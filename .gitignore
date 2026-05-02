@@ -1,0 +1,68 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Build directories
+build/
+out/
+cmake-build-*/
+
+# CMake (generated; not the top-level setup Makefile)
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+**/Makefile
+!/Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Claude Code: ignore everything under .claude/, except project-owned skills.
+# `make skills` installs upstream skills (e.g. caveman) into .claude/skills/
+# alongside committed project-owned ones (e.g. bonsai-policy).
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/bonsai-policy/
