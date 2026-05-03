@@ -1,0 +1,16 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+IndentWidth: 4
+UseTab: Never
+ColumnLimit: 88
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+BreakBeforeBraces: Allman
+SpaceAfterCStyleCast: true
+SpaceBeforeAssignmentOperators: true
+AlignConsecutiveAssignments: true
+ReflowComments: true
+QualifierAlignment: Custom
+QualifierOrder: ["inline", "static", "type", "const", "volatile", "constexpr"]

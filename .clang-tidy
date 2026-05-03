@@ -1,0 +1,38 @@
+---
+# 1. The Checks
+# We enable a mix of checks:
+# - bugprone-*: Detects likely bugs (e.g., use after free, unsafe casts).
+# - modern-*: Suggests C++20/23 improvements (e.g., "use std::print", "use auto").
+# - performance-*: Flags expensive copies.
+# - readability-*: Enforces clear code style.
+Checks: >
+  -*,
+  bugprone-*,
+  cppcoreguidelines-*,
+  google-*,
+  modernize-*,
+  performance-*,
+  readability-*,
+  misc-include-cleaner,
+  -google-runtime-references,
+  -readability-identifier-length,
+  -readability-uppercase-literal-suffix,
+  -readability-magic-numbers,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -modernize-use-ranges,
+  -modernize-use-nodiscard,
+  -modernize-use-trailing-return-type,
+  -cppcoreguidelines-pro-type-member-init,
+
+# 2. Settings
+# Treat warnings as errors? (Like --strict in Python)
+# WarningsAsErrors: '*'
+
+# 3. Check Options (Fine-tuning)
+CheckOptions:
+  # Enforce variable naming (snake_case is standard in C++ std lib)
+  readability-identifier-naming.VariableCase: lower_case
+  readability-identifier-naming.FunctionCase: lower_case
+
+  # Limit function length (forces modularity)
+  readability-function-size.LineThreshold: 88
