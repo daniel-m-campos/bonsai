@@ -72,7 +72,7 @@ Avoid claiming: speed parity with reference libraries, production suitability.
   - **Open**: the exact dispatch mechanism. Earlier nested-lambda sketch was
     ugly. Need a flatter design — possibly a dispatch table keyed on a
     name-tuple, or a builder that resolves one component at a time. **TBD
-    in architecture.md.**
+    in `architecture/6-dispatch.md`.**
 
 - **`Booster` as single concrete class for now**, not abstract base.
   Virtualize when adding DART/RF (probably never, given non-goals).
@@ -169,7 +169,8 @@ Avoid claiming: speed parity with reference libraries, production suitability.
 ## 5. Decisions deferred / open questions
 
 - **Dispatch mechanism shape** at the runtime → static boundary. Need
-  flatter design than nested lambdas. (Resolve in architecture.md.)
+  flatter design than nested lambdas. (Resolve in
+  `architecture/6-dispatch.md`.)
 - **Numerical parity tolerance values** — pick after seeing actual variance.
 - **Whether to implement the C++26 reflection branch** or just sketch it.
   Depends on time remaining after main path is solid.
@@ -232,10 +233,20 @@ docs/
                          evaluation criteria
   context.md          — this file (handoff briefing)
   ai-usage.md         — AI policy + audit trail
-  architecture.md     — deep design (concepts, dispatch, data layout,
-                         threading model)
-  decisions.md        — append-only ADR log
+  decisions.md        — append-only decisions log
   benchmarking.md     — (later) results, methodology, reproduction
+  architecture/
+    README.md         — index + cross-cutting concerns (dispatch,
+                         threading, error handling, determinism)
+    1-dataset.md      — Dataset, BinMapper, readers
+    2-histogram.md    — (TBD) Histogram, subtraction, parallel reduce
+    3-tree.md         — (TBD) Tree, Node, TreeGrower
+    4-objective.md    — (TBD) Objective, MSE, logloss
+    5-booster.md      — (TBD) Booster, training loop
+    6-dispatch.md     — (TBD) registry, runtime → static boundary
+    7-parallel.md     — (TBD) ParallelBackend, OpenMP, std::execution
+    8-config.md       — (TBD) Config, TOML, CLI overrides
+    9-cli.md          — (TBD) subcommand handlers
   conversations/
     2026-05-02-initial-design.md  — full transcript of design chat
 ```
@@ -257,16 +268,15 @@ docs/
 + Open questions / risks before phase plan
 + Evaluation criteria for final report (figures/tables planned)
 
-`architecture.md` is the deep dive: concept definitions with code,
-the dispatch mechanism (TBD design), Dataset invariants, parallel
-backend interface, registry mechanics, threading model, error handling.
+`architecture/` holds per-component design docs. Each numbered file
+covers one component (Dataset, Histogram, Tree, etc.) in enough depth
+to implement it. `architecture/README.md` is the index plus
+cross-cutting concerns (dispatch architecture, threading model, error
+handling, determinism contract).
 
-`decisions.md` is ADR-style, append-only:
-- Context, Decision, Alternatives considered, Consequences. ~5 lines each.
-- Examples to seed: ADR-001 (static poly + runtime boundary),
-  ADR-002 (typelist registry not macros), ADR-003 (skip categoricals
-  in MVP), ADR-004 (two parallel backends), ADR-005 (no profile
-  abstraction layer).
+`decisions.md` is the append-only decisions log. Plain ordered list,
+caveman style, one entry per non-trivial choice. New entries at the
+bottom; numbering never reused.
 
 ## 9. Tech stack (locked)
 
@@ -335,8 +345,8 @@ this repo:
   the MVP.
 - Writing the `ParallelBackend` concept or its first impl.
 - Resolving the deferred dispatch design question — that resolution
-  must come from the user, in `architecture.md`, before any code is
-  written against it.
+  must come from the user, in `architecture/6-dispatch.md`, before any
+  code is written against it.
 
 **ALWAYS**
 - Disclose AI assistance in commit messages when AI wrote any portion
@@ -357,8 +367,8 @@ has signed off and that the user has authored the core path.
 ## 12. What this doc is not
 
 - Not the proposal. Proposal is for the professor; this is for agents.
-- Not a replacement for `architecture.md`. This is the briefing; that's
-  the deep dive.
+- Not a replacement for `architecture/`. This is the briefing; those
+  are the per-component deep dives.
 - Not append-only. Update in place as decisions evolve. Use
   `decisions.md` for the audit trail of *changes*.
 

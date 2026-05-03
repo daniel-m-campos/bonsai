@@ -3,9 +3,8 @@
 > **Course:** MPCS 51045 — Advanced C++, Spring 2026
 > **Status:** Draft proposal. Audience is the professor (for grading scope) and
 > future-me / collaborating agents (as a stable design reference).
-> Companion docs: `docs/context.md` (briefing), `docs/architecture.md` (deep
-> design — to be written after this proposal settles), `docs/decisions.md`
-> (ADR log).
+> Companion docs: `docs/context.md` (briefing), `docs/architecture/`
+> (per-component design docs), `docs/decisions.md` (decisions log).
 
 ## Goals and non-goals
 
@@ -214,7 +213,7 @@ the compiler dedupes substantial portions, and binary size is not a
 constraint. xgboost / LightGBM cannot do this because their plugin sets are
 open across third-party binaries; bonsai's are not, by design.
 
-**Open question, resolved in `architecture.md`.** The exact mechanism for
+**Open question, resolved in `docs/architecture/6-dispatch.md`.** The exact mechanism for
 turning four runtime strings into one statically-typed `Booster<...>`
 without writing a four-deep nested-lambda tower. Candidates: a flat dispatch
 table keyed on a tuple of names, or a builder that resolves one component
@@ -419,9 +418,9 @@ next.
 
 ### 7.2 Open questions / risks
 
-- **Dispatch mechanism shape** at the runtime → static boundary. Resolved in
-  `architecture.md` before code lands. The cartesian-product instantiation
-  is locked in; the syntactic shape is not.
+- **Dispatch mechanism shape** at the runtime → static boundary. Resolved
+  in `docs/architecture/6-dispatch.md` before code lands. The
+  cartesian-product instantiation is locked in; the syntactic shape is not.
 - **`std::execution::par` quality.** libstdc++ silently falls back to serial
   if TBB is not linked. Mitigation: vendor TBB via FetchContent; add a
   runtime check at startup that confirms `par` actually parallelizes.
@@ -485,9 +484,12 @@ bonsai/
     proposal.md               this document
     context.md                handoff briefing for agents / future-self
     ai-usage.md               AI policy + audit trail
-    architecture.md           deep design (concepts, dispatch, threading)
-    decisions.md              ADR log, append-only
+    decisions.md              decisions log, append-only
     benchmarking.md           (Phase 2+) results, methodology, reproduction
+    architecture/             per-component design docs
+      README.md               index + cross-cutting concerns
+      1-dataset.md            Dataset, BinMapper, readers
+      ...                     2-histogram, 3-tree, ... (added as designed)
     conversations/            preserved design transcripts
   include/bonsai/             public-ish headers
     core/                       Dataset, BinMapper, Histogram, Gradient

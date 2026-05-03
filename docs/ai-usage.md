@@ -32,7 +32,8 @@ The "spine" — first working version written by the user, no AI ghost-writing:
 - `Objective` concept + MVP impls (MSE, logloss).
 - `ParallelBackend` concept + first impl (`SerialBackend`, then `OpenMPBackend`).
 - Resolution of the deferred dispatch-shape design question (flagged in
-  [`proposal.md` §3.4](proposal.md)) — written into `architecture.md` by
+  [`proposal.md` §3.4](proposal.md)) — written into the relevant
+  `docs/architecture/N-*.md` doc (likely `6-dispatch.md`) by
   the user, in their own voice, before any code is written against it.
 
 Once the spine works end-to-end on the MVP regression dataset, AI assistance
@@ -43,7 +44,8 @@ opens up for the rest.
 **Always allowed** (does not touch core implementation):
 
 - Documentation drafting and editorial cleanup (`proposal.md`,
-  `architecture.md`, ADRs, READMEs). User owns design decisions; AI drafts prose.
+  `docs/architecture/*.md`, ADRs, READMEs). User owns design decisions;
+  AI drafts prose.
 - Reference-library surveys, tradeoff summaries.
 - Diagrams (architecture, flow, data layout).
 - Searches and lookups.
@@ -89,9 +91,16 @@ the conversation that produced [`proposal.md`](proposal.md) and
 artifacts or make design decisions, not every chat.
 
 **Professor sign-off.** User shares this repo with the professor *before* any
-implementation code is written. Until sign-off, no files under `src/` or
-`include/`. Documentation work pre-sign-off is fine — the documentation is
-*what* gets reviewed.
+implementation code is written. The intent is to confirm the policy
+interpretation before forging ahead.
+
+**Pre-sign-off override.** As of 2026-05-03 the user has elected to proceed
+with implementation before the professor has confirmed the interpretation.
+If the professor objects on review, AI-assisted work to that point is
+identifiable via commit trailers (`AI-Assisted: ...`) and the audit-trail
+table below, and may be rolled back. The skill (`.claude/skills/bonsai-policy`)
+remains strict; agents will continue to ask before creating files under
+`src/` or `include/`, and the user explicitly confirms each time.
 
 **Agent obligations.** Any AI agent in this repo:
 
@@ -114,6 +123,8 @@ Append-only. New entries at the bottom.
 | 2026-05-02 | `docs/context.md` + `docs/ai-usage.md` (AI policy) | Edits applied per user direction. | User authored the policy; AI drafted prose. |
 | 2026-05-02 | `Makefile` (`make skills` target) | Drafted by AI. | Project-local `make skills` installs the [caveman](https://github.com/juliusbrussee/caveman) Claude Code skill into `.claude/skills/` (gitignored). One-time fetch from upstream; opt-in. |
 | 2026-05-02 | `.claude/skills/bonsai-policy/SKILL.md` | Drafted by AI from this doc + `docs/context.md` §11. | In-context guardrail skill that auto-loads when an agent is about to write code or make a design decision. Restates the policy and adds a hard-stop on writes under `src/` or `include/` until the user confirms professor sign-off. |
+| 2026-05-02 | Dataset-design discussion + `docs/decisions.md` entries 1–6 + `docs/architecture/1-dataset.md` + `docs/architecture/8-config.md` (data slice) | AI as sounding board (surveyed lgbm/xgb/catboost binning, dataset, reader strategies; named idiomatic options at each step; pushed back where appropriate). User decided each entry. AI drafted prose. | Spans two sessions. User narrowed and corrected the design repeatedly: rejected lgbm-style reference-Dataset coupling, picked free-function readers over a `Reader` concept, dropped the variant + `visit_column` complexity, moved I/O out of domain types. Transcript: this conversation. |
+| 2026-05-03 | Pre-sign-off implementation override | n/a (user decision) | User elected to begin implementation before the professor confirmed AI policy. AI-assisted artifacts are identifiable via commit trailers and this audit table for rollback if needed. |
 
 When implementation starts, this table grows per AI-assisted artifact (or per
 phase if grouping is cleaner).
@@ -125,9 +136,9 @@ User plans to confirm before code is written:
 1. AI-drafted documentation acceptable when the user owns every design
    decision and assistance is disclosed? (User's reading: yes, per "produce
    architecture diagrams, etc.")
-2. Deferred dispatch-shape design (in `architecture.md` before code) — does
-   user-written prose with AI editorial cleanup afterward satisfy
-   "architecture written by you"?
+2. Deferred dispatch-shape design (in `docs/architecture/6-dispatch.md`
+   before code) — does user-written prose with AI editorial cleanup
+   afterward satisfy "architecture written by you"?
 3. Is the boundary above (user hand-writes spine; AI assists with tests,
    build, CLI, benchmarks, Phase 4) the right interpretation?
 4. Is the commit-trailer convention sufficient, or does the professor want

@@ -62,7 +62,7 @@ in those areas:
   `OpenMPBackend`)
 - Resolution of the deferred dispatch-shape design question (flagged
   in `docs/proposal.md` §3.4) — written by the user, in their own
-  voice, into `docs/architecture.md`
+  voice, into `docs/architecture/6-dispatch.md`
 
 If the user asks you to write any of the above before the spine is
 in place, **decline and remind them of the policy**. They may
@@ -71,8 +71,8 @@ override; if they do, the override gets logged in
 
 ## Always allowed (no spine prerequisite)
 
-- Drafting and editing docs: `proposal.md`, `architecture.md`,
-  `decisions.md`, READMEs, ADRs.
+- Drafting and editing docs: `proposal.md`, `architecture/*.md`,
+  `decisions.md`, READMEs.
 - Reference-library surveys, tradeoff summaries.
 - Diagrams (architecture, flow, data layout).
 - Editorial cleanup of user-written prose or code.
