@@ -2,11 +2,13 @@
 #include <cassert>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <iterator>
 #include <limits>
 #include <random>
 #include <ranges>
 #include <span>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -18,11 +20,6 @@ namespace bonsai
 
 namespace
 {
-
-bool is_nan(float x)
-{
-    return std::isnan(x);
-}
 
 bool is_not_nan(float x)
 {
@@ -82,13 +79,21 @@ std::vector<float> create_cuts(std::span<float const> subsample, size_t step)
 
 BinMapper BinMapper::fit(std::span<float const> column, BinMapperConfig const &cfg)
 {
-    bool const has_missing_bin = std::ranges::any_of(column, is_nan);
-    assert(cfg.max_bin > (has_missing_bin ? 2 : 1));
-    // 1 bin for the +inf sentinel, another for the missing slot if needed.
-    size_t const cut_budget = cfg.max_bin - (has_missing_bin ? 2 : 1);
+    assert(cfg.max_bin > 2);
+    // 1 bin for the +inf sentinel, another for the missing slot.
+    size_t const cut_budget = cfg.max_bin - 2;
     auto const subsample    = create_sorted_subsample(column, cfg);
     auto cuts = create_cuts(subsample, quantile_step(subsample.size(), cut_budget));
-    return {std::move(cuts), has_missing_bin};
+    return {std::move(cuts)};
+}
+
+uint16_t BinMapper::transform(float x) const
+{
+    if (std::isnan(x))
+    {
+        return n_buckets() - 1;
+    }
+    return std::ranges::lower_bound(cuts_, x) - cuts_.begin();
 }
 
 } // namespace bonsai

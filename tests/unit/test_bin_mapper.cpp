@@ -23,7 +23,6 @@ TEST_CASE("BinMapper: small column produces one cut per distinct value plus sent
     BinMapperConfig cfg{.n_samples = column.size()};
     auto mapper = BinMapper::fit(std::span(column), cfg);
 
-    CHECK_FALSE(mapper.has_missing_bin());
     CHECK(std::ranges::is_sorted(mapper.cuts()));
     CHECK(mapper.cuts().back() == f_inf);
     // Bin 0 is (-inf, cuts[0]] so the smallest value gets no cut of its own.
@@ -38,7 +37,6 @@ TEST_CASE("BinMapper: subsamples cuts when n_samples < column", "[bin_mapper][fi
     BinMapperConfig cfg{.n_samples = column.size() - 2};
     auto mapper = BinMapper::fit(std::span(column), cfg);
 
-    CHECK_FALSE(mapper.has_missing_bin());
     CHECK(std::ranges::is_sorted(mapper.cuts()));
     CHECK(mapper.cuts().back() == f_inf);
     CHECK(mapper.cuts().size() <= cfg.n_samples);
@@ -51,7 +49,6 @@ TEST_CASE("BinMapper: reserves a missing bin when column contains NaN",
     BinMapperConfig cfg{.n_samples = column.size()};
     auto mapper = BinMapper::fit(std::span(column), cfg);
 
-    CHECK(mapper.has_missing_bin());
     CHECK(std::ranges::is_sorted(mapper.cuts()));
     CHECK(mapper.cuts().back() == f_inf);
     CHECK(std::ranges::none_of(mapper.cuts(), [](float x) { return std::isnan(x); }));
@@ -63,7 +60,6 @@ TEST_CASE("BinMapper: duplicates are skipped", "[bin_mapper][fit][dup]")
     BinMapperConfig cfg{.n_samples = column.size()};
     auto mapper = BinMapper::fit(std::span(column), cfg);
 
-    CHECK_FALSE(mapper.has_missing_bin());
     CHECK(std::ranges::is_sorted(mapper.cuts()));
     CHECK(mapper.cuts().back() == f_inf);
     CHECK(std::ranges::adjacent_find(mapper.cuts()) == mapper.cuts().end());
@@ -87,7 +83,6 @@ TEST_CASE("BinMapper: subsamples deterministically on a large seeded column",
     auto mapper       = BinMapper::fit(std::span(column), cfg);
     auto mapper_again = BinMapper::fit(std::span(column), cfg);
 
-    CHECK_FALSE(mapper.has_missing_bin());
     CHECK(std::ranges::is_sorted(mapper.cuts()));
     CHECK(mapper.cuts().back() == f_inf);
     CHECK(mapper.cuts().size() <= n_samples);
@@ -110,7 +105,6 @@ TEST_CASE("BinMapper: max_bin caps the cut count including the sentinel",
     BinMapperConfig cfg{.max_bin = 8, .n_samples = column.size()};
     auto mapper = BinMapper::fit(std::span(column), cfg);
 
-    CHECK_FALSE(mapper.has_missing_bin());
     CHECK(mapper.cuts().size() <= static_cast<size_t>(cfg.max_bin));
     CHECK(std::ranges::is_sorted(mapper.cuts()));
     CHECK(std::ranges::adjacent_find(mapper.cuts()) == mapper.cuts().end());
@@ -132,7 +126,6 @@ TEST_CASE("BinMapper: max_bin reserves a slot for the missing bin",
     BinMapperConfig cfg{.max_bin = 8, .n_samples = column.size()};
     auto mapper = BinMapper::fit(std::span(column), cfg);
 
-    CHECK(mapper.has_missing_bin());
     // Total bin budget includes the missing bin, so cuts <= max_bin - 1.
     CHECK(mapper.cuts().size() <= static_cast<size_t>(cfg.max_bin) - 1);
 }
@@ -155,7 +148,6 @@ TEST_CASE("BinMapper: NaNs are filtered out of the subsample branch",
     BinMapperConfig cfg{.n_samples = n_samples, .seed = 1};
     auto mapper = BinMapper::fit(std::span(column), cfg);
 
-    CHECK(mapper.has_missing_bin());
     CHECK(std::ranges::none_of(mapper.cuts(), [](float x) { return std::isnan(x); }));
     CHECK(std::ranges::is_sorted(mapper.cuts()));
     CHECK(mapper.cuts().back() == f_inf);
@@ -169,7 +161,6 @@ TEST_CASE("BinMapper: single-value column collapses to one cut plus sentinel",
     BinMapperConfig cfg{.n_samples = column.size()};
     auto mapper = BinMapper::fit(std::span(column), cfg);
 
-    CHECK_FALSE(mapper.has_missing_bin());
     CHECK(mapper.cuts().size() == 2);
     CHECK(mapper.cuts().front() == 3.0F);
     CHECK(mapper.cuts().back() == f_inf);
@@ -182,7 +173,56 @@ TEST_CASE("BinMapper: all-NaN column emits only the sentinel", "[bin_mapper][fit
     BinMapperConfig cfg{.n_samples = column.size()};
     auto mapper = BinMapper::fit(std::span(column), cfg);
 
-    CHECK(mapper.has_missing_bin());
     CHECK(mapper.cuts().size() == 1);
     CHECK(mapper.cuts().front() == f_inf);
+}
+
+TEST_CASE("BinMapper: transform routes values to half-open right-inclusive bins",
+          "[bin_mapper][transform]")
+{
+    std::vector<float> column = {1.0F, 2.0F, 3.0F, 4.0F, 5.0F};
+    BinMapperConfig cfg{.n_samples = column.size()};
+    auto mapper = BinMapper::fit(std::span(column), cfg);
+    // cuts = [2, 3, 4, 5, +inf]; bins are (-inf,2], (2,3], (3,4], (4,5], (5,+inf]
+
+    CHECK(mapper.transform(0.0F) == 0); // below first cut
+    CHECK(mapper.transform(2.0F) == 0); // exactly first cut, right-inclusive
+    CHECK(mapper.transform(2.5F) == 1); // between cuts
+    CHECK(mapper.transform(5.0F) == 3); // exactly last finite cut
+    CHECK(mapper.transform(100.0F) ==
+          4);                            // above last finite cut, lands in sentinel bin
+    CHECK(mapper.transform(f_inf) == 4); // +inf also lands in sentinel bin
+}
+
+TEST_CASE("BinMapper: transform routes NaN to the missing bin",
+          "[bin_mapper][transform][nan]")
+{
+    std::vector<float> column = {1.0F, 2.0F, 3.0F, 4.0F, 5.0F};
+    BinMapperConfig cfg{.n_samples = column.size()};
+    auto mapper = BinMapper::fit(std::span(column), cfg);
+
+    CHECK(mapper.transform(f_nan) == mapper.n_buckets() - 1);
+}
+
+TEST_CASE("BinMapper: transform is monotonic over the fitted column",
+          "[bin_mapper][transform]")
+{
+    std::mt19937 rng(0xABCDEF);
+    std::uniform_real_distribution<float> dist(-50.0F, 50.0F);
+    std::vector<float> column(100);
+    std::ranges::generate(column, [&] { return dist(rng); });
+
+    BinMapperConfig cfg{.n_samples = column.size()};
+    auto mapper = BinMapper::fit(std::span(column), cfg);
+
+    std::vector<float> sorted = column;
+    std::ranges::sort(sorted);
+
+    auto last = mapper.transform(sorted.front());
+    for (float x : sorted)
+    {
+        auto bin = mapper.transform(x);
+        CHECK(bin >= last);
+        last = bin;
+    }
 }
