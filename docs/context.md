@@ -355,14 +355,13 @@ this repo:
 - Preserve conversation transcripts of any non-trivial design
   discussion under `docs/conversations/`.
 - If an agent is unsure whether a task crosses the line, *stop and
-  ask the user* rather than guessing. The user has explicitly chosen
-  to share this repo with the professor for sign-off before any code
-  is written; do not write code until that has happened.
+  ask the user* rather than guessing.
 
-The implementation has not started. **No code lives in this repo yet by
-design.** Any agent that finds itself about to create source files in
-`src/` or `include/` should confirm with the user that the professor
-has signed off and that the user has authored the core path.
+Professor signed off on this policy on 2026-05-04 ("LGTM"). Implementation
+is underway. Any agent about to create source files in `src/` or
+`include/` for a spine component should confirm with the user that they
+have hand-authored that component first; outside the spine, the normal
+"allowed once core is working" rules apply.
 
 ## 12. What this doc is not
 

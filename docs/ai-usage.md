@@ -90,24 +90,18 @@ the conversation that produced [`proposal.md`](proposal.md) and
 [`docs/context.md`](context.md). Capture conversations that produce
 artifacts or make design decisions, not every chat.
 
-**Professor sign-off.** User shares this repo with the professor *before* any
-implementation code is written. The intent is to confirm the policy
-interpretation before forging ahead.
-
-**Pre-sign-off override.** As of 2026-05-03 the user has elected to proceed
-with implementation before the professor has confirmed the interpretation.
-If the professor objects on review, AI-assisted work to that point is
-identifiable via commit trailers (`AI-Assisted: ...`) and the audit-trail
-table below, and may be rolled back. The skill (`.claude/skills/bonsai-policy`)
-remains strict; agents will continue to ask before creating files under
-`src/` or `include/`, and the user explicitly confirms each time.
+**Professor sign-off.** Received 2026-05-04. The professor reviewed this
+policy and replied "LGTM," approving the interpretation as written. The
+four open questions below resolve to the user's stated readings. The
+pre-sign-off override (entered 2026-05-03) is moot — AI-assisted work
+to that point stands and does not need rollback.
 
 **Agent obligations.** Any AI agent in this repo:
 
 1. Reads `docs/context.md` (which links here) before non-trivial work.
-2. Does not create `src/` or `include/` files without explicit confirmation
-   that the professor has signed off *and* the user has hand-authored the
-   relevant core component.
+2. Does not create `src/` or `include/` files for spine components
+   until the user has hand-authored that component. The professor
+   sign-off is no longer a gate; user authorship of the spine is.
 3. Stops and asks when a task arguably crosses the line.
 4. Surfaces AI authorship in commit message drafts.
 
@@ -125,24 +119,25 @@ Append-only. New entries at the bottom.
 | 2026-05-02 | `.claude/skills/bonsai-policy/SKILL.md` | Drafted by AI from this doc + `docs/context.md` §11. | In-context guardrail skill that auto-loads when an agent is about to write code or make a design decision. Restates the policy and adds a hard-stop on writes under `src/` or `include/` until the user confirms professor sign-off. |
 | 2026-05-02 | Dataset-design discussion + `docs/decisions.md` entries 1–6 + `docs/architecture/1-dataset.md` + `docs/architecture/8-config.md` (data slice) | AI as sounding board (surveyed lgbm/xgb/catboost binning, dataset, reader strategies; named idiomatic options at each step; pushed back where appropriate). User decided each entry. AI drafted prose. | Spans two sessions. User narrowed and corrected the design repeatedly: rejected lgbm-style reference-Dataset coupling, picked free-function readers over a `Reader` concept, dropped the variant + `visit_column` complexity, moved I/O out of domain types. Transcript: this conversation. |
 | 2026-05-03 | Pre-sign-off implementation override | n/a (user decision) | User elected to begin implementation before the professor confirmed AI policy. AI-assisted artifacts are identifiable via commit trailers and this audit table for rollback if needed. |
+| 2026-05-04 | Professor sign-off on AI-usage policy | n/a (professor decision) | Professor replied "LGTM" to this policy doc. The four open questions below resolve to the user's stated readings. Spine-authorship rule remains; the sign-off gate is lifted. |
+| 2026-05-04 | `docs/ai-usage.md` + `docs/context.md` §11 + `.claude/skills/bonsai-policy/SKILL.md` | AI applied edits per user direction reflecting professor sign-off. | User invoked `/bonsai-policy updatez: professor said LGTM`. AI rewrote the sign-off block, resolved the open questions, and replaced the "no code under src/include until sign-off" hard gate with a narrower "spine components require user authorship first" gate. User reviews. |
 
 When implementation starts, this table grows per AI-assisted artifact (or per
 phase if grouping is cleaner).
 
-## Open questions for the professor
+## Open questions for the professor — resolved 2026-05-04
 
-User plans to confirm before code is written:
+Professor replied "LGTM" on 2026-05-04, approving this policy as written.
+All four questions resolve to the user's reading:
 
-1. AI-drafted documentation acceptable when the user owns every design
-   decision and assistance is disclosed? (User's reading: yes, per "produce
-   architecture diagrams, etc.")
-2. Deferred dispatch-shape design (in `docs/architecture/6-dispatch.md`
-   before code) — does user-written prose with AI editorial cleanup
-   afterward satisfy "architecture written by you"?
-3. Is the boundary above (user hand-writes spine; AI assists with tests,
-   build, CLI, benchmarks, Phase 4) the right interpretation?
-4. Is the commit-trailer convention sufficient, or does the professor want
-   a different format (per-file header, per-PR summary)?
+1. **AI-drafted documentation acceptable** when the user owns every design
+   decision and assistance is disclosed. ✅
+2. **Deferred dispatch-shape design** (in `docs/architecture/6-dispatch.md`
+   before code) — user-written prose with AI editorial cleanup afterward
+   satisfies "architecture written by you". ✅
+3. **Boundary stands**: user hand-writes the spine; AI assists with tests,
+   build, CLI, benchmarks, Phase 4. ✅
+4. **Commit-trailer convention** (`AI-Assisted: ...`) is sufficient. ✅
 
-Professor's answers, once received, get recorded here and override the user's
-interpretation where they conflict.
+If the professor sends follow-up clarifications later, they get appended
+below this block and override the resolutions above where they conflict.

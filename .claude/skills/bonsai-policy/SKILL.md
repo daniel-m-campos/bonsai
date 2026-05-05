@@ -26,26 +26,29 @@ decision, or commit.**
    the core implementation or architecture. AI assists *afterward* with
    tests, build, CLI, benchmarks, extensions, docs, diagrams.
 
-## Hard gate (do not write code without confirmation)
+## Spine gate (do not ghost-write core components)
 
-The user has stated: **no source files exist in this repo until the
-professor signs off on the policy interpretation**. As of this skill's
-last update, sign-off has not happened.
+Professor signed off on this policy on 2026-05-04 ("LGTM"), so the
+"no code at all until sign-off" gate is lifted. The **spine-authorship
+gate remains**: the user must hand-author each spine component before
+AI touches that component.
 
-If you (the agent) are about to:
-- Create any file under `src/` or `include/`
-- Edit any file under `src/` or `include/`
-- Run a code generator, scaffolder, or template that produces source
-  files in those paths
+If you (the agent) are about to create or edit a file under `src/` or
+`include/` that implements a spine component listed below, and the
+user has not yet hand-authored it, **stop and ask**:
 
-**Stop and ask the user**:
-> "The bonsai-policy skill blocks writing under src/ or include/ until
-> the professor has signed off and you've hand-authored the relevant
-> core component. Has the sign-off happened, and have you written the
-> core path for what I'm about to touch?"
+> "The bonsai-policy skill flags this as a spine component
+> (<name>). Have you hand-authored the initial version yourself? If
+> not, I should not write it — that's reserved for you under the AI
+> policy."
 
-Proceed only on explicit user confirmation, not on inference from
-context.
+Proceed only on explicit user confirmation that they have written the
+initial version. Editorial cleanup, refactors, and follow-on work on
+already-user-authored spine code are fine — but the *initial*
+implementation must come from the user.
+
+Non-spine files under `src/` or `include/` (e.g., test glue, CSV I/O,
+CLI plumbing, build wiring) do not need this confirmation.
 
 ## The "spine" — user must hand-author first
 
@@ -106,8 +109,8 @@ override; if they do, the override gets logged in
 Before non-trivial work:
 
 1. Read `docs/context.md` (which links to `docs/ai-usage.md`).
-2. If creating files under `src/` or `include/`: confirm sign-off and
-   user authorship as above.
+2. If creating or editing a spine component under `src/` or `include/`:
+   confirm user authorship as above.
 3. If unsure whether a task crosses the line: stop and ask, do not
    guess.
 4. When drafting commit messages, surface AI authorship via the
