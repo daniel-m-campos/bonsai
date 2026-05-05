@@ -43,3 +43,23 @@ regardless of thread count or backend. Test in
 - Code sketches show shape, not impl.
 - Close with "What's not here" + cross-references.
 - Filename: `N-<name>.md`.
+
+## Test naming
+
+Catch2 `TEST_CASE` names follow `"<Component>: <behavior under condition>"`:
+PascalCase component, colon, behavioral phrase starting with a present-tense
+verb, condition trailing after `when` / `if` / `for`. One `TEST_CASE` per
+behavior — use `SECTION` for parameter variations within a behavior.
+
+Tags stack a component tag with one or more behavioral tags drawn from a
+fixed set: `[fit]`, `[transform]`, `[ctor]`, `[edge]`, `[nan]`, `[perf]`,
+`[smoke]`. This makes `--tags [nan]` and `--tags [fit]` useful filters
+across files.
+
+```cpp
+TEST_CASE("BinMapper: reserves a missing bin when column contains NaN",
+          "[bin_mapper][fit][nan]")
+```
+
+Stubs get a single `"<Component>: smoke"` case tagged `[smoke]`, deleted
+once a real behavior test lands.
