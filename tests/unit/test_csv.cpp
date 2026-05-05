@@ -6,6 +6,6 @@
 // tests/data/; round-trip read_csv -> Dataset; fit_from_csv producing
 // a sane BinMappers.
 
-TEST_CASE("csv compiles", "[csv]") {
+TEST_CASE("Csv: smoke", "[csv][smoke]") {
     REQUIRE(true);
 }

@@ -6,6 +6,6 @@
 // uint16_t storage matching BinMapper transforms; labels / weights
 // ownership; n_buckets per feature.
 
-TEST_CASE("Dataset compiles", "[dataset]") {
+TEST_CASE("Dataset: smoke", "[dataset][smoke]") {
     REQUIRE(true);
 }

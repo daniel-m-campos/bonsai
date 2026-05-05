@@ -5,6 +5,6 @@
 // Stub. TODO(user): tests for BinMappers::fit aggregating per-feature
 // BinMappers, indexing, feature_names, and round-trip with a tiny batch.
 
-TEST_CASE("BinMappers compiles", "[bin_mappers]") {
+TEST_CASE("BinMappers: smoke", "[bin_mappers][smoke]") {
     REQUIRE(true);
 }
