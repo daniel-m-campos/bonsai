@@ -153,6 +153,46 @@ Rejected: `Reader` concept + `Reader auto&` template params for `fit` and
 `bin`. Over-engineered for once-per-program file loading. Free functions are
 the simpler shape.
 
+---
 
+## 7. Determinism contract: fixed thread count, not cross-thread
 
+Same seed + same data + **same thread count** → same model bytes.
+Different thread counts: predictions within numerical tolerance, but
+bytes may differ.
 
+What this rules in:
+- Per-thread local histograms (no atomic FP adds — those are bit-unstable
+  even at fixed thread count).
+- Deterministic chunking (e.g., OpenMP `schedule(static)`).
+- `random_seed` carries through samplers / shufflers.
+
+What this rules out (relative to earlier framing):
+- Promising cross-thread bit-exactness. The earlier draft demanded
+  fixed-order merge (`tid` outer, bin inner) so the per-thread reduction
+  shape didn't depend on thread count. Dropped — costs design constraints
+  on `ParallelBackend` (must expose ordered reduction primitive) and
+  forecloses `OpenMP reduction(+:...)` and `std::execution` reduce
+  shapes.
+
+Field check: XGBoost and CatBoost don't promise cross-thread
+determinism. LightGBM offers it behind `deterministic=true` +
+`force_col_wise|row_wise`, and its own maintainers describe the
+guarantee as fragile (RFC #6731). The pragmatic, industry-standard
+contract is "thread count is part of the reproducibility input."
+
+Test contract:
+- `test_determinism_fixed_threads`: two runs at `n_threads=k` for
+  `k ∈ {1, 4, 8}` produce identical model files. Required to pass.
+- `test_determinism_cross_threads`: predictions across different
+  thread counts agree to numerical tolerance (e.g., max abs diff
+  < 1e-5 on YearPredictionMSD). Required to pass.
+
+Knock-on:
+- `ParallelBackend` does not need to expose "ordered reduction" as
+  a primitive. `parallel_for` + thread-local accumulators is enough.
+- The histogram's parallel-build description in
+  [`architecture/2-histogram.md`](architecture/2-histogram.md) §"Parallel
+  construction" reflects this — no fixed-tid-order requirement.
+- Atomic FP adds remain forbidden, but for the bit-stability-at-fixed-N
+  reason, not the cross-N reason.

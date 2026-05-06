@@ -118,9 +118,11 @@ Avoid claiming: speed parity with reference libraries, production suitability.
 - **Known risk**: libstdc++ `std::execution::par` requires linking TBB or
   it falls back silently to serial. Vendor TBB via FetchContent. Add a
   runtime check.
-- **Determinism is a hard requirement.** Same seed → same model. Forces
-  deterministic parallel reductions from day one (per-thread local hists
-  with fixed-order merge, not atomic adds).
+- **Determinism is a hard requirement at fixed thread count.** Same seed
+  + same `n_threads` → same model bytes. Cross-thread-count: predictions
+  within tolerance, bytes may differ. Forces per-thread local hists from
+  day one (no atomic FP adds — bit-unstable even at fixed N). See
+  decisions §7.
 
 ### Testing
 - **Catch2 v3** (link `Catch2WithMain`).

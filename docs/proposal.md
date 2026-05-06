@@ -160,9 +160,11 @@ What needs to be right from day one (refactors here cascade):
 - **`std::span` returns from `Dataset`.** No vector copies in the hot path.
 - **Histogram subtraction.** `sibling = parent − sibling` halves histogram
   build cost. Implemented from the start.
-- **Deterministic parallel reductions.** Per-thread local histograms with a
-  fixed-order merge, *not* atomic adds. Makes the determinism test pass and
-  keeps numerical output stable across thread counts.
+- **Deterministic parallel reductions at fixed thread count.** Per-thread
+  local histograms, *not* atomic adds. Atomic FP adds are bit-unstable
+  even at fixed `n_threads`. Cross-thread-count bit-exactness is not
+  promised — predictions match within tolerance, model bytes may differ.
+  Matches XGBoost / LightGBM / CatBoost field consensus; see decisions §7.
 
 ### 3.3 What must be iron-clad from the beginning
 
@@ -173,9 +175,10 @@ What needs to be right from day one (refactors here cascade):
   changing a concept ripples through every implementation.
 - The `Config` schema and the runtime → static dispatch boundary. Adding a
   parameter is cheap; restructuring the section layout is not.
-- The determinism contract. Same seed plus same data must produce the same
-  model, regardless of thread count or backend. Designed for from day one;
-  retrofitting is impractical.
+- The determinism contract. Same seed + same data + **same thread count**
+  must produce the same model bytes; cross-thread-count runs match within
+  numerical tolerance. Designed for from day one; retrofitting is
+  impractical. See decisions §7.
 
 ### 3.4 Static vs dynamic polymorphism
 
@@ -307,7 +310,7 @@ Catch2 v3 (`Catch2WithMain`), four layers:
 | Layer | Examples | What it catches |
 |---|---|---|
 | Unit | `test_bin_mapper`, `test_histogram`, `test_objective`, `test_tree_grower`, `test_registry`, `test_config_parse` | Per-component correctness, edge cases, registry lookup behavior, TOML round-tripping. `test_objective` covers both MSE and logloss gradients/hessians against analytical values from the MVP — the second objective is what catches regression-only assumptions in the `Objective` concept. |
-| Integration | `test_train_predict`, `test_save_load`, `test_determinism` | End-to-end training on tiny datasets; serialization round-trip; same seed → same model across thread counts. |
+| Integration | `test_train_predict`, `test_save_load`, `test_determinism` | End-to-end training on tiny datasets; serialization round-trip; same seed + fixed thread count → identical model bytes; same seed across thread counts → predictions within tolerance. |
 | Numerical parity | `test_parity_xgb`, `test_parity_lgbm` | bonsai's RMSE matches reference libraries within tolerance on matched hyperparameters on the MVP regression dataset. AUC parity on a classification dataset is added in Phase 4. |
 | Golden-file | `test_golden_predictions` | Predictions on a small committed regression dataset do not drift across commits. |
 
@@ -321,11 +324,15 @@ Conventions:
   monotonicity of bin assignment, count invariants, edge handling. Catch2
   `GENERATE` is sufficient; rapidcheck is overkill for this project's
   needs.
-- **Determinism test from day one.** Same seed and same data must produce
-  the same model regardless of thread count. This test will fail the first
-  time parallelism is added if reductions are not deterministic by design —
-  which is the point. The architecture is forced to be deterministic from
-  the start rather than retrofitted.
+- **Determinism test from day one.** Two flavors:
+  (a) at fixed `n_threads`, same seed + same data → identical model bytes;
+  (b) across thread counts, same seed + same data → predictions within
+  numerical tolerance. The (a) test will fail the first time parallelism
+  is added if any reduction uses atomic FP adds or otherwise loses
+  reproducibility at fixed thread count — which is the point. Cross-thread
+  bit-exactness is *not* promised (see decisions §7) — XGBoost and
+  CatBoost don't guarantee it either, and LightGBM only does so behind
+  a flag that its own maintainers describe as fragile.
 - **Golden files for one small regression dataset.** Reference predictions committed
   to the repo as small files; the test fails if predictions drift. High
   signal for catching subtle regressions during the parallel phase.
@@ -412,7 +419,7 @@ next.
 |---|---|---|
 | **1. Serial MVP** | End-to-end serial train + predict on numeric features. Regression (MSE) is the parity / golden / benchmark target on YearPredictionMSD. The `Objective` concept is implemented for both MSE and logloss (logloss has unit tests against analytical gradients and a smoke-level integration test on synthetic 2-class data, but no live reference dataset — that comes in Phase 4). Depth-wise grower. Histogram split finder. Uniform sampler. CLI: `bonsai fit / predict / eval`. TOML config + CLI overrides. | YearPredictionMSD trains, predictions match ballpark accuracy of reference libs (no parity checks yet), unit tests green for both MSE and logloss objectives, save/load round-trips. |
 | **2. Benchmark harness** | Dataset loaders, parity tests vs xgboost / LightGBM / CatBoost, golden-file tests, microbenchmark scaffold for the dispatch microbenchmark. | RMSE parity passes within initial tolerance bands on YearPredictionMSD. `bonsai bench` produces reproducible numbers. |
-| **3. Parallelism** | OpenMP backend (feature-parallel histogram construction, row-parallel within feature, parallel predict, SIMD bin scan). Then `std::execution` backend behind the same `ParallelBackend` concept. Determinism test continues to pass. | Speedup curve is positive and monotone up to 8 threads on both backends. Determinism test passes at all thread counts. Numerical parity tolerances unchanged. |
+| **3. Parallelism** | OpenMP backend (feature-parallel histogram construction, row-parallel within feature, parallel predict, SIMD bin scan). Then `std::execution` backend behind the same `ParallelBackend` concept. Determinism tests (fixed-N bytes, cross-N tolerance) continue to pass. | Speedup curve is positive and monotone up to 8 threads on both backends. Fixed-thread-count determinism passes at every supported `n_threads`; cross-thread-count predictions agree within tolerance. Numerical parity tolerances unchanged. |
 | **4. Extensions** | Binary classification parity lands first: a classification reference dataset (Higgs subset), AUC parity vs reference libs, golden file. The logloss objective is already in the codebase from Phase 1, so this phase is dataset wiring + parity tuning, not new core code. Then leaf-wise grower; oblivious grower; GOSS sampler; exact splitter; categorical handlers. Each demonstrates the extension API by being added without touching the core. | Each extension is one new file plus one entry in the registry typelist (or, for classification, one new dataset + parity test). Unit tests + a parity check against the corresponding reference library on at least one dataset. |
 | **Stretch** | — | C++26 reflection branch for the registry. Monotonic constraints. Snapshot / checkpoint format (currently a binary dump for v1). CV runner. Python bindings via pybind11 (probably skip). | Each is independently scoped. Stretch items are pop-off-able if time runs short. |
 

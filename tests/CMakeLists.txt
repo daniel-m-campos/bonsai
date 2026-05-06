@@ -5,6 +5,7 @@ add_executable(bonsai_tests
     unit/test_bin_mappers.cpp
     unit/test_dataset.cpp
     unit/test_csv.cpp
+    unit/test_histogram.cpp
 )
 
 target_link_libraries(bonsai_tests PRIVATE

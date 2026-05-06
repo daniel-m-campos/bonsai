@@ -9,7 +9,7 @@ disagrees, decisions wins.
 | # | Doc | Status |
 |---|---|---|
 | 1 | [`1-dataset.md`](1-dataset.md) — Dataset, BinMapper, readers | done |
-| 2 | `2-histogram.md` — gradient/hessian sums, subtraction, parallel reduce | TBD |
+| 2 | [`2-histogram.md`](2-histogram.md) — gradient/hessian sums, subtraction, parallel reduce | done |
 | 3 | `3-tree.md` — Tree, Node, depth-wise grower, histogram splitter | TBD |
 | 4 | `4-objective.md` — Objective concept, MSE, logloss | TBD |
 | 5 | `5-booster.md` — Booster, training loop, `update_one_iter` | TBD |
@@ -24,16 +24,19 @@ disagrees, decisions wins.
 Shape is open — see `6-dispatch.md` when written.
 
 **Threading.** Two backends behind `ParallelBackend` concept (OpenMP,
-std::execution). Determinism required: same seed + data → same model
-across thread counts. Forces per-thread local hists with fixed-order
-merge. Detailed in `7-parallel.md`.
+std::execution). Determinism is per-thread-count, not cross-thread
+(decision 7). Forces per-thread local hists (no atomic FP adds);
+final-merge order doesn't need to be `tid`-pinned. Detailed in
+`7-parallel.md`.
 
 **Errors.** Component constructors validate their config slice, throw
 `ConfigError` with key path. No central validator. CLI top-level catches.
 
-**Determinism contract.** Same seed + data + config → same model bytes,
-regardless of thread count or backend. Test in
-`tests/integration/test_determinism.cpp`.
+**Determinism contract** (decision 7). Same seed + data + config +
+**same thread count** → same model bytes. Different thread counts:
+predictions within numerical tolerance, bytes may differ. Tests in
+`tests/integration/test_determinism.cpp` cover both: byte-equality at
+fixed `n_threads`, prediction-tolerance across thread counts.
 
 **Precision.** Float storage, double accumulators. Matches xgb/lgbm.
 
