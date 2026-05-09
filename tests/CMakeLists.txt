@@ -6,11 +6,14 @@ add_executable(bonsai_tests
     unit/test_dataset.cpp
     unit/test_csv.cpp
     unit/test_histogram.cpp
+    unit/test_dense_tree.cpp
+    unit/test_oblivious_tree.cpp
 )
 
 target_link_libraries(bonsai_tests PRIVATE
     bonsai_data
     bonsai_io
+    bonsai_tree
     bonsai_warnings
     Catch2::Catch2WithMain
 )
