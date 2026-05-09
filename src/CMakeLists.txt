@@ -16,6 +16,18 @@ target_include_directories(bonsai_data PUBLIC
 
 target_link_libraries(bonsai_data PUBLIC bonsai_warnings)
 
+# ---- bonsai_tree: DenseTree, ObliviousTree, growers (later) -----------------
+
+add_library(bonsai_tree OBJECT
+    tree.cpp
+)
+
+target_include_directories(bonsai_tree PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_link_libraries(bonsai_tree PUBLIC bonsai_warnings)
+
 # ---- bonsai_io: CSV (and later parquet, libsvm) -----------------------------
 
 add_library(bonsai_io OBJECT
