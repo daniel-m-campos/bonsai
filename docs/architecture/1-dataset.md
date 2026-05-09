@@ -87,16 +87,18 @@ private:
 
 ### Fit (decision 1)
 
-- **Quantile cuts** at `k/max_bin` for `k = 1..max_bin-1`. Default
-  `max_bin = 255`.
-- **Low-cardinality fallback**: if `n_distinct < max_bin`, one cut
-  between each pair of distinct values. Bucket count = `n_distinct`.
-- **Dedupe** cut collisions (sentinel values like `0.0`). Final count
-  `<= max_bin`, never exact.
-- **Bin 0 reserved for missing.** NaN + sentinel short-circuit to bin
-  0; quantile skips NaNs.
-- **Sampling**: 200K rows uniform random with fixed seed by default,
-  configurable. Full column if smaller.
+- **Quantile cuts** by stride over the sorted-by-`nth_element` subsample,
+  budgeted at `max_bin - 2` cuts (one slot reserved for the `+inf`
+  sentinel, one for the missing bin). Default `max_bin = 255`.
+- **Low-cardinality fallback** falls out naturally: duplicate cuts are
+  dropped during stride extraction, so columns with `< max_bin - 2`
+  distinct values produce fewer real cuts and a smaller `n_buckets`.
+- **`+inf` sentinel** is appended as the final cut. `n_buckets()` =
+  `cuts_.size()`.
+- **NaN short-circuits to bin `n_buckets - 1`** (the last bucket =
+  missing). Quantile sampling skips NaNs.
+- **Sampling**: `n_samples` rows reservoir-sampled with fixed seed by
+  default, configurable. Full column if smaller.
 
 Rejected: equal-width (skew kills it); xgb GK sketch (overkill);
 xgb-style per-node default direction for missing (complicates split
@@ -106,12 +108,15 @@ scoring without parity benefit).
 
 ```cpp
 uint16_t BinMapper::transform(float x) const {
-    if (has_missing_bin_ && (std::isnan(x) || x == sentinel_)) return 0;
-    auto it = std::upper_bound(cuts_.begin(), cuts_.end(), x);
-    return static_cast<uint16_t>(it - cuts_.begin())
-         + (has_missing_bin_ ? 1 : 0);
+    if (std::isnan(x)) return n_buckets() - 1;          // missing → last bin
+    return std::ranges::lower_bound(cuts_, x) - cuts_.begin();
 }
 ```
+
+Right-edge cuts: bin `b` holds values in `[cuts_[b-1], cuts_[b])`
+(half-open), with bin 0 holding values `< cuts_[0]`. The final cut is
+`+inf`, so any finite real value lands in a real bin (`0 .. n_buckets - 2`);
+NaN short-circuits to the missing bucket (`n_buckets - 1`).
 
 Returns `uint16_t` regardless of caller's storage width; storage type
 is decided per-feature based on `n_buckets()`.
@@ -148,8 +153,8 @@ public:
     static Dataset bin(ColumnBatch const&, BinMappers const&,
                        DataConfig const&);
 
-    size_t num_rows() const;
-    size_t num_features() const;
+    size_t n_rows() const;
+    size_t n_features() const;
     std::span<float const>    labels()  const;
     std::span<float const>    weights() const;       // empty if uniform
     BinMappers const&         mappers() const;

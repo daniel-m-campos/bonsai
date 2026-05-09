@@ -98,7 +98,7 @@ class Dataset {
 };
 ```
 
-Public API: `num_rows()`, `num_features()`, `labels()`, `weights()`,
+Public API: `n_rows()`, `n_features()`, `labels()`, `weights()`,
 `mappers()`, `n_buckets(fid)`, `is_categorical(fid)`,
 `column(fid) -> span<uint16_t const>`.
 
@@ -196,3 +196,293 @@ Knock-on:
   construction" reflects this — no fixed-tid-order requirement.
 - Atomic FP adds remain forbidden, but for the bit-stability-at-fixed-N
   reason, not the cross-N reason.
+
+---
+
+## 8. Two trees in Phase 1: depth-wise + oblivious
+
+`DepthwiseGrower` → `DenseTree` and `ObliviousGrower` → `ObliviousTree`
+both ship in Phase 1. Proposal puts oblivious in Phase 4; pulled
+forward to force the `Tree` concept and `TreeGrower::Tree` associated
+type to be honest from day one.
+
+The two tree types have structurally different on-disk shapes (flat
+node array vs per-level splits + leaf table) and structurally different
+predict kernels (walk-until-leaf vs fixed-depth branchless gather).
+With only depth-wise shipping, the second-tree-type machinery would
+be aspirational. Same rationale as logloss alongside MSE in Phase 1
+(proposal §1).
+
+Cost: one extra grower + one extra tree type of spine code, plus a
+second parity target (depth-wise vs xgboost/LightGBM, oblivious vs
+CatBoost). Both targets share YearPredictionMSD.
+
+---
+
+## 9. `Tree` is a concept; minimum surface = predict ×2 + diagnostics
+
+```cpp
+template <typename T>
+concept Tree = requires(T const t,
+                         std::span<float const> row,
+                         std::span<float const> rows, size_t n_features,
+                         std::span<float> out) {
+    { t.predict(row) }                       -> std::same_as<float>;
+    { t.predict(rows, n_features, out) }     -> std::same_as<void>;
+    { t.n_leaves() }                         -> std::convertible_to<size_t>;
+    { t.depth() }                            -> std::convertible_to<size_t>;
+};
+```
+
+Concept, not abstract base. `Booster<Gr, ...>::trees_` is
+`std::vector<typename Gr::Tree>`, monomorphized. No vtable on predict.
+
+Two `predict` overloads under one name (single-row returns float; batch
+fills `out`). Disambiguation by arity. Row-major batch input — matches
+xgb / lgbm. CatBoost's column-major fast path is motivated by predict-
+time rebinarization, which we don't do (decision 3 — float thresholds).
+Oblivious can transpose-on-demand internally if profiling justifies.
+
+Rejected: `leaf_index(row)` (DenseTree and ObliviousTree leaf-index
+spaces aren't unified — defer to Phase 4 if SHAP / leaf-output predict
+is wanted); `walk(visitor)` (no shared node shape between the two
+impls); serialization on the concept (lives in `bonsai::io` per
+decision 6).
+
+---
+
+## 10. Shrinkage is baked into leaf values at tree construction
+
+Grower receives `learning_rate` as a constructor argument (in
+`TreeConfig`) and writes `lr · -G/(H + λ_l2)` into leaves. Trees are
+pure functions of input rows; predict has no learning-rate knowledge.
+Matches xgboost, LightGBM.
+
+Rejected: per-iteration `learning_rate` argument to `grow()` (Phase 1
+doesn't need decay schedules; non-breaking to add later as a `grow`
+overload).
+
+Knock-on: `Tree` concept doesn't carry a `set_shrinkage` mutator; trees
+are immutable post-construction.
+
+---
+
+## 11. `ObliviousTree`: per-level `default_left`, not per-node
+
+Every node at level `d` of an oblivious tree shares the same
+`(feature_id, threshold, default_left)` triple — that's the symmetric-
+tree contract. Relaxing `default_left` to per-node-at-level recovers a
+small accuracy edge in heavily-missing data but breaks the branchless
+predict kernel and isn't what CatBoost does.
+
+`LevelSplit { uint32_t feature_id; float threshold; bool default_left; }`
+× depth. Leaf table of size `2^depth`.
+
+When a level's feature has no missing rows in training data,
+`default_left` is don't-care; the splitter records whichever orientation
+scored higher (arbitrary if no missing rows existed) and predict honors
+it without thinking.
+
+---
+
+## 12. Sampler is the booster's responsibility, not the grower's
+
+`grow(ds, grad, hess, row_indices)`. The grower receives sampled row
+indices; it doesn't know what sampler produced them. "Use all rows" is
+just `row_indices = 0..n_rows-1`.
+
+Keeps `TreeGrower` concept narrow. Sampler swappable via
+`Booster<Obj, Gr, Sa, Backend>` independent of grower choice.
+Determinism contract testable on the grower without re-wiring the
+sampler.
+
+Rejected: grower owns sampler as a member (lgbm-style). Couples grower
+template to sampler template; bigger cartesian product on `Booster`
+instantiations for no compositional gain.
+
+---
+
+## 13. Branchless NaN routing in predict
+
+```cpp
+bool is_nan  = std::isnan(v);
+bool less    = !is_nan && (v < threshold);
+bool go_left = less | (is_nan & default_left);
+```
+
+Compiles to mask / select on x86-64 and ARM. Preserves vectorizability
+for `ObliviousTree`'s batched predict; also keeps `DenseTree`'s
+single-row predict tight.
+
+Rejected: branchful `if (isnan(v)) ... else ...` (loses oblivious's
+SIMD story); pre-cleaning predict input (caller can't know per-feature
+default direction; rules itself out).
+
+Knock-on: predict-time sentinels (e.g. `-999`) declared in
+`BinMapperConfig` are *not* honored at predict — only `std::isnan`. Caller
+contract: convert sentinels to NaN before predict. Matches xgb / lgbm.
+
+---
+
+## 14. Splitter is a template parameter on the grower; one `SplitFinder` concept
+
+```cpp
+template <SplitFinder Sp = HistogramSplitFinder> class DepthwiseGrower;
+template <SplitFinder Sp = HistogramSplitFinder> class ObliviousGrower;
+```
+
+Static dispatch through to the splitter; inlined into `grow()`. Default
+makes the common case ergonomic; explicit `Sp` makes the extension API
+real.
+
+```cpp
+struct SplitCandidate {
+    uint32_t feature_id;
+    uint16_t bin_idx;        // grower converts to threshold via cuts[bin_idx]
+    bool     default_left;
+    double   gain;
+    bool     valid;
+};
+
+template <typename T>
+concept SplitFinder = requires(T const f,
+                                std::span<Histogram const> hists,
+                                Dataset const& ds,
+                                double sum_grad,
+                                double sum_hess) {
+    { f.find(hists, ds, sum_grad, sum_hess) }
+        -> std::same_as<SplitCandidate>;
+};
+```
+
+Both growers consume the same `vector<Histogram>` shape and produce the
+same `SplitCandidate`. Depth-wise calls `find` once per frontier node
+with that node's histograms; oblivious calls `find` once per level with
+the folded level histograms. The splitter doesn't know or care whether
+its input is per-node or level-pooled.
+
+Earlier draft of this entry split this into `PerNodeSplitFinder` /
+`LevelSplitFinder` to make mismatched grower/splitter pairs a compile
+error. Rejected: histogram-based scoring collapses the two signatures
+to the same shape, so the "compile-time rejection" was illusory.
+Phase 4 splitters that don't fit this shape (e.g. an exact splitter
+scanning raw rows) earn their own concept when written.
+
+Rejected: type-erased `unique_ptr<SplitFinder>` member (the dynamic-
+dispatch shape we explicitly chose against in proposal §3.4).
+
+---
+
+## 15. Splitter returns one best candidate per call
+
+`find(...)` returns a single `SplitCandidate`. `valid = false` if no
+positive-gain split exists or no candidate clears `min_gain_to_split`.
+
+Rejected: returning all per-feature candidates and letting the grower
+pick max. No caller wants this; flexibility nobody's asking for.
+
+---
+
+## 16. Splitter tie-break: lowest `fid`, then lowest `bin_idx`
+
+When two candidates have equal gain (within bit-exact equality, not
+tolerance), prefer the one with the lower `feature_id`; if those tie,
+prefer the lower `bin_idx`. Stable, deterministic at fixed thread
+count. Matches lgbm's tie-break order (xgb's is implementation-
+dependent in their `hist` updater).
+
+Knock-on: same convention applies to the smaller-sibling choice in
+the subtraction-trick wiring — when `n_left == n_right`, left wins.
+
+---
+
+## 17. Partitioning: per-node row-index lists (strategy A)
+
+Each live `FrontierNode` carries its own `std::vector<uint32_t>` of row
+indices. At root: one list with the booster-supplied `row_indices`. At
+each split: partition the parent's list into `(left_rows, right_rows)`,
+replace parent in frontier with two children carrying the new lists.
+
+Both growers use this strategy (oblivious folds per-node histograms
+into level histograms at scoring time; ~1.5% overhead on
+YearPredictionMSD-scale data).
+
+Rejected: single `row_to_node` array of length `n_rows` rebucketed on
+each split (xgb's `hist` updater shape; lgbm's voting parallel mode).
+Beats per-node lists on cache locality at very shallow depth, loses at
+typical `max_depth = 6`. More importantly: the subtraction trick wires
+naturally onto per-node histograms. A single rebucketed position
+vector either fights subtraction (the all-live-nodes-in-one-pass kernel
+doesn't know to skip the larger sibling) or imports per-node branching
+back into the kernel.
+
+Knock-on: oblivious grower needs a fold step
+(`level_hists = sum_per_feature(frontier[*].hists)`) before split
+scoring. Cheap relative to histogram build.
+
+---
+
+## 18. Frontier holds histograms inline (no histogram pool)
+
+`FrontierNode { rows, sum_grad, sum_hess, hists }`. `vector<Histogram>`
+per node, sized `n_features`. The grower carries
+`std::vector<FrontierNode> frontier` and rotates it level-by-level.
+
+Lists and histograms are local to `grow()`; the grower is stateless
+across calls (one boosting iteration → one allocation cycle). Matches
+lgbm's `SerialTreeLearner`.
+
+Rejected: histogram pool with slot-id indirection (xgb's `hist`
+updater). Recycles allocations across the tree, but Phase 1 isn't
+allocation-bound. The pool refactor is contained if profiling later
+shows the allocator dominating.
+
+---
+
+## 19. Subtraction trick from day one, both growers
+
+Build smaller child by row-scan; derive larger by
+`larger_hist = parent_hist - smaller_hist`. Halves histogram-build
+work across the tree (per [`2-histogram.md`](architecture/2-histogram.md)
+§"Why subtraction halves it"). Implemented from day one because
+retrofitting means restructuring the grower's per-node memory.
+
+Per-parent protocol:
+1. Splitter scores `parent.hists`; commit candidate.
+2. Partition `parent.rows` into `(left_rows, right_rows)`.
+3. Pick smaller (left wins ties).
+4. Build smaller's hists by row-scan.
+5. Derive larger's hists by `parent_hist - smaller_hist` (also subtract
+   `sum_grad` and `sum_hess`).
+6. Push left, right into new frontier in left-then-right order
+   (frontier order is structural, independent of build order).
+7. Parent's hists released when parent goes out of scope.
+
+For oblivious: same per-parent protocol, run once per parent at each
+level. Cross-level subtraction (deriving level `d+1`'s level histogram
+from level `d`'s) doesn't help — different levels score on different
+features, so per-feature histograms for level `d+1` have to be built
+regardless.
+
+---
+
+## 20. Phase 1 regularization knobs
+
+`TreeConfig` fields:
+
+| Knob | Default | Meaning |
+|---|---|---|
+| `max_depth`               | 6     | Hard cap on tree depth. |
+| `min_data_in_leaf`        | 20    | Node row-count floor (and child row-count floor before splitting). |
+| `min_sum_hessian_in_leaf` | 1e-3  | Effective row-count floor under non-MSE objectives. |
+| `lambda_l2`               | 1.0   | L2 reg on leaf weights, in gain formula and leaf value. |
+| `min_gain_to_split`       | 0.0   | Minimum gain to accept a candidate. |
+
+Validated in grower constructors; `ConfigError` with key path on bad
+values. Section is `[tree]` in TOML.
+
+Rejected for Phase 1: `max_leaves` (leaf-wise concept; depth-wise's
+natural cap is `max_depth`, oblivious's leaf count is `2^depth` exactly).
+
+Leaf value: `leaf_value = learning_rate · -G / (H + lambda_l2)`,
+applied at finalization (decision 10).
