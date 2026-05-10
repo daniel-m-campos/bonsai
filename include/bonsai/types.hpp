@@ -6,7 +6,7 @@
 namespace bonsai
 {
 
-using bin_idx_t    = uint16_t;
+using bin_id_t     = uint16_t;
 using feature_id_t = uint32_t;
 using row_id_t     = uint32_t;
 using node_id_t    = uint32_t;

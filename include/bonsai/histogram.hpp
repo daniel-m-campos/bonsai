@@ -1,9 +1,10 @@
 #pragma once
 
+#include "bonsai/types.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
-#include <cstdint>
+#include <span>
 #include <vector>
 
 namespace bonsai
@@ -22,12 +23,14 @@ struct HistCell
     }
 };
 
+using cell_view_t = std::span<HistCell const>;
+
 class Histogram
 {
   public:
-    explicit Histogram(size_t n_buckets) : cells_(n_buckets) {}
+    explicit Histogram(size_t n_bins) : cells_(n_bins) {}
 
-    void add(uint16_t bin, double grad, double hess)
+    void add(bin_id_t bin, double grad, double hess)
     {
         cells_[bin].sum_grad += grad;
         cells_[bin].sum_hess += hess;
@@ -43,9 +46,26 @@ class Histogram
         return cells_.size();
     }
 
-    HistCell const &operator[](size_t bin) const
+    HistCell const &operator[](bin_id_t bin) const
     {
         return cells_[bin];
+    }
+
+    HistCell const &missing() const
+    {
+        return cells_.back();
+    }
+
+    cell_view_t sweep_cells() const
+    {
+        return std::span{cells_}.first(cells_.size() - 1);
+    }
+
+    // Cut positions for binary splits: real bins minus the last one,
+    // since "all real bins on the left, none on the right" is degenerate.
+    cell_view_t cut_cells() const
+    {
+        return std::span{cells_}.first(cells_.size() - 2);
     }
 
     Histogram &operator-=(Histogram const &other)
@@ -61,5 +81,7 @@ class Histogram
   private:
     std::vector<HistCell> cells_;
 };
+
+using histogram_view_t = std::span<Histogram const>;
 
 } // namespace bonsai

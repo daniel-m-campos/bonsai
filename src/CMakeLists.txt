@@ -28,6 +28,18 @@ target_include_directories(bonsai_tree PUBLIC
 
 target_link_libraries(bonsai_tree PUBLIC bonsai_warnings)
 
+# ---- bonsai_split: SplitCandidate, SplitFinder concept, HistogramSplitFinder
+
+add_library(bonsai_split OBJECT
+    split.cpp
+)
+
+target_include_directories(bonsai_split PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_link_libraries(bonsai_split PUBLIC bonsai_data bonsai_warnings)
+
 # ---- bonsai_io: CSV (and later parquet, libsvm) -----------------------------
 
 add_library(bonsai_io OBJECT
