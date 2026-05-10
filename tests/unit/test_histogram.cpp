@@ -94,3 +94,51 @@ TEST_CASE("Histogram: missing-bin cell accumulates like any other cell",
     CHECK(hist[1].sum_grad == 0.0);
     CHECK(hist[2].sum_grad == 0.0);
 }
+
+TEST_CASE("Histogram: missing returns the last cell", "[histogram][nan]")
+{
+    Histogram hist{3};
+    hist.add(0, 0.25, 1.0);
+    hist.add(1, -0.5, 1.0);
+    hist.add(2, 0.125, 1.0); // bin 2 = missing per BinMapper convention
+
+    CHECK(hist.missing().sum_grad == 0.125);
+    CHECK(hist.missing().sum_hess == 1.0);
+}
+
+TEST_CASE("Histogram: reals returns a span over real bins only, excluding missing",
+          "[histogram]")
+{
+    Histogram hist{4};
+    hist.add(0, 0.5, 1.0);
+    hist.add(1, -0.25, 1.0);
+    hist.add(2, 0.125, 1.0);
+    hist.add(3, 1.0, 1.0); // bin 3 = missing
+
+    auto reals = hist.sweep_cells();
+
+    REQUIRE(reals.size() == 3);
+    CHECK(reals[0].sum_grad == 0.5);
+    CHECK(reals[1].sum_grad == -0.25);
+    CHECK(reals[2].sum_grad == 0.125);
+}
+
+TEST_CASE("Histogram: reals iterates the real bins in order", "[histogram]")
+{
+    Histogram hist{3};
+    hist.add(0, 0.25, 1.0);
+    hist.add(1, -0.5, 2.0);
+    // bin 2 = missing, intentionally non-zero to confirm exclusion
+    hist.add(2, 99.0, 99.0);
+
+    double total_grad = 0.0;
+    double total_hess = 0.0;
+    for (auto const &cell : hist.sweep_cells())
+    {
+        total_grad += cell.sum_grad;
+        total_hess += cell.sum_hess;
+    }
+
+    CHECK(total_grad == -0.25); // 0.25 + (-0.5)
+    CHECK(total_hess == 3.0);   // 1 + 2; missing-bin's 99 excluded
+}
