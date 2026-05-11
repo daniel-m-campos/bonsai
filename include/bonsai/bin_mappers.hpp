@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "bonsai/bin_mapper.hpp"
-#include "bonsai/config/config.hpp"
+#include "bonsai/config/bin_mapper_config.hpp"
 #include "bonsai/detail/column_batch.hpp"
 
 namespace bonsai
@@ -15,7 +15,7 @@ namespace bonsai
 class BinMappers
 {
   public:
-    static BinMappers fit(detail::ColumnBatch const &batch, Config const &cfg);
+    static BinMappers fit(detail::ColumnBatch const &batch, BinMapperConfig const &cfg);
 
     BinMapper const &operator[](size_t fid) const;
     size_t size() const;

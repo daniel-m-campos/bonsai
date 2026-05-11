@@ -5,7 +5,7 @@
 
 using namespace bonsai; // NOLINT
 
-TEST_CASE("Histogram: ctor sizes cells to n_buckets and zero-initializes",
+TEST_CASE("Histogram: ctor sizes cells to n_bins and zero-initializes",
           "[histogram][ctor]")
 {
     Histogram hist{4};

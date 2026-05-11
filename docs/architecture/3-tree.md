@@ -78,8 +78,8 @@ two diagnostics (`n_leaves`, `depth`).
   so row-major is the natural shape (matches xgboost, LightGBM). If
   benchmarks later show oblivious wants column-major to vectorize, an
   internal scratch transpose is a non-breaking implementation detail.
-- **Shrinkage baked into leaves at construction.** The grower receives
-  `learning_rate` in its constructor and writes
+- **Shrinkage baked into leaves at construction.** The grower reads
+  `learning_rate` from its `TreeConfig` and writes
   `lr · (-G/(H + λ))` into leaves. Trees are pure functions of input
   rows; predict has no learning-rate knowledge.
 - **Concept, not abstract base.** `Booster<Gr, ...>::trees_` is
@@ -243,7 +243,7 @@ missing-bin contribution at training time — see §"Missing rows" below.
 
 ## Missing rows — training to predict
 
-The histogram's missing bin (`n_buckets - 1`, populated by
+The histogram's missing bin (`n_bins - 1`, populated by
 `BinMapper::transform` for NaN and configured sentinel inputs;
 [`1-dataset.md`](1-dataset.md), [`2-histogram.md`](2-histogram.md))
 exists so the splitter can score "missing rows go left" vs "missing
@@ -251,7 +251,7 @@ rows go right" and record the better orientation as `default_left`.
 
 ```
 training:
-  BinMapper bins NaN → bin n_buckets-1
+  BinMapper bins NaN → bin n_bins-1
    → histogram cell accumulates (sum_grad, sum_hess) for missing rows
    → splitter scores both orientations, picks better
    → grower writes (fid, threshold, default_left) into the node
@@ -323,7 +323,7 @@ class DepthwiseGrower {
 public:
     using Tree = DenseTree;
 
-    DepthwiseGrower(TreeConfig const& cfg, Sp splitter, float learning_rate);
+    DepthwiseGrower(TreeConfig const& cfg, Sp splitter);
 
     DenseTree grow(Dataset const& ds,
                    std::span<float const> grad,
@@ -332,7 +332,6 @@ public:
 private:
     TreeConfig cfg_;
     Sp         splitter_;
-    float      learning_rate_;
 };
 
 template <SplitFinder Sp = HistogramSplitFinder>
@@ -423,7 +422,7 @@ Strategy A (decision 17): each live node carries its own
 partition the parent's list into `(left_rows, right_rows)`; replace
 the parent in the frontier with two children carrying the new lists.
 
-Rejected: a single `row_to_node` array of length `n_rows` rebucketed
+Rejected: a single `row_to_node` array of length `n_rows` rebined
 on each split (LightGBM's voting parallel mode, xgboost's `hist`
 updater). At our typical depths (max_depth 6) the per-node lists win
 on cache locality once the tree gets past the root. More importantly:
@@ -497,7 +496,7 @@ def build_by_subtraction(parent, smaller, larger_rows):
 ```
 
 `build_by_scan` is `O(n_features × n_smaller_rows)`;
-`build_by_subtraction` is `O(n_features × n_buckets)`. The
+`build_by_subtraction` is `O(n_features × n_bins)`. The
 work-savings come from `n_smaller_rows ≤ n_parent_rows / 2`.
 
 **Root case.** No parent exists; build root histograms directly by row-
@@ -575,9 +574,9 @@ def grow_oblivious(ds, grad, hess, row_indices, cfg, splitter, lr):
 `Histogram` per feature. The build phase (`split_parent` calls) is the
 same helper depth-wise uses.
 
-The fold cost is `n_features · n_buckets · |frontier|` per level —
+The fold cost is `n_features · n_bins · |frontier|` per level —
 small relative to histogram building. On YearPredictionMSD (90
-features, 255 buckets) at level 5 with 32 live nodes:
+features, 255 bins) at level 5 with 32 live nodes:
 ~730 K ops fold vs ~45 M ops histogram-build per level (~1.5%).
 
 The build phase (steps after `splitter.find`) is bit-for-bit

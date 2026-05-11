@@ -18,14 +18,14 @@ Append-only log. Order = decision order. Caveman style. New entries at bottom.
   fixed seed. Configurable. If column has `<= sample_size` rows, use full
   column.
 - Bin 0 reserved for missing. NaN + user-configured sentinel short-circuit
-  to bin 0. Real values bins `1..n_buckets-1`. Quantile skips NaNs.
+  to bin 0. Real values bins `1..n_bins-1`. Quantile skips NaNs.
 - `BinMapper` serializable. Round-trip through model file. Predict on new
   data reuses train boundaries exact.
 
 Rejected: equal-width (skew kills it). Quantile sketch (overkill, swap
 in later). xgb per-node default direction (complicates split scoring).
 
-Knock-on: bucket count varies per feature, histogram reads `n_buckets[fid]`.
+Knock-on: bin count varies per feature, histogram reads `n_bins[fid]`.
 Bin 0 special, split scoring skips it for real-valued cuts. `BinMapper`
 ownership vs `Dataset` is next decision.
 
@@ -99,8 +99,8 @@ class Dataset {
 ```
 
 Public API: `n_rows()`, `n_features()`, `labels()`, `weights()`,
-`mappers()`, `n_buckets(fid)`, `is_categorical(fid)`,
-`column(fid) -> span<uint16_t const>`.
+`mappers()`, `n_bins(fid)`, `is_categorical(fid)`,
+`feature_bins(fid) -> span<bin_id_t const>`.
 
 Rejected: `std::variant<vector<uint8_t>, vector<uint16_t>>` per feature
 to save ~50% on binned column memory. Saves ~45MB on YearPredictionMSD,
@@ -407,11 +407,11 @@ Both growers use this strategy (oblivious folds per-node histograms
 into level histograms at scoring time; ~1.5% overhead on
 YearPredictionMSD-scale data).
 
-Rejected: single `row_to_node` array of length `n_rows` rebucketed on
+Rejected: single `row_to_node` array of length `n_rows` rebinned on
 each split (xgb's `hist` updater shape; lgbm's voting parallel mode).
 Beats per-node lists on cache locality at very shallow depth, loses at
 typical `max_depth = 6`. More importantly: the subtraction trick wires
-naturally onto per-node histograms. A single rebucketed position
+naturally onto per-node histograms. A single rebinned position
 vector either fights subtraction (the all-live-nodes-in-one-pass kernel
 doesn't know to skip the larger sibling) or imports per-node branching
 back into the kernel.

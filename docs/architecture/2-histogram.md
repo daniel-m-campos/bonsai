@@ -8,9 +8,9 @@
 ## Why
 
 Histogram GBT scoring runs on a fixed shape: for each `(node, feature)`
-pair, sum gradients and hessians into per-bin buckets, then walk the
-bucket array once to score split candidates. This file pins down what
-that bucket array looks like, who owns it, and how parallel building
+pair, sum gradients and hessians into per-bin cells, then walk the
+cell array once to score split candidates. This file pins down what
+that cell array looks like, who owns it, and how parallel building
 keeps determinism without atomic adds.
 
 Three properties drive the design:
@@ -78,7 +78,7 @@ Naively: for each candidate threshold `t` on feature `f`, scan all
 node rows once, partition into left/right, sum gradients. That's
 `O(n_rows · n_thresholds · n_features)` per node.
 
-Pre-binning collapses thresholds: there are only `n_buckets` (≤256)
+Pre-binning collapses thresholds: there are only `n_bins` (≤256)
 distinct cut positions per feature, given by the `BinMapper`. So:
 
 1. **Build phase** (one pass over node rows per feature):
@@ -97,10 +97,10 @@ distinct cut positions per feature, given by the `BinMapper`. So:
 2. **Scoring phase** (one pass over bins per feature):
 
    ```
-   // real-valued bins are 0 .. n_buckets - 2; bin n_buckets - 1 is missing.
+   // real-valued bins are 0 .. n_bins - 2; bin n_bins - 1 is missing.
    // G_real, H_real exclude the missing bin.
    G_L = 0; H_L = 0
-   for b in 1 .. n_buckets - 2:
+   for b in 1 .. n_bins - 2:
        G_L += hist[b - 1].sum_grad
        H_L += hist[b - 1].sum_hess
        G_R = G_real - G_L
@@ -108,20 +108,20 @@ distinct cut positions per feature, given by the `BinMapper`. So:
        score gain(L, R); track best
    ```
 
-   `O(n_buckets)` per feature. Cumulative left-sums; right is the
+   `O(n_bins)` per feature. Cumulative left-sums; right is the
    real-bin total minus left, no second pass over bins. `b` runs
-   `1 .. n_buckets - 2` because the candidate cut sits *between*
-   adjacent real-valued bins — `n_buckets - 2` real bins yield
-   `n_buckets - 3` interior cuts plus the cut after bin 0, i.e.
-   `b = 1 .. n_buckets - 2` putting bins `0..b-1` on the left.
-   The missing bin (`n_buckets - 1`) is excluded from the sweep
+   `1 .. n_bins - 2` because the candidate cut sits *between*
+   adjacent real-valued bins — `n_bins - 2` real bins yield
+   `n_bins - 3` interior cuts plus the cut after bin 0, i.e.
+   `b = 1 .. n_bins - 2` putting bins `0..b-1` on the left.
+   The missing bin (`n_bins - 1`) is excluded from the sweep
    entirely; how its rows are routed is the splitter's call (see
    below).
 
-   Total per node: `O(n_rows · n_features)` build + `O(n_buckets ·
+   Total per node: `O(n_rows · n_features)` build + `O(n_bins ·
    n_features)` score. The first term dominates. Going from
    `n_thresholds` candidates per feature (originally `O(n_rows)`) to
-   `n_buckets` (≤256) is the whole point — and it's paid for in the
+   `n_bins` (≤256) is the whole point — and it's paid for in the
    scoring loop, not the build loop.
 
 ### Why subtraction halves it
@@ -137,7 +137,7 @@ cached and we scan only the smaller child to build its histogram, we
 can compute the larger child's histogram by subtraction:
 
 ```
-hist_R = hist_parent − hist_L          // elementwise, O(n_buckets)
+hist_R = hist_parent − hist_L          // elementwise, O(n_bins)
 ```
 
 The row-scan cost goes from `n_parent` to `min(n_L, n_R) ≤ n_parent /
@@ -148,15 +148,15 @@ per-node memory.
 
 ### The missing bin
 
-`BinMapper` reserves the **last** bucket (`n_buckets - 1`) for
-missing/sentinel values. Real-valued bins occupy `0 .. n_buckets - 2`,
+`BinMapper` reserves the **last** bin (`n_bins - 1`) for
+missing/sentinel values. Real-valued bins occupy `0 .. n_bins - 2`,
 separated by right-edge cuts in `cuts_` (the final cut is a `+inf`
 sentinel; NaN short-circuits straight to the missing slot). This
 matches LightGBM's convention.
 
 For real-valued split scoring, candidate thresholds live *between*
 adjacent real-valued bins — cut positions `0|1, 1|2, ..., (n-3)|(n-2)`
-where `n = n_buckets`. The scoring loop above sweeps exactly those.
+where `n = n_bins`. The scoring loop above sweeps exactly those.
 The missing bin sits outside that sweep: its `(sum_grad, sum_hess)`
 cell is honest accumulated data, but it doesn't participate in the
 "left vs right of cut" partition.
@@ -171,7 +171,7 @@ cell available.
 
 ### Tiny worked example
 
-Node has 6 rows, feature `f` has 4 buckets (0–2 are real, 3 is
+Node has 6 rows, feature `f` has 4 bins (0–2 are real, 3 is
 missing). Suppose for these 6 rows:
 
 | row | bin | g    | h   |
@@ -193,7 +193,7 @@ Build pass produces:
 | 3   | +0.2     | 1.0      |  ← missing
 
 Totals over real bins (0..2): `G_real = +0.1, H_real = 5.0`. Scoring
-sweeps `b = 1 .. n_buckets - 2 = 2`, putting bins `0..b-1` on left:
+sweeps `b = 1 .. n_bins - 2 = 2`, putting bins `0..b-1` on left:
 
 - `b = 1` (cut at `0|1`): `G_L = −0.9, H_L = 2.0; G_R = +1.0, H_R = 3.0`
 - `b = 2` (cut at `1|2`): `G_L = 0.0,  H_L = 4.0; G_R = +0.1, H_R = 1.0`
@@ -220,7 +220,7 @@ struct HistCell {
   by `bin`. AoS keeps grad+hess on one cache line per indexed update;
   SoA would force two cache lines in flight per row for no benefit,
   since the access pattern isn't sequential. Scoring is sequential
-  but only `O(n_buckets ≤ 256)` and not the bottleneck. xgb/lgbm
+  but only `O(n_bins ≤ 256)` and not the bottleneck. xgb/lgbm
   both AoS.
 - **No count field.** `sum_hess` carries effective row count for MSE
   (`hess = 1` per row → `sum_hess == n_rows`); for logloss the count
@@ -237,7 +237,7 @@ xgb/lgbm both use double); 32B padding to a cache line (wasteful —
 ```cpp
 class Histogram {
 public:
-    explicit Histogram(size_t n_buckets);
+    explicit Histogram(size_t n_bins);
 
     void add(uint16_t bin, double grad, double hess);
     void clear();                                      // zero cells, keep size
@@ -255,7 +255,7 @@ private:
 
 - One `Histogram` per `(node, feature)`. The grower owns the matrix of
   these (see §"Ownership" below).
-- `size() == n_buckets[fid]`, not `max_bin`. Variable per feature
+- `size() == n_bins[fid]`, not `max_bin`. Variable per feature
   because `BinMapper::fit` deduplicates collisions and does
   low-cardinality fallback (decision 1 in [`../decisions.md`](../decisions.md)).
 - `clear()` zeros the cells in place; `size()` is invariant. Histograms
@@ -265,7 +265,7 @@ private:
   `size() == other.size()`. Asserted in debug, UB otherwise — this is
   a hot path called per `(child, feature)`.
 
-The missing-bin cell (`cells_[n_buckets - 1]`) accumulates like any
+The missing-bin cell (`cells_[n_bins - 1]`) accumulates like any
 other; the histogram doesn't know about missing semantics. Split
 scoring is what excludes it from the real-valued sweep.
 
@@ -298,7 +298,7 @@ auto large_hist = parent_hist;                     // copy
 large_hist -= small_hist;                          // subtraction
 ```
 
-The copy is `n_buckets * 16B` per feature — cheap relative to the row
+The copy is `n_bins * 16B` per feature — cheap relative to the row
 scan it replaces. If profiling later shows the copy as hot, switch to
 in-place: `parent_hist -= small_hist; large = parent_hist;` — but
 parent is needed for both subtractions only on the *first* split of a
@@ -327,14 +327,14 @@ It does *not* rule out:
 The pattern:
 
 1. Each thread owns a private `vector<HistCell>` sized for the feature
-   (or for the full feature × bucket grid, for feature-parallel).
+   (or for the full feature × bin grid, for feature-parallel).
 2. Threads scan their row ranges, accumulating into private cells
    only. No cross-thread writes during scan.
 3. Final merge sums per-thread partials into the canonical histogram.
    Order doesn't have to be `tid`-major — it just has to be
    reproducible at fixed `n_threads`.
 
-Cost: `n_threads * n_features * n_buckets * 16B` of scratch. On
+Cost: `n_threads * n_features * n_bins * 16B` of scratch. On
 YearPredictionMSD with 90 features, 255 bins, 8 threads: ~2.8MB. Fine.
 
 `ParallelBackend` (concept, see [`7-parallel.md`](7-parallel.md)) wraps

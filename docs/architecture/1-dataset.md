@@ -5,8 +5,8 @@
 
 ## Why bin
 
-Histogram GBT scans buckets, not raw values. `float32` cell → small
-integer bucket index. Split-finding goes from `O(n_rows)` candidates
+Histogram GBT scans bins, not raw values. `float32` cell → small
+integer bin index. Split-finding goes from `O(n_rows)` candidates
 per feature to `O(max_bin)`. `uint8` is 4× smaller than `float32` —
 memory and cache wins are the side benefit.
 
@@ -72,14 +72,14 @@ public:
                          BinMapperConfig const& cfg);
 
     uint16_t transform(float x) const;
-    size_t   n_buckets() const;
+    size_t   n_bins() const;
     std::span<float const> cuts() const;
     float min() const;
     float max() const;
 
 private:
     std::vector<float> cuts_;
-    uint16_t           n_buckets_;
+    uint16_t           n_bins_;
     bool               has_missing_bin_;
     float              min_value_, max_value_;
 };
@@ -92,10 +92,10 @@ private:
   sentinel, one for the missing bin). Default `max_bin = 255`.
 - **Low-cardinality fallback** falls out naturally: duplicate cuts are
   dropped during stride extraction, so columns with `< max_bin - 2`
-  distinct values produce fewer real cuts and a smaller `n_buckets`.
-- **`+inf` sentinel** is appended as the final cut. `n_buckets()` =
+  distinct values produce fewer real cuts and a smaller `n_bins`.
+- **`+inf` sentinel** is appended as the final cut. `n_bins()` =
   `cuts_.size()`.
-- **NaN short-circuits to bin `n_buckets - 1`** (the last bucket =
+- **NaN short-circuits to bin `n_bins - 1`** (the last bin =
   missing). Quantile sampling skips NaNs.
 - **Sampling**: `n_samples` rows reservoir-sampled with fixed seed by
   default, configurable. Full column if smaller.
@@ -108,18 +108,18 @@ scoring without parity benefit).
 
 ```cpp
 uint16_t BinMapper::transform(float x) const {
-    if (std::isnan(x)) return n_buckets() - 1;          // missing → last bin
+    if (std::isnan(x)) return n_bins() - 1;             // missing → last bin
     return std::ranges::lower_bound(cuts_, x) - cuts_.begin();
 }
 ```
 
 Right-edge cuts: bin `b` holds values in `[cuts_[b-1], cuts_[b])`
 (half-open), with bin 0 holding values `< cuts_[0]`. The final cut is
-`+inf`, so any finite real value lands in a real bin (`0 .. n_buckets - 2`);
-NaN short-circuits to the missing bucket (`n_buckets - 1`).
+`+inf`, so any finite real value lands in a real bin (`0 .. n_bins - 2`);
+NaN short-circuits to the missing bin (`n_bins - 1`).
 
 Returns `uint16_t` regardless of caller's storage width; storage type
-is decided per-feature based on `n_buckets()`.
+is decided per-feature based on `n_bins()`.
 
 ## `BinMappers`
 
@@ -155,14 +155,14 @@ public:
 
     size_t n_rows() const;
     size_t n_features() const;
-    std::span<float const>    labels()  const;
-    std::span<float const>    weights() const;       // empty if uniform
+    floats_view               labels()  const;
+    floats_view               weights() const;       // empty if uniform
     BinMappers const&         mappers() const;
-    size_t                    n_buckets(size_t fid) const;
+    size_t                    n_bins(size_t fid) const;
     bool                      is_categorical(size_t fid) const;
-    std::span<uint16_t const> column(size_t fid) const;
+    std::span<bin_id_t const> feature_bins(size_t fid) const;
 private:
-    std::vector<std::vector<uint16_t>> features_;
+    std::vector<std::vector<bin_id_t>> features_;
     std::vector<float>                 labels_, weights_;
     BinMappers                         mappers_;
     std::vector<bool>                  is_categorical_;
@@ -173,12 +173,12 @@ private:
 ### Layout (decision 4)
 
 - **Column-major.** Row-major destroys cache on histogram scans.
-- **Uniform `uint16_t` storage** for all binned columns. Doesn't matter
-  if a feature has 8 buckets or 250 — same width.
+- **Uniform `bin_id_t` storage** for all binned columns. Doesn't matter
+  if a feature has 8 bins or 250 — same width.
 - Group columns (ranking) are non-goals.
 
 Rejected: `std::variant<vector<uint8_t>, vector<uint16_t>>` per feature
-to halve memory on small-bucket features. Saves ~45MB on
+to halve memory on small-bin features. Saves ~45MB on
 YearPredictionMSD, ~308MB on Higgs — neither pressure-tests modern
 hardware. Cost was variant dispatch (a `visit_column` wrapper at every
 column scan). Rejected for MVP. Reversible if memory becomes the
@@ -187,9 +187,9 @@ bottleneck on a future dataset.
 ### Histogram inner loop
 
 ```cpp
-auto col = ds.column(fid);   // span<uint16_t const>
-for (size_t i = 0; i < col.size(); ++i)
-    hist[col[i]] += grad[i];
+auto bins = ds.feature_bins(fid);  // span<bin_id_t const>
+for (size_t i = 0; i < bins.size(); ++i)
+    hist[bins[i]] += grad[i];
 ```
 
 Direct array indexing. No variant, no dispatch.
