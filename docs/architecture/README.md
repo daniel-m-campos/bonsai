@@ -11,7 +11,7 @@ disagrees, decisions wins.
 | 1 | [`1-dataset.md`](1-dataset.md) — Dataset, BinMapper, readers | done |
 | 2 | [`2-histogram.md`](2-histogram.md) — gradient/hessian sums, subtraction, parallel reduce | done |
 | 3 | [`3-tree.md`](3-tree.md) — Tree concept, `DenseTree` + `ObliviousTree`, depth-wise + oblivious growers, histogram splitter | done |
-| 4 | `4-objective.md` — Objective concept, MSE, logloss | TBD |
+| 4 | [`4-objective.md`](4-objective.md) — Objective concept, MSE, logloss | done |
 | 5 | `5-booster.md` — Booster, training loop, `update_one_iter` | TBD |
 | 6 | `6-dispatch.md` — registry, runtime → static boundary | TBD |
 | 7 | `7-parallel.md` — ParallelBackend, OpenMP, std::execution | TBD |

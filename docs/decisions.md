@@ -486,3 +486,73 @@ natural cap is `max_depth`, oblivious's leaf count is `2^depth` exactly).
 
 Leaf value: `leaf_value = learning_rate · -G / (H + lambda_l2)`,
 applied at finalization (decision 10).
+
+## 21. `Objective` is a concept; static methods, no instance state
+
+Matches the `SplitFinder` shape (decision 14). Two static functions
+required: `compute(preds, labels, grad, hess)` writes per-row
+gradients and hessians; `eval(preds, labels)` returns a scalar mean
+loss. Dispatch is at the `Booster<Gr, Obj, ...>` template parameter,
+fixed at compile time. No vtable; no shared mutable state across
+calls.
+
+Rejected: virtual base class (loses compile-time dispatch);
+concept-with-instance-methods (no Phase 1 objective needs instance
+state).
+
+## 22. `Objective` does **not** own initial score or link inverse
+
+The first-tree bias prediction (mean for MSE, log-odds for logloss)
+and the predict-time link inverse (sigmoid for logloss) live in the
+booster, not the objective. Rationale: both are score-accumulator
+concerns. The booster maintains the running raw-score prediction
+array, decides whether the bias comes from config or labels, and is
+the sole owner of the predict path. Pushing them into `Objective`
+would either force every objective to expose a `transform` and an
+`initial_score` it might not need (e.g. MSE: `transform` is
+identity), or invite a fragmenting set of optional methods on the
+concept.
+
+See `5-booster.md` (TBD) for where these land.
+
+## 23. Phase 1 objectives: MSE + binary logloss, single-output
+
+Two MVP impls satisfy the `Objective` concept:
+`MSEObjective` (regression) and `LogLossObjective` (binary
+classification). Both consume 1D per-row `floats_view` for `preds`
+and `labels`, write 1D `floats_out` for `grad` and `hess`.
+
+Rejected for Phase 1:
+
+- **Multi-class / softmax.** K-output extension; touches
+  `Objective`, `Booster`, `Tree` (K-output leaves). Phase 4.
+- **Quantile, Huber, Tweedie, Cox.** Out of scope; satisfy the
+  concept when added.
+- **Custom user objectives.** No registry needed — anyone satisfying
+  the concept can drop in as a `Booster` template parameter.
+
+## 24. `compute` writes raw-score grad/hess; output is overwritten, not accumulated
+
+`Objective::compute` writes `grad` and `hess` outright; callers don't
+zero buffers first. `preds` are raw scores throughout
+(logloss does **not** apply sigmoid inside `compute` or `eval`); the
+booster keeps an additive raw-score accumulator across iterations
+and applies the link only at the outermost predict call. Matches
+xgboost / LightGBM; keeps boosting math additive.
+
+`hess` is always non-negative (MSE: 1; logloss: `p·(1−p) ∈ (0,
+0.25]`); the splitter's `min_child_hess` (decision 20) catches
+near-zero hessians before they propagate.
+
+## 25. Sample weights are applied by the booster, not the objective
+
+When `Dataset.weights` is non-empty, the booster multiplies the
+`grad` and `hess` buffers by the weight vector immediately after
+`Objective::compute` returns and before handing them to the grower.
+Keeps every `Objective` impl focused on loss math; the multiplication
+is a 2-line buffer loop that doesn't belong duplicated across
+objectives.
+
+Rejected: a `WeightedObjective<T>` wrapper that satisfies `Objective`
+by composing with weights. Adds a template layer with no semantic
+content; same effect as the booster-side multiply.

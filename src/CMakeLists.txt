@@ -41,6 +41,18 @@ target_include_directories(bonsai_split PUBLIC
 
 target_link_libraries(bonsai_split PUBLIC bonsai_data bonsai_warnings)
 
+# ---- bonsai_objective: Objective concept, MSEObjective, LogLossObjective ----
+
+add_library(bonsai_objective OBJECT
+    objective.cpp
+)
+
+target_include_directories(bonsai_objective PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_link_libraries(bonsai_objective PUBLIC bonsai_warnings)
+
 # ---- bonsai_io: CSV (and later parquet, libsvm) -----------------------------
 
 add_library(bonsai_io OBJECT

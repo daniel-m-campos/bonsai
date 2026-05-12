@@ -10,6 +10,7 @@ add_executable(bonsai_tests
     unit/test_oblivious_tree.cpp
     unit/test_split.cpp
     unit/test_grower.cpp
+    unit/test_objective.cpp
 )
 
 target_link_libraries(bonsai_tests PRIVATE
@@ -17,6 +18,7 @@ target_link_libraries(bonsai_tests PRIVATE
     bonsai_io
     bonsai_tree
     bonsai_split
+    bonsai_objective
     bonsai_warnings
     Catch2::Catch2WithMain
 )
