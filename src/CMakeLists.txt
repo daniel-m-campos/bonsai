@@ -20,13 +20,14 @@ target_link_libraries(bonsai_data PUBLIC bonsai_warnings)
 
 add_library(bonsai_tree OBJECT
     tree.cpp
+    grower.cpp
 )
 
 target_include_directories(bonsai_tree PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
 
-target_link_libraries(bonsai_tree PUBLIC bonsai_warnings)
+target_link_libraries(bonsai_tree PUBLIC bonsai_data bonsai_split bonsai_warnings)
 
 # ---- bonsai_split: SplitCandidate, SplitFinder concept, HistogramSplitFinder
 

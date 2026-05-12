@@ -61,6 +61,11 @@ class Histogram
         return std::span{cells_}.first(cells_.size() - 1);
     }
 
+    cell_view_t all_cells() const
+    {
+        return std::span{cells_};
+    }
+
     // Cut positions for binary splits: real bins minus the last one,
     // since "all real bins on the left, none on the right" is degenerate.
     cell_view_t cut_cells() const
