@@ -9,6 +9,7 @@ add_executable(bonsai_tests
     unit/test_dense_tree.cpp
     unit/test_oblivious_tree.cpp
     unit/test_split.cpp
+    unit/test_grower.cpp
 )
 
 target_link_libraries(bonsai_tests PRIVATE
