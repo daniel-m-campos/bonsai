@@ -2,19 +2,12 @@
 #include <utility>
 #include <vector>
 
+#include "bonsai/config/tree_config.hpp"
 #include "bonsai/histogram.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
 
 using namespace bonsai; // NOLINT
-
-namespace
-{
-
-auto constexpr score = [](double g, double h, double lambda)
-{ return (g * g) / (h + lambda); };
-
-} // namespace
 
 TEST_CASE("HistogramSplitFinder: picks the obvious cut on a single feature",
           "[split][basic]")
@@ -24,17 +17,18 @@ TEST_CASE("HistogramSplitFinder: picks the obvious cut on a single feature",
     h.add(0, -1.0, 1.0);
     h.add(1, +1.0, 1.0);
 
-    std::vector<Histogram> hists = {std::move(h)};
-
-    HistogramSplitFinder::Params params{.parent_score = 0.0, .lambda_l2 = 1.0};
-    Split const s = HistogramSplitFinder::find(histogram_view_t{hists}, params);
+    TreeConfig cfg{.lambda_l2 = 1.0F};
+    SplitNode node{.hists = {}, .rows = {}, .grad = 0.0, .hess = 2.0};
+    node.hists.push_back(std::move(h));
+    Split const s = HistogramSplitFinder::find(node, cfg);
 
     REQUIRE(s.valid);
     CHECK(s.feature_id == feature_id_t{0});
     CHECK(s.bin_id == bin_id_t{0});
 
-    double const expected = score(-1.0, 1.0, params.lambda_l2) +
-                            score(+1.0, 1.0, params.lambda_l2) - params.parent_score;
+    double const expected = score(-1.0, 1.0, cfg.lambda_l2) +
+                            score(+1.0, 1.0, cfg.lambda_l2) -
+                            score(node.grad, node.hess, cfg.lambda_l2);
     CHECK(s.gain == expected);
 }
 
@@ -51,10 +45,11 @@ TEST_CASE("HistogramSplitFinder: picks the best feature across two features",
     h1.add(0, -2.0, 1.0);
     h1.add(1, +2.0, 1.0);
 
-    std::vector<Histogram> hists = {std::move(h0), std::move(h1)};
-
-    HistogramSplitFinder::Params params{.parent_score = 0.0, .lambda_l2 = 1.0};
-    Split const s = HistogramSplitFinder::find(histogram_view_t{hists}, params);
+    TreeConfig cfg{.lambda_l2 = 1.0F};
+    SplitNode node{.hists = {}, .rows = {}, .grad = 0.0, .hess = 2.0};
+    node.hists.push_back(std::move(h0));
+    node.hists.push_back(std::move(h1));
+    Split const s = HistogramSplitFinder::find(node, cfg);
 
     REQUIRE(s.valid);
     CHECK(s.feature_id == feature_id_t{1});
@@ -73,18 +68,19 @@ TEST_CASE(
     h.add(1, +1.0, 1.0); // real
     h.add(2, -1.0, 1.0); // missing (last)
 
-    std::vector<Histogram> hists = {std::move(h)};
-
-    HistogramSplitFinder::Params params{.parent_score = 0.0, .lambda_l2 = 1.0};
-    Split const s = HistogramSplitFinder::find(histogram_view_t{hists}, params);
+    TreeConfig cfg{.lambda_l2 = 1.0F};
+    SplitNode node{.hists = {}, .rows = {}, .grad = -1.0, .hess = 3.0};
+    node.hists.push_back(std::move(h));
+    Split const s = HistogramSplitFinder::find(node, cfg);
 
     REQUIRE(s.valid);
     CHECK(s.default_left == true);
     CHECK(s.bin_id == bin_id_t{0});
 
     // Expected: g_left = -1 + (-1) = -2, h_left = 2; g_right = +1, h_right = 1.
-    double const expected = score(-2.0, 2.0, params.lambda_l2) +
-                            score(+1.0, 1.0, params.lambda_l2) - params.parent_score;
+    double const expected = score(-2.0, 2.0, cfg.lambda_l2) +
+                            score(+1.0, 1.0, cfg.lambda_l2) -
+                            score(node.grad, node.hess, cfg.lambda_l2);
     CHECK(s.gain == expected);
 }
 
@@ -98,18 +94,19 @@ TEST_CASE("HistogramSplitFinder: missing cell prefers default_right when its gra
     h.add(1, +1.0, 1.0);
     h.add(2, +1.0, 1.0); // missing
 
-    std::vector<Histogram> hists = {std::move(h)};
-
-    HistogramSplitFinder::Params params{.parent_score = 0.0, .lambda_l2 = 1.0};
-    Split const s = HistogramSplitFinder::find(histogram_view_t{hists}, params);
+    TreeConfig cfg{.lambda_l2 = 1.0F};
+    SplitNode node{.hists = {}, .rows = {}, .grad = +1.0, .hess = 3.0};
+    node.hists.push_back(std::move(h));
+    Split const s = HistogramSplitFinder::find(node, cfg);
 
     REQUIRE(s.valid);
     CHECK(s.default_left == false);
     CHECK(s.bin_id == bin_id_t{0});
 
     // g_left = -1, h_left = 1; g_right = +1 + (+1) = +2, h_right = 2.
-    double const expected = score(-1.0, 1.0, params.lambda_l2) +
-                            score(+2.0, 2.0, params.lambda_l2) - params.parent_score;
+    double const expected = score(-1.0, 1.0, cfg.lambda_l2) +
+                            score(+2.0, 2.0, cfg.lambda_l2) -
+                            score(node.grad, node.hess, cfg.lambda_l2);
     CHECK(s.gain == expected);
 }
 
@@ -118,19 +115,18 @@ TEST_CASE("HistogramSplitFinder: returns invalid when no positive-gain split exi
 {
     // Two real bins with identical (grad, hess) and missing zero.
     // Best achievable child-score sum equals the unsplit score, so
-    // setting parent_gain to that value drives net gain to zero —
+    // setting node_score to that value drives net gain to zero —
     // never strictly greater than best_split.gain (default 0.0).
     Histogram h{3};
     h.add(0, +0.5, 1.0);
     h.add(1, +0.5, 1.0);
 
-    std::vector<Histogram> hists = {std::move(h)};
+    float constexpr lambda = 1.0F;
+    TreeConfig cfg{.lambda_l2 = lambda};
+    SplitNode node{.hists = {}, .rows = {}, .grad = 1.0, .hess = 2.0};
+    node.hists.push_back(std::move(h));
 
-    double constexpr lambda = 1.0;
-    double const unsplit    = score(1.0, 2.0, lambda);
-    HistogramSplitFinder::Params params{.parent_score = unsplit, .lambda_l2 = lambda};
-
-    Split const s = HistogramSplitFinder::find(histogram_view_t{hists}, params);
+    Split const s = HistogramSplitFinder::find(node, cfg);
 
     CHECK_FALSE(s.valid);
     CHECK(s.gain == 0.0);
@@ -142,8 +138,7 @@ TEST_CASE("HistogramSplitFinder: returns invalid when no positive-gain split exi
 TEST_CASE("HistogramSplitFinder: empty histogram view returns invalid default Split",
           "[split][edge]")
 {
-    Split const s = HistogramSplitFinder::find(
-        histogram_view_t{}, HistogramSplitFinder::Params{.parent_score = 0.0});
+    Split const s = HistogramSplitFinder::find(SplitNode{}, TreeConfig{});
 
     CHECK_FALSE(s.valid);
     CHECK(s.gain == 0.0);
@@ -168,10 +163,10 @@ TEST_CASE("HistogramSplitFinder: skips the degenerate all-real-on-left cut",
     h.add(1, -1.0, 1.0);
     h.add(2, +5.0, 0.01); // missing: tiny hess, big grad
 
-    std::vector<Histogram> hists = {std::move(h)};
-
-    HistogramSplitFinder::Params params{.parent_score = 0.0, .lambda_l2 = 1.0};
-    Split const s = HistogramSplitFinder::find(histogram_view_t{hists}, params);
+    TreeConfig cfg{.lambda_l2 = 1.0F};
+    SplitNode node{.hists = {}, .rows = {}, .grad = +5.0, .hess = 2.01};
+    node.hists.push_back(std::move(h));
+    Split const s = HistogramSplitFinder::find(node, cfg);
 
     REQUIRE(s.valid);
     CHECK(s.bin_id == bin_id_t{0});
@@ -186,21 +181,25 @@ TEST_CASE("HistogramSplitFinder: min_child_hess rejects splits with too-light ch
     // "split" that puts every row on one side. The default
     // min_child_hess = 1.0 should reject this: right child has hess
     // 0 < 1.0.
-    Histogram h{3};
-    h.add(2, +2.0, 1.0); // missing only
+    // Real bins cleanly split (opposing grad). Bin 0's hess is tiny so
+    // the only candidate cut puts a sub-1.0-hess child on the left.
+    // min_child_hess=1.0 rejects; disabling the guard accepts the same
+    // genuine cut.
+    Histogram h{4};
+    h.add(0, -1.0, 0.5); // real, light
+    h.add(1, +1.0, 2.0); // real, heavy
+    // bin 2: zero, missing: zero
 
-    std::vector<Histogram> hists = {std::move(h)};
+    SplitNode node{.hists = {}, .rows = {}, .grad = 0.0, .hess = 2.5};
+    node.hists.push_back(std::move(h));
 
-    Split const guarded = HistogramSplitFinder::find(
-        histogram_view_t{hists}, {.parent_score = 0.0});
+    Split const guarded = HistogramSplitFinder::find(node, TreeConfig{});
     CHECK_FALSE(guarded.valid);
 
-    // Disabling the guard exposes the pseudo-split.
     Split const unguarded = HistogramSplitFinder::find(
-        histogram_view_t{hists},
-        {.parent_score = 0.0, .lambda_l2 = 1.0, .min_child_hess = 0.0});
+        node, TreeConfig{.min_child_hess = 0.0F, .lambda_l2 = 1.0F});
     REQUIRE(unguarded.valid);
-    CHECK(unguarded.default_left == true);
+    CHECK(unguarded.bin_id == bin_id_t{0});
 }
 
 TEST_CASE("HistogramSplitFinder: lambda_l2 changes the chosen cut",
@@ -217,14 +216,13 @@ TEST_CASE("HistogramSplitFinder: lambda_l2 changes the chosen cut",
     h.add(2, -3.0, 4.0);  // bin 2
     // bin 3 missing, zero
 
-    std::vector<Histogram> hists = {std::move(h)};
+    SplitNode node{.hists = {}, .rows = {}, .grad = 0.0, .hess = 8.25};
+    node.hists.push_back(std::move(h));
 
     Split const lo = HistogramSplitFinder::find(
-        histogram_view_t{hists},
-        {.parent_score = 0.0, .lambda_l2 = 0.0, .min_child_hess = 0.0});
+        node, TreeConfig{.min_child_hess = 0.0F, .lambda_l2 = 0.0F});
     Split const hi = HistogramSplitFinder::find(
-        histogram_view_t{hists},
-        {.parent_score = 0.0, .lambda_l2 = 10.0, .min_child_hess = 0.0});
+        node, TreeConfig{.min_child_hess = 0.0F, .lambda_l2 = 10.0F});
 
     REQUIRE(lo.valid);
     REQUIRE(hi.valid);

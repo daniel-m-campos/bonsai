@@ -88,7 +88,7 @@ uint16_t BinMapper::transform(float x) const
 {
     if (std::isnan(x))
     {
-        return n_buckets() - 1;
+        return n_bins() - 1;
     }
     return std::ranges::lower_bound(cuts_, x) - cuts_.begin();
 }

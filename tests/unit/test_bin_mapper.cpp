@@ -28,7 +28,7 @@ TEST_CASE("BinMapper: small column produces one cut per distinct value plus sent
     // Bin 0 is (-inf, cuts[0]] so the smallest value gets no cut of its own.
     std::vector<float> expected = {2.0F, 3.0F, 4.0F, 5.0F, f_inf};
     CHECK(std::ranges::equal(mapper.cuts(), expected));
-    CHECK(mapper.n_buckets() == mapper.cuts().size());
+    CHECK(mapper.n_bins() == mapper.cuts().size());
 }
 
 TEST_CASE("BinMapper: subsamples cuts when n_samples < column", "[bin_mapper][fit]")
@@ -164,7 +164,7 @@ TEST_CASE("BinMapper: single-value column collapses to one cut plus sentinel",
     CHECK(mapper.cuts().size() == 2);
     CHECK(mapper.cuts().front() == 3.0F);
     CHECK(mapper.cuts().back() == f_inf);
-    CHECK(mapper.n_buckets() == 2);
+    CHECK(mapper.n_bins() == 2);
 }
 
 TEST_CASE("BinMapper: all-NaN column emits only the sentinel", "[bin_mapper][fit][nan]")
@@ -201,7 +201,7 @@ TEST_CASE("BinMapper: transform routes NaN to the missing bin",
     BinMapperConfig cfg{.n_samples = column.size()};
     auto mapper = BinMapper::fit(std::span(column), cfg);
 
-    CHECK(mapper.transform(f_nan) == mapper.n_buckets() - 1);
+    CHECK(mapper.transform(f_nan) == mapper.n_bins() - 1);
 }
 
 TEST_CASE("BinMapper: transform is monotonic over the fitted column",

@@ -16,7 +16,7 @@ class BinMapper
   public:
     static BinMapper fit(std::span<float const> column, BinMapperConfig const &cfg);
     uint16_t transform(float x) const;
-    size_t n_buckets() const
+    size_t n_bins() const
     {
         return cuts_.size();
     }

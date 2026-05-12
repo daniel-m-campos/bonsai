@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "bonsai/config/tree_config.hpp"
 #include "bonsai/histogram.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
@@ -37,55 +38,67 @@ std::vector<Histogram> make_workload(size_t n_features, size_t n_bins)
     return hists;
 }
 
-HistogramSplitFinder::Params const k_params{
-    .parent_score = 0.0, .lambda_l2 = 1.0, .min_child_hess = 1.0};
+TreeConfig const k_cfg{.min_child_hess = 1.0F, .lambda_l2 = 1.0F};
+
+// Sum (grad, hess) over all rows in feature 0's histogram (incl. missing)
+// so the splitter exercises real cuts instead of failing every
+// min_child_hess gate.
+SplitNode make_node(std::vector<Histogram> hists)
+{
+    SplitNode node{.hists = std::move(hists), .rows = {}, .grad = 0.0, .hess = 0.0};
+    for (auto const &cell : node.hists.front().sweep_cells())
+    {
+        node.grad += cell.sum_grad;
+        node.hess += cell.sum_hess;
+    }
+    auto const &m = node.hists.front().missing();
+    node.grad += m.sum_grad;
+    node.hess += m.sum_hess;
+    return node;
+}
 
 } // namespace
 
 TEST_CASE("HistogramSplitFinder: bench small (8 features x 64 bins)",
           "[bench][split][small]")
 {
-    auto const hists = make_workload(8, 64);
-    auto const view  = histogram_view_t{hists};
+    auto const node = make_node(make_workload(8, 64));
 
     BENCHMARK("find: 8x64")
     {
-        return HistogramSplitFinder::find(view, k_params);
+        return HistogramSplitFinder::find(node, k_cfg);
     };
 }
 
 TEST_CASE("HistogramSplitFinder: bench medium (64 features x 128 bins)",
           "[bench][split][medium]")
 {
-    auto const hists = make_workload(64, 128);
-    auto const view  = histogram_view_t{hists};
+    auto const node = make_node(make_workload(64, 128));
 
     BENCHMARK("find: 64x128")
     {
-        return HistogramSplitFinder::find(view, k_params);
+        return HistogramSplitFinder::find(node, k_cfg);
     };
 }
 
 TEST_CASE("HistogramSplitFinder: bench large (256 features x 256 bins)",
           "[bench][split][large]")
 {
-    auto const hists = make_workload(256, 256);
-    auto const view  = histogram_view_t{hists};
+    auto const node = make_node(make_workload(256, 256));
 
     BENCHMARK("find: 256x256")
     {
-        return HistogramSplitFinder::find(view, k_params);
+        return HistogramSplitFinder::find(node, k_cfg);
     };
 }
 
 TEST_CASE("HistogramSplitFinder: bench xlarge (1024 features x 512 bins)",
           "[bench][split][xlarge]")
 {
-    auto const hists = make_workload(1024, 512);
-    auto const view  = histogram_view_t{hists};
+    auto const node = make_node(make_workload(1024, 512));
 
     BENCHMARK("find: 1024x512")
     {
-        return HistogramSplitFinder::find(view, k_params);
+        return HistogramSplitFinder::find(node, k_cfg);
     };
 }
