@@ -38,7 +38,8 @@ std::vector<Histogram> make_workload(size_t n_features, size_t n_bins)
     return hists;
 }
 
-TreeConfig const k_cfg{.min_child_hess = 1.0F, .lambda_l2 = 1.0F};
+TreeConfig const k_cfg{
+    .min_child_hess = 1.0F, .lambda_l2 = 1.0F, .min_data_in_leaf = 0};
 
 // Sum (grad, hess) over all rows in feature 0's histogram (incl. missing)
 // so the splitter exercises real cuts instead of failing every
