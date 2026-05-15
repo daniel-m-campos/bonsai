@@ -12,8 +12,8 @@ disagrees, decisions wins.
 | 2 | [`2-histogram.md`](2-histogram.md) — gradient/hessian sums, subtraction, parallel reduce | done |
 | 3 | [`3-tree.md`](3-tree.md) — Tree concept, `DenseTree` + `ObliviousTree`, depth-wise + oblivious growers, histogram splitter | done |
 | 4 | [`4-objective.md`](4-objective.md) — Objective concept, MSE, logloss | done |
-| 5 | `5-booster.md` — Booster, training loop, `update_one_iter` | TBD |
-| 6 | `6-dispatch.md` — registry, runtime → static boundary | TBD |
+| 5 | [`5-booster.md`](5-booster.md) — Booster, training loop, `update_one_iter` | done |
+| 6 | [`6-dispatch.md`](6-dispatch.md) — registry, runtime → static boundary | done |
 | 7 | `7-parallel.md` — ParallelBackend, OpenMP, std::execution | TBD |
 | 8 | [`8-config.md`](8-config.md) — Config, TOML, CLI overrides | partial (data slice only) |
 | 9 | `9-cli.md` — subcommands, progress bars, logging | TBD |
@@ -21,7 +21,9 @@ disagrees, decisions wins.
 ## Cross-cutting concerns
 
 **Dispatch.** Static poly inside `Booster`, runtime at config boundary.
-Shape is open — see `6-dispatch.md` when written.
+Flat table over `cartesian_product_t<...>`; one vcall at boundary,
+zero inside `update_one_iter`. See [`6-dispatch.md`](6-dispatch.md) +
+decision 26.
 
 **Threading.** Two backends behind `ParallelBackend` concept (OpenMP,
 std::execution). Determinism is per-thread-count, not cross-thread
