@@ -43,6 +43,14 @@ auto MSEObjective::eval(floats_view preds, floats_view targets)
     return sum_squared_error / n;
 }
 
+auto MSEObjective::init_score(floats_view targets) -> floats_view::value_type
+{
+    assert(!targets.empty());
+    auto const n    = static_cast<float>(targets.size());
+    float const sum = std::accumulate(targets.begin(), targets.end(), 0.0F);
+    return sum / n;
+}
+
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void LogLossObjective::compute(floats_view scores, floats_view labels, floats_out grad,
                                floats_out hess)
@@ -77,6 +85,15 @@ float LogLossObjective::eval(floats_view scores, floats_view labels)
         });
 
     return sum_log_loss / n;
+}
+
+auto LogLossObjective::init_score(floats_view labels) -> floats_view::value_type
+{
+    assert(!labels.empty());
+    auto const n    = static_cast<float>(labels.size());
+    float const sum = std::accumulate(labels.begin(), labels.end(), 0.0F);
+    float const p   = sum / n;
+    return std::log(p / (1.0F - p));
 }
 
 } // namespace bonsai
