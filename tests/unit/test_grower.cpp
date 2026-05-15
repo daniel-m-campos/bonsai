@@ -65,7 +65,7 @@ TEST_CASE("DepthwiseGrower: depth=1 separable yields one split, two leaves",
                    .max_depth        = 1,
                    .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto tree = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
 
     CHECK(tree.params().n_leaves == 2);
     CHECK(tree.params().depth == 1);
@@ -106,7 +106,7 @@ TEST_CASE("DepthwiseGrower: depth=2 separable yields four leaves with correct ro
                    .max_depth        = 2,
                    .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto tree = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
 
     CHECK(tree.params().n_leaves == 4);
     CHECK(tree.params().depth == 2);
@@ -138,7 +138,7 @@ TEST_CASE("DepthwiseGrower: max_depth=0 returns single-leaf tree", "[grower][edg
 
     TreeConfig cfg{.lambda_l2 = 1.0F, .max_depth = 0, .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto tree = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
 
     CHECK(tree.params().n_leaves == 1);
     CHECK(tree.params().depth == 0);
@@ -166,7 +166,7 @@ TEST_CASE("DepthwiseGrower: no positive-gain split yields single leaf",
                    .max_depth        = 3,
                    .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto tree = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
 
     CHECK(tree.params().n_leaves == 1);
     // Root never split: depth should be 0, not the loop's iteration count.
@@ -193,7 +193,7 @@ TEST_CASE("DepthwiseGrower: NaN predict routes via default_left", "[grower][miss
                    .max_depth        = 1,
                    .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto tree = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
 
     // With no missing values at fit time, the splitter's default_left tie-break
     // favors `true`, so NaN inputs at predict time must route to the left leaf
@@ -226,7 +226,7 @@ TEST_CASE("DepthwiseGrower: min_child_hess starves all splits → single leaf",
                    .max_depth        = 2,
                    .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto tree = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
 
     CHECK(tree.params().n_leaves == 1);
     CHECK(tree.params().depth == 0);
@@ -259,7 +259,7 @@ TEST_CASE("DepthwiseGrower: asymmetric tree — one child splits, other stays a 
                    .max_depth        = 2,
                    .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto tree = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
 
     CHECK(tree.params().n_leaves == 3);
     CHECK(tree.params().depth == 2);
@@ -294,7 +294,7 @@ TEST_CASE("DepthwiseGrower: empty row_indices yields zero-valued single leaf",
                    .max_depth        = 3,
                    .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto tree = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
 
     CHECK(tree.params().n_leaves == 1);
     CHECK(tree.params().depth == 0);

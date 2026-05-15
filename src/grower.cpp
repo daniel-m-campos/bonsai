@@ -23,10 +23,14 @@ inline float leaf_value(double grad, double hess, double lambda)
 }
 
 inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitNode const &node,
-                             double lambda, size_t &n_leaves)
+                             double lambda, size_t &n_leaves, train_leaf_values &values)
 {
-    nodes[node.id] =
-        DenseTree::LeafNode{.value = leaf_value(node.grad, node.hess, lambda)};
+    float const v  = leaf_value(node.grad, node.hess, lambda);
+    nodes[node.id] = DenseTree::LeafNode{.value = v};
+    for (row_id_t r : node.rows)
+    {
+        values[r] = v;
+    }
     ++n_leaves;
 }
 
@@ -111,7 +115,8 @@ inline std::pair<SplitNode, SplitNode> split_node(Dataset const &ds, floats_view
 inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
                          TreeConfig const &config, std::vector<SplitNode> &current,
                          std::vector<SplitNode> &next, std::vector<Split> const &splits,
-                         DenseTree::Nodes &nodes, size_t &n_leaves)
+                         DenseTree::Nodes &nodes, size_t &n_leaves,
+                         train_leaf_values &values)
 {
     for (node_id_t i = 0; i < current.size(); ++i)
     {
@@ -119,7 +124,7 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         auto const &split = splits[i];
         if (!split.valid) // assume valid incorporates all cfg parameter logic
         {
-            finalize_as_leaf(nodes, node, config.lambda_l2, n_leaves);
+            finalize_as_leaf(nodes, node, config.lambda_l2, n_leaves, values);
             continue;
         }
         node_id_t const left_id = nodes.size();
@@ -155,9 +160,10 @@ DepthwiseGrower<SplitterT>::DepthwiseGrower(TreeConfig const &cfg) : config_(cfg
 template <SplitFinder SplitterT>
 auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
                                       floats_view hess, row_index_view row_indices)
-    -> Tree
+    -> GrowResult<Tree>
 {
     Tree::Nodes nodes;
+    train_leaf_values values(ds.n_rows(), 0.0F);
     std::vector<SplitNode> current;
     std::vector<SplitNode> next;
     std::vector<Split> splits;
@@ -173,7 +179,8 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
         {
             splits.push_back(SplitterT::find(node, config_));
         }
-        update_nodes(ds, grad, hess, config_, current, next, splits, nodes, n_leaves);
+        update_nodes(ds, grad, hess, config_, current, next, splits, nodes, n_leaves,
+                     values);
         if (current.empty())
         {
             break;
@@ -183,10 +190,11 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
 
     for (auto const &node : current)
     {
-        finalize_as_leaf(nodes, node, config_.lambda_l2, n_leaves);
+        finalize_as_leaf(nodes, node, config_.lambda_l2, n_leaves, values);
     }
 
-    return Tree(std::move(nodes), {.depth = depth, .n_leaves = n_leaves});
+    return {.tree   = Tree(std::move(nodes), {.depth = depth, .n_leaves = n_leaves}),
+            .values = std::move(values)};
 }
 
 template class DepthwiseGrower<HistogramSplitFinder>;
