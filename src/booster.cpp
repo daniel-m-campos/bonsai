@@ -89,5 +89,7 @@ void Booster<Obj, Gr, Sa>::predict(features_view X, floats_out scores) const
 
 template class Booster<MSEObjective, DepthwiseGrower<HistogramSplitFinder>,
                        AllRowsSampler>;
+template class Booster<LogLossObjective, DepthwiseGrower<HistogramSplitFinder>,
+                       AllRowsSampler>;
 
 } // namespace bonsai

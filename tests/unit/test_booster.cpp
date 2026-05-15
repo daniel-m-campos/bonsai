@@ -33,11 +33,24 @@ Config tiny_cfg()
 using TestBooster =
     Booster<MSEObjective, DepthwiseGrower<HistogramSplitFinder>, AllRowsSampler>;
 
+using TestLogLossBooster =
+    Booster<LogLossObjective, DepthwiseGrower<HistogramSplitFinder>, AllRowsSampler>;
+
 detail::ColumnBatch separable_batch()
 {
     return detail::ColumnBatch{
         .features      = {{0.0F, 0.1F, 0.9F, 1.0F}},
         .labels        = {-1.0F, -1.0F, +1.0F, +1.0F},
+        .weights       = {},
+        .feature_names = {"a"},
+    };
+}
+
+detail::ColumnBatch separable_binary_batch()
+{
+    return detail::ColumnBatch{
+        .features      = {{0.0F, 0.1F, 0.9F, 1.0F}},
+        .labels        = {0.0F, 0.0F, 1.0F, 1.0F},
         .weights       = {},
         .feature_names = {"a"},
     };
@@ -221,6 +234,60 @@ TEST_CASE("Booster: predict matches analytic leaf after 1 iter",
     CHECK(y_hat[1] == Catch::Approx(left).epsilon(1e-5));
     CHECK(y_hat[2] == Catch::Approx(right).epsilon(1e-5));
     CHECK(y_hat[3] == Catch::Approx(right).epsilon(1e-5));
+}
+
+TEST_CASE("Booster: LogLoss eval decreases monotonically over iters",
+          "[booster][logloss][convergence]")
+{
+    auto const batch      = separable_binary_batch();
+    Dataset const train   = make_dataset(batch);
+    RawFeatures const raw = to_raw(batch);
+    floats_view const labels{batch.labels};
+
+    Config const cfg = tiny_cfg();
+    TestLogLossBooster booster{cfg};
+
+    booster.update_one_iter(train);
+    float const initial_eval = booster.eval(raw.view(), labels);
+    float prev_eval          = initial_eval;
+
+    for (int i = 0; i < 4; ++i)
+    {
+        booster.update_one_iter(train);
+        float const cur_eval = booster.eval(raw.view(), labels);
+        CHECK(cur_eval <= prev_eval);
+        prev_eval = cur_eval;
+    }
+
+    CHECK(prev_eval < initial_eval);
+}
+
+TEST_CASE("Booster: LogLoss predict produces raw scores separating classes",
+          "[booster][logloss][predict]")
+{
+    auto const batch    = separable_binary_batch();
+    Dataset const train = make_dataset(batch);
+    RawFeatures const raw = separable_raw_midpoints();
+
+    Config const cfg = tiny_cfg();
+    TestLogLossBooster booster{cfg};
+    for (int i = 0; i < 10; ++i)
+    {
+        booster.update_one_iter(train);
+    }
+
+    std::vector<float> y_hat(raw.n_rows);
+    booster.predict(raw.view(), y_hat);
+
+    for (float v : y_hat)
+    {
+        CHECK(std::isfinite(v));
+    }
+    // Class 0 → negative score, class 1 → positive score.
+    CHECK(y_hat[0] < 0.0F);
+    CHECK(y_hat[1] < 0.0F);
+    CHECK(y_hat[2] > 0.0F);
+    CHECK(y_hat[3] > 0.0F);
 }
 
 TEST_CASE("Booster: n_iters tracks update count", "[booster][n_iters]")
