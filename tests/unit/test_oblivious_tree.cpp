@@ -12,6 +12,14 @@ using namespace bonsai::test; // NOLINT
 namespace
 {
 
+template <typename TreeT, size_t N>
+float predict_one(TreeT const &tree, std::array<float, N> const &row)
+{
+    std::array<float, 1> out{};
+    tree.predict(features_view{row.data(), 1, N}, floats_out{out});
+    return out[0];
+}
+
 // Depth-0 tree with a single leaf. No splits.
 ObliviousTree single_leaf(float value)
 {
@@ -66,10 +74,10 @@ TEST_CASE("ObliviousTree: predict returns the leaf value for a depth-0 tree",
 {
     auto tree = single_leaf(single_leaf_value);
     std::array<float, 1> row{single_leaf_input};
-    CHECK(tree.predict(row) == single_leaf_value);
+    CHECK(predict_one(tree, row) == single_leaf_value);
 }
 
-TEST_CASE("ObliviousTree: predict routes by strict less-than threshold",
+TEST_CASE("ObliviousTree: predict routes by less-than-or-equal threshold",
           "[oblivious_tree][predict]")
 {
     auto tree = one_split(fid_0, /*default_left=*/false);
@@ -77,18 +85,20 @@ TEST_CASE("ObliviousTree: predict routes by strict less-than threshold",
     std::array<float, 1> below{below_threshold};
     std::array<float, 1> above{above_threshold};
 
-    CHECK(tree.predict(below) == default_left_leaf);
-    CHECK(tree.predict(above) == default_right_leaf);
+    CHECK(predict_one(tree, below) == default_left_leaf);
+    CHECK(predict_one(tree, above) == default_right_leaf);
 }
 
-TEST_CASE("ObliviousTree: predict routes value equal to threshold to the right",
+TEST_CASE("ObliviousTree: predict routes value equal to threshold to the left",
           "[oblivious_tree][predict][edge]")
 {
+    // Comparison is `v <= threshold`, matching the binner's right-inclusive
+    // bin partition, so v == threshold goes left.
     auto tree = one_split(fid_0, /*default_left=*/false);
 
     std::array<float, 1> at{at_threshold};
 
-    CHECK(tree.predict(at) == default_right_leaf);
+    CHECK(predict_one(tree, at) == default_left_leaf);
 }
 
 TEST_CASE("ObliviousTree: predict routes NaN left when default_left is true",
@@ -98,7 +108,7 @@ TEST_CASE("ObliviousTree: predict routes NaN left when default_left is true",
 
     std::array<float, 1> nan_row{f_nan};
 
-    CHECK(tree.predict(nan_row) == default_left_leaf);
+    CHECK(predict_one(tree, nan_row) == default_left_leaf);
 }
 
 TEST_CASE("ObliviousTree: predict routes NaN right when default_left is false",
@@ -108,7 +118,7 @@ TEST_CASE("ObliviousTree: predict routes NaN right when default_left is false",
 
     std::array<float, 1> nan_row{f_nan};
 
-    CHECK(tree.predict(nan_row) == default_right_leaf);
+    CHECK(predict_one(tree, nan_row) == default_right_leaf);
 }
 
 TEST_CASE("ObliviousTree: predict honors per-level default_left for NaN routing",
@@ -126,10 +136,10 @@ TEST_CASE("ObliviousTree: predict honors per-level default_left for NaN routing"
     };
 
     std::array<float, 2> nan_f0_low_f1{f_nan, f1_below_two};
-    CHECK(tree.predict(nan_f0_low_f1) == leaf_ll_value);
+    CHECK(predict_one(tree, nan_f0_low_f1) == leaf_ll_value);
 
     std::array<float, 2> low_f0_nan_f1{below_threshold, f_nan};
-    CHECK(tree.predict(low_f0_nan_f1) == leaf_lr_value);
+    CHECK(predict_one(tree, low_f0_nan_f1) == leaf_lr_value);
 }
 
 TEST_CASE("ObliviousTree: predict walks a multi-level tree to the correct leaf",
@@ -144,10 +154,10 @@ TEST_CASE("ObliviousTree: predict walks a multi-level tree to the correct leaf",
     std::array<float, 2> rl{above_threshold, f1_below_two}; // 10 → leaf_rl_value
     std::array<float, 2> rr{above_threshold, f1_above_two}; // 11 → leaf_rr_value
 
-    CHECK(tree.predict(ll) == leaf_ll_value);
-    CHECK(tree.predict(lr) == leaf_lr_value);
-    CHECK(tree.predict(rl) == leaf_rl_value);
-    CHECK(tree.predict(rr) == leaf_rr_value);
+    CHECK(predict_one(tree, ll) == leaf_ll_value);
+    CHECK(predict_one(tree, lr) == leaf_lr_value);
+    CHECK(predict_one(tree, rl) == leaf_rl_value);
+    CHECK(predict_one(tree, rr) == leaf_rr_value);
 }
 
 TEST_CASE("ObliviousTree: params() returns construction parameters",
@@ -175,7 +185,7 @@ TEST_CASE("ObliviousTree: batch predict strides correctly across multiple featur
     };
     std::array<float, 4> out{};
 
-    tree.predict(rows, /*n_features=*/2, out);
+    tree.predict(features_view{rows.data(), 4, 2}, out);
 
     CHECK(out[0] == leaf_ll_value);
     CHECK(out[1] == leaf_lr_value);
@@ -189,17 +199,17 @@ TEST_CASE("ObliviousTree: batch predict produces same results as single-row pred
     auto tree = one_split(fid_0, /*default_left=*/true);
 
     std::array<float, 4> rows{
-        batch_below,       // row 0: <1.0  → -0.5
-        batch_above,       // row 1: >=1.0 → +0.5
+        batch_below,       // row 0: <=1.0 → -0.5
+        batch_above,       // row 1: >1.0  → +0.5
         f_nan,             // row 2: NaN, default_left → -0.5
-        default_threshold, // row 3: ==1.0 → +0.5 (strict <)
+        default_threshold, // row 3: ==1.0 → -0.5 (v <= threshold goes left)
     };
     std::array<float, 4> out{};
 
-    tree.predict(rows, /*n_features=*/1, out);
+    tree.predict(features_view{rows.data(), 4, 1}, out);
 
     CHECK(out[0] == default_left_leaf);
     CHECK(out[1] == default_right_leaf);
     CHECK(out[2] == default_left_leaf);
-    CHECK(out[3] == default_right_leaf);
+    CHECK(out[3] == default_left_leaf);
 }

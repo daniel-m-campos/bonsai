@@ -10,33 +10,21 @@
 namespace bonsai
 {
 
-namespace
-{
-
-template <Tree T>
-void predict(T const &tree, floats_view rows, size_t n_features, floats_out out)
-{
-    assert(rows.size() == out.size() * n_features);
-    for (row_id_t i = 0; i < out.size(); ++i)
-    {
-        out[i] = tree.predict(rows.subspan(i * n_features, n_features));
-    }
-}
-} // namespace
-
 DenseTree::DenseTree(Nodes nodes, Params params)
     : nodes_(std::move(nodes)), params_(params)
 {
 }
 
-float DenseTree::predict(floats_view row) const
+float DenseTree::walk_row(features_view X, row_id_t i) const
 {
     node_id_t index = 0;
     while (auto const *node = std::get_if<InternalNode>(&nodes_[index]))
     {
-        float v     = row[node->feature_id];
+        float v     = X[i, node->feature_id];
         bool is_nan = std::isnan(v);
-        bool less   = !is_nan && (v < node->threshold);
+        // Binner is right-inclusive: bin b contains v ∈ (cuts[b-1], cuts[b]].
+        // Grower routes bin <= split.bin_id left, so v == threshold goes left.
+        bool less = !is_nan && (v <= node->threshold);
         // NOLINTNEXTLINE(readability-implicit-bool-conversion)
         bool go_left = less | (is_nan & node->default_left);
         index        = go_left ? node->left : node->right;
@@ -44,9 +32,13 @@ float DenseTree::predict(floats_view row) const
     return std::get<LeafNode>(nodes_[index]).value;
 }
 
-void DenseTree::predict(floats_view rows, size_t n_features, floats_out out) const
+void DenseTree::predict(features_view X, floats_out out) const
 {
-    ::bonsai::predict(*this, rows, n_features, out);
+    assert(X.extent(0) == out.size());
+    for (row_id_t i = 0; i < out.size(); ++i)
+    {
+        out[i] += walk_row(X, i);
+    }
 }
 
 ObliviousTree::ObliviousTree(LevelSplits splits, LeafValues values)
@@ -56,14 +48,14 @@ ObliviousTree::ObliviousTree(LevelSplits splits, LeafValues values)
     assert(leaf_values_.size() == (1ULL << splits_.size()));
 }
 
-float ObliviousTree::predict(floats_view row) const
+float ObliviousTree::walk_row(features_view X, row_id_t i) const
 {
     node_id_t index = 0;
     for (auto const &s : splits_)
     {
-        float v     = row[s.feature_id];
+        float v     = X[i, s.feature_id];
         bool is_nan = std::isnan(v);
-        bool less   = !is_nan && (v < s.threshold);
+        bool less   = !is_nan && (v <= s.threshold);
         // NOLINTNEXTLINE(readability-implicit-bool-conversion)
         bool go_left = less | (is_nan & s.default_left);
         index        = (index << 1) | (go_left ? 0U : 1U);
@@ -71,9 +63,13 @@ float ObliviousTree::predict(floats_view row) const
     return leaf_values_[index];
 }
 
-void ObliviousTree::predict(floats_view rows, size_t n_features, floats_out out) const
+void ObliviousTree::predict(features_view X, floats_out out) const
 {
-    ::bonsai::predict(*this, rows, n_features, out);
+    assert(X.extent(0) == out.size());
+    for (row_id_t i = 0; i < out.size(); ++i)
+    {
+        out[i] += walk_row(X, i);
+    }
 }
 
 } // namespace bonsai

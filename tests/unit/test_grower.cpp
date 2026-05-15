@@ -1,3 +1,4 @@
+#include <array>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
@@ -18,6 +19,13 @@ using namespace bonsai; // NOLINT
 
 namespace
 {
+
+template <typename TreeT> float predict_one(TreeT const &tree, std::vector<float> row)
+{
+    std::array<float, 1> out{};
+    tree.predict(features_view{row.data(), 1, row.size()}, floats_out{out});
+    return out[0];
+}
 
 struct Built
 {
@@ -72,8 +80,8 @@ TEST_CASE("DepthwiseGrower: depth=1 separable yields one split, two leaves",
 
     // Left rows (grad -1) → leaf value -(-2)/(2+1) = +2/3.
     // Right rows (grad +1) → leaf value -(+2)/(2+1) = -2/3.
-    float const left_pred  = tree.predict(std::vector<float>{0.0F});
-    float const right_pred = tree.predict(std::vector<float>{1.0F});
+    float const left_pred  = predict_one(tree, std::vector<float>{0.0F});
+    float const right_pred = predict_one(tree, std::vector<float>{1.0F});
     CHECK(left_pred == Catch::Approx(2.0F / 3.0F).epsilon(1e-5));
     CHECK(right_pred == Catch::Approx(-2.0F / 3.0F).epsilon(1e-5));
 }
@@ -113,10 +121,14 @@ TEST_CASE("DepthwiseGrower: depth=2 separable yields four leaves with correct ro
 
     // One representative point per quadrant; sign should match negation of
     // the quadrant's mean grad.
-    float const p_lolo = tree.predict(std::vector<float>{0.0F, 0.0F}); // grad <0 → +
-    float const p_lohi = tree.predict(std::vector<float>{0.0F, 2.0F}); // grad >0 → -
-    float const p_hilo = tree.predict(std::vector<float>{2.0F, 0.0F}); // grad <0 → +
-    float const p_hihi = tree.predict(std::vector<float>{2.0F, 2.0F}); // grad >0 → -
+    float const p_lolo =
+        predict_one(tree, std::vector<float>{0.0F, 0.0F}); // grad <0 → +
+    float const p_lohi =
+        predict_one(tree, std::vector<float>{0.0F, 2.0F}); // grad >0 → -
+    float const p_hilo =
+        predict_one(tree, std::vector<float>{2.0F, 0.0F}); // grad <0 → +
+    float const p_hihi =
+        predict_one(tree, std::vector<float>{2.0F, 2.0F}); // grad >0 → -
     CHECK(p_lolo > 0.0F);
     CHECK(p_lohi < 0.0F);
     CHECK(p_hilo > 0.0F);
@@ -143,7 +155,7 @@ TEST_CASE("DepthwiseGrower: max_depth=0 returns single-leaf tree", "[grower][edg
     CHECK(tree.params().n_leaves == 1);
     CHECK(tree.params().depth == 0);
     // Sum grad = 0, sum hess = 2 → leaf value = -0/(2+1) = 0.
-    CHECK(tree.predict(std::vector<float>{0.5F}) == 0.0F);
+    CHECK(predict_one(tree, std::vector<float>{0.5F}) == 0.0F);
 }
 
 TEST_CASE("DepthwiseGrower: no positive-gain split yields single leaf",
@@ -172,7 +184,7 @@ TEST_CASE("DepthwiseGrower: no positive-gain split yields single leaf",
     // Root never split: depth should be 0, not the loop's iteration count.
     CHECK(tree.params().depth == 0);
     // Sum grad = 3, sum hess = 3 → leaf value = -3/(3+1) = -0.75.
-    CHECK(tree.predict(std::vector<float>{0.5F}) == -0.75F);
+    CHECK(predict_one(tree, std::vector<float>{0.5F}) == -0.75F);
 }
 
 TEST_CASE("DepthwiseGrower: NaN predict routes via default_left", "[grower][missing]")
@@ -199,7 +211,7 @@ TEST_CASE("DepthwiseGrower: NaN predict routes via default_left", "[grower][miss
     // favors `true`, so NaN inputs at predict time must route to the left leaf
     // (grad sum -2 → leaf value +2/3).
     float const nan_pred =
-        tree.predict(std::vector<float>{std::numeric_limits<float>::quiet_NaN()});
+        predict_one(tree, std::vector<float>{std::numeric_limits<float>::quiet_NaN()});
     CHECK(std::isfinite(nan_pred));
     CHECK(nan_pred == Catch::Approx(2.0F / 3.0F).epsilon(1e-5));
 }
@@ -231,7 +243,7 @@ TEST_CASE("DepthwiseGrower: min_child_hess starves all splits → single leaf",
     CHECK(tree.params().n_leaves == 1);
     CHECK(tree.params().depth == 0);
     // Sum grad = 0, sum hess = 4 → leaf value = -0/(4+1) = 0.
-    CHECK(tree.predict(std::vector<float>{0.5F}) == 0.0F);
+    CHECK(predict_one(tree, std::vector<float>{0.5F}) == 0.0F);
 }
 
 TEST_CASE("DepthwiseGrower: asymmetric tree — one child splits, other stays a leaf",
@@ -265,12 +277,12 @@ TEST_CASE("DepthwiseGrower: asymmetric tree — one child splits, other stays a 
     CHECK(tree.params().depth == 2);
 
     // Left leaf: grad sum -20, hess 4, lambda 1 → -(-20)/(4+1) = +4.
-    float const left_leaf = tree.predict(std::vector<float>{0.0F});
+    float const left_leaf = predict_one(tree, std::vector<float>{0.0F});
     CHECK(left_leaf == Catch::Approx(4.0F).epsilon(1e-5));
     // Right subtree leaves: rows {4,5} grad -2, hess 2 → +2/3;
     //                       rows {6,7} grad +2, hess 2 → -2/3.
-    float const right_lo = tree.predict(std::vector<float>{1.0F});
-    float const right_hi = tree.predict(std::vector<float>{1.3F});
+    float const right_lo = predict_one(tree, std::vector<float>{1.0F});
+    float const right_hi = predict_one(tree, std::vector<float>{1.3F});
     CHECK(right_lo == Catch::Approx(2.0F / 3.0F).epsilon(1e-5));
     CHECK(right_hi == Catch::Approx(-2.0F / 3.0F).epsilon(1e-5));
 }
@@ -299,5 +311,5 @@ TEST_CASE("DepthwiseGrower: empty row_indices yields zero-valued single leaf",
     CHECK(tree.params().n_leaves == 1);
     CHECK(tree.params().depth == 0);
     // Sum grad = 0, sum hess = 0 → leaf value = -0/(0+1) = 0.
-    CHECK(tree.predict(std::vector<float>{0.5F}) == 0.0F);
+    CHECK(predict_one(tree, std::vector<float>{0.5F}) == 0.0F);
 }

@@ -11,11 +11,9 @@ namespace bonsai
 {
 
 template <typename T>
-concept Tree = requires(T const t, floats_view row, floats_view rows, size_t n_features,
-                        floats_out out) {
+concept Tree = requires(T const t, features_view X, floats_out out) {
     { t.params() } -> std::same_as<typename T::Params const &>;
-    { t.predict(row) } -> std::same_as<float>;
-    { t.predict(rows, n_features, out) } -> std::same_as<void>;
+    { t.predict(X, out) } -> std::same_as<void>;
 };
 
 class DenseTree
@@ -46,9 +44,8 @@ class DenseTree
 
     DenseTree(Nodes nodes, Params params);
 
-    float predict(floats_view row) const;
-
-    void predict(floats_view rows, size_t n_features, floats_out out) const;
+    // Accumulates into out; caller initializes (e.g. to zero or to a bias).
+    void predict(features_view X, floats_out out) const;
 
     Params const &params() const
     {
@@ -56,6 +53,8 @@ class DenseTree
     }
 
   private:
+    float walk_row(features_view X, row_id_t i) const;
+
     Nodes nodes_;
     Params params_;
 };
@@ -81,9 +80,8 @@ class ObliviousTree
 
     ObliviousTree(LevelSplits splits, LeafValues values);
 
-    float predict(floats_view row) const;
-
-    void predict(floats_view rows, size_t n_features, floats_out out) const;
+    // Accumulates into out; caller initializes (e.g. to zero or to a bias).
+    void predict(features_view X, floats_out out) const;
 
     Params const &params() const
     {
@@ -91,6 +89,8 @@ class ObliviousTree
     }
 
   private:
+    float walk_row(features_view X, row_id_t i) const;
+
     LevelSplits splits_;
     LeafValues leaf_values_;
     Params params_;
