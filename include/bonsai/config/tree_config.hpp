@@ -6,7 +6,6 @@ namespace bonsai
 
 struct TreeConfig
 {
-    float learning_rate      = 0.05F;
     float min_child_hess     = 1.0F;
     float min_gain_to_split  = 0.0F;
     float lambda_l2          = 1.0F;
