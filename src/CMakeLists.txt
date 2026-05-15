@@ -65,6 +65,25 @@ target_include_directories(bonsai_sampler PUBLIC
 
 target_link_libraries(bonsai_sampler PUBLIC bonsai_warnings)
 
+# ---- bonsai_booster: Booster training loop ----------------------------------
+
+add_library(bonsai_booster OBJECT
+    booster.cpp
+)
+
+target_include_directories(bonsai_booster PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_link_libraries(bonsai_booster PUBLIC
+    bonsai_data
+    bonsai_tree
+    bonsai_split
+    bonsai_objective
+    bonsai_sampler
+    bonsai_warnings
+)
+
 # ---- bonsai_io: CSV (and later parquet, libsvm) -----------------------------
 
 add_library(bonsai_io OBJECT
