@@ -84,6 +84,25 @@ target_link_libraries(bonsai_booster PUBLIC
     bonsai_warnings
 )
 
+# ---- bonsai_registry: typelist + flat dispatch table -> IBooster ------------
+
+add_library(bonsai_registry OBJECT
+    registry/make_booster.cpp
+)
+
+target_include_directories(bonsai_registry PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_link_libraries(bonsai_registry PUBLIC
+    bonsai_booster
+    bonsai_objective
+    bonsai_tree
+    bonsai_split
+    bonsai_sampler
+    bonsai_warnings
+)
+
 # ---- bonsai_io: CSV (and later parquet, libsvm) -----------------------------
 
 add_library(bonsai_io OBJECT
