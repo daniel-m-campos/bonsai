@@ -14,5 +14,6 @@ using node_id_t    = uint32_t;
 using floats_view    = std::span<float const>;
 using floats_out     = std::span<float>;
 using row_index_view = std::span<row_id_t const>;
+using row_index_out  = std::span<row_id_t>;
 
 } // namespace bonsai

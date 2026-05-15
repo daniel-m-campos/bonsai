@@ -53,6 +53,18 @@ target_include_directories(bonsai_objective PUBLIC
 
 target_link_libraries(bonsai_objective PUBLIC bonsai_warnings)
 
+# ---- bonsai_sampler: Sampler concept, AllRowsSampler ------------------------
+
+add_library(bonsai_sampler OBJECT
+    sampler.cpp
+)
+
+target_include_directories(bonsai_sampler PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_link_libraries(bonsai_sampler PUBLIC bonsai_warnings)
+
 # ---- bonsai_io: CSV (and later parquet, libsvm) -----------------------------
 
 add_library(bonsai_io OBJECT
