@@ -60,6 +60,29 @@ The honest pitch (use these in proposal section 1):
 
 Avoid claiming: speed parity with reference libraries, production suitability.
 
+## 3.5. Spine implementation status
+
+The bonsai-policy gate (`.claude/skills/bonsai-policy`) restricts AI from
+writing initial versions of spine components. Status as of 2026-05-16:
+
+| Spine component | User-authored | File(s) |
+|---|---|---|
+| `Dataset`, `BinMapper`, `BinMappers` | yes | `include/bonsai/{dataset,bin_mapper,bin_mappers}.hpp` |
+| `Histogram` | yes | `include/bonsai/histogram.hpp` |
+| Depth-wise `TreeGrower`, `Tree` | yes | `include/bonsai/{grower,tree}.hpp` |
+| Histogram `SplitFinder` | yes | `include/bonsai/split.hpp` |
+| `Objective` concept + MSE + LogLoss | yes | `include/bonsai/objective.hpp` |
+| `Sampler` concept | yes | `include/bonsai/sampler.hpp` |
+| `Booster<O,G,Sp,Sa>` + `IBooster` | yes | `include/bonsai/booster.hpp` |
+| Registry / dispatch (flat table) | yes | `include/bonsai/registry/`, `include/bonsai/typelist.hpp` |
+| Dispatch resolution doc | yes | `docs/architecture/6-dispatch.md` |
+| `ParallelBackend` concept | **no — gated** | (doc 7 TBD) |
+| `SerialBackend`, `OpenMPBackend` | **no — gated** | (depends on doc 7) |
+
+Editorial cleanup, refactors, tests, build, CLI, benchmarks, and docs on
+already-user-authored spine code are fine. Initial versions of the two
+remaining gated rows must come from the user.
+
 ## 4. Decisions made (with rationale)
 
 ### Architecture
