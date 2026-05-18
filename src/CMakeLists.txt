@@ -105,6 +105,22 @@ target_link_libraries(bonsai_registry PUBLIC
     bonsai_warnings
 )
 
+# ---- bonsai_config: TOML loader + dotted-key overrides ----------------------
+
+add_library(bonsai_config OBJECT
+    config/toml.cpp
+    config/toml_dump.cpp
+)
+
+target_include_directories(bonsai_config PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_link_libraries(bonsai_config PUBLIC
+    bonsai_warnings
+    tomlplusplus::tomlplusplus
+)
+
 # ---- bonsai_io: CSV (and later parquet, libsvm) -----------------------------
 
 add_library(bonsai_io OBJECT

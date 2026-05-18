@@ -107,6 +107,7 @@ template <> struct FieldCodec<bool>
         }
         return std::unexpected("expected true/false, got '" + std::string{value} + "'");
     }
+    static toml::value<bool> to_toml(bool v) { return toml::value{v}; }
 };
 
 // -------------------- int ----------------------------------------------------
@@ -126,6 +127,10 @@ template <> struct FieldCodec<int>
     {
         return read_int_from_string(value);
     }
+    static toml::value<int64_t> to_toml(int v)
+    {
+        return toml::value{static_cast<int64_t>(v)};
+    }
 };
 
 // -------------------- unsigned ints (uint8_t / uint32_t / uint64_t / size_t) -
@@ -141,6 +146,10 @@ struct FieldCodec<U>
     static ParseResult<U> from_string(std::string_view value)
     {
         return read_uint_from_string<U>(value);
+    }
+    static toml::value<int64_t> to_toml(U v)
+    {
+        return toml::value{static_cast<int64_t>(v)};
     }
 };
 
@@ -161,6 +170,10 @@ template <> struct FieldCodec<float>
     {
         return read_float_from_string(value);
     }
+    static toml::value<double> to_toml(float v)
+    {
+        return toml::value{static_cast<double>(v)};
+    }
 };
 
 // -------------------- std::string --------------------------------------------
@@ -179,6 +192,10 @@ template <> struct FieldCodec<std::string>
     static ParseResult<std::string> from_string(std::string_view value)
     {
         return std::string{value};
+    }
+    static toml::value<std::string> to_toml(std::string const &v)
+    {
+        return toml::value{v};
     }
 };
 
@@ -210,6 +227,15 @@ template <> struct FieldCodec<std::vector<std::string>>
     {
         return std::unexpected("cannot set list-valued key via CLI override");
     }
+    static toml::array to_toml(std::vector<std::string> const &v)
+    {
+        toml::array a;
+        for (auto const &s : v)
+        {
+            a.push_back(s);
+        }
+        return a;
+    }
 };
 
 // -------------------- std::vector<int> ---------------------------------------
@@ -240,6 +266,15 @@ template <> struct FieldCodec<std::vector<int>>
     {
         return std::unexpected("cannot set list-valued key via CLI override");
     }
+    static toml::array to_toml(std::vector<int> const &v)
+    {
+        toml::array a;
+        for (auto const &x : v)
+        {
+            a.push_back(static_cast<int64_t>(x));
+        }
+        return a;
+    }
 };
 
 // -------------------- std::optional<float> -----------------------------------
@@ -263,6 +298,11 @@ template <> struct FieldCodec<std::optional<float>>
             return std::unexpected(r.error());
         }
         return std::optional<float>{*r};
+    }
+    // Caller (dump_toml) skips the key when nullopt; precondition: has_value().
+    static toml::value<double> to_toml(std::optional<float> const &v)
+    {
+        return toml::value{static_cast<double>(*v)};
     }
 };
 
