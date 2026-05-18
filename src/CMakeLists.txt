@@ -90,6 +90,7 @@ target_link_libraries(bonsai_booster PUBLIC
 
 add_library(bonsai_registry OBJECT
     registry/make_booster.cpp
+    registry/objective_dispatch.cpp
 )
 
 target_include_directories(bonsai_registry PUBLIC
