@@ -19,6 +19,7 @@ add_executable(bonsai_tests
     unit/test_make_booster.cpp
     unit/test_toml.cpp
     unit/test_model_io.cpp
+    unit/test_cli_pipeline.cpp
 )
 
 target_link_libraries(bonsai_tests PRIVATE
@@ -31,6 +32,7 @@ target_link_libraries(bonsai_tests PRIVATE
     bonsai_booster
     bonsai_registry
     bonsai_config
+    bonsai_cli
     bonsai_warnings
     Catch2::Catch2WithMain
 )

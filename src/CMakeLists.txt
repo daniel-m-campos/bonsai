@@ -137,6 +137,29 @@ target_link_libraries(bonsai_io PUBLIC
     nlohmann_json::nlohmann_json
 )
 
+# ---- bonsai_cli: subcommand handlers + shared helpers -----------------------
+
+add_library(bonsai_cli OBJECT
+    cli/common.cpp
+    cli/pipeline.cpp
+)
+
+target_include_directories(bonsai_cli PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+# The CLI talks only to IBooster, make_booster, the by-name objective
+# dispatchers, BinMappers/Dataset, io::*, and Config. Concrete objective /
+# grower / sampler / split / booster pieces come in transitively via
+# bonsai_registry and bonsai_io.
+target_link_libraries(bonsai_cli PUBLIC
+    bonsai_data
+    bonsai_io
+    bonsai_registry
+    bonsai_config
+    bonsai_warnings
+)
+
 # ---- bonsai (CLI executable) ------------------------------------------------
 
 add_executable(bonsai cli/main.cpp)

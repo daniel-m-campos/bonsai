@@ -1,0 +1,85 @@
+#include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
+#include <cstddef>
+#include <string>
+#include <vector>
+
+#include "bonsai/cli/pipeline.hpp"
+#include "bonsai/config/config.hpp"
+
+using namespace bonsai;      // NOLINT
+using namespace bonsai::cli; // NOLINT
+
+namespace
+{
+
+std::string const k_tiny_path = std::string{BONSAI_TESTS_DATA_DIR} + "/tiny.csv";
+
+Config make_tiny_config()
+{
+    Config cfg;
+    cfg.data.train             = k_tiny_path;
+    cfg.bin_mapper.max_bin     = 8;
+    cfg.bin_mapper.n_samples   = 100;
+    cfg.booster_config.n_iters = 5;
+    return cfg;
+}
+
+} // namespace
+
+TEST_CASE("load_train_from_csv: tiny.csv yields N rows and non-empty mappers",
+          "[cli_pipeline][load]")
+{
+    auto const cfg    = make_tiny_config();
+    auto const loaded = load_train_from_csv(cfg, cfg.data.train);
+
+    CHECK(loaded.train.n_rows() == 4);
+    CHECK(loaded.train.n_features() > 0);
+    CHECK(loaded.mappers.size() > 0);
+}
+
+TEST_CASE("train_in_memory: progress callback fires n_iters times in 1..n order",
+          "[cli_pipeline][train]")
+{
+    auto const cfg    = make_tiny_config();
+    auto const loaded = load_train_from_csv(cfg, cfg.data.train);
+
+    std::vector<std::size_t> iters;
+    auto booster = train_in_memory(cfg, loaded.train,
+                                   [&](std::size_t iter, std::size_t /*total*/)
+                                   { iters.push_back(iter); });
+
+    REQUIRE(iters.size() == cfg.booster_config.n_iters);
+    for (std::size_t i = 0; i < iters.size(); ++i)
+    {
+        CHECK(iters[i] == i + 1);
+    }
+    CHECK(booster->n_iters() == cfg.booster_config.n_iters);
+}
+
+TEST_CASE("score_csv: returns one raw score per row",
+          "[cli_pipeline][score]")
+{
+    auto const cfg    = make_tiny_config();
+    auto const loaded = load_train_from_csv(cfg, cfg.data.train);
+    auto const booster = train_in_memory(cfg, loaded.train);
+
+    auto const scored = score_csv(*booster, cfg.data.train, cfg.data);
+    CHECK(scored.raw_scores.size() == 4);
+}
+
+TEST_CASE("score_and_label_csv: labels match the CSV's label column",
+          "[cli_pipeline][score]")
+{
+    auto const cfg    = make_tiny_config();
+    auto const loaded = load_train_from_csv(cfg, cfg.data.train);
+    auto const booster = train_in_memory(cfg, loaded.train);
+
+    auto const sl = score_and_label_csv(*booster, cfg.data.train, cfg.data);
+    REQUIRE(sl.raw_scores.size() == 4);
+    REQUIRE(sl.labels.size() == 4);
+    CHECK(sl.labels[0] == Catch::Approx(0.5F));
+    CHECK(sl.labels[1] == Catch::Approx(1.5F));
+    CHECK(sl.labels[2] == Catch::Approx(2.5F));
+    CHECK(sl.labels[3] == Catch::Approx(3.5F));
+}
