@@ -46,6 +46,7 @@ target_link_libraries(bonsai_split PUBLIC bonsai_data bonsai_warnings)
 add_library(bonsai_objective OBJECT
     objective.cpp
     objective_traits.cpp
+    metric.cpp
 )
 
 target_include_directories(bonsai_objective PUBLIC
