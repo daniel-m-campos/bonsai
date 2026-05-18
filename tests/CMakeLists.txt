@@ -11,6 +11,7 @@ add_executable(bonsai_tests
     unit/test_split.cpp
     unit/test_grower.cpp
     unit/test_objective.cpp
+    unit/test_objective_traits.cpp
     unit/test_booster.cpp
     unit/test_typelist.cpp
     unit/test_make_booster.cpp
