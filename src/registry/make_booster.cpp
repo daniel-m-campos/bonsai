@@ -5,14 +5,12 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "bonsai/booster.hpp"
 #include "bonsai/config/config.hpp"
-#include "bonsai/grower.hpp"
-#include "bonsai/objective.hpp"
 #include "bonsai/registry/names.hpp"
-#include "bonsai/sampler.hpp"
-#include "bonsai/split.hpp"
+#include "bonsai/registry/typelists.hpp"
 #include "bonsai/typelist.hpp"
 
 namespace bonsai
@@ -20,10 +18,6 @@ namespace bonsai
 
 namespace
 {
-
-using Objectives = TypeList<MSEObjective, LogLossObjective>;
-using Growers    = TypeList<DepthwiseGrower<HistogramSplitFinder>>;
-using Samplers   = TypeList<AllRowsSampler>;
 
 using Configurations = cartesian_product_t<Objectives, Growers, Samplers>;
 
@@ -92,6 +86,17 @@ std::unique_ptr<IBooster> make_booster(Config const &config)
 
     throw UnknownImplError("make_booster: no impl for (" + std::string{obj} + ", " +
                            std::string{gr} + ", " + std::string{sa} + ")");
+}
+
+std::vector<AvailableCombo> available_combos()
+{
+    std::vector<AvailableCombo> out;
+    out.reserve(configurations.size());
+    for (Entry const &e : configurations)
+    {
+        out.push_back({e.objective_name, e.grower_name, e.sampler_name});
+    }
+    return out;
 }
 
 } // namespace bonsai
