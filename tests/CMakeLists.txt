@@ -33,4 +33,8 @@ target_include_directories(bonsai_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 
+target_compile_definitions(bonsai_tests PRIVATE
+    BONSAI_TESTS_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data"
+)
+
 catch_discover_tests(bonsai_tests)
