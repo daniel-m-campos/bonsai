@@ -4,6 +4,7 @@
 #include "bonsai/config/booster_config.hpp"
 #include "bonsai/config/data_config.hpp"
 #include "bonsai/config/dispatch_config.hpp"
+#include "bonsai/config/metrics_config.hpp"
 #include "bonsai/config/tree_config.hpp"
 
 namespace bonsai
@@ -16,6 +17,7 @@ struct Config
     TreeConfig tree_config;
     BoosterConfig booster_config;
     DispatchConfig dispatch;
+    MetricsConfig metrics;
     // ParallelConfig, IOConfig — added as components are designed.
 };
 

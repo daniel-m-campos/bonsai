@@ -223,9 +223,32 @@ template <> struct FieldCodec<std::vector<std::string>>
         }
         return out;
     }
-    static ParseResult<std::vector<std::string>> from_string(std::string_view)
+    static ParseResult<std::vector<std::string>> from_string(std::string_view value)
     {
-        return std::unexpected("cannot set list-valued key via CLI override");
+        // Comma-separated; empty token rejected (e.g. "a,,b" or trailing ",").
+        // Lets `--set metrics.fit=rmse,mae` work; bare empty string -> empty vec.
+        std::vector<std::string> out;
+        if (value.empty())
+        {
+            return out;
+        }
+        size_t start = 0;
+        while (start <= value.size())
+        {
+            auto const comma = value.find(',', start);
+            auto const piece = value.substr(start, comma - start);
+            if (piece.empty())
+            {
+                return std::unexpected("empty value in comma-separated list");
+            }
+            out.emplace_back(piece);
+            if (comma == std::string_view::npos)
+            {
+                break;
+            }
+            start = comma + 1;
+        }
+        return out;
     }
     static toml::array to_toml(std::vector<std::string> const &v)
     {
