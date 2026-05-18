@@ -18,6 +18,7 @@ add_executable(bonsai_tests
     unit/test_typelist.cpp
     unit/test_make_booster.cpp
     unit/test_toml.cpp
+    unit/test_model_io.cpp
 )
 
 target_link_libraries(bonsai_tests PRIVATE

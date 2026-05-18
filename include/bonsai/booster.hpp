@@ -44,6 +44,22 @@ class Booster final : public IBooster
         return trees_.size();
     };
 
+    // Save/load accessors. Public so io::save_booster / io::load_booster
+    // can serialize state without befriending the I/O module.
+    std::vector<typename grower_type::Tree> const &trees() const
+    {
+        return trees_;
+    }
+    float init_score() const
+    {
+        return init_score_;
+    }
+    void load_state(std::vector<typename grower_type::Tree> trees, float init_score)
+    {
+        trees_      = std::move(trees);
+        init_score_ = init_score;
+    }
+
   private:
     BoosterConfig config_;
     grower_type grower_;

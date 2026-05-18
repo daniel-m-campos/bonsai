@@ -52,6 +52,11 @@ class DenseTree
         return params_;
     }
 
+    Nodes const &nodes() const
+    {
+        return nodes_;
+    }
+
   private:
     float walk_row(features_view X, row_id_t i) const;
 

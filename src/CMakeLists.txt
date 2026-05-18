@@ -122,13 +122,20 @@ target_link_libraries(bonsai_config PUBLIC
     tomlplusplus::tomlplusplus
 )
 
-# ---- bonsai_io: CSV (and later parquet, libsvm) -----------------------------
+# ---- bonsai_io: CSV (and later parquet, libsvm) + model save/load -----------
 
 add_library(bonsai_io OBJECT
     io/csv.cpp
+    io/model.cpp
 )
 
-target_link_libraries(bonsai_io PUBLIC bonsai_data bonsai_warnings)
+target_link_libraries(bonsai_io PUBLIC
+    bonsai_data
+    bonsai_booster
+    bonsai_registry
+    bonsai_warnings
+    nlohmann_json::nlohmann_json
+)
 
 # ---- bonsai (CLI executable) ------------------------------------------------
 
@@ -137,5 +144,12 @@ add_executable(bonsai cli/main.cpp)
 target_link_libraries(bonsai PRIVATE
     bonsai_data
     bonsai_io
+    bonsai_booster
+    bonsai_tree
+    bonsai_split
+    bonsai_objective
+    bonsai_sampler
+    bonsai_registry
     bonsai_warnings
+    nlohmann_json::nlohmann_json
 )

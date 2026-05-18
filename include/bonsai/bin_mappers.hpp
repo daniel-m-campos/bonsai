@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "bonsai/bin_mapper.hpp"
@@ -16,6 +17,14 @@ class BinMappers
 {
   public:
     static BinMappers fit(detail::ColumnBatch const &batch, BinMapperConfig const &cfg);
+    static BinMappers from_mappers(std::vector<BinMapper> mappers,
+                                   std::vector<std::string> feature_names)
+    {
+        BinMappers out;
+        out.mappers_       = std::move(mappers);
+        out.feature_names_ = std::move(feature_names);
+        return out;
+    }
 
     BinMapper const &operator[](size_t fid) const;
     size_t size() const;

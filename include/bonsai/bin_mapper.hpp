@@ -15,6 +15,10 @@ class BinMapper
 {
   public:
     static BinMapper fit(std::span<float const> column, BinMapperConfig const &cfg);
+    static BinMapper from_cuts(std::vector<float> cuts)
+    {
+        return BinMapper{std::move(cuts)};
+    }
     uint16_t transform(float x) const;
     size_t n_bins() const
     {
