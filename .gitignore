@@ -59,6 +59,18 @@ _deps/
 # macOS
 .DS_Store
 
+# Tooling artifacts (catboost dumps an info dir per training run).
+catboost_info/
+.venv/
+__pycache__/
+
+# Toy datasets pulled by scripts/fetch_toy.py — regenerate, don't commit.
+tests/data/california_housing_*.csv
+
+# Comparison results — regenerate via scripts/compare.py.
+benchmarks/results/*.json
+benchmarks/results/*.md
+
 # Claude Code: ignore everything under .claude/, except project-owned skills.
 # `make skills` installs upstream skills (e.g. caveman) into .claude/skills/
 # alongside committed project-owned ones (e.g. bonsai-policy).
