@@ -40,5 +40,6 @@ int run_predict(PredictOpts const &opts);
 int run_eval(EvalOpts const &opts);
 int run_bench(BenchOpts const &opts);
 int run_info();
+int run_params();
 
 } // namespace bonsai::cli

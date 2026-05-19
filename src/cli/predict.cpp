@@ -8,6 +8,7 @@
 #include <print>
 
 #include "bonsai/config/data_config.hpp"
+#include "bonsai/config/toml.hpp"
 #include "bonsai/io/model.hpp"
 #include "bonsai/registry/objective_dispatch.hpp"
 
@@ -16,7 +17,12 @@ namespace bonsai::cli
 
 int run_predict(PredictOpts const &opts)
 {
-    auto cfg    = resolve_config(opts.common);
+    auto cfg = resolve_config(opts.common);
+    if (opts.common.dump_config)
+    {
+        std::println("{}", config::dump_toml(cfg));
+        return EXIT_SUCCESS;
+    }
     auto loaded = io::load_booster(opts.model_path);
 
     DataConfig data_cfg = cfg.data;

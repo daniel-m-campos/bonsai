@@ -17,6 +17,7 @@ struct CommonOpts
 {
     std::string config_path;
     std::vector<config::Override> overrides;
+    bool dump_config = false;
 };
 
 // Load config from TOML (if path is given) and apply CLI overrides.

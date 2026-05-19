@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "bonsai/config/data_config.hpp"
+#include "bonsai/config/toml.hpp"
 #include "bonsai/io/model.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/registry/objective_dispatch.hpp"
@@ -68,7 +69,12 @@ void print_default_metrics(std::string const &objective_name,
 
 int run_eval(EvalOpts const &opts)
 {
-    auto cfg    = resolve_config(opts.common);
+    auto cfg = resolve_config(opts.common);
+    if (opts.common.dump_config)
+    {
+        std::println("{}", config::dump_toml(cfg));
+        return EXIT_SUCCESS;
+    }
     auto loaded = io::load_booster(opts.model_path);
 
     DataConfig data_cfg = cfg.data;

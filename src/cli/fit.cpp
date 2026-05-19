@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <print>
 
+#include "bonsai/config/toml.hpp"
 #include "bonsai/io/model.hpp"
 
 namespace bonsai::cli
@@ -15,6 +16,11 @@ namespace bonsai::cli
 int run_fit(FitOpts const &opts)
 {
     auto cfg = resolve_config(opts.common);
+    if (opts.common.dump_config)
+    {
+        std::println("{}", config::dump_toml(cfg));
+        return EXIT_SUCCESS;
+    }
     if (cfg.data.train.empty())
     {
         std::println(stderr, "fit: data.train is required");

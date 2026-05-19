@@ -143,6 +143,7 @@ add_library(bonsai_cli OBJECT
     cli/common.cpp
     cli/pipeline.cpp
     cli/info.cpp
+    cli/params.cpp
     cli/fit.cpp
     cli/predict.cpp
     cli/eval.cpp
