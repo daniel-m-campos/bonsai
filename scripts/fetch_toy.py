@@ -15,7 +15,6 @@ as the first column (matches DataConfig.label_column = 0 default).
 Run via uv:
     uv run scripts/fetch_toy.py
 """
-from __future__ import annotations
 
 import csv
 import pathlib

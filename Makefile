@@ -46,10 +46,10 @@ perf-benchmark: build
 	@./build/benchmarks/bonsai_bench $(ARGS)
 
 fit-benchmark: build $(TOY_SENTINEL)
-	@python scripts/compare.py --config configs/california_housing.toml $(ARGS)
+	@uv run scripts/compare.py --config configs/california_housing.toml $(ARGS)
 
 $(TOY_SENTINEL):
-	@python scripts/fetch_toy.py
+	@uv run scripts/fetch_toy.py
 	@touch $@
 
 help:

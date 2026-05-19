@@ -20,18 +20,17 @@ the same settings. Writes:
 Run via uv (after `make build` and `uv run scripts/fetch_toy.py`):
     uv run scripts/compare.py --config configs/california_housing.toml
 """
-from __future__ import annotations
 
 import argparse
 import json
 import pathlib
 import subprocess
 import time
-import tomllib
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+import tomllib
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
