@@ -142,6 +142,11 @@ target_link_libraries(bonsai_io PUBLIC
 add_library(bonsai_cli OBJECT
     cli/common.cpp
     cli/pipeline.cpp
+    cli/info.cpp
+    cli/fit.cpp
+    cli/predict.cpp
+    cli/eval.cpp
+    cli/bench.cpp
 )
 
 target_include_directories(bonsai_cli PUBLIC
@@ -165,6 +170,7 @@ target_link_libraries(bonsai_cli PUBLIC
 add_executable(bonsai cli/main.cpp)
 
 target_link_libraries(bonsai PRIVATE
+    bonsai_cli
     bonsai_data
     bonsai_io
     bonsai_booster
@@ -173,6 +179,8 @@ target_link_libraries(bonsai PRIVATE
     bonsai_objective
     bonsai_sampler
     bonsai_registry
+    bonsai_config
     bonsai_warnings
+    CLI11::CLI11
     nlohmann_json::nlohmann_json
 )

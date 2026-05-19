@@ -20,6 +20,7 @@ add_executable(bonsai_tests
     unit/test_toml.cpp
     unit/test_model_io.cpp
     unit/test_cli_pipeline.cpp
+    unit/test_eval_baseline.cpp
 )
 
 target_link_libraries(bonsai_tests PRIVATE
