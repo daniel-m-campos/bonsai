@@ -15,8 +15,8 @@ disagrees, decisions wins.
 | 5 | [`5-booster.md`](5-booster.md) — Booster, training loop, `update_one_iter` | done |
 | 6 | [`6-dispatch.md`](6-dispatch.md) — registry, runtime → static boundary | done |
 | 7 | `7-parallel.md` — ParallelBackend, OpenMP, std::execution | TBD |
-| 8 | [`8-config.md`](8-config.md) — Config, TOML, CLI overrides | partial (data slice only) |
-| 9 | `9-cli.md` — subcommands, progress bars, logging | TBD |
+| 8 | [`8-config.md`](8-config.md) — Config, TOML, CLI overrides | done |
+| 9 | [`9-cli.md`](9-cli.md) — subcommands, progress bars, logging | done |
 
 ## Cross-cutting concerns
 

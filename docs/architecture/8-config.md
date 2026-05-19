@@ -1,9 +1,8 @@
 # 8. Config
 
-> **Status:** Partial. Only the data-related slice is pinned down (enough
-> to implement [`1-dataset.md`](1-dataset.md)). `BoosterConfig`,
-> `TreeConfig`, `SamplerConfig`, `SplitConfig`, `ParallelConfig`,
-> `IOConfig` to be filled in as their components are designed.
+> **Status:** Mostly done. `DataConfig`, `BinMapperConfig`, `BoosterConfig`,
+> `TreeConfig`, `DispatchConfig` are pinned and parsed. `ParallelConfig`,
+> `IOConfig` to be filled in as their components are designed (post-spine).
 
 ## Shape
 
@@ -17,7 +16,9 @@ namespace bonsai {
 struct Config {
     DataConfig      data;
     BinMapperConfig bin_mapper;
-    // BoosterConfig, TreeConfig, SamplerConfig, SplitConfig,
+    TreeConfig      tree_config;
+    BoosterConfig   booster_config;
+    DispatchConfig  dispatch;
     // ParallelConfig, IOConfig — TBD
 };
 
@@ -116,21 +117,62 @@ missing_nan = true
 missing_sentinel = -999.0
 ```
 
+## `TreeConfig`, `BoosterConfig`, `DispatchConfig`
+
+```cpp
+struct TreeConfig {
+    float   min_child_hess     = 1.0F;
+    float   min_gain_to_split  = 0.0F;
+    float   lambda_l2          = 1.0F;
+    uint8_t max_depth          = 6;
+    uint8_t min_data_in_leaf   = 20;
+};
+
+struct BoosterConfig {
+    uint32_t n_iters       = 100;
+    float    learning_rate = 0.05F;
+    uint32_t random_seed   = 42;
+};
+
+struct DispatchConfig {
+    std::string objective_name = "mse";       // mse | logloss
+    std::string grower_name    = "depthwise";
+    std::string sampler_name   = "all_rows";
+};
+```
+
+TOML:
+
+```toml
+[tree]
+max_depth = 6
+min_data_in_leaf = 20
+lambda_l2 = 1.0
+
+[booster]
+n_iters = 200
+learning_rate = 0.05
+
+[dispatch]
+objective_name = "mse"
+grower_name = "depthwise"
+sampler_name = "all_rows"
+```
+
 ## CLI overrides
 
-Dotted keys, kebab-case at the CLI:
+Dotted keys via `--set section.key=value` (repeatable):
 
 ```
 bonsai fit --config base.toml \
-           --data.train train.csv \
-           --bin_mapper.max-bin 127 \
-           --bin_mapper.bin-construct-sample 100000
+           --set tree.max_depth=8 \
+           --set booster.n_iters=300 \
+           --set booster.learning_rate=0.03
 ```
 
-Underscores in struct field names become dashes on the CLI. Section
-names use the dotted prefix; underscores in section names (like
-`bin_mapper`) stay as-is. (CLI11 supports both styles; pick one and
-stick to it. TBD; lock in when the CLI doc lands.)
+Keys mirror the underscored TOML names (e.g. `tree.max_depth`, not
+`tree.max-depth`). Last write wins across multiple `--set` flags and
+between the file and the CLI. Unknown keys throw `ConfigError`.
 
 ## Parsing
 

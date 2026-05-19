@@ -63,7 +63,9 @@ Avoid claiming: speed parity with reference libraries, production suitability.
 ## 3.5. Spine implementation status
 
 The bonsai-policy gate (`.claude/skills/bonsai-policy`) restricts AI from
-writing initial versions of spine components. Status as of 2026-05-16:
+writing initial versions of spine components. Status as of 2026-05-16
+(CLI, CSV reader, TOML loader, model save/load, and Python comparison
+sidecar landed alongside this update):
 
 | Spine component | User-authored | File(s) |
 |---|---|---|
