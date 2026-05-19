@@ -3,15 +3,19 @@ SKILLS_DIR   := .claude/skills
 LLVM_BIN     := /opt/homebrew/opt/llvm/bin
 SOURCES      := $(shell find src include -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' \) 2>/dev/null)
 LINT_SOURCES := $(shell find src -type f -name '*.cpp' 2>/dev/null)
+TOY_SENTINEL := tests/data/.toy-fetched
+SDK_PATH     := $(shell xcrun --show-sdk-path)
 
 all: build
 
-configure:
+build/build.ninja:
 	@cmake -DCMAKE_BUILD_TYPE=Release \
 	-DCMAKE_CXX_COMPILER=$(LLVM_BIN)/clang++ \
 	-G Ninja -S . -B build
 
-build: configure
+configure: build/build.ninja
+
+build: build/build.ninja
 	@cmake --build build -j
 
 clean:
@@ -22,8 +26,10 @@ rebuild: clean build
 format:
 	@$(LLVM_BIN)/clang-format -i $(SOURCES)
 
-lint: build
-	@out=$$($(LLVM_BIN)/clang-tidy --quiet --extra-arg=--driver-mode=g++ \
+lint: build/build.ninja
+	@out=$$($(LLVM_BIN)/run-clang-tidy -quiet -use-color=0 \
+	    -clang-tidy-binary $(LLVM_BIN)/clang-tidy \
+	    -extra-arg=-isysroot -extra-arg=$(SDK_PATH) \
 	    -header-filter='include/bonsai/.*' -p build $(LINT_SOURCES) 2>/dev/null \
 	    | grep -E '(warning|error):' \
 	    | grep -v -E '(c\+\+/v1|system-headers|too many)'); \
@@ -31,19 +37,33 @@ lint: build
 	echo "lint: no findings."
 
 run: build
+	@./build/src/bonsai $(ARGS)
 
 test: build
 	@ctest --test-dir build
 
+perf-benchmark: build
+	@./build/benchmarks/bonsai_bench $(ARGS)
+
+fit-benchmark: build $(TOY_SENTINEL)
+	@python scripts/compare.py --config configs/california_housing.toml $(ARGS)
+
+$(TOY_SENTINEL):
+	@python scripts/fetch_toy.py
+	@touch $@
+
 help:
 	@echo "Targets:"
-	@echo "  make build         Configure + compile."
-	@echo "  make rebuild       Clean + build."
-	@echo "  make test          Build + run ctest."
-	@echo "  make format        clang-format src/ + include/ in place."
-	@echo "  make lint          clang-tidy on src/ (header-filtered to bonsai)."
-	@echo "  make skills        Install project-local Claude Code skills (currently: caveman)."
-	@echo "  make skills-clean  Remove installed project-local skills."
+	@echo "  make build              Configure + compile."
+	@echo "  make rebuild            Clean + build."
+	@echo "  make test               Build + run ctest."
+	@echo "  make run ARGS=...       Build + run ./build/src/bonsai with ARGS."
+	@echo "  make perf-benchmark     Build + run Catch2 perf microbenchmarks (ARGS forwarded)."
+	@echo "  make fit-benchmark      Build + compare bonsai vs lightgbm/catboost on cal housing."
+	@echo "  make format             clang-format src/ + include/ in place."
+	@echo "  make lint               clang-tidy on src/ (header-filtered to bonsai)."
+	@echo "  make skills             Install project-local Claude Code skills (currently: caveman)."
+	@echo "  make skills-clean       Remove installed project-local skills."
 
 skills: $(SKILLS_DIR)/caveman/SKILL.md
 
@@ -56,4 +76,4 @@ $(SKILLS_DIR)/caveman/SKILL.md:
 skills-clean:
 	rm -rf $(SKILLS_DIR)
 
-.PHONY: configure build clean rebuild format lint all run test skills skills-clean help
+.PHONY: configure build clean rebuild format lint all run test perf-benchmark fit-benchmark skills skills-clean help
