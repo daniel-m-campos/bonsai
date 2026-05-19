@@ -63,9 +63,10 @@ Avoid claiming: speed parity with reference libraries, production suitability.
 ## 3.5. Spine implementation status
 
 The bonsai-policy gate (`.claude/skills/bonsai-policy`) restricts AI from
-writing initial versions of spine components. Status as of 2026-05-16
-(CLI, CSV reader, TOML loader, model save/load, and Python comparison
-sidecar landed alongside this update):
+writing initial versions of spine components. Status as of 2026-05-18
+(CLI, CSV reader, TOML loader, model save/load, Python comparison
+sidecar, and the typed-section config / metric registry / fit-time
+metric tick logging features are landed):
 
 | Spine component | User-authored | File(s) |
 |---|---|---|
@@ -81,9 +82,12 @@ sidecar landed alongside this update):
 | `ParallelBackend` concept | **no — gated** | (doc 7 TBD) |
 | `SerialBackend`, `OpenMPBackend` | **no — gated** | (depends on doc 7) |
 
-Editorial cleanup, refactors, tests, build, CLI, benchmarks, and docs on
-already-user-authored spine code are fine. Initial versions of the two
-remaining gated rows must come from the user.
+**Spine complete as of 2026-05-18.** The two remaining gated rows
+(`ParallelBackend` concept + first impl) are reclassified as part of
+Phase 3 work rather than spine-gated work — the spine-authorship
+gate is satisfied for everything required to ship the Phase 1 MVP
+and Phase 2 benchmark harness. AI assistance is now open across the
+codebase (see §11 for the relaxed rules).
 
 ## 4. Decisions made (with rationale)
 
@@ -93,11 +97,9 @@ remaining gated rows must come from the user.
   `Booster<Obj, Gr, Sp, Sa>` is a class template. Runtime dispatch from TOML
   string happens once at construction; everything inside the booster is
   statically dispatched. Cost: cartesian product instantiations (~15-90
-  variants), acceptable at this scale.
-  - **Open**: the exact dispatch mechanism. Earlier nested-lambda sketch was
-    ugly. Need a flatter design — possibly a dispatch table keyed on a
-    name-tuple, or a builder that resolves one component at a time. **TBD
-    in `architecture/6-dispatch.md`.**
+  variants), acceptable at this scale. Resolved as a flat table over
+  `cartesian_product_t<...>` (decision 26); see
+  `architecture/6-dispatch.md`.
 
 - **`Booster` as single concrete class for now**, not abstract base.
   Virtualize when adding DART/RF (probably never, given non-goals).
@@ -161,13 +163,15 @@ remaining gated rows must come from the user.
   fail on drift).
 
 ### CLI
-- **CatBoost-style subcommands**: `gbt fit`, `gbt predict`, `gbt eval`,
-  `gbt bench`, `gbt info`.
+- **CatBoost-style subcommands**: `bonsai fit`, `bonsai predict`,
+  `bonsai eval`, `bonsai bench`, `bonsai info`, `bonsai params`.
 - **CLI11** for parsing — header-only, dotted/nested keys, no deps.
-- **Indicators (p-ranav)** for progress bars — header-only, thread-safe,
-  has MultiProgress for showing per-validation eval alongside training.
-- **TOML config + CLI overrides** with dotted keys (`--tree.max-leaves 63`).
-  Resolution: defaults → file → CLI. Last write wins.
+- **Fit-time output** is text via `std::print` from a tick callback
+  gated on `booster.log_intervals`. Streaming progress-bar UI is
+  deferred (not currently wired).
+- **TOML config + CLI overrides** via dotted `--set` keys
+  (`--set tree.max_depth=8`, repeatable). Resolution: defaults → file
+  → CLI. Last write wins.
 - **toml++** for parsing (strict mode — reject unknown keys).
 
 ### Config schema
@@ -183,21 +187,20 @@ remaining gated rows must come from the user.
 - **No `extra` map for "future-proofing."** Strict typing throughout.
 
 ### Logging
-- **spdlog** via FetchContent. Saves a week of yak-shaving on a custom
-  logger.
+- **spdlog** is fetched but not yet wired into source. CLI fit-time
+  output is `std::print` for now (decision deferred until a real
+  logging surface needs structured records).
 
 ### Build
 - **CMake with FetchContent** for all deps (Catch2, CLI11, toml++,
-  indicators, spdlog, google-benchmark, TBB).
+  spdlog, nlohmann/json). google-benchmark and TBB will be added when
+  the microbench and parallel backends land.
 - **OBJECT libraries** for component groups — avoids static-archive
   dead-code stripping issues.
 - **No system package dependencies** — single `cmake --build` for grading.
 
 ## 5. Decisions deferred / open questions
 
-- **Dispatch mechanism shape** at the runtime → static boundary. Need
-  flatter design than nested lambdas. (Resolve in
-  `architecture/6-dispatch.md`.)
 - **Numerical parity tolerance values** — pick after seeing actual variance.
 - **Whether to implement the C++26 reflection branch** or just sketch it.
   Depends on time remaining after main path is solid.
@@ -207,38 +210,64 @@ remaining gated rows must come from the user.
 
 ## 6. Architecture sketch
 
+Current layout: `include/bonsai/` is mostly flat with header-per-component;
+subdirectories exist for `cli/`, `config/`, `io/`, `registry/`, and
+`detail/`. Source mirrors `src/`. Aspirational shape, mapping component
+to file or directory (future impls noted where they don't exist yet):
+
 ```
-gbt/
-  core/        Dataset, BinMapper, Histogram, Gradient
-  tree/        Tree, Node
-               TreeGrower concept, impls: depthwise, leafwise, oblivious
-  split/       SplitFinder concept, impls: histogram, exact
-  objective/   Objective concept, impls: mse, logloss, softmax, quantile, huber
-  sampler/     Sampler concept, impls: uniform, goss, bernoulli
-  cat/         (Phase 4) CategoricalHandler, impls: onehot, partition, target_stat
-  parallel/    ParallelBackend concept, impls: serial, openmp, stdexec
-  booster/     Booster<Obj, Gr, Sp, Sa, Backend>, training loop, early stopping
-  io/          CSV / libsvm / parquet readers, model serialize
-  config/      Config struct, TOML parser, CLI override merger
-  registry/    Registry<Base, Config, Impls...>, dispatch fold expression
-  cli/         subcommand handlers (fit, predict, eval, bench, info)
+include/bonsai/
+  dataset.hpp, bin_mapper.hpp, bin_mappers.hpp, histogram.hpp
+                — Dataset, BinMapper, Histogram, Gradient
+  tree.hpp, grower.hpp
+                — Tree, Node, TreeGrower concept;
+                  impls: depthwise (now); leafwise, oblivious (future)
+  split.hpp     — SplitFinder concept; impls: histogram (now), exact (future)
+  objective.hpp, objective_traits.hpp, task.hpp, metric.hpp
+                — Objective concept; impls: mse, logloss (now);
+                  softmax, quantile, huber (future)
+  sampler.hpp   — Sampler concept; impls: all_rows (now);
+                  uniform, goss, bernoulli (future)
+  cat/          — (Phase 4) CategoricalHandler;
+                  impls: onehot, partition, target_stat
+  parallel/     — (Phase 3) ParallelBackend concept;
+                  impls: serial, openmp, stdexec
+  booster.hpp   — Booster<Obj, Gr, Sa>, IBooster, training loop
+  io/           — CSV reader; model save/load (MessagePack);
+                  libsvm, parquet readers (future)
+  config/       — Config struct, typed sections, FieldCodec,
+                  TOML parser + dumper, CLI override merger
+  registry/     — flat table over cartesian_product_t<...>,
+                  IBooster at boundary
+  cli/          — subcommand handlers
+                  (fit, predict, eval, bench, info, params)
 ```
 
 ## 7. Implementation phases (high level)
 
 1. **Phase 1: Serial MVP.** Numeric features only. MSE is the live parity
-   target on one regression dataset (YearPredictionMSD). Logloss objective
-   ships alongside MSE — analytical-gradient unit tests + a synthetic
-   2-class smoke test, no live reference dataset. Depth-wise grower,
-   histogram splitter, uniform sampler. CLI: fit / predict / eval. TOML
-   config + CLI overrides.
-2. **Phase 2: Benchmark harness.** Dataset loader for YearPredictionMSD,
-   parity tests vs xgb/lgbm/catboost (RMSE only), golden files,
+   target on one regression dataset (California Housing). Logloss
+   objective ships alongside MSE — analytical-gradient unit tests + a
+   synthetic 2-class smoke test, no live reference dataset. Depth-wise
+   grower, histogram splitter, all-rows sampler. CLI: fit / predict /
+   eval / bench / info / params. TOML config + CLI overrides.
+2. **Phase 2: Benchmark harness.** California Housing parity script
+   vs xgboost / lightgbm / catboost (RMSE), golden files,
    microbenchmark scaffold.
+
+**Phase 2.5: CLI design + cleanup** (inserted 2026-05-18, decision
+28). Before turning on parallelism, take a pass on CLI usability, the
+typed-config surface, and the small things glossed over during the
+Phase 1/2 sprints. Items captured as concrete tasks during the work,
+not pre-listed here. No new spine, no parallel backends; refactors
+are fair game now that AI assistance is open.
+
 3. **Phase 3: Parallelism.** OpenMP first (feature-parallel hist
    construction, row-parallel within feature, parallel predict, SIMD bin
    scan). Then std::execution variant. Determinism + tolerance regression
-   throughout.
+   throughout. Adds YearPredictionMSD as the perf benchmark (California
+   Housing is too small to expose scaling); speedup curves are measured
+   here, not on the integration dataset.
 4. **Phase 4: Extensions.** First item is binary classification parity:
    wire in a classification reference dataset (Higgs subset), AUC parity
    tests, golden file. Logloss code is already in the codebase from Phase
@@ -266,14 +295,14 @@ docs/
     README.md         — index + cross-cutting concerns (dispatch,
                          threading, error handling, determinism)
     1-dataset.md      — Dataset, BinMapper, readers
-    2-histogram.md    — (TBD) Histogram, subtraction, parallel reduce
-    3-tree.md         — (TBD) Tree, Node, TreeGrower
-    4-objective.md    — (TBD) Objective, MSE, logloss
-    5-booster.md      — (TBD) Booster, training loop
-    6-dispatch.md     — (TBD) registry, runtime → static boundary
+    2-histogram.md    — Histogram, subtraction, parallel reduce
+    3-tree.md         — Tree, Node, TreeGrower
+    4-objective.md    — Objective, MSE, logloss
+    5-booster.md      — Booster, training loop
+    6-dispatch.md     — registry, runtime → static boundary
     7-parallel.md     — (TBD) ParallelBackend, OpenMP, std::execution
-    8-config.md       — (TBD) Config, TOML, CLI overrides
-    9-cli.md          — (TBD) subcommand handlers
+    8-config.md       — Config, TOML, CLI overrides
+    9-cli.md          — subcommand handlers
   conversations/
     2026-05-02-initial-design.md  — full transcript of design chat
 ```
@@ -313,11 +342,11 @@ bottom; numbering never reused.
 | Build | CMake + FetchContent | No system deps |
 | CLI | CLI11 | Dotted nested keys |
 | Config | toml++ | Strict mode, reject unknown keys |
-| Progress | indicators (p-ranav) | Header-only, MultiProgress |
-| Logging | spdlog | FetchContent |
+| Progress | `std::print` tick callback | indicators (p-ranav) deferred |
+| Logging | spdlog (fetched, not yet wired) | structured logging deferred |
 | Tests | Catch2 v3 | Link `Catch2WithMain` |
-| Bench | google-benchmark | Separate from Catch2 |
-| Parallel | OpenMP + std::execution | TBB vendored for stdexec |
+| Bench | google-benchmark (planned) | not yet fetched |
+| Parallel (planned) | OpenMP + std::execution | TBB to be vendored for stdexec |
 
 ## 10. Evaluation criteria (figures planned for final report)
 
@@ -346,49 +375,45 @@ The professor's two asks, paraphrased:
    AI to add features, tests, produce architecture diagrams, etc. is
    ok." Initial implementation must be by the user.
 
+**Status (2026-05-18).** Spine is complete. The user has hand-authored
+every spine component required to ship the Phase 1 MVP and Phase 2
+benchmark harness end-to-end (Dataset, BinMapper, BinMappers,
+Histogram, depth-wise + oblivious TreeGrower, DenseTree, ObliviousTree,
+histogram SplitFinder, Objective concept + MSE + LogLoss, Sampler
+concept + AllRowsSampler, Booster + IBooster, registry / dispatch flat
+table). The `ParallelBackend` concept and its first impl are reclassified
+as Phase 3 work, not spine-gated. The course rule "write the core
+functionality and architecture yourself" is satisfied.
+
 What this means for any agent (Claude Code, subagent, etc.) working in
-this repo:
+this repo from 2026-05-18 onward:
 
-**ALLOWED**
-- Drafting / editing documents (`docs/*.md`, ADRs, READMEs).
-- Surveying reference libraries, summarizing design tradeoffs.
-- Generating diagrams.
-- Editorial cleanup of user-written prose or code.
-- After the user has authored the core implementation by hand:
-  - Writing tests (unit, integration, golden-file, parity).
-  - Build system / CMake.
-  - CLI plumbing (argument parsing, subcommand wiring).
-  - Benchmark harness, dataset loaders, scripts.
-  - Secondary objectives / extensions (Phase 4 items) *after* the
-    Phase 1 core is working.
-  - Documentation, comments, commit messages.
-
-**NOT ALLOWED until the user has written the core path by hand**
-- Writing `Dataset`, `BinMapper`, `Histogram` (core data structures).
-- Writing `Booster<...>` (training loop, gradient/score management).
-- Writing the registry / dispatch mechanism.
-- Writing the depth-wise `TreeGrower` or histogram `SplitFinder`.
-- Writing the `Objective` concept implementations (MSE, logloss) for
-  the MVP.
-- Writing the `ParallelBackend` concept or its first impl.
-- Resolving the deferred dispatch design question — that resolution
-  must come from the user, in `architecture/6-dispatch.md`, before any
-  code is written against it.
+**ALLOWED — broadly**
+- Refactoring anywhere in the codebase, including spine components,
+  CLI, config, I/O, registry, and tests.
+- Writing new features: additional objectives, samplers, growers,
+  split finders, the parallel backends, categorical handlers.
+- Authoring tests, build, benchmarks, dataset loaders, scripts.
+- Drafting and editing docs, decisions, diagrams.
+- Following commit-message style and producing PR descriptions.
 
 **ALWAYS**
-- Disclose AI assistance in commit messages when AI wrote any portion
-  of the diff (e.g., trailer line `AI-Assisted: tests authored with
-  Claude`).
-- Preserve conversation transcripts of any non-trivial design
-  discussion under `docs/conversations/`.
-- If an agent is unsure whether a task crosses the line, *stop and
-  ask the user* rather than guessing.
+- Disclose AI assistance via commit trailer when AI wrote any portion
+  of the diff: `AI-Assisted: <short description>`. Absence of trailer
+  means 100% user-written.
+- Preserve conversation transcripts of non-trivial design discussions
+  under `docs/conversations/`.
+- Stop and ask before destructive operations or anything that crosses
+  obvious scope. Approval in one task does not transfer to the next.
 
-Professor signed off on this policy on 2026-05-04 ("LGTM"). Implementation
-is underway. Any agent about to create source files in `src/` or
-`include/` for a spine component should confirm with the user that they
-have hand-authored that component first; outside the spine, the normal
-"allowed once core is working" rules apply.
+**NOT ALLOWED**
+- Silently writing without the trailer. Disclosure is non-negotiable.
+- Making design decisions the user accepts without independent
+  rationale. AI proposes, user decides.
+
+Professor signed off on the policy on 2026-05-04 ("LGTM"). The
+spine-authorship gate that operated during Phase 1 is now satisfied
+and lifted (decision 28). Full audit trail in `docs/ai-usage.md`.
 
 ## 12. What this doc is not
 

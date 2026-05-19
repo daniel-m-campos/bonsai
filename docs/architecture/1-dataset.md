@@ -57,9 +57,11 @@ input. Without this shared intermediate, you'd either parse the file
 twice or collapse `fit` and `bin` into one factory (rejected as decision
 2).
 
-CLI default: parse twice on the train path (cheap for YearPredictionMSD,
-~1s redundant). If that ever matters, the CLI can call `csv::parse`
-directly once and pass the same `ColumnBatch` to both `fit` and `bin`.
+CLI default: parse twice on the train path (cheap for California
+Housing). If that ever matters — once larger datasets like
+YearPredictionMSD enter the perf benchmark — the CLI can call
+`csv::parse` directly once and pass the same `ColumnBatch` to both
+`fit` and `bin`.
 
 ## `BinMapper`
 
@@ -178,11 +180,11 @@ private:
 - Group columns (ranking) are non-goals.
 
 Rejected: `std::variant<vector<uint8_t>, vector<uint16_t>>` per feature
-to halve memory on small-bin features. Saves ~45MB on
-YearPredictionMSD, ~308MB on Higgs — neither pressure-tests modern
-hardware. Cost was variant dispatch (a `visit_column` wrapper at every
-column scan). Rejected for MVP. Reversible if memory becomes the
-bottleneck on a future dataset.
+to halve memory on small-bin features. Forecast savings on planned
+perf datasets: ~45MB on YearPredictionMSD, ~308MB on Higgs — neither
+pressure-tests modern hardware. Cost was variant dispatch (a
+`visit_column` wrapper at every column scan). Rejected for MVP.
+Reversible if memory becomes the bottleneck on a future dataset.
 
 ### Histogram inner loop
 
@@ -221,7 +223,8 @@ unit. `read_X` and `fit_from_X` share parsing through an internal
 `namespace bonsai::csv { ColumnBatch parse(...); }` helper.
 
 **Phase 1: hand-rolled CSV** (~50 LOC). Numeric only, comma-separated,
-header row, configurable label column. Enough for YearPredictionMSD.
+header row, configurable label column. Enough for California Housing
+(integration) and the planned YearPredictionMSD perf benchmark.
 
 **Phase 4+: Arrow optional** behind `BONSAI_PARQUET=ON` CMake flag.
 Arrow handles CSV + parquet + feather. Heavier dep (transitive

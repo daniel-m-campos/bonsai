@@ -1,13 +1,13 @@
 # 9. CLI
 
-> **Status:** Done for the MVP. CLI11-based subcommand layout, all five
-> subcommands wired (`fit`, `predict`, `eval`, `bench`, `info`).
+> **Status:** Done for the MVP. CLI11-based subcommand layout, all six
+> subcommands wired (`fit`, `predict`, `eval`, `bench`, `info`, `params`).
 
 ## Layout
 
-`src/cli/main.cpp` is the thin CLI11 root: it builds five `CLI::App`
+`src/cli/main.cpp` is the thin CLI11 root: it builds six `CLI::App`
 subcommands and dispatches to the per-subcommand handler in
-`src/cli/{fit,predict,eval,bench,info}.cpp`. Each handler owns one
+`src/cli/{fit,predict,eval,bench,info,params}.cpp`. Each handler owns one
 free function (`run_fit`, etc.) over a strongly-typed `*Opts` struct
 declared in `src/cli/handlers.hpp`.
 
@@ -29,6 +29,7 @@ Shared helpers live in `src/cli/common.{hpp,cpp}`:
 | `eval`    | Evaluate a model | `--model`     | regression → RMSE; logloss → logloss + accuracy |
 | `bench`   | Time fit+predict | `-c <config>` | prints `load_seconds`, `fit_seconds`, `predict_seconds`, `rows_per_sec` |
 | `info`    | List dispatch combos | —         | enumerates `available_combos()` from the registry |
+| `params`  | Print default config as TOML | —    | lists every `--set` key in a parseable skeleton |
 
 ## Overrides
 
@@ -36,6 +37,11 @@ Every command accepts `--set <key>=<value>` (repeatable). Keys are
 dotted into `Config` sections (`tree.max_depth`, `booster.n_iters`,
 …). Underscores in field names; sections are the TOML headers.
 Last write wins across multiple flags and the TOML file.
+
+Every command except `info` and `params` also accepts `--dump-config`.
+When set, the resolved config (defaults → TOML → `--set`) is printed
+as TOML and the command exits without running. Useful for debugging
+override precedence and as a reproducibility artifact.
 
 Unknown keys throw `ConfigError`; unknown TOML sections also throw,
 and toml++ is configured in strict mode (unknown keys inside a known
@@ -59,12 +65,15 @@ matching decision 22 (booster owns predict-path link). The flag
 
 ## What's not here
 
+Fit-time progress is text-based (`std::print` from `on_tick`), gated
+on `booster.log_intervals` (see [`8-config.md`](8-config.md)). No
+`indicators` progress bars yet.
+
 - `--early-stopping-rounds` on `fit` — deferred until eval-during-fit
   is wired.
-- Multi-validation (`[data].valid`) — config parses it but `fit`
-  doesn't use it yet.
-- Streaming progress bars (indicators (p-ranav)) — currently logging
-  every 10 iters to stdout.
+- Multi-validation (`[data].valid`) — only the first path is consumed
+  for per-iter eval metrics; additional entries log a stderr warning.
+  Multiple simultaneous valid sets deferred.
 
 ## Cross-references
 

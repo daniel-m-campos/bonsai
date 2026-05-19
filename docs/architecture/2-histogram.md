@@ -334,8 +334,9 @@ The pattern:
    Order doesn't have to be `tid`-major — it just has to be
    reproducible at fixed `n_threads`.
 
-Cost: `n_threads * n_features * n_bins * 16B` of scratch. On
-YearPredictionMSD with 90 features, 255 bins, 8 threads: ~2.8MB. Fine.
+Cost: `n_threads * n_features * n_bins * 16B` of scratch. Forecast
+on the planned YearPredictionMSD perf benchmark (90 features,
+255 bins, 8 threads): ~2.8MB. Fine.
 
 `ParallelBackend` (concept, see [`7-parallel.md`](7-parallel.md)) wraps
 the row-range scan + per-thread reduction so the same `Histogram::build`

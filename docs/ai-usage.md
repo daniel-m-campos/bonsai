@@ -21,9 +21,11 @@ for features, tests, diagrams, etc.
 
 When ambiguous, err toward writing it yourself and disclosing more.
 
-## Core that the user must hand-author
+## Spine-authorship rule — satisfied 2026-05-18
 
-The "spine" — first working version written by the user, no AI ghost-writing:
+The course rule "write the core functionality and architecture
+yourself" required the user to hand-author the spine of the system
+before AI assisted with that area. The list as originally specified:
 
 - `Dataset`, `BinMapper`, `Histogram`.
 - `Booster<...>` — training loop, gradient/score management, `update_one_iter`.
@@ -36,38 +38,41 @@ The "spine" — first working version written by the user, no AI ghost-writing:
   `docs/architecture/N-*.md` doc (likely `6-dispatch.md`) by
   the user, in their own voice, before any code is written against it.
 
-Once the spine works end-to-end on the MVP regression dataset, AI assistance
-opens up for the rest.
+**Status as of 2026-05-18 (decision 28).** Every item above is in
+place except the parallel backends, which are reclassified as Phase 3
+work — the user will own the threading-model design (`7-parallel.md`)
+before AI implements from it, so the spine-authorship intent is
+preserved. The course rule is satisfied; the spine gate as a hard
+stop on AI edits is lifted.
 
-## What AI may do, and when
+## What AI may do, from 2026-05-18 onward
 
-**Always allowed** (does not touch core implementation):
+**Broadly allowed** — anywhere in the codebase, including spine
+components:
 
-- Documentation drafting and editorial cleanup (`proposal.md`,
-  `docs/architecture/*.md`, ADRs, READMEs). User owns design decisions;
-  AI drafts prose.
-- Reference-library surveys, tradeoff summaries.
-- Diagrams (architecture, flow, data layout).
-- Searches and lookups.
-
-**Allowed after the Phase 1 core is working end-to-end:**
-
+- Refactoring existing code (spine, CLI, config, I/O, registry, tests).
+- Implementing new features: additional objectives, samplers, growers,
+  split finders, parallel backends, categorical handlers.
 - Tests (unit, integration, golden-file, parity, determinism).
 - Build system (CMake, FetchContent, CI).
-- CLI plumbing (argument parsing, subcommand wiring, config loading,
-  progress-bar integration).
 - Benchmark harness, dataset loaders, reproduction scripts.
-- Phase 4 extensions (leaf-wise/oblivious growers, GOSS, exact splitter,
-  categorical handlers, additional objectives). User reviews each.
-- Parallel backends *after* `SerialBackend` and `OpenMPBackend` exist —
-  e.g., `StdExecBackend`.
-- Boilerplate (header guards, includes, forward decls, CSV glue).
+- Docs, decisions log entries, diagrams.
+- Commit messages and PR descriptions.
+
+**Always:**
+
+- Disclose via `AI-Assisted: <short description>` trailer on any
+  commit with AI-authored content. Absence = 100% user-written.
+- Preserve non-trivial design conversations under
+  `docs/conversations/<YYYY-MM-DD>-<slug>.md`.
+- Stop and ask before destructive operations or anything outside
+  the agreed scope. Approval in one task does not transfer.
 
 **Never:**
 
-- AI ghost-writing core data structures or training loop.
-- AI making design decisions the user then accepts without independent rationale.
-- Any AI assistance without disclosure.
+- Silent AI authorship (no trailer).
+- AI making design decisions the user accepts without independent
+  rationale. AI proposes; user decides.
 
 ## Operational rules
 
@@ -99,11 +104,12 @@ to that point stands and does not need rollback.
 **Agent obligations.** Any AI agent in this repo:
 
 1. Reads `docs/context.md` (which links here) before non-trivial work.
-2. Does not create `src/` or `include/` files for spine components
-   until the user has hand-authored that component. The professor
-   sign-off is no longer a gate; user authorship of the spine is.
-3. Stops and asks when a task arguably crosses the line.
-4. Surfaces AI authorship in commit message drafts.
+2. From 2026-05-18 onward: may touch any file in the tree (decision
+   28). The spine-authorship gate is satisfied and lifted.
+3. Stops and asks before destructive operations or scope creep.
+   Approval in one task does not transfer to the next.
+4. Surfaces AI authorship in commit message drafts via the
+   `AI-Assisted: ...` trailer.
 
 ## Audit trail
 
@@ -126,6 +132,7 @@ Append-only. New entries at the bottom.
 | 2026-05-07 | `include/bonsai/types.hpp` + `include/bonsai/tree.hpp` + `src/tree.cpp` + `tests/unit/test_dense_tree.cpp` + `tests/unit/test_oblivious_tree.cpp` + `tests/unit/test_tree_constants.hpp` | User hand-authored the spine code (`DenseTree`, `ObliviousTree`, `Tree` concept, types aliases). AI advised on type aliasing (rejected `row_t`/`column_t` for changing meaning per call site), spotted const-correctness and concept-signature bugs in early drafts, and authored the unit tests after the spine landed. | First two of four `3-tree.md` spine components shipped (tree types). `DepthwiseGrower`, `ObliviousGrower`, `HistogramSplitFinder`, and the `TreeGrower` / `SplitFinder` concept declarations are still pending — user-authored when written. |
 
 | 2026-05-11 | `docs/architecture/4-objective.md` + `docs/decisions.md` §§21–25 + `docs/architecture/README.md` (index update) | AI surveyed xgb (`ObjFunction`, `RegLossObj` family), lgbm (`ObjectiveFunction`, virtual `GetGradients`), CatBoost (`IDerCalcer`) interface shapes; presented three interface options (concept-static, concept-instance, virtual base) and three scope options (initial_score, eval, transform, weighting). User picked concept-static + bundled eval, kept everything else off the concept (initial_score, transform, sample-weighting all booster-side). AI drafted doc prose and decisions entries from those choices. Spine impl (`Objective` concept declaration, `MSEObjective`, `LogLossObjective`) reserved for hand-authoring. | Doc + decisions only; no spine code written. Tests for the objectives land after user-authored impl, per usual. |
+| 2026-05-18 | `docs/context.md` + `docs/decisions.md` §28 + `docs/ai-usage.md` + `.claude/skills/bonsai-policy/SKILL.md` (spine-gate lift + Phase 2.5 insertion + AI policy relaxation) | User declared the spine-authorship rule satisfied: Phase 1 MVP and Phase 2 benchmark harness end-to-end on California Housing, with eval baseline pinned at `rmse=0.7175214`. The `ParallelBackend` concept + first impl reclassified as Phase 3 work rather than spine-gated; the user will own the threading-model design (`7-parallel.md`) before AI implements from it. AI drafted prose for the policy update, decision §28, and the skill rewrite from the user's direction. | AI assistance opens up across the codebase, including refactors of spine components, from this date forward. Disclosure trailer + transcript-capture rules stand. Phase 2.5 (CLI design + cleanup) inserted between Phase 2 and Phase 3. |
 
 When implementation starts, this table grows per AI-assisted artifact (or per
 phase if grouping is cleaner).

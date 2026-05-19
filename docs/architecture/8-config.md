@@ -1,8 +1,9 @@
 # 8. Config
 
 > **Status:** Mostly done. `DataConfig`, `BinMapperConfig`, `BoosterConfig`,
-> `TreeConfig`, `DispatchConfig` are pinned and parsed. `ParallelConfig`,
-> `IOConfig` to be filled in as their components are designed (post-spine).
+> `TreeConfig`, `DispatchConfig`, `MetricsConfig` are pinned and parsed.
+> `ParallelConfig`, `IOConfig` to be filled in as their components are
+> designed (post-spine).
 
 ## Shape
 
@@ -19,6 +20,7 @@ struct Config {
     TreeConfig      tree_config;
     BoosterConfig   booster_config;
     DispatchConfig  dispatch;
+    MetricsConfig   metrics;
     // ParallelConfig, IOConfig — TBD
 };
 
@@ -117,7 +119,7 @@ missing_nan = true
 missing_sentinel = -999.0
 ```
 
-## `TreeConfig`, `BoosterConfig`, `DispatchConfig`
+## `TreeConfig`, `BoosterConfig`, `DispatchConfig`, `MetricsConfig`
 
 ```cpp
 struct TreeConfig {
@@ -132,12 +134,20 @@ struct BoosterConfig {
     uint32_t n_iters       = 100;
     float    learning_rate = 0.05F;
     uint32_t random_seed   = 42;
+    uint32_t log_intervals = 0;   // 0 = silent; else
+                                  // floor(n_iters/log_intervals)+1
+                                  // metric ticks during fit
 };
 
 struct DispatchConfig {
     std::string objective_name = "mse";       // mse | logloss
     std::string grower_name    = "depthwise";
     std::string sampler_name   = "all_rows";
+};
+
+struct MetricsConfig {
+    std::vector<std::string> fit;    // empty → objective defaults
+    std::vector<std::string> eval;   // empty → objective defaults
 };
 ```
 
@@ -152,11 +162,17 @@ lambda_l2 = 1.0
 [booster]
 n_iters = 200
 learning_rate = 0.05
+# log_intervals = 10
 
 [dispatch]
 objective_name = "mse"
 grower_name = "depthwise"
 sampler_name = "all_rows"
+
+[metrics]
+# fit and eval lists; empty means the objective's defaults
+fit = ["rmse"]
+eval = ["rmse", "mae"]
 ```
 
 ## CLI overrides
@@ -190,9 +206,8 @@ auto-mapping. Errors throw `ConfigError` with a key path:
 
 ## What's not here
 
-- `BoosterConfig`, `TreeConfig`, `SamplerConfig`, `SplitConfig`,
-  `ParallelConfig`, `IOConfig` — added as their components are designed.
-- `MetricConfig` — same.
+- `SamplerConfig`, `SplitConfig`, `ParallelConfig`, `IOConfig` — added
+  as their components are designed.
 - TOML→struct deserializer details — pinned down when `parse_toml` is
   implemented.
 - Profiles / presets — explicitly rejected (decision *reserved*; was

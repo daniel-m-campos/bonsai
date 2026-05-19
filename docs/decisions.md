@@ -696,3 +696,58 @@ Rejected:
   has no `Booster` to dispatch on; both belong in an I/O module.
 - **Sample-before-grad ordering.** GOSS dependency + small grad
   cost + concept-flag avoidance.
+
+## 28. Spine complete; AI policy relaxes; insert Phase 2.5
+
+**Milestone (2026-05-18).** Phase 1 (Serial MVP) and Phase 2
+(benchmark harness) are complete. The spine is end-to-end working on
+California Housing: hand-authored `Dataset`, `BinMapper`,
+`BinMappers`, `Histogram`, depth-wise + oblivious `TreeGrower`,
+`DenseTree`, `ObliviousTree`, histogram `SplitFinder`, `Objective`
+concept + `MSEObjective` + `LogLossObjective`, `Sampler` concept +
+`AllRowsSampler`, `Booster<O,G,Sp,Sa>` + `IBooster`, registry /
+dispatch flat table, dispatch resolution doc (`6-dispatch.md`). The
+Python sidecar runs bonsai vs xgboost / lightgbm / catboost on the
+same TOML config. Eval baseline pinned at `rmse=0.7175214` (regression
+net via `tests/unit/test_eval_baseline.cpp`).
+
+**AI policy.** Relaxes. The course rule — "write the core
+functionality and architecture yourself" — is satisfied. The
+spine-authorship gate that operated through Phases 1–2 is lifted
+(see `ai-usage.md` audit trail entry 2026-05-18). AI may now refactor
+and add features anywhere in the codebase, including spine
+components, the parallel backends (still pending), additional
+objectives / growers / samplers, and the CLI. Disclosure rule stands:
+any commit with AI-authored content carries `AI-Assisted: ...` in the
+trailer.
+
+**Why now and not later.** The two remaining originally-gated spine
+items (`ParallelBackend` concept + first impl) were carried as
+spine-gated to force the user to make the threading-model design
+calls. Those calls are not yet made, but they belong to a design
+phase that will produce `architecture/7-parallel.md` first — at which
+point the spine-authorship rule is moot anyway because the user
+authors the design and AI implements from it. Keeping the gate now
+just creates an artificial blocker on the cleanup phase.
+
+**Phase 2.5 inserted.** Between Phase 2 and Phase 3, before turning
+on parallelism, the next focus is a CLI / config usability and design
+pass plus the small items glossed over during the Phase 1/2 sprints.
+No new spine, no parallel backends. Refactors are open (AI may
+assist). Items captured as commits during the work rather than
+pre-listed. Phase 3 (Parallelism) follows; YearPredictionMSD becomes
+the perf benchmark there.
+
+**`bonsai-policy` skill update.** The skill no longer hard-stops on
+edits to spine files. It refocuses on disclosure, transcript capture,
+and the "stop and ask before destructive operations / scope creep"
+guardrails that apply at every phase. The spine list and gating
+language is preserved in `ai-usage.md` history for the audit trail.
+
+**Operational changes for future commits.**
+
+- A commit may now touch any file in the tree without prior
+  user-authorship confirmation.
+- `AI-Assisted: ...` trailer required on any AI-touched commit.
+- Non-trivial design conversations still get preserved under
+  `docs/conversations/`.

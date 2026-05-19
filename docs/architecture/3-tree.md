@@ -27,8 +27,9 @@ assumptions that one wouldn't.
 
 The cost is one extra grower + one extra tree type of spine code, plus
 a second parity target (depth-wise vs xgboost/LightGBM, oblivious vs
-CatBoost). Both targets share the same regression dataset
-(YearPredictionMSD).
+CatBoost). Both targets share the same regression dataset (California
+Housing for integration; YearPredictionMSD is held back as the
+post-parallelism perf benchmark).
 
 ## The three joints
 
@@ -575,8 +576,9 @@ def grow_oblivious(ds, grad, hess, row_indices, cfg, splitter, lr):
 same helper depth-wise uses.
 
 The fold cost is `n_features · n_bins · |frontier|` per level —
-small relative to histogram building. On YearPredictionMSD (90
-features, 255 bins) at level 5 with 32 live nodes:
+small relative to histogram building. Forecast on the planned
+post-parallelism perf benchmark (YearPredictionMSD, 90 features,
+255 bins) at level 5 with 32 live nodes:
 ~730 K ops fold vs ~45 M ops histogram-build per level (~1.5%).
 
 The build phase (steps after `splitter.find`) is bit-for-bit
