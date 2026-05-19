@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -9,6 +10,7 @@
 #include "bonsai/registry/make_booster.hpp"
 #include "bonsai/registry/names.hpp"
 #include "bonsai/registry/typelists.hpp"
+#include "bonsai/task.hpp"
 #include "bonsai/typelist.hpp"
 #include "bonsai/types.hpp"
 
@@ -18,7 +20,8 @@ namespace bonsai
 namespace
 {
 
-using LinkFn = void (*)(floats_out);
+using LinkFn         = void (*)(floats_out);
+using DefaultsFn     = std::span<std::string_view const> (*)();
 
 struct LinkEntry
 {
@@ -26,9 +29,26 @@ struct LinkEntry
     LinkFn apply;
 };
 
+struct TaskEntry
+{
+    std::string_view name;
+    TaskKind task;
+};
+
+struct DefaultsEntry
+{
+    std::string_view name;
+    DefaultsFn defaults;
+};
+
 template <typename O> void link_thunk(floats_out scores)
 {
     link_inverse_of<O>::apply(scores);
+}
+
+template <typename O> std::span<std::string_view const> defaults_thunk()
+{
+    return default_metrics_of<O>::value();
 }
 
 auto constexpr create_link_table()
@@ -46,7 +66,38 @@ auto constexpr create_link_table()
     return out;
 }
 
-inline auto constexpr link_table = create_link_table();
+auto constexpr create_task_table()
+{
+    std::array<TaskEntry, size_v<Objectives>> out{};
+    size_t i = 0;
+    for_each_type<Objectives>(
+        [&i, &out]<typename O>()
+        {
+            static_assert(HasName<O>, "Objective needs impl_name specialization");
+            static_assert(HasTaskKind<O>, "Objective needs task_of specialization");
+            out[i++] = TaskEntry{impl_name<O>::value, task_of<O>::value};
+        });
+    return out;
+}
+
+auto constexpr create_defaults_table()
+{
+    std::array<DefaultsEntry, size_v<Objectives>> out{};
+    size_t i = 0;
+    for_each_type<Objectives>(
+        [&i, &out]<typename O>()
+        {
+            static_assert(HasName<O>, "Objective needs impl_name specialization");
+            static_assert(HasDefaultMetricNames<O>,
+                          "Objective needs default_metrics_of specialization");
+            out[i++] = DefaultsEntry{impl_name<O>::value, &defaults_thunk<O>};
+        });
+    return out;
+}
+
+inline auto constexpr link_table     = create_link_table();
+inline auto constexpr task_table     = create_task_table();
+inline auto constexpr defaults_table = create_defaults_table();
 
 } // namespace
 
@@ -61,6 +112,33 @@ void apply_link_inverse_by_name(std::string_view objective_name, floats_out scor
         }
     }
     throw UnknownImplError("apply_link_inverse_by_name: no objective '" +
+                           std::string{objective_name} + "'");
+}
+
+TaskKind task_kind_by_name(std::string_view objective_name)
+{
+    for (auto const &e : task_table)
+    {
+        if (e.name == objective_name)
+        {
+            return e.task;
+        }
+    }
+    throw UnknownImplError("task_kind_by_name: no objective '" +
+                           std::string{objective_name} + "'");
+}
+
+std::span<std::string_view const>
+default_metric_names_by_name(std::string_view objective_name)
+{
+    for (auto const &e : defaults_table)
+    {
+        if (e.name == objective_name)
+        {
+            return e.defaults();
+        }
+    }
+    throw UnknownImplError("default_metric_names_by_name: no objective '" +
                            std::string{objective_name} + "'");
 }
 

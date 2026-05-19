@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -23,8 +25,30 @@ struct LoadedTrain
     Dataset train;
 };
 
-// Step 1 of training: fit bin mappers from `path`, then bin the same file.
+// Step 1 of training (minimal): fit bin mappers from `path`, then bin the same
+// file. Used by tests that don't need a row-major feature buffer.
 LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path);
+
+// One side of a train/valid pair. Carries both the binned Dataset (for
+// update_one_iter / labels) and the row-major FeatureBuffer (for predict).
+struct LabeledData
+{
+    Dataset dataset;
+    FeatureBuffer features;
+    std::vector<float> labels;
+};
+
+struct LoadedTrainValid
+{
+    BinMappers mappers;
+    LabeledData train;
+    std::optional<LabeledData> valid;
+};
+
+// Fit bin mappers on cfg.data.train, bin it, and capture a row-major buffer.
+// If cfg.data.valid is non-empty, additionally bin valid[0] with the same
+// mappers. valid[1..] are ignored with a stderr warning.
+LoadedTrainValid load_train_and_valid_from_csv(Config const &cfg);
 
 // Progress callback: receives (iter_one_based, total_iters) after each
 // boosting iteration. The helper calls it every iteration; the caller throttles
@@ -35,6 +59,32 @@ using ProgressFn = std::function<void(std::size_t, std::size_t)>;
 // `cfg.booster_config.n_iters` iterations of `update_one_iter` on `train`.
 std::unique_ptr<IBooster> train_in_memory(Config const &cfg, Dataset const &train,
                                           ProgressFn const &on_progress = {});
+
+// Per-tick snapshot of model performance during fit. Predictions are RAW
+// scores (link not applied yet); the printer decides whether to invert and
+// MAY mutate the preds spans in place to do so (they alias scratch buffers
+// owned by `train_with_progress` and are overwritten next tick anyway).
+// Do not retain any span past the callback call.
+struct FitTick
+{
+    std::size_t iter;                  // 0-based; 0 == init_score baseline
+    std::size_t n_iters;               // cfg.booster_config.n_iters
+    std::span<float> train_preds;      // mutable; link-inversion target
+    std::span<float const> train_labels;
+    std::span<float> valid_preds;      // empty if no valid set
+    std::span<float const> valid_labels;
+};
+
+using FitTickFn = std::function<void(FitTick const &)>;
+
+// Full training entry point used by `bonsai fit`. Runs n_iters of
+// update_one_iter on train; when log_intervals > 0, invokes on_tick at iter 0
+// (init_score baseline), every floor(n_iters/log_intervals) iters, and at the
+// final iter. Predictions live in scratch buffers owned by this function;
+// callbacks must not retain references past the call.
+std::unique_ptr<IBooster> train_with_progress(Config const &cfg,
+                                              LoadedTrainValid const &loaded,
+                                              FitTickFn const &on_tick = {});
 
 struct ScoredBatch
 {

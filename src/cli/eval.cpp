@@ -2,19 +2,18 @@
 #include "bonsai/cli/handlers.hpp"
 #include "bonsai/cli/pipeline.hpp"
 
-#include <algorithm>
-#include <cmath>
-#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <print>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "bonsai/config/data_config.hpp"
 #include "bonsai/config/toml.hpp"
 #include "bonsai/io/model.hpp"
-#include "bonsai/objective.hpp"
+#include "bonsai/metric.hpp"
 #include "bonsai/registry/objective_dispatch.hpp"
 
 namespace bonsai::cli
@@ -23,46 +22,25 @@ namespace bonsai::cli
 namespace
 {
 
-// Phase 1 transitional: emits the same metrics bit-for-bit as before the
-// metrics-table deletion. Phase 2 replaces this with the new TaskKind+Metric
-// registry. Routes rmse through MSEObjective::eval to preserve exact float
-// rounding behavior.
-void print_default_metrics(std::string const &objective_name,
-                           std::vector<float> &raw_scores,
-                           std::vector<float> const &labels)
+// Resolve the metric-name list to use for eval: user override if non-empty,
+// else the objective's declared defaults.
+std::vector<std::string_view>
+choose_metric_names(std::vector<std::string> const &override_names,
+                    std::string const &objective_name)
 {
-    if (objective_name == "logloss")
+    std::vector<std::string_view> out;
+    if (!override_names.empty())
     {
-        apply_link_inverse_by_name(objective_name, raw_scores);
-        auto const &p       = raw_scores;
-        auto const &y       = labels;
-        auto const n        = p.size();
-        double constexpr eps = 1e-7;
-        double ll            = 0.0;
-        std::size_t correct  = 0;
-        for (std::size_t i = 0; i < n; ++i)
+        out.reserve(override_names.size());
+        for (auto const &n : override_names)
         {
-            double const pi = p[i];
-            double const ti = y[i] > 0.5F ? 1.0 : 0.0;
-            ll -= (ti * std::log(std::max(pi, eps))) +
-                  ((1.0 - ti) * std::log(std::max(1.0 - pi, eps)));
-            if ((pi >= 0.5) == (ti >= 0.5))
-            {
-                ++correct;
-            }
+            out.emplace_back(n);
         }
-        auto const nd = static_cast<double>(n);
-        std::print("logloss={} accuracy={} ",
-                   static_cast<float>(ll / nd),
-                   static_cast<float>(static_cast<double>(correct) / nd));
+        return out;
     }
-    else
-    {
-        // MSE link is identity; raw_scores == predictions. Use the
-        // objective's eval directly so float rounding matches pre-refactor.
-        float const mse = MSEObjective::eval(raw_scores, labels);
-        std::print("rmse={} ", std::sqrt(mse));
-    }
+    auto const defaults = default_metric_names_by_name(objective_name);
+    out.assign(defaults.begin(), defaults.end());
+    return out;
 }
 
 } // namespace
@@ -86,7 +64,17 @@ int run_eval(EvalOpts const &opts)
     }
 
     auto sl = score_and_label_csv(*loaded.booster, path, data_cfg);
-    print_default_metrics(loaded.dispatch.objective_name, sl.raw_scores, sl.labels);
+    apply_link_inverse_by_name(loaded.dispatch.objective_name, sl.raw_scores);
+
+    auto const task  = task_kind_by_name(loaded.dispatch.objective_name);
+    auto const names = choose_metric_names(cfg.metrics.eval, loaded.dispatch.objective_name);
+
+    for (auto const name : names)
+    {
+        auto const m = resolve_metric_for_task(name, task);
+        float const v = m.compute(sl.raw_scores, sl.labels);
+        std::print("{}={} ", m.name, v);
+    }
     std::println("n={}", sl.raw_scores.size());
     return EXIT_SUCCESS;
 }

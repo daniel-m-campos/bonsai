@@ -13,14 +13,15 @@ add_executable(bonsai_tests
     unit/test_objective.cpp
     unit/test_objective_traits.cpp
     unit/test_objective_dispatch.cpp
-    unit/test_metric.cpp
     unit/test_booster.cpp
+    unit/test_cli_pipeline.cpp
+    unit/test_eval_baseline.cpp
+    unit/test_task.cpp
+    unit/test_metric.cpp
     unit/test_typelist.cpp
     unit/test_make_booster.cpp
     unit/test_toml.cpp
     unit/test_model_io.cpp
-    unit/test_cli_pipeline.cpp
-    unit/test_eval_baseline.cpp
 )
 
 target_link_libraries(bonsai_tests PRIVATE
