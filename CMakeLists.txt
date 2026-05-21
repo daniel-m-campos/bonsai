@@ -46,22 +46,13 @@ endif()
 # CLI parsing, header-only.
 FetchContent_Declare(CLI11
     GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
-    GIT_TAG        v2.4.2
+    GIT_TAG        v2.6.2
 )
 
 # TOML config, header-only.
 FetchContent_Declare(tomlplusplus
     GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
     GIT_TAG        v3.4.0
-)
-
-# Logging. Use std::format (C++23) instead of bundled fmt — sidesteps the
-# FMT_STRING / consteval breakage in clang-trunk against bundled fmt.
-set(SPDLOG_BUILD_SHARED  OFF CACHE BOOL "" FORCE)
-set(SPDLOG_USE_STD_FORMAT ON CACHE BOOL "" FORCE)
-FetchContent_Declare(spdlog
-    GIT_REPOSITORY https://github.com/gabime/spdlog.git
-    GIT_TAG        v1.15.0
 )
 
 # nlohmann/json — single-header, MIT, used for MessagePack model format
@@ -72,7 +63,7 @@ FetchContent_Declare(nlohmann_json
     GIT_TAG        v3.11.3
 )
 
-FetchContent_MakeAvailable(CLI11 tomlplusplus spdlog nlohmann_json)
+FetchContent_MakeAvailable(CLI11 tomlplusplus nlohmann_json)
 
 # ---- Subdirectories ---------------------------------------------------------
 
