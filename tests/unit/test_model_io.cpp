@@ -1,11 +1,11 @@
 #include <cstddef>
 #include <cstdio>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "bonsai/bin_mappers.hpp"
@@ -124,16 +124,13 @@ TEST_CASE("ModelIo: save -> load -> predict reproduces predictions",
     booster->predict(raw.view(), y_before);
 
     TempPath const tmp;
-    io::save_booster(*booster, tmp.str(), mappers, cfg.dispatch,
-                     cfg.booster_config.learning_rate);
+    io::save_booster(*booster, tmp.str(), mappers, cfg);
 
     auto loaded = io::load_booster(tmp.str());
 
     REQUIRE(loaded.booster != nullptr);
-    REQUIRE(loaded.dispatch.objective_name == cfg.dispatch.objective_name);
+    REQUIRE(loaded.cfg == cfg);
     REQUIRE(loaded.mappers.size() == mappers.size());
-    REQUIRE(loaded.learning_rate ==
-            Catch::Approx(cfg.booster_config.learning_rate).epsilon(1e-6));
     REQUIRE(loaded.booster->n_iters() == 5);
 
     std::vector<float> y_after(raw.n_rows);
@@ -167,13 +164,12 @@ TEST_CASE("ModelIo: logloss save -> load -> predict reproduces predictions",
     booster->predict(raw.view(), y_before);
 
     TempPath const tmp;
-    io::save_booster(*booster, tmp.str(), mappers, cfg.dispatch,
-                     cfg.booster_config.learning_rate);
+    io::save_booster(*booster, tmp.str(), mappers, cfg);
 
     auto loaded = io::load_booster(tmp.str());
 
     REQUIRE(loaded.booster != nullptr);
-    REQUIRE(loaded.dispatch.objective_name == "logloss");
+    REQUIRE(loaded.cfg == cfg);
     REQUIRE(loaded.booster->n_iters() == 5);
 
     std::vector<float> y_after(raw.n_rows);
@@ -183,6 +179,61 @@ TEST_CASE("ModelIo: logloss save -> load -> predict reproduces predictions",
     {
         REQUIRE(y_after[i] == y_before[i]);
     }
+}
+
+TEST_CASE("ModelIo: full Config round-trips via save/load", "[model_io][config]")
+{
+    // Exercises every leaf-type conversion the Config macros generate
+    // (bool, int, unsigned, float, string, vector<int>, vector<string>,
+    // optional<float>). If a new leaf type is added to Config without a
+    // matching nlohmann conversion, this test fails to compile or round-trip.
+    auto const batch         = tiny_batch();
+    BinMappers const mappers = BinMappers::fit(batch, {});
+    Dataset const train      = Dataset::bin(batch, mappers, {});
+
+    Config cfg   = tiny_cfg();
+    auto booster = make_booster(cfg);
+    booster->update_one_iter(train);
+
+    // Populate every non-dispatch field with a non-default value.
+    // Dispatch fields must keep matching the trained booster.
+    cfg.data.train                    = "train.csv";
+    cfg.data.valid                    = {"valid_a.csv", "valid_b.csv"};
+    cfg.data.test                     = "test.csv";
+    cfg.data.format                   = "tsv";
+    cfg.data.header                   = false;
+    cfg.data.label_column             = 3;
+    cfg.data.weight_column            = 7;
+    cfg.data.ignore_columns           = {1, 2, 5};
+    cfg.data.missing_nan              = false;
+    cfg.data.missing_sentinel         = -99.5F;
+    cfg.bin_mapper.max_bin            = 127;
+    cfg.bin_mapper.n_samples          = 50'000;
+    cfg.bin_mapper.seed               = 314159;
+    cfg.bin_mapper.min_data_in_bin    = 4;
+    cfg.tree_config.min_child_hess    = 2.5F;
+    cfg.tree_config.min_gain_to_split = 0.1F;
+    cfg.tree_config.lambda_l2         = 0.5F;
+    cfg.tree_config.max_depth         = 10;
+    cfg.tree_config.min_data_in_leaf  = 30;
+    cfg.booster_config.n_iters        = 500;
+    cfg.booster_config.learning_rate  = 0.1F;
+    cfg.booster_config.random_seed    = 7;
+    cfg.booster_config.log_intervals  = 10;
+    cfg.metrics.fit                   = {"rmse", "mae"};
+    cfg.metrics.eval                  = {"rmse"};
+
+    TempPath const tmp;
+    io::save_booster(*booster, tmp.str(), mappers, cfg);
+    auto const loaded = io::load_booster(tmp.str());
+    REQUIRE(loaded.cfg == cfg);
+
+    // missing_sentinel empty (nullopt) also round-trips (serialized as null).
+    cfg.data.missing_sentinel = std::nullopt;
+    io::save_booster(*booster, tmp.str(), mappers, cfg);
+    auto const loaded2 = io::load_booster(tmp.str());
+    REQUIRE(loaded2.cfg == cfg);
+    REQUIRE_FALSE(loaded2.cfg.data.missing_sentinel.has_value());
 }
 
 TEST_CASE("ModelIo: bad magic throws", "[model_io][edge]")

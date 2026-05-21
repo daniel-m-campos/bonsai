@@ -112,8 +112,7 @@ int run_fit(FitOpts const &opts)
     if (!opts.model_path.empty())
     {
         std::println("fit: saving model to {}", opts.model_path);
-        io::save_booster(*booster, opts.model_path, loaded.mappers, cfg.dispatch,
-                         cfg.booster_config.learning_rate);
+        io::save_booster(*booster, opts.model_path, loaded.mappers, cfg);
     }
     return EXIT_SUCCESS;
 }

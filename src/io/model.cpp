@@ -1,32 +1,89 @@
 #include "bonsai/io/model.hpp"
+#include "nlohmann/adl_serializer.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <ios>
 #include <iterator>
 #include <memory>
+#include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
+// nlohmann/json v3.11 doesn't ship std::optional<T> conversion; add a tiny
+// adl_serializer so the NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE macros below can
+// see optional fields (e.g. DataConfig::missing_sentinel).
+template <typename T> struct nlohmann::adl_serializer<std::optional<T>>
+{
+    static void to_json(json &j, std::optional<T> const &opt)
+    {
+        if (opt.has_value())
+        {
+            j = *opt;
+        }
+        else
+        {
+            j = nullptr;
+        }
+    }
+    static void from_json(json const &j, std::optional<T> &opt)
+    {
+        if (j.is_null())
+        {
+            opt = std::nullopt;
+        }
+        else
+        {
+            opt = j.get<T>();
+        }
+    }
+};
+
 #include "bonsai/bin_mapper.hpp"
 #include "bonsai/bin_mappers.hpp"
 #include "bonsai/booster.hpp"
 #include "bonsai/config/config.hpp"
 #include "bonsai/config/dispatch_config.hpp"
-#include "bonsai/grower.hpp"
-#include "bonsai/objective.hpp"
 #include "bonsai/registry/make_booster.hpp"
 #include "bonsai/registry/names.hpp"
 #include "bonsai/registry/typelists.hpp"
-#include "bonsai/sampler.hpp"
-#include "bonsai/split.hpp"
 #include "bonsai/tree.hpp"
 #include "bonsai/typelist.hpp"
+
+namespace bonsai
+{
+// Free-function (to|from)_json for the POD records. Macros expand in
+// namespace bonsai so ADL finds them on the nested types. Member order
+// here = JSON key order; renaming a member changes the on-disk schema.
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DenseTree::InternalNode, feature_id, threshold, left,
+                                   right, default_left)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DenseTree::LeafNode, value)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DenseTree::Params, depth, n_leaves)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DataConfig, train, valid, test, format, header,
+                                   label_column, weight_column, ignore_columns,
+                                   missing_nan, missing_sentinel)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(BinMapperConfig, max_bin, n_samples, seed,
+                                   min_data_in_bin)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TreeConfig, min_child_hess, min_gain_to_split,
+                                   lambda_l2, max_depth, min_data_in_leaf)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(BoosterConfig, n_iters, learning_rate, random_seed,
+                                   log_intervals)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DispatchConfig, objective_name, grower_name,
+                                   sampler_name)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(MetricsConfig, fit, eval)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Config, data, bin_mapper, tree_config,
+                                   booster_config, dispatch, metrics)
+} // namespace bonsai
 
 namespace bonsai::io
 {
@@ -37,40 +94,45 @@ namespace
 using json = nlohmann::json;
 
 std::string_view constexpr k_magic  = "bonsai01";
-uint32_t constexpr k_format_version = 1;
+uint32_t constexpr k_format_version = 2;
 
 // ---- Tree <-> JSON --------------------------------------------------------
 
+json node_to_json(DenseTree::Node const &node)
+{
+    return std::visit(
+        [](auto const &n) -> json
+        {
+            using N = std::decay_t<decltype(n)>;
+            json j  = n;
+            j["kind"] =
+                std::is_same_v<N, DenseTree::InternalNode> ? "internal" : "leaf";
+            return j;
+        },
+        node);
+}
+
+DenseTree::Node node_from_json(json const &j)
+{
+    auto const kind = j.at("kind").get<std::string>();
+    if (kind == "internal")
+    {
+        return j.get<DenseTree::InternalNode>();
+    }
+    if (kind == "leaf")
+    {
+        return j.get<DenseTree::LeafNode>();
+    }
+    throw std::runtime_error("model: unknown tree node kind '" + kind + "'");
+}
+
 json tree_to_json(DenseTree const &t)
 {
-    json out        = json::object();
-    out["depth"]    = t.params().depth;
-    out["n_leaves"] = t.params().n_leaves;
-    json nodes      = json::array();
+    json out   = t.params();
+    json nodes = json::array();
     for (auto const &node : t.nodes())
     {
-        std::visit(
-            [&nodes](auto const &n)
-            {
-                using N = std::decay_t<decltype(n)>;
-                json j;
-                if constexpr (std::is_same_v<N, DenseTree::InternalNode>)
-                {
-                    j["kind"]         = "internal";
-                    j["feature_id"]   = n.feature_id;
-                    j["threshold"]    = n.threshold;
-                    j["left"]         = n.left;
-                    j["right"]        = n.right;
-                    j["default_left"] = n.default_left;
-                }
-                else
-                {
-                    j["kind"]  = "leaf";
-                    j["value"] = n.value;
-                }
-                nodes.push_back(std::move(j));
-            },
-            node);
+        nodes.push_back(node_to_json(node));
     }
     out["nodes"] = std::move(nodes);
     return out;
@@ -82,30 +144,9 @@ DenseTree tree_from_json(json const &j)
     nodes.reserve(j.at("nodes").size());
     for (auto const &nj : j.at("nodes"))
     {
-        std::string const kind = nj.at("kind").get<std::string>();
-        if (kind == "internal")
-        {
-            DenseTree::InternalNode n{};
-            n.feature_id   = nj.at("feature_id").get<feature_id_t>();
-            n.threshold    = nj.at("threshold").get<float>();
-            n.left         = nj.at("left").get<node_id_t>();
-            n.right        = nj.at("right").get<node_id_t>();
-            n.default_left = nj.at("default_left").get<bool>();
-            nodes.emplace_back(n);
-        }
-        else if (kind == "leaf")
-        {
-            nodes.emplace_back(DenseTree::LeafNode{nj.at("value").get<float>()});
-        }
-        else
-        {
-            throw std::runtime_error("model: unknown tree node kind '" + kind + "'");
-        }
+        nodes.push_back(node_from_json(nj));
     }
-    DenseTree::Params params{};
-    params.depth    = j.at("depth").get<size_t>();
-    params.n_leaves = j.at("n_leaves").get<size_t>();
-    return DenseTree{std::move(nodes), params};
+    return DenseTree{std::move(nodes), j.get<DenseTree::Params>()};
 }
 
 // ---- BinMappers <-> JSON --------------------------------------------------
@@ -270,7 +311,7 @@ std::vector<uint8_t> read_file(std::string const &path)
                                 std::istreambuf_iterator<char>()};
 }
 
-void write_file(std::string const &path, std::vector<uint8_t> const &bytes)
+void write_file(std::string const &path, std::span<uint8_t const> bytes)
 {
     std::ofstream out(path, std::ios::binary);
     if (!out)
@@ -284,23 +325,19 @@ void write_file(std::string const &path, std::vector<uint8_t> const &bytes)
 } // namespace
 
 void save_booster(IBooster const &booster, std::string const &path,
-                  BinMappers const &mappers, DispatchConfig const &dispatch,
-                  float learning_rate)
+                  BinMappers const &mappers, Config const &cfg)
 {
     json root;
-    root["magic"]                 = std::string{k_magic};
-    root["version"]               = k_format_version;
-    root["dispatch"]["objective"] = dispatch.objective_name;
-    root["dispatch"]["grower"]    = dispatch.grower_name;
-    root["dispatch"]["sampler"]   = dispatch.sampler_name;
-    root["learning_rate"]         = learning_rate;
-    root["bin_mappers"]           = mappers_to_json(mappers);
+    root["magic"]       = std::string{k_magic};
+    root["version"]     = k_format_version;
+    root["config"]      = cfg;
+    root["bin_mappers"] = mappers_to_json(mappers);
 
-    if (!save_dispatch(booster, dispatch, root))
+    if (!save_dispatch(booster, cfg.dispatch, root))
     {
-        throw std::runtime_error("model: save_booster: no impl for (" +
-                                 dispatch.objective_name + ", " + dispatch.grower_name +
-                                 ", " + dispatch.sampler_name + ")");
+        throw std::runtime_error(
+            "model: save_booster: no impl for (" + cfg.dispatch.objective_name + ", " +
+            cfg.dispatch.grower_name + ", " + cfg.dispatch.sampler_name + ")");
     }
 
     auto const bytes = json::to_msgpack(root);
@@ -322,21 +359,11 @@ LoadedBooster load_booster(std::string const &path)
     }
 
     LoadedBooster out;
-    out.dispatch.objective_name =
-        root.at("dispatch").at("objective").get<std::string>();
-    out.dispatch.grower_name  = root.at("dispatch").at("grower").get<std::string>();
-    out.dispatch.sampler_name = root.at("dispatch").at("sampler").get<std::string>();
-    out.learning_rate         = root.at("learning_rate").get<float>();
-    out.mappers               = mappers_from_json(root.at("bin_mappers"));
+    out.cfg     = root.at("config").get<Config>();
+    out.mappers = mappers_from_json(root.at("bin_mappers"));
+    out.booster = make_booster(out.cfg);
 
-    // Reconstruct the booster via make_booster with a synthesized config
-    // carrying the on-disk dispatch triple and learning rate.
-    Config cfg;
-    cfg.dispatch                     = out.dispatch;
-    cfg.booster_config.learning_rate = out.learning_rate;
-    out.booster                      = make_booster(cfg);
-
-    if (!load_dispatch(*out.booster, out.dispatch, root))
+    if (!load_dispatch(*out.booster, out.cfg.dispatch, root))
     {
         throw std::runtime_error(
             "model: load_booster: dispatch triple unknown after make_booster");

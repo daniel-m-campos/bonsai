@@ -13,6 +13,8 @@ struct BoosterConfig
     // 0 = silent; else log floor(n_iters / log_intervals) + 1 ticks during fit
     // (iter 0 baseline + each period boundary + final iter).
     uint32_t log_intervals = 0;
+
+    bool operator==(BoosterConfig const &) const = default;
 };
 
 } // namespace bonsai

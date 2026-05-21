@@ -204,6 +204,11 @@ hand-written deserializer in `config/parse.cpp`; no reflection-based
 auto-mapping. Errors throw `ConfigError` with a key path:
 `"data.format: unknown value 'tsv', expected csv|parquet|libsvm"`.
 
+The on-disk *model file* (`bonsai::io::save_booster`) serializes the
+same Config to JSON-in-msgpack via `NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE`
+macros, not through this codec — see decision 29 for the rationale
+(less code at the cost of duplicating the field list).
+
 ## What's not here
 
 - `SamplerConfig`, `SplitConfig`, `ParallelConfig`, `IOConfig` — added

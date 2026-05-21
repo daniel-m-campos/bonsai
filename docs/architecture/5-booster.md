@@ -204,8 +204,11 @@ Save and load are **I/O concerns, not booster methods.** Both are
 free functions in a separate I/O module:
 
 ```cpp
-void save_booster(IBooster const&, std::filesystem::path const&);
-auto load_booster(std::filesystem::path const&) -> std::unique_ptr<IBooster>;
+void save_booster(IBooster const&, std::string const& path,
+                  BinMappers const&, Config const&);
+struct LoadedBooster { std::unique_ptr<IBooster> booster;
+                       BinMappers mappers; Config cfg; };
+LoadedBooster load_booster(std::string const& path);
 ```
 
 Rationale: `load` needs the objective/grower/splitter/sampler types
@@ -214,10 +217,12 @@ disk, then calls into the same registry path `make_booster` uses.
 That's structurally the dispatch boundary, not a member function.
 `save` is the symmetric counterpart and lives next to `load`.
 
-What gets written: `init_score`, `learning_rate`, the four component
-names (for registry round-trip), `BinMappers` (diagnostic only per
-decision 3), trees in their tree-specific serialization. Format
-itself is out of scope for this doc.
+What gets written: the full training `Config` (six sub-structs,
+decision 29) under `"config"`, `BinMappers` (diagnostic only per
+decision 3), `init_score`, trees in their tree-specific serialization.
+On-disk format is msgpack-encoded JSON; the JSON shape comes from
+`NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE` macros in `src/io/model.cpp`
+(decision 29 for the why-not-codec rationale).
 
 `IBooster` exposes whatever minimal accessors `save_booster` needs
 (e.g., `for_each_tree`, `init_score()`, `learning_rate()`) — these are

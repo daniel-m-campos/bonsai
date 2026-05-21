@@ -19,6 +19,8 @@ struct Config
     DispatchConfig dispatch;
     MetricsConfig metrics;
     // ParallelConfig, IOConfig — added as components are designed.
+
+    bool operator==(Config const &) const = default;
 };
 
 } // namespace bonsai

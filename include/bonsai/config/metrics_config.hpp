@@ -12,6 +12,8 @@ struct MetricsConfig
 {
     std::vector<std::string> fit;
     std::vector<std::string> eval;
+
+    bool operator==(MetricsConfig const &) const = default;
 };
 
 } // namespace bonsai

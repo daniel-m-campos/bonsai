@@ -21,6 +21,8 @@ struct DataConfig
 
     bool missing_nan                      = true;
     std::optional<float> missing_sentinel = std::nullopt;
+
+    bool operator==(DataConfig const &) const = default;
 };
 
 } // namespace bonsai

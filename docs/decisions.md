@@ -751,3 +751,58 @@ language is preserved in `ai-usage.md` history for the audit trail.
 - `AI-Assisted: ...` trailer required on any AI-touched commit.
 - Non-trivial design conversations still get preserved under
   `docs/conversations/`.
+
+## 29. Model file serializes the full `Config` via NLOHMANN macros, not the existing TOML codec
+
+**On-disk format (2026-05-20).** `save_booster(IBooster const&, path,
+BinMappers const&, Config const&)`. Full Config rides along in the
+msgpack envelope under `"config"`. `load_booster` reads it straight
+into `LoadedBooster::cfg` and calls `make_booster(out.cfg)` — no
+synthesized-Config indirection (was `{dispatch, learning_rate}` torn
+apart at save and stitched back at load). Format version bumped 1 → 2;
+no v1 artifacts in the repo, fail-loud on stale files is correct.
+
+**Mechanism.** `NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE` per Config
+sub-struct (Data, BinMapper, Tree, Booster, Dispatch, Metrics) plus
+one for `Config` itself. Same macros are used for the tree-node POD
+records (`DenseTree::InternalNode` / `LeafNode` / `Params`), replacing
+~65 lines of hand-typed JSON-key mirror code. One-shot
+`adl_serializer<std::optional<T>>` added in the same TU — nlohmann
+v3.11 doesn't ship optional support. Every macro lives in
+`src/io/model.cpp` (no public-header nlohmann leakage).
+
+**Why not the existing TOML codec.** The TOML path uses `Section`
+descriptors + `field_name<MemPtr>()` (`source_location`-based
+extraction) to drive serialization with zero per-struct boilerplate.
+The JSON path could reuse those Section tuples the same way — that
+was the originally-proposed approach. Rejected in favor of the
+macros: less code (~10 macro lines vs ~30 lines of generic fold +
+two new files in `bonsai::config`), one fewer abstraction layer to
+read when debugging the on-disk format, and the macro form lives
+next to the only consumer (`model.cpp`). Trade-off explicitly
+accepted: the macro field-list duplicates the existing Section
+field-list. A member added to a struct but not to one of the two
+enumerations silently drops from that serializer.
+
+**Why not modern C++ reflection.** P2996 (static reflection, C++26)
+collapses every NLOHMANN macro in this file to one template per
+direction. Not available in our toolchain. When it lands, this
+decision is the natural retirement point — delete the macros, ship
+the reflection-based serializer, format version stays at 2.
+Boost.PFR is positional-only (no field names) and brings a
+dependency for no JSON-key benefit. Rejected.
+
+**Inspection.** Model files are now `jq`-able as a structured tree:
+`nlohmann::json::from_msgpack(read_file(path)).dump(2)` yields
+`{magic, version, config: {data, bin_mapper, tree_config,
+booster_config, dispatch, metrics}, bin_mappers, init_score, trees}`.
+This was a load-bearing factor in the encoding choice: a
+TOML-string-in-JSON alternative (~2 lines using `dump_toml`/`parse_toml`)
+would have hidden Config behind one escaped-string blob and broken
+`jq` access to individual fields.
+
+**Knock-on.** Every Config sub-struct gained `bool operator==(...)
+const = default;` so round-trip tests can assert `loaded.cfg == cfg`
+in one line. Also widened the existing `[model_io][config]` test to
+populate every Config leaf with a non-default value (covers each
+leaf-type's nlohmann conversion in one shot).

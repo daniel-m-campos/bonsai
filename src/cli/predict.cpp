@@ -41,7 +41,8 @@ int run_predict(PredictOpts const &opts)
 
     if (opts.apply_link)
     {
-        apply_link_inverse_by_name(loaded.dispatch.objective_name, scored.raw_scores);
+        apply_link_inverse_by_name(loaded.cfg.dispatch.objective_name,
+                                   scored.raw_scores);
     }
 
     if (opts.out_path.empty())

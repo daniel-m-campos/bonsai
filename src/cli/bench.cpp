@@ -67,8 +67,7 @@ int run_bench(BenchOpts const &opts)
 
     if (!opts.model_path.empty())
     {
-        io::save_booster(*booster, opts.model_path, loaded.mappers, cfg.dispatch,
-                         cfg.booster_config.learning_rate);
+        io::save_booster(*booster, opts.model_path, loaded.mappers, cfg);
     }
     return EXIT_SUCCESS;
 }
