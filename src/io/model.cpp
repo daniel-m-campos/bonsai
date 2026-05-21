@@ -22,6 +22,7 @@
 #include "bonsai/objective.hpp"
 #include "bonsai/registry/make_booster.hpp"
 #include "bonsai/registry/names.hpp"
+#include "bonsai/registry/typelists.hpp"
 #include "bonsai/sampler.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/tree.hpp"
@@ -184,34 +185,74 @@ template <typename B> bool try_load_into(IBooster &booster, json const &j)
     return true;
 }
 
-using BoosterTypes = TypeList<
-    Booster<MSEObjective, DepthwiseGrower<HistogramSplitFinder>, AllRowsSampler>,
-    Booster<LogLossObjective, DepthwiseGrower<HistogramSplitFinder>, AllRowsSampler>>;
+using Configurations = cartesian_product_t<Objectives, Growers, Samplers>;
 
-bool save_dispatch(IBooster const &booster, json &out)
+template <typename Combo>
+using BoosterFor =
+    Booster<type_at_t<0, Combo>, type_at_t<1, Combo>, type_at_t<2, Combo>>;
+
+bool save_dispatch(IBooster const &booster, DispatchConfig const &disp, json &out)
 {
     bool ok = false;
-    for_each_type<BoosterTypes>(
-        [&]<typename B>()
+    for_each_type<Configurations>(
+        [&]<typename Combo>()
         {
-            if (!ok)
+            if (ok)
             {
-                ok = try_save_as<B>(booster, out);
+                return;
             }
+            using O  = type_at_t<0, Combo>;
+            using G  = type_at_t<1, Combo>;
+            using Sa = type_at_t<2, Combo>;
+            static_assert(HasName<O>, "Objective needs impl_name specialization");
+            static_assert(HasName<G>, "Grower needs impl_name specialization");
+            static_assert(HasName<Sa>, "Sampler needs impl_name specialization");
+            if (disp.objective_name != impl_name<O>::value)
+            {
+                return;
+            }
+            if (disp.grower_name != impl_name<G>::value)
+            {
+                return;
+            }
+            if (disp.sampler_name != impl_name<Sa>::value)
+            {
+                return;
+            }
+            ok = try_save_as<BoosterFor<Combo>>(booster, out);
         });
     return ok;
 }
 
-bool load_dispatch(IBooster &booster, json const &j)
+bool load_dispatch(IBooster &booster, DispatchConfig const &disp, json const &j)
 {
     bool ok = false;
-    for_each_type<BoosterTypes>(
-        [&]<typename B>()
+    for_each_type<Configurations>(
+        [&]<typename Combo>()
         {
-            if (!ok)
+            if (ok)
             {
-                ok = try_load_into<B>(booster, j);
+                return;
             }
+            using O  = type_at_t<0, Combo>;
+            using G  = type_at_t<1, Combo>;
+            using Sa = type_at_t<2, Combo>;
+            static_assert(HasName<O>, "Objective needs impl_name specialization");
+            static_assert(HasName<G>, "Grower needs impl_name specialization");
+            static_assert(HasName<Sa>, "Sampler needs impl_name specialization");
+            if (disp.objective_name != impl_name<O>::value)
+            {
+                return;
+            }
+            if (disp.grower_name != impl_name<G>::value)
+            {
+                return;
+            }
+            if (disp.sampler_name != impl_name<Sa>::value)
+            {
+                return;
+            }
+            ok = try_load_into<BoosterFor<Combo>>(booster, j);
         });
     return ok;
 }
@@ -255,10 +296,11 @@ void save_booster(IBooster const &booster, std::string const &path,
     root["learning_rate"]         = learning_rate;
     root["bin_mappers"]           = mappers_to_json(mappers);
 
-    if (!save_dispatch(booster, root))
+    if (!save_dispatch(booster, dispatch, root))
     {
-        throw std::runtime_error(
-            "model: save_booster: concrete Booster type not in registered set");
+        throw std::runtime_error("model: save_booster: no impl for (" +
+                                 dispatch.objective_name + ", " + dispatch.grower_name +
+                                 ", " + dispatch.sampler_name + ")");
     }
 
     auto const bytes = json::to_msgpack(root);
@@ -294,7 +336,7 @@ LoadedBooster load_booster(std::string const &path)
     cfg.booster_config.learning_rate = out.learning_rate;
     out.booster                      = make_booster(cfg);
 
-    if (!load_dispatch(*out.booster, root))
+    if (!load_dispatch(*out.booster, out.dispatch, root))
     {
         throw std::runtime_error(
             "model: load_booster: dispatch triple unknown after make_booster");

@@ -93,6 +93,16 @@ detail::ColumnBatch tiny_batch()
     };
 }
 
+detail::ColumnBatch tiny_binary_batch()
+{
+    return detail::ColumnBatch{
+        .features      = {{0.0F, 0.1F, 0.9F, 1.0F}},
+        .labels        = {0.0F, 0.0F, 1.0F, 1.0F},
+        .weights       = {},
+        .feature_names = {"a"},
+    };
+}
+
 } // namespace
 
 TEST_CASE("ModelIo: save -> load -> predict reproduces predictions",
@@ -133,6 +143,44 @@ TEST_CASE("ModelIo: save -> load -> predict reproduces predictions",
     {
         // Bit-equal after round-trip; predictions are deterministic and
         // we stored every float (init_score, learning_rate, leaf values).
+        REQUIRE(y_after[i] == y_before[i]);
+    }
+}
+
+TEST_CASE("ModelIo: logloss save -> load -> predict reproduces predictions",
+          "[model_io][smoke]")
+{
+    auto const batch         = tiny_binary_batch();
+    BinMappers const mappers = BinMappers::fit(batch, {});
+    Dataset const train      = Dataset::bin(batch, mappers, {});
+    RawFeatures const raw    = to_raw(batch);
+
+    Config cfg                  = tiny_cfg();
+    cfg.dispatch.objective_name = "logloss";
+    auto booster                = make_booster(cfg);
+    for (int i = 0; i < 5; ++i)
+    {
+        booster->update_one_iter(train);
+    }
+
+    std::vector<float> y_before(raw.n_rows);
+    booster->predict(raw.view(), y_before);
+
+    TempPath const tmp;
+    io::save_booster(*booster, tmp.str(), mappers, cfg.dispatch,
+                     cfg.booster_config.learning_rate);
+
+    auto loaded = io::load_booster(tmp.str());
+
+    REQUIRE(loaded.booster != nullptr);
+    REQUIRE(loaded.dispatch.objective_name == "logloss");
+    REQUIRE(loaded.booster->n_iters() == 5);
+
+    std::vector<float> y_after(raw.n_rows);
+    loaded.booster->predict(raw.view(), y_after);
+
+    for (size_t i = 0; i < y_before.size(); ++i)
+    {
         REQUIRE(y_after[i] == y_before[i]);
     }
 }
