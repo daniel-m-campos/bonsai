@@ -3,6 +3,9 @@
 #include "bonsai/histogram.hpp"
 #include "bonsai/types.hpp"
 #include <cstddef>
+#include <mdspan>
+#include <span>
+#include <vector>
 
 namespace bonsai
 {
@@ -78,6 +81,75 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
     }
 }
 
+inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id_t fid,
+                                              TreeConfig const &config,
+                                              SplitOutput &best)
+{
+    size_t const n_parents = frontier.size();
+    size_t const n_bins    = frontier.front().hists[fid].prefix_size();
+    if (n_bins == 0)
+    {
+        return;
+    }
+
+    thread_local std::vector<HistCell> prefix_storage;
+    prefix_storage.assign(n_parents * n_bins, HistCell{});
+    auto prefix = std::mdspan<HistCell, std::dextents<size_t, 2>>(
+        prefix_storage.data(), n_parents, n_bins);
+
+    thread_local std::vector<double> real_grad;
+    thread_local std::vector<double> real_hess;
+    real_grad.resize(n_parents);
+    real_hess.resize(n_parents);
+
+    double sum_parent_score = 0.0;
+    for (size_t p = 0; p < n_parents; ++p)
+    {
+        auto const &hist    = frontier[p].hists[fid];
+        auto const &missing = hist.missing();
+        hist.fill_prefix(std::span(&prefix[p, 0], n_bins));
+        sum_parent_score +=
+            score(hist.total_grad(), hist.total_hess(), config.lambda_l2);
+        real_grad[p] = hist.total_grad() - missing.sum_grad;
+        real_hess[p] = hist.total_hess() - missing.sum_hess;
+    }
+
+    for (size_t b = 0; b < n_bins; ++b)
+    {
+        for (bool const default_left : {true, false})
+        {
+            double sum_children_score = 0.0;
+            bool feasible             = true;
+            for (size_t p = 0; p < n_parents; ++p)
+            {
+                auto const &hist = frontier[p].hists[fid];
+                auto const s     = split_sums_at(prefix[p, b], hist.missing(),
+                                                 real_grad[p], real_hess[p], default_left);
+                if (s.hL < config.min_child_hess || s.hR < config.min_child_hess)
+                {
+                    feasible = false;
+                    break;
+                }
+                sum_children_score += score(s.gL, s.hL, config.lambda_l2) +
+                                      score(s.gR, s.hR, config.lambda_l2);
+            }
+            if (!feasible)
+            {
+                continue;
+            }
+            double const gain = sum_children_score - sum_parent_score;
+            if (gain > best.gain && gain >= config.min_gain_to_split)
+            {
+                best = {.gain         = gain,
+                        .feature_id   = fid,
+                        .bin_id       = static_cast<bin_id_t>(b),
+                        .default_left = default_left,
+                        .valid        = true};
+            }
+        }
+    }
+}
+
 } // namespace
 
 SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
@@ -88,31 +160,28 @@ SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
         return {};
     }
     SplitOutput best;
-    auto const &hists = input.hists;
-    for (feature_id_t fid = 0; fid < hists.size(); ++fid)
+    feature_id_t const n_features = input.hists.size();
+    for (feature_id_t fid = 0; fid < n_features; ++fid)
     {
         update_best_for_feature_for_node(input, fid, config, best);
     }
     return best;
 }
 
-namespace
-{
-[[maybe_unused]] inline void
-update_best_for_feature_for_level([[maybe_unused]] SplitInput const &input,
-                                  [[maybe_unused]] feature_id_t fid,
-                                  [[maybe_unused]] TreeConfig const &config,
-                                  [[maybe_unused]] SplitOutput &best)
-{
-}
 
-} // namespace
-
-SplitOutput HistogramLevelSplitFinder::find([[maybe_unused]] FrontierInput frontier,
-                                            [[maybe_unused]] TreeConfig const &config)
+SplitOutput HistogramLevelSplitFinder::find(FrontierInput frontier,
+                                            TreeConfig const &config)
 {
+    if (frontier.empty())
+    {
+        return {};
+    }
     SplitOutput best;
-
+    feature_id_t const n_features = frontier.front().hists.size();
+    for (feature_id_t fid = 0; fid < n_features; ++fid)
+    {
+        update_best_for_feature_for_level(frontier, fid, config, best);
+    }
     return best;
 }
 
