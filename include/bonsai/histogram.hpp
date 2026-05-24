@@ -87,6 +87,44 @@ class Histogram
         return std::span{cells_}.first(cells_.size() - 2);
     }
 
+    // Buffer size required by fill_prefix; equals cut_cells().size().
+    // Returns 0 when cells_.size() < 2 (degenerate hist with no cut
+    // positions).
+    size_t prefix_size() const
+    {
+        return cells_.size() >= 2 ? cells_.size() - 2 : 0;
+    }
+
+    // Fills `out[i] = sum of cut_cells()[0..i] inclusive` for
+    // i in [0, prefix_size()). Used by the level finder to get
+    // random-access left-side sums at every candidate bin.
+    void fill_prefix(std::span<HistCell> out) const
+    {
+        assert(out.size() == prefix_size());
+        if (out.empty())
+        {
+            return; // degenerate hist (cells_.size() < 2): no cuts to scan
+        }
+        HistCell run{};
+        size_t i = 0;
+        for (auto const &cell : cut_cells())
+        {
+            run.sum_grad += cell.sum_grad;
+            run.sum_hess += cell.sum_hess;
+            out[i++]     = run;
+        }
+    }
+
+    // Convenience: allocates a buffer sized to prefix_size() and
+    // fills it. For tests / one-off code; hot-path callers should
+    // reuse a thread_local buffer with resize() + fill_prefix().
+    std::vector<HistCell> create_prefix() const
+    {
+        std::vector<HistCell> out(prefix_size());
+        fill_prefix(out);
+        return out;
+    }
+
     Histogram &operator-=(Histogram const &other)
     {
         assert(other.size() == size());
