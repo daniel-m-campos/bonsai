@@ -92,15 +92,12 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
         return;
     }
 
-    thread_local std::vector<HistCell> prefix_storage;
-    prefix_storage.assign(n_parents * n_bins, HistCell{});
+    std::vector<HistCell> prefix_storage(n_parents * n_bins, HistCell{});
     auto prefix = std::mdspan<HistCell, std::dextents<size_t, 2>>(
         prefix_storage.data(), n_parents, n_bins);
 
-    thread_local std::vector<double> real_grad;
-    thread_local std::vector<double> real_hess;
-    real_grad.resize(n_parents);
-    real_hess.resize(n_parents);
+    std::vector<double> real_grad(n_parents);
+    std::vector<double> real_hess(n_parents);
 
     double sum_parent_score = 0.0;
     for (size_t p = 0; p < n_parents; ++p)

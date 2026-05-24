@@ -48,6 +48,33 @@ SplitInput make_node(std::vector<Histogram> hists)
     return SplitInput{.hists = std::move(hists), .rows = {}};
 }
 
+std::vector<SplitInput> make_frontier(size_t n_parents, size_t n_features,
+                                      size_t n_bins)
+{
+    std::vector<SplitInput> frontier;
+    frontier.reserve(n_parents);
+    for (size_t p = 0; p < n_parents; ++p)
+    {
+        // Vary the workload per parent so different parents prefer different
+        // cuts and the summed-argmax path is exercised.
+        auto hists = make_workload(n_features, n_bins);
+        for (size_t f = 0; f < n_features; ++f)
+        {
+            Histogram h{n_bins};
+            for (size_t b = 0; b < n_bins; ++b)
+            {
+                double const g = std::sin(static_cast<double>((p * n_features) + f) +
+                                          (0.13 * static_cast<double>(b)));
+                double const hess = 1.0 + (0.01 * static_cast<double>(b));
+                h.add(static_cast<bin_id_t>(b), g, hess);
+            }
+            hists[f] = std::move(h);
+        }
+        frontier.push_back(SplitInput{.hists = std::move(hists), .rows = {}});
+    }
+    return frontier;
+}
+
 } // namespace
 
 TEST_CASE("HistogramSplitFinder: bench small (8 features x 64 bins)",
@@ -91,5 +118,41 @@ TEST_CASE("HistogramSplitFinder: bench xlarge (1024 features x 512 bins)",
     BENCHMARK("find: 1024x512")
     {
         return HistogramNodeSplitFinder::find(node, k_cfg);
+    };
+}
+
+TEST_CASE(
+    "HistogramLevelSplitFinder: bench shallow level (4 parents x 8 features x 64 bins)",
+    "[bench][split][level][shallow]")
+{
+    auto const frontier = make_frontier(4, 8, 64);
+
+    BENCHMARK("level find: 4p x 8f x 64b")
+    {
+        return HistogramLevelSplitFinder::find(frontier, k_cfg);
+    };
+}
+
+TEST_CASE(
+    "HistogramLevelSplitFinder: bench mid level (16 parents x 64 features x 128 bins)",
+    "[bench][split][level][mid]")
+{
+    auto const frontier = make_frontier(16, 64, 128);
+
+    BENCHMARK("level find: 16p x 64f x 128b")
+    {
+        return HistogramLevelSplitFinder::find(frontier, k_cfg);
+    };
+}
+
+TEST_CASE(
+    "HistogramLevelSplitFinder: bench deep level (64 parents x 256 features x 256 bins)",
+    "[bench][split][level][deep]")
+{
+    auto const frontier = make_frontier(64, 256, 256);
+
+    BENCHMARK("level find: 64p x 256f x 256b")
+    {
+        return HistogramLevelSplitFinder::find(frontier, k_cfg);
     };
 }
