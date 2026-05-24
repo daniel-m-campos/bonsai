@@ -16,9 +16,9 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
 {
     auto const &hist         = input.hists[fid];
     auto const &missing_cell = hist.missing();
-    double const real_grad   = input.grad - missing_cell.sum_grad;
-    double const real_hess   = input.hess - missing_cell.sum_hess;
-    double const node_score  = score(input.grad, input.hess, config.lambda_l2);
+    double const real_grad   = hist.total_grad() - missing_cell.sum_grad;
+    double const real_hess   = hist.total_hess() - missing_cell.sum_hess;
+    double const node_score  = score(hist.total_grad(), hist.total_hess(), config.lambda_l2);
     double left_grad         = 0.0;
     double left_hess         = 0.0;
     bin_id_t b               = 0;

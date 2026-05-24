@@ -14,9 +14,16 @@ struct SplitInput
 {
     std::vector<Histogram> hists;
     std::vector<row_id_t> rows;
-    double grad  = 0.0;
-    double hess  = 0.0;
     node_id_t id = 0;
+
+    double total_grad() const
+    {
+        return hists.empty() ? 0.0 : hists[0].total_grad();
+    }
+    double total_hess() const
+    {
+        return hists.empty() ? 0.0 : hists[0].total_hess();
+    }
 };
 
 struct SplitOutput

@@ -41,21 +41,11 @@ std::vector<Histogram> make_workload(size_t n_features, size_t n_bins)
 TreeConfig const k_cfg{
     .min_child_hess = 1.0F, .lambda_l2 = 1.0F, .min_data_in_leaf = 0};
 
-// Sum (grad, hess) over all rows in feature 0's histogram (incl. missing)
-// so the splitter exercises real cuts instead of failing every
-// min_child_hess gate.
-SplitNode make_node(std::vector<Histogram> hists)
+// Totals (grad, hess) are now maintained inside Histogram by add(),
+// so just hand the histograms over.
+SplitInput make_node(std::vector<Histogram> hists)
 {
-    SplitNode node{.hists = std::move(hists), .rows = {}, .grad = 0.0, .hess = 0.0};
-    for (auto const &cell : node.hists.front().sweep_cells())
-    {
-        node.grad += cell.sum_grad;
-        node.hess += cell.sum_hess;
-    }
-    auto const &m = node.hists.front().missing();
-    node.grad += m.sum_grad;
-    node.hess += m.sum_hess;
-    return node;
+    return SplitInput{.hists = std::move(hists), .rows = {}};
 }
 
 } // namespace
@@ -67,7 +57,7 @@ TEST_CASE("HistogramSplitFinder: bench small (8 features x 64 bins)",
 
     BENCHMARK("find: 8x64")
     {
-        return HistogramSplitFinder::find(node, k_cfg);
+        return HistogramNodeSplitFinder::find(node, k_cfg);
     };
 }
 
@@ -78,7 +68,7 @@ TEST_CASE("HistogramSplitFinder: bench medium (64 features x 128 bins)",
 
     BENCHMARK("find: 64x128")
     {
-        return HistogramSplitFinder::find(node, k_cfg);
+        return HistogramNodeSplitFinder::find(node, k_cfg);
     };
 }
 
@@ -89,7 +79,7 @@ TEST_CASE("HistogramSplitFinder: bench large (256 features x 256 bins)",
 
     BENCHMARK("find: 256x256")
     {
-        return HistogramSplitFinder::find(node, k_cfg);
+        return HistogramNodeSplitFinder::find(node, k_cfg);
     };
 }
 
@@ -100,6 +90,6 @@ TEST_CASE("HistogramSplitFinder: bench xlarge (1024 features x 512 bins)",
 
     BENCHMARK("find: 1024x512")
     {
-        return HistogramSplitFinder::find(node, k_cfg);
+        return HistogramNodeSplitFinder::find(node, k_cfg);
     };
 }

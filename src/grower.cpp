@@ -25,7 +25,7 @@ inline float leaf_value(double grad, double hess, double lambda)
 inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
                              double lambda, size_t &n_leaves, train_leaf_values &values)
 {
-    float const v  = leaf_value(node.grad, node.hess, lambda);
+    float const v  = leaf_value(node.total_grad(), node.total_hess(), lambda);
     nodes[node.id] = DenseTree::LeafNode{.value = v};
     for (row_id_t r : node.rows)
     {
@@ -47,16 +47,6 @@ inline void populate_from_rows(Dataset const &ds, floats_view grad, floats_view 
             h.add(bins[r], grad[r], hess[r]);
         }
         node.hists.push_back(std::move(h));
-    }
-    if (node.hists.empty())
-    {
-        return;
-    }
-    auto const &h0 = node.hists.front();
-    for (auto const &c : h0.all_cells())
-    {
-        node.grad += c.sum_grad;
-        node.hess += c.sum_hess;
     }
 }
 
@@ -99,8 +89,6 @@ split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput par
     SplitInput &small       = left_smaller ? left : right;
     SplitInput &large       = left_smaller ? right : left;
     populate_from_rows(ds, grad, hess, small);
-    large.grad = parent.grad - small.grad;
-    large.hess = parent.hess - small.hess;
     large.hists.reserve(ds.n_features());
     for (feature_id_t f = 0; f < ds.n_features(); ++f)
     {

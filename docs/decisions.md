@@ -459,8 +459,9 @@ Per-parent protocol:
 2. Partition `parent.rows` into `(left_rows, right_rows)`.
 3. Pick smaller (left wins ties).
 4. Build smaller's hists by row-scan.
-5. Derive larger's hists by `parent_hist - smaller_hist` (also subtract
-   `sum_grad` and `sum_hess`).
+5. Derive larger's hists by `parent_hist - smaller_hist`. `Histogram`
+   carries its own `(total_grad, total_hess)` so `operator-=`
+   subtracts cells and totals together.
 6. Push left, right into new frontier in left-then-right order
    (frontier order is structural, independent of build order).
 7. Parent's hists released when parent goes out of scope.
