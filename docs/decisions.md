@@ -416,9 +416,16 @@ vector either fights subtraction (the all-live-nodes-in-one-pass kernel
 doesn't know to skip the larger sibling) or imports per-node branching
 back into the kernel.
 
-Knock-on: oblivious grower needs a fold step
-(`level_hists = sum_per_feature(frontier[*].hists)`) before split
-scoring. Cheap relative to histogram build.
+Knock-on: oblivious grower needs **per-parent gain summation**
+across the frontier — for each candidate `(feature, bin)`, sum
+`score(left, λ) + score(right, λ) − score(parent, λ)` over every
+parent (CatBoost's symmetric-tree gain; see [decision 30](#30-obliviousgrower-fold-then-score-was-wrong-revert-and-re-spec)).
+Same `O(n_features · n_bins · |frontier|)` order as a fold; the
+difference is in *what* is accumulated (gain, not histogram cells).
+An earlier version of this knock-on said "needs a fold step
+(`level_hists = sum_per_feature(...)`) before split scoring" — that
+was wrong because `score(g, h)` is non-additive; corrected
+2026-05-22.
 
 ---
 
@@ -806,3 +813,125 @@ const = default;` so round-trip tests can assert `loaded.cfg == cfg`
 in one line. Also widened the existing `[model_io][config]` test to
 populate every Config leaf with a non-default value (covers each
 leaf-type's nlohmann conversion in one shot).
+
+---
+
+## 30. `ObliviousGrower`: fold-then-score was wrong, revert and re-spec
+
+**Date.** 2026-05-21 (landed), 2026-05-22 (reverted).
+
+### What landed (2026-05-21)
+
+`ObliviousGrower<SplitFinder SplitterT>` in
+[`include/bonsai/grower.hpp`](../include/bonsai/grower.hpp) +
+[`src/grower.cpp`](../src/grower.cpp). The level-scoring step folded
+per-feature histograms across the frontier into one summed level
+histogram, then called the existing single-node
+`HistogramSplitFinder::find` on that fold. Registered as
+`impl_name = "oblivious"` in the `Growers` typelist; the registry's
+cartesian product picked up `{mse, logloss} × oblivious × all_rows`
+automatically. Model I/O was generalized to be tree-type-polymorphic
+(`try_save_as<B>` / `try_load_into<B>` use `typename B::tree_type`;
+new `tree_to_json` overload + `tree_from_json<TreeT>` specialization
+per tree type). `Histogram::operator+=` added to drive the fold.
+
+### What went wrong
+
+The gain function `score(g, h) = g²/(h + λ)` is non-additive:
+
+```
+score(Σ g_i_L, Σ h_i_L) + score(Σ g_i_R, Σ h_i_R) − score(Σ g_i, Σ h_i)
+  ≠
+Σ_i [ score(g_i_L, h_i_L) + score(g_i_R, h_i_R) − score(g_i, h_i) ]
+```
+
+Folding histograms before scoring gives the first expression. The
+gain induced by applying one split to every parent in the frontier
+is the second expression. Bonsai's fold-then-score therefore did not
+compute the right gain.
+
+The bug surfaced during depth=2 testing as a "fold equals root
+histogram" property: because rows are partitioned (not removed)
+across the frontier, the fold at level `k+1` reconstructs the root
+histogram exactly, so the splitter re-picked the same `(feature, bin)`
+at every level and produced degenerate trees where `2^depth − 2`
+leaves were empty. I documented this as inherent to oblivious +
+basic gain. It isn't — it's an artifact of the wrong gain function.
+
+### Verification against CatBoost (2026-05-22)
+
+Inspected [catboost/private/libs/algo/greedy_tensor_search.cpp](https://github.com/catboost/catboost/blob/master/catboost/private/libs/algo/greedy_tensor_search.cpp).
+The symmetric-tree path calls `CalcBestScore` → `CalcStatsAndScores`,
+which builds per-leaf histograms across the current depth's leaves
+and aggregates gains via `SetBestScore`. Per-parent gain summation
+confirmed. The fold-then-score approach has no CatBoost analog.
+
+### Resolution (2026-05-22)
+
+Reverted the broken implementation in one commit:
+
+- `ObliviousGrower<SplitterT>` declaration removed from
+  [`include/bonsai/grower.hpp`](../include/bonsai/grower.hpp).
+- `make_level_node` helper + `ObliviousGrower::grow` impl +
+  explicit instantiation removed from
+  [`src/grower.cpp`](../src/grower.cpp).
+- `Histogram::operator+=` removed from
+  [`include/bonsai/histogram.hpp`](../include/bonsai/histogram.hpp).
+- `Growers` typelist reverted to `TypeList<DepthwiseGrower<...>>` in
+  [`include/bonsai/registry/typelists.hpp`](../include/bonsai/registry/typelists.hpp);
+  `impl_name<ObliviousGrower<...>>` removed from
+  [`include/bonsai/registry/names.hpp`](../include/bonsai/registry/names.hpp).
+- Two `Booster<..., ObliviousGrower<...>, ...>` explicit
+  instantiations removed from
+  [`src/booster.cpp`](../src/booster.cpp).
+- `tests/unit/test_oblivious_grower.cpp` deleted; CMake entry
+  removed; oblivious cases removed from `test_make_booster.cpp` and
+  `test_model_io.cpp`. The `ObliviousTree`-specific `tree_to_json`
+  overload and `tree_from_json<ObliviousTree>` specialization in
+  [`src/io/model.cpp`](../src/io/model.cpp) were also removed
+  because `-Werror=unused-function` would otherwise fire.
+
+### What was kept
+
+Infrastructure that is independently valid (does not assume the
+broken impl):
+
+- `ObliviousTree::splits()` / `leaf_values()` accessors on
+  [`include/bonsai/tree.hpp`](../include/bonsai/tree.hpp). Needed by
+  I/O once the correct grower lands.
+- `using tree_type = typename Gr::Tree;` public alias on `Booster`
+  in [`include/bonsai/booster.hpp`](../include/bonsai/booster.hpp).
+- Tree-type-polymorphic `try_save_as<B>` / `try_load_into<B>` in
+  [`src/io/model.cpp`](../src/io/model.cpp) (uses
+  `typename B::tree_type`), and the `NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE`
+  macros for `ObliviousTree::LevelSplit` / `Params`.
+- [`tests/unit/test_grower_helpers.hpp`](../tests/unit/test_grower_helpers.hpp)
+  shared fixtures — grower-agnostic, still used by `test_grower.cpp`.
+
+### Outstanding
+
+Decision 8's Phase-1 commitment (depth-wise + oblivious) is not
+honored. The design-review drift flag at
+[`reviews/2026-05-19-design-review.md`](reviews/2026-05-19-design-review.md)
+§"DenseTree / ObliviousTree" remains accurate. The correct algorithm
+is documented as a design target in
+[`architecture/3-tree.md` §"Oblivious grow loop"](architecture/3-tree.md);
+implementation pending in Phase 2.5 (user-authored).
+
+### Lesson
+
+Mathematical primitives need a sanity check before being trusted
+across an aggregation boundary. `score(g, h)` looks superficially
+linear in `g`, but the `g²` term kills additivity. Two more
+checkpoints that should have caught the bug earlier:
+
+1. **Cross-reference against the reference library before
+   implementing.** CatBoost's source explicitly aggregates gains
+   per-leaf. A 10-minute read of `greedy_tensor_search.cpp` would
+   have surfaced the right shape before any code was written.
+2. **Design tests that distinguish the right answer from a
+   plausibly-wrong one.** The original `depth=2` test was content
+   with "4 leaves, structurally correct" and even rationalized the
+   degenerate `[2 non-empty, 2 empty]` outcome. A test that demanded
+   "all 4 leaves carry rows" or "level-1 split differs from level-0
+   on some non-trivial fixture" would have failed loudly.

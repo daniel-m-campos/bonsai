@@ -126,7 +126,8 @@ TEST_CASE("make_booster: MSE/Depthwise/AllRows parity with direct instantiation"
     Config const cfg = tiny_cfg();
 
     using DirectBooster =
-        Booster<MSEObjective, DepthwiseGrower<HistogramSplitFinder>, AllRowsSampler>;
+        Booster<MSEObjective, DepthwiseGrower<HistogramSplitFinder>,
+                AllRowsSampler>;
     DirectBooster direct{cfg};
 
     auto const dispatched = make_booster(cfg);

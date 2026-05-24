@@ -6,11 +6,9 @@
 #include "bonsai/grower.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/sampler.hpp"
-#include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
 #include <cstddef>
 #include <random>
-#include <span>
 #include <vector>
 
 namespace bonsai
@@ -33,6 +31,7 @@ class Booster final : public IBooster
     using objective_type = Obj;
     using grower_type    = Gr;
     using sampler_type   = Sa;
+    using tree_type      = typename Gr::Tree;
 
     explicit Booster(Config const &config);
 

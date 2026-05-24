@@ -1,79 +1,30 @@
-#include <array>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
-#include <cstddef>
 #include <limits>
 #include <utility>
 #include <vector>
 
-#include "bonsai/bin_mappers.hpp"
-#include "bonsai/config/bin_mapper_config.hpp"
 #include "bonsai/config/tree_config.hpp"
-#include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/types.hpp"
+#include "test_grower_helpers.hpp"
 
-using namespace bonsai; // NOLINT
-
-namespace
-{
-
-template <typename TreeT> float predict_one(TreeT const &tree, std::vector<float> row)
-{
-    std::array<float, 1> out{};
-    tree.predict(features_view{row.data(), 1, row.size()}, floats_out{out});
-    return out[0];
-}
-
-struct Built
-{
-    BinMappers mappers;
-    Dataset ds;
-};
-
-Built build(detail::ColumnBatch batch)
-{
-    BinMappers mappers = BinMappers::fit(batch, BinMapperConfig{});
-    Dataset ds         = Dataset::bin(batch, mappers, {});
-    return Built{.mappers = std::move(mappers), .ds = std::move(ds)};
-}
-
-std::vector<row_id_t> iota_rows(size_t n)
-{
-    std::vector<row_id_t> v(n);
-    for (row_id_t i = 0; i < n; ++i)
-    {
-        v[i] = i;
-    }
-    return v;
-}
-
-} // namespace
+using namespace bonsai;       // NOLINT
+using namespace bonsai::test; // NOLINT
 
 TEST_CASE("DepthwiseGrower: depth=1 separable yields one split, two leaves",
           "[grower][smoke]")
 {
-    // 1 feature, 4 rows. Grad = -1 for low feature vals, +1 for high.
-    // Separable at the midpoint cut. hess = 1.0 each.
-    detail::ColumnBatch batch{
-        .features      = {{0.0F, 0.1F, 0.9F, 1.0F}},
-        .labels        = std::vector<float>(4, 0.0F),
-        .weights       = {},
-        .feature_names = {"a"},
-    };
-    auto built = build(std::move(batch));
-    std::vector<float> grad{-1.0F, -1.0F, +1.0F, +1.0F};
-    std::vector<float> hess(4, 1.0F);
-    auto rows = iota_rows(4);
-
+    auto in = separable_4row();
     TreeConfig cfg{.min_child_hess   = 0.0F,
                    .lambda_l2        = 1.0F,
                    .max_depth        = 1,
                    .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values] =
+        grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     CHECK(tree.params().n_leaves == 2);
     CHECK(tree.params().depth == 1);
@@ -137,20 +88,11 @@ TEST_CASE("DepthwiseGrower: depth=2 separable yields four leaves with correct ro
 
 TEST_CASE("DepthwiseGrower: max_depth=0 returns single-leaf tree", "[grower][edge]")
 {
-    detail::ColumnBatch batch{
-        .features      = {{0.0F, 1.0F}},
-        .labels        = std::vector<float>(2, 0.0F),
-        .weights       = {},
-        .feature_names = {"a"},
-    };
-    auto built = build(std::move(batch));
-    std::vector<float> grad{-1.0F, +1.0F};
-    std::vector<float> hess(2, 1.0F);
-    auto rows = iota_rows(2);
-
+    auto in = two_value_pair();
     TreeConfig cfg{.lambda_l2 = 1.0F, .max_depth = 0, .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values] =
+        grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     CHECK(tree.params().n_leaves == 1);
     CHECK(tree.params().depth == 0);
@@ -161,24 +103,14 @@ TEST_CASE("DepthwiseGrower: max_depth=0 returns single-leaf tree", "[grower][edg
 TEST_CASE("DepthwiseGrower: no positive-gain split yields single leaf",
           "[grower][no_split]")
 {
-    // Uniform grad and hess: every cut has gain == 0, none positive.
-    detail::ColumnBatch batch{
-        .features      = {{0.0F, 0.5F, 1.0F}},
-        .labels        = std::vector<float>(3, 0.0F),
-        .weights       = {},
-        .feature_names = {"a"},
-    };
-    auto built = build(std::move(batch));
-    std::vector<float> grad(3, 1.0F);
-    std::vector<float> hess(3, 1.0F);
-    auto rows = iota_rows(3);
-
+    auto in = uniform_3row();
     TreeConfig cfg{.min_child_hess   = 0.0F,
                    .lambda_l2        = 1.0F,
                    .max_depth        = 3,
                    .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values] =
+        grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     CHECK(tree.params().n_leaves == 1);
     // Root never split: depth should be 0, not the loop's iteration count.
@@ -189,23 +121,14 @@ TEST_CASE("DepthwiseGrower: no positive-gain split yields single leaf",
 
 TEST_CASE("DepthwiseGrower: NaN predict routes via default_left", "[grower][missing]")
 {
-    detail::ColumnBatch batch{
-        .features      = {{0.0F, 0.1F, 0.9F, 1.0F}},
-        .labels        = std::vector<float>(4, 0.0F),
-        .weights       = {},
-        .feature_names = {"a"},
-    };
-    auto built = build(std::move(batch));
-    std::vector<float> grad{-1.0F, -1.0F, +1.0F, +1.0F};
-    std::vector<float> hess(4, 1.0F);
-    auto rows = iota_rows(4);
-
+    auto in = separable_4row();
     TreeConfig cfg{.min_child_hess   = 0.0F,
                    .lambda_l2        = 1.0F,
                    .max_depth        = 1,
                    .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values] =
+        grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     // With no missing values at fit time, the splitter's default_left tie-break
     // favors `true`, so NaN inputs at predict time must route to the left leaf
@@ -222,23 +145,14 @@ TEST_CASE("DepthwiseGrower: min_child_hess starves all splits → single leaf",
     // Same separable layout as the smoke test, but min_child_hess > max
     // achievable hess on either side (2.0). Every candidate is rejected;
     // root falls through to a leaf.
-    detail::ColumnBatch batch{
-        .features      = {{0.0F, 0.1F, 0.9F, 1.0F}},
-        .labels        = std::vector<float>(4, 0.0F),
-        .weights       = {},
-        .feature_names = {"a"},
-    };
-    auto built = build(std::move(batch));
-    std::vector<float> grad{-1.0F, -1.0F, +1.0F, +1.0F};
-    std::vector<float> hess(4, 1.0F);
-    auto rows = iota_rows(4);
-
+    auto in = separable_4row();
     TreeConfig cfg{.min_child_hess   = 3.0F,
                    .lambda_l2        = 1.0F,
                    .max_depth        = 2,
                    .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values] =
+        grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     CHECK(tree.params().n_leaves == 1);
     CHECK(tree.params().depth == 0);
@@ -290,23 +204,15 @@ TEST_CASE("DepthwiseGrower: asymmetric tree — one child splits, other stays a 
 TEST_CASE("DepthwiseGrower: empty row_indices yields zero-valued single leaf",
           "[grower][edge]")
 {
-    detail::ColumnBatch batch{
-        .features      = {{0.0F, 0.5F, 1.0F}},
-        .labels        = std::vector<float>(3, 0.0F),
-        .weights       = {},
-        .feature_names = {"a"},
-    };
-    auto built = build(std::move(batch));
-    std::vector<float> grad(3, 1.0F);
-    std::vector<float> hess(3, 1.0F);
-    std::vector<row_id_t> rows; // empty
-
+    auto in   = uniform_3row();
+    in.rows   = {}; // empty
     TreeConfig cfg{.min_child_hess   = 0.0F,
                    .lambda_l2        = 1.0F,
                    .max_depth        = 3,
                    .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values] =
+        grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     CHECK(tree.params().n_leaves == 1);
     CHECK(tree.params().depth == 0);

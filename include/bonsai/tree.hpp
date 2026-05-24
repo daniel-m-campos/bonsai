@@ -93,6 +93,16 @@ class ObliviousTree
         return params_;
     }
 
+    LevelSplits const &splits() const
+    {
+        return splits_;
+    }
+
+    LeafValues const &leaf_values() const
+    {
+        return leaf_values_;
+    }
+
   private:
     float walk_row(features_view X, row_id_t i) const;
 

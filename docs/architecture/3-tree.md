@@ -542,22 +542,25 @@ through the builder is straightforward bookkeeping, omitted here.
 
 ## Oblivious grow loop
 
-Same outer shape as depth-wise. Differences: each level folds per-node
-histograms into one level histogram before scoring, and **all** nodes
-at the level share the chosen split.
+> **Status (2026-05-22):** design target only. No `ObliviousGrower`
+> implementation currently ships — see [decision 30](../decisions.md).
+> The pseudocode below describes the intended algorithm; the previous
+> fold-then-score impl was reverted after the gain function was found
+> wrong.
+
+Same outer shape as depth-wise. Differences: **all** nodes at the
+level share one chosen split, and the gain for a candidate split is
+the **sum of per-parent gains** across the frontier — not the gain
+of a single folded histogram.
 
 ```python
-def grow_oblivious(ds, grad, hess, row_indices, cfg, splitter, lr):
+def grow_oblivious(ds, grad, hess, row_indices, cfg, lr):
     splits = []
     frontier = [build_by_scan(row_indices, ds, grad, hess)]
 
     for _ in range(cfg.max_depth):
-        level_hists    = fold_per_feature(node.hists for node in frontier)
-        level_sum_grad = sum(node.sum_grad for node in frontier)
-        level_sum_hess = sum(node.sum_hess for node in frontier)
-
-        candidate = splitter.find(level_hists, ds, level_sum_grad, level_sum_hess)
-        if not candidate.valid or violates_regularization_level(frontier, candidate, cfg):
+        candidate = find_level_split(frontier, ds, cfg)
+        if not candidate.valid:
             break  # every node at this level becomes a leaf
 
         splits.append(LevelSplit(candidate))
@@ -571,19 +574,63 @@ def grow_oblivious(ds, grad, hess, row_indices, cfg, splitter, lr):
     return ObliviousTree(splits, leaf_values)
 ```
 
-`fold_per_feature` sums per-node histograms bin-by-bin into one
-`Histogram` per feature. The build phase (`split_parent` calls) is the
-same helper depth-wise uses.
+`find_level_split` iterates `(feature, bin, default_left)` candidates
+and, for each, sums per-parent gain across the frontier:
 
-The fold cost is `n_features · n_bins · |frontier|` per level —
-small relative to histogram building. Forecast on the planned
-post-parallelism perf benchmark (YearPredictionMSD, 90 features,
-255 bins) at level 5 with 32 live nodes:
-~730 K ops fold vs ~45 M ops histogram-build per level (~1.5%).
+```python
+def find_level_split(frontier, ds, cfg):
+    best = invalid_candidate()
+    for fid in range(ds.n_features()):
+        for bin_id in range(ds.n_bins(fid) - 1):
+            for default_left in (True, False):
+                level_gain = 0.0
+                feasible   = True
+                for p in frontier:
+                    gL, hL, gR, hR = split_sums(p.hists[fid], bin_id, default_left,
+                                                p.grad, p.hess)
+                    if hL < cfg.min_child_hess or hR < cfg.min_child_hess:
+                        feasible = False  # oblivious is all-or-nothing
+                        break
+                    level_gain += (score(gL, hL, cfg.lambda_l2)
+                                 + score(gR, hR, cfg.lambda_l2)
+                                 - score(p.grad, p.hess, cfg.lambda_l2))
+                if feasible and level_gain > best.gain and level_gain >= cfg.min_gain_to_split:
+                    best = Candidate(fid, bin_id, default_left, level_gain)
+    return best
+```
 
-The build phase (steps after `splitter.find`) is bit-for-bit
-identical to depth-wise's per-parent loop. The two growers share a
-`build_by_subtraction` helper.
+**Why per-parent summation, not fold-then-score.** The gain function
+`score(g, h) = g²/(h + λ)` is non-additive:
+
+```
+score(Σ g_i_L, Σ h_i_L) + score(Σ g_i_R, Σ h_i_R) − score(Σ g_i, Σ h_i)
+  ≠
+Σ_i [ score(g_i_L, h_i_L) + score(g_i_R, h_i_R) − score(g_i, h_i) ]
+```
+
+Folding histograms before scoring gives the first expression — which
+is *not* the gain induced by applying one split to every parent in
+the frontier. The second expression is. CatBoost confirms this in
+[catboost/private/libs/algo/greedy_tensor_search.cpp](https://github.com/catboost/catboost/blob/master/catboost/private/libs/algo/greedy_tensor_search.cpp):
+the symmetric-tree path calls `CalcBestScore` → `CalcStatsAndScores`,
+which builds per-leaf histograms across the current depth's leaves
+and aggregates gains via `SetBestScore`.
+
+**Constraint shape.** `min_child_hess` is enforced **per parent** —
+if any parent in the frontier would create an undersized child under
+the candidate, the entire candidate is rejected. This is what "all
+nodes at the level share the chosen split" implies: oblivious is
+all-or-nothing. `min_data_in_leaf` is not enforced for oblivious
+(matches CatBoost — that knob applies only to its Lossguide /
+Depthwise growing policies).
+
+**Cost.** `O(n_features · n_bins · |frontier|)` per level for the
+gain accumulation — same order as the original fold-then-score
+sketch; the difference is in *what* is accumulated (gain, not
+histogram cells). Build phase after `find_level_split` (the
+`split_parent` calls) is bit-for-bit identical to depth-wise's
+per-parent subtraction-trick loop. The two growers share that
+helper.
 
 The output `ObliviousTree` is constructed from:
 - `splits_` = the `LevelSplit` recorded at each level (one per level).

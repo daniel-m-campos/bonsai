@@ -69,6 +69,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DenseTree::InternalNode, feature_id, threshol
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DenseTree::LeafNode, value)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DenseTree::Params, depth, n_leaves)
 
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ObliviousTree::LevelSplit, feature_id, threshold,
+                                   default_left)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ObliviousTree::Params, depth, n_leaves)
+
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DataConfig, train, valid, test, format, header,
                                    label_column, weight_column, ignore_columns,
                                    missing_nan, missing_sentinel)
@@ -138,7 +142,9 @@ json tree_to_json(DenseTree const &t)
     return out;
 }
 
-DenseTree tree_from_json(json const &j)
+template <typename TreeT> TreeT tree_from_json(json const &j);
+
+template <> DenseTree tree_from_json<DenseTree>(json const &j)
 {
     DenseTree::Nodes nodes;
     nodes.reserve(j.at("nodes").size());
@@ -216,11 +222,12 @@ template <typename B> bool try_load_into(IBooster &booster, json const &j)
     {
         return false;
     }
-    std::vector<DenseTree> trees;
+    using TreeT = typename B::tree_type;
+    std::vector<TreeT> trees;
     trees.reserve(j.at("trees").size());
     for (auto const &tj : j.at("trees"))
     {
-        trees.push_back(tree_from_json(tj));
+        trees.push_back(tree_from_json<TreeT>(tj));
     }
     concrete->load_state(std::move(trees), j.at("init_score").get<float>());
     return true;
