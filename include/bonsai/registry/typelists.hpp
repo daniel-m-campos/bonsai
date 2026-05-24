@@ -10,7 +10,7 @@ namespace bonsai
 {
 
 using Objectives = TypeList<MSEObjective, LogLossObjective>;
-using Growers    = TypeList<DepthwiseGrower<HistogramSplitFinder>>;
+using Growers    = TypeList<DepthwiseGrower<HistogramNodeSplitFinder>>;
 using Samplers   = TypeList<AllRowsSampler>;
 
 } // namespace bonsai

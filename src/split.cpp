@@ -10,14 +10,15 @@ namespace bonsai
 namespace
 {
 
-inline void update_best_for_feature(SplitNode const &node, feature_id_t fid,
-                                    TreeConfig const &config, Split &best)
+inline void update_best_for_feature_for_node(SplitInput const &input, feature_id_t fid,
+                                             TreeConfig const &config,
+                                             SplitOutput &best)
 {
-    auto const &hist         = node.hists[fid];
+    auto const &hist         = input.hists[fid];
     auto const &missing_cell = hist.missing();
-    double const real_grad   = node.grad - missing_cell.sum_grad;
-    double const real_hess   = node.hess - missing_cell.sum_hess;
-    double const node_score  = score(node.grad, node.hess, config.lambda_l2);
+    double const real_grad   = input.grad - missing_cell.sum_grad;
+    double const real_hess   = input.hess - missing_cell.sum_hess;
+    double const node_score  = score(input.grad, input.hess, config.lambda_l2);
     double left_grad         = 0.0;
     double left_hess         = 0.0;
     bin_id_t b               = 0;
@@ -59,18 +60,39 @@ inline void update_best_for_feature(SplitNode const &node, feature_id_t fid,
 
 } // namespace
 
-Split HistogramSplitFinder::find(SplitNode const &node, TreeConfig const &config)
+SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
+                                           TreeConfig const &config)
 {
-    if (node.rows.size() < 2 * size_t{config.min_data_in_leaf})
+    if (input.rows.size() < 2 * size_t{config.min_data_in_leaf})
     {
         return {};
     }
-    Split best;
-    auto const &hists = node.hists;
+    SplitOutput best;
+    auto const &hists = input.hists;
     for (feature_id_t fid = 0; fid < hists.size(); ++fid)
     {
-        update_best_for_feature(node, fid, config, best);
+        update_best_for_feature_for_node(input, fid, config, best);
     }
+    return best;
+}
+
+namespace
+{
+[[maybe_unused]] inline void
+update_best_for_feature_for_level([[maybe_unused]] SplitInput const &input,
+                                  [[maybe_unused]] feature_id_t fid,
+                                  [[maybe_unused]] TreeConfig const &config,
+                                  [[maybe_unused]] SplitOutput &best)
+{
+}
+
+} // namespace
+
+SplitOutput HistogramLevelSplitFinder::find([[maybe_unused]] FrontierInput frontier,
+                                            [[maybe_unused]] TreeConfig const &config)
+{
+    SplitOutput best;
+
     return best;
 }
 

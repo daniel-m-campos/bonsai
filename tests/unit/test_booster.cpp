@@ -31,10 +31,11 @@ Config tiny_cfg()
 }
 
 using TestBooster =
-    Booster<MSEObjective, DepthwiseGrower<HistogramSplitFinder>, AllRowsSampler>;
+    Booster<MSEObjective, DepthwiseGrower<HistogramNodeSplitFinder>, AllRowsSampler>;
 
 using TestLogLossBooster =
-    Booster<LogLossObjective, DepthwiseGrower<HistogramSplitFinder>, AllRowsSampler>;
+    Booster<LogLossObjective, DepthwiseGrower<HistogramNodeSplitFinder>,
+            AllRowsSampler>;
 
 detail::ColumnBatch separable_batch()
 {
@@ -86,7 +87,8 @@ RawFeatures to_raw(detail::ColumnBatch const &batch)
             data[(r * n_features) + f] = batch.features[f][r];
         }
     }
-    return RawFeatures{.data = std::move(data), .n_rows = n_rows, .n_features = n_features};
+    return RawFeatures{
+        .data = std::move(data), .n_rows = n_rows, .n_features = n_features};
 }
 
 // Predict inputs for `separable_batch`: rows 0,1 take a value strictly below
@@ -107,11 +109,10 @@ TEST_CASE("Booster: ctor doesn't allocate per-row state", "[booster][ctor]")
     SUCCEED();
 }
 
-TEST_CASE("Booster: predict shape + finite after 1 iter",
-          "[booster][predict][smoke]")
+TEST_CASE("Booster: predict shape + finite after 1 iter", "[booster][predict][smoke]")
 {
-    auto const batch    = separable_batch();
-    Dataset const train = make_dataset(batch);
+    auto const batch      = separable_batch();
+    Dataset const train   = make_dataset(batch);
     RawFeatures const raw = to_raw(batch);
 
     Config const cfg = tiny_cfg();
@@ -178,14 +179,14 @@ TEST_CASE("Booster: eval == MSE(predict, labels) by construction",
 TEST_CASE("Booster: weights scale grad/hess and shift leaf values",
           "[booster][update][weights]")
 {
-    auto const batch_unw = separable_batch();
+    auto const batch_unw    = separable_batch();
     Dataset const train_unw = make_dataset(batch_unw);
 
     detail::ColumnBatch batch_w = separable_batch();
     batch_w.weights             = {2.0F, 2.0F, 2.0F, 2.0F};
     Dataset const train_w       = make_dataset(batch_w);
 
-    Config const cfg = tiny_cfg();  // lambda_l2 default = 1.0 ⇒ weights don't cancel.
+    Config const cfg = tiny_cfg(); // lambda_l2 default = 1.0 ⇒ weights don't cancel.
     TestBooster booster_unw{cfg};
     TestBooster booster_w{cfg};
     booster_unw.update_one_iter(train_unw);
@@ -222,9 +223,9 @@ TEST_CASE("Booster: predict matches analytic leaf after 1 iter",
     std::vector<float> y_hat(raw.n_rows);
     booster.predict(raw.view(), y_hat);
 
-    // init_score = mean(y) = 0. Grad after init = pred - y = {1,1,-1,-1}, hess = {1,1,1,1}.
-    // Single split separates rows {0,1} from {2,3}; left leaf = -2/(2+λ), right = +2/(2+λ).
-    // Predict = init + lr * leaf.
+    // init_score = mean(y) = 0. Grad after init = pred - y = {1,1,-1,-1}, hess =
+    // {1,1,1,1}. Single split separates rows {0,1} from {2,3}; left leaf = -2/(2+λ),
+    // right = +2/(2+λ). Predict = init + lr * leaf.
     float const lambda = cfg.tree_config.lambda_l2;
     float const lr     = cfg.booster_config.learning_rate;
     float const left   = lr * (-2.0F / (2.0F + lambda));
@@ -265,8 +266,8 @@ TEST_CASE("Booster: LogLoss eval decreases monotonically over iters",
 TEST_CASE("Booster: LogLoss predict produces raw scores separating classes",
           "[booster][logloss][predict]")
 {
-    auto const batch    = separable_binary_batch();
-    Dataset const train = make_dataset(batch);
+    auto const batch      = separable_binary_batch();
+    Dataset const train   = make_dataset(batch);
     RawFeatures const raw = separable_raw_midpoints();
 
     Config const cfg = tiny_cfg();

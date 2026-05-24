@@ -22,7 +22,7 @@ inline float leaf_value(double grad, double hess, double lambda)
     return static_cast<float>(-grad / (hess + lambda));
 }
 
-inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitNode const &node,
+inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
                              double lambda, size_t &n_leaves, train_leaf_values &values)
 {
     float const v  = leaf_value(node.grad, node.hess, lambda);
@@ -35,7 +35,7 @@ inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitNode const &node,
 }
 
 inline void populate_from_rows(Dataset const &ds, floats_view grad, floats_view hess,
-                               SplitNode &node)
+                               SplitInput &node)
 {
     node.hists.reserve(ds.n_features());
     for (feature_id_t fid = 0; fid < ds.n_features(); ++fid)
@@ -60,20 +60,19 @@ inline void populate_from_rows(Dataset const &ds, floats_view grad, floats_view 
     }
 }
 
-SplitNode make_root(Dataset const &ds, floats_view grad, floats_view hess,
-                    row_index_view row_indices)
+SplitInput make_root(Dataset const &ds, floats_view grad, floats_view hess,
+                     row_index_view row_indices)
 {
-    SplitNode root;
+    SplitInput root;
     root.id = 0;
     root.rows.assign(row_indices.begin(), row_indices.end());
     populate_from_rows(ds, grad, hess, root);
     return root;
 }
 
-inline std::pair<SplitNode, SplitNode> split_node(Dataset const &ds, floats_view grad,
-                                                  floats_view hess, SplitNode parent,
-                                                  Split const &s, node_id_t left_id,
-                                                  node_id_t right_id)
+inline std::pair<SplitInput, SplitInput>
+split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput parent,
+           SplitOutput const &s, node_id_t left_id, node_id_t right_id)
 {
     // 1. Partition parent.rows in place: lefts first, then rights.
     auto const &bins    = ds.feature_bins(s.feature_id);
@@ -89,16 +88,16 @@ inline std::pair<SplitNode, SplitNode> split_node(Dataset const &ds, floats_view
     };
     auto mid = std::partition(parent.rows.begin(), parent.rows.end(), goes_left);
 
-    SplitNode left;
-    SplitNode right;
+    SplitInput left;
+    SplitInput right;
     left.id  = left_id;
     right.id = right_id;
     left.rows.assign(parent.rows.begin(), mid);
     right.rows.assign(mid, parent.rows.end());
 
     bool const left_smaller = left.rows.size() <= right.rows.size();
-    SplitNode &small        = left_smaller ? left : right;
-    SplitNode &large        = left_smaller ? right : left;
+    SplitInput &small       = left_smaller ? left : right;
+    SplitInput &large       = left_smaller ? right : left;
     populate_from_rows(ds, grad, hess, small);
     large.grad = parent.grad - small.grad;
     large.hess = parent.hess - small.hess;
@@ -113,8 +112,9 @@ inline std::pair<SplitNode, SplitNode> split_node(Dataset const &ds, floats_view
 }
 
 inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
-                         TreeConfig const &config, std::vector<SplitNode> &current,
-                         std::vector<SplitNode> &next, std::vector<Split> const &splits,
+                         TreeConfig const &config, std::vector<SplitInput> &current,
+                         std::vector<SplitInput> &next,
+                         std::vector<SplitOutput> const &splits,
                          DenseTree::Nodes &nodes, size_t &n_leaves,
                          train_leaf_values &values)
 {
@@ -152,21 +152,21 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
 
 } // namespace
 
-template <SplitFinder SplitterT>
+template <NodeSplitFinder SplitterT>
 DepthwiseGrower<SplitterT>::DepthwiseGrower(TreeConfig const &cfg) : config_(cfg)
 {
 }
 
-template <SplitFinder SplitterT>
+template <NodeSplitFinder SplitterT>
 auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
                                       floats_view hess, row_index_view row_indices)
     -> GrowResult<Tree>
 {
     Tree::Nodes nodes;
     train_leaf_values values(ds.n_rows(), 0.0F);
-    std::vector<SplitNode> current;
-    std::vector<SplitNode> next;
-    std::vector<Split> splits;
+    std::vector<SplitInput> current;
+    std::vector<SplitInput> next;
+    std::vector<SplitOutput> splits;
     current.push_back(make_root(ds, grad, hess, row_indices));
     nodes.emplace_back(DenseTree::LeafNode{});
     uint8_t depth   = 0;
@@ -197,6 +197,6 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
             .values = std::move(values)};
 }
 
-template class DepthwiseGrower<HistogramSplitFinder>;
+template class DepthwiseGrower<HistogramNodeSplitFinder>;
 
 } // namespace bonsai

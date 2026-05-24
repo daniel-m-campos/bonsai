@@ -3,6 +3,7 @@
 #include "bonsai/grower.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/sampler.hpp"
+#include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
 #include <algorithm>
 #include <cassert>
@@ -87,9 +88,9 @@ void Booster<Obj, Gr, Sa>::predict(features_view X, floats_out scores) const
     }
 }
 
-template class Booster<MSEObjective, DepthwiseGrower<HistogramSplitFinder>,
+template class Booster<MSEObjective, DepthwiseGrower<HistogramNodeSplitFinder>,
                        AllRowsSampler>;
-template class Booster<LogLossObjective, DepthwiseGrower<HistogramSplitFinder>,
+template class Booster<LogLossObjective, DepthwiseGrower<HistogramNodeSplitFinder>,
                        AllRowsSampler>;
 
 } // namespace bonsai

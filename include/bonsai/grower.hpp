@@ -29,11 +29,23 @@ concept TreeGrower = requires(T g, Dataset const &ds, floats_view grad,
     } -> std::same_as<GrowResult<typename T::Tree>>;
 };
 
-template <SplitFinder SplitterT = HistogramSplitFinder> class DepthwiseGrower
+template <NodeSplitFinder SplitterT = HistogramNodeSplitFinder> class DepthwiseGrower
 {
   public:
     using Tree = DenseTree;
     explicit DepthwiseGrower(TreeConfig const &cfg);
+    GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
+                          row_index_view row_indices);
+
+  private:
+    TreeConfig config_;
+};
+
+template <LevelSplitFinder SplitterT = HistogramLevelSplitFinder> class ObliviousGrower
+{
+  public:
+    using Tree = ObliviousTree;
+    explicit ObliviousGrower(TreeConfig const &cfg);
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
                           row_index_view row_indices);
 

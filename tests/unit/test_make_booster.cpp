@@ -126,7 +126,7 @@ TEST_CASE("make_booster: MSE/Depthwise/AllRows parity with direct instantiation"
     Config const cfg = tiny_cfg();
 
     using DirectBooster =
-        Booster<MSEObjective, DepthwiseGrower<HistogramSplitFinder>,
+        Booster<MSEObjective, DepthwiseGrower<HistogramNodeSplitFinder>,
                 AllRowsSampler>;
     DirectBooster direct{cfg};
 
@@ -167,7 +167,7 @@ TEST_CASE("make_booster: LogLoss/Depthwise/AllRows parity with direct instantiat
     cfg.dispatch.objective_name = "logloss";
 
     using DirectBooster =
-        Booster<LogLossObjective, DepthwiseGrower<HistogramSplitFinder>,
+        Booster<LogLossObjective, DepthwiseGrower<HistogramNodeSplitFinder>,
                 AllRowsSampler>;
     DirectBooster direct{cfg};
 

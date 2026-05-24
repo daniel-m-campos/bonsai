@@ -35,7 +35,7 @@ template <> struct impl_name<LogLossObjective>
     static std::string_view constexpr value = "logloss";
 };
 
-template <> struct impl_name<DepthwiseGrower<HistogramSplitFinder>>
+template <> struct impl_name<DepthwiseGrower<HistogramNodeSplitFinder>>
 {
     static std::string_view constexpr value = "depthwise";
 };

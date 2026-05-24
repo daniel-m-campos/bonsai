@@ -4,12 +4,13 @@
 #include "bonsai/histogram.hpp"
 #include "bonsai/types.hpp"
 #include <concepts>
+#include <span>
 #include <vector>
 
 namespace bonsai
 {
 
-struct SplitNode
+struct SplitInput
 {
     std::vector<Histogram> hists;
     std::vector<row_id_t> rows;
@@ -18,7 +19,7 @@ struct SplitNode
     node_id_t id = 0;
 };
 
-struct Split
+struct SplitOutput
 {
     double gain             = 0.0;
     feature_id_t feature_id = 0;
@@ -28,13 +29,25 @@ struct Split
 };
 
 template <typename T>
-concept SplitFinder = requires(SplitNode const &node, TreeConfig const &config) {
-    { T::find(node, config) } -> std::same_as<Split>;
+concept NodeSplitFinder = requires(SplitInput const &input, TreeConfig const &config) {
+    { T::find(input, config) } -> std::same_as<SplitOutput>;
 };
 
-struct HistogramSplitFinder
+struct HistogramNodeSplitFinder
 {
-    static Split find(SplitNode const &node, TreeConfig const &config);
+    static SplitOutput find(SplitInput const &input, TreeConfig const &config);
+};
+
+using FrontierInput = std::span<SplitInput const>;
+
+template <typename T>
+concept LevelSplitFinder = requires(FrontierInput frontier, TreeConfig const &config) {
+    { T::find(frontier, config) } -> std::same_as<SplitOutput>;
+};
+
+struct HistogramLevelSplitFinder
+{
+    static SplitOutput find(FrontierInput frontier, TreeConfig const &config);
 };
 
 inline double score(double g, double h, double lambda)
