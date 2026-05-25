@@ -53,11 +53,9 @@ template <typename T> struct nlohmann::adl_serializer<std::optional<T>>
 #include "bonsai/booster.hpp"
 #include "bonsai/config/config.hpp"
 #include "bonsai/config/dispatch_config.hpp"
+#include "bonsai/registry/configurations.hpp"
 #include "bonsai/registry/make_booster.hpp"
-#include "bonsai/registry/names.hpp"
-#include "bonsai/registry/typelists.hpp"
 #include "bonsai/tree.hpp"
-#include "bonsai/typelist.hpp"
 
 namespace bonsai
 {
@@ -233,76 +231,18 @@ template <typename B> bool try_load_into(IBooster &booster, json const &j)
     return true;
 }
 
-using Configurations = cartesian_product_t<Objectives, Growers, Samplers>;
-
-template <typename Combo>
-using BoosterFor =
-    Booster<type_at_t<0, Combo>, type_at_t<1, Combo>, type_at_t<2, Combo>>;
-
 bool save_dispatch(IBooster const &booster, DispatchConfig const &disp, json &out)
 {
-    bool ok = false;
-    for_each_type<Configurations>(
-        [&]<typename Combo>()
-        {
-            if (ok)
-            {
-                return;
-            }
-            using O  = type_at_t<0, Combo>;
-            using G  = type_at_t<1, Combo>;
-            using Sa = type_at_t<2, Combo>;
-            static_assert(HasName<O>, "Objective needs impl_name specialization");
-            static_assert(HasName<G>, "Grower needs impl_name specialization");
-            static_assert(HasName<Sa>, "Sampler needs impl_name specialization");
-            if (disp.objective_name != impl_name<O>::value)
-            {
-                return;
-            }
-            if (disp.grower_name != impl_name<G>::value)
-            {
-                return;
-            }
-            if (disp.sampler_name != impl_name<Sa>::value)
-            {
-                return;
-            }
-            ok = try_save_as<BoosterFor<Combo>>(booster, out);
-        });
-    return ok;
+    return with_combo_matching(disp,
+                               [&]<typename Combo>()
+                               { return try_save_as<BoosterFor<Combo>>(booster, out); });
 }
 
 bool load_dispatch(IBooster &booster, DispatchConfig const &disp, json const &j)
 {
-    bool ok = false;
-    for_each_type<Configurations>(
-        [&]<typename Combo>()
-        {
-            if (ok)
-            {
-                return;
-            }
-            using O  = type_at_t<0, Combo>;
-            using G  = type_at_t<1, Combo>;
-            using Sa = type_at_t<2, Combo>;
-            static_assert(HasName<O>, "Objective needs impl_name specialization");
-            static_assert(HasName<G>, "Grower needs impl_name specialization");
-            static_assert(HasName<Sa>, "Sampler needs impl_name specialization");
-            if (disp.objective_name != impl_name<O>::value)
-            {
-                return;
-            }
-            if (disp.grower_name != impl_name<G>::value)
-            {
-                return;
-            }
-            if (disp.sampler_name != impl_name<Sa>::value)
-            {
-                return;
-            }
-            ok = try_load_into<BoosterFor<Combo>>(booster, j);
-        });
-    return ok;
+    return with_combo_matching(disp,
+                               [&]<typename Combo>()
+                               { return try_load_into<BoosterFor<Combo>>(booster, j); });
 }
 
 // ---- File I/O -------------------------------------------------------------

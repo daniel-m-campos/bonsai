@@ -9,8 +9,8 @@
 
 #include "bonsai/booster.hpp"
 #include "bonsai/config/config.hpp"
+#include "bonsai/registry/configurations.hpp"
 #include "bonsai/registry/names.hpp"
-#include "bonsai/registry/typelists.hpp"
 #include "bonsai/typelist.hpp"
 
 namespace bonsai
@@ -18,8 +18,6 @@ namespace bonsai
 
 namespace
 {
-
-using Configurations = cartesian_product_t<Objectives, Growers, Samplers>;
 
 struct Entry
 {
@@ -29,13 +27,9 @@ struct Entry
     std::unique_ptr<IBooster> (*factory)(Config const &);
 };
 
-template <typename Configuration>
-std::unique_ptr<IBooster> factory_for(Config const &cfg)
+template <typename Combo> std::unique_ptr<IBooster> factory_for(Config const &cfg)
 {
-    using O  = type_at_t<0, Configuration>;
-    using G  = type_at_t<1, Configuration>;
-    using Sa = type_at_t<2, Configuration>;
-    return std::make_unique<Booster<O, G, Sa>>(cfg);
+    return std::make_unique<BoosterFor<Combo>>(cfg);
 }
 
 auto constexpr create_table()
@@ -43,11 +37,11 @@ auto constexpr create_table()
     std::array<Entry, size_v<Configurations>> out{};
     size_t i = 0;
     for_each_type<Configurations>(
-        [&i, &out]<typename Configuration>()
+        [&i, &out]<typename Combo>()
         {
-            using O  = type_at_t<0, Configuration>;
-            using G  = type_at_t<1, Configuration>;
-            using Sa = type_at_t<2, Configuration>;
+            using O  = type_at_t<0, Combo>;
+            using G  = type_at_t<1, Combo>;
+            using Sa = type_at_t<2, Combo>;
             static_assert(
                 HasName<O>,
                 "Objective in Objectives typelist needs impl_name specialization");
@@ -60,7 +54,7 @@ auto constexpr create_table()
                 impl_name<O>::value,
                 impl_name<G>::value,
                 impl_name<Sa>::value,
-                &factory_for<Configuration>,
+                &factory_for<Combo>,
             };
         });
     return out;
