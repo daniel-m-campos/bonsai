@@ -64,8 +64,10 @@ catboost_info/
 .venv/
 __pycache__/
 
-# Toy datasets pulled by scripts/fetch_toy.py — regenerate, don't commit.
-tests/data/california_housing_*.csv
+# Datasets pulled by scripts/fetch_*.py — regenerate, don't commit.
+# (tiny.csv is a small fixture tracked by hand for unit tests.)
+tests/data/*.csv
+!tests/data/tiny.csv
 tests/data/.toy-fetched
 
 # Comparison results — regenerate via scripts/compare.py.
