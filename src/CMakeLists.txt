@@ -67,17 +67,20 @@ target_include_directories(bonsai_sampler PUBLIC
 
 target_link_libraries(bonsai_sampler PUBLIC bonsai_warnings)
 
-# ---- bonsai_booster: Booster training loop ----------------------------------
+# ---- bonsai_booster: header-only Booster<O,G,Sa> training loop --------------
+#
+# Booster is a class template whose method bodies live in booster.hpp, so this
+# target only aggregates include paths + transitive deps. Consumers
+# (bonsai_registry, bonsai_io, the bonsai exe, bonsai_tests) link against it
+# the same way regardless.
 
-add_library(bonsai_booster OBJECT
-    booster.cpp
-)
+add_library(bonsai_booster INTERFACE)
 
-target_include_directories(bonsai_booster PUBLIC
+target_include_directories(bonsai_booster INTERFACE
     ${CMAKE_SOURCE_DIR}/include
 )
 
-target_link_libraries(bonsai_booster PUBLIC
+target_link_libraries(bonsai_booster INTERFACE
     bonsai_data
     bonsai_tree
     bonsai_split
