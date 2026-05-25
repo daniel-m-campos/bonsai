@@ -58,7 +58,6 @@ auto constexpr create_link_table()
     for_each_type<Objectives>(
         [&i, &out]<typename O>()
         {
-            static_assert(HasName<O>, "Objective needs impl_name specialization");
             static_assert(HasLinkInverse<O>,
                           "Objective needs link_inverse_of specialization");
             out[i++] = LinkEntry{impl_name<O>::value, &link_thunk<O>};
@@ -73,7 +72,6 @@ auto constexpr create_task_table()
     for_each_type<Objectives>(
         [&i, &out]<typename O>()
         {
-            static_assert(HasName<O>, "Objective needs impl_name specialization");
             static_assert(HasTaskKind<O>, "Objective needs task_of specialization");
             out[i++] = TaskEntry{impl_name<O>::value, task_of<O>::value};
         });
@@ -87,7 +85,6 @@ auto constexpr create_defaults_table()
     for_each_type<Objectives>(
         [&i, &out]<typename O>()
         {
-            static_assert(HasName<O>, "Objective needs impl_name specialization");
             static_assert(HasDefaultMetricNames<O>,
                           "Objective needs default_metrics_of specialization");
             out[i++] = DefaultsEntry{impl_name<O>::value, &defaults_thunk<O>};

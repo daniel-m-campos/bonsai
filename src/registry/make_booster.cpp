@@ -42,14 +42,6 @@ auto constexpr create_table()
             using O  = type_at_t<0, Combo>;
             using G  = type_at_t<1, Combo>;
             using Sa = type_at_t<2, Combo>;
-            static_assert(
-                HasName<O>,
-                "Objective in Objectives typelist needs impl_name specialization");
-            static_assert(HasName<G>,
-                          "Grower in Growers typelist needs impl_name specialization");
-            static_assert(
-                HasName<Sa>,
-                "Sampler in Samplers typelist needs impl_name specialization");
             out[i++] = Entry{
                 impl_name<O>::value,
                 impl_name<G>::value,
