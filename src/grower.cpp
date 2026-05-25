@@ -187,4 +187,65 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
 
 template class DepthwiseGrower<HistogramNodeSplitFinder>;
 
+template <LevelSplitFinder SplitterT>
+ObliviousGrower<SplitterT>::ObliviousGrower(TreeConfig const &cfg) : config_(cfg)
+{
+}
+
+template <LevelSplitFinder SplitterT>
+auto ObliviousGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
+                                      floats_view hess, row_index_view row_indices)
+    -> GrowResult<Tree>
+{
+    Tree::LevelSplits level_splits;
+    Tree::LeafTable leaf_table;
+    train_leaf_values values(ds.n_rows(), 0.0F);
+
+    std::vector<SplitInput> frontier;
+    std::vector<SplitInput> next;
+    frontier.push_back(make_root(ds, grad, hess, row_indices));
+
+    size_t depth = 0;
+    while (depth < config_.max_depth)
+    {
+        SplitOutput const split = SplitterT::find(frontier, config_);
+        if (!split.valid)
+        {
+            break;
+        }
+        float const threshold = ds.mappers()[split.feature_id].cuts()[split.bin_id];
+        level_splits.push_back({.feature_id   = split.feature_id,
+                                .threshold    = threshold,
+                                .default_left = split.default_left});
+        next.reserve(frontier.size() * 2);
+        for (auto &node : frontier)
+        {
+            auto [left, right] =
+                split_node(ds, grad, hess, std::move(node), split, 0, 0);
+            next.push_back(std::move(left));
+            next.push_back(std::move(right));
+        }
+        std::swap(frontier, next);
+        next.clear();
+        ++depth;
+    }
+
+    leaf_table.reserve(frontier.size());
+    for (auto const &leaf : frontier)
+    {
+        float const v =
+            leaf_value(leaf.total_grad(), leaf.total_hess(), config_.lambda_l2);
+        leaf_table.push_back(v);
+        for (row_id_t r : leaf.rows)
+        {
+            values[r] = v;
+        }
+    }
+
+    return {.tree   = Tree(std::move(level_splits), std::move(leaf_table)),
+            .values = std::move(values)};
+}
+
+template class ObliviousGrower<HistogramLevelSplitFinder>;
+
 } // namespace bonsai

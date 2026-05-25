@@ -23,8 +23,7 @@ float predict_one(TreeT const &tree, std::array<float, N> const &row)
 // Depth-0 tree with a single leaf. No splits.
 ObliviousTree single_leaf(float value)
 {
-    return ObliviousTree{ObliviousTree::LevelSplits{},
-                         ObliviousTree::LeafValues{value}};
+    return ObliviousTree{ObliviousTree::LevelSplits{}, ObliviousTree::LeafTable{value}};
 }
 
 // Depth-1 tree splitting on `fid` at `default_threshold`.
@@ -37,7 +36,7 @@ ObliviousTree one_split(feature_id_t fid, bool default_left)
              .threshold    = default_threshold,
              .default_left = default_left},
         },
-        ObliviousTree::LeafValues{default_left_leaf, default_right_leaf},
+        ObliviousTree::LeafTable{default_left_leaf, default_right_leaf},
     };
 }
 
@@ -62,8 +61,8 @@ ObliviousTree depth2_two_feature_tree()
              .threshold    = right_subtree_threshold,
              .default_left = false},
         },
-        ObliviousTree::LeafValues{leaf_ll_value, leaf_lr_value, leaf_rl_value,
-                                  leaf_rr_value},
+        ObliviousTree::LeafTable{leaf_ll_value, leaf_lr_value, leaf_rl_value,
+                                 leaf_rr_value},
     };
 }
 
@@ -131,8 +130,8 @@ TEST_CASE("ObliviousTree: predict honors per-level default_left for NaN routing"
              .threshold    = right_subtree_threshold,
              .default_left = false},
         },
-        ObliviousTree::LeafValues{leaf_ll_value, leaf_lr_value, leaf_rl_value,
-                                  leaf_rr_value},
+        ObliviousTree::LeafTable{leaf_ll_value, leaf_lr_value, leaf_rl_value,
+                                 leaf_rr_value},
     };
 
     std::array<float, 2> nan_f0_low_f1{f_nan, f1_below_two};

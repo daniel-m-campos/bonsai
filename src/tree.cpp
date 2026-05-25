@@ -41,11 +41,11 @@ void DenseTree::predict(features_view X, floats_out out) const
     }
 }
 
-ObliviousTree::ObliviousTree(LevelSplits splits, LeafValues values)
-    : splits_(std::move(splits)), leaf_values_(std::move(values)),
-      params_{.depth = splits_.size(), .n_leaves = leaf_values_.size()}
+ObliviousTree::ObliviousTree(LevelSplits splits, LeafTable values)
+    : splits_(std::move(splits)), leaf_table_(std::move(values)),
+      params_{.depth = splits_.size(), .n_leaves = leaf_table_.size()}
 {
-    assert(leaf_values_.size() == (1ULL << splits_.size()));
+    assert(leaf_table_.size() == (1ULL << splits_.size()));
 }
 
 float ObliviousTree::walk_row(features_view X, row_id_t i) const
@@ -60,7 +60,7 @@ float ObliviousTree::walk_row(features_view X, row_id_t i) const
         bool go_left = less | (is_nan & s.default_left);
         index        = (index << 1) | (go_left ? 0U : 1U);
     }
-    return leaf_values_[index];
+    return leaf_table_[index];
 }
 
 void ObliviousTree::predict(features_view X, floats_out out) const

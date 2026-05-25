@@ -75,7 +75,7 @@ class ObliviousTree
     };
 
     using LevelSplits = std::vector<LevelSplit>;
-    using LeafValues  = std::vector<float>;
+    using LeafTable   = std::vector<float>;
 
     struct Params
     {
@@ -83,7 +83,7 @@ class ObliviousTree
         size_t n_leaves{};
     };
 
-    ObliviousTree(LevelSplits splits, LeafValues values);
+    ObliviousTree(LevelSplits splits, LeafTable values);
 
     // Accumulates into out; caller initializes (e.g. to zero or to a bias).
     void predict(features_view X, floats_out out) const;
@@ -98,16 +98,16 @@ class ObliviousTree
         return splits_;
     }
 
-    LeafValues const &leaf_values() const
+    LeafTable const &leaf_table() const
     {
-        return leaf_values_;
+        return leaf_table_;
     }
 
   private:
     float walk_row(features_view X, row_id_t i) const;
 
     LevelSplits splits_;
-    LeafValues leaf_values_;
+    LeafTable leaf_table_;
     Params params_;
 };
 
