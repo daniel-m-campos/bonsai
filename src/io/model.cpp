@@ -153,6 +153,22 @@ template <> DenseTree tree_from_json<DenseTree>(json const &j)
     return DenseTree{std::move(nodes), j.get<DenseTree::Params>()};
 }
 
+json tree_to_json(ObliviousTree const &t)
+{
+    json out      = t.params();
+    out["splits"] = t.splits();
+    out["leaves"] = t.leaf_table();
+    return out;
+}
+
+template <> ObliviousTree tree_from_json<ObliviousTree>(json const &j)
+{
+    return ObliviousTree{
+        j.at("splits").get<ObliviousTree::LevelSplits>(),
+        j.at("leaves").get<ObliviousTree::LeafTable>(),
+    };
+}
+
 // ---- BinMappers <-> JSON --------------------------------------------------
 
 json mappers_to_json(BinMappers const &mappers)

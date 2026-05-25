@@ -1,4 +1,5 @@
 #include <catch2/catch_approx.hpp>
+#include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
 #include <cstddef>
@@ -10,10 +11,9 @@
 #include "bonsai/config/config.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
-#include "bonsai/grower.hpp"
 #include "bonsai/objective.hpp"
+#include "bonsai/registry/typelists.hpp"
 #include "bonsai/sampler.hpp"
-#include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
 
 using namespace bonsai; // NOLINT
@@ -30,12 +30,11 @@ Config tiny_cfg()
     return cfg;
 }
 
-using TestBooster =
-    Booster<MSEObjective, DepthwiseGrower<HistogramNodeSplitFinder>, AllRowsSampler>;
+template <typename G>
+using MseBooster = Booster<MSEObjective, G, AllRowsSampler>;
 
-using TestLogLossBooster =
-    Booster<LogLossObjective, DepthwiseGrower<HistogramNodeSplitFinder>,
-            AllRowsSampler>;
+template <typename G>
+using LogLossBooster = Booster<LogLossObjective, G, AllRowsSampler>;
 
 detail::ColumnBatch separable_batch()
 {
@@ -102,21 +101,23 @@ RawFeatures separable_raw_midpoints()
 
 } // namespace
 
-TEST_CASE("Booster: ctor doesn't allocate per-row state", "[booster][ctor]")
+TEMPLATE_LIST_TEST_CASE("Booster: ctor doesn't allocate per-row state", "[booster][ctor]",
+                   Growers)
 {
     Config const cfg = tiny_cfg();
-    TestBooster booster{cfg};
+    MseBooster<TestType> booster{cfg};
     SUCCEED();
 }
 
-TEST_CASE("Booster: predict shape + finite after 1 iter", "[booster][predict][smoke]")
+TEMPLATE_LIST_TEST_CASE("Booster: predict shape + finite after 1 iter",
+                   "[booster][predict][smoke]", Growers)
 {
     auto const batch      = separable_batch();
     Dataset const train   = make_dataset(batch);
     RawFeatures const raw = to_raw(batch);
 
     Config const cfg = tiny_cfg();
-    TestBooster booster{cfg};
+    MseBooster<TestType> booster{cfg};
     booster.update_one_iter(train);
 
     std::vector<float> y_hat(raw.n_rows);
@@ -129,8 +130,8 @@ TEST_CASE("Booster: predict shape + finite after 1 iter", "[booster][predict][sm
     }
 }
 
-TEST_CASE("Booster: MSE eval decreases monotonically over iters",
-          "[booster][eval][convergence]")
+TEMPLATE_LIST_TEST_CASE("Booster: MSE eval decreases monotonically over iters",
+                   "[booster][eval][convergence]", Growers)
 {
     auto const batch      = separable_batch();
     Dataset const train   = make_dataset(batch);
@@ -138,7 +139,7 @@ TEST_CASE("Booster: MSE eval decreases monotonically over iters",
     floats_view const labels{batch.labels};
 
     Config const cfg = tiny_cfg();
-    TestBooster booster{cfg};
+    MseBooster<TestType> booster{cfg};
 
     booster.update_one_iter(train);
     float const initial_eval = booster.eval(raw.view(), labels);
@@ -155,8 +156,8 @@ TEST_CASE("Booster: MSE eval decreases monotonically over iters",
     CHECK(prev_eval < initial_eval);
 }
 
-TEST_CASE("Booster: eval == MSE(predict, labels) by construction",
-          "[booster][eval][predict][contract]")
+TEMPLATE_LIST_TEST_CASE("Booster: eval == MSE(predict, labels) by construction",
+                   "[booster][eval][predict][contract]", Growers)
 {
     auto const batch      = separable_batch();
     Dataset const train   = make_dataset(batch);
@@ -164,7 +165,7 @@ TEST_CASE("Booster: eval == MSE(predict, labels) by construction",
     floats_view const labels{batch.labels};
 
     Config const cfg = tiny_cfg();
-    TestBooster booster{cfg};
+    MseBooster<TestType> booster{cfg};
     booster.update_one_iter(train);
 
     float const eval_result = booster.eval(raw.view(), labels);
@@ -176,8 +177,8 @@ TEST_CASE("Booster: eval == MSE(predict, labels) by construction",
     CHECK(eval_result == Catch::Approx(recomputed).epsilon(1e-6));
 }
 
-TEST_CASE("Booster: weights scale grad/hess and shift leaf values",
-          "[booster][update][weights]")
+TEMPLATE_LIST_TEST_CASE("Booster: weights scale grad/hess and shift leaf values",
+                   "[booster][update][weights]", Growers)
 {
     auto const batch_unw    = separable_batch();
     Dataset const train_unw = make_dataset(batch_unw);
@@ -187,8 +188,8 @@ TEST_CASE("Booster: weights scale grad/hess and shift leaf values",
     Dataset const train_w       = make_dataset(batch_w);
 
     Config const cfg = tiny_cfg(); // lambda_l2 default = 1.0 ⇒ weights don't cancel.
-    TestBooster booster_unw{cfg};
-    TestBooster booster_w{cfg};
+    MseBooster<TestType> booster_unw{cfg};
+    MseBooster<TestType> booster_w{cfg};
     booster_unw.update_one_iter(train_unw);
     booster_w.update_one_iter(train_w);
 
@@ -209,15 +210,15 @@ TEST_CASE("Booster: weights scale grad/hess and shift leaf values",
     CHECK(pred_w[3] > pred_unw[3]);
 }
 
-TEST_CASE("Booster: predict matches analytic leaf after 1 iter",
-          "[booster][predict][analytic]")
+TEMPLATE_LIST_TEST_CASE("Booster: predict matches analytic leaf after 1 iter",
+                   "[booster][predict][analytic]", Growers)
 {
     auto const batch      = separable_batch();
     Dataset const train   = make_dataset(batch);
     RawFeatures const raw = separable_raw_midpoints();
 
     Config const cfg = tiny_cfg();
-    TestBooster booster{cfg};
+    MseBooster<TestType> booster{cfg};
     booster.update_one_iter(train);
 
     std::vector<float> y_hat(raw.n_rows);
@@ -237,8 +238,8 @@ TEST_CASE("Booster: predict matches analytic leaf after 1 iter",
     CHECK(y_hat[3] == Catch::Approx(right).epsilon(1e-5));
 }
 
-TEST_CASE("Booster: LogLoss eval decreases monotonically over iters",
-          "[booster][logloss][convergence]")
+TEMPLATE_LIST_TEST_CASE("Booster: LogLoss eval decreases monotonically over iters",
+                   "[booster][logloss][convergence]", Growers)
 {
     auto const batch      = separable_binary_batch();
     Dataset const train   = make_dataset(batch);
@@ -246,7 +247,7 @@ TEST_CASE("Booster: LogLoss eval decreases monotonically over iters",
     floats_view const labels{batch.labels};
 
     Config const cfg = tiny_cfg();
-    TestLogLossBooster booster{cfg};
+    LogLossBooster<TestType> booster{cfg};
 
     booster.update_one_iter(train);
     float const initial_eval = booster.eval(raw.view(), labels);
@@ -263,15 +264,15 @@ TEST_CASE("Booster: LogLoss eval decreases monotonically over iters",
     CHECK(prev_eval < initial_eval);
 }
 
-TEST_CASE("Booster: LogLoss predict produces raw scores separating classes",
-          "[booster][logloss][predict]")
+TEMPLATE_LIST_TEST_CASE("Booster: LogLoss predict produces raw scores separating classes",
+                   "[booster][logloss][predict]", Growers)
 {
     auto const batch      = separable_binary_batch();
     Dataset const train   = make_dataset(batch);
     RawFeatures const raw = separable_raw_midpoints();
 
     Config const cfg = tiny_cfg();
-    TestLogLossBooster booster{cfg};
+    LogLossBooster<TestType> booster{cfg};
     for (int i = 0; i < 10; ++i)
     {
         booster.update_one_iter(train);
@@ -291,12 +292,13 @@ TEST_CASE("Booster: LogLoss predict produces raw scores separating classes",
     CHECK(y_hat[3] > 0.0F);
 }
 
-TEST_CASE("Booster: n_iters tracks update count", "[booster][n_iters]")
+TEMPLATE_LIST_TEST_CASE("Booster: n_iters tracks update count", "[booster][n_iters]",
+                   Growers)
 {
     auto const batch    = separable_batch();
     Dataset const train = make_dataset(batch);
     Config const cfg    = tiny_cfg();
-    TestBooster booster{cfg};
+    MseBooster<TestType> booster{cfg};
 
     CHECK(booster.n_iters() == 0);
     booster.update_one_iter(train);

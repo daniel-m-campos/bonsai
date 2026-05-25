@@ -1,12 +1,14 @@
 #include <cstddef>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <system_error>
 #include <utility>
 #include <vector>
 
+#include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "bonsai/bin_mappers.hpp"
@@ -15,7 +17,11 @@
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/io/model.hpp"
+#include "bonsai/objective.hpp"
 #include "bonsai/registry/make_booster.hpp"
+#include "bonsai/registry/names.hpp"
+#include "bonsai/registry/typelists.hpp"
+#include "bonsai/typelist.hpp"
 #include "bonsai/types.hpp"
 
 using namespace bonsai; // NOLINT
@@ -94,7 +100,14 @@ detail::ColumnBatch tiny_batch()
     };
 }
 
-detail::ColumnBatch tiny_binary_batch()
+template <typename O> detail::ColumnBatch batch_for();
+
+template <> detail::ColumnBatch batch_for<MSEObjective>()
+{
+    return tiny_batch();
+}
+
+template <> detail::ColumnBatch batch_for<LogLossObjective>()
 {
     return detail::ColumnBatch{
         .features      = {{0.0F, 0.1F, 0.9F, 1.0F}},
@@ -104,18 +117,26 @@ detail::ColumnBatch tiny_binary_batch()
     };
 }
 
+using DispatchCombos = cartesian_product_t<Objectives, Growers, Samplers>;
+
 } // namespace
 
-TEST_CASE("ModelIo: save -> load -> predict reproduces predictions",
-          "[model_io][smoke]")
+TEMPLATE_LIST_TEST_CASE("ModelIo: save -> load -> predict reproduces predictions",
+                        "[model_io][smoke]", DispatchCombos)
 {
-    auto const batch         = tiny_batch();
+    using O                  = type_at_t<0, TestType>;
+    using G                  = type_at_t<1, TestType>;
+    using S                  = type_at_t<2, TestType>;
+    auto const batch         = batch_for<O>();
     BinMappers const mappers = BinMappers::fit(batch, {});
     Dataset const train      = Dataset::bin(batch, mappers, {});
     RawFeatures const raw    = to_raw(batch);
 
-    Config const cfg = tiny_cfg();
-    auto booster     = make_booster(cfg);
+    Config cfg                  = tiny_cfg();
+    cfg.dispatch.objective_name = std::string{impl_name<O>::value};
+    cfg.dispatch.grower_name    = std::string{impl_name<G>::value};
+    cfg.dispatch.sampler_name   = std::string{impl_name<S>::value};
+    auto booster                = make_booster(cfg);
     for (int i = 0; i < 5; ++i)
     {
         booster->update_one_iter(train);
@@ -141,43 +162,6 @@ TEST_CASE("ModelIo: save -> load -> predict reproduces predictions",
     {
         // Bit-equal after round-trip; predictions are deterministic and
         // we stored every float (init_score, learning_rate, leaf values).
-        REQUIRE(y_after[i] == y_before[i]);
-    }
-}
-
-TEST_CASE("ModelIo: logloss save -> load -> predict reproduces predictions",
-          "[model_io][smoke]")
-{
-    auto const batch         = tiny_binary_batch();
-    BinMappers const mappers = BinMappers::fit(batch, {});
-    Dataset const train      = Dataset::bin(batch, mappers, {});
-    RawFeatures const raw    = to_raw(batch);
-
-    Config cfg                  = tiny_cfg();
-    cfg.dispatch.objective_name = "logloss";
-    auto booster                = make_booster(cfg);
-    for (int i = 0; i < 5; ++i)
-    {
-        booster->update_one_iter(train);
-    }
-
-    std::vector<float> y_before(raw.n_rows);
-    booster->predict(raw.view(), y_before);
-
-    TempPath const tmp;
-    io::save_booster(*booster, tmp.str(), mappers, cfg);
-
-    auto loaded = io::load_booster(tmp.str());
-
-    REQUIRE(loaded.booster != nullptr);
-    REQUIRE(loaded.cfg == cfg);
-    REQUIRE(loaded.booster->n_iters() == 5);
-
-    std::vector<float> y_after(raw.n_rows);
-    loaded.booster->predict(raw.view(), y_after);
-
-    for (size_t i = 0; i < y_before.size(); ++i)
-    {
         REQUIRE(y_after[i] == y_before[i]);
     }
 }

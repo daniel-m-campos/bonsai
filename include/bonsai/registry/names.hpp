@@ -40,6 +40,11 @@ template <> struct impl_name<DepthwiseGrower<HistogramNodeSplitFinder>>
     static std::string_view constexpr value = "depthwise";
 };
 
+template <> struct impl_name<ObliviousGrower<HistogramLevelSplitFinder>>
+{
+    static std::string_view constexpr value = "oblivious";
+};
+
 template <> struct impl_name<AllRowsSampler>
 {
     static std::string_view constexpr value = "all_rows";

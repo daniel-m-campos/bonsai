@@ -1,6 +1,8 @@
 #include <catch2/catch_approx.hpp>
+#include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -9,11 +11,12 @@
 #include "bonsai/config/config.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
-#include "bonsai/grower.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/registry/make_booster.hpp"
+#include "bonsai/registry/names.hpp"
+#include "bonsai/registry/typelists.hpp"
 #include "bonsai/sampler.hpp"
-#include "bonsai/split.hpp"
+#include "bonsai/typelist.hpp"
 #include "bonsai/types.hpp"
 
 using namespace bonsai; // NOLINT
@@ -73,6 +76,25 @@ RawFeatures to_raw(detail::ColumnBatch const &batch)
         .data = std::move(data), .n_rows = n_rows, .n_features = n_features};
 }
 
+template <typename O> detail::ColumnBatch batch_for();
+
+template <> detail::ColumnBatch batch_for<MSEObjective>()
+{
+    return separable_batch();
+}
+
+template <> detail::ColumnBatch batch_for<LogLossObjective>()
+{
+    return detail::ColumnBatch{
+        .features      = {{0.0F, 0.1F, 0.9F, 1.0F}},
+        .labels        = {0.0F, 0.0F, 1.0F, 1.0F},
+        .weights       = {},
+        .feature_names = {"a"},
+    };
+}
+
+using DispatchCombos = cartesian_product_t<Objectives, Growers, Samplers>;
+
 } // namespace
 
 TEST_CASE("make_booster: default config returns non-null IBooster",
@@ -116,61 +138,23 @@ TEST_CASE("make_booster: unknown sampler name throws UnknownImplError",
     CHECK_THROWS_AS(make_booster(cfg), UnknownImplError);
 }
 
-TEST_CASE("make_booster: MSE/Depthwise/AllRows parity with direct instantiation",
-          "[registry][make_booster][parity]")
+TEMPLATE_LIST_TEST_CASE("make_booster: parity with direct instantiation",
+                        "[registry][make_booster][parity]", DispatchCombos)
 {
-    auto const batch      = separable_batch();
-    Dataset const train   = make_dataset(batch);
-    RawFeatures const raw = to_raw(batch);
-
-    Config const cfg = tiny_cfg();
-
-    using DirectBooster =
-        Booster<MSEObjective, DepthwiseGrower<HistogramNodeSplitFinder>,
-                AllRowsSampler>;
-    DirectBooster direct{cfg};
-
-    auto const dispatched = make_booster(cfg);
-
-    int constexpr n_iters = 5;
-    for (int i = 0; i < n_iters; ++i)
-    {
-        direct.update_one_iter(train);
-        dispatched->update_one_iter(train);
-    }
-
-    std::vector<float> y_direct(raw.n_rows);
-    std::vector<float> y_dispatched(raw.n_rows);
-    direct.predict(raw.view(), y_direct);
-    dispatched->predict(raw.view(), y_dispatched);
-
-    REQUIRE(y_direct.size() == y_dispatched.size());
-    for (size_t i = 0; i < y_direct.size(); ++i)
-    {
-        CHECK(y_direct[i] == Catch::Approx(y_dispatched[i]).epsilon(1e-6));
-    }
-}
-
-TEST_CASE("make_booster: LogLoss/Depthwise/AllRows parity with direct instantiation",
-          "[registry][make_booster][parity][logloss]")
-{
-    detail::ColumnBatch const batch{
-        .features      = {{0.0F, 0.1F, 0.9F, 1.0F}},
-        .labels        = {0.0F, 0.0F, 1.0F, 1.0F},
-        .weights       = {},
-        .feature_names = {"a"},
-    };
+    using O               = type_at_t<0, TestType>;
+    using G               = type_at_t<1, TestType>;
+    using S               = type_at_t<2, TestType>;
+    auto const batch      = batch_for<O>();
     Dataset const train   = make_dataset(batch);
     RawFeatures const raw = to_raw(batch);
 
     Config cfg                  = tiny_cfg();
-    cfg.dispatch.objective_name = "logloss";
+    cfg.dispatch.objective_name = std::string{impl_name<O>::value};
+    cfg.dispatch.grower_name    = std::string{impl_name<G>::value};
+    cfg.dispatch.sampler_name   = std::string{impl_name<S>::value};
 
-    using DirectBooster =
-        Booster<LogLossObjective, DepthwiseGrower<HistogramNodeSplitFinder>,
-                AllRowsSampler>;
+    using DirectBooster = Booster<O, G, S>;
     DirectBooster direct{cfg};
-
     auto const dispatched = make_booster(cfg);
 
     int constexpr n_iters = 5;
