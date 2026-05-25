@@ -42,7 +42,7 @@ bonsai fit -c config.toml \
 ```
 
 Append `--dump-config` to any subcommand to print the resolved config
-(after `-c` + `--set`) as TOML and exit — useful for verifying overrides
+(after `-c` + `--set`) as TOML and exit, useful for verifying overrides
 before a long fit.
 
 `bonsai info` lists every `(objective, grower, sampler)` triple the
@@ -112,7 +112,10 @@ for how the typelist machinery and JSON serialization fit together.
 
 ## Docs
 
-- [docs/architecture/](docs/architecture/) — per-component design notes.
-- [docs/context.md](docs/context.md) — project context and roadmap.
-- [docs/decisions.md](docs/decisions.md) — decision log.
-- [docs/ai-usage.md](docs/ai-usage.md) — AI authorship policy.
+- [docs/report.md](docs/report.md): final report (what was built,
+  performance vs reference libraries, reflections, deferred work).
+- [docs/proposal.md](docs/proposal.md): initial project proposal.
+- [docs/architecture/](docs/architecture/): per-component design notes.
+- [docs/context.md](docs/context.md): project context and roadmap.
+- [docs/decisions.md](docs/decisions.md): decision log.
+- [docs/ai-usage.md](docs/ai-usage.md): AI authorship policy.
