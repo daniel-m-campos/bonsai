@@ -34,6 +34,8 @@ import tomllib
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
+BONSAI_GROWERS = ("depthwise", "oblivious")
+
 
 def load_toml(path: pathlib.Path) -> dict:
     return tomllib.loads(path.read_text())
@@ -76,14 +78,16 @@ def rmse(pred: np.ndarray, y: np.ndarray) -> float:
     return float(np.sqrt(np.mean((pred - y) ** 2)))
 
 
-def run_bonsai(config_path: pathlib.Path, hp: HP) -> Result:
+def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str) -> Result:
     binary = REPO_ROOT / "build" / "src" / "bonsai"
-    model = REPO_ROOT / "build" / "_compare_model.msgpack"
-    preds = REPO_ROOT / "build" / "_compare_preds.csv"
+    model = REPO_ROOT / "build" / f"_compare_model_{grower}.msgpack"
+    preds = REPO_ROOT / "build" / f"_compare_preds_{grower}.csv"
+    override = f"dispatch.grower_name={grower}"
 
     t0 = time.perf_counter()
     subprocess.run(
-        [str(binary), "fit", "-c", str(config_path), "--model", str(model)],
+        [str(binary), "fit", "-c", str(config_path), "--set", override,
+         "--model", str(model)],
         check=True,
         capture_output=True,
     )
@@ -91,8 +95,8 @@ def run_bonsai(config_path: pathlib.Path, hp: HP) -> Result:
 
     t1 = time.perf_counter()
     subprocess.run(
-        [str(binary), "predict", "-c", str(config_path), "--model", str(model),
-         "--out", str(preds)],
+        [str(binary), "predict", "-c", str(config_path), "--set", override,
+         "--model", str(model), "--out", str(preds)],
         check=True,
         capture_output=True,
     )
@@ -190,13 +194,14 @@ def run_catboost(train_df, test_df, hp: HP) -> Result:
 
 
 def write_markdown(path: pathlib.Path, dataset: str, results: dict[str, Result]) -> None:
+    width = max(len("library"), max(len(n) for n in results))
     rows = [
-        "| library  | rmse   | fit_seconds | predict_seconds |",
-        "|----------|--------|-------------|-----------------|",
+        f"| {'library':<{width}} | rmse   | fit_seconds | predict_seconds |",
+        f"|{'-' * (width + 2)}|--------|-------------|-----------------|",
     ]
     for name, r in results.items():
         rows.append(
-            f"| {name:<8} | {r.rmse:6.4f} | {r.fit_seconds:11.3f} | {r.predict_seconds:15.3f} |"
+            f"| {name:<{width}} | {r.rmse:6.4f} | {r.fit_seconds:11.3f} | {r.predict_seconds:15.3f} |"
         )
     path.write_text(f"# {dataset} comparison\n\n" + "\n".join(rows) + "\n")
 
@@ -218,8 +223,10 @@ def main() -> int:
 
     results: dict[str, Result] = {}
 
-    print(f"bonsai (n_iters={hp.n_iters})", flush=True)
-    results["bonsai"] = run_bonsai(args.config, hp)
+    for grower in BONSAI_GROWERS:
+        label = f"bonsai ({grower})"
+        print(f"{label} (n_iters={hp.n_iters})", flush=True)
+        results[label] = run_bonsai(args.config, hp, grower)
 
     print("xgboost", flush=True)
     results["xgboost"] = run_xgboost(train_df, test_df, hp)
