@@ -12,9 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -63,9 +61,8 @@ namespace bonsai
 // Free-function (to|from)_json for the POD records. Macros expand in
 // namespace bonsai so ADL finds them on the nested types. Member order
 // here = JSON key order; renaming a member changes the on-disk schema.
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DenseTree::InternalNode, feature_id, threshold, left,
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DenseTree::Node, feature_id, threshold_or_value, left,
                                    right, default_left)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DenseTree::LeafNode, value)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DenseTree::Params, depth, n_leaves)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ObliviousTree::LevelSplit, feature_id, threshold,
@@ -98,47 +95,14 @@ namespace
 using json = nlohmann::json;
 
 std::string_view constexpr k_magic  = "bonsai01";
-uint32_t constexpr k_format_version = 3;
+uint32_t constexpr k_format_version = 4;
 
 // ---- Tree <-> JSON --------------------------------------------------------
 
-json node_to_json(DenseTree::Node const &node)
-{
-    return std::visit(
-        [](auto const &n) -> json
-        {
-            using N = std::decay_t<decltype(n)>;
-            json j  = n;
-            j["kind"] =
-                std::is_same_v<N, DenseTree::InternalNode> ? "internal" : "leaf";
-            return j;
-        },
-        node);
-}
-
-DenseTree::Node node_from_json(json const &j)
-{
-    auto const kind = j.at("kind").get<std::string>();
-    if (kind == "internal")
-    {
-        return j.get<DenseTree::InternalNode>();
-    }
-    if (kind == "leaf")
-    {
-        return j.get<DenseTree::LeafNode>();
-    }
-    throw std::runtime_error("model: unknown tree node kind '" + kind + "'");
-}
-
 json tree_to_json(DenseTree const &t)
 {
-    json out   = t.params();
-    json nodes = json::array();
-    for (auto const &node : t.nodes())
-    {
-        nodes.push_back(node_to_json(node));
-    }
-    out["nodes"] = std::move(nodes);
+    json out     = t.params();
+    out["nodes"] = t.nodes();
     return out;
 }
 
@@ -146,13 +110,8 @@ template <typename TreeT> TreeT tree_from_json(json const &j);
 
 template <> DenseTree tree_from_json<DenseTree>(json const &j)
 {
-    DenseTree::Nodes nodes;
-    nodes.reserve(j.at("nodes").size());
-    for (auto const &nj : j.at("nodes"))
-    {
-        nodes.push_back(node_from_json(nj));
-    }
-    return DenseTree{std::move(nodes), j.get<DenseTree::Params>()};
+    return DenseTree{j.at("nodes").get<DenseTree::Nodes>(),
+                     j.get<DenseTree::Params>()};
 }
 
 json tree_to_json(ObliviousTree const &t)

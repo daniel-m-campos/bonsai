@@ -5,7 +5,6 @@
 #include <cmath>
 #include <cstddef>
 #include <utility>
-#include <variant>
 
 namespace bonsai
 {
@@ -18,18 +17,20 @@ DenseTree::DenseTree(Nodes nodes, Params params)
 float DenseTree::walk_row(features_view X, row_id_t i) const
 {
     node_id_t index = 0;
-    while (auto const *node = std::get_if<InternalNode>(&nodes_[index]))
+    Node const *node = &nodes_[index];
+    while (node->feature_id != k_leaf_flag)
     {
         float v     = X[i, node->feature_id];
         bool is_nan = std::isnan(v);
         // Binner is right-inclusive: bin b contains v ∈ (cuts[b-1], cuts[b]].
         // Grower routes bin <= split.bin_id left, so v == threshold goes left.
-        bool less = !is_nan && (v <= node->threshold);
+        bool less = !is_nan && (v <= node->threshold_or_value);
         // NOLINTNEXTLINE(readability-implicit-bool-conversion)
         bool go_left = less | (is_nan & node->default_left);
         index        = go_left ? node->left : node->right;
+        node         = &nodes_[index];
     }
-    return std::get<LeafNode>(nodes_[index]).value;
+    return node->threshold_or_value;
 }
 
 void DenseTree::predict(features_view X, floats_out out) const

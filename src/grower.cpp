@@ -26,7 +26,7 @@ inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
                              double lambda, size_t &n_leaves, train_leaf_values &values)
 {
     float const v  = leaf_value(node.total_grad(), node.total_hess(), lambda);
-    nodes[node.id] = DenseTree::LeafNode{.value = v};
+    nodes[node.id] = DenseTree::leaf(v);
     for (row_id_t r : node.rows)
     {
         values[r] = v;
@@ -116,18 +116,13 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
             continue;
         }
         node_id_t const left_id = nodes.size();
-        nodes.emplace_back(DenseTree::LeafNode{});
+        nodes.emplace_back(DenseTree::leaf(0.0F));
         node_id_t const right_id = nodes.size();
-        nodes.emplace_back(DenseTree::LeafNode{});
+        nodes.emplace_back(DenseTree::leaf(0.0F));
 
         float const threshold = ds.mappers()[split.feature_id].cuts()[split.bin_id];
-        nodes[node.id]        = DenseTree::InternalNode{
-                   .feature_id   = split.feature_id,
-                   .threshold    = threshold,
-                   .left         = left_id,
-                   .right        = right_id,
-                   .default_left = split.default_left,
-        };
+        nodes[node.id] = DenseTree::internal(split.feature_id, threshold, left_id,
+                                             right_id, split.default_left);
 
         auto [left, right] =
             split_node(ds, grad, hess, std::move(node), split, left_id, right_id);
@@ -156,7 +151,7 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
     std::vector<SplitInput> next;
     std::vector<SplitOutput> splits;
     current.push_back(make_root(ds, grad, hess, row_indices));
-    nodes.emplace_back(DenseTree::LeafNode{});
+    nodes.emplace_back(DenseTree::leaf(0.0F));
     uint8_t depth   = 0;
     size_t n_leaves = 0;
     while (depth < config_.max_depth)
