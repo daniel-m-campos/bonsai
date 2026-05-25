@@ -1,7 +1,11 @@
-add_executable(bonsai_bench bench_split.cpp)
+add_executable(bonsai_bench
+    bench_split.cpp
+    bench_sampler.cpp
+)
 
 target_link_libraries(bonsai_bench PRIVATE
     bonsai_split
+    bonsai_sampler
     bonsai_warnings
     Catch2::Catch2WithMain
 )

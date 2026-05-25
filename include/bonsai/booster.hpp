@@ -38,7 +38,7 @@ class Booster final : public IBooster
 
     explicit Booster(Config const &config)
         : config_(config.booster_config), grower_(config.tree_config),
-          rng_(config.booster_config.random_seed)
+          sampler_(config), rng_(config.booster_config.random_seed)
     {
     }
 
@@ -68,7 +68,7 @@ class Booster final : public IBooster
             row_indices_.resize(train.n_rows());
         }
         size_t const n_selected =
-            sampler_type::sample(grad_, hess_, rng_, row_indices_);
+            sampler_.sample(grad_, hess_, rng_, row_indices_);
 
         auto [tree, leaf_values] =
             grower_.grow(train, grad_, hess_, {row_indices_.data(), n_selected});
@@ -126,6 +126,7 @@ class Booster final : public IBooster
   private:
     BoosterConfig config_;
     grower_type grower_;
+    sampler_type sampler_;
     std::mt19937 rng_;
     std::vector<tree_type> trees_;
     std::vector<float> scores_;

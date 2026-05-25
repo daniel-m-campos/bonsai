@@ -35,6 +35,8 @@ import tomllib
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 BONSAI_GROWERS = ("depthwise", "oblivious")
+BONSAI_SAMPLERS = ("all_rows", "bernoulli")
+BERNOULLI_P = 0.8
 
 
 def load_toml(path: pathlib.Path) -> dict:
@@ -78,15 +80,21 @@ def rmse(pred: np.ndarray, y: np.ndarray) -> float:
     return float(np.sqrt(np.mean((pred - y) ** 2)))
 
 
-def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str) -> Result:
+def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str) -> Result:
     binary = REPO_ROOT / "build" / "src" / "bonsai"
-    model = REPO_ROOT / "build" / f"_compare_model_{grower}.msgpack"
-    preds = REPO_ROOT / "build" / f"_compare_preds_{grower}.csv"
-    override = f"dispatch.grower_name={grower}"
+    stem = f"{grower}_{sampler}"
+    model = REPO_ROOT / "build" / f"_compare_model_{stem}.msgpack"
+    preds = REPO_ROOT / "build" / f"_compare_preds_{stem}.csv"
+    overrides = [
+        "--set", f"dispatch.grower_name={grower}",
+        "--set", f"dispatch.sampler_name={sampler}",
+    ]
+    if sampler == "bernoulli":
+        overrides += ["--set", f"sampler.subsample={BERNOULLI_P}"]
 
     t0 = time.perf_counter()
     subprocess.run(
-        [str(binary), "fit", "-c", str(config_path), "--set", override,
+        [str(binary), "fit", "-c", str(config_path), *overrides,
          "--model", str(model)],
         check=True,
         capture_output=True,
@@ -95,7 +103,7 @@ def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str) -> Result:
 
     t1 = time.perf_counter()
     subprocess.run(
-        [str(binary), "predict", "-c", str(config_path), "--set", override,
+        [str(binary), "predict", "-c", str(config_path), *overrides,
          "--model", str(model), "--out", str(preds)],
         check=True,
         capture_output=True,
@@ -224,9 +232,10 @@ def main() -> int:
     results: dict[str, Result] = {}
 
     for grower in BONSAI_GROWERS:
-        label = f"bonsai ({grower})"
-        print(f"{label} (n_iters={hp.n_iters})", flush=True)
-        results[label] = run_bonsai(args.config, hp, grower)
+        for sampler in BONSAI_SAMPLERS:
+            label = f"bonsai ({grower}, {sampler})"
+            print(f"{label} (n_iters={hp.n_iters})", flush=True)
+            results[label] = run_bonsai(args.config, hp, grower, sampler)
 
     print("xgboost", flush=True)
     results["xgboost"] = run_xgboost(train_df, test_df, hp)

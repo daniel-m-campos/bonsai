@@ -50,4 +50,9 @@ template <> struct impl_name<AllRowsSampler>
     static std::string_view constexpr value = "all_rows";
 };
 
+template <> struct impl_name<BernoulliSampler>
+{
+    static std::string_view constexpr value = "bernoulli";
+};
+
 } // namespace bonsai

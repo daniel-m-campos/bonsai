@@ -53,6 +53,7 @@ template <typename T> struct nlohmann::adl_serializer<std::optional<T>>
 #include "bonsai/booster.hpp"
 #include "bonsai/config/config.hpp"
 #include "bonsai/config/dispatch_config.hpp"
+#include "bonsai/config/sampler_config.hpp"
 #include "bonsai/registry/configurations.hpp"
 #include "bonsai/registry/make_booster.hpp"
 #include "bonsai/tree.hpp"
@@ -82,8 +83,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(BoosterConfig, n_iters, learning_rate, random
                                    log_intervals)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DispatchConfig, objective_name, grower_name,
                                    sampler_name)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(SamplerConfig, subsample)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(MetricsConfig, fit, eval)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Config, data, bin_mapper, tree_config,
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Config, data, bin_mapper, tree_config, sampler,
                                    booster_config, dispatch, metrics)
 } // namespace bonsai
 
@@ -96,7 +98,7 @@ namespace
 using json = nlohmann::json;
 
 std::string_view constexpr k_magic  = "bonsai01";
-uint32_t constexpr k_format_version = 2;
+uint32_t constexpr k_format_version = 3;
 
 // ---- Tree <-> JSON --------------------------------------------------------
 
