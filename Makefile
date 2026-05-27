@@ -1,7 +1,7 @@
 CAVEMAN_URL  := https://raw.githubusercontent.com/juliusbrussee/caveman/main/skills/caveman/SKILL.md
 SKILLS_DIR   := .claude/skills
 LLVM_BIN     := /opt/homebrew/opt/llvm/bin
-SOURCES      := $(shell find src include -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' \) 2>/dev/null)
+SOURCES      := $(shell find src include tests benchmarks -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' \) 2>/dev/null)
 LINT_SOURCES := $(shell find src -type f -name '*.cpp' 2>/dev/null)
 TOY_SENTINEL := tests/data/.toy-fetched
 SDK_PATH     := $(shell xcrun --show-sdk-path)
@@ -60,7 +60,7 @@ help:
 	@echo "  make run ARGS=...       Build + run ./build/src/bonsai with ARGS."
 	@echo "  make perf-benchmark     Build + run Catch2 perf microbenchmarks (ARGS forwarded)."
 	@echo "  make fit-benchmark      Build + compare bonsai vs lightgbm/catboost on cal housing."
-	@echo "  make format             clang-format src/ + include/ in place."
+	@echo "  make format             clang-format src/ + include/ + tests/ + benchmarks/ in place."
 	@echo "  make lint               clang-tidy on src/ (header-filtered to bonsai)."
 	@echo "  make skills             Install project-local Claude Code skills (currently: caveman)."
 	@echo "  make skills-clean       Remove installed project-local skills."

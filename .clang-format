@@ -11,6 +11,7 @@ BreakBeforeBraces: Allman
 SpaceAfterCStyleCast: true
 SpaceBeforeAssignmentOperators: true
 AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: true
 ReflowComments: true
 QualifierAlignment: Custom
-QualifierOrder: ["inline", "static", "type", "const", "volatile", "constexpr"]
+QualifierOrder: ["inline", "static", "constexpr", "type", "const", "volatile"]
