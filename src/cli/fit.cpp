@@ -6,7 +6,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <print>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -15,6 +14,7 @@
 #include "bonsai/io/model.hpp"
 #include "bonsai/metric.hpp"
 #include "bonsai/registry/objective_dispatch.hpp"
+#include "bonsai/types.hpp"
 
 namespace bonsai::cli
 {
@@ -42,8 +42,8 @@ choose_metric_names(std::vector<std::string> const &override_names,
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-void print_metric_row(std::string_view label, std::span<float const> preds,
-                      std::span<float const> labels, std::vector<Metric> const &metrics)
+void print_metric_row(std::string_view label, floats_view preds, floats_view labels,
+                      std::vector<Metric> const &metrics)
 {
     std::print("{}:", label);
     for (auto const &m : metrics)

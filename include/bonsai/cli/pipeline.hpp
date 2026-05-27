@@ -15,6 +15,7 @@
 #include "bonsai/config/config.hpp"
 #include "bonsai/config/data_config.hpp"
 #include "bonsai/dataset.hpp"
+#include "bonsai/types.hpp"
 
 namespace bonsai::cli
 {
@@ -53,7 +54,7 @@ LoadedTrainValid load_train_and_valid_from_csv(Config const &cfg);
 // Progress callback: receives (iter_one_based, total_iters) after each
 // boosting iteration. The helper calls it every iteration; the caller throttles
 // (e.g. `fit`'s "every 10" check lives in the callback body).
-using ProgressFn = std::function<void(std::size_t, std::size_t)>;
+using ProgressFn = std::function<void(size_t, size_t)>;
 
 // Step 2 of training: build a booster from cfg via the registry and run
 // `cfg.booster_config.n_iters` iterations of `update_one_iter` on `train`.
@@ -67,12 +68,12 @@ std::unique_ptr<IBooster> train_in_memory(Config const &cfg, Dataset const &trai
 // Do not retain any span past the callback call.
 struct FitTick
 {
-    std::size_t            iter;        // 0-based; 0 == init_score baseline
-    std::size_t            n_iters;     // cfg.booster_config.n_iters
-    std::span<float>       train_preds; // mutable; link-inversion target
-    std::span<float const> train_labels;
-    std::span<float>       valid_preds; // empty if no valid set
-    std::span<float const> valid_labels;
+    size_t           iter;        // 0-based; 0 == init_score baseline
+    size_t           n_iters;     // cfg.booster_config.n_iters
+    std::span<float> train_preds; // mutable; link-inversion target
+    floats_view      train_labels;
+    std::span<float> valid_preds; // empty if no valid set
+    floats_view      valid_labels;
 };
 
 using FitTickFn = std::function<void(FitTick const &)>;

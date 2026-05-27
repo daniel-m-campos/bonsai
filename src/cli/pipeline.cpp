@@ -21,6 +21,7 @@
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/io/csv.hpp"
 #include "bonsai/registry/make_booster.hpp"
+#include "bonsai/types.hpp"
 
 namespace bonsai::cli
 {
@@ -127,8 +128,8 @@ std::unique_ptr<IBooster> train_with_progress(Config const           &cfg,
     auto fire_tick = [&](std::size_t iter)
     {
         booster->predict(loaded.train.features.view(), train_preds);
-        std::span<float>       v_preds;
-        std::span<float const> v_labels;
+        std::span<float> v_preds;
+        floats_view      v_labels;
         if (loaded.valid.has_value())
         {
             booster->predict(loaded.valid->features.view(), valid_preds);

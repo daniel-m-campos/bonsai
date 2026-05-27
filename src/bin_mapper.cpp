@@ -2,17 +2,16 @@
 #include <cassert>
 #include <cmath>
 #include <cstddef>
-#include <cstdint>
 #include <iterator>
 #include <limits>
 #include <random>
 #include <ranges>
-#include <span>
 #include <utility>
 #include <vector>
 
 #include "bonsai/bin_mapper.hpp"
 #include "bonsai/config/bin_mapper_config.hpp"
+#include "bonsai/types.hpp"
 
 namespace bonsai
 {
@@ -27,8 +26,7 @@ bool is_not_nan(float x)
 
 // Build a NaN-free working set (unsorted). Either copies the column whole
 // or draws a seeded reservoir sample.
-std::vector<float> create_subsample(std::span<float const> column,
-                                    BinMapperConfig const &cfg)
+std::vector<float> create_subsample(floats_view column, BinMapperConfig const &cfg)
 {
     std::vector<float> subsample;
     if (column.size() <= cfg.n_samples)
@@ -74,7 +72,7 @@ std::vector<float> create_cuts(std::vector<float> &subsample, size_t step)
 
 } // namespace
 
-BinMapper BinMapper::fit(std::span<float const> column, BinMapperConfig const &cfg)
+BinMapper BinMapper::fit(floats_view column, BinMapperConfig const &cfg)
 {
     assert(cfg.max_bin > 2);
     // 1 bin for the +inf sentinel, another for the missing slot.
@@ -84,7 +82,7 @@ BinMapper BinMapper::fit(std::span<float const> column, BinMapperConfig const &c
     return {std::move(cuts)};
 }
 
-uint16_t BinMapper::transform(float x) const
+bin_id_t BinMapper::transform(float x) const
 {
     if (std::isnan(x))
     {

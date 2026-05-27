@@ -1,12 +1,11 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
-#include <span>
 #include <utility>
 #include <vector>
 
 #include "bonsai/config/bin_mapper_config.hpp"
+#include "bonsai/types.hpp"
 
 namespace bonsai
 {
@@ -14,17 +13,17 @@ namespace bonsai
 class BinMapper
 {
   public:
-    static BinMapper fit(std::span<float const> column, BinMapperConfig const &cfg);
+    static BinMapper fit(floats_view column, BinMapperConfig const &cfg);
     static BinMapper from_cuts(std::vector<float> cuts)
     {
         return BinMapper{std::move(cuts)};
     }
-    uint16_t transform(float x) const;
+    bin_id_t transform(float x) const;
     size_t   n_bins() const
     {
         return cuts_.size();
     }
-    std::span<float const> cuts() const
+    floats_view cuts() const
     {
         return {cuts_};
     }
