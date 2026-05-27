@@ -43,8 +43,7 @@ std::unique_ptr<IBooster> train_in_memory(Config const &cfg, Dataset const &trai
         booster->update_one_iter(train);
         if (on_progress)
         {
-            on_progress(static_cast<std::size_t>(i) + 1,
-                        static_cast<std::size_t>(n_iters));
+            on_progress(static_cast<size_t>(i) + 1, static_cast<size_t>(n_iters));
         }
     }
     return booster;
@@ -125,11 +124,11 @@ std::unique_ptr<IBooster> train_with_progress(Config const           &cfg,
         valid_preds.resize(loaded.valid->features.n_rows);
     }
 
-    auto fire_tick = [&](std::size_t iter)
+    auto fire_tick = [&](size_t iter)
     {
         booster->predict(loaded.train.features.view(), train_preds);
-        std::span<float> v_preds;
-        floats_view      v_labels;
+        floats_out  v_preds;
+        floats_view v_labels;
         if (loaded.valid.has_value())
         {
             booster->predict(loaded.valid->features.view(), valid_preds);
@@ -138,7 +137,7 @@ std::unique_ptr<IBooster> train_with_progress(Config const           &cfg,
         }
         on_tick(FitTick{
             .iter         = iter,
-            .n_iters      = static_cast<std::size_t>(n_iters),
+            .n_iters      = static_cast<size_t>(n_iters),
             .train_preds  = train_preds,
             .train_labels = loaded.train.labels,
             .valid_preds  = v_preds,
@@ -162,7 +161,7 @@ std::unique_ptr<IBooster> train_with_progress(Config const           &cfg,
             bool const is_final  = one_based == n_iters;
             if (is_period || is_final)
             {
-                fire_tick(static_cast<std::size_t>(one_based));
+                fire_tick(static_cast<size_t>(one_based));
             }
         }
     }

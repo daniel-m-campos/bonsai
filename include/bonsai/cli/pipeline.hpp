@@ -5,7 +5,6 @@
 #include <functional>
 #include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <vector>
 
@@ -68,12 +67,12 @@ std::unique_ptr<IBooster> train_in_memory(Config const &cfg, Dataset const &trai
 // Do not retain any span past the callback call.
 struct FitTick
 {
-    size_t           iter;        // 0-based; 0 == init_score baseline
-    size_t           n_iters;     // cfg.booster_config.n_iters
-    std::span<float> train_preds; // mutable; link-inversion target
-    floats_view      train_labels;
-    std::span<float> valid_preds; // empty if no valid set
-    floats_view      valid_labels;
+    size_t      iter;        // 0-based; 0 == init_score baseline
+    size_t      n_iters;     // cfg.booster_config.n_iters
+    floats_out  train_preds; // mutable; link-inversion target
+    floats_view train_labels;
+    floats_out  valid_preds; // empty if no valid set
+    floats_view valid_labels;
 };
 
 using FitTickFn = std::function<void(FitTick const &)>;

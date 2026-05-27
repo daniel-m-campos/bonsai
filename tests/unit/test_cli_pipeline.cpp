@@ -44,13 +44,13 @@ TEST_CASE("train_in_memory: progress callback fires n_iters times in 1..n order"
     auto const cfg    = make_tiny_config();
     auto const loaded = load_train_from_csv(cfg, cfg.data.train);
 
-    std::vector<std::size_t> iters;
+    std::vector<size_t> iters;
     auto                     booster =
-        train_in_memory(cfg, loaded.train, [&](std::size_t iter, std::size_t /*total*/)
+        train_in_memory(cfg, loaded.train, [&](size_t iter, size_t /*total*/)
                         { iters.push_back(iter); });
 
     REQUIRE(iters.size() == cfg.booster_config.n_iters);
-    for (std::size_t i = 0; i < iters.size(); ++i)
+    for (size_t i = 0; i < iters.size(); ++i)
     {
         CHECK(iters[i] == i + 1);
     }
