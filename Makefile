@@ -39,7 +39,7 @@ lint: build/build.ninja
 run: build
 	@./build/src/bonsai $(ARGS)
 
-test: build
+test: build $(TOY_SENTINEL)
 	@ctest --test-dir build
 
 perf-benchmark: build
