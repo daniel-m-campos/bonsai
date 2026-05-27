@@ -40,7 +40,7 @@ inline void populate_from_rows(Dataset const &ds, floats_view grad, floats_view 
     node.hists.reserve(ds.n_features());
     for (feature_id_t fid = 0; fid < ds.n_features(); ++fid)
     {
-        Histogram h{ds.n_bins(fid)};
+        Histogram   h{ds.n_bins(fid)};
         auto const &bins = ds.feature_bins(fid);
         for (row_id_t r : node.rows)
         {
@@ -65,9 +65,9 @@ split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput par
            SplitOutput const &s, node_id_t left_id, node_id_t right_id)
 {
     // 1. Partition parent.rows in place: lefts first, then rights.
-    auto const &bins    = ds.feature_bins(s.feature_id);
-    auto const last_bin = static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
-    auto goes_left      = [&](row_id_t r)
+    auto const &bins      = ds.feature_bins(s.feature_id);
+    auto const  last_bin  = static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
+    auto        goes_left = [&](row_id_t r)
     {
         bin_id_t const b = bins[r];
         if (b == last_bin)
@@ -85,9 +85,9 @@ split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput par
     left.rows.assign(parent.rows.begin(), mid);
     right.rows.assign(mid, parent.rows.end());
 
-    bool const left_smaller = left.rows.size() <= right.rows.size();
-    SplitInput &small       = left_smaller ? left : right;
-    SplitInput &large       = left_smaller ? right : left;
+    bool const  left_smaller = left.rows.size() <= right.rows.size();
+    SplitInput &small        = left_smaller ? left : right;
+    SplitInput &large        = left_smaller ? right : left;
     populate_from_rows(ds, grad, hess, small);
     large.hists.reserve(ds.n_features());
     for (feature_id_t f = 0; f < ds.n_features(); ++f)
@@ -101,14 +101,14 @@ split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput par
 
 inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
                          TreeConfig const &config, std::vector<SplitInput> &current,
-                         std::vector<SplitInput> &next,
+                         std::vector<SplitInput>        &next,
                          std::vector<SplitOutput> const &splits,
                          DenseTree::Nodes &nodes, size_t &n_leaves,
                          train_leaf_values &values)
 {
     for (node_id_t i = 0; i < current.size(); ++i)
     {
-        auto &node        = current[i];
+        auto       &node  = current[i];
         auto const &split = splits[i];
         if (!split.valid) // assume valid incorporates all cfg parameter logic
         {
@@ -145,15 +145,15 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
                                       floats_view hess, row_index_view row_indices)
     -> GrowResult<Tree>
 {
-    Tree::Nodes nodes;
-    train_leaf_values values(ds.n_rows(), 0.0F);
-    std::vector<SplitInput> current;
-    std::vector<SplitInput> next;
+    Tree::Nodes              nodes;
+    train_leaf_values        values(ds.n_rows(), 0.0F);
+    std::vector<SplitInput>  current;
+    std::vector<SplitInput>  next;
     std::vector<SplitOutput> splits;
     current.push_back(make_root(ds, grad, hess, row_indices));
     nodes.emplace_back(DenseTree::leaf(0.0F));
-    uint8_t depth   = 0;
-    size_t n_leaves = 0;
+    uint8_t depth    = 0;
+    size_t  n_leaves = 0;
     while (depth < config_.max_depth)
     {
         splits.clear();
@@ -193,7 +193,7 @@ auto ObliviousGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
     -> GrowResult<Tree>
 {
     Tree::LevelSplits level_splits;
-    Tree::LeafTable leaf_table;
+    Tree::LeafTable   leaf_table;
     train_leaf_values values(ds.n_rows(), 0.0F);
 
     std::vector<SplitInput> frontier;

@@ -20,7 +20,7 @@ TEST_CASE("apply_link_inverse_by_name: logloss matches sigmoid",
 TEST_CASE("apply_link_inverse_by_name: mse is identity",
           "[objective_dispatch][link][mse]")
 {
-    std::vector<float> scores         = {-2.0F, 0.0F, 3.5F};
+    std::vector<float>       scores   = {-2.0F, 0.0F, 3.5F};
     std::vector<float> const original = scores;
     apply_link_inverse_by_name("mse", scores);
     CHECK(scores == original);

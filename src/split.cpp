@@ -43,10 +43,10 @@ inline SplitSums split_sums_at(HistCell const &left_prefix, HistCell const &miss
 
 inline void update_best_for_feature_for_node(SplitInput const &input, feature_id_t fid,
                                              TreeConfig const &config,
-                                             SplitOutput &best)
+                                             SplitOutput      &best)
 {
-    auto const &hist         = input.hists[fid];
-    auto const &missing_cell = hist.missing();
+    auto const  &hist         = input.hists[fid];
+    auto const  &missing_cell = hist.missing();
     double const node_score =
         score(hist.total_grad(), hist.total_hess(), config.lambda_l2);
     double const real_grad = hist.total_grad() - missing_cell.sum_grad;
@@ -83,7 +83,7 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
 
 inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id_t fid,
                                               TreeConfig const &config,
-                                              SplitOutput &best)
+                                              SplitOutput      &best)
 {
     size_t const n_parents = frontier.size();
     size_t const n_bins    = frontier.front().hists[fid].prefix_size();
@@ -93,8 +93,8 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
     }
 
     std::vector<HistCell> prefix_storage(n_parents * n_bins, HistCell{});
-    auto prefix = std::mdspan<HistCell, std::dextents<size_t, 2>>(
-        prefix_storage.data(), n_parents, n_bins);
+    auto prefix = std::mdspan<HistCell, std::dextents<size_t, 2>>(prefix_storage.data(),
+                                                                  n_parents, n_bins);
 
     std::vector<double> real_grad(n_parents);
     std::vector<double> real_hess(n_parents);
@@ -116,12 +116,12 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
         for (bool const default_left : {true, false})
         {
             double sum_children_score = 0.0;
-            bool feasible             = true;
+            bool   feasible           = true;
             for (size_t p = 0; p < n_parents; ++p)
             {
                 auto const &hist = frontier[p].hists[fid];
-                auto const s     = split_sums_at(prefix[p, b], hist.missing(),
-                                                 real_grad[p], real_hess[p], default_left);
+                auto const s = split_sums_at(prefix[p, b], hist.missing(), real_grad[p],
+                                             real_hess[p], default_left);
                 if (s.hL < config.min_child_hess || s.hR < config.min_child_hess)
                 {
                     feasible = false;
@@ -156,7 +156,7 @@ SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
     {
         return {};
     }
-    SplitOutput best;
+    SplitOutput        best;
     feature_id_t const n_features = input.hists.size();
     for (feature_id_t fid = 0; fid < n_features; ++fid)
     {
@@ -165,15 +165,14 @@ SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
     return best;
 }
 
-
-SplitOutput HistogramLevelSplitFinder::find(FrontierInput frontier,
+SplitOutput HistogramLevelSplitFinder::find(FrontierInput     frontier,
                                             TreeConfig const &config)
 {
     if (frontier.empty())
     {
         return {};
     }
-    SplitOutput best;
+    SplitOutput        best;
     feature_id_t const n_features = frontier.front().hists.size();
     for (feature_id_t fid = 0; fid < n_features; ++fid)
     {

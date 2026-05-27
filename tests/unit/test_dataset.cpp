@@ -38,7 +38,7 @@ TEST_CASE(
         .feature_names = {"a", "b"},
     };
     BinMappers const mappers = BinMappers::fit(batch, BinMapperConfig{});
-    Dataset const ds         = Dataset::bin(batch, mappers, {});
+    Dataset const    ds      = Dataset::bin(batch, mappers, {});
 
     REQUIRE(ds.n_features() == 2);
     REQUIRE(ds.n_rows() == 4);
@@ -62,7 +62,7 @@ TEST_CASE("Dataset: n_rows / n_features / n_bins accessors", "[dataset][accessor
         .feature_names = {"a", "b"},
     };
     BinMappers const mappers = BinMappers::fit(batch, BinMapperConfig{});
-    Dataset const ds         = Dataset::bin(batch, mappers, {});
+    Dataset const    ds      = Dataset::bin(batch, mappers, {});
 
     CHECK(ds.n_rows() == 8);
     CHECK(ds.n_features() == 2);
@@ -82,7 +82,7 @@ TEST_CASE("Dataset: labels pass through, weights empty when uniform",
         .feature_names = {"a"},
     };
     BinMappers const mappers = BinMappers::fit(batch, BinMapperConfig{});
-    Dataset const ds         = Dataset::bin(batch, mappers, {});
+    Dataset const    ds      = Dataset::bin(batch, mappers, {});
 
     auto lab = ds.labels();
     REQUIRE(lab.size() == 4);
@@ -100,7 +100,7 @@ TEST_CASE("Dataset: weights pass through when provided", "[dataset][weights]")
         .feature_names = {"a"},
     };
     BinMappers const mappers = BinMappers::fit(batch, BinMapperConfig{});
-    Dataset const ds         = Dataset::bin(batch, mappers, {});
+    Dataset const    ds      = Dataset::bin(batch, mappers, {});
 
     auto w = ds.weights();
     REQUIRE(w.size() == 4);
@@ -110,7 +110,7 @@ TEST_CASE("Dataset: weights pass through when provided", "[dataset][weights]")
 
 TEST_CASE("Dataset: NaN row routes to missing bin (last bin)", "[dataset][missing]")
 {
-    auto const nan = std::numeric_limits<float>::quiet_NaN();
+    auto const          nan = std::numeric_limits<float>::quiet_NaN();
     detail::ColumnBatch batch{
         .features      = {{0.1F, 0.5F, nan, 0.9F}},
         .labels        = {0.0F, 0.0F, 0.0F, 0.0F},
@@ -118,7 +118,7 @@ TEST_CASE("Dataset: NaN row routes to missing bin (last bin)", "[dataset][missin
         .feature_names = {"a"},
     };
     BinMappers const mappers = BinMappers::fit(batch, BinMapperConfig{});
-    Dataset const ds         = Dataset::bin(batch, mappers, {});
+    Dataset const    ds      = Dataset::bin(batch, mappers, {});
 
     auto bins = ds.feature_bins(0);
     REQUIRE(bins.size() == 4);

@@ -16,12 +16,12 @@ DenseTree::DenseTree(Nodes nodes, Params params)
 
 float DenseTree::walk_row(features_view X, row_id_t i) const
 {
-    node_id_t index = 0;
-    Node const *node = &nodes_[index];
+    node_id_t   index = 0;
+    Node const *node  = &nodes_[index];
     while (node->feature_id != k_leaf_flag)
     {
-        float v     = X[i, node->feature_id];
-        bool is_nan = std::isnan(v);
+        float v      = X[i, node->feature_id];
+        bool  is_nan = std::isnan(v);
         // Binner is right-inclusive: bin b contains v ∈ (cuts[b-1], cuts[b]].
         // Grower routes bin <= split.bin_id left, so v == threshold goes left.
         bool less = !is_nan && (v <= node->threshold_or_value);
@@ -54,9 +54,9 @@ float ObliviousTree::walk_row(features_view X, row_id_t i) const
     node_id_t index = 0;
     for (auto const &s : splits_)
     {
-        float v     = X[i, s.feature_id];
-        bool is_nan = std::isnan(v);
-        bool less   = !is_nan && (v <= s.threshold);
+        float v      = X[i, s.feature_id];
+        bool  is_nan = std::isnan(v);
+        bool  less   = !is_nan && (v <= s.threshold);
         // NOLINTNEXTLINE(readability-implicit-bool-conversion)
         bool go_left = less | (is_nan & s.default_left);
         index        = (index << 1) | (go_left ? 0U : 1U);

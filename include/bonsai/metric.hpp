@@ -35,11 +35,18 @@ float compute_r2(floats_view preds, floats_view labels);
 float compute_logloss(floats_view probs, floats_view labels);
 float compute_accuracy(floats_view probs, floats_view labels);
 
-inline constexpr Metric metric_rmse    {"rmse",     TaskKind::regression,            &compute_rmse};
-inline constexpr Metric metric_mae     {"mae",      TaskKind::regression,            &compute_mae};
-inline constexpr Metric metric_r2      {"r2",       TaskKind::regression,            &compute_r2};
-inline constexpr Metric metric_logloss {"logloss",  TaskKind::binary_classification, &compute_logloss};
-inline constexpr Metric metric_accuracy{"accuracy", TaskKind::binary_classification, &compute_accuracy};
+inline constexpr Metric metric_rmse{
+    .name = "rmse", .task = TaskKind::regression, .compute = &compute_rmse};
+inline constexpr Metric metric_mae{
+    .name = "mae", .task = TaskKind::regression, .compute = &compute_mae};
+inline constexpr Metric metric_r2{
+    .name = "r2", .task = TaskKind::regression, .compute = &compute_r2};
+inline constexpr Metric metric_logloss{.name    = "logloss",
+                                       .task    = TaskKind::binary_classification,
+                                       .compute = &compute_logloss};
+inline constexpr Metric metric_accuracy{.name    = "accuracy",
+                                        .task    = TaskKind::binary_classification,
+                                        .compute = &compute_accuracy};
 
 class MetricNotFoundError : public std::runtime_error
 {

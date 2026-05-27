@@ -17,11 +17,11 @@ using namespace bonsai::test; // NOLINT
 TEST_CASE("DepthwiseGrower: depth=1 separable yields one split, two leaves",
           "[grower][smoke]")
 {
-    auto in = separable_4row();
-    TreeConfig cfg{.min_child_hess   = 0.0F,
-                   .lambda_l2        = 1.0F,
-                   .max_depth        = 1,
-                   .min_data_in_leaf = 0};
+    auto              in = separable_4row();
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .max_depth        = 1,
+                          .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
     auto [tree, train_leaf_values] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
@@ -58,12 +58,12 @@ TEST_CASE("DepthwiseGrower: depth=2 separable yields four leaves with correct ro
     // asymmetry between the lo and hi halves.
     std::vector<float> grad{-0.5F, -0.5F, +0.5F, +0.5F, -5.0F, -5.0F, +5.0F, +5.0F};
     std::vector<float> hess(8, 1.0F);
-    auto rows = iota_rows(8);
+    auto               rows = iota_rows(8);
 
-    TreeConfig cfg{.min_child_hess   = 0.0F,
-                   .lambda_l2        = 1.0F,
-                   .max_depth        = 2,
-                   .min_data_in_leaf = 0};
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .max_depth        = 2,
+                          .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
     auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
 
@@ -88,8 +88,8 @@ TEST_CASE("DepthwiseGrower: depth=2 separable yields four leaves with correct ro
 
 TEST_CASE("DepthwiseGrower: max_depth=0 returns single-leaf tree", "[grower][edge]")
 {
-    auto in = two_value_pair();
-    TreeConfig cfg{.lambda_l2 = 1.0F, .max_depth = 0, .min_data_in_leaf = 0};
+    auto              in = two_value_pair();
+    TreeConfig        cfg{.lambda_l2 = 1.0F, .max_depth = 0, .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
     auto [tree, train_leaf_values] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
@@ -103,11 +103,11 @@ TEST_CASE("DepthwiseGrower: max_depth=0 returns single-leaf tree", "[grower][edg
 TEST_CASE("DepthwiseGrower: no positive-gain split yields single leaf",
           "[grower][no_split]")
 {
-    auto in = uniform_3row();
-    TreeConfig cfg{.min_child_hess   = 0.0F,
-                   .lambda_l2        = 1.0F,
-                   .max_depth        = 3,
-                   .min_data_in_leaf = 0};
+    auto              in = uniform_3row();
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .max_depth        = 3,
+                          .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
     auto [tree, train_leaf_values] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
@@ -121,11 +121,11 @@ TEST_CASE("DepthwiseGrower: no positive-gain split yields single leaf",
 
 TEST_CASE("DepthwiseGrower: NaN predict routes via default_left", "[grower][missing]")
 {
-    auto in = separable_4row();
-    TreeConfig cfg{.min_child_hess   = 0.0F,
-                   .lambda_l2        = 1.0F,
-                   .max_depth        = 1,
-                   .min_data_in_leaf = 0};
+    auto              in = separable_4row();
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .max_depth        = 1,
+                          .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
     auto [tree, train_leaf_values] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
@@ -145,11 +145,11 @@ TEST_CASE("DepthwiseGrower: min_child_hess starves all splits → single leaf",
     // Same separable layout as the smoke test, but min_child_hess > max
     // achievable hess on either side (2.0). Every candidate is rejected;
     // root falls through to a leaf.
-    auto in = separable_4row();
-    TreeConfig cfg{.min_child_hess   = 3.0F,
-                   .lambda_l2        = 1.0F,
-                   .max_depth        = 2,
-                   .min_data_in_leaf = 0};
+    auto              in = separable_4row();
+    TreeConfig        cfg{.min_child_hess   = 3.0F,
+                          .lambda_l2        = 1.0F,
+                          .max_depth        = 2,
+                          .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
     auto [tree, train_leaf_values] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
@@ -175,15 +175,15 @@ TEST_CASE("DepthwiseGrower: asymmetric tree — one child splits, other stays a 
         .weights       = {},
         .feature_names = {"a"},
     };
-    auto built = build(std::move(batch));
+    auto               built = build(std::move(batch));
     std::vector<float> grad{-5.0F, -5.0F, -5.0F, -5.0F, -1.0F, -1.0F, +1.0F, +1.0F};
     std::vector<float> hess(8, 1.0F);
-    auto rows = iota_rows(8);
+    auto               rows = iota_rows(8);
 
-    TreeConfig cfg{.min_child_hess   = 0.0F,
-                   .lambda_l2        = 1.0F,
-                   .max_depth        = 2,
-                   .min_data_in_leaf = 0};
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .max_depth        = 2,
+                          .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
     auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
 
@@ -204,12 +204,12 @@ TEST_CASE("DepthwiseGrower: asymmetric tree — one child splits, other stays a 
 TEST_CASE("DepthwiseGrower: empty row_indices yields zero-valued single leaf",
           "[grower][edge]")
 {
-    auto in   = uniform_3row();
-    in.rows   = {}; // empty
-    TreeConfig cfg{.min_child_hess   = 0.0F,
-                   .lambda_l2        = 1.0F,
-                   .max_depth        = 3,
-                   .min_data_in_leaf = 0};
+    auto in = uniform_3row();
+    in.rows = {}; // empty
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .max_depth        = 3,
+                          .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
     auto [tree, train_leaf_values] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);

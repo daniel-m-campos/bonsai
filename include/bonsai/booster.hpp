@@ -20,11 +20,11 @@ namespace bonsai
 class IBooster
 {
   public:
-    virtual ~IBooster()                                           = default;
-    virtual void update_one_iter(Dataset const &train)            = 0;
-    virtual float eval(features_view X, floats_view labels) const = 0;
-    virtual void predict(features_view X, floats_out y_hat) const = 0;
-    virtual size_t n_iters() const                                = 0;
+    virtual ~IBooster()                                             = default;
+    virtual void   update_one_iter(Dataset const &train)            = 0;
+    virtual float  eval(features_view X, floats_view labels) const  = 0;
+    virtual void   predict(features_view X, floats_out y_hat) const = 0;
+    virtual size_t n_iters() const                                  = 0;
 };
 
 template <Objective Obj, TreeGrower Gr, Sampler Sa>
@@ -37,8 +37,8 @@ class Booster final : public IBooster
     using tree_type      = typename Gr::Tree;
 
     explicit Booster(Config const &config)
-        : config_(config.booster_config), grower_(config.tree_config),
-          sampler_(config), rng_(config.booster_config.random_seed)
+        : config_(config.booster_config), grower_(config.tree_config), sampler_(config),
+          rng_(config.booster_config.random_seed)
     {
     }
 
@@ -67,8 +67,7 @@ class Booster final : public IBooster
         {
             row_indices_.resize(train.n_rows());
         }
-        size_t const n_selected =
-            sampler_.sample(grad_, hess_, rng_, row_indices_);
+        size_t const n_selected = sampler_.sample(grad_, hess_, rng_, row_indices_);
 
         auto [tree, leaf_values] =
             grower_.grow(train, grad_, hess_, {row_indices_.data(), n_selected});
@@ -124,16 +123,16 @@ class Booster final : public IBooster
     }
 
   private:
-    BoosterConfig config_;
-    grower_type grower_;
-    sampler_type sampler_;
-    std::mt19937 rng_;
+    BoosterConfig          config_;
+    grower_type            grower_;
+    sampler_type           sampler_;
+    std::mt19937           rng_;
     std::vector<tree_type> trees_;
-    std::vector<float> scores_;
-    std::vector<float> grad_;
-    std::vector<float> hess_;
-    std::vector<row_id_t> row_indices_;
-    float init_score_ = 0.0F;
+    std::vector<float>     scores_;
+    std::vector<float>     grad_;
+    std::vector<float>     hess_;
+    std::vector<row_id_t>  row_indices_;
+    float                  init_score_ = 0.0F;
 };
 
 } // namespace bonsai

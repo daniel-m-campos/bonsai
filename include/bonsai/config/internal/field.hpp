@@ -38,7 +38,7 @@ template <typename Sub, typename Fields> struct Section
 {
     std::string_view name;
     Sub Config::*sub;
-    Fields fields;
+    Fields       fields;
     using sub_type = Sub;
 };
 

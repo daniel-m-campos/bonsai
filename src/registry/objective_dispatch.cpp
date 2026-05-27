@@ -20,25 +20,25 @@ namespace bonsai
 namespace
 {
 
-using LinkFn         = void (*)(floats_out);
-using DefaultsFn     = std::span<std::string_view const> (*)();
+using LinkFn     = void (*)(floats_out);
+using DefaultsFn = std::span<std::string_view const> (*)();
 
 struct LinkEntry
 {
     std::string_view name;
-    LinkFn apply;
+    LinkFn           apply;
 };
 
 struct TaskEntry
 {
     std::string_view name;
-    TaskKind task;
+    TaskKind         task;
 };
 
 struct DefaultsEntry
 {
     std::string_view name;
-    DefaultsFn defaults;
+    DefaultsFn       defaults;
 };
 
 template <typename O> void link_thunk(floats_out scores)
@@ -51,10 +51,10 @@ template <typename O> std::span<std::string_view const> defaults_thunk()
     return default_metrics_of<O>::value();
 }
 
-auto constexpr create_link_table()
+constexpr auto create_link_table()
 {
     std::array<LinkEntry, size_v<Objectives>> out{};
-    size_t i = 0;
+    size_t                                    i = 0;
     for_each_type<Objectives>(
         [&i, &out]<typename O>()
         {
@@ -65,10 +65,10 @@ auto constexpr create_link_table()
     return out;
 }
 
-auto constexpr create_task_table()
+constexpr auto create_task_table()
 {
     std::array<TaskEntry, size_v<Objectives>> out{};
-    size_t i = 0;
+    size_t                                    i = 0;
     for_each_type<Objectives>(
         [&i, &out]<typename O>()
         {
@@ -78,10 +78,10 @@ auto constexpr create_task_table()
     return out;
 }
 
-auto constexpr create_defaults_table()
+constexpr auto create_defaults_table()
 {
     std::array<DefaultsEntry, size_v<Objectives>> out{};
-    size_t i = 0;
+    size_t                                        i = 0;
     for_each_type<Objectives>(
         [&i, &out]<typename O>()
         {
@@ -92,9 +92,9 @@ auto constexpr create_defaults_table()
     return out;
 }
 
-inline auto constexpr link_table     = create_link_table();
-inline auto constexpr task_table     = create_task_table();
-inline auto constexpr defaults_table = create_defaults_table();
+inline constexpr auto link_table     = create_link_table();
+inline constexpr auto task_table     = create_task_table();
+inline constexpr auto defaults_table = create_defaults_table();
 
 } // namespace
 

@@ -13,8 +13,8 @@ namespace bonsai
 struct SplitInput
 {
     std::vector<Histogram> hists;
-    std::vector<row_id_t> rows;
-    node_id_t id = 0;
+    std::vector<row_id_t>  rows;
+    node_id_t              id = 0;
 
     double total_grad() const
     {
@@ -28,11 +28,11 @@ struct SplitInput
 
 struct SplitOutput
 {
-    double gain             = 0.0;
-    feature_id_t feature_id = 0;
-    bin_id_t bin_id         = 0;
-    bool default_left       = true;
-    bool valid              = false;
+    double       gain         = 0.0;
+    feature_id_t feature_id   = 0;
+    bin_id_t     bin_id       = 0;
+    bool         default_left = true;
+    bool         valid        = false;
 };
 
 template <typename T>

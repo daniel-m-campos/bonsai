@@ -32,10 +32,10 @@ template <typename Combo> std::unique_ptr<IBooster> factory_for(Config const &cf
     return std::make_unique<BoosterFor<Combo>>(cfg);
 }
 
-auto constexpr create_table()
+constexpr auto create_table()
 {
     std::array<Entry, size_v<Configurations>> out{};
-    size_t i = 0;
+    size_t                                    i = 0;
     for_each_type<Configurations>(
         [&i, &out]<typename Combo>()
         {
@@ -52,7 +52,7 @@ auto constexpr create_table()
     return out;
 }
 
-inline auto constexpr configurations = create_table();
+inline constexpr auto configurations = create_table();
 
 } // namespace
 

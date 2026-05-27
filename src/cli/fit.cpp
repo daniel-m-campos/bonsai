@@ -24,7 +24,7 @@ namespace
 
 std::vector<std::string_view>
 choose_metric_names(std::vector<std::string> const &override_names,
-                    std::string const &objective_name)
+                    std::string const              &objective_name)
 {
     std::vector<std::string_view> out;
     if (!override_names.empty())
@@ -43,8 +43,7 @@ choose_metric_names(std::vector<std::string> const &override_names,
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void print_metric_row(std::string_view label, std::span<float const> preds,
-                      std::span<float const> labels,
-                      std::vector<Metric> const &metrics)
+                      std::span<float const> labels, std::vector<Metric> const &metrics)
 {
     std::print("{}:", label);
     for (auto const &m : metrics)
@@ -75,8 +74,8 @@ int run_fit(FitOpts const &opts)
                  loaded.train.dataset.n_features());
 
     auto const &obj_name = cfg.dispatch.objective_name;
-    auto const task      = task_kind_by_name(obj_name);
-    auto const names     = choose_metric_names(cfg.metrics.fit, obj_name);
+    auto const  task     = task_kind_by_name(obj_name);
+    auto const  names    = choose_metric_names(cfg.metrics.fit, obj_name);
 
     // Resolve names to Metric values up front so a bad name fails fast.
     std::vector<Metric> metrics;
@@ -86,8 +85,9 @@ int run_fit(FitOpts const &opts)
         metrics.push_back(resolve_metric_for_task(name, task));
     }
 
-    std::println("fit: training {} iterations ({} / {} / {})", cfg.booster_config.n_iters,
-                 obj_name, cfg.dispatch.grower_name, cfg.dispatch.sampler_name);
+    std::println("fit: training {} iterations ({} / {} / {})",
+                 cfg.booster_config.n_iters, obj_name, cfg.dispatch.grower_name,
+                 cfg.dispatch.sampler_name);
 
     auto const on_tick = [&](FitTick const &tick)
     {

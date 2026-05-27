@@ -9,29 +9,29 @@ namespace bonsai::cli
 
 struct FitOpts
 {
-    CommonOpts common;
+    CommonOpts  common;
     std::string model_path;
 };
 
 struct PredictOpts
 {
-    CommonOpts common;
+    CommonOpts  common;
     std::string model_path;
     std::string data_path;
     std::string out_path; // empty -> stdout
-    bool apply_link = true;
+    bool        apply_link = true;
 };
 
 struct EvalOpts
 {
-    CommonOpts common;
+    CommonOpts  common;
     std::string model_path;
     std::string data_path;
 };
 
 struct BenchOpts
 {
-    CommonOpts common;
+    CommonOpts  common;
     std::string model_path; // optional output
 };
 

@@ -30,8 +30,7 @@ Config tiny_cfg()
     return cfg;
 }
 
-template <typename G>
-using MseBooster = Booster<MSEObjective, G, AllRowsSampler>;
+template <typename G> using MseBooster = Booster<MSEObjective, G, AllRowsSampler>;
 
 template <typename G>
 using LogLossBooster = Booster<LogLossObjective, G, AllRowsSampler>;
@@ -66,9 +65,9 @@ Dataset make_dataset(detail::ColumnBatch const &batch)
 struct RawFeatures
 {
     std::vector<float> data;
-    size_t n_rows;
-    size_t n_features;
-    features_view view() const
+    size_t             n_rows;
+    size_t             n_features;
+    features_view      view() const
     {
         return features_view{data.data(), n_rows, n_features};
     }
@@ -76,8 +75,8 @@ struct RawFeatures
 
 RawFeatures to_raw(detail::ColumnBatch const &batch)
 {
-    size_t const n_features = batch.features.size();
-    size_t const n_rows     = n_features == 0 ? 0 : batch.features[0].size();
+    size_t const       n_features = batch.features.size();
+    size_t const       n_rows     = n_features == 0 ? 0 : batch.features[0].size();
     std::vector<float> data(n_rows * n_features);
     for (size_t f = 0; f < n_features; ++f)
     {
@@ -101,22 +100,22 @@ RawFeatures separable_raw_midpoints()
 
 } // namespace
 
-TEMPLATE_LIST_TEST_CASE("Booster: ctor doesn't allocate per-row state", "[booster][ctor]",
-                   Growers)
+TEMPLATE_LIST_TEST_CASE("Booster: ctor doesn't allocate per-row state",
+                        "[booster][ctor]", Growers)
 {
-    Config const cfg = tiny_cfg();
+    Config const         cfg = tiny_cfg();
     MseBooster<TestType> booster{cfg};
     SUCCEED();
 }
 
 TEMPLATE_LIST_TEST_CASE("Booster: predict shape + finite after 1 iter",
-                   "[booster][predict][smoke]", Growers)
+                        "[booster][predict][smoke]", Growers)
 {
-    auto const batch      = separable_batch();
-    Dataset const train   = make_dataset(batch);
-    RawFeatures const raw = to_raw(batch);
+    auto const        batch = separable_batch();
+    Dataset const     train = make_dataset(batch);
+    RawFeatures const raw   = to_raw(batch);
 
-    Config const cfg = tiny_cfg();
+    Config const         cfg = tiny_cfg();
     MseBooster<TestType> booster{cfg};
     booster.update_one_iter(train);
 
@@ -131,19 +130,19 @@ TEMPLATE_LIST_TEST_CASE("Booster: predict shape + finite after 1 iter",
 }
 
 TEMPLATE_LIST_TEST_CASE("Booster: MSE eval decreases monotonically over iters",
-                   "[booster][eval][convergence]", Growers)
+                        "[booster][eval][convergence]", Growers)
 {
-    auto const batch      = separable_batch();
-    Dataset const train   = make_dataset(batch);
-    RawFeatures const raw = to_raw(batch);
+    auto const        batch = separable_batch();
+    Dataset const     train = make_dataset(batch);
+    RawFeatures const raw   = to_raw(batch);
     floats_view const labels{batch.labels};
 
-    Config const cfg = tiny_cfg();
+    Config const         cfg = tiny_cfg();
     MseBooster<TestType> booster{cfg};
 
     booster.update_one_iter(train);
     float const initial_eval = booster.eval(raw.view(), labels);
-    float prev_eval          = initial_eval;
+    float       prev_eval    = initial_eval;
 
     for (int i = 0; i < 4; ++i)
     {
@@ -157,14 +156,14 @@ TEMPLATE_LIST_TEST_CASE("Booster: MSE eval decreases monotonically over iters",
 }
 
 TEMPLATE_LIST_TEST_CASE("Booster: eval == MSE(predict, labels) by construction",
-                   "[booster][eval][predict][contract]", Growers)
+                        "[booster][eval][predict][contract]", Growers)
 {
-    auto const batch      = separable_batch();
-    Dataset const train   = make_dataset(batch);
-    RawFeatures const raw = to_raw(batch);
+    auto const        batch = separable_batch();
+    Dataset const     train = make_dataset(batch);
+    RawFeatures const raw   = to_raw(batch);
     floats_view const labels{batch.labels};
 
-    Config const cfg = tiny_cfg();
+    Config const         cfg = tiny_cfg();
     MseBooster<TestType> booster{cfg};
     booster.update_one_iter(train);
 
@@ -178,9 +177,9 @@ TEMPLATE_LIST_TEST_CASE("Booster: eval == MSE(predict, labels) by construction",
 }
 
 TEMPLATE_LIST_TEST_CASE("Booster: weights scale grad/hess and shift leaf values",
-                   "[booster][update][weights]", Growers)
+                        "[booster][update][weights]", Growers)
 {
-    auto const batch_unw    = separable_batch();
+    auto const    batch_unw = separable_batch();
     Dataset const train_unw = make_dataset(batch_unw);
 
     detail::ColumnBatch batch_w = separable_batch();
@@ -193,7 +192,7 @@ TEMPLATE_LIST_TEST_CASE("Booster: weights scale grad/hess and shift leaf values"
     booster_unw.update_one_iter(train_unw);
     booster_w.update_one_iter(train_w);
 
-    RawFeatures const raw = separable_raw_midpoints();
+    RawFeatures const  raw = separable_raw_midpoints();
     std::vector<float> pred_unw(raw.n_rows);
     std::vector<float> pred_w(raw.n_rows);
     booster_unw.predict(raw.view(), pred_unw);
@@ -211,13 +210,13 @@ TEMPLATE_LIST_TEST_CASE("Booster: weights scale grad/hess and shift leaf values"
 }
 
 TEMPLATE_LIST_TEST_CASE("Booster: predict matches analytic leaf after 1 iter",
-                   "[booster][predict][analytic]", Growers)
+                        "[booster][predict][analytic]", Growers)
 {
-    auto const batch      = separable_batch();
-    Dataset const train   = make_dataset(batch);
-    RawFeatures const raw = separable_raw_midpoints();
+    auto const        batch = separable_batch();
+    Dataset const     train = make_dataset(batch);
+    RawFeatures const raw   = separable_raw_midpoints();
 
-    Config const cfg = tiny_cfg();
+    Config const         cfg = tiny_cfg();
     MseBooster<TestType> booster{cfg};
     booster.update_one_iter(train);
 
@@ -239,19 +238,19 @@ TEMPLATE_LIST_TEST_CASE("Booster: predict matches analytic leaf after 1 iter",
 }
 
 TEMPLATE_LIST_TEST_CASE("Booster: LogLoss eval decreases monotonically over iters",
-                   "[booster][logloss][convergence]", Growers)
+                        "[booster][logloss][convergence]", Growers)
 {
-    auto const batch      = separable_binary_batch();
-    Dataset const train   = make_dataset(batch);
-    RawFeatures const raw = to_raw(batch);
+    auto const        batch = separable_binary_batch();
+    Dataset const     train = make_dataset(batch);
+    RawFeatures const raw   = to_raw(batch);
     floats_view const labels{batch.labels};
 
-    Config const cfg = tiny_cfg();
+    Config const             cfg = tiny_cfg();
     LogLossBooster<TestType> booster{cfg};
 
     booster.update_one_iter(train);
     float const initial_eval = booster.eval(raw.view(), labels);
-    float prev_eval          = initial_eval;
+    float       prev_eval    = initial_eval;
 
     for (int i = 0; i < 4; ++i)
     {
@@ -264,14 +263,15 @@ TEMPLATE_LIST_TEST_CASE("Booster: LogLoss eval decreases monotonically over iter
     CHECK(prev_eval < initial_eval);
 }
 
-TEMPLATE_LIST_TEST_CASE("Booster: LogLoss predict produces raw scores separating classes",
-                   "[booster][logloss][predict]", Growers)
+TEMPLATE_LIST_TEST_CASE(
+    "Booster: LogLoss predict produces raw scores separating classes",
+    "[booster][logloss][predict]", Growers)
 {
-    auto const batch      = separable_binary_batch();
-    Dataset const train   = make_dataset(batch);
-    RawFeatures const raw = separable_raw_midpoints();
+    auto const        batch = separable_binary_batch();
+    Dataset const     train = make_dataset(batch);
+    RawFeatures const raw   = separable_raw_midpoints();
 
-    Config const cfg = tiny_cfg();
+    Config const             cfg = tiny_cfg();
     LogLossBooster<TestType> booster{cfg};
     for (int i = 0; i < 10; ++i)
     {
@@ -293,11 +293,11 @@ TEMPLATE_LIST_TEST_CASE("Booster: LogLoss predict produces raw scores separating
 }
 
 TEMPLATE_LIST_TEST_CASE("Booster: n_iters tracks update count", "[booster][n_iters]",
-                   Growers)
+                        Growers)
 {
-    auto const batch    = separable_batch();
-    Dataset const train = make_dataset(batch);
-    Config const cfg    = tiny_cfg();
+    auto const           batch = separable_batch();
+    Dataset const        train = make_dataset(batch);
+    Config const         cfg   = tiny_cfg();
     MseBooster<TestType> booster{cfg};
 
     CHECK(booster.n_iters() == 0);

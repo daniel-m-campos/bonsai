@@ -27,7 +27,7 @@ void add_common(CLI::App *cmd, bonsai::cli::CommonOpts &opts,
 }
 
 void collect_overrides(std::vector<std::string> const &set_kvs,
-                       bonsai::cli::CommonOpts &opts)
+                       bonsai::cli::CommonOpts        &opts)
 {
     for (auto const &kv : set_kvs)
     {
@@ -96,7 +96,8 @@ void register_eval(CLI::App &app, bonsai::cli::EvalOpts &opts,
 void register_bench(CLI::App &app, bonsai::cli::BenchOpts &opts,
                     std::vector<std::string> &kvs, int &rc)
 {
-    auto *cmd = app.add_subcommand("bench", "Time fit+predict for a config and dataset");
+    auto *cmd =
+        app.add_subcommand("bench", "Time fit+predict for a config and dataset");
     add_common(cmd, opts.common, kvs);
     cmd->add_option("--model", opts.model_path, "Optional output model file");
     cmd->footer(params_footer);
@@ -110,8 +111,8 @@ void register_bench(CLI::App &app, bonsai::cli::BenchOpts &opts,
 
 void register_info(CLI::App &app, int &rc)
 {
-    auto *cmd =
-        app.add_subcommand("info", "Print available (objective, grower, sampler) combos");
+    auto *cmd = app.add_subcommand(
+        "info", "Print available (objective, grower, sampler) combos");
     cmd->callback([&] { rc = bonsai::cli::run_info(); });
 }
 
@@ -137,19 +138,19 @@ int main(int argc, char *argv[])
     // returns that value below.
     int rc = EXIT_SUCCESS;
 
-    FitOpts fit;
+    FitOpts                  fit;
     std::vector<std::string> fit_kvs;
     register_fit(app, fit, fit_kvs, rc);
 
-    PredictOpts predict;
+    PredictOpts              predict;
     std::vector<std::string> predict_kvs;
     register_predict(app, predict, predict_kvs, rc);
 
-    EvalOpts eval;
+    EvalOpts                 eval;
     std::vector<std::string> eval_kvs;
     register_eval(app, eval, eval_kvs, rc);
 
-    BenchOpts bench;
+    BenchOpts                bench;
     std::vector<std::string> bench_kvs;
     register_bench(app, bench, bench_kvs, rc);
 

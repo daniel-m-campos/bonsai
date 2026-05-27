@@ -7,7 +7,7 @@
 namespace bonsai::config::internal
 {
 
-inline auto constexpr data_section = make_section(
+inline constexpr auto data_section = make_section(
     "data", &Config::data, field<&DataConfig::train>(), field<&DataConfig::test>(),
     field<&DataConfig::format>(), field<&DataConfig::header>(),
     field<&DataConfig::label_column>(), field<&DataConfig::weight_column>(),

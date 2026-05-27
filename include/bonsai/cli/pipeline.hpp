@@ -22,7 +22,7 @@ namespace bonsai::cli
 struct LoadedTrain
 {
     BinMappers mappers;
-    Dataset train;
+    Dataset    train;
 };
 
 // Step 1 of training (minimal): fit bin mappers from `path`, then bin the same
@@ -33,15 +33,15 @@ LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path);
 // update_one_iter / labels) and the row-major FeatureBuffer (for predict).
 struct LabeledData
 {
-    Dataset dataset;
-    FeatureBuffer features;
+    Dataset            dataset;
+    FeatureBuffer      features;
     std::vector<float> labels;
 };
 
 struct LoadedTrainValid
 {
-    BinMappers mappers;
-    LabeledData train;
+    BinMappers                 mappers;
+    LabeledData                train;
     std::optional<LabeledData> valid;
 };
 
@@ -67,11 +67,11 @@ std::unique_ptr<IBooster> train_in_memory(Config const &cfg, Dataset const &trai
 // Do not retain any span past the callback call.
 struct FitTick
 {
-    std::size_t iter;                  // 0-based; 0 == init_score baseline
-    std::size_t n_iters;               // cfg.booster_config.n_iters
-    std::span<float> train_preds;      // mutable; link-inversion target
+    std::size_t            iter;        // 0-based; 0 == init_score baseline
+    std::size_t            n_iters;     // cfg.booster_config.n_iters
+    std::span<float>       train_preds; // mutable; link-inversion target
     std::span<float const> train_labels;
-    std::span<float> valid_preds;      // empty if no valid set
+    std::span<float>       valid_preds; // empty if no valid set
     std::span<float const> valid_labels;
 };
 
@@ -82,13 +82,13 @@ using FitTickFn = std::function<void(FitTick const &)>;
 // (init_score baseline), every floor(n_iters/log_intervals) iters, and at the
 // final iter. Predictions live in scratch buffers owned by this function;
 // callbacks must not retain references past the call.
-std::unique_ptr<IBooster> train_with_progress(Config const &cfg,
+std::unique_ptr<IBooster> train_with_progress(Config const           &cfg,
                                               LoadedTrainValid const &loaded,
-                                              FitTickFn const &on_tick = {});
+                                              FitTickFn const        &on_tick = {});
 
 struct ScoredBatch
 {
-    FeatureBuffer features;
+    FeatureBuffer      features;
     std::vector<float> raw_scores;
 };
 
@@ -99,7 +99,7 @@ ScoredBatch score_csv(IBooster const &booster, std::string const &path,
 
 struct ScoredAndLabeled
 {
-    FeatureBuffer features;
+    FeatureBuffer      features;
     std::vector<float> raw_scores;
     std::vector<float> labels;
 };

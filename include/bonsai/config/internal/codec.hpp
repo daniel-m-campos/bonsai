@@ -39,10 +39,10 @@ template <typename U> ParseResult<U> read_uint_from_toml(toml::node const &node)
 
 template <typename U> ParseResult<U> read_uint_from_string(std::string_view value)
 {
-    int64_t v       = 0;
+    int64_t     v   = 0;
     auto const *beg = value.data();
     auto const *end = beg + value.size();
-    auto const res  = std::from_chars(beg, end, v);
+    auto const  res = std::from_chars(beg, end, v);
     if (res.ec != std::errc{} || res.ptr != end)
     {
         return std::unexpected("cannot parse integer from '" + std::string{value} +
@@ -57,10 +57,10 @@ template <typename U> ParseResult<U> read_uint_from_string(std::string_view valu
 
 inline ParseResult<int> read_int_from_string(std::string_view value)
 {
-    int v           = 0;
+    int         v   = 0;
     auto const *beg = value.data();
     auto const *end = beg + value.size();
-    auto const res  = std::from_chars(beg, end, v);
+    auto const  res = std::from_chars(beg, end, v);
     if (res.ec != std::errc{} || res.ptr != end)
     {
         return std::unexpected("cannot parse integer from '" + std::string{value} +
@@ -72,8 +72,8 @@ inline ParseResult<int> read_int_from_string(std::string_view value)
 inline ParseResult<float> read_float_from_string(std::string_view value)
 {
     std::string const owned{value};
-    char *end       = nullptr;
-    float const v   = std::strtof(owned.c_str(), &end);
+    char             *end = nullptr;
+    float const       v   = std::strtof(owned.c_str(), &end);
     auto const used = static_cast<size_t>(end != nullptr ? end - owned.c_str() : 0);
     if (used != owned.size())
     {
@@ -107,7 +107,10 @@ template <> struct FieldCodec<bool>
         }
         return std::unexpected("expected true/false, got '" + std::string{value} + "'");
     }
-    static toml::value<bool> to_toml(bool v) { return toml::value{v}; }
+    static toml::value<bool> to_toml(bool v)
+    {
+        return toml::value{v};
+    }
 };
 
 // -------------------- int ----------------------------------------------------

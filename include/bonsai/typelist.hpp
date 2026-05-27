@@ -9,7 +9,7 @@ namespace bonsai
 
 template <typename... Ts> struct TypeList
 {
-    static size_t constexpr size = sizeof...(Ts);
+    static constexpr size_t size = sizeof...(Ts);
 };
 
 template <typename L> struct size;
@@ -19,7 +19,7 @@ struct size<TypeList<Ts...>> : std::integral_constant<size_t, sizeof...(Ts)>
 {
 };
 
-template <typename L> inline size_t constexpr size_v = size<L>::value;
+template <typename L> inline constexpr size_t size_v = size<L>::value;
 
 template <size_t I, typename L> struct type_at;
 
@@ -114,14 +114,14 @@ namespace detail
 {
 
 template <typename F, typename... Ts>
-void constexpr for_each_type_impl(F &&f, TypeList<Ts...> /*unused*/)
+constexpr void for_each_type_impl(F &&f, TypeList<Ts...> /*unused*/)
 {
     (std::forward<F>(f).template operator()<Ts>(), ...);
 }
 
 } // namespace detail
 
-template <typename L, typename F> void constexpr for_each_type(F &&f)
+template <typename L, typename F> constexpr void for_each_type(F &&f)
 {
     detail::for_each_type_impl(std::forward<F>(f), L{});
 }

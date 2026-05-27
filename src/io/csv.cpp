@@ -24,7 +24,7 @@ namespace bonsai::detail::csv
 namespace
 {
 
-float constexpr k_nan = std::numeric_limits<float>::quiet_NaN();
+constexpr float k_nan = std::numeric_limits<float>::quiet_NaN();
 
 std::string_view trim(std::string_view s)
 {
@@ -65,9 +65,9 @@ float parse_field(std::string_view raw, bool missing_nan, std::optional<float> s
         return k_nan;
     }
     std::string const buf{s};
-    char *end           = nullptr;
-    float const val     = std::strtof(buf.c_str(), &end);
-    auto const consumed = static_cast<size_t>(end != nullptr ? end - buf.c_str() : 0);
+    char             *end = nullptr;
+    float const       val = std::strtof(buf.c_str(), &end);
+    auto const consumed   = static_cast<size_t>(end != nullptr ? end - buf.c_str() : 0);
     if (consumed != buf.size())
     {
         throw std::runtime_error("csv::parse: bad numeric field '" + buf + "'");
@@ -139,7 +139,7 @@ std::vector<size_t> resolve_feature_cols(size_t n_cols, DataConfig const &cfg)
     }
     std::unordered_set<int> const ignore(cfg.ignore_columns.begin(),
                                          cfg.ignore_columns.end());
-    std::vector<size_t> out;
+    std::vector<size_t>           out;
     out.reserve(n_cols);
     for (size_t c = 0; c < n_cols; ++c)
     {
@@ -154,11 +154,11 @@ std::vector<size_t> resolve_feature_cols(size_t n_cols, DataConfig const &cfg)
 }
 
 ColumnBatch materialize(std::vector<std::vector<float>> const &rows,
-                        std::vector<size_t> const &feature_cols,
-                        std::vector<std::string> const &all_names,
-                        DataConfig const &cfg)
+                        std::vector<size_t> const             &feature_cols,
+                        std::vector<std::string> const        &all_names,
+                        DataConfig const                      &cfg)
 {
-    auto const n_rows = rows.size();
+    auto const  n_rows = rows.size();
     ColumnBatch batch;
     batch.features.assign(feature_cols.size(), std::vector<float>(n_rows));
     batch.labels.resize(n_rows);
@@ -198,14 +198,14 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
     }
 
     std::vector<std::string_view> scratch;
-    std::vector<std::string> all_names;
+    std::vector<std::string>      all_names;
     if (cfg.header)
     {
         all_names = read_header(in, path, scratch);
     }
 
     std::vector<std::vector<float>> rows;
-    std::string line;
+    std::string                     line;
     while (std::getline(in, line))
     {
         if (line.empty() || (line.size() == 1 && line[0] == '\r'))

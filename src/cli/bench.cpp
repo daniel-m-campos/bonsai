@@ -41,16 +41,16 @@ int run_bench(BenchOpts const &opts)
     using clk = std::chrono::steady_clock;
 
     auto const t0     = clk::now();
-    auto loaded       = load_train_from_csv(cfg, cfg.data.train);
+    auto       loaded = load_train_from_csv(cfg, cfg.data.train);
     auto const t_load = seconds_since(t0);
 
-    auto const t1    = clk::now();
-    auto booster     = train_in_memory(cfg, loaded.train);
-    auto const t_fit = seconds_since(t1);
+    auto const t1      = clk::now();
+    auto       booster = train_in_memory(cfg, loaded.train);
+    auto const t_fit   = seconds_since(t1);
 
     auto const t2        = clk::now();
     auto const eval_path = cfg.data.test.empty() ? cfg.data.train : cfg.data.test;
-    auto scored          = score_csv(*booster, eval_path, cfg.data);
+    auto       scored    = score_csv(*booster, eval_path, cfg.data);
     auto const t_predict = seconds_since(t2);
 
     auto const rows_per_sec =

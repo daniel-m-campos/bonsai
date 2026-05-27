@@ -20,7 +20,7 @@ class BinMapper
         return BinMapper{std::move(cuts)};
     }
     uint16_t transform(float x) const;
-    size_t n_bins() const
+    size_t   n_bins() const
     {
         return cuts_.size();
     }

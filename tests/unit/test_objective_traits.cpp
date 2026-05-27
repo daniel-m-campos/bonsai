@@ -9,10 +9,9 @@
 
 using namespace bonsai; // NOLINT
 
-TEST_CASE("link_inverse_of<MSEObjective>: apply is identity",
-          "[link_inverse][mse]")
+TEST_CASE("link_inverse_of<MSEObjective>: apply is identity", "[link_inverse][mse]")
 {
-    std::vector<float> scores  = {-3.5F, 0.0F, 1.25F, 17.0F, -0.125F};
+    std::vector<float>       scores   = {-3.5F, 0.0F, 1.25F, 17.0F, -0.125F};
     std::vector<float> const original = scores;
 
     link_inverse_of<MSEObjective>::apply(scores);

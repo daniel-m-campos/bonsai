@@ -26,7 +26,7 @@ namespace
 // else the objective's declared defaults.
 std::vector<std::string_view>
 choose_metric_names(std::vector<std::string> const &override_names,
-                    std::string const &objective_name)
+                    std::string const              &objective_name)
 {
     std::vector<std::string_view> out;
     if (!override_names.empty())
@@ -66,12 +66,13 @@ int run_eval(EvalOpts const &opts)
     auto sl = score_and_label_csv(*loaded.booster, path, data_cfg);
     apply_link_inverse_by_name(loaded.cfg.dispatch.objective_name, sl.raw_scores);
 
-    auto const task  = task_kind_by_name(loaded.cfg.dispatch.objective_name);
-    auto const names = choose_metric_names(cfg.metrics.eval, loaded.cfg.dispatch.objective_name);
+    auto const task = task_kind_by_name(loaded.cfg.dispatch.objective_name);
+    auto const names =
+        choose_metric_names(cfg.metrics.eval, loaded.cfg.dispatch.objective_name);
 
     for (auto const name : names)
     {
-        auto const m = resolve_metric_for_task(name, task);
+        auto const  m = resolve_metric_for_task(name, task);
         float const v = m.compute(sl.raw_scores, sl.labels);
         std::print("{}={} ", m.name, v);
     }

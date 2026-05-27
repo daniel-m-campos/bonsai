@@ -7,7 +7,7 @@
 namespace bonsai::config::internal
 {
 
-inline auto constexpr sampler_section =
+inline constexpr auto sampler_section =
     make_section("sampler", &Config::sampler, field<&SamplerConfig::subsample>());
 
 } // namespace bonsai::config::internal

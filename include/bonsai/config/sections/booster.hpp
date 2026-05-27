@@ -7,7 +7,7 @@
 namespace bonsai::config::internal
 {
 
-inline auto constexpr booster_section = make_section(
+inline constexpr auto booster_section = make_section(
     "booster", &Config::booster_config, field<&BoosterConfig::n_iters>(),
     field<&BoosterConfig::learning_rate>(), field<&BoosterConfig::random_seed>(),
     field<&BoosterConfig::log_intervals>());

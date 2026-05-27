@@ -57,7 +57,7 @@ size_t quantile_step(size_t subsample_size, size_t cut_budget)
 std::vector<float> create_cuts(std::vector<float> &subsample, size_t step)
 {
     std::vector<float> cuts;
-    auto lo = subsample.begin();
+    auto               lo = subsample.begin();
     for (size_t k = step; k < subsample.size(); k += step)
     {
         auto target = subsample.begin() + k;
@@ -79,7 +79,7 @@ BinMapper BinMapper::fit(std::span<float const> column, BinMapperConfig const &c
     assert(cfg.max_bin > 2);
     // 1 bin for the +inf sentinel, another for the missing slot.
     size_t const cut_budget = cfg.max_bin - 2;
-    auto subsample          = create_subsample(column, cfg);
+    auto         subsample  = create_subsample(column, cfg);
     auto cuts = create_cuts(subsample, quantile_step(subsample.size(), cut_budget));
     return {std::move(cuts)};
 }

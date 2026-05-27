@@ -21,14 +21,14 @@ float compute_rmse(floats_view preds, floats_view labels)
 {
     assert(preds.size() == labels.size());
     assert(!preds.empty());
-    auto const n   = static_cast<float>(preds.size());
-    float const ss = std::transform_reduce(
-        preds.begin(), preds.end(), labels.begin(), 0.0F, std::plus<>(),
-        [](float const p, float const t)
-        {
-            double const d = p - t;
-            return d * d;
-        });
+    auto const  n  = static_cast<float>(preds.size());
+    float const ss = std::transform_reduce(preds.begin(), preds.end(), labels.begin(),
+                                           0.0F, std::plus<>(),
+                                           [](float const p, float const t)
+                                           {
+                                               double const d = p - t;
+                                               return d * d;
+                                           });
     return std::sqrt(ss / n);
 }
 
@@ -36,7 +36,7 @@ float compute_mae(floats_view preds, floats_view labels)
 {
     assert(preds.size() == labels.size());
     assert(!preds.empty());
-    auto const n  = static_cast<float>(preds.size());
+    auto const  n = static_cast<float>(preds.size());
     float const s = std::transform_reduce(
         preds.begin(), preds.end(), labels.begin(), 0.0F, std::plus<>(),
         [](float const p, float const t) { return std::abs(p - t); });
@@ -47,8 +47,8 @@ float compute_r2(floats_view preds, floats_view labels)
 {
     assert(preds.size() == labels.size());
     assert(!preds.empty());
-    double const n  = static_cast<double>(labels.size());
-    double mean_y   = 0.0;
+    auto const n      = static_cast<double>(labels.size());
+    double     mean_y = 0.0;
     for (float const y : labels)
     {
         mean_y += static_cast<double>(y);
@@ -57,9 +57,10 @@ float compute_r2(floats_view preds, floats_view labels)
 
     double ss_res = 0.0;
     double ss_tot = 0.0;
-    for (std::size_t i = 0; i < labels.size(); ++i)
+    for (size_t i = 0; i < labels.size(); ++i)
     {
-        double const d_res = static_cast<double>(preds[i]) - static_cast<double>(labels[i]);
+        double const d_res =
+            static_cast<double>(preds[i]) - static_cast<double>(labels[i]);
         double const d_tot = static_cast<double>(labels[i]) - mean_y;
         ss_res += d_res * d_res;
         ss_tot += d_tot * d_tot;
@@ -79,9 +80,9 @@ float compute_logloss(floats_view probs, floats_view labels)
 {
     assert(probs.size() == labels.size());
     assert(!probs.empty());
-    double constexpr eps = 1e-7;
-    double ll            = 0.0;
-    for (std::size_t i = 0; i < probs.size(); ++i)
+    constexpr double eps = 1e-7;
+    double           ll  = 0.0;
+    for (size_t i = 0; i < probs.size(); ++i)
     {
         double const p = probs[i];
         double const t = labels[i] > 0.5F ? 1.0 : 0.0;
@@ -96,8 +97,8 @@ float compute_accuracy(floats_view probs, floats_view labels)
 {
     assert(probs.size() == labels.size());
     assert(!probs.empty());
-    std::size_t correct = 0;
-    for (std::size_t i = 0; i < probs.size(); ++i)
+    size_t correct = 0;
+    for (size_t i = 0; i < probs.size(); ++i)
     {
         bool const pred_pos  = probs[i] >= 0.5F;
         bool const label_pos = labels[i] >= 0.5F;
@@ -115,7 +116,7 @@ namespace
 
 // Tiny hand-written registry. No for_each_type machinery -- five entries.
 // Adding a metric is one line below + matching free function above.
-inline auto constexpr all_metrics = std::array<Metric, 5>{{
+inline constexpr auto all_metrics = std::array<Metric, 5>{{
     metric_rmse,
     metric_mae,
     metric_r2,
@@ -143,9 +144,9 @@ Metric resolve_metric_for_task(std::string_view name, TaskKind task)
     auto const m = find_metric(name);
     if (m.task != task)
     {
-        throw MetricTaskMismatchError(std::format(
-            "metric '{}' is a {} metric but the model is for {}",
-            name, task_kind_name(m.task), task_kind_name(task)));
+        throw MetricTaskMismatchError(
+            std::format("metric '{}' is a {} metric but the model is for {}", name,
+                        task_kind_name(m.task), task_kind_name(task)));
     }
     return m;
 }

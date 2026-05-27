@@ -32,9 +32,9 @@ namespace
 struct RawFeatures
 {
     std::vector<float> data;
-    size_t n_rows;
-    size_t n_features;
-    features_view view() const
+    size_t             n_rows;
+    size_t             n_features;
+    features_view      view() const
     {
         return features_view{data.data(), n_rows, n_features};
     }
@@ -42,8 +42,8 @@ struct RawFeatures
 
 RawFeatures to_raw(detail::ColumnBatch const &batch)
 {
-    size_t const n_features = batch.features.size();
-    size_t const n_rows     = n_features == 0 ? 0 : batch.features[0].size();
+    size_t const       n_features = batch.features.size();
+    size_t const       n_rows     = n_features == 0 ? 0 : batch.features[0].size();
     std::vector<float> data(n_rows * n_features);
     for (size_t f = 0; f < n_features; ++f)
     {
@@ -73,7 +73,7 @@ struct TempPath
     TempPath(TempPath const &)            = delete;
     TempPath &operator=(TempPath const &) = delete;
     TempPath(TempPath &&)                 = delete;
-    TempPath &operator=(TempPath &&)      = delete;
+    TempPath   &operator=(TempPath &&)    = delete;
     std::string str() const
     {
         return path.string();
@@ -124,13 +124,13 @@ using DispatchCombos = cartesian_product_t<Objectives, Growers, Samplers>;
 TEMPLATE_LIST_TEST_CASE("ModelIo: save -> load -> predict reproduces predictions",
                         "[model_io][smoke]", DispatchCombos)
 {
-    using O                  = type_at_t<0, TestType>;
-    using G                  = type_at_t<1, TestType>;
-    using S                  = type_at_t<2, TestType>;
-    auto const batch         = batch_for<O>();
-    BinMappers const mappers = BinMappers::fit(batch, {});
-    Dataset const train      = Dataset::bin(batch, mappers, {});
-    RawFeatures const raw    = to_raw(batch);
+    using O                   = type_at_t<0, TestType>;
+    using G                   = type_at_t<1, TestType>;
+    using S                   = type_at_t<2, TestType>;
+    auto const        batch   = batch_for<O>();
+    BinMappers const  mappers = BinMappers::fit(batch, {});
+    Dataset const     train   = Dataset::bin(batch, mappers, {});
+    RawFeatures const raw     = to_raw(batch);
 
     Config cfg                  = tiny_cfg();
     cfg.dispatch.objective_name = std::string{impl_name<O>::value};
@@ -172,12 +172,12 @@ TEST_CASE("ModelIo: full Config round-trips via save/load", "[model_io][config]"
     // (bool, int, unsigned, float, string, vector<int>, vector<string>,
     // optional<float>). If a new leaf type is added to Config without a
     // matching nlohmann conversion, this test fails to compile or round-trip.
-    auto const batch         = tiny_batch();
+    auto const       batch   = tiny_batch();
     BinMappers const mappers = BinMappers::fit(batch, {});
-    Dataset const train      = Dataset::bin(batch, mappers, {});
+    Dataset const    train   = Dataset::bin(batch, mappers, {});
 
-    Config cfg   = tiny_cfg();
-    auto booster = make_booster(cfg);
+    Config cfg     = tiny_cfg();
+    auto   booster = make_booster(cfg);
     booster->update_one_iter(train);
 
     // Populate every non-dispatch field with a non-default value.

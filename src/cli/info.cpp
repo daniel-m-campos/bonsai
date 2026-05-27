@@ -12,7 +12,7 @@ namespace bonsai::cli
 
 int run_info()
 {
-    auto const combos = available_combos();
+    auto const                 combos = available_combos();
     std::set<std::string_view> objectives;
     std::set<std::string_view> growers;
     std::set<std::string_view> samplers;

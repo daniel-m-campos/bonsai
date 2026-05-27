@@ -24,7 +24,7 @@ template <typename... Ts>
 struct all_named<TypeList<Ts...>> : std::bool_constant<(HasName<Ts> && ...)>
 {
 };
-template <typename L> inline bool constexpr all_named_v = all_named<L>::value;
+template <typename L> inline constexpr bool all_named_v = all_named<L>::value;
 } // namespace detail
 
 // Single point of truth for "every dispatchable impl has an impl_name<T>

@@ -23,14 +23,13 @@ lambda_l2 = 0.5
 n_iters = 250
 learning_rate = 0.1
 )";
-    auto const cfg = bonsai::config::parse_toml(kText);
+    auto const     cfg   = bonsai::config::parse_toml(kText);
 
     REQUIRE(cfg.data.train == "train.csv");
     REQUIRE(cfg.data.test == "test.csv");
     REQUIRE(cfg.data.label_column == 0);
     REQUIRE(cfg.tree_config.max_depth == 8);
-    REQUIRE_THAT(cfg.tree_config.lambda_l2,
-                 Catch::Matchers::WithinAbs(0.5F, 1e-6F));
+    REQUIRE_THAT(cfg.tree_config.lambda_l2, Catch::Matchers::WithinAbs(0.5F, 1e-6F));
     REQUIRE(cfg.booster_config.n_iters == 250);
     REQUIRE_THAT(cfg.booster_config.learning_rate,
                  Catch::Matchers::WithinAbs(0.1F, 1e-6F));
@@ -67,15 +66,12 @@ max_depth = "six"
     REQUIRE_THROWS_AS(bonsai::config::parse_toml(kText), bonsai::ConfigError);
 }
 
-TEST_CASE("Overrides: apply dotted keys updates the right fields",
-          "[overrides][fit]")
+TEST_CASE("Overrides: apply dotted keys updates the right fields", "[overrides][fit]")
 {
-    bonsai::Config cfg;
+    bonsai::Config                              cfg;
     std::vector<bonsai::config::Override> const ovs = {
-        {"tree.max_depth", "10"},
-        {"booster.n_iters", "5"},
-        {"booster.learning_rate", "0.25"},
-        {"dispatch.objective_name", "logloss"},
+        {"tree.max_depth", "10"},          {"booster.n_iters", "5"},
+        {"booster.learning_rate", "0.25"}, {"dispatch.objective_name", "logloss"},
         {"data.header", "false"},
     };
     bonsai::config::apply_overrides(cfg, ovs);
@@ -90,27 +86,24 @@ TEST_CASE("Overrides: apply dotted keys updates the right fields",
 
 TEST_CASE("Overrides: malformed value throws ConfigError", "[overrides][edge]")
 {
-    bonsai::Config cfg;
+    bonsai::Config                              cfg;
     std::vector<bonsai::config::Override> const ovs = {
         {"tree.max_depth", "not_a_number"}};
-    REQUIRE_THROWS_AS(bonsai::config::apply_overrides(cfg, ovs),
-                      bonsai::ConfigError);
+    REQUIRE_THROWS_AS(bonsai::config::apply_overrides(cfg, ovs), bonsai::ConfigError);
 }
 
 TEST_CASE("Overrides: unknown key throws ConfigError", "[overrides][edge]")
 {
-    bonsai::Config cfg;
+    bonsai::Config                              cfg;
     std::vector<bonsai::config::Override> const ovs = {{"tree.bogus", "1"}};
-    REQUIRE_THROWS_AS(bonsai::config::apply_overrides(cfg, ovs),
-                      bonsai::ConfigError);
+    REQUIRE_THROWS_AS(bonsai::config::apply_overrides(cfg, ovs), bonsai::ConfigError);
 }
 
 TEST_CASE("Overrides: non-dotted key throws ConfigError", "[overrides][edge]")
 {
-    bonsai::Config cfg;
+    bonsai::Config                              cfg;
     std::vector<bonsai::config::Override> const ovs = {{"max_depth", "8"}};
-    REQUIRE_THROWS_AS(bonsai::config::apply_overrides(cfg, ovs),
-                      bonsai::ConfigError);
+    REQUIRE_THROWS_AS(bonsai::config::apply_overrides(cfg, ovs), bonsai::ConfigError);
 }
 
 TEST_CASE("Toml: [metrics] section populates fit and eval lists", "[toml][metrics]")
@@ -120,7 +113,7 @@ TEST_CASE("Toml: [metrics] section populates fit and eval lists", "[toml][metric
 fit  = ["rmse", "mae"]
 eval = ["rmse", "r2", "mae"]
 )";
-    auto const cfg = bonsai::config::parse_toml(kText);
+    auto const     cfg   = bonsai::config::parse_toml(kText);
     REQUIRE(cfg.metrics.fit.size() == 2);
     CHECK(cfg.metrics.fit[0] == "rmse");
     CHECK(cfg.metrics.fit[1] == "mae");
@@ -137,16 +130,15 @@ TEST_CASE("Toml: booster.log_intervals parses to BoosterConfig",
 [booster]
 log_intervals = 5
 )";
-    auto const cfg = bonsai::config::parse_toml(kText);
+    auto const     cfg   = bonsai::config::parse_toml(kText);
     CHECK(cfg.booster_config.log_intervals == 5);
 }
 
 TEST_CASE("Overrides: comma-separated value populates vector<string>",
           "[overrides][metrics]")
 {
-    bonsai::Config cfg;
-    std::vector<bonsai::config::Override> const ovs = {
-        {"metrics.eval", "rmse,mae,r2"}};
+    bonsai::Config                              cfg;
+    std::vector<bonsai::config::Override> const ovs = {{"metrics.eval", "rmse,mae,r2"}};
     bonsai::config::apply_overrides(cfg, ovs);
     REQUIRE(cfg.metrics.eval.size() == 3);
     CHECK(cfg.metrics.eval[0] == "rmse");
@@ -157,7 +149,7 @@ TEST_CASE("Overrides: comma-separated value populates vector<string>",
 TEST_CASE("Overrides: empty value yields empty vector", "[overrides][metrics]")
 {
     bonsai::Config cfg;
-    cfg.metrics.fit = {"keep"};
+    cfg.metrics.fit                                 = {"keep"};
     std::vector<bonsai::config::Override> const ovs = {{"metrics.fit", ""}};
     bonsai::config::apply_overrides(cfg, ovs);
     CHECK(cfg.metrics.fit.empty());
@@ -165,10 +157,9 @@ TEST_CASE("Overrides: empty value yields empty vector", "[overrides][metrics]")
 
 TEST_CASE("Overrides: empty token in list rejected", "[overrides][metrics][edge]")
 {
-    bonsai::Config cfg;
+    bonsai::Config                              cfg;
     std::vector<bonsai::config::Override> const ovs = {{"metrics.fit", "a,,b"}};
-    REQUIRE_THROWS_AS(bonsai::config::apply_overrides(cfg, ovs),
-                      bonsai::ConfigError);
+    REQUIRE_THROWS_AS(bonsai::config::apply_overrides(cfg, ovs), bonsai::ConfigError);
 }
 
 TEST_CASE("dump_toml: default config contains every section and key landmark",
@@ -194,8 +185,8 @@ TEST_CASE("dump_toml: default config contains every section and key landmark",
 TEST_CASE("dump_toml: round-trip on default Config", "[toml][dump][roundtrip]")
 {
     bonsai::Config const original{};
-    auto const text       = bonsai::config::dump_toml(original);
-    auto const round_trip = bonsai::config::parse_toml(text);
+    auto const           text       = bonsai::config::dump_toml(original);
+    auto const           round_trip = bonsai::config::parse_toml(text);
 
     CHECK(round_trip.data.train == original.data.train);
     CHECK(round_trip.data.test == original.data.test);
@@ -209,9 +200,9 @@ TEST_CASE("dump_toml: round-trip on default Config", "[toml][dump][roundtrip]")
                Catch::Matchers::WithinAbs(original.tree_config.lambda_l2, 1e-7F));
 
     CHECK(round_trip.booster_config.n_iters == original.booster_config.n_iters);
-    CHECK_THAT(round_trip.booster_config.learning_rate,
-               Catch::Matchers::WithinAbs(original.booster_config.learning_rate,
-                                          1e-7F));
+    CHECK_THAT(
+        round_trip.booster_config.learning_rate,
+        Catch::Matchers::WithinAbs(original.booster_config.learning_rate, 1e-7F));
     CHECK(round_trip.booster_config.random_seed == original.booster_config.random_seed);
     CHECK(round_trip.booster_config.log_intervals ==
           original.booster_config.log_intervals);
@@ -265,9 +256,9 @@ TEST_CASE("dump_toml: round-trip on non-default Config exercises every codec typ
                Catch::Matchers::WithinAbs(original.tree_config.lambda_l2, 1e-7F));
 
     CHECK(round_trip.booster_config.n_iters == original.booster_config.n_iters);
-    CHECK_THAT(round_trip.booster_config.learning_rate,
-               Catch::Matchers::WithinAbs(original.booster_config.learning_rate,
-                                          1e-7F));
+    CHECK_THAT(
+        round_trip.booster_config.learning_rate,
+        Catch::Matchers::WithinAbs(original.booster_config.learning_rate, 1e-7F));
     CHECK(round_trip.booster_config.log_intervals ==
           original.booster_config.log_intervals);
 

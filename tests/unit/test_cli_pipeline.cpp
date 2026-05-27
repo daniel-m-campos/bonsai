@@ -45,9 +45,9 @@ TEST_CASE("train_in_memory: progress callback fires n_iters times in 1..n order"
     auto const loaded = load_train_from_csv(cfg, cfg.data.train);
 
     std::vector<std::size_t> iters;
-    auto booster = train_in_memory(cfg, loaded.train,
-                                   [&](std::size_t iter, std::size_t /*total*/)
-                                   { iters.push_back(iter); });
+    auto                     booster =
+        train_in_memory(cfg, loaded.train, [&](std::size_t iter, std::size_t /*total*/)
+                        { iters.push_back(iter); });
 
     REQUIRE(iters.size() == cfg.booster_config.n_iters);
     for (std::size_t i = 0; i < iters.size(); ++i)
@@ -57,11 +57,10 @@ TEST_CASE("train_in_memory: progress callback fires n_iters times in 1..n order"
     CHECK(booster->n_iters() == cfg.booster_config.n_iters);
 }
 
-TEST_CASE("score_csv: returns one raw score per row",
-          "[cli_pipeline][score]")
+TEST_CASE("score_csv: returns one raw score per row", "[cli_pipeline][score]")
 {
-    auto const cfg    = make_tiny_config();
-    auto const loaded = load_train_from_csv(cfg, cfg.data.train);
+    auto const cfg     = make_tiny_config();
+    auto const loaded  = load_train_from_csv(cfg, cfg.data.train);
     auto const booster = train_in_memory(cfg, loaded.train);
 
     auto const scored = score_csv(*booster, cfg.data.train, cfg.data);
@@ -71,8 +70,8 @@ TEST_CASE("score_csv: returns one raw score per row",
 TEST_CASE("score_and_label_csv: labels match the CSV's label column",
           "[cli_pipeline][score]")
 {
-    auto const cfg    = make_tiny_config();
-    auto const loaded = load_train_from_csv(cfg, cfg.data.train);
+    auto const cfg     = make_tiny_config();
+    auto const loaded  = load_train_from_csv(cfg, cfg.data.train);
     auto const booster = train_in_memory(cfg, loaded.train);
 
     auto const sl = score_and_label_csv(*booster, cfg.data.train, cfg.data);

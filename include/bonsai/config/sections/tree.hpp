@@ -7,7 +7,7 @@
 namespace bonsai::config::internal
 {
 
-inline auto constexpr tree_section = make_section(
+inline constexpr auto tree_section = make_section(
     "tree", &Config::tree_config, field<&TreeConfig::min_child_hess>(),
     field<&TreeConfig::min_gain_to_split>(), field<&TreeConfig::lambda_l2>(),
     field<&TreeConfig::max_depth>(), field<&TreeConfig::min_data_in_leaf>());

@@ -21,20 +21,20 @@ class Dataset
     size_t n_rows() const;
     size_t n_features() const;
 
-    floats_view labels() const;
-    floats_view weights() const; // empty if uniform
-    BinMappers const &mappers() const;
-    size_t n_bins(size_t fid) const;
-    bool is_categorical(size_t fid) const;
+    floats_view               labels() const;
+    floats_view               weights() const; // empty if uniform
+    BinMappers const         &mappers() const;
+    size_t                    n_bins(size_t fid) const;
+    bool                      is_categorical(size_t fid) const;
     std::span<bin_id_t const> feature_bins(size_t fid) const;
 
   private:
     std::vector<std::vector<bin_id_t>> features_;
-    std::vector<float> labels_;
-    std::vector<float> weights_;
-    BinMappers mappers_;
-    std::vector<bool> is_categorical_;
-    size_t n_rows_ = 0;
+    std::vector<float>                 labels_;
+    std::vector<float>                 weights_;
+    BinMappers                         mappers_;
+    std::vector<bool>                  is_categorical_;
+    size_t                             n_rows_ = 0;
 };
 
 } // namespace bonsai

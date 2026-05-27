@@ -211,7 +211,7 @@ TEST_CASE("Histogram: create_prefix returns the same values as fill_prefix",
 TEST_CASE("Histogram: fill_prefix on degenerate hist (prefix_size = 0) is a no-op",
           "[histogram][prefix][edge]")
 {
-    Histogram hist{1};
+    Histogram             hist{1};
     std::vector<HistCell> prefix; // empty, matches prefix_size() == 0
     hist.fill_prefix(prefix);     // must not assert / crash
     CHECK(prefix.empty());

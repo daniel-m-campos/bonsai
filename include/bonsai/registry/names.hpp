@@ -27,32 +27,32 @@ concept HasName = requires {
 
 template <> struct impl_name<MSEObjective>
 {
-    static std::string_view constexpr value = "mse";
+    static constexpr std::string_view value = "mse";
 };
 
 template <> struct impl_name<LogLossObjective>
 {
-    static std::string_view constexpr value = "logloss";
+    static constexpr std::string_view value = "logloss";
 };
 
 template <> struct impl_name<DepthwiseGrower<HistogramNodeSplitFinder>>
 {
-    static std::string_view constexpr value = "depthwise";
+    static constexpr std::string_view value = "depthwise";
 };
 
 template <> struct impl_name<ObliviousGrower<HistogramLevelSplitFinder>>
 {
-    static std::string_view constexpr value = "oblivious";
+    static constexpr std::string_view value = "oblivious";
 };
 
 template <> struct impl_name<AllRowsSampler>
 {
-    static std::string_view constexpr value = "all_rows";
+    static constexpr std::string_view value = "all_rows";
 };
 
 template <> struct impl_name<BernoulliSampler>
 {
-    static std::string_view constexpr value = "bernoulli";
+    static constexpr std::string_view value = "bernoulli";
 };
 
 } // namespace bonsai

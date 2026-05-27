@@ -35,7 +35,7 @@ LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path)
 std::unique_ptr<IBooster> train_in_memory(Config const &cfg, Dataset const &train,
                                           ProgressFn const &on_progress)
 {
-    auto booster       = make_booster(cfg);
+    auto       booster = make_booster(cfg);
     auto const n_iters = cfg.booster_config.n_iters;
     for (uint32_t i = 0; i < n_iters; ++i)
     {
@@ -55,7 +55,7 @@ namespace
 struct ParsedFeatures
 {
     detail::ColumnBatch batch;
-    FeatureBuffer buf;
+    FeatureBuffer       buf;
 };
 
 ParsedFeatures parse_and_buffer(std::string const &path, DataConfig const &data_cfg)
@@ -68,9 +68,9 @@ ParsedFeatures parse_and_buffer(std::string const &path, DataConfig const &data_
 LabeledData load_labeled(std::string const &path, DataConfig const &data_cfg,
                          BinMappers const &mappers)
 {
-    auto batch          = detail::csv::parse(path, data_cfg);
-    auto features       = to_feature_buffer(batch);
-    auto dataset        = Dataset::bin(batch, mappers, data_cfg);
+    auto               batch    = detail::csv::parse(path, data_cfg);
+    auto               features = to_feature_buffer(batch);
+    auto               dataset  = Dataset::bin(batch, mappers, data_cfg);
     std::vector<float> labels(batch.labels.begin(), batch.labels.end());
     return LabeledData{.dataset  = std::move(dataset),
                        .features = std::move(features),
@@ -102,11 +102,11 @@ LoadedTrainValid load_train_and_valid_from_csv(Config const &cfg)
                             .valid   = std::move(valid)};
 }
 
-std::unique_ptr<IBooster> train_with_progress(Config const &cfg,
+std::unique_ptr<IBooster> train_with_progress(Config const           &cfg,
                                               LoadedTrainValid const &loaded,
-                                              FitTickFn const &on_tick)
+                                              FitTickFn const        &on_tick)
 {
-    auto booster       = make_booster(cfg);
+    auto       booster = make_booster(cfg);
     auto const n_iters = cfg.booster_config.n_iters;
     auto const log_iv  = cfg.booster_config.log_intervals;
 
@@ -127,7 +127,7 @@ std::unique_ptr<IBooster> train_with_progress(Config const &cfg,
     auto fire_tick = [&](std::size_t iter)
     {
         booster->predict(loaded.train.features.view(), train_preds);
-        std::span<float> v_preds;
+        std::span<float>       v_preds;
         std::span<float const> v_labels;
         if (loaded.valid.has_value())
         {
@@ -172,7 +172,7 @@ std::unique_ptr<IBooster> train_with_progress(Config const &cfg,
 ScoredBatch score_csv(IBooster const &booster, std::string const &path,
                       DataConfig const &data_cfg)
 {
-    auto pf = parse_and_buffer(path, data_cfg);
+    auto               pf = parse_and_buffer(path, data_cfg);
     std::vector<float> raw(pf.buf.n_rows);
     booster.predict(pf.buf.view(), raw);
     return ScoredBatch{.features = std::move(pf.buf), .raw_scores = std::move(raw)};
@@ -181,7 +181,7 @@ ScoredBatch score_csv(IBooster const &booster, std::string const &path,
 ScoredAndLabeled score_and_label_csv(IBooster const &booster, std::string const &path,
                                      DataConfig const &data_cfg)
 {
-    auto pf = parse_and_buffer(path, data_cfg);
+    auto               pf = parse_and_buffer(path, data_cfg);
     std::vector<float> raw(pf.buf.n_rows);
     booster.predict(pf.buf.view(), raw);
     std::vector<float> labels(pf.batch.labels.begin(), pf.batch.labels.end());

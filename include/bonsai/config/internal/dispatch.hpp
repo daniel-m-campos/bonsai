@@ -110,8 +110,8 @@ void load_from_table(toml::table const &root, Config &cfg, Sections const &secti
         {
             for (auto const &[k, _] : root)
             {
-                auto const name = k.str();
-                bool known      = false;
+                auto const name  = k.str();
+                bool       known = false;
                 ((sections.name == name ? (known = true, void()) : void()), ...);
                 if (!known)
                 {

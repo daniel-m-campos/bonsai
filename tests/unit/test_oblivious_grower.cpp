@@ -17,11 +17,11 @@ using namespace bonsai::test; // NOLINT
 TEST_CASE("ObliviousGrower: depth=1 separable yields one split, two leaves",
           "[grower][oblivious][smoke]")
 {
-    auto in = separable_4row();
-    TreeConfig cfg{.min_child_hess   = 0.0F,
-                   .lambda_l2        = 1.0F,
-                   .max_depth        = 1,
-                   .min_data_in_leaf = 0};
+    auto              in = separable_4row();
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .max_depth        = 1,
+                          .min_data_in_leaf = 0};
     ObliviousGrower<> grower{cfg};
     auto [tree, train_leaf_values] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
@@ -50,15 +50,15 @@ TEST_CASE("ObliviousGrower: depth=2 separable yields four leaves with correct ro
         .weights       = {},
         .feature_names = {"a", "b"},
     };
-    auto built = build(std::move(batch));
+    auto               built = build(std::move(batch));
     std::vector<float> grad{-0.5F, -0.5F, +0.5F, +0.5F, -5.0F, -5.0F, +5.0F, +5.0F};
     std::vector<float> hess(8, 1.0F);
-    auto rows = iota_rows(8);
+    auto               rows = iota_rows(8);
 
-    TreeConfig cfg{.min_child_hess   = 0.0F,
-                   .lambda_l2        = 1.0F,
-                   .max_depth        = 2,
-                   .min_data_in_leaf = 0};
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .max_depth        = 2,
+                          .min_data_in_leaf = 0};
     ObliviousGrower<> grower{cfg};
     auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
 
@@ -82,8 +82,8 @@ TEST_CASE("ObliviousGrower: depth=2 separable yields four leaves with correct ro
 TEST_CASE("ObliviousGrower: max_depth=0 returns single-leaf tree",
           "[grower][oblivious][edge]")
 {
-    auto in = two_value_pair();
-    TreeConfig cfg{.lambda_l2 = 1.0F, .max_depth = 0, .min_data_in_leaf = 0};
+    auto              in = two_value_pair();
+    TreeConfig        cfg{.lambda_l2 = 1.0F, .max_depth = 0, .min_data_in_leaf = 0};
     ObliviousGrower<> grower{cfg};
     auto [tree, train_leaf_values] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
@@ -97,11 +97,11 @@ TEST_CASE("ObliviousGrower: max_depth=0 returns single-leaf tree",
 TEST_CASE("ObliviousGrower: no positive-gain split yields single leaf",
           "[grower][oblivious][no_split]")
 {
-    auto in = uniform_3row();
-    TreeConfig cfg{.min_child_hess   = 0.0F,
-                   .lambda_l2        = 1.0F,
-                   .max_depth        = 3,
-                   .min_data_in_leaf = 0};
+    auto              in = uniform_3row();
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .max_depth        = 3,
+                          .min_data_in_leaf = 0};
     ObliviousGrower<> grower{cfg};
     auto [tree, train_leaf_values] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
@@ -115,11 +115,11 @@ TEST_CASE("ObliviousGrower: no positive-gain split yields single leaf",
 TEST_CASE("ObliviousGrower: NaN predict routes via default_left",
           "[grower][oblivious][missing]")
 {
-    auto in = separable_4row();
-    TreeConfig cfg{.min_child_hess   = 0.0F,
-                   .lambda_l2        = 1.0F,
-                   .max_depth        = 1,
-                   .min_data_in_leaf = 0};
+    auto              in = separable_4row();
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .max_depth        = 1,
+                          .min_data_in_leaf = 0};
     ObliviousGrower<> grower{cfg};
     auto [tree, train_leaf_values] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
@@ -133,11 +133,11 @@ TEST_CASE("ObliviousGrower: NaN predict routes via default_left",
 TEST_CASE("ObliviousGrower: min_child_hess starves all splits → single leaf",
           "[grower][oblivious][min_child_hess]")
 {
-    auto in = separable_4row();
-    TreeConfig cfg{.min_child_hess   = 3.0F,
-                   .lambda_l2        = 1.0F,
-                   .max_depth        = 2,
-                   .min_data_in_leaf = 0};
+    auto              in = separable_4row();
+    TreeConfig        cfg{.min_child_hess   = 3.0F,
+                          .lambda_l2        = 1.0F,
+                          .max_depth        = 2,
+                          .min_data_in_leaf = 0};
     ObliviousGrower<> grower{cfg};
     auto [tree, train_leaf_values] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
@@ -151,12 +151,12 @@ TEST_CASE("ObliviousGrower: min_child_hess starves all splits → single leaf",
 TEST_CASE("ObliviousGrower: empty row_indices yields zero-valued single leaf",
           "[grower][oblivious][edge]")
 {
-    auto in   = uniform_3row();
-    in.rows   = {}; // empty
-    TreeConfig cfg{.min_child_hess   = 0.0F,
-                   .lambda_l2        = 1.0F,
-                   .max_depth        = 3,
-                   .min_data_in_leaf = 0};
+    auto in = uniform_3row();
+    in.rows = {}; // empty
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .max_depth        = 3,
+                          .min_data_in_leaf = 0};
     ObliviousGrower<> grower{cfg};
     auto [tree, train_leaf_values] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
@@ -173,11 +173,11 @@ TEST_CASE("ObliviousGrower: level with no gain stops growth before max_depth",
     // halves; within each child, grads are uniform so no further split has
     // positive gain. With max_depth=3, an oblivious grower must stop at
     // depth=1 (all-or-nothing) — n_leaves stays at 2, not 4 or 8.
-    auto in = separable_4row();
-    TreeConfig cfg{.min_child_hess   = 0.0F,
-                   .lambda_l2        = 1.0F,
-                   .max_depth        = 3,
-                   .min_data_in_leaf = 0};
+    auto              in = separable_4row();
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .max_depth        = 3,
+                          .min_data_in_leaf = 0};
     ObliviousGrower<> grower{cfg};
     auto [tree, train_leaf_values] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);

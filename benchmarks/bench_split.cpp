@@ -63,8 +63,8 @@ std::vector<SplitInput> make_frontier(size_t n_parents, size_t n_features,
             Histogram h{n_bins};
             for (size_t b = 0; b < n_bins; ++b)
             {
-                double const g = std::sin(static_cast<double>((p * n_features) + f) +
-                                          (0.13 * static_cast<double>(b)));
+                double const g    = std::sin(static_cast<double>((p * n_features) + f) +
+                                             (0.13 * static_cast<double>(b)));
                 double const hess = 1.0 + (0.01 * static_cast<double>(b));
                 h.add(static_cast<bin_id_t>(b), g, hess);
             }
@@ -145,9 +145,9 @@ TEST_CASE(
     };
 }
 
-TEST_CASE(
-    "HistogramLevelSplitFinder: bench deep level (64 parents x 256 features x 256 bins)",
-    "[bench][split][level][deep]")
+TEST_CASE("HistogramLevelSplitFinder: bench deep level (64 parents x 256 features x "
+          "256 bins)",
+          "[bench][split][level][deep]")
 {
     auto const frontier = make_frontier(64, 256, 256);
 

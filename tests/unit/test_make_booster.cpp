@@ -15,7 +15,6 @@
 #include "bonsai/registry/make_booster.hpp"
 #include "bonsai/registry/names.hpp"
 #include "bonsai/registry/typelists.hpp"
-#include "bonsai/sampler.hpp"
 #include "bonsai/typelist.hpp"
 #include "bonsai/types.hpp"
 
@@ -52,9 +51,9 @@ Dataset make_dataset(detail::ColumnBatch const &batch)
 struct RawFeatures
 {
     std::vector<float> data;
-    size_t n_rows;
-    size_t n_features;
-    features_view view() const
+    size_t             n_rows;
+    size_t             n_features;
+    features_view      view() const
     {
         return features_view{data.data(), n_rows, n_features};
     }
@@ -62,8 +61,8 @@ struct RawFeatures
 
 RawFeatures to_raw(detail::ColumnBatch const &batch)
 {
-    size_t const n_features = batch.features.size();
-    size_t const n_rows     = n_features == 0 ? 0 : batch.features[0].size();
+    size_t const       n_features = batch.features.size();
+    size_t const       n_rows     = n_features == 0 ? 0 : batch.features[0].size();
     std::vector<float> data(n_rows * n_features);
     for (size_t f = 0; f < n_features; ++f)
     {
@@ -100,20 +99,20 @@ using DispatchCombos = cartesian_product_t<Objectives, Growers, Samplers>;
 TEST_CASE("make_booster: default config returns non-null IBooster",
           "[registry][make_booster]")
 {
-    Config const cfg   = tiny_cfg();
-    auto const booster = make_booster(cfg);
+    Config const cfg     = tiny_cfg();
+    auto const   booster = make_booster(cfg);
     REQUIRE(booster != nullptr);
 }
 
 TEST_CASE("make_booster: returned booster runs update_one_iter + predict",
           "[registry][make_booster][smoke]")
 {
-    auto const batch      = separable_batch();
-    Dataset const train   = make_dataset(batch);
-    RawFeatures const raw = to_raw(batch);
+    auto const        batch = separable_batch();
+    Dataset const     train = make_dataset(batch);
+    RawFeatures const raw   = to_raw(batch);
 
-    Config const cfg   = tiny_cfg();
-    auto const booster = make_booster(cfg);
+    Config const cfg     = tiny_cfg();
+    auto const   booster = make_booster(cfg);
     booster->update_one_iter(train);
 
     std::vector<float> y_hat(raw.n_rows);
@@ -141,12 +140,12 @@ TEST_CASE("make_booster: unknown sampler name throws UnknownImplError",
 TEMPLATE_LIST_TEST_CASE("make_booster: parity with direct instantiation",
                         "[registry][make_booster][parity]", DispatchCombos)
 {
-    using O               = type_at_t<0, TestType>;
-    using G               = type_at_t<1, TestType>;
-    using S               = type_at_t<2, TestType>;
-    auto const batch      = batch_for<O>();
-    Dataset const train   = make_dataset(batch);
-    RawFeatures const raw = to_raw(batch);
+    using O                 = type_at_t<0, TestType>;
+    using G                 = type_at_t<1, TestType>;
+    using S                 = type_at_t<2, TestType>;
+    auto const        batch = batch_for<O>();
+    Dataset const     train = make_dataset(batch);
+    RawFeatures const raw   = to_raw(batch);
 
     Config cfg                  = tiny_cfg();
     cfg.dispatch.objective_name = std::string{impl_name<O>::value};
@@ -155,9 +154,9 @@ TEMPLATE_LIST_TEST_CASE("make_booster: parity with direct instantiation",
 
     using DirectBooster = Booster<O, G, S>;
     DirectBooster direct{cfg};
-    auto const dispatched = make_booster(cfg);
+    auto const    dispatched = make_booster(cfg);
 
-    int constexpr n_iters = 5;
+    constexpr int n_iters = 5;
     for (int i = 0; i < n_iters; ++i)
     {
         direct.update_one_iter(train);

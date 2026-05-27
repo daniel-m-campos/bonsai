@@ -16,16 +16,16 @@ concept Objective =
 
 struct MSEObjective
 {
-    static void compute(floats_view preds, floats_view targets, floats_out grad,
-                        floats_out hess);
+    static void  compute(floats_view preds, floats_view targets, floats_out grad,
+                         floats_out hess);
     static float eval(floats_view preds, floats_view targets);
     static float init_score(floats_view targets);
 };
 
 struct LogLossObjective
 {
-    static void compute(floats_view scores, floats_view labels, floats_out grad,
-                        floats_out hess);
+    static void  compute(floats_view scores, floats_view labels, floats_out grad,
+                         floats_out hess);
     static float eval(floats_view scores, floats_view labels);
     static float init_score(floats_view labels);
 };

@@ -37,11 +37,11 @@ template <> struct link_inverse_of<LogLossObjective>
 // Task this objective serves. Determines which metrics are compatible.
 template <> struct task_of<MSEObjective>
 {
-    static TaskKind constexpr value = TaskKind::regression;
+    static constexpr TaskKind value = TaskKind::regression;
 };
 template <> struct task_of<LogLossObjective>
 {
-    static TaskKind constexpr value = TaskKind::binary_classification;
+    static constexpr TaskKind value = TaskKind::binary_classification;
 };
 
 // Default metric names to report when the user does not set `metrics.fit` /
@@ -51,7 +51,9 @@ template <typename T> struct default_metrics_of;
 
 template <typename T>
 concept HasDefaultMetricNames = requires {
-    { default_metrics_of<T>::value() } -> std::convertible_to<std::span<std::string_view const>>;
+    {
+        default_metrics_of<T>::value()
+    } -> std::convertible_to<std::span<std::string_view const>>;
 };
 
 template <> struct default_metrics_of<MSEObjective>

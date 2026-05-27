@@ -71,7 +71,7 @@ ObliviousTree depth2_two_feature_tree()
 TEST_CASE("ObliviousTree: predict returns the leaf value for a depth-0 tree",
           "[oblivious_tree][predict]")
 {
-    auto tree = single_leaf(single_leaf_value);
+    auto                 tree = single_leaf(single_leaf_value);
     std::array<float, 1> row{single_leaf_input};
     CHECK(predict_one(tree, row) == single_leaf_value);
 }

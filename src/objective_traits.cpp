@@ -34,21 +34,23 @@ std::string_view task_kind_name(TaskKind kind)
 {
     switch (kind)
     {
-    case TaskKind::regression:            return "regression";
-    case TaskKind::binary_classification: return "binary_classification";
+    case TaskKind::regression:
+        return "regression";
+    case TaskKind::binary_classification:
+        return "binary_classification";
     }
     return "unknown";
 }
 
 std::span<std::string_view const> default_metrics_of<MSEObjective>::value()
 {
-    static auto constexpr names = std::array<std::string_view, 1>{"rmse"};
+    static constexpr auto names = std::array<std::string_view, 1>{"rmse"};
     return names;
 }
 
 std::span<std::string_view const> default_metrics_of<LogLossObjective>::value()
 {
-    static auto constexpr names =
+    static constexpr auto names =
         std::array<std::string_view, 2>{"logloss", "accuracy"};
     return names;
 }

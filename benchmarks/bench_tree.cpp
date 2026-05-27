@@ -24,10 +24,10 @@ namespace
 
 struct Workload
 {
-    DenseTree tree;
+    DenseTree          tree;
     std::vector<float> raw_features; // row-major, n_rows × n_features
-    size_t n_rows;
-    size_t n_features;
+    size_t             n_rows;
+    size_t             n_features;
 
     features_view view() const
     {
@@ -40,7 +40,7 @@ struct Workload
 // raw row-major feature matrix to predict against.
 Workload make_workload(size_t n_rows, size_t n_features, uint8_t depth, uint32_t seed)
 {
-    std::mt19937 rng(seed);
+    std::mt19937                          rng(seed);
     std::uniform_real_distribution<float> xdist(0.0F, 1.0F);
 
     detail::ColumnBatch batch;
@@ -67,11 +67,11 @@ Workload make_workload(size_t n_rows, size_t n_features, uint8_t depth, uint32_t
     }
 
     BinMappers mappers = BinMappers::fit(batch, BinMapperConfig{});
-    Dataset ds         = Dataset::bin(batch, mappers, {});
+    Dataset    ds      = Dataset::bin(batch, mappers, {});
 
     std::vector<float> grad(n_rows);
     std::vector<float> hess(n_rows, 1.0F);
-    float const mean_y =
+    float const        mean_y =
         std::accumulate(batch.labels.begin(), batch.labels.end(), 0.0F) /
         static_cast<float>(n_rows);
     for (size_t r = 0; r < n_rows; ++r)
@@ -82,11 +82,11 @@ Workload make_workload(size_t n_rows, size_t n_features, uint8_t depth, uint32_t
     std::vector<row_id_t> rows(n_rows);
     std::iota(rows.begin(), rows.end(), row_id_t{0});
 
-    TreeConfig cfg{.min_child_hess    = 0.0F,
-                   .min_gain_to_split = 0.0F,
-                   .lambda_l2         = 1.0F,
-                   .max_depth         = depth,
-                   .min_data_in_leaf  = 1};
+    TreeConfig        cfg{.min_child_hess    = 0.0F,
+                          .min_gain_to_split = 0.0F,
+                          .lambda_l2         = 1.0F,
+                          .max_depth         = depth,
+                          .min_data_in_leaf  = 1};
     DepthwiseGrower<> grower{cfg};
     auto [tree, _] = grower.grow(ds, grad, hess, rows);
 
@@ -112,7 +112,7 @@ Workload make_workload(size_t n_rows, size_t n_features, uint8_t depth, uint32_t
 TEST_CASE("DenseTree::predict: small (1k rows x 4 features, depth 4)",
           "[bench][tree][dense]")
 {
-    auto wl = make_workload(1'000, 4, 4, 42);
+    auto               wl = make_workload(1'000, 4, 4, 42);
     std::vector<float> out(wl.n_rows);
     BENCHMARK("dense predict: 1k x 4f x d4")
     {
@@ -125,7 +125,7 @@ TEST_CASE("DenseTree::predict: small (1k rows x 4 features, depth 4)",
 TEST_CASE("DenseTree::predict: medium (10k rows x 8 features, depth 6)",
           "[bench][tree][dense]")
 {
-    auto wl = make_workload(10'000, 8, 6, 42);
+    auto               wl = make_workload(10'000, 8, 6, 42);
     std::vector<float> out(wl.n_rows);
     BENCHMARK("dense predict: 10k x 8f x d6")
     {
@@ -138,7 +138,7 @@ TEST_CASE("DenseTree::predict: medium (10k rows x 8 features, depth 6)",
 TEST_CASE("DenseTree::predict: large (100k rows x 16 features, depth 8)",
           "[bench][tree][dense]")
 {
-    auto wl = make_workload(100'000, 16, 8, 42);
+    auto               wl = make_workload(100'000, 16, 8, 42);
     std::vector<float> out(wl.n_rows);
     BENCHMARK("dense predict: 100k x 16f x d8")
     {
@@ -151,7 +151,7 @@ TEST_CASE("DenseTree::predict: large (100k rows x 16 features, depth 8)",
 TEST_CASE("DenseTree::predict: deep (10k rows x 8 features, depth 10)",
           "[bench][tree][dense]")
 {
-    auto wl = make_workload(10'000, 8, 10, 42);
+    auto               wl = make_workload(10'000, 8, 10, 42);
     std::vector<float> out(wl.n_rows);
     BENCHMARK("dense predict: 10k x 8f x d10")
     {

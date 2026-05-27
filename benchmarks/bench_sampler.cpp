@@ -25,9 +25,9 @@ Config cfg_with_subsample(float p)
 
 TEST_CASE("AllRowsSampler: bench 1k rows", "[bench][sampler][all_rows]")
 {
-    AllRowsSampler s{Config{}};
+    AllRowsSampler        s{Config{}};
     std::vector<row_id_t> out(1'000);
-    std::mt19937 rng(42);
+    std::mt19937          rng(42);
     BENCHMARK("all_rows: 1k")
     {
         return s.sample({}, {}, rng, out);
@@ -36,9 +36,9 @@ TEST_CASE("AllRowsSampler: bench 1k rows", "[bench][sampler][all_rows]")
 
 TEST_CASE("AllRowsSampler: bench 100k rows", "[bench][sampler][all_rows]")
 {
-    AllRowsSampler s{Config{}};
+    AllRowsSampler        s{Config{}};
     std::vector<row_id_t> out(100'000);
-    std::mt19937 rng(42);
+    std::mt19937          rng(42);
     BENCHMARK("all_rows: 100k")
     {
         return s.sample({}, {}, rng, out);
@@ -47,9 +47,9 @@ TEST_CASE("AllRowsSampler: bench 100k rows", "[bench][sampler][all_rows]")
 
 TEST_CASE("AllRowsSampler: bench 1M rows", "[bench][sampler][all_rows]")
 {
-    AllRowsSampler s{Config{}};
+    AllRowsSampler        s{Config{}};
     std::vector<row_id_t> out(1'000'000);
-    std::mt19937 rng(42);
+    std::mt19937          rng(42);
     BENCHMARK("all_rows: 1M")
     {
         return s.sample({}, {}, rng, out);
@@ -58,7 +58,7 @@ TEST_CASE("AllRowsSampler: bench 1M rows", "[bench][sampler][all_rows]")
 
 TEST_CASE("BernoulliSampler p=0.5: bench 1k rows", "[bench][sampler][bernoulli]")
 {
-    BernoulliSampler s{cfg_with_subsample(0.5F)};
+    BernoulliSampler      s{cfg_with_subsample(0.5F)};
     std::vector<row_id_t> out(1'000);
     BENCHMARK("bernoulli p=0.5: 1k")
     {
@@ -69,7 +69,7 @@ TEST_CASE("BernoulliSampler p=0.5: bench 1k rows", "[bench][sampler][bernoulli]"
 
 TEST_CASE("BernoulliSampler p=0.5: bench 100k rows", "[bench][sampler][bernoulli]")
 {
-    BernoulliSampler s{cfg_with_subsample(0.5F)};
+    BernoulliSampler      s{cfg_with_subsample(0.5F)};
     std::vector<row_id_t> out(100'000);
     BENCHMARK("bernoulli p=0.5: 100k")
     {
@@ -80,7 +80,7 @@ TEST_CASE("BernoulliSampler p=0.5: bench 100k rows", "[bench][sampler][bernoulli
 
 TEST_CASE("BernoulliSampler p=0.5: bench 1M rows", "[bench][sampler][bernoulli]")
 {
-    BernoulliSampler s{cfg_with_subsample(0.5F)};
+    BernoulliSampler      s{cfg_with_subsample(0.5F)};
     std::vector<row_id_t> out(1'000'000);
     BENCHMARK("bernoulli p=0.5: 1M")
     {
@@ -91,7 +91,7 @@ TEST_CASE("BernoulliSampler p=0.5: bench 1M rows", "[bench][sampler][bernoulli]"
 
 TEST_CASE("BernoulliSampler p=0.8: bench 100k rows", "[bench][sampler][bernoulli]")
 {
-    BernoulliSampler s{cfg_with_subsample(0.8F)};
+    BernoulliSampler      s{cfg_with_subsample(0.8F)};
     std::vector<row_id_t> out(100'000);
     BENCHMARK("bernoulli p=0.8: 100k")
     {

@@ -106,12 +106,12 @@ class Histogram
             return; // degenerate hist (cells_.size() < 2): no cuts to scan
         }
         HistCell run{};
-        size_t i = 0;
+        size_t   i = 0;
         for (auto const &cell : cut_cells())
         {
             run.sum_grad += cell.sum_grad;
             run.sum_hess += cell.sum_hess;
-            out[i++]     = run;
+            out[i++] = run;
         }
     }
 
@@ -139,8 +139,8 @@ class Histogram
 
   private:
     std::vector<HistCell> cells_;
-    double total_grad_ = 0.0;
-    double total_hess_ = 0.0;
+    double                total_grad_ = 0.0;
+    double                total_hess_ = 0.0;
 };
 
 using histogram_view_t = std::span<Histogram const>;

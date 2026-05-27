@@ -71,7 +71,7 @@ DenseTree depth2_two_feature_tree()
 TEST_CASE("DenseTree: predict returns the leaf value for a single-leaf tree",
           "[dense_tree][predict]")
 {
-    auto tree = single_leaf(single_leaf_value);
+    auto                 tree = single_leaf(single_leaf_value);
     std::array<float, 1> row{single_leaf_input};
     CHECK(predict_one(tree, row) == single_leaf_value);
 }

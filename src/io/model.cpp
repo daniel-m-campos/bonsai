@@ -61,8 +61,8 @@ namespace bonsai
 // Free-function (to|from)_json for the POD records. Macros expand in
 // namespace bonsai so ADL finds them on the nested types. Member order
 // here = JSON key order; renaming a member changes the on-disk schema.
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DenseTree::Node, feature_id, threshold_or_value, left,
-                                   right, default_left)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DenseTree::Node, feature_id, threshold_or_value,
+                                   left, right, default_left)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DenseTree::Params, depth, n_leaves)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ObliviousTree::LevelSplit, feature_id, threshold,
@@ -94,8 +94,8 @@ namespace
 
 using json = nlohmann::json;
 
-std::string_view constexpr k_magic  = "bonsai01";
-uint32_t constexpr k_format_version = 4;
+constexpr std::string_view k_magic          = "bonsai01";
+constexpr uint32_t         k_format_version = 4;
 
 // ---- Tree <-> JSON --------------------------------------------------------
 
@@ -110,8 +110,7 @@ template <typename TreeT> TreeT tree_from_json(json const &j);
 
 template <> DenseTree tree_from_json<DenseTree>(json const &j)
 {
-    return DenseTree{j.at("nodes").get<DenseTree::Nodes>(),
-                     j.get<DenseTree::Params>()};
+    return DenseTree{j.at("nodes").get<DenseTree::Nodes>(), j.get<DenseTree::Params>()};
 }
 
 json tree_to_json(ObliviousTree const &t)
@@ -134,7 +133,7 @@ template <> ObliviousTree tree_from_json<ObliviousTree>(json const &j)
 
 json mappers_to_json(BinMappers const &mappers)
 {
-    json out         = json::array();
+    json       out   = json::array();
     auto const names = mappers.feature_names();
     for (size_t i = 0; i < mappers.size(); ++i)
     {
@@ -153,7 +152,7 @@ json mappers_to_json(BinMappers const &mappers)
 
 BinMappers mappers_from_json(json const &j)
 {
-    std::vector<BinMapper> mappers;
+    std::vector<BinMapper>   mappers;
     std::vector<std::string> names;
     mappers.reserve(j.size());
     names.reserve(j.size());
@@ -210,16 +209,16 @@ template <typename B> bool try_load_into(IBooster &booster, json const &j)
 
 bool save_dispatch(IBooster const &booster, DispatchConfig const &disp, json &out)
 {
-    return with_combo_matching(disp,
-                               [&]<typename Combo>()
-                               { return try_save_as<BoosterFor<Combo>>(booster, out); });
+    return with_combo_matching(
+        disp,
+        [&]<typename Combo>() { return try_save_as<BoosterFor<Combo>>(booster, out); });
 }
 
 bool load_dispatch(IBooster &booster, DispatchConfig const &disp, json const &j)
 {
-    return with_combo_matching(disp,
-                               [&]<typename Combo>()
-                               { return try_load_into<BoosterFor<Combo>>(booster, j); });
+    return with_combo_matching(
+        disp,
+        [&]<typename Combo>() { return try_load_into<BoosterFor<Combo>>(booster, j); });
 }
 
 // ---- File I/O -------------------------------------------------------------

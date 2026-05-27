@@ -25,13 +25,13 @@ inline float predict_one(TreeT const &tree, std::vector<float> row)
 struct Built
 {
     BinMappers mappers;
-    Dataset ds;
+    Dataset    ds;
 };
 
 inline Built build(detail::ColumnBatch batch)
 {
     BinMappers mappers = BinMappers::fit(batch, BinMapperConfig{});
-    Dataset ds         = Dataset::bin(batch, mappers, {});
+    Dataset    ds      = Dataset::bin(batch, mappers, {});
     return Built{.mappers = std::move(mappers), .ds = std::move(ds)};
 }
 
@@ -47,9 +47,9 @@ inline std::vector<row_id_t> iota_rows(size_t n)
 
 struct ScenarioInputs
 {
-    Built built;
-    std::vector<float> grad;
-    std::vector<float> hess;
+    Built                 built;
+    std::vector<float>    grad;
+    std::vector<float>    hess;
     std::vector<row_id_t> rows;
 };
 

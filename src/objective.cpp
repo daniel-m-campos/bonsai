@@ -31,7 +31,7 @@ auto MSEObjective::eval(floats_view preds, floats_view targets)
 {
     assert(preds.size() == targets.size());
     assert(!preds.empty());
-    auto const n                  = static_cast<float>(preds.size());
+    auto const  n                 = static_cast<float>(preds.size());
     float const sum_squared_error = std::transform_reduce(
         preds.begin(), preds.end(), targets.begin(), 0.0F, std::plus<>(),
         [](auto const p, auto const t)
@@ -46,7 +46,7 @@ auto MSEObjective::eval(floats_view preds, floats_view targets)
 auto MSEObjective::init_score(floats_view targets) -> floats_view::value_type
 {
     assert(!targets.empty());
-    auto const n    = static_cast<float>(targets.size());
+    auto const  n   = static_cast<float>(targets.size());
     float const sum = std::accumulate(targets.begin(), targets.end(), 0.0F);
     return sum / n;
 }
@@ -73,7 +73,7 @@ float LogLossObjective::eval(floats_view scores, floats_view labels)
     assert(scores.size() == labels.size());
     assert(!scores.empty());
 
-    auto const n             = static_cast<float>(scores.size());
+    auto const  n            = static_cast<float>(scores.size());
     float const sum_log_loss = std::transform_reduce(
         scores.begin(), scores.end(), labels.begin(), 0.0F, std::plus<>(),
         [](auto const score, auto const y)
@@ -90,7 +90,7 @@ float LogLossObjective::eval(floats_view scores, floats_view labels)
 auto LogLossObjective::init_score(floats_view labels) -> floats_view::value_type
 {
     assert(!labels.empty());
-    auto const n    = static_cast<float>(labels.size());
+    auto const  n   = static_cast<float>(labels.size());
     float const sum = std::accumulate(labels.begin(), labels.end(), 0.0F);
     float const p   = sum / n;
     return std::log(p / (1.0F - p));

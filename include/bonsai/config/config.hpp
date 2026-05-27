@@ -13,13 +13,13 @@ namespace bonsai
 
 struct Config
 {
-    DataConfig data;
+    DataConfig      data;
     BinMapperConfig bin_mapper;
-    TreeConfig tree_config;
-    SamplerConfig sampler;
-    BoosterConfig booster_config;
-    DispatchConfig dispatch;
-    MetricsConfig metrics;
+    TreeConfig      tree_config;
+    SamplerConfig   sampler;
+    BoosterConfig   booster_config;
+    DispatchConfig  dispatch;
+    MetricsConfig   metrics;
     // ParallelConfig, IOConfig — added as components are designed.
 
     bool operator==(Config const &) const = default;

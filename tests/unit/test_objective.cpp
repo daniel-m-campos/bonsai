@@ -17,8 +17,8 @@ TEST_CASE("MSEObjective: compute writes grad = p - y and hess = 1",
     // Dyadic-fraction inputs so the subtraction is bit-exact in float.
     std::vector<float> const preds   = {1.0F, 2.5F, -0.5F, 4.0F};
     std::vector<float> const targets = {0.5F, 3.0F, 0.5F, 4.0F};
-    std::vector<float> grad(4);
-    std::vector<float> hess(4);
+    std::vector<float>       grad(4);
+    std::vector<float>       hess(4);
 
     MSEObjective::compute(preds, targets, grad, hess);
 
@@ -34,8 +34,8 @@ TEST_CASE("MSEObjective: compute overwrites grad and hess buffers",
     // Pins decision 24 (4-objective.md).
     std::vector<float> const preds(8, 0.5F);
     std::vector<float> const targets(8, 0.25F);
-    std::vector<float> grad(8, 99.0F);
-    std::vector<float> hess(8, 99.0F);
+    std::vector<float>       grad(8, 99.0F);
+    std::vector<float>       hess(8, 99.0F);
 
     MSEObjective::compute(preds, targets, grad, hess);
 
@@ -49,8 +49,8 @@ TEST_CASE("MSEObjective: compute handles zero residuals",
 {
     std::vector<float> const preds   = {1.0F, 2.0F, 3.0F, 4.0F};
     std::vector<float> const targets = preds; // exact equality
-    std::vector<float> grad(4, 99.0F);
-    std::vector<float> hess(4, 99.0F);
+    std::vector<float>       grad(4, 99.0F);
+    std::vector<float>       hess(4, 99.0F);
 
     MSEObjective::compute(preds, targets, grad, hess);
 
@@ -63,8 +63,8 @@ TEST_CASE("MSEObjective: compute on single-element input",
 {
     std::vector<float> const preds{2.5F};
     std::vector<float> const targets{1.5F};
-    std::vector<float> grad(1, 99.0F);
-    std::vector<float> hess(1, 99.0F);
+    std::vector<float>       grad(1, 99.0F);
+    std::vector<float>       hess(1, 99.0F);
 
     MSEObjective::compute(preds, targets, grad, hess);
 
@@ -113,8 +113,8 @@ TEST_CASE("LogLossObjective: compute matches sigmoid math at score = 0",
     // grad = 0.5 - y; hess = 0.5 * 0.5 = 0.25. Bit-exact.
     std::vector<float> const scores = {0.0F, 0.0F, 0.0F, 0.0F};
     std::vector<float> const labels = {0.0F, 1.0F, 0.0F, 1.0F};
-    std::vector<float> grad(4);
-    std::vector<float> hess(4);
+    std::vector<float>       grad(4);
+    std::vector<float>       hess(4);
 
     LogLossObjective::compute(scores, labels, grad, hess);
 
@@ -128,11 +128,11 @@ TEST_CASE("LogLossObjective: compute matches sigmoid math at non-zero scores",
 {
     // score = log(3) ~ 1.0986 -> sigmoid = 3/(3+1) = 0.75.
     // score = -log(3) -> sigmoid = 1/(1+3) = 0.25.
-    float const log3                = std::log(3.0F);
+    float const              log3   = std::log(3.0F);
     std::vector<float> const scores = {log3, -log3};
     std::vector<float> const labels = {1.0F, 0.0F};
-    std::vector<float> grad(2);
-    std::vector<float> hess(2);
+    std::vector<float>       grad(2);
+    std::vector<float>       hess(2);
 
     LogLossObjective::compute(scores, labels, grad, hess);
 
@@ -152,8 +152,8 @@ TEST_CASE("LogLossObjective: compute is numerically stable for extreme scores",
     // collapses to 0, which the splitter's min_child_hess gate catches.
     std::vector<float> const scores = {+100.0F, -100.0F, +1000.0F, -1000.0F};
     std::vector<float> const labels = {1.0F, 0.0F, 0.0F, 1.0F};
-    std::vector<float> grad(4);
-    std::vector<float> hess(4);
+    std::vector<float>       grad(4);
+    std::vector<float>       hess(4);
 
     LogLossObjective::compute(scores, labels, grad, hess);
 
@@ -170,8 +170,8 @@ TEST_CASE("LogLossObjective: compute overwrites grad and hess buffers",
 {
     std::vector<float> const scores(4, 0.0F);
     std::vector<float> const labels(4, 1.0F);
-    std::vector<float> grad(4, 99.0F);
-    std::vector<float> hess(4, 99.0F);
+    std::vector<float>       grad(4, 99.0F);
+    std::vector<float>       hess(4, 99.0F);
 
     LogLossObjective::compute(scores, labels, grad, hess);
 
@@ -224,7 +224,7 @@ TEST_CASE("LogLossObjective: eval matches reference cross-entropy",
     {
         double const x        = scores[i];
         double const softplus = std::max(0.0, x) + std::log1p(std::exp(-std::abs(x)));
-        ref_sum               += softplus - (labels[i] * x);
+        ref_sum += softplus - (labels[i] * x);
     }
     auto const expected =
         static_cast<float>(ref_sum / static_cast<double>(scores.size()));

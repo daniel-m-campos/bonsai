@@ -15,7 +15,7 @@ using train_leaf_values = std::vector<float>;
 
 template <typename TreeT> struct GrowResult
 {
-    TreeT tree;
+    TreeT             tree;
     train_leaf_values values;
 };
 

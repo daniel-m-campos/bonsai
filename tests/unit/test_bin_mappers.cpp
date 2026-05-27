@@ -55,7 +55,7 @@ TEST_CASE("BinMappers: empty ColumnBatch produces empty mapper set",
           "[bin_mappers][edge]")
 {
     detail::ColumnBatch batch{};
-    BinMappers const m = BinMappers::fit(batch, BinMapperConfig{});
+    BinMappers const    m = BinMappers::fit(batch, BinMapperConfig{});
     CHECK(m.size() == 0);
     CHECK(m.feature_names().empty());
 }

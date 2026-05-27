@@ -23,18 +23,17 @@ std::string tiny_csv()
 bonsai::Config base_config()
 {
     bonsai::Config cfg;
-    cfg.data.header             = true;
-    cfg.data.label_column       = 0;
-    cfg.bin_mapper.max_bin      = 16;
-    cfg.bin_mapper.n_samples    = 1000;
+    cfg.data.header                = true;
+    cfg.data.label_column          = 0;
+    cfg.bin_mapper.max_bin         = 16;
+    cfg.bin_mapper.n_samples       = 1000;
     cfg.bin_mapper.min_data_in_bin = 1;
     return cfg;
 }
 
 } // namespace
 
-TEST_CASE("Csv: parse populates ColumnBatch with header names and labels",
-          "[csv][fit]")
+TEST_CASE("Csv: parse populates ColumnBatch with header names and labels", "[csv][fit]")
 {
     bonsai::DataConfig data_cfg;
     data_cfg.header       = true;
@@ -81,9 +80,10 @@ TEST_CASE("Csv: empty fields and nan literals become NaN", "[csv][nan]")
 TEST_CASE("Csv: missing_sentinel maps to NaN", "[csv][nan]")
 {
     bonsai::DataConfig data_cfg;
-    data_cfg.header           = true;
-    data_cfg.label_column     = 0;
-    data_cfg.missing_sentinel = 4.0F; // f2 row 3, f1 row 3, f3 row -1 → none of these are 4
+    data_cfg.header       = true;
+    data_cfg.label_column = 0;
+    data_cfg.missing_sentinel =
+        4.0F; // f2 row 3, f1 row 3, f3 row -1 → none of these are 4
 
     auto const batch = bonsai::detail::csv::parse(tiny_csv(), data_cfg);
 
@@ -98,9 +98,9 @@ TEST_CASE("Csv: missing_sentinel maps to NaN", "[csv][nan]")
 TEST_CASE("Csv: read_csv pipes through fit_from_csv to a usable Dataset",
           "[csv][fit][smoke]")
 {
-    auto cfg            = base_config();
-    auto const mappers  = bonsai::io::fit_from_csv(tiny_csv(), cfg);
-    auto const dataset  = bonsai::io::read_csv(tiny_csv(), cfg.data, mappers);
+    auto       cfg     = base_config();
+    auto const mappers = bonsai::io::fit_from_csv(tiny_csv(), cfg);
+    auto const dataset = bonsai::io::read_csv(tiny_csv(), cfg.data, mappers);
 
     REQUIRE(dataset.n_rows() == 4);
     REQUIRE(dataset.n_features() == 3);

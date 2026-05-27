@@ -15,9 +15,9 @@ namespace bonsai::cli
 // Shared CLI options used by most subcommands.
 struct CommonOpts
 {
-    std::string config_path;
+    std::string                   config_path;
     std::vector<config::Override> overrides;
-    bool dump_config = false;
+    bool                          dump_config = false;
 };
 
 // Load config from TOML (if path is given) and apply CLI overrides.
@@ -36,8 +36,8 @@ inline Config resolve_config(CommonOpts const &opts)
 struct FeatureBuffer
 {
     std::vector<float> data;
-    size_t n_rows{};
-    size_t n_features{};
+    size_t             n_rows{};
+    size_t             n_features{};
 
     features_view view() const
     {

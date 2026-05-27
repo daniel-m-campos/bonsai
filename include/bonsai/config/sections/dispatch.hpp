@@ -7,7 +7,7 @@
 namespace bonsai::config::internal
 {
 
-inline auto constexpr dispatch_section = make_section(
+inline constexpr auto dispatch_section = make_section(
     "dispatch", &Config::dispatch, field<&DispatchConfig::objective_name>(),
     field<&DispatchConfig::grower_name>(), field<&DispatchConfig::sampler_name>());
 

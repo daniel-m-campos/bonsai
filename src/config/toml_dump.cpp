@@ -6,9 +6,11 @@
 #include <tuple>
 #include <utility>
 
+// clang-format off
 #include <toml++/toml.hpp>
 #include <toml++/impl/array.hpp>
 #include <toml++/impl/table.hpp>
+// clang-format on
 
 #include "bonsai/config/config.hpp"
 #include "bonsai/config/internal/codec.hpp"
@@ -54,10 +56,9 @@ std::string dump_toml(Config const &cfg)
             {
                 toml::table tbl;
                 auto const &sub = cfg.*(s.sub);
-                std::apply(
-                    [&](auto const &...f)
-                    { (insert_field(tbl, f.leaf, sub.*(f.member)), ...); },
-                    s.fields);
+                std::apply([&](auto const &...f)
+                           { (insert_field(tbl, f.leaf, sub.*(f.member)), ...); },
+                           s.fields);
                 root.insert_or_assign(std::string{s.name}, std::move(tbl));
             };
             (emit(section), ...);

@@ -7,7 +7,7 @@
 namespace bonsai::config::internal
 {
 
-inline auto constexpr metrics_section =
+inline constexpr auto metrics_section =
     make_section("metrics", &Config::metrics, field<&MetricsConfig::fit>(),
                  field<&MetricsConfig::eval>());
 

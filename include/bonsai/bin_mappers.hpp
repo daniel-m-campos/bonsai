@@ -17,7 +17,7 @@ class BinMappers
 {
   public:
     static BinMappers fit(detail::ColumnBatch const &batch, BinMapperConfig const &cfg);
-    static BinMappers from_mappers(std::vector<BinMapper> mappers,
+    static BinMappers from_mappers(std::vector<BinMapper>   mappers,
                                    std::vector<std::string> feature_names)
     {
         BinMappers out;
@@ -26,12 +26,12 @@ class BinMappers
         return out;
     }
 
-    BinMapper const &operator[](size_t fid) const;
-    size_t size() const;
+    BinMapper const             &operator[](size_t fid) const;
+    size_t                       size() const;
     std::span<std::string const> feature_names() const;
 
   private:
-    std::vector<BinMapper> mappers_;
+    std::vector<BinMapper>   mappers_;
     std::vector<std::string> feature_names_;
 };
 

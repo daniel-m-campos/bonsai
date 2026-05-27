@@ -30,15 +30,16 @@ concept Tree = requires(T const t, features_view X, floats_out out) {
 class DenseTree
 {
   public:
-    static feature_id_t constexpr k_leaf_flag = std::numeric_limits<feature_id_t>::max();
+    static constexpr feature_id_t k_leaf_flag =
+        std::numeric_limits<feature_id_t>::max();
 
     struct Node
     {
-        feature_id_t feature_id   = k_leaf_flag;
-        float threshold_or_value  = 0.0F;
-        node_id_t left            = 0;
-        node_id_t right           = 0;
-        bool default_left         = false;
+        feature_id_t feature_id         = k_leaf_flag;
+        float        threshold_or_value = 0.0F;
+        node_id_t    left               = 0;
+        node_id_t    right              = 0;
+        bool         default_left       = false;
     };
 
     using Nodes = std::vector<Node>;
@@ -59,11 +60,11 @@ class DenseTree
     static Node internal(feature_id_t feature_id, float threshold, node_id_t left,
                          node_id_t right, bool default_left)
     {
-        return Node{.feature_id          = feature_id,
-                    .threshold_or_value  = threshold,
-                    .left                = left,
-                    .right               = right,
-                    .default_left        = default_left};
+        return Node{.feature_id         = feature_id,
+                    .threshold_or_value = threshold,
+                    .left               = left,
+                    .right              = right,
+                    .default_left       = default_left};
     }
 
     static bool is_leaf(Node const &n)
@@ -87,7 +88,7 @@ class DenseTree
   private:
     float walk_row(features_view X, row_id_t i) const;
 
-    Nodes nodes_;
+    Nodes  nodes_;
     Params params_;
 };
 
@@ -97,8 +98,8 @@ class ObliviousTree
     struct LevelSplit
     {
         feature_id_t feature_id;
-        float threshold;
-        bool default_left;
+        float        threshold;
+        bool         default_left;
     };
 
     using LevelSplits = std::vector<LevelSplit>;
@@ -134,8 +135,8 @@ class ObliviousTree
     float walk_row(features_view X, row_id_t i) const;
 
     LevelSplits splits_;
-    LeafTable leaf_table_;
-    Params params_;
+    LeafTable   leaf_table_;
+    Params      params_;
 };
 
 } // namespace bonsai

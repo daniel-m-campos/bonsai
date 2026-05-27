@@ -93,15 +93,13 @@ TEST_CASE("find_metric: unknown name throws MetricNotFoundError",
     CHECK_THROWS_AS(find_metric("nope"), MetricNotFoundError);
 }
 
-TEST_CASE("resolve_metric_for_task: matching task returns metric",
-          "[metric][resolve]")
+TEST_CASE("resolve_metric_for_task: matching task returns metric", "[metric][resolve]")
 {
     auto const m = resolve_metric_for_task("rmse", TaskKind::regression);
     CHECK(m.name == "rmse");
 }
 
-TEST_CASE("resolve_metric_for_task: mismatched task throws",
-          "[metric][resolve][error]")
+TEST_CASE("resolve_metric_for_task: mismatched task throws", "[metric][resolve][error]")
 {
     CHECK_THROWS_AS(resolve_metric_for_task("accuracy", TaskKind::regression),
                     MetricTaskMismatchError);
