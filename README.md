@@ -1,12 +1,40 @@
-# bonsai
+<p align="center">
+  <img src="docs/assets/bonsai-logo.png" alt="bonsai" width="640">
+</p>
 
-A histogram gradient-boosted tree library and CLI, written in C++23.
+<p align="center">
+  <b>A histogram gradient-boosted tree library and CLI in modern C++23.</b>
+</p>
 
-## Usage
+<p align="center">
+  <img alt="C++23" src="https://img.shields.io/badge/C%2B%2B-23-00599C?logo=cplusplus&logoColor=white">
+  <img alt="CMake" src="https://img.shields.io/badge/CMake-%E2%89%A5%203.28-064F8C?logo=cmake&logoColor=white">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg"></a>
+  <img alt="tests" src="https://img.shields.io/badge/tests-204%20passing-success">
+</p>
 
-Bonsai is driven by a TOML config plus per-call `--set` overrides.
+<p align="center">
+  <a href="docs/proposal.md">Proposal</a> &nbsp;·&nbsp;
+  <a href="docs/architecture/">Architecture</a> &nbsp;·&nbsp;
+  <a href="docs/decisions.md">Decisions</a> &nbsp;·&nbsp;
+  <a href="docs/report.md">Retrospective</a>
+</p>
 
-### Quick demo
+---
+
+## What is bonsai?
+
+bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library and command-line tool written in C++23. It pairs a small, concept-checked component API (objectives, growers, split finders, samplers) with compile-time dispatch in the training hot path, and ships a benchmark harness that pits it against xgboost, lightgbm, and catboost on real data. The aim is a readable, thoroughly documented GBT — a reference-grade implementation that still lands within RMSE tolerance of the production libraries.
+
+## Highlights
+
+- **Compile-time dispatch where it counts.** Components are C++ concepts; the runtime TOML config is resolved to a monomorphized `Booster<Objective, Grower, Splitter, Sampler>` exactly once at construction. Everything inside the training loop is statically dispatched — no virtual calls in the hot path.
+- **Concept-checked components.** Contract violations are caught at compile time, not runtime. Adding an objective, grower, split finder, or sampler is two edits and the dispatch table, CLI listing, and parametric tests expand automatically.
+- **Reference-library parity.** RMSE within tolerance of xgboost / lightgbm on the California Housing regression benchmark, driven by a Python sidecar that runs all three reference libraries on the same config.
+- **CLI-first, config-driven.** CatBoost-style subcommands, a strict TOML config, and inline `--set key=value` overrides — no Python bindings required.
+- **One-command build, no system dependencies.** CMake + FetchContent vendors every dependency; a clean checkout builds with a single command.
+
+## Quick start
 
 Train, predict, and compare against xgboost/lightgbm/catboost on the California Housing dataset in one command:
 
@@ -60,18 +88,6 @@ make help            # list all targets
 
 The `make fit-benchmark` target additionally needs [uv](https://docs.astral.sh/uv/) for the Python sidecar that runs the reference libraries.
 
-## Layout
-
-```
-include/bonsai/   public headers (Booster, Tree, Grower, Sampler, …)
-src/              implementation + CLI (src/cli/)
-tests/unit/       Catch2 unit + parity tests (ctest)
-benchmarks/       Catch2 microbenchmarks (bonsai_bench)
-scripts/          uv-managed Python: compare.py, fetch_toy.py
-configs/          example TOML configs
-docs/             design + decision logs
-```
-
 ## Extending bonsai
 
 The minimum to add a new objective / grower / sampler is two edits:
@@ -89,10 +105,26 @@ Anything beyond a stateless impl needs a bit more:
 
 See [docs/architecture/6-dispatch.md](docs/architecture/6-dispatch.md) for how the typelist machinery and JSON serialization fit together.
 
-## Docs
+## Project layout
+
+```
+include/bonsai/   public headers (Booster, Tree, Grower, Sampler, …)
+src/              implementation + CLI (src/cli/)
+tests/unit/       Catch2 unit + parity tests (ctest)
+benchmarks/       Catch2 microbenchmarks (bonsai_bench)
+scripts/          uv-managed Python: compare.py, fetch_toy.py
+configs/          example TOML configs
+docs/             design + decision logs
+```
+
+## Documentation
 
 - [docs/report.md](docs/report.md): project retrospective (what was built, performance vs reference libraries, reflections, deferred work).
 - [docs/proposal.md](docs/proposal.md): initial project proposal.
 - [docs/architecture/](docs/architecture/): per-component design notes.
 - [docs/context.md](docs/context.md): project context and roadmap.
 - [docs/decisions.md](docs/decisions.md): decision log.
+
+## License
+
+MIT © 2026 Daniel M Campos. See [LICENSE](LICENSE).
