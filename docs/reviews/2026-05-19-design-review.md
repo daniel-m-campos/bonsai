@@ -1,44 +1,20 @@
 # Design Review: bonsai
 
-> **Date**: 2026-05-19
-> **Scope**: Spine + CLI + config + registry + I/O, as of the
-> Phase 2 milestone (commit `a1dfafb`, "docs: spine complete; relax AI
-> policy; insert Phase 2.5"). ~4.2 KLOC across 47 headers and 25
-> sources.
-> **Method**: `/design-review` skill (SOLID → DOD → supplementary
-> principles), cross-referenced against the MPCS 51045 coursework
-> (`~/work/mpcs/advanced_cpp/`) and the reference GBT libraries
-> (XGBoost, LightGBM, CatBoost, sklearn).
-> **Audience**: future-me / refactoring agents driving Phase 2.5
-> cleanup before Phase 3 parallelism.
+> **Date**: 2026-05-19 **Scope**: Spine + CLI + config + registry + I/O, as of the Phase 2 milestone (commit `a1dfafb`, "docs: spine complete; relax AI policy; insert Phase 2.5"). ~4.2 KLOC across 47 headers and 25 sources. **Method**: `/design-review` skill (SOLID → DOD → supplementary principles), cross-referenced against the reference GBT libraries (XGBoost, LightGBM, CatBoost, sklearn). **Audience**: future-me / refactoring agents driving Phase 2.5 cleanup before Phase 3 parallelism.
 
 ## Project Overview
 
-- **Repository**: `/Users/danielmcampos/work/mpcs/bonsai`
+- **Repository**: `bonsai`
 - **Language**: C++23
-- **Description**: From-scratch histogram-based gradient-boosted-tree
-  library; MPCS 51045 final project. Spine is end-to-end working on
-  California Housing as of 2026-05-18 (decision 28).
+- **Description**: From-scratch histogram-based gradient-boosted-tree library. Spine is end-to-end working on California Housing as of 2026-05-18 (decision 28).
 
 ## Scoping
 
-- **Extensibility pressure**: **medium-high**. Pluggable `Objective`,
-  `TreeGrower`, `SplitFinder`, `Sampler`, plus future
-  `ParallelBackend` and categorical handlers. Bounded by a closed
-  compile-time plugin set (proposal §3.4) — not a third-party plugin
-  ecosystem like XGBoost.
-- **Performance pressure**: **high inside `update_one_iter`**
-  (histogram build, split scoring, tree walk over ~500K rows),
-  **low everywhere else** (CLI, config parsing, model I/O, CSV).
-- **Data clarity**: **clear**. `(CSV rows, labels) → ColumnBatch →
-  Dataset(binned, column-major) → per-iter (scores, grad, hess) →
-  tree → updated scores`. Documented in
-  [docs/architecture/2-histogram.md](../architecture/2-histogram.md)
-  and the §6 sketch.
+- **Extensibility pressure**: **medium-high**. Pluggable `Objective`, `TreeGrower`, `SplitFinder`, `Sampler`, plus future `ParallelBackend` and categorical handlers. Bounded by a closed compile-time plugin set (proposal §3.4) — not a third-party plugin ecosystem like XGBoost.
+- **Performance pressure**: **high inside `update_one_iter`** (histogram build, split scoring, tree walk over ~500K rows), **low everywhere else** (CLI, config parsing, model I/O, CSV).
+- **Data clarity**: **clear**. `(CSV rows, labels) → ColumnBatch → Dataset(binned, column-major) → per-iter (scores, grad, hess) → tree → updated scores`. Documented in [docs/architecture/2-histogram.md](../architecture/2-histogram.md) and the §6 sketch.
 
-This is exactly the **"high extensibility + high perf" cell**: SOLID
-at boundaries, DOD inside the hot path. The proposal commits to this
-split explicitly; this review judges the code on that basis.
+This is exactly the **"high extensibility + high perf" cell**: SOLID at boundaries, DOD inside the hot path. The proposal commits to this split explicitly; this review judges the code on that basis.
 
 ## Per-Entity Analysis
 
@@ -77,12 +53,7 @@ split explicitly; this review judges the code on that basis.
 | D2 | ✅ | `DenseTree::Nodes = vector<variant<InternalNode, LeafNode>>` — variant adds 8B tag per node; for depth 6 that's ~64 nodes × 24B ≈ 1.5KB per tree. Predict walks `O(depth)` per row. Fine. `ObliviousTree::leaf_values_` is `2^depth` floats — branchless gather works directly. |
 | D3 | ✅ | Branchless NaN routing (decision 13) compiles to `cmov`/select on x86-64; preserves vectorizability for `ObliviousTree`. Verified by inspection of [src/tree.cpp:27-30](../../src/tree.cpp#L27-L30). |
 
-**Drift flag:** Decision 8 says oblivious grower ships in Phase 1
-alongside `ObliviousTree`. The tree type exists; **no
-`ObliviousGrower` exists in headers and the registry's `Growers`
-typelist contains only `DepthwiseGrower<HistogramSplitFinder>`**.
-The CLI cannot fit an oblivious tree today. Either the decision is
-stale or the grower is half-landed. Reconcile before reporting.
+**Drift flag:** Decision 8 says oblivious grower ships in Phase 1 alongside `ObliviousTree`. The tree type exists; **no `ObliviousGrower` exists in headers and the registry's `Growers` typelist contains only `DepthwiseGrower<HistogramSplitFinder>`**. The CLI cannot fit an oblivious tree today. Either the decision is stale or the grower is half-landed. Reconcile before reporting.
 
 ### Objective / Sampler / Metric
 
@@ -116,7 +87,7 @@ stale or the grower is half-landed. Reconcile before reporting.
 |-----------|--------|----------|
 | S | ✅ | Pure type-level algorithms. Each metafunction has one job (`size`, `type_at`, `concat`, `prepend_each`, etc.). |
 | O | ✅ | New algorithms are new structs; existing ones don't change. |
-| D4 | ✅ | ~30 LOC of fold-and-recurse, comparable to Boost.MP11's `mp_product` but hand-written deliberately as the project's metaprogramming showcase. Single-purpose; no speculative parameters. The course taught typelists (HW 14.2's `all_types` + visitor) but **not cartesian product** — bonsai's `cartesian_product_t` is an extension. Worth a one-paragraph explainer comment for readers coming from the course; the test file `test_typelist.cpp` provides one form of that. |
+| D4 | ✅ | ~30 LOC of fold-and-recurse, comparable to Boost.MP11's `mp_product` but hand-written deliberately as the project's metaprogramming showcase. Single-purpose; no speculative parameters. Builds a typelist `cartesian_product_t` on top of the basic typelist machinery. Worth a one-paragraph explainer comment for readers new to the pattern; the test file `test_typelist.cpp` provides one form of that. |
 
 ### Config system (TOML + section descriptors + FieldCodec)
 
@@ -166,15 +137,7 @@ stale or the grower is half-landed. Reconcile before reporting.
 
 ### 1. Derive `BoosterTypes` in `src/io/model.cpp` from `Configurations`
 
-…the registry's cartesian product — so adding a combo to the typelist
-auto-extends save/load. As of today, `io::save_booster` will throw
-`"concrete Booster type not in registered set"` for any combo that
-lives in `make_booster`'s table but not in `model.cpp`'s hand-listed
-`BoosterTypes`. This is the highest-impact fix: a latent correctness
-bug, not just code smell. Replace the `dynamic_cast` chain with
-name-keyed dispatch (you already know the dispatch triple from the
-on-disk magic header) — saves N RTTI calls per save/load and removes
-the duplication.
+…the registry's cartesian product — so adding a combo to the typelist auto-extends save/load. As of today, `io::save_booster` will throw `"concrete Booster type not in registered set"` for any combo that lives in `make_booster`'s table but not in `model.cpp`'s hand-listed `BoosterTypes`. This is the highest-impact fix: a latent correctness bug, not just code smell. Replace the `dynamic_cast` chain with name-keyed dispatch (you already know the dispatch triple from the on-disk magic header) — saves N RTTI calls per save/load and removes the duplication.
 
 Concrete sketch:
 
@@ -204,39 +167,17 @@ bool save_dispatch(IBooster const& booster, DispatchConfig const& disp, json& ou
 }
 ```
 
-Name-keyed early-out means at most one `dynamic_cast` per call
-instead of N. `save_booster` already takes `DispatchConfig const&`,
-so the triple is in scope. `load_booster` reads the triple from the
-on-disk magic before reconstructing the booster — same shape.
+Name-keyed early-out means at most one `dynamic_cast` per call instead of N. `save_booster` already takes `DispatchConfig const&`, so the triple is in scope. `load_booster` reads the triple from the on-disk magic before reconstructing the booster — same shape.
 
 ### 2. Reconcile the oblivious-grower drift
 
-Decision 8 says `ObliviousGrower → ObliviousTree` ships in Phase 1;
-the tree class and its tests exist, but no `ObliviousGrower` is in
-[include/bonsai/grower.hpp](../../include/bonsai/grower.hpp) and the
-`Growers` typelist contains only `DepthwiseGrower<HistogramSplitFinder>`.
-Either land the grower (Phase 2.5 is the natural window) or update
-[decisions.md](../decisions.md) and
-[3-tree.md](../architecture/3-tree.md) to reflect what actually
-shipped. As-is, the codebase and the design docs disagree.
+Decision 8 says `ObliviousGrower → ObliviousTree` ships in Phase 1; the tree class and its tests exist, but no `ObliviousGrower` is in [include/bonsai/grower.hpp](../../include/bonsai/grower.hpp) and the `Growers` typelist contains only `DepthwiseGrower<HistogramSplitFinder>`. Either land the grower (Phase 2.5 is the natural window) or update [decisions.md](../decisions.md) and [3-tree.md](../architecture/3-tree.md) to reflect what actually shipped. As-is, the codebase and the design docs disagree.
 
-If landing the grower: same shape as `DepthwiseGrower<SplitterT>`,
-returns `GrowResult<ObliviousTree>`, holds a `vector<LevelSplit>`
-under construction and a `vector<float>` leaf table sized `2^depth`.
-The per-parent subtraction-trick protocol from decision 19 carries
-over; the per-level fold from decision 17 is the new piece.
+If landing the grower: same shape as `DepthwiseGrower<SplitterT>`, returns `GrowResult<ObliviousTree>`, holds a `vector<LevelSplit>` under construction and a `vector<float>` leaf table sized `2^depth`. The per-parent subtraction-trick protocol from decision 19 carries over; the per-level fold from decision 17 is the new piece.
 
 ### 3. Consolidate per-objective metadata
 
-Adding a third objective touches six files (struct, impl, typelist,
-`impl_name`, `task_of`, `link_inverse_of`, `default_metrics_of`).
-Fold the four traits into a single `objective_metadata<O>`
-specialization co-located with the objective definition — keeps the
-concept narrow but cuts the friction from six edits to three
-(`objective.hpp`, `objective.cpp`, `typelist`). The four `_table`
-builders in `objective_dispatch.cpp` collapse into one. Strictly an
-ergonomics fix, but the architecture doc claims this is already the
-case; the recommendation is to make the doc true.
+Adding a third objective touches six files (struct, impl, typelist, `impl_name`, `task_of`, `link_inverse_of`, `default_metrics_of`). Fold the four traits into a single `objective_metadata<O>` specialization co-located with the objective definition — keeps the concept narrow but cuts the friction from six edits to three (`objective.hpp`, `objective.cpp`, `typelist`). The four `_table` builders in `objective_dispatch.cpp` collapse into one. Strictly an ergonomics fix, but the architecture doc claims this is already the case; the recommendation is to make the doc true.
 
 Concrete sketch:
 
@@ -256,73 +197,23 @@ template <> struct objective_metadata<MSEObjective> {
 // LogLossObjective: same shape, different bodies.
 ```
 
-Then `impl_name<O>::value`, `task_of<O>::value`,
-`link_inverse_of<O>::apply`, and `default_metrics_of<O>::value()`
-all forward to `objective_metadata<O>`. Old specializations
-deprecate cleanly; the registry's `for_each_type` loop in
-`objective_dispatch.cpp` collapses to a single pass.
+Then `impl_name<O>::value`, `task_of<O>::value`, `link_inverse_of<O>::apply`, and `default_metrics_of<O>::value()` all forward to `objective_metadata<O>`. Old specializations deprecate cleanly; the registry's `for_each_type` loop in `objective_dispatch.cpp` collapses to a single pass.
 
 ## Key Takeaways
 
-**The architectural claim is real and the code backs it up.** The
-proposal's centerpiece — *static polymorphism inside the hot path,
-dynamic at the configuration boundary* — is honestly implemented:
-monomorphized `Booster<O, G, Sa>` for the training loop, one
-`IBooster` vcall at the CLI seam, concepts (not virtual bases) for
-the four extension points. The cartesian-product flat table is
-moderate metaprogramming, but it's justified by what it buys
-(invalid-combo elimination, mechanical `--help` enumeration, future
-5D promotion when `ParallelBackend` lands), and the design doc walks
-through three alternatives with a decision matrix before picking.
-This is what "informed divergence from the reference libraries"
-looks like.
+**The architectural claim is real and the code backs it up.** The proposal's centerpiece — *static polymorphism inside the hot path, dynamic at the configuration boundary* — is honestly implemented: monomorphized `Booster<O, G, Sa>` for the training loop, one `IBooster` vcall at the CLI seam, concepts (not virtual bases) for the four extension points. The cartesian-product flat table is moderate metaprogramming, but it's justified by what it buys (invalid-combo elimination, mechanical `--help` enumeration, future 5D promotion when `ParallelBackend` lands), and the design doc walks through three alternatives with a decision matrix before picking. This is what "informed divergence from the reference libraries" looks like.
 
-**The course material maps onto bonsai in a coherent way.**
-Typelists, pack expansion, fold expressions, concepts (HW 3-5,
-14-15) are all present and load-bearing. CRTP (HW 17) is not used —
-the design picks template parameter lists instead, which is the
-right call for this dispatch shape and is a legitimate alternative
-the course exposed students to. The abstract-factory pattern from HW
-12.3 is explicitly rejected in
-[6-dispatch.md](../architecture/6-dispatch.md) — the rejection is
-reasoned, not ignorance. The exchange-sim final project's
-concurrency primitives (Chase-Lev, SPSC, memory-ordering rationale)
-are not yet visible in bonsai because `ParallelBackend` is gated to
-Phase 3; the patterns the student practiced in the previous final
-are the right ones for Phase 3 to inherit. The one technique bonsai
-uses that the course did *not* teach is `std::source_location`-based
-field reflection — defensible because the file pins the compiler
-format with `static_assert` and labels itself as a P2996 stand-in.
+**Modern C++ techniques are used coherently.** Typelists, pack expansion, fold expressions, and concepts are all present and load-bearing. CRTP is not used — the design picks template parameter lists instead, which is the right call for this dispatch shape. The abstract-factory pattern is explicitly rejected in [6-dispatch.md](../architecture/6-dispatch.md) — the rejection is reasoned, not ignorance. Concurrency primitives are not yet visible in bonsai because `ParallelBackend` is deferred to Phase 3. The one technique that stands out is `std::source_location`-based field reflection — defensible because the file pins the compiler format with `static_assert` and labels itself as a P2996 stand-in.
 
-**Reference-library comparison is honest.** XGBoost / LightGBM /
-CatBoost all use macro-based string registries with vtables in the
-inner loop, because their plugin sets are open across third-party
-binaries. bonsai's closed set lets it monomorphize — a *real*
-architectural improvement, not a stylistic preference. The
-microbenchmark with/without virtualization (proposal §5) is the
-falsification test for this claim; design it carefully because that
-table is the centerpiece of the final report. LightGBM's
-`CheckParamConflict` (hundreds of lines of sequential validation) is
-replaced in bonsai by typelist-construction-level filtering
-([6-dispatch.md](../architecture/6-dispatch.md) §"Encoding
-compatibility") — that section is the strongest single design
-contribution and would make a great paragraph in the writeup.
+**Reference-library comparison is honest.** XGBoost / LightGBM / CatBoost all use macro-based string registries with vtables in the inner loop, because their plugin sets are open across third-party binaries. bonsai's closed set lets it monomorphize — a *real* architectural improvement, not a stylistic preference. The microbenchmark with/without virtualization (proposal §5) is the falsification test for this claim; design it carefully because that table is the centerpiece of the final report. LightGBM's `CheckParamConflict` (hundreds of lines of sequential validation) is replaced in bonsai by typelist-construction-level filtering ([6-dispatch.md](../architecture/6-dispatch.md) §"Encoding compatibility") — that section is the strongest single design contribution and would make a great paragraph in the writeup.
 
-**The actionable items are not architectural.** Top three are:
-derive `BoosterTypes` from `Configurations` (latent correctness),
-reconcile oblivious-grower drift (doc-vs-code), and consolidate the
-six-touch-points for adding an objective (ergonomics that the doc
-claims you already have). None of these threaten the core
-architectural claims; all three are achievable in Phase 2.5 without
-spine changes, which is exactly what Phase 2.5 was inserted for.
+**The actionable items are not architectural.** Top three are: derive `BoosterTypes` from `Configurations` (latent correctness), reconcile oblivious-grower drift (doc-vs-code), and consolidate the six-touch-points for adding an objective (ergonomics that the doc claims you already have). None of these threaten the core architectural claims; all three are achievable in Phase 2.5 without spine changes, which is exactly what Phase 2.5 was inserted for.
 
 ---
 
 ## Refactoring tracking
 
-When tackling these from this file, link each PR/commit back here so
-follow-up reviews can diff against the baseline. Suggested
-attribution:
+When tackling these from this file, link each PR/commit back here so follow-up reviews can diff against the baseline. Suggested attribution:
 
 - `refactor(io): derive BoosterTypes from Configurations (review §Rec 1)`
 - `feat(grower): land ObliviousGrower (review §Rec 2 / decision 8)`

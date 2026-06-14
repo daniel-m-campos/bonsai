@@ -1,13 +1,15 @@
 # Building a custom gradient boosting library in C++
 *2026-05-02*
 
+> Preserved early-design transcript. Kept as a record of how the architecture was reasoned out; some of the design has since evolved (see `docs/decisions.md`).
+
 ---
 
 **Human**
 
-I need to spec out an advanced c++ final project. I’m thinking of implementing my own version of gbt library starting with a serial minimal features, benchmarking predictive performance against a classic data set as well and training/inference speed and then adding parallelism and extra features. 
+I need to spec out an advanced C++ project. I’m thinking of implementing my own version of gbt library starting with a serial minimal features, benchmarking predictive performance against a classic data set as well and training/inference speed and then adding parallelism and extra features.
 
-I want to keep the api extension for incorporating features for the three main libraries xgboost, lgbm, catboost. 
+I want to keep the api extension for incorporating features for the three main libraries xgboost, lgbm, catboost.
 
 Help me plan this out. Once I get the architecture/api down, I am allowed to use AI to implement new features.
 
@@ -163,8 +165,7 @@ Style: CLI-first for training, C API for inference embedding.
 
 ## CLI conventions to study
 
-- **XGBoost**: positional config file, `key=value` overrides on cmdline. Spartan.
-  `xgboost train.conf num_round=100 eta=0.1`
+- **XGBoost**: positional config file, `key=value` overrides on cmdline. Spartan. `xgboost train.conf num_round=100 eta=0.1`
 - **LightGBM**: `lightgbm config=train.conf data=... task=train objective=binary`. `task` selects mode.
 - **CatBoost**: subcommand-style — `catboost fit -f train.tsv --loss-function Logloss -i 500`. Most modern; closest to standard Unix CLI.
 
@@ -561,7 +562,7 @@ When you add GOSS sampling, oblivious trees, native categoricals — each is a n
 
 ## What to demo in your report
 
-The registry is a clean place to show off template metaprogramming, RAII (registration via constructor side-effect), and the open/closed principle in action. Worth a paragraph in the writeup with a "before / after" of how adding a new objective looks — that's the kind of concrete API-design point graders like.
+The registry is a clean place to show off template metaprogramming, RAII (registration via constructor side-effect), and the open/closed principle in action. Worth a paragraph in the writeup with a "before / after" of how adding a new objective looks — that's a concrete API-design point worth highlighting.
 
 CLI parser layer next, or jump to the `Booster::UpdateOneIter` loop and how config flows through it?
 
@@ -575,21 +576,19 @@ Okay let's go bit deeper on registry/factory. Attached is a meta factory pattern
 
 **Assistant**
 
-# Registry / Factory — Using the Course's Abstract Factory Pattern
+# Registry / Factory — Using the Abstract Factory Pattern
 
-Good — this changes things meaningfully. The course pattern composes factories via variadic inheritance, which is *much* nicer than runtime string lookup for the parts of your design where the set of types is known at compile time. But your registry has a different requirement: **string-driven dispatch from a TOML config**, which is fundamentally runtime. Let's separate those.
+Good — this changes things meaningfully. The abstract-factory pattern composes factories via variadic inheritance, which is *much* nicer than runtime string lookup for the parts of your design where the set of types is known at compile time. But your registry has a different requirement: **string-driven dispatch from a TOML config**, which is fundamentally runtime. Let's separate those.
 
 ## Two distinct problems
 
-**Problem 1: Bundling related types together.**
-"A `model` factory makes `model_locomotive`, `model_freight_car`, `model_caboose`." The course pattern nails this. For your library, the analog is something like a "sklearn-style" preset: "the `xgboost-classic` profile uses `DepthwiseGrower` + `ExactSplitFinder` + `OneHotCategorical`." Compile-time, known set, no strings needed.
+**Problem 1: Bundling related types together.** "A `model` factory makes `model_locomotive`, `model_freight_car`, `model_caboose`." The abstract-factory pattern nails this. For your library, the analog is something like a "sklearn-style" preset: "the `xgboost-classic` profile uses `DepthwiseGrower` + `ExactSplitFinder` + `OneHotCategorical`." Compile-time, known set, no strings needed.
 
-**Problem 2: Runtime dispatch from a string.**
-TOML says `grower = "leafwise"`. You need to map that string to a constructor. The set of strings is open (Phase 4 adds more), and the choice is genuinely runtime. The course pattern can't do this — variadic inheritance requires types at compile time.
+**Problem 2: Runtime dispatch from a string.** TOML says `grower = "leafwise"`. You need to map that string to a constructor. The set of strings is open (Phase 4 adds more), and the choice is genuinely runtime. The abstract-factory pattern can't do this — variadic inheritance requires types at compile time.
 
 You want both, used at different layers.
 
-## Layer A: Course-style abstract factory for *profiles*
+## Layer A: Abstract factory for *profiles*
 
 Use it for the bundling problem. This gives you compile-time-checked presets:
 
@@ -601,7 +600,7 @@ struct CategoricalHandler { virtual ~CategoricalHandler() = default; /* ... */ }
 struct Sampler       { virtual ~Sampler() = default; /* ... */ };
 
 // Component-set factory, parameterized on construction config
-using component_factory = mpcs::abstract_factory<
+using component_factory = abstract_factory<
     TreeGrower(const TreeConfig&),
     SplitFinder(const SplitConfig&),
     CategoricalHandler(const TreeConfig&),
@@ -609,28 +608,28 @@ using component_factory = mpcs::abstract_factory<
 >;
 
 // XGBoost-style profile: depth-wise + exact splits + one-hot cats
-using xgb_classic_profile = mpcs::concrete_factory<
+using xgb_classic_profile = concrete_factory<
     component_factory,
     DepthwiseGrower, ExactSplitFinder, OneHotCategorical, UniformSampler>;
 
 // LightGBM-style: leaf-wise + histogram + native partitioning + GOSS
-using lgbm_profile = mpcs::concrete_factory<
+using lgbm_profile = concrete_factory<
     component_factory,
     LeafwiseGrower, HistSplitFinder, PartitionCategorical, GOSSSampler>;
 
 // CatBoost-style: oblivious + histogram + target stats + bernoulli
-using catboost_profile = mpcs::concrete_factory<
+using catboost_profile = concrete_factory<
     component_factory,
     ObliviousGrower, HistSplitFinder, TargetStatCategorical, BernoulliSampler>;
 ```
 
-This is a **direct application of the course pattern** to your problem domain, and it's a great talking point in the report — "the abstract-factory pattern lets users select a coherent bundle of GBT components matching the philosophy of an existing library." TOML-side: `profile = "lgbm"` selects the profile, `[tree]` etc. override individual params.
+This is a **direct application of the abstract-factory pattern** to your problem domain, and it's a great talking point in the report — "the abstract-factory pattern lets users select a coherent bundle of GBT components matching the philosophy of an existing library." TOML-side: `profile = "lgbm"` selects the profile, `[tree]` etc. override individual params.
 
 The flexible-factory variant (with constructor args in the type signature) maps perfectly here, because each component genuinely has its own config type.
 
 ## Layer B: String dispatch for individual components
 
-For "user wrote `grower = "leafwise"` in TOML and we need a `LeafwiseGrower`", you need runtime string lookup. The course pattern can't do this — but C++23/26 lets you write it without macros.
+For "user wrote `grower = "leafwise"` in TOML and we need a `LeafwiseGrower`", you need runtime string lookup. The abstract-factory pattern can't do this — but C++23/26 lets you write it without macros.
 
 ### Approach 1: `consteval` registration list (my recommendation)
 
@@ -743,14 +742,14 @@ Profile sets the defaults; per-component string overrides poke through. This mat
 
 ## Concrete recommendation for your project
 
-1. **Use the course's abstract_factory pattern verbatim for profiles** (Layer A). It's a direct demonstration of the technique you were taught and maps cleanly to "select a library style."
+1. **Use the abstract_factory pattern verbatim for profiles** (Layer A). It's a clean demonstration of the technique and maps cleanly to "select a library style."
 2. **Use the typelist registry (Approach 1) for string dispatch** (Layer B). Zero macros, parameter packs + fold expressions for the metaprogramming credit, single point of edit when adding components.
 3. **If C++26 reflection is available on your compiler**, build a small experimental branch demonstrating Approach 2, even if just for one registry. That's a strong "I'm tracking the bleeding edge" point for the report.
 4. **Skip the static-init self-registration pattern entirely.** It's industrial-strength but its main benefit (no central edit) is mostly recovered by the typelist approach without any of the linker pitfalls.
 
 ## Why this is *better* than what I described before
 
-The earlier macro-based self-registration is what real libraries use because they have hundreds of plugins, sometimes loaded from DLLs, and need genuine dynamic registration. You don't. Your registry is closed at compile time — you, the author, know all the implementations. Pretending otherwise just buys you static-init hazards. The typelist approach is honest about what you actually have, simpler to reason about, and demonstrates more of what the course taught (parameter packs, folds, `constexpr`).
+The earlier macro-based self-registration is what real libraries use because they have hundreds of plugins, sometimes loaded from DLLs, and need genuine dynamic registration. You don't. Your registry is closed at compile time — you, the author, know all the implementations. Pretending otherwise just buys you static-init hazards. The typelist approach is honest about what you actually have, simpler to reason about, and exercises more modern C++ (parameter packs, folds, `constexpr`).
 
 Want to sketch the full type-list registry with proper concepts (`concept Constructible_from<T, Config>`) and a `static_assert` that catches "you forgot the `name` constant" at compile time? That's another nice C++20/23 talking point.
 
@@ -939,7 +938,7 @@ docs/
 third_party/              # vendored, or all FetchContent
 ```
 
-`FetchContent` for Catch2 / toml++ / cli11 / google-benchmark — vendored deps make grading easier (one `cmake --build`). Avoid system-package dependencies entirely.
+`FetchContent` for Catch2 / toml++ / cli11 / google-benchmark — vendored deps make builds reproducible (one `cmake --build`). Avoid system-package dependencies entirely.
 
 ## What I think still needs decisions before drafting the plan doc
 
@@ -958,7 +957,7 @@ Pick off whichever of these you have opinions on; the rest I'll default in the p
 
 **Human**
 
-1. Single. 
+1. Single.
 2. Can we use static polymorphism/concepts instead of dynamic/runtime polymorphism?
 3. yes
 4. yes
@@ -970,7 +969,7 @@ Pick off whichever of these you have opinions on; the rest I'll default in the p
 For the docs, I want a [proposal.md](http://proposal.md) which contains the following sections:
 
 1. Application idea and description. Some justification for this library beyond the pedagogical would be nice e.g. modern c++ makes maintainence/extension easier, better perf etc.?
-2. Survey of xgboost, lgbm, catboost. Table comparing features, implementation approaches, C++ API, cli. 
+2. Survey of xgboost, lgbm, catboost. Table comparing features, implementation approaches, C++ API, cli.
 3. Core architecture/design approach. This should outline the key entities, what requires extension, what is performance sensitive, and what needs to be iron clad from the beginning e.g. dataset. Some discussion of meta programming approaches and static vs. dynamic polymorphism as we can done.
 4. Testing approach.
 5. Benchmarking approach.
@@ -978,7 +977,7 @@ For the docs, I want a [proposal.md](http://proposal.md) which contains the foll
 7. Implementation phases. This should include a table sequencing the serial to parallel transition and then a nice to have feature list that can be popped off.
 8. The physical design of the application e.g. directory structure etc.
 
-This should serve as the proposal for the professor to review but also a central doc to discuss iterate on design before beginning the implementation. Does this makes sense? Do you think there is a better documentation approach?
+This should serve as the proposal to review but also a central doc to discuss iterate on design before beginning the implementation. Does this makes sense? Do you think there is a better documentation approach?
 
 ---
 
@@ -1065,9 +1064,9 @@ If you'd rather keep dep count truly minimal, you can also write a 50-line progr
 
 Your section list is solid and exactly the right shape for a proposal-as-living-design-doc. A few additions worth making:
 
-**Add a "Goals and non-goals" section near the top** (before or after section 1). One paragraph each. Sets expectations — "this project does X, this project does *not* aim to be production-ready or beat lgbm on speed." Saves you from scope creep and tells the professor what to grade against.
+**Add a "Goals and non-goals" section near the top** (before or after section 1). One paragraph each. Sets expectations — "this project does X, this project does *not* aim to be production-ready or beat lgbm on speed." Saves you from scope creep and pins down what the project is accountable for.
 
-**Add an "Open questions / risks" section near the end**, before the phase plan. Explicit list of things you don't know yet — `std::execution::par` quality, reflection branch viability, numerical parity tolerance values. Shows engineering maturity and gives the professor concrete things to push back on.
+**Add an "Open questions / risks" section near the end**, before the phase plan. Explicit list of things you don't know yet — `std::execution::par` quality, reflection branch viability, numerical parity tolerance values. Shows engineering maturity and gives reviewers concrete things to push back on.
 
 **Combine your sections 4 & 5 into one "Quality"** section, or keep separate — your call. I'd combine, because testing strategy and benchmarking strategy share a lot of harness code (golden files, dataset loading, tolerance comparison).
 
@@ -1085,7 +1084,7 @@ Knowing the figures up front shapes what instrumentation to build into the code.
 
 What you have is good. The one thing I'd suggest splitting out is **`docs/architecture.md` as a separate companion doc from day one**, not as a thing-you-make-later.
 
-**`proposal.md`** — the rationale, plan, scope, phases, evaluation criteria. The "what and why." Pitched at the professor and at future-you-in-week-3 wondering what they signed up for. Write once, light revisions.
+**`proposal.md`** — the rationale, plan, scope, phases, evaluation criteria. The "what and why." Pitched at reviewers and at future-you-in-week-3 wondering what they signed up for. Write once, light revisions.
 
 **`docs/architecture.md`** — the "how." Detailed component contracts, concept definitions, dispatch flow, data layout invariants, threading model. Lives alongside the code, gets updated as decisions evolve. This is where the typelist registry mechanics, the `Booster<Obj,Gr,Sp,Sa>` template, the `Dataset` invariants, the parallel backend concept all get documented in detail.
 
@@ -1220,8 +1219,7 @@ Here it is — single self-contained handoff doc that captures everything from t
 ## 1. Project in two sentences
 
 A from-scratch C++23 implementation of a histogram-based gradient boosted
-trees library, built as a final project for MPCS 51045 (Advanced C++).
-Goal is to demonstrate modern C++ techniques (concepts, parameter packs, fold
+trees library. Goal is to demonstrate modern C++ techniques (concepts, parameter packs, fold
 expressions, optional reflection) and parallelism (OpenMP + std::execution)
 while producing a working, benchmarked GBT that can be compared against
 xgboost / lightgbm / catboost on standard datasets.
@@ -1291,8 +1289,8 @@ Avoid claiming: speed parity with reference libraries, production suitability.
   (P2996 / static reflection in C++26). User has this working in another
   project. Showcase only; typelist version is the production path.
 
-- **Skip the course's abstract-factory profile pattern.** Earlier sketch
-  proposed using mpcs::abstract_factory for "lgbm-style profile" bundles.
+- **Skip the abstract-factory profile pattern.** Earlier sketch
+  proposed using abstract_factory for "lgbm-style profile" bundles.
   Rejected as abstraction-for-its-own-sake; TOML defaults handle presets
   fine.
 
@@ -1365,7 +1363,8 @@ Avoid claiming: speed parity with reference libraries, production suitability.
   indicators, spdlog, google-benchmark, TBB).
 - **OBJECT libraries** for component groups — avoids static-archive
   dead-code stripping issues.
-- **No system package dependencies** — single `cmake --build` for grading.
+- **No system package dependencies** — single `cmake --build` from a
+  clean checkout.
 
 ## 5. Decisions deferred / open questions
 
@@ -1381,20 +1380,7 @@ Avoid claiming: speed parity with reference libraries, production suitability.
 ## 6. Architecture sketch
 
 ```
-gbt/
-  core/        Dataset, BinMapper, Histogram, Gradient
-  tree/        Tree, Node
-               TreeGrower concept, impls: depthwise, leafwise, oblivious
-  split/       SplitFinder concept, impls: histogram, exact
-  objective/   Objective concept, impls: mse, logloss, softmax, quantile, huber
-  sampler/     Sampler concept, impls: uniform, goss, bernoulli
-  cat/         (Phase 4) CategoricalHandler, impls: onehot, partition, target_stat
-  parallel/    ParallelBackend concept, impls: serial, openmp, stdexec
-  booster/     Booster<Obj, Gr, Sp, Sa, Backend>, training loop, early stopping
-  io/          CSV / libsvm / parquet readers, model serialize
-  config/      Config struct, TOML parser, CLI override merger
-  registry/    Registry<Base, Config, Impls...>, dispatch fold expression
-  cli/         subcommand handlers (fit, predict, eval, bench, info)
+gbt/ core/        Dataset, BinMapper, Histogram, Gradient tree/        Tree, Node TreeGrower concept, impls: depthwise, leafwise, oblivious split/       SplitFinder concept, impls: histogram, exact objective/   Objective concept, impls: mse, logloss, softmax, quantile, huber sampler/     Sampler concept, impls: uniform, goss, bernoulli cat/         (Phase 4) CategoricalHandler, impls: onehot, partition, target_stat parallel/    ParallelBackend concept, impls: serial, openmp, stdexec booster/     Booster<Obj, Gr, Sp, Sa, Backend>, training loop, early stopping io/          CSV / libsvm / parquet readers, model serialize config/      Config struct, TOML parser, CLI override merger registry/    Registry<Base, Config, Impls...>, dispatch fold expression cli/         subcommand handlers (fit, predict, eval, bench, info)
 ```
 
 ## 7. Implementation phases (high level)
@@ -1416,17 +1402,7 @@ gbt/
 ## 8. Doc structure
 
 ```
-README.md           — short orientation, build, link to proposal
-proposal.md         — the proposal: rationale, plan, scope, phases,
-                       evaluation criteria
-docs/
-  context.md        — this file (handoff briefing)
-  architecture.md   — deep design (concepts, dispatch, data layout,
-                       threading model)
-  decisions.md      — append-only ADR log
-  benchmarking.md   — (later) results, methodology, reproduction
-  conversations/
-    2026-05-02-initial-design.md  — full transcript of design chat
+README.md           — short orientation, build, link to proposal proposal.md         — the proposal: rationale, plan, scope, phases, evaluation criteria docs/ context.md        — this file (handoff briefing) architecture.md   — deep design (concepts, dispatch, data layout, threading model) decisions.md      — append-only ADR log benchmarking.md   — (later) results, methodology, reproduction conversations/ 2026-05-02-initial-design.md  — full transcript of design chat
 ```
 
 `README.md` stays short — points readers at `proposal.md`.
@@ -1486,7 +1462,8 @@ These figures should drive instrumentation decisions in the code.
 
 ## 11. What this doc is not
 
-- Not the proposal. Proposal is for the professor; this is for agents.
+- Not the proposal. The proposal pitches the design; this is the
+  working briefing.
 - Not a replacement for `architecture.md`. This is the briefing; that's
   the deep dive.
 - Not append-only. Update in place as decisions evolve. Use
@@ -1496,8 +1473,6 @@ These figures should drive instrumentation decisions in the code.
 
 - Full design conversation transcript:
   `docs/conversations/2026-05-02-initial-design.md`
-- Course context: MPCS 51045 (Advanced C++), Spring 2026
-  https://mpcs-courses.cs.uchicago.edu/2025-26/spring/courses/mpcs-51045-1
 - Reference libraries:
   - xgboost: `include/xgboost/` — DMatrix, Learner, GradientBooster
   - LightGBM: `include/LightGBM/` — Dataset, Boosting, TreeLearner
@@ -1511,7 +1486,7 @@ These figures should drive instrumentation decisions in the code.
 3. **Initialize the repo** with just these two files plus an empty `README.md` and a stub `CMakeLists.txt`. Commit.
 4. **Open Claude Code** in that directory. First prompt:
 
-   > Read `docs/context.md` and `docs/conversations/2026-05-02-initial-design.md`. Then draft `proposal.md` following the section structure laid out in context.md section 8. Don't draft `architecture.md` yet — we'll do that in a separate session after the proposal is settled.
+> Read `docs/context.md` and `docs/conversations/2026-05-02-initial-design.md`. Then draft `proposal.md` following the section structure laid out in context.md section 8. Don't draft `architecture.md` yet — we'll do that in a separate session after the proposal is settled.
 
 5. **Iterate the proposal** in Claude Code. When sections need design decisions you don't want to make in a code-editing context, come back here, work it through, then go back.
 6. **Once proposal is done**, second Claude Code session for `architecture.md` — that one will need to settle the dispatch design we deferred.
