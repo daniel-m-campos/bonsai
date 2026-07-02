@@ -635,3 +635,28 @@ subprocess, CSV, or model-save overhead — though bonsai's `train()` still
 includes binning, which xgb's timed `train` does not). Re-baselined:
 RMSE identical to the CLI rows; predict drops 0.20s -> 0.08s on
 YearPredictionMSD, landing between xgboost (0.017) and lightgbm (0.105).
+
+## 37. Feature importance recorded at grow time; the guide series
+
+**Importance.** Split-count and gain importance ship behind
+`IBooster::feature_importance(ImportanceType)`, `bonsai importance`, and the
+Python `feature_importances_` / `importance(type)` surfaces. The one design
+decision: gain is **stamped when the split is created** (`split_gains` per
+node on `DenseTree`, `level_gains` on `ObliviousTree`, serialized — format
+v5) because it is not reconstructible from a stored tree. Accumulation is a
+20-line walk in `booster.hpp`. Verified by cross-library agreement on
+California Housing: bonsai and lightgbm agree on both types *including
+their disagreement with each other* — gain crowns MedInc, split-count
+crowns Longitude/Latitude (many fine-grained, individually-small splits),
+the textbook argument for gain as the default and a finding the agreement
+test now pins.
+
+**The guide.** `docs/guide/` is a nine-chapter pedagogical series — concept
+→ math → the actual implementing code → runnable experiment → war story —
+positioned as a deliberate differentiator: reference libraries document
+parameters, the guide documents mechanics against a codebase small enough
+to read. War stories are real ones from this log (OOB stale scores §34,
+DART's k+1 trap §35, the two-libomp deadlock §36, the split-vs-gain
+disagreement above). Stale narrative docs were refreshed in the same pass
+(context, report addendum, architecture 2–8, new 7-parallel.md), and
+milestones are now git-tagged (`mpcs-submission`, `v0.2.0`–`v0.5.0`).

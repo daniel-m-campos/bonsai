@@ -30,6 +30,7 @@ bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library a
 
 - **Compile-time dispatch where it counts.** Components are C++ concepts; the runtime TOML config is resolved to a monomorphized `Booster<Objective, Grower, Splitter, Sampler>` exactly once at construction. Everything inside the training loop is statically dispatched — no virtual calls in the hot path.
 - **Concept-checked components.** Contract violations are caught at compile time, not runtime. Adding an objective, grower, split finder, or sampler is two edits and the dispatch table, CLI listing, and parametric tests expand automatically.
+- **A guide, not just docs.** [docs/guide/](docs/guide/) explains how gradient boosting works chapter by chapter — concept, math, then the ~50 real lines that implement it here, then an experiment. Written against this codebase because it's small enough to actually read.
 - **Reference-library parity.** RMSE within tolerance of xgboost / lightgbm on the California Housing and Year Prediction MSD regression benchmarks, driven by a Python sidecar that runs all three reference libraries on the same config.
 - **Three growers.** `depthwise` (level-wise, XGBoost-style), `leafwise` (best-first with a `max_leaves` budget, LightGBM-style), and `oblivious` (symmetric, CatBoost-style) — selectable per run from config.
 - **Deterministic parallelism.** OpenMP across features and rows with no cross-thread reductions: models and predictions are bit-identical to a serial run at any thread count (`[parallel] n_threads`, 0 = all cores).
@@ -140,7 +141,8 @@ docs/             design + decision logs
 
 ## Documentation
 
-- [docs/report.md](docs/report.md): project retrospective (what was built, performance vs reference libraries, reflections, deferred work).
+- **[docs/guide/](docs/guide/): the bonsai guide** — gradient boosting from math to code. Each chapter takes one concept (histograms, split finding, GOSS, DART, feature importance, determinism…) from intuition through the actual implementing code to an experiment you can run against the reference libraries. This is the differentiator: reference libraries document parameters; the guide documents *mechanics*, against readable code.
+- [docs/report.md](docs/report.md): project retrospective (what was built, performance vs reference libraries, reflections, deferred work) + 2026-07 addendum.
 - [docs/proposal.md](docs/proposal.md): initial project proposal.
 - [docs/architecture/](docs/architecture/): per-component design notes.
 - [docs/context.md](docs/context.md): project context and roadmap.
