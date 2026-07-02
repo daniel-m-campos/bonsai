@@ -576,3 +576,34 @@ Lesson (rhymes with decision 30): the booster-side `values` shortcut was
 only ever validated with `all_rows`. A contract as easy to state as "every
 row's train value equals the tree's prediction for that row" deserved a
 test the day the first subsampler landed.
+
+## 35. Remaining-gap round: objectives, monotone, interaction, DART
+
+Second feature-parity pass (protocol and A/B tables in
+[feature_gap.md](feature_gap.md)); sparse/EFB explicitly stays out of scope
+until the harness has a sparse dataset to measure against.
+
+- **Objectives became Config-constructed instances** (like `Sampler`) so
+  parameterized losses carry state — `[objective] huber_delta /
+  quantile_alpha`. Statics satisfy instance-call syntax, so MSE/LogLoss kept
+  their static methods and only gained trivial ctors. MAE / Huber / Quantile
+  land with sign/clamped/pinball gradients and median/quantile init scores.
+  Known limitation: no leaf-renewal pass, worth ~10% MAE vs
+  lightgbm/xgboost's renewed leaves on YearMSD; bonsai matches lightgbm on
+  huber, where renewal matters less.
+- **Monotone constraints**: candidate splits on a constrained feature are
+  rejected when bounded child weights violate the direction, and children
+  inherit midpoint-fenced leaf bounds via `SplitInput::lo/hi` — whole paths
+  are provably monotone. Costs every library the same ~2% RMSE on CH.
+- **Interaction constraints**: `SplitInput::allowed/path` carries the
+  permitted feature set down the tree; a feature may split only where some
+  group covers the whole path (or alone). Same ~9% RMSE cost as xgb/lgbm on
+  a two-group CH config.
+- **DART**: dropout of existing trees with bin-space routing to recover
+  dropped train contributions (no per-tree caches), rescaling with
+  xgboost's `normalize_type="tree"` factors — the DART paper's 1/(k+1)
+  starves the new tree by ~1/lr under shrinkage and measurably tanked RMSE
+  until replaced. bonsai's DART now degrades less than xgb/lgbm's at the
+  same settings. Incompatible with early stopping by construction (throws).
+- Oblivious grower rejects monotone/interaction constraints at
+  construction rather than silently ignoring them.

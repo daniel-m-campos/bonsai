@@ -70,7 +70,7 @@ bonsai fit -c config.toml \
 
 Append `--dump-config` to any subcommand to print the resolved config (after `-c` + `--set`) as TOML and exit, useful for verifying overrides before a long fit.
 
-`bonsai info` lists every `(objective, grower, sampler)` triple the binary knows how to dispatch to (currently 2×3×2 = 12 combos).
+`bonsai info` lists every `(objective, grower, sampler)` triple the binary knows how to dispatch to (currently 5×3×3 = 45 combos).
 
 ## Build
 
