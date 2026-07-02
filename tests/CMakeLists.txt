@@ -11,6 +11,7 @@ add_executable(bonsai_tests
     unit/test_split_node.cpp
     unit/test_split_level.cpp
     unit/test_grower.cpp
+    unit/test_leafwise_grower.cpp
     unit/test_oblivious_grower.cpp
     unit/test_sampler.cpp
     unit/test_objective.cpp

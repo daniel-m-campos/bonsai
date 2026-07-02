@@ -34,7 +34,7 @@ import tomllib
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-BONSAI_GROWERS = ("depthwise", "oblivious")
+BONSAI_GROWERS = ("depthwise", "oblivious", "leafwise")
 BONSAI_SAMPLERS = ("all_rows", "bernoulli")
 BERNOULLI_P = 0.8
 
@@ -48,6 +48,7 @@ class HP:
     n_iters: int
     learning_rate: float
     max_depth: int
+    max_leaves: int
     min_data_in_leaf: int
     lambda_l2: float
     max_bin: int
@@ -62,6 +63,7 @@ def hp_from(cfg: dict) -> HP:
         n_iters=int(booster.get("n_iters", 100)),
         learning_rate=float(booster.get("learning_rate", 0.05)),
         max_depth=int(tree.get("max_depth", 6)),
+        max_leaves=int(tree.get("max_leaves", 31)),
         min_data_in_leaf=int(tree.get("min_data_in_leaf", 20)),
         lambda_l2=float(tree.get("lambda_l2", 1.0)),
         max_bin=int(bin_mapper.get("max_bin", 255)),
@@ -132,6 +134,7 @@ def run_xgboost(train_df, test_df, hp: HP) -> Result:
         "objective": "reg:squarederror",
         "learning_rate": hp.learning_rate,
         "max_depth": hp.max_depth,
+        "max_leaves": hp.max_leaves,
         "min_child_weight": hp.min_data_in_leaf,
         "reg_lambda": hp.lambda_l2,
         "max_bin": hp.max_bin,

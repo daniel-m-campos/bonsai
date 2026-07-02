@@ -53,4 +53,16 @@ template <LevelSplitFinder SplitterT = HistogramLevelSplitFinder> class Obliviou
     TreeConfig config_;
 };
 
+template <NodeSplitFinder SplitterT = HistogramNodeSplitFinder> class LeafwiseGrower
+{
+  public:
+    using Tree = DenseTree;
+    explicit LeafwiseGrower(TreeConfig const &cfg);
+    GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
+                          row_index_view row_indices);
+
+  private:
+    TreeConfig config_;
+};
+
 } // namespace bonsai

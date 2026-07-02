@@ -133,6 +133,15 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
     next.clear();
 }
 
+// A leaf awaiting expansion: its histograms/rows, its best split (heap key),
+// and its depth (to enforce the max_depth cap on children).
+struct Candidate
+{
+    SplitInput  node;
+    SplitOutput split;
+    uint8_t     depth = 0;
+};
+
 } // namespace
 
 template <NodeSplitFinder SplitterT>
@@ -158,9 +167,9 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
     {
         splits.clear();
         splits.reserve(current.size());
-        for (auto const &node : current)
+        for (auto const &input : current)
         {
-            splits.push_back(SplitterT::find(node, config_));
+            splits.push_back(SplitterT::find(input, config_));
         }
         update_nodes(ds, grad, hess, config_, current, next, splits, nodes, n_leaves,
                      values);
@@ -242,5 +251,104 @@ auto ObliviousGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
 }
 
 template class ObliviousGrower<HistogramLevelSplitFinder>;
+
+template <NodeSplitFinder SplitterT>
+LeafwiseGrower<SplitterT>::LeafwiseGrower(TreeConfig const &cfg) : config_(cfg)
+{
+}
+
+template <NodeSplitFinder SplitterT>
+auto LeafwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
+                                     floats_view hess, row_index_view row_indices)
+    -> GrowResult<Tree>
+{
+    Tree::Nodes       nodes;
+    train_leaf_values values(ds.n_rows(), 0.0F);
+
+    // Max-heap on gain; ties broken by lower node id so growth is deterministic.
+    auto gain_less = [](Candidate const &a, Candidate const &b)
+    {
+        if (a.split.gain != b.split.gain)
+        {
+            return a.split.gain < b.split.gain;
+        }
+        return a.node.id > b.node.id;
+    };
+
+    std::vector<Candidate>  heap;
+    std::vector<SplitInput> pending;
+
+    SplitInput root = make_root(ds, grad, hess, row_indices);
+    nodes.emplace_back(DenseTree::leaf(0.0F));
+
+    size_t  n_leaves    = 0;
+    size_t  live_leaves = 1;
+    uint8_t depth       = 0;
+
+    auto has_budget = [&]
+    { return config_.max_leaves == 0 || live_leaves < config_.max_leaves; };
+
+    SplitOutput const root_split = SplitterT::find(root, config_);
+    if (root_split.valid && config_.max_depth > 0)
+    {
+        heap.push_back({std::move(root), root_split, 0});
+    }
+    else
+    {
+        pending.push_back(std::move(root));
+    }
+
+    while (!heap.empty() && has_budget())
+    {
+        std::pop_heap(heap.begin(), heap.end(), gain_less);
+        Candidate c = std::move(heap.back());
+        heap.pop_back();
+
+        node_id_t const left_id = nodes.size();
+        nodes.emplace_back(DenseTree::leaf(0.0F));
+        node_id_t const right_id = nodes.size();
+        nodes.emplace_back(DenseTree::leaf(0.0F));
+
+        float const threshold = ds.mappers()[c.split.feature_id].cuts()[c.split.bin_id];
+        nodes[c.node.id] = DenseTree::internal(c.split.feature_id, threshold, left_id,
+                                               right_id, c.split.default_left);
+
+        auto [left, right] =
+            split_node(ds, grad, hess, std::move(c.node), c.split, left_id, right_id);
+        ++live_leaves;
+
+        uint8_t const child_depth = c.depth + 1;
+        depth                     = std::max(depth, child_depth);
+        for (SplitInput *child : {&left, &right})
+        {
+            SplitOutput const split = (child_depth < config_.max_depth)
+                                          ? SplitterT::find(*child, config_)
+                                          : SplitOutput{};
+            if (split.valid)
+            {
+                heap.push_back({std::move(*child), split, child_depth});
+                std::push_heap(heap.begin(), heap.end(), gain_less);
+            }
+            else
+            {
+                pending.push_back(std::move(*child));
+            }
+        }
+    }
+
+    for (auto const &c : heap)
+    {
+        finalize_as_leaf(nodes, c.node, config_.lambda_l2, n_leaves, values);
+    }
+    for (auto const &leaf : pending)
+    {
+        finalize_as_leaf(nodes, leaf, config_.lambda_l2, n_leaves, values);
+    }
+
+    return {.tree   = Tree(std::move(nodes), {.depth = depth, .n_leaves = n_leaves}),
+            .values = std::move(values)};
+}
+
+template class LeafwiseGrower<HistogramNodeSplitFinder>;
 
 } // namespace bonsai
