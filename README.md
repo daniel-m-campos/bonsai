@@ -30,7 +30,9 @@ bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library a
 
 - **Compile-time dispatch where it counts.** Components are C++ concepts; the runtime TOML config is resolved to a monomorphized `Booster<Objective, Grower, Splitter, Sampler>` exactly once at construction. Everything inside the training loop is statically dispatched — no virtual calls in the hot path.
 - **Concept-checked components.** Contract violations are caught at compile time, not runtime. Adding an objective, grower, split finder, or sampler is two edits and the dispatch table, CLI listing, and parametric tests expand automatically.
-- **Reference-library parity.** RMSE within tolerance of xgboost / lightgbm on the California Housing regression benchmark, driven by a Python sidecar that runs all three reference libraries on the same config.
+- **Reference-library parity.** RMSE within tolerance of xgboost / lightgbm on the California Housing and Year Prediction MSD regression benchmarks, driven by a Python sidecar that runs all three reference libraries on the same config.
+- **Three growers.** `depthwise` (level-wise, XGBoost-style), `leafwise` (best-first with a `max_leaves` budget, LightGBM-style), and `oblivious` (symmetric, CatBoost-style) — selectable per run from config.
+- **Deterministic parallelism.** OpenMP across features and rows with no cross-thread reductions: models and predictions are bit-identical to a serial run at any thread count (`[parallel] n_threads`, 0 = all cores).
 - **CLI-first, config-driven.** CatBoost-style subcommands, a strict TOML config, and inline `--set key=value` overrides — no Python bindings required.
 - **One-command build, no system dependencies.** CMake + FetchContent vendors every dependency; a clean checkout builds with a single command.
 
@@ -68,7 +70,7 @@ bonsai fit -c config.toml \
 
 Append `--dump-config` to any subcommand to print the resolved config (after `-c` + `--set`) as TOML and exit, useful for verifying overrides before a long fit.
 
-`bonsai info` lists every `(objective, grower, sampler)` triple the binary knows how to dispatch to (currently 2×2×2 = 8 combos).
+`bonsai info` lists every `(objective, grower, sampler)` triple the binary knows how to dispatch to (currently 2×3×2 = 12 combos).
 
 ## Build
 

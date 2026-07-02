@@ -512,3 +512,29 @@ Mathematical primitives need a sanity check before being trusted across an aggre
 
 1. **Cross-reference against the reference library before implementing.** CatBoost's source explicitly aggregates gains per-leaf. A 10-minute read of `greedy_tensor_search.cpp` would have surfaced the right shape before any code was written.
 2. **Design tests that distinguish the right answer from a plausibly-wrong one.** The original `depth=2` test was content with "4 leaves, structurally correct" and even rationalized the degenerate `[2 non-empty, 2 empty]` outcome. A test that demanded "all 4 leaves carry rows" or "level-1 split differs from level-0 on some non-trivial fixture" would have failed loudly.
+
+## 31. `LeafwiseGrower`: best-first growth on a gain-keyed heap, `max_leaves` primary
+
+Third grower, `dispatch.grower_name = "leafwise"` (LightGBM's default strategy). A `std::vector<Candidate>` maintained with `std::push_heap`/`std::pop_heap` holds every expandable leaf — `{SplitInput, SplitOutput, depth}` — keyed on split gain; each pop converts one leaf into two children, so `live_leaves` counts up and growth stops at `TreeConfig::max_leaves` (new field; `0` = unbounded, `max_depth` stays as the cap). Reuses `make_root` / `split_node` / `finalize_as_leaf` / `HistogramNodeSplitFinder` unchanged and emits a `DenseTree`, so registration is just the typelist + `impl_name` edits.
+
+- **`std::vector` + heap algorithms over `std::priority_queue`**: `top()` returns `const&`, which fights moving the histogram-heavy `SplitInput` out; `pop_heap` + `std::move(heap.back())` doesn't.
+- **Tie-break**: equal gains resolve to the lower node id (FIFO-ish), so trees are deterministic.
+- **Semantics**: with `max_leaves = 2^max_depth` and a separable dataset, leafwise reproduces depthwise's tree exactly (covered by unit test).
+
+## 32. Parallelism: OpenMP behind a one-function seam, determinism at any thread count
+
+`bonsai/parallel.hpp` exposes `parallel::for_each_index(n, f)` — an OpenMP `parallel for` (dynamic schedule, chunk `n/(threads*4)`) with a serial fallback when OpenMP is absent — plus `set_n_threads` fed from a new `[parallel] n_threads` config section (0 = all cores). Every parallel site assigns each index to exactly one thread and performs **no cross-thread reductions**: per-feature histogram fill, per-feature split scans (per-feature bests merged serially in feature order, preserving the tie-break), row-wise predict, objective grad/hess, score updates, CSV row parsing, binning, mapper fitting.
+
+Consequence: models and predictions are **bit-identical to a serial run at any thread count** — stronger than the proposal's fixed-thread-count contract (decision 7), because the row-parallel-within-feature + per-thread-histogram-merge design that motivates the weaker contract hasn't been needed yet. If it ever is (single-feature datasets), the contract degrades to fixed-N as originally specified.
+
+Rejected for now: the `ParallelBackend` concept as a 5th dispatch dimension (proposal §3.4, `7-parallel.md` TBD). One free function covers every call site today; promoting it to a dispatched component adds a typelist dimension with a single implementation. The seam keeps the door open — `std::execution`/TBB would slot in behind the same signature.
+
+## 33. Hot-path perf: ordered gradients, stable scatter, node totals out of `add`
+
+Three measured wins on Year Prediction MSD (M2, 8 threads), all bit-identical outputs:
+
+- **Ordered gradients** (LightGBM trick): `populate_from_rows` gathers grad/hess into node-row order once, so each of the 90 per-feature scans reads them sequentially instead of re-walking two full arrays with scattered indices.
+- **Stable split scatter**: `split_node` replaces `std::partition` + two `assign`s with a two-pass exact-size stable scatter. Stability keeps every node's rows ascending (root's are iota), so bin lookups walk memory near-sequentially at every depth.
+- **Node totals once**: `Histogram::add` no longer maintains running totals (2 redundant double-adds per row×feature, duplicated per feature); node totals are one O(n_bins) cell sum over `hists[0]`, hoisted per node in the split finders.
+
+CSV load: whole-file read + line index + row-parallel `from_chars` parse straight into column-major storage, and the train file is parsed once (mapper fit + binning share the batch) instead of twice. Load 7.4s → 1.3s; 200-iter depthwise fit 73s → ~27s; leafwise ~12s.
