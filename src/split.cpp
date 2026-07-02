@@ -47,7 +47,11 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
                                              TreeConfig const &config,
                                              SplitOutput      &best)
 {
-    auto const  &hist         = input.hists[fid];
+    auto const &hist = input.hists[fid];
+    if (hist.size() == 0)
+    {
+        return; // unselected under feature_fraction < 1
+    }
     auto const  &missing_cell = hist.missing();
     double const node_score =
         score(node_totals.sum_grad, node_totals.sum_hess, config.lambda_l2);
@@ -177,7 +181,7 @@ SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
         return {};
     }
     feature_id_t const       n_features  = input.hists.size();
-    HistCell const           node_totals = input.hists[0].totals();
+    HistCell const           node_totals = input.totals();
     std::vector<SplitOutput> per_feature(n_features);
     parallel::for_each_index(n_features,
                              [&](size_t fid)
@@ -200,7 +204,7 @@ SplitOutput HistogramLevelSplitFinder::find(FrontierInput     frontier,
     std::vector<HistCell> node_totals(frontier.size());
     for (size_t p = 0; p < frontier.size(); ++p)
     {
-        node_totals[p] = frontier[p].hists[0].totals();
+        node_totals[p] = frontier[p].totals();
     }
     std::vector<SplitOutput> per_feature(n_features);
     parallel::for_each_index(n_features,

@@ -7,8 +7,13 @@
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
+#include <numeric>
+#include <random>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -23,6 +28,27 @@ inline float leaf_value(double grad, double hess, double lambda)
     return static_cast<float>(-grad / (hess + lambda));
 }
 
+using feature_view = std::span<feature_id_t const>;
+
+// Per-tree feature subsample: a sorted draw of ceil(fraction * n) distinct
+// feature ids. fraction >= 1 selects everything.
+std::vector<feature_id_t> sample_features(size_t n_features, float fraction,
+                                          std::mt19937 &rng)
+{
+    std::vector<feature_id_t> all(n_features);
+    std::iota(all.begin(), all.end(), feature_id_t{0});
+    if (fraction >= 1.0F || n_features <= 1)
+    {
+        return all;
+    }
+    auto const k = std::max<size_t>(
+        1, static_cast<size_t>(std::ceil(fraction * static_cast<float>(n_features))));
+    std::vector<feature_id_t> selected;
+    selected.reserve(k);
+    std::sample(all.begin(), all.end(), std::back_inserter(selected), k, rng);
+    return selected; // std::sample preserves order -> sorted
+}
+
 inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
                              double lambda, size_t &n_leaves, train_leaf_values &values)
 {
@@ -35,8 +61,10 @@ inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
     ++n_leaves;
 }
 
+// Builds histograms for `selected` features only; unselected slots stay
+// zero-binned placeholders the split finders skip.
 inline void populate_from_rows(Dataset const &ds, floats_view grad, floats_view hess,
-                               SplitInput &node)
+                               SplitInput &node, feature_view selected)
 {
     // Gather grad/hess into node-row order once, so every feature's scan
     // below reads them sequentially instead of re-walking the full arrays
@@ -59,18 +87,21 @@ inline void populate_from_rows(Dataset const &ds, floats_view grad, floats_view 
                              });
 
     node.hists.reserve(ds.n_features());
+    size_t j = 0;
     for (feature_id_t fid = 0; fid < ds.n_features(); ++fid)
     {
-        node.hists.emplace_back(ds.n_bins(fid));
+        bool const sel = j < selected.size() && selected[j] == fid;
+        node.hists.emplace_back(sel ? ds.n_bins(fid) : 0);
+        j += sel ? 1 : 0;
     }
     // Feature-parallel: each feature's histogram is owned by one thread and
     // filled in row order, so results are bit-identical at any thread count.
-    parallel::for_each_index(ds.n_features(),
-                             [&, og, oh](size_t f)
+    parallel::for_each_index(selected.size(),
+                             [&, og, oh](size_t s)
                              {
-                                 auto const  fid  = static_cast<feature_id_t>(f);
-                                 Histogram  &h    = node.hists[fid];
-                                 auto const &bins = ds.feature_bins(fid);
+                                 feature_id_t const fid  = selected[s];
+                                 Histogram         &h    = node.hists[fid];
+                                 auto const        &bins = ds.feature_bins(fid);
                                  for (size_t k = 0; k < n; ++k)
                                  {
                                      h.add(bins[node.rows[k]], og[k], oh[k]);
@@ -79,18 +110,19 @@ inline void populate_from_rows(Dataset const &ds, floats_view grad, floats_view 
 }
 
 SplitInput make_root(Dataset const &ds, floats_view grad, floats_view hess,
-                     row_index_view row_indices)
+                     row_index_view row_indices, feature_view selected)
 {
     SplitInput root;
     root.id = 0;
     root.rows.assign(row_indices.begin(), row_indices.end());
-    populate_from_rows(ds, grad, hess, root);
+    populate_from_rows(ds, grad, hess, root, selected);
     return root;
 }
 
 inline std::pair<SplitInput, SplitInput>
 split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput parent,
-           SplitOutput const &s, node_id_t left_id, node_id_t right_id)
+           SplitOutput const &s, node_id_t left_id, node_id_t right_id,
+           feature_view selected)
 {
     // 1. Scatter parent.rows into the children in one stable pass. Stability
     //    keeps every node's rows ascending (the root's are iota), so later
@@ -135,12 +167,13 @@ split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput par
     bool const  left_smaller = left.rows.size() <= right.rows.size();
     SplitInput &small        = left_smaller ? left : right;
     SplitInput &large        = left_smaller ? right : left;
-    populate_from_rows(ds, grad, hess, small);
+    populate_from_rows(ds, grad, hess, small, selected);
     large.hists.reserve(ds.n_features());
     for (feature_id_t f = 0; f < ds.n_features(); ++f)
     {
         large.hists.push_back(std::move(parent.hists[f]));
     }
+    // Unselected slots are zero-binned on both sides: no-op subtraction.
     parallel::for_each_index(ds.n_features(),
                              [&](size_t f) { large.hists[f] -= small.hists[f]; });
 
@@ -152,7 +185,7 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
                          std::vector<SplitInput>        &next,
                          std::vector<SplitOutput> const &splits,
                          DenseTree::Nodes &nodes, size_t &n_leaves,
-                         train_leaf_values &values)
+                         train_leaf_values &values, feature_view selected)
 {
     for (node_id_t i = 0; i < current.size(); ++i)
     {
@@ -172,8 +205,8 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         nodes[node.id] = DenseTree::internal(split.feature_id, threshold, left_id,
                                              right_id, split.default_left);
 
-        auto [left, right] =
-            split_node(ds, grad, hess, std::move(node), split, left_id, right_id);
+        auto [left, right] = split_node(ds, grad, hess, std::move(node), split,
+                                        left_id, right_id, selected);
         next.push_back(std::move(left));
         next.push_back(std::move(right));
     }
@@ -193,7 +226,8 @@ struct Candidate
 } // namespace
 
 template <NodeSplitFinder SplitterT>
-DepthwiseGrower<SplitterT>::DepthwiseGrower(TreeConfig const &cfg) : config_(cfg)
+DepthwiseGrower<SplitterT>::DepthwiseGrower(TreeConfig const &cfg)
+    : config_(cfg), feature_rng_(cfg.feature_seed)
 {
 }
 
@@ -207,7 +241,9 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
     std::vector<SplitInput>  current;
     std::vector<SplitInput>  next;
     std::vector<SplitOutput> splits;
-    current.push_back(make_root(ds, grad, hess, row_indices));
+    auto const               selected =
+        sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
+    current.push_back(make_root(ds, grad, hess, row_indices, selected));
     nodes.emplace_back(DenseTree::leaf(0.0F));
     uint8_t depth    = 0;
     size_t  n_leaves = 0;
@@ -220,7 +256,7 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
             splits.push_back(SplitterT::find(input, config_));
         }
         update_nodes(ds, grad, hess, config_, current, next, splits, nodes, n_leaves,
-                     values);
+                     values, selected);
         if (current.empty())
         {
             break;
@@ -240,7 +276,8 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
 template class DepthwiseGrower<HistogramNodeSplitFinder>;
 
 template <LevelSplitFinder SplitterT>
-ObliviousGrower<SplitterT>::ObliviousGrower(TreeConfig const &cfg) : config_(cfg)
+ObliviousGrower<SplitterT>::ObliviousGrower(TreeConfig const &cfg)
+    : config_(cfg), feature_rng_(cfg.feature_seed)
 {
 }
 
@@ -255,7 +292,9 @@ auto ObliviousGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
 
     std::vector<SplitInput> frontier;
     std::vector<SplitInput> next;
-    frontier.push_back(make_root(ds, grad, hess, row_indices));
+    auto const              selected =
+        sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
+    frontier.push_back(make_root(ds, grad, hess, row_indices, selected));
 
     size_t depth = 0;
     while (depth < config_.max_depth)
@@ -273,7 +312,7 @@ auto ObliviousGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
         for (auto &node : frontier)
         {
             auto [left, right] =
-                split_node(ds, grad, hess, std::move(node), split, 0, 0);
+                split_node(ds, grad, hess, std::move(node), split, 0, 0, selected);
             next.push_back(std::move(left));
             next.push_back(std::move(right));
         }
@@ -301,7 +340,8 @@ auto ObliviousGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
 template class ObliviousGrower<HistogramLevelSplitFinder>;
 
 template <NodeSplitFinder SplitterT>
-LeafwiseGrower<SplitterT>::LeafwiseGrower(TreeConfig const &cfg) : config_(cfg)
+LeafwiseGrower<SplitterT>::LeafwiseGrower(TreeConfig const &cfg)
+    : config_(cfg), feature_rng_(cfg.feature_seed)
 {
 }
 
@@ -326,7 +366,9 @@ auto LeafwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
     std::vector<Candidate>  heap;
     std::vector<SplitInput> pending;
 
-    SplitInput root = make_root(ds, grad, hess, row_indices);
+    auto const selected =
+        sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
+    SplitInput root = make_root(ds, grad, hess, row_indices, selected);
     nodes.emplace_back(DenseTree::leaf(0.0F));
 
     size_t  n_leaves    = 0;
@@ -361,8 +403,8 @@ auto LeafwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
         nodes[c.node.id] = DenseTree::internal(c.split.feature_id, threshold, left_id,
                                                right_id, c.split.default_left);
 
-        auto [left, right] =
-            split_node(ds, grad, hess, std::move(c.node), c.split, left_id, right_id);
+        auto [left, right] = split_node(ds, grad, hess, std::move(c.node), c.split,
+                                        left_id, right_id, selected);
         ++live_leaves;
 
         uint8_t const child_depth = c.depth + 1;

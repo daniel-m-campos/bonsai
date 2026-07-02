@@ -16,13 +16,27 @@ struct SplitInput
     std::vector<row_id_t>  rows;
     node_id_t              id = 0;
 
+    // Node-level totals from the first populated histogram (every populated
+    // feature sums the same rows). Unselected features under
+    // feature_fraction < 1 are zero-binned placeholders and are skipped.
+    HistCell totals() const
+    {
+        for (auto const &h : hists)
+        {
+            if (h.size() != 0)
+            {
+                return h.totals();
+            }
+        }
+        return {};
+    }
     double total_grad() const
     {
-        return hists.empty() ? 0.0 : hists[0].totals().sum_grad;
+        return totals().sum_grad;
     }
     double total_hess() const
     {
-        return hists.empty() ? 0.0 : hists[0].totals().sum_hess;
+        return totals().sum_hess;
     }
 };
 

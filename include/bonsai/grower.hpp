@@ -6,6 +6,7 @@
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
 #include <concepts>
+#include <random>
 #include <vector>
 
 namespace bonsai
@@ -38,7 +39,8 @@ template <NodeSplitFinder SplitterT = HistogramNodeSplitFinder> class DepthwiseG
                           row_index_view row_indices);
 
   private:
-    TreeConfig config_;
+    TreeConfig   config_;
+    std::mt19937 feature_rng_;
 };
 
 template <LevelSplitFinder SplitterT = HistogramLevelSplitFinder> class ObliviousGrower
@@ -50,7 +52,8 @@ template <LevelSplitFinder SplitterT = HistogramLevelSplitFinder> class Obliviou
                           row_index_view row_indices);
 
   private:
-    TreeConfig config_;
+    TreeConfig   config_;
+    std::mt19937 feature_rng_;
 };
 
 template <NodeSplitFinder SplitterT = HistogramNodeSplitFinder> class LeafwiseGrower
@@ -62,7 +65,8 @@ template <NodeSplitFinder SplitterT = HistogramNodeSplitFinder> class LeafwiseGr
                           row_index_view row_indices);
 
   private:
-    TreeConfig config_;
+    TreeConfig   config_;
+    std::mt19937 feature_rng_;
 };
 
 } // namespace bonsai

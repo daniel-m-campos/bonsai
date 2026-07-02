@@ -51,6 +51,7 @@ class HP:
     max_leaves: int
     min_data_in_leaf: int
     lambda_l2: float
+    feature_fraction: float
     max_bin: int
     random_seed: int
 
@@ -66,6 +67,7 @@ def hp_from(cfg: dict) -> HP:
         max_leaves=int(tree.get("max_leaves", 31)),
         min_data_in_leaf=int(tree.get("min_data_in_leaf", 20)),
         lambda_l2=float(tree.get("lambda_l2", 1.0)),
+        feature_fraction=float(tree.get("feature_fraction", 1.0)),
         max_bin=int(bin_mapper.get("max_bin", 255)),
         random_seed=int(booster.get("random_seed", 42)),
     )
@@ -82,7 +84,8 @@ def rmse(pred: np.ndarray, y: np.ndarray) -> float:
     return float(np.sqrt(np.mean((pred - y) ** 2)))
 
 
-def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str) -> Result:
+def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str,
+               hp_overrides: list[str] | None = None) -> Result:
     binary = REPO_ROOT / "build" / "src" / "bonsai"
     stem = f"{grower}_{sampler}"
     model = REPO_ROOT / "build" / f"_compare_model_{stem}.msgpack"
@@ -91,6 +94,8 @@ def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str) -> 
         "--set", f"dispatch.grower_name={grower}",
         "--set", f"dispatch.sampler_name={sampler}",
     ]
+    for ov in hp_overrides or []:
+        overrides += ["--set", ov]
     if sampler == "bernoulli":
         overrides += ["--set", f"sampler.subsample={BERNOULLI_P}"]
 
@@ -137,6 +142,7 @@ def run_xgboost(train_df, test_df, hp: HP) -> Result:
         "max_leaves": hp.max_leaves,
         "min_child_weight": hp.min_data_in_leaf,
         "reg_lambda": hp.lambda_l2,
+        "colsample_bytree": hp.feature_fraction,
         "max_bin": hp.max_bin,
         "tree_method": "hist",
         "seed": hp.random_seed,
@@ -165,6 +171,7 @@ def run_lightgbm(train_df, test_df, hp: HP) -> Result:
         "num_leaves": hp.max_leaves if hp.max_leaves > 0 else (1 << hp.max_depth) - 1,
         "min_data_in_leaf": hp.min_data_in_leaf,
         "lambda_l2": hp.lambda_l2,
+        "feature_fraction": hp.feature_fraction,
         "max_bin": hp.max_bin,
         "verbose": -1,
         "seed": hp.random_seed,
@@ -189,6 +196,7 @@ def run_catboost(train_df, test_df, hp: HP) -> Result:
         learning_rate=hp.learning_rate,
         depth=hp.max_depth,
         l2_leaf_reg=hp.lambda_l2,
+        rsm=hp.feature_fraction,
         random_seed=hp.random_seed,
         loss_function="RMSE",
         verbose=False,
@@ -222,9 +230,28 @@ def main() -> int:
     ap.add_argument("--config", required=True, type=pathlib.Path)
     ap.add_argument("--name", default=None,
                     help="report stem (defaults to config stem)")
+    ap.add_argument("--hp", action="append", default=[], metavar="SEC.KEY=VAL",
+                    help="hyperparameter override applied to bonsai (--set) and "
+                         "the mapped reference-library params, e.g. "
+                         "tree.feature_fraction=0.8")
+    ap.add_argument("--growers", default=",".join(BONSAI_GROWERS),
+                    help="comma-separated bonsai growers to run")
+    ap.add_argument("--samplers", default=",".join(BONSAI_SAMPLERS),
+                    help="comma-separated bonsai samplers to run")
     args = ap.parse_args()
 
     cfg = load_toml(args.config)
+    for ov in args.hp:
+        key, _, raw = ov.partition("=")
+        sec, _, name = key.partition(".")
+        try:
+            val: object = int(raw)
+        except ValueError:
+            try:
+                val = float(raw)
+            except ValueError:
+                val = raw
+        cfg.setdefault(sec, {})[name] = val
     hp = hp_from(cfg)
 
     train_path = REPO_ROOT / cfg["data"]["train"]
@@ -234,11 +261,11 @@ def main() -> int:
 
     results: dict[str, Result] = {}
 
-    for grower in BONSAI_GROWERS:
-        for sampler in BONSAI_SAMPLERS:
+    for grower in args.growers.split(","):
+        for sampler in args.samplers.split(","):
             label = f"bonsai ({grower}, {sampler})"
             print(f"{label} (n_iters={hp.n_iters})", flush=True)
-            results[label] = run_bonsai(args.config, hp, grower, sampler)
+            results[label] = run_bonsai(args.config, hp, grower, sampler, args.hp)
 
     print("xgboost", flush=True)
     results["xgboost"] = run_xgboost(train_df, test_df, hp)
