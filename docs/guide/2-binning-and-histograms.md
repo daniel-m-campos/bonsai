@@ -24,8 +24,8 @@ $c_0 < c_1 < \cdots < c_{k-1}$: bin $b$ holds values in $(c_{b-1}, c_b]$
 per-bin sums:
 
 ```math
-\text{cell}[b] = \Big(\textstyle\sum_i g_i,\; \sum_i h_i\Big)
-\quad\text{over rows } i \text{ in the node with } \operatorname{bin}(x_i) = b
+\text{cell}[b] = \Big(\sum_i g_i,\; \sum_i h_i\Big)
+\quad\text{over rows } i \text{ in the node with } \mathrm{bin}(x_i) = b
 ```
 
 A candidate split "$\le b$" needs the left-side sums $G_L, H_L$ — a prefix

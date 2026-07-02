@@ -14,14 +14,14 @@ From chapter 1, a leaf with sums $(G, H)$ achieves (up to a constant) loss
 reduction proportional to its **score**:
 
 ```math
-\operatorname{score}(G, H) = \frac{G^2}{H + \lambda}
+\mathrm{score}(G, H) = \frac{G^2}{H + \lambda}
 ```
 
 A split's **gain** is what the children score over the parent:
 
 ```math
-\text{gain} = \operatorname{score}(G_L, H_L) +
-\operatorname{score}(G_R, H_R) - \operatorname{score}(G, H)
+\text{gain} = \mathrm{score}(G_L, H_L) +
+\mathrm{score}(G_R, H_R) - \mathrm{score}(G, H)
 ```
 
 Intuition: $G^2$ rewards leaves whose gradients *agree* (a large sum of

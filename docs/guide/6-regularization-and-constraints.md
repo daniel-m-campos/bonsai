@@ -24,7 +24,7 @@ sum:
 ```math
 T(G, \alpha) = \begin{cases} G - \alpha & G > \alpha \\ G + \alpha & G < -\alpha \\ 0 & \text{otherwise} \end{cases}
 \qquad w^{\ast} = -\frac{T(G, \alpha)}{H + \lambda}, \quad
-\operatorname{score} = \frac{T(G, \alpha)^2}{H + \lambda}
+\mathrm{score} = \frac{T(G, \alpha)^2}{H + \lambda}
 ```
 
 so leaves with $|G| \le \alpha$ are exactly zero (sparsity), and

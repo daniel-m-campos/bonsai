@@ -21,8 +21,8 @@ Three classic flavors:
 Nothing beyond chapter 3. Every internal node already computed
 
 ```math
-\text{gain} = \operatorname{score}(G_L, H_L) +
-\operatorname{score}(G_R, H_R) - \operatorname{score}(G, H)
+\text{gain} = \mathrm{score}(G_L, H_L) +
+\mathrm{score}(G_R, H_R) - \mathrm{score}(G, H)
 ```
 
 when it was created. Then, over all internal nodes $v$ of all trees:

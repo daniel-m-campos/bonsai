@@ -86,8 +86,8 @@ logloss. Raw scores stay in link space throughout training; the sigmoid
 |---|---|---|---|---|
 | `mse` | $F - y$ | $1$ | mean | the reference path |
 | `logloss` | $p - y$ | $p(1-p)$ | log-odds | raw-score space; sigmoid at predict |
-| `mae` | $\operatorname{sign}(F - y)$ | $1$ | median | constant hessian — see below |
-| `huber` | $\operatorname{clamp}(F - y, \pm\delta)$ | $1$ | median | `[objective] huber_delta` |
+| `mae` | $\mathrm{sign}(F - y)$ | $1$ | median | constant hessian — see below |
+| `huber` | $\mathrm{clamp}(F - y, \pm\delta)$ | $1$ | median | `[objective] huber_delta` |
 | `quantile` | $1-\alpha$ if $F > y$, else $-\alpha$ | $1$ | $\alpha$-quantile | `[objective] quantile_alpha` |
 
 Constant-hessian caveat: for MAE/quantile,
