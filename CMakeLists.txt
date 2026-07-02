@@ -30,6 +30,22 @@ endif()
 # ---- Options ----------------------------------------------------------------
 
 option(BONSAI_TESTS "Build tests" ON)
+option(BONSAI_OPENMP "Enable OpenMP parallelism" ON)
+
+# ---- Parallelism ------------------------------------------------------------
+# Interface target consumed by every component that includes
+# bonsai/parallel.hpp. Without OpenMP the wrappers degrade to serial loops.
+
+add_library(bonsai_parallel INTERFACE)
+if(BONSAI_OPENMP)
+    find_package(OpenMP COMPONENTS CXX)
+    if(OpenMP_CXX_FOUND)
+        target_link_libraries(bonsai_parallel INTERFACE OpenMP::OpenMP_CXX)
+        target_compile_definitions(bonsai_parallel INTERFACE BONSAI_USE_OPENMP)
+    else()
+        message(STATUS "OpenMP not found; bonsai builds serial")
+    endif()
+endif()
 
 # ---- Dependencies via FetchContent ------------------------------------------
 

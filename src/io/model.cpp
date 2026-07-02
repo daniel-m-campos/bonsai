@@ -82,8 +82,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DispatchConfig, objective_name, grower_name,
                                    sampler_name)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(SamplerConfig, subsample)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(MetricsConfig, fit, eval)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ParallelConfig, n_threads)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Config, data, bin_mapper, tree_config, sampler,
-                                   booster_config, dispatch, metrics)
+                                   booster_config, dispatch, metrics, parallel)
 } // namespace bonsai
 
 namespace bonsai::io

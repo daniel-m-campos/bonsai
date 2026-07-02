@@ -162,7 +162,7 @@ def run_lightgbm(train_df, test_df, hp: HP) -> Result:
         "metric": "rmse",
         "learning_rate": hp.learning_rate,
         "max_depth": hp.max_depth,
-        "num_leaves": (1 << hp.max_depth) - 1,
+        "num_leaves": hp.max_leaves if hp.max_leaves > 0 else (1 << hp.max_depth) - 1,
         "min_data_in_leaf": hp.min_data_in_leaf,
         "lambda_l2": hp.lambda_l2,
         "max_bin": hp.max_bin,

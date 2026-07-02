@@ -7,6 +7,7 @@
 #include "bonsai/config/config.hpp"
 #include "bonsai/config/toml.hpp"
 #include "bonsai/detail/column_batch.hpp"
+#include "bonsai/parallel.hpp"
 #include "bonsai/types.hpp"
 
 namespace bonsai::cli
@@ -21,6 +22,8 @@ struct CommonOpts
 };
 
 // Load config from TOML (if path is given) and apply CLI overrides.
+// Also applies process-wide settings the resolved config dictates
+// (worker thread count) so every subcommand honors [parallel].
 inline Config resolve_config(CommonOpts const &opts)
 {
     Config cfg;
@@ -29,6 +32,7 @@ inline Config resolve_config(CommonOpts const &opts)
         cfg = config::load_toml(opts.config_path);
     }
     config::apply_overrides(cfg, opts.overrides);
+    parallel::set_n_threads(cfg.parallel.n_threads);
     return cfg;
 }
 

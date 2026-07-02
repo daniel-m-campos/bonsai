@@ -2,6 +2,7 @@
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/histogram.hpp"
+#include "bonsai/parallel.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
@@ -37,17 +38,44 @@ inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
 inline void populate_from_rows(Dataset const &ds, floats_view grad, floats_view hess,
                                SplitInput &node)
 {
+    // Gather grad/hess into node-row order once, so every feature's scan
+    // below reads them sequentially instead of re-walking the full arrays
+    // with scattered indices (n_features x full-array traffic otherwise).
+    static thread_local std::vector<float> ordered_grad;
+    static thread_local std::vector<float> ordered_hess;
+    size_t const n = node.rows.size();
+    ordered_grad.resize(n);
+    ordered_hess.resize(n);
+    // Capture raw pointers: naming the thread_local inside the parallel
+    // region would resolve to each worker's own (empty) vector.
+    float *const og = ordered_grad.data();
+    float *const oh = ordered_hess.data();
+    parallel::for_each_index(n,
+                             [&, og, oh](size_t k)
+                             {
+                                 row_id_t const r = node.rows[k];
+                                 og[k]            = grad[r];
+                                 oh[k]            = hess[r];
+                             });
+
     node.hists.reserve(ds.n_features());
     for (feature_id_t fid = 0; fid < ds.n_features(); ++fid)
     {
-        Histogram   h{ds.n_bins(fid)};
-        auto const &bins = ds.feature_bins(fid);
-        for (row_id_t r : node.rows)
-        {
-            h.add(bins[r], grad[r], hess[r]);
-        }
-        node.hists.push_back(std::move(h));
+        node.hists.emplace_back(ds.n_bins(fid));
     }
+    // Feature-parallel: each feature's histogram is owned by one thread and
+    // filled in row order, so results are bit-identical at any thread count.
+    parallel::for_each_index(ds.n_features(),
+                             [&, og, oh](size_t f)
+                             {
+                                 auto const  fid  = static_cast<feature_id_t>(f);
+                                 Histogram  &h    = node.hists[fid];
+                                 auto const &bins = ds.feature_bins(fid);
+                                 for (size_t k = 0; k < n; ++k)
+                                 {
+                                     h.add(bins[node.rows[k]], og[k], oh[k]);
+                                 }
+                             });
 }
 
 SplitInput make_root(Dataset const &ds, floats_view grad, floats_view hess,

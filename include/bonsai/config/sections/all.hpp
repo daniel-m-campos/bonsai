@@ -19,6 +19,7 @@
 #include "bonsai/config/sections/data.hpp"
 #include "bonsai/config/sections/dispatch.hpp"
 #include "bonsai/config/sections/metrics.hpp"
+#include "bonsai/config/sections/parallel.hpp"
 #include "bonsai/config/sections/sampler.hpp"
 #include "bonsai/config/sections/tree.hpp"
 
@@ -26,8 +27,8 @@ namespace bonsai::config::internal
 {
 
 inline constexpr auto all_sections = std::tuple{
-    data_section,    bin_mapper_section, tree_section,    sampler_section,
-    booster_section, dispatch_section,   metrics_section,
+    data_section,    bin_mapper_section, tree_section,     sampler_section,
+    booster_section, dispatch_section,   metrics_section,  parallel_section,
 };
 
 } // namespace bonsai::config::internal

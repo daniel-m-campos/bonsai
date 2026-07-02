@@ -5,6 +5,7 @@
 #include "bonsai/dataset.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/objective.hpp"
+#include "bonsai/parallel.hpp"
 #include "bonsai/sampler.hpp"
 #include "bonsai/types.hpp"
 #include <algorithm>
@@ -72,10 +73,9 @@ class Booster final : public IBooster
         auto [tree, leaf_values] =
             grower_.grow(train, grad_, hess_, {row_indices_.data(), n_selected});
 
-        for (size_t i = 0; i < scores_.size(); ++i)
-        {
-            scores_[i] += config_.learning_rate * leaf_values[i];
-        }
+        parallel::for_each_index(
+            scores_.size(),
+            [&](size_t i) { scores_[i] += config_.learning_rate * leaf_values[i]; });
 
         trees_.push_back(std::move(tree));
     }

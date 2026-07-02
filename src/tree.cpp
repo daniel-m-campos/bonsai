@@ -1,4 +1,5 @@
 #include "bonsai/tree.hpp"
+#include "bonsai/parallel.hpp"
 #include "bonsai/types.hpp"
 
 #include <cassert>
@@ -36,10 +37,8 @@ float DenseTree::walk_row(features_view X, row_id_t i) const
 void DenseTree::predict(features_view X, floats_out out) const
 {
     assert(X.extent(0) == out.size());
-    for (row_id_t i = 0; i < out.size(); ++i)
-    {
-        out[i] += walk_row(X, i);
-    }
+    parallel::for_each_index(out.size(), [&](size_t i)
+                             { out[i] += walk_row(X, static_cast<row_id_t>(i)); });
 }
 
 ObliviousTree::ObliviousTree(LevelSplits splits, LeafTable values)
@@ -67,10 +66,8 @@ float ObliviousTree::walk_row(features_view X, row_id_t i) const
 void ObliviousTree::predict(features_view X, floats_out out) const
 {
     assert(X.extent(0) == out.size());
-    for (row_id_t i = 0; i < out.size(); ++i)
-    {
-        out[i] += walk_row(X, i);
-    }
+    parallel::for_each_index(out.size(), [&](size_t i)
+                             { out[i] += walk_row(X, static_cast<row_id_t>(i)); });
 }
 
 } // namespace bonsai

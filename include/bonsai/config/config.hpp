@@ -5,6 +5,7 @@
 #include "bonsai/config/data_config.hpp"
 #include "bonsai/config/dispatch_config.hpp"
 #include "bonsai/config/metrics_config.hpp"
+#include "bonsai/config/parallel_config.hpp"
 #include "bonsai/config/sampler_config.hpp"
 #include "bonsai/config/tree_config.hpp"
 
@@ -20,7 +21,8 @@ struct Config
     BoosterConfig   booster_config;
     DispatchConfig  dispatch;
     MetricsConfig   metrics;
-    // ParallelConfig, IOConfig — added as components are designed.
+    ParallelConfig  parallel;
+    // IOConfig — added as components are designed.
 
     bool operator==(Config const &) const = default;
 };

@@ -1,6 +1,7 @@
 #include "bonsai/split.hpp"
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/histogram.hpp"
+#include "bonsai/parallel.hpp"
 #include "bonsai/types.hpp"
 #include <cstddef>
 #include <mdspan>
@@ -147,6 +148,21 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
     }
 }
 
+// Merge per-feature bests in feature order: strict > keeps the lowest
+// feature id on gain ties, matching the serial scan exactly.
+SplitOutput reduce_in_feature_order(std::vector<SplitOutput> const &per_feature)
+{
+    SplitOutput best;
+    for (auto const &cand : per_feature)
+    {
+        if (cand.valid && cand.gain > best.gain)
+        {
+            best = cand;
+        }
+    }
+    return best;
+}
+
 } // namespace
 
 SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
@@ -156,13 +172,16 @@ SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
     {
         return {};
     }
-    SplitOutput        best;
-    feature_id_t const n_features = input.hists.size();
-    for (feature_id_t fid = 0; fid < n_features; ++fid)
-    {
-        update_best_for_feature_for_node(input, fid, config, best);
-    }
-    return best;
+    feature_id_t const       n_features = input.hists.size();
+    std::vector<SplitOutput> per_feature(n_features);
+    parallel::for_each_index(n_features,
+                             [&](size_t fid)
+                             {
+                                 update_best_for_feature_for_node(
+                                     input, static_cast<feature_id_t>(fid), config,
+                                     per_feature[fid]);
+                             });
+    return reduce_in_feature_order(per_feature);
 }
 
 SplitOutput HistogramLevelSplitFinder::find(FrontierInput     frontier,
@@ -172,13 +191,16 @@ SplitOutput HistogramLevelSplitFinder::find(FrontierInput     frontier,
     {
         return {};
     }
-    SplitOutput        best;
-    feature_id_t const n_features = frontier.front().hists.size();
-    for (feature_id_t fid = 0; fid < n_features; ++fid)
-    {
-        update_best_for_feature_for_level(frontier, fid, config, best);
-    }
-    return best;
+    feature_id_t const       n_features = frontier.front().hists.size();
+    std::vector<SplitOutput> per_feature(n_features);
+    parallel::for_each_index(n_features,
+                             [&](size_t fid)
+                             {
+                                 update_best_for_feature_for_level(
+                                     frontier, static_cast<feature_id_t>(fid), config,
+                                     per_feature[fid]);
+                             });
+    return reduce_in_feature_order(per_feature);
 }
 
 } // namespace bonsai

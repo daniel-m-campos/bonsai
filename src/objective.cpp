@@ -1,4 +1,5 @@
 #include "bonsai/objective.hpp"
+#include "bonsai/parallel.hpp"
 #include "bonsai/types.hpp"
 #include <algorithm>
 #include <cassert>
@@ -18,11 +19,12 @@ void MSEObjective::compute(floats_view preds, floats_view targets, floats_out gr
     assert(targets.size() == grad.size());
     assert(grad.size() == hess.size());
 
-    for (size_t i = 0; i < preds.size(); ++i)
-    {
-        grad[i] = preds[i] - targets[i];
-        hess[i] = 1.0F;
-    }
+    parallel::for_each_index(preds.size(),
+                             [&](size_t i)
+                             {
+                                 grad[i] = preds[i] - targets[i];
+                                 hess[i] = 1.0F;
+                             });
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -59,13 +61,14 @@ void LogLossObjective::compute(floats_view scores, floats_view labels, floats_ou
     assert(labels.size() == grad.size());
     assert(grad.size() == hess.size());
 
-    for (size_t i = 0; i < scores.size(); ++i)
-    {
-        float const score = scores[i];
-        float const p     = 1.0F / (1.0F + std::exp(-score));
-        grad[i]           = p - labels[i];
-        hess[i]           = p * (1.0F - p);
-    }
+    parallel::for_each_index(scores.size(),
+                             [&](size_t i)
+                             {
+                                 float const score = scores[i];
+                                 float const p = 1.0F / (1.0F + std::exp(-score));
+                                 grad[i]       = p - labels[i];
+                                 hess[i]       = p * (1.0F - p);
+                             });
 }
 
 float LogLossObjective::eval(floats_view scores, floats_view labels)

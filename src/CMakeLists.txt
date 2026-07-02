@@ -27,7 +27,8 @@ target_include_directories(bonsai_tree PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
 
-target_link_libraries(bonsai_tree PUBLIC bonsai_data bonsai_split bonsai_warnings)
+target_link_libraries(bonsai_tree PUBLIC bonsai_data bonsai_split bonsai_parallel
+                                         bonsai_warnings)
 
 # ---- bonsai_split: SplitCandidate, SplitFinder concept, HistogramSplitFinder
 
@@ -39,7 +40,7 @@ target_include_directories(bonsai_split PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
 
-target_link_libraries(bonsai_split PUBLIC bonsai_data bonsai_warnings)
+target_link_libraries(bonsai_split PUBLIC bonsai_data bonsai_parallel bonsai_warnings)
 
 # ---- bonsai_objective: Objective concept, MSEObjective, LogLossObjective ----
 
@@ -53,7 +54,7 @@ target_include_directories(bonsai_objective PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
 
-target_link_libraries(bonsai_objective PUBLIC bonsai_warnings)
+target_link_libraries(bonsai_objective PUBLIC bonsai_parallel bonsai_warnings)
 
 # ---- bonsai_sampler: Sampler concept, AllRowsSampler ------------------------
 
@@ -86,6 +87,7 @@ target_link_libraries(bonsai_booster INTERFACE
     bonsai_split
     bonsai_objective
     bonsai_sampler
+    bonsai_parallel
     bonsai_warnings
 )
 
@@ -166,6 +168,7 @@ target_link_libraries(bonsai_cli PUBLIC
     bonsai_io
     bonsai_registry
     bonsai_config
+    bonsai_parallel
     bonsai_warnings
 )
 
