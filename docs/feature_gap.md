@@ -1,11 +1,12 @@
 # Feature gap: bonsai vs xgboost / lightgbm / catboost
 
-Regression-relevant features the reference libraries have and bonsai lacks,
-sorted by expected fit/predict impact on the benchmark datasets (California
-Housing, Year Prediction MSD). Categorical-variable features are out of scope
-by request. Engine-internal performance work (uint8 bins, row-major layouts,
-histogram pooling) is tracked separately — those aren't features one can
-"enable" in the reference libraries for an A/B.
+Features the reference libraries have and bonsai lacks, sorted by expected
+fit/predict impact on the benchmark datasets (California Housing, Year
+Prediction MSD). Everything below is in scope; rows whose A/B needs harness
+work first (a sparse or categorical dataset, an AUC metric) say so in their
+impact column. Engine-internal performance work (uint8 bins, row-major
+layouts, histogram pooling) is tracked separately — those aren't features
+one can "enable" in the reference libraries for an A/B.
 
 | # | Feature | xgboost | lightgbm | catboost | Expected impact | Status |
 |---|---------|---------|----------|----------|-----------------|--------|
@@ -17,13 +18,23 @@ histogram pooling) is tracked separately — those aren't features one can
 | 6 | Monotone constraints | `monotone_constraints` | same | same | Constraints can only cost RMSE on unconstrained benchmarks; capability parity | **landed** |
 | 7 | Interaction constraints | yes | yes | — | Same reasoning as monotone | **landed** |
 | 8 | DART boosting | `booster=dart` | `boosting=dart` | — | Fits *slower* (re-predicts per iter); rare RMSE gains | **landed** |
-| 9 | Sparse-input handling / EFB | yes | yes (EFB) | yes | Benchmarks are dense; nothing to enable or measure — stays out of scope until a sparse dataset exists in the harness | out of scope |
+| 9 | Feature importance (split count + gain) | `get_score` | `feature_importance` | `get_feature_importance` | No fit/predict impact; table-stakes introspection. Split-count is free; gain needs per-node gains stored at grow time | planned |
+| 10 | Leaf renewal for MAE/quantile | built in (adaptive trees) | `RenewTreeOutput` | built in | Closes the known ~10% MAE gap vs refs on MAE/quantile objectives (see results log §5) | planned |
+| 11 | Classification benchmark (AUC) | n/a (harness) | n/a | n/a | logloss objective exists but is only unit-tested; needs a live dataset (e.g. Higgs subset) + AUC column in compare.py | planned |
+| 12 | Categorical features | one-hot / partition | native (Fisher) | ordered target stats | Biggest real-world capability gap; needs a categorical dataset (e.g. Adult, Amazon) in the harness first | planned |
+| 13 | Prediction extras: staged predict, `pred_leaf`, tree dump | yes | yes | yes | Debug/introspection; small, each independent | planned |
+| 14 | Warm start / training continuation | `xgb_model` | `init_model` | `init_model` | Fit latency for iterative workflows; booster already saves/loads full state | planned |
+| 15 | TreeSHAP (`pred_contribs`) | yes | yes | yes | Modern attribution standard; real algorithm, sized as its own project | planned |
+| 16 | Multi-class / softmax objective | yes | yes | yes | K-output leaves touch Objective, Booster, and Tree — largest structural change | planned |
+| 17 | Sparse-input handling / EFB | yes | yes (EFB) | yes | Needs a sparse dataset in the harness to enable or measure anything | planned |
 
 Measurement protocol, per implemented feature: enable the equivalent knob in
 bonsai and every reference library that has it, run
 `scripts/compare.py` on both configs, and record RMSE and fit/predict
 seconds deltas vs the feature-off baseline
-(`benchmarks/results/{msd,ch}_final.*`).
+(`benchmarks/results/{msd,ch}_final.*`). Features without a knob to A/B
+(importance, prediction extras) are instead verified for agreement against
+the reference libraries' outputs on the same model shape.
 
 ## Results log
 
