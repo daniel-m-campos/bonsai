@@ -9,9 +9,11 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -95,6 +97,29 @@ class Model
     void save(std::string const &path) const
     {
         bonsai::io::save_booster(*booster_, path, mappers_, cfg_);
+    }
+
+    // type: "gain" (total loss reduction) or "split" (split count),
+    // padded to the trained feature count.
+    nb::ndarray<nb::numpy, double> feature_importance(std::string const &type) const
+    {
+        bonsai::ImportanceType const t = [&]
+        {
+            if (type == "gain")
+            {
+                return bonsai::ImportanceType::gain;
+            }
+            if (type == "split")
+            {
+                return bonsai::ImportanceType::split;
+            }
+            throw std::invalid_argument("importance type must be 'gain' or 'split'");
+        }();
+        auto *out = new std::vector<double>(booster_->feature_importance(t));
+        out->resize(std::max(out->size(), mappers_.size()), 0.0);
+        nb::capsule owner(out, [](void *p) noexcept
+                          { delete static_cast<std::vector<double> *>(p); });
+        return {out->data(), {out->size()}, owner};
     }
 
     size_t n_iters() const
@@ -181,6 +206,8 @@ NB_MODULE(_bonsai, m)
 
     nb::class_<Model>(m, "Model")
         .def("predict", &Model::predict, nb::arg("X"))
+        .def("feature_importance", &Model::feature_importance,
+             nb::arg("type") = "gain")
         .def("save", &Model::save, nb::arg("path"))
         .def_prop_ro("n_iters", &Model::n_iters)
         .def_prop_ro("config_toml", &Model::config_toml);

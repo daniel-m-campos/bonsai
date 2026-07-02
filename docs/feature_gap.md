@@ -18,7 +18,7 @@ one can "enable" in the reference libraries for an A/B.
 | 6 | Monotone constraints | `monotone_constraints` | same | same | Constraints can only cost RMSE on unconstrained benchmarks; capability parity | **landed** |
 | 7 | Interaction constraints | yes | yes | — | Same reasoning as monotone | **landed** |
 | 8 | DART boosting | `booster=dart` | `boosting=dart` | — | Fits *slower* (re-predicts per iter); rare RMSE gains | **landed** |
-| 9 | Feature importance (split count + gain) | `get_score` | `feature_importance` | `get_feature_importance` | No fit/predict impact; table-stakes introspection. Split-count is free; gain needs per-node gains stored at grow time | planned |
+| 9 | Feature importance (split count + gain) | `get_score` | `feature_importance` | `get_feature_importance` | No fit/predict impact; table-stakes introspection. Split-count is free; gain needs per-node gains stored at grow time | **landed** |
 | 10 | Leaf renewal for MAE/quantile | built in (adaptive trees) | `RenewTreeOutput` | built in | Closes the known ~10% MAE gap vs refs on MAE/quantile objectives (see results log §5) | planned |
 | 11 | Classification benchmark (AUC) | n/a (harness) | n/a | n/a | logloss objective exists but is only unit-tested; needs a live dataset (e.g. Higgs subset) + AUC column in compare.py | planned |
 | 12 | Categorical features | one-hot / partition | native (Fisher) | ordered target stats | Biggest real-world capability gap; needs a categorical dataset (e.g. Adult, Amazon) in the harness first | planned |
@@ -214,3 +214,25 @@ the control.
 | xgboost (dart) | 0.6255 | 2.9 |
 | lightgbm (dart) | 0.7022 | 1.1 |
 | catboost (control) | 0.5147 | 0.3 |
+
+### 9. Feature importance — `bonsai importance` / `feature_importances_` (landed)
+
+Growers stamp each split's gain at grow time (`split_gains` on
+`DenseTree`, `level_gains` on `ObliviousTree`, serialized — format v5);
+`IBooster::feature_importance(type)` accumulates over trees. Surfaces:
+CLI `bonsai importance --model m.msgpack`, Python
+`Model.feature_importance(type)`, `BonsaiRegressor.importance()` and
+sklearn-style normalized `feature_importances_`.
+
+Agreement check (the knob-less protocol) on California Housing:
+bonsai and lightgbm agree on **both** types — including their
+disagreement with each other. Gain crowns `MedInc`; split-count crowns
+geography (`Longitude`/`Latitude` take ~2x more splits at lower gain
+each), the textbook case for preferring gain. Asserted in
+`python/tests/test_bindings.py::test_feature_importance_agreement`.
+
+| feature | bonsai gain | bonsai split | lgbm split |
+|---|---|---|---|
+| MedInc | 113,908 (top) | 1,129 | 764 |
+| Longitude | 22,255 | **1,900** (top) | **1,144** (top) |
+| Latitude | 19,821 | 1,889 | 1,142 |

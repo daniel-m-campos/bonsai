@@ -364,3 +364,35 @@ TEST_CASE("Booster: DART is deterministic per seed", "[booster][dart][determinis
     };
     CHECK(run() == run());
 }
+
+TEST_CASE("Booster: feature_importance accumulates gain and split counts",
+          "[booster][importance]")
+{
+    auto const    batch = separable_batch();
+    Dataset const train = make_dataset(batch);
+
+    Config cfg = tiny_cfg();
+    MseBooster<DepthwiseGrower<>> b{cfg};
+    for (int i = 0; i < 5; ++i)
+    {
+        b.update_one_iter(train);
+    }
+
+    auto const gain  = b.feature_importance(ImportanceType::gain);
+    auto const split = b.feature_importance(ImportanceType::split);
+    REQUIRE(!gain.empty());
+    REQUIRE(!split.empty());
+    // Single-feature dataset: everything lands on feature 0.
+    CHECK(gain[0] > 0.0);
+    CHECK(split[0] >= 5.0); // at least the root split of each of 5 trees
+    // Split count equals the total number of internal nodes across trees.
+    double n_internal = 0;
+    for (auto const &t : b.trees())
+    {
+        for (auto const &n : t.nodes())
+        {
+            n_internal += DenseTree::is_leaf(n) ? 0 : 1;
+        }
+    }
+    CHECK(split[0] == n_internal);
+}

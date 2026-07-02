@@ -180,6 +180,11 @@ TEMPLATE_LIST_TEST_CASE("ModelIo: save -> load -> predict reproduces predictions
         // we stored every float (init_score, learning_rate, leaf values).
         REQUIRE(y_after[i] == y_before[i]);
     }
+
+    // Split gains round-trip too: importance identical on both sides.
+    auto const gain_before = booster->feature_importance(ImportanceType::gain);
+    auto const gain_after  = loaded.booster->feature_importance(ImportanceType::gain);
+    REQUIRE(gain_before == gain_after);
 }
 
 TEST_CASE("ModelIo: full Config round-trips via save/load", "[model_io][config]")

@@ -18,6 +18,15 @@
 namespace bonsai
 {
 
+// How to score a feature's contribution across the ensemble:
+//   split — number of times the feature is chosen for a split
+//   gain  — total loss reduction from those splits (usually what you want)
+enum class ImportanceType : uint8_t
+{
+    split,
+    gain,
+};
+
 class IBooster
 {
   public:
@@ -26,6 +35,10 @@ class IBooster
     virtual float  eval(features_view X, floats_view labels) const  = 0;
     virtual void   predict(features_view X, floats_out y_hat) const = 0;
     virtual size_t n_iters() const                                  = 0;
+
+    // Per-feature importance summed over all trees, sized max feature id + 1
+    // (callers pad to the full feature count).
+    virtual std::vector<double> feature_importance(ImportanceType type) const = 0;
 
     // Incremental prediction support for early stopping: accumulate only the
     // newest tree's (shrinkage-scaled) contribution into `scores`, a buffer
@@ -108,6 +121,47 @@ inline void accumulate_train_contribution(ObliviousTree const &tree,
             }
             out[r] += tree.leaf_table()[index];
         });
+}
+
+// One tree's contribution to per-feature importance.
+inline void accumulate_importance(DenseTree const &tree, ImportanceType type,
+                                  std::vector<double> &out)
+{
+    auto const &nodes = tree.nodes();
+    auto const &gains = tree.split_gains();
+    for (size_t i = 0; i < nodes.size(); ++i)
+    {
+        if (DenseTree::is_leaf(nodes[i]))
+        {
+            continue;
+        }
+        size_t const f = nodes[i].feature_id;
+        if (out.size() <= f)
+        {
+            out.resize(f + 1, 0.0);
+        }
+        out[f] += type == ImportanceType::split
+                      ? 1.0
+                      : (i < gains.size() ? gains[i] : 0.0F);
+    }
+}
+
+inline void accumulate_importance(ObliviousTree const &tree, ImportanceType type,
+                                  std::vector<double> &out)
+{
+    auto const &splits = tree.splits();
+    auto const &gains  = tree.level_gains();
+    for (size_t lvl = 0; lvl < splits.size(); ++lvl)
+    {
+        size_t const f = splits[lvl].feature_id;
+        if (out.size() <= f)
+        {
+            out.resize(f + 1, 0.0);
+        }
+        out[f] += type == ImportanceType::split
+                      ? 1.0
+                      : (lvl < gains.size() ? gains[lvl] : 0.0F);
+    }
 }
 
 } // namespace internal
@@ -249,6 +303,16 @@ class Booster final : public IBooster
     size_t n_iters() const override
     {
         return trees_.size();
+    }
+
+    std::vector<double> feature_importance(ImportanceType type) const override
+    {
+        std::vector<double> out;
+        for (auto const &tree : trees_)
+        {
+            internal::accumulate_importance(tree, type, out);
+        }
+        return out;
     }
 
     float score_base() const override

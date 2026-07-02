@@ -109,6 +109,15 @@ void register_bench(CLI::App &app, bonsai::cli::BenchOpts &opts,
         });
 }
 
+void register_importance(CLI::App &app, bonsai::cli::ImportanceOpts &opts, int &rc)
+{
+    auto *cmd = app.add_subcommand(
+        "importance", "Print per-feature gain and split-count importance");
+    cmd->add_option("--model", opts.model_path, "Trained model (.msgpack)")
+        ->required();
+    cmd->callback([&] { rc = bonsai::cli::run_importance(opts); });
+}
+
 void register_info(CLI::App &app, int &rc)
 {
     auto *cmd = app.add_subcommand(
@@ -154,6 +163,8 @@ int main(int argc, char *argv[])
     std::vector<std::string> bench_kvs;
     register_bench(app, bench, bench_kvs, rc);
 
+    ImportanceOpts importance;
+    register_importance(app, importance, rc);
     register_info(app, rc);
     register_params(app, rc);
 

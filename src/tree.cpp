@@ -10,8 +10,8 @@
 namespace bonsai
 {
 
-DenseTree::DenseTree(Nodes nodes, Params params)
-    : nodes_(std::move(nodes)), params_(params)
+DenseTree::DenseTree(Nodes nodes, Params params, std::vector<float> split_gains)
+    : nodes_(std::move(nodes)), params_(params), split_gains_(std::move(split_gains))
 {
 }
 
@@ -41,9 +41,11 @@ void DenseTree::predict(features_view X, floats_out out) const
                              { out[i] += walk_row(X, static_cast<row_id_t>(i)); });
 }
 
-ObliviousTree::ObliviousTree(LevelSplits splits, LeafTable values)
+ObliviousTree::ObliviousTree(LevelSplits splits, LeafTable values,
+                             std::vector<float> level_gains)
     : splits_(std::move(splits)), leaf_table_(std::move(values)),
-      params_{.depth = splits_.size(), .n_leaves = leaf_table_.size()}
+      params_{.depth = splits_.size(), .n_leaves = leaf_table_.size()},
+      level_gains_(std::move(level_gains))
 {
     assert(leaf_table_.size() == (1ULL << splits_.size()));
 }

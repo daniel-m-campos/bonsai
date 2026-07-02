@@ -409,3 +409,26 @@ TEST_CASE("DepthwiseGrower: interaction constraints keep groups on separate path
         stack.push_back({n.right, used});
     }
 }
+
+TEST_CASE("DepthwiseGrower: split gains are stamped on internal nodes",
+          "[grower][importance]")
+{
+    auto              in = separable_4row();
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .max_depth        = 1,
+                          .min_data_in_leaf = 0};
+    DepthwiseGrower<> grower{cfg};
+    auto [tree, values] = grower.grow(in.built.ds, in.grad, in.hess, in.rows);
+
+    auto const &gains = tree.split_gains();
+    REQUIRE(gains.size() == tree.nodes().size());
+    CHECK(gains[0] > 0.0F); // root split has positive gain
+    for (size_t i = 0; i < tree.nodes().size(); ++i)
+    {
+        if (DenseTree::is_leaf(tree.nodes()[i]))
+        {
+            CHECK(gains[i] == 0.0F);
+        }
+    }
+}

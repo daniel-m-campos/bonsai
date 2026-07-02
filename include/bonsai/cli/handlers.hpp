@@ -35,10 +35,16 @@ struct BenchOpts
     std::string model_path; // optional output
 };
 
+struct ImportanceOpts
+{
+    std::string model_path;
+};
+
 int run_fit(FitOpts const &opts);
 int run_predict(PredictOpts const &opts);
 int run_eval(EvalOpts const &opts);
 int run_bench(BenchOpts const &opts);
+int run_importance(ImportanceOpts const &opts);
 int run_info();
 int run_params();
 

@@ -154,6 +154,7 @@ add_library(bonsai_cli OBJECT
     cli/predict.cpp
     cli/eval.cpp
     cli/bench.cpp
+    cli/importance.cpp
 )
 
 target_include_directories(bonsai_cli PUBLIC

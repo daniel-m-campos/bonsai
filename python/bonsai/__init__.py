@@ -74,6 +74,19 @@ class BonsaiRegressor:
             raise RuntimeError("fit() or load first")
         return np.asarray(self._model.predict(_as_2d_f32(X)))
 
+    def importance(self, type: str = "gain") -> np.ndarray:
+        """Raw per-feature importance: total split gain or split count."""
+        if self._model is None:
+            raise RuntimeError("fit() first")
+        return np.asarray(self._model.feature_importance(type))
+
+    @property
+    def feature_importances_(self) -> np.ndarray:
+        """Gain importance normalized to sum to 1 (sklearn convention)."""
+        raw = self.importance("gain")
+        total = raw.sum()
+        return raw / total if total > 0 else raw
+
     def save(self, path: str) -> None:
         if self._model is None:
             raise RuntimeError("fit() before save()")

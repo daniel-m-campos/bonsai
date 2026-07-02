@@ -308,6 +308,7 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
                          DenseTree::Nodes &nodes, size_t &n_leaves,
                          train_leaf_values &values, feature_view selected,
                          std::vector<bin_id_t>    &split_bins,
+                         std::vector<float>       &split_gains,
                          interaction_groups const &groups)
 {
     for (node_id_t i = 0; i < current.size(); ++i)
@@ -325,6 +326,8 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         nodes.emplace_back(DenseTree::leaf(0.0F));
         split_bins.resize(nodes.size(), 0);
         split_bins[node.id] = split.bin_id;
+        split_gains.resize(nodes.size(), 0.0F);
+        split_gains[node.id] = static_cast<float>(split.gain);
 
         float const threshold = ds.mappers()[split.feature_id].cuts()[split.bin_id];
         nodes[node.id] = DenseTree::internal(split.feature_id, threshold, left_id,
@@ -424,6 +427,7 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
     std::vector<SplitInput>  next;
     std::vector<SplitOutput> splits;
     std::vector<bin_id_t>    split_bins(1, 0);
+    std::vector<float>       split_gains(1, 0.0F);
     auto const               selected =
         sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
     current.push_back(make_root(ds, grad, hess, row_indices, selected));
@@ -439,7 +443,7 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
             splits.push_back(SplitterT::find(input, config_));
         }
         update_nodes(ds, grad, hess, config_, current, next, splits, nodes, n_leaves,
-                     values, selected, split_bins, interaction_groups_);
+                     values, selected, split_bins, split_gains, interaction_groups_);
         if (current.empty())
         {
             break;
@@ -452,8 +456,10 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
         finalize_as_leaf(nodes, node, config_, n_leaves, values);
     }
     route_unsampled(ds, nodes, split_bins, row_indices, values);
+    split_gains.resize(nodes.size(), 0.0F);
 
-    return {.tree   = Tree(std::move(nodes), {.depth = depth, .n_leaves = n_leaves}),
+    return {.tree   = Tree(std::move(nodes), {.depth = depth, .n_leaves = n_leaves},
+                           std::move(split_gains)),
             .values = std::move(values)};
 }
 
@@ -490,6 +496,7 @@ auto ObliviousGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
     std::vector<SplitInput> frontier;
     std::vector<SplitInput> next;
     std::vector<bin_id_t>   level_bins;
+    std::vector<float>      level_gains;
     auto const              selected =
         sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
     frontier.push_back(make_root(ds, grad, hess, row_indices, selected));
@@ -507,6 +514,7 @@ auto ObliviousGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
                                 .threshold    = threshold,
                                 .default_left = split.default_left});
         level_bins.push_back(split.bin_id);
+        level_gains.push_back(static_cast<float>(split.gain));
         next.reserve(frontier.size() * 2);
         for (auto &node : frontier)
         {
@@ -569,7 +577,8 @@ auto ObliviousGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
             });
     }
 
-    return {.tree   = Tree(std::move(level_splits), std::move(leaf_table)),
+    return {.tree   = Tree(std::move(level_splits), std::move(leaf_table),
+                           std::move(level_gains)),
             .values = std::move(values)};
 }
 
@@ -603,6 +612,7 @@ auto LeafwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
     std::vector<Candidate>  heap;
     std::vector<SplitInput> pending;
     std::vector<bin_id_t>   split_bins(1, 0);
+    std::vector<float>      split_gains(1, 0.0F);
 
     auto const selected =
         sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
@@ -638,6 +648,8 @@ auto LeafwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
         nodes.emplace_back(DenseTree::leaf(0.0F));
         split_bins.resize(nodes.size(), 0);
         split_bins[c.node.id] = c.split.bin_id;
+        split_gains.resize(nodes.size(), 0.0F);
+        split_gains[c.node.id] = static_cast<float>(c.split.gain);
 
         float const threshold = ds.mappers()[c.split.feature_id].cuts()[c.split.bin_id];
         nodes[c.node.id] = DenseTree::internal(c.split.feature_id, threshold, left_id,
@@ -681,8 +693,10 @@ auto LeafwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
         finalize_as_leaf(nodes, leaf, config_, n_leaves, values);
     }
     route_unsampled(ds, nodes, split_bins, row_indices, values);
+    split_gains.resize(nodes.size(), 0.0F);
 
-    return {.tree   = Tree(std::move(nodes), {.depth = depth, .n_leaves = n_leaves}),
+    return {.tree   = Tree(std::move(nodes), {.depth = depth, .n_leaves = n_leaves},
+                           std::move(split_gains)),
             .values = std::move(values)};
 }
 

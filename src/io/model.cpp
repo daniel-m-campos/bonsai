@@ -101,7 +101,7 @@ namespace
 using json = nlohmann::json;
 
 constexpr std::string_view k_magic          = "bonsai01";
-constexpr uint32_t         k_format_version = 4;
+constexpr uint32_t         k_format_version = 5;
 
 // ---- Tree <-> JSON --------------------------------------------------------
 
@@ -109,6 +109,7 @@ json tree_to_json(DenseTree const &t)
 {
     json out     = t.params();
     out["nodes"] = t.nodes();
+    out["gains"] = t.split_gains();
     return out;
 }
 
@@ -116,7 +117,8 @@ template <typename TreeT> TreeT tree_from_json(json const &j);
 
 template <> DenseTree tree_from_json<DenseTree>(json const &j)
 {
-    return DenseTree{j.at("nodes").get<DenseTree::Nodes>(), j.get<DenseTree::Params>()};
+    return DenseTree{j.at("nodes").get<DenseTree::Nodes>(), j.get<DenseTree::Params>(),
+                     j.at("gains").get<std::vector<float>>()};
 }
 
 json tree_to_json(ObliviousTree const &t)
@@ -124,6 +126,7 @@ json tree_to_json(ObliviousTree const &t)
     json out      = t.params();
     out["splits"] = t.splits();
     out["leaves"] = t.leaf_table();
+    out["gains"]  = t.level_gains();
     return out;
 }
 
@@ -132,6 +135,7 @@ template <> ObliviousTree tree_from_json<ObliviousTree>(json const &j)
     return ObliviousTree{
         j.at("splits").get<ObliviousTree::LevelSplits>(),
         j.at("leaves").get<ObliviousTree::LeafTable>(),
+        j.at("gains").get<std::vector<float>>(),
     };
 }
 

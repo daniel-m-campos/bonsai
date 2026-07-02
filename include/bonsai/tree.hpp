@@ -50,7 +50,10 @@ class DenseTree
         size_t n_leaves{};
     };
 
-    DenseTree(Nodes nodes, Params params);
+    // split_gains: per-node split gain, indexed by node id (0 for leaves).
+    // Optional so hand-built test trees stay terse; empty means "unknown"
+    // and gain-based feature importance reports 0 for this tree.
+    DenseTree(Nodes nodes, Params params, std::vector<float> split_gains = {});
 
     static Node leaf(float value)
     {
@@ -97,11 +100,17 @@ class DenseTree
         return nodes_;
     }
 
+    std::vector<float> const &split_gains() const
+    {
+        return split_gains_;
+    }
+
   private:
     float walk_row(features_view X, row_id_t i) const;
 
-    Nodes  nodes_;
-    Params params_;
+    Nodes              nodes_;
+    Params             params_;
+    std::vector<float> split_gains_;
 };
 
 class ObliviousTree
@@ -123,7 +132,9 @@ class ObliviousTree
         size_t n_leaves{};
     };
 
-    ObliviousTree(LevelSplits splits, LeafTable values);
+    // level_gains: split gain per level; empty = unknown (see DenseTree).
+    ObliviousTree(LevelSplits splits, LeafTable values,
+                  std::vector<float> level_gains = {});
 
     // DART normalization: multiply every leaf contribution by `factor`.
     void scale_leaves(float factor)
@@ -152,12 +163,18 @@ class ObliviousTree
         return leaf_table_;
     }
 
+    std::vector<float> const &level_gains() const
+    {
+        return level_gains_;
+    }
+
   private:
     float walk_row(features_view X, row_id_t i) const;
 
-    LevelSplits splits_;
-    LeafTable   leaf_table_;
-    Params      params_;
+    LevelSplits        splits_;
+    LeafTable          leaf_table_;
+    Params             params_;
+    std::vector<float> level_gains_;
 };
 
 } // namespace bonsai

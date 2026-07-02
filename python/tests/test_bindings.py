@@ -85,9 +85,38 @@ def test_bad_param_raises():
         raise AssertionError("expected a config error")
 
 
+def test_feature_importance_agreement():
+    """bonsai and lightgbm agree on California Housing for BOTH importance
+    types — including their disagreement with each other: gain crowns
+    MedInc (feature 0), while split-count crowns geography (lat/long,
+    features 6/7), the textbook example of why gain is the better default."""
+    import lightgbm as lgb
+
+    Xtr, ytr = load_csv(TRAIN_CSV)
+    m = bonsai.BonsaiRegressor(**CH_PARAMS).fit(Xtr, ytr)
+
+    gain = m.importance("gain")
+    split = m.importance("split")
+    assert gain.shape == (Xtr.shape[1],)
+    assert int(np.argmax(gain)) == 0, gain
+    assert int(np.argmax(split)) in (6, 7), split
+
+    fi = m.feature_importances_
+    assert abs(float(fi.sum()) - 1.0) < 1e-6
+    assert int(np.argmax(fi)) == 0
+
+    lgbm = lgb.train(
+        {"objective": "regression", "verbose": -1, "max_bin": 255},
+        lgb.Dataset(Xtr, label=ytr), num_boost_round=200,
+    )
+    assert int(np.argmax(lgbm.feature_importance("gain"))) == 0
+    assert int(np.argmax(lgbm.feature_importance("split"))) in (6, 7)
+
+
 if __name__ == "__main__":
     test_fit_predict_rmse()
     test_parity_with_cli()
     test_early_stopping_stops()
     test_bad_param_raises()
+    test_feature_importance_agreement()
     print("all binding tests passed")
