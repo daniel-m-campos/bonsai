@@ -72,6 +72,18 @@ class DenseTree
         return n.feature_id == k_leaf_flag;
     }
 
+    // DART normalization: multiply every leaf contribution by `factor`.
+    void scale_leaves(float factor)
+    {
+        for (auto &n : nodes_)
+        {
+            if (is_leaf(n))
+            {
+                n.threshold_or_value *= factor;
+            }
+        }
+    }
+
     // Accumulates into out; caller initializes (e.g. to zero or to a bias).
     void predict(features_view X, floats_out out) const;
 
@@ -112,6 +124,15 @@ class ObliviousTree
     };
 
     ObliviousTree(LevelSplits splits, LeafTable values);
+
+    // DART normalization: multiply every leaf contribution by `factor`.
+    void scale_leaves(float factor)
+    {
+        for (auto &v : leaf_table_)
+        {
+            v *= factor;
+        }
+    }
 
     // Accumulates into out; caller initializes (e.g. to zero or to a bias).
     void predict(features_view X, floats_out out) const;

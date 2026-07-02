@@ -17,6 +17,7 @@
 #include "bonsai/cli/common.hpp"
 #include "bonsai/config/config.hpp"
 #include "bonsai/config/data_config.hpp"
+#include "bonsai/config/errors.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/io/csv.hpp"
@@ -164,6 +165,13 @@ std::unique_ptr<IBooster> train_with_progress(Config const           &cfg,
     // contributions) keep the per-iteration eval O(rows), not O(rows*trees).
     auto const es_rounds = cfg.booster_config.early_stopping_rounds;
     bool const es_enabled = es_rounds > 0 && loaded.valid.has_value();
+    if (es_enabled && cfg.booster_config.dart_drop_rate > 0.0F)
+    {
+        // DART rescales earlier trees each iteration, which invalidates the
+        // incrementally accumulated valid scores below.
+        throw ConfigError("early_stopping_rounds cannot be combined with "
+                          "dart_drop_rate");
+    }
     std::vector<float> es_scores;
     float              best_loss = 0.0F;
     uint32_t           best_iter = 0;

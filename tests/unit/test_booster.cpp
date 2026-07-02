@@ -306,3 +306,61 @@ TEMPLATE_LIST_TEST_CASE("Booster: n_iters tracks update count", "[booster][n_ite
     booster.update_one_iter(train);
     CHECK(booster.n_iters() == 2);
 }
+
+TEST_CASE("Booster: DART trains, stays finite, and differs from plain GBDT",
+          "[booster][dart]")
+{
+    auto const    batch = separable_batch();
+    Dataset const train = make_dataset(batch);
+    auto const    raw   = to_raw(batch);
+
+    Config cfg                          = tiny_cfg();
+    cfg.booster_config.learning_rate    = 0.3F;
+    Config dart_cfg                     = cfg;
+    dart_cfg.booster_config.dart_drop_rate = 0.5F;
+
+    MseBooster<DepthwiseGrower<>> plain{cfg};
+    MseBooster<DepthwiseGrower<>> dart{dart_cfg};
+    for (int i = 0; i < 10; ++i)
+    {
+        plain.update_one_iter(train);
+        dart.update_one_iter(train);
+    }
+
+    std::vector<float> y_plain(raw.n_rows);
+    std::vector<float> y_dart(raw.n_rows);
+    plain.predict(raw.view(), y_plain);
+    dart.predict(raw.view(), y_dart);
+
+    bool differs = false;
+    for (size_t i = 0; i < raw.n_rows; ++i)
+    {
+        REQUIRE(std::isfinite(y_dart[i]));
+        differs |= y_dart[i] != y_plain[i];
+    }
+    CHECK(differs); // dropout must have fired at rate 0.5 over 10 iters
+}
+
+TEST_CASE("Booster: DART is deterministic per seed", "[booster][dart][determinism]")
+{
+    auto const    batch = separable_batch();
+    Dataset const train = make_dataset(batch);
+    auto const    raw   = to_raw(batch);
+
+    Config cfg                          = tiny_cfg();
+    cfg.booster_config.dart_drop_rate   = 0.5F;
+    cfg.booster_config.random_seed      = 123;
+
+    auto run = [&]
+    {
+        MseBooster<DepthwiseGrower<>> b{cfg};
+        for (int i = 0; i < 8; ++i)
+        {
+            b.update_one_iter(train);
+        }
+        std::vector<float> y(raw.n_rows);
+        b.predict(raw.view(), y);
+        return y;
+    };
+    CHECK(run() == run());
+}

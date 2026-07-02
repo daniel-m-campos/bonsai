@@ -56,6 +56,7 @@ class HP:
     top_rate: float
     other_rate: float
     early_stopping_rounds: int
+    dart_drop_rate: float
     objective: str
     huber_delta: float
     quantile_alpha: float
@@ -84,6 +85,7 @@ def hp_from(cfg: dict) -> HP:
         top_rate=float(sampler.get("top_rate", 0.2)),
         other_rate=float(sampler.get("other_rate", 0.1)),
         early_stopping_rounds=int(booster.get("early_stopping_rounds", 0)),
+        dart_drop_rate=float(booster.get("dart_drop_rate", 0.0)),
         objective=str(dispatch.get("objective_name", "mse")),
         huber_delta=float(objective.get("huber_delta", 1.0)),
         quantile_alpha=float(objective.get("quantile_alpha", 0.5)),
@@ -225,6 +227,8 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
         "max_bin": hp.max_bin,
         "tree_method": "hist",
         "seed": hp.random_seed,
+        **({"booster": "dart", "rate_drop": hp.dart_drop_rate,
+            "normalize_type": "tree"} if hp.dart_drop_rate > 0 else {}),
         **({"monotone_constraints": "(" + ",".join(
                 str(c) for c in padded_constraints(hp, len(feature_cols))) + ")"}
            if hp.monotone_constraints else {}),
@@ -275,6 +279,8 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
         "max_bin": hp.max_bin,
         "verbose": -1,
         "seed": hp.random_seed,
+        **({"boosting": "dart", "drop_rate": hp.dart_drop_rate}
+           if hp.dart_drop_rate > 0 else {}),
         **({"monotone_constraints": padded_constraints(hp, len(feature_cols))}
            if hp.monotone_constraints else {}),
         **({"interaction_constraints": hp.interaction_constraints}

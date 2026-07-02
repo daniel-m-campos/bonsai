@@ -16,6 +16,9 @@ struct BoosterConfig
     // 0 = off; else stop when the first valid set's objective hasn't improved
     // for this many iterations, and keep only the best iteration's trees.
     uint32_t early_stopping_rounds = 0;
+    // DART: probability of dropping each existing tree per iteration.
+    // 0 = plain gradient boosting. Incompatible with early stopping.
+    float dart_drop_rate = 0.0F;
 
     bool operator==(BoosterConfig const &) const = default;
 };

@@ -16,7 +16,7 @@ histogram pooling) is tracked separately — those aren't features one can
 | 5 | Robust objectives (Huber / MAE / quantile) | `reg:pseudohubererror` etc. | `huber`, `mae`, `quantile` | `Huber`, `MAE`, `Quantile` | None on RMSE-scored benchmarks (MSE is the matched loss); MAE column added for these | **landed** |
 | 6 | Monotone constraints | `monotone_constraints` | same | same | Constraints can only cost RMSE on unconstrained benchmarks; capability parity | **landed** |
 | 7 | Interaction constraints | yes | yes | — | Same reasoning as monotone | **landed** |
-| 8 | DART boosting | `booster=dart` | `boosting=dart` | — | Fits *slower* (re-predicts per iter); rare RMSE gains | planned |
+| 8 | DART boosting | `booster=dart` | `boosting=dart` | — | Fits *slower* (re-predicts per iter); rare RMSE gains | **landed** |
 | 9 | Sparse-input handling / EFB | yes | yes (EFB) | yes | Benchmarks are dense; nothing to enable or measure — stays out of scope until a sparse dataset exists in the harness | out of scope |
 
 Measurement protocol, per implemented feature: enable the equivalent knob in
@@ -178,3 +178,28 @@ control at 0.5147.
 | bonsai (leafwise) | 0.5208 | +8.6% |
 | xgboost | 0.5236 | +8.7% |
 | lightgbm | 0.5198 | +9.1% |
+
+### 8. DART — `booster.dart_drop_rate` (landed)
+
+Each iteration drops every existing tree with probability
+`dart_drop_rate`, computes gradients against the reduced model
+(dropped trees' train contributions recovered by bin-space routing, no
+per-tree caches), then rescales: new tree 1/(k+lr), dropped trees
+k/(k+lr) — xgboost's `normalize_type="tree"` factors. The DART paper's
+1/(k+1) starves the new tree by ~1/lr under shrinkage; implementing it
+literally cost bonsai 0.88 RMSE before switching to the reference
+scheme. Incompatible with early stopping (rescaling invalidates the
+incremental valid scores) — the combination throws.
+
+California Housing, `drop_rate = 0.1`, 200 iters (`ch_dart2`): DART
+regularizes (everyone is worse than plain GBDT at this fixed budget)
+and bonsai's implementation degrades the least; catboost (no DART) is
+the control.
+
+| library | rmse | fit_s |
+|---|---|---|
+| bonsai (depthwise, dart) | 0.5930 | 1.9 |
+| bonsai (leafwise, dart) | 0.6031 | 1.2 |
+| xgboost (dart) | 0.6255 | 2.9 |
+| lightgbm (dart) | 0.7022 | 1.1 |
+| catboost (control) | 0.5147 | 0.3 |
