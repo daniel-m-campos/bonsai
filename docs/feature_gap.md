@@ -11,7 +11,7 @@ histogram pooling) is tracked separately — those aren't features one can
 |---|---------|---------|----------|----------|-----------------|--------|
 | 1 | Feature (column) subsampling per tree | `colsample_bytree` | `feature_fraction` | `rsm` | Fit latency ↓ ~proportionally to fraction (fewer histogram scans); RMSE neutral-to-better (decorrelates trees) | **landed** |
 | 2 | GOSS (gradient one-side sampling) | — (GPU only) | `data_sample_strategy=goss` | — | Fit latency ↓ 2–3× at near-equal RMSE; only lightgbm comparable | **landed** |
-| 3 | Early stopping on validation | `early_stopping_rounds` | `early_stopping_round` | `od_wait` | Fit latency ↓ whenever the model converges before `n_iters`; RMSE ~best-iteration | planned |
+| 3 | Early stopping on validation | `early_stopping_rounds` | `early_stopping_round` | `od_wait` | Fit latency ↓ whenever the model converges before `n_iters`; RMSE ~best-iteration | **landed** |
 | 4 | L1 leaf regularization | `reg_alpha` | `lambda_l1` | — | RMSE small (usually ±0.1–0.5%); latency negligible | planned |
 | 5 | Robust objectives (Huber / MAE / quantile) | `reg:pseudohubererror` etc. | `huber`, `mae`, `quantile` | `Huber`, `MAE`, `Quantile` | None on RMSE-scored benchmarks (MSE is the matched loss); useful capability, no A/B signal | deferred |
 | 6 | Monotone constraints | `monotone_constraints` | same | same | Constraints can only cost RMSE on unconstrained benchmarks; no fit/predict win | not planned |
@@ -69,3 +69,25 @@ the mean) because it re-selects rows by |grad| every iteration, feeding
 on its own staleness. Fixed by routing unsampled rows through the
 finished tree in bin space (`route_unsampled`), exactly matching the
 float-threshold predict path.
+
+### 3. Early stopping — `booster.early_stopping_rounds` (landed)
+
+All libraries share a 90/10 train/valid split of the train file, lr
+0.15, up to 400 iters, patience 20 (`msd_es`). Baseline for context is
+the fixed 200-iter lr 0.05 run (`msd_final`):
+
+| library | rmse | fit_s | rmse @ baseline |
+|---|---|---|---|
+| bonsai (depthwise) | 8.9918 | 20.6 | 8.9911 |
+| bonsai (leafwise) | **8.9977** | 12.9 | 9.0871 |
+| xgboost | 8.9900 | 8.8 | 9.1389 |
+| lightgbm | 9.0016 | 9.1 | 9.0826 |
+| catboost | 8.9593 | 22.4 | 9.1441 |
+
+Early stopping lets every library run at a higher learning rate to its
+own best iteration instead of a hand-tuned count; all five converge to
+8.96–9.00. bonsai leafwise lands between xgboost and lightgbm on RMSE.
+bonsai's per-iteration valid eval is incremental (score_base +
+accumulate_last_tree), so the overhead is one tree-predict over the
+valid set per iteration, and the kept model is truncated to the best
+iteration like the references.

@@ -21,6 +21,7 @@
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/io/csv.hpp"
 #include "bonsai/registry/make_booster.hpp"
+#include "bonsai/registry/objective_dispatch.hpp"
 #include "bonsai/types.hpp"
 
 namespace bonsai::cli
@@ -159,6 +160,14 @@ std::unique_ptr<IBooster> train_with_progress(Config const           &cfg,
         fire_tick(0);
     }
 
+    // Early stopping: incremental valid raw scores (score_base + per-tree
+    // contributions) keep the per-iteration eval O(rows), not O(rows*trees).
+    auto const es_rounds = cfg.booster_config.early_stopping_rounds;
+    bool const es_enabled = es_rounds > 0 && loaded.valid.has_value();
+    std::vector<float> es_scores;
+    float              best_loss = 0.0F;
+    uint32_t           best_iter = 0;
+
     for (uint32_t i = 0; i < n_iters; ++i)
     {
         booster->update_one_iter(loaded.train.dataset);
@@ -170,6 +179,32 @@ std::unique_ptr<IBooster> train_with_progress(Config const           &cfg,
             if (is_period || is_final)
             {
                 fire_tick(static_cast<size_t>(one_based));
+            }
+        }
+        if (es_enabled)
+        {
+            if (i == 0)
+            {
+                es_scores.assign(loaded.valid->features.n_rows,
+                                 booster->score_base());
+            }
+            booster->accumulate_last_tree(loaded.valid->features.view(), es_scores);
+            float const loss =
+                eval_objective_by_name(cfg.dispatch.objective_name, es_scores,
+                                       loaded.valid->labels);
+            if (i == 0 || loss < best_loss)
+            {
+                best_loss = loss;
+                best_iter = i;
+            }
+            else if (i - best_iter >= es_rounds)
+            {
+                booster->truncate(best_iter + 1);
+                std::println("fit: early stop at iter {} (best iter {}, valid {} "
+                             "loss {})",
+                             i + 1, best_iter + 1, cfg.dispatch.objective_name,
+                             best_loss);
+                break;
             }
         }
     }

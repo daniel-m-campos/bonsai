@@ -26,6 +26,14 @@ class IBooster
     virtual float  eval(features_view X, floats_view labels) const  = 0;
     virtual void   predict(features_view X, floats_out y_hat) const = 0;
     virtual size_t n_iters() const                                  = 0;
+
+    // Incremental prediction support for early stopping: accumulate only the
+    // newest tree's (shrinkage-scaled) contribution into `scores`, a buffer
+    // the caller initialized to score_base() before the first tree.
+    virtual float score_base() const                                        = 0;
+    virtual void  accumulate_last_tree(features_view X, floats_out scores) const = 0;
+    // Drop trees beyond the first n_trees (keep the best iteration's model).
+    virtual void truncate(size_t n_trees) = 0;
 };
 
 template <Objective Obj, TreeGrower Gr, Sampler Sa>
@@ -104,6 +112,33 @@ class Booster final : public IBooster
     size_t n_iters() const override
     {
         return trees_.size();
+    }
+
+    float score_base() const override
+    {
+        return init_score_;
+    }
+
+    void accumulate_last_tree(features_view X, floats_out scores) const override
+    {
+        assert(!trees_.empty());
+        assert(X.extent(0) == scores.size());
+        std::vector<float> raw(scores.size(), 0.0F);
+        trees_.back().predict(X, raw);
+        parallel::for_each_index(scores.size(),
+                                 [&](size_t i)
+                                 { scores[i] += config_.learning_rate * raw[i]; });
+    }
+
+    void truncate(size_t n_trees) override
+    {
+        if (n_trees < trees_.size())
+        {
+            // erase, not resize: growth would require default-constructible
+            // trees, and truncate only ever shrinks.
+            trees_.erase(trees_.begin() + static_cast<std::ptrdiff_t>(n_trees),
+                         trees_.end());
+        }
     }
 
     // Save/load accessors. Public so io::save_booster / io::load_booster

@@ -21,12 +21,19 @@ namespace
 {
 
 using LinkFn     = void (*)(floats_out);
+using EvalFn     = float (*)(floats_view, floats_view);
 using DefaultsFn = std::span<std::string_view const> (*)();
 
 struct LinkEntry
 {
     std::string_view name;
     LinkFn           apply;
+};
+
+struct EvalEntry
+{
+    std::string_view name;
+    EvalFn           eval;
 };
 
 struct TaskEntry
@@ -46,6 +53,11 @@ template <typename O> void link_thunk(floats_out scores)
     link_inverse_of<O>::apply(scores);
 }
 
+template <typename O> float eval_thunk(floats_view scores, floats_view labels)
+{
+    return O::eval(scores, labels);
+}
+
 template <typename O> std::span<std::string_view const> defaults_thunk()
 {
     return default_metrics_of<O>::value();
@@ -62,6 +74,16 @@ constexpr auto create_link_table()
                           "Objective needs link_inverse_of specialization");
             out[i++] = LinkEntry{impl_name<O>::value, &link_thunk<O>};
         });
+    return out;
+}
+
+constexpr auto create_eval_table()
+{
+    std::array<EvalEntry, size_v<Objectives>> out{};
+    size_t                                    i = 0;
+    for_each_type<Objectives>([&i, &out]<typename O>()
+                              { out[i++] = EvalEntry{impl_name<O>::value,
+                                                     &eval_thunk<O>}; });
     return out;
 }
 
@@ -93,6 +115,7 @@ constexpr auto create_defaults_table()
 }
 
 inline constexpr auto link_table     = create_link_table();
+inline constexpr auto eval_table     = create_eval_table();
 inline constexpr auto task_table     = create_task_table();
 inline constexpr auto defaults_table = create_defaults_table();
 
@@ -109,6 +132,20 @@ void apply_link_inverse_by_name(std::string_view objective_name, floats_out scor
         }
     }
     throw UnknownImplError("apply_link_inverse_by_name: no objective '" +
+                           std::string{objective_name} + "'");
+}
+
+float eval_objective_by_name(std::string_view objective_name, floats_view scores,
+                             floats_view labels)
+{
+    for (auto const &e : eval_table)
+    {
+        if (e.name == objective_name)
+        {
+            return e.eval(scores, labels);
+        }
+    }
+    throw UnknownImplError("eval_objective_by_name: no objective '" +
                            std::string{objective_name} + "'");
 }
 

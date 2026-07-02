@@ -82,3 +82,31 @@ TEST_CASE("score_and_label_csv: labels match the CSV's label column",
     CHECK(sl.labels[2] == Catch::Approx(2.5F));
     CHECK(sl.labels[3] == Catch::Approx(3.5F));
 }
+
+TEST_CASE("train_with_progress: early stopping truncates to the best iteration",
+          "[cli_pipeline][early_stop]")
+{
+    // Train and validate on the same tiny file: valid loss converges after a
+    // couple of trees, so a small patience must stop well before n_iters and
+    // the kept model must have best_iter + 1 <= n_iters trees.
+    Config cfg;
+    cfg.data.train                          = k_tiny_path;
+    cfg.data.valid                          = {k_tiny_path};
+    cfg.bin_mapper.max_bin                  = 8;
+    cfg.bin_mapper.n_samples                = 100;
+    cfg.booster_config.n_iters              = 200;
+    cfg.booster_config.learning_rate        = 0.5F;
+    cfg.booster_config.early_stopping_rounds = 3;
+    cfg.tree_config.min_data_in_leaf        = 0;
+    cfg.tree_config.min_child_hess          = 0.0F;
+
+    auto const loaded  = load_train_and_valid_from_csv(cfg);
+    auto       booster = train_with_progress(cfg, loaded, {});
+    CHECK(booster->n_iters() < 200);
+
+    Config no_es                          = cfg;
+    no_es.booster_config.early_stopping_rounds = 0;
+    auto const loaded2                    = load_train_and_valid_from_csv(no_es);
+    auto       full = train_with_progress(no_es, loaded2, {});
+    CHECK(full->n_iters() == 200);
+}

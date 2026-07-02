@@ -54,6 +54,7 @@ class HP:
     feature_fraction: float
     top_rate: float
     other_rate: float
+    early_stopping_rounds: int
     max_bin: int
     random_seed: int
 
@@ -73,6 +74,7 @@ def hp_from(cfg: dict) -> HP:
         feature_fraction=float(tree.get("feature_fraction", 1.0)),
         top_rate=float(sampler.get("top_rate", 0.2)),
         other_rate=float(sampler.get("other_rate", 0.1)),
+        early_stopping_rounds=int(booster.get("early_stopping_rounds", 0)),
         max_bin=int(bin_mapper.get("max_bin", 255)),
         random_seed=int(booster.get("random_seed", 42)),
     )
@@ -133,7 +135,7 @@ def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str,
     return Result(rmse=rmse(pred, y_test), fit_seconds=fit_s, predict_seconds=pred_s)
 
 
-def run_xgboost(train_df, test_df, hp: HP) -> Result:
+def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     import xgboost as xgb
 
     feature_cols = [c for c in train_df.columns if c != "label"]
@@ -152,18 +154,27 @@ def run_xgboost(train_df, test_df, hp: HP) -> Result:
         "tree_method": "hist",
         "seed": hp.random_seed,
     }
+    fit_kwargs = {}
+    if valid_df is not None and hp.early_stopping_rounds > 0:
+        dvalid = xgb.DMatrix(valid_df[feature_cols], label=valid_df["label"])
+        fit_kwargs = {
+            "evals": [(dvalid, "valid")],
+            "early_stopping_rounds": hp.early_stopping_rounds,
+            "verbose_eval": False,
+        }
     t0 = time.perf_counter()
-    booster = xgb.train(params, dtrain, num_boost_round=hp.n_iters)
+    booster = xgb.train(params, dtrain, num_boost_round=hp.n_iters, **fit_kwargs)
     fit_s = time.perf_counter() - t0
 
     t1 = time.perf_counter()
-    pred = booster.predict(dtest)
+    pred = booster.predict(dtest)  # uses best_iteration when early-stopped
     pred_s = time.perf_counter() - t1
     return Result(rmse=rmse(pred, test_df["label"].to_numpy()),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
-def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False) -> Result:
+def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
+                 valid_df=None) -> Result:
     import lightgbm as lgb
 
     feature_cols = [c for c in train_df.columns if c != "label"]
@@ -184,21 +195,31 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False) -> Result:
         "verbose": -1,
         "seed": hp.random_seed,
     }
+    fit_kwargs = {}
+    if valid_df is not None and hp.early_stopping_rounds > 0:
+        dvalid = lgb.Dataset(valid_df[feature_cols], label=valid_df["label"],
+                             reference=dtrain)
+        fit_kwargs = {
+            "valid_sets": [dvalid],
+            "callbacks": [lgb.early_stopping(hp.early_stopping_rounds,
+                                             verbose=False)],
+        }
     t0 = time.perf_counter()
-    model = lgb.train(params, dtrain, num_boost_round=hp.n_iters)
+    model = lgb.train(params, dtrain, num_boost_round=hp.n_iters, **fit_kwargs)
     fit_s = time.perf_counter() - t0
 
     t1 = time.perf_counter()
-    pred = model.predict(test_df[feature_cols])
+    pred = model.predict(test_df[feature_cols])  # best_iteration when stopped
     pred_s = time.perf_counter() - t1
     return Result(rmse=rmse(pred, test_df["label"].to_numpy()),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
-def run_catboost(train_df, test_df, hp: HP) -> Result:
+def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     from catboost import CatBoostRegressor
 
     feature_cols = [c for c in train_df.columns if c != "label"]
+    use_es = valid_df is not None and hp.early_stopping_rounds > 0
     model = CatBoostRegressor(
         iterations=hp.n_iters,
         learning_rate=hp.learning_rate,
@@ -208,9 +229,14 @@ def run_catboost(train_df, test_df, hp: HP) -> Result:
         random_seed=hp.random_seed,
         loss_function="RMSE",
         verbose=False,
+        **({"early_stopping_rounds": hp.early_stopping_rounds,
+            "use_best_model": True} if use_es else {}),
     )
+    fit_kwargs = {}
+    if use_es:
+        fit_kwargs = {"eval_set": (valid_df[feature_cols], valid_df["label"])}
     t0 = time.perf_counter()
-    model.fit(train_df[feature_cols], train_df["label"])
+    model.fit(train_df[feature_cols], train_df["label"], **fit_kwargs)
     fit_s = time.perf_counter() - t0
 
     t1 = time.perf_counter()
@@ -267,26 +293,46 @@ def main() -> int:
     train_df = pd.read_csv(train_path)
     test_df = pd.read_csv(test_path)
 
+    # Early stopping needs a valid set every library sees identically:
+    # carve the last 10% of train off for validation and give the same
+    # split to bonsai (via CSVs + --set) and the reference libraries.
+    valid_df = None
+    bonsai_hp_overrides = list(args.hp)
+    if hp.early_stopping_rounds > 0:
+        n_valid = max(1, len(train_df) // 10)
+        valid_df = train_df.iloc[-n_valid:]
+        train_df = train_df.iloc[:-n_valid]
+        es_train = REPO_ROOT / "build" / "_compare_es_train.csv"
+        es_valid = REPO_ROOT / "build" / "_compare_es_valid.csv"
+        train_df.to_csv(es_train, index=False)
+        valid_df.to_csv(es_valid, index=False)
+        bonsai_hp_overrides += [
+            f"data.train={es_train}",
+            f"data.valid={es_valid}",
+        ]
+
     results: dict[str, Result] = {}
 
     for grower in args.growers.split(","):
         for sampler in args.samplers.split(","):
             label = f"bonsai ({grower}, {sampler})"
             print(f"{label} (n_iters={hp.n_iters})", flush=True)
-            results[label] = run_bonsai(args.config, hp, grower, sampler, args.hp)
+            results[label] = run_bonsai(args.config, hp, grower, sampler,
+                                        bonsai_hp_overrides)
 
     print("xgboost", flush=True)
-    results["xgboost"] = run_xgboost(train_df, test_df, hp)
+    results["xgboost"] = run_xgboost(train_df, test_df, hp, valid_df=valid_df)
 
     print("lightgbm", flush=True)
-    results["lightgbm"] = run_lightgbm(train_df, test_df, hp)
+    results["lightgbm"] = run_lightgbm(train_df, test_df, hp, valid_df=valid_df)
 
     if "goss" in args.samplers.split(","):
         print("lightgbm (goss)", flush=True)
-        results["lightgbm (goss)"] = run_lightgbm(train_df, test_df, hp, goss=True)
+        results["lightgbm (goss)"] = run_lightgbm(train_df, test_df, hp, goss=True,
+                                                  valid_df=valid_df)
 
     print("catboost", flush=True)
-    results["catboost"] = run_catboost(train_df, test_df, hp)
+    results["catboost"] = run_catboost(train_df, test_df, hp, valid_df=valid_df)
 
     out_dir = REPO_ROOT / "benchmarks" / "results"
     out_dir.mkdir(parents=True, exist_ok=True)

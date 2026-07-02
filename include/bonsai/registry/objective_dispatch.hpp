@@ -18,6 +18,12 @@ void apply_link_inverse_by_name(std::string_view objective_name, floats_out scor
 // Throws UnknownImplError if no match.
 TaskKind task_kind_by_name(std::string_view objective_name);
 
+// Look up an objective by name and evaluate its loss on raw scores (no link
+// applied — objectives eval in raw-score space). Used by early stopping.
+// Throws UnknownImplError if no match.
+float eval_objective_by_name(std::string_view objective_name, floats_view scores,
+                             floats_view labels);
+
 // Look up an objective by name and return the default metric names to report
 // when the user has not configured `metrics.fit` / `metrics.eval`. Throws
 // UnknownImplError if no match.
