@@ -92,7 +92,9 @@ inline std::pair<SplitInput, SplitInput>
 split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput parent,
            SplitOutput const &s, node_id_t left_id, node_id_t right_id)
 {
-    // 1. Partition parent.rows in place: lefts first, then rights.
+    // 1. Scatter parent.rows into the children in one stable pass. Stability
+    //    keeps every node's rows ascending (the root's are iota), so later
+    //    per-feature bin lookups walk memory near-sequentially.
     auto const &bins      = ds.feature_bins(s.feature_id);
     auto const  last_bin  = static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
     auto        goes_left = [&](row_id_t r)
@@ -104,14 +106,31 @@ split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput par
         }
         return b <= s.bin_id;
     };
-    auto mid = std::partition(parent.rows.begin(), parent.rows.end(), goes_left);
 
     SplitInput left;
     SplitInput right;
     left.id  = left_id;
     right.id = right_id;
-    left.rows.assign(parent.rows.begin(), mid);
-    right.rows.assign(mid, parent.rows.end());
+    size_t n_left = 0;
+    for (row_id_t const r : parent.rows)
+    {
+        n_left += goes_left(r) ? 1 : 0;
+    }
+    left.rows.resize(n_left);
+    right.rows.resize(parent.rows.size() - n_left);
+    size_t li = 0;
+    size_t ri = 0;
+    for (row_id_t const r : parent.rows)
+    {
+        if (goes_left(r))
+        {
+            left.rows[li++] = r;
+        }
+        else
+        {
+            right.rows[ri++] = r;
+        }
+    }
 
     bool const  left_smaller = left.rows.size() <= right.rows.size();
     SplitInput &small        = left_smaller ? left : right;
@@ -120,9 +139,10 @@ split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput par
     large.hists.reserve(ds.n_features());
     for (feature_id_t f = 0; f < ds.n_features(); ++f)
     {
-        parent.hists[f] -= small.hists[f];
         large.hists.push_back(std::move(parent.hists[f]));
     }
+    parallel::for_each_index(ds.n_features(),
+                             [&](size_t f) { large.hists[f] -= small.hists[f]; });
 
     return {std::move(left), std::move(right)};
 }

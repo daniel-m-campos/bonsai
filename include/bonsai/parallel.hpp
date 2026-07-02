@@ -50,7 +50,7 @@ template <typename F> void for_each_index(size_t n, F &&f)
     if (nt > 1 && n > 1)
     {
         auto const chunk = static_cast<int64_t>(
-            std::max<size_t>(1, n / (static_cast<size_t>(nt) * 16)));
+            std::max<size_t>(1, n / (static_cast<size_t>(nt) * 4)));
 #pragma omp parallel for schedule(dynamic, chunk) num_threads(nt)
         for (int64_t i = 0; i < static_cast<int64_t>(n); ++i)
         {
