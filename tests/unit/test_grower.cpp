@@ -239,3 +239,42 @@ TEST_CASE("DepthwiseGrower: unsampled rows still receive the tree's train values
     CHECK(values[2] == oob_pred);
     CHECK(oob_pred != 0.0F);
 }
+
+TEST_CASE("DepthwiseGrower: lambda_l1 soft-thresholds leaf values",
+          "[grower][lambda_l1]")
+{
+    // Separable fixture: leaf grad sums are -2 and +2 with hess 2.
+    // With lambda_l1 = 0.5: value = -(g -/+ 0.5) / (2 + 1) = +/- 0.5.
+    auto              in = separable_4row();
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .lambda_l1        = 0.5F,
+                          .max_depth        = 1,
+                          .min_data_in_leaf = 0};
+    DepthwiseGrower<> grower{cfg};
+    auto [tree, values] = grower.grow(in.built.ds, in.grad, in.hess, in.rows);
+
+    REQUIRE(tree.params().n_leaves == 2);
+    CHECK(predict_one(tree, std::vector<float>{0.0F}) ==
+          Catch::Approx(0.5F).epsilon(1e-5));
+    CHECK(predict_one(tree, std::vector<float>{1.0F}) ==
+          Catch::Approx(-0.5F).epsilon(1e-5));
+}
+
+TEST_CASE("DepthwiseGrower: large lambda_l1 kills all gain -> single zero leaf",
+          "[grower][lambda_l1]")
+{
+    // |leaf grad| maxes at 2; lambda_l1 = 5 thresholds every score to zero,
+    // so no split has positive gain and the root leaf value is 0.
+    auto              in = separable_4row();
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .lambda_l1        = 5.0F,
+                          .max_depth        = 3,
+                          .min_data_in_leaf = 0};
+    DepthwiseGrower<> grower{cfg};
+    auto [tree, values] = grower.grow(in.built.ds, in.grad, in.hess, in.rows);
+
+    CHECK(tree.params().n_leaves == 1);
+    CHECK(predict_one(tree, std::vector<float>{0.5F}) == 0.0F);
+}

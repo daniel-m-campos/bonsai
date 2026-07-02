@@ -75,7 +75,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DataConfig, train, valid, test, format, heade
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(BinMapperConfig, max_bin, n_samples, seed,
                                    min_data_in_bin)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TreeConfig, min_child_hess, min_gain_to_split,
-                                   lambda_l2, max_depth, min_data_in_leaf,
+                                   lambda_l2, lambda_l1, max_depth, min_data_in_leaf,
                                    max_leaves, feature_fraction, feature_seed)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(BoosterConfig, n_iters, learning_rate, random_seed,
                                    log_intervals, early_stopping_rounds)

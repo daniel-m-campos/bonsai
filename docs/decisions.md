@@ -538,3 +538,41 @@ Three measured wins on Year Prediction MSD (M2, 8 threads), all bit-identical ou
 - **Node totals once**: `Histogram::add` no longer maintains running totals (2 redundant double-adds per row×feature, duplicated per feature); node totals are one O(n_bins) cell sum over `hists[0]`, hoisted per node in the split finders.
 
 CSV load: whole-file read + line index + row-parallel `from_chars` parse straight into column-major storage, and the train file is parsed once (mapper fit + binning share the batch) instead of twice. Load 7.4s → 1.3s; 200-iter depthwise fit 73s → ~27s; leafwise ~12s.
+
+## 34. Feature-parity round: colsample, GOSS, early stopping, L1 — and the OOB score bug
+
+Four reference-library features landed in one pass, each benchmarked A/B on
+Year Prediction MSD with the equivalent knob enabled in xgboost / lightgbm /
+catboost (protocol + tables in [feature_gap.md](feature_gap.md)):
+
+- **`tree.feature_fraction`** — per-tree feature subsample drawn from a
+  grower-owned rng (`tree.feature_seed`), histograms built for selected
+  features only; unselected slots are zero-binned placeholders the finders
+  skip. Node totals moved to `SplitInput::totals()` (first populated hist).
+- **`sampler_name = "goss"`** — LightGBM's gradient one-side sampling; the
+  `Sampler` concept now takes mutable grad/hess so the sampler can amplify
+  the small-gradient sample in place.
+- **`booster.early_stopping_rounds`** — incremental valid eval
+  (`IBooster::score_base` / `accumulate_last_tree`, one single-tree predict
+  per iteration) + `truncate` to the best iteration.
+- **`tree.lambda_l1`** — XGBoost-style soft threshold on the gradient sum in
+  both the gain score and the leaf value.
+
+**The GOSS benchmark exposed a latent correctness bug** in every subsampled
+path: `GrowResult.values` was only stamped for sampled rows, so out-of-bag
+rows' entries stayed 0 and the booster's score accumulator silently
+diverged from the real model for those rows — their gradients were computed
+against predictions missing whole trees. Bernoulli had been quietly paying
+~2% RMSE for this (9.1873 → 8.9916 on MSD after the fix); GOSS diverged
+outright (RMSE 24.7 — worse than predicting the mean) because it re-selects
+by |grad| every iteration and fed on its own staleness. Fix: growers now
+route unsampled rows through the finished tree *in bin space*
+(`route_unsampled`, split bins recorded during growth), which is exact with
+respect to the float-threshold predict path — `bin(v) <= b  ⟺  v <=
+cuts[b]` under the right-inclusive binner, missing bin routed by
+`default_left` on both paths.
+
+Lesson (rhymes with decision 30): the booster-side `values` shortcut was
+only ever validated with `all_rows`. A contract as easy to state as "every
+row's train value equals the tree's prediction for that row" deserved a
+test the day the first subsampler landed.

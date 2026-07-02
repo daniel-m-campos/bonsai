@@ -51,6 +51,7 @@ class HP:
     max_leaves: int
     min_data_in_leaf: int
     lambda_l2: float
+    lambda_l1: float
     feature_fraction: float
     top_rate: float
     other_rate: float
@@ -71,6 +72,7 @@ def hp_from(cfg: dict) -> HP:
         max_leaves=int(tree.get("max_leaves", 31)),
         min_data_in_leaf=int(tree.get("min_data_in_leaf", 20)),
         lambda_l2=float(tree.get("lambda_l2", 1.0)),
+        lambda_l1=float(tree.get("lambda_l1", 0.0)),
         feature_fraction=float(tree.get("feature_fraction", 1.0)),
         top_rate=float(sampler.get("top_rate", 0.2)),
         other_rate=float(sampler.get("other_rate", 0.1)),
@@ -149,6 +151,7 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
         "max_leaves": hp.max_leaves,
         "min_child_weight": hp.min_data_in_leaf,
         "reg_lambda": hp.lambda_l2,
+        "reg_alpha": hp.lambda_l1,
         "colsample_bytree": hp.feature_fraction,
         "max_bin": hp.max_bin,
         "tree_method": "hist",
@@ -190,6 +193,7 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
         "num_leaves": hp.max_leaves if hp.max_leaves > 0 else (1 << hp.max_depth) - 1,
         "min_data_in_leaf": hp.min_data_in_leaf,
         "lambda_l2": hp.lambda_l2,
+        "lambda_l1": hp.lambda_l1,
         "feature_fraction": hp.feature_fraction,
         "max_bin": hp.max_bin,
         "verbose": -1,

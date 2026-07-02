@@ -71,9 +71,30 @@ struct HistogramLevelSplitFinder
     static SplitOutput find(FrontierInput frontier, TreeConfig const &config);
 };
 
+// Soft-threshold on the gradient sum: XGBoost's L1 treatment. Zero when
+// |g| <= l1, else shrinks toward zero by l1.
+inline double l1_thresholded(double g, double l1)
+{
+    if (g > l1)
+    {
+        return g - l1;
+    }
+    if (g < -l1)
+    {
+        return g + l1;
+    }
+    return 0.0;
+}
+
 inline double score(double g, double h, double lambda)
 {
     return (g * g) / (h + lambda);
+}
+
+inline double score(double g, double h, double l1, double l2)
+{
+    double const t = l1_thresholded(g, l1);
+    return (t * t) / (h + l2);
 }
 
 } // namespace bonsai

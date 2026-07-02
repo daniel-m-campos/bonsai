@@ -54,7 +54,8 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
     }
     auto const  &missing_cell = hist.missing();
     double const node_score =
-        score(node_totals.sum_grad, node_totals.sum_hess, config.lambda_l2);
+        score(node_totals.sum_grad, node_totals.sum_hess, config.lambda_l1,
+              config.lambda_l2);
     double const real_grad = node_totals.sum_grad - missing_cell.sum_grad;
     double const real_hess = node_totals.sum_hess - missing_cell.sum_hess;
 
@@ -72,8 +73,9 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
             {
                 continue;
             }
-            double const gain = score(s.gL, s.hL, config.lambda_l2) +
-                                score(s.gR, s.hR, config.lambda_l2) - node_score;
+            double const gain =
+                score(s.gL, s.hL, config.lambda_l1, config.lambda_l2) +
+                score(s.gR, s.hR, config.lambda_l1, config.lambda_l2) - node_score;
             if (gain > best.gain && gain >= config.min_gain_to_split)
             {
                 best = {.gain         = gain,
@@ -114,7 +116,8 @@ inline void update_best_for_feature_for_level(FrontierInput               fronti
         auto const &missing = hist.missing();
         hist.fill_prefix(std::span(&prefix[p, 0], n_bins));
         sum_parent_score +=
-            score(node_totals[p].sum_grad, node_totals[p].sum_hess, config.lambda_l2);
+            score(node_totals[p].sum_grad, node_totals[p].sum_hess,
+                  config.lambda_l1, config.lambda_l2);
         real_grad[p] = node_totals[p].sum_grad - missing.sum_grad;
         real_hess[p] = node_totals[p].sum_hess - missing.sum_hess;
     }
@@ -135,8 +138,9 @@ inline void update_best_for_feature_for_level(FrontierInput               fronti
                     feasible = false;
                     break;
                 }
-                sum_children_score += score(s.gL, s.hL, config.lambda_l2) +
-                                      score(s.gR, s.hR, config.lambda_l2);
+                sum_children_score +=
+                    score(s.gL, s.hL, config.lambda_l1, config.lambda_l2) +
+                    score(s.gR, s.hR, config.lambda_l1, config.lambda_l2);
             }
             if (!feasible)
             {

@@ -23,9 +23,10 @@ namespace bonsai
 namespace
 {
 
-inline float leaf_value(double grad, double hess, double lambda)
+inline float leaf_value(double grad, double hess, TreeConfig const &config)
 {
-    return static_cast<float>(-grad / (hess + lambda));
+    return static_cast<float>(-l1_thresholded(grad, config.lambda_l1) /
+                              (hess + config.lambda_l2));
 }
 
 using feature_view = std::span<feature_id_t const>;
@@ -50,9 +51,10 @@ std::vector<feature_id_t> sample_features(size_t n_features, float fraction,
 }
 
 inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
-                             double lambda, size_t &n_leaves, train_leaf_values &values)
+                             TreeConfig const &config, size_t &n_leaves,
+                             train_leaf_values &values)
 {
-    float const v  = leaf_value(node.total_grad(), node.total_hess(), lambda);
+    float const v  = leaf_value(node.total_grad(), node.total_hess(), config);
     nodes[node.id] = DenseTree::leaf(v);
     for (row_id_t r : node.rows)
     {
@@ -194,7 +196,7 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         auto const &split = splits[i];
         if (!split.valid) // assume valid incorporates all cfg parameter logic
         {
-            finalize_as_leaf(nodes, node, config.lambda_l2, n_leaves, values);
+            finalize_as_leaf(nodes, node, config, n_leaves, values);
             continue;
         }
         node_id_t const left_id = nodes.size();
@@ -320,7 +322,7 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
 
     for (auto const &node : current)
     {
-        finalize_as_leaf(nodes, node, config_.lambda_l2, n_leaves, values);
+        finalize_as_leaf(nodes, node, config_, n_leaves, values);
     }
     route_unsampled(ds, nodes, split_bins, row_indices, values);
 
@@ -382,7 +384,7 @@ auto ObliviousGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
     for (auto const &leaf : frontier)
     {
         float const v =
-            leaf_value(leaf.total_grad(), leaf.total_hess(), config_.lambda_l2);
+            leaf_value(leaf.total_grad(), leaf.total_hess(), config_);
         leaf_table.push_back(v);
         for (row_id_t r : leaf.rows)
         {
@@ -525,11 +527,11 @@ auto LeafwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
 
     for (auto const &c : heap)
     {
-        finalize_as_leaf(nodes, c.node, config_.lambda_l2, n_leaves, values);
+        finalize_as_leaf(nodes, c.node, config_, n_leaves, values);
     }
     for (auto const &leaf : pending)
     {
-        finalize_as_leaf(nodes, leaf, config_.lambda_l2, n_leaves, values);
+        finalize_as_leaf(nodes, leaf, config_, n_leaves, values);
     }
     route_unsampled(ds, nodes, split_bins, row_indices, values);
 

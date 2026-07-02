@@ -12,7 +12,7 @@ histogram pooling) is tracked separately — those aren't features one can
 | 1 | Feature (column) subsampling per tree | `colsample_bytree` | `feature_fraction` | `rsm` | Fit latency ↓ ~proportionally to fraction (fewer histogram scans); RMSE neutral-to-better (decorrelates trees) | **landed** |
 | 2 | GOSS (gradient one-side sampling) | — (GPU only) | `data_sample_strategy=goss` | — | Fit latency ↓ 2–3× at near-equal RMSE; only lightgbm comparable | **landed** |
 | 3 | Early stopping on validation | `early_stopping_rounds` | `early_stopping_round` | `od_wait` | Fit latency ↓ whenever the model converges before `n_iters`; RMSE ~best-iteration | **landed** |
-| 4 | L1 leaf regularization | `reg_alpha` | `lambda_l1` | — | RMSE small (usually ±0.1–0.5%); latency negligible | planned |
+| 4 | L1 leaf regularization | `reg_alpha` | `lambda_l1` | — | RMSE small (usually ±0.1–0.5%); latency negligible | **landed** |
 | 5 | Robust objectives (Huber / MAE / quantile) | `reg:pseudohubererror` etc. | `huber`, `mae`, `quantile` | `Huber`, `MAE`, `Quantile` | None on RMSE-scored benchmarks (MSE is the matched loss); useful capability, no A/B signal | deferred |
 | 6 | Monotone constraints | `monotone_constraints` | same | same | Constraints can only cost RMSE on unconstrained benchmarks; no fit/predict win | not planned |
 | 7 | Interaction constraints | yes | yes | — | Same reasoning as monotone | not planned |
@@ -91,3 +91,24 @@ bonsai's per-iteration valid eval is incremental (score_base +
 accumulate_last_tree), so the overhead is one tree-predict over the
 valid set per iteration, and the kept model is truncated to the best
 iteration like the references.
+
+### 4. L1 leaf regularization — `tree.lambda_l1` (landed)
+
+XGBoost-style soft threshold on the gradient sum in both gain and leaf
+values. Year Prediction MSD, 200 iters, `lambda_l1 = 100` (`msd_l1`)
+vs baseline:
+
+| library | rmse | Δrmse | fit_s |
+|---|---|---|---|
+| bonsai (depthwise) | 8.9937 | +0.03% | 30.3 |
+| bonsai (leafwise) | 9.0928 | +0.06% | 13.6 |
+| xgboost (`reg_alpha`) | 9.1357 | −0.04% | 5.8 |
+| lightgbm (`lambda_l1`) | 9.0857 | +0.03% | 8.2 |
+| catboost (no L1 knob) | 9.1441 | ±0 | 8.2 |
+
+As expected, L1 at this scale is a small, dataset-dependent
+regularizer: deltas within ±0.06% for every library that supports it
+(bonsai's direction matches lightgbm's), latency neutral. Verified as
+exact math via unit tests (soft-threshold shifts leaf values by
+alpha/(h+lambda); large alpha collapses the tree to a single zero
+leaf); `lambda_l1 = 0` is bit-identical to the pre-feature build.
