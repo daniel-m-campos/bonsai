@@ -1,4 +1,5 @@
 #include "bonsai/grower.hpp"
+#include "bonsai/config/errors.hpp"
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/histogram.hpp"
@@ -29,6 +30,40 @@ inline float leaf_value(double grad, double hess, TreeConfig const &config)
                               (hess + config.lambda_l2));
 }
 
+// Children inherit the parent's leaf-value bounds; a split on a monotone
+// feature additionally fences both sides at the midpoint of the child
+// weights (xgboost's scheme), so descendant leaves can't cross.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+inline void propagate_monotone_bounds(double parent_lo, double parent_hi,
+                                      SplitOutput const &s, TreeConfig const &config,
+                                      SplitInput &left, SplitInput &right)
+{
+    left.lo  = parent_lo;
+    left.hi  = parent_hi;
+    right.lo = parent_lo;
+    right.hi = parent_hi;
+    int const mc = monotone_constraint_of(config, s.feature_id);
+    if (mc == 0)
+    {
+        return;
+    }
+    double const wL = bounded_leaf_weight(left.total_grad(), left.total_hess(),
+                                          config, parent_lo, parent_hi);
+    double const wR = bounded_leaf_weight(right.total_grad(), right.total_hess(),
+                                          config, parent_lo, parent_hi);
+    double const mid = 0.5 * (wL + wR);
+    if (mc > 0)
+    {
+        left.hi  = std::min(left.hi, mid);
+        right.lo = std::max(right.lo, mid);
+    }
+    else
+    {
+        left.lo  = std::max(left.lo, mid);
+        right.hi = std::min(right.hi, mid);
+    }
+}
+
 using feature_view = std::span<feature_id_t const>;
 
 // Per-tree feature subsample: a sorted draw of ceil(fraction * n) distinct
@@ -54,7 +89,8 @@ inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
                              TreeConfig const &config, size_t &n_leaves,
                              train_leaf_values &values)
 {
-    float const v  = leaf_value(node.total_grad(), node.total_hess(), config);
+    auto const v   = static_cast<float>(bounded_leaf_weight(
+        node.total_grad(), node.total_hess(), config, node.lo, node.hi));
     nodes[node.id] = DenseTree::leaf(v);
     for (row_id_t r : node.rows)
     {
@@ -210,8 +246,11 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         nodes[node.id] = DenseTree::internal(split.feature_id, threshold, left_id,
                                              right_id, split.default_left);
 
+        double const parent_lo = node.lo;
+        double const parent_hi = node.hi;
         auto [left, right] = split_node(ds, grad, hess, std::move(node), split,
                                         left_id, right_id, selected);
+        propagate_monotone_bounds(parent_lo, parent_hi, split, config, left, right);
         next.push_back(std::move(left));
         next.push_back(std::move(right));
     }
@@ -336,6 +375,14 @@ template <LevelSplitFinder SplitterT>
 ObliviousGrower<SplitterT>::ObliviousGrower(TreeConfig const &cfg)
     : config_(cfg), feature_rng_(cfg.feature_seed)
 {
+    for (int const mc : cfg.monotone_constraints)
+    {
+        if (mc != 0)
+        {
+            throw ConfigError(
+                "monotone_constraints are not supported by the oblivious grower");
+        }
+    }
 }
 
 template <LevelSplitFinder SplitterT>
@@ -502,8 +549,11 @@ auto LeafwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
         nodes[c.node.id] = DenseTree::internal(c.split.feature_id, threshold, left_id,
                                                right_id, c.split.default_left);
 
+        double const parent_lo = c.node.lo;
+        double const parent_hi = c.node.hi;
         auto [left, right] = split_node(ds, grad, hess, std::move(c.node), c.split,
                                         left_id, right_id, selected);
+        propagate_monotone_bounds(parent_lo, parent_hi, c.split, config_, left, right);
         ++live_leaves;
 
         uint8_t const child_depth = c.depth + 1;

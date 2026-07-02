@@ -288,9 +288,29 @@ template <> struct FieldCodec<std::vector<int>>
         }
         return out;
     }
-    static ParseResult<std::vector<int>> from_string(std::string_view)
+    // Comma-separated: --set section.key=1,0,-1
+    static ParseResult<std::vector<int>> from_string(std::string_view value)
     {
-        return std::unexpected("cannot set list-valued key via CLI override");
+        std::vector<int> out;
+        size_t           start = 0;
+        while (start <= value.size())
+        {
+            size_t const comma = value.find(',', start);
+            size_t const end   = comma == std::string_view::npos ? value.size() : comma;
+            auto const   item  = value.substr(start, end - start);
+            auto         r     = read_int_from_string(item);
+            if (!r)
+            {
+                return std::unexpected(r.error());
+            }
+            out.push_back(static_cast<int>(*r));
+            if (comma == std::string_view::npos)
+            {
+                break;
+            }
+            start = comma + 1;
+        }
+        return out;
     }
     static toml::array to_toml(std::vector<int> const &v)
     {

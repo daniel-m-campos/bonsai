@@ -56,6 +56,10 @@ class HP:
     top_rate: float
     other_rate: float
     early_stopping_rounds: int
+    objective: str
+    huber_delta: float
+    quantile_alpha: float
+    monotone_constraints: list
     max_bin: int
     random_seed: int
 
@@ -65,6 +69,8 @@ def hp_from(cfg: dict) -> HP:
     booster = cfg.get("booster", {})
     bin_mapper = cfg.get("bin_mapper", {})
     sampler = cfg.get("sampler", {})
+    dispatch = cfg.get("dispatch", {})
+    objective = cfg.get("objective", {})
     return HP(
         n_iters=int(booster.get("n_iters", 100)),
         learning_rate=float(booster.get("learning_rate", 0.05)),
@@ -77,6 +83,11 @@ def hp_from(cfg: dict) -> HP:
         top_rate=float(sampler.get("top_rate", 0.2)),
         other_rate=float(sampler.get("other_rate", 0.1)),
         early_stopping_rounds=int(booster.get("early_stopping_rounds", 0)),
+        objective=str(dispatch.get("objective_name", "mse")),
+        huber_delta=float(objective.get("huber_delta", 1.0)),
+        quantile_alpha=float(objective.get("quantile_alpha", 0.5)),
+        monotone_constraints=parse_constraints(
+            tree.get("monotone_constraints", [])),
         max_bin=int(bin_mapper.get("max_bin", 255)),
         random_seed=int(booster.get("random_seed", 42)),
     )
@@ -85,12 +96,52 @@ def hp_from(cfg: dict) -> HP:
 @dataclass
 class Result:
     rmse: float
+    mae: float
     fit_seconds: float
     predict_seconds: float
 
 
+def parse_constraints(v) -> list:
+    if isinstance(v, int):
+        return [v]
+    if isinstance(v, str):
+        return [int(x) for x in v.split(",") if x != ""]
+    return [int(x) for x in v]
+
+
+def padded_constraints(hp: HP, n_features: int) -> list:
+    mc = hp.monotone_constraints
+    return mc + [0] * (n_features - len(mc))
+
+
 def rmse(pred: np.ndarray, y: np.ndarray) -> float:
     return float(np.sqrt(np.mean((pred - y) ** 2)))
+
+
+def mae(pred: np.ndarray, y: np.ndarray) -> float:
+    return float(np.mean(np.abs(pred - y)))
+
+
+# Per-library objective-name mappings; parameterized losses pull
+# huber_delta / quantile_alpha from HP.
+XGB_OBJECTIVE = {
+    "mse": "reg:squarederror",
+    "mae": "reg:absoluteerror",
+    "huber": "reg:pseudohubererror",
+    "quantile": "reg:quantileerror",
+}
+LGBM_OBJECTIVE = {
+    "mse": "regression",
+    "mae": "regression_l1",
+    "huber": "huber",
+    "quantile": "quantile",
+}
+CATBOOST_LOSS = {
+    "mse": "RMSE",
+    "mae": "MAE",
+    "huber": "Huber:delta={delta}",
+    "quantile": "Quantile:alpha={alpha}",
+}
 
 
 def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str,
@@ -134,7 +185,8 @@ def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str,
     pred_df = pd.read_csv(preds)
     pred = pred_df["prediction"].to_numpy()
 
-    return Result(rmse=rmse(pred, y_test), fit_seconds=fit_s, predict_seconds=pred_s)
+    return Result(rmse=rmse(pred, y_test), mae=mae(pred, y_test),
+                  fit_seconds=fit_s, predict_seconds=pred_s)
 
 
 def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
@@ -145,7 +197,10 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     dtest = xgb.DMatrix(test_df[feature_cols], label=test_df["label"])
 
     params = {
-        "objective": "reg:squarederror",
+        "objective": XGB_OBJECTIVE[hp.objective],
+        **({"huber_slope": hp.huber_delta} if hp.objective == "huber" else {}),
+        **({"quantile_alpha": hp.quantile_alpha}
+           if hp.objective == "quantile" else {}),
         "learning_rate": hp.learning_rate,
         "max_depth": hp.max_depth,
         "max_leaves": hp.max_leaves,
@@ -156,6 +211,9 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
         "max_bin": hp.max_bin,
         "tree_method": "hist",
         "seed": hp.random_seed,
+        **({"monotone_constraints": "(" + ",".join(
+                str(c) for c in padded_constraints(hp, len(feature_cols))) + ")"}
+           if hp.monotone_constraints else {}),
     }
     fit_kwargs = {}
     if valid_df is not None and hp.early_stopping_rounds > 0:
@@ -172,7 +230,8 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     t1 = time.perf_counter()
     pred = booster.predict(dtest)  # uses best_iteration when early-stopped
     pred_s = time.perf_counter() - t1
-    return Result(rmse=rmse(pred, test_df["label"].to_numpy()),
+    y = test_df["label"].to_numpy()
+    return Result(rmse=rmse(pred, y), mae=mae(pred, y),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
@@ -183,7 +242,9 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
     feature_cols = [c for c in train_df.columns if c != "label"]
     dtrain = lgb.Dataset(train_df[feature_cols], label=train_df["label"])
     params = {
-        "objective": "regression",
+        "objective": LGBM_OBJECTIVE[hp.objective],
+        **({"alpha": hp.huber_delta} if hp.objective == "huber" else {}),
+        **({"alpha": hp.quantile_alpha} if hp.objective == "quantile" else {}),
         "metric": "rmse",
         **({"data_sample_strategy": "goss",
             "top_rate": hp.top_rate,
@@ -198,6 +259,8 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
         "max_bin": hp.max_bin,
         "verbose": -1,
         "seed": hp.random_seed,
+        **({"monotone_constraints": padded_constraints(hp, len(feature_cols))}
+           if hp.monotone_constraints else {}),
     }
     fit_kwargs = {}
     if valid_df is not None and hp.early_stopping_rounds > 0:
@@ -215,7 +278,8 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
     t1 = time.perf_counter()
     pred = model.predict(test_df[feature_cols])  # best_iteration when stopped
     pred_s = time.perf_counter() - t1
-    return Result(rmse=rmse(pred, test_df["label"].to_numpy()),
+    y = test_df["label"].to_numpy()
+    return Result(rmse=rmse(pred, y), mae=mae(pred, y),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
@@ -231,8 +295,11 @@ def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
         l2_leaf_reg=hp.lambda_l2,
         rsm=hp.feature_fraction,
         random_seed=hp.random_seed,
-        loss_function="RMSE",
+        loss_function=CATBOOST_LOSS[hp.objective].format(
+            delta=hp.huber_delta, alpha=hp.quantile_alpha),
         verbose=False,
+        **({"monotone_constraints": padded_constraints(hp, len(feature_cols))}
+           if hp.monotone_constraints else {}),
         **({"early_stopping_rounds": hp.early_stopping_rounds,
             "use_best_model": True} if use_es else {}),
     )
@@ -246,19 +313,20 @@ def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     t1 = time.perf_counter()
     pred = model.predict(test_df[feature_cols])
     pred_s = time.perf_counter() - t1
-    return Result(rmse=rmse(pred, test_df["label"].to_numpy()),
+    y = test_df["label"].to_numpy()
+    return Result(rmse=rmse(pred, y), mae=mae(pred, y),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
 def write_markdown(path: pathlib.Path, dataset: str, results: dict[str, Result]) -> None:
     width = max(len("library"), max(len(n) for n in results))
     rows = [
-        f"| {'library':<{width}} | rmse   | fit_seconds | predict_seconds |",
-        f"|{'-' * (width + 2)}|--------|-------------|-----------------|",
+        f"| {'library':<{width}} | rmse   | mae    | fit_seconds | predict_seconds |",
+        f"|{'-' * (width + 2)}|--------|--------|-------------|-----------------|",
     ]
     for name, r in results.items():
         rows.append(
-            f"| {name:<{width}} | {r.rmse:6.4f} | {r.fit_seconds:11.3f} | {r.predict_seconds:15.3f} |"
+            f"| {name:<{width}} | {r.rmse:6.4f} | {r.mae:6.4f} | {r.fit_seconds:11.3f} | {r.predict_seconds:15.3f} |"
         )
     path.write_text(f"# {dataset} comparison\n\n" + "\n".join(rows) + "\n")
 

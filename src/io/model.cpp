@@ -76,7 +76,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(BinMapperConfig, max_bin, n_samples, seed,
                                    min_data_in_bin)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TreeConfig, min_child_hess, min_gain_to_split,
                                    lambda_l2, lambda_l1, max_depth, min_data_in_leaf,
-                                   max_leaves, feature_fraction, feature_seed)
+                                   max_leaves, feature_fraction, feature_seed,
+                                   monotone_constraints)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(BoosterConfig, n_iters, learning_rate, random_seed,
                                    log_intervals, early_stopping_rounds)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DispatchConfig, objective_name, grower_name,
@@ -84,8 +85,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DispatchConfig, objective_name, grower_name,
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(SamplerConfig, subsample, top_rate, other_rate)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(MetricsConfig, fit, eval)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ParallelConfig, n_threads)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ObjectiveConfig, huber_delta, quantile_alpha)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Config, data, bin_mapper, tree_config, sampler,
-                                   booster_config, dispatch, metrics, parallel)
+                                   booster_config, dispatch, metrics, parallel,
+                                   objective)
 } // namespace bonsai
 
 namespace bonsai::io

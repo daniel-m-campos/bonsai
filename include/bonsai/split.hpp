@@ -3,7 +3,9 @@
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/histogram.hpp"
 #include "bonsai/types.hpp"
+#include <algorithm>
 #include <concepts>
+#include <limits>
 #include <span>
 #include <vector>
 
@@ -15,6 +17,9 @@ struct SplitInput
     std::vector<Histogram> hists;
     std::vector<row_id_t>  rows;
     node_id_t              id = 0;
+    // Leaf-value bounds inherited down the tree by monotone constraints.
+    double lo = -std::numeric_limits<double>::infinity();
+    double hi = std::numeric_limits<double>::infinity();
 
     // Node-level totals from the first populated histogram (every populated
     // feature sums the same rows). Unselected features under
@@ -95,6 +100,24 @@ inline double score(double g, double h, double l1, double l2)
 {
     double const t = l1_thresholded(g, l1);
     return (t * t) / (h + l2);
+}
+
+// Newton leaf weight for the given sums, clamped to the node's monotone
+// bounds. Shared by the split finders (constraint checks) and growers
+// (leaf finalization / bound propagation).
+inline double bounded_leaf_weight(double g, double h, TreeConfig const &config,
+                                  double lo, double hi)
+{
+    double const w = -l1_thresholded(g, config.lambda_l1) / (h + config.lambda_l2);
+    return std::clamp(w, lo, hi);
+}
+
+// Per-feature monotone direction; features beyond the configured list are
+// unconstrained.
+inline int monotone_constraint_of(TreeConfig const &config, feature_id_t fid)
+{
+    return fid < config.monotone_constraints.size() ? config.monotone_constraints[fid]
+                                                    : 0;
 }
 
 } // namespace bonsai

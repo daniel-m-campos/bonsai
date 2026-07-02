@@ -59,6 +59,8 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
     double const real_grad = node_totals.sum_grad - missing_cell.sum_grad;
     double const real_hess = node_totals.sum_hess - missing_cell.sum_hess;
 
+    int const mc = monotone_constraint_of(config, fid);
+
     HistCell left_prefix{};
     bin_id_t b = 0;
     for (auto const &cell : hist.cut_cells())
@@ -72,6 +74,17 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
             if (s.hL < config.min_child_hess || s.hR < config.min_child_hess)
             {
                 continue;
+            }
+            if (mc != 0)
+            {
+                double const wL =
+                    bounded_leaf_weight(s.gL, s.hL, config, input.lo, input.hi);
+                double const wR =
+                    bounded_leaf_weight(s.gR, s.hR, config, input.lo, input.hi);
+                if (static_cast<double>(mc) * (wR - wL) < 0.0)
+                {
+                    continue; // would break monotonicity in feature fid
+                }
             }
             double const gain =
                 score(s.gL, s.hL, config.lambda_l1, config.lambda_l2) +

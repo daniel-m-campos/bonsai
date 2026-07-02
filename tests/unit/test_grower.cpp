@@ -278,3 +278,85 @@ TEST_CASE("DepthwiseGrower: large lambda_l1 kills all gain -> single zero leaf",
     CHECK(tree.params().n_leaves == 1);
     CHECK(predict_one(tree, std::vector<float>{0.5F}) == 0.0F);
 }
+
+TEST_CASE("DepthwiseGrower: monotone +1 forces non-decreasing predictions",
+          "[grower][monotone]")
+{
+    // Single feature; gradients make the unconstrained tree NON-monotone:
+    // group means swing down then up (grad -1, +2, -2 across thirds).
+    detail::ColumnBatch batch{
+        .features      = {{0.0F, 0.1F, 0.2F, 1.0F, 1.1F, 1.2F, 2.0F, 2.1F, 2.2F}},
+        .labels        = std::vector<float>(9, 0.0F),
+        .weights       = {},
+        .feature_names = {"a"},
+    };
+    auto               built = build(std::move(batch));
+    std::vector<float> grad{-1.0F, -1.0F, -1.0F, +2.0F, +2.0F,
+                            +2.0F, -2.0F, -2.0F, -2.0F};
+    std::vector<float> hess(9, 1.0F);
+    auto               rows = iota_rows(9);
+
+    TreeConfig unconstrained{.min_child_hess   = 0.0F,
+                             .lambda_l2        = 1.0F,
+                             .max_depth        = 4,
+                             .min_data_in_leaf = 0};
+    TreeConfig constrained        = unconstrained;
+    constrained.monotone_constraints = {+1};
+
+    auto predict_curve = [&](DenseTree const &tree)
+    {
+        std::vector<float> out;
+        for (float x : {0.0F, 1.05F, 2.1F})
+        {
+            out.push_back(predict_one(tree, std::vector<float>{x}));
+        }
+        return out;
+    };
+
+    DepthwiseGrower<> free_grower{unconstrained};
+    auto [free_tree, free_values] =
+        free_grower.grow(built.ds, grad, hess, rows);
+    auto const free_curve = predict_curve(free_tree);
+    // Sanity: unconstrained tree is non-monotone on this data.
+    CHECK((free_curve[1] < free_curve[0] || free_curve[2] < free_curve[1]));
+
+    DepthwiseGrower<> mono_grower{constrained};
+    auto [mono_tree, mono_values] =
+        mono_grower.grow(built.ds, grad, hess, rows);
+    auto const curve = predict_curve(mono_tree);
+    CHECK(curve[0] <= curve[1]);
+    CHECK(curve[1] <= curve[2]);
+}
+
+TEST_CASE("LeafwiseGrower: monotone -1 forces non-increasing predictions",
+          "[grower][monotone][leafwise]")
+{
+    detail::ColumnBatch batch{
+        .features      = {{0.0F, 0.1F, 0.2F, 1.0F, 1.1F, 1.2F, 2.0F, 2.1F, 2.2F}},
+        .labels        = std::vector<float>(9, 0.0F),
+        .weights       = {},
+        .feature_names = {"a"},
+    };
+    auto               built = build(std::move(batch));
+    std::vector<float> grad{+1.0F, +1.0F, +1.0F, -2.0F, -2.0F,
+                            -2.0F, +2.0F, +2.0F, +2.0F};
+    std::vector<float> hess(9, 1.0F);
+    auto               rows = iota_rows(9);
+
+    TreeConfig cfg{.min_child_hess   = 0.0F,
+                   .lambda_l2        = 1.0F,
+                   .max_depth        = 4,
+                   .min_data_in_leaf = 0,
+                   .max_leaves       = 8};
+    cfg.monotone_constraints = {-1};
+
+    LeafwiseGrower<> grower{cfg};
+    auto [tree, values] = grower.grow(built.ds, grad, hess, rows);
+    float prev          = predict_one(tree, std::vector<float>{0.0F});
+    for (float x : {1.05F, 2.1F})
+    {
+        float const cur = predict_one(tree, std::vector<float>{x});
+        CHECK(cur <= prev);
+        prev = cur;
+    }
+}
