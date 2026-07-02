@@ -29,7 +29,7 @@ oblivious:   argmax over the SUM of per-parent gains for one shared (feature, bi
 
 Leaf-wise's property worth internalizing: each expansion converts one leaf
 into two (net +1), so `max_leaves` bounds the tree exactly, and the tree
-is the greedy-optimal sequence of the first $\texttt{max\_leaves} - 1$ splits. A
+is the greedy-optimal sequence of the first `max_leaves - 1` splits. A
 depth-wise tree spends its budget evenly; a leaf-wise tree spends it where
 gain lives.
 

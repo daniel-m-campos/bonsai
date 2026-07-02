@@ -20,13 +20,17 @@ Three classic flavors:
 
 Nothing beyond chapter 3. Every internal node already computed
 
-$$\text{gain} = \operatorname{score}(G_L, H_L) +
-\operatorname{score}(G_R, H_R) - \operatorname{score}(G, H)$$
+```math
+\text{gain} = \operatorname{score}(G_L, H_L) +
+\operatorname{score}(G_R, H_R) - \operatorname{score}(G, H)
+```
 
 when it was created. Then, over all internal nodes $v$ of all trees:
 
-$$\text{split}[f] = \sum_v \mathbb{1}[v \text{ splits on } f] \qquad
-\text{gain}[f] = \sum_v \text{gain}(v)\,\mathbb{1}[v \text{ splits on } f]$$
+```math
+\text{split}[f] = \sum_v \mathbf{1}[v \text{ splits on } f] \qquad
+\text{gain}[f] = \sum_v \text{gain}(v)\,\mathbf{1}[v \text{ splits on } f]
+```
 
 Why they disagree: a feature can be split on *often* for *small* gains.
 Fine-grained, high-cardinality features invite many low-value splits;

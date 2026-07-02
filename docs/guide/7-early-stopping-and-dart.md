@@ -58,8 +58,10 @@ gradients, then rescale so the ensemble's expected output is preserved.
 Drop $k$ trees; fit the new tree; then normalize (xgboost's
 `normalize_type="tree"`, with learning rate $\eta$):
 
-$$\text{new tree} \times \frac{1}{k + \eta} \qquad\qquad
-\text{dropped trees} \times \frac{k}{k + \eta}$$
+```math
+\text{new tree} \times \frac{1}{k + \eta} \qquad\qquad
+\text{dropped trees} \times \frac{k}{k + \eta}
+```
 
 The paper's original factors are $\tfrac{1}{k+1}$ and $\tfrac{k}{k+1}$ —
 correct for *unshrunk* trees. Combined with a learning rate they starve

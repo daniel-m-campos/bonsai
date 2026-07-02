@@ -23,8 +23,10 @@ $c_0 < c_1 < \cdots < c_{k-1}$: bin $b$ holds values in $(c_{b-1}, c_b]$
 (right-inclusive). Per node and feature, the histogram accumulates
 per-bin sums:
 
-$$\text{cell}[b] = \Big(\textstyle\sum_i g_i,\; \sum_i h_i\Big)
-\quad\text{over rows } i \text{ in the node with } \operatorname{bin}(x_i) = b$$
+```math
+\text{cell}[b] = \Big(\textstyle\sum_i g_i,\; \sum_i h_i\Big)
+\quad\text{over rows } i \text{ in the node with } \operatorname{bin}(x_i) = b
+```
 
 A candidate split "$\le b$" needs the left-side sums $G_L, H_L$ — a prefix
 sum over cells — and the right side is $G - G_L$ by subtraction from the

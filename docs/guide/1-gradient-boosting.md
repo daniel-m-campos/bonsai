@@ -18,11 +18,15 @@ gradient descent — performed in function space instead of parameter space.
 
 Model after $m$ trees, with learning rate (shrinkage) $\eta$:
 
-$$F_m(x) = \text{base} + \eta\, T_1(x) + \eta\, T_2(x) + \cdots + \eta\, T_m(x)$$
+```math
+F_m(x) = \text{base} + \eta\, T_1(x) + \eta\, T_2(x) + \cdots + \eta\, T_m(x)
+```
 
 For a loss $L(y, F)$, each row $i$ contributes at round $m$:
 
-$$g_i = \frac{\partial L}{\partial F} \quad\text{(gradient)} \qquad h_i = \frac{\partial^2 L}{\partial F^2} \quad\text{(hessian)}$$
+```math
+g_i = \frac{\partial L}{\partial F} \quad\text{(gradient)} \qquad h_i = \frac{\partial^2 L}{\partial F^2} \quad\text{(hessian)}
+```
 
 both evaluated at the current prediction $F_{m-1}(x_i)$. For squared error
 $L = \tfrac{1}{2}(F-y)^2$ these are simply $g = F - y$ (the residual) and
@@ -33,8 +37,10 @@ formulation: approximate the loss of adding value $w$ to every row in some
 leaf with a second-order Taylor expansion, add an L2 penalty
 $\tfrac{1}{2}\lambda w^2$, and minimize:
 
-$$\sum_i \left(g_i w + \tfrac{1}{2} h_i w^2\right) + \tfrac{1}{2}\lambda w^2
-\;\;\Longrightarrow\;\; w^{\ast} = -\frac{G}{H + \lambda}$$
+```math
+\sum_i \left(g_i w + \tfrac{1}{2} h_i w^2\right) + \tfrac{1}{2}\lambda w^2
+\;\;\Longrightarrow\;\; w^{\ast} = -\frac{G}{H + \lambda}
+```
 
 where $G = \sum_i g_i$ and $H = \sum_i h_i$ over the rows in the leaf.
 That's the whole formula for a leaf's value. With an L1 penalty $\alpha$
@@ -65,7 +71,7 @@ One boosting round is [`Booster::update_one_iter`](../../include/bonsai/booster.
 
 The leaf-value formula is `bounded_leaf_weight` in
 [`include/bonsai/split.hpp`](../../include/bonsai/split.hpp) — literally
-$-\texttt{l1\_thresholded}(G, \alpha) / (H + \lambda)$, clamped to
+$-T(G, \alpha) / (H + \lambda)$ with $T$ = `l1_thresholded`, clamped to
 monotone bounds.
 
 The starting point `base` is `Objective::init_score` — the mean for MSE,

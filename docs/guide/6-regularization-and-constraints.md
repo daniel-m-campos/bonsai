@@ -21,9 +21,11 @@ Boosting will happily memorize the training set; every knob here limits
 leaves supported by little evidence. **L1** soft-thresholds the gradient
 sum:
 
-$$T(G, \alpha) = \begin{cases} G - \alpha & G > \alpha \\ G + \alpha & G < -\alpha \\ 0 & \text{otherwise} \end{cases}
+```math
+T(G, \alpha) = \begin{cases} G - \alpha & G > \alpha \\ G + \alpha & G < -\alpha \\ 0 & \text{otherwise} \end{cases}
 \qquad w^{\ast} = -\frac{T(G, \alpha)}{H + \lambda}, \quad
-\operatorname{score} = \frac{T(G, \alpha)^2}{H + \lambda}$$
+\operatorname{score} = \frac{T(G, \alpha)^2}{H + \lambda}
+```
 
 so leaves with $|G| \le \alpha$ are exactly zero (sparsity), and
 everything else shrinks toward zero by $\alpha$.

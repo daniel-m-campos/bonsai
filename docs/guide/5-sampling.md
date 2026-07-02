@@ -19,8 +19,10 @@ GOSS keeps the top $a$ fraction of rows by $|g|$ and uniformly samples $b$
 of the total from the remainder. The sampled remainder stands in for
 $(1-a)$ of the data using only $b$ of it, so its rows are **amplified**:
 
-$$g_i \leftarrow g_i \cdot \frac{1-a}{b} \qquad
-h_i \leftarrow h_i \cdot \frac{1-a}{b} \qquad \text{(sampled rest only)}$$
+```math
+g_i \leftarrow g_i \cdot \frac{1-a}{b} \qquad
+h_i \leftarrow h_i \cdot \frac{1-a}{b} \qquad \text{(sampled rest only)}
+```
 
 With that reweighting, every histogram cell's expected sums equal the
 full-data sums — split gains are unbiased estimates — while histogram work
