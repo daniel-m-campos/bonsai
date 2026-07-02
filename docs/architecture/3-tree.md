@@ -386,7 +386,7 @@ Shrinkage is applied in `leaf_value` (decision 10). `tree.add_internal` records 
 
 ## Oblivious grow loop
 
-> **Status (2026-05-22):** design target only. No `ObliviousGrower` implementation currently ships — see [decision 30](../decisions.md). The pseudocode below describes the intended algorithm; the previous fold-then-score impl was reverted after the gain function was found wrong.
+> **Status:** implemented. The fold-then-score impl was reverted 2026-05-22 (decision 30) and re-landed with the correct per-parent gain summation described below; oblivious runs in every benchmark since.
 
 Same outer shape as depth-wise. Differences: **all** nodes at the level share one chosen split, and the gain for a candidate split is the **sum of per-parent gains** across the frontier — not the gain of a single folded histogram.
 
@@ -468,7 +468,7 @@ The output `ObliviousTree` is constructed from:
 
 Validated in `DepthwiseGrower` / `ObliviousGrower` constructors. `ConfigError` thrown with key path on bad values.
 
-`max_leaves` is **not** included in Phase 1. It's a leaf-wise concept (`LeafwiseGrower` uses it as the primary stopping criterion); for depth-wise the natural cap is `max_depth`, and oblivious's leaf count is `2^depth` exactly. Adding `max_leaves` for either grower is Phase 4 territory.
+`max_leaves` shipped with `LeafwiseGrower` (decision 31), which uses it as the primary stopping criterion; depth-wise and oblivious ignore it (their natural caps are `max_depth` and `2^depth`). Growers also enforce `feature_fraction`, `lambda_l1`, `monotone_constraints`, and `interaction_constraints` — see decisions 34–35 and the [guide](../guide/) for the concept-level treatment.
 
 ## Leaf values
 

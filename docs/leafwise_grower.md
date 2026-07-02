@@ -1,5 +1,10 @@
 # Adding a Leaf-Wise (Best-First) Grower
 
+> **Status: implemented** (decision 31, tag `v0.2.0`) — the shipped
+> `LeafwiseGrower` follows this guide closely; it remains useful as a
+> worked example of adding a grower. Concept-level discussion:
+> [guide/4-growing-trees.md](guide/4-growing-trees.md).
+
 A guide for implementing `LeafwiseGrower` in bonsai. This is a learning map — it explains
 what a leaf-wise grower is, why each piece exists, and the exact seams to plug into. The
 code sketches are illustrative, not copy-paste.

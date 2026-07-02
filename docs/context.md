@@ -4,29 +4,25 @@
 
 ## 1. Project in two sentences
 
-A from-scratch C++23 implementation of a histogram-based gradient boosted trees library. Goal is to demonstrate modern C++ techniques (concepts, parameter packs, fold expressions, optional reflection) and parallelism (OpenMP + std::execution) while producing a working, benchmarked GBT that can be compared against xgboost / lightgbm / catboost on one regression dataset for the MVP.
+A from-scratch C++23 implementation of a histogram-based gradient boosted trees library — three growers, five objectives, three samplers, constraints, DART, OpenMP parallelism, a CLI, and Python bindings — benchmarked head-to-head against xgboost / lightgbm / catboost. Status (2026-07): RMSE parity achieved on both regression datasets; the living feature tracker is [feature_gap.md](feature_gap.md), the audit trail is [decisions.md](decisions.md) (36 entries), and milestones are git-tagged (`mpcs-submission`, `v0.2.0`–`v0.4.0`).
 
 ## 2. Goals and non-goals
 
-**Goals:**
-- Working serial histogram-GBT with regression as the live MVP path (parity, golden, benchmarks all run against one regression dataset).
-- Logloss objective + binary-classification prediction path implemented alongside MSE in MVP, but only as far as unit tests + synthetic-data smoke tests carry it. Live classification parity is Phase 4. The goal is to keep the `Objective` concept and dispatch honest under a second implementation, not to debug two reference datasets at once.
-- Parity (within tolerance) with reference libraries on RMSE on the MVP regression dataset. AUC parity on a classification dataset is added in Phase 4.
-- Two parallel backends (OpenMP, std::execution) with measurable speedup.
-- Clean extension API spanning the conceptual surface of all three reference libraries (different growers, splitters, samplers).
-- Modern C++ showcase: concepts, static dispatch in hot paths, optional C++26 reflection branch.
-- CLI-first (no Python bindings), CatBoost-style argument conventions.
+**Goals (updated 2026-07; original MVP goals all met):**
+- Regression RMSE parity with the reference libraries — **achieved** on California Housing and Year Prediction MSD (leafwise lands between xgboost and lightgbm with early stopping).
+- Feature parity on the reference libraries' regression surface — tracked row-by-row in [feature_gap.md](feature_gap.md); rows 1–9 landed with per-feature A/B tables, rows 10–17 planned.
+- Deterministic parallelism: OpenMP behind a one-function seam; models bit-identical to serial at any thread count (decision 32).
+- Clean extension API spanning the conceptual surface of all three reference libraries — demonstrated: 5 objectives × 3 growers × 3 samplers, all registry-dispatched.
+- CLI-first **plus** Python bindings (nanobind, `BonsaiRegressor`; decision 36) — models interchangeable between the two.
+- Pedagogical value: readable code, per-component architecture docs, and the concept→code guide series in `docs/guide/`.
 
-**Non-goals:**
-- Beating xgboost/lgbm on training speed (they have years of tuning).
+**Non-goals (still):**
 - Production readiness, ABI stability, or distribution.
-- Python/R bindings.
-- GPU support.
-- DART, Random Forest, or ranking objectives in the main path.
-- Distributed training.
-- Multiclass classification in the main path.
-- Full classification parity / golden / benchmark coverage in the MVP. Logloss code lives in MVP under unit tests, but a second live reference dataset is not debugged in parallel with regression.
-- Categorical features in MVP (deferred to Phase 4 as extension demo).
+- GPU support; distributed training.
+- Multiclass classification (tracked as gap row 16, largest structural change).
+- R bindings.
+
+**Former non-goals since delivered:** Python bindings (v0.4.0), DART (decision 35), competitive training speed (within ~1.5–2× of xgboost, ahead of catboost).
 
 ## 3. Justification beyond pedagogy
 
@@ -52,10 +48,10 @@ The spine is the end-to-end core path. Status as of 2026-05-18 (CLI, CSV reader,
 | `Booster<O,G,Sp,Sa>` + `IBooster` | done | `include/bonsai/booster.hpp` |
 | Registry / dispatch (flat table) | done | `include/bonsai/registry/`, `include/bonsai/typelist.hpp` |
 | Dispatch resolution doc | done | `docs/architecture/6-dispatch.md` |
-| `ParallelBackend` concept | Phase 3 | (doc 7 TBD) |
-| `SerialBackend`, `OpenMPBackend` | Phase 3 | (depends on doc 7) |
+| Parallelism seam (`parallel::for_each_index`) | done (decision 32) | `include/bonsai/parallel.hpp`, `architecture/7-parallel.md` |
+| Python bindings | done (decision 36) | `src/python/module.cpp`, `python/bonsai/` |
 
-**Spine complete as of 2026-05-18.** Everything required to ship the Phase 1 MVP and Phase 2 benchmark harness is in place. The two remaining rows (`ParallelBackend` concept + first impl) are Phase 3 work.
+**Spine complete as of 2026-05-18; Phase 3 (parallelism) and most of Phase 4 (leafwise, GOSS, robust objectives, constraints, DART, importance) landed 2026-07.** The `ParallelBackend` concept was deliberately not promoted to a dispatch dimension — one free function covers every call site (decision 32).
 
 ## 4. Decisions made (with rationale)
 
@@ -134,17 +130,14 @@ include/bonsai/
                 — Dataset, BinMapper, Histogram, Gradient
   tree.hpp, grower.hpp
                 — Tree, Node, TreeGrower concept;
-                  impls: depthwise (now); leafwise, oblivious (future)
-  split.hpp     — SplitFinder concept; impls: histogram (now), exact (future)
+                  impls: depthwise, leafwise, oblivious
+  split.hpp     — SplitFinder concept; impls: histogram node + level
   objective.hpp, objective_traits.hpp, task.hpp, metric.hpp
-                — Objective concept; impls: mse, logloss (now);
-                  softmax, quantile, huber (future)
-  sampler.hpp   — Sampler concept; impls: all_rows (now);
-                  uniform, goss, bernoulli (future)
-  cat/          — (Phase 4) CategoricalHandler;
-                  impls: onehot, partition, target_stat
-  parallel/     — (Phase 3) ParallelBackend concept;
-                  impls: serial, openmp, stdexec
+                — Objective concept; impls: mse, logloss, mae,
+                  huber, quantile (softmax future, gap row 16)
+  sampler.hpp   — Sampler concept; impls: all_rows, bernoulli, goss
+  parallel.hpp  — for_each_index seam (OpenMP / serial fallback)
+  cat/          — (future, gap row 12) CategoricalHandler
   booster.hpp   — Booster<Obj, Gr, Sa>, IBooster, training loop
   io/           — CSV reader; model save/load (MessagePack);
                   libsvm, parquet readers (future)
@@ -163,9 +156,9 @@ include/bonsai/
 
 **Phase 2.5: CLI design + cleanup** (inserted 2026-05-18, decision 28). Before turning on parallelism, take a pass on CLI usability, the typed-config surface, and the small things glossed over during the Phase 1/2 sprints. Items captured as concrete tasks during the work, not pre-listed here. No new spine, no parallel backends; refactors are fair game now that AI assistance is open.
 
-3. **Phase 3: Parallelism.** OpenMP first (feature-parallel hist construction, row-parallel within feature, parallel predict, SIMD bin scan). Then std::execution variant. Determinism + tolerance regression throughout. Adds YearPredictionMSD as the perf benchmark (California Housing is too small to expose scaling); speedup curves are measured here, not on the integration dataset.
-4. **Phase 4: Extensions.** First item is binary classification parity: wire in a classification reference dataset (Higgs subset), AUC parity tests, golden file. Logloss code is already in the codebase from Phase 1, so this is dataset wiring + tuning, not new core code. Then leaf-wise grower, oblivious grower, GOSS sampler, exact splitter, categorical handlers — one per "library style" demonstrates the extension API claim.
-5. **Stretch:** C++26 reflection branch for registry, Python via pybind11 (probably skip), monotonic constraints.
+3. **Phase 3: Parallelism — done (decision 32, v0.2.0).** OpenMP feature/row parallelism behind `parallel::for_each_index`; determinism strengthened to bit-identical at ANY thread count (no cross-thread reductions). std::execution backend dropped — no second implementation earns the abstraction yet.
+4. **Phase 4: Extensions — mostly done (decisions 31, 34–36, v0.3.0–v0.4.0).** Landed: leafwise grower, GOSS, robust objectives, monotone/interaction constraints, DART, early stopping, L1, feature importance, Python bindings. Remaining items live in [feature_gap.md](feature_gap.md) rows 10–17 (leaf renewal, classification benchmark, categorical, prediction extras, warm start, TreeSHAP, multiclass, sparse).
+5. **Stretch:** C++26 reflection branch for the registry.
 
 Phases are ordered, not time-boxed. No week assignments.
 
@@ -178,7 +171,8 @@ docs/
                          evaluation criteria
   context.md          — this file (handoff briefing)
   decisions.md        — append-only decisions log
-  benchmarking.md     — (later) results, methodology, reproduction
+  feature_gap.md      — living feature tracker + per-feature A/B results
+  guide/              — pedagogical series: concept → math → the code
   architecture/
     README.md         — index + cross-cutting concerns (dispatch,
                          threading, error handling, determinism)
@@ -188,7 +182,7 @@ docs/
     4-objective.md    — Objective, MSE, logloss
     5-booster.md      — Booster, training loop
     6-dispatch.md     — registry, runtime → static boundary
-    7-parallel.md     — (TBD) ParallelBackend, OpenMP, std::execution
+    7-parallel.md     — parallelism seam, determinism contract
     8-config.md       — Config, TOML, CLI overrides
     9-cli.md          — subcommand handlers
   conversations/
@@ -226,7 +220,8 @@ docs/
 | Logging | spdlog (fetched, not yet wired) | structured logging deferred |
 | Tests | Catch2 v3 | Link `Catch2WithMain` |
 | Bench | google-benchmark (planned) | not yet fetched |
-| Parallel (planned) | OpenMP + std::execution | TBB to be vendored for stdexec |
+| Parallel | OpenMP (libomp; static for the Python module) | std::execution dropped (decision 32) |
+| Python | nanobind + scikit-build-core | `pip install .`; models interchangeable with CLI |
 
 ## 10. Evaluation criteria (figures planned for final report)
 

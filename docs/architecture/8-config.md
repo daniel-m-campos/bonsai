@@ -1,6 +1,6 @@
 # 8. Config
 
-> **Status:** Mostly done. `DataConfig`, `BinMapperConfig`, `BoosterConfig`, `TreeConfig`, `DispatchConfig`, `MetricsConfig` are pinned and parsed. `ParallelConfig`, `IOConfig` to be filled in as their components are designed (post-spine).
+> **Status:** Done for everything shipped. `DataConfig`, `BinMapperConfig`, `BoosterConfig`, `TreeConfig`, `SamplerConfig`, `DispatchConfig`, `MetricsConfig`, `ParallelConfig` (`[parallel] n_threads`, decision 32), and `ObjectiveConfig` (`[objective] huber_delta / quantile_alpha`, decision 35) are pinned and parsed. `IOConfig` remains future.
 
 ## Shape
 
@@ -16,7 +16,9 @@ struct Config {
     BoosterConfig   booster_config;
     DispatchConfig  dispatch;
     MetricsConfig   metrics;
-    // ParallelConfig, IOConfig — TBD
+    ParallelConfig  parallel;   // [parallel] n_threads (decision 32)
+    ObjectiveConfig objective;  // [objective] huber_delta, quantile_alpha
+    // IOConfig — TBD
 };
 
 }
@@ -185,7 +187,7 @@ The on-disk *model file* (`bonsai::io::save_booster`) serializes the same Config
 
 ## What's not here
 
-- `SamplerConfig`, `SplitConfig`, `ParallelConfig`, `IOConfig` — added as their components are designed.
+- `SplitConfig`, `IOConfig` — added as their components are designed (`SamplerConfig`, `ParallelConfig`, `ObjectiveConfig` since landed).
 - TOML→struct deserializer details — pinned down when `parse_toml` is implemented.
 - Profiles / presets — explicitly rejected (decision *reserved*; was ADR-005 in the original sketch, kept as a non-goal).
 

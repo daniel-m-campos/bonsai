@@ -1,6 +1,12 @@
 # Project retrospective: bonsai
 
 > **Companions:** [proposal](proposal.md), [architecture/](architecture/), [decisions log](decisions.md).
+>
+> **This document is a dated snapshot** of the project at MVP completion
+> (git tag `mpcs-submission`). The claims about missing parallelism, two
+> growers, and the speed gap were true then and are preserved as the
+> point-in-time record. For what changed since, jump to the
+> [Addendum](#addendum-2026-07) at the bottom.
 
 ## Summary
 
@@ -135,3 +141,43 @@ The proposal flagged a C++26 reflection branch for the registry (P2996). Skipped
 - Binned-uint8 predict path. Closes the remaining predict gap; model-format change so it needs a `k_format_version` bump.
 - `GOSSSampler`. The interesting sampler: needs gradient / Hessian access during sampling, which the `Sampler` concept already passes through.
 - Categorical features. The canonical demonstration of the extension API per the proposal.
+
+---
+
+## Addendum (2026-07)
+
+Everything the retrospective named as "the next milestone" has since
+landed, in four tagged pushes (see `git tag -n`):
+
+- **`v0.2.0` — performance parity** (decisions 31–33): leafwise grower,
+  OpenMP parallelism behind a one-function seam (bit-identical to serial
+  at any thread count), parallel CSV/binning, ordered gradients, stable
+  scatter, node-totals hoisting. YearPredictionMSD fit went 73s → 12–28s.
+- **`v0.3.0` — feature parity** (decisions 34–35): feature subsampling,
+  GOSS (whose benchmark exposed and fixed a latent stale-score bug in all
+  subsampled training), early stopping, L1, MAE/Huber/quantile objectives,
+  monotone + interaction constraints, DART. Each feature was A/B'd with
+  the same knob enabled in xgboost/lightgbm/catboost; tables live in
+  [feature_gap.md](feature_gap.md).
+- **`v0.4.0` — Python bindings** (decision 36): nanobind module,
+  sklearn-style `BonsaiRegressor`, models interchangeable with the CLI,
+  static libomp so bonsai coexists with xgboost/lightgbm in one process.
+- **Feature importance** (decision 37): split-count + gain, CLI and
+  Python surfaces.
+
+Current standing on YearPredictionMSD (200 iters, in-process "native"
+timing like the references; `benchmarks/results/msd_native.*`):
+
+| library | rmse | fit_s | predict_s |
+|---|---|---|---|
+| bonsai (depthwise) | 8.9911 | 28.3 | 0.063 |
+| bonsai (leafwise) | 9.0871 | 12.3 | 0.081 |
+| xgboost | 9.1357 | 5.7 | 0.017 |
+| lightgbm | 9.0826 | 7.7 | 0.105 |
+| catboost | 9.1441 | 8.4 | 0.014 |
+
+With early stopping enabled for everyone, all five libraries converge to
+RMSE 8.96–9.00 and bonsai leafwise lands between xgboost and lightgbm.
+The dispatch grid is 5 objectives × 3 growers × 3 samplers = 45 combos,
+316 C++ tests + a Python binding suite. Remaining backlog:
+[feature_gap.md](feature_gap.md) rows 10–17.

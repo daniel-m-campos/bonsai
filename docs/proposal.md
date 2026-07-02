@@ -1,5 +1,10 @@
 # Proposal — bonsai: a modern C++ gradient boosted trees library
 
+> **Historical document** — the original proposal, kept as written. Several
+> non-goals (Python bindings, DART, competitive speed) were later delivered;
+> the audit trail is [decisions.md](decisions.md) and the living tracker is
+> [feature_gap.md](feature_gap.md).
+
 > **Status:** Draft proposal. Serves as a stable design reference for future-me / collaborating agents. Companion docs: `docs/context.md` (briefing), `docs/architecture/` (per-component design docs), `docs/decisions.md` (decisions log).
 
 ## Goals and non-goals

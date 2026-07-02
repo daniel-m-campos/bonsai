@@ -175,7 +175,7 @@ private:
 - `size() == n_bins[fid]`, not `max_bin`. Variable per feature because `BinMapper::fit` deduplicates collisions and does low-cardinality fallback (decision 1 in [`../decisions.md`](../decisions.md)).
 - `clear()` zeros the cells and totals in place; `size()` is invariant. Histograms are allocated once per `(node-slot, feature)` and reused across iterations — `clear()` is the reset, not a destructor.
 - `operator-=` is the subtraction trick primitive; precondition `size() == other.size()`. Asserted in debug, UB otherwise — this is a hot path called per `(child, feature)`. The cell loop and the two scalar total subtractions are fused so the trick stays a single call site.
-- `total_grad()` / `total_hess()` carry the node's per-feature sums. Same across all of a node's histograms (every feature sees the same rows), so `hists[0].total_grad()` is canonical when the caller has a `SplitInput` instead of a single `Histogram`. Maintained as a running scalar pair so the grower doesn't sweep cells to recover the totals.
+- Node totals: **no longer maintained in `add()`** (decision 33). The running scalar pair cost two redundant double-adds per row × feature and duplicated the same node-level totals across every feature. Histograms now carry cells only; node totals are one O(n_bins) cell sweep (`Histogram::totals()`), computed once per node via `SplitInput::totals()` — which uses the first *populated* histogram, since `feature_fraction < 1` leaves unselected features as zero-binned placeholders.
 
 The missing-bin cell (`cells_[n_bins - 1]`) accumulates like any other; the histogram doesn't know about missing semantics. Split scoring is what excludes it from the real-valued sweep.
 
@@ -233,7 +233,7 @@ The build pseudocode is in §"Why a histogram makes that cheap." Two implementat
 
 - Where node-row partitioning lives (the `rows` span above) → [`3-tree.md`](3-tree.md).
 - Split scoring — how the histogram is *consumed* — also [`3-tree.md`](3-tree.md).
-- Backend dispatch for parallel build → [`7-parallel.md`](7-parallel.md).
+- Parallel build and the determinism contract → [`7-parallel.md`](7-parallel.md) (feature-parallel fill with ordered gradients; shipped, decision 32).
 - Categorical histograms (Phase 4). Layout is the same; what changes is split scoring (partition-based, not threshold-based).
 - Serialization. Histograms are training-time scratch and don't round-trip to disk.
 

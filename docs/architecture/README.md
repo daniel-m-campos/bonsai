@@ -12,7 +12,7 @@ Per-component design docs. Numbered roughly in build order. Source of truth for 
 | 4 | [`4-objective.md`](4-objective.md) — Objective concept, MSE, logloss | done |
 | 5 | [`5-booster.md`](5-booster.md) — Booster, training loop, `update_one_iter` | done |
 | 6 | [`6-dispatch.md`](6-dispatch.md) — registry, runtime → static boundary | done |
-| 7 | `7-parallel.md` — ParallelBackend, OpenMP, std::execution | TBD |
+| 7 | `7-parallel.md` — parallelism seam, determinism contract | done (decision 32) |
 | 8 | [`8-config.md`](8-config.md) — Config, TOML, CLI overrides | done |
 | 9 | [`9-cli.md`](9-cli.md) — subcommands, overrides, fit-time output | done |
 
@@ -20,11 +20,11 @@ Per-component design docs. Numbered roughly in build order. Source of truth for 
 
 **Dispatch.** Static poly inside `Booster`, runtime at config boundary. Flat table over `cartesian_product_t<...>`; one vcall at boundary, zero inside `update_one_iter`. See [`6-dispatch.md`](6-dispatch.md) + decision 26.
 
-**Threading.** Two backends behind `ParallelBackend` concept (OpenMP, std::execution) planned. Determinism is per-thread-count, not cross-thread (decision 7). Forces per-thread local hists (no atomic FP adds); final-merge order doesn't need to be `tid`-pinned. To be detailed in `7-parallel.md` (TBD).
+**Threading.** Shipped as a single seam, not a backend concept (decision 32): `parallel::for_each_index` in `bonsai/parallel.hpp`, OpenMP body with serial fallback, `[parallel] n_threads` config. Every parallel site assigns each index to exactly one thread with no cross-thread reductions. Details in [`7-parallel.md`](7-parallel.md).
 
 **Errors.** Component constructors validate their config slice, throw `ConfigError` with key path. No central validator. CLI top-level catches.
 
-**Determinism contract** (decision 7). Same seed + data + config + **same thread count** → same model bytes. Different thread counts: predictions within numerical tolerance, bytes may differ. Determinism tests land with `7-parallel.md` (TBD): byte-equality at fixed `n_threads`, prediction-tolerance across thread counts.
+**Determinism contract** — now *stronger* than originally specified (decision 7 promised fixed-thread-count byte equality). Because no parallel site performs a cross-thread floating-point reduction, models and predictions are **bit-identical to a serial run at any thread count** (decision 32). The weaker fixed-N contract returns only if row-parallel histograms with per-thread merges ever land; `7-parallel.md` spells out the trade.
 
 **Precision.** Float storage, double accumulators. Matches xgb/lgbm.
 

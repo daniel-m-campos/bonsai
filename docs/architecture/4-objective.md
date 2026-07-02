@@ -123,7 +123,7 @@ Parity tests against xgboost/LightGBM live at the booster level (end-to-end), no
 
 - **Multi-class / softmax.** Decision 23 pins single-output for Phase 1. Multi-class is a Phase 4 extension; the natural shape is a K-output concept overload returning `grad`/`hess` per class. Signature change is contained: it touches `Objective`, `Booster`, and `Tree` (which would need K-output leaves). Not free, but well- isolated.
 - **Custom user-supplied objectives.** Out of scope for Phase 1. Adding one means satisfying the concept; no registry needed since dispatch is static at the `Booster` template parameter.
-- **Quantile, Huber, Tweedie, Cox.** Phase 4 ([`../proposal.md` §7](../proposal.md)).
+- **Quantile, Huber, MAE** — since shipped (decision 35): objectives became Config-constructed instances so parameterized losses (`[objective] huber_delta / quantile_alpha`) carry state; MSE/LogLoss kept static methods (statics satisfy instance-call syntax) and gained trivial ctors. Constant-hessian caveat: MAE/quantile leaves are gradient means, not residual medians — leaf renewal (feature_gap row 10) is the known follow-up. **Tweedie, Cox** remain future.
 - **Metric concept.** Bundled into `Objective::eval` for MVP (single-metric, the training loss). Splitting into a `Metric` concept happens when early stopping needs auxiliary metrics (e.g. AUC alongside logloss).
 - **Sample weighting.** Booster-side concern (decision 25); see `5-booster.md`.
 - **Initial score / link inverse.** Booster-side (decision 22); see `5-booster.md`.

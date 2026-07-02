@@ -216,7 +216,7 @@ These are both honest interpretations of "static in hot paths, dynamic at config
 ## Other open sub-decisions
 
 - **Where erasure happens, if at all.** Falls out of A vs B above.
-- **`Backend` placement — deferred to `7-parallel.md`.** Dispatch is 4D for now (Obj, Gr, Sp, Sa). When Backend lands, two reversible options stay open: (a) compose separately (`booster.train<Backend>(data)`), zero dispatch changes; or (b) promote to 5D by adding one typelist to `cartesian_product_t`, table regenerates mechanically.
+- **`Backend` placement — resolved (decision 32).** Neither (a) nor (b): parallelism is a single free function (`parallel::for_each_index` in `bonsai/parallel.hpp`) with an OpenMP body and a serial fallback, set process-wide from `[parallel] n_threads`. One implementation doesn't earn a dispatch dimension; the seam keeps promotion to 5D open if a second backend ever exists. See [`7-parallel.md`](7-parallel.md).
 - **Invalid combinations — resolved.** Pre-filter at typelist construction. See "Encoding compatibility" below.
 
 ## Encoding compatibility (invalid combinations)

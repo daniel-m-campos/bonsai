@@ -173,13 +173,13 @@ Static members, same shape as `Objective` and `SplitFinder`. Returns the count o
 
 Identity sampler: writes `0..n_rows-1`, returns `n_rows`. Compiles out trivially under inlining; the booster's call site is the same shape regardless of sampler.
 
-### Phase 4: `GOSS`, `BernoulliSampler`
+### `BernoulliSampler`, `GossSampler` — shipped
 
-Stub `name`s in the typelist for completeness; impls land in Phase 4. Sub-product machinery from `6-dispatch.md` handles incompatibilities (e.g., if any future grower can't take a non-identity sampler).
+Both landed (decisions 27, 34). GOSS forced one concept change: `sample()` takes **mutable** grad/hess spans so the sampler can amplify the retained small-gradient rows in place — the booster recomputes both from the objective every iteration, so the scaling never outlives its tree. GOSS benchmarking also exposed the out-of-bag stale-score bug (decision 34): every row must receive the tree's contribution in `GrowResult.values`, sampled or not (`route_unsampled`).
 
-### Why static, not `T t.sample(...)`
+### Instance samplers and objectives
 
-Same reason as `Objective` (decision 21 / `4-objective.md`): no instance state needed in MVP. RNG is passed in by the booster, which owns determinism per decision 7. If a future sampler needs config (e.g., GOSS thresholds), it can read from `Config const&` passed as an extra arg, not from a stored member.
+Samplers are Config-constructed instances (subsample rate, GOSS rates). Objectives followed in decision 35 for the same reason (huber_delta, quantile_alpha); the booster holds `objective_` and calls through it — statics still satisfy the instance-call syntax, so MSE/LogLoss kept their static methods. The booster also implements DART (decision 35: per-iteration tree dropout with bin-space routing) and the incremental early-stopping hooks (`score_base` / `accumulate_last_tree` / `truncate`, decision 34), plus `feature_importance` (decision 37).
 
 ## Threading touchpoints (foreshadowing `7-parallel.md`)
 
