@@ -8,6 +8,8 @@ SDK_PATH     := $(shell xcrun --show-sdk-path)
 
 all: build
 
+PYTHON ?= .venv/bin/python
+
 build/build.ninja:
 	@cmake -DCMAKE_BUILD_TYPE=Release \
 	-DCMAKE_CXX_COMPILER=$(LLVM_BIN)/clang++ \
@@ -45,6 +47,17 @@ test: build $(TOY_SENTINEL)
 perf-benchmark: build
 	@./build/benchmarks/bonsai_bench $(ARGS)
 
+# Python extension. Needs a python with nanobind + numpy installed
+# (override with PYTHON=/path/to/python).
+python: build/build.ninja
+	@cmake -B build -DBONSAI_PYTHON=ON -DBONSAI_OPENMP_STATIC=ON \
+	    -DPython_EXECUTABLE=$(abspath $(PYTHON)) >/dev/null
+	@cmake --build build --target _bonsai -j
+	@echo "module at build/python/bonsai — use PYTHONPATH=build/python"
+
+python-test: python $(TOY_SENTINEL)
+	@PYTHONPATH=build/python $(PYTHON) python/tests/test_bindings.py
+
 fit-benchmark: build $(TOY_SENTINEL)
 	@uv run scripts/compare.py --config configs/california_housing.toml $(ARGS)
 
@@ -60,6 +73,8 @@ help:
 	@echo "  make run ARGS=...       Build + run ./build/src/bonsai with ARGS."
 	@echo "  make perf-benchmark     Build + run Catch2 perf microbenchmarks (ARGS forwarded)."
 	@echo "  make fit-benchmark      Build + compare bonsai vs lightgbm/catboost on cal housing."
+	@echo "  make python             Build the Python extension (PYTHON=... to pick the interpreter)."
+	@echo "  make python-test        Build + run python/tests/test_bindings.py."
 	@echo "  make format             clang-format src/ + include/ + tests/ + benchmarks/ in place."
 	@echo "  make lint               clang-tidy on src/ (header-filtered to bonsai)."
 	@echo "  make skills             Install project-local Claude Code skills (currently: caveman)."
@@ -76,4 +91,4 @@ $(SKILLS_DIR)/caveman/SKILL.md:
 skills-clean:
 	rm -rf $(SKILLS_DIR)
 
-.PHONY: configure build clean rebuild format lint all run test perf-benchmark fit-benchmark skills skills-clean help
+.PHONY: configure build clean rebuild format lint all run test perf-benchmark fit-benchmark python python-test skills skills-clean help

@@ -70,6 +70,25 @@ bonsai fit -c config.toml \
 
 Append `--dump-config` to any subcommand to print the resolved config (after `-c` + `--set`) as TOML and exit, useful for verifying overrides before a long fit.
 
+### Python
+
+A nanobind extension wraps the same training pipeline the CLI uses — numpy in, numpy out, models interchangeable with the CLI's `.msgpack` format:
+
+```python
+import bonsai
+
+model = bonsai.BonsaiRegressor(
+    n_iters=200, learning_rate=0.05, grower="leafwise",
+    early_stopping_rounds=20,
+    params={"tree.lambda_l1": 0.5},   # any dotted config key the CLI accepts
+)
+model.fit(X_train, y_train, eval_set=(X_valid, y_valid))
+pred = model.predict(X_test)
+model.save("model.msgpack")           # loadable by `bonsai predict` and vice versa
+```
+
+Install with `pip install .` (scikit-build-core builds the extension), or for development `cmake -B build -DBONSAI_PYTHON=ON && cmake --build build --target _bonsai` and set `PYTHONPATH=build/python`. Requires `nanobind` and `numpy` at build time. `scripts/compare.py` automatically adds in-process "native" rows to the benchmark table when the module is importable, timed the same way as the reference libraries.
+
 `bonsai info` lists every `(objective, grower, sampler)` triple the binary knows how to dispatch to (currently 5×3×3 = 45 combos).
 
 ## Build

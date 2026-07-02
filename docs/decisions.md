@@ -607,3 +607,31 @@ until the harness has a sparse dataset to measure against.
   same settings. Incompatible with early stopping by construction (throws).
 - Oblivious grower rejects monotone/interaction constraints at
   construction rather than silently ignoring them.
+
+## 36. Python bindings: nanobind over the CLI's own seams, static libomp
+
+`_bonsai` (nanobind, `python/bonsai` package, `pip install .` via
+scikit-build-core) wraps exactly the seams the CLI uses — `config::
+apply_overrides` for params (dotted keys, same codec as `--set`),
+`cli::train_with_progress` for fit (so early stopping and valid sets come
+for free), `io::save_booster`/`load_booster` for model files interchangeable
+with the CLI. No training or prediction logic lives in the binding. The
+sklearn-ish `BonsaiRegressor` accepts first-class knobs plus a `params`
+dict of dotted config keys. Parity test: same config through the module and
+the CLI agrees to atol 2e-4 on California Housing predictions.
+
+**The libomp lesson.** Linking the extension against Homebrew's
+`libomp.dylib` deadlocked the process the moment xgboost built a DMatrix —
+a `sample` trace showed one OpenMP call stack spanning *two different
+libomp images* (ours and xgboost's bundled copy): classic duplicate-runtime
+interposition. Fix, standard for wheels: `BONSAI_OPENMP_STATIC=ON` links
+`libomp.a` into the module and `-Wl,-exported_symbol,_PyInit__bonsai`
+strips every other export (1015 leaked `kmp` symbols before). Verified by
+interleaving bonsai / xgboost / lightgbm training in one process.
+
+**Native benchmark rows.** compare.py adds in-process "(native)" rows when
+`build/python` is importable, timed like the reference libraries (no
+subprocess, CSV, or model-save overhead — though bonsai's `train()` still
+includes binning, which xgb's timed `train` does not). Re-baselined:
+RMSE identical to the CLI rows; predict drops 0.20s -> 0.08s on
+YearPredictionMSD, landing between xgboost (0.017) and lightgbm (0.105).

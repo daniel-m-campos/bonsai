@@ -205,6 +205,71 @@ def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str,
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
+def _flatten_cfg_overrides(cfg: dict) -> list[tuple[str, str]]:
+    """Dotted (key, value) pairs for every non-data scalar in the TOML config.
+    Lists are comma-joined (fine for monotone_constraints; interaction
+    groups would need the + form)."""
+    out = []
+    for sec, kv in cfg.items():
+        if sec == "data" or not isinstance(kv, dict):
+            continue
+        for k, v in kv.items():
+            if isinstance(v, (list, tuple)):
+                sv = ",".join(str(x) for x in v)
+            elif isinstance(v, bool):
+                sv = "true" if v else "false"
+            else:
+                sv = str(v)
+            out.append((f"{sec}.{k}", sv))
+    return out
+
+
+def import_native_bonsai():
+    import sys
+    sys.path.insert(0, str(REPO_ROOT / "build" / "python"))
+    try:
+        import bonsai as native  # noqa: PLC0415
+        return native
+    except ImportError:
+        return None
+
+
+def run_bonsai_native(native, cfg: dict, train_df, test_df, hp: HP, grower: str,
+                      sampler: str, hp_overrides: list[str],
+                      valid_df=None) -> Result:
+    feature_cols = [c for c in train_df.columns if c != "label"]
+    Xtr = np.ascontiguousarray(train_df[feature_cols], dtype=np.float32)
+    ytr = np.ascontiguousarray(train_df["label"], dtype=np.float32)
+    Xte = np.ascontiguousarray(test_df[feature_cols], dtype=np.float32)
+
+    pairs = _flatten_cfg_overrides(cfg)
+    pairs += [("dispatch.grower_name", grower),
+              ("dispatch.sampler_name", sampler)]
+    if sampler == "bernoulli":
+        pairs.append(("sampler.subsample", str(BERNOULLI_P)))
+    for ov in hp_overrides:
+        key, _, raw = ov.partition("=")
+        if not key.startswith("data."):
+            pairs.append((key, raw))
+
+    ev = None
+    if valid_df is not None and hp.early_stopping_rounds > 0:
+        ev = (np.ascontiguousarray(valid_df[feature_cols], dtype=np.float32),
+              np.ascontiguousarray(valid_df["label"], dtype=np.float32))
+
+    t0 = time.perf_counter()
+    model = native.train(pairs, Xtr, ytr, ev)
+    fit_s = time.perf_counter() - t0
+
+    t1 = time.perf_counter()
+    pred = np.asarray(model.predict(Xte))
+    pred_s = time.perf_counter() - t1
+
+    y = test_df["label"].to_numpy()
+    return Result(rmse=rmse(pred, y), mae=mae(pred, y),
+                  fit_seconds=fit_s, predict_seconds=pred_s)
+
+
 def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     import xgboost as xgb
 
@@ -409,12 +474,23 @@ def main() -> int:
 
     results: dict[str, Result] = {}
 
+    native = import_native_bonsai()
+    if native is None:
+        print("native module not importable (build with -DBONSAI_PYTHON=ON); "
+              "CLI subprocess rows only", flush=True)
+
     for grower in args.growers.split(","):
         for sampler in args.samplers.split(","):
             label = f"bonsai ({grower}, {sampler})"
             print(f"{label} (n_iters={hp.n_iters})", flush=True)
             results[label] = run_bonsai(args.config, hp, grower, sampler,
                                         bonsai_hp_overrides)
+            if native is not None:
+                nlabel = f"bonsai ({grower}, {sampler}, native)"
+                print(nlabel, flush=True)
+                results[nlabel] = run_bonsai_native(
+                    native, cfg, train_df, test_df, hp, grower, sampler,
+                    args.hp, valid_df=valid_df)
 
     print("xgboost", flush=True)
     results["xgboost"] = run_xgboost(train_df, test_df, hp, valid_df=valid_df)

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind>=2.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "bonsai-gbt"
+version = "0.1.0"
+description = "Histogram gradient-boosted trees with a C++23 core"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Daniel M Campos" }]
+dependencies = ["numpy>=1.26"]
+
+[tool.scikit-build]
+minimum-version = "0.10"
+wheel.packages = ["python/bonsai"]
+cmake.version = ">=3.25"
+build.targets = ["_bonsai"]
+
+[tool.scikit-build.cmake.define]
+BONSAI_PYTHON = "ON"
+BONSAI_TESTS = "OFF"
+BONSAI_OPENMP_STATIC = "ON"

@@ -1,0 +1,100 @@
+"""bonsai: histogram gradient-boosted trees, C++23 core."""
+
+from __future__ import annotations
+
+import numpy as np
+
+from ._bonsai import Model, default_config_toml, load, train
+
+__all__ = ["BonsaiRegressor", "Model", "default_config_toml", "load", "train"]
+
+
+def _as_2d_f32(X) -> np.ndarray:
+    a = np.ascontiguousarray(X, dtype=np.float32)
+    if a.ndim != 2:
+        raise ValueError(f"X must be 2-dimensional, got shape {a.shape}")
+    return a
+
+
+def _as_1d_f32(y) -> np.ndarray:
+    a = np.ascontiguousarray(y, dtype=np.float32)
+    if a.ndim != 1:
+        raise ValueError(f"y must be 1-dimensional, got shape {a.shape}")
+    return a
+
+
+class BonsaiRegressor:
+    """sklearn-style wrapper around the native booster.
+
+    First-class arguments cover the common knobs; anything else can be set
+    through ``params`` using dotted config keys, e.g.
+    ``params={"tree.lambda_l1": 0.5, "sampler.top_rate": 0.2}`` — the same
+    keys the CLI accepts via ``--set``.
+    """
+
+    def __init__(
+        self,
+        n_iters: int = 100,
+        learning_rate: float = 0.05,
+        max_depth: int = 6,
+        max_leaves: int = 31,
+        grower: str = "leafwise",
+        sampler: str = "all_rows",
+        objective: str = "mse",
+        early_stopping_rounds: int = 0,
+        n_threads: int = 0,
+        random_seed: int = 42,
+        params: dict | None = None,
+    ):
+        self._params = {
+            "booster.n_iters": n_iters,
+            "booster.learning_rate": learning_rate,
+            "booster.early_stopping_rounds": early_stopping_rounds,
+            "booster.random_seed": random_seed,
+            "tree.max_depth": max_depth,
+            "tree.max_leaves": max_leaves,
+            "dispatch.grower_name": grower,
+            "dispatch.sampler_name": sampler,
+            "dispatch.objective_name": objective,
+            "parallel.n_threads": n_threads,
+            **(params or {}),
+        }
+        self._model: Model | None = None
+
+    def fit(self, X, y, eval_set: tuple | None = None) -> "BonsaiRegressor":
+        pairs = [(k, _to_config_str(v)) for k, v in self._params.items()]
+        ev = None
+        if eval_set is not None:
+            ev = (_as_2d_f32(eval_set[0]), _as_1d_f32(eval_set[1]))
+        self._model = train(pairs, _as_2d_f32(X), _as_1d_f32(y), ev)
+        return self
+
+    def predict(self, X) -> np.ndarray:
+        if self._model is None:
+            raise RuntimeError("fit() or load first")
+        return np.asarray(self._model.predict(_as_2d_f32(X)))
+
+    def save(self, path: str) -> None:
+        if self._model is None:
+            raise RuntimeError("fit() before save()")
+        self._model.save(path)
+
+    @classmethod
+    def from_file(cls, path: str) -> "BonsaiRegressor":
+        out = cls()
+        out._model = load(path)
+        return out
+
+    @property
+    def n_iters_(self) -> int:
+        if self._model is None:
+            raise RuntimeError("fit() first")
+        return self._model.n_iters
+
+
+def _to_config_str(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (list, tuple)):
+        return ",".join(str(x) for x in v)
+    return str(v)
