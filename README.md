@@ -10,7 +10,7 @@
   <img alt="C++23" src="https://img.shields.io/badge/C%2B%2B-23-00599C?logo=cplusplus&logoColor=white">
   <img alt="CMake" src="https://img.shields.io/badge/CMake-%E2%89%A5%203.28-064F8C?logo=cmake&logoColor=white">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg"></a>
-  <img alt="tests" src="https://img.shields.io/badge/tests-204%20passing-success">
+  <img alt="tests" src="https://img.shields.io/badge/tests-316%20passing-success">
 </p>
 
 <p align="center">
