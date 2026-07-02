@@ -13,6 +13,7 @@ inline constexpr auto tree_section = make_section(
     field<&TreeConfig::lambda_l1>(),
     field<&TreeConfig::max_depth>(), field<&TreeConfig::min_data_in_leaf>(),
     field<&TreeConfig::max_leaves>(), field<&TreeConfig::feature_fraction>(),
-    field<&TreeConfig::feature_seed>(), field<&TreeConfig::monotone_constraints>());
+    field<&TreeConfig::feature_seed>(), field<&TreeConfig::monotone_constraints>(),
+    field<&TreeConfig::interaction_constraints>());
 
 } // namespace bonsai::config::internal

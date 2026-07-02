@@ -52,6 +52,10 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
     {
         return; // unselected under feature_fraction < 1
     }
+    if (!input.allowed.empty() && input.allowed[fid] == 0)
+    {
+        return; // interaction constraints exclude this feature here
+    }
     auto const  &missing_cell = hist.missing();
     double const node_score =
         score(node_totals.sum_grad, node_totals.sum_hess, config.lambda_l1,

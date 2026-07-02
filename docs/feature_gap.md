@@ -15,7 +15,7 @@ histogram pooling) is tracked separately — those aren't features one can
 | 4 | L1 leaf regularization | `reg_alpha` | `lambda_l1` | — | RMSE small (usually ±0.1–0.5%); latency negligible | **landed** |
 | 5 | Robust objectives (Huber / MAE / quantile) | `reg:pseudohubererror` etc. | `huber`, `mae`, `quantile` | `Huber`, `MAE`, `Quantile` | None on RMSE-scored benchmarks (MSE is the matched loss); MAE column added for these | **landed** |
 | 6 | Monotone constraints | `monotone_constraints` | same | same | Constraints can only cost RMSE on unconstrained benchmarks; capability parity | **landed** |
-| 7 | Interaction constraints | yes | yes | — | Same reasoning as monotone | planned |
+| 7 | Interaction constraints | yes | yes | — | Same reasoning as monotone | **landed** |
 | 8 | DART boosting | `booster=dart` | `boosting=dart` | — | Fits *slower* (re-predicts per iter); rare RMSE gains | planned |
 | 9 | Sparse-input handling / EFB | yes | yes (EFB) | yes | Benchmarks are dense; nothing to enable or measure — stays out of scope until a sparse dataset exists in the harness | out of scope |
 
@@ -157,3 +157,24 @@ and bonsai remains in front of the constrained field.
 | xgboost | 0.4908 | +1.9% |
 | lightgbm | 0.4891 | +2.6% |
 | catboost | 0.5194 | +0.9% |
+
+### 7. Interaction constraints — `tree.interaction_constraints` (landed)
+
+Feature groups as strings (`["0,1", "2,3"]` in TOML, `0+1,2+3` via
+`--set`). A node may split on a feature only if some group contains it
+together with every feature already on the path (features outside all
+groups may keep splitting alone); the allowed set propagates through
+`SplitInput::allowed/path`. Oblivious grower rejects the option. Unit
+test walks every root-to-leaf path and asserts groups never mix.
+
+California Housing, groups {0–3 economic} / {4–7 geographic}
+(`ch_interaction`): forbidding cross-group interaction costs every
+library the same ~9%; catboost (no such option) is the unchanged
+control at 0.5147.
+
+| library | rmse | Δrmse |
+|---|---|---|
+| bonsai (depthwise) | 0.5195 | +9.6% |
+| bonsai (leafwise) | 0.5208 | +8.6% |
+| xgboost | 0.5236 | +8.7% |
+| lightgbm | 0.5198 | +9.1% |

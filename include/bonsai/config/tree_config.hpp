@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 namespace bonsai
 {
@@ -19,6 +20,10 @@ struct TreeConfig
     // Per-feature monotone direction: +1 increasing, -1 decreasing, 0 free.
     // Missing trailing entries are free. Node-splitting growers only.
     std::vector<int> monotone_constraints = {};
+    // Feature groups allowed to interact on a tree path; one group per
+    // string, ids separated by ',' (TOML) or '+' (CLI). Features outside
+    // every group can only split alone. Empty = unconstrained.
+    std::vector<std::string> interaction_constraints = {};
 
     bool operator==(TreeConfig const &) const = default;
 };

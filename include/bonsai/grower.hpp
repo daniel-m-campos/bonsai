@@ -39,8 +39,9 @@ template <NodeSplitFinder SplitterT = HistogramNodeSplitFinder> class DepthwiseG
                           row_index_view row_indices);
 
   private:
-    TreeConfig   config_;
-    std::mt19937 feature_rng_;
+    TreeConfig                             config_;
+    std::mt19937                           feature_rng_;
+    std::vector<std::vector<feature_id_t>> interaction_groups_;
 };
 
 template <LevelSplitFinder SplitterT = HistogramLevelSplitFinder> class ObliviousGrower
@@ -65,8 +66,9 @@ template <NodeSplitFinder SplitterT = HistogramNodeSplitFinder> class LeafwiseGr
                           row_index_view row_indices);
 
   private:
-    TreeConfig   config_;
-    std::mt19937 feature_rng_;
+    TreeConfig                             config_;
+    std::mt19937                           feature_rng_;
+    std::vector<std::vector<feature_id_t>> interaction_groups_;
 };
 
 } // namespace bonsai

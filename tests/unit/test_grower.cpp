@@ -2,6 +2,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
 #include <limits>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -358,5 +359,53 @@ TEST_CASE("LeafwiseGrower: monotone -1 forces non-increasing predictions",
         float const cur = predict_one(tree, std::vector<float>{x});
         CHECK(cur <= prev);
         prev = cur;
+    }
+}
+
+TEST_CASE("DepthwiseGrower: interaction constraints keep groups on separate paths",
+          "[grower][interaction]")
+{
+    // Three informative features; groups {0,1} and {2}: no root-to-leaf path
+    // may use feature 2 together with 0 or 1.
+    detail::ColumnBatch batch{
+        .features      = {{0.0F, 0.1F, 0.2F, 0.3F, 1.0F, 1.1F, 1.2F, 1.3F},
+                          {0.0F, 1.0F, 0.1F, 1.1F, 0.2F, 1.2F, 0.3F, 1.3F},
+                          {0.5F, 0.0F, 1.0F, 0.6F, 0.1F, 1.1F, 0.7F, 1.2F}},
+        .labels        = std::vector<float>(8, 0.0F),
+        .weights       = {},
+        .feature_names = {"a", "b", "c"},
+    };
+    auto               built = build(std::move(batch));
+    std::vector<float> grad{-3.0F, +1.0F, -2.0F, +2.0F, -1.0F, +3.0F, -2.5F, +1.5F};
+    std::vector<float> hess(8, 1.0F);
+    auto               rows = iota_rows(8);
+
+    TreeConfig cfg{.min_child_hess   = 0.0F,
+                   .lambda_l2        = 1.0F,
+                   .max_depth        = 3,
+                   .min_data_in_leaf = 0};
+    cfg.interaction_constraints = {"0,1", "2"};
+
+    DepthwiseGrower<> grower{cfg};
+    auto [tree, values] = grower.grow(built.ds, grad, hess, rows);
+
+    // Walk every root-to-leaf path and collect the features used.
+    auto const &nodes = tree.nodes();
+    std::vector<std::pair<node_id_t, std::set<feature_id_t>>> stack{{0, {}}};
+    while (!stack.empty())
+    {
+        auto [id, used] = stack.back();
+        stack.pop_back();
+        auto const &n = nodes[id];
+        if (DenseTree::is_leaf(n))
+        {
+            bool const mixes_groups =
+                used.contains(2) && (used.contains(0) || used.contains(1));
+            CHECK(!mixes_groups);
+            continue;
+        }
+        used.insert(n.feature_id);
+        stack.push_back({n.left, used});
+        stack.push_back({n.right, used});
     }
 }

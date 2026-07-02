@@ -60,6 +60,7 @@ class HP:
     huber_delta: float
     quantile_alpha: float
     monotone_constraints: list
+    interaction_constraints: list
     max_bin: int
     random_seed: int
 
@@ -88,6 +89,8 @@ def hp_from(cfg: dict) -> HP:
         quantile_alpha=float(objective.get("quantile_alpha", 0.5)),
         monotone_constraints=parse_constraints(
             tree.get("monotone_constraints", [])),
+        interaction_constraints=parse_groups(
+            tree.get("interaction_constraints", [])),
         max_bin=int(bin_mapper.get("max_bin", 255)),
         random_seed=int(booster.get("random_seed", 42)),
     )
@@ -107,6 +110,17 @@ def parse_constraints(v) -> list:
     if isinstance(v, str):
         return [int(x) for x in v.split(",") if x != ""]
     return [int(x) for x in v]
+
+
+def parse_groups(v) -> list:
+    """["0,1", "2+3"] or CLI string "0+1,2+3" -> [[0,1],[2,3]]."""
+    entries = v.split(",") if isinstance(v, str) else list(v)
+    groups = []
+    for e in entries:
+        ids = [int(x) for x in str(e).replace("+", ",").split(",") if x != ""]
+        if ids:
+            groups.append(ids)
+    return groups
 
 
 def padded_constraints(hp: HP, n_features: int) -> list:
@@ -214,6 +228,8 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
         **({"monotone_constraints": "(" + ",".join(
                 str(c) for c in padded_constraints(hp, len(feature_cols))) + ")"}
            if hp.monotone_constraints else {}),
+        **({"interaction_constraints": str(hp.interaction_constraints)}
+           if hp.interaction_constraints else {}),
     }
     fit_kwargs = {}
     if valid_df is not None and hp.early_stopping_rounds > 0:
@@ -261,6 +277,8 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
         "seed": hp.random_seed,
         **({"monotone_constraints": padded_constraints(hp, len(feature_cols))}
            if hp.monotone_constraints else {}),
+        **({"interaction_constraints": hp.interaction_constraints}
+           if hp.interaction_constraints else {}),
     }
     fit_kwargs = {}
     if valid_df is not None and hp.early_stopping_rounds > 0:

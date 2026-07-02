@@ -66,6 +66,89 @@ inline void propagate_monotone_bounds(double parent_lo, double parent_hi,
 
 using feature_view = std::span<feature_id_t const>;
 
+using interaction_groups = std::vector<std::vector<feature_id_t>>;
+
+// Parses TreeConfig::interaction_constraints ("0,1" or "0+1" per entry).
+interaction_groups parse_interaction_groups(TreeConfig const &config)
+{
+    interaction_groups groups;
+    for (auto const &entry : config.interaction_constraints)
+    {
+        std::vector<feature_id_t> group;
+        size_t                    start = 0;
+        while (start < entry.size())
+        {
+            size_t const sep =
+                std::min(entry.find(',', start), entry.find('+', start));
+            size_t const end = sep == std::string::npos ? entry.size() : sep;
+            if (end > start)
+            {
+                group.push_back(static_cast<feature_id_t>(
+                    std::stoul(entry.substr(start, end - start))));
+            }
+            start = end + 1;
+        }
+        if (!group.empty())
+        {
+            std::ranges::sort(group);
+            groups.push_back(std::move(group));
+        }
+    }
+    return groups;
+}
+
+// The features a node may split on, given the distinct features already on
+// its path: every group that contains the whole path contributes its
+// members, and a feature may always continue splitting alone. Empty result
+// vector means "all allowed" (path empty or no constraints).
+std::vector<char> allowed_features(interaction_groups const  &groups,
+                                   std::vector<feature_id_t> const &path,
+                                   size_t                     n_features)
+{
+    if (groups.empty() || path.empty())
+    {
+        return {};
+    }
+    std::vector<char> allowed(n_features, 0);
+    for (auto const &group : groups)
+    {
+        bool const covers_path = std::ranges::includes(group, path);
+        if (covers_path)
+        {
+            for (feature_id_t const f : group)
+            {
+                allowed[f] = 1;
+            }
+        }
+    }
+    if (path.size() == 1)
+    {
+        allowed[path.front()] = 1; // any feature may keep splitting alone
+    }
+    return allowed;
+}
+
+// Sets both children's interaction state after a split on `fid`.
+void propagate_interaction_state(interaction_groups const        &groups,
+                                 std::vector<feature_id_t> const &parent_path,
+                                 feature_id_t fid, size_t n_features,
+                                 SplitInput &left, SplitInput &right)
+{
+    if (groups.empty())
+    {
+        return;
+    }
+    std::vector<feature_id_t> path = parent_path;
+    if (!std::ranges::binary_search(path, fid))
+    {
+        path.insert(std::ranges::upper_bound(path, fid), fid);
+    }
+    left.allowed  = allowed_features(groups, path, n_features);
+    right.allowed = left.allowed;
+    left.path     = path;
+    right.path    = std::move(path);
+}
+
 // Per-tree feature subsample: a sorted draw of ceil(fraction * n) distinct
 // feature ids. fraction >= 1 selects everything.
 std::vector<feature_id_t> sample_features(size_t n_features, float fraction,
@@ -224,7 +307,8 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
                          std::vector<SplitOutput> const &splits,
                          DenseTree::Nodes &nodes, size_t &n_leaves,
                          train_leaf_values &values, feature_view selected,
-                         std::vector<bin_id_t> &split_bins)
+                         std::vector<bin_id_t>    &split_bins,
+                         interaction_groups const &groups)
 {
     for (node_id_t i = 0; i < current.size(); ++i)
     {
@@ -246,11 +330,14 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         nodes[node.id] = DenseTree::internal(split.feature_id, threshold, left_id,
                                              right_id, split.default_left);
 
-        double const parent_lo = node.lo;
-        double const parent_hi = node.hi;
+        double const parent_lo   = node.lo;
+        double const parent_hi   = node.hi;
+        auto const   parent_path = std::move(node.path);
         auto [left, right] = split_node(ds, grad, hess, std::move(node), split,
                                         left_id, right_id, selected);
         propagate_monotone_bounds(parent_lo, parent_hi, split, config, left, right);
+        propagate_interaction_state(groups, parent_path, split.feature_id,
+                                    ds.n_features(), left, right);
         next.push_back(std::move(left));
         next.push_back(std::move(right));
     }
@@ -321,7 +408,8 @@ inline void route_unsampled(Dataset const &ds, DenseTree::Nodes const &nodes,
 
 template <NodeSplitFinder SplitterT>
 DepthwiseGrower<SplitterT>::DepthwiseGrower(TreeConfig const &cfg)
-    : config_(cfg), feature_rng_(cfg.feature_seed)
+    : config_(cfg), feature_rng_(cfg.feature_seed),
+      interaction_groups_(parse_interaction_groups(cfg))
 {
 }
 
@@ -351,7 +439,7 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
             splits.push_back(SplitterT::find(input, config_));
         }
         update_nodes(ds, grad, hess, config_, current, next, splits, nodes, n_leaves,
-                     values, selected, split_bins);
+                     values, selected, split_bins, interaction_groups_);
         if (current.empty())
         {
             break;
@@ -382,6 +470,11 @@ ObliviousGrower<SplitterT>::ObliviousGrower(TreeConfig const &cfg)
             throw ConfigError(
                 "monotone_constraints are not supported by the oblivious grower");
         }
+    }
+    if (!cfg.interaction_constraints.empty())
+    {
+        throw ConfigError(
+            "interaction_constraints are not supported by the oblivious grower");
     }
 }
 
@@ -484,7 +577,8 @@ template class ObliviousGrower<HistogramLevelSplitFinder>;
 
 template <NodeSplitFinder SplitterT>
 LeafwiseGrower<SplitterT>::LeafwiseGrower(TreeConfig const &cfg)
-    : config_(cfg), feature_rng_(cfg.feature_seed)
+    : config_(cfg), feature_rng_(cfg.feature_seed),
+      interaction_groups_(parse_interaction_groups(cfg))
 {
 }
 
@@ -549,11 +643,14 @@ auto LeafwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
         nodes[c.node.id] = DenseTree::internal(c.split.feature_id, threshold, left_id,
                                                right_id, c.split.default_left);
 
-        double const parent_lo = c.node.lo;
-        double const parent_hi = c.node.hi;
+        double const parent_lo   = c.node.lo;
+        double const parent_hi   = c.node.hi;
+        auto const   parent_path = std::move(c.node.path);
         auto [left, right] = split_node(ds, grad, hess, std::move(c.node), c.split,
                                         left_id, right_id, selected);
         propagate_monotone_bounds(parent_lo, parent_hi, c.split, config_, left, right);
+        propagate_interaction_state(interaction_groups_, parent_path,
+                                    c.split.feature_id, ds.n_features(), left, right);
         ++live_leaves;
 
         uint8_t const child_depth = c.depth + 1;

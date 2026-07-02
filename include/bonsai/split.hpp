@@ -20,6 +20,11 @@ struct SplitInput
     // Leaf-value bounds inherited down the tree by monotone constraints.
     double lo = -std::numeric_limits<double>::infinity();
     double hi = std::numeric_limits<double>::infinity();
+    // Features this node may split on under interaction constraints;
+    // empty = all allowed. Indexed by feature id.
+    std::vector<char> allowed = {};
+    // Distinct features used on the path from the root to this node.
+    std::vector<feature_id_t> path = {};
 
     // Node-level totals from the first populated histogram (every populated
     // feature sums the same rows). Unselected features under
