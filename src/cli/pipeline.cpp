@@ -28,8 +28,9 @@ namespace bonsai::cli
 
 LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path)
 {
-    auto mappers = io::fit_from_csv(path, cfg);
-    auto train   = io::read_csv(path, cfg.data, mappers);
+    auto const batch   = detail::csv::parse(path, cfg.data);
+    auto       mappers = BinMappers::fit(batch, cfg.bin_mapper);
+    auto       train   = Dataset::bin(batch, mappers, cfg.data);
     return LoadedTrain{.mappers = std::move(mappers), .train = std::move(train)};
 }
 
@@ -65,10 +66,9 @@ ParsedFeatures parse_and_buffer(std::string const &path, DataConfig const &data_
     return ParsedFeatures{.batch = std::move(batch), .buf = std::move(buf)};
 }
 
-LabeledData load_labeled(std::string const &path, DataConfig const &data_cfg,
+LabeledData make_labeled(detail::ColumnBatch const &batch, DataConfig const &data_cfg,
                          BinMappers const &mappers)
 {
-    auto               batch    = detail::csv::parse(path, data_cfg);
     auto               features = to_feature_buffer(batch);
     auto               dataset  = Dataset::bin(batch, mappers, data_cfg);
     std::vector<float> labels(batch.labels.begin(), batch.labels.end());
@@ -77,12 +77,20 @@ LabeledData load_labeled(std::string const &path, DataConfig const &data_cfg,
                        .labels   = std::move(labels)};
 }
 
+LabeledData load_labeled(std::string const &path, DataConfig const &data_cfg,
+                         BinMappers const &mappers)
+{
+    return make_labeled(detail::csv::parse(path, data_cfg), data_cfg, mappers);
+}
+
 } // namespace
 
 LoadedTrainValid load_train_and_valid_from_csv(Config const &cfg)
 {
-    auto mappers = io::fit_from_csv(cfg.data.train, cfg);
-    auto train   = load_labeled(cfg.data.train, cfg.data, mappers);
+    // Parse the train CSV once: fit mappers and bin from the same batch.
+    auto const train_batch = detail::csv::parse(cfg.data.train, cfg.data);
+    auto       mappers     = BinMappers::fit(train_batch, cfg.bin_mapper);
+    auto       train       = make_labeled(train_batch, cfg.data, mappers);
 
     std::optional<LabeledData> valid;
     if (!cfg.data.valid.empty())

@@ -3,6 +3,7 @@
 #include <cstddef>
 
 #include "bonsai/detail/column_batch.hpp"
+#include "bonsai/parallel.hpp"
 
 namespace bonsai::cli
 {
@@ -13,13 +14,15 @@ FeatureBuffer to_feature_buffer(detail::ColumnBatch const &batch)
     buf.n_features = batch.features.size();
     buf.n_rows     = buf.n_features == 0 ? 0 : batch.features[0].size();
     buf.data.resize(buf.n_rows * buf.n_features);
-    for (size_t f = 0; f < buf.n_features; ++f)
-    {
-        for (size_t r = 0; r < buf.n_rows; ++r)
-        {
-            buf.data[(r * buf.n_features) + f] = batch.features[f][r];
-        }
-    }
+    parallel::for_each_index(buf.n_rows,
+                             [&](size_t r)
+                             {
+                                 for (size_t f = 0; f < buf.n_features; ++f)
+                                 {
+                                     buf.data[(r * buf.n_features) + f] =
+                                         batch.features[f][r];
+                                 }
+                             });
     return buf;
 }
 

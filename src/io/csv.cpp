@@ -1,13 +1,16 @@
 #include "bonsai/io/csv.hpp"
 
+#include <atomic>
+#include <charconv>
 #include <cstddef>
-#include <cstdlib>
+#include <cstdint>
 #include <fstream>
 #include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -17,6 +20,7 @@
 #include "bonsai/config/data_config.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
+#include "bonsai/parallel.hpp"
 
 namespace bonsai::detail::csv
 {
@@ -60,17 +64,16 @@ float parse_field(std::string_view raw, bool missing_nan, std::optional<float> s
         }
         throw std::runtime_error("csv::parse: empty field with missing_nan=false");
     }
-    if (is_nan_literal(s))
+    float      val{};
+    auto const [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), val);
+    if (ec != std::errc{} || ptr != s.data() + s.size())
     {
-        return k_nan;
-    }
-    std::string const buf{s};
-    char             *end = nullptr;
-    float const       val = std::strtof(buf.c_str(), &end);
-    auto const consumed   = static_cast<size_t>(end != nullptr ? end - buf.c_str() : 0);
-    if (consumed != buf.size())
-    {
-        throw std::runtime_error("csv::parse: bad numeric field '" + buf + "'");
+        if (is_nan_literal(s))
+        {
+            return k_nan;
+        }
+        throw std::runtime_error("csv::parse: bad numeric field '" + std::string{s} +
+                                 "'");
     }
     if (sentinel && val == *sentinel)
     {
@@ -94,35 +97,19 @@ void split_csv_line(std::string_view line, std::vector<std::string_view> &out)
     out.emplace_back(line.substr(start));
 }
 
-std::vector<std::string> read_header(std::ifstream &in, std::string const &path,
-                                     std::vector<std::string_view> &scratch)
+std::string read_file(std::string const &path)
 {
-    std::string line;
-    if (!std::getline(in, line))
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
     {
-        throw std::runtime_error("csv::parse: empty file '" + path + "'");
+        throw std::runtime_error("csv::parse: cannot open '" + path + "'");
     }
-    split_csv_line(line, scratch);
-    std::vector<std::string> names;
-    names.reserve(scratch.size());
-    for (auto const &f : scratch)
-    {
-        names.emplace_back(trim(f));
-    }
-    return names;
-}
-
-std::vector<float> parse_row(std::string_view line, DataConfig const &cfg,
-                             std::vector<std::string_view> &scratch)
-{
-    split_csv_line(line, scratch);
-    std::vector<float> row;
-    row.reserve(scratch.size());
-    for (auto const &f : scratch)
-    {
-        row.push_back(parse_field(f, cfg.missing_nan, cfg.missing_sentinel));
-    }
-    return row;
+    in.seekg(0, std::ios::end);
+    auto const size = static_cast<size_t>(in.tellg());
+    in.seekg(0, std::ios::beg);
+    std::string buf(size, '\0');
+    in.read(buf.data(), static_cast<std::streamsize>(size));
+    return buf;
 }
 
 std::vector<size_t> resolve_feature_cols(size_t n_cols, DataConfig const &cfg)
@@ -153,12 +140,95 @@ std::vector<size_t> resolve_feature_cols(size_t n_cols, DataConfig const &cfg)
     return out;
 }
 
-ColumnBatch materialize(std::vector<std::vector<float>> const &rows,
-                        std::vector<size_t> const             &feature_cols,
-                        std::vector<std::string> const        &all_names,
-                        DataConfig const                      &cfg)
+// Where each CSV column's parsed value lands in the ColumnBatch.
+struct ColDest
 {
-    auto const  n_rows = rows.size();
+    enum class Kind : uint8_t
+    {
+        feature,
+        label,
+        weight,
+        ignore
+    };
+    Kind   kind = Kind::ignore;
+    size_t idx  = 0; // feature slot when kind == feature
+};
+
+} // namespace
+
+ColumnBatch parse(std::string const &path, DataConfig const &cfg)
+{
+    // Read the whole file once, index the data lines, then parse rows in
+    // parallel straight into column-major storage. Each row writes only
+    // its own slots, so the result is identical at any thread count.
+    std::string const buf = read_file(path);
+
+    std::vector<std::string_view> scratch;
+    std::vector<std::string>      all_names;
+    size_t                        pos = 0;
+
+    auto next_line = [&](size_t &p) -> std::string_view
+    {
+        size_t const nl   = buf.find('\n', p);
+        size_t const end  = nl == std::string::npos ? buf.size() : nl;
+        auto         line = std::string_view{buf}.substr(p, end - p);
+        p                 = end + 1;
+        if (!line.empty() && line.back() == '\r')
+        {
+            line.remove_suffix(1);
+        }
+        return line;
+    };
+
+    if (cfg.header)
+    {
+        if (buf.empty())
+        {
+            throw std::runtime_error("csv::parse: empty file '" + path + "'");
+        }
+        split_csv_line(next_line(pos), scratch);
+        all_names.reserve(scratch.size());
+        for (auto const &f : scratch)
+        {
+            all_names.emplace_back(trim(f));
+        }
+    }
+
+    std::vector<std::string_view> lines;
+    while (pos < buf.size())
+    {
+        auto const line = next_line(pos);
+        if (!line.empty())
+        {
+            lines.push_back(line);
+        }
+    }
+
+    if (all_names.empty() && !lines.empty())
+    {
+        split_csv_line(lines.front(), scratch);
+        all_names.reserve(scratch.size());
+        for (size_t i = 0; i < scratch.size(); ++i)
+        {
+            all_names.emplace_back("f" + std::to_string(i));
+        }
+    }
+
+    auto const   feature_cols = resolve_feature_cols(all_names.size(), cfg);
+    size_t const n_cols       = all_names.size();
+    size_t const n_rows       = lines.size();
+
+    std::vector<ColDest> dest(n_cols);
+    dest[static_cast<size_t>(cfg.label_column)] = {ColDest::Kind::label, 0};
+    if (cfg.weight_column >= 0)
+    {
+        dest[static_cast<size_t>(cfg.weight_column)] = {ColDest::Kind::weight, 0};
+    }
+    for (size_t f = 0; f < feature_cols.size(); ++f)
+    {
+        dest[feature_cols[f]] = {ColDest::Kind::feature, f};
+    }
+
     ColumnBatch batch;
     batch.features.assign(feature_cols.size(), std::vector<float>(n_rows));
     batch.labels.resize(n_rows);
@@ -171,66 +241,70 @@ ColumnBatch materialize(std::vector<std::vector<float>> const &rows,
     {
         batch.feature_names.push_back(all_names[fc]);
     }
-    for (size_t r = 0; r < n_rows; ++r)
-    {
-        auto const &row = rows[r];
-        batch.labels[r] = row[static_cast<size_t>(cfg.label_column)];
-        if (cfg.weight_column >= 0)
-        {
-            batch.weights[r] = row[static_cast<size_t>(cfg.weight_column)];
-        }
-        for (size_t f = 0; f < feature_cols.size(); ++f)
-        {
-            batch.features[f][r] = row[feature_cols[f]];
-        }
-    }
-    return batch;
-}
 
-} // namespace
-
-ColumnBatch parse(std::string const &path, DataConfig const &cfg)
-{
-    std::ifstream in(path);
-    if (!in)
+    // Parses every field (including ignored columns, so bad data still
+    // fails) and stores by destination. Throws on malformed rows.
+    auto parse_line_into = [&](size_t r)
     {
-        throw std::runtime_error("csv::parse: cannot open '" + path + "'");
-    }
-
-    std::vector<std::string_view> scratch;
-    std::vector<std::string>      all_names;
-    if (cfg.header)
-    {
-        all_names = read_header(in, path, scratch);
-    }
-
-    std::vector<std::vector<float>> rows;
-    std::string                     line;
-    while (std::getline(in, line))
-    {
-        if (line.empty() || (line.size() == 1 && line[0] == '\r'))
+        auto const line  = lines[r];
+        size_t     c     = 0;
+        size_t     start = 0;
+        for (size_t i = 0; i <= line.size(); ++i)
         {
-            continue;
-        }
-        auto row = parse_row(line, cfg, scratch);
-        if (all_names.empty())
-        {
-            all_names.reserve(row.size());
-            for (size_t i = 0; i < row.size(); ++i)
+            if (i != line.size() && line[i] != ',')
             {
-                all_names.emplace_back("f" + std::to_string(i));
+                continue;
             }
+            if (c >= n_cols)
+            {
+                break; // too many fields; reported below
+            }
+            float const v = parse_field(line.substr(start, i - start), cfg.missing_nan,
+                                        cfg.missing_sentinel);
+            switch (dest[c].kind)
+            {
+            case ColDest::Kind::feature: batch.features[dest[c].idx][r] = v; break;
+            case ColDest::Kind::label:   batch.labels[r] = v; break;
+            case ColDest::Kind::weight:  batch.weights[r] = v; break;
+            case ColDest::Kind::ignore:  break;
+            }
+            ++c;
+            start = i + 1;
         }
-        if (row.size() != all_names.size())
+        if (c != n_cols)
         {
             throw std::runtime_error("csv::parse: column count mismatch in '" + path +
                                      "'");
         }
-        rows.push_back(std::move(row));
+    };
+
+    // Exceptions must not escape a worker thread: record the first bad row,
+    // then re-parse it serially so the original error propagates.
+    std::atomic<size_t> first_bad{std::numeric_limits<size_t>::max()};
+    parallel::for_each_index(n_rows,
+                             [&](size_t r)
+                             {
+                                 try
+                                 {
+                                     parse_line_into(r);
+                                 }
+                                 catch (...)
+                                 {
+                                     size_t seen = first_bad.load();
+                                     while (r < seen &&
+                                            !first_bad.compare_exchange_weak(seen, r))
+                                     {
+                                     }
+                                 }
+                             });
+    if (size_t const bad = first_bad.load();
+        bad != std::numeric_limits<size_t>::max())
+    {
+        parse_line_into(bad); // throws with the field-level message
+        throw std::runtime_error("csv::parse: malformed row in '" + path + "'");
     }
 
-    auto const feature_cols = resolve_feature_cols(all_names.size(), cfg);
-    return materialize(rows, feature_cols, all_names, cfg);
+    return batch;
 }
 
 } // namespace bonsai::detail::csv

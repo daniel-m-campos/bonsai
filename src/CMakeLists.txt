@@ -14,7 +14,7 @@ target_include_directories(bonsai_data PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
 
-target_link_libraries(bonsai_data PUBLIC bonsai_warnings)
+target_link_libraries(bonsai_data PUBLIC bonsai_parallel bonsai_warnings)
 
 # ---- bonsai_tree: DenseTree, ObliviousTree, growers (later) -----------------
 
@@ -138,6 +138,7 @@ target_link_libraries(bonsai_io PUBLIC
     bonsai_data
     bonsai_booster
     bonsai_registry
+    bonsai_parallel
     bonsai_warnings
     nlohmann_json::nlohmann_json
 )

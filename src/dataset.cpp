@@ -7,6 +7,7 @@
 #include "bonsai/bin_mappers.hpp"
 #include "bonsai/config/data_config.hpp"
 #include "bonsai/detail/column_batch.hpp"
+#include "bonsai/parallel.hpp"
 #include "bonsai/types.hpp"
 
 namespace bonsai
@@ -26,18 +27,19 @@ Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers
     ds.weights_ = batch.weights;
     ds.features_.resize(batch.features.size());
     ds.is_categorical_.assign(batch.features.size(), false);
-    for (size_t f = 0; f < batch.features.size(); ++f)
-    {
-        auto const &col = batch.features[f];
-        assert(col.size() == ds.n_rows_);
-        auto &binned = ds.features_[f];
-        binned.resize(ds.n_rows_);
-        auto const &mapper = mappers[f];
-        for (size_t i = 0; i < ds.n_rows_; ++i)
-        {
-            binned[i] = mapper.transform(col[i]);
-        }
-    }
+    parallel::for_each_index(batch.features.size(),
+                             [&](size_t f)
+                             {
+                                 auto const &col = batch.features[f];
+                                 assert(col.size() == ds.n_rows_);
+                                 auto &binned = ds.features_[f];
+                                 binned.resize(ds.n_rows_);
+                                 auto const &mapper = mappers[f];
+                                 for (size_t i = 0; i < ds.n_rows_; ++i)
+                                 {
+                                     binned[i] = mapper.transform(col[i]);
+                                 }
+                             });
     return ds;
 }
 
