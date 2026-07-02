@@ -46,8 +46,8 @@ class Booster final : public IBooster
     using tree_type      = typename Gr::Tree;
 
     explicit Booster(Config const &config)
-        : config_(config.booster_config), grower_(config.tree_config), sampler_(config),
-          rng_(config.booster_config.random_seed)
+        : config_(config.booster_config), objective_(config), grower_(config.tree_config),
+          sampler_(config), rng_(config.booster_config.random_seed)
     {
     }
 
@@ -57,11 +57,11 @@ class Booster final : public IBooster
         {
             grad_.resize(train.n_rows());
             hess_.resize(train.n_rows());
-            init_score_ = objective_type::init_score(train.labels());
+            init_score_ = objective_.init_score(train.labels());
             scores_.assign(train.n_rows(), init_score_);
         }
 
-        objective_type::compute(scores_, train.labels(), grad_, hess_);
+        objective_.compute(scores_, train.labels(), grad_, hess_);
 
         if (!train.weights().empty())
         {
@@ -92,7 +92,7 @@ class Booster final : public IBooster
     {
         std::vector<float> scores(X.extent(0));
         predict(X, scores);
-        return objective_type::eval(scores, labels);
+        return objective_.eval(scores, labels);
     }
 
     void predict(features_view X, floats_out scores) const override
@@ -159,6 +159,7 @@ class Booster final : public IBooster
 
   private:
     BoosterConfig          config_;
+    objective_type         objective_;
     grower_type            grower_;
     sampler_type           sampler_;
     std::mt19937           rng_;

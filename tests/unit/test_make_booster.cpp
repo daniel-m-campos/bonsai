@@ -92,6 +92,22 @@ template <> detail::ColumnBatch batch_for<LogLossObjective>()
     };
 }
 
+
+template <> detail::ColumnBatch batch_for<MAEObjective>()
+{
+    return batch_for<MSEObjective>();
+}
+
+template <> detail::ColumnBatch batch_for<HuberObjective>()
+{
+    return batch_for<MSEObjective>();
+}
+
+template <> detail::ColumnBatch batch_for<QuantileObjective>()
+{
+    return batch_for<MSEObjective>();
+}
+
 using DispatchCombos = cartesian_product_t<Objectives, Growers, Samplers>;
 
 } // namespace

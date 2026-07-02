@@ -35,6 +35,21 @@ template <> struct impl_name<LogLossObjective>
     static constexpr std::string_view value = "logloss";
 };
 
+template <> struct impl_name<MAEObjective>
+{
+    static constexpr std::string_view value = "mae";
+};
+
+template <> struct impl_name<HuberObjective>
+{
+    static constexpr std::string_view value = "huber";
+};
+
+template <> struct impl_name<QuantileObjective>
+{
+    static constexpr std::string_view value = "quantile";
+};
+
 template <> struct impl_name<DepthwiseGrower<HistogramNodeSplitFinder>>
 {
     static constexpr std::string_view value = "depthwise";

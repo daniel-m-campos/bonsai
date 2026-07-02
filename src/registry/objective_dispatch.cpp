@@ -21,7 +21,7 @@ namespace
 {
 
 using LinkFn     = void (*)(floats_out);
-using EvalFn     = float (*)(floats_view, floats_view);
+using EvalFn     = float (*)(Config const &, floats_view, floats_view);
 using DefaultsFn = std::span<std::string_view const> (*)();
 
 struct LinkEntry
@@ -53,9 +53,10 @@ template <typename O> void link_thunk(floats_out scores)
     link_inverse_of<O>::apply(scores);
 }
 
-template <typename O> float eval_thunk(floats_view scores, floats_view labels)
+template <typename O>
+float eval_thunk(Config const &cfg, floats_view scores, floats_view labels)
 {
-    return O::eval(scores, labels);
+    return O{cfg}.eval(scores, labels);
 }
 
 template <typename O> std::span<std::string_view const> defaults_thunk()
@@ -135,14 +136,14 @@ void apply_link_inverse_by_name(std::string_view objective_name, floats_out scor
                            std::string{objective_name} + "'");
 }
 
-float eval_objective_by_name(std::string_view objective_name, floats_view scores,
-                             floats_view labels)
+float eval_objective_by_name(std::string_view objective_name, Config const &cfg,
+                             floats_view scores, floats_view labels)
 {
     for (auto const &e : eval_table)
     {
         if (e.name == objective_name)
         {
-            return e.eval(scores, labels);
+            return e.eval(cfg, scores, labels);
         }
     }
     throw UnknownImplError("eval_objective_by_name: no objective '" +

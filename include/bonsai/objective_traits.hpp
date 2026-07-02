@@ -34,6 +34,19 @@ template <> struct link_inverse_of<LogLossObjective>
     static void apply(floats_out scores);
 };
 
+template <> struct link_inverse_of<MAEObjective>
+{
+    static void apply(floats_out /*scores*/) {}
+};
+template <> struct link_inverse_of<HuberObjective>
+{
+    static void apply(floats_out /*scores*/) {}
+};
+template <> struct link_inverse_of<QuantileObjective>
+{
+    static void apply(floats_out /*scores*/) {}
+};
+
 // Task this objective serves. Determines which metrics are compatible.
 template <> struct task_of<MSEObjective>
 {
@@ -42,6 +55,18 @@ template <> struct task_of<MSEObjective>
 template <> struct task_of<LogLossObjective>
 {
     static constexpr TaskKind value = TaskKind::binary_classification;
+};
+template <> struct task_of<MAEObjective>
+{
+    static constexpr TaskKind value = TaskKind::regression;
+};
+template <> struct task_of<HuberObjective>
+{
+    static constexpr TaskKind value = TaskKind::regression;
+};
+template <> struct task_of<QuantileObjective>
+{
+    static constexpr TaskKind value = TaskKind::regression;
 };
 
 // Default metric names to report when the user does not set `metrics.fit` /
@@ -61,6 +86,18 @@ template <> struct default_metrics_of<MSEObjective>
     static std::span<std::string_view const> value();
 };
 template <> struct default_metrics_of<LogLossObjective>
+{
+    static std::span<std::string_view const> value();
+};
+template <> struct default_metrics_of<MAEObjective>
+{
+    static std::span<std::string_view const> value();
+};
+template <> struct default_metrics_of<HuberObjective>
+{
+    static std::span<std::string_view const> value();
+};
+template <> struct default_metrics_of<QuantileObjective>
 {
     static std::span<std::string_view const> value();
 };

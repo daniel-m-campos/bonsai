@@ -55,4 +55,22 @@ std::span<std::string_view const> default_metrics_of<LogLossObjective>::value()
     return names;
 }
 
+std::span<std::string_view const> default_metrics_of<MAEObjective>::value()
+{
+    static constexpr auto names = std::array<std::string_view, 2>{"mae", "rmse"};
+    return names;
+}
+
+std::span<std::string_view const> default_metrics_of<HuberObjective>::value()
+{
+    static constexpr auto names = std::array<std::string_view, 2>{"mae", "rmse"};
+    return names;
+}
+
+std::span<std::string_view const> default_metrics_of<QuantileObjective>::value()
+{
+    static constexpr auto names = std::array<std::string_view, 2>{"mae", "rmse"};
+    return names;
+}
+
 } // namespace bonsai

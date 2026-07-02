@@ -190,7 +190,7 @@ std::unique_ptr<IBooster> train_with_progress(Config const           &cfg,
             }
             booster->accumulate_last_tree(loaded.valid->features.view(), es_scores);
             float const loss =
-                eval_objective_by_name(cfg.dispatch.objective_name, es_scores,
+                eval_objective_by_name(cfg.dispatch.objective_name, cfg, es_scores,
                                        loaded.valid->labels);
             if (i == 0 || loss < best_loss)
             {

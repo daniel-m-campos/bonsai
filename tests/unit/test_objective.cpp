@@ -246,3 +246,67 @@ TEST_CASE("LogLossObjective: eval is finite for extreme scores",
     // Correctly-classified extreme scores -> near-zero loss.
     CHECK(loss == Catch::Approx(0.0F).margin(1e-3));
 }
+
+TEST_CASE("MAEObjective: sign gradients, unit hessians, median init",
+          "[objective][mae]")
+{
+    std::vector<float> preds{2.0F, 1.0F, 3.0F};
+    std::vector<float> targets{1.0F, 1.0F, 5.0F};
+    std::vector<float> grad(3);
+    std::vector<float> hess(3);
+    MAEObjective::compute(preds, targets, grad, hess);
+    CHECK(grad[0] == 1.0F);  // over-prediction
+    CHECK(grad[1] == 0.0F);  // exact
+    CHECK(grad[2] == -1.0F); // under-prediction
+    CHECK(hess[0] == 1.0F);
+
+    // eval: mean |r| = (1 + 0 + 2) / 3.
+    CHECK(MAEObjective::eval(preds, targets) == Catch::Approx(1.0F));
+
+    std::vector<float> labels{5.0F, 1.0F, 3.0F, 9.0F, 7.0F};
+    CHECK(MAEObjective::init_score(labels) == 5.0F); // median
+}
+
+TEST_CASE("HuberObjective: gradient clamps at delta", "[objective][huber]")
+{
+    Config cfg{};
+    cfg.objective.huber_delta = 2.0F;
+    HuberObjective const obj{cfg};
+
+    std::vector<float> preds{0.5F, 5.0F, -5.0F};
+    std::vector<float> targets{0.0F, 0.0F, 0.0F};
+    std::vector<float> grad(3);
+    std::vector<float> hess(3);
+    obj.compute(preds, targets, grad, hess);
+    CHECK(grad[0] == 0.5F);  // inside the L2 zone
+    CHECK(grad[1] == 2.0F);  // clamped
+    CHECK(grad[2] == -2.0F); // clamped
+
+    // eval: 0.5*0.25 + 2*(5-1) + 2*(5-1) over 3.
+    CHECK(obj.eval(preds, targets) ==
+          Catch::Approx((0.125F + 8.0F + 8.0F) / 3.0F));
+}
+
+TEST_CASE("QuantileObjective: pinball gradients and alpha-quantile init",
+          "[objective][quantile]")
+{
+    Config cfg{};
+    cfg.objective.quantile_alpha = 0.9F;
+    QuantileObjective const obj{cfg};
+
+    std::vector<float> preds{2.0F, 0.0F};
+    std::vector<float> targets{1.0F, 1.0F};
+    std::vector<float> grad(2);
+    std::vector<float> hess(2);
+    obj.compute(preds, targets, grad, hess);
+    CHECK(grad[0] == Catch::Approx(0.1F));  // over-prediction: 1 - alpha
+    CHECK(grad[1] == Catch::Approx(-0.9F)); // under-prediction: -alpha
+
+    // eval: over by 1 -> (1-a)*1 = 0.1; under by 1 -> a*1 = 0.9.
+    CHECK(obj.eval(preds, targets) == Catch::Approx(0.5F));
+
+    std::vector<float> labels{1.0F, 2.0F, 3.0F, 4.0F, 5.0F, 6.0F, 7.0F, 8.0F,
+                              9.0F, 10.0F};
+    // Nearest-rank on alpha * (n-1): round(0.9 * 9) = 8 -> value 9.
+    CHECK(obj.init_score(labels) == 9.0F);
+}
