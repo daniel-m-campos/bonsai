@@ -219,3 +219,23 @@ TEST_CASE("DepthwiseGrower: empty row_indices yields zero-valued single leaf",
     // Sum grad = 0, sum hess = 0 → leaf value = -0/(0+1) = 0.
     CHECK(predict_one(tree, std::vector<float>{0.5F}) == 0.0F);
 }
+
+TEST_CASE("DepthwiseGrower: unsampled rows still receive the tree's train values",
+          "[grower][sampling]")
+{
+    // Grow on rows {0,1,3} only; row 2 (feature 0.9, right half) must still
+    // get the right leaf's value in `values`, matching tree.predict.
+    auto                  in = separable_4row();
+    std::vector<row_id_t> sampled{0, 1, 3};
+
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .max_depth        = 2,
+                          .min_data_in_leaf = 0};
+    DepthwiseGrower<> grower{cfg};
+    auto [tree, values] = grower.grow(in.built.ds, in.grad, in.hess, sampled);
+
+    float const oob_pred = predict_one(tree, std::vector<float>{0.9F});
+    CHECK(values[2] == oob_pred);
+    CHECK(oob_pred != 0.0F);
+}

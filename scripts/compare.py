@@ -52,6 +52,8 @@ class HP:
     min_data_in_leaf: int
     lambda_l2: float
     feature_fraction: float
+    top_rate: float
+    other_rate: float
     max_bin: int
     random_seed: int
 
@@ -60,6 +62,7 @@ def hp_from(cfg: dict) -> HP:
     tree = cfg.get("tree", {})
     booster = cfg.get("booster", {})
     bin_mapper = cfg.get("bin_mapper", {})
+    sampler = cfg.get("sampler", {})
     return HP(
         n_iters=int(booster.get("n_iters", 100)),
         learning_rate=float(booster.get("learning_rate", 0.05)),
@@ -68,6 +71,8 @@ def hp_from(cfg: dict) -> HP:
         min_data_in_leaf=int(tree.get("min_data_in_leaf", 20)),
         lambda_l2=float(tree.get("lambda_l2", 1.0)),
         feature_fraction=float(tree.get("feature_fraction", 1.0)),
+        top_rate=float(sampler.get("top_rate", 0.2)),
+        other_rate=float(sampler.get("other_rate", 0.1)),
         max_bin=int(bin_mapper.get("max_bin", 255)),
         random_seed=int(booster.get("random_seed", 42)),
     )
@@ -158,7 +163,7 @@ def run_xgboost(train_df, test_df, hp: HP) -> Result:
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
-def run_lightgbm(train_df, test_df, hp: HP) -> Result:
+def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False) -> Result:
     import lightgbm as lgb
 
     feature_cols = [c for c in train_df.columns if c != "label"]
@@ -166,6 +171,9 @@ def run_lightgbm(train_df, test_df, hp: HP) -> Result:
     params = {
         "objective": "regression",
         "metric": "rmse",
+        **({"data_sample_strategy": "goss",
+            "top_rate": hp.top_rate,
+            "other_rate": hp.other_rate} if goss else {}),
         "learning_rate": hp.learning_rate,
         "max_depth": hp.max_depth,
         "num_leaves": hp.max_leaves if hp.max_leaves > 0 else (1 << hp.max_depth) - 1,
@@ -272,6 +280,10 @@ def main() -> int:
 
     print("lightgbm", flush=True)
     results["lightgbm"] = run_lightgbm(train_df, test_df, hp)
+
+    if "goss" in args.samplers.split(","):
+        print("lightgbm (goss)", flush=True)
+        results["lightgbm (goss)"] = run_lightgbm(train_df, test_df, hp, goss=True)
 
     print("catboost", flush=True)
     results["catboost"] = run_catboost(train_df, test_df, hp)

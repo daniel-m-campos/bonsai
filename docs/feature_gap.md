@@ -10,7 +10,7 @@ histogram pooling) is tracked separately — those aren't features one can
 | # | Feature | xgboost | lightgbm | catboost | Expected impact | Status |
 |---|---------|---------|----------|----------|-----------------|--------|
 | 1 | Feature (column) subsampling per tree | `colsample_bytree` | `feature_fraction` | `rsm` | Fit latency ↓ ~proportionally to fraction (fewer histogram scans); RMSE neutral-to-better (decorrelates trees) | **landed** |
-| 2 | GOSS (gradient one-side sampling) | — (GPU only) | `data_sample_strategy=goss` | — | Fit latency ↓ 2–3× at near-equal RMSE; only lightgbm comparable | planned |
+| 2 | GOSS (gradient one-side sampling) | — (GPU only) | `data_sample_strategy=goss` | — | Fit latency ↓ 2–3× at near-equal RMSE; only lightgbm comparable | **landed** |
 | 3 | Early stopping on validation | `early_stopping_rounds` | `early_stopping_round` | `od_wait` | Fit latency ↓ whenever the model converges before `n_iters`; RMSE ~best-iteration | planned |
 | 4 | L1 leaf regularization | `reg_alpha` | `lambda_l1` | — | RMSE small (usually ±0.1–0.5%); latency negligible | planned |
 | 5 | Robust objectives (Huber / MAE / quantile) | `reg:pseudohubererror` etc. | `huber`, `mae`, `quantile` | `Huber`, `MAE`, `Quantile` | None on RMSE-scored benchmarks (MSE is the matched loss); useful capability, no A/B signal | deferred |
@@ -44,3 +44,28 @@ Slight RMSE improvement and a fit speedup for every library. bonsai's
 speedup is smaller than xgboost/lightgbm's because its per-node fixed
 costs (parallel-region launches, histogram allocation, row partition)
 don't shrink with the feature count.
+
+### 2. GOSS — `dispatch.sampler_name = "goss"` (landed)
+
+`sampler.top_rate = 0.2`, `sampler.other_rate = 0.1` (LightGBM defaults).
+Year Prediction MSD, 200 iters (`msd_goss2`), vs the all_rows baseline:
+
+| library | rmse | fit_s | Δrmse | Δfit |
+|---|---|---|---|---|
+| bonsai (depthwise, goss) | 8.9934 | 18.4 | +0.03% | −33% |
+| bonsai (leafwise, goss) | 9.0757 | 10.9 | −0.13% | −13% |
+| lightgbm (goss) | 9.0697 | 5.0 | −0.14% | −44% |
+
+GOSS *improves* leafwise RMSE while cutting fit time, matching the
+direction and magnitude of LightGBM's own GOSS delta (−0.14%).
+
+Implementing this surfaced a real bug affecting every subsampling
+sampler: `GrowResult.values` was only written for sampled rows, so
+out-of-bag rows' training scores went stale relative to the model
+(gradients computed against predictions that were missing whole trees).
+Bernoulli quietly lost accuracy — depthwise 9.1873 → **8.9916** after
+the fix — and GOSS diverged outright (RMSE 24.7, worse than predicting
+the mean) because it re-selects rows by |grad| every iteration, feeding
+on its own staleness. Fixed by routing unsampled rows through the
+finished tree in bin space (`route_unsampled`), exactly matching the
+float-threshold predict path.

@@ -185,7 +185,8 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
                          std::vector<SplitInput>        &next,
                          std::vector<SplitOutput> const &splits,
                          DenseTree::Nodes &nodes, size_t &n_leaves,
-                         train_leaf_values &values, feature_view selected)
+                         train_leaf_values &values, feature_view selected,
+                         std::vector<bin_id_t> &split_bins)
 {
     for (node_id_t i = 0; i < current.size(); ++i)
     {
@@ -200,6 +201,8 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         nodes.emplace_back(DenseTree::leaf(0.0F));
         node_id_t const right_id = nodes.size();
         nodes.emplace_back(DenseTree::leaf(0.0F));
+        split_bins.resize(nodes.size(), 0);
+        split_bins[node.id] = split.bin_id;
 
         float const threshold = ds.mappers()[split.feature_id].cuts()[split.bin_id];
         nodes[node.id] = DenseTree::internal(split.feature_id, threshold, left_id,
@@ -223,6 +226,56 @@ struct Candidate
     uint8_t     depth = 0;
 };
 
+// Rows not in `sampled` (sorted) never reach a leaf during growth, so
+// finalize_as_leaf can't stamp their train values — yet the booster's score
+// accumulator covers every row. Route them through the finished tree in bin
+// space (split_bins[i] is node i's split bin; bin <= split_bin routes left,
+// exactly matching the float-threshold predict path) and fill their values.
+// Skipping this desynchronizes training scores from the real model for any
+// sampler that drops rows: gradients go stale and GOSS-style samplers, which
+// re-pick rows by |grad|, diverge outright.
+inline void route_unsampled(Dataset const &ds, DenseTree::Nodes const &nodes,
+                            std::vector<bin_id_t> const &split_bins,
+                            row_index_view sampled, train_leaf_values &values)
+{
+    size_t const n = ds.n_rows();
+    if (sampled.size() == n)
+    {
+        return;
+    }
+    std::vector<row_id_t> oob;
+    oob.reserve(n - sampled.size());
+    size_t j = 0;
+    for (row_id_t r = 0; r < n; ++r)
+    {
+        if (j < sampled.size() && sampled[j] == r)
+        {
+            ++j;
+            continue;
+        }
+        oob.push_back(r);
+    }
+    parallel::for_each_index(
+        oob.size(),
+        [&](size_t k)
+        {
+            row_id_t const r   = oob[k];
+            node_id_t      idx = 0;
+            while (!DenseTree::is_leaf(nodes[idx]))
+            {
+                auto const    &nd   = nodes[idx];
+                auto const    &bins = ds.feature_bins(nd.feature_id);
+                auto const     last =
+                    static_cast<bin_id_t>(ds.n_bins(nd.feature_id) - 1);
+                bin_id_t const b = bins[r];
+                bool const     left =
+                    (b == last) ? nd.default_left : b <= split_bins[idx];
+                idx = left ? nd.left : nd.right;
+            }
+            values[r] = nodes[idx].threshold_or_value;
+        });
+}
+
 } // namespace
 
 template <NodeSplitFinder SplitterT>
@@ -241,6 +294,7 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
     std::vector<SplitInput>  current;
     std::vector<SplitInput>  next;
     std::vector<SplitOutput> splits;
+    std::vector<bin_id_t>    split_bins(1, 0);
     auto const               selected =
         sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
     current.push_back(make_root(ds, grad, hess, row_indices, selected));
@@ -256,7 +310,7 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
             splits.push_back(SplitterT::find(input, config_));
         }
         update_nodes(ds, grad, hess, config_, current, next, splits, nodes, n_leaves,
-                     values, selected);
+                     values, selected, split_bins);
         if (current.empty())
         {
             break;
@@ -268,6 +322,7 @@ auto DepthwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
     {
         finalize_as_leaf(nodes, node, config_.lambda_l2, n_leaves, values);
     }
+    route_unsampled(ds, nodes, split_bins, row_indices, values);
 
     return {.tree   = Tree(std::move(nodes), {.depth = depth, .n_leaves = n_leaves}),
             .values = std::move(values)};
@@ -292,6 +347,7 @@ auto ObliviousGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
 
     std::vector<SplitInput> frontier;
     std::vector<SplitInput> next;
+    std::vector<bin_id_t>   level_bins;
     auto const              selected =
         sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
     frontier.push_back(make_root(ds, grad, hess, row_indices, selected));
@@ -308,6 +364,7 @@ auto ObliviousGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
         level_splits.push_back({.feature_id   = split.feature_id,
                                 .threshold    = threshold,
                                 .default_left = split.default_left});
+        level_bins.push_back(split.bin_id);
         next.reserve(frontier.size() * 2);
         for (auto &node : frontier)
         {
@@ -331,6 +388,43 @@ auto ObliviousGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
         {
             values[r] = v;
         }
+    }
+
+    // Same stale-score hazard as route_unsampled: rows the sampler dropped
+    // still need this tree's contribution in their train values.
+    if (row_indices.size() != ds.n_rows())
+    {
+        std::vector<row_id_t> oob;
+        oob.reserve(ds.n_rows() - row_indices.size());
+        size_t j = 0;
+        for (row_id_t r = 0; r < ds.n_rows(); ++r)
+        {
+            if (j < row_indices.size() && row_indices[j] == r)
+            {
+                ++j;
+                continue;
+            }
+            oob.push_back(r);
+        }
+        parallel::for_each_index(
+            oob.size(),
+            [&](size_t k)
+            {
+                row_id_t const r     = oob[k];
+                size_t         index = 0;
+                for (size_t lvl = 0; lvl < level_splits.size(); ++lvl)
+                {
+                    auto const    &s    = level_splits[lvl];
+                    auto const    &bins = ds.feature_bins(s.feature_id);
+                    auto const     last =
+                        static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
+                    bin_id_t const b = bins[r];
+                    bool const     left =
+                        (b == last) ? s.default_left : b <= level_bins[lvl];
+                    index = (index << 1U) | (left ? 0U : 1U);
+                }
+                values[r] = leaf_table[index];
+            });
     }
 
     return {.tree   = Tree(std::move(level_splits), std::move(leaf_table)),
@@ -365,6 +459,7 @@ auto LeafwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
 
     std::vector<Candidate>  heap;
     std::vector<SplitInput> pending;
+    std::vector<bin_id_t>   split_bins(1, 0);
 
     auto const selected =
         sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
@@ -398,6 +493,8 @@ auto LeafwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
         nodes.emplace_back(DenseTree::leaf(0.0F));
         node_id_t const right_id = nodes.size();
         nodes.emplace_back(DenseTree::leaf(0.0F));
+        split_bins.resize(nodes.size(), 0);
+        split_bins[c.node.id] = c.split.bin_id;
 
         float const threshold = ds.mappers()[c.split.feature_id].cuts()[c.split.bin_id];
         nodes[c.node.id] = DenseTree::internal(c.split.feature_id, threshold, left_id,
@@ -434,6 +531,7 @@ auto LeafwiseGrower<SplitterT>::grow(Dataset const &ds, floats_view grad,
     {
         finalize_as_leaf(nodes, leaf, config_.lambda_l2, n_leaves, values);
     }
+    route_unsampled(ds, nodes, split_bins, row_indices, values);
 
     return {.tree   = Tree(std::move(nodes), {.depth = depth, .n_leaves = n_leaves}),
             .values = std::move(values)};

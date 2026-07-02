@@ -133,7 +133,7 @@ TEST_CASE("make_booster: unknown sampler name throws UnknownImplError",
           "[registry][make_booster][error]")
 {
     Config cfg                = tiny_cfg();
-    cfg.dispatch.sampler_name = "goss";
+    cfg.dispatch.sampler_name = "no_such_sampler";
     CHECK_THROWS_AS(make_booster(cfg), UnknownImplError);
 }
 

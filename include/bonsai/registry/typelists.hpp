@@ -16,7 +16,7 @@ using Objectives = TypeList<MSEObjective, LogLossObjective>;
 using Growers    = TypeList<DepthwiseGrower<HistogramNodeSplitFinder>,
                             ObliviousGrower<HistogramLevelSplitFinder>,
                             LeafwiseGrower<HistogramNodeSplitFinder>>;
-using Samplers   = TypeList<AllRowsSampler, BernoulliSampler>;
+using Samplers   = TypeList<AllRowsSampler, BernoulliSampler, GossSampler>;
 
 namespace detail
 {
