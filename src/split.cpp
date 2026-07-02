@@ -43,15 +43,16 @@ inline SplitSums split_sums_at(HistCell const &left_prefix, HistCell const &miss
 }
 
 inline void update_best_for_feature_for_node(SplitInput const &input, feature_id_t fid,
+                                             HistCell const   &node_totals,
                                              TreeConfig const &config,
                                              SplitOutput      &best)
 {
     auto const  &hist         = input.hists[fid];
     auto const  &missing_cell = hist.missing();
     double const node_score =
-        score(hist.total_grad(), hist.total_hess(), config.lambda_l2);
-    double const real_grad = hist.total_grad() - missing_cell.sum_grad;
-    double const real_hess = hist.total_hess() - missing_cell.sum_hess;
+        score(node_totals.sum_grad, node_totals.sum_hess, config.lambda_l2);
+    double const real_grad = node_totals.sum_grad - missing_cell.sum_grad;
+    double const real_hess = node_totals.sum_hess - missing_cell.sum_hess;
 
     HistCell left_prefix{};
     bin_id_t b = 0;
@@ -82,9 +83,11 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
     }
 }
 
-inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id_t fid,
-                                              TreeConfig const &config,
-                                              SplitOutput      &best)
+inline void update_best_for_feature_for_level(FrontierInput               frontier,
+                                              feature_id_t                fid,
+                                              std::vector<HistCell> const &node_totals,
+                                              TreeConfig const            &config,
+                                              SplitOutput                 &best)
 {
     size_t const n_parents = frontier.size();
     size_t const n_bins    = frontier.front().hists[fid].prefix_size();
@@ -107,9 +110,9 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
         auto const &missing = hist.missing();
         hist.fill_prefix(std::span(&prefix[p, 0], n_bins));
         sum_parent_score +=
-            score(hist.total_grad(), hist.total_hess(), config.lambda_l2);
-        real_grad[p] = hist.total_grad() - missing.sum_grad;
-        real_hess[p] = hist.total_hess() - missing.sum_hess;
+            score(node_totals[p].sum_grad, node_totals[p].sum_hess, config.lambda_l2);
+        real_grad[p] = node_totals[p].sum_grad - missing.sum_grad;
+        real_hess[p] = node_totals[p].sum_hess - missing.sum_hess;
     }
 
     for (size_t b = 0; b < n_bins; ++b)
@@ -168,18 +171,20 @@ SplitOutput reduce_in_feature_order(std::vector<SplitOutput> const &per_feature)
 SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
                                            TreeConfig const &config)
 {
-    if (input.rows.size() < 2 * size_t{config.min_data_in_leaf})
+    if (input.hists.empty() ||
+        input.rows.size() < 2 * size_t{config.min_data_in_leaf})
     {
         return {};
     }
-    feature_id_t const       n_features = input.hists.size();
+    feature_id_t const       n_features  = input.hists.size();
+    HistCell const           node_totals = input.hists[0].totals();
     std::vector<SplitOutput> per_feature(n_features);
     parallel::for_each_index(n_features,
                              [&](size_t fid)
                              {
                                  update_best_for_feature_for_node(
-                                     input, static_cast<feature_id_t>(fid), config,
-                                     per_feature[fid]);
+                                     input, static_cast<feature_id_t>(fid),
+                                     node_totals, config, per_feature[fid]);
                              });
     return reduce_in_feature_order(per_feature);
 }
@@ -191,14 +196,19 @@ SplitOutput HistogramLevelSplitFinder::find(FrontierInput     frontier,
     {
         return {};
     }
-    feature_id_t const       n_features = frontier.front().hists.size();
+    feature_id_t const    n_features = frontier.front().hists.size();
+    std::vector<HistCell> node_totals(frontier.size());
+    for (size_t p = 0; p < frontier.size(); ++p)
+    {
+        node_totals[p] = frontier[p].hists[0].totals();
+    }
     std::vector<SplitOutput> per_feature(n_features);
     parallel::for_each_index(n_features,
                              [&](size_t fid)
                              {
                                  update_best_for_feature_for_level(
-                                     frontier, static_cast<feature_id_t>(fid), config,
-                                     per_feature[fid]);
+                                     frontier, static_cast<feature_id_t>(fid),
+                                     node_totals, config, per_feature[fid]);
                              });
     return reduce_in_feature_order(per_feature);
 }

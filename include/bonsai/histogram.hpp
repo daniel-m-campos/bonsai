@@ -34,15 +34,11 @@ class Histogram
     {
         cells_[bin].sum_grad += grad;
         cells_[bin].sum_hess += hess;
-        total_grad_ += grad;
-        total_hess_ += hess;
     }
 
     void clear()
     {
         std::ranges::fill(cells_, HistCell{});
-        total_grad_ = 0.0;
-        total_hess_ = 0.0;
     }
 
     size_t size() const
@@ -50,14 +46,18 @@ class Histogram
         return cells_.size();
     }
 
-    double total_grad() const
+    // Sum over all cells (missing included). Node-level totals are the
+    // same for every feature, so callers compute this once per node
+    // instead of the histogram carrying running totals in add().
+    HistCell totals() const
     {
-        return total_grad_;
-    }
-
-    double total_hess() const
-    {
-        return total_hess_;
+        HistCell t{};
+        for (auto const &cell : cells_)
+        {
+            t.sum_grad += cell.sum_grad;
+            t.sum_hess += cell.sum_hess;
+        }
+        return t;
     }
 
     HistCell const &operator[](bin_id_t bin) const
@@ -132,15 +132,11 @@ class Histogram
         {
             cells_[i] -= other.cells_[i];
         }
-        total_grad_ -= other.total_grad_;
-        total_hess_ -= other.total_hess_;
         return *this;
     }
 
   private:
     std::vector<HistCell> cells_;
-    double                total_grad_ = 0.0;
-    double                total_hess_ = 0.0;
 };
 
 using histogram_view_t = std::span<Histogram const>;

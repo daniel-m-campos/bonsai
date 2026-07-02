@@ -18,11 +18,11 @@ struct SplitInput
 
     double total_grad() const
     {
-        return hists.empty() ? 0.0 : hists[0].total_grad();
+        return hists.empty() ? 0.0 : hists[0].totals().sum_grad;
     }
     double total_hess() const
     {
-        return hists.empty() ? 0.0 : hists[0].total_hess();
+        return hists.empty() ? 0.0 : hists[0].totals().sum_hess;
     }
 };
 
