@@ -660,3 +660,35 @@ DART's k+1 trap §35, the two-libomp deadlock §36, the split-vs-gain
 disagreement above). Stale narrative docs were refreshed in the same pass
 (context, report addendum, architecture 2–8, new 7-parallel.md), and
 milestones are now git-tagged (`mpcs-submission`, `v0.2.0`–`v0.5.0`).
+
+## 38. Completing the non-categorical gap: rows 10-17 in one push
+
+Every remaining non-categorical row of [feature_gap.md](feature_gap.md)
+landed (tables and datasets per row in that doc):
+
+- **Leaf renewal** (10): `GrowResult::leaf_ids` + an objective `renew_leaf`
+  hook; the booster regroups rows by leaf and replaces Newton steps with
+  loss-optimal values (residual median / alpha-quantile / clamped-mean
+  huber). Closed the recorded ~10% MAE gap outright — bonsai now ties
+  lightgbm on mae/quantile and leads on huber.
+- **Prediction extras** (13) + **warm start** (14): predict_at / staged /
+  pred_leaf / dump; --init-model continuation that rebuilds training scores
+  by bin-space routing and reuses the loaded mappers.
+- **Classification benchmark** (11): streamed HIGGS subset, AUC in both the
+  C++ metric registry (rank-sum) and compare.py. The logloss path's first
+  live outing landed between xgboost and lightgbm.
+- **TreeSHAP** (15): Algorithm 2 over per-node covers (stamped at grow
+  time, format v6); verified against a brute-force Shapley reference to
+  1e-9 plus the efficiency property at every level.
+- **Multiclass** (16): `BoosterFor` became a trait so {softmax, G, Sa}
+  routes to a dedicated `MulticlassBooster` — the one objective whose
+  K-output shape the 1-D `Objective` concept can't express. Covertype:
+  bonsai depthwise leads the field on accuracy.
+- **Sparse input** (17): LIBSVM reader behind `data.format`, densified,
+  with the boundary stated plainly: input parity yes, sparse compute no.
+  a9a AUC within 0.2% of xgboost.
+
+Recurring lesson, third occurrence (after §30, §34): the benchmark is the
+strongest test. lightgbm's multiclass metric rejection, catboost's
+regressor/classifier split, and a9a's short test-split feature space were
+all caught by running the harness, not by unit tests.
