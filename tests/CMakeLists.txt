@@ -8,6 +8,7 @@ add_executable(bonsai_tests
     unit/test_histogram.cpp
     unit/test_dense_tree.cpp
     unit/test_oblivious_tree.cpp
+    unit/test_shap.cpp
     unit/test_split_node.cpp
     unit/test_split_level.cpp
     unit/test_grower.cpp

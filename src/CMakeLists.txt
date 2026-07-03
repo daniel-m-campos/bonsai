@@ -21,6 +21,7 @@ target_link_libraries(bonsai_data PUBLIC bonsai_parallel bonsai_warnings)
 add_library(bonsai_tree OBJECT
     tree.cpp
     grower.cpp
+    shap.cpp
 )
 
 target_include_directories(bonsai_tree PUBLIC

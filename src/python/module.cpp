@@ -140,6 +140,24 @@ class Model
         return booster_->dump(mappers_.feature_names());
     }
 
+    // (n_rows, n_features + 1): TreeSHAP contributions, last column = bias.
+    // Rows sum to the raw (pre-link) prediction exactly.
+    nb::ndarray<nb::numpy, double> pred_contribs(array_2d const &X) const
+    {
+        size_t const n    = X.shape(0);
+        size_t const nf   = X.shape(1);
+        size_t const cols = nf + 1;
+        auto        *out  = new std::vector<double>(n * cols, 0.0);
+        {
+            nb::gil_scoped_release release;
+            booster_->pred_contribs(bonsai::features_view{X.data(), n, nf},
+                                    std::span<double>{*out}, nf);
+        }
+        nb::capsule owner(out, [](void *p) noexcept
+                          { delete static_cast<std::vector<double> *>(p); });
+        return {out->data(), {n, cols}, owner};
+    }
+
     void save(std::string const &path) const
     {
         bonsai::io::save_booster(*booster_, path, mappers_, cfg_);
@@ -265,6 +283,7 @@ NB_MODULE(_bonsai, m)
         .def("staged_predict", &Model::staged_predict, nb::arg("X"))
         .def("predict_leaf", &Model::predict_leaf, nb::arg("X"))
         .def("dump", &Model::dump)
+        .def("pred_contribs", &Model::pred_contribs, nb::arg("X"))
         .def("feature_importance", &Model::feature_importance,
              nb::arg("type") = "gain")
         .def("save", &Model::save, nb::arg("path"))

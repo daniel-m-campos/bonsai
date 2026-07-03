@@ -101,15 +101,16 @@ namespace
 using json = nlohmann::json;
 
 constexpr std::string_view k_magic          = "bonsai01";
-constexpr uint32_t         k_format_version = 5;
+constexpr uint32_t         k_format_version = 6;
 
 // ---- Tree <-> JSON --------------------------------------------------------
 
 json tree_to_json(DenseTree const &t)
 {
-    json out     = t.params();
-    out["nodes"] = t.nodes();
-    out["gains"] = t.split_gains();
+    json out      = t.params();
+    out["nodes"]  = t.nodes();
+    out["gains"]  = t.split_gains();
+    out["covers"] = t.covers();
     return out;
 }
 
@@ -118,7 +119,8 @@ template <typename TreeT> TreeT tree_from_json(json const &j);
 template <> DenseTree tree_from_json<DenseTree>(json const &j)
 {
     return DenseTree{j.at("nodes").get<DenseTree::Nodes>(), j.get<DenseTree::Params>(),
-                     j.at("gains").get<std::vector<float>>()};
+                     j.at("gains").get<std::vector<float>>(),
+                     j.at("covers").get<std::vector<float>>()};
 }
 
 json tree_to_json(ObliviousTree const &t)

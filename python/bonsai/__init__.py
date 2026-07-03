@@ -96,6 +96,13 @@ class BonsaiRegressor:
             raise RuntimeError("fit() first")
         return self._model.dump()
 
+    def pred_contribs(self, X) -> np.ndarray:
+        """(n_rows, n_features + 1) TreeSHAP contributions; last column is
+        the bias. Rows sum to the raw (pre-link) prediction exactly."""
+        if self._model is None:
+            raise RuntimeError("fit() first")
+        return np.asarray(self._model.pred_contribs(_as_2d_f32(X)))
+
     def importance(self, type: str = "gain") -> np.ndarray:
         """Raw per-feature importance: total split gain or split count."""
         if self._model is None:

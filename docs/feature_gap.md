@@ -24,7 +24,7 @@ one can "enable" in the reference libraries for an A/B.
 | 12 | Categorical features | one-hot / partition | native (Fisher) | ordered target stats | Biggest real-world capability gap; needs a categorical dataset (e.g. Adult, Amazon) in the harness first | planned |
 | 13 | Prediction extras: staged predict, `pred_leaf`, tree dump | yes | yes | yes | Debug/introspection; small, each independent | **landed** |
 | 14 | Warm start / training continuation | `xgb_model` | `init_model` | `init_model` | Fit latency for iterative workflows; booster already saves/loads full state | **landed** |
-| 15 | TreeSHAP (`pred_contribs`) | yes | yes | yes | Modern attribution standard; real algorithm, sized as its own project | planned |
+| 15 | TreeSHAP (`pred_contribs`) | yes | yes | yes | Modern attribution standard; real algorithm, sized as its own project | **landed** |
 | 16 | Multi-class / softmax objective | yes | yes | yes | K-output leaves touch Objective, Booster, and Tree — largest structural change | planned |
 | 17 | Sparse-input handling / EFB | yes | yes (EFB) | yes | Needs a sparse dataset in the harness to enable or measure anything | planned |
 
@@ -295,3 +295,20 @@ bonsai leafwise lands between xgboost and lightgbm on AUC at matched
 settings; depthwise (16x the nodes) leads everyone. catboost's 0.73 at
 these matched knobs is an outlier — its defaults want ordered boosting
 and auto-tuned lr; recorded as-is per protocol, not tuned.
+
+### 15. TreeSHAP — `pred_contribs` (landed)
+
+Lundberg's Algorithm 2, exact per-tree Shapley values in O(LD²) per
+row, using per-node training covers as the background distribution —
+growers now stamp covers alongside gains (model format v6). Surfaces:
+`IBooster::pred_contribs` (row-parallel over the ensemble, learning-rate
+scaled, bias column = init score + expected tree values) and
+`Model.pred_contribs(X)` in Python. Oblivious trees refuse (no per-node
+covers by construction).
+
+Verification is the strongest in the repo: a brute-force Shapley
+reference (subset enumeration over the same cover-conditioned
+expectations, `tree_expected_value`) matches `tree_shap` to 1e-9 on an
+interacting 3-feature tree, and the efficiency property — every row's
+contributions sum to its raw prediction exactly — is asserted at both
+tree and booster level, plus in the Python suite.

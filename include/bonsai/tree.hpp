@@ -52,9 +52,11 @@ class DenseTree
     };
 
     // split_gains: per-node split gain, indexed by node id (0 for leaves).
-    // Optional so hand-built test trees stay terse; empty means "unknown"
-    // and gain-based feature importance reports 0 for this tree.
-    DenseTree(Nodes nodes, Params params, std::vector<float> split_gains = {});
+    // covers: per-node training row count. Both optional so hand-built test
+    // trees stay terse; empty means "unknown" (importance reports 0, SHAP
+    // refuses).
+    DenseTree(Nodes nodes, Params params, std::vector<float> split_gains = {},
+              std::vector<float> covers = {});
 
     static Node leaf(float value)
     {
@@ -116,12 +118,18 @@ class DenseTree
         return split_gains_;
     }
 
+    std::vector<float> const &covers() const
+    {
+        return covers_;
+    }
+
   private:
     float walk_row(features_view X, row_id_t i) const;
 
     Nodes              nodes_;
     Params             params_;
     std::vector<float> split_gains_;
+    std::vector<float> covers_;
 };
 
 class ObliviousTree

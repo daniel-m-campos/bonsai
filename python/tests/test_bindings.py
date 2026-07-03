@@ -113,10 +113,20 @@ def test_feature_importance_agreement():
     assert int(np.argmax(lgbm.feature_importance("split"))) in (6, 7)
 
 
+def test_pred_contribs_efficiency():
+    Xtr, ytr = load_csv(TRAIN_CSV)
+    m = bonsai.BonsaiRegressor(n_iters=50).fit(Xtr, ytr)
+    c = m.pred_contribs(Xtr[:100])
+    p = m.predict(Xtr[:100])
+    assert c.shape == (100, Xtr.shape[1] + 1)
+    np.testing.assert_allclose(c.sum(axis=1), p, atol=1e-3)
+
+
 if __name__ == "__main__":
     test_fit_predict_rmse()
     test_parity_with_cli()
     test_early_stopping_stops()
     test_bad_param_raises()
     test_feature_importance_agreement()
+    test_pred_contribs_efficiency()
     print("all binding tests passed")

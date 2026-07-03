@@ -7,12 +7,14 @@
 #include "bonsai/objective.hpp"
 #include "bonsai/parallel.hpp"
 #include "bonsai/sampler.hpp"
+#include "bonsai/shap.hpp"
 #include "bonsai/types.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <random>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -60,6 +62,13 @@ class IBooster
 
     // Human-readable dump of every tree (feature names optional).
     virtual std::string dump(std::span<std::string const> feature_names) const = 0;
+
+    // TreeSHAP contributions: out is n_rows * (n_features + 1), row-major,
+    // last column = bias (init score + expected tree values). Rows sum to
+    // the raw prediction exactly. Throws for tree types without SHAP
+    // support (oblivious) or models without covers.
+    virtual void pred_contribs(features_view X, std::span<double> out,
+                               size_t n_features) const = 0;
 
     // Incremental prediction support for early stopping: accumulate only the
     // newest tree's (shrinkage-scaled) contribution into `scores`, a buffer
@@ -237,6 +246,19 @@ inline void accumulate_importance(ObliviousTree const &tree, ImportanceType type
                       ? 1.0
                       : (lvl < gains.size() ? gains[lvl] : 0.0F);
     }
+}
+
+inline void shap_one_row(DenseTree const &tree, features_view X, row_id_t row,
+                          std::span<double> phi)
+{
+    tree_shap(tree, X, row, phi);
+}
+
+inline void shap_one_row(ObliviousTree const & /*tree*/, features_view /*X*/,
+                         row_id_t /*row*/, std::span<double> /*phi*/)
+{
+    throw std::runtime_error(
+        "pred_contribs is not supported for oblivious trees");
 }
 
 } // namespace internal
@@ -503,6 +525,31 @@ class Booster final : public IBooster
             internal::dump_tree(trees_[t], feature_names, out);
         }
         return out;
+    }
+
+    void pred_contribs(features_view X, std::span<double> out,
+                       size_t n_features) const override
+    {
+        size_t const n    = X.extent(0);
+        size_t const cols = n_features + 1;
+        assert(out.size() == n * cols);
+        parallel::for_each_index(
+            n,
+            [&](size_t i)
+            {
+                std::span<double> const phi = out.subspan(i * cols, cols);
+                std::ranges::fill(phi, 0.0);
+                for (auto const &tree : trees_)
+                {
+                    internal::shap_one_row(tree, X, static_cast<row_id_t>(i),
+                                           phi);
+                }
+                for (double &v : phi)
+                {
+                    v *= config_.learning_rate;
+                }
+                phi[n_features] += init_score_;
+            });
     }
 
     float score_base() const override

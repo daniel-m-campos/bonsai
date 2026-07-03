@@ -10,8 +10,10 @@
 namespace bonsai
 {
 
-DenseTree::DenseTree(Nodes nodes, Params params, std::vector<float> split_gains)
-    : nodes_(std::move(nodes)), params_(params), split_gains_(std::move(split_gains))
+DenseTree::DenseTree(Nodes nodes, Params params, std::vector<float> split_gains,
+                     std::vector<float> covers)
+    : nodes_(std::move(nodes)), params_(params),
+      split_gains_(std::move(split_gains)), covers_(std::move(covers))
 {
 }
 
