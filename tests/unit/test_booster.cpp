@@ -396,3 +396,85 @@ TEST_CASE("Booster: feature_importance accumulates gain and split counts",
     }
     CHECK(split[0] == n_internal);
 }
+
+TEST_CASE("Booster: MAE leaf renewal sets leaves to residual medians",
+          "[booster][renewal]")
+{
+    // 7 rows, feature separates labels {-5 x3 | +5 x4}. init = median = 5;
+    // left residuals are all -10, right all 0. With renewal and lr = 1, one
+    // iteration reproduces the labels exactly: leaf = median(residuals).
+    // The plain Newton step would give left = -G/(H+lambda) = 3/4 instead.
+    detail::ColumnBatch batch{
+        .features = {{0.0F, 0.1F, 0.2F, 1.0F, 1.1F, 1.2F, 1.3F}},
+        .labels   = {-5.0F, -5.0F, -5.0F, 5.0F, 5.0F, 5.0F, 5.0F},
+        .weights  = {},
+        .feature_names = {"a"},
+    };
+    Dataset const train = make_dataset(batch);
+    auto const    raw   = to_raw(batch);
+
+    Config cfg                       = tiny_cfg();
+    cfg.booster_config.learning_rate = 1.0F;
+    cfg.tree_config.lambda_l2        = 1.0F;
+
+    Booster<MAEObjective, DepthwiseGrower<>, AllRowsSampler> b{cfg};
+    b.update_one_iter(train);
+
+    std::vector<float> pred(raw.n_rows);
+    b.predict(raw.view(), pred);
+    for (size_t i = 0; i < raw.n_rows; ++i)
+    {
+        CHECK(pred[i] == Catch::Approx(batch.labels[i]).margin(1e-5));
+    }
+}
+
+TEST_CASE("Booster: predict_at, staged, and leaf predictions are consistent",
+          "[booster][predict_extras]")
+{
+    auto const    batch = separable_batch();
+    Dataset const train = make_dataset(batch);
+    auto const    raw   = to_raw(batch);
+
+    Config cfg = tiny_cfg();
+    MseBooster<DepthwiseGrower<>> b{cfg};
+    for (int i = 0; i < 6; ++i)
+    {
+        b.update_one_iter(train);
+    }
+    size_t const n = raw.n_rows;
+    size_t const k = b.n_iters();
+
+    std::vector<float> full(n);
+    std::vector<float> at_all(n);
+    std::vector<float> at_2(n);
+    b.predict(raw.view(), full);
+    b.predict_at(raw.view(), at_all, 0);
+    b.predict_at(raw.view(), at_2, 2);
+    CHECK(full == at_all);
+    CHECK(full != at_2);
+
+    std::vector<float> staged(k * n);
+    b.predict_staged(raw.view(), staged);
+    for (size_t i = 0; i < n; ++i)
+    {
+        CHECK(staged[((k - 1) * n) + i] == full[i]); // last stage == full
+        CHECK(staged[(1 * n) + i] == at_2[i]);       // stage 2 == predict_at(2)
+    }
+
+    std::vector<node_id_t> leaves(n * k);
+    b.predict_leaf(raw.view(), leaves);
+    for (size_t i = 0; i < n; ++i)
+    {
+        for (size_t t = 0; t < k; ++t)
+        {
+            auto const id = leaves[(i * k) + t];
+            REQUIRE(id < b.trees()[t].nodes().size());
+            CHECK(DenseTree::is_leaf(b.trees()[t].nodes()[id]));
+        }
+    }
+
+    auto const text = b.dump(std::vector<std::string>{"a"});
+    CHECK(text.find("tree 0:") != std::string::npos);
+    CHECK(text.find("leaf=") != std::string::npos);
+    CHECK(text.find('a') != std::string::npos);
+}

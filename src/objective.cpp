@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <functional>
 #include <numeric>
+#include <span>
 #include <vector>
 
 namespace bonsai
@@ -15,19 +16,25 @@ namespace bonsai
 namespace
 {
 
-// Value at the given quantile of `values` (0.5 = median), nearest-rank on
-// alpha * (n - 1) so float noise in alpha can't shift the index. Copies;
-// callers are one-shot init_score paths.
-float quantile_of(floats_view values, float alpha)
+// Value at the given quantile (0.5 = median), nearest-rank on
+// alpha * (n - 1) so float noise in alpha can't shift the index.
+// Reorders `v` in place.
+float quantile_in_place(std::span<float> v, float alpha)
 {
-    assert(!values.empty());
-    std::vector<float> v(values.begin(), values.end());
-    auto const         k = std::min<size_t>(
+    assert(!v.empty());
+    auto const k = std::min<size_t>(
         v.size() - 1, static_cast<size_t>(std::llround(
                           static_cast<double>(alpha) *
                           static_cast<double>(v.size() - 1))));
     std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(k), v.end());
     return v[k];
+}
+
+// Copying wrapper for one-shot init_score paths over immutable labels.
+float quantile_of(floats_view values, float alpha)
+{
+    std::vector<float> v(values.begin(), values.end());
+    return quantile_in_place(v, alpha);
 }
 
 } // namespace
@@ -152,6 +159,11 @@ auto MAEObjective::init_score(floats_view targets) -> floats_view::value_type
     return quantile_of(targets, 0.5F);
 }
 
+float MAEObjective::renew_leaf(std::span<float> residuals)
+{
+    return quantile_in_place(residuals, 0.5F);
+}
+
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void HuberObjective::compute(floats_view preds, floats_view targets, floats_out grad,
                              floats_out hess) const
@@ -189,6 +201,17 @@ auto HuberObjective::init_score(floats_view targets) -> floats_view::value_type
     return quantile_of(targets, 0.5F);
 }
 
+float HuberObjective::renew_leaf(std::span<float> residuals) const
+{
+    float const med = quantile_in_place(residuals, 0.5F);
+    double      sum = 0.0;
+    for (float const r : residuals)
+    {
+        sum += std::clamp(r - med, -delta_, delta_);
+    }
+    return med + static_cast<float>(sum / static_cast<double>(residuals.size()));
+}
+
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void QuantileObjective::compute(floats_view preds, floats_view targets,
                                 floats_out grad, floats_out hess) const
@@ -221,6 +244,11 @@ auto QuantileObjective::init_score(floats_view targets) const
     -> floats_view::value_type
 {
     return quantile_of(targets, alpha_);
+}
+
+float QuantileObjective::renew_leaf(std::span<float> residuals) const
+{
+    return quantile_in_place(residuals, alpha_);
 }
 
 } // namespace bonsai

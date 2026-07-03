@@ -37,7 +37,7 @@ int run_predict(PredictOpts const &opts)
         return 2;
     }
 
-    auto scored = score_csv(*loaded.booster, path, data_cfg);
+    auto scored = score_csv(*loaded.booster, path, data_cfg, opts.num_iteration);
 
     if (opts.apply_link)
     {

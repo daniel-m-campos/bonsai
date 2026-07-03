@@ -68,8 +68,16 @@ int run_fit(FitOpts const &opts)
         return 2;
     }
 
+    io::LoadedBooster init;
+    if (!opts.init_model_path.empty())
+    {
+        std::println("fit: continuing from {}", opts.init_model_path);
+        init = io::load_booster(opts.init_model_path);
+    }
     std::println("fit: fitting bin mappers from {}", cfg.data.train);
-    auto loaded = load_train_and_valid_from_csv(cfg);
+    auto loaded = init.booster
+                      ? load_train_and_valid_with_mappers(cfg, std::move(init.mappers))
+                      : load_train_and_valid_from_csv(cfg);
     std::println("fit: {} rows x {} features", loaded.train.dataset.n_rows(),
                  loaded.train.dataset.n_features());
 
@@ -107,7 +115,7 @@ int run_fit(FitOpts const &opts)
         std::println("");
     };
 
-    auto booster = train_with_progress(cfg, loaded, on_tick);
+    auto booster = train_with_progress(cfg, loaded, on_tick, std::move(init.booster));
 
     if (!opts.model_path.empty())
     {

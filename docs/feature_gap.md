@@ -19,11 +19,11 @@ one can "enable" in the reference libraries for an A/B.
 | 7 | Interaction constraints | yes | yes | — | Same reasoning as monotone | **landed** |
 | 8 | DART boosting | `booster=dart` | `boosting=dart` | — | Fits *slower* (re-predicts per iter); rare RMSE gains | **landed** |
 | 9 | Feature importance (split count + gain) | `get_score` | `feature_importance` | `get_feature_importance` | No fit/predict impact; table-stakes introspection. Split-count is free; gain needs per-node gains stored at grow time | **landed** |
-| 10 | Leaf renewal for MAE/quantile | built in (adaptive trees) | `RenewTreeOutput` | built in | Closes the known ~10% MAE gap vs refs on MAE/quantile objectives (see results log §5) | planned |
+| 10 | Leaf renewal for MAE/quantile | built in (adaptive trees) | `RenewTreeOutput` | built in | Closes the known ~10% MAE gap vs refs on MAE/quantile objectives (see results log §5) | **landed** |
 | 11 | Classification benchmark (AUC) | n/a (harness) | n/a | n/a | logloss objective exists but is only unit-tested; needs a live dataset (e.g. Higgs subset) + AUC column in compare.py | planned |
 | 12 | Categorical features | one-hot / partition | native (Fisher) | ordered target stats | Biggest real-world capability gap; needs a categorical dataset (e.g. Adult, Amazon) in the harness first | planned |
-| 13 | Prediction extras: staged predict, `pred_leaf`, tree dump | yes | yes | yes | Debug/introspection; small, each independent | planned |
-| 14 | Warm start / training continuation | `xgb_model` | `init_model` | `init_model` | Fit latency for iterative workflows; booster already saves/loads full state | planned |
+| 13 | Prediction extras: staged predict, `pred_leaf`, tree dump | yes | yes | yes | Debug/introspection; small, each independent | **landed** |
+| 14 | Warm start / training continuation | `xgb_model` | `init_model` | `init_model` | Fit latency for iterative workflows; booster already saves/loads full state | **landed** |
 | 15 | TreeSHAP (`pred_contribs`) | yes | yes | yes | Modern attribution standard; real algorithm, sized as its own project | planned |
 | 16 | Multi-class / softmax objective | yes | yes | yes | K-output leaves touch Objective, Booster, and Tree — largest structural change | planned |
 | 17 | Sparse-input handling / EFB | yes | yes (EFB) | yes | Needs a sparse dataset in the harness to enable or measure anything | planned |
@@ -236,3 +236,37 @@ each), the textbook case for preferring gain. Asserted in
 | MedInc | 113,908 (top) | 1,129 | 764 |
 | Longitude | 22,255 | **1,900** (top) | **1,144** (top) |
 | Latitude | 19,821 | 1,889 | 1,142 |
+
+### 10. Leaf renewal — automatic for `mae` / `huber` / `quantile` (landed)
+
+Growers report per-row leaf assignments (`GrowResult::leaf_ids`); when an
+objective defines `renew_leaf`, the booster regroups rows by leaf and
+replaces each Newton step with the loss-optimal value over that leaf's
+residuals (median / alpha-quantile / LightGBM-style clamped-mean huber)
+before the score update — under DART, before rescaling. One-iteration
+exact-math test: with lr = 1, an MAE tree reproduces the labels.
+
+Year Prediction MSD, 200 iters, leafwise, MAE metric (`msd_obj2_*` vs
+`msd_obj_*`):
+
+| objective | bonsai (before → after) | xgboost | lightgbm | catboost |
+|---|---|---|---|---|
+| mae | 6.81 → **6.094** | 6.155 | 6.095 | 6.159 |
+| huber (δ=1) | 6.81 → **6.093** | diverged | 6.792 | diverged |
+| quantile (α=.5) | 7.11 → **6.096** | 6.158 | 6.094 | 6.159 |
+
+The ~10% gap is fully closed: bonsai now ties lightgbm on mae/quantile
+and posts the best huber of the field at matched δ=1.
+
+### 13+14. Prediction extras & warm start (landed)
+
+`predict_at(k)` / `--num-iteration` / `predict(X, num_iteration=k)`;
+one-pass `staged_predict` (n_iters × n_rows); `predict_leaf` per-tree
+leaf indices; `bonsai dump` / `Model.dump()` indented tree text with
+feature names and gains. Warm start continues a saved model — CLI
+`fit --init-model m.msgpack`, Python `fit(..., init_model=...)` —
+rebinning with the loaded model's mappers and rebuilding training
+scores by bin-space routing; a 3+3-iteration continuation matches a
+straight 6-iteration run within FP-regrouping tolerance (tested), and
+early stopping seeds its incremental valid scores from the pre-existing
+trees.

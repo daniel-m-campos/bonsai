@@ -1,11 +1,14 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
+#include <cstdio>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "bonsai/cli/pipeline.hpp"
 #include "bonsai/config/config.hpp"
+#include "bonsai/io/model.hpp"
 
 using namespace bonsai;      // NOLINT
 using namespace bonsai::cli; // NOLINT
@@ -109,4 +112,49 @@ TEST_CASE("train_with_progress: early stopping truncates to the best iteration",
     auto const loaded2                    = load_train_and_valid_from_csv(no_es);
     auto       full = train_with_progress(no_es, loaded2, {});
     CHECK(full->n_iters() == 200);
+}
+
+TEST_CASE("train_with_progress: warm start continues a saved model",
+          "[cli_pipeline][warm_start]")
+{
+    Config cfg;
+    cfg.data.train                   = k_tiny_path;
+    cfg.bin_mapper.max_bin           = 8;
+    cfg.bin_mapper.n_samples         = 100;
+    cfg.booster_config.n_iters       = 6;
+    cfg.booster_config.learning_rate = 0.3F;
+    cfg.tree_config.min_data_in_leaf = 0;
+    cfg.tree_config.min_child_hess   = 0.0F;
+
+    // Reference: 6 iterations straight through.
+    auto const loaded_a = load_train_and_valid_from_csv(cfg);
+    auto       straight = train_with_progress(cfg, loaded_a, {});
+
+    // Warm start: 3 iterations, save, reload, 3 more.
+    Config half                  = cfg;
+    half.booster_config.n_iters  = 3;
+    auto const loaded_b          = load_train_and_valid_from_csv(half);
+    auto       first             = train_with_progress(half, loaded_b, {});
+    auto const tmp = std::string{BONSAI_TESTS_DATA_DIR} + "/_warm_start_tmp.msgpack";
+    io::save_booster(*first, tmp, loaded_b.mappers, half);
+
+    auto       reloaded = io::load_booster(tmp);
+    auto const loaded_c =
+        load_train_and_valid_with_mappers(half, std::move(reloaded.mappers));
+    auto continued =
+        train_with_progress(half, loaded_c, {}, std::move(reloaded.booster));
+    std::remove(tmp.c_str());
+
+    REQUIRE(continued->n_iters() == 6);
+
+    // FP grouping differs when scores are rebuilt (sum-then-scale vs
+    // incremental), so compare within tolerance, not bytes.
+    std::vector<float> ps(loaded_a.train.features.n_rows);
+    std::vector<float> pc(loaded_a.train.features.n_rows);
+    straight->predict(loaded_a.train.features.view(), ps);
+    continued->predict(loaded_a.train.features.view(), pc);
+    for (size_t i = 0; i < ps.size(); ++i)
+    {
+        CHECK(pc[i] == Catch::Approx(ps[i]).margin(1e-4));
+    }
 }

@@ -12,6 +12,9 @@
 #include <cassert>
 #include <cstddef>
 #include <random>
+#include <span>
+#include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -39,6 +42,24 @@ class IBooster
     // Per-feature importance summed over all trees, sized max feature id + 1
     // (callers pad to the full feature count).
     virtual std::vector<double> feature_importance(ImportanceType type) const = 0;
+
+    // Predict using only the first n_trees trees (0 = all). The plain
+    // predict(X, out) is predict_at(X, out, 0).
+    virtual void predict_at(features_view X, floats_out y_hat,
+                            size_t n_trees) const = 0;
+
+    // Per-iteration predictions in one pass: out is n_iters() * n_rows,
+    // row-major by iteration (out[k*n_rows + i] = prediction of row i using
+    // the first k+1 trees).
+    virtual void predict_staged(features_view X, floats_out out) const = 0;
+
+    // Per-row, per-tree leaf indices (DenseTree node ids / ObliviousTree
+    // table indices): out is n_rows * n_iters(), row-major by row.
+    virtual void predict_leaf(features_view X,
+                              std::span<node_id_t> out) const = 0;
+
+    // Human-readable dump of every tree (feature names optional).
+    virtual std::string dump(std::span<std::string const> feature_names) const = 0;
 
     // Incremental prediction support for early stopping: accumulate only the
     // newest tree's (shrinkage-scaled) contribution into `scores`, a buffer
@@ -123,6 +144,60 @@ inline void accumulate_train_contribution(ObliviousTree const &tree,
         });
 }
 
+inline std::string feature_label(std::span<std::string const> names, size_t f)
+{
+    return f < names.size() ? names[f] : "f" + std::to_string(f);
+}
+
+// Indented text dump, one line per node.
+inline void dump_tree(DenseTree const &tree, std::span<std::string const> names,
+                      std::string &out)
+{
+    auto const &nodes = tree.nodes();
+    auto const &gains = tree.split_gains();
+    // NOLINTNEXTLINE(misc-no-recursion)
+    auto walk = [&](auto const &self, node_id_t id, int depth) -> void
+    {
+        out.append(static_cast<size_t>(depth) * 2, ' ');
+        auto const &n = nodes[id];
+        if (DenseTree::is_leaf(n))
+        {
+            out += "leaf=" + std::to_string(n.threshold_or_value) + "\n";
+            return;
+        }
+        out += feature_label(names, n.feature_id) +
+               " <= " + std::to_string(n.threshold_or_value) +
+               (n.default_left ? " [nan->left]" : " [nan->right]") +
+               " gain=" +
+               std::to_string(id < gains.size() ? gains[id] : 0.0F) + "\n";
+        self(self, n.left, depth + 1);
+        self(self, n.right, depth + 1);
+    };
+    walk(walk, 0, 0);
+}
+
+inline void dump_tree(ObliviousTree const &tree, std::span<std::string const> names,
+                      std::string &out)
+{
+    auto const &splits = tree.splits();
+    auto const &gains  = tree.level_gains();
+    for (size_t lvl = 0; lvl < splits.size(); ++lvl)
+    {
+        out += "level " + std::to_string(lvl) + ": " +
+               feature_label(names, splits[lvl].feature_id) +
+               " <= " + std::to_string(splits[lvl].threshold) +
+               (splits[lvl].default_left ? " [nan->left]" : " [nan->right]") +
+               " gain=" +
+               std::to_string(lvl < gains.size() ? gains[lvl] : 0.0F) + "\n";
+    }
+    out += "leaves:";
+    for (float const v : tree.leaf_table())
+    {
+        out += " " + std::to_string(v);
+    }
+    out += "\n";
+}
+
 // One tree's contribution to per-feature importance.
 inline void accumulate_importance(DenseTree const &tree, ImportanceType type,
                                   std::vector<double> &out)
@@ -183,12 +258,33 @@ class Booster final : public IBooster
 
     void update_one_iter(Dataset const &train) override
     {
-        if (trees_.empty())
+        if (scores_.empty())
         {
             grad_.resize(train.n_rows());
             hess_.resize(train.n_rows());
-            init_score_ = objective_.init_score(train.labels());
-            scores_.assign(train.n_rows(), init_score_);
+            if (trees_.empty())
+            {
+                init_score_ = objective_.init_score(train.labels());
+                scores_.assign(train.n_rows(), init_score_);
+            }
+            else
+            {
+                // Warm start: the booster was loaded with trees but no
+                // training state. Rebuild every row's score by routing the
+                // existing trees over the binned data.
+                std::vector<float> raw(train.n_rows(), 0.0F);
+                for (auto const &t : trees_)
+                {
+                    internal::accumulate_train_contribution(t, train, raw);
+                }
+                scores_.resize(train.n_rows());
+                parallel::for_each_index(
+                    train.n_rows(),
+                    [&](size_t i) {
+                        scores_[i] =
+                            init_score_ + (config_.learning_rate * raw[i]);
+                    });
+            }
         }
 
         // DART: drop a random subset of existing trees; gradients are
@@ -238,8 +334,17 @@ class Booster final : public IBooster
         }
         size_t const n_selected = sampler_.sample(grad_, hess_, rng_, row_indices_);
 
-        auto [tree, leaf_values] =
+        auto [tree, leaf_values, leaf_ids] =
             grower_.grow(train, grad_, hess_, {row_indices_.data(), n_selected});
+
+        // Leaf renewal (constant-hessian objectives): replace each leaf's
+        // Newton step with the objective's optimal value over the residuals
+        // of the rows it covers. scores_ still exclude this tree (and, under
+        // DART, the dropped trees) — exactly the state gradients used.
+        if constexpr (requires(std::span<float> r) { objective_.renew_leaf(r); })
+        {
+            renew_leaves(tree, leaf_ids, leaf_values, train.labels());
+        }
 
         if (!dropped.empty())
         {
@@ -305,12 +410,97 @@ class Booster final : public IBooster
         return trees_.size();
     }
 
+    // Group rows by leaf, hand each leaf's residuals to the objective, and
+    // overwrite both the tree's leaf values and the per-row training values.
+    void renew_leaves(tree_type &tree, std::vector<node_id_t> const &leaf_ids,
+                      train_leaf_values &leaf_values, floats_view labels)
+    {
+        std::unordered_map<node_id_t, std::vector<float>> residuals;
+        for (size_t r = 0; r < leaf_ids.size(); ++r)
+        {
+            residuals[leaf_ids[r]].push_back(labels[r] - scores_[r]);
+        }
+        std::unordered_map<node_id_t, float> renewed;
+        renewed.reserve(residuals.size());
+        for (auto &[leaf, res] : residuals)
+        {
+            float const v = objective_.renew_leaf(std::span<float>{res});
+            tree.set_leaf_value(leaf, v);
+            renewed.emplace(leaf, v);
+        }
+        for (size_t r = 0; r < leaf_ids.size(); ++r)
+        {
+            leaf_values[r] = renewed.at(leaf_ids[r]);
+        }
+    }
+
     std::vector<double> feature_importance(ImportanceType type) const override
     {
         std::vector<double> out;
         for (auto const &tree : trees_)
         {
             internal::accumulate_importance(tree, type, out);
+        }
+        return out;
+    }
+
+    void predict_at(features_view X, floats_out scores,
+                    size_t n_trees) const override
+    {
+        assert(X.extent(0) == scores.size());
+        size_t const k = n_trees == 0 ? trees_.size()
+                                      : std::min(n_trees, trees_.size());
+        std::fill(scores.begin(), scores.end(), 0.0F);
+        for (size_t t = 0; t < k; ++t)
+        {
+            trees_[t].predict(X, scores);
+        }
+        for (float &score : scores)
+        {
+            score = init_score_ + (score * config_.learning_rate);
+        }
+    }
+
+    void predict_staged(features_view X, floats_out out) const override
+    {
+        size_t const n = X.extent(0);
+        assert(out.size() == n * trees_.size());
+        std::vector<float> raw(n, 0.0F);
+        for (size_t t = 0; t < trees_.size(); ++t)
+        {
+            trees_[t].predict(X, raw);
+            parallel::for_each_index(
+                n, [&](size_t i) {
+                    out[(t * n) + i] =
+                        init_score_ + (raw[i] * config_.learning_rate);
+                });
+        }
+    }
+
+    void predict_leaf(features_view X, std::span<node_id_t> out) const override
+    {
+        size_t const n = X.extent(0);
+        assert(out.size() == n * trees_.size());
+        size_t const n_trees = trees_.size();
+        parallel::for_each_index(
+            n,
+            [&](size_t i)
+            {
+                for (size_t t = 0; t < n_trees; ++t)
+                {
+                    out[(i * n_trees) + t] =
+                        trees_[t].leaf_for(X, static_cast<row_id_t>(i));
+                }
+            });
+    }
+
+    std::string dump(std::span<std::string const> feature_names) const override
+    {
+        std::string out;
+        for (size_t t = 0; t < trees_.size(); ++t)
+        {
+            out += "tree " + std::to_string(t) + ":\n";
+            internal::dump_tree(trees_[t], feature_names, out);
         }
         return out;
     }

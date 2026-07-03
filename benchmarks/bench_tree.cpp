@@ -88,7 +88,7 @@ Workload make_workload(size_t n_rows, size_t n_features, uint8_t depth, uint32_t
                           .max_depth         = depth,
                           .min_data_in_leaf  = 1};
     DepthwiseGrower<> grower{cfg};
-    auto [tree, _] = grower.grow(ds, grad, hess, rows);
+    auto [tree, _, _lids] = grower.grow(ds, grad, hess, rows);
 
     std::vector<float> raw(n_rows * n_features);
     for (size_t r = 0; r < n_rows; ++r)

@@ -15,7 +15,7 @@ DenseTree::DenseTree(Nodes nodes, Params params, std::vector<float> split_gains)
 {
 }
 
-float DenseTree::walk_row(features_view X, row_id_t i) const
+node_id_t DenseTree::leaf_for(features_view X, row_id_t i) const
 {
     node_id_t   index = 0;
     Node const *node  = &nodes_[index];
@@ -31,7 +31,12 @@ float DenseTree::walk_row(features_view X, row_id_t i) const
         index        = go_left ? node->left : node->right;
         node         = &nodes_[index];
     }
-    return node->threshold_or_value;
+    return index;
+}
+
+float DenseTree::walk_row(features_view X, row_id_t i) const
+{
+    return nodes_[leaf_for(X, i)].threshold_or_value;
 }
 
 void DenseTree::predict(features_view X, floats_out out) const
@@ -50,7 +55,7 @@ ObliviousTree::ObliviousTree(LevelSplits splits, LeafTable values,
     assert(leaf_table_.size() == (1ULL << splits_.size()));
 }
 
-float ObliviousTree::walk_row(features_view X, row_id_t i) const
+node_id_t ObliviousTree::leaf_for(features_view X, row_id_t i) const
 {
     node_id_t index = 0;
     for (auto const &s : splits_)
@@ -62,7 +67,12 @@ float ObliviousTree::walk_row(features_view X, row_id_t i) const
         bool go_left = less | (is_nan & s.default_left);
         index        = (index << 1) | (go_left ? 0U : 1U);
     }
-    return leaf_table_[index];
+    return index;
+}
+
+float ObliviousTree::walk_row(features_view X, row_id_t i) const
+{
+    return leaf_table_[leaf_for(X, i)];
 }
 
 void ObliviousTree::predict(features_view X, floats_out out) const

@@ -3,6 +3,7 @@
 #include "bonsai/config/config.hpp"
 #include "bonsai/types.hpp"
 #include <concepts>
+#include <span>
 
 namespace bonsai
 {
@@ -52,6 +53,9 @@ struct MAEObjective
                          floats_out hess);
     static float eval(floats_view preds, floats_view targets);
     static float init_score(floats_view targets); // median
+    // Leaf renewal: the L1-optimal leaf value is the residual median, not
+    // the Newton step (which is a mean of +-1 gradients). Reorders in place.
+    static float renew_leaf(std::span<float> residuals);
 };
 
 // Huber loss: L2 within |residual| <= delta, L1 outside.
@@ -63,6 +67,9 @@ struct HuberObjective
                   floats_out hess) const;
     float eval(floats_view preds, floats_view targets) const;
     static float init_score(floats_view targets); // median
+    // LightGBM-style huber renewal: residual median plus the mean of the
+    // delta-clamped deviations from it. Reorders in place.
+    float renew_leaf(std::span<float> residuals) const;
 
   private:
     float delta_ = 1.0F;
@@ -80,6 +87,9 @@ struct QuantileObjective
                   floats_out hess) const;
     float eval(floats_view preds, floats_view targets) const;
     float init_score(floats_view targets) const; // alpha-quantile
+    // Pinball-optimal leaf value: the alpha-quantile of the residuals.
+    // Reorders in place.
+    float renew_leaf(std::span<float> residuals) const;
 
   private:
     float alpha_ = 0.5F;

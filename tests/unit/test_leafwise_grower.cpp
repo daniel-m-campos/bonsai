@@ -46,7 +46,7 @@ TEST_CASE("LeafwiseGrower: separable yields one split, two leaves",
                          .min_data_in_leaf = 0,
                          .max_leaves       = 31};
     LeafwiseGrower<> grower{cfg};
-    auto [tree, train_leaf_values] =
+    auto [tree, train_leaf_values, tree_lids] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     CHECK(tree.params().n_leaves == 2);
@@ -69,7 +69,7 @@ TEST_CASE("LeafwiseGrower: max_leaves=1 returns single root leaf",
                          .min_data_in_leaf = 0,
                          .max_leaves       = 1};
     LeafwiseGrower<> grower{cfg};
-    auto [tree, train_leaf_values] =
+    auto [tree, train_leaf_values, tree_lids] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     CHECK(tree.params().n_leaves == 1);
@@ -87,7 +87,7 @@ TEST_CASE("LeafwiseGrower: max_depth=0 returns single-leaf tree",
                          .min_data_in_leaf = 0,
                          .max_leaves       = 31};
     LeafwiseGrower<> grower{cfg};
-    auto [tree, train_leaf_values] =
+    auto [tree, train_leaf_values, tree_lids] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     CHECK(tree.params().n_leaves == 1);
@@ -105,7 +105,7 @@ TEST_CASE("LeafwiseGrower: no positive-gain split yields single leaf",
                          .min_data_in_leaf = 0,
                          .max_leaves       = 31};
     LeafwiseGrower<> grower{cfg};
-    auto [tree, train_leaf_values] =
+    auto [tree, train_leaf_values, tree_lids] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     CHECK(tree.params().n_leaves == 1);
@@ -128,7 +128,7 @@ TEST_CASE("LeafwiseGrower: leaf budget stops growth at exactly max_leaves",
                          .min_data_in_leaf = 0,
                          .max_leaves       = 3};
     LeafwiseGrower<> grower{cfg};
-    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values, tree_lids] = grower.grow(built.ds, grad, hess, rows);
 
     CHECK(tree.params().n_leaves == 3);
     CHECK(tree.params().depth == 2);
@@ -161,14 +161,14 @@ TEST_CASE("LeafwiseGrower: max_leaves=0 is unbounded (depth-capped only)",
                          .min_data_in_leaf = 0,
                          .max_leaves       = 0};
     LeafwiseGrower<> grower{cfg};
-    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values, tree_lids] = grower.grow(built.ds, grad, hess, rows);
 
     // Fully grown to the depth cap: same 4 leaves as depthwise at depth 2.
     CHECK(tree.params().n_leaves == 4);
     CHECK(tree.params().depth == 2);
 
     DepthwiseGrower<> dw{cfg};
-    auto [dw_tree, dw_values] = dw.grow(built.ds, grad, hess, rows);
+    auto [dw_tree, dw_values, dw_tree_lids] = dw.grow(built.ds, grad, hess, rows);
     for (auto const &pt : {std::vector<float>{0.0F, 0.0F}, {0.0F, 2.0F},
                            {2.0F, 0.0F}, {2.0F, 2.0F}})
     {
@@ -190,7 +190,7 @@ TEST_CASE("LeafwiseGrower: max_depth caps growth below the leaf budget",
                          .min_data_in_leaf = 0,
                          .max_leaves       = 100};
     LeafwiseGrower<> grower{cfg};
-    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values, tree_lids] = grower.grow(built.ds, grad, hess, rows);
 
     CHECK(tree.params().n_leaves == 2);
     CHECK(tree.params().depth == 1);
@@ -218,7 +218,7 @@ TEST_CASE("LeafwiseGrower: grows unbalanced tree when one side has no gain",
                          .min_data_in_leaf = 0,
                          .max_leaves       = 0};
     LeafwiseGrower<> grower{cfg};
-    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values, tree_lids] = grower.grow(built.ds, grad, hess, rows);
 
     CHECK(tree.params().n_leaves == 3);
     CHECK(tree.params().depth == 2);
@@ -245,8 +245,8 @@ TEST_CASE("LeafwiseGrower: identical inputs grow identical trees",
                          .min_data_in_leaf = 0,
                          .max_leaves       = 3};
     LeafwiseGrower<> grower{cfg};
-    auto [tree_a, values_a] = grower.grow(built.ds, grad, hess, rows);
-    auto [tree_b, values_b] = grower.grow(built.ds, grad, hess, rows);
+    auto [tree_a, values_a, tree_a_lids] = grower.grow(built.ds, grad, hess, rows);
+    auto [tree_b, values_b, tree_b_lids] = grower.grow(built.ds, grad, hess, rows);
 
     REQUIRE(tree_a.nodes().size() == tree_b.nodes().size());
     for (size_t i = 0; i < tree_a.nodes().size(); ++i)
@@ -273,7 +273,7 @@ TEST_CASE("LeafwiseGrower: empty row_indices yields zero-valued single leaf",
                          .min_data_in_leaf = 0,
                          .max_leaves       = 31};
     LeafwiseGrower<> grower{cfg};
-    auto [tree, train_leaf_values] =
+    auto [tree, train_leaf_values, tree_lids] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     CHECK(tree.params().n_leaves == 1);

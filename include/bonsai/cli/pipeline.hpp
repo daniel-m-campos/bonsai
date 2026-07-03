@@ -50,6 +50,11 @@ struct LoadedTrainValid
 // mappers. valid[1..] are ignored with a stderr warning.
 LoadedTrainValid load_train_and_valid_from_csv(Config const &cfg);
 
+// Warm-start variant: bin train/valid with EXISTING mappers (from a loaded
+// model) instead of refitting them — continuation must see the same bins.
+LoadedTrainValid load_train_and_valid_with_mappers(Config const &cfg,
+                                                   BinMappers mappers);
+
 // Progress callback: receives (iter_one_based, total_iters) after each
 // boosting iteration. The helper calls it every iteration; the caller throttles
 // (e.g. `fit`'s "every 10" check lives in the callback body).
@@ -82,9 +87,13 @@ using FitTickFn = std::function<void(FitTick const &)>;
 // (init_score baseline), every floor(n_iters/log_intervals) iters, and at the
 // final iter. Predictions live in scratch buffers owned by this function;
 // callbacks must not retain references past the call.
+// `initial` continues training an existing booster (warm start) instead of
+// constructing a fresh one from cfg; cfg still drives n_iters / ticks /
+// early stopping for the continuation.
 std::unique_ptr<IBooster> train_with_progress(Config const           &cfg,
                                               LoadedTrainValid const &loaded,
-                                              FitTickFn const        &on_tick = {});
+                                              FitTickFn const        &on_tick = {},
+                                              std::unique_ptr<IBooster> initial = {});
 
 struct ScoredBatch
 {
@@ -95,7 +104,7 @@ struct ScoredBatch
 // Parse CSV at `path`, build a row-major feature buffer, predict raw scores.
 // No link inverse applied — caller decides via apply_link_inverse_by_name.
 ScoredBatch score_csv(IBooster const &booster, std::string const &path,
-                      DataConfig const &data_cfg);
+                      DataConfig const &data_cfg, size_t n_trees = 0);
 
 struct ScoredAndLabeled
 {

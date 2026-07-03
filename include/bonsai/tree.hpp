@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <concepts>
 #include <cstddef>
 #include <limits>
@@ -87,8 +88,18 @@ class DenseTree
         }
     }
 
+    // Leaf renewal: overwrite one leaf's contribution in place.
+    void set_leaf_value(node_id_t id, float value)
+    {
+        assert(is_leaf(nodes_[id]));
+        nodes_[id].threshold_or_value = value;
+    }
+
     // Accumulates into out; caller initializes (e.g. to zero or to a bias).
     void predict(features_view X, floats_out out) const;
+
+    // The leaf node id row i of X lands in (pred_leaf support).
+    node_id_t leaf_for(features_view X, row_id_t i) const;
 
     Params const &params() const
     {
@@ -145,8 +156,17 @@ class ObliviousTree
         }
     }
 
+    // Leaf renewal: overwrite one leaf-table entry in place.
+    void set_leaf_value(size_t index, float value)
+    {
+        leaf_table_[index] = value;
+    }
+
     // Accumulates into out; caller initializes (e.g. to zero or to a bias).
     void predict(features_view X, floats_out out) const;
+
+    // The leaf-table index row i of X lands in (pred_leaf support).
+    node_id_t leaf_for(features_view X, row_id_t i) const;
 
     Params const &params() const
     {

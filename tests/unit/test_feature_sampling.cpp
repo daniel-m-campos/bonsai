@@ -54,7 +54,7 @@ TEST_CASE("feature_fraction=1 uses the full feature set (baseline unchanged)",
                           .max_depth        = 1,
                           .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto [tree, values] = grower.grow(in.built.ds, in.grad, in.hess, in.rows);
+    auto [tree, values, tree_lids] = grower.grow(in.built.ds, in.grad, in.hess, in.rows);
     CHECK(tree.params().n_leaves == 2);
 }
 
@@ -79,7 +79,7 @@ TEST_CASE("feature_fraction=0.25 restricts each tree to one feature",
     std::set<feature_id_t> seen_across_trees;
     for (int t = 0; t < 8; ++t)
     {
-        auto [tree, values] = grower.grow(built.ds, grad, hess, rows);
+        auto [tree, values, tree_lids] = grower.grow(built.ds, grad, hess, rows);
         auto const used     = split_features_of(tree);
         CHECK(used.size() == 1); // one selected feature per tree
         seen_across_trees.insert(used.begin(), used.end());
@@ -103,7 +103,7 @@ TEST_CASE("feature_fraction leaf values still use full node totals",
                           .max_depth        = 1,
                           .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto [tree, values] = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, values, tree_lids] = grower.grow(built.ds, grad, hess, rows);
 
     REQUIRE(tree.params().n_leaves == 2);
     // Same expected values as the unsampled separable smoke test.
@@ -134,7 +134,7 @@ TEST_CASE("feature_fraction draws are deterministic per seed",
         std::vector<std::set<feature_id_t>> seq;
         for (int t = 0; t < 5; ++t)
         {
-            auto [tree, values] = g.grow(built.ds, grad, hess, rows);
+            auto [tree, values, tree_lids] = g.grow(built.ds, grad, hess, rows);
             seq.push_back(split_features_of(tree));
         }
         return seq;

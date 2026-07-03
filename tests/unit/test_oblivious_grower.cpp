@@ -23,7 +23,7 @@ TEST_CASE("ObliviousGrower: depth=1 separable yields one split, two leaves",
                           .max_depth        = 1,
                           .min_data_in_leaf = 0};
     ObliviousGrower<> grower{cfg};
-    auto [tree, train_leaf_values] =
+    auto [tree, train_leaf_values, tree_lids] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     CHECK(tree.params().n_leaves == 2);
@@ -60,7 +60,7 @@ TEST_CASE("ObliviousGrower: depth=2 separable yields four leaves with correct ro
                           .max_depth        = 2,
                           .min_data_in_leaf = 0};
     ObliviousGrower<> grower{cfg};
-    auto [tree, train_leaf_values] = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, train_leaf_values, tree_lids] = grower.grow(built.ds, grad, hess, rows);
 
     CHECK(tree.params().n_leaves == 4);
     CHECK(tree.params().depth == 2);
@@ -85,7 +85,7 @@ TEST_CASE("ObliviousGrower: max_depth=0 returns single-leaf tree",
     auto              in = two_value_pair();
     TreeConfig        cfg{.lambda_l2 = 1.0F, .max_depth = 0, .min_data_in_leaf = 0};
     ObliviousGrower<> grower{cfg};
-    auto [tree, train_leaf_values] =
+    auto [tree, train_leaf_values, tree_lids] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     CHECK(tree.params().n_leaves == 1);
@@ -103,7 +103,7 @@ TEST_CASE("ObliviousGrower: no positive-gain split yields single leaf",
                           .max_depth        = 3,
                           .min_data_in_leaf = 0};
     ObliviousGrower<> grower{cfg};
-    auto [tree, train_leaf_values] =
+    auto [tree, train_leaf_values, tree_lids] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     CHECK(tree.params().n_leaves == 1);
@@ -121,7 +121,7 @@ TEST_CASE("ObliviousGrower: NaN predict routes via default_left",
                           .max_depth        = 1,
                           .min_data_in_leaf = 0};
     ObliviousGrower<> grower{cfg};
-    auto [tree, train_leaf_values] =
+    auto [tree, train_leaf_values, tree_lids] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     float const nan_pred =
@@ -139,7 +139,7 @@ TEST_CASE("ObliviousGrower: min_child_hess starves all splits → single leaf",
                           .max_depth        = 2,
                           .min_data_in_leaf = 0};
     ObliviousGrower<> grower{cfg};
-    auto [tree, train_leaf_values] =
+    auto [tree, train_leaf_values, tree_lids] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     CHECK(tree.params().n_leaves == 1);
@@ -158,7 +158,7 @@ TEST_CASE("ObliviousGrower: empty row_indices yields zero-valued single leaf",
                           .max_depth        = 3,
                           .min_data_in_leaf = 0};
     ObliviousGrower<> grower{cfg};
-    auto [tree, train_leaf_values] =
+    auto [tree, train_leaf_values, tree_lids] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     CHECK(tree.params().n_leaves == 1);
@@ -179,7 +179,7 @@ TEST_CASE("ObliviousGrower: level with no gain stops growth before max_depth",
                           .max_depth        = 3,
                           .min_data_in_leaf = 0};
     ObliviousGrower<> grower{cfg};
-    auto [tree, train_leaf_values] =
+    auto [tree, train_leaf_values, tree_lids] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     CHECK(tree.params().depth == 1);

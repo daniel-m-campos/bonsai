@@ -61,18 +61,40 @@ class BonsaiRegressor:
         }
         self._model: Model | None = None
 
-    def fit(self, X, y, eval_set: tuple | None = None) -> "BonsaiRegressor":
+    def fit(self, X, y, eval_set: tuple | None = None,
+            init_model: str | None = None) -> "BonsaiRegressor":
+        """init_model continues training from a saved .msgpack (warm start);
+        binning reuses the loaded model's cut points."""
         pairs = [(k, _to_config_str(v)) for k, v in self._params.items()]
         ev = None
         if eval_set is not None:
             ev = (_as_2d_f32(eval_set[0]), _as_1d_f32(eval_set[1]))
-        self._model = train(pairs, _as_2d_f32(X), _as_1d_f32(y), ev)
+        self._model = train(pairs, _as_2d_f32(X), _as_1d_f32(y), ev, init_model)
         return self
 
-    def predict(self, X) -> np.ndarray:
+    def predict(self, X, num_iteration: int = 0) -> np.ndarray:
         if self._model is None:
             raise RuntimeError("fit() or load first")
-        return np.asarray(self._model.predict(_as_2d_f32(X)))
+        return np.asarray(self._model.predict(_as_2d_f32(X), num_iteration))
+
+    def staged_predict(self, X) -> np.ndarray:
+        """(n_iters, n_rows): predictions after each boosting iteration."""
+        if self._model is None:
+            raise RuntimeError("fit() first")
+        return np.asarray(self._model.staged_predict(_as_2d_f32(X)))
+
+    def predict_leaf(self, X) -> np.ndarray:
+        """(n_rows, n_iters): per-tree leaf indices (feature engineering /
+        embedding trick)."""
+        if self._model is None:
+            raise RuntimeError("fit() first")
+        return np.asarray(self._model.predict_leaf(_as_2d_f32(X)))
+
+    def dump(self) -> str:
+        """Every tree as indented text."""
+        if self._model is None:
+            raise RuntimeError("fit() first")
+        return self._model.dump()
 
     def importance(self, type: str = "gain") -> np.ndarray:
         """Raw per-feature importance: total split gain or split count."""

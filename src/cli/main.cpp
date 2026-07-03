@@ -50,6 +50,8 @@ void register_fit(CLI::App &app, bonsai::cli::FitOpts &opts,
     add_common(cmd, opts.common, kvs);
     cmd->add_option("--model", opts.model_path, "Output model file (MessagePack)");
     cmd->footer(params_footer);
+    cmd->add_option("--init-model", opts.init_model_path,
+                    "Continue training from this saved model (warm start)");
     cmd->callback(
         [&]
         {
@@ -69,6 +71,8 @@ void register_predict(CLI::App &app, bonsai::cli::PredictOpts &opts,
     cmd->add_flag("!--raw-scores", opts.apply_link,
                   "Skip the link inverse for classification objectives");
     cmd->footer(params_footer);
+    cmd->add_option("--num-iteration", opts.num_iteration,
+                    "Predict with only the first K trees (0 = all)");
     cmd->callback(
         [&]
         {
@@ -107,6 +111,14 @@ void register_bench(CLI::App &app, bonsai::cli::BenchOpts &opts,
             collect_overrides(kvs, opts.common);
             rc = bonsai::cli::run_bench(opts);
         });
+}
+
+void register_dump(CLI::App &app, bonsai::cli::DumpOpts &opts, int &rc)
+{
+    auto *cmd = app.add_subcommand("dump", "Print every tree as indented text");
+    cmd->add_option("--model", opts.model_path, "Trained model (.msgpack)")
+        ->required();
+    cmd->callback([&] { rc = bonsai::cli::run_dump(opts); });
 }
 
 void register_importance(CLI::App &app, bonsai::cli::ImportanceOpts &opts, int &rc)
@@ -165,6 +177,8 @@ int main(int argc, char *argv[])
 
     ImportanceOpts importance;
     register_importance(app, importance, rc);
+    DumpOpts dump;
+    register_dump(app, dump, rc);
     register_info(app, rc);
     register_params(app, rc);
 

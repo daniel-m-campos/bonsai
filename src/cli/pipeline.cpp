@@ -87,6 +87,20 @@ LabeledData load_labeled(std::string const &path, DataConfig const &data_cfg,
 
 } // namespace
 
+LoadedTrainValid load_train_and_valid_with_mappers(Config const &cfg,
+                                                   BinMappers mappers)
+{
+    auto train = load_labeled(cfg.data.train, cfg.data, mappers);
+    std::optional<LabeledData> valid;
+    if (!cfg.data.valid.empty())
+    {
+        valid = load_labeled(cfg.data.valid[0], cfg.data, mappers);
+    }
+    return LoadedTrainValid{.mappers = std::move(mappers),
+                            .train   = std::move(train),
+                            .valid   = std::move(valid)};
+}
+
 LoadedTrainValid load_train_and_valid_from_csv(Config const &cfg)
 {
     // Parse the train CSV once: fit mappers and bin from the same batch.
@@ -114,9 +128,10 @@ LoadedTrainValid load_train_and_valid_from_csv(Config const &cfg)
 
 std::unique_ptr<IBooster> train_with_progress(Config const           &cfg,
                                               LoadedTrainValid const &loaded,
-                                              FitTickFn const        &on_tick)
+                                              FitTickFn const        &on_tick,
+                                              std::unique_ptr<IBooster> initial)
 {
-    auto       booster = make_booster(cfg);
+    auto booster = initial ? std::move(initial) : make_booster(cfg);
     auto const n_iters = cfg.booster_config.n_iters;
     auto const log_iv  = cfg.booster_config.log_intervals;
 
@@ -193,8 +208,18 @@ std::unique_ptr<IBooster> train_with_progress(Config const           &cfg,
         {
             if (i == 0)
             {
-                es_scores.assign(loaded.valid->features.n_rows,
-                                 booster->score_base());
+                es_scores.resize(loaded.valid->features.n_rows);
+                if (booster->n_iters() > 1)
+                {
+                    // Warm start: seed with the pre-existing trees' scores
+                    // (raw = base + lr * sums), excluding the tree just added.
+                    booster->predict_at(loaded.valid->features.view(), es_scores,
+                                        booster->n_iters() - 1);
+                }
+                else
+                {
+                    std::ranges::fill(es_scores, booster->score_base());
+                }
             }
             booster->accumulate_last_tree(loaded.valid->features.view(), es_scores);
             float const loss =
@@ -221,11 +246,11 @@ std::unique_ptr<IBooster> train_with_progress(Config const           &cfg,
 }
 
 ScoredBatch score_csv(IBooster const &booster, std::string const &path,
-                      DataConfig const &data_cfg)
+                      DataConfig const &data_cfg, size_t n_trees)
 {
     auto               pf = parse_and_buffer(path, data_cfg);
     std::vector<float> raw(pf.buf.n_rows);
-    booster.predict(pf.buf.view(), raw);
+    booster.predict_at(pf.buf.view(), raw, n_trees);
     return ScoredBatch{.features = std::move(pf.buf), .raw_scores = std::move(raw)};
 }
 
