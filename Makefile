@@ -1,10 +1,20 @@
 CAVEMAN_URL  := https://raw.githubusercontent.com/juliusbrussee/caveman/main/skills/caveman/SKILL.md
 SKILLS_DIR   := .claude/skills
-LLVM_BIN     := /opt/homebrew/opt/llvm/bin
 SOURCES      := $(shell find src include tests benchmarks -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' \) 2>/dev/null)
 LINT_SOURCES := $(shell find src -type f -name '*.cpp' 2>/dev/null)
 TOY_SENTINEL := tests/data/.toy-fetched
-SDK_PATH     := $(shell xcrun --show-sdk-path)
+
+# Toolchain root: homebrew LLVM on macOS, apt.llvm.org layout on Linux.
+# clang-tidy needs the macOS SDK sysroot spelled out; on Linux the driver
+# finds its own sysroot.
+ifeq ($(shell uname -s),Darwin)
+LLVM_BIN       ?= /opt/homebrew/opt/llvm/bin
+SDK_PATH       := $(shell xcrun --show-sdk-path)
+LINT_EXTRA_ARGS := -extra-arg=-isysroot -extra-arg=$(SDK_PATH)
+else
+LLVM_BIN       ?= /usr/lib/llvm-21/bin
+LINT_EXTRA_ARGS :=
+endif
 
 all: build
 
@@ -31,7 +41,7 @@ format:
 lint: build/build.ninja
 	@out=$$($(LLVM_BIN)/run-clang-tidy -quiet -use-color=0 \
 	    -clang-tidy-binary $(LLVM_BIN)/clang-tidy \
-	    -extra-arg=-isysroot -extra-arg=$(SDK_PATH) \
+	    $(LINT_EXTRA_ARGS) \
 	    -header-filter='include/bonsai/.*' -p build $(LINT_SOURCES) 2>/dev/null \
 	    | grep -E '(warning|error):' \
 	    | grep -v -E '(c\+\+/v1|system-headers|too many)'); \

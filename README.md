@@ -95,9 +95,22 @@ Install with `pip install .` (scikit-build-core builds the extension), or for de
 ## Build
 
 Requires:
-- clang ≥ 18 (C++23: `std::print`, concepts, ranges)
+- LLVM ≥ 20: clang + libc++ (C++23: `std::print`, `std::mdspan`; libc++ gains
+  float `std::from_chars` in 20, and clang 19 relaxed an over-broad OpenMP
+  restriction on capturing structured bindings — clang 18 fails on both)
 - CMake ≥ 3.28
 - Ninja (recommended)
+
+Supported on macOS (homebrew LLVM) and Linux (apt.llvm.org packages; built
+against LLVM's libc++, not libstdc++). The Makefile defaults to
+`/opt/homebrew/opt/llvm/bin` on macOS and `/usr/lib/llvm-21/bin` on Linux;
+override with `make LLVM_BIN=/path/to/llvm/bin ...`. On Ubuntu:
+
+```
+wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh && sudo bash /tmp/llvm.sh 21 && \
+sudo apt-get install -y libc++-21-dev libc++abi-21-dev libomp-21-dev \
+  clang-format-21 clang-tidy-21 clang-tools-21 ninja-build
+```
 
 ```
 make build           # configure + compile (build/)

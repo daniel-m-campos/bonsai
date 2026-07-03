@@ -27,6 +27,14 @@ if(APPLE AND CMAKE_CXX_COMPILER MATCHES "/opt/homebrew/opt/llvm/")
     )
 endif()
 
+# On Linux, clang defaults to the system libstdc++, which on Ubuntu 22.04
+# (GCC 11) predates <print> and <mdspan>. Build against LLVM's libc++
+# instead, matching the macOS toolchain.
+if(NOT APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_compile_options(-stdlib=libc++)
+    add_link_options(-stdlib=libc++)
+endif()
+
 # ---- Options ----------------------------------------------------------------
 
 option(BONSAI_TESTS "Build tests" ON)
@@ -51,7 +59,8 @@ if(BONSAI_OPENMP)
     if(OpenMP_CXX_FOUND)
         target_compile_definitions(bonsai_parallel INTERFACE BONSAI_USE_OPENMP)
         find_library(BONSAI_LIBOMP_A libomp.a
-                     HINTS /opt/homebrew/opt/libomp/lib /usr/local/opt/libomp/lib)
+                     HINTS /opt/homebrew/opt/libomp/lib /usr/local/opt/libomp/lib
+                           /usr/lib/llvm-21/lib)
         if(BONSAI_OPENMP_STATIC AND BONSAI_LIBOMP_A)
             target_compile_options(bonsai_parallel INTERFACE ${OpenMP_CXX_FLAGS})
             target_link_libraries(bonsai_parallel INTERFACE ${BONSAI_LIBOMP_A})
@@ -130,6 +139,10 @@ if(BONSAI_PYTHON)
         # OpenMP runtimes (xgboost/lightgbm bundle their own).
         target_link_options(_bonsai PRIVATE
                             "-Wl,-exported_symbol,_PyInit__bonsai")
+    else()
+        # GNU-ld equivalent: keep static-library symbols (libomp among
+        # them) local to the module.
+        target_link_options(_bonsai PRIVATE "-Wl,--exclude-libs,ALL")
     endif()
     target_link_libraries(_bonsai PRIVATE
         bonsai_cli
