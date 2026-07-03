@@ -692,3 +692,28 @@ Recurring lesson, third occurrence (after §30, §34): the benchmark is the
 strongest test. lightgbm's multiclass metric rejection, catboost's
 regressor/classifier split, and a9a's short test-split feature space were
 all caught by running the harness, not by unit tests.
+
+## 39. Categorical stage 1: measure before building
+
+**Decision.** Before implementing native categorical splits (gap row 12),
+add a genuinely categorical dataset and measure what native handling
+buys. Amazon employee access (OpenML 4135): 9 integer-ID features,
+RESOURCE at 7.5k distinct values — the regime one-hot cannot reach and
+arbitrary ID orderings hurt most.
+
+**Design.** The measurement isolates technique from library: lightgbm
+runs twice, once with the IDs as plain numerics and once with
+`categorical_feature` declared. That within-library delta (+0.0144 AUC,
+and faster fits) is what Fisher set splits are worth, independent of
+engine differences. bonsai contributes its two practical options today
+(raw IDs: 0.8476; K-fold target encoding: 0.8462) and the other
+references their native modes (xgboost 0.8498, catboost 0.8812).
+
+**Findings.** (a) The stage-2 prize is real but modest: ~+0.007 AUC from
+bonsai's best to lightgbm-native. (b) catboost's +0.026 lead over
+lightgbm-native does not come from target encoding per se — plain K-fold
+target encoding was no better than raw IDs — but from the ordered
+scheme plus feature combinations. (c) bonsai beats lightgbm when both
+are denied categorical machinery, so the gap is the feature, not the
+engine. Stage 2 (set splits) proceeds with a measured ceiling instead
+of a hope.

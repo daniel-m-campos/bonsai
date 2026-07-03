@@ -21,7 +21,7 @@ one can "enable" in the reference libraries for an A/B.
 | 9 | Feature importance (split count + gain) | `get_score` | `feature_importance` | `get_feature_importance` | No fit/predict impact; table-stakes introspection. Split-count is free; gain needs per-node gains stored at grow time | **landed** |
 | 10 | Leaf renewal for MAE/quantile | built in (adaptive trees) | `RenewTreeOutput` | built in | Closes the known ~10% MAE gap vs refs on MAE/quantile objectives (see results log §5) | **landed** |
 | 11 | Classification benchmark (AUC) | n/a (harness) | n/a | n/a | logloss objective exists but is only unit-tested; needs a live dataset (e.g. Higgs subset) + AUC column in compare.py | **landed** |
-| 12 | Categorical features | one-hot / partition | native (Fisher) | ordered target stats | Biggest real-world capability gap; needs a categorical dataset (e.g. Adult, Amazon) in the harness first | planned |
+| 12 | Categorical features | one-hot / partition | native (Fisher) | ordered target stats | Biggest real-world capability gap; stage 1 (measure it) done — see results log §18. Native set splits are worth ~+0.007 AUC vs bonsai today on Amazon; ordered target statistics ~+0.034 | **measured** (stage 1) |
 | 13 | Prediction extras: staged predict, `pred_leaf`, tree dump | yes | yes | yes | Debug/introspection; small, each independent | **landed** |
 | 14 | Warm start / training continuation | `xgb_model` | `init_model` | `init_model` | Fit latency for iterative workflows; booster already saves/loads full state | **landed** |
 | 15 | TreeSHAP (`pred_contribs`) | yes | yes | yes | Modern attribution standard; real algorithm, sized as its own project | **landed** |
@@ -361,3 +361,47 @@ a9a (Adult, 123 binary features, LIBSVM; 200 iters, `a9a`):
 
 Accuracy parity holds on sparse-format data (within 0.2% AUC of
 xgboost); the densification cost is invisible at this scale.
+
+### 18. Categorical features — stage 1: measure the gap (row 12)
+
+Before building native categorical splits, measure what they buy.
+Amazon employee access (OpenML 4135; 32,769 rows, 9 integer-ID
+features, RESOURCE 7,518 distinct / MGR\_ID 4,243; binary ACTION,
+~94% positive) via `scripts/fetch_amazon.py` +
+`scripts/bench_categorical.py`. 300 iters, lr 0.1, depth 8 / 63
+leaves. bonsai gets its two practical options today; the references
+get their native modes. The lightgbm native-vs-numeric pair isolates
+the value of native handling from library differences.
+
+| setup | auc | fit_s |
+|---|---|---|
+| bonsai (raw IDs as numeric) | 0.8476 | 2.1 |
+| bonsai (K-fold target encoding) | 0.8462 | 1.8 |
+| lightgbm (raw IDs as numeric) | 0.8405 | 1.6 |
+| lightgbm (native categorical) | 0.8549 | 0.7 |
+| xgboost (native categorical) | 0.8498 | 2.2 |
+| catboost (native, ordered TS) | 0.8812 | 5.2 |
+
+Reading the deltas:
+
+- **Native Fisher set splits are worth +0.0144 AUC within lightgbm**
+  (0.8405 → 0.8549) — and it fits *faster*, because one set split
+  replaces the many axis splits needed to carve up an arbitrary ID
+  ordering. Against bonsai's best today the stage-2 prize is
+  ~+0.007 (0.8476 → ~0.8549).
+- **Ordered target statistics are the bigger prize**: catboost leads
+  the whole field by +0.026 over lightgbm-native (0.8812). That's a
+  different technique — supervised encoding, not set partitioning —
+  and note plain K-fold target encoding did *not* reproduce it
+  (0.8462, no better than raw IDs). catboost's edge comes from the
+  ordered/permutation scheme plus feature *combinations*, not from
+  target encoding per se.
+- bonsai on raw IDs already beats lightgbm on raw IDs (+0.007),
+  consistent with the leafwise results elsewhere; the gap is purely
+  the missing categorical machinery, not engine quality.
+
+Verdict for stage 2: a real but modest gap (~0.7 pt AUC to
+lightgbm-native) exists on exactly the workload native splits target.
+One-hot via LIBSVM input is not a practical alternative here (7.5k
+distinct values in one column → ~15k dense features after
+materialization).
