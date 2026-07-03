@@ -8,6 +8,7 @@
 #include <functional>
 #include <numeric>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 namespace bonsai
@@ -249,6 +250,25 @@ auto QuantileObjective::init_score(floats_view targets) const
 float QuantileObjective::renew_leaf(std::span<float> residuals) const
 {
     return quantile_in_place(residuals, alpha_);
+}
+
+// SoftmaxObjective: registry-thunk stubs (see the header note). The real
+// math lives in MulticlassBooster.
+void SoftmaxObjective::compute(floats_view /*preds*/, floats_view /*targets*/,
+                               floats_out /*grad*/, floats_out /*hess*/)
+{
+    throw std::logic_error("softmax objective is handled by MulticlassBooster");
+}
+
+float SoftmaxObjective::eval(floats_view /*preds*/, floats_view /*targets*/)
+{
+    throw std::logic_error(
+        "softmax eval needs K columns; use MulticlassBooster::eval");
+}
+
+float SoftmaxObjective::init_score(floats_view /*targets*/)
+{
+    throw std::logic_error("softmax init is handled by MulticlassBooster");
 }
 
 } // namespace bonsai

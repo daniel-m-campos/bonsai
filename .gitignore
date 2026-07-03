@@ -81,3 +81,4 @@ benchmarks/results/*.md
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/bonsai-policy/
+tests/data/*.libsvm

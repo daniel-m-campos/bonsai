@@ -29,3 +29,20 @@ namespace bonsai::detail::csv
 ColumnBatch parse(std::string const &path, DataConfig const &cfg);
 
 } // namespace bonsai::detail::csv
+
+namespace bonsai::detail::libsvm
+{
+
+// LIBSVM sparse text (`label idx:val ...`, 1-based indices), materialized
+// dense: input-format support, not sparse compute.
+ColumnBatch parse(std::string const &path, DataConfig const &cfg);
+
+} // namespace bonsai::detail::libsvm
+
+namespace bonsai::detail
+{
+
+// Dispatch on DataConfig::format ("csv" | "libsvm").
+ColumnBatch parse_input(std::string const &path, DataConfig const &cfg);
+
+} // namespace bonsai::detail

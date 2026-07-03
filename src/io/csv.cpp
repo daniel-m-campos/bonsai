@@ -1,5 +1,6 @@
 #include "bonsai/io/csv.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <cstddef>
@@ -326,3 +327,128 @@ BinMappers fit_from_csv(std::string const &path, Config const &cfg)
 }
 
 } // namespace bonsai::io
+
+namespace bonsai::detail::libsvm
+{
+
+// LIBSVM sparse text: `label idx:val idx:val ...` per line, 1-based feature
+// indices. Materialized DENSE (absent entries are 0.0f) — bonsai's engine is
+// dense; this is input-format support, not sparse compute.
+ColumnBatch parse(std::string const &path, DataConfig const &cfg)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+    {
+        throw std::runtime_error("libsvm::parse: cannot open '" + path + "'");
+    }
+    in.seekg(0, std::ios::end);
+    auto const fsize = static_cast<size_t>(in.tellg());
+    in.seekg(0, std::ios::beg);
+    std::string buf(fsize, '\0');
+    in.read(buf.data(), static_cast<std::streamsize>(fsize));
+
+    struct Entry
+    {
+        uint32_t feature;
+        float    value;
+    };
+    std::vector<float>              labels;
+    std::vector<std::vector<Entry>> rows;
+    uint32_t                        max_feature = 0;
+
+    size_t pos = 0;
+    while (pos < buf.size())
+    {
+        size_t const nl  = buf.find('\n', pos);
+        size_t const end = nl == std::string::npos ? buf.size() : nl;
+        std::string_view line{buf.data() + pos, end - pos};
+        pos = end + 1;
+        if (!line.empty() && line.back() == '\r')
+        {
+            line.remove_suffix(1);
+        }
+        if (line.empty() || line.front() == '#')
+        {
+            continue;
+        }
+
+        size_t const sp = line.find(' ');
+        float        label{};
+        auto const   lend = sp == std::string_view::npos ? line.size() : sp;
+        std::from_chars(line.data(), line.data() + lend, label);
+        labels.push_back(label);
+        rows.emplace_back();
+
+        size_t cursor = lend;
+        while (cursor < line.size())
+        {
+            while (cursor < line.size() && line[cursor] == ' ')
+            {
+                ++cursor;
+            }
+            if (cursor >= line.size())
+            {
+                break;
+            }
+            size_t const colon = line.find(':', cursor);
+            if (colon == std::string_view::npos)
+            {
+                throw std::runtime_error("libsvm::parse: malformed pair in '" +
+                                         path + "'");
+            }
+            uint32_t idx{};
+            std::from_chars(line.data() + cursor, line.data() + colon, idx);
+            size_t const vend = std::min(line.find(' ', colon), line.size());
+            float        val{};
+            std::from_chars(line.data() + colon + 1, line.data() + vend, val);
+            if (idx == 0)
+            {
+                throw std::runtime_error(
+                    "libsvm::parse: feature indices are 1-based; got 0 in '" +
+                    path + "'");
+            }
+            rows.back().push_back({.feature = idx - 1, .value = val});
+            max_feature = std::max(max_feature, idx - 1);
+            cursor      = vend;
+        }
+    }
+
+    ColumnBatch batch;
+    size_t const n_rows     = labels.size();
+    size_t const inferred   = labels.empty() ? 0 : max_feature + 1;
+    size_t const n_features =
+        cfg.libsvm_n_features > 0
+            ? std::max(inferred, static_cast<size_t>(cfg.libsvm_n_features))
+            : inferred;
+    batch.labels            = std::move(labels);
+    batch.features.assign(n_features, std::vector<float>(n_rows, 0.0F));
+    for (size_t r = 0; r < n_rows; ++r)
+    {
+        for (auto const &[f, v] : rows[r])
+        {
+            batch.features[f][r] = v;
+        }
+    }
+    batch.feature_names.reserve(n_features);
+    for (size_t f = 0; f < n_features; ++f)
+    {
+        batch.feature_names.push_back("f" + std::to_string(f));
+    }
+    return batch;
+}
+
+} // namespace bonsai::detail::libsvm
+
+namespace bonsai::detail
+{
+
+ColumnBatch parse_input(std::string const &path, DataConfig const &cfg)
+{
+    if (cfg.format == "libsvm")
+    {
+        return libsvm::parse(path, cfg);
+    }
+    return csv::parse(path, cfg);
+}
+
+} // namespace bonsai::detail

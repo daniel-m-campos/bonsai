@@ -8,6 +8,8 @@
 
 #include "bonsai/bin_mappers.hpp"
 #include "bonsai/booster.hpp"
+#include "bonsai/io/model.hpp"
+#include "bonsai/multiclass_booster.hpp"
 #include "bonsai/config/config.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
@@ -477,4 +479,52 @@ TEST_CASE("Booster: predict_at, staged, and leaf predictions are consistent",
     CHECK(text.find("tree 0:") != std::string::npos);
     CHECK(text.find("leaf=") != std::string::npos);
     CHECK(text.find('a') != std::string::npos);
+}
+
+TEST_CASE("MulticlassBooster: separable 3-class data reaches perfect accuracy",
+          "[booster][multiclass]")
+{
+    detail::ColumnBatch batch{
+        .features      = {{0.0F, 0.1F, 0.5F, 0.6F, 0.9F, 1.0F}},
+        .labels        = {0.0F, 0.0F, 1.0F, 1.0F, 2.0F, 2.0F},
+        .weights       = {},
+        .feature_names = {"a"},
+    };
+    Dataset const train = make_dataset(batch);
+    auto const    raw   = to_raw(batch);
+
+    Config cfg                       = tiny_cfg();
+    cfg.objective.n_classes          = 3;
+    cfg.booster_config.learning_rate = 0.5F;
+
+    MulticlassBooster<DepthwiseGrower<>, AllRowsSampler> b{cfg};
+    float loss_before = 0.0F;
+    for (int i = 0; i < 20; ++i)
+    {
+        b.update_one_iter(train);
+        if (i == 0)
+        {
+            loss_before = b.eval(raw.view(), batch.labels);
+        }
+    }
+    CHECK(b.n_iters() == 20);
+    CHECK(b.eval(raw.view(), batch.labels) < loss_before); // mlogloss falls
+
+    std::vector<float> pred(raw.n_rows);
+    b.predict(raw.view(), pred);
+    for (size_t i = 0; i < raw.n_rows; ++i)
+    {
+        CHECK(pred[i] == batch.labels[i]); // argmax class ids
+    }
+
+    // Round-trip through the registry-driven model IO.
+    Config io_cfg                  = cfg;
+    io_cfg.dispatch.objective_name = "softmax";
+    BinMappers const mappers       = BinMappers::fit(batch, {});
+    io::save_booster(b, "/tmp/bonsai_mc_test.msgpack", mappers, io_cfg);
+    auto loaded = io::load_booster("/tmp/bonsai_mc_test.msgpack");
+    REQUIRE(loaded.booster->n_iters() == 20);
+    std::vector<float> pred2(raw.n_rows);
+    loaded.booster->predict(raw.view(), pred2);
+    CHECK(pred2 == pred);
 }

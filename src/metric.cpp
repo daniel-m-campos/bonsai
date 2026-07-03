@@ -157,18 +157,31 @@ float compute_auc(floats_view probs, floats_view labels)
     return static_cast<float>(u / (static_cast<double>(n_pos) * n_neg));
 }
 
+float compute_mc_accuracy(floats_view class_ids, floats_view labels)
+{
+    assert(class_ids.size() == labels.size());
+    assert(!class_ids.empty());
+    size_t correct = 0;
+    for (size_t i = 0; i < class_ids.size(); ++i)
+    {
+        correct += std::lround(class_ids[i]) == std::lround(labels[i]) ? 1 : 0;
+    }
+    return static_cast<float>(correct) / static_cast<float>(class_ids.size());
+}
+
 namespace
 {
 
 // Tiny hand-written registry. No for_each_type machinery -- five entries.
 // Adding a metric is one line below + matching free function above.
-inline constexpr auto all_metrics = std::array<Metric, 6>{{
+inline constexpr auto all_metrics = std::array<Metric, 7>{{
     metric_rmse,
     metric_mae,
     metric_r2,
     metric_logloss,
     metric_accuracy,
     metric_auc,
+    metric_mc_accuracy,
 }};
 
 } // namespace

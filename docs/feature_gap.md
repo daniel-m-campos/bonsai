@@ -25,8 +25,8 @@ one can "enable" in the reference libraries for an A/B.
 | 13 | Prediction extras: staged predict, `pred_leaf`, tree dump | yes | yes | yes | Debug/introspection; small, each independent | **landed** |
 | 14 | Warm start / training continuation | `xgb_model` | `init_model` | `init_model` | Fit latency for iterative workflows; booster already saves/loads full state | **landed** |
 | 15 | TreeSHAP (`pred_contribs`) | yes | yes | yes | Modern attribution standard; real algorithm, sized as its own project | **landed** |
-| 16 | Multi-class / softmax objective | yes | yes | yes | K-output leaves touch Objective, Booster, and Tree — largest structural change | planned |
-| 17 | Sparse-input handling / EFB | yes | yes (EFB) | yes | Needs a sparse dataset in the harness to enable or measure anything | planned |
+| 16 | Multi-class / softmax objective | yes | yes | yes | K-output leaves touch Objective, Booster, and Tree — largest structural change | **landed** |
+| 17 | Sparse-input handling / EFB | yes | yes (EFB) | yes | Needs a sparse dataset in the harness to enable or measure anything | **landed** (input format; sparse *compute* stays engine work) |
 
 Measurement protocol, per implemented feature: enable the equivalent knob in
 bonsai and every reference library that has it, run
@@ -312,3 +312,52 @@ expectations, `tree_expected_value`) matches `tree_shap` to 1e-9 on an
 interacting 3-feature tree, and the efficiency property — every row's
 contributions sum to its raw prediction exactly — is asserted at both
 tree and booster level, plus in the Python suite.
+
+### 16. Multi-class softmax — `objective_name = "softmax"` (landed)
+
+The K-output shape doesn't fit the 1-D `Objective` concept, so
+`BoosterFor` routes `{softmax, G, Sa}` to a dedicated
+`MulticlassBooster<G, Sa>`: one tree per class per round on softmax
+gradients (xgboost's `2p(1-p)` hessian), log-prior init scores, argmax
+predict, multiclass-logloss eval, `mc_accuracy` metric,
+`objective.n_classes` config. Works with every grower/sampler (54
+dispatch combos, all round-tripping through model IO — the envelope
+stores per-class init scores). Early stopping / DART / pred_contribs
+throw for now.
+
+UCI Covertype (500k rows, 54 features, 7 classes, 100 iters, lr 0.1,
+`covtype`):
+
+| library | accuracy | fit_s |
+|---|---|---|
+| bonsai (depthwise) | **0.6628** | 28.4 |
+| bonsai (leafwise) | 0.6337 | 22.5 |
+| xgboost | 0.6213 | 7.2 |
+| lightgbm | 0.6414 | 4.4 |
+| catboost | 0.3477 | 17.4 |
+
+bonsai depthwise leads on accuracy at matched knobs; leafwise lands
+between xgboost and lightgbm. Fit time trails (7 trees per round
+compound the known per-tree overheads). catboost again wants its own
+defaults rather than matched ones; recorded as-is.
+
+### 17. Sparse input — LIBSVM format (landed, with an honest boundary)
+
+`data.format = "libsvm"` parses `label idx:val ...` files
+(`detail::libsvm::parse`), with `data.libsvm_n_features` to pin the
+width when a test split's max index falls short of train's (the classic
+a9a trap). The input is **materialized dense** — this lands sparse
+*input* parity and a sparse dataset in the harness; sparse *compute*
+(EFB, sparse histograms) remains engine work, tracked separately.
+
+a9a (Adult, 123 binary features, LIBSVM; 200 iters, `a9a`):
+
+| library | auc | fit_s |
+|---|---|---|
+| bonsai (leafwise) | 0.9031 | 1.6 |
+| xgboost | 0.9051 | 0.5 |
+| lightgbm | 0.9038 | 0.7 |
+| catboost | 0.7661 | 0.7 |
+
+Accuracy parity holds on sparse-format data (within 0.2% AUC of
+xgboost); the densification cost is invisible at this scale.

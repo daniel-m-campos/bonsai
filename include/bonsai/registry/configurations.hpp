@@ -2,6 +2,8 @@
 
 #include "bonsai/booster.hpp"
 #include "bonsai/config/dispatch_config.hpp"
+#include "bonsai/multiclass_booster.hpp"
+#include "bonsai/objective.hpp"
 #include "bonsai/registry/names.hpp"
 #include "bonsai/registry/typelists.hpp"
 #include "bonsai/typelist.hpp"
@@ -14,9 +16,26 @@ namespace bonsai
 // resolution in io/model save/load.
 using Configurations = cartesian_product_t<Objectives, Growers, Samplers>;
 
+namespace detail
+{
+// Default: the uniform single-output booster. Softmax routes to the
+// K-output MulticlassBooster — the one objective whose shape doesn't fit
+// Booster<O,G,Sa> (see multiclass_booster.hpp).
+template <typename Combo> struct booster_for
+{
+    using type =
+        Booster<type_at_t<0, Combo>, type_at_t<1, Combo>, type_at_t<2, Combo>>;
+};
+
+template <typename G, typename Sa>
+struct booster_for<TypeList<SoftmaxObjective, G, Sa>>
+{
+    using type = MulticlassBooster<G, Sa>;
+};
+} // namespace detail
+
 template <typename Combo>
-using BoosterFor =
-    Booster<type_at_t<0, Combo>, type_at_t<1, Combo>, type_at_t<2, Combo>>;
+using BoosterFor = typename detail::booster_for<Combo>::type;
 
 // Invoke `cb.template operator()<Combo>()` for the single Combo in
 // Configurations whose three impl_names match `disp`. Returns whatever the

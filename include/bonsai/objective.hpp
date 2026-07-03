@@ -95,4 +95,20 @@ struct QuantileObjective
     float alpha_ = 0.5F;
 };
 
+// Multiclass softmax. A dispatch tag more than an Objective: the
+// K-output shape doesn't fit the 1-D Objective concept, so BoosterFor
+// routes {softmax, G, Sa} to MulticlassBooster<G, Sa>, which owns the
+// softmax math internally. The members below only satisfy the registry
+// thunks (eval table, link table); the 1-D eval cannot express K columns
+// and throws if reached.
+struct SoftmaxObjective
+{
+    SoftmaxObjective() = default;
+    explicit SoftmaxObjective(Config const &) {}
+    static void  compute(floats_view preds, floats_view targets, floats_out grad,
+                         floats_out hess);
+    static float eval(floats_view preds, floats_view targets);
+    static float init_score(floats_view targets);
+};
+
 } // namespace bonsai

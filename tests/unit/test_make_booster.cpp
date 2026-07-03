@@ -12,6 +12,7 @@
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/objective.hpp"
+#include "bonsai/registry/configurations.hpp"
 #include "bonsai/registry/make_booster.hpp"
 #include "bonsai/registry/names.hpp"
 #include "bonsai/registry/typelists.hpp"
@@ -108,6 +109,18 @@ template <> detail::ColumnBatch batch_for<QuantileObjective>()
     return batch_for<MSEObjective>();
 }
 
+
+template <> detail::ColumnBatch batch_for<SoftmaxObjective>()
+{
+    // 3-class labels over the same separable feature.
+    return detail::ColumnBatch{
+        .features      = {{0.0F, 0.1F, 0.5F, 0.6F, 0.9F, 1.0F}},
+        .labels        = {0.0F, 0.0F, 1.0F, 1.0F, 2.0F, 2.0F},
+        .weights       = {},
+        .feature_names = {"a"},
+    };
+}
+
 using DispatchCombos = cartesian_product_t<Objectives, Growers, Samplers>;
 
 } // namespace
@@ -168,7 +181,7 @@ TEMPLATE_LIST_TEST_CASE("make_booster: parity with direct instantiation",
     cfg.dispatch.grower_name    = std::string{impl_name<G>::value};
     cfg.dispatch.sampler_name   = std::string{impl_name<S>::value};
 
-    using DirectBooster = Booster<O, G, S>;
+    using DirectBooster = BoosterFor<TestType>;
     DirectBooster direct{cfg};
     auto const    dispatched = make_booster(cfg);
 

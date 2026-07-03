@@ -133,6 +133,18 @@ template <> detail::ColumnBatch batch_for<QuantileObjective>()
     return batch_for<MSEObjective>();
 }
 
+
+template <> detail::ColumnBatch batch_for<SoftmaxObjective>()
+{
+    // 3-class labels over the same separable feature.
+    return detail::ColumnBatch{
+        .features      = {{0.0F, 0.1F, 0.5F, 0.6F, 0.9F, 1.0F}},
+        .labels        = {0.0F, 0.0F, 1.0F, 1.0F, 2.0F, 2.0F},
+        .weights       = {},
+        .feature_names = {"a"},
+    };
+}
+
 using DispatchCombos = cartesian_product_t<Objectives, Growers, Samplers>;
 
 } // namespace

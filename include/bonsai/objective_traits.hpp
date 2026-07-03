@@ -46,6 +46,11 @@ template <> struct link_inverse_of<QuantileObjective>
 {
     static void apply(floats_out /*scores*/) {}
 };
+template <> struct link_inverse_of<SoftmaxObjective>
+{
+    // Multiclass predict emits argmax class ids; nothing to invert.
+    static void apply(floats_out /*scores*/) {}
+};
 
 // Task this objective serves. Determines which metrics are compatible.
 template <> struct task_of<MSEObjective>
@@ -67,6 +72,10 @@ template <> struct task_of<HuberObjective>
 template <> struct task_of<QuantileObjective>
 {
     static constexpr TaskKind value = TaskKind::regression;
+};
+template <> struct task_of<SoftmaxObjective>
+{
+    static constexpr TaskKind value = TaskKind::multiclass_classification;
 };
 
 // Default metric names to report when the user does not set `metrics.fit` /
@@ -98,6 +107,10 @@ template <> struct default_metrics_of<HuberObjective>
     static std::span<std::string_view const> value();
 };
 template <> struct default_metrics_of<QuantileObjective>
+{
+    static std::span<std::string_view const> value();
+};
+template <> struct default_metrics_of<SoftmaxObjective>
 {
     static std::span<std::string_view const> value();
 };

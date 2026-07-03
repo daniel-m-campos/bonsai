@@ -13,6 +13,7 @@ enum class TaskKind
 {
     regression,
     binary_classification,
+    multiclass_classification,
 };
 
 // Human-readable name for error messages and logs.

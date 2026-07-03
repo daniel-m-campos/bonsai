@@ -30,7 +30,7 @@ namespace bonsai::cli
 
 LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path)
 {
-    auto const batch   = detail::csv::parse(path, cfg.data);
+    auto const batch   = detail::parse_input(path, cfg.data);
     auto       mappers = BinMappers::fit(batch, cfg.bin_mapper);
     auto       train   = Dataset::bin(batch, mappers, cfg.data);
     return LoadedTrain{.mappers = std::move(mappers), .train = std::move(train)};
@@ -63,7 +63,7 @@ struct ParsedFeatures
 
 ParsedFeatures parse_and_buffer(std::string const &path, DataConfig const &data_cfg)
 {
-    auto batch = detail::csv::parse(path, data_cfg);
+    auto batch = detail::parse_input(path, data_cfg);
     auto buf   = to_feature_buffer(batch);
     return ParsedFeatures{.batch = std::move(batch), .buf = std::move(buf)};
 }
@@ -82,7 +82,7 @@ LabeledData make_labeled(detail::ColumnBatch const &batch, DataConfig const &dat
 LabeledData load_labeled(std::string const &path, DataConfig const &data_cfg,
                          BinMappers const &mappers)
 {
-    return make_labeled(detail::csv::parse(path, data_cfg), data_cfg, mappers);
+    return make_labeled(detail::parse_input(path, data_cfg), data_cfg, mappers);
 }
 
 } // namespace
@@ -104,7 +104,7 @@ LoadedTrainValid load_train_and_valid_with_mappers(Config const &cfg,
 LoadedTrainValid load_train_and_valid_from_csv(Config const &cfg)
 {
     // Parse the train CSV once: fit mappers and bin from the same batch.
-    auto const train_batch = detail::csv::parse(cfg.data.train, cfg.data);
+    auto const train_batch = detail::parse_input(cfg.data.train, cfg.data);
     auto       mappers     = BinMappers::fit(train_batch, cfg.bin_mapper);
     auto       train       = make_labeled(train_batch, cfg.data, mappers);
 

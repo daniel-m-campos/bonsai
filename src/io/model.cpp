@@ -71,7 +71,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ObliviousTree::Params, depth, n_leaves)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DataConfig, train, valid, test, format, header,
                                    label_column, weight_column, ignore_columns,
-                                   missing_nan, missing_sentinel)
+                                   missing_nan, missing_sentinel,
+                                   libsvm_n_features)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(BinMapperConfig, max_bin, n_samples, seed,
                                    min_data_in_bin)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TreeConfig, min_child_hess, min_gain_to_split,
@@ -86,7 +87,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DispatchConfig, objective_name, grower_name,
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(SamplerConfig, subsample, top_rate, other_rate)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(MetricsConfig, fit, eval)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ParallelConfig, n_threads)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ObjectiveConfig, huber_delta, quantile_alpha)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ObjectiveConfig, huber_delta, quantile_alpha,
+                                   n_classes)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Config, data, bin_mapper, tree_config, sampler,
                                    booster_config, dispatch, metrics, parallel,
                                    objective)
@@ -101,7 +103,7 @@ namespace
 using json = nlohmann::json;
 
 constexpr std::string_view k_magic          = "bonsai01";
-constexpr uint32_t         k_format_version = 6;
+constexpr uint32_t         k_format_version = 7;
 
 // ---- Tree <-> JSON --------------------------------------------------------
 
@@ -191,8 +193,15 @@ template <typename B> bool try_save_as(IBooster const &booster, json &out)
     {
         return false;
     }
-    out["init_score"] = concrete->init_score();
-    json trees        = json::array();
+    if constexpr (requires { concrete->init_scores(); })
+    {
+        out["init_scores"] = concrete->init_scores(); // multiclass
+    }
+    else
+    {
+        out["init_score"] = concrete->init_score();
+    }
+    json trees = json::array();
     for (auto const &t : concrete->trees())
     {
         trees.push_back(tree_to_json(t));
@@ -215,7 +224,17 @@ template <typename B> bool try_load_into(IBooster &booster, json const &j)
     {
         trees.push_back(tree_from_json<TreeT>(tj));
     }
-    concrete->load_state(std::move(trees), j.at("init_score").get<float>());
+    if constexpr (requires(std::vector<float> v) {
+                      concrete->load_state(std::move(trees), std::move(v));
+                  })
+    {
+        concrete->load_state(std::move(trees),
+                             j.at("init_scores").get<std::vector<float>>());
+    }
+    else
+    {
+        concrete->load_state(std::move(trees), j.at("init_score").get<float>());
+    }
     return true;
 }
 

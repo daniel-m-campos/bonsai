@@ -58,6 +58,7 @@ class HP:
     early_stopping_rounds: int
     dart_drop_rate: float
     objective: str
+    n_classes: int
     huber_delta: float
     quantile_alpha: float
     monotone_constraints: list
@@ -87,6 +88,7 @@ def hp_from(cfg: dict) -> HP:
         early_stopping_rounds=int(booster.get("early_stopping_rounds", 0)),
         dart_drop_rate=float(booster.get("dart_drop_rate", 0.0)),
         objective=str(dispatch.get("objective_name", "mse")),
+        n_classes=int(objective.get("n_classes", 3)),
         huber_delta=float(objective.get("huber_delta", 1.0)),
         quantile_alpha=float(objective.get("quantile_alpha", 0.5)),
         monotone_constraints=parse_constraints(
@@ -105,6 +107,7 @@ class Result:
     fit_seconds: float
     predict_seconds: float
     auc: float = float("nan")
+    acc: float = float("nan")
 
 
 def parse_constraints(v) -> list:
@@ -139,6 +142,13 @@ def mae(pred: np.ndarray, y: np.ndarray) -> float:
     return float(np.mean(np.abs(pred - y)))
 
 
+def maybe_acc(pred: np.ndarray, y: np.ndarray, multiclass: bool) -> float:
+    """Classification accuracy on class-id predictions (multiclass only)."""
+    if not multiclass:
+        return float("nan")
+    return float(np.mean(np.round(pred) == np.round(y)))
+
+
 def maybe_auc(pred: np.ndarray, y: np.ndarray) -> float:
     """AUC when labels are binary; NaN otherwise (regression runs)."""
     if set(np.unique(y)).issubset({0.0, 1.0}):
@@ -152,6 +162,7 @@ def maybe_auc(pred: np.ndarray, y: np.ndarray) -> float:
 XGB_OBJECTIVE = {
     "mse": "reg:squarederror",
     "logloss": "binary:logistic",
+    "softmax": "multi:softmax",
     "mae": "reg:absoluteerror",
     "huber": "reg:pseudohubererror",
     "quantile": "reg:quantileerror",
@@ -159,6 +170,7 @@ XGB_OBJECTIVE = {
 LGBM_OBJECTIVE = {
     "mse": "regression",
     "logloss": "binary",
+    "softmax": "multiclass",
     "mae": "regression_l1",
     "huber": "huber",
     "quantile": "quantile",
@@ -166,6 +178,7 @@ LGBM_OBJECTIVE = {
 CATBOOST_LOSS = {
     "mse": "RMSE",
     "logloss": "Logloss",
+    "softmax": "MultiClass",
     "mae": "MAE",
     "huber": "Huber:delta={delta}",
     "quantile": "Quantile:alpha={alpha}",
@@ -173,7 +186,7 @@ CATBOOST_LOSS = {
 
 
 def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str,
-               hp_overrides: list[str] | None = None) -> Result:
+               hp_overrides: list[str] | None = None, test_df=None) -> Result:
     binary = REPO_ROOT / "build" / "src" / "bonsai"
     stem = f"{grower}_{sampler}"
     model = REPO_ROOT / "build" / f"_compare_model_{stem}.msgpack"
@@ -205,16 +218,17 @@ def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str,
     )
     pred_s = time.perf_counter() - t1
 
-    cfg = load_toml(config_path)
-    test_path = REPO_ROOT / cfg["data"]["test"]
-    test_df = pd.read_csv(test_path)
+    if test_df is None:
+        cfg = load_toml(config_path)
+        test_df = pd.read_csv(REPO_ROOT / cfg["data"]["test"])
     y_test = test_df["label"].to_numpy()
 
     pred_df = pd.read_csv(preds)
     pred = pred_df["prediction"].to_numpy()
 
+    mc = hp.objective == "softmax"
     return Result(rmse=rmse(pred, y_test), mae=mae(pred, y_test),
-                  auc=maybe_auc(pred, y_test),
+                  auc=maybe_auc(pred, y_test), acc=maybe_acc(pred, y_test, mc),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
@@ -279,7 +293,9 @@ def run_bonsai_native(native, cfg: dict, train_df, test_df, hp: HP, grower: str,
     pred_s = time.perf_counter() - t1
 
     y = test_df["label"].to_numpy()
+    mc = hp.objective == "softmax"
     return Result(rmse=rmse(pred, y), mae=mae(pred, y), auc=maybe_auc(pred, y),
+                  acc=maybe_acc(pred, y, mc),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
@@ -292,6 +308,7 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
 
     params = {
         "objective": XGB_OBJECTIVE[hp.objective],
+        **({"num_class": hp.n_classes} if hp.objective == "softmax" else {}),
         **({"huber_slope": hp.huber_delta} if hp.objective == "huber" else {}),
         **({"quantile_alpha": hp.quantile_alpha}
            if hp.objective == "quantile" else {}),
@@ -329,7 +346,9 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     pred = booster.predict(dtest)  # uses best_iteration when early-stopped
     pred_s = time.perf_counter() - t1
     y = test_df["label"].to_numpy()
+    mc = hp.objective == "softmax"
     return Result(rmse=rmse(pred, y), mae=mae(pred, y), auc=maybe_auc(pred, y),
+                  acc=maybe_acc(pred, y, mc),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
@@ -341,9 +360,11 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
     dtrain = lgb.Dataset(train_df[feature_cols], label=train_df["label"])
     params = {
         "objective": LGBM_OBJECTIVE[hp.objective],
+        **({"num_class": hp.n_classes} if hp.objective == "softmax" else {}),
         **({"alpha": hp.huber_delta} if hp.objective == "huber" else {}),
         **({"alpha": hp.quantile_alpha} if hp.objective == "quantile" else {}),
-        "metric": "rmse",
+        "metric": {"softmax": "multi_logloss",
+                   "logloss": "binary_logloss"}.get(hp.objective, "rmse"),
         **({"data_sample_strategy": "goss",
             "top_rate": hp.top_rate,
             "other_rate": hp.other_rate} if goss else {}),
@@ -379,9 +400,13 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
 
     t1 = time.perf_counter()
     pred = model.predict(test_df[feature_cols])  # best_iteration when stopped
+    if hp.objective == "softmax":
+        pred = np.argmax(pred, axis=1).astype(float)
     pred_s = time.perf_counter() - t1
     y = test_df["label"].to_numpy()
+    mc = hp.objective == "softmax"
     return Result(rmse=rmse(pred, y), mae=mae(pred, y), auc=maybe_auc(pred, y),
+                  acc=maybe_acc(pred, y, mc),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
@@ -390,7 +415,8 @@ def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
 
     feature_cols = [c for c in train_df.columns if c != "label"]
     use_es = valid_df is not None and hp.early_stopping_rounds > 0
-    cls = CatBoostClassifier if hp.objective == "logloss" else CatBoostRegressor
+    cls = (CatBoostClassifier if hp.objective in ("logloss", "softmax")
+           else CatBoostRegressor)
     model = cls(
         iterations=hp.n_iters,
         learning_rate=hp.learning_rate,
@@ -417,21 +443,24 @@ def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     pred = model.predict(test_df[feature_cols])
     pred_s = time.perf_counter() - t1
     y = test_df["label"].to_numpy()
+    mc = hp.objective == "softmax"
     return Result(rmse=rmse(pred, y), mae=mae(pred, y), auc=maybe_auc(pred, y),
+                  acc=maybe_acc(pred, y, mc),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
 def write_markdown(path: pathlib.Path, dataset: str, results: dict[str, Result]) -> None:
     width = max(len("library"), max(len(n) for n in results))
     rows = [
-        f"| {'library':<{width}} | rmse   | mae    | auc    | fit_seconds | predict_seconds |",
-        f"|{'-' * (width + 2)}|--------|--------|--------|-------------|-----------------|",
+        f"| {'library':<{width}} | rmse   | mae    | auc    | acc    | fit_seconds | predict_seconds |",
+        f"|{'-' * (width + 2)}|--------|--------|--------|--------|-------------|-----------------|",
     ]
     import math
     for name, r in results.items():
         auc_s = "  -   " if math.isnan(r.auc) else f"{r.auc:6.4f}"
+        acc_s = "  -   " if math.isnan(r.acc) else f"{r.acc:6.4f}"
         rows.append(
-            f"| {name:<{width}} | {r.rmse:6.4f} | {r.mae:6.4f} | {auc_s} | {r.fit_seconds:11.3f} | {r.predict_seconds:15.3f} |"
+            f"| {name:<{width}} | {r.rmse:6.4f} | {r.mae:6.4f} | {auc_s} | {acc_s} | {r.fit_seconds:11.3f} | {r.predict_seconds:15.3f} |"
         )
     path.write_text(f"# {dataset} comparison\n\n" + "\n".join(rows) + "\n")
 
@@ -467,8 +496,19 @@ def main() -> int:
 
     train_path = REPO_ROOT / cfg["data"]["train"]
     test_path = REPO_ROOT / cfg["data"]["test"]
-    train_df = pd.read_csv(train_path)
-    test_df = pd.read_csv(test_path)
+    if cfg.get("data", {}).get("format") == "libsvm":
+        from sklearn.datasets import load_svmlight_file
+        nf = int(cfg["data"].get("libsvm_n_features", 0)) or None
+        Xtr, ytr = load_svmlight_file(str(train_path), n_features=nf)
+        Xte, yte = load_svmlight_file(str(test_path), n_features=nf)
+        cols = [f"f{i}" for i in range(Xtr.shape[1])]
+        train_df = pd.DataFrame(Xtr.toarray(), columns=cols)
+        train_df.insert(0, "label", ytr)
+        test_df = pd.DataFrame(Xte.toarray(), columns=cols)
+        test_df.insert(0, "label", yte)
+    else:
+        train_df = pd.read_csv(train_path)
+        test_df = pd.read_csv(test_path)
 
     # Early stopping needs a valid set every library sees identically:
     # carve the last 10% of train off for validation and give the same
@@ -500,7 +540,7 @@ def main() -> int:
             label = f"bonsai ({grower}, {sampler})"
             print(f"{label} (n_iters={hp.n_iters})", flush=True)
             results[label] = run_bonsai(args.config, hp, grower, sampler,
-                                        bonsai_hp_overrides)
+                                        bonsai_hp_overrides, test_df=test_df)
             if native is not None:
                 nlabel = f"bonsai ({grower}, {sampler}, native)"
                 print(nlabel, flush=True)

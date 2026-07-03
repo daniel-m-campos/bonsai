@@ -38,6 +38,8 @@ std::string_view task_kind_name(TaskKind kind)
         return "regression";
     case TaskKind::binary_classification:
         return "binary_classification";
+    case TaskKind::multiclass_classification:
+        return "multiclass_classification";
     }
     return "unknown";
 }
@@ -70,6 +72,12 @@ std::span<std::string_view const> default_metrics_of<HuberObjective>::value()
 std::span<std::string_view const> default_metrics_of<QuantileObjective>::value()
 {
     static constexpr auto names = std::array<std::string_view, 2>{"mae", "rmse"};
+    return names;
+}
+
+std::span<std::string_view const> default_metrics_of<SoftmaxObjective>::value()
+{
+    static constexpr auto names = std::array<std::string_view, 1>{"mc_accuracy"};
     return names;
 }
 
