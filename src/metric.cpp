@@ -9,6 +9,7 @@
 #include <functional>
 #include <limits>
 #include <numeric>
+#include <vector>
 #include <string_view>
 
 #include "bonsai/task.hpp"
@@ -111,17 +112,63 @@ float compute_accuracy(floats_view probs, floats_view labels)
                               static_cast<double>(probs.size()));
 }
 
+// AUC via the rank-sum (Mann-Whitney) identity: sort by score ascending,
+// sum the positives' ranks, tie groups get their average rank.
+float compute_auc(floats_view probs, floats_view labels)
+{
+    assert(probs.size() == labels.size());
+    assert(!probs.empty());
+    size_t const n = probs.size();
+
+    std::vector<size_t> order(n);
+    std::iota(order.begin(), order.end(), size_t{0});
+    std::ranges::sort(order,
+                      [&](size_t a, size_t b) { return probs[a] < probs[b]; });
+
+    double rank_sum_pos = 0.0;
+    size_t n_pos        = 0;
+    size_t i            = 0;
+    while (i < n)
+    {
+        size_t j = i;
+        while (j < n && probs[order[j]] == probs[order[i]])
+        {
+            ++j;
+        }
+        // average 1-based rank of the tie group [i, j)
+        double const avg_rank = 0.5 * (static_cast<double>(i + 1 + j));
+        for (size_t k = i; k < j; ++k)
+        {
+            if (labels[order[k]] >= 0.5F)
+            {
+                rank_sum_pos += avg_rank;
+                ++n_pos;
+            }
+        }
+        i = j;
+    }
+    size_t const n_neg = n - n_pos;
+    if (n_pos == 0 || n_neg == 0)
+    {
+        return 1.0F; // degenerate: one class only
+    }
+    double const u =
+        rank_sum_pos - (static_cast<double>(n_pos) * (n_pos + 1) / 2.0);
+    return static_cast<float>(u / (static_cast<double>(n_pos) * n_neg));
+}
+
 namespace
 {
 
 // Tiny hand-written registry. No for_each_type machinery -- five entries.
 // Adding a metric is one line below + matching free function above.
-inline constexpr auto all_metrics = std::array<Metric, 5>{{
+inline constexpr auto all_metrics = std::array<Metric, 6>{{
     metric_rmse,
     metric_mae,
     metric_r2,
     metric_logloss,
     metric_accuracy,
+    metric_auc,
 }};
 
 } // namespace

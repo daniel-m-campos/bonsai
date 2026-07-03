@@ -34,6 +34,7 @@ float compute_mae(floats_view preds, floats_view labels);
 float compute_r2(floats_view preds, floats_view labels);
 float compute_logloss(floats_view probs, floats_view labels);
 float compute_accuracy(floats_view probs, floats_view labels);
+float compute_auc(floats_view probs, floats_view labels);
 
 inline constexpr Metric metric_rmse{
     .name = "rmse", .task = TaskKind::regression, .compute = &compute_rmse};
@@ -47,6 +48,9 @@ inline constexpr Metric metric_logloss{.name    = "logloss",
 inline constexpr Metric metric_accuracy{.name    = "accuracy",
                                         .task    = TaskKind::binary_classification,
                                         .compute = &compute_accuracy};
+inline constexpr Metric metric_auc{.name    = "auc",
+                                   .task    = TaskKind::binary_classification,
+                                   .compute = &compute_auc};
 
 class MetricNotFoundError : public std::runtime_error
 {

@@ -20,7 +20,7 @@ one can "enable" in the reference libraries for an A/B.
 | 8 | DART boosting | `booster=dart` | `boosting=dart` | — | Fits *slower* (re-predicts per iter); rare RMSE gains | **landed** |
 | 9 | Feature importance (split count + gain) | `get_score` | `feature_importance` | `get_feature_importance` | No fit/predict impact; table-stakes introspection. Split-count is free; gain needs per-node gains stored at grow time | **landed** |
 | 10 | Leaf renewal for MAE/quantile | built in (adaptive trees) | `RenewTreeOutput` | built in | Closes the known ~10% MAE gap vs refs on MAE/quantile objectives (see results log §5) | **landed** |
-| 11 | Classification benchmark (AUC) | n/a (harness) | n/a | n/a | logloss objective exists but is only unit-tested; needs a live dataset (e.g. Higgs subset) + AUC column in compare.py | planned |
+| 11 | Classification benchmark (AUC) | n/a (harness) | n/a | n/a | logloss objective exists but is only unit-tested; needs a live dataset (e.g. Higgs subset) + AUC column in compare.py | **landed** |
 | 12 | Categorical features | one-hot / partition | native (Fisher) | ordered target stats | Biggest real-world capability gap; needs a categorical dataset (e.g. Adult, Amazon) in the harness first | planned |
 | 13 | Prediction extras: staged predict, `pred_leaf`, tree dump | yes | yes | yes | Debug/introspection; small, each independent | **landed** |
 | 14 | Warm start / training continuation | `xgb_model` | `init_model` | `init_model` | Fit latency for iterative workflows; booster already saves/loads full state | **landed** |
@@ -270,3 +270,28 @@ scores by bin-space routing; a 3+3-iteration continuation matches a
 straight 6-iteration run within FP-regrouping tolerance (tested), and
 early stopping seeds its incremental valid scores from the pre-existing
 trees.
+
+### 11. Classification benchmark — HIGGS + AUC (landed)
+
+`scripts/fetch_higgs.py` streams the first 550k rows of UCI HIGGS
+(500k train / 50k test, 28 features); `configs/higgs.toml` runs the
+logloss objective; compare.py maps it to `binary:logistic` / `binary` /
+`Logloss` (CatBoostClassifier) and adds an AUC column (regression rows
+show "-"). A rank-sum `auc` metric also joined the C++ metric registry
+for `bonsai eval` / fit ticks.
+
+First live outing for the logloss path (previously unit-tested only),
+200 iters, lr 0.1:
+
+| library | auc | logloss-ish rmse | fit_s |
+|---|---|---|---|
+| bonsai (depthwise) | **0.8218** | 0.4146 | 11.7 |
+| bonsai (leafwise) | 0.8139 | 0.4191 | 5.5 |
+| xgboost | 0.8111 | 0.4207 | 1.8 |
+| lightgbm | 0.8146 | 0.4188 | 2.4 |
+| catboost | 0.7321 | 0.5161 | 6.4 |
+
+bonsai leafwise lands between xgboost and lightgbm on AUC at matched
+settings; depthwise (16x the nodes) leads everyone. catboost's 0.73 at
+these matched knobs is an outlier — its defaults want ordered boosting
+and auto-tuned lr; recorded as-is per protocol, not tuned.

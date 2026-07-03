@@ -104,6 +104,7 @@ class Result:
     mae: float
     fit_seconds: float
     predict_seconds: float
+    auc: float = float("nan")
 
 
 def parse_constraints(v) -> list:
@@ -138,22 +139,33 @@ def mae(pred: np.ndarray, y: np.ndarray) -> float:
     return float(np.mean(np.abs(pred - y)))
 
 
+def maybe_auc(pred: np.ndarray, y: np.ndarray) -> float:
+    """AUC when labels are binary; NaN otherwise (regression runs)."""
+    if set(np.unique(y)).issubset({0.0, 1.0}):
+        from sklearn.metrics import roc_auc_score
+        return float(roc_auc_score(y, pred))
+    return float("nan")
+
+
 # Per-library objective-name mappings; parameterized losses pull
 # huber_delta / quantile_alpha from HP.
 XGB_OBJECTIVE = {
     "mse": "reg:squarederror",
+    "logloss": "binary:logistic",
     "mae": "reg:absoluteerror",
     "huber": "reg:pseudohubererror",
     "quantile": "reg:quantileerror",
 }
 LGBM_OBJECTIVE = {
     "mse": "regression",
+    "logloss": "binary",
     "mae": "regression_l1",
     "huber": "huber",
     "quantile": "quantile",
 }
 CATBOOST_LOSS = {
     "mse": "RMSE",
+    "logloss": "Logloss",
     "mae": "MAE",
     "huber": "Huber:delta={delta}",
     "quantile": "Quantile:alpha={alpha}",
@@ -202,6 +214,7 @@ def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str,
     pred = pred_df["prediction"].to_numpy()
 
     return Result(rmse=rmse(pred, y_test), mae=mae(pred, y_test),
+                  auc=maybe_auc(pred, y_test),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
@@ -266,7 +279,7 @@ def run_bonsai_native(native, cfg: dict, train_df, test_df, hp: HP, grower: str,
     pred_s = time.perf_counter() - t1
 
     y = test_df["label"].to_numpy()
-    return Result(rmse=rmse(pred, y), mae=mae(pred, y),
+    return Result(rmse=rmse(pred, y), mae=mae(pred, y), auc=maybe_auc(pred, y),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
@@ -316,7 +329,7 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     pred = booster.predict(dtest)  # uses best_iteration when early-stopped
     pred_s = time.perf_counter() - t1
     y = test_df["label"].to_numpy()
-    return Result(rmse=rmse(pred, y), mae=mae(pred, y),
+    return Result(rmse=rmse(pred, y), mae=mae(pred, y), auc=maybe_auc(pred, y),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
@@ -368,16 +381,17 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
     pred = model.predict(test_df[feature_cols])  # best_iteration when stopped
     pred_s = time.perf_counter() - t1
     y = test_df["label"].to_numpy()
-    return Result(rmse=rmse(pred, y), mae=mae(pred, y),
+    return Result(rmse=rmse(pred, y), mae=mae(pred, y), auc=maybe_auc(pred, y),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
 def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
-    from catboost import CatBoostRegressor
+    from catboost import CatBoostClassifier, CatBoostRegressor
 
     feature_cols = [c for c in train_df.columns if c != "label"]
     use_es = valid_df is not None and hp.early_stopping_rounds > 0
-    model = CatBoostRegressor(
+    cls = CatBoostClassifier if hp.objective == "logloss" else CatBoostRegressor
+    model = cls(
         iterations=hp.n_iters,
         learning_rate=hp.learning_rate,
         depth=hp.max_depth,
@@ -403,19 +417,21 @@ def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     pred = model.predict(test_df[feature_cols])
     pred_s = time.perf_counter() - t1
     y = test_df["label"].to_numpy()
-    return Result(rmse=rmse(pred, y), mae=mae(pred, y),
+    return Result(rmse=rmse(pred, y), mae=mae(pred, y), auc=maybe_auc(pred, y),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
 def write_markdown(path: pathlib.Path, dataset: str, results: dict[str, Result]) -> None:
     width = max(len("library"), max(len(n) for n in results))
     rows = [
-        f"| {'library':<{width}} | rmse   | mae    | fit_seconds | predict_seconds |",
-        f"|{'-' * (width + 2)}|--------|--------|-------------|-----------------|",
+        f"| {'library':<{width}} | rmse   | mae    | auc    | fit_seconds | predict_seconds |",
+        f"|{'-' * (width + 2)}|--------|--------|--------|-------------|-----------------|",
     ]
+    import math
     for name, r in results.items():
+        auc_s = "  -   " if math.isnan(r.auc) else f"{r.auc:6.4f}"
         rows.append(
-            f"| {name:<{width}} | {r.rmse:6.4f} | {r.mae:6.4f} | {r.fit_seconds:11.3f} | {r.predict_seconds:15.3f} |"
+            f"| {name:<{width}} | {r.rmse:6.4f} | {r.mae:6.4f} | {auc_s} | {r.fit_seconds:11.3f} | {r.predict_seconds:15.3f} |"
         )
     path.write_text(f"# {dataset} comparison\n\n" + "\n".join(rows) + "\n")
 

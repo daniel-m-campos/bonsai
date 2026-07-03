@@ -113,3 +113,16 @@ TEST_CASE("resolve_metric_for_task: unknown name still throws MetricNotFoundErro
     CHECK_THROWS_AS(resolve_metric_for_task("nope", TaskKind::regression),
                     MetricNotFoundError);
 }
+
+TEST_CASE("Metric: auc ranks perfect, random, and tied scores correctly",
+          "[metric][auc]")
+{
+    // Perfect separation -> 1; anti-separation -> 0; all-tied -> 0.5.
+    std::vector<float> labels{0.0F, 0.0F, 1.0F, 1.0F};
+    CHECK(compute_auc(std::vector<float>{0.1F, 0.2F, 0.8F, 0.9F}, labels) == 1.0F);
+    CHECK(compute_auc(std::vector<float>{0.9F, 0.8F, 0.2F, 0.1F}, labels) == 0.0F);
+    CHECK(compute_auc(std::vector<float>{0.5F, 0.5F, 0.5F, 0.5F}, labels) == 0.5F);
+    // One inversion among 4 pairs: 3/4.
+    CHECK(compute_auc(std::vector<float>{0.1F, 0.8F, 0.7F, 0.9F}, labels) ==
+          Catch::Approx(0.75F));
+}
