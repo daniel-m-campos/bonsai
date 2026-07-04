@@ -110,6 +110,9 @@ if(BONSAI_CUDA)
         --cuda-path=${CUDAToolkit_LIBRARY_ROOT}
         -Wno-unknown-cuda-version)
     target_include_directories(bonsai_cuda_kernels PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    # NVIDIA's headers #error on libc++ hosts on x86_64; this macro is their
+    # sanctioned bypass (parity-validated on A100/sm_80). No-op on aarch64.
+    target_compile_definitions(bonsai_cuda_kernels PRIVATE _ALLOW_UNSUPPORTED_LIBCPP)
     # bonsai_parallel gives the CPU-fallback path across-node OpenMP; clang
     # compiles OpenMP host code and CUDA in the same TU without conflict.
     target_link_libraries(bonsai_cuda_kernels PRIVATE bonsai_parallel bonsai_warnings)

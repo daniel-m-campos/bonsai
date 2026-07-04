@@ -1,6 +1,6 @@
 # 10 — CUDA histogram backend
 
-> **Status:** working (Jetson Orin Nano, sm_87). Registered as the `cuda_depthwise` grower. Perf story and measured ladders: [reviews/2026-07-03-design-review-cuda.md](../reviews/2026-07-03-design-review-cuda.md).
+> **Status:** working (Jetson Orin Nano sm_87; validated on A100 sm_80/x86_64). Registered as the `cuda_depthwise` grower. Perf story and measured ladders: [reviews/2026-07-03-design-review-cuda.md](../reviews/2026-07-03-design-review-cuda.md).
 
 ## The seam
 
@@ -41,6 +41,10 @@ There is no `BONSAI_USE_CUDA` macro. `cuda_depthwise` sits in the registry typel
 - `bonsai::cuda_available()` is the runtime predicate. `bonsai info` marks growers that can't train on the current host ("predict-only here"); the parametric test suites run the cuda combos where a device exists and SKIP them where not (Catch2 exit code 4, mapped via ctest `SKIP_RETURN_CODE`).
 - `BONSAI_USE_OPENMP` deliberately remains the one config macro: it guards an `#include <omp.h>` and a `#pragma`, which no language construct can, and is confined to [`parallel.hpp`](../../include/bonsai/parallel.hpp).
 
+## Cross-platform validation
+
+The same source builds and passes the full suite on Jetson (sm_87, aarch64, CUDA 12.6) and A100 (sm_80, x86_64, CUDA 12.6), with GPU-trained models reproducing identical RMSE across both. x86_64 needs `_ALLOW_UNSUPPORTED_LIBCPP` (NVIDIA's own bypass for their libc++-on-x86 header `#error`; set in the CUDA block, no-op elsewhere) — clang cannot target CUDA 13 yet, so hosts shipping it need a 12.x side-install pointed at via `CUDAToolkit_ROOT`.
+
 ## Deferred
 
-Device-resident row partitioning and split finding (the full gpu_hist architecture — the measured remainder of the gap to xgboost-GPU), a `[cuda]` config section for the cutoff constants, a `Dataset` version id to replace the pointer-identity upload cache, CUDA variants of the oblivious/leafwise growers (one typelist line each, when wanted).
+Device-resident row partitioning and split finding (the full gpu_hist architecture — the measured remainder of the gap to xgboost-GPU: on A100 our kernels take ~2s of a 12s MSD fit while xgboost-GPU completes entirely in 1.8s, so host orchestration is now the whole gap), a `[cuda]` config section for the cutoff constants, a `Dataset` version id to replace the pointer-identity upload cache, CUDA variants of the oblivious/leafwise growers (one typelist line each, when wanted).

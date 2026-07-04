@@ -118,3 +118,22 @@ The registry `#ifdef` (and its global `add_compile_definitions` crutch, flagged 
 - `bonsai info` annotates growers that can't train on the current host ("predict-only here"); the registered combo set is 72 everywhere.
 - The parametric test suites run the cuda combos where a device exists and SKIP them (Catch2 `SKIP`, exit code 4 mapped via ctest `SKIP_RETURN_CODE`) where it doesn't: 392/392 on both builds, 48 skipped on CPU-only.
 - `BONSAI_USE_OPENMP` stays, deliberately: it guards an `#include <omp.h>` and a `#pragma`, which no language construct can, and it is confined to the one 70-line `parallel.hpp`. That is the documented exception; config macros elsewhere should follow the stub/runtime-capability pattern.
+
+## A100 validation (2026-07-04): correctness ports, the gap is architecture
+
+Validation on a rented 4× A100-SXM4-80GB standard VM (x86_64, Ubuntu 22.04, CUDA 12.6 side-install, clang-21/libc++): full suite 392/392 after the toolchain deltas below; GPU-trained MSD model reproduces **RMSE 8.9911 — identical to the Jetson result** across GPU generation (sm_80 vs sm_87) and host ISA.
+
+Toolchain deltas found: clang cannot target CUDA 13 (its runtime wrapper includes texture headers CUDA 13 removed), so hosts shipping 13.x need a 12.x side-install selected via `CUDAToolkit_ROOT`; NVIDIA's headers `#error` on libc++ hosts on x86_64, bypassed with their own `_ALLOW_UNSUPPORTED_LIBCPP` macro, now set on the kernels target unconditionally (no-op on aarch64).
+
+**MSD ladder** (same config as the Jetson table; A100, 16 host threads unless noted):
+
+| configuration | fit (s) | test RMSE |
+|---|--:|--:|
+| bonsai CPU 16 threads | 15.9 | 8.9911 |
+| bonsai cuda_depthwise | 12.2 | 8.9911 |
+| xgboost CPU 60 threads | 4.3 | 8.9913 |
+| xgboost GPU | 1.8 | 8.9924 |
+
+Profile of the 12.2 s: upload 1.4 s + kernels 2.0 s + unpack 1.3 s + CPU fallback 0.5 s; the remaining ~7 s is host-side growing and data prep. Read against xgboost-GPU finishing everything in 1.8 s: **our kernels already run at parity with xgboost's entire device pipeline — the whole remaining gap (6.8× here vs 1.46× on the Jetson, where the slow iGPU masked it) is host-driven orchestration.** This is the quantified case for the deferred device-resident phase: on server GPUs, per-level host round trips and CPU split finding cap the backend regardless of kernel quality.
+
+Also surfaced: `parallel.n_threads = 0` (all hardware threads) collapses on many-core hosts — at 60 threads the GPU fit ran 51 s and the CPU fit 167 s (4–10× regressions from spin-wait contention at level barriers). Tracked as its own issue; the numbers above pin threads explicitly.
