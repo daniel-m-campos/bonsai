@@ -25,12 +25,21 @@ struct SplitInput
     std::vector<char> allowed = {};
     // Distinct features used on the path from the root to this node.
     std::vector<feature_id_t> path = {};
+    // Node grad/hess totals and row count, set when histograms are final.
+    // With a device-resident builder (phase 3) these are the node's only
+    // populated statistics: hists/rows stay empty on the host.
+    HistCell sums      = {};
+    size_t   row_count = 0;
 
-    // Node-level totals from the first populated histogram (every populated
-    // feature sums the same rows). Unselected features under
-    // feature_fraction < 1 are zero-binned placeholders and are skipped.
+    // Node-level totals: the cached sums when set, else from the first
+    // populated histogram (every populated feature sums the same rows;
+    // unselected features are zero-binned placeholders and are skipped).
     HistCell totals() const
     {
+        if (row_count > 0)
+        {
+            return sums;
+        }
         for (auto const &h : hists)
         {
             if (h.size() != 0)

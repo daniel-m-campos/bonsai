@@ -228,6 +228,8 @@ SplitInput make_root(Dataset const &ds, floats_view grad, floats_view hess,
     root.id = 0;
     root.rows.assign(row_indices.begin(), row_indices.end());
     builder.populate(ds, grad, hess, root, selected);
+    root.sums      = root.totals();
+    root.row_count = root.rows.size();
     return root;
 }
 
@@ -248,6 +250,26 @@ inline void populate_nodes(Dataset const &ds, floats_view grad, floats_view hess
             builder.populate(ds, grad, hess, node, selected);
         }
     }
+}
+
+// One level's split search. Host path: the splitter policy per node. A
+// builder exposing find_splits_many (device-resident histograms, phase 3)
+// takes over here; the splitter remains the fallback and parity reference.
+template <NodeSplitFinder SplitterT, HistogramBuilder BuilderT>
+inline void
+find_splits(std::vector<SplitInput> const &current, TreeConfig const &config,
+            [[maybe_unused]] feature_view selected, [[maybe_unused]] BuilderT &builder,
+            std::vector<SplitOutput> &out)
+{
+    out.clear();
+    out.reserve(current.size());
+    auto const t0 = std::chrono::steady_clock::now();
+    for (auto const &input : current)
+    {
+        out.push_back(SplitterT::find(input, config));
+    }
+    GrowProfiler::instance().find_s +=
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 }
 
 // A split with rows partitioned and histograms pending: the smaller child
@@ -325,6 +347,10 @@ inline void finish_split(Dataset const &ds, PendingSplit &p)
     // Unselected slots are zero-binned on both sides: no-op subtraction.
     parallel::for_each_index(ds.n_features(),
                              [&](size_t f) { large.hists[f] -= small.hists[f]; });
+    small.sums      = small.totals(); // row_count still 0: totals() scans hists
+    large.sums      = large.totals();
+    small.row_count = small.rows.size();
+    large.row_count = large.rows.size();
 }
 
 template <HistogramBuilder BuilderT>
@@ -547,16 +573,7 @@ auto DepthwiseGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view g
     size_t  n_leaves = 0;
     while (depth < config_.max_depth)
     {
-        splits.clear();
-        splits.reserve(current.size());
-        auto const find_t0 = std::chrono::steady_clock::now();
-        for (auto const &input : current)
-        {
-            splits.push_back(SplitterT::find(input, config_));
-        }
-        gd::GrowProfiler::instance().find_s +=
-            std::chrono::duration<double>(std::chrono::steady_clock::now() - find_t0)
-                .count();
+        gd::find_splits<SplitterT>(current, config_, selected, builder_, splits);
         gd::update_nodes(ds, grad, hess, config_, current, next, splits, nodes,
                          n_leaves, values, selected, split_bins, split_gains, covers,
                          leaf_ids, interaction_groups_, builder_);
