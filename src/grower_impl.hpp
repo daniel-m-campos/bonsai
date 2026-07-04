@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <iterator>
 #include <numeric>
 #include <random>
@@ -200,15 +201,48 @@ SplitInput make_root(Dataset const &ds, floats_view grad, floats_view hess,
     return root;
 }
 
+// Uses the builder's batched hook when present, else a populate loop.
 template <HistogramBuilder BuilderT>
-inline std::pair<SplitInput, SplitInput>
-split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput parent,
-           SplitOutput const &s, node_id_t left_id, node_id_t right_id,
-           feature_view selected, BuilderT &builder)
+inline void populate_nodes(Dataset const &ds, floats_view grad, floats_view hess,
+                           split_input_refs nodes, feature_view selected,
+                           BuilderT &builder)
 {
-    // 1. Scatter parent.rows into the children in one stable pass. Stability
-    //    keeps every node's rows ascending (the root's are iota), so later
-    //    per-feature bin lookups walk memory near-sequentially.
+    if constexpr (requires {
+                      builder.populate_many(ds, grad, hess, nodes, selected);
+                  })
+    {
+        builder.populate_many(ds, grad, hess, nodes, selected);
+    }
+    else
+    {
+        for (SplitInput &node : nodes)
+        {
+            builder.populate(ds, grad, hess, node, selected);
+        }
+    }
+}
+
+// A split with rows partitioned and histograms pending: the smaller child
+// populates, then finish_split derives the larger by subtraction.
+struct PendingSplit
+{
+    SplitInput             left;
+    SplitInput             right;
+    std::vector<Histogram> parent_hists;
+};
+
+inline SplitInput &smaller_child(PendingSplit &p)
+{
+    return p.left.rows.size() <= p.right.rows.size() ? p.left : p.right;
+}
+
+// Scatters parent.rows into the children in one stable pass. Stability
+// keeps every node's rows ascending (the root's are iota), so later
+// per-feature bin lookups walk memory near-sequentially.
+inline PendingSplit partition_rows(Dataset const &ds, SplitInput parent,
+                                   SplitOutput const &s, node_id_t left_id,
+                                   node_id_t right_id)
+{
     auto const &bins      = ds.feature_bins(s.feature_id);
     auto const  last_bin  = static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
     auto        goes_left = [&](row_id_t r)
@@ -221,45 +255,60 @@ split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput par
         return b <= s.bin_id;
     };
 
-    SplitInput left;
-    SplitInput right;
-    left.id  = left_id;
-    right.id = right_id;
+    PendingSplit p;
+    p.left.id  = left_id;
+    p.right.id = right_id;
     size_t n_left = 0;
     for (row_id_t const r : parent.rows)
     {
         n_left += goes_left(r) ? 1 : 0;
     }
-    left.rows.resize(n_left);
-    right.rows.resize(parent.rows.size() - n_left);
+    p.left.rows.resize(n_left);
+    p.right.rows.resize(parent.rows.size() - n_left);
     size_t li = 0;
     size_t ri = 0;
     for (row_id_t const r : parent.rows)
     {
         if (goes_left(r))
         {
-            left.rows[li++] = r;
+            p.left.rows[li++] = r;
         }
         else
         {
-            right.rows[ri++] = r;
+            p.right.rows[ri++] = r;
         }
     }
+    p.parent_hists = std::move(parent.hists);
+    return p;
+}
 
-    bool const  left_smaller = left.rows.size() <= right.rows.size();
-    SplitInput &small        = left_smaller ? left : right;
-    SplitInput &large        = left_smaller ? right : left;
-    builder.populate(ds, grad, hess, small, selected);
+// Completes a partitioned split whose smaller child has been populated: the
+// larger child takes the parent's histograms and subtracts the sibling.
+inline void finish_split(Dataset const &ds, PendingSplit &p)
+{
+    bool const  left_smaller = p.left.rows.size() <= p.right.rows.size();
+    SplitInput &small        = left_smaller ? p.left : p.right;
+    SplitInput &large        = left_smaller ? p.right : p.left;
     large.hists.reserve(ds.n_features());
     for (feature_id_t f = 0; f < ds.n_features(); ++f)
     {
-        large.hists.push_back(std::move(parent.hists[f]));
+        large.hists.push_back(std::move(p.parent_hists[f]));
     }
     // Unselected slots are zero-binned on both sides: no-op subtraction.
     parallel::for_each_index(ds.n_features(),
                              [&](size_t f) { large.hists[f] -= small.hists[f]; });
+}
 
-    return {std::move(left), std::move(right)};
+template <HistogramBuilder BuilderT>
+inline std::pair<SplitInput, SplitInput>
+split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput parent,
+           SplitOutput const &s, node_id_t left_id, node_id_t right_id,
+           feature_view selected, BuilderT &builder)
+{
+    PendingSplit p = partition_rows(ds, std::move(parent), s, left_id, right_id);
+    builder.populate(ds, grad, hess, smaller_child(p), selected);
+    finish_split(ds, p);
+    return {std::move(p.left), std::move(p.right)};
 }
 
 template <HistogramBuilder BuilderT>
@@ -275,6 +324,21 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
                          std::vector<node_id_t>   &leaf_ids,
                          interaction_groups const &groups, BuilderT &builder)
 {
+    // Pass 1: serial tree bookkeeping; partitions and histogram work are
+    // deferred so both can run level-wide.
+    struct Deferred
+    {
+        SplitInput                parent;
+        PendingSplit              p;
+        SplitOutput               split;
+        node_id_t                 left_id;
+        node_id_t                 right_id;
+        double                    parent_lo;
+        double                    parent_hi;
+        std::vector<feature_id_t> parent_path;
+    };
+    std::vector<Deferred> deferred;
+    deferred.reserve(current.size());
     for (node_id_t i = 0; i < current.size(); ++i)
     {
         auto       &node  = current[i];
@@ -300,13 +364,47 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
 
         double const parent_lo   = node.lo;
         double const parent_hi   = node.hi;
-        auto const   parent_path = std::move(node.path);
-        auto [left, right] = split_node(ds, grad, hess, std::move(node), split,
-                                        left_id, right_id, selected, builder);
-        covers[left_id]  = static_cast<float>(left.rows.size());
-        covers[right_id] = static_cast<float>(right.rows.size());
-        propagate_monotone_bounds(parent_lo, parent_hi, split, config, left, right);
-        propagate_interaction_state(groups, parent_path, split.feature_id,
+        auto         parent_path = std::move(node.path);
+        deferred.push_back({std::move(node), PendingSplit{}, split, left_id,
+                            right_id, parent_lo, parent_hi,
+                            std::move(parent_path)});
+    }
+
+    // Pass 1b: partition each parent's rows, one node per worker (child
+    // row order is scheduling-independent, so bit-identical to serial).
+    parallel::for_each_index(deferred.size(),
+                             [&](size_t i)
+                             {
+                                 Deferred &d = deferred[i];
+                                 d.p = partition_rows(ds, std::move(d.parent),
+                                                      d.split, d.left_id,
+                                                      d.right_id);
+                             });
+    for (auto &d : deferred)
+    {
+        covers[d.left_id]  = static_cast<float>(d.p.left.rows.size());
+        covers[d.right_id] = static_cast<float>(d.p.right.rows.size());
+    }
+
+    // Pass 2: populate every smaller sibling in one builder call.
+    std::vector<std::reference_wrapper<SplitInput>> smalls;
+    smalls.reserve(deferred.size());
+    for (auto &d : deferred)
+    {
+        smalls.emplace_back(smaller_child(d.p));
+    }
+    populate_nodes(ds, grad, hess, smalls, selected, builder);
+
+    // Pass 3: subtraction, then constraint propagation (needs populated
+    // child totals) and frontier hand-off in original node order.
+    for (auto &d : deferred)
+    {
+        finish_split(ds, d.p);
+        SplitInput &left  = d.p.left;
+        SplitInput &right = d.p.right;
+        propagate_monotone_bounds(d.parent_lo, d.parent_hi, d.split, config, left,
+                                  right);
+        propagate_interaction_state(groups, d.parent_path, d.split.feature_id,
                                     ds.n_features(), left, right);
         next.push_back(std::move(left));
         next.push_back(std::move(right));
@@ -498,13 +596,28 @@ auto ObliviousGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view g
                                 .default_left = split.default_left});
         level_bins.push_back(split.bin_id);
         level_gains.push_back(static_cast<float>(split.gain));
-        next.reserve(frontier.size() * 2);
-        for (auto &node : frontier)
+        // Same shape as the depthwise update: partition, batch-populate,
+        // subtract.
+        std::vector<gd::PendingSplit> pending(frontier.size());
+        parallel::for_each_index(
+            frontier.size(),
+            [&](size_t i) {
+                pending[i] =
+                    gd::partition_rows(ds, std::move(frontier[i]), split, 0, 0);
+            });
+        std::vector<std::reference_wrapper<SplitInput>> smalls;
+        smalls.reserve(pending.size());
+        for (auto &p : pending)
         {
-            auto [left, right] = gd::split_node(ds, grad, hess, std::move(node),
-                                                split, 0, 0, selected, builder_);
-            next.push_back(std::move(left));
-            next.push_back(std::move(right));
+            smalls.emplace_back(gd::smaller_child(p));
+        }
+        gd::populate_nodes(ds, grad, hess, smalls, selected, builder_);
+        next.reserve(pending.size() * 2);
+        for (auto &p : pending)
+        {
+            gd::finish_split(ds, p);
+            next.push_back(std::move(p.left));
+            next.push_back(std::move(p.right));
         }
         std::swap(frontier, next);
         next.clear();

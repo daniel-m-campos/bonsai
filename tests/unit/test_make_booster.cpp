@@ -16,6 +16,7 @@
 #include "bonsai/registry/make_booster.hpp"
 #include "bonsai/registry/names.hpp"
 #include "bonsai/registry/typelists.hpp"
+#include "test_grower_helpers.hpp"
 #include "bonsai/typelist.hpp"
 #include "bonsai/types.hpp"
 
@@ -169,6 +170,7 @@ TEST_CASE("make_booster: unknown sampler name throws UnknownImplError",
 TEMPLATE_LIST_TEST_CASE("make_booster: parity with direct instantiation",
                         "[registry][make_booster][parity]", DispatchCombos)
 {
+    test::skip_without_cuda<type_at_t<1, TestType>>();
     using O                 = type_at_t<0, TestType>;
     using G                 = type_at_t<1, TestType>;
     using S                 = type_at_t<2, TestType>;

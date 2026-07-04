@@ -22,11 +22,15 @@ add_library(bonsai_tree OBJECT
     tree.cpp
     grower.cpp
     shap.cpp
+    cuda/grower_cuda.cpp
 )
 
-if(BONSAI_CUDA)
+# The CUDA grower instantiation above is plain C++ against the pimpl'd
+# builder header; only the backend behind it varies. BONSAI_CUDA=ON links
+# the real kernels via bonsai_gpu, OFF compiles the throwing stub.
+if(NOT BONSAI_CUDA)
     target_sources(bonsai_tree PRIVATE
-        cuda/grower_cuda.cpp
+        cuda/histogram_builder_stub.cpp
     )
 endif()
 

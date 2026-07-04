@@ -2,33 +2,25 @@
 
 #include <type_traits>
 
+#include "bonsai/cuda/histogram_builder.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/registry/names.hpp"
 #include "bonsai/sampler.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/typelist.hpp"
-#ifdef BONSAI_USE_CUDA
-#include "bonsai/cuda/histogram_builder.hpp"
-#endif
 
 namespace bonsai
 {
 
 using Objectives = TypeList<MSEObjective, LogLossObjective, MAEObjective,
                             HuberObjective, QuantileObjective, SoftmaxObjective>;
-// BONSAI_USE_CUDA is defined globally by the build (CMake option BONSAI_CUDA),
-// so every TU sees the same Growers list.
-#ifdef BONSAI_USE_CUDA
+// cuda_depthwise is in every build (stub-backed without BONSAI_CUDA), so
+// the registry is identical across configurations; docs/architecture/10-cuda.md.
 using Growers    = TypeList<DepthwiseGrower<HistogramNodeSplitFinder>,
                             ObliviousGrower<HistogramLevelSplitFinder>,
                             LeafwiseGrower<HistogramNodeSplitFinder>,
                             CudaDepthwiseGrower>;
-#else
-using Growers    = TypeList<DepthwiseGrower<HistogramNodeSplitFinder>,
-                            ObliviousGrower<HistogramLevelSplitFinder>,
-                            LeafwiseGrower<HistogramNodeSplitFinder>>;
-#endif
 using Samplers   = TypeList<AllRowsSampler, BernoulliSampler, GossSampler>;
 
 namespace detail

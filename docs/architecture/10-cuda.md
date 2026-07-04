@@ -1,0 +1,46 @@
+# 10 — CUDA histogram backend
+
+> **Status:** working (Jetson Orin Nano, sm_87). Registered as the `cuda_depthwise` grower. Perf story and measured ladders: [reviews/2026-07-03-design-review-cuda.md](../reviews/2026-07-03-design-review-cuda.md).
+
+## The seam
+
+Histogram construction is a policy on the growers ([`include/bonsai/grower.hpp`](../../include/bonsai/grower.hpp)):
+
+```cpp
+template <NodeSplitFinder SplitterT, HistogramBuilder BuilderT = CpuHistogramBuilder>
+class DepthwiseGrower;
+
+using CudaDepthwiseGrower = DepthwiseGrower<HistogramNodeSplitFinder, CudaHistogramBuilder>;
+```
+
+There is exactly one grow-loop implementation ([`src/grower_impl.hpp`](../../src/grower_impl.hpp)); the CUDA grower is an instantiation, not a fork. A `HistogramBuilder` supplies `begin_tree` (per-tree staging: the CUDA builder uploads gradients there) and `populate` (fill one node's per-feature histograms). Builders may also provide `populate_many`; `grower_detail::populate_nodes` detects it via `if constexpr` + `requires` and otherwise degrades to a populate loop, so the CPU builder needs no batched method. Everything else — split finding, the sibling-subtraction trick, tree assembly — is builder-agnostic and stays on the CPU.
+
+## Level batching
+
+The depthwise and oblivious growers process a tree level in three passes: serial bookkeeping, level-wide row partitioning (`partition_rows`, one node per worker thread — each partition touches only its own parent's rows, so results are scheduling-independent), then one `populate_many` call covering every smaller sibling. The larger siblings derive by subtraction (`finish_split`). Leafwise keeps per-node `split_node`: its gain-ordered heap is inherently sequential, so there is no level to batch.
+
+This exists because per-node GPU round trips dominated: ~185 launches per tree collapsed to one per level (~9), which is where most of the phase-2 speedup came from.
+
+## The kernel
+
+One TU, [`src/cuda/histogram_builder.cu`](../../src/cuda/histogram_builder.cu), compiled as CUDA C++ by the project's own clang (`-x cuda --offload-arch`, cache var `BONSAI_CUDA_ARCH`) — same C++23, same libc++ as every other TU, so it uses `Dataset`/`Histogram`/`SplitInput` directly. No nvcc, no second standard library, no C ABI.
+
+Device residency: the binned matrix uploads once per dataset (uint8 when every feature fits 256 bins — the `max_bin = 255` default — uint16 otherwise), gradients once per tree as a packed `float2` array, and per level one concatenated row-index upload. A gather kernel reorders `(grad, hess)` into level order once so the histogram kernel reads them sequentially per feature instead of re-gathering through the row indirection `n_features` times.
+
+The histogram kernel's grid is (feature, node, row-chunk). Each block accumulates its ≤32k-row chunk into a shared-memory histogram (two copies split by warp parity to spread atomic contention), then merges into the (node, feature) slice of the pre-zeroed output with global double atomics. Precision scheme: shared accumulation is **float** (native shared-memory atomics; double atomics emulate via CAS loops), the cross-chunk merge is **double** — rounding stays bounded per chunk, and results match the CPU builder to tolerance, not bit-exactly, because atomics add in arbitrary order.
+
+Two guards route nodes to the CPU builder instead (in parallel across nodes; the CPU builder's inner loops degrade to a team of one inside the active OpenMP region, keeping per-node results bit-identical): nodes under `k_min_gpu_rows = 512` (measured knee — a launch + synchronous copy-back costs more than scanning a small node), and histograms that would exceed the 48 KiB/block shared-memory budget (`max_bin` ≳ 6k), which would otherwise fail the launch at runtime.
+
+`BONSAI_CUDA_PROFILE=1` prints a per-fit wall-clock breakdown (upload / gpu / unpack / cpu-fallback) when the builder is destroyed.
+
+## Always registered, capability at runtime
+
+There is no `BONSAI_USE_CUDA` macro. `cuda_depthwise` sits in the registry typelist in every build — the builder header is CUDA-free (pimpl) — so the registry is identical across configurations and no config define has to keep TUs in ODR agreement. `BONSAI_CUDA=OFF` builds link a stub ([`src/cuda/histogram_builder_stub.cpp`](../../src/cuda/histogram_builder_stub.cpp)): construction succeeds, training throws with a message naming the fix. Consequences:
+
+- Models trained with `cuda_depthwise` load and **predict on any build** — trees are ordinary `DenseTree`s; only training touches the builder.
+- `bonsai::cuda_available()` is the runtime predicate. `bonsai info` marks growers that can't train on the current host ("predict-only here"); the parametric test suites run the cuda combos where a device exists and SKIP them where not (Catch2 exit code 4, mapped via ctest `SKIP_RETURN_CODE`).
+- `BONSAI_USE_OPENMP` deliberately remains the one config macro: it guards an `#include <omp.h>` and a `#pragma`, which no language construct can, and is confined to [`parallel.hpp`](../../include/bonsai/parallel.hpp).
+
+## Deferred
+
+Device-resident row partitioning and split finding (the full gpu_hist architecture — the measured remainder of the gap to xgboost-GPU), a `[cuda]` config section for the cutoff constants, a `Dataset` version id to replace the pointer-identity upload cache, CUDA variants of the oblivious/leafwise growers (one typelist line each, when wanted).

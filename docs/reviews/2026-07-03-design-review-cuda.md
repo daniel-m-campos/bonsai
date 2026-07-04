@@ -82,3 +82,39 @@ All three should-fixes landed, alongside a kernel precision/perf change prompted
 3. **Coverage gap** — the test scenario grew to 4 096 rows, above the (now 512-row) cutoff, so the parity tests exercise the real kernel; tolerances widened (WithinRel 1e-4 ∥ WithinAbs 1e-5) for float accumulation.
 4. **Kernel: float shared accumulation, double merge** (supersedes the review's "double on both paths" description). Shared-memory float atomics are native where double atomics CAS-loop; each ≤ 32 k-row chunk sums in float and chunks merge in double. Measured on Year Prediction MSD (463 715 × 90, 200 iters, depth 8): 254.0 s CPU 1-thread → 71.7 s CPU 6-thread → **54.1 s GPU** (cutoff 512), with test RMSE 8.9948 vs 8.9911 CPU (+0.04 %). California Housing RMSE unchanged at 4 decimals (0.47382432 vs 0.47382435).
 5. **C ABI replaced by clang CUDA C++** (resolves the `api.h` placement nit by deleting the file). The kernel TU is now `src/cuda/histogram_builder.cu`, compiled by the project's clang with `-x cuda --offload-arch` — same C++23/libc++ as every other TU, so kernels and builder share one file, use `Dataset`/`Histogram`/`SplitInput` directly, RAII-wrap device buffers, and inherit `bonsai_warnings` (`-Werror`). nvcc and the second (libstdc++) toolchain are gone; `BONSAI_CUDA` now requires the CXX compiler to be clang, which the project mandates anyway. clang's codegen also benches slightly faster: **51.5 s** on the MSD fit. Trade-off accepted: kernel-TU compilation is now tied to clang's CUDA support rather than nvcc's.
+
+## Phase 2 (same day): level batching, profile-guided kernel work, xgboost-GPU reference
+
+Profiling (`BONSAI_CUDA_PROFILE=1`, new env-gated chrono counters in the builder) attributed phase 1's time to per-node launch overhead: ~185 populate round trips per tree, with sub-4k-row nodes averaging ~0.5 ms of almost pure launch+sync cost. Changes, in the order they earned their keep:
+
+1. **Level batching** — the growers now hand a whole level to the builder at once. `grower_detail::populate_nodes` calls the builder's `populate_many` when present (detected via `if constexpr` + `requires`, so the CPU builder needs no batched method); `update_nodes` (depthwise) and the oblivious level loop were restructured into partition → batch-populate → subtract passes, with `split_node` retained for the leafwise grower's inherently sequential heap order. Launches per fit dropped from ~21,600 to 1,800 (one per tree level).
+2. **Across-node parallelism for the CPU-fallback set** inside `populate_many` (inner feature-loops degrade to a team of one inside the active OpenMP region — bit-identical per node). Contended fallback time fell ~3.5×.
+3. **Parallel row partitioning** — pass 1b of `update_nodes` partitions each split node's rows on its own worker (each partition touches only its own rows; child row order is scheduling-independent). This also sped up the *CPU* build: 6-thread MSD fit 71.7 s → 62.4 s.
+4. **Kernel micro-opts** — uint8 device bins when every feature fits 256 bins, float2-packed gradients, a level-order gradient pre-gather kernel, and warp-parity sub-histograms. Collectively worth ~2.5 s; the kernel is DRAM-latency-bound on the bins gather, so these hit diminishing returns quickly.
+
+**Reference bar** (user-directed): xgboost built from source for sm_87 (v3.0.2 — 3.1's CUDA floor of 12.9 exceeds this JetPack's 12.6; one two-line `WQSummary::Entry operator==` patch for CUDA 12.6's older CCCL) runs `device="cuda"` natively on this GPU.
+
+**Final MSD ladder** (464,715 × 90, 200 iters, depth 8, this Jetson Orin Nano):
+
+| configuration | fit (s) | test RMSE |
+|---|--:|--:|
+| bonsai CPU 1 thread | 254.0 | 8.9911 |
+| bonsai CPU 6 threads (phase 2) | 62.4 | 8.9911 |
+| bonsai cuda_depthwise phase 1 | 51.5 | 8.9948 |
+| **bonsai cuda_depthwise phase 2** | **38.2** | **8.9911** |
+| xgboost CPU 6 threads | 34.6 | 8.9849 |
+| xgboost GPU (sm_87 build) | 26.2 | 8.9924 |
+
+Smaller datasets (132k rows): 64-feature GPU now edges 6-thread CPU (7.4 s vs 7.7 s); 8-feature still favors CPU (2.7 s vs 2.2 s) — expected, and the hybrid picks reasonable paths automatically.
+
+**Remaining gap analysis.** Of the 38.2 s: ~20 s kernels (DRAM-latency-bound bins gather), ~3 s rows upload, ~2 s host unpack, ~2 s CPU-fallback populate, ~11 s CPU-side growing (split finding, subtraction, bookkeeping, booster). Closing on xgboost-GPU's 26 s means going device-resident like it does: rows partitioned on device (no per-level upload), split finding on device (no histogram copy-back). That is the full gpu_hist architecture — deferred as its own phase with this measured justification.
+
+## Post-phase-2 update: BONSAI_USE_CUDA eliminated
+
+The registry `#ifdef` (and its global `add_compile_definitions` crutch, flagged above as an ODR-coupling smell) is gone. `cuda_depthwise` is registered unconditionally — the builder header is CUDA-free, so CPU-only builds compile the grower against a stub TU (`src/cuda/histogram_builder_stub.cpp`) whose `begin_tree` throws with a message naming the fix. Availability became a runtime predicate, `bonsai::cuda_available()`. Consequences, all verified:
+
+- The registry typelists are identical in every configuration — the ODR hazard is structurally impossible now, and CMake lost the global define.
+- **The model-portability finding above is resolved**: a cuda_depthwise model trained by the CUDA binary evaluates on the CPU-only binary (CH RMSE 0.4738 cross-binary); only re-training throws.
+- `bonsai info` annotates growers that can't train on the current host ("predict-only here"); the registered combo set is 72 everywhere.
+- The parametric test suites run the cuda combos where a device exists and SKIP them (Catch2 `SKIP`, exit code 4 mapped via ctest `SKIP_RETURN_CODE`) where it doesn't: 392/392 on both builds, 48 skipped on CPU-only.
+- `BONSAI_USE_OPENMP` stays, deliberately: it guards an `#include <omp.h>` and a `#pragma`, which no language construct can, and it is confined to the one 70-line `parallel.hpp`. That is the documented exception; config macros elsewhere should follow the stub/runtime-capability pattern.

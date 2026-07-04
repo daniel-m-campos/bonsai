@@ -30,9 +30,9 @@ add_executable(bonsai_tests
     unit/test_model_io.cpp
 )
 
-if(BONSAI_CUDA)
-    target_sources(bonsai_tests PRIVATE unit/test_cuda_grower.cpp)
-endif()
+# Compiled in every build; the cases SKIP at runtime when no usable CUDA
+# device is present (cuda_available()).
+target_sources(bonsai_tests PRIVATE unit/test_cuda_grower.cpp)
 
 target_link_libraries(bonsai_tests PRIVATE
     bonsai_data
@@ -57,4 +57,7 @@ target_compile_definitions(bonsai_tests PRIVATE
     BONSAI_TESTS_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data"
 )
 
-catch_discover_tests(bonsai_tests)
+# Catch2 exits 4 when every selected test case SKIPs (e.g. the CUDA parity
+# cases on a host without a usable device); tell ctest that means skipped,
+# not failed.
+catch_discover_tests(bonsai_tests PROPERTIES SKIP_RETURN_CODE 4)
