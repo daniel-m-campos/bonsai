@@ -47,9 +47,9 @@ What crosses the bus per level is the design's core; each stage deletes rows fro
 | D2H child row counts | — | — | 8 B/node |
 | D2H leaf ids | — | — | ~2 MB once per tree |
 
-## Stage A — device split finding + resident level histograms (est. 12.2 → ~8 s)
+## Stage A — device split finding + resident level histograms (measured: 13.1 → 7.5 s)
 
-Deletes: unpack (1.3 s), CPU-fallback populate (0.5 s), host find (~2.5 s est.).
+Landed (commit 556310b): A100 MSD fit 7.5 s vs the 13.1 s baseline, RMSE 8.9911 unchanged, 392/392 both configs. Profile after: upload 0.73 + device 0.86 + find-sync 1.34 + partition 1.6; unpack, CPU-fallback, and host find read zero. Two implementation lessons: small nodes need the direct-global kernel (row-proportional) rather than the shared-memory kernel (bin-proportional) once no CPU cutoff exists, and the one-lane FP64 scan is ~2 ms/node on the Jetson iGPU (1/32-rate FP64) while immaterial on the A100 — a warp-parallel scan is deferred until a target platform needs it.
 
 Two ping-pong device buffers hold parent/child level histograms (≈94 MB each at depth 8 × 90 features × 256 bins; a `begin_tree` capacity check degrades the whole fit to copy-back mode when they would not fit). A subtraction kernel mirrors `finish_split` (larger child = parent − smaller, double precision, driven by per-level slot triples). The per-node CPU fallback disappears in resident mode — `k_min_gpu_rows` existed to amortize per-launch copy-back, which no longer exists; small nodes ride the batched launch.
 
