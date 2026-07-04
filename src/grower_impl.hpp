@@ -227,6 +227,13 @@ SplitInput make_root(Dataset const &ds, floats_view grad, floats_view hess,
     SplitInput root;
     root.id = 0;
     root.rows.assign(row_indices.begin(), row_indices.end());
+    if constexpr (requires { builder.begin_root(ds, grad, hess, root, selected); })
+    {
+        if (builder.begin_root(ds, grad, hess, root, selected))
+        {
+            return root; // resident: histogram lives on the device
+        }
+    }
     builder.populate(ds, grad, hess, root, selected);
     root.sums      = root.totals();
     root.row_count = root.rows.size();
@@ -256,14 +263,32 @@ inline void populate_nodes(Dataset const &ds, floats_view grad, floats_view hess
 // builder exposing find_splits_many (device-resident histograms, phase 3)
 // takes over here; the splitter remains the fallback and parity reference.
 template <NodeSplitFinder SplitterT, HistogramBuilder BuilderT>
-inline void
-find_splits(std::vector<SplitInput> const &current, TreeConfig const &config,
-            [[maybe_unused]] feature_view selected, [[maybe_unused]] BuilderT &builder,
-            std::vector<SplitOutput> &out)
+inline void find_splits(Dataset const &ds, std::vector<SplitInput> const &current,
+                        TreeConfig const &config, BuilderT &builder,
+                        std::vector<SplitOutput> &out,
+                        std::vector<HistCell>    &child_sums)
 {
-    out.clear();
-    out.reserve(current.size());
     auto const t0 = std::chrono::steady_clock::now();
+    out.clear();
+    child_sums.clear();
+    if constexpr (requires {
+                      builder.find_splits_many(
+                          ds, config, std::span<SplitInput const>{},
+                          std::span<SplitOutput>{}, std::span<HistCell>{});
+                  })
+    {
+        if (builder.resident())
+        {
+            out.resize(current.size());
+            child_sums.resize(2 * current.size());
+            builder.find_splits_many(ds, config, current, out, child_sums);
+            GrowProfiler::instance().find_s +=
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
+                    .count();
+            return;
+        }
+    }
+    out.reserve(current.size());
     for (auto const &input : current)
     {
         out.push_back(SplitterT::find(input, config));
@@ -370,11 +395,11 @@ inline void
 update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
              TreeConfig const &config, std::vector<SplitInput> &current,
              std::vector<SplitInput> &next, std::vector<SplitOutput> const &splits,
-             DenseTree::Nodes &nodes, size_t &n_leaves, train_leaf_values &values,
-             feature_view selected, std::vector<bin_id_t> &split_bins,
-             std::vector<float> &split_gains, std::vector<float> &covers,
-             std::vector<node_id_t> &leaf_ids, interaction_groups const &groups,
-             BuilderT &builder)
+             std::vector<HistCell> const &child_sums, DenseTree::Nodes &nodes,
+             size_t &n_leaves, train_leaf_values &values, feature_view selected,
+             std::vector<bin_id_t> &split_bins, std::vector<float> &split_gains,
+             std::vector<float> &covers, std::vector<node_id_t> &leaf_ids,
+             interaction_groups const &groups, BuilderT &builder)
 {
     // Pass 1: serial tree bookkeeping; partitions and histogram work are
     // deferred so both can run level-wide.
@@ -388,6 +413,9 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         double                    parent_lo;
         double                    parent_hi;
         std::vector<feature_id_t> parent_path;
+        uint32_t                  parent_slot = 0; // index in `current`
+        HistCell                  left_sums{};     // from find (device mode only)
+        HistCell                  right_sums{};
     };
     auto &prof = GrowProfiler::instance();
     auto  mark = std::chrono::steady_clock::now();
@@ -422,11 +450,15 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         nodes[node.id] = DenseTree::internal(split.feature_id, threshold, left_id,
                                              right_id, split.default_left);
 
-        double const parent_lo   = node.lo;
-        double const parent_hi   = node.hi;
-        auto         parent_path = std::move(node.path);
+        double const   parent_lo   = node.lo;
+        double const   parent_hi   = node.hi;
+        auto           parent_path = std::move(node.path);
+        HistCell const ls = child_sums.empty() ? HistCell{} : child_sums[2 * size_t{i}];
+        HistCell const rs =
+            child_sums.empty() ? HistCell{} : child_sums[(2 * size_t{i}) + 1];
         deferred.push_back({std::move(node), PendingSplit{}, split, left_id, right_id,
-                            parent_lo, parent_hi, std::move(parent_path)});
+                            parent_lo, parent_hi, std::move(parent_path),
+                            static_cast<uint32_t>(i), ls, rs});
     }
 
     lap(prof.bookkeep_s);
@@ -448,21 +480,56 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
 
     lap(prof.partition_s);
 
-    // Pass 2: populate every smaller sibling in one builder call.
-    std::vector<std::reference_wrapper<SplitInput>> smalls;
-    smalls.reserve(deferred.size());
-    for (auto &d : deferred)
+    // Pass 2: populate every smaller sibling in one builder call. Resident
+    // builders take the whole level as slot ops: smalls build on the device
+    // and larges derive there by subtraction; child sums came from find.
+    bool used_device = false;
+    if constexpr (requires {
+                      typename BuilderT::LevelOp;
+                      builder.advance_level(
+                          ds, std::span<typename BuilderT::LevelOp const>{});
+                  })
     {
-        smalls.emplace_back(smaller_child(d.p));
+        if (builder.resident())
+        {
+            std::vector<typename BuilderT::LevelOp> ops;
+            ops.reserve(deferred.size());
+            for (uint32_t k = 0; k < deferred.size(); ++k)
+            {
+                Deferred  &d          = deferred[k];
+                bool const left_small = d.p.left.rows.size() <= d.p.right.rows.size();
+                ops.push_back({d.parent_slot, (2 * k) + (left_small ? 0U : 1U),
+                               (2 * k) + (left_small ? 1U : 0U),
+                               left_small ? d.p.left.rows : d.p.right.rows});
+                d.p.left.sums       = d.left_sums;
+                d.p.right.sums      = d.right_sums;
+                d.p.left.row_count  = d.p.left.rows.size();
+                d.p.right.row_count = d.p.right.rows.size();
+            }
+            builder.advance_level(ds, ops);
+            used_device = true;
+        }
     }
-    populate_nodes(ds, grad, hess, smalls, selected, builder);
+    if (!used_device)
+    {
+        std::vector<std::reference_wrapper<SplitInput>> smalls;
+        smalls.reserve(deferred.size());
+        for (auto &d : deferred)
+        {
+            smalls.emplace_back(smaller_child(d.p));
+        }
+        populate_nodes(ds, grad, hess, smalls, selected, builder);
+    }
     lap(prof.populate_s);
 
-    // Pass 3: subtraction, then constraint propagation (needs populated
+    // Pass 3: subtraction (host mode), then constraint propagation (needs
     // child totals) and frontier hand-off in original node order.
     for (auto &d : deferred)
     {
-        finish_split(ds, d.p);
+        if (!used_device)
+        {
+            finish_split(ds, d.p);
+        }
         SplitInput &left  = d.p.left;
         SplitInput &right = d.p.right;
         propagate_monotone_bounds(d.parent_lo, d.parent_hi, d.split, config, left,
@@ -561,6 +628,7 @@ auto DepthwiseGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view g
     std::vector<SplitInput>  current;
     std::vector<SplitInput>  next;
     std::vector<SplitOutput> splits;
+    std::vector<HistCell>    child_sums;
     std::vector<bin_id_t>    split_bins(1, 0);
     std::vector<float>       split_gains(1, 0.0F);
     std::vector<float>       covers(1, static_cast<float>(row_indices.size()));
@@ -573,10 +641,10 @@ auto DepthwiseGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view g
     size_t  n_leaves = 0;
     while (depth < config_.max_depth)
     {
-        gd::find_splits<SplitterT>(current, config_, selected, builder_, splits);
-        gd::update_nodes(ds, grad, hess, config_, current, next, splits, nodes,
-                         n_leaves, values, selected, split_bins, split_gains, covers,
-                         leaf_ids, interaction_groups_, builder_);
+        gd::find_splits<SplitterT>(ds, current, config_, builder_, splits, child_sums);
+        gd::update_nodes(ds, grad, hess, config_, current, next, splits, child_sums,
+                         nodes, n_leaves, values, selected, split_bins, split_gains,
+                         covers, leaf_ids, interaction_groups_, builder_);
         if (current.empty())
         {
             break;

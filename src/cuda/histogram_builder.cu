@@ -120,7 +120,7 @@ __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
                             uint32_t const *rows, uint32_t const *row_ofs,
                             uint32_t const *row_cnt, uint32_t const *features,
                             uint32_t const *n_bins, uint32_t n_rows, uint32_t n_sel,
-                            double *out, uint32_t stride)
+                            double *out, uint32_t stride, uint32_t const *out_slot)
 {
     // Two sub-histograms split by warp parity spread atomic contention.
     extern __shared__ float sh[];
@@ -147,12 +147,170 @@ __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
         atomicAdd(&my[(2 * b) + 1], v.y);
     }
     __syncthreads();
-    double *o = out + (((static_cast<size_t>(node) * n_sel) + blockIdx.x) * stride);
+    uint32_t const oslot = out_slot != nullptr ? out_slot[node] : node;
+    double *o = out + (((static_cast<size_t>(oslot) * n_sel) + blockIdx.x) * stride);
     for (uint32_t i = threadIdx.x; i < 2 * nb; i += blockDim.x)
     {
-        atomicAdd(&o[i],
-                  static_cast<double>(sh[i]) + static_cast<double>(sh[(2 * nb) + i]));
+        float const v = sh[i] + sh[(2 * nb) + i];
+        if (v != 0.0F)
+        {
+            atomicAdd(&o[i], static_cast<double>(v));
+        }
     }
+}
+
+// Small nodes skip the shared-memory stage: below ~512 rows the fixed
+// per-(node,feature) zero+merge cost dominates, so one block per node
+// accumulates row visits straight into the node's global slot in double.
+template <typename BinT>
+__global__ void hist_small_kernel(BinT const *bins, float2 const *gh_ordered,
+                                  uint32_t const *rows, uint32_t const *row_ofs,
+                                  uint32_t const *row_cnt, uint32_t const *features,
+                                  uint32_t n_rows, uint32_t n_sel, double *out,
+                                  uint32_t stride, uint32_t const *out_slot)
+{
+    uint32_t const  node = blockIdx.x;
+    uint32_t const  cnt  = row_cnt[node];
+    uint32_t const  ofs  = row_ofs[node];
+    uint32_t const *nr   = rows + ofs;
+    float2 const   *ngh  = gh_ordered + ofs;
+    double *o = out + (static_cast<size_t>(out_slot[node]) * n_sel * stride);
+    for (uint32_t k = threadIdx.x; k < cnt * n_sel; k += blockDim.x)
+    {
+        uint32_t const sel = k / cnt;
+        uint32_t const i   = k % cnt;
+        uint32_t const b   = bins[(static_cast<size_t>(features[sel]) * n_rows) + nr[i]];
+        float2 const   v   = ngh[i];
+        atomicAdd(&o[(sel * stride) + (2 * b)], static_cast<double>(v.x));
+        atomicAdd(&o[(sel * stride) + (2 * b) + 1], static_cast<double>(v.y));
+    }
+}
+
+// Larger children derive on-device: child[large] = parent - child[small].
+// Slot triples are (parent, small, large); slot_doubles is one slot's span.
+__global__ void subtract_kernel(double const *parents, double *children,
+                                uint32_t const *triples, uint32_t slot_doubles)
+{
+    uint32_t const *t     = triples + (3UL * blockIdx.y);
+    uint32_t const  span  = gridDim.x * blockDim.x;
+    double const   *par   = parents + (static_cast<size_t>(t[0]) * slot_doubles);
+    double const   *small = children + (static_cast<size_t>(t[1]) * slot_doubles);
+    double         *large = children + (static_cast<size_t>(t[2]) * slot_doubles);
+    for (uint32_t i = (blockIdx.x * blockDim.x) + threadIdx.x; i < slot_doubles;
+         i += span)
+    {
+        large[i] = par[i] - small[i];
+    }
+}
+
+// Per-(node, feature) best split. 56-byte POD; dl encodes default_left.
+struct FeatBest
+{
+    double  gain, gL, hL, gR, hR;
+    int32_t bin, dl, valid, sel;
+};
+
+// One thread walks one (node, selected-feature) histogram sequentially,
+// replicating the CPU scan in split.cpp exactly: same prefix order, both
+// default_left routings, min_child_hess, monotone feasibility, min_gain.
+// The scan is <= 254 iterations; clarity beats occupancy here.
+__global__ void find_kernel(double const *hists, uint32_t const *features,
+                            uint32_t const *n_bins, double const *node_sums,
+                            double const *node_bounds, char const *allowed,
+                            int const *monotone, uint32_t n_sel, uint32_t stride,
+                            double l1, double l2, double min_child_hess,
+                            double min_gain, FeatBest *out)
+{
+    if (threadIdx.x != 0)
+    {
+        return;
+    }
+    uint32_t const node = blockIdx.y;
+    uint32_t const sel  = blockIdx.x;
+    FeatBest       best = {};
+    out[(static_cast<size_t>(node) * n_sel) + sel] = best;
+    if (allowed != nullptr && allowed[(static_cast<size_t>(node) * n_sel) + sel] == 0)
+    {
+        return;
+    }
+    uint32_t const f  = features[sel];
+    uint32_t const nb = n_bins[f];
+    if (nb < 2)
+    {
+        return; // no cut cells (degenerate feature)
+    }
+    double const *cells =
+        hists + (((static_cast<size_t>(node) * n_sel) + sel) * stride);
+    double const g_total = node_sums[2 * node];
+    double const h_total = node_sums[(2 * node) + 1];
+    double const miss_g  = cells[2 * (nb - 1)];
+    double const miss_h  = cells[(2 * (nb - 1)) + 1];
+    double const node_score = score(g_total, h_total, l1, l2);
+    double const real_grad  = g_total - miss_g;
+    double const real_hess  = h_total - miss_h;
+    double const lo         = node_bounds[2 * node];
+    double const hi         = node_bounds[(2 * node) + 1];
+    int const    mc         = monotone[f];
+
+    // Cut cells are bins [0, nb-2): the last real bin cannot split and the
+    // final cell is the missing bin (mirrors Histogram::cut_cells()).
+    double pg = 0.0;
+    double ph = 0.0;
+    for (uint32_t b = 0; b + 2 < nb; ++b)
+    {
+        pg += cells[2 * b];
+        ph += cells[(2 * b) + 1];
+        for (int dl = 1; dl >= 0; --dl)
+        {
+            double const gL = pg + (dl != 0 ? miss_g : 0.0);
+            double const hL = ph + (dl != 0 ? miss_h : 0.0);
+            double const gR = (real_grad - pg) + (dl == 0 ? miss_g : 0.0);
+            double const hR = (real_hess - ph) + (dl == 0 ? miss_h : 0.0);
+            if (hL < min_child_hess || hR < min_child_hess)
+            {
+                continue;
+            }
+            if (mc != 0)
+            {
+                double const wL = bounded_leaf_weight(gL, hL, l1, l2, lo, hi);
+                double const wR = bounded_leaf_weight(gR, hR, l1, l2, lo, hi);
+                if (static_cast<double>(mc) * (wR - wL) < 0.0)
+                {
+                    continue;
+                }
+            }
+            double const gain = score(gL, hL, l1, l2) + score(gR, hR, l1, l2) -
+                                node_score;
+            if (gain > best.gain && gain >= min_gain)
+            {
+                best = {gain, gL, hL, gR, hR, static_cast<int32_t>(b), dl, 1,
+                        static_cast<int32_t>(sel)};
+            }
+        }
+    }
+    out[(static_cast<size_t>(node) * n_sel) + sel] = best;
+}
+
+// Per-node winner in ascending selected-feature order with strict >,
+// matching reduce_in_feature_order's lowest-feature-id tie-break.
+__global__ void reduce_kernel(FeatBest const *per_feat, uint32_t n_sel,
+                              FeatBest *out)
+{
+    if (threadIdx.x != 0)
+    {
+        return;
+    }
+    uint32_t const  node = blockIdx.x;
+    FeatBest        best = {};
+    FeatBest const *row  = per_feat + (static_cast<size_t>(node) * n_sel);
+    for (uint32_t s = 0; s < n_sel; ++s)
+    {
+        if (row[s].valid != 0 && row[s].gain > best.gain)
+        {
+            best = row[s];
+        }
+    }
+    out[node] = best;
 }
 
 } // namespace
@@ -210,6 +368,51 @@ struct CudaHistogramBuilder::Impl
     std::vector<uint32_t> host_ofs;
     std::vector<uint32_t> host_cnt;
     std::vector<float2>   host_gh;
+
+    // Resident level state (phase 3): ping-pong per-level histogram buffers,
+    // slot-indexed [slot][sel][2 * max_sel_bins] like `out`. cur() holds the
+    // frontier the next find reads; advance_level writes children into
+    // other() and swaps.
+    DeviceBuffer<double>   level_a;
+    DeviceBuffer<double>   level_b;
+    bool                   cur_is_a = true;
+    bool                   resident = false;
+    uint32_t               n_sel    = 0;
+    uint32_t               stride   = 0; // doubles per (slot, feature): 2*max_sel_bins
+    DeviceBuffer<uint32_t> slots;        // hist out_slot per batched small
+    DeviceBuffer<uint32_t> triples;      // (parent, small, large) per op
+    DeviceBuffer<double>   node_sums;    // 2 per frontier node
+    DeviceBuffer<double>   node_bounds;  // lo, hi per frontier node
+    DeviceBuffer<char>     allowed;      // n_nodes * n_sel, only when constrained
+    DeviceBuffer<int>      monotone;     // per feature
+    DeviceBuffer<FeatBest> feat_best;
+    DeviceBuffer<FeatBest> node_best;
+    std::vector<uint32_t>  host_slots;
+    std::vector<uint32_t>  host_triples;
+    std::vector<uint32_t>  host_sofs; // small-node subset: ofs/cnt/slot
+    std::vector<uint32_t>  host_scnt;
+    std::vector<uint32_t>  host_sslot;
+    DeviceBuffer<uint32_t> sofs;
+    DeviceBuffer<uint32_t> scnt;
+    DeviceBuffer<uint32_t> sslot;
+    std::vector<double>    host_nsums;
+    std::vector<double>    host_bounds;
+    std::vector<char>      host_allowed;
+    std::vector<int>       host_mono;
+    std::vector<FeatBest>  host_best;
+
+    DeviceBuffer<double> &cur()
+    {
+        return cur_is_a ? level_a : level_b;
+    }
+    DeviceBuffer<double> &other()
+    {
+        return cur_is_a ? level_b : level_a;
+    }
+    size_t slot_doubles() const
+    {
+        return static_cast<size_t>(n_sel) * stride;
+    }
 
     void ensure_dataset(Dataset const &dataset)
     {
@@ -277,6 +480,7 @@ void CudaHistogramBuilder::begin_tree(Dataset const &ds, floats_view grad,
                                       floats_view hess)
 {
     impl_->ensure_dataset(ds);
+    impl_->resident = false;
     impl_->host_gh.resize(grad.size());
     for (size_t r = 0; r < grad.size(); ++r)
     {
@@ -412,7 +616,7 @@ void CudaHistogramBuilder::populate_many(Dataset const &ds, floats_view grad,
             bins, impl_->gh_ordered.get(), impl_->rows.get(), impl_->row_ofs.get(),
             impl_->row_cnt.get(), impl_->features.get(), impl_->n_bins.get(),
             static_cast<uint32_t>(ds.n_rows()), static_cast<uint32_t>(selected.size()),
-            impl_->out.get(), stride);
+            impl_->out.get(), stride, nullptr);
     };
     if (impl_->bins_are_u8)
     {
@@ -448,6 +652,325 @@ void CudaHistogramBuilder::populate_many(Dataset const &ds, floats_view grad,
                 h.add(static_cast<bin_id_t>(b), cells[2 * b], cells[(2 * b) + 1]);
             }
         }
+    }
+    lap(prof.unpack_s);
+}
+
+bool CudaHistogramBuilder::resident() const
+{
+    return impl_->resident;
+}
+
+bool CudaHistogramBuilder::begin_root(Dataset const &ds, floats_view grad,
+                                      floats_view hess, SplitInput &root,
+                                      std::span<feature_id_t const> selected)
+{
+    Impl  &im           = *impl_;
+    size_t max_sel_bins = 0;
+    for (feature_id_t const fid : selected)
+    {
+        max_sel_bins = std::max(max_sel_bins, ds.n_bins(fid));
+    }
+    if (selected.empty() || 4 * max_sel_bins * sizeof(float) > k_max_shared_bytes)
+    {
+        return false; // caller degrades to the copy-back path
+    }
+    im.resident = true;
+    im.n_sel    = static_cast<uint32_t>(selected.size());
+    im.stride   = static_cast<uint32_t>(2 * max_sel_bins);
+    im.host_features.assign(selected.begin(), selected.end());
+    im.features.upload(im.host_features.data(), im.host_features.size());
+
+    im.cur_is_a = true;
+    im.cur().ensure(im.slot_doubles());
+    check(cudaMemset(im.cur().get(), 0, im.slot_doubles() * sizeof(double)),
+          "zero root slot");
+    auto const n = static_cast<uint32_t>(root.rows.size());
+    im.rows.upload(root.rows.data(), root.rows.size());
+    uint32_t const zero = 0;
+    im.row_ofs.upload(&zero, 1);
+    im.row_cnt.upload(&n, 1);
+    im.slots.upload(&zero, 1);
+    im.gh_ordered.ensure(root.rows.size());
+    gather_gh_kernel<<<dim3(std::clamp<uint32_t>(n / 256, 1, 512)), dim3(256)>>>(
+        im.gh.get(), im.rows.get(), n, im.gh_ordered.get());
+    check(cudaGetLastError(), "gather launch");
+    auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
+    dim3 const grid(im.n_sel, 1, n_chunks);
+    auto const launch = [&](auto const *bins)
+    {
+        hist_kernel<<<grid, dim3(256), 2UL * im.stride * sizeof(float)>>>(
+            bins, im.gh_ordered.get(), im.rows.get(), im.row_ofs.get(),
+            im.row_cnt.get(), im.features.get(), im.n_bins.get(),
+            static_cast<uint32_t>(ds.n_rows()), im.n_sel, im.cur().get(), im.stride,
+            im.slots.get());
+    };
+    if (im.bins_are_u8)
+    {
+        launch(im.bins8.get());
+    }
+    else
+    {
+        launch(im.bins16.get());
+    }
+    check(cudaGetLastError(), "root hist launch");
+
+    double sg = 0.0;
+    double sh = 0.0;
+    for (row_id_t const r : root.rows)
+    {
+        sg += grad[r];
+        sh += hess[r];
+    }
+    root.sums      = {sg, sh};
+    root.row_count = root.rows.size();
+    if (im.prof.enabled)
+    {
+        ++im.prof.launches;
+        ++im.prof.gpu_nodes;
+    }
+    return true;
+}
+
+void CudaHistogramBuilder::advance_level(Dataset const &ds,
+                                         std::span<LevelOp const> ops)
+{
+    Impl &im = *impl_;
+    if (ops.empty())
+    {
+        return;
+    }
+    auto &prof = im.prof;
+    auto  t0   = ProfileCounters::clock::now();
+    auto  lap  = [&](double &sink)
+    {
+        if (!prof.enabled)
+        {
+            return;
+        }
+        auto const t1 = ProfileCounters::clock::now();
+        sink += std::chrono::duration<double>(t1 - t0).count();
+        t0 = t1;
+    };
+
+    // One concatenated row upload; nodes route to the shared-memory kernel
+    // above the row cutoff and to the direct-global kernel below it.
+    size_t total_rows = 0;
+    size_t max_rows   = 0;
+    im.host_ofs.clear();
+    im.host_cnt.clear();
+    im.host_slots.clear();
+    im.host_sofs.clear();
+    im.host_scnt.clear();
+    im.host_sslot.clear();
+    im.host_triples.clear();
+    std::vector<uint32_t> all_ofs;
+    all_ofs.reserve(ops.size());
+    for (LevelOp const &op : ops)
+    {
+        auto const ofs = static_cast<uint32_t>(total_rows);
+        auto const cnt = static_cast<uint32_t>(op.small_rows.size());
+        all_ofs.push_back(ofs);
+        if (cnt >= k_min_gpu_rows)
+        {
+            im.host_ofs.push_back(ofs);
+            im.host_cnt.push_back(cnt);
+            im.host_slots.push_back(op.small_slot);
+            max_rows = std::max(max_rows, op.small_rows.size());
+        }
+        else
+        {
+            im.host_sofs.push_back(ofs);
+            im.host_scnt.push_back(cnt);
+            im.host_sslot.push_back(op.small_slot);
+        }
+        im.host_triples.push_back(op.parent_slot);
+        im.host_triples.push_back(op.small_slot);
+        im.host_triples.push_back(op.large_slot);
+        total_rows += op.small_rows.size();
+    }
+    im.host_rows.resize(total_rows);
+    for (size_t k = 0; k < ops.size(); ++k)
+    {
+        std::ranges::copy(ops[k].small_rows, im.host_rows.begin() + all_ofs[k]);
+    }
+    im.rows.upload(im.host_rows.data(), std::max<size_t>(total_rows, 1));
+    if (!im.host_ofs.empty())
+    {
+        im.row_ofs.upload(im.host_ofs.data(), im.host_ofs.size());
+        im.row_cnt.upload(im.host_cnt.data(), im.host_cnt.size());
+        im.slots.upload(im.host_slots.data(), im.host_slots.size());
+    }
+    if (!im.host_sofs.empty())
+    {
+        im.sofs.upload(im.host_sofs.data(), im.host_sofs.size());
+        im.scnt.upload(im.host_scnt.data(), im.host_scnt.size());
+        im.sslot.upload(im.host_sslot.data(), im.host_sslot.size());
+    }
+    im.triples.upload(im.host_triples.data(), im.host_triples.size());
+    lap(prof.upload_s);
+
+    size_t const child_slots = 2 * ops.size();
+    im.other().ensure(child_slots * im.slot_doubles());
+    check(cudaMemset(im.other().get(), 0,
+                     child_slots * im.slot_doubles() * sizeof(double)),
+          "zero level");
+    im.gh_ordered.ensure(std::max<size_t>(total_rows, 1));
+    if (total_rows > 0)
+    {
+        gather_gh_kernel<<<dim3(std::clamp<uint32_t>(
+                               static_cast<uint32_t>(total_rows / 256), 1, 512)),
+                           dim3(256)>>>(im.gh.get(), im.rows.get(),
+                                        static_cast<uint32_t>(total_rows),
+                                        im.gh_ordered.get());
+        check(cudaGetLastError(), "gather launch");
+        auto const launch = [&](auto const *bins)
+        {
+            if (!im.host_ofs.empty())
+            {
+                auto const n_chunks = std::clamp<uint32_t>(
+                    (static_cast<uint32_t>(max_rows) + 32767) / 32768, 1, 64);
+                dim3 const grid(im.n_sel,
+                                static_cast<uint32_t>(im.host_ofs.size()), n_chunks);
+                hist_kernel<<<grid, dim3(256), 2UL * im.stride * sizeof(float)>>>(
+                    bins, im.gh_ordered.get(), im.rows.get(), im.row_ofs.get(),
+                    im.row_cnt.get(), im.features.get(), im.n_bins.get(),
+                    static_cast<uint32_t>(ds.n_rows()), im.n_sel, im.other().get(),
+                    im.stride, im.slots.get());
+            }
+            if (!im.host_sofs.empty())
+            {
+                hist_small_kernel<<<dim3(static_cast<uint32_t>(im.host_sofs.size())),
+                                    dim3(128)>>>(
+                    bins, im.gh_ordered.get(), im.rows.get(), im.sofs.get(),
+                    im.scnt.get(), im.features.get(),
+                    static_cast<uint32_t>(ds.n_rows()), im.n_sel, im.other().get(),
+                    im.stride, im.sslot.get());
+            }
+        };
+        if (im.bins_are_u8)
+        {
+            launch(im.bins8.get());
+        }
+        else
+        {
+            launch(im.bins16.get());
+        }
+        check(cudaGetLastError(), "level hist launch");
+    }
+    auto const sd = static_cast<uint32_t>(im.slot_doubles());
+    subtract_kernel<<<dim3(std::clamp<uint32_t>((sd + 255) / 256, 1, 256),
+                           static_cast<uint32_t>(ops.size())),
+                      dim3(256)>>>(im.cur().get(), im.other().get(),
+                                   im.triples.get(), sd);
+    check(cudaGetLastError(), "subtract launch");
+    im.cur_is_a = !im.cur_is_a;
+    if (prof.enabled)
+    {
+        ++prof.launches;
+        prof.gpu_nodes += child_slots;
+    }
+    lap(prof.gpu_s);
+}
+
+void CudaHistogramBuilder::find_splits_many(Dataset const &ds,
+                                            TreeConfig const &config,
+                                            std::span<SplitInput const> level,
+                                            std::span<SplitOutput>      out,
+                                            std::span<HistCell>         child_sums)
+{
+    Impl        &im = *impl_;
+    size_t const n  = level.size();
+    auto        &prof = im.prof;
+    auto         t0   = ProfileCounters::clock::now();
+    auto         lap  = [&](double &sink)
+    {
+        if (!prof.enabled)
+        {
+            return;
+        }
+        auto const t1 = ProfileCounters::clock::now();
+        sink += std::chrono::duration<double>(t1 - t0).count();
+        t0 = t1;
+    };
+
+    im.host_nsums.resize(2 * n);
+    im.host_bounds.resize(2 * n);
+    bool any_mask = false;
+    for (size_t i = 0; i < n; ++i)
+    {
+        im.host_nsums[2 * i]       = level[i].sums.sum_grad;
+        im.host_nsums[(2 * i) + 1] = level[i].sums.sum_hess;
+        im.host_bounds[2 * i]      = level[i].lo;
+        im.host_bounds[(2 * i) + 1] = level[i].hi;
+        any_mask = any_mask || !level[i].allowed.empty();
+    }
+    im.node_sums.upload(im.host_nsums.data(), 2 * n);
+    im.node_bounds.upload(im.host_bounds.data(), 2 * n);
+    if (any_mask)
+    {
+        im.host_allowed.resize(n * im.n_sel);
+        for (size_t i = 0; i < n; ++i)
+        {
+            for (uint32_t s = 0; s < im.n_sel; ++s)
+            {
+                im.host_allowed[(i * im.n_sel) + s] =
+                    level[i].allowed.empty()
+                        ? char{1}
+                        : level[i].allowed[im.host_features[s]];
+            }
+        }
+        im.allowed.upload(im.host_allowed.data(), im.host_allowed.size());
+    }
+    im.host_mono.resize(ds.n_features());
+    for (feature_id_t f = 0; f < ds.n_features(); ++f)
+    {
+        im.host_mono[f] = monotone_constraint_of(config, f);
+    }
+    im.monotone.upload(im.host_mono.data(), im.host_mono.size());
+    lap(prof.upload_s);
+
+    im.feat_best.ensure(n * im.n_sel);
+    im.node_best.ensure(n);
+    find_kernel<<<dim3(im.n_sel, static_cast<uint32_t>(n)), dim3(32)>>>(
+        im.cur().get(), im.features.get(), im.n_bins.get(), im.node_sums.get(),
+        im.node_bounds.get(), any_mask ? im.allowed.get() : nullptr,
+        im.monotone.get(), im.n_sel, im.stride, config.lambda_l1, config.lambda_l2,
+        config.min_child_hess, config.min_gain_to_split, im.feat_best.get());
+    check(cudaGetLastError(), "find launch");
+    reduce_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(32)>>>(
+        im.feat_best.get(), im.n_sel, im.node_best.get());
+    check(cudaGetLastError(), "reduce launch");
+    im.host_best.resize(n);
+    check(cudaMemcpy(im.host_best.data(), im.node_best.get(), n * sizeof(FeatBest),
+                     cudaMemcpyDeviceToHost), // implicit sync
+          "find copy back");
+    if (prof.enabled)
+    {
+        ++prof.launches;
+    }
+    lap(prof.gpu_s);
+
+    for (size_t i = 0; i < n; ++i)
+    {
+        FeatBest const &b        = im.host_best[i];
+        bool const      eligible = level[i].row_count >=
+                              2 * static_cast<size_t>(config.min_data_in_leaf);
+        if (b.valid == 0 || !eligible)
+        {
+            out[i]                 = {};
+            child_sums[2 * i]      = {};
+            child_sums[(2 * i) + 1] = {};
+            continue;
+        }
+        out[i] = {.gain         = b.gain,
+                  .feature_id   = static_cast<feature_id_t>(
+                      im.host_features[static_cast<size_t>(b.sel)]),
+                  .bin_id       = static_cast<bin_id_t>(b.bin),
+                  .default_left = b.dl != 0,
+                  .valid        = true};
+        child_sums[2 * i]       = {b.gL, b.hL};
+        child_sums[(2 * i) + 1] = {b.gR, b.hR};
     }
     lap(prof.unpack_s);
 }

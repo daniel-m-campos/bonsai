@@ -57,4 +57,31 @@ void CudaHistogramBuilder::populate_many(Dataset const & /*ds*/, floats_view /*g
     throw_unavailable();
 }
 
+bool CudaHistogramBuilder::begin_root(Dataset const & /*ds*/, floats_view /*grad*/,
+                                      floats_view /*hess*/, SplitInput & /*root*/,
+                                      std::span<feature_id_t const> /*selected*/)
+{
+    throw_unavailable();
+}
+
+bool CudaHistogramBuilder::resident() const
+{
+    return false;
+}
+
+void CudaHistogramBuilder::advance_level(Dataset const & /*ds*/,
+                                         std::span<LevelOp const> /*ops*/)
+{
+    throw_unavailable();
+}
+
+void CudaHistogramBuilder::find_splits_many(Dataset const & /*ds*/,
+                                            TreeConfig const & /*config*/,
+                                            std::span<SplitInput const> /*level*/,
+                                            std::span<SplitOutput> /*out*/,
+                                            std::span<HistCell> /*child_sums*/)
+{
+    throw_unavailable();
+}
+
 } // namespace bonsai
