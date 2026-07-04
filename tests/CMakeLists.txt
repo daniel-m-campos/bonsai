@@ -30,6 +30,10 @@ add_executable(bonsai_tests
     unit/test_model_io.cpp
 )
 
+if(BONSAI_CUDA)
+    target_sources(bonsai_tests PRIVATE unit/test_cuda_grower.cpp)
+endif()
+
 target_link_libraries(bonsai_tests PRIVATE
     bonsai_data
     bonsai_io
