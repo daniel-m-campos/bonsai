@@ -1,6 +1,6 @@
 # 11 — GPU-resident growing
 
-> **Status:** design (decision 40). Stages land incrementally on the phase-3 branch, each gated on the MSD ladder (`make bench-gpu`); measured tables replace the estimates below as stages land. Baseline evidence: [reviews/2026-07-03-design-review-cuda.md](../reviews/2026-07-03-design-review-cuda.md) (A100 validation section).
+> **Status:** landed (decision 40; commits 556310b, a1a40c4, a644358 on cuda-phase2). A100 MSD ladder: 13.1 s (phase 2) → 7.5 (stage A) → 5.4 (stage B) → **5.0 s** (stage C) vs xgboost-GPU 1.8 s; RMSE 8.9911 at every stage; 392/392 both configs; CPU builds bit-identical. Grow-loop time is ~2.5 s — near xgboost's train phase — with CSV parse + binning (~2.5 s, outside this design's scope) now the largest remaining block. Baseline evidence: [reviews/2026-07-03-design-review-cuda.md](../reviews/2026-07-03-design-review-cuda.md).
 
 ## Why
 
@@ -61,9 +61,9 @@ Landed (commit a1a40c4): A100 MSD fit 5.41 s, RMSE 8.9911 unchanged, 392/392 bot
 
 The device keeps decision 17's shape: one concatenated row array in level order plus per-node (offset, count) segments — exactly what `populate_many` already assembles per level, made persistent and double-buffered. Partitioning is three kernels per level: route flags (same `goes_left` logic: bin compare, last-bin routes by `default_left`), a hand-rolled exclusive scan (block scan → block-sums scan → offset add; no CUB/Thrust, keeping the TU self-contained), and a stable scatter that carries the ordered gradients along — which also deletes the per-level gather kernel. Stability preserves the CPU's ascending per-node row order. A leaf-assignment kernel stamps `leaf_ids` at end of tree; `route_unsampled` and leaf renewal stay host-side and unchanged.
 
-## Stage C — residual trims (est. → ~2.5–3.5 s; xgboost-GPU is 1.8 s)
+## Stage C — residual trims (measured: 5.4 → 5.0 s)
 
-Gradient interleave moves on-device (deletes the serial 463k-row float2 pack per tree), small per-level transfers move to pinned staging, and a sync audit enforces exactly one blocking copy per level (split results) plus one per tree (leaf ids).
+Landed (commit a644358): gradient interleave moved on-device (raw grad/hess uploads feed an interleave kernel, deleting the serial per-tree float2 pack) and the find kernel assigns one selected feature per warp lane instead of one per 32-lane block — full utilization, identical per-feature scan and tie-break (find-sync 1.33 → 0.98 s). Pinned staging was evaluated and skipped: per-level transfers are already tens of microseconds. Syncs stand at two per level (split results, partition counts) plus one leaf download per tree.
 
 ## Determinism and parity
 
