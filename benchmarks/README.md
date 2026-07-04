@@ -62,4 +62,6 @@ make bench-gpu                   # or: uv run scripts/bench_gpu.py --threads 16
 ctest --test-dir build-cuda -j16 # before claiming a win
 ```
 
+JSONL sync discipline: the node appends to the tracked results file, so always `scp` the node's copy back to the workstation and commit it there, then `git checkout -- benchmarks/results/gpu_msd.jsonl` on the node before `git pull` (the repo copy already contains the node's entries).
+
 `bench-gpu` runs bonsai cuda_depthwise / bonsai CPU / xgboost CPU / xgboost GPU with the hyperparameters from `configs/year_prediction_msd.toml`, prints fit time, RMSE, the gap to xgboost-GPU, and the `BONSAI_CUDA_PROFILE` + `BONSAI_GROW_PROFILE` breakdowns, and appends one JSON line per variant to `benchmarks/results/gpu_msd.jsonl` (keyed by git sha + GPU name) — regression tracking is a diff of that file. Pin threads explicitly on many-core hosts (`n_threads=0` collapses: issue #2). A100 reference points (2026-07-04, commit 1e20154): bonsai GPU 12.2 s, xgboost GPU 1.8 s, RMSE 8.9911.

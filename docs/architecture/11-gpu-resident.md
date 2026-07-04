@@ -55,9 +55,9 @@ Two ping-pong device buffers hold parent/child level histograms (≈94 MB each a
 
 The find kernel (grid: feature × node) runs a sequential double-precision prefix scan over the cut cells in the same order as the CPU scan — both `default_left` routings, `min_child_hess`, monotone feasibility via the header-inline `bounded_leaf_weight` (directly usable in the .cu TU; the single-toolchain design paying off), interaction mask, `min_gain_to_split`. A reduce kernel picks the per-node winner with the same lowest-feature-id tie-break as `reduce_in_feature_order`, structurally preserving the CPU's choice up to floating-point rounding.
 
-## Stage B — device partitioning + resident rows (est. ~8 → ~4 s)
+## Stage B — device partitioning + resident rows (measured: 7.5 → 5.4 s)
 
-Deletes: row upload (1.4 s), host partition (~2.5 s est.), per-node row-vector churn.
+Landed (commit a1a40c4): A100 MSD fit 5.41 s, RMSE 8.9911 unchanged, 392/392 both configs. Host partition fell 1.6 → 0.19 s and per-level row uploads are gone; remaining attributed time is the per-tree gradient upload (~0.6 s, stage C's device-interleave target) plus ~2 s of real device kernel work — and CSV parse + binning outside the grow loop is now the largest single block, a post-phase-3 candidate.
 
 The device keeps decision 17's shape: one concatenated row array in level order plus per-node (offset, count) segments — exactly what `populate_many` already assembles per level, made persistent and double-buffered. Partitioning is three kernels per level: route flags (same `goes_left` logic: bin compare, last-bin routes by `default_left`), a hand-rolled exclusive scan (block scan → block-sums scan → offset add; no CUB/Thrust, keeping the TU self-contained), and a stable scatter that carries the ordered gradients along — which also deletes the per-level gather kernel. Stability preserves the CPU's ascending per-node row order. A leaf-assignment kernel stamps `leaf_ids` at end of tree; `route_unsampled` and leaf renewal stay host-side and unchanged.
 
