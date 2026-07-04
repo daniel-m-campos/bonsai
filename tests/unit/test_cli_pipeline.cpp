@@ -48,9 +48,8 @@ TEST_CASE("train_in_memory: progress callback fires n_iters times in 1..n order"
     auto const loaded = load_train_from_csv(cfg, cfg.data.train);
 
     std::vector<size_t> iters;
-    auto                     booster =
-        train_in_memory(cfg, loaded.train, [&](size_t iter, size_t /*total*/)
-                        { iters.push_back(iter); });
+    auto booster = train_in_memory(cfg, loaded.train, [&](size_t iter, size_t /*total*/)
+                                   { iters.push_back(iter); });
 
     REQUIRE(iters.size() == cfg.booster_config.n_iters);
     for (size_t i = 0; i < iters.size(); ++i)
@@ -93,23 +92,23 @@ TEST_CASE("train_with_progress: early stopping truncates to the best iteration",
     // couple of trees, so a small patience must stop well before n_iters and
     // the kept model must have best_iter + 1 <= n_iters trees.
     Config cfg;
-    cfg.data.train                          = k_tiny_path;
-    cfg.data.valid                          = {k_tiny_path};
-    cfg.bin_mapper.max_bin                  = 8;
-    cfg.bin_mapper.n_samples                = 100;
-    cfg.booster_config.n_iters              = 200;
-    cfg.booster_config.learning_rate        = 0.5F;
+    cfg.data.train                           = k_tiny_path;
+    cfg.data.valid                           = {k_tiny_path};
+    cfg.bin_mapper.max_bin                   = 8;
+    cfg.bin_mapper.n_samples                 = 100;
+    cfg.booster_config.n_iters               = 200;
+    cfg.booster_config.learning_rate         = 0.5F;
     cfg.booster_config.early_stopping_rounds = 3;
-    cfg.tree_config.min_data_in_leaf        = 0;
-    cfg.tree_config.min_child_hess          = 0.0F;
+    cfg.tree_config.min_data_in_leaf         = 0;
+    cfg.tree_config.min_child_hess           = 0.0F;
 
     auto const loaded  = load_train_and_valid_from_csv(cfg);
     auto       booster = train_with_progress(cfg, loaded, {});
     CHECK(booster->n_iters() < 200);
 
-    Config no_es                          = cfg;
+    Config no_es                               = cfg;
     no_es.booster_config.early_stopping_rounds = 0;
-    auto const loaded2                    = load_train_and_valid_from_csv(no_es);
+    auto const loaded2                         = load_train_and_valid_from_csv(no_es);
     auto       full = train_with_progress(no_es, loaded2, {});
     CHECK(full->n_iters() == 200);
 }
@@ -131,10 +130,10 @@ TEST_CASE("train_with_progress: warm start continues a saved model",
     auto       straight = train_with_progress(cfg, loaded_a, {});
 
     // Warm start: 3 iterations, save, reload, 3 more.
-    Config half                  = cfg;
-    half.booster_config.n_iters  = 3;
-    auto const loaded_b          = load_train_and_valid_from_csv(half);
-    auto       first             = train_with_progress(half, loaded_b, {});
+    Config half                 = cfg;
+    half.booster_config.n_iters = 3;
+    auto const loaded_b         = load_train_and_valid_from_csv(half);
+    auto       first            = train_with_progress(half, loaded_b, {});
     auto const tmp = std::string{BONSAI_TESTS_DATA_DIR} + "/_warm_start_tmp.msgpack";
     io::save_booster(*first, tmp, loaded_b.mappers, half);
 

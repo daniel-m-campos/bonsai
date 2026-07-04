@@ -72,16 +72,14 @@ void require_hists_match(SplitInput const &cpu, SplitInput const &gpu)
         for (size_t b = 0; b < cpu.hists[f].size(); ++b)
         {
             auto const bin = static_cast<bin_id_t>(b);
-            REQUIRE_THAT(gpu.hists[f][bin].sum_grad,
-                         Catch::Matchers::WithinRel(cpu.hists[f][bin].sum_grad,
-                                                    1e-4) ||
-                             Catch::Matchers::WithinAbs(
-                                 cpu.hists[f][bin].sum_grad, 1e-5));
-            REQUIRE_THAT(gpu.hists[f][bin].sum_hess,
-                         Catch::Matchers::WithinRel(cpu.hists[f][bin].sum_hess,
-                                                    1e-4) ||
-                             Catch::Matchers::WithinAbs(
-                                 cpu.hists[f][bin].sum_hess, 1e-5));
+            REQUIRE_THAT(
+                gpu.hists[f][bin].sum_grad,
+                Catch::Matchers::WithinRel(cpu.hists[f][bin].sum_grad, 1e-4) ||
+                    Catch::Matchers::WithinAbs(cpu.hists[f][bin].sum_grad, 1e-5));
+            REQUIRE_THAT(
+                gpu.hists[f][bin].sum_hess,
+                Catch::Matchers::WithinRel(cpu.hists[f][bin].sum_hess, 1e-4) ||
+                    Catch::Matchers::WithinAbs(cpu.hists[f][bin].sum_hess, 1e-5));
         }
     }
 }
@@ -93,8 +91,8 @@ TEST_CASE("CudaHistogramBuilder matches CPU histograms on all rows",
     {
         SKIP("no usable CUDA device");
     }
-    auto scenario = random_scenario();
-    auto const &ds = scenario.built.ds;
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
 
     std::vector<feature_id_t> selected(ds.n_features());
     std::iota(selected.begin(), selected.end(), feature_id_t{0});
@@ -121,8 +119,8 @@ TEST_CASE("CudaHistogramBuilder matches CPU histograms on a row subset",
     {
         SKIP("no usable CUDA device");
     }
-    auto scenario = random_scenario();
-    auto const &ds = scenario.built.ds;
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
 
     // Every third row, plus a feature subset with a placeholder gap.
     std::vector<row_id_t> rows;
@@ -148,15 +146,14 @@ TEST_CASE("CudaHistogramBuilder matches CPU histograms on a row subset",
     require_hists_match(cpu_node, gpu_node);
 }
 
-TEST_CASE("CudaDepthwiseGrower predictions match DepthwiseGrower",
-          "[cuda][grower]")
+TEST_CASE("CudaDepthwiseGrower predictions match DepthwiseGrower", "[cuda][grower]")
 {
     if (!cuda_available())
     {
         SKIP("no usable CUDA device");
     }
-    auto scenario = random_scenario();
-    auto const &ds = scenario.built.ds;
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
 
     TreeConfig cfg;
     cfg.max_depth        = 5;
@@ -171,8 +168,7 @@ TEST_CASE("CudaDepthwiseGrower predictions match DepthwiseGrower",
     REQUIRE(cpu.values.size() == gpu.values.size());
     for (size_t r = 0; r < cpu.values.size(); ++r)
     {
-        REQUIRE_THAT(gpu.values[r],
-                     Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
+        REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
     }
 }
 
@@ -192,12 +188,10 @@ TEST_CASE("CudaDepthwiseGrower handles consecutive trees and datasets",
     cfg.max_depth = 3;
 
     CudaDepthwiseGrower grower(cfg);
-    auto const first =
-        grower.grow(scenario_a.built.ds, scenario_a.grad, scenario_a.hess,
-                    scenario_a.rows);
-    auto const second =
-        grower.grow(scenario_a.built.ds, scenario_a.grad, scenario_a.hess,
-                    scenario_a.rows);
+    auto const          first  = grower.grow(scenario_a.built.ds, scenario_a.grad,
+                                             scenario_a.hess, scenario_a.rows);
+    auto const          second = grower.grow(scenario_a.built.ds, scenario_a.grad,
+                                             scenario_a.hess, scenario_a.rows);
     // Not bit-exact: atomic accumulation order differs between runs, so the
     // two grows may disagree in the last ulps even on identical inputs.
     for (size_t r = 0; r < first.values.size(); ++r)

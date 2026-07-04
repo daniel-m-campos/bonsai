@@ -65,7 +65,7 @@ float parse_field(std::string_view raw, bool missing_nan, std::optional<float> s
         }
         throw std::runtime_error("csv::parse: empty field with missing_nan=false");
     }
-    float      val{};
+    float val{};
     auto const [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), val);
     if (ec != std::errc{} || ptr != s.data() + s.size())
     {
@@ -264,10 +264,17 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
                                         cfg.missing_sentinel);
             switch (dest[c].kind)
             {
-            case ColDest::Kind::feature: batch.features[dest[c].idx][r] = v; break;
-            case ColDest::Kind::label:   batch.labels[r] = v; break;
-            case ColDest::Kind::weight:  batch.weights[r] = v; break;
-            case ColDest::Kind::ignore:  break;
+            case ColDest::Kind::feature:
+                batch.features[dest[c].idx][r] = v;
+                break;
+            case ColDest::Kind::label:
+                batch.labels[r] = v;
+                break;
+            case ColDest::Kind::weight:
+                batch.weights[r] = v;
+                break;
+            case ColDest::Kind::ignore:
+                break;
             }
             ++c;
             start = i + 1;
@@ -298,8 +305,7 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
                                      }
                                  }
                              });
-    if (size_t const bad = first_bad.load();
-        bad != std::numeric_limits<size_t>::max())
+    if (size_t const bad = first_bad.load(); bad != std::numeric_limits<size_t>::max())
     {
         parse_line_into(bad); // throws with the field-level message
         throw std::runtime_error("csv::parse: malformed row in '" + path + "'");
@@ -359,8 +365,8 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
     size_t pos = 0;
     while (pos < buf.size())
     {
-        size_t const nl  = buf.find('\n', pos);
-        size_t const end = nl == std::string::npos ? buf.size() : nl;
+        size_t const     nl  = buf.find('\n', pos);
+        size_t const     end = nl == std::string::npos ? buf.size() : nl;
         std::string_view line{buf.data() + pos, end - pos};
         pos = end + 1;
         if (!line.empty() && line.back() == '\r')
@@ -393,8 +399,8 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
             size_t const colon = line.find(':', cursor);
             if (colon == std::string_view::npos)
             {
-                throw std::runtime_error("libsvm::parse: malformed pair in '" +
-                                         path + "'");
+                throw std::runtime_error("libsvm::parse: malformed pair in '" + path +
+                                         "'");
             }
             uint32_t idx{};
             std::from_chars(line.data() + cursor, line.data() + colon, idx);
@@ -404,8 +410,8 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
             if (idx == 0)
             {
                 throw std::runtime_error(
-                    "libsvm::parse: feature indices are 1-based; got 0 in '" +
-                    path + "'");
+                    "libsvm::parse: feature indices are 1-based; got 0 in '" + path +
+                    "'");
             }
             rows.back().push_back({.feature = idx - 1, .value = val});
             max_feature = std::max(max_feature, idx - 1);
@@ -413,14 +419,14 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
         }
     }
 
-    ColumnBatch batch;
-    size_t const n_rows     = labels.size();
-    size_t const inferred   = labels.empty() ? 0 : max_feature + 1;
+    ColumnBatch  batch;
+    size_t const n_rows   = labels.size();
+    size_t const inferred = labels.empty() ? 0 : max_feature + 1;
     size_t const n_features =
         cfg.libsvm_n_features > 0
             ? std::max(inferred, static_cast<size_t>(cfg.libsvm_n_features))
             : inferred;
-    batch.labels            = std::move(labels);
+    batch.labels = std::move(labels);
     batch.features.assign(n_features, std::vector<float>(n_rows, 0.0F));
     for (size_t r = 0; r < n_rows; ++r)
     {

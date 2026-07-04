@@ -24,9 +24,9 @@ float quantile_in_place(std::span<float> v, float alpha)
 {
     assert(!v.empty());
     auto const k = std::min<size_t>(
-        v.size() - 1, static_cast<size_t>(std::llround(
-                          static_cast<double>(alpha) *
-                          static_cast<double>(v.size() - 1))));
+        v.size() - 1,
+        static_cast<size_t>(std::llround(static_cast<double>(alpha) *
+                                         static_cast<double>(v.size() - 1))));
     std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(k), v.end());
     return v[k];
 }
@@ -94,9 +94,9 @@ void LogLossObjective::compute(floats_view scores, floats_view labels, floats_ou
                              [&](size_t i)
                              {
                                  float const score = scores[i];
-                                 float const p = 1.0F / (1.0F + std::exp(-score));
-                                 grad[i]       = p - labels[i];
-                                 hess[i]       = p * (1.0F - p);
+                                 float const p     = 1.0F / (1.0F + std::exp(-score));
+                                 grad[i]           = p - labels[i];
+                                 hess[i]           = p * (1.0F - p);
                              });
 }
 
@@ -148,10 +148,9 @@ auto MAEObjective::eval(floats_view preds, floats_view targets)
 {
     assert(preds.size() == targets.size());
     assert(!preds.empty());
-    float const sum = std::transform_reduce(preds.begin(), preds.end(),
-                                            targets.begin(), 0.0F, std::plus<>(),
-                                            [](auto const p, auto const t)
-                                            { return std::abs(p - t); });
+    float const sum = std::transform_reduce(
+        preds.begin(), preds.end(), targets.begin(), 0.0F, std::plus<>(),
+        [](auto const p, auto const t) { return std::abs(p - t); });
     return sum / static_cast<float>(preds.size());
 }
 
@@ -214,8 +213,8 @@ float HuberObjective::renew_leaf(std::span<float> residuals) const
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-void QuantileObjective::compute(floats_view preds, floats_view targets,
-                                floats_out grad, floats_out hess) const
+void QuantileObjective::compute(floats_view preds, floats_view targets, floats_out grad,
+                                floats_out hess) const
 {
     assert(preds.size() == targets.size());
     float const a = alpha_;
@@ -233,16 +232,15 @@ auto QuantileObjective::eval(floats_view preds, floats_view targets) const
 {
     assert(preds.size() == targets.size());
     assert(!preds.empty());
-    float const a   = alpha_;
-    float const sum = std::transform_reduce(
-        preds.begin(), preds.end(), targets.begin(), 0.0F, std::plus<>(),
-        [a](auto const p, auto const t)
-        { return t >= p ? a * (t - p) : (1.0F - a) * (p - t); });
+    float const a = alpha_;
+    float const sum =
+        std::transform_reduce(preds.begin(), preds.end(), targets.begin(), 0.0F,
+                              std::plus<>(), [a](auto const p, auto const t)
+                              { return t >= p ? a * (t - p) : (1.0F - a) * (p - t); });
     return sum / static_cast<float>(preds.size());
 }
 
-auto QuantileObjective::init_score(floats_view targets) const
-    -> floats_view::value_type
+auto QuantileObjective::init_score(floats_view targets) const -> floats_view::value_type
 {
     return quantile_of(targets, alpha_);
 }
@@ -262,8 +260,7 @@ void SoftmaxObjective::compute(floats_view /*preds*/, floats_view /*targets*/,
 
 float SoftmaxObjective::eval(floats_view /*preds*/, floats_view /*targets*/)
 {
-    throw std::logic_error(
-        "softmax eval needs K columns; use MulticlassBooster::eval");
+    throw std::logic_error("softmax eval needs K columns; use MulticlassBooster::eval");
 }
 
 float SoftmaxObjective::init_score(floats_view /*targets*/)

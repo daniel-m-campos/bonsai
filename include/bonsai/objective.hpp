@@ -12,14 +12,13 @@ namespace bonsai
 // (huber_delta, quantile_alpha) can carry state. Parameter-free objectives
 // keep static methods — statics satisfy instance-call syntax.
 template <typename T>
-concept Objective =
-    std::constructible_from<T, Config const &> &&
-    requires(T const &o, floats_view preds, floats_view targets, floats_out grad,
-             floats_out hess) {
-        { o.compute(preds, targets, grad, hess) } -> std::same_as<void>;
-        { o.eval(preds, targets) } -> std::same_as<float>;
-        { o.init_score(targets) } -> std::same_as<float>;
-    };
+concept Objective = std::constructible_from<T, Config const &> &&
+                    requires(T const &o, floats_view preds, floats_view targets,
+                             floats_out grad, floats_out hess) {
+                        { o.compute(preds, targets, grad, hess) } -> std::same_as<void>;
+                        { o.eval(preds, targets) } -> std::same_as<float>;
+                        { o.init_score(targets) } -> std::same_as<float>;
+                    };
 
 struct MSEObjective
 {
@@ -63,9 +62,9 @@ struct HuberObjective
 {
     HuberObjective() = default;
     explicit HuberObjective(Config const &cfg) : delta_(cfg.objective.huber_delta) {}
-    void  compute(floats_view preds, floats_view targets, floats_out grad,
-                  floats_out hess) const;
-    float eval(floats_view preds, floats_view targets) const;
+    void         compute(floats_view preds, floats_view targets, floats_out grad,
+                         floats_out hess) const;
+    float        eval(floats_view preds, floats_view targets) const;
     static float init_score(floats_view targets); // median
     // LightGBM-style huber renewal: residual median plus the mean of the
     // delta-clamped deviations from it. Reorders in place.
@@ -79,8 +78,7 @@ struct HuberObjective
 struct QuantileObjective
 {
     QuantileObjective() = default;
-    explicit QuantileObjective(Config const &cfg)
-        : alpha_(cfg.objective.quantile_alpha)
+    explicit QuantileObjective(Config const &cfg) : alpha_(cfg.objective.quantile_alpha)
     {
     }
     void  compute(floats_view preds, floats_view targets, floats_out grad,

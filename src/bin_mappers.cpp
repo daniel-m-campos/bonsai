@@ -21,8 +21,7 @@ BinMappers BinMappers::fit(detail::ColumnBatch const &batch, BinMapperConfig con
     // identical to a serial pass. Optional slots because BinMapper has no
     // default constructor.
     std::vector<std::optional<BinMapper>> slots(batch.features.size());
-    parallel::for_each_index(batch.features.size(),
-                             [&](size_t f)
+    parallel::for_each_index(batch.features.size(), [&](size_t f)
                              { slots[f] = BinMapper::fit(batch.features[f], cfg); });
 
     BinMappers out;

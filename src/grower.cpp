@@ -23,7 +23,7 @@ void CpuHistogramBuilder::populate(Dataset const &ds, floats_view grad,
     // with scattered indices (n_features x full-array traffic otherwise).
     static thread_local std::vector<float> ordered_grad;
     static thread_local std::vector<float> ordered_hess;
-    size_t const n = node.rows.size();
+    size_t const                           n = node.rows.size();
     ordered_grad.resize(n);
     ordered_hess.resize(n);
     // Capture raw pointers: naming the thread_local inside the parallel

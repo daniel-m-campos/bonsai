@@ -57,8 +57,7 @@ class IBooster
 
     // Per-row, per-tree leaf indices (DenseTree node ids / ObliviousTree
     // table indices): out is n_rows * n_iters(), row-major by row.
-    virtual void predict_leaf(features_view X,
-                              std::span<node_id_t> out) const = 0;
+    virtual void predict_leaf(features_view X, std::span<node_id_t> out) const = 0;
 
     // Human-readable dump of every tree (feature names optional).
     virtual std::string dump(std::span<std::string const> feature_names) const = 0;
@@ -73,7 +72,7 @@ class IBooster
     // Incremental prediction support for early stopping: accumulate only the
     // newest tree's (shrinkage-scaled) contribution into `scores`, a buffer
     // the caller initialized to score_base() before the first tree.
-    virtual float score_base() const                                        = 0;
+    virtual float score_base() const                                             = 0;
     virtual void  accumulate_last_tree(features_view X, floats_out scores) const = 0;
     // Drop trees beyond the first n_trees (keep the best iteration's model).
     virtual void truncate(size_t n_trees) = 0;
@@ -109,21 +108,19 @@ inline void accumulate_train_contribution(DenseTree const &tree, Dataset const &
             node_id_t idx = 0;
             while (!DenseTree::is_leaf(nodes[idx]))
             {
-                auto const    &nd   = nodes[idx];
-                auto const    &bins = ds.feature_bins(nd.feature_id);
-                auto const     last =
-                    static_cast<bin_id_t>(ds.n_bins(nd.feature_id) - 1);
+                auto const &nd   = nodes[idx];
+                auto const &bins = ds.feature_bins(nd.feature_id);
+                auto const  last = static_cast<bin_id_t>(ds.n_bins(nd.feature_id) - 1);
                 bin_id_t const b = bins[r];
-                bool const     left =
-                    (b == last) ? nd.default_left : b <= tbin[idx];
-                idx = left ? nd.left : nd.right;
+                bool const     left = (b == last) ? nd.default_left : b <= tbin[idx];
+                idx                 = left ? nd.left : nd.right;
             }
             out[r] += nodes[idx].threshold_or_value;
         });
 }
 
-inline void accumulate_train_contribution(ObliviousTree const &tree,
-                                          Dataset const &ds, floats_out out)
+inline void accumulate_train_contribution(ObliviousTree const &tree, Dataset const &ds,
+                                          floats_out out)
 {
     auto const           &splits = tree.splits();
     std::vector<bin_id_t> tbin(splits.size(), 0);
@@ -140,14 +137,12 @@ inline void accumulate_train_contribution(ObliviousTree const &tree,
             size_t index = 0;
             for (size_t lvl = 0; lvl < splits.size(); ++lvl)
             {
-                auto const    &s    = splits[lvl];
-                auto const    &bins = ds.feature_bins(s.feature_id);
-                auto const     last =
-                    static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
+                auto const &s    = splits[lvl];
+                auto const &bins = ds.feature_bins(s.feature_id);
+                auto const  last = static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
                 bin_id_t const b = bins[r];
-                bool const     left =
-                    (b == last) ? s.default_left : b <= tbin[lvl];
-                index = (index << 1U) | (left ? 0U : 1U);
+                bool const     left = (b == last) ? s.default_left : b <= tbin[lvl];
+                index               = (index << 1U) | (left ? 0U : 1U);
             }
             out[r] += tree.leaf_table()[index];
         });
@@ -177,8 +172,7 @@ inline void dump_tree(DenseTree const &tree, std::span<std::string const> names,
         out += feature_label(names, n.feature_id) +
                " <= " + std::to_string(n.threshold_or_value) +
                (n.default_left ? " [nan->left]" : " [nan->right]") +
-               " gain=" +
-               std::to_string(id < gains.size() ? gains[id] : 0.0F) + "\n";
+               " gain=" + std::to_string(id < gains.size() ? gains[id] : 0.0F) + "\n";
         self(self, n.left, depth + 1);
         self(self, n.right, depth + 1);
     };
@@ -196,8 +190,7 @@ inline void dump_tree(ObliviousTree const &tree, std::span<std::string const> na
                feature_label(names, splits[lvl].feature_id) +
                " <= " + std::to_string(splits[lvl].threshold) +
                (splits[lvl].default_left ? " [nan->left]" : " [nan->right]") +
-               " gain=" +
-               std::to_string(lvl < gains.size() ? gains[lvl] : 0.0F) + "\n";
+               " gain=" + std::to_string(lvl < gains.size() ? gains[lvl] : 0.0F) + "\n";
     }
     out += "leaves:";
     for (float const v : tree.leaf_table())
@@ -224,9 +217,8 @@ inline void accumulate_importance(DenseTree const &tree, ImportanceType type,
         {
             out.resize(f + 1, 0.0);
         }
-        out[f] += type == ImportanceType::split
-                      ? 1.0
-                      : (i < gains.size() ? gains[i] : 0.0F);
+        out[f] +=
+            type == ImportanceType::split ? 1.0 : (i < gains.size() ? gains[i] : 0.0F);
     }
 }
 
@@ -249,7 +241,7 @@ inline void accumulate_importance(ObliviousTree const &tree, ImportanceType type
 }
 
 inline void shap_one_row(DenseTree const &tree, features_view X, row_id_t row,
-                          std::span<double> phi)
+                         std::span<double> phi)
 {
     tree_shap(tree, X, row, phi);
 }
@@ -257,8 +249,7 @@ inline void shap_one_row(DenseTree const &tree, features_view X, row_id_t row,
 inline void shap_one_row(ObliviousTree const & /*tree*/, features_view /*X*/,
                          row_id_t /*row*/, std::span<double> /*phi*/)
 {
-    throw std::runtime_error(
-        "pred_contribs is not supported for oblivious trees");
+    throw std::runtime_error("pred_contribs is not supported for oblivious trees");
 }
 
 } // namespace internal
@@ -273,8 +264,9 @@ class Booster final : public IBooster
     using tree_type      = typename Gr::Tree;
 
     explicit Booster(Config const &config)
-        : config_(config.booster_config), objective_(config), grower_(config.tree_config),
-          sampler_(config), rng_(config.booster_config.random_seed)
+        : config_(config.booster_config), objective_(config),
+          grower_(config.tree_config), sampler_(config),
+          rng_(config.booster_config.random_seed)
     {
     }
 
@@ -301,11 +293,8 @@ class Booster final : public IBooster
                 }
                 scores_.resize(train.n_rows());
                 parallel::for_each_index(
-                    train.n_rows(),
-                    [&](size_t i) {
-                        scores_[i] =
-                            init_score_ + (config_.learning_rate * raw[i]);
-                    });
+                    train.n_rows(), [&](size_t i)
+                    { scores_[i] = init_score_ + (config_.learning_rate * raw[i]); });
             }
         }
 
@@ -333,8 +322,7 @@ class Booster final : public IBooster
                                                             dropped_sum);
                 }
                 parallel::for_each_index(
-                    scores_.size(),
-                    [&](size_t i)
+                    scores_.size(), [&](size_t i)
                     { scores_[i] -= config_.learning_rate * dropped_sum[i]; });
             }
         }
@@ -385,22 +373,19 @@ class Booster final : public IBooster
             }
             // scores_ currently exclude the dropped trees entirely; add back
             // their rescaled contribution plus the scaled new tree.
-            parallel::for_each_index(
-                scores_.size(),
-                [&](size_t i)
-                {
-                    scores_[i] += config_.learning_rate *
-                                  ((old_scale * dropped_sum[i]) +
-                                   (new_scale * leaf_values[i]));
-                });
+            parallel::for_each_index(scores_.size(),
+                                     [&](size_t i)
+                                     {
+                                         scores_[i] += config_.learning_rate *
+                                                       ((old_scale * dropped_sum[i]) +
+                                                        (new_scale * leaf_values[i]));
+                                     });
         }
         else
         {
-            parallel::for_each_index(scores_.size(),
-                                     [&](size_t i) {
-                                         scores_[i] +=
-                                             config_.learning_rate * leaf_values[i];
-                                     });
+            parallel::for_each_index(
+                scores_.size(), [&](size_t i)
+                { scores_[i] += config_.learning_rate * leaf_values[i]; });
         }
 
         trees_.push_back(std::move(tree));
@@ -466,12 +451,11 @@ class Booster final : public IBooster
         return out;
     }
 
-    void predict_at(features_view X, floats_out scores,
-                    size_t n_trees) const override
+    void predict_at(features_view X, floats_out scores, size_t n_trees) const override
     {
         assert(X.extent(0) == scores.size());
-        size_t const k = n_trees == 0 ? trees_.size()
-                                      : std::min(n_trees, trees_.size());
+        size_t const k =
+            n_trees == 0 ? trees_.size() : std::min(n_trees, trees_.size());
         std::fill(scores.begin(), scores.end(), 0.0F);
         for (size_t t = 0; t < k; ++t)
         {
@@ -492,10 +476,8 @@ class Booster final : public IBooster
         {
             trees_[t].predict(X, raw);
             parallel::for_each_index(
-                n, [&](size_t i) {
-                    out[(t * n) + i] =
-                        init_score_ + (raw[i] * config_.learning_rate);
-                });
+                n, [&](size_t i)
+                { out[(t * n) + i] = init_score_ + (raw[i] * config_.learning_rate); });
         }
     }
 
@@ -504,16 +486,15 @@ class Booster final : public IBooster
         size_t const n = X.extent(0);
         assert(out.size() == n * trees_.size());
         size_t const n_trees = trees_.size();
-        parallel::for_each_index(
-            n,
-            [&](size_t i)
-            {
-                for (size_t t = 0; t < n_trees; ++t)
-                {
-                    out[(i * n_trees) + t] =
-                        trees_[t].leaf_for(X, static_cast<row_id_t>(i));
-                }
-            });
+        parallel::for_each_index(n,
+                                 [&](size_t i)
+                                 {
+                                     for (size_t t = 0; t < n_trees; ++t)
+                                     {
+                                         out[(i * n_trees) + t] = trees_[t].leaf_for(
+                                             X, static_cast<row_id_t>(i));
+                                     }
+                                 });
     }
 
     std::string dump(std::span<std::string const> feature_names) const override
@@ -541,8 +522,7 @@ class Booster final : public IBooster
                 std::ranges::fill(phi, 0.0);
                 for (auto const &tree : trees_)
                 {
-                    internal::shap_one_row(tree, X, static_cast<row_id_t>(i),
-                                           phi);
+                    internal::shap_one_row(tree, X, static_cast<row_id_t>(i), phi);
                 }
                 for (double &v : phi)
                 {
@@ -563,8 +543,7 @@ class Booster final : public IBooster
         assert(X.extent(0) == scores.size());
         std::vector<float> raw(scores.size(), 0.0F);
         trees_.back().predict(X, raw);
-        parallel::for_each_index(scores.size(),
-                                 [&](size_t i)
+        parallel::for_each_index(scores.size(), [&](size_t i)
                                  { scores[i] += config_.learning_rate * raw[i]; });
     }
 

@@ -16,9 +16,9 @@
 #include "bonsai/registry/make_booster.hpp"
 #include "bonsai/registry/names.hpp"
 #include "bonsai/registry/typelists.hpp"
-#include "test_grower_helpers.hpp"
 #include "bonsai/typelist.hpp"
 #include "bonsai/types.hpp"
+#include "test_grower_helpers.hpp"
 
 using namespace bonsai; // NOLINT
 
@@ -94,7 +94,6 @@ template <> detail::ColumnBatch batch_for<LogLossObjective>()
     };
 }
 
-
 template <> detail::ColumnBatch batch_for<MAEObjective>()
 {
     return batch_for<MSEObjective>();
@@ -109,7 +108,6 @@ template <> detail::ColumnBatch batch_for<QuantileObjective>()
 {
     return batch_for<MSEObjective>();
 }
-
 
 template <> detail::ColumnBatch batch_for<SoftmaxObjective>()
 {
