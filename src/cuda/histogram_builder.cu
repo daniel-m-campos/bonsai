@@ -99,6 +99,18 @@ template <typename T> class DeviceBuffer
     size_t capacity_ = 0;
 };
 
+// Interleaves the raw grad/hess uploads into float2 pairs on the device,
+// replacing the serial per-tree host pack.
+__global__ void interleave_kernel(float const *grad, float const *hess,
+                                  uint32_t n, float2 *gh)
+{
+    uint32_t const span = gridDim.x * blockDim.x;
+    for (uint32_t r = (blockIdx.x * blockDim.x) + threadIdx.x; r < n; r += span)
+    {
+        gh[r] = {grad[r], hess[r]};
+    }
+}
+
 // Reorders (grad, hess) into level order once, so hist_kernel reads them
 // sequentially instead of re-gathering per feature.
 __global__ void gather_gh_kernel(float2 const *gh, uint32_t const *rows,
@@ -383,13 +395,13 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
                             double l1, double l2, double min_child_hess,
                             double min_gain, FeatBest *out)
 {
-    if (threadIdx.x != 0)
+    uint32_t const node = blockIdx.y;
+    uint32_t const sel  = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (sel >= n_sel)
     {
         return;
     }
-    uint32_t const node = blockIdx.y;
-    uint32_t const sel  = blockIdx.x;
-    FeatBest       best = {};
+    FeatBest best = {};
     out[(static_cast<size_t>(node) * n_sel) + sel] = best;
     if (allowed != nullptr && allowed[(static_cast<size_t>(node) * n_sel) + sel] == 0)
     {
@@ -507,6 +519,8 @@ struct CudaHistogramBuilder::Impl
     DeviceBuffer<uint16_t> bins16;
     bool                   bins_are_u8 = false;
     DeviceBuffer<uint32_t> n_bins;     // per-feature bin counts
+    DeviceBuffer<float>    grad_raw;   // per-tree raw uploads, interleaved below
+    DeviceBuffer<float>    hess_raw;
     DeviceBuffer<float2>   gh;         // interleaved (grad, hess) per row
     DeviceBuffer<float2>   gh_ordered; // gathered into level row order
     DeviceBuffer<uint32_t> rows;       // concatenated node row lists
@@ -529,7 +543,6 @@ struct CudaHistogramBuilder::Impl
     std::vector<uint32_t> host_rows;
     std::vector<uint32_t> host_ofs;
     std::vector<uint32_t> host_cnt;
-    std::vector<float2>   host_gh;
 
     // Resident level state (phase 3): ping-pong per-level histogram buffers,
     // slot-indexed [slot][sel][2 * max_sel_bins] like `out`. cur() holds the
@@ -678,12 +691,13 @@ void CudaHistogramBuilder::begin_tree(Dataset const &ds, floats_view grad,
 {
     impl_->ensure_dataset(ds);
     impl_->resident = false;
-    impl_->host_gh.resize(grad.size());
-    for (size_t r = 0; r < grad.size(); ++r)
-    {
-        impl_->host_gh[r] = {grad[r], hess[r]};
-    }
-    impl_->gh.upload(impl_->host_gh.data(), impl_->host_gh.size());
+    auto const n = static_cast<uint32_t>(grad.size());
+    impl_->grad_raw.upload(grad.data(), grad.size());
+    impl_->hess_raw.upload(hess.data(), hess.size());
+    impl_->gh.ensure(grad.size());
+    interleave_kernel<<<dim3(std::clamp<uint32_t>(n / 256, 1, 1024)), dim3(256)>>>(
+        impl_->grad_raw.get(), impl_->hess_raw.get(), n, impl_->gh.get());
+    check(cudaGetLastError(), "interleave launch");
 }
 
 void CudaHistogramBuilder::populate(Dataset const &ds, floats_view grad,
@@ -1239,7 +1253,7 @@ void CudaHistogramBuilder::find_splits_many(Dataset const &ds,
 
     im.feat_best.ensure(n * im.n_sel);
     im.node_best.ensure(n);
-    find_kernel<<<dim3(im.n_sel, static_cast<uint32_t>(n)), dim3(32)>>>(
+    find_kernel<<<dim3((im.n_sel + 31) / 32, static_cast<uint32_t>(n)), dim3(32)>>>(
         im.cur().get(), im.features.get(), im.n_bins.get(), im.node_sums.get(),
         im.node_bounds.get(), any_mask ? im.allowed.get() : nullptr,
         im.monotone.get(), im.n_sel, im.stride, config.lambda_l1, config.lambda_l2,
