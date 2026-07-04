@@ -69,8 +69,25 @@ bool CudaHistogramBuilder::resident() const
     return false;
 }
 
+void CudaHistogramBuilder::stamp_leaves(std::span<LeafStamp const> /*stamps*/)
+{
+    throw_unavailable();
+}
+
+void CudaHistogramBuilder::partition_level(Dataset const & /*ds*/,
+                                           std::span<PartitionOp const> /*ops*/,
+                                           std::span<uint32_t> /*child_counts*/)
+{
+    throw_unavailable();
+}
+
 void CudaHistogramBuilder::advance_level(Dataset const & /*ds*/,
                                          std::span<LevelOp const> /*ops*/)
+{
+    throw_unavailable();
+}
+
+void CudaHistogramBuilder::finalize_rows(std::span<node_id_t> /*leaf_by_row*/)
 {
     throw_unavailable();
 }

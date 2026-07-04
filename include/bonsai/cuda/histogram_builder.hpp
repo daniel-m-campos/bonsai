@@ -45,13 +45,31 @@ class CudaHistogramBuilder
     // the host fallback when begin_root declines.
 
     // One child-level derivation: the smaller child's histogram builds from
-    // its rows; the larger derives on-device as parent minus smaller.
+    // its device row segment; the larger derives on-device as parent minus
+    // smaller. Rows never cross the bus: partition_level wrote the segments.
     struct LevelOp
     {
-        uint32_t                  parent_slot;
-        uint32_t                  small_slot;
-        uint32_t                  large_slot;
-        std::span<row_id_t const> small_rows;
+        uint32_t parent_slot;
+        uint32_t small_slot;
+        uint32_t large_slot;
+    };
+
+    // One split's routing: partition the parent slot's row segment into the
+    // children, stably (left rows keep ascending order, then right rows).
+    struct PartitionOp
+    {
+        uint32_t     parent_slot;
+        uint32_t     left_slot;
+        uint32_t     right_slot;
+        feature_id_t feature_id;
+        bin_id_t     bin_id;
+        bool         default_left;
+    };
+
+    struct LeafStamp
+    {
+        uint32_t  slot;
+        node_id_t node_id;
     };
 
     // Starts the resident path for this tree: builds the root histogram into
@@ -61,9 +79,20 @@ class CudaHistogramBuilder
     bool begin_root(Dataset const &ds, floats_view grad, floats_view hess,
                     SplitInput &root, std::span<feature_id_t const> selected);
     bool resident() const;
+    // Records final leaf assignment for every row in the given slots'
+    // segments (call before the level advances past them).
+    void stamp_leaves(std::span<LeafStamp const> stamps);
+    // Routes every split slot's rows into its children on the device;
+    // child_counts receives (n_left, n_right) per op — the only partition
+    // data that returns to the host.
+    void partition_level(Dataset const &ds, std::span<PartitionOp const> ops,
+                         std::span<uint32_t> child_counts);
     // Populates all smaller children and subtracts all larger ones, then
     // makes the child level current.
     void advance_level(Dataset const &ds, std::span<LevelOp const> ops);
+    // End of tree: the per-row leaf assignment (indexed by row id; only rows
+    // this tree trained on carry fresh values).
+    void finalize_rows(std::span<node_id_t> leaf_by_row);
     // Best split per frontier node from the current level's device
     // histograms; child_sums receives the winning cut's (left, right) totals,
     // 2 cells per node. level[i] corresponds to slot i.

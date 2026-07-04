@@ -425,6 +425,12 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         sink += std::chrono::duration<double>(now - mark).count();
         mark = now;
     };
+    struct SlotLeaf
+    {
+        uint32_t  slot;
+        node_id_t node_id;
+    };
+    std::vector<SlotLeaf> leaf_slots;
     std::vector<Deferred> deferred;
     deferred.reserve(current.size());
     for (node_id_t i = 0; i < current.size(); ++i)
@@ -433,6 +439,7 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         auto const &split = splits[i];
         if (!split.valid) // assume valid incorporates all cfg parameter logic
         {
+            leaf_slots.push_back({static_cast<uint32_t>(i), node.id});
             finalize_as_leaf(nodes, node, config, n_leaves, values, leaf_ids);
             continue;
         }
@@ -463,55 +470,81 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
 
     lap(prof.bookkeep_s);
 
-    // Pass 1b: partition each parent's rows, one node per worker (child
-    // row order is scheduling-independent, so bit-identical to serial).
-    parallel::for_each_index(deferred.size(),
-                             [&](size_t i)
-                             {
-                                 Deferred &d = deferred[i];
-                                 d.p = partition_rows(ds, std::move(d.parent), d.split,
-                                                      d.left_id, d.right_id);
-                             });
-    for (auto &d : deferred)
-    {
-        covers[d.left_id]  = static_cast<float>(d.p.left.rows.size());
-        covers[d.right_id] = static_cast<float>(d.p.right.rows.size());
-    }
-
-    lap(prof.partition_s);
-
-    // Pass 2: populate every smaller sibling in one builder call. Resident
-    // builders take the whole level as slot ops: smalls build on the device
-    // and larges derive there by subtraction; child sums came from find.
+    // Resident path: leaves stamp their device segments, splits partition on
+    // the device (only child counts return), and the child level's
+    // histograms build/subtract in place. Rows never reach the host.
     bool used_device = false;
     if constexpr (requires {
+                      typename BuilderT::PartitionOp;
+                      typename BuilderT::LeafStamp;
                       typename BuilderT::LevelOp;
-                      builder.advance_level(
-                          ds, std::span<typename BuilderT::LevelOp const>{});
                   })
     {
         if (builder.resident())
         {
+            std::vector<typename BuilderT::LeafStamp> stamps;
+            stamps.reserve(leaf_slots.size());
+            for (SlotLeaf const &ls : leaf_slots)
+            {
+                stamps.push_back({ls.slot, ls.node_id});
+            }
+            builder.stamp_leaves(stamps);
+            std::vector<typename BuilderT::PartitionOp> pops;
+            pops.reserve(deferred.size());
+            for (uint32_t k = 0; k < deferred.size(); ++k)
+            {
+                Deferred const &d = deferred[k];
+                pops.push_back({d.parent_slot, 2 * k, (2 * k) + 1, d.split.feature_id,
+                                d.split.bin_id, d.split.default_left});
+            }
+            std::vector<uint32_t> counts(2 * deferred.size(), 0);
+            builder.partition_level(ds, pops, counts);
+            lap(prof.partition_s);
+
             std::vector<typename BuilderT::LevelOp> ops;
             ops.reserve(deferred.size());
             for (uint32_t k = 0; k < deferred.size(); ++k)
             {
-                Deferred  &d          = deferred[k];
-                bool const left_small = d.p.left.rows.size() <= d.p.right.rows.size();
+                Deferred      &d      = deferred[k];
+                uint32_t const nl     = counts[2 * k];
+                uint32_t const nr     = counts[(2 * k) + 1];
+                d.p.left.id           = d.left_id;
+                d.p.right.id          = d.right_id;
+                d.p.left.sums         = d.left_sums;
+                d.p.right.sums        = d.right_sums;
+                d.p.left.row_count    = nl;
+                d.p.right.row_count   = nr;
+                covers[d.left_id]     = static_cast<float>(nl);
+                covers[d.right_id]    = static_cast<float>(nr);
+                bool const left_small = nl <= nr;
                 ops.push_back({d.parent_slot, (2 * k) + (left_small ? 0U : 1U),
-                               (2 * k) + (left_small ? 1U : 0U),
-                               left_small ? d.p.left.rows : d.p.right.rows});
-                d.p.left.sums       = d.left_sums;
-                d.p.right.sums      = d.right_sums;
-                d.p.left.row_count  = d.p.left.rows.size();
-                d.p.right.row_count = d.p.right.rows.size();
+                               (2 * k) + (left_small ? 1U : 0U)});
             }
             builder.advance_level(ds, ops);
             used_device = true;
+            lap(prof.populate_s);
         }
     }
     if (!used_device)
     {
+        // Pass 1b: partition each parent's rows, one node per worker (child
+        // row order is scheduling-independent, so bit-identical to serial).
+        parallel::for_each_index(deferred.size(),
+                                 [&](size_t i)
+                                 {
+                                     Deferred &d = deferred[i];
+                                     d.p =
+                                         partition_rows(ds, std::move(d.parent),
+                                                        d.split, d.left_id, d.right_id);
+                                 });
+        for (auto &d : deferred)
+        {
+            covers[d.left_id]  = static_cast<float>(d.p.left.rows.size());
+            covers[d.right_id] = static_cast<float>(d.p.right.rows.size());
+        }
+        lap(prof.partition_s);
+
+        // Pass 2: populate every smaller sibling in one builder call.
         std::vector<std::reference_wrapper<SplitInput>> smalls;
         smalls.reserve(deferred.size());
         for (auto &d : deferred)
@@ -519,8 +552,8 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
             smalls.emplace_back(smaller_child(d.p));
         }
         populate_nodes(ds, grad, hess, smalls, selected, builder);
+        lap(prof.populate_s);
     }
-    lap(prof.populate_s);
 
     // Pass 3: subtraction (host mode), then constraint propagation (needs
     // child totals) and frontier hand-off in original node order.
@@ -652,9 +685,35 @@ auto DepthwiseGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view g
         ++depth;
     }
 
+    if constexpr (requires { typename BuilderT::LeafStamp; })
+    {
+        if (builder_.resident())
+        {
+            std::vector<typename BuilderT::LeafStamp> stamps;
+            stamps.reserve(current.size());
+            for (uint32_t i = 0; i < current.size(); ++i)
+            {
+                stamps.push_back({i, current[i].id});
+            }
+            builder_.stamp_leaves(stamps);
+        }
+    }
     for (auto const &node : current)
     {
         gd::finalize_as_leaf(nodes, node, config_, n_leaves, values, leaf_ids);
+    }
+    if constexpr (requires { builder_.finalize_rows(std::span<node_id_t>{}); })
+    {
+        if (builder_.resident())
+        {
+            std::vector<node_id_t> by_row(ds.n_rows(), 0);
+            builder_.finalize_rows(by_row);
+            for (row_id_t const r : row_indices)
+            {
+                leaf_ids[r] = by_row[r];
+                values[r]   = nodes[by_row[r]].threshold_or_value;
+            }
+        }
     }
     gd::route_unsampled(ds, nodes, split_bins, row_indices, values, leaf_ids);
     split_gains.resize(nodes.size(), 0.0F);
