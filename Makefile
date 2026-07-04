@@ -83,6 +83,12 @@ python-test: python $(TOY_SENTINEL)
 fit-benchmark: build $(TOY_SENTINEL)
 	@uv run scripts/compare.py --config configs/california_housing.toml $(ARGS)
 
+# GPU perf loop (benchmarks/README.md): MSD ladder vs xgboost-GPU,
+# appends benchmarks/results/gpu_msd.jsonl. Needs the MSD dataset
+# (scripts/fetch_year_msd.py) and a CUDA-capable host.
+bench-gpu: build-cuda
+	@BONSAI_CUDA_PROFILE=1 BONSAI_GROW_PROFILE=1 uv run scripts/bench_gpu.py $(ARGS)
+
 $(TOY_SENTINEL):
 	@uv run scripts/fetch_toy.py
 	@touch $@
@@ -97,6 +103,7 @@ help:
 	@echo "  make run ARGS=...       Build + run ./build/src/bonsai with ARGS."
 	@echo "  make perf-benchmark     Build + run Catch2 perf microbenchmarks (ARGS forwarded)."
 	@echo "  make fit-benchmark      Build + compare bonsai vs lightgbm/catboost on cal housing."
+	@echo "  make bench-gpu          MSD ladder vs xgboost-GPU with profile breakdowns (GPU perf loop)."
 	@echo "  make python             Build the Python extension (PYTHON=... to pick the interpreter)."
 	@echo "  make python-test        Build + run python/tests/test_bindings.py."
 	@echo "  make format             clang-format src/ + include/ + tests/ + benchmarks/ in place."
@@ -115,4 +122,4 @@ $(SKILLS_DIR)/caveman/SKILL.md:
 skills-clean:
 	rm -rf $(SKILLS_DIR)
 
-.PHONY: configure build build-cuda clean rebuild format lint all run test test-cuda perf-benchmark fit-benchmark python python-test skills skills-clean help
+.PHONY: configure build build-cuda clean rebuild format lint all run test test-cuda perf-benchmark fit-benchmark bench-gpu python python-test skills skills-clean help

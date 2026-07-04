@@ -14,12 +14,16 @@
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <iterator>
 #include <numeric>
+#include <print>
 #include <random>
 #include <span>
 #include <string>
@@ -28,6 +32,33 @@
 
 namespace bonsai::grower_detail
 {
+
+// Host-side counterpart of the CUDA builder's ProfileCounters: attributes a
+// fit's wall-clock across the grow loop's phases (BONSAI_GROW_PROFILE=1),
+// printed once at process exit. Depthwise-only; drives phase-3 staging.
+struct GrowProfiler
+{
+    bool const enabled = std::getenv("BONSAI_GROW_PROFILE") != nullptr;
+    double find_s = 0, bookkeep_s = 0, partition_s = 0, populate_s = 0, finalize_s = 0;
+
+    static GrowProfiler &instance()
+    {
+        static GrowProfiler prof;
+        return prof;
+    }
+
+    ~GrowProfiler()
+    {
+        if (enabled &&
+            find_s + bookkeep_s + partition_s + populate_s + finalize_s > 0.0)
+        {
+            std::println(stderr,
+                         "grow-profile: find={:.2f}s bookkeep={:.2f}s "
+                         "partition={:.2f}s populate={:.2f}s finalize={:.2f}s",
+                         find_s, bookkeep_s, partition_s, populate_s, finalize_s);
+        }
+    }
+};
 
 inline float leaf_value(double grad, double hess, TreeConfig const &config)
 {
@@ -332,6 +363,14 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         double                    parent_hi;
         std::vector<feature_id_t> parent_path;
     };
+    auto &prof = GrowProfiler::instance();
+    auto  mark = std::chrono::steady_clock::now();
+    auto  lap  = [&mark](double &sink)
+    {
+        auto const now = std::chrono::steady_clock::now();
+        sink += std::chrono::duration<double>(now - mark).count();
+        mark = now;
+    };
     std::vector<Deferred> deferred;
     deferred.reserve(current.size());
     for (node_id_t i = 0; i < current.size(); ++i)
@@ -364,6 +403,8 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
                             parent_lo, parent_hi, std::move(parent_path)});
     }
 
+    lap(prof.bookkeep_s);
+
     // Pass 1b: partition each parent's rows, one node per worker (child
     // row order is scheduling-independent, so bit-identical to serial).
     parallel::for_each_index(deferred.size(),
@@ -379,6 +420,8 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         covers[d.right_id] = static_cast<float>(d.p.right.rows.size());
     }
 
+    lap(prof.partition_s);
+
     // Pass 2: populate every smaller sibling in one builder call.
     std::vector<std::reference_wrapper<SplitInput>> smalls;
     smalls.reserve(deferred.size());
@@ -387,6 +430,7 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         smalls.emplace_back(smaller_child(d.p));
     }
     populate_nodes(ds, grad, hess, smalls, selected, builder);
+    lap(prof.populate_s);
 
     // Pass 3: subtraction, then constraint propagation (needs populated
     // child totals) and frontier hand-off in original node order.
@@ -402,6 +446,7 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         next.push_back(std::move(left));
         next.push_back(std::move(right));
     }
+    lap(prof.finalize_s);
     std::swap(current, next);
     next.clear();
 }
@@ -504,10 +549,14 @@ auto DepthwiseGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view g
     {
         splits.clear();
         splits.reserve(current.size());
+        auto const find_t0 = std::chrono::steady_clock::now();
         for (auto const &input : current)
         {
             splits.push_back(SplitterT::find(input, config_));
         }
+        gd::GrowProfiler::instance().find_s +=
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - find_t0)
+                .count();
         gd::update_nodes(ds, grad, hess, config_, current, next, splits, nodes,
                          n_leaves, values, selected, split_bins, split_gains, covers,
                          leaf_ids, interaction_groups_, builder_);

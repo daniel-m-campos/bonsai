@@ -717,3 +717,13 @@ scheme plus feature combinations. (c) bonsai beats lightgbm when both
 are denied categorical machinery, so the gap is the feature, not the
 engine. Stage 2 (set splits) proceeds with a measured ceiling instead
 of a hope.
+
+---
+
+## 40. GPU-resident growing: widen the builder seam to an optional level backend
+
+**Decision.** Phase 3 (device-resident partitioning and split finding, design in [architecture/11-gpu-resident.md](architecture/11-gpu-resident.md)) extends the builder policy with three *optional* hooks — `find_splits_many`, `partition_many`, `finalize_rows` — detected via `if constexpr` + `requires`, the same idiom as phase 2's `populate_many`. The host grow loop remains the single algorithm narrative and the decision-maker (leaf-vs-split, smaller-child pairing, constraint propagation); the device executes the data plane. `SplitInput` gains `sums` and `row_count` so it degrades to node metadata when histograms and rows stay device-resident.
+
+**Rejected.** A device splitter as a fourth typelist dimension: there is one device implementation and it is coupled to the CUDA builder's state, so a registry axis buys combinations nobody can instantiate (the same restraint as decision 32 for threading). A `row_to_node` map (xgboost's shape): decision 17's reasons hold on the device too — per-node segments pair naturally with the subtraction trick and stable per-node row order. CUB/Thrust for the partition scan: a hand-rolled three-kernel scan keeps the backend a single self-contained TU with no new dependency.
+
+**Consequences.** In resident mode `SplitInput.hists`/`rows` are empty; the inspect path for tests and debugging is an explicit `download_histograms`. The `cuda_depthwise` determinism contract is formally tolerance-equal (prediction/RMSE tolerance + split-agreement rate in parity tests, never tree equality); CPU-only builds stay bit-identical. Copy-back mode is retained as the degrade path (deep trees, oversized `max_bin`) and for the oblivious/leafwise growers.
