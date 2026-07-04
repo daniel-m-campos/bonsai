@@ -14,8 +14,6 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
-#include <string>
-#include <utility>
 #include <vector>
 
 #include "bonsai/bin_mappers.hpp"
@@ -29,8 +27,6 @@
 #include "bonsai/io/model.hpp"
 #include "bonsai/parallel.hpp"
 #include "bonsai/registry/objective_dispatch.hpp"
-#include "bonsai/types.hpp"
-#include <span>
 
 namespace nb = nanobind;
 

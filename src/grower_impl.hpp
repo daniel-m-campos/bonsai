@@ -698,9 +698,9 @@ auto DepthwiseGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view g
             builder_.stamp_leaves(stamps);
         }
     }
-    for (auto const &node : current)
+    for (auto const &input : current)
     {
-        gd::finalize_as_leaf(nodes, node, config_, n_leaves, values, leaf_ids);
+        gd::finalize_as_leaf(nodes, input, config_, n_leaves, values, leaf_ids);
     }
     if constexpr (requires { builder_.finalize_rows(std::span<node_id_t>{}); })
     {

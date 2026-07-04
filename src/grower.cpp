@@ -15,7 +15,7 @@ namespace bonsai
 // Builds histograms for `selected` features only; unselected slots stay
 // zero-binned placeholders the split finders skip.
 void CpuHistogramBuilder::populate(Dataset const &ds, floats_view grad,
-                                   floats_view hess, SplitInput &node,
+                                   floats_view hess, SplitInput &split_input,
                                    std::span<feature_id_t const> selected)
 {
     // Gather grad/hess into node-row order once, so every feature's scan
@@ -23,7 +23,7 @@ void CpuHistogramBuilder::populate(Dataset const &ds, floats_view grad,
     // with scattered indices (n_features x full-array traffic otherwise).
     static thread_local std::vector<float> ordered_grad;
     static thread_local std::vector<float> ordered_hess;
-    size_t const                           n = node.rows.size();
+    size_t const                           n = split_input.rows.size();
     ordered_grad.resize(n);
     ordered_hess.resize(n);
     // Capture raw pointers: naming the thread_local inside the parallel
@@ -33,17 +33,17 @@ void CpuHistogramBuilder::populate(Dataset const &ds, floats_view grad,
     parallel::for_each_index(n,
                              [&, og, oh](size_t k)
                              {
-                                 row_id_t const r = node.rows[k];
+                                 row_id_t const r = split_input.rows[k];
                                  og[k]            = grad[r];
                                  oh[k]            = hess[r];
                              });
 
-    node.hists.reserve(ds.n_features());
+    split_input.hists.reserve(ds.n_features());
     size_t j = 0;
     for (feature_id_t fid = 0; fid < ds.n_features(); ++fid)
     {
         bool const sel = j < selected.size() && selected[j] == fid;
-        node.hists.emplace_back(sel ? ds.n_bins(fid) : 0);
+        split_input.hists.emplace_back(sel ? ds.n_bins(fid) : 0);
         j += sel ? 1 : 0;
     }
     // Feature-parallel: each feature's histogram is owned by one thread and
@@ -52,11 +52,11 @@ void CpuHistogramBuilder::populate(Dataset const &ds, floats_view grad,
                              [&, og, oh](size_t s)
                              {
                                  feature_id_t const fid  = selected[s];
-                                 Histogram         &h    = node.hists[fid];
+                                 Histogram         &h    = split_input.hists[fid];
                                  auto const        &bins = ds.feature_bins(fid);
                                  for (size_t k = 0; k < n; ++k)
                                  {
-                                     h.add(bins[node.rows[k]], og[k], oh[k]);
+                                     h.add(bins[split_input.rows[k]], og[k], oh[k]);
                                  }
                              });
 }
