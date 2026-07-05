@@ -6,6 +6,7 @@
 // are tolerance-based rather than bit-exact.
 
 #include "bonsai/config/tree_config.hpp"
+#include "bonsai/cuda/grower.hpp"
 #include "bonsai/cuda/histogram_builder.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/grower.hpp"

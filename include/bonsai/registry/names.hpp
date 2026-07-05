@@ -3,7 +3,7 @@
 #include <concepts>
 #include <string_view>
 
-#include "bonsai/cuda/histogram_builder.hpp"
+#include "bonsai/cuda/grower.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/sampler.hpp"

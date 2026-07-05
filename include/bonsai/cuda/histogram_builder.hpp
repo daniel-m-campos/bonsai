@@ -32,7 +32,7 @@ class CudaHistogramBuilder
 
     void begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
     void populate(Dataset const &ds, floats_view grad, floats_view hess,
-                  SplitInput &node, std::span<feature_id_t const> selected);
+                  SplitInput &split_input, std::span<feature_id_t const> selected);
     // Batched variant: one kernel launch covers a whole tree level.
     void populate_many(Dataset const &ds, floats_view grad, floats_view hess,
                        split_input_refs nodes, std::span<feature_id_t const> selected);
@@ -106,9 +106,5 @@ class CudaHistogramBuilder
 };
 
 static_assert(HistogramBuilder<CudaHistogramBuilder>);
-
-// Registered as "cuda_depthwise" (registry/typelists.hpp).
-using CudaDepthwiseGrower =
-    DepthwiseGrower<HistogramNodeSplitFinder, CudaHistogramBuilder>;
 
 } // namespace bonsai

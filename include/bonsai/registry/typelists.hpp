@@ -2,7 +2,7 @@
 
 #include <type_traits>
 
-#include "bonsai/cuda/histogram_builder.hpp"
+#include "bonsai/cuda/grower.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/registry/names.hpp"
@@ -15,12 +15,10 @@ namespace bonsai
 
 using Objectives = TypeList<MSEObjective, LogLossObjective, MAEObjective,
                             HuberObjective, QuantileObjective, SoftmaxObjective>;
-// cuda_depthwise is in every build (stub-backed without BONSAI_CUDA), so
-// the registry is identical across configurations; docs/architecture/10-cuda.md.
-using Growers  = TypeList<DepthwiseGrower<HistogramNodeSplitFinder>,
-                          ObliviousGrower<HistogramLevelSplitFinder>,
-                          LeafwiseGrower<HistogramNodeSplitFinder>, CudaDepthwiseGrower>;
-using Samplers = TypeList<AllRowsSampler, BernoulliSampler, GossSampler>;
+using Growers    = TypeList<DepthwiseGrower<HistogramNodeSplitFinder>,
+                            ObliviousGrower<HistogramLevelSplitFinder>,
+                            LeafwiseGrower<HistogramNodeSplitFinder>, CudaDepthwiseGrower>;
+using Samplers   = TypeList<AllRowsSampler, BernoulliSampler, GossSampler>;
 
 namespace detail
 {
