@@ -6,9 +6,11 @@
 // bonsai's anonymous namespace. The scan math (score, bounded_leaf_weight)
 // comes from split.hpp and is constexpr, hence device-callable.
 
+#include <cstddef>
+#include <cstdint>
 #include <cuda.h>
 
-#include <cstdint>
+#include <vector_types.h>
 
 #include "bonsai/split.hpp"
 
@@ -16,6 +18,8 @@ namespace bonsai
 {
 namespace
 {
+
+// NOLINTBEGIN(bugprone-easily-swappable-parameters,cppcoreguidelines-avoid-c-arrays,cppcoreguidelines-pro-bounds-pointer-arithmetic,modernize-avoid-c-arrays,cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-bounds-array-to-pointer-decay,readability-function-cognitive-complexity,readability-identifier-naming)
 
 // Nodes with fewer rows than this build on the CPU: the kernel launch +
 // synchronous copy-back round trip outweighs the histogram work itself
@@ -27,6 +31,13 @@ constexpr size_t k_min_gpu_rows = 512;
 // builder instead of failing the kernel launch at runtime.
 constexpr size_t k_max_shared_bytes = 48UL * 1024UL;
 
+// Widened index of the first (grad) slot of pair i in a flat [grad0, hess0,
+// grad1, hess1, ...] array; the hess slot is pair_off(i) + 1.
+__device__ constexpr size_t pair_off(uint32_t i)
+{
+    return 2 * static_cast<size_t>(i);
+}
+
 // Interleaves the raw grad/hess uploads into float2 pairs on the device,
 // replacing the serial per-tree host pack.
 __global__ void interleave_kernel(float const *grad, float const *hess, uint32_t n,
@@ -35,7 +46,7 @@ __global__ void interleave_kernel(float const *grad, float const *hess, uint32_t
     uint32_t const span = gridDim.x * blockDim.x;
     for (uint32_t r = (blockIdx.x * blockDim.x) + threadIdx.x; r < n; r += span)
     {
-        gh[r] = {grad[r], hess[r]};
+        gh[r] = {.x = grad[r], .y = hess[r]};
     }
 }
 
@@ -72,9 +83,9 @@ __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
         sh[i] = 0.0F;
     }
     __syncthreads();
-    float          *my    = sh + (((threadIdx.x >> 5) & 1U) * 2 * nb);
-    BinT const     *fb    = bins + (static_cast<size_t>(f) * n_rows);
-    uint32_t const  ofs   = row_ofs[node];
+    float          *my  = sh + (static_cast<size_t>((threadIdx.x >> 5) & 1U) * 2 * nb);
+    BinT const     *fb  = bins + (static_cast<size_t>(f) * n_rows);
+    uint32_t const  ofs = row_ofs[node];
     uint32_t const *nrows = rows + ofs;
     float2 const   *ngh   = gh_ordered + ofs;
     uint32_t const  cnt   = row_cnt[node];
@@ -83,8 +94,8 @@ __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
     {
         uint32_t const b = fb[nrows[k]];
         float2 const   v = ngh[k];
-        atomicAdd(&my[2 * b], v.x);
-        atomicAdd(&my[(2 * b) + 1], v.y);
+        atomicAdd(&my[pair_off(b)], v.x);
+        atomicAdd(&my[pair_off(b) + 1], v.y);
     }
     __syncthreads();
     uint32_t const oslot = out_slot != nullptr ? out_slot[node] : node;
@@ -341,15 +352,15 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
     }
     double const *cells =
         hists + (((static_cast<size_t>(node) * n_sel) + sel) * stride);
-    double const g_total    = node_sums[2 * node];
-    double const h_total    = node_sums[(2 * node) + 1];
-    double const miss_g     = cells[2 * (nb - 1)];
-    double const miss_h     = cells[(2 * (nb - 1)) + 1];
+    double const g_total    = node_sums[pair_off(node)];
+    double const h_total    = node_sums[pair_off(node) + 1];
+    double const miss_g     = cells[pair_off(nb - 1)];
+    double const miss_h     = cells[pair_off(nb - 1) + 1];
     double const node_score = score(g_total, h_total, l1, l2);
     double const real_grad  = g_total - miss_g;
     double const real_hess  = h_total - miss_h;
-    double const lo         = node_bounds[2 * node];
-    double const hi         = node_bounds[(2 * node) + 1];
+    double const lo         = node_bounds[pair_off(node)];
+    double const hi         = node_bounds[pair_off(node) + 1];
     int const    mc         = monotone[f];
 
     // Cut cells are bins [0, nb-2): the last real bin cannot split and the
@@ -358,8 +369,8 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
     double ph = 0.0;
     for (uint32_t b = 0; b + 2 < nb; ++b)
     {
-        pg += cells[2 * b];
-        ph += cells[(2 * b) + 1];
+        pg += cells[pair_off(b)];
+        ph += cells[pair_off(b) + 1];
         for (int dl = 1; dl >= 0; --dl)
         {
             double const gL = pg + (dl != 0 ? miss_g : 0.0);
@@ -383,9 +394,15 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
                 score(gL, hL, l1, l2) + score(gR, hR, l1, l2) - node_score;
             if (gain > best.gain && gain >= min_gain)
             {
-                best = {gain, gL, hL,
-                        gR,   hR, static_cast<int32_t>(b),
-                        dl,   1,  static_cast<int32_t>(sel)};
+                best = {.gain  = gain,
+                        .gL    = gL,
+                        .hL    = hL,
+                        .gR    = gR,
+                        .hR    = hR,
+                        .bin   = static_cast<int32_t>(b),
+                        .dl    = dl,
+                        .valid = 1,
+                        .sel   = static_cast<int32_t>(sel)};
             }
         }
     }
@@ -412,6 +429,8 @@ __global__ void reduce_kernel(FeatBest const *per_feat, uint32_t n_sel, FeatBest
     }
     out[node] = best;
 }
+
+// NOLINTEND(bugprone-easily-swappable-parameters,cppcoreguidelines-avoid-c-arrays,cppcoreguidelines-pro-bounds-pointer-arithmetic,modernize-avoid-c-arrays,cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-bounds-array-to-pointer-decay,readability-function-cognitive-complexity,readability-identifier-naming)
 
 } // namespace
 } // namespace bonsai

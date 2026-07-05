@@ -4,6 +4,7 @@
 #include "bonsai/grower.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
+#include <cstdint>
 #include <memory>
 #include <span>
 

@@ -2,12 +2,14 @@
 // the build. Design, batching, and precision scheme:
 // docs/architecture/10-cuda.md.
 
+#include "bonsai/config/tree_config.hpp"
 #include "bonsai/cuda/histogram_builder.hpp"
+#include "bonsai/dataset.hpp"
+#include "bonsai/grower.hpp"
 #include "bonsai/histogram.hpp"
 #include "bonsai/parallel.hpp"
+#include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
-
-#include <cuda.h>
 
 #include <algorithm>
 #include <array>
@@ -16,16 +18,25 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cuda_runtime_api.h>
+#include <driver_types.h>
 #include <functional>
-#include <stdexcept>
-#include <string>
+#include <memory>
+#include <print>
+#include <span>
 #include <vector>
+#include <vector_types.h>
 
 #include "detail/device_buffer.cuh"
 #include "detail/kernels.cuh"
 
 namespace bonsai
 {
+
+// Flat device/host buffers throughout this file are offset by hand (docs/
+// architecture/10-cuda.md); grad/hess travel as an adjacent pair everywhere
+// in this API, matching the gradient-boosting literature's convention.
+// NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)
 
 bool cuda_available()
 {
@@ -41,17 +52,30 @@ struct ProfileCounters
     double upload_s = 0, gpu_s = 0, unpack_s = 0, cpu_s = 0;
     size_t launches = 0, gpu_nodes = 0, cpu_calls = 0;
 
+    ProfileCounters()                                      = default;
+    ProfileCounters(ProfileCounters const &)                = delete;
+    ProfileCounters &operator=(ProfileCounters const &)     = delete;
+    ProfileCounters(ProfileCounters &&) noexcept            = delete;
+    ProfileCounters &operator=(ProfileCounters &&) noexcept = delete;
+
     ~ProfileCounters()
     {
         if (!enabled || (gpu_s == 0 && cpu_s == 0))
         {
             return;
         }
-        std::fprintf(stderr,
-                     "cuda-profile: upload=%.2fs gpu=%.2fs unpack=%.2fs "
-                     "cpu_fallback=%.2fs | %zu launches covering %zu nodes, "
-                     "%zu cpu-fallback nodes\n",
-                     upload_s, gpu_s, unpack_s, cpu_s, launches, gpu_nodes, cpu_calls);
+        try
+        {
+            std::println(stderr,
+                         "cuda-profile: upload={:.2f}s gpu={:.2f}s unpack={:.2f}s "
+                         "cpu_fallback={:.2f}s | {} launches covering {} nodes, {} "
+                         "cpu-fallback nodes",
+                         upload_s, gpu_s, unpack_s, cpu_s, launches, gpu_nodes, cpu_calls);
+        }
+        catch (...)
+        {
+            std::fputs("cuda-profile: failed to format profile line\n", stderr);
+        }
     }
 };
 
@@ -367,7 +391,7 @@ void CudaHistogramBuilder::populate_many(Dataset const &ds, floats_view grad,
     check(cudaGetLastError(), "gather launch");
     auto const launch = [&](auto const *bins)
     {
-        hist_kernel<<<grid, block, 2 * stride * sizeof(float)>>>(
+        hist_kernel<<<grid, block, 2 * static_cast<size_t>(stride) * sizeof(float)>>>(
             bins, impl_->gh_ordered.get(), impl_->rows.get(), impl_->row_ofs.get(),
             impl_->row_cnt.get(), impl_->features.get(), impl_->n_bins.get(),
             static_cast<uint32_t>(ds.n_rows()), static_cast<uint32_t>(selected.size()),
@@ -481,7 +505,7 @@ bool CudaHistogramBuilder::begin_root(Dataset const &ds, floats_view grad,
         sg += grad[r];
         sh += hess[r];
     }
-    root.sums      = {sg, sh};
+    root.sums      = {.sum_grad=sg, .sum_hess=sh};
     root.row_count = root.rows.size();
     if (im.prof.enabled)
     {
@@ -831,10 +855,12 @@ void CudaHistogramBuilder::find_splits_many(Dataset const &ds, TreeConfig const 
                                    .bin_id       = static_cast<bin_id_t>(b.bin),
                                    .default_left = b.dl != 0,
                                    .valid        = true};
-        child_sums[2 * i]       = {b.gL, b.hL};
-        child_sums[(2 * i) + 1] = {b.gR, b.hR};
+        child_sums[2 * i]       = {.sum_grad=b.gL, .sum_hess=b.hL};
+        child_sums[(2 * i) + 1] = {.sum_grad=b.gR, .sum_hess=b.hR};
     }
     lap(prof.unpack_s);
 }
+
+// NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)
 
 } // namespace bonsai
