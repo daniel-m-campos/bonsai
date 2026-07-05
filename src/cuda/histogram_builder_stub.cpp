@@ -43,7 +43,7 @@ void CudaHistogramBuilder::begin_tree(Dataset const & /*ds*/, floats_view /*grad
 }
 
 void CudaHistogramBuilder::populate(Dataset const & /*ds*/, floats_view /*grad*/,
-                                    floats_view /*hess*/, SplitInput & /*node*/,
+                                    floats_view /*hess*/, SplitInput & /*split_input*/,
                                     std::span<feature_id_t const> /*selected*/)
 {
     throw_unavailable();

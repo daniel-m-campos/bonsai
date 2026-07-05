@@ -53,6 +53,10 @@ def rmse(pred: np.ndarray, y: np.ndarray) -> float:
     return float(np.sqrt(np.mean((pred - y) ** 2)))
 
 
+# The CLI binary (not the python module) is deliberate: only build-cuda/src/bonsai
+# is CUDA-enabled (the `make python` extension is CPU-only), it reads the TOML
+# config directly, and the profile breakdowns are env-gated stderr prints the
+# subprocess boundary captures cleanly.
 def run_bonsai(grower: str, threads: int, y_test: np.ndarray) -> dict:
     model, preds = "/tmp/bench_gpu_model.msgpack", "/tmp/bench_gpu_preds.csv"
     fit_cmd = [str(BINARY), "fit", "-c", str(CONFIG),
