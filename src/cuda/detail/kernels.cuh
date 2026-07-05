@@ -6,6 +6,7 @@
 // bonsai's anonymous namespace. The scan math (score, bounded_leaf_weight)
 // comes from split.hpp and is constexpr, hence device-callable.
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cuda.h>
@@ -33,7 +34,7 @@ constexpr size_t k_max_shared_bytes = 48UL * 1024UL;
 
 // Widened index of the first (grad) slot of pair i in a flat [grad0, hess0,
 // grad1, hess1, ...] array; the hess slot is pair_off(i) + 1.
-__device__ constexpr size_t pair_off(uint32_t i)
+constexpr __device__ size_t pair_off(uint32_t i)
 {
     return 2 * static_cast<size_t>(i);
 }
@@ -50,6 +51,18 @@ __global__ void interleave_kernel(float const *grad, float const *hess, uint32_t
     }
 }
 
+// A 1-D "one thread per element" launch: grid covers n elements in 256-thread
+// blocks, capped so tiny inputs don't over-subscribe. The two wrappers below
+// borrow thrust's free-function names (interleave ~ transform, gather) so call
+// sites read as algorithms; they are just the launch boilerplate for the
+// kernels above kept in one place instead of re-spelled per call site.
+inline void interleave(float const *grad, float const *hess, uint32_t n, float2 *gh)
+{
+    interleave_kernel<<<dim3(std::clamp<uint32_t>(n / 256, 1, 1024)), dim3(256)>>>(
+        grad, hess, n, gh);
+    check(cudaGetLastError(), "interleave launch");
+}
+
 // Reorders (grad, hess) into level order once, so hist_kernel reads them
 // sequentially instead of re-gathering per feature.
 __global__ void gather_gh_kernel(float2 const *gh, uint32_t const *rows,
@@ -61,6 +74,15 @@ __global__ void gather_gh_kernel(float2 const *gh, uint32_t const *rows,
     {
         gh_ordered[k] = gh[rows[k]];
     }
+}
+
+// gh_ordered[k] = gh[rows[k]] for k in [0, n) — a device gather.
+inline void gather(float2 const *gh, uint32_t const *rows, uint32_t n,
+                   float2 *gh_ordered)
+{
+    gather_gh_kernel<<<dim3(std::clamp<uint32_t>(n / 256, 1, 512)), dim3(256)>>>(
+        gh, rows, n, gh_ordered);
+    check(cudaGetLastError(), "gather launch");
 }
 
 // Grid is (feature, node, row-chunk). Shared accumulation is float
