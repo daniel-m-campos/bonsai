@@ -23,7 +23,7 @@ This exists because per-node GPU round trips dominated: ~185 launches per tree c
 
 ## The kernel
 
-One TU, [`src/cuda/histogram_builder.cu`](../../src/cuda/histogram_builder.cu), compiled as CUDA C++ by the project's own clang (`-x cuda --offload-arch`, cache var `BONSAI_CUDA_ARCH`) — same C++23, same libc++ as every other TU, so it uses `Dataset`/`Histogram`/`SplitInput` directly. No nvcc, no second standard library, no C ABI.
+One TU, [`src/cuda/histogram_builder.cu`](../../src/cuda/histogram_builder.cu), compiled as CUDA C++ by the project's own clang (`-x cuda --offload-arch`, cache var `BONSAI_CUDA_ARCH`) — same C++23, same libc++ as every other TU, so it uses `Dataset`/`Histogram`/`SplitInput` directly. No nvcc, no second standard library, no C ABI. The kernels and the `DeviceBuffer` helper live in `src/cuda/detail/{kernels,device_buffer}.cuh`, `#include`d into that one TU's anonymous namespace — a readability split, not a second compilation unit.
 
 Device residency: the binned matrix uploads once per dataset (uint8 when every feature fits 256 bins — the `max_bin = 255` default — uint16 otherwise), gradients once per tree as a packed `float2` array, and per level one concatenated row-index upload. A gather kernel reorders `(grad, hess)` into level order once so the histogram kernel reads them sequentially per feature instead of re-gathering through the row indirection `n_features` times.
 

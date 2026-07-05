@@ -21,6 +21,9 @@
 #include <string>
 #include <vector>
 
+#include "detail/device_buffer.cuh"
+#include "detail/kernels.cuh"
+
 namespace bonsai
 {
 
@@ -29,465 +32,6 @@ bool cuda_available()
     int n = 0;
     return cudaGetDeviceCount(&n) == cudaSuccess && n > 0;
 }
-
-namespace
-{
-
-// Nodes with fewer rows than this build on the CPU: the kernel launch +
-// synchronous copy-back round trip outweighs the histogram work itself
-// below roughly this size (knee measured on Jetson Orin Nano).
-constexpr size_t k_min_gpu_rows = 512;
-
-// Shared-memory histogram footprint cap (stride floats, 48 KiB/block
-// budget). Datasets binned past ~6k bins per feature fall back to the CPU
-// builder instead of failing the kernel launch at runtime.
-constexpr size_t k_max_shared_bytes = 48UL * 1024UL;
-
-void check(cudaError_t rc, char const *what)
-{
-    if (rc != cudaSuccess)
-    {
-        throw std::runtime_error(std::string{"cuda: "} + what + ": " +
-                                 cudaGetErrorString(rc));
-    }
-}
-
-// Owning device allocation. Grow-only, geometric; contents dropped on
-// reallocation (callers re-upload per use).
-template <typename T> class DeviceBuffer
-{
-  public:
-    DeviceBuffer() = default;
-    ~DeviceBuffer()
-    {
-        cudaFree(ptr_);
-    }
-    DeviceBuffer(DeviceBuffer const &)            = delete;
-    DeviceBuffer &operator=(DeviceBuffer const &) = delete;
-
-    T *get() const
-    {
-        return ptr_;
-    }
-
-    void ensure(size_t needed)
-    {
-        if (needed <= capacity_)
-        {
-            return;
-        }
-        size_t grown = capacity_ == 0 ? needed : capacity_;
-        while (grown < needed)
-        {
-            grown *= 2;
-        }
-        cudaFree(ptr_);
-        ptr_      = nullptr;
-        capacity_ = 0;
-        check(cudaMalloc(&ptr_, grown * sizeof(T)), "malloc");
-        capacity_ = grown;
-    }
-
-    void upload(T const *host, size_t n)
-    {
-        ensure(n);
-        check(cudaMemcpy(ptr_, host, n * sizeof(T), cudaMemcpyHostToDevice), "upload");
-    }
-
-  private:
-    T     *ptr_      = nullptr;
-    size_t capacity_ = 0;
-};
-
-// Interleaves the raw grad/hess uploads into float2 pairs on the device,
-// replacing the serial per-tree host pack.
-__global__ void interleave_kernel(float const *grad, float const *hess,
-                                  uint32_t n, float2 *gh)
-{
-    uint32_t const span = gridDim.x * blockDim.x;
-    for (uint32_t r = (blockIdx.x * blockDim.x) + threadIdx.x; r < n; r += span)
-    {
-        gh[r] = {grad[r], hess[r]};
-    }
-}
-
-// Reorders (grad, hess) into level order once, so hist_kernel reads them
-// sequentially instead of re-gathering per feature.
-__global__ void gather_gh_kernel(float2 const *gh, uint32_t const *rows,
-                                 uint32_t total_rows, float2 *gh_ordered)
-{
-    uint32_t const span = gridDim.x * blockDim.x;
-    for (uint32_t k = (blockIdx.x * blockDim.x) + threadIdx.x; k < total_rows;
-         k += span)
-    {
-        gh_ordered[k] = gh[rows[k]];
-    }
-}
-
-// Grid is (feature, node, row-chunk). Shared accumulation is float
-// (native atomics; double atomics CAS-loop), cross-chunk merge is double —
-// rounding stays bounded per <= 32k-row chunk.
-template <typename BinT>
-__global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
-                            uint32_t const *rows, uint32_t const *row_ofs,
-                            uint32_t const *row_cnt, uint32_t const *features,
-                            uint32_t const *n_bins, uint32_t n_rows, uint32_t n_sel,
-                            double *out, uint32_t stride, uint32_t const *out_slot)
-{
-    // Two sub-histograms split by warp parity spread atomic contention.
-    extern __shared__ float sh[];
-    uint32_t const          f    = features[blockIdx.x];
-    uint32_t const          node = blockIdx.y;
-    uint32_t const          nb   = n_bins[f];
-    for (uint32_t i = threadIdx.x; i < 4 * nb; i += blockDim.x)
-    {
-        sh[i] = 0.0F;
-    }
-    __syncthreads();
-    float          *my    = sh + (((threadIdx.x >> 5) & 1U) * 2 * nb);
-    BinT const     *fb    = bins + (static_cast<size_t>(f) * n_rows);
-    uint32_t const  ofs   = row_ofs[node];
-    uint32_t const *nrows = rows + ofs;
-    float2 const   *ngh   = gh_ordered + ofs;
-    uint32_t const  cnt   = row_cnt[node];
-    uint32_t const  span  = gridDim.z * blockDim.x;
-    for (uint32_t k = (blockIdx.z * blockDim.x) + threadIdx.x; k < cnt; k += span)
-    {
-        uint32_t const b = fb[nrows[k]];
-        float2 const   v = ngh[k];
-        atomicAdd(&my[2 * b], v.x);
-        atomicAdd(&my[(2 * b) + 1], v.y);
-    }
-    __syncthreads();
-    uint32_t const oslot = out_slot != nullptr ? out_slot[node] : node;
-    double *o = out + (((static_cast<size_t>(oslot) * n_sel) + blockIdx.x) * stride);
-    for (uint32_t i = threadIdx.x; i < 2 * nb; i += blockDim.x)
-    {
-        float const v = sh[i] + sh[(2 * nb) + i];
-        if (v != 0.0F)
-        {
-            atomicAdd(&o[i], static_cast<double>(v));
-        }
-    }
-}
-
-// Small nodes skip the shared-memory stage: below ~512 rows the fixed
-// per-(node,feature) zero+merge cost dominates, so one block per node
-// accumulates row visits straight into the node's global slot in double.
-template <typename BinT>
-__global__ void hist_small_kernel(BinT const *bins, float2 const *gh_ordered,
-                                  uint32_t const *rows, uint32_t const *row_ofs,
-                                  uint32_t const *row_cnt, uint32_t const *features,
-                                  uint32_t n_rows, uint32_t n_sel, double *out,
-                                  uint32_t stride, uint32_t const *out_slot)
-{
-    uint32_t const  node = blockIdx.x;
-    uint32_t const  cnt  = row_cnt[node];
-    uint32_t const  ofs  = row_ofs[node];
-    uint32_t const *nr   = rows + ofs;
-    float2 const   *ngh  = gh_ordered + ofs;
-    double *o = out + (static_cast<size_t>(out_slot[node]) * n_sel * stride);
-    for (uint32_t k = threadIdx.x; k < cnt * n_sel; k += blockDim.x)
-    {
-        uint32_t const sel = k / cnt;
-        uint32_t const i   = k % cnt;
-        uint32_t const b   = bins[(static_cast<size_t>(features[sel]) * n_rows) + nr[i]];
-        float2 const   v   = ngh[i];
-        atomicAdd(&o[(sel * stride) + (2 * b)], static_cast<double>(v.x));
-        atomicAdd(&o[(sel * stride) + (2 * b) + 1], static_cast<double>(v.y));
-    }
-}
-
-
-// --- Stage B: device row partitioning (docs/architecture/11-gpu-resident.md).
-// Rows live in ping-pong segment buffers; each split routes its parent
-// segment into stable left/right child segments via count -> scan -> scatter
-// (hand-rolled: no CUB, the TU stays self-contained). CHUNK rows per block,
-// each thread owning ROWS_PER_THREAD consecutive rows keeps the scatter
-// stable and the scans tiny.
-constexpr uint32_t k_part_rows_per_thread = 16;
-constexpr uint32_t k_part_block           = 256;
-constexpr uint32_t k_part_chunk           = k_part_block * k_part_rows_per_thread;
-
-// Device-side view of one PartitionOp plus its parent segment.
-struct PartOpDev
-{
-    uint32_t ofs, cnt, fid, bin, dl;
-};
-
-__device__ inline bool goes_left_dev(uint32_t b, uint32_t last_bin, uint32_t bin,
-                                     uint32_t dl)
-{
-    if (b == last_bin)
-    {
-        return dl != 0;
-    }
-    return b <= bin;
-}
-
-// Phase 1: per-(op, chunk) left-count; flags cached for the scatter pass.
-template <typename BinT>
-__global__ void route_count_kernel(BinT const *bins, uint32_t const *n_bins,
-                                   uint32_t const *rows, PartOpDev const *ops,
-                                   uint32_t n_rows, uint32_t max_chunks,
-                                   uint8_t *flags, uint32_t *block_counts)
-{
-    __shared__ uint32_t sh[k_part_block];
-    PartOpDev const     op    = ops[blockIdx.y];
-    uint32_t const      chunk = blockIdx.x;
-    uint32_t const      base  = chunk * k_part_chunk;
-    BinT const         *fb    = bins + (static_cast<size_t>(op.fid) * n_rows);
-    uint32_t const      last  = n_bins[op.fid] - 1;
-    uint32_t            mine  = 0;
-    for (uint32_t j = 0; j < k_part_rows_per_thread; ++j)
-    {
-        uint32_t const i = base + (threadIdx.x * k_part_rows_per_thread) + j;
-        if (i < op.cnt)
-        {
-            bool const l    = goes_left_dev(fb[rows[op.ofs + i]], last, op.bin, op.dl);
-            flags[op.ofs + i] = l ? 1 : 0;
-            mine += l ? 1U : 0U;
-        }
-    }
-    sh[threadIdx.x] = mine;
-    __syncthreads();
-    for (uint32_t step = k_part_block / 2; step > 0; step /= 2)
-    {
-        if (threadIdx.x < step)
-        {
-            sh[threadIdx.x] += sh[threadIdx.x + step];
-        }
-        __syncthreads();
-    }
-    if (threadIdx.x == 0)
-    {
-        block_counts[(static_cast<size_t>(blockIdx.y) * max_chunks) + chunk] = sh[0];
-    }
-}
-
-// Phase 2: exclusive scan of each op's chunk counts; total -> n_left[op].
-__global__ void seg_scan_kernel(uint32_t *block_counts, uint32_t max_chunks,
-                                uint32_t *n_left)
-{
-    if (threadIdx.x != 0)
-    {
-        return;
-    }
-    uint32_t *c   = block_counts + (static_cast<size_t>(blockIdx.x) * max_chunks);
-    uint32_t  run = 0;
-    for (uint32_t k = 0; k < max_chunks; ++k)
-    {
-        uint32_t const v = c[k];
-        c[k]             = run;
-        run += v;
-    }
-    n_left[blockIdx.x] = run;
-}
-
-// Phase 3: stable scatter into the other rows/gh buffers. Each thread's
-// consecutive rows write in order; block and thread bases come from the
-// scanned counts, so left keeps ascending order, then right.
-__global__ void scatter_kernel(uint32_t const *rows_in, float2 const *gh_in,
-                               uint8_t const *flags, PartOpDev const *ops,
-                               uint32_t const *block_counts, uint32_t const *n_left,
-                               uint32_t max_chunks, uint32_t *rows_out,
-                               float2 *gh_out)
-{
-    __shared__ uint32_t sh[k_part_block + 1];
-    PartOpDev const     op    = ops[blockIdx.y];
-    uint32_t const      chunk = blockIdx.x;
-    uint32_t const      base  = chunk * k_part_chunk;
-    uint32_t            mine  = 0;
-    for (uint32_t j = 0; j < k_part_rows_per_thread; ++j)
-    {
-        uint32_t const i = base + (threadIdx.x * k_part_rows_per_thread) + j;
-        mine += (i < op.cnt && flags[op.ofs + i] != 0) ? 1U : 0U;
-    }
-    sh[threadIdx.x + 1] = mine;
-    if (threadIdx.x == 0)
-    {
-        sh[0] = 0;
-    }
-    __syncthreads();
-    // Hillis-Steele inclusive scan over thread counts -> exclusive bases.
-    for (uint32_t step = 1; step < k_part_block; step *= 2)
-    {
-        uint32_t v = 0;
-        if (threadIdx.x + 1 >= step + 1)
-        {
-            v = sh[threadIdx.x + 1 - step];
-        }
-        __syncthreads();
-        sh[threadIdx.x + 1] += v;
-        __syncthreads();
-    }
-    uint32_t const nl_total = n_left[blockIdx.y];
-    uint32_t const block_lefts =
-        block_counts[(static_cast<size_t>(blockIdx.y) * max_chunks) + chunk];
-    uint32_t lefts  = block_lefts + sh[threadIdx.x];
-    uint32_t before = base + (threadIdx.x * k_part_rows_per_thread);
-    for (uint32_t j = 0; j < k_part_rows_per_thread; ++j)
-    {
-        uint32_t const i = base + (threadIdx.x * k_part_rows_per_thread) + j;
-        if (i >= op.cnt)
-        {
-            break;
-        }
-        uint32_t dst = 0;
-        if (flags[op.ofs + i] != 0)
-        {
-            dst = op.ofs + lefts;
-            ++lefts;
-        }
-        else
-        {
-            dst = op.ofs + nl_total + (before + j - lefts);
-        }
-        rows_out[dst] = rows_in[op.ofs + i];
-        gh_out[dst]   = gh_in[op.ofs + i];
-    }
-}
-
-// Records each segment row's final leaf id (persistent per-row array).
-__global__ void stamp_kernel(uint32_t const *rows, PartOpDev const *segs,
-                             uint32_t const *node_ids, uint32_t *leaf_by_row)
-{
-    PartOpDev const seg = segs[blockIdx.x];
-    uint32_t const  id  = node_ids[blockIdx.x];
-    for (uint32_t i = threadIdx.x; i < seg.cnt; i += blockDim.x)
-    {
-        leaf_by_row[rows[seg.ofs + i]] = id;
-    }
-}
-
-// Larger children derive on-device: child[large] = parent - child[small].
-// Slot triples are (parent, small, large); slot_doubles is one slot's span.
-__global__ void subtract_kernel(double const *parents, double *children,
-                                uint32_t const *triples, uint32_t slot_doubles)
-{
-    uint32_t const *t     = triples + (3UL * blockIdx.y);
-    uint32_t const  span  = gridDim.x * blockDim.x;
-    double const   *par   = parents + (static_cast<size_t>(t[0]) * slot_doubles);
-    double const   *small = children + (static_cast<size_t>(t[1]) * slot_doubles);
-    double         *large = children + (static_cast<size_t>(t[2]) * slot_doubles);
-    for (uint32_t i = (blockIdx.x * blockDim.x) + threadIdx.x; i < slot_doubles;
-         i += span)
-    {
-        large[i] = par[i] - small[i];
-    }
-}
-
-// Per-(node, feature) best split. 56-byte POD; dl encodes default_left.
-struct FeatBest
-{
-    double  gain, gL, hL, gR, hR;
-    int32_t bin, dl, valid, sel;
-};
-
-// One thread walks one (node, selected-feature) histogram sequentially,
-// replicating the CPU scan in split.cpp exactly: same prefix order, both
-// default_left routings, min_child_hess, monotone feasibility, min_gain.
-// The scan is <= 254 iterations; clarity beats occupancy here.
-__global__ void find_kernel(double const *hists, uint32_t const *features,
-                            uint32_t const *n_bins, double const *node_sums,
-                            double const *node_bounds, char const *allowed,
-                            int const *monotone, uint32_t n_sel, uint32_t stride,
-                            double l1, double l2, double min_child_hess,
-                            double min_gain, FeatBest *out)
-{
-    uint32_t const node = blockIdx.y;
-    uint32_t const sel  = (blockIdx.x * blockDim.x) + threadIdx.x;
-    if (sel >= n_sel)
-    {
-        return;
-    }
-    FeatBest best = {};
-    out[(static_cast<size_t>(node) * n_sel) + sel] = best;
-    if (allowed != nullptr && allowed[(static_cast<size_t>(node) * n_sel) + sel] == 0)
-    {
-        return;
-    }
-    uint32_t const f  = features[sel];
-    uint32_t const nb = n_bins[f];
-    if (nb < 2)
-    {
-        return; // no cut cells (degenerate feature)
-    }
-    double const *cells =
-        hists + (((static_cast<size_t>(node) * n_sel) + sel) * stride);
-    double const g_total = node_sums[2 * node];
-    double const h_total = node_sums[(2 * node) + 1];
-    double const miss_g  = cells[2 * (nb - 1)];
-    double const miss_h  = cells[(2 * (nb - 1)) + 1];
-    double const node_score = score(g_total, h_total, l1, l2);
-    double const real_grad  = g_total - miss_g;
-    double const real_hess  = h_total - miss_h;
-    double const lo         = node_bounds[2 * node];
-    double const hi         = node_bounds[(2 * node) + 1];
-    int const    mc         = monotone[f];
-
-    // Cut cells are bins [0, nb-2): the last real bin cannot split and the
-    // final cell is the missing bin (mirrors Histogram::cut_cells()).
-    double pg = 0.0;
-    double ph = 0.0;
-    for (uint32_t b = 0; b + 2 < nb; ++b)
-    {
-        pg += cells[2 * b];
-        ph += cells[(2 * b) + 1];
-        for (int dl = 1; dl >= 0; --dl)
-        {
-            double const gL = pg + (dl != 0 ? miss_g : 0.0);
-            double const hL = ph + (dl != 0 ? miss_h : 0.0);
-            double const gR = (real_grad - pg) + (dl == 0 ? miss_g : 0.0);
-            double const hR = (real_hess - ph) + (dl == 0 ? miss_h : 0.0);
-            if (hL < min_child_hess || hR < min_child_hess)
-            {
-                continue;
-            }
-            if (mc != 0)
-            {
-                double const wL = bounded_leaf_weight(gL, hL, l1, l2, lo, hi);
-                double const wR = bounded_leaf_weight(gR, hR, l1, l2, lo, hi);
-                if (static_cast<double>(mc) * (wR - wL) < 0.0)
-                {
-                    continue;
-                }
-            }
-            double const gain = score(gL, hL, l1, l2) + score(gR, hR, l1, l2) -
-                                node_score;
-            if (gain > best.gain && gain >= min_gain)
-            {
-                best = {gain, gL, hL, gR, hR, static_cast<int32_t>(b), dl, 1,
-                        static_cast<int32_t>(sel)};
-            }
-        }
-    }
-    out[(static_cast<size_t>(node) * n_sel) + sel] = best;
-}
-
-// Per-node winner in ascending selected-feature order with strict >,
-// matching reduce_in_feature_order's lowest-feature-id tie-break.
-__global__ void reduce_kernel(FeatBest const *per_feat, uint32_t n_sel,
-                              FeatBest *out)
-{
-    if (threadIdx.x != 0)
-    {
-        return;
-    }
-    uint32_t const  node = blockIdx.x;
-    FeatBest        best = {};
-    FeatBest const *row  = per_feat + (static_cast<size_t>(node) * n_sel);
-    for (uint32_t s = 0; s < n_sel; ++s)
-    {
-        if (row[s].valid != 0 && row[s].gain > best.gain)
-        {
-            best = row[s];
-        }
-    }
-    out[node] = best;
-}
-
-} // namespace
 
 // BONSAI_CUDA_PROFILE=1 accumulators, printed at builder destruction.
 struct ProfileCounters
@@ -518,8 +62,8 @@ struct CudaHistogramBuilder::Impl
     DeviceBuffer<uint8_t>  bins8;
     DeviceBuffer<uint16_t> bins16;
     bool                   bins_are_u8 = false;
-    DeviceBuffer<uint32_t> n_bins;     // per-feature bin counts
-    DeviceBuffer<float>    grad_raw;   // per-tree raw uploads, interleaved below
+    DeviceBuffer<uint32_t> n_bins;   // per-feature bin counts
+    DeviceBuffer<float>    grad_raw; // per-tree raw uploads, interleaved below
     DeviceBuffer<float>    hess_raw;
     DeviceBuffer<float2>   gh;         // interleaved (grad, hess) per row
     DeviceBuffer<float2>   gh_ordered; // gathered into level row order
@@ -575,13 +119,13 @@ struct CudaHistogramBuilder::Impl
     // scatter into the "b" side and the pair swaps with the hist buffers.
     DeviceBuffer<uint32_t>  rows_b;
     DeviceBuffer<float2>    gh_b;
-    DeviceBuffer<uint8_t>   flags;        // per-row route flag, scatter reuse
+    DeviceBuffer<uint8_t>   flags; // per-row route flag, scatter reuse
     DeviceBuffer<PartOpDev> part_ops;
     DeviceBuffer<uint32_t>  block_counts; // per (op, chunk), scanned in place
     DeviceBuffer<uint32_t>  nl_dev;       // per op: total left count
     DeviceBuffer<uint32_t>  stamp_ids;
-    DeviceBuffer<uint32_t>  leaf_by_row;  // per row id: final leaf node
-    std::vector<uint32_t>   slot_ofs;     // current level's segment layout
+    DeviceBuffer<uint32_t>  leaf_by_row; // per row id: final leaf node
+    std::vector<uint32_t>   slot_ofs;    // current level's segment layout
     std::vector<uint32_t>   slot_cnt;
     std::vector<uint32_t>   next_ofs; // children layout, live after partition
     std::vector<uint32_t>   next_cnt;
@@ -605,11 +149,11 @@ struct CudaHistogramBuilder::Impl
     {
         return cur_is_a ? gh_b : gh_ordered;
     }
-    std::vector<double>    host_nsums;
-    std::vector<double>    host_bounds;
-    std::vector<char>      host_allowed;
-    std::vector<int>       host_mono;
-    std::vector<FeatBest>  host_best;
+    std::vector<double>   host_nsums;
+    std::vector<double>   host_bounds;
+    std::vector<char>     host_allowed;
+    std::vector<int>      host_mono;
+    std::vector<FeatBest> host_best;
 
     DeviceBuffer<double> &cur()
     {
@@ -691,7 +235,7 @@ void CudaHistogramBuilder::begin_tree(Dataset const &ds, floats_view grad,
 {
     impl_->ensure_dataset(ds);
     impl_->resident = false;
-    auto const n = static_cast<uint32_t>(grad.size());
+    auto const n    = static_cast<uint32_t>(grad.size());
     impl_->grad_raw.upload(grad.data(), grad.size());
     impl_->hess_raw.upload(hess.data(), hess.size());
     impl_->gh.ensure(grad.size());
@@ -701,10 +245,10 @@ void CudaHistogramBuilder::begin_tree(Dataset const &ds, floats_view grad,
 }
 
 void CudaHistogramBuilder::populate(Dataset const &ds, floats_view grad,
-                                    floats_view hess, SplitInput &node,
+                                    floats_view hess, SplitInput &split_input,
                                     std::span<feature_id_t const> selected)
 {
-    std::array const one = {std::ref(node)};
+    std::array const one = {std::ref(split_input)};
     populate_many(ds, grad, hess, one, selected);
 }
 
@@ -958,8 +502,7 @@ void CudaHistogramBuilder::stamp_leaves(std::span<LeafStamp const> stamps)
     im.host_ids.clear();
     for (LeafStamp const &st : stamps)
     {
-        im.host_part.push_back(
-            {im.slot_ofs[st.slot], im.slot_cnt[st.slot], 0, 0, 0});
+        im.host_part.push_back({im.slot_ofs[st.slot], im.slot_cnt[st.slot], 0, 0, 0});
         im.host_ids.push_back(st.node_id);
     }
     im.part_ops.upload(im.host_part.data(), im.host_part.size());
@@ -972,7 +515,7 @@ void CudaHistogramBuilder::stamp_leaves(std::span<LeafStamp const> stamps)
 
 void CudaHistogramBuilder::partition_level(Dataset const & /*ds*/,
                                            std::span<PartitionOp const> ops,
-                                           std::span<uint32_t> child_counts)
+                                           std::span<uint32_t>          child_counts)
 {
     Impl &im = *impl_;
     if (ops.empty())
@@ -1005,7 +548,8 @@ void CudaHistogramBuilder::partition_level(Dataset const & /*ds*/,
         max_cnt = std::max(max_cnt, cnt);
     }
     im.part_ops.upload(im.host_part.data(), n);
-    uint32_t const max_chunks = std::max(1U, (max_cnt + k_part_chunk - 1) / k_part_chunk);
+    uint32_t const max_chunks =
+        std::max(1U, (max_cnt + k_part_chunk - 1) / k_part_chunk);
     im.flags.ensure(im.n_rows);
     im.block_counts.ensure(n * max_chunks);
     im.nl_dev.ensure(n);
@@ -1052,9 +596,9 @@ void CudaHistogramBuilder::partition_level(Dataset const & /*ds*/,
     im.next_cnt.assign(2 * n, 0);
     for (size_t k = 0; k < n; ++k)
     {
-        uint32_t const nl           = im.host_nl[k];
-        uint32_t const parent_ofs   = im.host_part[k].ofs;
-        uint32_t const parent_cnt   = im.host_part[k].cnt;
+        uint32_t const nl              = im.host_nl[k];
+        uint32_t const parent_ofs      = im.host_part[k].ofs;
+        uint32_t const parent_cnt      = im.host_part[k].cnt;
         im.next_ofs[ops[k].left_slot]  = parent_ofs;
         im.next_cnt[ops[k].left_slot]  = nl;
         im.next_ofs[ops[k].right_slot] = parent_ofs + nl;
@@ -1068,12 +612,11 @@ void CudaHistogramBuilder::finalize_rows(std::span<node_id_t> leaf_by_row)
 {
     Impl &im = *impl_;
     check(cudaMemcpy(leaf_by_row.data(), im.leaf_by_row.get(),
-                     leaf_by_row.size() * sizeof(node_id_t),
-                     cudaMemcpyDeviceToHost),
+                     leaf_by_row.size() * sizeof(node_id_t), cudaMemcpyDeviceToHost),
           "leaf ids copy");
 }
 
-void CudaHistogramBuilder::advance_level(Dataset const &ds,
+void CudaHistogramBuilder::advance_level(Dataset const           &ds,
                                          std::span<LevelOp const> ops)
 {
     Impl &im = *impl_;
@@ -1180,8 +723,8 @@ void CudaHistogramBuilder::advance_level(Dataset const &ds,
     auto const sd = static_cast<uint32_t>(im.slot_doubles());
     subtract_kernel<<<dim3(std::clamp<uint32_t>((sd + 255) / 256, 1, 256),
                            static_cast<uint32_t>(ops.size())),
-                      dim3(256)>>>(im.cur().get(), im.other().get(),
-                                   im.triples.get(), sd);
+                      dim3(256)>>>(im.cur().get(), im.other().get(), im.triples.get(),
+                                   sd);
     check(cudaGetLastError(), "subtract launch");
     im.cur_is_a = !im.cur_is_a;
     im.slot_ofs = im.next_ofs;
@@ -1194,14 +737,13 @@ void CudaHistogramBuilder::advance_level(Dataset const &ds,
     lap(prof.gpu_s);
 }
 
-void CudaHistogramBuilder::find_splits_many(Dataset const &ds,
-                                            TreeConfig const &config,
+void CudaHistogramBuilder::find_splits_many(Dataset const &ds, TreeConfig const &config,
                                             std::span<SplitInput const> level,
                                             std::span<SplitOutput>      out,
                                             std::span<HistCell>         child_sums)
 {
-    Impl        &im = *impl_;
-    size_t const n  = level.size();
+    Impl        &im   = *impl_;
+    size_t const n    = level.size();
     auto        &prof = im.prof;
     auto         t0   = ProfileCounters::clock::now();
     auto         lap  = [&](double &sink)
@@ -1220,11 +762,11 @@ void CudaHistogramBuilder::find_splits_many(Dataset const &ds,
     bool any_mask = false;
     for (size_t i = 0; i < n; ++i)
     {
-        im.host_nsums[2 * i]       = level[i].sums.sum_grad;
-        im.host_nsums[(2 * i) + 1] = level[i].sums.sum_hess;
-        im.host_bounds[2 * i]      = level[i].lo;
+        im.host_nsums[2 * i]        = level[i].sums.sum_grad;
+        im.host_nsums[(2 * i) + 1]  = level[i].sums.sum_hess;
+        im.host_bounds[2 * i]       = level[i].lo;
         im.host_bounds[(2 * i) + 1] = level[i].hi;
-        any_mask = any_mask || !level[i].allowed.empty();
+        any_mask                    = any_mask || !level[i].allowed.empty();
     }
     im.node_sums.upload(im.host_nsums.data(), 2 * n);
     im.node_bounds.upload(im.host_bounds.data(), 2 * n);
@@ -1236,9 +778,8 @@ void CudaHistogramBuilder::find_splits_many(Dataset const &ds,
             for (uint32_t s = 0; s < im.n_sel; ++s)
             {
                 im.host_allowed[(i * im.n_sel) + s] =
-                    level[i].allowed.empty()
-                        ? char{1}
-                        : level[i].allowed[im.host_features[s]];
+                    level[i].allowed.empty() ? char{1}
+                                             : level[i].allowed[im.host_features[s]];
             }
         }
         im.allowed.upload(im.host_allowed.data(), im.host_allowed.size());
@@ -1255,9 +796,9 @@ void CudaHistogramBuilder::find_splits_many(Dataset const &ds,
     im.node_best.ensure(n);
     find_kernel<<<dim3((im.n_sel + 31) / 32, static_cast<uint32_t>(n)), dim3(32)>>>(
         im.cur().get(), im.features.get(), im.n_bins.get(), im.node_sums.get(),
-        im.node_bounds.get(), any_mask ? im.allowed.get() : nullptr,
-        im.monotone.get(), im.n_sel, im.stride, config.lambda_l1, config.lambda_l2,
-        config.min_child_hess, config.min_gain_to_split, im.feat_best.get());
+        im.node_bounds.get(), any_mask ? im.allowed.get() : nullptr, im.monotone.get(),
+        im.n_sel, im.stride, config.lambda_l1, config.lambda_l2, config.min_child_hess,
+        config.min_gain_to_split, im.feat_best.get());
     check(cudaGetLastError(), "find launch");
     reduce_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(32)>>>(
         im.feat_best.get(), im.n_sel, im.node_best.get());
@@ -1274,22 +815,22 @@ void CudaHistogramBuilder::find_splits_many(Dataset const &ds,
 
     for (size_t i = 0; i < n; ++i)
     {
-        FeatBest const &b        = im.host_best[i];
-        bool const      eligible = level[i].row_count >=
-                              2 * static_cast<size_t>(config.min_data_in_leaf);
+        FeatBest const &b = im.host_best[i];
+        bool const      eligible =
+            level[i].row_count >= 2 * static_cast<size_t>(config.min_data_in_leaf);
         if (b.valid == 0 || !eligible)
         {
-            out[i]                 = {};
-            child_sums[2 * i]      = {};
+            out[i]                  = {};
+            child_sums[2 * i]       = {};
             child_sums[(2 * i) + 1] = {};
             continue;
         }
-        out[i] = {.gain         = b.gain,
-                  .feature_id   = static_cast<feature_id_t>(
+        out[i]                  = {.gain       = b.gain,
+                                   .feature_id = static_cast<feature_id_t>(
                       im.host_features[static_cast<size_t>(b.sel)]),
-                  .bin_id       = static_cast<bin_id_t>(b.bin),
-                  .default_left = b.dl != 0,
-                  .valid        = true};
+                                   .bin_id       = static_cast<bin_id_t>(b.bin),
+                                   .default_left = b.dl != 0,
+                                   .valid        = true};
         child_sums[2 * i]       = {b.gL, b.hL};
         child_sums[(2 * i) + 1] = {b.gR, b.hR};
     }

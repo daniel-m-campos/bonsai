@@ -1,6 +1,6 @@
 CAVEMAN_URL  := https://raw.githubusercontent.com/juliusbrussee/caveman/main/skills/caveman/SKILL.md
 SKILLS_DIR   := .claude/skills
-SOURCES      := $(shell find src include tests benchmarks -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' \) 2>/dev/null)
+SOURCES      := $(shell find src include tests benchmarks -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.cu' -o -name '*.cuh' \) 2>/dev/null)
 LINT_SOURCES := $(shell find src -type f -name '*.cpp' 2>/dev/null)
 TOY_SENTINEL := tests/data/.toy-fetched
 
