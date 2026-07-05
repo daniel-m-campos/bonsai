@@ -24,6 +24,7 @@
 #include <memory>
 #include <print>
 #include <span>
+#include <utility>
 #include <vector>
 #include <vector_types.h>
 
@@ -199,6 +200,219 @@ struct CudaHistogramBuilder::Impl
         return static_cast<size_t>(n_selected) * stride;
     }
 
+    // Calls fn with the active binned-matrix pointer (uint8 when every feature
+    // fits 256 bins, else uint16) — the one branch every histogram and
+    // partition launch shares.
+    template <typename F> void dispatch_bins(F &&fn)
+    {
+        if (bins_are_u8)
+        {
+            std::forward<F>(fn)(bins8.data());
+        }
+        else
+        {
+            std::forward<F>(fn)(bins16.data());
+        }
+    }
+
+    // Concatenates the batched nodes' row lists into one device upload; the
+    // per-node offsets index it in-kernel. Returns {total_rows, max_rows}.
+    std::pair<size_t, size_t>
+    stage_level_rows(std::vector<std::reference_wrapper<SplitInput>> const &batched,
+                     std::span<feature_id_t const>                          selected)
+    {
+        size_t total_rows = 0;
+        size_t max_rows   = 0;
+        row_ofs.clear();
+        row_cnt.clear();
+        for (SplitInput const &node : batched)
+        {
+            row_ofs.host.push_back(static_cast<uint32_t>(total_rows));
+            row_cnt.host.push_back(static_cast<uint32_t>(node.rows.size()));
+            total_rows += node.rows.size();
+            max_rows = std::max(max_rows, node.rows.size());
+        }
+        host_rows.resize(total_rows);
+        for (size_t n = 0; n < batched.size(); ++n)
+        {
+            std::ranges::copy(batched[n].get().rows,
+                              host_rows.begin() + row_ofs.host[n]);
+        }
+        features.host.assign(selected.begin(), selected.end());
+        rows.upload(host_rows.data(), total_rows);
+        row_ofs.sync();
+        row_cnt.sync();
+        features.sync();
+        return {total_rows, max_rows};
+    }
+
+    // Copies the device histogram cells back into each batched node's
+    // per-feature host Histogram.
+    void
+    unpack_histograms(std::vector<std::reference_wrapper<SplitInput>> const &batched,
+                      std::span<feature_id_t const> selected, uint32_t stride)
+    {
+        for (size_t n = 0; n < batched.size(); ++n)
+        {
+            for (size_t s = 0; s < selected.size(); ++s)
+            {
+                Histogram    &h = batched[n].get().hists[selected[s]];
+                double const *cells =
+                    out.host.data() + (((n * selected.size()) + s) * stride);
+                for (size_t b = 0; b < h.size(); ++b)
+                {
+                    h.add(static_cast<bin_id_t>(b), cells[2 * b], cells[(2 * b) + 1]);
+                }
+            }
+        }
+    }
+
+    // Buckets each child op by the smaller child's size: nodes above the row
+    // cutoff stage into the shared-memory kernel's (row_ofs, row_cnt, slots),
+    // the rest into the direct-global kernel's (sofs, scnt, sslot); every op's
+    // (parent, small, large) triple stages for the subtract. Returns the
+    // largest small-child row count (sizes the shared kernel's chunk grid).
+    size_t stage_children(std::span<LevelOp const> ops)
+    {
+        size_t max_rows = 0;
+        row_ofs.clear();
+        row_cnt.clear();
+        slots.clear();
+        sofs.clear();
+        scnt.clear();
+        sslot.clear();
+        triples.clear();
+        for (LevelOp const &op : ops)
+        {
+            uint32_t const ofs = next_ofs[op.small_slot];
+            uint32_t const cnt = next_cnt[op.small_slot];
+            if (cnt >= k_min_gpu_rows)
+            {
+                row_ofs.host.push_back(ofs);
+                row_cnt.host.push_back(cnt);
+                slots.host.push_back(op.small_slot);
+                max_rows = std::max<size_t>(max_rows, cnt);
+            }
+            else
+            {
+                sofs.host.push_back(ofs);
+                scnt.host.push_back(cnt);
+                sslot.host.push_back(op.small_slot);
+            }
+            triples.host.push_back(op.parent_slot);
+            triples.host.push_back(op.small_slot);
+            triples.host.push_back(op.large_slot);
+        }
+        if (!row_ofs.empty())
+        {
+            row_ofs.sync();
+            row_cnt.sync();
+            slots.sync();
+        }
+        if (!sofs.empty())
+        {
+            sofs.sync();
+            scnt.sync();
+            sslot.sync();
+        }
+        triples.sync();
+        return max_rows;
+    }
+
+    // Fills the child slots' (offset, count) layout from the device left-counts
+    // and echoes (n_left, n_right) per op back to the caller.
+    void layout_children(std::span<PartitionOp const> ops,
+                         std::span<uint32_t>          child_counts)
+    {
+        size_t const n = ops.size();
+        next_ofs.assign(2 * n, 0);
+        next_cnt.assign(2 * n, 0);
+        for (size_t k = 0; k < n; ++k)
+        {
+            uint32_t const nl           = nl_dev.host[k];
+            uint32_t const parent_ofs   = part_ops.host[k].ofs;
+            uint32_t const parent_cnt   = part_ops.host[k].cnt;
+            next_ofs[ops[k].left_slot]  = parent_ofs;
+            next_cnt[ops[k].left_slot]  = nl;
+            next_ofs[ops[k].right_slot] = parent_ofs + nl;
+            next_cnt[ops[k].right_slot] = parent_cnt - nl;
+            child_counts[2 * k]         = nl;
+            child_counts[(2 * k) + 1]   = parent_cnt - nl;
+        }
+    }
+
+    // Stages the per-node totals, monotone-bound box, optional allowed-feature
+    // mask, and per-feature monotone directions the find kernel reads. Returns
+    // whether any node carried a mask (the kernel gets nullptr otherwise).
+    bool stage_find_inputs(std::span<SplitInput const> level, TreeConfig const &config,
+                           Dataset const &ds)
+    {
+        size_t const n = level.size();
+        node_sums.host.resize(2 * n);
+        node_bounds.host.resize(2 * n);
+        bool any_mask = false;
+        for (size_t i = 0; i < n; ++i)
+        {
+            node_sums.host[2 * i]         = level[i].sums.sum_grad;
+            node_sums.host[(2 * i) + 1]   = level[i].sums.sum_hess;
+            node_bounds.host[2 * i]       = level[i].lo;
+            node_bounds.host[(2 * i) + 1] = level[i].hi;
+            any_mask                      = any_mask || !level[i].allowed.empty();
+        }
+        node_sums.sync();
+        node_bounds.sync();
+        if (any_mask)
+        {
+            allowed.host.resize(n * n_selected);
+            for (size_t i = 0; i < n; ++i)
+            {
+                for (uint32_t s = 0; s < n_selected; ++s)
+                {
+                    allowed.host[(i * n_selected) + s] =
+                        level[i].allowed.empty() ? char{1}
+                                                 : level[i].allowed[features.host[s]];
+                }
+            }
+            allowed.sync();
+        }
+        monotone.host.resize(ds.n_features());
+        for (feature_id_t f = 0; f < ds.n_features(); ++f)
+        {
+            monotone.host[f] = monotone_constraint_of(config, f);
+        }
+        monotone.sync();
+        return any_mask;
+    }
+
+    // Translates each node's device-side best split into a host SplitOutput and
+    // its (left, right) child sums; a node with no valid split or too few rows
+    // to split emits an empty output.
+    void unpack_splits(std::span<SplitInput const> level, TreeConfig const &config,
+                       std::span<SplitOutput> out, std::span<HistCell> child_sums)
+    {
+        for (size_t i = 0; i < level.size(); ++i)
+        {
+            FeatBest const &b = node_best.host[i];
+            bool const      eligible =
+                level[i].row_count >= 2 * static_cast<size_t>(config.min_data_in_leaf);
+            if (b.valid == 0 || !eligible)
+            {
+                out[i]                  = {};
+                child_sums[2 * i]       = {};
+                child_sums[(2 * i) + 1] = {};
+                continue;
+            }
+            out[i]                  = {.gain       = b.gain,
+                                       .feature_id = static_cast<feature_id_t>(
+                          features.host[static_cast<size_t>(b.sel)]),
+                                       .bin_id       = static_cast<bin_id_t>(b.bin),
+                                       .default_left = b.dl != 0,
+                                       .valid        = true};
+            child_sums[2 * i]       = {.sum_grad = b.gL, .sum_hess = b.hL};
+            child_sums[(2 * i) + 1] = {.sum_grad = b.gR, .sum_hess = b.hR};
+        }
+    }
+
     void ensure_dataset(Dataset const &dataset)
     {
         void const *first =
@@ -281,6 +495,47 @@ void CudaHistogramBuilder::populate(Dataset const &ds, floats_view grad,
     populate_many(ds, grad, hess, one, selected);
 }
 
+// Splits a level's nodes: sub-cutoff nodes (or any node when a feature's
+// histogram would overflow shared memory) go to the CPU builder; the rest
+// batch into one device launch.
+static void
+split_gpu_cpu_nodes(split_input_refs nodes, bool shared_fits,
+                    std::vector<std::reference_wrapper<SplitInput>> &cpu_nodes,
+                    std::vector<std::reference_wrapper<SplitInput>> &batched)
+{
+    batched.reserve(nodes.size());
+    for (SplitInput &node : nodes)
+    {
+        if (node.rows.size() < k_min_gpu_rows || !shared_fits)
+        {
+            cpu_nodes.emplace_back(node);
+        }
+        else
+        {
+            batched.emplace_back(node);
+        }
+    }
+}
+
+// CPU-builder shape contract: every feature gets a Histogram, zero-binned where
+// unselected so the finders skip it.
+static void reserve_placeholder_hists(
+    std::vector<std::reference_wrapper<SplitInput>> const &batched, Dataset const &ds,
+    std::span<feature_id_t const> selected)
+{
+    for (SplitInput &node : batched)
+    {
+        node.hists.reserve(ds.n_features());
+        size_t j = 0;
+        for (feature_id_t fid = 0; fid < ds.n_features(); ++fid)
+        {
+            bool const sel = j < selected.size() && selected[j] == fid;
+            node.hists.emplace_back(sel ? ds.n_bins(fid) : 0);
+            j += sel ? 1 : 0;
+        }
+    }
+}
+
 void CudaHistogramBuilder::populate_many(Dataset const &ds, floats_view grad,
                                          floats_view hess, split_input_refs nodes,
                                          std::span<feature_id_t const> selected)
@@ -296,23 +551,11 @@ void CudaHistogramBuilder::populate_many(Dataset const &ds, floats_view grad,
     auto &prof_counters = impl_->prof_counters;
     auto  lap           = prof_counters.lap();
 
-    // Sub-cutoff nodes go to the CPU builder; the rest share one launch.
     std::vector<std::reference_wrapper<SplitInput>> cpu_nodes;
     std::vector<std::reference_wrapper<SplitInput>> batched;
-    batched.reserve(nodes.size());
-    for (SplitInput &node : nodes)
-    {
-        if (node.rows.size() < k_min_gpu_rows || !shared_fits)
-        {
-            cpu_nodes.emplace_back(node);
-        }
-        else
-        {
-            batched.emplace_back(node);
-        }
-    }
-    // One worker per node; the CPU builder's inner parallel loops degrade
-    // to a team of one inside this region, so results stay bit-identical.
+    split_gpu_cpu_nodes(nodes, shared_fits, cpu_nodes, batched);
+    // One worker per node; the CPU builder's inner parallel loops degrade to a
+    // team of one inside this region, so results stay bit-identical.
     prof_counters.cpu_calls += cpu_nodes.size();
     parallel::for_each_index(
         cpu_nodes.size(),
@@ -323,46 +566,13 @@ void CudaHistogramBuilder::populate_many(Dataset const &ds, floats_view grad,
         return;
     }
 
-    // CPU-builder shape contract: zero-binned placeholders when unselected.
-    for (SplitInput &node : batched)
-    {
-        node.hists.reserve(ds.n_features());
-        size_t j = 0;
-        for (feature_id_t fid = 0; fid < ds.n_features(); ++fid)
-        {
-            bool const sel = j < selected.size() && selected[j] == fid;
-            node.hists.emplace_back(sel ? ds.n_bins(fid) : 0);
-            j += sel ? 1 : 0;
-        }
-    }
+    reserve_placeholder_hists(batched, ds, selected);
     if (selected.empty())
     {
         return;
     }
 
-    // One concatenated row upload; per-node offsets index it in-kernel.
-    size_t total_rows = 0;
-    size_t max_rows   = 0;
-    impl_->row_ofs.clear();
-    impl_->row_cnt.clear();
-    for (SplitInput const &node : batched)
-    {
-        impl_->row_ofs.host.push_back(static_cast<uint32_t>(total_rows));
-        impl_->row_cnt.host.push_back(static_cast<uint32_t>(node.rows.size()));
-        total_rows += node.rows.size();
-        max_rows = std::max(max_rows, node.rows.size());
-    }
-    impl_->host_rows.resize(total_rows);
-    for (size_t n = 0; n < batched.size(); ++n)
-    {
-        SplitInput const &node = batched[n];
-        std::ranges::copy(node.rows, impl_->host_rows.begin() + impl_->row_ofs.host[n]);
-    }
-    impl_->features.host.assign(selected.begin(), selected.end());
-    impl_->rows.upload(impl_->host_rows.data(), total_rows);
-    impl_->row_ofs.sync();
-    impl_->row_cnt.sync();
-    impl_->features.sync();
+    auto const [total_rows, max_rows] = impl_->stage_level_rows(batched, selected);
     lap(prof_counters.upload_s);
 
     auto const   stride = static_cast<uint32_t>(2 * max_selected_bins);
@@ -381,22 +591,18 @@ void CudaHistogramBuilder::populate_many(Dataset const &ds, floats_view grad,
     impl_->gh_ordered.reserve(total_rows);
     gather(impl_->gh.data(), impl_->rows.data(), static_cast<uint32_t>(total_rows),
            impl_->gh_ordered.data());
-    auto const launch = [&](auto const *bins)
-    {
-        hist_kernel<<<grid, block, 2 * static_cast<size_t>(stride) * sizeof(float)>>>(
-            bins, impl_->gh_ordered.data(), impl_->rows.data(), impl_->row_ofs.device(),
-            impl_->row_cnt.device(), impl_->features.device(), impl_->n_bins.data(),
-            static_cast<uint32_t>(ds.n_rows()), static_cast<uint32_t>(selected.size()),
-            impl_->out.device(), stride, nullptr);
-    };
-    if (impl_->bins_are_u8)
-    {
-        launch(impl_->bins8.data());
-    }
-    else
-    {
-        launch(impl_->bins16.data());
-    }
+    impl_->dispatch_bins(
+        [&](auto const *bins)
+        {
+            hist_kernel<<<grid, block,
+                          2 * static_cast<size_t>(stride) * sizeof(float)>>>(
+                bins, impl_->gh_ordered.data(), impl_->rows.data(),
+                impl_->row_ofs.device(), impl_->row_cnt.device(),
+                impl_->features.device(), impl_->n_bins.data(),
+                static_cast<uint32_t>(ds.n_rows()),
+                static_cast<uint32_t>(selected.size()), impl_->out.device(), stride,
+                nullptr);
+        });
     check(cudaGetLastError(), "launch");
 
     impl_->out.fetch(out_doubles); // DtoH, implicit sync
@@ -407,19 +613,7 @@ void CudaHistogramBuilder::populate_many(Dataset const &ds, floats_view grad,
     }
     lap(prof_counters.gpu_s);
 
-    for (size_t n = 0; n < batched.size(); ++n)
-    {
-        for (size_t s = 0; s < selected.size(); ++s)
-        {
-            Histogram    &h = batched[n].get().hists[selected[s]];
-            double const *cells =
-                impl_->out.host.data() + (((n * selected.size()) + s) * stride);
-            for (size_t b = 0; b < h.size(); ++b)
-            {
-                h.add(static_cast<bin_id_t>(b), cells[2 * b], cells[(2 * b) + 1]);
-            }
-        }
-    }
+    impl_->unpack_histograms(batched, selected, stride);
     lap(prof_counters.unpack_s);
 }
 
@@ -464,22 +658,15 @@ bool CudaHistogramBuilder::begin_root(Dataset const &ds, floats_view grad,
     gather(im.gh.data(), im.rows.data(), n, im.gh_ordered.data());
     auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
     dim3 const grid(im.n_selected, 1, n_chunks);
-    auto const launch = [&](auto const *bins)
-    {
-        hist_kernel<<<grid, dim3(256), 2UL * im.stride * sizeof(float)>>>(
-            bins, im.gh_ordered.data(), im.rows.data(), im.row_ofs.device(),
-            im.row_cnt.device(), im.features.device(), im.n_bins.data(),
-            static_cast<uint32_t>(ds.n_rows()), im.n_selected, im.cur().data(),
-            im.stride, im.slots.device());
-    };
-    if (im.bins_are_u8)
-    {
-        launch(im.bins8.data());
-    }
-    else
-    {
-        launch(im.bins16.data());
-    }
+    im.dispatch_bins(
+        [&](auto const *bins)
+        {
+            hist_kernel<<<grid, dim3(256), 2UL * im.stride * sizeof(float)>>>(
+                bins, im.gh_ordered.data(), im.rows.data(), im.row_ofs.device(),
+                im.row_cnt.device(), im.features.device(), im.n_bins.data(),
+                static_cast<uint32_t>(ds.n_rows()), im.n_selected, im.cur().data(),
+                im.stride, im.slots.device());
+        });
     check(cudaGetLastError(), "root hist launch");
 
     im.slot_ofs.assign(1, 0);
@@ -559,21 +746,14 @@ void CudaHistogramBuilder::partition_level(Dataset const & /*ds*/,
     lap(prof.upload_s);
 
     dim3 const grid(max_chunks, static_cast<uint32_t>(n));
-    auto const route = [&](auto const *bins)
-    {
-        route_count_kernel<<<grid, dim3(k_part_block)>>>(
-            bins, im.n_bins.data(), im.cur_rows().data(), im.part_ops.device(),
-            static_cast<uint32_t>(im.n_rows), max_chunks, im.flags.data(),
-            im.block_counts.data());
-    };
-    if (im.bins_are_u8)
-    {
-        route(im.bins8.data());
-    }
-    else
-    {
-        route(im.bins16.data());
-    }
+    im.dispatch_bins(
+        [&](auto const *bins)
+        {
+            route_count_kernel<<<grid, dim3(k_part_block)>>>(
+                bins, im.n_bins.data(), im.cur_rows().data(), im.part_ops.device(),
+                static_cast<uint32_t>(im.n_rows), max_chunks, im.flags.data(),
+                im.block_counts.data());
+        });
     check(cudaGetLastError(), "route launch");
     seg_scan_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(32)>>>(
         im.block_counts.data(), max_chunks, im.nl_dev.device());
@@ -592,20 +772,7 @@ void CudaHistogramBuilder::partition_level(Dataset const & /*ds*/,
     }
     lap(prof.gpu_s);
 
-    im.next_ofs.assign(2 * n, 0);
-    im.next_cnt.assign(2 * n, 0);
-    for (size_t k = 0; k < n; ++k)
-    {
-        uint32_t const nl              = im.nl_dev.host[k];
-        uint32_t const parent_ofs      = im.part_ops.host[k].ofs;
-        uint32_t const parent_cnt      = im.part_ops.host[k].cnt;
-        im.next_ofs[ops[k].left_slot]  = parent_ofs;
-        im.next_cnt[ops[k].left_slot]  = nl;
-        im.next_ofs[ops[k].right_slot] = parent_ofs + nl;
-        im.next_cnt[ops[k].right_slot] = parent_cnt - nl;
-        child_counts[2 * k]            = nl;
-        child_counts[(2 * k) + 1]      = parent_cnt - nl;
-    }
+    im.layout_children(ops, child_counts);
 }
 
 void CudaHistogramBuilder::finalize_rows(std::span<node_id_t> leaf_by_row)
@@ -627,50 +794,8 @@ void CudaHistogramBuilder::advance_level(Dataset const           &ds,
     auto &prof = im.prof_counters;
     auto  lap  = prof.lap();
 
-    // Smalls route to the shared-memory kernel above the row cutoff and to
-    // the direct-global kernel below it; rows are already device-resident.
-    size_t max_rows = 0;
-    im.row_ofs.clear();
-    im.row_cnt.clear();
-    im.slots.clear();
-    im.sofs.clear();
-    im.scnt.clear();
-    im.sslot.clear();
-    im.triples.clear();
-    for (LevelOp const &op : ops)
-    {
-        uint32_t const ofs = im.next_ofs[op.small_slot];
-        uint32_t const cnt = im.next_cnt[op.small_slot];
-        if (cnt >= k_min_gpu_rows)
-        {
-            im.row_ofs.host.push_back(ofs);
-            im.row_cnt.host.push_back(cnt);
-            im.slots.host.push_back(op.small_slot);
-            max_rows = std::max<size_t>(max_rows, cnt);
-        }
-        else
-        {
-            im.sofs.host.push_back(ofs);
-            im.scnt.host.push_back(cnt);
-            im.sslot.host.push_back(op.small_slot);
-        }
-        im.triples.host.push_back(op.parent_slot);
-        im.triples.host.push_back(op.small_slot);
-        im.triples.host.push_back(op.large_slot);
-    }
-    if (!im.row_ofs.empty())
-    {
-        im.row_ofs.sync();
-        im.row_cnt.sync();
-        im.slots.sync();
-    }
-    if (!im.sofs.empty())
-    {
-        im.sofs.sync();
-        im.scnt.sync();
-        im.sslot.sync();
-    }
-    im.triples.sync();
+    // Rows are already device-resident; only the per-child layout stages here.
+    size_t const max_rows = im.stage_children(ops);
     lap(prof.upload_s);
 
     size_t const child_slots = 2 * ops.size();
@@ -678,38 +803,31 @@ void CudaHistogramBuilder::advance_level(Dataset const           &ds,
     check(cudaMemset(im.other().data(), 0,
                      child_slots * im.slot_doubles() * sizeof(double)),
           "zero level");
-    auto const launch = [&](auto const *bins)
-    {
-        if (!im.row_ofs.empty())
+    im.dispatch_bins(
+        [&](auto const *bins)
         {
-            auto const n_chunks = std::clamp<uint32_t>(
-                (static_cast<uint32_t>(max_rows) + 32767) / 32768, 1, 64);
-            dim3 const grid(im.n_selected, static_cast<uint32_t>(im.row_ofs.size()),
-                            n_chunks);
-            hist_kernel<<<grid, dim3(256), 2UL * im.stride * sizeof(float)>>>(
-                bins, im.other_gh().data(), im.other_rows().data(), im.row_ofs.device(),
-                im.row_cnt.device(), im.features.device(), im.n_bins.data(),
-                static_cast<uint32_t>(ds.n_rows()), im.n_selected, im.other().data(),
-                im.stride, im.slots.device());
-        }
-        if (!im.sofs.empty())
-        {
-            hist_small_kernel<<<dim3(static_cast<uint32_t>(im.sofs.size())),
-                                dim3(128)>>>(
-                bins, im.other_gh().data(), im.other_rows().data(), im.sofs.device(),
-                im.scnt.device(), im.features.device(),
-                static_cast<uint32_t>(ds.n_rows()), im.n_selected, im.other().data(),
-                im.stride, im.sslot.device());
-        }
-    };
-    if (im.bins_are_u8)
-    {
-        launch(im.bins8.data());
-    }
-    else
-    {
-        launch(im.bins16.data());
-    }
+            if (!im.row_ofs.empty())
+            {
+                auto const n_chunks = std::clamp<uint32_t>(
+                    (static_cast<uint32_t>(max_rows) + 32767) / 32768, 1, 64);
+                dim3 const grid(im.n_selected, static_cast<uint32_t>(im.row_ofs.size()),
+                                n_chunks);
+                hist_kernel<<<grid, dim3(256), 2UL * im.stride * sizeof(float)>>>(
+                    bins, im.other_gh().data(), im.other_rows().data(),
+                    im.row_ofs.device(), im.row_cnt.device(), im.features.device(),
+                    im.n_bins.data(), static_cast<uint32_t>(ds.n_rows()), im.n_selected,
+                    im.other().data(), im.stride, im.slots.device());
+            }
+            if (!im.sofs.empty())
+            {
+                hist_small_kernel<<<dim3(static_cast<uint32_t>(im.sofs.size())),
+                                    dim3(128)>>>(
+                    bins, im.other_gh().data(), im.other_rows().data(),
+                    im.sofs.device(), im.scnt.device(), im.features.device(),
+                    static_cast<uint32_t>(ds.n_rows()), im.n_selected,
+                    im.other().data(), im.stride, im.sslot.device());
+            }
+        });
     check(cudaGetLastError(), "level hist launch");
     auto const sd = static_cast<uint32_t>(im.slot_doubles());
     subtract_kernel<<<dim3(std::clamp<uint32_t>((sd + 255) / 256, 1, 256),
@@ -738,39 +856,7 @@ void CudaHistogramBuilder::find_splits_many(Dataset const &ds, TreeConfig const 
     auto        &prof = im.prof_counters;
     auto         lap  = prof.lap();
 
-    im.node_sums.host.resize(2 * n);
-    im.node_bounds.host.resize(2 * n);
-    bool any_mask = false;
-    for (size_t i = 0; i < n; ++i)
-    {
-        im.node_sums.host[2 * i]         = level[i].sums.sum_grad;
-        im.node_sums.host[(2 * i) + 1]   = level[i].sums.sum_hess;
-        im.node_bounds.host[2 * i]       = level[i].lo;
-        im.node_bounds.host[(2 * i) + 1] = level[i].hi;
-        any_mask                         = any_mask || !level[i].allowed.empty();
-    }
-    im.node_sums.sync();
-    im.node_bounds.sync();
-    if (any_mask)
-    {
-        im.allowed.host.resize(n * im.n_selected);
-        for (size_t i = 0; i < n; ++i)
-        {
-            for (uint32_t s = 0; s < im.n_selected; ++s)
-            {
-                im.allowed.host[(i * im.n_selected) + s] =
-                    level[i].allowed.empty() ? char{1}
-                                             : level[i].allowed[im.features.host[s]];
-            }
-        }
-        im.allowed.sync();
-    }
-    im.monotone.host.resize(ds.n_features());
-    for (feature_id_t f = 0; f < ds.n_features(); ++f)
-    {
-        im.monotone.host[f] = monotone_constraint_of(config, f);
-    }
-    im.monotone.sync();
+    bool const any_mask = im.stage_find_inputs(level, config, ds);
     lap(prof.upload_s);
 
     im.feat_best.reserve(n * im.n_selected);
@@ -793,27 +879,7 @@ void CudaHistogramBuilder::find_splits_many(Dataset const &ds, TreeConfig const 
     }
     lap(prof.gpu_s);
 
-    for (size_t i = 0; i < n; ++i)
-    {
-        FeatBest const &b = im.node_best.host[i];
-        bool const      eligible =
-            level[i].row_count >= 2 * static_cast<size_t>(config.min_data_in_leaf);
-        if (b.valid == 0 || !eligible)
-        {
-            out[i]                  = {};
-            child_sums[2 * i]       = {};
-            child_sums[(2 * i) + 1] = {};
-            continue;
-        }
-        out[i]                  = {.gain       = b.gain,
-                                   .feature_id = static_cast<feature_id_t>(
-                      im.features.host[static_cast<size_t>(b.sel)]),
-                                   .bin_id       = static_cast<bin_id_t>(b.bin),
-                                   .default_left = b.dl != 0,
-                                   .valid        = true};
-        child_sums[2 * i]       = {.sum_grad = b.gL, .sum_hess = b.hL};
-        child_sums[(2 * i) + 1] = {.sum_grad = b.gR, .sum_hess = b.hR};
-    }
+    im.unpack_splits(level, config, out, child_sums);
     lap(prof.unpack_s);
 }
 

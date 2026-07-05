@@ -31,19 +31,21 @@ class CudaHistogramBuilder
     CudaHistogramBuilder(CudaHistogramBuilder const &)            = delete;
     CudaHistogramBuilder &operator=(CudaHistogramBuilder const &) = delete;
 
+    // --- HistogramBuilder concept (required): the copy-back path.
     void begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
     void populate(Dataset const &ds, floats_view grad, floats_view hess,
                   SplitInput &split_input, std::span<feature_id_t const> selected);
-    // Batched variant: one kernel launch covers a whole tree level.
+
+    // --- BatchHistogramBuilder (optional, phase 2): one launch covers a level.
     void populate_many(Dataset const &ds, floats_view grad, floats_view hess,
                        split_input_refs nodes, std::span<feature_id_t const> selected);
 
-    // --- Resident level backend (phase 3, docs/architecture/11-gpu-resident.md).
-    // Level histograms stay on the device, keyed by the node's index in the
-    // grower's frontier ("slot"); splits are found on the device and only
-    // decisions and child sums cross the bus. The depthwise grower detects
-    // these hooks via if constexpr + requires; the splitter policy remains
-    // the host fallback when begin_root declines.
+    // --- ResidentHistogramBuilder (optional, phase 3,
+    // docs/architecture/11-gpu-resident.md). Level histograms stay on the device, keyed
+    // by the node's index in the grower's frontier ("slot"); splits are found on the
+    // device and only decisions and child sums cross the bus. The depthwise grower
+    // gates this whole cluster on the ResidentHistogramBuilder concept; the splitter
+    // policy remains the host fallback when begin_root declines.
 
     // One child-level derivation: the smaller child's histogram builds from
     // its device row segment; the larger derives on-device as parent minus
@@ -107,5 +109,7 @@ class CudaHistogramBuilder
 };
 
 static_assert(HistogramBuilder<CudaHistogramBuilder>);
+static_assert(BatchHistogramBuilder<CudaHistogramBuilder>);
+static_assert(ResidentHistogramBuilder<CudaHistogramBuilder>);
 
 } // namespace bonsai

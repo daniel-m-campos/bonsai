@@ -51,6 +51,44 @@ concept HistogramBuilder =
         b.populate(ds, grad, hess, split_input, selected);
     };
 
+// Optional phase-2 hook: fill an entire tree level in one call (the CUDA
+// builder collapses it to a single launch). populate_nodes uses it when
+// present and otherwise loops populate per node.
+template <typename T>
+concept BatchHistogramBuilder =
+    HistogramBuilder<T> &&
+    requires(T b, Dataset const &ds, floats_view grad, floats_view hess,
+             split_input_refs nodes, std::span<feature_id_t const> selected) {
+        b.populate_many(ds, grad, hess, nodes, selected);
+    };
+
+// Optional phase-3 hooks: histograms and rows stay device-resident, so only
+// decisions and counts cross the bus (docs/architecture/11-gpu-resident.md).
+// The depthwise grower drives this whole cluster or none of it, so it is one
+// concept and not seven; resident() is the runtime query of whether the device
+// path is actually live for the current tree.
+template <typename T>
+concept ResidentHistogramBuilder =
+    HistogramBuilder<T> &&
+    requires(T b, Dataset const &ds, TreeConfig const &config, floats_view grad,
+             floats_view hess, SplitInput &root, std::span<feature_id_t const> selected,
+             std::span<typename T::LeafStamp const>   stamps,
+             std::span<typename T::PartitionOp const> pops,
+             std::span<typename T::LevelOp const> lops, std::span<uint32_t> counts,
+             std::span<SplitInput const> level, std::span<SplitOutput> out,
+             std::span<HistCell> child_sums, std::span<node_id_t> by_row) {
+        typename T::LevelOp;
+        typename T::PartitionOp;
+        typename T::LeafStamp;
+        { b.begin_root(ds, grad, hess, root, selected) } -> std::convertible_to<bool>;
+        { b.resident() } -> std::convertible_to<bool>;
+        b.stamp_leaves(stamps);
+        b.partition_level(ds, pops, counts);
+        b.advance_level(ds, lops);
+        b.finalize_rows(by_row);
+        b.find_splits_many(ds, config, level, out, child_sums);
+    };
+
 struct CpuHistogramBuilder
 {
     void begin_tree(Dataset const & /*ds*/, floats_view /*grad*/, floats_view /*hess*/)

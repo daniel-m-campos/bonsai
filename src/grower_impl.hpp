@@ -227,7 +227,7 @@ SplitInput make_root(Dataset const &ds, floats_view grad, floats_view hess,
     SplitInput root;
     root.id = 0;
     root.rows.assign(row_indices.begin(), row_indices.end());
-    if constexpr (requires { builder.begin_root(ds, grad, hess, root, selected); })
+    if constexpr (ResidentHistogramBuilder<HistogramBuilderT>)
     {
         if (builder.begin_root(ds, grad, hess, root, selected))
         {
@@ -246,7 +246,7 @@ inline void populate_nodes(Dataset const &ds, floats_view grad, floats_view hess
                            split_input_refs nodes, feature_view selected,
                            HistogramBuilderT &builder)
 {
-    if constexpr (requires { builder.populate_many(ds, grad, hess, nodes, selected); })
+    if constexpr (BatchHistogramBuilder<HistogramBuilderT>)
     {
         builder.populate_many(ds, grad, hess, nodes, selected);
     }
@@ -271,11 +271,7 @@ inline void find_splits(Dataset const &ds, std::vector<SplitInput> const &curren
     auto const t0 = std::chrono::steady_clock::now();
     out.clear();
     child_sums.clear();
-    if constexpr (requires {
-                      builder.find_splits_many(
-                          ds, config, std::span<SplitInput const>{},
-                          std::span<SplitOutput>{}, std::span<HistCell>{});
-                  })
+    if constexpr (ResidentHistogramBuilder<HistogramBuilderT>)
     {
         if (builder.resident())
         {
@@ -474,11 +470,7 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
     // the device (only child counts return), and the child level's
     // histograms build/subtract in place. Rows never reach the host.
     bool used_device = false;
-    if constexpr (requires {
-                      typename HistogramBuilderT::PartitionOp;
-                      typename HistogramBuilderT::LeafStamp;
-                      typename HistogramBuilderT::LevelOp;
-                  })
+    if constexpr (ResidentHistogramBuilder<HistogramBuilderT>)
     {
         if (builder.resident())
         {
@@ -686,7 +678,7 @@ auto DepthwiseGrower<SplitterT, HistogramBuilderT>::grow(Dataset const &ds,
         ++depth;
     }
 
-    if constexpr (requires { typename HistogramBuilderT::LeafStamp; })
+    if constexpr (ResidentHistogramBuilder<HistogramBuilderT>)
     {
         if (builder_.resident())
         {
@@ -703,7 +695,7 @@ auto DepthwiseGrower<SplitterT, HistogramBuilderT>::grow(Dataset const &ds,
     {
         gd::finalize_as_leaf(nodes, input, config_, n_leaves, values, leaf_ids);
     }
-    if constexpr (requires { builder_.finalize_rows(std::span<node_id_t>{}); })
+    if constexpr (ResidentHistogramBuilder<HistogramBuilderT>)
     {
         if (builder_.resident())
         {
