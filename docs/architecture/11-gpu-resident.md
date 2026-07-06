@@ -1,6 +1,8 @@
 # 11 — GPU-resident growing
 
 > **Status:** landed (decision 40; commits 556310b, a1a40c4, a644358 on cuda-phase2). A100 MSD ladder: 13.1 s (phase 2) → 7.5 (stage A) → 5.4 (stage B) → **5.0 s** (stage C) vs xgboost-GPU 1.8 s; RMSE 8.9911 at every stage; 392/392 both configs; CPU builds bit-identical. Grow-loop time is ~2.5 s — near xgboost's train phase — with CSV parse + binning (~2.5 s, outside this design's scope) now the largest remaining block. Baseline evidence: [reviews/2026-07-03-design-review-cuda.md](../reviews/2026-07-03-design-review-cuda.md).
+>
+> **Grower-side seam superseded by [`12-grower-backend.md`](12-grower-backend.md) (decision 41):** the "each level step dispatches host-or-device internally" model in *The seam* below is replaced by the `LevelStep` compile-time strategy, `resident()` is retired, and copy-back is dropped in favour of a CPU fallback. The device-kernel stages (A/B/C) and the level state machine here stand unchanged. This doc is updated to match once the redesign lands.
 
 ## Why
 
