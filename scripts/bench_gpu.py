@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["numpy", "pandas", "xgboost"]
+# dependencies = ["numpy", "pandas", "xgboost", "lightgbm", "catboost"]
 # ///
 """MSD benchmark ladder for the GPU perf loop (see benchmarks/README.md).
 
@@ -104,6 +104,59 @@ def run_xgb(device: str, threads: int, test, y_test) -> dict:
             "rmse": round(rmse(pred, y_test), 4), "profile": {}}
 
 
+# LightGBM full pipeline (CSV read + Dataset binning + train), same fair
+# timing as bonsai/xgboost. device="cuda" for GPU, "cpu" otherwise.
+def run_lgbm(device: str, threads: int, test, y_test) -> dict:
+    import lightgbm as lgb
+    cfg = tomllib.loads(CONFIG.read_text())
+    depth = cfg["tree"]["max_depth"]
+    params = {"objective": "regression", "metric": "rmse",
+              "learning_rate": cfg["booster"]["learning_rate"],
+              "max_depth": depth, "num_leaves": (1 << depth) - 1,
+              "min_data_in_leaf": cfg["tree"]["min_data_in_leaf"],
+              "lambda_l2": cfg["tree"]["lambda_l2"],
+              "max_bin": cfg["bin_mapper"]["max_bin"],
+              "seed": cfg["booster"]["random_seed"], "verbose": -1,
+              "device_type": device, "num_threads": threads}
+    t0 = time.perf_counter()
+    train = pd.read_csv(REPO / cfg["data"]["train"])
+    feats = [c for c in train.columns if c != "label"]
+    dtrain = lgb.Dataset(train[feats], label=train["label"])
+    model = lgb.train(params, dtrain, num_boost_round=cfg["booster"]["n_iters"])
+    fit_s = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    pred = model.predict(test[feats])
+    predict_s = time.perf_counter() - t0
+    return {"fit_s": round(fit_s, 2), "predict_s": round(predict_s, 2),
+            "rmse": round(rmse(pred, y_test), 4), "profile": {}}
+
+
+# CatBoost full pipeline (CSV read + Pool binning + train). task_type="GPU"
+# for GPU. CatBoost caps GPU border_count at 254.
+def run_catboost(device: str, threads: int, test, y_test) -> dict:
+    from catboost import CatBoostRegressor, Pool
+    cfg = tomllib.loads(CONFIG.read_text())
+    t0 = time.perf_counter()
+    train = pd.read_csv(REPO / cfg["data"]["train"])
+    feats = [c for c in train.columns if c != "label"]
+    pool = Pool(train[feats], label=train["label"].to_numpy())
+    model = CatBoostRegressor(
+        iterations=cfg["booster"]["n_iters"],
+        learning_rate=cfg["booster"]["learning_rate"],
+        depth=cfg["tree"]["max_depth"], l2_leaf_reg=cfg["tree"]["lambda_l2"],
+        border_count=min(cfg["bin_mapper"]["max_bin"], 254),
+        random_seed=cfg["booster"]["random_seed"], loss_function="RMSE",
+        task_type=("GPU" if device == "cuda" else "CPU"), devices="0",
+        thread_count=threads, verbose=False)
+    model.fit(pool)
+    fit_s = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    pred = model.predict(test[feats])
+    predict_s = time.perf_counter() - t0
+    return {"fit_s": round(fit_s, 2), "predict_s": round(predict_s, 2),
+            "rmse": round(rmse(pred, y_test), 4), "profile": {}}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--threads", type=int, default=16,
@@ -124,7 +177,11 @@ def main() -> int:
     runners = {"bonsai_gpu": lambda: run_bonsai("cuda_depthwise", args.threads, y_test),
                "bonsai_cpu": lambda: run_bonsai("depthwise", args.threads, y_test),
                "xgb_cpu": lambda: run_xgb("cpu", args.threads, test, y_test),
-               "xgb_gpu": lambda: run_xgb("cuda", args.threads, test, y_test)}
+               "xgb_gpu": lambda: run_xgb("cuda", args.threads, test, y_test),
+               "lgbm_cpu": lambda: run_lgbm("cpu", args.threads, test, y_test),
+               "lgbm_gpu": lambda: run_lgbm("cuda", args.threads, test, y_test),
+               "catboost_cpu": lambda: run_catboost("cpu", args.threads, test, y_test),
+               "catboost_gpu": lambda: run_catboost("cuda", args.threads, test, y_test)}
 
     results, ts = {}, datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     RESULTS.parent.mkdir(parents=True, exist_ok=True)
