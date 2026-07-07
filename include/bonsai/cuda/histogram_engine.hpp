@@ -31,14 +31,12 @@ class CudaHistogramEngine
     CudaHistogramEngine(CudaHistogramEngine const &)            = delete;
     CudaHistogramEngine &operator=(CudaHistogramEngine const &) = delete;
 
-    // --- HistogramEngine concept (required): the copy-back path.
+    // --- HistogramEngine concept (required): begin_tree stages the per-tree
+    // gradient upload; populate is the CPU fallback for trees begin_root
+    // declines (the GPU copy-back path was retired by decision 41).
     void begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
     void populate(Dataset const &ds, floats_view grad, floats_view hess,
                   SplitInput &split_input, std::span<feature_id_t const> selected);
-
-    // --- BatchHistogramEngine (optional, phase 2): one launch covers a level.
-    void populate_many(Dataset const &ds, floats_view grad, floats_view hess,
-                       split_input_refs nodes, std::span<feature_id_t const> selected);
 
     // --- GPULevelEngine (optional, phase 3,
     // docs/architecture/11-gpu-resident.md). Level histograms stay on the device, keyed
@@ -108,7 +106,6 @@ class CudaHistogramEngine
 };
 
 static_assert(HistogramEngine<CudaHistogramEngine>);
-static_assert(BatchHistogramEngine<CudaHistogramEngine>);
 static_assert(GPULevelEngine<CudaHistogramEngine>);
 
 } // namespace bonsai

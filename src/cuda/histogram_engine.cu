@@ -120,7 +120,6 @@ struct CudaHistogramEngine::Impl
     Staged<uint32_t>       row_ofs;    // per batched node: offset into rows
     Staged<uint32_t>       row_cnt;    // per batched node: row count
     Staged<uint32_t>       features;
-    Staged<double>         out;
     CpuHistogramEngine     cpu;
     ProfileCounters        prof_counters;
 
@@ -129,10 +128,6 @@ struct CudaHistogramEngine::Impl
     void const    *bins0   = nullptr;
     size_t         n_rows  = 0;
     size_t         n_feats = 0;
-
-    // Host staging for `rows` only: its device side ping-pongs with rows_b, so
-    // it is not a Staged pair like the other buffers.
-    std::vector<uint32_t> host_rows;
 
     // Resident level state (phase 3): ping-pong per-level histogram buffers,
     // slot-indexed [slot][sel][2 * max_sel_bins] like `out`. cur() holds the
@@ -211,58 +206,6 @@ struct CudaHistogramEngine::Impl
         else
         {
             std::forward<F>(fn)(bins16.data());
-        }
-    }
-
-    // Concatenates the batched nodes' row lists into one device upload; the
-    // per-node offsets index it in-kernel. Returns {total_rows, max_rows}.
-    std::pair<size_t, size_t>
-    stage_level_rows(std::vector<std::reference_wrapper<SplitInput>> const &batched,
-                     std::span<feature_id_t const>                          selected)
-    {
-        size_t total_rows = 0;
-        size_t max_rows   = 0;
-        row_ofs.clear();
-        row_cnt.clear();
-        for (SplitInput const &node : batched)
-        {
-            row_ofs.host.push_back(static_cast<uint32_t>(total_rows));
-            row_cnt.host.push_back(static_cast<uint32_t>(node.rows.size()));
-            total_rows += node.rows.size();
-            max_rows = std::max(max_rows, node.rows.size());
-        }
-        host_rows.resize(total_rows);
-        for (size_t n = 0; n < batched.size(); ++n)
-        {
-            std::ranges::copy(batched[n].get().rows,
-                              host_rows.begin() + row_ofs.host[n]);
-        }
-        features.host.assign(selected.begin(), selected.end());
-        rows.upload(host_rows.data(), total_rows);
-        row_ofs.sync();
-        row_cnt.sync();
-        features.sync();
-        return {total_rows, max_rows};
-    }
-
-    // Copies the device histogram cells back into each batched node's
-    // per-feature host Histogram.
-    void
-    unpack_histograms(std::vector<std::reference_wrapper<SplitInput>> const &batched,
-                      std::span<feature_id_t const> selected, uint32_t stride)
-    {
-        for (size_t n = 0; n < batched.size(); ++n)
-        {
-            for (size_t s = 0; s < selected.size(); ++s)
-            {
-                Histogram    &h = batched[n].get().hists[selected[s]];
-                double const *cells =
-                    out.host.data() + (((n * selected.size()) + s) * stride);
-                for (size_t b = 0; b < h.size(); ++b)
-                {
-                    h.add(static_cast<bin_id_t>(b), cells[2 * b], cells[(2 * b) + 1]);
-                }
-            }
         }
     }
 
@@ -485,134 +428,18 @@ void CudaHistogramEngine::begin_tree(Dataset const &ds, floats_view grad,
     interleave(impl_->grad_raw.data(), impl_->hess_raw.data(), n, impl_->gh.data());
 }
 
+// Host-plane fallback: builds the node's histograms on the CPU. Runs only
+// when begin_root declines the resident path (oversized max_bin) — the GPU
+// copy-back path this replaced was phase-1/2 research, retired by decision 41.
 void CudaHistogramEngine::populate(Dataset const &ds, floats_view grad,
                                    floats_view hess, SplitInput &split_input,
                                    std::span<feature_id_t const> selected)
 {
-    std::array const one = {std::ref(split_input)};
-    populate_many(ds, grad, hess, one, selected);
-}
-
-// Splits a level's nodes: sub-cutoff nodes (or any node when a feature's
-// histogram would overflow shared memory) go to the CPU builder; the rest
-// batch into one device launch.
-static void
-split_gpu_cpu_nodes(split_input_refs nodes, bool shared_fits,
-                    std::vector<std::reference_wrapper<SplitInput>> &cpu_nodes,
-                    std::vector<std::reference_wrapper<SplitInput>> &batched)
-{
-    batched.reserve(nodes.size());
-    for (SplitInput &node : nodes)
-    {
-        if (node.rows.size() < k_min_gpu_rows || !shared_fits)
-        {
-            cpu_nodes.emplace_back(node);
-        }
-        else
-        {
-            batched.emplace_back(node);
-        }
-    }
-}
-
-// CPU-builder shape contract: every feature gets a Histogram, zero-binned where
-// unselected so the finders skip it.
-static void reserve_placeholder_hists(
-    std::vector<std::reference_wrapper<SplitInput>> const &batched, Dataset const &ds,
-    std::span<feature_id_t const> selected)
-{
-    for (SplitInput &node : batched)
-    {
-        node.hists.reserve(ds.n_features());
-        size_t j = 0;
-        for (feature_id_t fid = 0; fid < ds.n_features(); ++fid)
-        {
-            bool const sel = j < selected.size() && selected[j] == fid;
-            node.hists.emplace_back(sel ? ds.n_bins(fid) : 0);
-            j += sel ? 1 : 0;
-        }
-    }
-}
-
-void CudaHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
-                                        floats_view hess, split_input_refs nodes,
-                                        std::span<feature_id_t const> selected)
-{
-    size_t max_selected_bins = 0;
-    for (feature_id_t const fid : selected)
-    {
-        max_selected_bins = std::max(max_selected_bins, ds.n_bins(fid));
-    }
-    bool const shared_fits =
-        4 * max_selected_bins * sizeof(float) <= k_max_shared_bytes; // 2 sub-hists
-
     auto &prof_counters = impl_->prof_counters;
     auto  lap           = prof_counters.lap();
-
-    std::vector<std::reference_wrapper<SplitInput>> cpu_nodes;
-    std::vector<std::reference_wrapper<SplitInput>> batched;
-    split_gpu_cpu_nodes(nodes, shared_fits, cpu_nodes, batched);
-    // One worker per node; the CPU builder's inner parallel loops degrade to a
-    // team of one inside this region, so results stay bit-identical.
-    prof_counters.cpu_calls += cpu_nodes.size();
-    parallel::for_each_index(
-        cpu_nodes.size(),
-        [&](size_t i) { impl_->cpu.populate(ds, grad, hess, cpu_nodes[i], selected); });
+    ++prof_counters.cpu_calls;
+    impl_->cpu.populate(ds, grad, hess, split_input, selected);
     lap(prof_counters.cpu_s);
-    if (batched.empty())
-    {
-        return;
-    }
-
-    reserve_placeholder_hists(batched, ds, selected);
-    if (selected.empty())
-    {
-        return;
-    }
-
-    auto const [total_rows, max_rows] = impl_->stage_level_rows(batched, selected);
-    lap(prof_counters.upload_s);
-
-    auto const   stride = static_cast<uint32_t>(2 * max_selected_bins);
-    size_t const out_doubles =
-        static_cast<size_t>(stride) * selected.size() * batched.size();
-    impl_->out.reserve(out_doubles);
-    check(cudaMemset(impl_->out.device(), 0, out_doubles * sizeof(double)), "zero out");
-
-    // Chunk count sized by the level's largest node, capped at 64.
-    uint32_t const chunk    = 32768;
-    auto const     n_chunks = std::clamp<uint32_t>(
-        (static_cast<uint32_t>(max_rows) + chunk - 1) / chunk, 1, 64);
-    dim3 const grid(static_cast<uint32_t>(selected.size()),
-                    static_cast<uint32_t>(batched.size()), n_chunks);
-    dim3 const block(256);
-    impl_->gh_ordered.reserve(total_rows);
-    gather(impl_->gh.data(), impl_->rows.data(), static_cast<uint32_t>(total_rows),
-           impl_->gh_ordered.data());
-    impl_->dispatch_bins(
-        [&](auto const *bins)
-        {
-            hist_kernel<<<grid, block,
-                          2 * static_cast<size_t>(stride) * sizeof(float)>>>(
-                bins, impl_->gh_ordered.data(), impl_->rows.data(),
-                impl_->row_ofs.device(), impl_->row_cnt.device(),
-                impl_->features.device(), impl_->n_bins.data(),
-                static_cast<uint32_t>(ds.n_rows()),
-                static_cast<uint32_t>(selected.size()), impl_->out.device(), stride,
-                nullptr);
-        });
-    check(cudaGetLastError(), "launch");
-
-    impl_->out.fetch(out_doubles); // DtoH, implicit sync
-    if (prof_counters.enabled)
-    {
-        ++prof_counters.launches;
-        prof_counters.gpu_nodes += batched.size();
-    }
-    lap(prof_counters.gpu_s);
-
-    impl_->unpack_histograms(batched, selected, stride);
-    lap(prof_counters.unpack_s);
 }
 
 bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,

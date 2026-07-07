@@ -170,22 +170,14 @@ inline void finish_split(Dataset const &ds, PendingSplit &p)
     large.row_count = large.rows.size();
 }
 
-// Uses the engine's batched hook when present, else a populate loop.
 template <HistogramEngine EngineT>
 inline void populate_nodes(Dataset const &ds, floats_view grad, floats_view hess,
                            split_input_refs nodes, feature_view selected,
                            EngineT &engine)
 {
-    if constexpr (BatchHistogramEngine<EngineT>)
+    for (SplitInput &node : nodes)
     {
-        engine.populate_many(ds, grad, hess, nodes, selected);
-    }
-    else
-    {
-        for (SplitInput &node : nodes)
-        {
-            engine.populate(ds, grad, hess, node, selected);
-        }
+        engine.populate(ds, grad, hess, node, selected);
     }
 }
 

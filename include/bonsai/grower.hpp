@@ -53,17 +53,6 @@ concept HistogramEngine =
         b.populate(ds, grad, hess, split_input, selected);
     };
 
-// Optional phase-2 hook: fill an entire tree level in one call (the CUDA
-// builder collapses it to a single launch). populate_nodes uses it when
-// present and otherwise loops populate per node.
-template <typename T>
-concept BatchHistogramEngine =
-    HistogramEngine<T> &&
-    requires(T b, Dataset const &ds, floats_view grad, floats_view hess,
-             split_input_refs nodes, std::span<feature_id_t const> selected) {
-        b.populate_many(ds, grad, hess, nodes, selected);
-    };
-
 // The GPU data plane: histograms and rows stay device-resident, so only
 // decisions and counts cross the bus (docs/architecture/12-grower-backend.md).
 // The LevelStep drives this whole cluster or none of it, so it is one concept
