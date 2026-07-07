@@ -4,6 +4,7 @@
 #include "bonsai/grower.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
+#include <cstdint>
 #include <memory>
 #include <span>
 
@@ -15,34 +16,34 @@ namespace bonsai
 // needs this to be true. See docs/architecture/10-cuda.md.
 bool cuda_available();
 
-// HistogramBuilder that offloads histogram construction to the GPU
-// (src/cuda/histogram_builder.cu; a throwing stub backs it when built
-// without BONSAI_CUDA). GPU cells match the CPU builder to tolerance, not
+// HistogramEngine that offloads histogram construction to the GPU
+// (src/cuda/histogram_engine.cu; a throwing stub backs it when built
+// without BONSAI_CUDA). GPU cells match the CPU engine to tolerance, not
 // bit-exactly: atomics accumulate in arbitrary order. Design and precision
 // scheme: docs/architecture/10-cuda.md.
-class CudaHistogramBuilder
+class CudaHistogramEngine
 {
   public:
-    CudaHistogramBuilder();
-    ~CudaHistogramBuilder();
-    CudaHistogramBuilder(CudaHistogramBuilder &&) noexcept;
-    CudaHistogramBuilder &operator=(CudaHistogramBuilder &&) noexcept;
-    CudaHistogramBuilder(CudaHistogramBuilder const &)            = delete;
-    CudaHistogramBuilder &operator=(CudaHistogramBuilder const &) = delete;
+    CudaHistogramEngine();
+    ~CudaHistogramEngine();
+    CudaHistogramEngine(CudaHistogramEngine &&) noexcept;
+    CudaHistogramEngine &operator=(CudaHistogramEngine &&) noexcept;
+    CudaHistogramEngine(CudaHistogramEngine const &)            = delete;
+    CudaHistogramEngine &operator=(CudaHistogramEngine const &) = delete;
 
+    // --- HistogramEngine concept (required): begin_tree stages the per-tree
+    // gradient upload; populate is the CPU fallback for trees begin_root
+    // declines (the GPU copy-back path was retired by decision 41).
     void begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
     void populate(Dataset const &ds, floats_view grad, floats_view hess,
-                  SplitInput &node, std::span<feature_id_t const> selected);
-    // Batched variant: one kernel launch covers a whole tree level.
-    void populate_many(Dataset const &ds, floats_view grad, floats_view hess,
-                       split_input_refs nodes, std::span<feature_id_t const> selected);
+                  SplitInput &split_input, std::span<feature_id_t const> selected);
 
-    // --- Resident level backend (phase 3, docs/architecture/11-gpu-resident.md).
-    // Level histograms stay on the device, keyed by the node's index in the
-    // grower's frontier ("slot"); splits are found on the device and only
-    // decisions and child sums cross the bus. The depthwise grower detects
-    // these hooks via if constexpr + requires; the splitter policy remains
-    // the host fallback when begin_root declines.
+    // --- GPULevelEngine (optional, phase 3,
+    // docs/architecture/11-gpu-resident.md). Level histograms stay on the device, keyed
+    // by the node's index in the grower's frontier ("slot"); splits are found on the
+    // device and only decisions and child sums cross the bus. The depthwise grower
+    // gates this whole cluster on the GPULevelEngine concept; the splitter
+    // policy remains the host fallback when begin_root declines.
 
     // One child-level derivation: the smaller child's histogram builds from
     // its device row segment; the larger derives on-device as parent minus
@@ -78,7 +79,6 @@ class CudaHistogramBuilder
     // bins exceed the shared-memory budget — and the caller uses populate.
     bool begin_root(Dataset const &ds, floats_view grad, floats_view hess,
                     SplitInput &root, std::span<feature_id_t const> selected);
-    bool resident() const;
     // Records final leaf assignment for every row in the given slots'
     // segments (call before the level advances past them).
     void stamp_leaves(std::span<LeafStamp const> stamps);
@@ -105,10 +105,7 @@ class CudaHistogramBuilder
     std::unique_ptr<Impl> impl_;
 };
 
-static_assert(HistogramBuilder<CudaHistogramBuilder>);
-
-// Registered as "cuda_depthwise" (registry/typelists.hpp).
-using CudaDepthwiseGrower =
-    DepthwiseGrower<HistogramNodeSplitFinder, CudaHistogramBuilder>;
+static_assert(HistogramEngine<CudaHistogramEngine>);
+static_assert(GPULevelEngine<CudaHistogramEngine>);
 
 } // namespace bonsai

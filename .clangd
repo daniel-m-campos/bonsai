@@ -4,3 +4,43 @@ CompileFlags:
 Diagnostics:
   UnusedIncludes: Strict
   MissingIncludes: Strict
+
+---
+# src/cuda/* is only compiled with real CUDA flags in build-cuda (BONSAI_CUDA=ON);
+# build/ has no -x cuda entries there at all.
+If:
+  PathMatch: src/cuda/.*
+CompileFlags:
+  CompilationDatabase: build-cuda
+
+---
+# Headers have no compile-command entry of their own, so clangd guesses a TU by
+# directory proximity and picks a host-only .cpp instead of histogram_builder.cu.
+# Force CUDA device-compilation flags directly to remove that ambiguity.
+#
+# --cuda-path and --offload-arch below are hand-copied from what CMake itself
+# resolves (CUDAToolkit_LIBRARY_ROOT, BONSAI_CUDA_ARCH in CMakeLists.txt) since
+# clangd config can't read CMake variables; re-sync these if either changes.
+If:
+  PathMatch: src/cuda/detail/.*\.cuh
+CompileFlags:
+  Add:
+    - -x
+    - cuda
+    - --cuda-path=/usr/local/cuda-12.6
+    - --offload-arch=native
+    - -Wno-unknown-cuda-version
+# Symbols here are only referenced from histogram_builder.cu (the real TU) or
+# from uninstantiated function templates within these headers; clangd parses
+# each header standalone and can't see either use, producing false positives.
+#
+# MissingIncludes is off too: clang's CUDA support hand-injects atomicAdd's
+# declaring headers (__clang_cuda_runtime_wrapper.h #undefs their include
+# guards to re-pull in the .hpp bodies) rather than making them safely
+# includable — adding the "missing" #include directly duplicates those
+# definitions and fails the real build.
+Diagnostics:
+  Suppress:
+    - -Wunused-function
+    - -Wunused-const-variable
+  MissingIncludes: None
