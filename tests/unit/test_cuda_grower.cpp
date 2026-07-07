@@ -1,9 +1,9 @@
-// CUDA histogram-backend parity tests. Only compiled when BONSAI_CUDA is on
-// (tests/CMakeLists.txt) and they exercise the real device: scenarios are
-// sized above the builder's CPU-fallback cutoff so populate really launches
-// kernels. GPU histograms accumulate per-chunk in float (merged in double),
-// and atomics add in arbitrary order, so comparisons are tolerance-based
-// rather than bit-exact.
+// CUDA histogram-backend parity tests. Compiled in every build; each case
+// SKIPs at runtime unless cuda_available(). They exercise the real device:
+// scenarios are sized above the builder's CPU-fallback cutoff so populate
+// really launches kernels. GPU histograms accumulate per-chunk in float
+// (merged in double), and atomics add in arbitrary order, so comparisons
+// are tolerance-based rather than bit-exact.
 
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/cuda/histogram_builder.hpp"
@@ -89,6 +89,10 @@ void require_hists_match(SplitInput const &cpu, SplitInput const &gpu)
 TEST_CASE("CudaHistogramBuilder matches CPU histograms on all rows",
           "[cuda][histogram]")
 {
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
     auto scenario = random_scenario();
     auto const &ds = scenario.built.ds;
 
@@ -113,6 +117,10 @@ TEST_CASE("CudaHistogramBuilder matches CPU histograms on all rows",
 TEST_CASE("CudaHistogramBuilder matches CPU histograms on a row subset",
           "[cuda][histogram]")
 {
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
     auto scenario = random_scenario();
     auto const &ds = scenario.built.ds;
 
@@ -143,6 +151,10 @@ TEST_CASE("CudaHistogramBuilder matches CPU histograms on a row subset",
 TEST_CASE("CudaDepthwiseGrower predictions match DepthwiseGrower",
           "[cuda][grower]")
 {
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
     auto scenario = random_scenario();
     auto const &ds = scenario.built.ds;
 
@@ -167,6 +179,10 @@ TEST_CASE("CudaDepthwiseGrower predictions match DepthwiseGrower",
 TEST_CASE("CudaDepthwiseGrower handles consecutive trees and datasets",
           "[cuda][grower]")
 {
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
     // One builder instance across two grows on one dataset, then a switch
     // to a second dataset — exercises the upload cache in begin_tree.
     auto scenario_a = random_scenario();

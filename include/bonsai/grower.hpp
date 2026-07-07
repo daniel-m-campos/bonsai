@@ -6,12 +6,16 @@
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
 #include <concepts>
+#include <functional>
 #include <random>
 #include <span>
 #include <vector>
 
 namespace bonsai
 {
+
+// A tree level's worth of nodes handed to a HistogramBuilder in one call.
+using split_input_refs = std::span<std::reference_wrapper<SplitInput> const>;
 
 using train_leaf_values = std::vector<float>;
 
@@ -49,8 +53,7 @@ concept HistogramBuilder =
 
 struct CpuHistogramBuilder
 {
-    void begin_tree(Dataset const & /*ds*/, floats_view /*grad*/,
-                    floats_view /*hess*/)
+    void begin_tree(Dataset const & /*ds*/, floats_view /*grad*/, floats_view /*hess*/)
     {
     }
     void populate(Dataset const &ds, floats_view grad, floats_view hess,
@@ -59,8 +62,8 @@ struct CpuHistogramBuilder
 
 static_assert(HistogramBuilder<CpuHistogramBuilder>);
 
-template <NodeSplitFinder SplitterT = HistogramNodeSplitFinder,
-          HistogramBuilder BuilderT = CpuHistogramBuilder>
+template <NodeSplitFinder  SplitterT = HistogramNodeSplitFinder,
+          HistogramBuilder BuilderT  = CpuHistogramBuilder>
 class DepthwiseGrower
 {
   public:
@@ -77,7 +80,7 @@ class DepthwiseGrower
 };
 
 template <LevelSplitFinder SplitterT = HistogramLevelSplitFinder,
-          HistogramBuilder BuilderT = CpuHistogramBuilder>
+          HistogramBuilder BuilderT  = CpuHistogramBuilder>
 class ObliviousGrower
 {
   public:
@@ -92,8 +95,8 @@ class ObliviousGrower
     BuilderT     builder_;
 };
 
-template <NodeSplitFinder SplitterT = HistogramNodeSplitFinder,
-          HistogramBuilder BuilderT = CpuHistogramBuilder>
+template <NodeSplitFinder  SplitterT = HistogramNodeSplitFinder,
+          HistogramBuilder BuilderT  = CpuHistogramBuilder>
 class LeafwiseGrower
 {
   public:

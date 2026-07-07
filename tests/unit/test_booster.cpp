@@ -17,6 +17,7 @@
 #include "bonsai/registry/typelists.hpp"
 #include "bonsai/sampler.hpp"
 #include "bonsai/types.hpp"
+#include "test_grower_helpers.hpp"
 
 using namespace bonsai; // NOLINT
 
@@ -113,6 +114,7 @@ TEMPLATE_LIST_TEST_CASE("Booster: ctor doesn't allocate per-row state",
 TEMPLATE_LIST_TEST_CASE("Booster: predict shape + finite after 1 iter",
                         "[booster][predict][smoke]", Growers)
 {
+    test::skip_without_cuda<TestType>();
     auto const        batch = separable_batch();
     Dataset const     train = make_dataset(batch);
     RawFeatures const raw   = to_raw(batch);
@@ -134,6 +136,7 @@ TEMPLATE_LIST_TEST_CASE("Booster: predict shape + finite after 1 iter",
 TEMPLATE_LIST_TEST_CASE("Booster: MSE eval decreases monotonically over iters",
                         "[booster][eval][convergence]", Growers)
 {
+    test::skip_without_cuda<TestType>();
     auto const        batch = separable_batch();
     Dataset const     train = make_dataset(batch);
     RawFeatures const raw   = to_raw(batch);
@@ -160,6 +163,7 @@ TEMPLATE_LIST_TEST_CASE("Booster: MSE eval decreases monotonically over iters",
 TEMPLATE_LIST_TEST_CASE("Booster: eval == MSE(predict, labels) by construction",
                         "[booster][eval][predict][contract]", Growers)
 {
+    test::skip_without_cuda<TestType>();
     auto const        batch = separable_batch();
     Dataset const     train = make_dataset(batch);
     RawFeatures const raw   = to_raw(batch);
@@ -181,6 +185,7 @@ TEMPLATE_LIST_TEST_CASE("Booster: eval == MSE(predict, labels) by construction",
 TEMPLATE_LIST_TEST_CASE("Booster: weights scale grad/hess and shift leaf values",
                         "[booster][update][weights]", Growers)
 {
+    test::skip_without_cuda<TestType>();
     auto const    batch_unw = separable_batch();
     Dataset const train_unw = make_dataset(batch_unw);
 
@@ -214,6 +219,7 @@ TEMPLATE_LIST_TEST_CASE("Booster: weights scale grad/hess and shift leaf values"
 TEMPLATE_LIST_TEST_CASE("Booster: predict matches analytic leaf after 1 iter",
                         "[booster][predict][analytic]", Growers)
 {
+    test::skip_without_cuda<TestType>();
     auto const        batch = separable_batch();
     Dataset const     train = make_dataset(batch);
     RawFeatures const raw   = separable_raw_midpoints();
@@ -242,6 +248,7 @@ TEMPLATE_LIST_TEST_CASE("Booster: predict matches analytic leaf after 1 iter",
 TEMPLATE_LIST_TEST_CASE("Booster: LogLoss eval decreases monotonically over iters",
                         "[booster][logloss][convergence]", Growers)
 {
+    test::skip_without_cuda<TestType>();
     auto const        batch = separable_binary_batch();
     Dataset const     train = make_dataset(batch);
     RawFeatures const raw   = to_raw(batch);
@@ -269,6 +276,7 @@ TEMPLATE_LIST_TEST_CASE(
     "Booster: LogLoss predict produces raw scores separating classes",
     "[booster][logloss][predict]", Growers)
 {
+    test::skip_without_cuda<TestType>();
     auto const        batch = separable_binary_batch();
     Dataset const     train = make_dataset(batch);
     RawFeatures const raw   = separable_raw_midpoints();
@@ -297,6 +305,7 @@ TEMPLATE_LIST_TEST_CASE(
 TEMPLATE_LIST_TEST_CASE("Booster: n_iters tracks update count", "[booster][n_iters]",
                         Growers)
 {
+    test::skip_without_cuda<TestType>();
     auto const           batch = separable_batch();
     Dataset const        train = make_dataset(batch);
     Config const         cfg   = tiny_cfg();

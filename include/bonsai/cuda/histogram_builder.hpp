@@ -10,16 +10,16 @@
 namespace bonsai
 {
 
-// HistogramBuilder that offloads per-node histogram construction to the GPU
-// (src/cuda/histogram_builder.cu, CUDA C++ compiled by clang). Split
-// finding, row partitioning, and the sibling-subtraction trick stay on the
-// CPU. Device state is created lazily: the binned matrix uploads once per
-// dataset, gradients once per tree. Kernels accumulate float per row-chunk
-// and merge chunks in double; atomics add in arbitrary order, so cells
-// match the CPU builder to rounding, not bit-exactly. Nodes below a
-// row-count cutoff build on the CPU instead — a kernel launch +
-// synchronous copy-back round trip costs more than scanning a small node
-// outright, and most nodes in a deep tree are small.
+// True when this build carries the CUDA backend AND a usable device is
+// present. cuda_depthwise is registered in every build; only training
+// needs this to be true. See docs/architecture/10-cuda.md.
+bool cuda_available();
+
+// HistogramBuilder that offloads histogram construction to the GPU
+// (src/cuda/histogram_builder.cu; a throwing stub backs it when built
+// without BONSAI_CUDA). GPU cells match the CPU builder to tolerance, not
+// bit-exactly: atomics accumulate in arbitrary order. Design and precision
+// scheme: docs/architecture/10-cuda.md.
 class CudaHistogramBuilder
 {
   public:
@@ -33,6 +33,9 @@ class CudaHistogramBuilder
     void begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
     void populate(Dataset const &ds, floats_view grad, floats_view hess,
                   SplitInput &node, std::span<feature_id_t const> selected);
+    // Batched variant: one kernel launch covers a whole tree level.
+    void populate_many(Dataset const &ds, floats_view grad, floats_view hess,
+                       split_input_refs nodes, std::span<feature_id_t const> selected);
 
   private:
     struct Impl;
@@ -41,8 +44,7 @@ class CudaHistogramBuilder
 
 static_assert(HistogramBuilder<CudaHistogramBuilder>);
 
-// The dispatchable grower this backend exists for (registered as
-// "cuda_depthwise" when BONSAI_USE_CUDA is defined).
+// Registered as "cuda_depthwise" (registry/typelists.hpp).
 using CudaDepthwiseGrower =
     DepthwiseGrower<HistogramNodeSplitFinder, CudaHistogramBuilder>;
 
