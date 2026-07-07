@@ -1,18 +1,36 @@
 #pragma once
 
 #include <array>
+#include <concepts>
 #include <cstddef>
 #include <utility>
 #include <vector>
 
+#include <catch2/catch_test_macros.hpp>
+
 #include "bonsai/bin_mappers.hpp"
 #include "bonsai/config/bin_mapper_config.hpp"
+#include "bonsai/cuda/histogram_builder.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/types.hpp"
 
 namespace bonsai::test
 {
+
+// Skips the running test case when the grower under test needs a CUDA
+// device this host (or build) doesn't have. No-op for CPU growers, so
+// TEMPLATE_LIST cases over the full registry stay unconditional.
+template <typename GrowerT> void skip_without_cuda()
+{
+    if constexpr (std::same_as<GrowerT, CudaDepthwiseGrower>)
+    {
+        if (!cuda_available())
+        {
+            SKIP("cuda_depthwise needs a usable CUDA device");
+        }
+    }
+}
 
 template <typename TreeT>
 inline float predict_one(TreeT const &tree, std::vector<float> row)

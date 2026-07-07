@@ -79,10 +79,12 @@ if(BONSAI_OPENMP)
 endif()
 
 # ---- CUDA (optional) ---------------------------------------------------------
-# Interface target consumed by bonsai_tree. When BONSAI_CUDA is ON it carries
-# the histogram-kernel library and the BONSAI_USE_CUDA define that registers
-# the cuda_depthwise grower; when OFF it is empty and the build is identical
-# to before the backend existed.
+# Interface target consumed by bonsai_tree. cuda_depthwise is registered in
+# every build (the registry headers are CUDA-free), so no config macro
+# exists: when BONSAI_CUDA is ON this target carries the real
+# histogram-kernel library, when OFF a stub TU that throws on training
+# (src/cuda/histogram_builder_stub.cpp, added in src/CMakeLists.txt).
+# Availability is a runtime question — bonsai::cuda_available().
 #
 # The kernel TU is CUDA C++ compiled by the project's own clang (-x cuda),
 # not nvcc — same C++23, same libc++, so it uses bonsai types directly and
@@ -99,10 +101,6 @@ if(BONSAI_CUDA)
     find_package(CUDAToolkit REQUIRED)
     set(BONSAI_CUDA_ARCH "native" CACHE STRING
         "GPU architecture for clang --offload-arch (e.g. sm_87, or native)")
-    # The registered grower list changes with this define, so it must be
-    # visible to every TU that sees the registry typelists (src, tests,
-    # benchmarks, python) — a global define keeps them consistent.
-    add_compile_definitions(BONSAI_USE_CUDA)
     add_library(bonsai_cuda_kernels STATIC src/cuda/histogram_builder.cu)
     set_source_files_properties(src/cuda/histogram_builder.cu
                                 PROPERTIES LANGUAGE CXX)
@@ -112,7 +110,12 @@ if(BONSAI_CUDA)
         --cuda-path=${CUDAToolkit_LIBRARY_ROOT}
         -Wno-unknown-cuda-version)
     target_include_directories(bonsai_cuda_kernels PRIVATE ${CMAKE_SOURCE_DIR}/include)
-    target_link_libraries(bonsai_cuda_kernels PRIVATE bonsai_warnings)
+    # NVIDIA's headers #error on libc++ hosts on x86_64; this macro is their
+    # sanctioned bypass (parity-validated on A100/sm_80). No-op on aarch64.
+    target_compile_definitions(bonsai_cuda_kernels PRIVATE _ALLOW_UNSUPPORTED_LIBCPP)
+    # bonsai_parallel gives the CPU-fallback path across-node OpenMP; clang
+    # compiles OpenMP host code and CUDA in the same TU without conflict.
+    target_link_libraries(bonsai_cuda_kernels PRIVATE bonsai_parallel bonsai_warnings)
     target_link_libraries(bonsai_gpu INTERFACE bonsai_cuda_kernels CUDA::cudart)
 endif()
 

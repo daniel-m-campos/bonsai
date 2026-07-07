@@ -90,7 +90,7 @@ model.save("model.msgpack")           # loadable by `bonsai predict` and vice ve
 
 Install with `pip install .` (scikit-build-core builds the extension), or for development `cmake -B build -DBONSAI_PYTHON=ON && cmake --build build --target _bonsai` and set `PYTHONPATH=build/python`. Requires `nanobind` and `numpy` at build time. `scripts/compare.py` automatically adds in-process "native" rows to the benchmark table when the module is importable, timed the same way as the reference libraries.
 
-`bonsai info` lists every `(objective, grower, sampler)` triple the binary knows how to dispatch to (currently 5×3×3 = 45 combos).
+`bonsai info` lists every `(objective, grower, sampler)` triple the binary knows how to dispatch to (currently 6×4×3 = 72 combos; growers that can't train on the current machine, like `cuda_depthwise` without a GPU, are marked predict-only).
 
 ## Build
 
@@ -120,7 +120,7 @@ The `make fit-benchmark` target additionally needs [uv](https://docs.astral.sh/u
 
 ### CUDA (optional)
 
-A GPU histogram backend (needs the CUDA toolkit ≥ 12) that registers a `cuda_depthwise` grower in the dispatch. Builds into its own tree so the CPU-only `build/` stays pristine:
+A GPU histogram backend (needs the CUDA toolkit ≥ 12) behind the `cuda_depthwise` grower. The grower is registered in every build — models trained with it load and predict anywhere, and `bonsai info` marks it predict-only where no device is available — but training needs a binary built with the backend, which lives in its own tree so the CPU-only `build/` stays pristine:
 
 ```
 make build-cuda      # configure + compile with -DBONSAI_CUDA=ON (build-cuda/)
@@ -128,7 +128,7 @@ make test-cuda       # ctest against the CUDA build
 ./build-cuda/src/bonsai fit -c config.toml --set dispatch.grower_name=cuda_depthwise ...
 ```
 
-Histogram construction runs on the GPU for all but the smallest nodes (float accumulation per row-chunk, merged in double — RMSE matches the CPU grower to library-comparison precision). Split finding, row partitioning, and the sibling-subtraction trick are unchanged, and the grower emits ordinary `DenseTree`s, so saved models are identical in format to `depthwise`. The kernel TU ([src/cuda/histogram_builder.cu](src/cuda/histogram_builder.cu)) is CUDA C++ compiled by the project's own clang (`-x cuda`) — same C++23, same libc++, no nvcc — so it uses bonsai types directly. Set `BONSAI_CUDA_ARCH` if `native` detection is unavailable (e.g. cross-compiling). On a Jetson Orin Nano, Year Prediction MSD (464 k × 90, 200 iters, depth 8) fits in 52 s vs 72 s for 6-thread OpenMP and 254 s single-threaded.
+Histogram construction runs on the GPU, one batched kernel launch per tree level (float accumulation per row-chunk, merged in double — RMSE matches the CPU grower to library-comparison precision); nodes too small to amortize a launch build on the CPU instead, in parallel across nodes. Split finding and the sibling-subtraction trick are unchanged, and the grower emits ordinary `DenseTree`s, so saved models are identical in format to `depthwise`. The kernel TU ([src/cuda/histogram_builder.cu](src/cuda/histogram_builder.cu)) is CUDA C++ compiled by the project's own clang (`-x cuda`) — same C++23, same libc++, no nvcc — so it uses bonsai types directly. Set `BONSAI_CUDA_ARCH` if `native` detection is unavailable (e.g. cross-compiling); `BONSAI_CUDA_PROFILE=1` prints a per-fit time breakdown. On a Jetson Orin Nano, Year Prediction MSD (464 k × 90, 200 iters, depth 8) fits in 38 s vs 62 s for 6-thread OpenMP and 254 s single-threaded — versus 26 s for an sm_87-built xgboost-GPU on the same device, the fully-device-resident reference.
 
 ## Extending bonsai
 

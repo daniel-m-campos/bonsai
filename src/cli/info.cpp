@@ -5,10 +5,24 @@
 #include <set>
 #include <string_view>
 
+#include "bonsai/cuda/histogram_builder.hpp"
 #include "bonsai/registry/make_booster.hpp"
+#include "bonsai/registry/names.hpp"
 
 namespace bonsai::cli
 {
+
+namespace
+{
+
+// cuda_depthwise is registered everywhere but trains only with a device.
+bool trains_here(std::string_view grower_name)
+{
+    return grower_name != impl_name<CudaDepthwiseGrower>::value ||
+           cuda_available();
+}
+
+} // namespace
 
 int run_info()
 {
@@ -32,7 +46,7 @@ int run_info()
     std::print("\n  growers:    ");
     for (auto const &n : growers)
     {
-        std::print("{} ", n);
+        std::print("{}{} ", n, trains_here(n) ? "" : " (predict-only here)");
     }
     std::print("\n  samplers:   ");
     for (auto const &n : samplers)

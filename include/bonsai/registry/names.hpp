@@ -3,13 +3,11 @@
 #include <concepts>
 #include <string_view>
 
+#include "bonsai/cuda/histogram_builder.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/sampler.hpp"
 #include "bonsai/split.hpp"
-#ifdef BONSAI_USE_CUDA
-#include "bonsai/cuda/histogram_builder.hpp"
-#endif
 
 namespace bonsai
 {
@@ -73,12 +71,10 @@ template <> struct impl_name<LeafwiseGrower<HistogramNodeSplitFinder>>
     static constexpr std::string_view value = "leafwise";
 };
 
-#ifdef BONSAI_USE_CUDA
 template <> struct impl_name<CudaDepthwiseGrower>
 {
     static constexpr std::string_view value = "cuda_depthwise";
 };
-#endif
 
 template <> struct impl_name<AllRowsSampler>
 {
