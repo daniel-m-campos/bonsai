@@ -181,6 +181,21 @@ inline void populate_nodes(Dataset const &ds, floats_view grad, floats_view hess
     }
 }
 
+// The data plane for a single node — the leafwise grower's unit of work: its
+// gain heap expands one node at a time, so there is no level to batch and no
+// LevelPlan; the same partition/populate/subtract primitives compose directly.
+template <HistogramEngine EngineT>
+inline std::pair<SplitInput, SplitInput>
+split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput parent,
+           SplitOutput const &s, node_id_t left_id, node_id_t right_id,
+           feature_view selected, EngineT &engine)
+{
+    PendingSplit p = partition_rows(ds, std::move(parent), s, left_id, right_id);
+    engine.populate(ds, grad, hess, smaller_child(p), selected);
+    finish_split(ds, p);
+    return {std::move(p.left), std::move(p.right)};
+}
+
 // One split node's deferred work, produced by the control plane (plan_level)
 // and executed by the LevelStep: partition fills p's children, build_children
 // fills their histograms (host) or slots (device).

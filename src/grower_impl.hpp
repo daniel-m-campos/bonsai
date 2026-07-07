@@ -175,33 +175,6 @@ inline std::vector<feature_id_t> sample_features(size_t n_features, float fracti
     return selected; // std::sample preserves order -> sorted
 }
 
-// Host-only root setup for the growers that have not yet adopted LevelStep
-// (oblivious, leafwise); the depthwise path uses LevelStep::make_root.
-template <HistogramEngine EngineT>
-SplitInput make_root(Dataset const &ds, floats_view grad, floats_view hess,
-                     row_index_view row_indices, feature_view selected, EngineT &engine)
-{
-    SplitInput root;
-    root.id = 0;
-    root.rows.assign(row_indices.begin(), row_indices.end());
-    engine.populate(ds, grad, hess, root, selected);
-    root.sums      = root.totals();
-    root.row_count = root.rows.size();
-    return root;
-}
-
-template <HistogramEngine EngineT>
-inline std::pair<SplitInput, SplitInput>
-split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput parent,
-           SplitOutput const &s, node_id_t left_id, node_id_t right_id,
-           feature_view selected, EngineT &builder)
-{
-    PendingSplit p = partition_rows(ds, std::move(parent), s, left_id, right_id);
-    builder.populate(ds, grad, hess, smaller_child(p), selected);
-    finish_split(ds, p);
-    return {std::move(p.left), std::move(p.right)};
-}
-
 // Control plane, first half of a level: serial tree bookkeeping. Decides
 // leaf-vs-split per frontier node, writes the tree's internal nodes and
 // per-node stats, and defers the data-plane work (partition + histograms)
@@ -594,8 +567,12 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
 
     auto const selected =
         gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
-    builder_.begin_tree(ds, grad, hess);
-    SplitInput root = gd::make_root(ds, grad, hess, row_indices, selected, builder_);
+
+    // Leafwise shares the data plane's primitives but not its level batching:
+    // the gain heap expands one node at a time (split_node), so there is no
+    // level to batch — the LevelStep opens the tree and builds the root.
+    gd::LevelStep<EngineT, SplitterT> step(builder_, ds, config_, grad, hess, selected);
+    SplitInput                        root = step.make_root(row_indices);
     nodes.emplace_back(DenseTree::leaf(0.0F));
 
     size_t  n_leaves    = 0;
