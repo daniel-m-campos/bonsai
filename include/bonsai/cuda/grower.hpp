@@ -19,4 +19,7 @@ using CudaDepthwiseGrower = DepthwiseGrower<CudaHistogramEngine>;
 using CudaObliviousGrower =
     ObliviousGrower<CudaHistogramEngine, HistogramLevelSplitFinder>;
 
+// The "cuda_leafwise" grower: best-first (leaf-wise) growth with the GPU engine.
+using CudaLeafwiseGrower = LeafwiseGrower<CudaHistogramEngine>;
+
 } // namespace bonsai

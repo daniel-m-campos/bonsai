@@ -25,7 +25,8 @@ namespace bonsai::test
 template <typename GrowerT> void skip_without_cuda()
 {
     if constexpr (std::same_as<GrowerT, CudaDepthwiseGrower> ||
-                  std::same_as<GrowerT, CudaObliviousGrower>)
+                  std::same_as<GrowerT, CudaObliviousGrower> ||
+                  std::same_as<GrowerT, CudaLeafwiseGrower>)
     {
         if (!cuda_available())
         {

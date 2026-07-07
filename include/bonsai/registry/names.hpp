@@ -81,6 +81,11 @@ template <> struct impl_name<CudaObliviousGrower>
     static constexpr std::string_view value = "cuda_oblivious";
 };
 
+template <> struct impl_name<CudaLeafwiseGrower>
+{
+    static constexpr std::string_view value = "cuda_leafwise";
+};
+
 template <> struct impl_name<AllRowsSampler>
 {
     static constexpr std::string_view value = "all_rows";
