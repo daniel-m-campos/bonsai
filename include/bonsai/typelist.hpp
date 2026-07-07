@@ -116,7 +116,9 @@ namespace detail
 template <typename F, typename... Ts>
 constexpr void for_each_type_impl(F &&f, TypeList<Ts...> /*unused*/)
 {
-    (std::forward<F>(f).template operator()<Ts>(), ...);
+    // Invoked once per type on the lvalue; forwarding in a fold would move
+    // f more than once.
+    (f.template operator()<Ts>(), ...);
 }
 
 } // namespace detail

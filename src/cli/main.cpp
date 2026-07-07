@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <print>
@@ -145,11 +146,12 @@ void register_params(CLI::App &app, int &rc)
 } // namespace
 
 int main(int argc, char *argv[])
+try
 {
     CLI::App app{"bonsai: a histogram gradient-boosted tree CLI"};
     app.require_subcommand(1);
 
-    using namespace bonsai::cli;
+    using namespace bonsai::cli; // NOLINT(google-build-using-namespace)
 
     // Each subcommand's callback fires after CLI11 finishes parsing its
     // tokens. The closure captures the local *Opts struct by reference, runs
@@ -191,4 +193,17 @@ int main(int argc, char *argv[])
     }
 
     return rc;
+}
+// C stdio in the handlers: std::println can itself throw, which would
+// escape main.
+catch (std::exception const &e)
+{
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,modernize-use-std-print)
+    std::fprintf(stderr, "bonsai: %s\n", e.what());
+    return EXIT_FAILURE;
+}
+catch (...)
+{
+    std::fputs("bonsai: unknown error\n", stderr);
+    return EXIT_FAILURE;
 }
