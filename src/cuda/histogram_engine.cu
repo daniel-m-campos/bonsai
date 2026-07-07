@@ -7,12 +7,10 @@
 #include "bonsai/dataset.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/histogram.hpp"
-#include "bonsai/parallel.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -20,7 +18,6 @@
 #include <cstdlib>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
-#include <functional>
 #include <memory>
 #include <print>
 #include <span>

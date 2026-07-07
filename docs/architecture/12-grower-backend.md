@@ -1,6 +1,6 @@
 # 12 — Grower data-plane: the `LevelStep` strategy
 
-> **Status:** design (decision 41). Supersedes the grower-side *seam* of [`11-gpu-resident.md`](11-gpu-resident.md) — its device-kernel stages (A/B/C) stand unchanged; this doc replaces how the grow loop reaches them. Not yet implemented.
+> **Status:** landed (decision 41; commits b4d223c → a4764ba on cuda-phase2). Supersedes the grower-side *seam* of [`11-gpu-resident.md`](11-gpu-resident.md) — its device-kernel stages (A/B/C) stand unchanged; this doc replaces how the grow loop reaches them. Gates held at every phase: 392/392 both configs, CPU models bit-identical (sha256, all three growers), resident-path launch counts unchanged, A100 MSD fit within noise of the pre-refactor baseline.
 
 ## Why
 
@@ -17,21 +17,25 @@ From the grower's point of view there are only **two** data planes, not three. C
 `LevelStep` groups the per-tree data-plane operations behind one interface, selected by engine *type* via partial specialization plus a concept. Selection happens at template instantiation, so it is zero runtime cost — no virtuals, no type erasure (the restraint of decisions 14/26/32). The name is doc 11's own phrase ("each level step becomes a named helper") and is deliberately distinct from the `*Grower` classes, which model `TreeGrower` and grow a whole tree.
 
 ```cpp
-// Host data plane: serves every HistogramEngine — the CPU engine, and the
-// CUDA engine's CPU fallback. Branch-free; a reader here never meets a GPU concept.
-template <NodeSplitFinder SplitterT, HistogramEngine Engine>
-struct LevelStep {
-    void find_splits(frontier, out&, child_sums&);   // SplitterT::find per node
+// Host data plane (src/level_step.hpp): serves every HistogramEngine — the CPU
+// engine, and the CUDA engine's CPU fallback. Branch-free; no GPU concept appears.
+// The constructor opens the tree (engine.begin_tree) and captures the per-tree
+// context (engine&, ds, config, grad, hess, selected), so methods take only
+// what varies per level.
+template <HistogramEngine EngineT, typename SplitterT>
+class LevelStep {
+    SplitInput make_root(row_indices);                // populate + totals
+    void find_splits(frontier, out&, child_sums&);    // per-node find, or one level find broadcast
     void partition(plan&);                            // partition_rows, one node per worker
-    void build_children(plan&, grad, hess, selected); // populate smaller + finish_split subtraction
-    void finalize(frontier, nodes&, values&, leaf_ids&, rows);  // host leaf stamping
+    void build_children(plan&);                       // populate smaller + finish_split subtraction
+    void finalize(frontier, nodes&, ...);             // host leaf stamping
 };
 
 // GPU data plane: only for a GPULevelEngine. Holds the per-tree mode; the ONE
 // irreducible runtime fork (on-device vs CPU fallback) lives here and nowhere else.
-template <NodeSplitFinder SplitterT, GPULevelEngine Engine>
-struct LevelStep<SplitterT, Engine> {
-    bool on_device;   // captured once from begin_root; false ⇒ delegate to the host plane
+template <GPULevelEngine EngineT, typename SplitterT>
+class LevelStep<EngineT, SplitterT> {
+    bool on_device;   // captured once inside make_root from begin_root's bool
     // each method: if (on_device) engine.<device op>  else  <host LevelStep op>
 };
 ```
@@ -39,16 +43,19 @@ struct LevelStep<SplitterT, Engine> {
 `grow()` then reads as pure control-plane narrative — no `if constexpr`, no `resident()` in sight:
 
 ```cpp
-auto step = make_level_step<SplitterT>(engine, root);   // mode captured once from begin_root
-for (level) {
-    step.find_splits(frontier, out, child_sums);
-    auto plan = plan_level(frontier, out, child_sums, nodes, ...);   // host bookkeeping only
+LevelStep<EngineT, SplitterT> step(engine, ds, config, grad, hess, selected);
+current.push_back(step.make_root(row_indices));       // mode captured once, inside the step
+while (depth < max_depth) {
+    step.find_splits(current, splits, child_sums);
+    auto plan = plan_level(current, splits, child_sums, nodes, ...);  // host bookkeeping only
     step.partition(plan);
-    step.build_children(plan, grad, hess, selected);
-    commit_children(plan, next, config, groups);                    // constraint propagation + hand-off
+    step.build_children(plan);
+    commit_children(plan, covers, current, next);     // constraint propagation + hand-off
 }
-step.finalize(frontier, nodes, values, leaf_ids, row_indices);      // stamp leaves + pull device row ids
+step.finalize(current, nodes, values, leaf_ids, row_indices);  // stamp leaves + pull device row ids
 ```
+
+Two refinements over the original sketch, adopted at implementation: the step owns *root creation* (absorbing the old `make_root` fork — the mode never escapes the data plane), and it holds the per-tree context from its constructor — which, more than the decomposition itself, is what deleted the 18-parameter signatures. Find *granularity* resolves inside `find_splits`: a `LevelSplitFinder` runs once and broadcasts to every frontier node (the oblivious shape), a `NodeSplitFinder` loops — so the oblivious grower reuses the same step with zero new machinery.
 
 `update_nodes` dissolves into `plan_level` (host bookkeeping) + the `LevelStep` methods + `commit_children` (constraint propagation and frontier hand-off) — each a helper of at most ~40 lines. The CPU path is fully branch-free; the GPU details are quarantined in the one specialization. And the design is extensible by construction: every grower builds `LevelStep<SplitterT, Engine>` and calls the same methods, so a future `CudaObliviousGrower` (one alias plus a registry line) gets the GPU plane for free — Oblivious broadcasts its single level split into the per-node `plan` the `LevelStep` consumes.
 
@@ -121,12 +128,12 @@ Four refinements this surfaces over a bare `Grower<SplitterT, Engine>`:
 
 1. The finder is grower-*declared* (`DefaultFinder`), overridable only for tests — the depthwise-with-a-level-finder mismatch becomes impossible by construction, and the finder stops reading as a vestigial parameter on the GPU path (it is a default, and it is the parity contract the device find must match).
 2. Find *granularity* threads into `LevelStep` on both planes, so `GPULevelEngine` grows a level-find sibling to `find_splits_many` for oblivious/GPU.
-3. Leafwise unifies onto the *host* `LevelStep` with singleton frontiers — its `split_node` is `partition` + `build_children` over a frontier of one — so there is no separate node-step abstraction; the sole difference across the three growers is the outer loop that builds the frontier.
+3. Leafwise shares the data plane's *primitives*, not its level batching (resolved below).
 4. The GPU `LevelStep` specialization is concept-constrained to level-batched growth, so leafwise/GPU is a compile-time non-selection (it stays host), not a silent slow path.
 
 The result keeps the two-injected-policies / derived-plane / no-new-axis shape, but the couplings the current alias gets right by hand become constraints the compiler enforces. The only genuinely new capability the full matrix demands is the device level-find; everything else is the same primitives recomposed.
 
-*Open call:* refinement 3 shrinks the code to one data-plane vocabulary for all three growers, but bends `LevelStep`'s "batch a frontier" identity to also mean "a frontier of one"; the alternative keeps leafwise on its own `split_node` path. Leaning toward unification — the primitives are identical — but flagged where cleanest-hierarchy and honest-naming pull apart.
+*Resolved at implementation (phase 5):* full singleton-frontier unification was attempted per the original lean and rejected at the gate — a per-heap-pop `LevelPlan` adds ceremony and allocations in the hot best-first loop for zero shared-code gain, because `split_node` already composes the same `level_step.hpp` primitives (`partition_rows` + `populate` + `finish_split`). Landed instead: leafwise opens its tree through the `LevelStep` (constructor + `make_root`), and `split_node` lives in `level_step.hpp` documented as the *single-node* data plane — `level_step.hpp` is the complete data-plane home, and honest naming won over maximal hierarchy.
 
 ## Retiring the copy-back research
 
@@ -142,4 +149,4 @@ Both configurations build clean and pass `ctest` (392/392) at every phase: the h
 
 ## What's not here
 
-Actual implementation (this is design only — it lands in phases: depthwise core, CUDA builder slim-down, oblivious onto the shared `LevelStep`, leafwise de-dup). Device oblivious/leafwise *growers* — this design makes them a one-line alias plus a registry entry, but registering and validating them is a separate pass, and leafwise's gain-heap is inherently sequential (no level to batch — [`10-cuda.md`](10-cuda.md)), so its device value is limited. The device kernels and their optimization stages are unchanged and remain in [`11-gpu-resident.md`](11-gpu-resident.md); the engine policy originates as the histogram builder in [`10-cuda.md`](10-cuda.md); the ratifying choice is decision 41, superseding the framing of decision 40.
+Device oblivious — the shared `LevelStep` makes `ObliviousGrower<CudaHistogramEngine>` a one-line alias plus a registry entry, but it needs the device *level*-find (`GPULevelEngine`'s missing sibling to `find_splits_many`) and its own parity validation; a later pass. Device leafwise — its gain-heap is inherently sequential (no level to batch — [`10-cuda.md`](10-cuda.md)), so its device value is limited and none is planned. One correction to this doc's earlier draft: the oblivious grower's *unsampled-row routing* does not unify with `route_unsampled` (it routes to ObliviousTree leaf-table indices, not DenseTree node ids) — only its level update went through the `LevelStep`. The device kernels and their optimization stages are unchanged and remain in [`11-gpu-resident.md`](11-gpu-resident.md); the engine policy originates as the histogram builder in [`10-cuda.md`](10-cuda.md); the ratifying choice is decision 41, superseding the framing of decision 40.

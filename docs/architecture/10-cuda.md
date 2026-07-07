@@ -2,26 +2,27 @@
 
 > **Status:** working (Jetson Orin Nano sm_87; validated on A100 sm_80/x86_64). Registered as the `cuda_depthwise` grower. Perf story and measured ladders: [reviews/2026-07-03-design-review-cuda.md](../reviews/2026-07-03-design-review-cuda.md).
 >
-> **The grower-side seam is being redesigned in [`12-grower-backend.md`](12-grower-backend.md) (decision 41):** the `LevelStep` strategy replaces the optional-hook dispatch, and `populate_many` + the GPU copy-back path (*Level batching*, and the CPU-cutoff guards in *The kernel*) are retired for a CPU fallback. The kernel, precision scheme, and registration story below are unaffected. This doc is updated to match once the redesign lands.
+> **The grower-side seam was redesigned by [`12-grower-backend.md`](12-grower-backend.md) (decision 41, landed):** the `LevelStep` compile-time strategy replaced the optional-hook dispatch, and `populate_many` + the GPU copy-back path were retired for a CPU fallback. The kernel, precision scheme, and registration story below are current.
 
 ## The seam
 
-Histogram construction is a policy on the growers ([`include/bonsai/grower.hpp`](../../include/bonsai/grower.hpp)):
+Histogram construction is an engine policy on the growers ([`include/bonsai/grower.hpp`](../../include/bonsai/grower.hpp)):
 
 ```cpp
-template <NodeSplitFinder SplitterT, HistogramBuilder BuilderT = CpuHistogramBuilder>
+template <HistogramEngine EngineT = CpuHistogramEngine,
+          NodeSplitFinder SplitterT = HistogramNodeSplitFinder>
 class DepthwiseGrower;
 
-using CudaDepthwiseGrower = DepthwiseGrower<HistogramNodeSplitFinder, CudaHistogramBuilder>;
+using CudaDepthwiseGrower = DepthwiseGrower<CudaHistogramEngine>;
 ```
 
-There is exactly one grow-loop implementation ([`src/grower_impl.hpp`](../../src/grower_impl.hpp)); the CUDA grower is an instantiation, not a fork. A `HistogramBuilder` supplies `begin_tree` (per-tree staging: the CUDA builder uploads gradients there) and `populate` (fill one node's per-feature histograms). Builders may also provide `populate_many`; `grower_detail::populate_nodes` detects it via `if constexpr` + `requires` and otherwise degrades to a populate loop, so the CPU builder needs no batched method. Everything else — split finding, the sibling-subtraction trick, tree assembly — is builder-agnostic and stays on the CPU.
+There is exactly one grow-loop implementation ([`src/grower_impl.hpp`](../../src/grower_impl.hpp)); the CUDA grower is an instantiation, not a fork. A `HistogramEngine` supplies `begin_tree` (per-tree staging: the CUDA engine uploads gradients there) and `populate` (fill one node's per-feature histograms — the CUDA engine delegates this to its CPU member; it exists as the fallback for trees `begin_root` declines). The grow loop reaches the engine through the `LevelStep` data plane ([`12-grower-backend.md`](12-grower-backend.md)): the host plane drives `populate` + the sibling-subtraction trick; a `GPULevelEngine` selects the device plane, where whole levels build, partition, and find splits on the device.
 
 ## Level batching
 
-The depthwise and oblivious growers process a tree level in three passes: serial bookkeeping, level-wide row partitioning (`partition_rows`, one node per worker thread — each partition touches only its own parent's rows, so results are scheduling-independent), then one `populate_many` call covering every smaller sibling. The larger siblings derive by subtraction (`finish_split`). Leafwise keeps per-node `split_node`: its gain-ordered heap is inherently sequential, so there is no level to batch.
+The depthwise and oblivious growers process a tree level through the shared `LevelStep`: control-plane bookkeeping (`plan_level`), level-wide row partitioning (`partition_rows` on the host plane, one node per worker thread — each partition touches only its own parent's rows, so results are scheduling-independent; `partition_level` on the device), then every smaller sibling's histograms in one pass with the larger siblings derived by subtraction (`finish_split` on the host; `advance_level` on the device). Leafwise keeps per-node `split_node` (the single-node data plane in [`src/level_step.hpp`](../../src/level_step.hpp)): its gain-ordered heap is inherently sequential, so there is no level to batch.
 
-This exists because per-node GPU round trips dominated: ~185 launches per tree collapsed to one per level (~9), which is where most of the phase-2 speedup came from.
+Level batching exists because per-node GPU round trips dominated: ~185 launches per tree collapsed to one per level (~9), which is where most of the phase-2 speedup came from; phase 3 then made the level state device-resident (doc 11).
 
 ## The kernel
 
@@ -31,9 +32,9 @@ Device residency: the binned matrix uploads once per dataset (uint8 when every f
 
 The histogram kernel's grid is (feature, node, row-chunk). Each block accumulates its ≤32k-row chunk into a shared-memory histogram (two copies split by warp parity to spread atomic contention), then merges into the (node, feature) slice of the pre-zeroed output with global double atomics. Precision scheme: shared accumulation is **float** (native shared-memory atomics; double atomics emulate via CAS loops), the cross-chunk merge is **double** — rounding stays bounded per chunk, and results match the CPU builder to tolerance, not bit-exactly, because atomics add in arbitrary order.
 
-Two guards route nodes to the CPU builder instead (in parallel across nodes; the CPU builder's inner loops degrade to a team of one inside the active OpenMP region, keeping per-node results bit-identical): nodes under `k_min_gpu_rows = 512` (measured knee — a launch + synchronous copy-back costs more than scanning a small node), and histograms that would exceed the 48 KiB/block shared-memory budget (`max_bin` ≳ 6k), which would otherwise fail the launch at runtime.
+`k_min_gpu_rows = 512` routes each resident child to the right kernel (below it, the direct-global small-node kernel beats the shared-memory one — the fixed zero+merge cost is bin-proportional, small nodes are row-proportional). The 48 KiB/block shared-memory budget (`max_bin` ≳ 6k) is checked once per tree in `begin_root`, which declines the resident path and lets the `LevelStep` fall back to CPU histogram building — the launch never fails at runtime.
 
-`BONSAI_CUDA_PROFILE=1` prints a per-fit wall-clock breakdown (upload / gpu / unpack / cpu-fallback) when the builder is destroyed.
+`BONSAI_CUDA_PROFILE=1` prints a per-fit wall-clock breakdown (upload / gpu / unpack / cpu-fallback) when the engine is destroyed.
 
 ## Always registered, capability at runtime
 
