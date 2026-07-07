@@ -67,6 +67,10 @@ The device keeps decision 17's shape: one concatenated row array in level order 
 
 Landed (commit a644358): gradient interleave moved on-device (raw grad/hess uploads feed an interleave kernel, deleting the serial per-tree float2 pack) and the find kernel assigns one selected feature per warp lane instead of one per 32-lane block — full utilization, identical per-feature scan and tie-break (find-sync 1.33 → 0.98 s). Pinned staging was evaluated and skipped: per-level transfers are already tens of microseconds. Syncs stand at two per level (split results, partition counts) plus one leaf download per tree.
 
+## Stage D — warp-parallel find scan (measured on RTX 5090)
+
+Landed (commit 7aa9cce): the find kernel becomes one warp per (node, feature) instead of one lane. A tiled warp prefix-scan (`__shfl_up_sync`) builds each bin's left grad/hess, every lane scores its own bins, and a warp argmax reduce (`__shfl_down_sync`) picks the winner under the same tie-break (max gain, then lowest bin, then `default_left`) via `feat_better`. This retires stage A's "one-lane FP64 scan deferred" note: on consumer Blackwell (sm_120, 1/64-rate FP64) the sequential scan dominated, and parallelizing it cut find 1.27 → 0.38 s on the 5090 (grow loop 1.48 → 0.57 s), RMSE 8.9911 unchanged, 392/392, tolerance-equal. With a fair benchmark (both bonsai and xgboost timing CSV read + binning + train), bonsai-GPU fits MSD in ~2.95 s vs xgboost-GPU ~4.8 s on the 5090.
+
 ## Determinism and parity
 
 The `cuda_depthwise` contract is tolerance-equal, not bit-equal (established in phase 2: float shared-memory accumulation, atomic ordering). Device split finding preserves the CPU's scan order and tie-break structurally, but equal-within-rounding gains may pick different splits, changing tree *structure* while model quality is equivalent. Parity tests therefore assert prediction/RMSE tolerance and a high split-agreement rate — never tree equality. CPU-only builds remain bit-identical and untouched.

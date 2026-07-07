@@ -75,7 +75,11 @@ def run_bonsai(grower: str, threads: int, y_test: np.ndarray) -> dict:
             "rmse": round(rmse(pred, y_test), 4), "profile": parse_profiles(fit.stderr)}
 
 
-def run_xgb(device: str, threads: int, train, test, y_test) -> dict:
+# fit_s times the whole ingest+train pipeline — CSV read + DMatrix (xgboost's
+# binning) + train — to match bonsai's CLI, which reads the CSV and fits bin
+# mappers inside its timed fit. Both measure data loading, so the comparison
+# is apples-to-apples.
+def run_xgb(device: str, threads: int, test, y_test) -> dict:
     import xgboost as xgb
     cfg = tomllib.loads(CONFIG.read_text())
     params = {"objective": "reg:squarederror",
@@ -86,12 +90,13 @@ def run_xgb(device: str, threads: int, train, test, y_test) -> dict:
               "max_bin": cfg["bin_mapper"]["max_bin"],
               "tree_method": "hist", "seed": cfg["booster"]["random_seed"],
               "device": device, **({"nthread": threads} if device == "cpu" else {})}
+    t0 = time.perf_counter()
+    train = pd.read_csv(REPO / cfg["data"]["train"])
     feats = [c for c in train.columns if c != "label"]
     dtrain = xgb.DMatrix(train[feats], label=train["label"])
-    dtest = xgb.DMatrix(test[feats])
-    t0 = time.perf_counter()
     booster = xgb.train(params, dtrain, num_boost_round=cfg["booster"]["n_iters"])
     fit_s = time.perf_counter() - t0
+    dtest = xgb.DMatrix(test[feats])
     t0 = time.perf_counter()
     pred = booster.predict(dtest)
     predict_s = time.perf_counter() - t0
@@ -107,7 +112,6 @@ def main() -> int:
     args = ap.parse_args()
 
     cfg = tomllib.loads(CONFIG.read_text())
-    train = pd.read_csv(REPO / cfg["data"]["train"])
     test = pd.read_csv(REPO / cfg["data"]["test"])
     y_test = test["label"].to_numpy()
 
@@ -119,8 +123,8 @@ def main() -> int:
 
     runners = {"bonsai_gpu": lambda: run_bonsai("cuda_depthwise", args.threads, y_test),
                "bonsai_cpu": lambda: run_bonsai("depthwise", args.threads, y_test),
-               "xgb_cpu": lambda: run_xgb("cpu", args.threads, train, test, y_test),
-               "xgb_gpu": lambda: run_xgb("cuda", args.threads, train, test, y_test)}
+               "xgb_cpu": lambda: run_xgb("cpu", args.threads, test, y_test),
+               "xgb_gpu": lambda: run_xgb("cuda", args.threads, test, y_test)}
 
     results, ts = {}, datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     RESULTS.parent.mkdir(parents=True, exist_ok=True)
