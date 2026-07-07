@@ -574,11 +574,18 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     auto const selected =
         gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
 
-    // Leafwise shares the data plane's primitives but not its level batching:
-    // the gain heap expands one node at a time (split_node), so there is no
-    // level to batch — the LevelStep opens the tree and builds the root.
-    gd::LevelStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
-    SplitInput                        root = step.make_root(row_indices);
+    // Leafwise expands one node at a time (split_node) on host rows, so it does
+    // not use the device-resident plane (which keeps rows/histograms on the GPU
+    // and has no single-node best-first path). The root is built directly via
+    // populate — the CUDA engine's populate delegates to its CPU member, so
+    // this path is correct with either engine.
+    engine_.begin_tree(ds, grad, hess);
+    SplitInput root;
+    root.id = 0;
+    root.rows.assign(row_indices.begin(), row_indices.end());
+    engine_.populate(ds, grad, hess, root, selected);
+    root.sums      = root.totals();
+    root.row_count = root.rows.size();
     nodes.emplace_back(DenseTree::leaf(0.0F));
 
     size_t  n_leaves    = 0;
