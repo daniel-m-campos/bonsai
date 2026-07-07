@@ -4,13 +4,15 @@
 
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/parallel.hpp"
+#include "ingest_profiler.hpp"
 
 namespace bonsai::cli
 {
 
 FeatureBuffer to_feature_buffer(detail::ColumnBatch const &batch)
 {
-    FeatureBuffer buf;
+    detail::IngestProfiler::Lap lap;
+    FeatureBuffer               buf;
     buf.n_features = batch.features.size();
     buf.n_rows     = buf.n_features == 0 ? 0 : batch.features[0].size();
     buf.data.resize(buf.n_rows * buf.n_features);
@@ -23,6 +25,7 @@ FeatureBuffer to_feature_buffer(detail::ColumnBatch const &batch)
                                          batch.features[f][r];
                                  }
                              });
+    lap(detail::IngestProfiler::instance().buffer_s);
     return buf;
 }
 

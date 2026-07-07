@@ -13,6 +13,7 @@ add_library(bonsai_data OBJECT
 target_include_directories(bonsai_data PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
+target_include_directories(bonsai_data PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(bonsai_data PUBLIC bonsai_parallel bonsai_warnings)
 
@@ -148,6 +149,8 @@ add_library(bonsai_io OBJECT
     io/model.cpp
 )
 
+target_include_directories(bonsai_io PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 target_link_libraries(bonsai_io PUBLIC
     bonsai_data
     bonsai_booster
@@ -175,6 +178,7 @@ add_library(bonsai_cli OBJECT
 target_include_directories(bonsai_cli PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
+target_include_directories(bonsai_cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # The CLI talks only to IBooster, make_booster, the by-name objective
 # dispatchers, BinMappers/Dataset, io::*, and Config. Concrete objective /

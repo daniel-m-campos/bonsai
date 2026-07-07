@@ -9,6 +9,7 @@
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/parallel.hpp"
 #include "bonsai/types.hpp"
+#include "ingest_profiler.hpp"
 
 namespace bonsai
 {
@@ -20,7 +21,8 @@ Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers
                      DataConfig const & /*cfg*/)
 {
     assert(batch.features.size() == mappers.size());
-    Dataset ds;
+    detail::IngestProfiler::Lap lap;
+    Dataset                     ds;
     ds.n_rows_  = batch.labels.size();
     ds.mappers_ = mappers;
     ds.labels_  = batch.labels;
@@ -40,6 +42,7 @@ Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers
                                      binned[i] = mapper.transform(col[i]);
                                  }
                              });
+    lap(detail::IngestProfiler::instance().bin_s);
     return ds;
 }
 

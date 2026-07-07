@@ -22,9 +22,12 @@
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/parallel.hpp"
+#include "ingest_profiler.hpp"
 
 namespace bonsai::detail::csv
 {
+
+using detail::IngestProfiler;
 
 namespace
 {
@@ -162,7 +165,11 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
     // Read the whole file once, index the data lines, then parse rows in
     // parallel straight into column-major storage. Each row writes only
     // its own slots, so the result is identical at any thread count.
+    auto               &prof = IngestProfiler::instance();
+    IngestProfiler::Lap lap;
+
     std::string const buf = read_file(path);
+    lap(prof.read_s);
 
     std::vector<std::string_view> scratch;
     std::vector<std::string>      all_names;
@@ -214,6 +221,8 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
             all_names.emplace_back("f" + std::to_string(i));
         }
     }
+
+    lap(prof.index_s);
 
     auto const   feature_cols = resolve_feature_cols(all_names.size(), cfg);
     size_t const n_cols       = all_names.size();
@@ -310,6 +319,7 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
         parse_line_into(bad); // throws with the field-level message
         throw std::runtime_error("csv::parse: malformed row in '" + path + "'");
     }
+    lap(prof.parse_s);
 
     return batch;
 }
