@@ -676,7 +676,7 @@ void CudaHistogramEngine::find_splits_many(Dataset const &ds, TreeConfig const &
 
     im.feat_best.reserve(n * im.n_selected);
     im.node_best.reserve(n);
-    find_kernel<<<dim3((im.n_selected + 31) / 32, static_cast<uint32_t>(n)),
+    find_kernel<<<dim3(im.n_selected, static_cast<uint32_t>(n)),
                   dim3(32)>>>(im.cur().data(), im.features.device(), im.n_bins.data(),
                               im.node_sums.device(), im.node_bounds.device(),
                               any_mask ? im.allowed.device() : nullptr,

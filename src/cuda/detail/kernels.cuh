@@ -347,6 +347,37 @@ struct FeatBest
 // replicating the CPU scan in split.cpp exactly: same prefix order, both
 // default_left routings, min_child_hess, monotone feasibility, min_gain.
 // The scan is <= 254 iterations; clarity beats occupancy here.
+// True when candidate a beats b under the serial scan's tie-break: higher
+// gain, then lower bin, then default_left first (dl 1 before 0). Ties never
+// replace in the serial `gain > best` loop, so equal gains keep the earlier.
+__device__ inline bool feat_better(double ga, int ba, int da, int va, double gb,
+                                   int bb, int db, int vb)
+{
+    if (va != vb)
+    {
+        return va > vb; // a valid, b not -> a wins
+    }
+    if (va == 0)
+    {
+        return false; // both invalid
+    }
+    if (ga != gb)
+    {
+        return ga > gb;
+    }
+    if (ba != bb)
+    {
+        return ba < bb;
+    }
+    return da > db;
+}
+
+// One warp per (node, feature). The 32 lanes cooperate on the <= 254-bin cut
+// scan: a warp-tiled inclusive prefix sum builds each bin's left grad/hess,
+// every lane scores its own bins, and a warp reduce picks the winner with the
+// same (max gain, then lowest bin, then default_left) tie-break as the serial
+// CPU scan. The tiled summation order differs, so results are tolerance-equal
+// (docs/architecture/11-gpu-resident.md), not bit-equal.
 __global__ void find_kernel(double const *hists, uint32_t const *features,
                             uint32_t const *n_bins, double const *node_sums,
                             double const *node_bounds, char const *allowed,
@@ -355,14 +386,18 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
                             double min_gain, FeatBest *out)
 {
     uint32_t const node = blockIdx.y;
-    uint32_t const sel  = (blockIdx.x * blockDim.x) + threadIdx.x;
+    uint32_t const sel  = blockIdx.x;
+    uint32_t const lane = threadIdx.x; // 0..31
     if (sel >= n_sel)
     {
         return;
     }
-    FeatBest best                                  = {};
-    out[(static_cast<size_t>(node) * n_sel) + sel] = best;
-    if (allowed != nullptr && allowed[(static_cast<size_t>(node) * n_sel) + sel] == 0)
+    size_t const oidx = (static_cast<size_t>(node) * n_sel) + sel;
+    if (lane == 0)
+    {
+        out[oidx] = FeatBest{};
+    }
+    if (allowed != nullptr && allowed[oidx] == 0)
     {
         return;
     }
@@ -372,63 +407,115 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
     {
         return; // no cut cells (degenerate feature)
     }
-    double const *cells =
-        hists + (((static_cast<size_t>(node) * n_sel) + sel) * stride);
-    double const g_total    = node_sums[pair_off(node)];
-    double const h_total    = node_sums[pair_off(node) + 1];
-    double const miss_g     = cells[pair_off(nb - 1)];
-    double const miss_h     = cells[pair_off(nb - 1) + 1];
-    double const node_score = score(g_total, h_total, l1, l2);
-    double const real_grad  = g_total - miss_g;
-    double const real_hess  = h_total - miss_h;
-    double const lo         = node_bounds[pair_off(node)];
-    double const hi         = node_bounds[pair_off(node) + 1];
-    int const    mc         = monotone[f];
+    double const  *cells      = hists + (oidx * stride);
+    double const   g_total    = node_sums[pair_off(node)];
+    double const   h_total    = node_sums[pair_off(node) + 1];
+    double const   miss_g     = cells[pair_off(nb - 1)];
+    double const   miss_h     = cells[pair_off(nb - 1) + 1];
+    double const   node_score = score(g_total, h_total, l1, l2);
+    double const   real_grad  = g_total - miss_g;
+    double const   real_hess  = h_total - miss_h;
+    double const   lo         = node_bounds[pair_off(node)];
+    double const   hi         = node_bounds[pair_off(node) + 1];
+    int const      mc         = monotone[f];
+    uint32_t const n_cut      = nb - 2; // cut cells are bins [0, nb-2)
 
-    // Cut cells are bins [0, nb-2): the last real bin cannot split and the
-    // final cell is the missing bin (mirrors Histogram::cut_cells()).
-    double pg = 0.0;
-    double ph = 0.0;
-    for (uint32_t b = 0; b + 2 < nb; ++b)
+    double  best_gain = 0.0;
+    int32_t best_bin = 0, best_dl = 0, best_valid = 0;
+    double  bgL = 0, bhL = 0, bgR = 0, bhR = 0;
+
+    // Running inclusive prefix carried across 32-bin tiles.
+    double carry_g = 0.0;
+    double carry_h = 0.0;
+    for (uint32_t base = 0; base < n_cut; base += 32)
     {
-        pg += cells[pair_off(b)];
-        ph += cells[pair_off(b) + 1];
-        for (int dl = 1; dl >= 0; --dl)
+        uint32_t const b  = base + lane;
+        double         vg = (b < n_cut) ? cells[pair_off(b)] : 0.0;
+        double         vh = (b < n_cut) ? cells[pair_off(b) + 1] : 0.0;
+        // Warp inclusive scan (shuffle-up) of this tile's grad/hess.
+        double sg = vg;
+        double sh_ = vh;
+        for (int off = 1; off < 32; off <<= 1)
         {
-            double const gL = pg + (dl != 0 ? miss_g : 0.0);
-            double const hL = ph + (dl != 0 ? miss_h : 0.0);
-            double const gR = (real_grad - pg) + (dl == 0 ? miss_g : 0.0);
-            double const hR = (real_hess - ph) + (dl == 0 ? miss_h : 0.0);
-            if (hL < min_child_hess || hR < min_child_hess)
+            double ng = __shfl_up_sync(0xffffffffU, sg, off);
+            double nh = __shfl_up_sync(0xffffffffU, sh_, off);
+            if (lane >= static_cast<uint32_t>(off))
             {
-                continue;
+                sg += ng;
+                sh_ += nh;
             }
-            if (mc != 0)
+        }
+        double const pg = carry_g + sg; // inclusive prefix through bin b
+        double const ph = carry_h + sh_;
+        carry_g += __shfl_sync(0xffffffffU, sg, 31);
+        carry_h += __shfl_sync(0xffffffffU, sh_, 31);
+
+        if (b < n_cut)
+        {
+            for (int dl = 1; dl >= 0; --dl)
             {
-                double const wL = bounded_leaf_weight(gL, hL, l1, l2, lo, hi);
-                double const wR = bounded_leaf_weight(gR, hR, l1, l2, lo, hi);
-                if (static_cast<double>(mc) * (wR - wL) < 0.0)
+                double const gL = pg + (dl != 0 ? miss_g : 0.0);
+                double const hL = ph + (dl != 0 ? miss_h : 0.0);
+                double const gR = (real_grad - pg) + (dl == 0 ? miss_g : 0.0);
+                double const hR = (real_hess - ph) + (dl == 0 ? miss_h : 0.0);
+                if (hL < min_child_hess || hR < min_child_hess)
                 {
                     continue;
                 }
-            }
-            double const gain =
-                score(gL, hL, l1, l2) + score(gR, hR, l1, l2) - node_score;
-            if (gain > best.gain && gain >= min_gain)
-            {
-                best = {.gain  = gain,
-                        .gL    = gL,
-                        .hL    = hL,
-                        .gR    = gR,
-                        .hR    = hR,
-                        .bin   = static_cast<int32_t>(b),
-                        .dl    = dl,
-                        .valid = 1,
-                        .sel   = static_cast<int32_t>(sel)};
+                if (mc != 0)
+                {
+                    double const wL = bounded_leaf_weight(gL, hL, l1, l2, lo, hi);
+                    double const wR = bounded_leaf_weight(gR, hR, l1, l2, lo, hi);
+                    if (static_cast<double>(mc) * (wR - wL) < 0.0)
+                    {
+                        continue;
+                    }
+                }
+                double const gain =
+                    score(gL, hL, l1, l2) + score(gR, hR, l1, l2) - node_score;
+                if (gain >= min_gain &&
+                    feat_better(gain, static_cast<int>(b), dl, 1, best_gain, best_bin,
+                                best_dl, best_valid))
+                {
+                    best_gain  = gain;
+                    best_bin   = static_cast<int32_t>(b);
+                    best_dl    = dl;
+                    best_valid = 1;
+                    bgL = gL, bhL = hL, bgR = gR, bhR = hR;
+                }
             }
         }
     }
-    out[(static_cast<size_t>(node) * n_sel) + sel] = best;
+
+    // Warp reduce to the winning candidate under the same tie-break.
+    for (int off = 16; off > 0; off >>= 1)
+    {
+        double const og  = __shfl_down_sync(0xffffffffU, best_gain, off);
+        int const    ob  = __shfl_down_sync(0xffffffffU, best_bin, off);
+        int const    od  = __shfl_down_sync(0xffffffffU, best_dl, off);
+        int const    ov  = __shfl_down_sync(0xffffffffU, best_valid, off);
+        double const ogL = __shfl_down_sync(0xffffffffU, bgL, off);
+        double const ohL = __shfl_down_sync(0xffffffffU, bhL, off);
+        double const ogR = __shfl_down_sync(0xffffffffU, bgR, off);
+        double const ohR = __shfl_down_sync(0xffffffffU, bhR, off);
+        if (feat_better(og, ob, od, ov, best_gain, best_bin, best_dl, best_valid))
+        {
+            best_gain = og, best_bin = ob, best_dl = od, best_valid = ov;
+            bgL = ogL, bhL = ohL, bgR = ogR, bhR = ohR;
+        }
+    }
+    if (lane == 0 && best_valid != 0)
+    {
+        out[oidx] = {.gain  = best_gain,
+                     .gL    = bgL,
+                     .hL    = bhL,
+                     .gR    = bgR,
+                     .hR    = bhR,
+                     .bin   = best_bin,
+                     .dl    = best_dl,
+                     .valid = 1,
+                     .sel   = static_cast<int32_t>(sel)};
+    }
 }
 
 // Per-node winner in ascending selected-feature order with strict >,
