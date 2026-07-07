@@ -15,8 +15,16 @@ template <typename F> void parallel::for_each_index(size_t n, F &&f);
 
 Runs `f(i)` for `i in [0, n)`. OpenMP body when built with `BONSAI_OPENMP`
 (default), plain loop otherwise — callers never see the difference. The
-worker count comes from `[parallel] n_threads` (0 = all hardware threads),
-applied process-wide by `resolve_config` / the Python module.
+worker count comes from `[parallel] n_threads` (0 = auto: hardware threads
+capped at 16), applied process-wide by `resolve_config` / the Python module.
+
+Auto is capped because the per-level parallel sections are short: on hosts
+where the core count far exceeds per-level parallelism, OpenMP spin-wait at
+the section barriers dominates useful work — a 60-vCPU host ran the MSD fit
+10× slower at 60 threads than at 16 (issue #2, decision 44). An explicit
+`n_threads = N` passes through uncapped; on oversubscribed many-core hosts
+`OMP_WAIT_POLICY=passive` (or `KMP_BLOCKTIME=0`) is the operator knob that
+makes idle workers sleep instead of spin.
 
 Why not the proposed `ParallelBackend` concept dispatched like objectives
 and growers? One implementation doesn't earn a typelist dimension. The
