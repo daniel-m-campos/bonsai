@@ -658,6 +658,41 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
     }
 }
 
+// Given the oblivious level split (feature index sel, bin, default_left),
+// each thread computes one node's (left, right) child sums from its device
+// histogram — 4 doubles per node [gL, hL, gR, hR] — so the host can fill the
+// children's SplitInput.sums (device histograms aren't host-scannable).
+__global__ void level_child_sums_kernel(double const *hists, double const *node_sums,
+                                        uint32_t sel, uint32_t bin, int dl,
+                                        uint32_t n_nodes, uint32_t n_sel, uint32_t stride,
+                                        uint32_t nb, double *out4)
+{
+    uint32_t const p = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (p >= n_nodes)
+    {
+        return;
+    }
+    double const *cells  = hists + ((static_cast<size_t>(p) * n_sel + sel) * stride);
+    double const  g      = node_sums[pair_off(p)];
+    double const  h      = node_sums[pair_off(p) + 1];
+    double const  miss_g = cells[pair_off(nb - 1)];
+    double const  miss_h = cells[pair_off(nb - 1) + 1];
+    double        pg = 0.0, ph = 0.0;
+    for (uint32_t b = 0; b <= bin; ++b)
+    {
+        pg += cells[pair_off(b)];
+        ph += cells[pair_off(b) + 1];
+    }
+    double const gL      = pg + (dl != 0 ? miss_g : 0.0);
+    double const hL      = ph + (dl != 0 ? miss_h : 0.0);
+    double const gR      = (g - miss_g - pg) + (dl == 0 ? miss_g : 0.0);
+    double const hR      = (h - miss_h - ph) + (dl == 0 ? miss_h : 0.0);
+    out4[(4 * p) + 0]    = gL;
+    out4[(4 * p) + 1]    = hL;
+    out4[(4 * p) + 2]    = gR;
+    out4[(4 * p) + 3]    = hR;
+}
+
 // NOLINTEND(bugprone-easily-swappable-parameters,cppcoreguidelines-avoid-c-arrays,cppcoreguidelines-pro-bounds-pointer-arithmetic,modernize-avoid-c-arrays,cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-bounds-array-to-pointer-decay,readability-function-cognitive-complexity,readability-identifier-naming)
 
 } // namespace

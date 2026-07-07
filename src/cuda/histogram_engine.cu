@@ -143,7 +143,8 @@ struct CudaHistogramEngine::Impl
     Staged<int>            monotone;    // per feature
     DeviceBuffer<FeatBest> feat_best;
     Staged<FeatBest>       node_best;
-    Staged<uint32_t>       sofs; // small-node subset: ofs/cnt/slot
+    Staged<double>         level_child; // oblivious: 4 per node [gL,hL,gR,hR]
+    Staged<uint32_t>       sofs;        // small-node subset: ofs/cnt/slot
     Staged<uint32_t>       scnt;
     Staged<uint32_t>       sslot;
 
@@ -729,27 +730,45 @@ void CudaHistogramEngine::find_level_split(Dataset const &ds, TreeConfig const &
     }
     lap(prof.gpu_s);
 
-    // One split for the whole frontier, broadcast to every node. child_sums is
-    // unused by the oblivious control plane (device partition/advance recompute
-    // the children); zero it for the interface.
+    // One split for the whole frontier, broadcast to every node. Each node's
+    // (left, right) child sums come from a device kernel — the children's
+    // device histograms are not host-scannable, so their SplitInput.sums must
+    // be filled from here for the next level's find.
     FeatBest const &b = im.node_best.host[0];
     SplitOutput     split{};
+    for (auto &c : child_sums)
+    {
+        c = HistCell{};
+    }
     if (b.valid != 0)
     {
-        split = {.gain       = b.gain,
-                 .feature_id = static_cast<feature_id_t>(
-                     im.features.host[static_cast<size_t>(b.sel)]),
-                 .bin_id       = static_cast<bin_id_t>(b.bin),
-                 .default_left = b.dl != 0,
-                 .valid        = true};
+        auto const   sel = static_cast<uint32_t>(b.sel);
+        auto const   fid = static_cast<feature_id_t>(im.features.host[sel]);
+        auto const   nb  = static_cast<uint32_t>(ds.n_bins(fid));
+        split            = {.gain         = b.gain,
+                            .feature_id   = fid,
+                            .bin_id       = static_cast<bin_id_t>(b.bin),
+                            .default_left = b.dl != 0,
+                            .valid        = true};
+        im.level_child.reserve(4 * n);
+        level_child_sums_kernel<<<dim3((static_cast<uint32_t>(n) + 127) / 128),
+                                  dim3(128)>>>(
+            im.cur().data(), im.node_sums.device(), sel, static_cast<uint32_t>(b.bin),
+            b.dl, static_cast<uint32_t>(n), im.n_selected, im.stride, nb,
+            im.level_child.device());
+        check(cudaGetLastError(), "level child sums launch");
+        im.level_child.fetch(4 * n);
+        for (size_t i = 0; i < n; ++i)
+        {
+            child_sums[2 * i] = {.sum_grad = im.level_child.host[(4 * i) + 0],
+                                 .sum_hess = im.level_child.host[(4 * i) + 1]};
+            child_sums[(2 * i) + 1] = {.sum_grad = im.level_child.host[(4 * i) + 2],
+                                       .sum_hess = im.level_child.host[(4 * i) + 3]};
+        }
     }
     for (size_t i = 0; i < n; ++i)
     {
         out[i] = split;
-    }
-    for (auto &c : child_sums)
-    {
-        c = HistCell{};
     }
     lap(prof.unpack_s);
 }

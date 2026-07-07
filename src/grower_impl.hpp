@@ -448,6 +448,9 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
         plan.splits.reserve(frontier.size());
         for (uint32_t i = 0; i < frontier.size(); ++i)
         {
+            HistCell const ls = child_sums.empty() ? HistCell{} : child_sums[2 * i];
+            HistCell const rs =
+                child_sums.empty() ? HistCell{} : child_sums[(2 * i) + 1];
             plan.splits.push_back({std::move(frontier[i]),
                                    gd::PendingSplit{},
                                    split,
@@ -457,8 +460,8 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
                                    0.0,
                                    {},
                                    i,
-                                   {},
-                                   {}});
+                                   ls,
+                                   rs});
         }
         step.partition(plan);
         step.build_children(plan);
