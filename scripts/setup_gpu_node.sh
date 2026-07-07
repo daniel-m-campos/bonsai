@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
 # One-shot bonsai CUDA setup for a fresh x86_64 Ubuntu 22.04 GPU node
 # (validated on Thunder Compute 4x A100 standard VMs — use standard VMs
-# only; 1x/2x instances virtualize the GPU and are unusable for this).
-# Usage: bash setup_gpu_node.sh [branch]   (default: cuda-phase2)
+# only; 1x/2x instances virtualize the GPU and are unusable for this —
+# or any bare-metal/passthrough GPU host, e.g. a RunPod/Lambda box).
+# Usage: bash setup_gpu_node.sh [branch] [cuda-ver]   (default: cuda-phase2, auto)
+# cuda-ver auto-selects by compute capability: Blackwell (sm_100/120)
+# needs CUDA >= 12.8; everything older gets 12.6. clang-21 handles both
+# (LLVM 21 grew sm_100/sm_120 offload-arch support).
 # Idempotent: safe to re-run. See benchmarks/README.md for the workflow.
 set -euxo pipefail
 
 BRANCH="${1:-cuda-phase2}"
+CUDA_VER="${2:-auto}"
+if [ "$CUDA_VER" = "auto" ]; then
+    CC_MAJOR=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | cut -d. -f1)
+    if [ "${CC_MAJOR:-0}" -ge 10 ]; then CUDA_VER=12.8; else CUDA_VER=12.6; fi
+fi
 export PATH="$HOME/.local/bin:$PATH"
 
 # Thunder's telemetry shim (/etc/ld.so.preload) busy-spins when many
@@ -30,12 +39,13 @@ sudo apt-get install -y -qq ninja-build git
 command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh -s -- -q
 command -v cmake >/dev/null 2>&1 && [ "$(cmake --version | head -1 | grep -oE '[0-9]+' | head -1)" -ge 4 ] || uv tool install -q cmake
 
-# --- CUDA 12.6 side-by-side (clang-21 cannot target CUDA 13)
-if [ ! -x /usr/local/cuda-12.6/bin/nvcc ]; then
+# --- CUDA side-by-side install (clang-21 cannot target CUDA 13)
+CUDA_PKG="cuda-toolkit-${CUDA_VER/./-}"
+if [ ! -x "/usr/local/cuda-${CUDA_VER}/bin/nvcc" ]; then
     wget -qO /tmp/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
     sudo dpkg -i /tmp/cuda-keyring.deb
     sudo apt-get update -qq
-    sudo apt-get install -y -qq cuda-toolkit-12-6
+    sudo apt-get install -y -qq "$CUDA_PKG"
 fi
 
 # --- repo + build
@@ -47,7 +57,7 @@ git pull -q --ff-only || true
 cmake -B build-cuda -GNinja -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_COMPILER=/usr/lib/llvm-21/bin/clang++ \
     -DBONSAI_CUDA=ON \
-    -DCUDAToolkit_ROOT=/usr/local/cuda-12.6
+    -DCUDAToolkit_ROOT="/usr/local/cuda-${CUDA_VER}"
 ninja -C build-cuda
 
 # --- datasets
