@@ -25,6 +25,7 @@ add_executable(bonsai_tests
     unit/test_task.cpp
     unit/test_metric.cpp
     unit/test_typelist.cpp
+    unit/test_parallel.cpp
     unit/test_make_booster.cpp
     unit/test_toml.cpp
     unit/test_model_io.cpp
