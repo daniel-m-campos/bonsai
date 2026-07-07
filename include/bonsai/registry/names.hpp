@@ -56,17 +56,17 @@ template <> struct impl_name<SoftmaxObjective>
     static constexpr std::string_view value = "softmax";
 };
 
-template <> struct impl_name<DepthwiseGrower<HistogramNodeSplitFinder>>
+template <> struct impl_name<DepthwiseGrower<CpuHistogramEngine>>
 {
     static constexpr std::string_view value = "depthwise";
 };
 
-template <> struct impl_name<ObliviousGrower<HistogramLevelSplitFinder>>
+template <> struct impl_name<ObliviousGrower<CpuHistogramEngine>>
 {
     static constexpr std::string_view value = "oblivious";
 };
 
-template <> struct impl_name<LeafwiseGrower<HistogramNodeSplitFinder>>
+template <> struct impl_name<LeafwiseGrower<CpuHistogramEngine>>
 {
     static constexpr std::string_view value = "leafwise";
 };

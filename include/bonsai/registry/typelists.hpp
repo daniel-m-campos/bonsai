@@ -15,10 +15,10 @@ namespace bonsai
 
 using Objectives = TypeList<MSEObjective, LogLossObjective, MAEObjective,
                             HuberObjective, QuantileObjective, SoftmaxObjective>;
-using Growers    = TypeList<DepthwiseGrower<HistogramNodeSplitFinder>,
-                            ObliviousGrower<HistogramLevelSplitFinder>,
-                            LeafwiseGrower<HistogramNodeSplitFinder>, CudaDepthwiseGrower>;
-using Samplers   = TypeList<AllRowsSampler, BernoulliSampler, GossSampler>;
+using Growers =
+    TypeList<DepthwiseGrower<CpuHistogramEngine>, ObliviousGrower<CpuHistogramEngine>,
+             LeafwiseGrower<CpuHistogramEngine>, CudaDepthwiseGrower>;
+using Samplers = TypeList<AllRowsSampler, BernoulliSampler, GossSampler>;
 
 namespace detail
 {

@@ -30,7 +30,7 @@ add_library(bonsai_tree OBJECT
 # the real kernels via bonsai_gpu, OFF compiles the throwing stub.
 if(NOT BONSAI_CUDA)
     target_sources(bonsai_tree PRIVATE
-        cuda/histogram_builder_stub.cpp
+        cuda/histogram_engine_stub.cpp
     )
 endif()
 

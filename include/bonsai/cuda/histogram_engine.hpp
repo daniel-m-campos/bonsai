@@ -16,35 +16,35 @@ namespace bonsai
 // needs this to be true. See docs/architecture/10-cuda.md.
 bool cuda_available();
 
-// HistogramBuilder that offloads histogram construction to the GPU
-// (src/cuda/histogram_builder.cu; a throwing stub backs it when built
+// HistogramEngine that offloads histogram construction to the GPU
+// (src/cuda/histogram_engine.cu; a throwing stub backs it when built
 // without BONSAI_CUDA). GPU cells match the CPU builder to tolerance, not
 // bit-exactly: atomics accumulate in arbitrary order. Design and precision
 // scheme: docs/architecture/10-cuda.md.
-class CudaHistogramBuilder
+class CudaHistogramEngine
 {
   public:
-    CudaHistogramBuilder();
-    ~CudaHistogramBuilder();
-    CudaHistogramBuilder(CudaHistogramBuilder &&) noexcept;
-    CudaHistogramBuilder &operator=(CudaHistogramBuilder &&) noexcept;
-    CudaHistogramBuilder(CudaHistogramBuilder const &)            = delete;
-    CudaHistogramBuilder &operator=(CudaHistogramBuilder const &) = delete;
+    CudaHistogramEngine();
+    ~CudaHistogramEngine();
+    CudaHistogramEngine(CudaHistogramEngine &&) noexcept;
+    CudaHistogramEngine &operator=(CudaHistogramEngine &&) noexcept;
+    CudaHistogramEngine(CudaHistogramEngine const &)            = delete;
+    CudaHistogramEngine &operator=(CudaHistogramEngine const &) = delete;
 
-    // --- HistogramBuilder concept (required): the copy-back path.
+    // --- HistogramEngine concept (required): the copy-back path.
     void begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
     void populate(Dataset const &ds, floats_view grad, floats_view hess,
                   SplitInput &split_input, std::span<feature_id_t const> selected);
 
-    // --- BatchHistogramBuilder (optional, phase 2): one launch covers a level.
+    // --- BatchHistogramEngine (optional, phase 2): one launch covers a level.
     void populate_many(Dataset const &ds, floats_view grad, floats_view hess,
                        split_input_refs nodes, std::span<feature_id_t const> selected);
 
-    // --- ResidentHistogramBuilder (optional, phase 3,
+    // --- GPULevelEngine (optional, phase 3,
     // docs/architecture/11-gpu-resident.md). Level histograms stay on the device, keyed
     // by the node's index in the grower's frontier ("slot"); splits are found on the
     // device and only decisions and child sums cross the bus. The depthwise grower
-    // gates this whole cluster on the ResidentHistogramBuilder concept; the splitter
+    // gates this whole cluster on the GPULevelEngine concept; the splitter
     // policy remains the host fallback when begin_root declines.
 
     // One child-level derivation: the smaller child's histogram builds from
@@ -108,8 +108,8 @@ class CudaHistogramBuilder
     std::unique_ptr<Impl> impl_;
 };
 
-static_assert(HistogramBuilder<CudaHistogramBuilder>);
-static_assert(BatchHistogramBuilder<CudaHistogramBuilder>);
-static_assert(ResidentHistogramBuilder<CudaHistogramBuilder>);
+static_assert(HistogramEngine<CudaHistogramEngine>);
+static_assert(BatchHistogramEngine<CudaHistogramEngine>);
+static_assert(GPULevelEngine<CudaHistogramEngine>);
 
 } // namespace bonsai

@@ -4,7 +4,7 @@
 // The class-template form is spelled out here because explicit instantiation
 // cannot name a type alias.
 
-#include "bonsai/cuda/histogram_builder.hpp"
+#include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/split.hpp"
 #include "grower_impl.hpp"
@@ -12,6 +12,6 @@
 namespace bonsai
 {
 
-template class DepthwiseGrower<HistogramNodeSplitFinder, CudaHistogramBuilder>;
+template class DepthwiseGrower<CudaHistogramEngine, HistogramNodeSplitFinder>;
 
 } // namespace bonsai

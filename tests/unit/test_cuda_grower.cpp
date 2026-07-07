@@ -7,7 +7,7 @@
 
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/cuda/grower.hpp"
-#include "bonsai/cuda/histogram_builder.hpp"
+#include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/split.hpp"
@@ -85,8 +85,7 @@ void require_hists_match(SplitInput const &cpu, SplitInput const &gpu)
     }
 }
 
-TEST_CASE("CudaHistogramBuilder matches CPU histograms on all rows",
-          "[cuda][histogram]")
+TEST_CASE("CudaHistogramEngine matches CPU histograms on all rows", "[cuda][histogram]")
 {
     if (!cuda_available())
     {
@@ -98,8 +97,8 @@ TEST_CASE("CudaHistogramBuilder matches CPU histograms on all rows",
     std::vector<feature_id_t> selected(ds.n_features());
     std::iota(selected.begin(), selected.end(), feature_id_t{0});
 
-    CpuHistogramBuilder  cpu_builder;
-    CudaHistogramBuilder gpu_builder;
+    CpuHistogramEngine  cpu_builder;
+    CudaHistogramEngine gpu_builder;
     gpu_builder.begin_tree(ds, scenario.grad, scenario.hess);
 
     SplitInput cpu_node;
@@ -113,7 +112,7 @@ TEST_CASE("CudaHistogramBuilder matches CPU histograms on all rows",
     require_hists_match(cpu_node, gpu_node);
 }
 
-TEST_CASE("CudaHistogramBuilder matches CPU histograms on a row subset",
+TEST_CASE("CudaHistogramEngine matches CPU histograms on a row subset",
           "[cuda][histogram]")
 {
     if (!cuda_available())
@@ -131,8 +130,8 @@ TEST_CASE("CudaHistogramBuilder matches CPU histograms on a row subset",
     }
     std::vector<feature_id_t> const selected{0, 2, 3};
 
-    CpuHistogramBuilder  cpu_builder;
-    CudaHistogramBuilder gpu_builder;
+    CpuHistogramEngine  cpu_builder;
+    CudaHistogramEngine gpu_builder;
     gpu_builder.begin_tree(ds, scenario.grad, scenario.hess);
 
     SplitInput cpu_node;
@@ -160,8 +159,8 @@ TEST_CASE("CudaDepthwiseGrower predictions match DepthwiseGrower", "[cuda][growe
     cfg.max_depth        = 5;
     cfg.min_data_in_leaf = 4;
 
-    DepthwiseGrower<HistogramNodeSplitFinder> cpu_grower(cfg);
-    CudaDepthwiseGrower                       gpu_grower(cfg);
+    DepthwiseGrower<CpuHistogramEngine> cpu_grower(cfg);
+    CudaDepthwiseGrower                 gpu_grower(cfg);
 
     auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
     auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);

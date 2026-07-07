@@ -6,7 +6,7 @@
 #include <string_view>
 
 #include "bonsai/cuda/grower.hpp"
-#include "bonsai/cuda/histogram_builder.hpp"
+#include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/registry/make_booster.hpp"
 #include "bonsai/registry/names.hpp"
 

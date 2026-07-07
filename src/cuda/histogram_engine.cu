@@ -3,7 +3,7 @@
 // docs/architecture/10-cuda.md.
 
 #include "bonsai/config/tree_config.hpp"
-#include "bonsai/cuda/histogram_builder.hpp"
+#include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/histogram.hpp"
@@ -104,7 +104,7 @@ struct ProfileCounters
     }
 };
 
-struct CudaHistogramBuilder::Impl
+struct CudaHistogramEngine::Impl
 {
     // One of bins8/bins16 per dataset (uint8 iff every feature fits 256
     // bins); feature-major, n_features * n_rows.
@@ -121,7 +121,7 @@ struct CudaHistogramBuilder::Impl
     Staged<uint32_t>       row_cnt;    // per batched node: row count
     Staged<uint32_t>       features;
     Staged<double>         out;
-    CpuHistogramBuilder    cpu;
+    CpuHistogramEngine     cpu;
     ProfileCounters        prof_counters;
 
     // Uploaded-dataset identity heuristic; any mismatch just re-uploads.
@@ -469,14 +469,14 @@ struct CudaHistogramBuilder::Impl
     }
 };
 
-CudaHistogramBuilder::CudaHistogramBuilder() : impl_(std::make_unique<Impl>()) {}
-CudaHistogramBuilder::~CudaHistogramBuilder()                                = default;
-CudaHistogramBuilder::CudaHistogramBuilder(CudaHistogramBuilder &&) noexcept = default;
-CudaHistogramBuilder &
-CudaHistogramBuilder::operator=(CudaHistogramBuilder &&) noexcept = default;
+CudaHistogramEngine::CudaHistogramEngine() : impl_(std::make_unique<Impl>()) {}
+CudaHistogramEngine::~CudaHistogramEngine()                               = default;
+CudaHistogramEngine::CudaHistogramEngine(CudaHistogramEngine &&) noexcept = default;
+CudaHistogramEngine &
+CudaHistogramEngine::operator=(CudaHistogramEngine &&) noexcept = default;
 
-void CudaHistogramBuilder::begin_tree(Dataset const &ds, floats_view grad,
-                                      floats_view hess)
+void CudaHistogramEngine::begin_tree(Dataset const &ds, floats_view grad,
+                                     floats_view hess)
 {
     impl_->ensure_dataset(ds);
     impl_->resident = false;
@@ -487,9 +487,9 @@ void CudaHistogramBuilder::begin_tree(Dataset const &ds, floats_view grad,
     interleave(impl_->grad_raw.data(), impl_->hess_raw.data(), n, impl_->gh.data());
 }
 
-void CudaHistogramBuilder::populate(Dataset const &ds, floats_view grad,
-                                    floats_view hess, SplitInput &split_input,
-                                    std::span<feature_id_t const> selected)
+void CudaHistogramEngine::populate(Dataset const &ds, floats_view grad,
+                                   floats_view hess, SplitInput &split_input,
+                                   std::span<feature_id_t const> selected)
 {
     std::array const one = {std::ref(split_input)};
     populate_many(ds, grad, hess, one, selected);
@@ -536,9 +536,9 @@ static void reserve_placeholder_hists(
     }
 }
 
-void CudaHistogramBuilder::populate_many(Dataset const &ds, floats_view grad,
-                                         floats_view hess, split_input_refs nodes,
-                                         std::span<feature_id_t const> selected)
+void CudaHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
+                                        floats_view hess, split_input_refs nodes,
+                                        std::span<feature_id_t const> selected)
 {
     size_t max_selected_bins = 0;
     for (feature_id_t const fid : selected)
@@ -617,14 +617,14 @@ void CudaHistogramBuilder::populate_many(Dataset const &ds, floats_view grad,
     lap(prof_counters.unpack_s);
 }
 
-bool CudaHistogramBuilder::resident() const
+bool CudaHistogramEngine::resident() const
 {
     return impl_->resident;
 }
 
-bool CudaHistogramBuilder::begin_root(Dataset const &ds, floats_view grad,
-                                      floats_view hess, SplitInput &root,
-                                      std::span<feature_id_t const> selected)
+bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
+                                     floats_view hess, SplitInput &root,
+                                     std::span<feature_id_t const> selected)
 {
     Impl  &im           = *impl_;
     size_t max_sel_bins = 0;
@@ -690,7 +690,7 @@ bool CudaHistogramBuilder::begin_root(Dataset const &ds, floats_view grad,
     return true;
 }
 
-void CudaHistogramBuilder::stamp_leaves(std::span<LeafStamp const> stamps)
+void CudaHistogramEngine::stamp_leaves(std::span<LeafStamp const> stamps)
 {
     Impl &im = *impl_;
     if (stamps.empty())
@@ -713,9 +713,9 @@ void CudaHistogramBuilder::stamp_leaves(std::span<LeafStamp const> stamps)
     check(cudaGetLastError(), "stamp launch");
 }
 
-void CudaHistogramBuilder::partition_level(Dataset const & /*ds*/,
-                                           std::span<PartitionOp const> ops,
-                                           std::span<uint32_t>          child_counts)
+void CudaHistogramEngine::partition_level(Dataset const & /*ds*/,
+                                          std::span<PartitionOp const> ops,
+                                          std::span<uint32_t>          child_counts)
 {
     Impl &im = *impl_;
     if (ops.empty())
@@ -775,7 +775,7 @@ void CudaHistogramBuilder::partition_level(Dataset const & /*ds*/,
     im.layout_children(ops, child_counts);
 }
 
-void CudaHistogramBuilder::finalize_rows(std::span<node_id_t> leaf_by_row)
+void CudaHistogramEngine::finalize_rows(std::span<node_id_t> leaf_by_row)
 {
     Impl &im = *impl_;
     check(cudaMemcpy(leaf_by_row.data(), im.leaf_by_row.data(),
@@ -783,8 +783,7 @@ void CudaHistogramBuilder::finalize_rows(std::span<node_id_t> leaf_by_row)
           "leaf ids copy");
 }
 
-void CudaHistogramBuilder::advance_level(Dataset const           &ds,
-                                         std::span<LevelOp const> ops)
+void CudaHistogramEngine::advance_level(Dataset const &ds, std::span<LevelOp const> ops)
 {
     Impl &im = *impl_;
     if (ops.empty())
@@ -846,10 +845,10 @@ void CudaHistogramBuilder::advance_level(Dataset const           &ds,
     lap(prof.gpu_s);
 }
 
-void CudaHistogramBuilder::find_splits_many(Dataset const &ds, TreeConfig const &config,
-                                            std::span<SplitInput const> level,
-                                            std::span<SplitOutput>      out,
-                                            std::span<HistCell>         child_sums)
+void CudaHistogramEngine::find_splits_many(Dataset const &ds, TreeConfig const &config,
+                                           std::span<SplitInput const> level,
+                                           std::span<SplitOutput>      out,
+                                           std::span<HistCell>         child_sums)
 {
     Impl        &im   = *impl_;
     size_t const n    = level.size();

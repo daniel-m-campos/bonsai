@@ -1,7 +1,7 @@
 #pragma once
 
 // Device kernels and their PODs/constants, extracted from
-// histogram_builder.cu for readability (docs/architecture/10-cuda.md). Still
+// histogram_engine.cu for readability (docs/architecture/10-cuda.md). Still
 // one translation unit: this header is included only by that .cu, inside
 // bonsai's anonymous namespace. The scan math (score, bounded_leaf_weight)
 // comes from split.hpp and is constexpr, hence device-callable.

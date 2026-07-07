@@ -219,15 +219,15 @@ inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
     ++n_leaves;
 }
 
-template <HistogramBuilder HistogramBuilderT>
+template <HistogramEngine EngineT>
 SplitInput make_root(Dataset const &ds, floats_view grad, floats_view hess,
                      row_index_view row_indices, feature_view selected,
-                     HistogramBuilderT &builder)
+                     EngineT &builder)
 {
     SplitInput root;
     root.id = 0;
     root.rows.assign(row_indices.begin(), row_indices.end());
-    if constexpr (ResidentHistogramBuilder<HistogramBuilderT>)
+    if constexpr (GPULevelEngine<EngineT>)
     {
         if (builder.begin_root(ds, grad, hess, root, selected))
         {
@@ -241,12 +241,12 @@ SplitInput make_root(Dataset const &ds, floats_view grad, floats_view hess,
 }
 
 // Uses the builder's batched hook when present, else a populate loop.
-template <HistogramBuilder HistogramBuilderT>
+template <HistogramEngine EngineT>
 inline void populate_nodes(Dataset const &ds, floats_view grad, floats_view hess,
                            split_input_refs nodes, feature_view selected,
-                           HistogramBuilderT &builder)
+                           EngineT &builder)
 {
-    if constexpr (BatchHistogramBuilder<HistogramBuilderT>)
+    if constexpr (BatchHistogramEngine<EngineT>)
     {
         builder.populate_many(ds, grad, hess, nodes, selected);
     }
@@ -262,16 +262,16 @@ inline void populate_nodes(Dataset const &ds, floats_view grad, floats_view hess
 // One level's split search. Host path: the splitter policy per node. A
 // builder exposing find_splits_many (device-resident histograms, phase 3)
 // takes over here; the splitter remains the fallback and parity reference.
-template <NodeSplitFinder SplitterT, HistogramBuilder HistogramBuilderT>
+template <NodeSplitFinder SplitterT, HistogramEngine EngineT>
 inline void find_splits(Dataset const &ds, std::vector<SplitInput> const &current,
-                        TreeConfig const &config, HistogramBuilderT &builder,
+                        TreeConfig const &config, EngineT &builder,
                         std::vector<SplitOutput> &out,
                         std::vector<HistCell>    &child_sums)
 {
     auto const t0 = std::chrono::steady_clock::now();
     out.clear();
     child_sums.clear();
-    if constexpr (ResidentHistogramBuilder<HistogramBuilderT>)
+    if constexpr (GPULevelEngine<EngineT>)
     {
         if (builder.resident())
         {
@@ -374,11 +374,11 @@ inline void finish_split(Dataset const &ds, PendingSplit &p)
     large.row_count = large.rows.size();
 }
 
-template <HistogramBuilder HistogramBuilderT>
+template <HistogramEngine EngineT>
 inline std::pair<SplitInput, SplitInput>
 split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput parent,
            SplitOutput const &s, node_id_t left_id, node_id_t right_id,
-           feature_view selected, HistogramBuilderT &builder)
+           feature_view selected, EngineT &builder)
 {
     PendingSplit p = partition_rows(ds, std::move(parent), s, left_id, right_id);
     builder.populate(ds, grad, hess, smaller_child(p), selected);
@@ -386,7 +386,7 @@ split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput par
     return {std::move(p.left), std::move(p.right)};
 }
 
-template <HistogramBuilder HistogramBuilderT>
+template <HistogramEngine EngineT>
 inline void
 update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
              TreeConfig const &config, std::vector<SplitInput> &current,
@@ -395,7 +395,7 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
              size_t &n_leaves, train_leaf_values &values, feature_view selected,
              std::vector<bin_id_t> &split_bins, std::vector<float> &split_gains,
              std::vector<float> &covers, std::vector<node_id_t> &leaf_ids,
-             interaction_groups const &groups, HistogramBuilderT &builder)
+             interaction_groups const &groups, EngineT &builder)
 {
     // Pass 1: serial tree bookkeeping; partitions and histogram work are
     // deferred so both can run level-wide.
@@ -470,18 +470,18 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
     // the device (only child counts return), and the child level's
     // histograms build/subtract in place. Rows never reach the host.
     bool used_device = false;
-    if constexpr (ResidentHistogramBuilder<HistogramBuilderT>)
+    if constexpr (GPULevelEngine<EngineT>)
     {
         if (builder.resident())
         {
-            std::vector<typename HistogramBuilderT::LeafStamp> stamps;
+            std::vector<typename EngineT::LeafStamp> stamps;
             stamps.reserve(leaf_slots.size());
             for (SlotLeaf const &ls : leaf_slots)
             {
                 stamps.push_back({ls.slot, ls.node_id});
             }
             builder.stamp_leaves(stamps);
-            std::vector<typename HistogramBuilderT::PartitionOp> pops;
+            std::vector<typename EngineT::PartitionOp> pops;
             pops.reserve(deferred.size());
             for (uint32_t k = 0; k < deferred.size(); ++k)
             {
@@ -493,7 +493,7 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
             builder.partition_level(ds, pops, counts);
             lap(prof.partition_s);
 
-            std::vector<typename HistogramBuilderT::LevelOp> ops;
+            std::vector<typename EngineT::LevelOp> ops;
             ops.reserve(deferred.size());
             for (uint32_t k = 0; k < deferred.size(); ++k)
             {
@@ -633,18 +633,17 @@ inline void route_unsampled(Dataset const &ds, DenseTree::Nodes const &nodes,
 namespace bonsai
 {
 
-template <NodeSplitFinder SplitterT, HistogramBuilder HistogramBuilderT>
-DepthwiseGrower<SplitterT, HistogramBuilderT>::DepthwiseGrower(TreeConfig const &cfg)
+template <HistogramEngine EngineT, NodeSplitFinder SplitterT>
+DepthwiseGrower<EngineT, SplitterT>::DepthwiseGrower(TreeConfig const &cfg)
     : config_(cfg), feature_rng_(cfg.feature_seed),
       interaction_groups_(grower_detail::parse_interaction_groups(cfg))
 {
 }
 
-template <NodeSplitFinder SplitterT, HistogramBuilder HistogramBuilderT>
-auto DepthwiseGrower<SplitterT, HistogramBuilderT>::grow(Dataset const &ds,
-                                                         floats_view    grad,
-                                                         floats_view    hess,
-                                                         row_index_view row_indices)
+template <HistogramEngine EngineT, NodeSplitFinder SplitterT>
+auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view grad,
+                                               floats_view    hess,
+                                               row_index_view row_indices)
     -> GrowResult<Tree>
 {
     namespace gd = grower_detail;
@@ -678,11 +677,11 @@ auto DepthwiseGrower<SplitterT, HistogramBuilderT>::grow(Dataset const &ds,
         ++depth;
     }
 
-    if constexpr (ResidentHistogramBuilder<HistogramBuilderT>)
+    if constexpr (GPULevelEngine<EngineT>)
     {
         if (builder_.resident())
         {
-            std::vector<typename HistogramBuilderT::LeafStamp> stamps;
+            std::vector<typename EngineT::LeafStamp> stamps;
             stamps.reserve(current.size());
             for (uint32_t i = 0; i < current.size(); ++i)
             {
@@ -695,7 +694,7 @@ auto DepthwiseGrower<SplitterT, HistogramBuilderT>::grow(Dataset const &ds,
     {
         gd::finalize_as_leaf(nodes, input, config_, n_leaves, values, leaf_ids);
     }
-    if constexpr (ResidentHistogramBuilder<HistogramBuilderT>)
+    if constexpr (GPULevelEngine<EngineT>)
     {
         if (builder_.resident())
         {
@@ -718,8 +717,8 @@ auto DepthwiseGrower<SplitterT, HistogramBuilderT>::grow(Dataset const &ds,
             .leaf_ids = std::move(leaf_ids)};
 }
 
-template <LevelSplitFinder SplitterT, HistogramBuilder HistogramBuilderT>
-ObliviousGrower<SplitterT, HistogramBuilderT>::ObliviousGrower(TreeConfig const &cfg)
+template <HistogramEngine EngineT, LevelSplitFinder SplitterT>
+ObliviousGrower<EngineT, SplitterT>::ObliviousGrower(TreeConfig const &cfg)
     : config_(cfg), feature_rng_(cfg.feature_seed)
 {
     for (int const mc : cfg.monotone_constraints)
@@ -737,11 +736,10 @@ ObliviousGrower<SplitterT, HistogramBuilderT>::ObliviousGrower(TreeConfig const 
     }
 }
 
-template <LevelSplitFinder SplitterT, HistogramBuilder HistogramBuilderT>
-auto ObliviousGrower<SplitterT, HistogramBuilderT>::grow(Dataset const &ds,
-                                                         floats_view    grad,
-                                                         floats_view    hess,
-                                                         row_index_view row_indices)
+template <HistogramEngine EngineT, LevelSplitFinder SplitterT>
+auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view grad,
+                                               floats_view    hess,
+                                               row_index_view row_indices)
     -> GrowResult<Tree>
 {
     namespace gd = grower_detail;
@@ -858,18 +856,17 @@ auto ObliviousGrower<SplitterT, HistogramBuilderT>::grow(Dataset const &ds,
             .leaf_ids = std::move(leaf_ids)};
 }
 
-template <NodeSplitFinder SplitterT, HistogramBuilder HistogramBuilderT>
-LeafwiseGrower<SplitterT, HistogramBuilderT>::LeafwiseGrower(TreeConfig const &cfg)
+template <HistogramEngine EngineT, NodeSplitFinder SplitterT>
+LeafwiseGrower<EngineT, SplitterT>::LeafwiseGrower(TreeConfig const &cfg)
     : config_(cfg), feature_rng_(cfg.feature_seed),
       interaction_groups_(grower_detail::parse_interaction_groups(cfg))
 {
 }
 
-template <NodeSplitFinder SplitterT, HistogramBuilder HistogramBuilderT>
-auto LeafwiseGrower<SplitterT, HistogramBuilderT>::grow(Dataset const &ds,
-                                                        floats_view    grad,
-                                                        floats_view    hess,
-                                                        row_index_view row_indices)
+template <HistogramEngine EngineT, NodeSplitFinder SplitterT>
+auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view grad,
+                                              floats_view    hess,
+                                              row_index_view row_indices)
     -> GrowResult<Tree>
 {
     namespace gd = grower_detail;

@@ -2,10 +2,12 @@
 
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/dataset.hpp"
+#include "bonsai/histogram.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
 #include <concepts>
+#include <cstdint>
 #include <functional>
 #include <random>
 #include <span>
@@ -14,7 +16,7 @@
 namespace bonsai
 {
 
-// A tree level's worth of nodes handed to a HistogramBuilder in one call.
+// A tree level's worth of nodes handed to a HistogramEngine in one call.
 using split_input_refs = std::span<std::reference_wrapper<SplitInput> const>;
 
 using train_leaf_values = std::vector<float>;
@@ -44,7 +46,7 @@ concept TreeGrower = requires(T g, Dataset const &ds, floats_view grad,
 // uploads gradients there); populate fills the split input's hists for the
 // selected features and leaves zero-binned placeholders the finders skip.
 template <typename T>
-concept HistogramBuilder =
+concept HistogramEngine =
     requires(T b, Dataset const &ds, floats_view grad, floats_view hess,
              SplitInput &split_input, std::span<feature_id_t const> selected) {
         b.begin_tree(ds, grad, hess);
@@ -55,8 +57,8 @@ concept HistogramBuilder =
 // builder collapses it to a single launch). populate_nodes uses it when
 // present and otherwise loops populate per node.
 template <typename T>
-concept BatchHistogramBuilder =
-    HistogramBuilder<T> &&
+concept BatchHistogramEngine =
+    HistogramEngine<T> &&
     requires(T b, Dataset const &ds, floats_view grad, floats_view hess,
              split_input_refs nodes, std::span<feature_id_t const> selected) {
         b.populate_many(ds, grad, hess, nodes, selected);
@@ -68,8 +70,8 @@ concept BatchHistogramBuilder =
 // concept and not seven; resident() is the runtime query of whether the device
 // path is actually live for the current tree.
 template <typename T>
-concept ResidentHistogramBuilder =
-    HistogramBuilder<T> &&
+concept GPULevelEngine =
+    HistogramEngine<T> &&
     requires(T b, Dataset const &ds, TreeConfig const &config, floats_view grad,
              floats_view hess, SplitInput &root, std::span<feature_id_t const> selected,
              std::span<typename T::LeafStamp const>   stamps,
@@ -89,7 +91,7 @@ concept ResidentHistogramBuilder =
         b.find_splits_many(ds, config, level, out, child_sums);
     };
 
-struct CpuHistogramBuilder
+struct CpuHistogramEngine
 {
     void begin_tree(Dataset const & /*ds*/, floats_view /*grad*/, floats_view /*hess*/)
     {
@@ -98,10 +100,10 @@ struct CpuHistogramBuilder
                   SplitInput &split_input, std::span<feature_id_t const> selected);
 };
 
-static_assert(HistogramBuilder<CpuHistogramBuilder>);
+static_assert(HistogramEngine<CpuHistogramEngine>);
 
-template <NodeSplitFinder  SplitterT         = HistogramNodeSplitFinder,
-          HistogramBuilder HistogramBuilderT = CpuHistogramBuilder>
+template <HistogramEngine EngineT   = CpuHistogramEngine,
+          NodeSplitFinder SplitterT = HistogramNodeSplitFinder>
 class DepthwiseGrower
 {
   public:
@@ -114,11 +116,11 @@ class DepthwiseGrower
     TreeConfig                             config_;
     std::mt19937                           feature_rng_;
     std::vector<std::vector<feature_id_t>> interaction_groups_;
-    HistogramBuilderT                      builder_;
+    EngineT                                builder_;
 };
 
-template <LevelSplitFinder SplitterT         = HistogramLevelSplitFinder,
-          HistogramBuilder HistogramBuilderT = CpuHistogramBuilder>
+template <HistogramEngine  EngineT   = CpuHistogramEngine,
+          LevelSplitFinder SplitterT = HistogramLevelSplitFinder>
 class ObliviousGrower
 {
   public:
@@ -128,13 +130,13 @@ class ObliviousGrower
                           row_index_view row_indices);
 
   private:
-    TreeConfig        config_;
-    std::mt19937      feature_rng_;
-    HistogramBuilderT builder_;
+    TreeConfig   config_;
+    std::mt19937 feature_rng_;
+    EngineT      builder_;
 };
 
-template <NodeSplitFinder  SplitterT         = HistogramNodeSplitFinder,
-          HistogramBuilder HistogramBuilderT = CpuHistogramBuilder>
+template <HistogramEngine EngineT   = CpuHistogramEngine,
+          NodeSplitFinder SplitterT = HistogramNodeSplitFinder>
 class LeafwiseGrower
 {
   public:
@@ -147,7 +149,7 @@ class LeafwiseGrower
     TreeConfig                             config_;
     std::mt19937                           feature_rng_;
     std::vector<std::vector<feature_id_t>> interaction_groups_;
-    HistogramBuilderT                      builder_;
+    EngineT                                builder_;
 };
 
 } // namespace bonsai

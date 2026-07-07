@@ -1,7 +1,7 @@
 #pragma once
 
 // Owning device allocation and the host/device staging pair it backs,
-// extracted from histogram_builder.cu for readability. Injected into bonsai's
+// extracted from histogram_engine.cu for readability. Injected into bonsai's
 // anonymous namespace: this header is included by exactly that one TU.
 
 #include <cuda.h>

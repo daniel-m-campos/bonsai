@@ -1,6 +1,6 @@
 #pragma once
 
-#include "bonsai/cuda/histogram_builder.hpp"
+#include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/split.hpp"
 
@@ -11,7 +11,6 @@ namespace bonsai
 // GPU histogram builder. A named alias so the registry, name trait, and CLI
 // can refer to the type without spelling the full instantiation; the
 // explicit instantiation lives in src/cuda/grower_cuda.cpp.
-using CudaDepthwiseGrower =
-    DepthwiseGrower<HistogramNodeSplitFinder, CudaHistogramBuilder>;
+using CudaDepthwiseGrower = DepthwiseGrower<CudaHistogramEngine>;
 
 } // namespace bonsai

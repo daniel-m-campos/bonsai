@@ -14,9 +14,9 @@ namespace bonsai
 
 // Builds histograms for `selected` features only; unselected slots stay
 // zero-binned placeholders the split finders skip.
-void CpuHistogramBuilder::populate(Dataset const &ds, floats_view grad,
-                                   floats_view hess, SplitInput &split_input,
-                                   std::span<feature_id_t const> selected)
+void CpuHistogramEngine::populate(Dataset const &ds, floats_view grad, floats_view hess,
+                                  SplitInput                   &split_input,
+                                  std::span<feature_id_t const> selected)
 {
     // Gather grad/hess into node-row order once, so every feature's scan
     // below reads them sequentially instead of re-walking the full arrays
@@ -61,8 +61,8 @@ void CpuHistogramBuilder::populate(Dataset const &ds, floats_view grad,
                              });
 }
 
-template class DepthwiseGrower<HistogramNodeSplitFinder, CpuHistogramBuilder>;
-template class ObliviousGrower<HistogramLevelSplitFinder, CpuHistogramBuilder>;
-template class LeafwiseGrower<HistogramNodeSplitFinder, CpuHistogramBuilder>;
+template class DepthwiseGrower<CpuHistogramEngine, HistogramNodeSplitFinder>;
+template class ObliviousGrower<CpuHistogramEngine, HistogramLevelSplitFinder>;
+template class LeafwiseGrower<CpuHistogramEngine, HistogramNodeSplitFinder>;
 
 } // namespace bonsai
