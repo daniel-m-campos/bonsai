@@ -343,15 +343,44 @@ struct FeatBest
     int32_t bin, dl, valid, sel;
 };
 
-// One thread walks one (node, selected-feature) histogram sequentially,
-// replicating the CPU scan in split.cpp exactly: same prefix order, both
-// default_left routings, min_child_hess, monotone feasibility, min_gain.
-// The scan is <= 254 iterations; clarity beats occupancy here.
+// The (left, right) grad/hess of a cut, given the inclusive prefix through
+// its bin and the missing cell routed by default_left. Device mirror of
+// split_sums_at in src/split.cpp — the single source of truth for
+// missing-routing semantics; every find/child-sums kernel calls this.
+struct SplitSumsDev
+{
+    double gL, hL, gR, hR;
+};
+
+inline __device__ SplitSumsDev split_sums_dev(double pg, double ph, double miss_g,
+                                              double miss_h, double real_g,
+                                              double real_h, int dl)
+{
+    return {.gL = pg + (dl != 0 ? miss_g : 0.0),
+            .hL = ph + (dl != 0 ? miss_h : 0.0),
+            .gR = (real_g - pg) + (dl == 0 ? miss_g : 0.0),
+            .hR = (real_h - ph) + (dl == 0 ? miss_h : 0.0)};
+}
+
+inline __device__ double warp_sum(double v)
+{
+    for (int o = 16; o > 0; o >>= 1)
+    {
+        v += __shfl_down_sync(0xffffffffU, v, o);
+    }
+    return __shfl_sync(0xffffffffU, v, 0);
+}
+
+inline __device__ int warp_all(int v)
+{
+    return __all_sync(0xffffffffU, v != 0) ? 1 : 0;
+}
+
 // True when candidate a beats b under the serial scan's tie-break: higher
 // gain, then lower bin, then default_left first (dl 1 before 0). Ties never
 // replace in the serial `gain > best` loop, so equal gains keep the earlier.
-__device__ inline bool feat_better(double ga, int ba, int da, int va, double gb,
-                                   int bb, int db, int vb)
+inline __device__ bool feat_better(double ga, int ba, int da, int va, double gb, int bb,
+                                   int db, int vb)
 {
     if (va != vb)
     {
@@ -433,7 +462,7 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
         double         vg = (b < n_cut) ? cells[pair_off(b)] : 0.0;
         double         vh = (b < n_cut) ? cells[pair_off(b) + 1] : 0.0;
         // Warp inclusive scan (shuffle-up) of this tile's grad/hess.
-        double sg = vg;
+        double sg  = vg;
         double sh_ = vh;
         for (int off = 1; off < 32; off <<= 1)
         {
@@ -454,26 +483,26 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
         {
             for (int dl = 1; dl >= 0; --dl)
             {
-                double const gL = pg + (dl != 0 ? miss_g : 0.0);
-                double const hL = ph + (dl != 0 ? miss_h : 0.0);
-                double const gR = (real_grad - pg) + (dl == 0 ? miss_g : 0.0);
-                double const hR = (real_hess - ph) + (dl == 0 ? miss_h : 0.0);
-                if (hL < min_child_hess || hR < min_child_hess)
+                auto const s =
+                    split_sums_dev(pg, ph, miss_g, miss_h, real_grad, real_hess, dl);
+                if (s.hL < min_child_hess || s.hR < min_child_hess)
                 {
                     continue;
                 }
                 if (mc != 0)
                 {
-                    double const wL = bounded_leaf_weight(gL, hL, l1, l2, lo, hi);
-                    double const wR = bounded_leaf_weight(gR, hR, l1, l2, lo, hi);
+                    double const wL = bounded_leaf_weight(s.gL, s.hL, l1, l2, lo, hi);
+                    double const wR = bounded_leaf_weight(s.gR, s.hR, l1, l2, lo, hi);
                     if (static_cast<double>(mc) * (wR - wL) < 0.0)
                     {
                         continue;
                     }
                 }
                 double const gain =
-                    score(gL, hL, l1, l2) + score(gR, hR, l1, l2) - node_score;
-                if (gain >= min_gain &&
+                    score(s.gL, s.hL, l1, l2) + score(s.gR, s.hR, l1, l2) - node_score;
+                // gain > 0.0 mirrors the CPU's strict `gain > best` with a
+                // zero-initialized best: zero-gain cuts never become valid.
+                if (gain > 0.0 && gain >= min_gain &&
                     feat_better(gain, static_cast<int>(b), dl, 1, best_gain, best_bin,
                                 best_dl, best_valid))
                 {
@@ -481,7 +510,7 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
                     best_bin   = static_cast<int32_t>(b);
                     best_dl    = dl;
                     best_valid = 1;
-                    bgL = gL, bhL = hL, bgR = gR, bhR = hR;
+                    bgL = s.gL, bhL = s.hL, bgR = s.gR, bhR = s.hR;
                 }
             }
         }
@@ -537,6 +566,172 @@ __global__ void reduce_kernel(FeatBest const *per_feat, uint32_t n_sel, FeatBest
         }
     }
     out[node] = best;
+}
+
+// Oblivious level-find: one split for the whole frontier. For feature f, the
+// gain of a cut (bin, default_left) is the sum over ALL frontier nodes of
+// score(left) + score(right) minus the sum of node scores, and the cut must
+// be feasible (min_child_hess) for every node. One warp per feature: nodes
+// are processed in chunks of 32 (one per lane), each chunk's per-bin child
+// scores and feasibility warp-reduce into shared per-bin accumulators, so any
+// frontier width works. A final lane-0 scan picks the best (bin, dl). Mirrors
+// update_best_for_feature_for_level in split.cpp (tolerance-equal).
+__global__ void level_find_kernel(double const *hists, uint32_t const *features,
+                                  uint32_t const *n_bins, double const *node_sums,
+                                  uint32_t n_sel, uint32_t n_nodes, uint32_t stride,
+                                  double l1, double l2, double min_child_hess,
+                                  double min_gain, double *score_scratch,
+                                  int *feas_scratch, FeatBest *out_feat)
+{
+    // Per-feature scratch slice [2][max_cut]: bin width can exceed any shared
+    // budget on the u16-bin path, and this warp is the slice's only writer.
+    uint32_t const max_cut    = stride / 2; // >= n_cut for every feature
+    uint32_t const f          = blockIdx.x;
+    uint32_t const lane       = threadIdx.x;
+    uint32_t const fid        = features[f];
+    uint32_t const nb         = n_bins[fid];
+    double        *s_score[2] = {score_scratch + (static_cast<size_t>(f) * 2 * max_cut),
+                                 score_scratch + ((static_cast<size_t>(f) * 2 + 1) * max_cut)};
+    int           *s_feas[2]  = {feas_scratch + (static_cast<size_t>(f) * 2 * max_cut),
+                                 feas_scratch + ((static_cast<size_t>(f) * 2 + 1) * max_cut)};
+    double         parent_sum = 0.0;
+
+    if (lane == 0)
+    {
+        out_feat[f] = FeatBest{};
+    }
+    if (nb < 2)
+    {
+        return;
+    }
+    uint32_t const n_cut = nb - 2; // cut cells are bins [0, nb-2)
+    for (uint32_t b = lane; b < n_cut; b += 32)
+    {
+        for (int dl = 0; dl < 2; ++dl)
+        {
+            s_score[dl][b] = 0.0;
+            s_feas[dl][b]  = 1;
+        }
+    }
+    __syncwarp();
+
+    for (uint32_t base = 0; base < n_nodes; base += 32)
+    {
+        uint32_t const p      = base + lane;
+        bool const     active = p < n_nodes;
+        double const  *cells =
+            active ? hists + ((static_cast<size_t>(p) * n_sel + f) * stride) : nullptr;
+        double const g      = active ? node_sums[pair_off(p)] : 0.0;
+        double const h      = active ? node_sums[pair_off(p) + 1] : 0.0;
+        double const miss_g = active ? cells[pair_off(nb - 1)] : 0.0;
+        double const miss_h = active ? cells[pair_off(nb - 1) + 1] : 0.0;
+        double const real_g = g - miss_g;
+        double const real_h = h - miss_h;
+        parent_sum += warp_sum(active ? score(g, h, l1, l2) : 0.0);
+
+        double pg = 0.0;
+        double ph = 0.0;
+        for (uint32_t b = 0; b < n_cut; ++b)
+        {
+            if (active)
+            {
+                pg += cells[pair_off(b)];
+                ph += cells[pair_off(b) + 1];
+            }
+            for (int dl = 1; dl >= 0; --dl)
+            {
+                auto const s =
+                    split_sums_dev(pg, ph, miss_g, miss_h, real_g, real_h, dl);
+                bool const ok =
+                    !active || (s.hL >= min_child_hess && s.hR >= min_child_hess);
+                double const cs   = (active && ok) ? score(s.gL, s.hL, l1, l2) +
+                                                       score(s.gR, s.hR, l1, l2)
+                                                   : 0.0;
+                int const    feas = warp_all(ok ? 1 : 0);
+                double const sum  = warp_sum(cs);
+                if (lane == 0)
+                {
+                    s_score[dl][b] += sum;
+                    s_feas[dl][b] &= feas;
+                }
+            }
+        }
+        __syncwarp();
+    }
+
+    if (lane == 0)
+    {
+        FeatBest best = {};
+        for (uint32_t b = 0; b < n_cut; ++b)
+        {
+            for (int dl = 1; dl >= 0; --dl)
+            {
+                if (s_feas[dl][b] == 0)
+                {
+                    continue;
+                }
+                double const gain = s_score[dl][b] - parent_sum;
+                if (gain > best.gain && gain >= min_gain)
+                {
+                    best = {.gain  = gain,
+                            .gL    = 0,
+                            .hL    = 0,
+                            .gR    = 0,
+                            .hR    = 0,
+                            .bin   = static_cast<int32_t>(b),
+                            .dl    = dl,
+                            .valid = 1,
+                            .sel   = static_cast<int32_t>(f)};
+                }
+            }
+        }
+        out_feat[f] = best;
+    }
+}
+
+// Given the winning oblivious level split (read from the reduced FeatBest so
+// no host round-trip is needed), each thread computes one node's (left,
+// right) child sums from its device histogram — 4 doubles per node
+// [gL, hL, gR, hR] — so the host can fill the children's SplitInput.sums
+// (device histograms aren't host-scannable). Writes zeros when no split won.
+__global__ void level_child_sums_kernel(double const *hists, double const *node_sums,
+                                        FeatBest const *winner,
+                                        uint32_t const *features,
+                                        uint32_t const *n_bins, uint32_t n_nodes,
+                                        uint32_t n_sel, uint32_t stride, double *out4)
+{
+    uint32_t const p = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (p >= n_nodes)
+    {
+        return;
+    }
+    FeatBest const b = *winner;
+    if (b.valid == 0)
+    {
+        out4[(4 * p) + 0] = 0.0;
+        out4[(4 * p) + 1] = 0.0;
+        out4[(4 * p) + 2] = 0.0;
+        out4[(4 * p) + 3] = 0.0;
+        return;
+    }
+    auto const     sel    = static_cast<uint32_t>(b.sel);
+    uint32_t const nb     = n_bins[features[sel]];
+    double const  *cells  = hists + ((static_cast<size_t>(p) * n_sel + sel) * stride);
+    double const   g      = node_sums[pair_off(p)];
+    double const   h      = node_sums[pair_off(p) + 1];
+    double const   miss_g = cells[pair_off(nb - 1)];
+    double const   miss_h = cells[pair_off(nb - 1) + 1];
+    double         pg = 0.0, ph = 0.0;
+    for (uint32_t bb = 0; bb <= static_cast<uint32_t>(b.bin); ++bb)
+    {
+        pg += cells[pair_off(bb)];
+        ph += cells[pair_off(bb) + 1];
+    }
+    auto const s = split_sums_dev(pg, ph, miss_g, miss_h, g - miss_g, h - miss_h, b.dl);
+    out4[(4 * p) + 0] = s.gL;
+    out4[(4 * p) + 1] = s.hL;
+    out4[(4 * p) + 2] = s.gR;
+    out4[(4 * p) + 3] = s.hR;
 }
 
 // NOLINTEND(bugprone-easily-swappable-parameters,cppcoreguidelines-avoid-c-arrays,cppcoreguidelines-pro-bounds-pointer-arithmetic,modernize-avoid-c-arrays,cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-bounds-array-to-pointer-decay,readability-function-cognitive-complexity,readability-identifier-naming)

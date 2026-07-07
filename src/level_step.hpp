@@ -295,6 +295,23 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         }
     }
 
+    // Oblivious leaf finalize, host plane: each frontier node is a leaf,
+    // indexed by position into leaf_table; stamp its rows directly.
+    void finalize_leaves(std::vector<SplitInput> const &frontier,
+                         std::vector<float> const      &leaf_table,
+                         train_leaf_values &values, std::vector<node_id_t> &leaf_ids,
+                         row_index_view /*row_indices*/)
+    {
+        for (size_t li = 0; li < frontier.size(); ++li)
+        {
+            for (row_id_t const r : frontier[li].rows)
+            {
+                values[r]   = leaf_table[li];
+                leaf_ids[r] = static_cast<node_id_t>(li);
+            }
+        }
+    }
+
     // --- shared host ops (the GPU specialization's fallback calls these) ----
 
     template <typename S>
@@ -402,7 +419,20 @@ class LevelStep<EngineT, SplitterT>
             child_sums.clear();
             out.resize(current.size());
             child_sums.resize(2 * current.size());
-            engine_.find_splits_many(ds_, config_, current, out, child_sums);
+            // Oblivious (LevelSplitFinder) picks one split for the whole
+            // frontier; depthwise/leafwise pick one per node. The engine
+            // kernels hardcode histogram-gain scoring, so only the histogram
+            // finders may select this plane.
+            static_assert(std::same_as<SplitterT, HistogramLevelSplitFinder> ||
+                          std::same_as<SplitterT, HistogramNodeSplitFinder>);
+            if constexpr (LevelSplitFinder<SplitterT>)
+            {
+                engine_.find_level_split(ds_, config_, current, out, child_sums);
+            }
+            else
+            {
+                engine_.find_splits_many(ds_, config_, current, out, child_sums);
+            }
         }
         else
         {
@@ -512,6 +542,35 @@ class LevelStep<EngineT, SplitterT>
                 leaf_ids[r] = by_row[r];
                 values[r]   = nodes[by_row[r]].threshold_or_value;
             }
+        }
+    }
+
+    // Oblivious leaf finalize: the frontier nodes are the leaves, indexed by
+    // position into leaf_table. On device the rows are resident, so stamp each
+    // final slot with its leaf index and download the per-row assignment; the
+    // host path already filled values via each leaf's rows.
+    void finalize_leaves(std::vector<SplitInput> const &frontier,
+                         std::vector<float> const      &leaf_table,
+                         train_leaf_values &values, std::vector<node_id_t> &leaf_ids,
+                         row_index_view row_indices)
+    {
+        if (!on_device_)
+        {
+            return;
+        }
+        std::vector<typename EngineT::LeafStamp> stamps;
+        stamps.reserve(frontier.size());
+        for (uint32_t i = 0; i < frontier.size(); ++i)
+        {
+            stamps.push_back({i, static_cast<node_id_t>(i)});
+        }
+        engine_.stamp_leaves(stamps);
+        std::vector<node_id_t> by_row(ds_.n_rows(), 0);
+        engine_.finalize_rows(by_row);
+        for (row_id_t const r : row_indices)
+        {
+            leaf_ids[r] = by_row[r];
+            values[r]   = leaf_table[by_row[r]];
         }
     }
 

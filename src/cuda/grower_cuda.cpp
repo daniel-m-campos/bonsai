@@ -13,5 +13,6 @@ namespace bonsai
 {
 
 template class DepthwiseGrower<CudaHistogramEngine, HistogramNodeSplitFinder>;
+template class ObliviousGrower<CudaHistogramEngine, HistogramLevelSplitFinder>;
 
 } // namespace bonsai

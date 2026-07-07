@@ -88,4 +88,13 @@ void CudaHistogramEngine::find_splits_many(Dataset const & /*ds*/,
     throw_unavailable();
 }
 
+void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
+                                           TreeConfig const & /*config*/,
+                                           std::span<SplitInput const> /*level*/,
+                                           std::span<SplitOutput> /*out*/,
+                                           std::span<HistCell> /*child_sums*/)
+{
+    throw_unavailable();
+}
+
 } // namespace bonsai

@@ -172,6 +172,62 @@ TEST_CASE("CudaDepthwiseGrower predictions match DepthwiseGrower", "[cuda][growe
     }
 }
 
+TEST_CASE("CudaObliviousGrower predictions match ObliviousGrower", "[cuda][grower]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
+
+    TreeConfig cfg;
+    cfg.max_depth        = 5;
+    cfg.min_data_in_leaf = 4;
+
+    ObliviousGrower<CpuHistogramEngine> cpu_grower(cfg);
+    CudaObliviousGrower                 gpu_grower(cfg);
+
+    auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+
+    REQUIRE(cpu.values.size() == gpu.values.size());
+    for (size_t r = 0; r < cpu.values.size(); ++r)
+    {
+        REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
+    }
+}
+
+TEST_CASE("CudaObliviousGrower survives frontiers wider than one node chunk",
+          "[cuda][grower]")
+{
+    // The device level-find processes the frontier in 32-node chunks; depth 7
+    // on 4096 rows exercises multi-chunk levels (64+ nodes) that the register
+    // -tiled first implementation silently truncated.
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
+
+    TreeConfig cfg;
+    cfg.max_depth        = 7;
+    cfg.min_data_in_leaf = 1;
+
+    ObliviousGrower<CpuHistogramEngine> cpu_grower(cfg);
+    CudaObliviousGrower                 gpu_grower(cfg);
+
+    auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+
+    REQUIRE(cpu.values.size() == gpu.values.size());
+    for (size_t r = 0; r < cpu.values.size(); ++r)
+    {
+        REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
+    }
+}
+
 TEST_CASE("CudaDepthwiseGrower handles consecutive trees and datasets",
           "[cuda][grower]")
 {

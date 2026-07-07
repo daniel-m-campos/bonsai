@@ -16,7 +16,7 @@ Per-component design docs. Numbered roughly in build order. Source of truth for 
 | 8 | [`8-config.md`](8-config.md) — Config, TOML, CLI overrides | done |
 | 9 | [`9-cli.md`](9-cli.md) — subcommands, overrides, fit-time output | done |
 | 10 | [`10-cuda.md`](10-cuda.md) — GPU histogram backend: builder policy, level batching, runtime capability | done |
-| 11 | [`11-gpu-resident.md`](11-gpu-resident.md) — device-resident growing: level-backend hooks, staged plan | landed (decision 40) |
+| 11 | [`11-gpu-resident.md`](11-gpu-resident.md) — the GPU device plane: resident buffers, kernels, precision, cross-library results | done (decisions 40–42) |
 | 12 | [`12-grower-backend.md`](12-grower-backend.md) — grower data-plane: the `LevelStep` compile-time strategy | landed (decision 41) |
 
 ## Cross-cutting concerns
