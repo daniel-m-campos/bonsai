@@ -43,19 +43,19 @@ inline void propagate_monotone_bounds(double parent_lo, double parent_hi,
                                       SplitOutput const &s, TreeConfig const &config,
                                       SplitInput &left, SplitInput &right)
 {
-    left.lo  = parent_lo;
-    left.hi  = parent_hi;
-    right.lo = parent_lo;
-    right.hi = parent_hi;
+    left.lo      = parent_lo;
+    left.hi      = parent_hi;
+    right.lo     = parent_lo;
+    right.hi     = parent_hi;
     int const mc = monotone_constraint_of(config, s.feature_id);
     if (mc == 0)
     {
         return;
     }
-    double const wL = bounded_leaf_weight(left.total_grad(), left.total_hess(),
-                                          config, parent_lo, parent_hi);
-    double const wR = bounded_leaf_weight(right.total_grad(), right.total_hess(),
-                                          config, parent_lo, parent_hi);
+    double const wL  = bounded_leaf_weight(left.total_grad(), left.total_hess(), config,
+                                           parent_lo, parent_hi);
+    double const wR  = bounded_leaf_weight(right.total_grad(), right.total_hess(),
+                                           config, parent_lo, parent_hi);
     double const mid = 0.5 * (wL + wR);
     if (mc > 0)
     {
@@ -83,8 +83,7 @@ inline interaction_groups parse_interaction_groups(TreeConfig const &config)
         size_t                    start = 0;
         while (start < entry.size())
         {
-            size_t const sep =
-                std::min(entry.find(',', start), entry.find('+', start));
+            size_t const sep = std::min(entry.find(',', start), entry.find('+', start));
             size_t const end = sep == std::string::npos ? entry.size() : sep;
             if (end > start)
             {
@@ -106,9 +105,9 @@ inline interaction_groups parse_interaction_groups(TreeConfig const &config)
 // its path: every group that contains the whole path contributes its
 // members, and a feature may always continue splitting alone. Empty result
 // vector means "all allowed" (path empty or no constraints).
-inline std::vector<char> allowed_features(interaction_groups const  &groups,
+inline std::vector<char> allowed_features(interaction_groups const        &groups,
                                           std::vector<feature_id_t> const &path,
-                                          size_t                     n_features)
+                                          size_t                           n_features)
 {
     if (groups.empty() || path.empty())
     {
@@ -207,9 +206,7 @@ inline void populate_nodes(Dataset const &ds, floats_view grad, floats_view hess
                            split_input_refs nodes, feature_view selected,
                            BuilderT &builder)
 {
-    if constexpr (requires {
-                      builder.populate_many(ds, grad, hess, nodes, selected);
-                  })
+    if constexpr (requires { builder.populate_many(ds, grad, hess, nodes, selected); })
     {
         builder.populate_many(ds, grad, hess, nodes, selected);
     }
@@ -256,8 +253,8 @@ inline PendingSplit partition_rows(Dataset const &ds, SplitInput parent,
     };
 
     PendingSplit p;
-    p.left.id  = left_id;
-    p.right.id = right_id;
+    p.left.id     = left_id;
+    p.right.id    = right_id;
     size_t n_left = 0;
     for (row_id_t const r : parent.rows)
     {
@@ -312,17 +309,15 @@ split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput par
 }
 
 template <HistogramBuilder BuilderT>
-inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
-                         TreeConfig const &config, std::vector<SplitInput> &current,
-                         std::vector<SplitInput>        &next,
-                         std::vector<SplitOutput> const &splits,
-                         DenseTree::Nodes &nodes, size_t &n_leaves,
-                         train_leaf_values &values, feature_view selected,
-                         std::vector<bin_id_t>    &split_bins,
-                         std::vector<float>       &split_gains,
-                         std::vector<float>       &covers,
-                         std::vector<node_id_t>   &leaf_ids,
-                         interaction_groups const &groups, BuilderT &builder)
+inline void
+update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
+             TreeConfig const &config, std::vector<SplitInput> &current,
+             std::vector<SplitInput> &next, std::vector<SplitOutput> const &splits,
+             DenseTree::Nodes &nodes, size_t &n_leaves, train_leaf_values &values,
+             feature_view selected, std::vector<bin_id_t> &split_bins,
+             std::vector<float> &split_gains, std::vector<float> &covers,
+             std::vector<node_id_t> &leaf_ids, interaction_groups const &groups,
+             BuilderT &builder)
 {
     // Pass 1: serial tree bookkeeping; partitions and histogram work are
     // deferred so both can run level-wide.
@@ -365,9 +360,8 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         double const parent_lo   = node.lo;
         double const parent_hi   = node.hi;
         auto         parent_path = std::move(node.path);
-        deferred.push_back({std::move(node), PendingSplit{}, split, left_id,
-                            right_id, parent_lo, parent_hi,
-                            std::move(parent_path)});
+        deferred.push_back({std::move(node), PendingSplit{}, split, left_id, right_id,
+                            parent_lo, parent_hi, std::move(parent_path)});
     }
 
     // Pass 1b: partition each parent's rows, one node per worker (child
@@ -376,9 +370,8 @@ inline void update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
                              [&](size_t i)
                              {
                                  Deferred &d = deferred[i];
-                                 d.p = partition_rows(ds, std::move(d.parent),
-                                                      d.split, d.left_id,
-                                                      d.right_id);
+                                 d.p = partition_rows(ds, std::move(d.parent), d.split,
+                                                      d.left_id, d.right_id);
                              });
     for (auto &d : deferred)
     {
@@ -460,14 +453,12 @@ inline void route_unsampled(Dataset const &ds, DenseTree::Nodes const &nodes,
             node_id_t      idx = 0;
             while (!DenseTree::is_leaf(nodes[idx]))
             {
-                auto const    &nd   = nodes[idx];
-                auto const    &bins = ds.feature_bins(nd.feature_id);
-                auto const     last =
-                    static_cast<bin_id_t>(ds.n_bins(nd.feature_id) - 1);
+                auto const &nd   = nodes[idx];
+                auto const &bins = ds.feature_bins(nd.feature_id);
+                auto const  last = static_cast<bin_id_t>(ds.n_bins(nd.feature_id) - 1);
                 bin_id_t const b = bins[r];
-                bool const     left =
-                    (b == last) ? nd.default_left : b <= split_bins[idx];
-                idx = left ? nd.left : nd.right;
+                bool const left  = (b == last) ? nd.default_left : b <= split_bins[idx];
+                idx              = left ? nd.left : nd.right;
             }
             values[r]   = nodes[idx].threshold_or_value;
             leaf_ids[r] = idx;
@@ -502,11 +493,10 @@ auto DepthwiseGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view g
     std::vector<bin_id_t>    split_bins(1, 0);
     std::vector<float>       split_gains(1, 0.0F);
     std::vector<float>       covers(1, static_cast<float>(row_indices.size()));
-    auto const               selected = gd::sample_features(
-        ds.n_features(), config_.feature_fraction, feature_rng_);
+    auto const               selected =
+        gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
     builder_.begin_tree(ds, grad, hess);
-    current.push_back(
-        gd::make_root(ds, grad, hess, row_indices, selected, builder_));
+    current.push_back(gd::make_root(ds, grad, hess, row_indices, selected, builder_));
     nodes.emplace_back(DenseTree::leaf(0.0F));
     uint8_t depth    = 0;
     size_t  n_leaves = 0;
@@ -519,8 +509,8 @@ auto DepthwiseGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view g
             splits.push_back(SplitterT::find(input, config_));
         }
         gd::update_nodes(ds, grad, hess, config_, current, next, splits, nodes,
-                         n_leaves, values, selected, split_bins, split_gains,
-                         covers, leaf_ids, interaction_groups_, builder_);
+                         n_leaves, values, selected, split_bins, split_gains, covers,
+                         leaf_ids, interaction_groups_, builder_);
         if (current.empty())
         {
             break;
@@ -576,11 +566,10 @@ auto ObliviousGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view g
     std::vector<SplitInput> next;
     std::vector<bin_id_t>   level_bins;
     std::vector<float>      level_gains;
-    auto const              selected = gd::sample_features(
-        ds.n_features(), config_.feature_fraction, feature_rng_);
+    auto const              selected =
+        gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
     builder_.begin_tree(ds, grad, hess);
-    frontier.push_back(
-        gd::make_root(ds, grad, hess, row_indices, selected, builder_));
+    frontier.push_back(gd::make_root(ds, grad, hess, row_indices, selected, builder_));
 
     size_t depth = 0;
     while (depth < config_.max_depth)
@@ -599,12 +588,12 @@ auto ObliviousGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view g
         // Same shape as the depthwise update: partition, batch-populate,
         // subtract.
         std::vector<gd::PendingSplit> pending(frontier.size());
-        parallel::for_each_index(
-            frontier.size(),
-            [&](size_t i) {
-                pending[i] =
-                    gd::partition_rows(ds, std::move(frontier[i]), split, 0, 0);
-            });
+        parallel::for_each_index(frontier.size(),
+                                 [&](size_t i)
+                                 {
+                                     pending[i] = gd::partition_rows(
+                                         ds, std::move(frontier[i]), split, 0, 0);
+                                 });
         std::vector<std::reference_wrapper<SplitInput>> smalls;
         smalls.reserve(pending.size());
         for (auto &p : pending)
@@ -629,8 +618,7 @@ auto ObliviousGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view g
     for (size_t li = 0; li < frontier.size(); ++li)
     {
         auto const &leaf = frontier[li];
-        float const v =
-            gd::leaf_value(leaf.total_grad(), leaf.total_hess(), config_);
+        float const v = gd::leaf_value(leaf.total_grad(), leaf.total_hess(), config_);
         leaf_table.push_back(v);
         for (row_id_t r : leaf.rows)
         {
@@ -663,9 +651,9 @@ auto ObliviousGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view g
                 size_t         index = 0;
                 for (size_t lvl = 0; lvl < level_splits.size(); ++lvl)
                 {
-                    auto const    &s    = level_splits[lvl];
-                    auto const    &bins = ds.feature_bins(s.feature_id);
-                    auto const     last =
+                    auto const &s    = level_splits[lvl];
+                    auto const &bins = ds.feature_bins(s.feature_id);
+                    auto const  last =
                         static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
                     bin_id_t const b = bins[r];
                     bool const     left =
@@ -717,11 +705,10 @@ auto LeafwiseGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view gr
     std::vector<float>         covers(1, static_cast<float>(row_indices.size()));
     std::vector<node_id_t>     leaf_ids(ds.n_rows(), 0);
 
-    auto const selected = gd::sample_features(
-        ds.n_features(), config_.feature_fraction, feature_rng_);
+    auto const selected =
+        gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
     builder_.begin_tree(ds, grad, hess);
-    SplitInput root =
-        gd::make_root(ds, grad, hess, row_indices, selected, builder_);
+    SplitInput root = gd::make_root(ds, grad, hess, row_indices, selected, builder_);
     nodes.emplace_back(DenseTree::leaf(0.0F));
 
     size_t  n_leaves    = 0;
@@ -764,11 +751,10 @@ auto LeafwiseGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view gr
         double const parent_lo   = c.node.lo;
         double const parent_hi   = c.node.hi;
         auto const   parent_path = std::move(c.node.path);
-        auto [left, right] = gd::split_node(ds, grad, hess, std::move(c.node),
-                                            c.split, left_id, right_id, selected,
-                                            builder_);
-        covers[left_id]  = static_cast<float>(left.rows.size());
-        covers[right_id] = static_cast<float>(right.rows.size());
+        auto [left, right] = gd::split_node(ds, grad, hess, std::move(c.node), c.split,
+                                            left_id, right_id, selected, builder_);
+        covers[left_id]    = static_cast<float>(left.rows.size());
+        covers[right_id]   = static_cast<float>(right.rows.size());
         gd::propagate_monotone_bounds(parent_lo, parent_hi, c.split, config_, left,
                                       right);
         gd::propagate_interaction_state(interaction_groups_, parent_path,

@@ -2,8 +2,8 @@
 // own TU so grower.cpp never depends on the CUDA backend; only compiled
 // when BONSAI_CUDA is enabled.
 
-#include "bonsai/cuda/histogram_builder.hpp"
 #include "../grower_impl.hpp"
+#include "bonsai/cuda/histogram_builder.hpp"
 
 namespace bonsai
 {

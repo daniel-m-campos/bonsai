@@ -19,7 +19,7 @@ struct PredictOpts
     CommonOpts  common;
     std::string model_path;
     std::string data_path;
-    std::string out_path;          // empty -> stdout
+    std::string out_path; // empty -> stdout
     bool        apply_link    = true;
     std::size_t num_iteration = 0; // predict with the first k trees; 0 = all
 };

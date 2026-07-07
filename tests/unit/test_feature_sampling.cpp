@@ -54,7 +54,8 @@ TEST_CASE("feature_fraction=1 uses the full feature set (baseline unchanged)",
                           .max_depth        = 1,
                           .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto [tree, values, tree_lids] = grower.grow(in.built.ds, in.grad, in.hess, in.rows);
+    auto [tree, values, tree_lids] =
+        grower.grow(in.built.ds, in.grad, in.hess, in.rows);
     CHECK(tree.params().n_leaves == 2);
 }
 
@@ -80,7 +81,7 @@ TEST_CASE("feature_fraction=0.25 restricts each tree to one feature",
     for (int t = 0; t < 8; ++t)
     {
         auto [tree, values, tree_lids] = grower.grow(built.ds, grad, hess, rows);
-        auto const used     = split_features_of(tree);
+        auto const used                = split_features_of(tree);
         CHECK(used.size() == 1); // one selected feature per tree
         seen_across_trees.insert(used.begin(), used.end());
     }

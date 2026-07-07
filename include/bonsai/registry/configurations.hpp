@@ -23,19 +23,16 @@ namespace detail
 // Booster<O,G,Sa> (see multiclass_booster.hpp).
 template <typename Combo> struct booster_for
 {
-    using type =
-        Booster<type_at_t<0, Combo>, type_at_t<1, Combo>, type_at_t<2, Combo>>;
+    using type = Booster<type_at_t<0, Combo>, type_at_t<1, Combo>, type_at_t<2, Combo>>;
 };
 
-template <typename G, typename Sa>
-struct booster_for<TypeList<SoftmaxObjective, G, Sa>>
+template <typename G, typename Sa> struct booster_for<TypeList<SoftmaxObjective, G, Sa>>
 {
     using type = MulticlassBooster<G, Sa>;
 };
 } // namespace detail
 
-template <typename Combo>
-using BoosterFor = typename detail::booster_for<Combo>::type;
+template <typename Combo> using BoosterFor = typename detail::booster_for<Combo>::type;
 
 // Invoke `cb.template operator()<Combo>()` for the single Combo in
 // Configurations whose three impl_names match `disp`. Returns whatever the

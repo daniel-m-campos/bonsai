@@ -82,9 +82,9 @@ constexpr auto create_eval_table()
 {
     std::array<EvalEntry, size_v<Objectives>> out{};
     size_t                                    i = 0;
-    for_each_type<Objectives>([&i, &out]<typename O>()
-                              { out[i++] = EvalEntry{impl_name<O>::value,
-                                                     &eval_thunk<O>}; });
+    for_each_type<Objectives>(
+        [&i, &out]<typename O>()
+        { out[i++] = EvalEntry{impl_name<O>::value, &eval_thunk<O>}; });
     return out;
 }
 

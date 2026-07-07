@@ -1,6 +1,6 @@
+#include <array>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
-#include <array>
 #include <cstddef>
 #include <span>
 #include <vector>
@@ -41,7 +41,7 @@ std::vector<double> brute_force_shapley(DenseTree const &tree, features_view X,
     for (size_t mask = 0; mask < n_subsets; ++mask)
     {
         std::vector<unsigned char> in(n_features, 0);
-        size_t               size = 0;
+        size_t                     size = 0;
         for (size_t f = 0; f < n_features; ++f)
         {
             if ((mask >> f) & 1U)
@@ -52,10 +52,9 @@ std::vector<double> brute_force_shapley(DenseTree const &tree, features_view X,
         }
         std::span<bool const> const s{reinterpret_cast<bool const *>(in.data()),
                                       n_features};
-        double const ev_s = tree_expected_value(tree, X, row, s);
-        double const w    = factorial(size) *
-                         factorial(n_features - size - 1) /
-                         factorial(n_features);
+        double const                ev_s = tree_expected_value(tree, X, row, s);
+        double const                w =
+            factorial(size) * factorial(n_features - size - 1) / factorial(n_features);
         for (size_t f = 0; f < n_features; ++f)
         {
             if ((mask >> f) & 1U)
@@ -63,9 +62,9 @@ std::vector<double> brute_force_shapley(DenseTree const &tree, features_view X,
                 continue; // need S without f
             }
             std::vector<unsigned char> with = in;
-            with[f]                   = 1;
-            std::span<bool const> const sw{
-                reinterpret_cast<bool const *>(with.data()), n_features};
+            with[f]                         = 1;
+            std::span<bool const> const sw{reinterpret_cast<bool const *>(with.data()),
+                                           n_features};
             phi[f] += w * (tree_expected_value(tree, X, row, sw) - ev_s);
         }
     }
@@ -87,8 +86,7 @@ detail::ColumnBatch shap_batch()
 
 } // namespace
 
-TEST_CASE("TreeSHAP: matches brute-force Shapley on a small tree",
-          "[shap][exact]")
+TEST_CASE("TreeSHAP: matches brute-force Shapley on a small tree", "[shap][exact]")
 {
     auto               built = build(shap_batch());
     std::vector<float> grad{-3.0F, +1.0F, -2.0F, +2.0F, -1.0F, +3.0F, -2.5F, +1.5F};
@@ -121,10 +119,9 @@ TEST_CASE("TreeSHAP: matches brute-force Shapley on a small tree",
           Catch::Approx(static_cast<double>(pred[0])).margin(1e-9));
 }
 
-TEST_CASE("Booster: pred_contribs rows sum to the raw prediction",
-          "[shap][booster]")
+TEST_CASE("Booster: pred_contribs rows sum to the raw prediction", "[shap][booster]")
 {
-    auto               built = build(shap_batch());
+    auto                built = build(shap_batch());
     detail::ColumnBatch batch = shap_batch();
     std::vector<float>  labels{1.0F, -1.0F, 2.0F, -2.0F, 0.5F, 3.0F, -0.5F, 1.5F};
 
@@ -134,7 +131,7 @@ TEST_CASE("Booster: pred_contribs rows sum to the raw prediction",
     cfg.tree_config.max_depth        = 3;
 
     // Build a dataset with real labels.
-    batch.labels = labels;
+    batch.labels             = labels;
     BinMappers const mappers = BinMappers::fit(batch, {});
     Dataset const    train   = Dataset::bin(batch, mappers, {});
 

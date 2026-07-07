@@ -28,9 +28,9 @@ namespace bonsai::config::internal
 {
 
 inline constexpr auto all_sections = std::tuple{
-    data_section,    bin_mapper_section, tree_section,     sampler_section,
-    booster_section, dispatch_section,   metrics_section,  parallel_section,
-    objective_section,
+    data_section,    bin_mapper_section, tree_section,
+    sampler_section, booster_section,    dispatch_section,
+    metrics_section, parallel_section,   objective_section,
 };
 
 } // namespace bonsai::config::internal

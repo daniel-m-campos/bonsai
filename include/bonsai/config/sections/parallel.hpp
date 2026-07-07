@@ -7,7 +7,7 @@
 namespace bonsai::config::internal
 {
 
-inline constexpr auto parallel_section = make_section(
-    "parallel", &Config::parallel, field<&ParallelConfig::n_threads>());
+inline constexpr auto parallel_section =
+    make_section("parallel", &Config::parallel, field<&ParallelConfig::n_threads>());
 
 } // namespace bonsai::config::internal

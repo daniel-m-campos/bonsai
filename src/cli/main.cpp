@@ -116,17 +116,15 @@ void register_bench(CLI::App &app, bonsai::cli::BenchOpts &opts,
 void register_dump(CLI::App &app, bonsai::cli::DumpOpts &opts, int &rc)
 {
     auto *cmd = app.add_subcommand("dump", "Print every tree as indented text");
-    cmd->add_option("--model", opts.model_path, "Trained model (.msgpack)")
-        ->required();
+    cmd->add_option("--model", opts.model_path, "Trained model (.msgpack)")->required();
     cmd->callback([&] { rc = bonsai::cli::run_dump(opts); });
 }
 
 void register_importance(CLI::App &app, bonsai::cli::ImportanceOpts &opts, int &rc)
 {
-    auto *cmd = app.add_subcommand(
-        "importance", "Print per-feature gain and split-count importance");
-    cmd->add_option("--model", opts.model_path, "Trained model (.msgpack)")
-        ->required();
+    auto *cmd = app.add_subcommand("importance",
+                                   "Print per-feature gain and split-count importance");
+    cmd->add_option("--model", opts.model_path, "Trained model (.msgpack)")->required();
     cmd->callback([&] { rc = bonsai::cli::run_importance(opts); });
 }
 

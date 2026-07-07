@@ -28,9 +28,9 @@
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/io/model.hpp"
 #include "bonsai/parallel.hpp"
-#include <span>
 #include "bonsai/registry/objective_dispatch.hpp"
 #include "bonsai/types.hpp"
+#include <span>
 
 namespace nb = nanobind;
 
@@ -63,10 +63,10 @@ bonsai::cli::LabeledData make_labeled(array_2d const &X, array_1d const &y,
     buf.n_features = f;
     buf.data.assign(X.data(), X.data() + (n * f));
 
-    return bonsai::cli::LabeledData{
-        .dataset  = bonsai::Dataset::bin(batch, mappers, cfg.data),
-        .features = std::move(buf),
-        .labels   = std::move(batch.labels)};
+    return bonsai::cli::LabeledData{.dataset =
+                                        bonsai::Dataset::bin(batch, mappers, cfg.data),
+                                    .features = std::move(buf),
+                                    .labels   = std::move(batch.labels)};
 }
 
 // A trained model: booster + the bin mappers and config it was fit with.
@@ -81,14 +81,14 @@ class Model
     }
 
     nb::ndarray<nb::numpy, float> predict(array_2d const &X,
-                                          size_t num_iteration = 0) const
+                                          size_t          num_iteration = 0) const
     {
         size_t const n   = X.shape(0);
         auto        *out = new std::vector<float>(n, 0.0F);
         {
             nb::gil_scoped_release release;
-            booster_->predict_at(bonsai::features_view{X.data(), n, X.shape(1)},
-                                 *out, num_iteration);
+            booster_->predict_at(bonsai::features_view{X.data(), n, X.shape(1)}, *out,
+                                 num_iteration);
             bonsai::apply_link_inverse_by_name(cfg_.dispatch.objective_name, *out);
         }
         nb::capsule owner(out, [](void *p) noexcept
@@ -99,13 +99,13 @@ class Model
     // (n_iters, n_rows): prediction after each boosting iteration.
     nb::ndarray<nb::numpy, float> staged_predict(array_2d const &X) const
     {
-        size_t const n = X.shape(0);
-        size_t const k = booster_->n_iters();
+        size_t const n   = X.shape(0);
+        size_t const k   = booster_->n_iters();
         auto        *out = new std::vector<float>(k * n, 0.0F);
         {
             nb::gil_scoped_release release;
-            booster_->predict_staged(
-                bonsai::features_view{X.data(), n, X.shape(1)}, *out);
+            booster_->predict_staged(bonsai::features_view{X.data(), n, X.shape(1)},
+                                     *out);
             for (size_t t = 0; t < k; ++t)
             {
                 bonsai::apply_link_inverse_by_name(
@@ -121,14 +121,13 @@ class Model
     // (n_rows, n_iters): the leaf each row lands in, per tree.
     nb::ndarray<nb::numpy, uint32_t> predict_leaf(array_2d const &X) const
     {
-        size_t const n = X.shape(0);
-        size_t const k = booster_->n_iters();
+        size_t const n   = X.shape(0);
+        size_t const k   = booster_->n_iters();
         auto        *out = new std::vector<bonsai::node_id_t>(n * k, 0);
         {
             nb::gil_scoped_release release;
-            booster_->predict_leaf(
-                bonsai::features_view{X.data(), n, X.shape(1)},
-                std::span<bonsai::node_id_t>{*out});
+            booster_->predict_leaf(bonsai::features_view{X.data(), n, X.shape(1)},
+                                   std::span<bonsai::node_id_t>{*out});
         }
         nb::capsule owner(out, [](void *p) noexcept
                           { delete static_cast<std::vector<bonsai::node_id_t> *>(p); });
@@ -202,8 +201,8 @@ class Model
     bonsai::Config                    cfg_;
 };
 
-bonsai::Config config_from_params(
-    std::vector<std::pair<std::string, std::string>> const &params)
+bonsai::Config
+config_from_params(std::vector<std::pair<std::string, std::string>> const &params)
 {
     bonsai::Config                        cfg;
     std::vector<bonsai::config::Override> overrides;
@@ -219,7 +218,7 @@ bonsai::Config config_from_params(
 Model train(std::vector<std::pair<std::string, std::string>> const &params,
             array_2d const &X, array_1d const &y,
             std::optional<std::pair<array_2d, array_1d>> const &eval_set,
-            std::optional<std::string> const &init_model)
+            std::optional<std::string> const                   &init_model)
 {
     bonsai::Config const cfg = config_from_params(params);
     bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
@@ -255,8 +254,8 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
     loaded.train   = make_labeled(X, y, loaded.mappers, cfg);
     if (eval_set)
     {
-        loaded.valid = make_labeled(eval_set->first, eval_set->second,
-                                    loaded.mappers, cfg);
+        loaded.valid =
+            make_labeled(eval_set->first, eval_set->second, loaded.mappers, cfg);
     }
 
     auto booster = bonsai::cli::train_with_progress(
@@ -278,14 +277,12 @@ NB_MODULE(_bonsai, m)
     m.doc() = "bonsai gradient-boosted trees (native module)";
 
     nb::class_<Model>(m, "Model")
-        .def("predict", &Model::predict, nb::arg("X"),
-             nb::arg("num_iteration") = 0)
+        .def("predict", &Model::predict, nb::arg("X"), nb::arg("num_iteration") = 0)
         .def("staged_predict", &Model::staged_predict, nb::arg("X"))
         .def("predict_leaf", &Model::predict_leaf, nb::arg("X"))
         .def("dump", &Model::dump)
         .def("pred_contribs", &Model::pred_contribs, nb::arg("X"))
-        .def("feature_importance", &Model::feature_importance,
-             nb::arg("type") = "gain")
+        .def("feature_importance", &Model::feature_importance, nb::arg("type") = "gain")
         .def("save", &Model::save, nb::arg("path"))
         .def_prop_ro("n_iters", &Model::n_iters)
         .def_prop_ro("config_toml", &Model::config_toml);

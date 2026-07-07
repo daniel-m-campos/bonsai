@@ -71,8 +71,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ObliviousTree::Params, depth, n_leaves)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DataConfig, train, valid, test, format, header,
                                    label_column, weight_column, ignore_columns,
-                                   missing_nan, missing_sentinel,
-                                   libsvm_n_features)
+                                   missing_nan, missing_sentinel, libsvm_n_features)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(BinMapperConfig, max_bin, n_samples, seed,
                                    min_data_in_bin)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TreeConfig, min_child_hess, min_gain_to_split,
@@ -80,8 +79,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TreeConfig, min_child_hess, min_gain_to_split
                                    max_leaves, feature_fraction, feature_seed,
                                    monotone_constraints, interaction_constraints)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(BoosterConfig, n_iters, learning_rate, random_seed,
-                                   log_intervals, early_stopping_rounds,
-                                   dart_drop_rate)
+                                   log_intervals, early_stopping_rounds, dart_drop_rate)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DispatchConfig, objective_name, grower_name,
                                    sampler_name)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(SamplerConfig, subsample, top_rate, other_rate)
