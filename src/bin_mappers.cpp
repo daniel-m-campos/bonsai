@@ -11,18 +11,21 @@
 #include "bonsai/config/bin_mapper_config.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/parallel.hpp"
+#include "ingest_profiler.hpp"
 
 namespace bonsai
 {
 
 BinMappers BinMappers::fit(detail::ColumnBatch const &batch, BinMapperConfig const &cfg)
 {
+    detail::IngestProfiler::Lap lap;
     // Feature-parallel; each fit draws its own seeded rng, so results are
     // identical to a serial pass. Optional slots because BinMapper has no
     // default constructor.
     std::vector<std::optional<BinMapper>> slots(batch.features.size());
     parallel::for_each_index(batch.features.size(), [&](size_t f)
                              { slots[f] = BinMapper::fit(batch.features[f], cfg); });
+    lap(detail::IngestProfiler::instance().fit_s);
 
     BinMappers out;
     out.mappers_.reserve(slots.size());
