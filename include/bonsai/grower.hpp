@@ -64,11 +64,11 @@ concept BatchHistogramEngine =
         b.populate_many(ds, grad, hess, nodes, selected);
     };
 
-// Optional phase-3 hooks: histograms and rows stay device-resident, so only
-// decisions and counts cross the bus (docs/architecture/11-gpu-resident.md).
-// The depthwise grower drives this whole cluster or none of it, so it is one
-// concept and not seven; resident() is the runtime query of whether the device
-// path is actually live for the current tree.
+// The GPU data plane: histograms and rows stay device-resident, so only
+// decisions and counts cross the bus (docs/architecture/12-grower-backend.md).
+// The LevelStep drives this whole cluster or none of it, so it is one concept
+// and not seven; begin_root's bool return is the per-tree mode (it declines
+// when the resident buffers cannot fit), captured once by the LevelStep.
 template <typename T>
 concept GPULevelEngine =
     HistogramEngine<T> &&
@@ -83,7 +83,6 @@ concept GPULevelEngine =
         typename T::PartitionOp;
         typename T::LeafStamp;
         { b.begin_root(ds, grad, hess, root, selected) } -> std::convertible_to<bool>;
-        { b.resident() } -> std::convertible_to<bool>;
         b.stamp_leaves(stamps);
         b.partition_level(ds, pops, counts);
         b.advance_level(ds, lops);

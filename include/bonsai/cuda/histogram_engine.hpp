@@ -81,7 +81,6 @@ class CudaHistogramEngine
     // bins exceed the shared-memory budget — and the caller uses populate.
     bool begin_root(Dataset const &ds, floats_view grad, floats_view hess,
                     SplitInput &root, std::span<feature_id_t const> selected);
-    bool resident() const;
     // Records final leaf assignment for every row in the given slots'
     // segments (call before the level advances past them).
     void stamp_leaves(std::span<LeafStamp const> stamps);

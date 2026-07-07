@@ -141,7 +141,6 @@ struct CudaHistogramEngine::Impl
     DeviceBuffer<double>   level_a;
     DeviceBuffer<double>   level_b;
     bool                   cur_is_a   = true;
-    bool                   resident   = false;
     uint32_t               n_selected = 0;
     uint32_t               stride = 0;  // doubles per (slot, feature): 2*max_sel_bins
     Staged<uint32_t>       slots;       // hist out_slot per batched small
@@ -479,8 +478,7 @@ void CudaHistogramEngine::begin_tree(Dataset const &ds, floats_view grad,
                                      floats_view hess)
 {
     impl_->ensure_dataset(ds);
-    impl_->resident = false;
-    auto const n    = static_cast<uint32_t>(grad.size());
+    auto const n = static_cast<uint32_t>(grad.size());
     impl_->grad_raw.upload(grad.data(), grad.size());
     impl_->hess_raw.upload(hess.data(), hess.size());
     impl_->gh.reserve(grad.size());
@@ -617,11 +615,6 @@ void CudaHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     lap(prof_counters.unpack_s);
 }
 
-bool CudaHistogramEngine::resident() const
-{
-    return impl_->resident;
-}
-
 bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
                                      floats_view hess, SplitInput &root,
                                      std::span<feature_id_t const> selected)
@@ -634,9 +627,8 @@ bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
     }
     if (selected.empty() || 4 * max_sel_bins * sizeof(float) > k_max_shared_bytes)
     {
-        return false; // caller degrades to the copy-back path
+        return false; // the LevelStep falls back to host histogram building
     }
-    im.resident   = true;
     im.n_selected = static_cast<uint32_t>(selected.size());
     im.stride     = static_cast<uint32_t>(2 * max_sel_bins);
     im.features.host.assign(selected.begin(), selected.end());

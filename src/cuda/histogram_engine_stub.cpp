@@ -64,11 +64,6 @@ bool CudaHistogramEngine::begin_root(Dataset const & /*ds*/, floats_view /*grad*
     throw_unavailable();
 }
 
-bool CudaHistogramEngine::resident() const
-{
-    return false;
-}
-
 void CudaHistogramEngine::stamp_leaves(std::span<LeafStamp const> /*stamps*/)
 {
     throw_unavailable();
