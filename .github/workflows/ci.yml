@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, fabel]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CTEST_OUTPUT_ON_FAILURE: 1
+  # CMake honors this env var at first configure; the Makefile stays clean.
+  CMAKE_CXX_COMPILER_LAUNCHER: ccache
+
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-llvm
+      - uses: astral-sh/setup-uv@v5
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: build-test
+      - uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-build-${{ hashFiles('CMakeLists.txt') }}
+      - uses: actions/cache@v4
+        with:
+          path: tests/data
+          key: toy-data-${{ hashFiles('scripts/fetch_toy.py') }}
+      - run: make build
+      - run: make test
+
+  sanitize:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-llvm
+      - uses: astral-sh/setup-uv@v5
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: sanitize
+      - uses: actions/cache@v4
+        with:
+          path: build-asan/_deps
+          key: deps-asan-${{ hashFiles('CMakeLists.txt') }}
+      - uses: actions/cache@v4
+        with:
+          path: tests/data
+          key: toy-data-${{ hashFiles('scripts/fetch_toy.py') }}
+      # detect_leaks=0: libomp keeps its thread pool alive past exit and
+      # LSan flags the runtime's own allocations, not bonsai's.
+      - run: make test-asan
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+
+  format:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-llvm
+      - run: make format-check
+
+  tidy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-llvm
+      - uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-build-${{ hashFiles('CMakeLists.txt') }}
+      - run: make configure
+      - run: make lint
+
+  python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-llvm
+      - uses: astral-sh/setup-uv@v5
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: python
+      - uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-build-${{ hashFiles('CMakeLists.txt') }}
+      - uses: actions/cache@v4
+        with:
+          path: tests/data
+          key: toy-data-${{ hashFiles('scripts/fetch_toy.py') }}
+      # lightgbm: test_bindings.py cross-checks feature importances against it.
+      - run: uv venv .venv && uv pip install --python .venv/bin/python nanobind numpy lightgbm
+      # test_bindings.py checks module-vs-CLI parity, so it needs the binary too.
+      - run: make build
+      - run: make python-test
+
+  # Compile-only: no GPU runners, but the kernel TU should not silently rot.
+  cuda-compile:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-llvm
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: cuda-compile
+      - uses: actions/cache@v4
+        with:
+          path: build-cuda/_deps
+          key: deps-cuda-${{ hashFiles('CMakeLists.txt') }}
+      - name: Install CUDA toolkit headers (no driver)
+        run: |
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update -qq
+          # libcurand-dev: clang's __clang_cuda_runtime_wrapper.h includes
+          # curand device headers unconditionally.
+          sudo apt-get install -y -qq cuda-nvcc-12-6 cuda-cudart-dev-12-6 \
+            libcurand-dev-12-6
+      - name: Configure and build (sm_80, tests off)
+        run: |
+          cmake -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=/usr/lib/llvm-21/bin/clang++ \
+            -DBONSAI_CUDA=ON -DBONSAI_CUDA_ARCH=sm_80 -DBONSAI_TESTS=OFF \
+            -DCUDAToolkit_ROOT=/usr/local/cuda-12.6 \
+            -G Ninja -S . -B build-cuda
+          cmake --build build-cuda -j
