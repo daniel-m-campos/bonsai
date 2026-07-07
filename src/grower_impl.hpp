@@ -14,12 +14,16 @@
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <iterator>
 #include <numeric>
+#include <print>
 #include <random>
 #include <span>
 #include <string>
@@ -28,6 +32,33 @@
 
 namespace bonsai::grower_detail
 {
+
+// Host-side counterpart of the CUDA builder's ProfileCounters: attributes a
+// fit's wall-clock across the grow loop's phases (BONSAI_GROW_PROFILE=1),
+// printed once at process exit. Depthwise-only; drives phase-3 staging.
+struct GrowProfiler
+{
+    bool const enabled = std::getenv("BONSAI_GROW_PROFILE") != nullptr;
+    double find_s = 0, bookkeep_s = 0, partition_s = 0, populate_s = 0, finalize_s = 0;
+
+    static GrowProfiler &instance()
+    {
+        static GrowProfiler prof;
+        return prof;
+    }
+
+    ~GrowProfiler()
+    {
+        if (enabled &&
+            find_s + bookkeep_s + partition_s + populate_s + finalize_s > 0.0)
+        {
+            std::println(stderr,
+                         "grow-profile: find={:.2f}s bookkeep={:.2f}s "
+                         "partition={:.2f}s populate={:.2f}s finalize={:.2f}s",
+                         find_s, bookkeep_s, partition_s, populate_s, finalize_s);
+        }
+    }
+};
 
 inline float leaf_value(double grad, double hess, TreeConfig const &config)
 {
@@ -196,7 +227,16 @@ SplitInput make_root(Dataset const &ds, floats_view grad, floats_view hess,
     SplitInput root;
     root.id = 0;
     root.rows.assign(row_indices.begin(), row_indices.end());
+    if constexpr (requires { builder.begin_root(ds, grad, hess, root, selected); })
+    {
+        if (builder.begin_root(ds, grad, hess, root, selected))
+        {
+            return root; // resident: histogram lives on the device
+        }
+    }
     builder.populate(ds, grad, hess, root, selected);
+    root.sums      = root.totals();
+    root.row_count = root.rows.size();
     return root;
 }
 
@@ -217,6 +257,44 @@ inline void populate_nodes(Dataset const &ds, floats_view grad, floats_view hess
             builder.populate(ds, grad, hess, node, selected);
         }
     }
+}
+
+// One level's split search. Host path: the splitter policy per node. A
+// builder exposing find_splits_many (device-resident histograms, phase 3)
+// takes over here; the splitter remains the fallback and parity reference.
+template <NodeSplitFinder SplitterT, HistogramBuilder BuilderT>
+inline void find_splits(Dataset const &ds, std::vector<SplitInput> const &current,
+                        TreeConfig const &config, BuilderT &builder,
+                        std::vector<SplitOutput> &out,
+                        std::vector<HistCell>    &child_sums)
+{
+    auto const t0 = std::chrono::steady_clock::now();
+    out.clear();
+    child_sums.clear();
+    if constexpr (requires {
+                      builder.find_splits_many(
+                          ds, config, std::span<SplitInput const>{},
+                          std::span<SplitOutput>{}, std::span<HistCell>{});
+                  })
+    {
+        if (builder.resident())
+        {
+            out.resize(current.size());
+            child_sums.resize(2 * current.size());
+            builder.find_splits_many(ds, config, current, out, child_sums);
+            GrowProfiler::instance().find_s +=
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
+                    .count();
+            return;
+        }
+    }
+    out.reserve(current.size());
+    for (auto const &input : current)
+    {
+        out.push_back(SplitterT::find(input, config));
+    }
+    GrowProfiler::instance().find_s +=
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 }
 
 // A split with rows partitioned and histograms pending: the smaller child
@@ -294,6 +372,10 @@ inline void finish_split(Dataset const &ds, PendingSplit &p)
     // Unselected slots are zero-binned on both sides: no-op subtraction.
     parallel::for_each_index(ds.n_features(),
                              [&](size_t f) { large.hists[f] -= small.hists[f]; });
+    small.sums      = small.totals(); // row_count still 0: totals() scans hists
+    large.sums      = large.totals();
+    small.row_count = small.rows.size();
+    large.row_count = large.rows.size();
 }
 
 template <HistogramBuilder BuilderT>
@@ -313,11 +395,11 @@ inline void
 update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
              TreeConfig const &config, std::vector<SplitInput> &current,
              std::vector<SplitInput> &next, std::vector<SplitOutput> const &splits,
-             DenseTree::Nodes &nodes, size_t &n_leaves, train_leaf_values &values,
-             feature_view selected, std::vector<bin_id_t> &split_bins,
-             std::vector<float> &split_gains, std::vector<float> &covers,
-             std::vector<node_id_t> &leaf_ids, interaction_groups const &groups,
-             BuilderT &builder)
+             std::vector<HistCell> const &child_sums, DenseTree::Nodes &nodes,
+             size_t &n_leaves, train_leaf_values &values, feature_view selected,
+             std::vector<bin_id_t> &split_bins, std::vector<float> &split_gains,
+             std::vector<float> &covers, std::vector<node_id_t> &leaf_ids,
+             interaction_groups const &groups, BuilderT &builder)
 {
     // Pass 1: serial tree bookkeeping; partitions and histogram work are
     // deferred so both can run level-wide.
@@ -331,7 +413,24 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         double                    parent_lo;
         double                    parent_hi;
         std::vector<feature_id_t> parent_path;
+        uint32_t                  parent_slot = 0; // index in `current`
+        HistCell                  left_sums{};     // from find (device mode only)
+        HistCell                  right_sums{};
     };
+    auto &prof = GrowProfiler::instance();
+    auto  mark = std::chrono::steady_clock::now();
+    auto  lap  = [&mark](double &sink)
+    {
+        auto const now = std::chrono::steady_clock::now();
+        sink += std::chrono::duration<double>(now - mark).count();
+        mark = now;
+    };
+    struct SlotLeaf
+    {
+        uint32_t  slot;
+        node_id_t node_id;
+    };
+    std::vector<SlotLeaf> leaf_slots;
     std::vector<Deferred> deferred;
     deferred.reserve(current.size());
     for (node_id_t i = 0; i < current.size(); ++i)
@@ -340,6 +439,7 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         auto const &split = splits[i];
         if (!split.valid) // assume valid incorporates all cfg parameter logic
         {
+            leaf_slots.push_back({static_cast<uint32_t>(i), node.id});
             finalize_as_leaf(nodes, node, config, n_leaves, values, leaf_ids);
             continue;
         }
@@ -357,42 +457,112 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         nodes[node.id] = DenseTree::internal(split.feature_id, threshold, left_id,
                                              right_id, split.default_left);
 
-        double const parent_lo   = node.lo;
-        double const parent_hi   = node.hi;
-        auto         parent_path = std::move(node.path);
+        double const   parent_lo   = node.lo;
+        double const   parent_hi   = node.hi;
+        auto           parent_path = std::move(node.path);
+        HistCell const ls = child_sums.empty() ? HistCell{} : child_sums[2 * size_t{i}];
+        HistCell const rs =
+            child_sums.empty() ? HistCell{} : child_sums[(2 * size_t{i}) + 1];
         deferred.push_back({std::move(node), PendingSplit{}, split, left_id, right_id,
-                            parent_lo, parent_hi, std::move(parent_path)});
+                            parent_lo, parent_hi, std::move(parent_path),
+                            static_cast<uint32_t>(i), ls, rs});
     }
 
-    // Pass 1b: partition each parent's rows, one node per worker (child
-    // row order is scheduling-independent, so bit-identical to serial).
-    parallel::for_each_index(deferred.size(),
-                             [&](size_t i)
-                             {
-                                 Deferred &d = deferred[i];
-                                 d.p = partition_rows(ds, std::move(d.parent), d.split,
-                                                      d.left_id, d.right_id);
-                             });
-    for (auto &d : deferred)
+    lap(prof.bookkeep_s);
+
+    // Resident path: leaves stamp their device segments, splits partition on
+    // the device (only child counts return), and the child level's
+    // histograms build/subtract in place. Rows never reach the host.
+    bool used_device = false;
+    if constexpr (requires {
+                      typename BuilderT::PartitionOp;
+                      typename BuilderT::LeafStamp;
+                      typename BuilderT::LevelOp;
+                  })
     {
-        covers[d.left_id]  = static_cast<float>(d.p.left.rows.size());
-        covers[d.right_id] = static_cast<float>(d.p.right.rows.size());
-    }
+        if (builder.resident())
+        {
+            std::vector<typename BuilderT::LeafStamp> stamps;
+            stamps.reserve(leaf_slots.size());
+            for (SlotLeaf const &ls : leaf_slots)
+            {
+                stamps.push_back({ls.slot, ls.node_id});
+            }
+            builder.stamp_leaves(stamps);
+            std::vector<typename BuilderT::PartitionOp> pops;
+            pops.reserve(deferred.size());
+            for (uint32_t k = 0; k < deferred.size(); ++k)
+            {
+                Deferred const &d = deferred[k];
+                pops.push_back({d.parent_slot, 2 * k, (2 * k) + 1, d.split.feature_id,
+                                d.split.bin_id, d.split.default_left});
+            }
+            std::vector<uint32_t> counts(2 * deferred.size(), 0);
+            builder.partition_level(ds, pops, counts);
+            lap(prof.partition_s);
 
-    // Pass 2: populate every smaller sibling in one builder call.
-    std::vector<std::reference_wrapper<SplitInput>> smalls;
-    smalls.reserve(deferred.size());
-    for (auto &d : deferred)
+            std::vector<typename BuilderT::LevelOp> ops;
+            ops.reserve(deferred.size());
+            for (uint32_t k = 0; k < deferred.size(); ++k)
+            {
+                Deferred      &d      = deferred[k];
+                uint32_t const nl     = counts[2 * k];
+                uint32_t const nr     = counts[(2 * k) + 1];
+                d.p.left.id           = d.left_id;
+                d.p.right.id          = d.right_id;
+                d.p.left.sums         = d.left_sums;
+                d.p.right.sums        = d.right_sums;
+                d.p.left.row_count    = nl;
+                d.p.right.row_count   = nr;
+                covers[d.left_id]     = static_cast<float>(nl);
+                covers[d.right_id]    = static_cast<float>(nr);
+                bool const left_small = nl <= nr;
+                ops.push_back({d.parent_slot, (2 * k) + (left_small ? 0U : 1U),
+                               (2 * k) + (left_small ? 1U : 0U)});
+            }
+            builder.advance_level(ds, ops);
+            used_device = true;
+            lap(prof.populate_s);
+        }
+    }
+    if (!used_device)
     {
-        smalls.emplace_back(smaller_child(d.p));
-    }
-    populate_nodes(ds, grad, hess, smalls, selected, builder);
+        // Pass 1b: partition each parent's rows, one node per worker (child
+        // row order is scheduling-independent, so bit-identical to serial).
+        parallel::for_each_index(deferred.size(),
+                                 [&](size_t i)
+                                 {
+                                     Deferred &d = deferred[i];
+                                     d.p =
+                                         partition_rows(ds, std::move(d.parent),
+                                                        d.split, d.left_id, d.right_id);
+                                 });
+        for (auto &d : deferred)
+        {
+            covers[d.left_id]  = static_cast<float>(d.p.left.rows.size());
+            covers[d.right_id] = static_cast<float>(d.p.right.rows.size());
+        }
+        lap(prof.partition_s);
 
-    // Pass 3: subtraction, then constraint propagation (needs populated
+        // Pass 2: populate every smaller sibling in one builder call.
+        std::vector<std::reference_wrapper<SplitInput>> smalls;
+        smalls.reserve(deferred.size());
+        for (auto &d : deferred)
+        {
+            smalls.emplace_back(smaller_child(d.p));
+        }
+        populate_nodes(ds, grad, hess, smalls, selected, builder);
+        lap(prof.populate_s);
+    }
+
+    // Pass 3: subtraction (host mode), then constraint propagation (needs
     // child totals) and frontier hand-off in original node order.
     for (auto &d : deferred)
     {
-        finish_split(ds, d.p);
+        if (!used_device)
+        {
+            finish_split(ds, d.p);
+        }
         SplitInput &left  = d.p.left;
         SplitInput &right = d.p.right;
         propagate_monotone_bounds(d.parent_lo, d.parent_hi, d.split, config, left,
@@ -402,6 +572,7 @@ update_nodes(Dataset const &ds, floats_view grad, floats_view hess,
         next.push_back(std::move(left));
         next.push_back(std::move(right));
     }
+    lap(prof.finalize_s);
     std::swap(current, next);
     next.clear();
 }
@@ -490,6 +661,7 @@ auto DepthwiseGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view g
     std::vector<SplitInput>  current;
     std::vector<SplitInput>  next;
     std::vector<SplitOutput> splits;
+    std::vector<HistCell>    child_sums;
     std::vector<bin_id_t>    split_bins(1, 0);
     std::vector<float>       split_gains(1, 0.0F);
     std::vector<float>       covers(1, static_cast<float>(row_indices.size()));
@@ -502,15 +674,10 @@ auto DepthwiseGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view g
     size_t  n_leaves = 0;
     while (depth < config_.max_depth)
     {
-        splits.clear();
-        splits.reserve(current.size());
-        for (auto const &input : current)
-        {
-            splits.push_back(SplitterT::find(input, config_));
-        }
-        gd::update_nodes(ds, grad, hess, config_, current, next, splits, nodes,
-                         n_leaves, values, selected, split_bins, split_gains, covers,
-                         leaf_ids, interaction_groups_, builder_);
+        gd::find_splits<SplitterT>(ds, current, config_, builder_, splits, child_sums);
+        gd::update_nodes(ds, grad, hess, config_, current, next, splits, child_sums,
+                         nodes, n_leaves, values, selected, split_bins, split_gains,
+                         covers, leaf_ids, interaction_groups_, builder_);
         if (current.empty())
         {
             break;
@@ -518,9 +685,35 @@ auto DepthwiseGrower<SplitterT, BuilderT>::grow(Dataset const &ds, floats_view g
         ++depth;
     }
 
+    if constexpr (requires { typename BuilderT::LeafStamp; })
+    {
+        if (builder_.resident())
+        {
+            std::vector<typename BuilderT::LeafStamp> stamps;
+            stamps.reserve(current.size());
+            for (uint32_t i = 0; i < current.size(); ++i)
+            {
+                stamps.push_back({i, current[i].id});
+            }
+            builder_.stamp_leaves(stamps);
+        }
+    }
     for (auto const &node : current)
     {
         gd::finalize_as_leaf(nodes, node, config_, n_leaves, values, leaf_ids);
+    }
+    if constexpr (requires { builder_.finalize_rows(std::span<node_id_t>{}); })
+    {
+        if (builder_.resident())
+        {
+            std::vector<node_id_t> by_row(ds.n_rows(), 0);
+            builder_.finalize_rows(by_row);
+            for (row_id_t const r : row_indices)
+            {
+                leaf_ids[r] = by_row[r];
+                values[r]   = nodes[by_row[r]].threshold_or_value;
+            }
+        }
     }
     gd::route_unsampled(ds, nodes, split_bins, row_indices, values, leaf_ids);
     split_gains.resize(nodes.size(), 0.0F);

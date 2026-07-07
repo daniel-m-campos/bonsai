@@ -1,0 +1,141 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["numpy", "pandas", "xgboost"]
+# ///
+"""MSD benchmark ladder for the GPU perf loop (see benchmarks/README.md).
+
+Runs bonsai cuda_depthwise, bonsai depthwise (CPU), and xgboost hist on
+CPU and GPU with hyperparameters from configs/year_prediction_msd.toml,
+prints one table with profile breakdowns and the gap to xgboost-GPU, and
+appends one JSON line per variant to benchmarks/results/gpu_msd.jsonl so
+regression tracking across commits is a diff of that file.
+
+    uv run scripts/bench_gpu.py [--threads 16] [--variants a,b,...]
+
+Variants: bonsai_gpu, bonsai_cpu, xgb_cpu, xgb_gpu.
+"""
+import argparse
+import datetime
+import json
+import pathlib
+import re
+import subprocess
+import sys
+import time
+import tomllib
+
+import numpy as np
+import pandas as pd
+
+REPO = pathlib.Path(__file__).resolve().parents[1]
+BINARY = REPO / "build-cuda" / "src" / "bonsai"
+CONFIG = REPO / "configs" / "year_prediction_msd.toml"
+RESULTS = REPO / "benchmarks" / "results" / "gpu_msd.jsonl"
+
+PROFILE_RE = re.compile(r"(\w+)=([\d.]+)s")
+
+
+def sh(cmd: list[str]) -> str:
+    return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def parse_profiles(stderr: str) -> dict:
+    prof = {}
+    for line in stderr.splitlines():
+        if line.startswith(("cuda-profile:", "grow-profile:")):
+            prefix = line.split(":", 1)[0].removesuffix("-profile")
+            for key, val in PROFILE_RE.findall(line):
+                prof[f"{prefix}_{key}"] = float(val)
+    return prof
+
+
+def rmse(pred: np.ndarray, y: np.ndarray) -> float:
+    return float(np.sqrt(np.mean((pred - y) ** 2)))
+
+
+def run_bonsai(grower: str, threads: int, y_test: np.ndarray) -> dict:
+    model, preds = "/tmp/bench_gpu_model.msgpack", "/tmp/bench_gpu_preds.csv"
+    fit_cmd = [str(BINARY), "fit", "-c", str(CONFIG),
+               "--set", f"dispatch.grower_name={grower}",
+               "--set", f"parallel.n_threads={threads}",
+               "--model", model]
+    t0 = time.perf_counter()
+    fit = subprocess.run(fit_cmd, check=True, capture_output=True, text=True)
+    fit_s = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    subprocess.run([str(BINARY), "predict", "-c", str(CONFIG), "--model", model,
+                    "--out", preds], check=True, capture_output=True)
+    predict_s = time.perf_counter() - t0
+    pred = pd.read_csv(preds)["prediction"].to_numpy()
+    return {"fit_s": round(fit_s, 2), "predict_s": round(predict_s, 2),
+            "rmse": round(rmse(pred, y_test), 4), "profile": parse_profiles(fit.stderr)}
+
+
+def run_xgb(device: str, threads: int, train, test, y_test) -> dict:
+    import xgboost as xgb
+    cfg = tomllib.loads(CONFIG.read_text())
+    params = {"objective": "reg:squarederror",
+              "learning_rate": cfg["booster"]["learning_rate"],
+              "max_depth": cfg["tree"]["max_depth"],
+              "min_child_weight": cfg["tree"]["min_data_in_leaf"],
+              "reg_lambda": cfg["tree"]["lambda_l2"],
+              "max_bin": cfg["bin_mapper"]["max_bin"],
+              "tree_method": "hist", "seed": cfg["booster"]["random_seed"],
+              "device": device, **({"nthread": threads} if device == "cpu" else {})}
+    feats = [c for c in train.columns if c != "label"]
+    dtrain = xgb.DMatrix(train[feats], label=train["label"])
+    dtest = xgb.DMatrix(test[feats])
+    t0 = time.perf_counter()
+    booster = xgb.train(params, dtrain, num_boost_round=cfg["booster"]["n_iters"])
+    fit_s = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    pred = booster.predict(dtest)
+    predict_s = time.perf_counter() - t0
+    return {"fit_s": round(fit_s, 2), "predict_s": round(predict_s, 2),
+            "rmse": round(rmse(pred, y_test), 4), "profile": {}}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--threads", type=int, default=16,
+                    help="host threads for bonsai / xgboost CPU (never 0 on many-core hosts: issue #2)")
+    ap.add_argument("--variants", default="bonsai_gpu,bonsai_cpu,xgb_cpu,xgb_gpu")
+    args = ap.parse_args()
+
+    cfg = tomllib.loads(CONFIG.read_text())
+    train = pd.read_csv(REPO / cfg["data"]["train"])
+    test = pd.read_csv(REPO / cfg["data"]["test"])
+    y_test = test["label"].to_numpy()
+
+    sha = sh(["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"])
+    try:
+        gpu = sh(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"]).splitlines()[0]
+    except Exception:
+        gpu = "none"
+
+    runners = {"bonsai_gpu": lambda: run_bonsai("cuda_depthwise", args.threads, y_test),
+               "bonsai_cpu": lambda: run_bonsai("depthwise", args.threads, y_test),
+               "xgb_cpu": lambda: run_xgb("cpu", args.threads, train, test, y_test),
+               "xgb_gpu": lambda: run_xgb("cuda", args.threads, train, test, y_test)}
+
+    results, ts = {}, datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    RESULTS.parent.mkdir(parents=True, exist_ok=True)
+    for name in args.variants.split(","):
+        print(f"running {name} ...", flush=True)
+        results[name] = runners[name]()
+        with RESULTS.open("a") as f:
+            f.write(json.dumps({"ts": ts, "git_sha": sha, "gpu": gpu, "threads": args.threads,
+                                "variant": name, **results[name]}) + "\n")
+
+    ref = results.get("xgb_gpu", {}).get("fit_s")
+    print(f"\n{sha} on {gpu} ({args.threads} threads)")
+    print(f"{'variant':<12} {'fit_s':>7} {'rmse':>8} {'xgb-gpu gap':>12}  profile")
+    for name, r in results.items():
+        gap = f"{r['fit_s'] / ref:.1f}x" if ref else "-"
+        prof = " ".join(f"{k.split('_', 1)[1]}={v}" for k, v in r["profile"].items()) or "-"
+        print(f"{name:<12} {r['fit_s']:>7} {r['rmse']:>8} {gap:>12}  {prof}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
