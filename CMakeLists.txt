@@ -41,6 +41,18 @@ endif()
 option(BONSAI_TESTS "Build tests" ON)
 option(BONSAI_OPENMP "Enable OpenMP parallelism" ON)
 option(BONSAI_PYTHON "Build the Python extension module" OFF)
+option(BONSAI_SANITIZE "Build with ASan + UBSan (CI test profile)" OFF)
+
+if(BONSAI_SANITIZE)
+    if(BONSAI_CUDA)
+        message(FATAL_ERROR "BONSAI_SANITIZE does not compose with the CUDA "
+                            "kernel TU; sanitize CPU builds only.")
+    endif()
+    # Global so FetchContent deps (Catch2) get the same instrumentation.
+    add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=all
+                        -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+endif()
 
 # Shared-module builds (the Python extension) need PIC everywhere; the cost
 # on the static targets is negligible.

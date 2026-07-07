@@ -42,13 +42,28 @@ build-cuda: build-cuda/build.ninja
 test-cuda: build-cuda $(TOY_SENTINEL)
 	@ctest --test-dir build-cuda
 
+build-asan/build.ninja:
+	@cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+	-DCMAKE_CXX_COMPILER=$(LLVM_BIN)/clang++ \
+	-DBONSAI_SANITIZE=ON \
+	-G Ninja -S . -B build-asan
+
+build-asan: build-asan/build.ninja
+	@cmake --build build-asan -j
+
+test-asan: build-asan $(TOY_SENTINEL)
+	@ctest --test-dir build-asan
+
 clean:
-	@rm -rf build build-cuda
+	@rm -rf build build-cuda build-asan
 
 rebuild: clean build
 
 format:
 	@$(LLVM_BIN)/clang-format -i $(SOURCES)
+
+format-check:
+	@$(LLVM_BIN)/clang-format --dry-run --Werror $(SOURCES)
 
 lint: build/build.ninja
 	@out=$$($(LLVM_BIN)/run-clang-tidy -quiet -use-color=0 \
@@ -100,6 +115,7 @@ help:
 	@echo "  make test               Build + run ctest."
 	@echo "  make build-cuda         Configure + compile with the CUDA backend (build-cuda/)."
 	@echo "  make test-cuda          Build CUDA variant + run ctest against it."
+	@echo "  make test-asan          Build ASan+UBSan variant (build-asan/) + run ctest."
 	@echo "  make run ARGS=...       Build + run ./build/src/bonsai with ARGS."
 	@echo "  make perf-benchmark     Build + run Catch2 perf microbenchmarks (ARGS forwarded)."
 	@echo "  make fit-benchmark      Build + compare bonsai vs lightgbm/catboost on cal housing."
@@ -107,6 +123,7 @@ help:
 	@echo "  make python             Build the Python extension (PYTHON=... to pick the interpreter)."
 	@echo "  make python-test        Build + run python/tests/test_bindings.py."
 	@echo "  make format             clang-format src/ + include/ + tests/ + benchmarks/ in place."
+	@echo "  make format-check       clang-format --dry-run --Werror (CI gate)."
 	@echo "  make lint               clang-tidy on src/ (header-filtered to bonsai)."
 	@echo "  make skills             Install project-local Claude Code skills (currently: caveman)."
 	@echo "  make skills-clean       Remove installed project-local skills."
@@ -122,4 +139,4 @@ $(SKILLS_DIR)/caveman/SKILL.md:
 skills-clean:
 	rm -rf $(SKILLS_DIR)
 
-.PHONY: configure build build-cuda clean rebuild format lint all run test test-cuda perf-benchmark fit-benchmark bench-gpu python python-test skills skills-clean help
+.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint all run test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu python python-test skills skills-clean help
