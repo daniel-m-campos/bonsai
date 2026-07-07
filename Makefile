@@ -118,6 +118,13 @@ fit-benchmark: build $(TOY_SENTINEL)
 bench-gpu: build-cuda
 	@BONSAI_CUDA_PROFILE=1 BONSAI_GROW_PROFILE=1 uv run scripts/bench_gpu.py $(ARGS)
 
+# Scaling suite (benchmarks/README.md): synthetic rows/cols/bins/threads
+# sweep vs xgboost/lightgbm/catboost, appends benchmarks/results/scaling.jsonl.
+# Uses the CUDA module tree when present, else the CPU one.
+bench-scaling:
+	@PYTHONPATH=$(if $(wildcard build-cuda/python),build-cuda/python,build/python) \
+	    uv run scripts/bench_scaling.py $(ARGS)
+
 $(TOY_SENTINEL):
 	@uv run scripts/fetch_toy.py
 	@touch $@
@@ -134,6 +141,7 @@ help:
 	@echo "  make perf-benchmark     Build + run Catch2 perf microbenchmarks (ARGS forwarded)."
 	@echo "  make fit-benchmark      Build + compare bonsai vs lightgbm/catboost on cal housing."
 	@echo "  make bench-gpu          MSD ladder vs xgboost-GPU with profile breakdowns (GPU perf loop)."
+	@echo "  make bench-scaling      Synthetic rows/cols/bins/threads scaling sweep vs reference libraries."
 	@echo "  make python             Build the Python extension (PYTHON=... to pick the interpreter)."
 	@echo "  make python-cuda        Build the CUDA-enabled extension into build-cuda/python."
 	@echo "  make python-test        Build + run python/tests/test_bindings.py."
@@ -154,4 +162,4 @@ $(SKILLS_DIR)/caveman/SKILL.md:
 skills-clean:
 	rm -rf $(SKILLS_DIR)
 
-.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint all run test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu python python-cuda python-test skills skills-clean help
+.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint all run test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu bench-scaling python python-cuda python-test skills skills-clean help
