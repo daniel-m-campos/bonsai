@@ -29,7 +29,7 @@ constexpr size_t k_min_gpu_rows = 512;
 
 // Shared-memory histogram footprint cap (stride floats, 48 KiB/block
 // budget). Datasets binned past ~6k bins per feature fall back to the CPU
-// builder instead of failing the kernel launch at runtime.
+// engine instead of failing the kernel launch at runtime.
 constexpr size_t k_max_shared_bytes = 48UL * 1024UL;
 
 // Widened index of the first (grad) slot of pair i in a flat [grad0, hess0,

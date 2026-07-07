@@ -28,7 +28,7 @@ struct SplitInput
     // Distinct features used on the path from the root to this node.
     // NOLINTNEXTLINE(readability-redundant-member-init)
     std::vector<feature_id_t> path = {};
-    // Cached node totals + row count. A device-resident builder leaves
+    // Cached node totals + row count. A device-resident engine leaves
     // hists/rows empty and sets these as the node's only host statistics.
     HistCell sums      = {};
     size_t   row_count = 0;

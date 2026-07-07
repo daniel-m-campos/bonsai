@@ -1,7 +1,7 @@
 #pragma once
 
 // Template definitions for the three growers, shared by every explicit
-// instantiation TU: grower.cpp instantiates the CPU-builder variants and
+// instantiation TU: grower.cpp instantiates the CPU-engine variants and
 // cuda/grower_cuda.cpp the CUDA one. Only src/ TUs include this header.
 
 #include "bonsai/config/errors.hpp"
@@ -352,7 +352,7 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
 
     // The LevelStep is the tree's data plane: host or GPU by engine type,
     // opened per tree so a GPU engine can decline back to the host mid-fit.
-    gd::LevelStep<EngineT, SplitterT> step(builder_, ds, config_, grad, hess, selected);
+    gd::LevelStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
     current.push_back(step.make_root(row_indices));
     nodes.emplace_back(DenseTree::leaf(0.0F));
     uint8_t depth    = 0;
@@ -425,7 +425,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
 
     // Same data plane as depthwise; only the control plane differs (one split
     // per level, broadcast to every frontier node; ObliviousTree bookkeeping).
-    gd::LevelStep<EngineT, SplitterT> step(builder_, ds, config_, grad, hess, selected);
+    gd::LevelStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
     frontier.push_back(step.make_root(row_indices));
 
     size_t depth = 0;
@@ -571,7 +571,7 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     // Leafwise shares the data plane's primitives but not its level batching:
     // the gain heap expands one node at a time (split_node), so there is no
     // level to batch — the LevelStep opens the tree and builds the root.
-    gd::LevelStep<EngineT, SplitterT> step(builder_, ds, config_, grad, hess, selected);
+    gd::LevelStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
     SplitInput                        root = step.make_root(row_indices);
     nodes.emplace_back(DenseTree::leaf(0.0F));
 
@@ -616,7 +616,7 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
         double const parent_hi   = c.node.hi;
         auto const   parent_path = std::move(c.node.path);
         auto [left, right] = gd::split_node(ds, grad, hess, std::move(c.node), c.split,
-                                            left_id, right_id, selected, builder_);
+                                            left_id, right_id, selected, engine_);
         covers[left_id]    = static_cast<float>(left.rows.size());
         covers[right_id]   = static_cast<float>(right.rows.size());
         gd::propagate_monotone_bounds(parent_lo, parent_hi, c.split, config_, left,

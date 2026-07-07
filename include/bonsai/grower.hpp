@@ -42,7 +42,7 @@ concept TreeGrower = requires(T g, Dataset const &ds, floats_view grad,
 };
 
 // Builds a node's per-feature histograms. begin_tree runs once per grow()
-// call so stateful backends can stage per-tree data (the CUDA builder
+// call so stateful backends can stage per-tree data (the CUDA engine
 // uploads gradients there); populate fills the split input's hists for the
 // selected features and leaves zero-binned placeholders the finders skip.
 template <typename T>
@@ -104,7 +104,7 @@ class DepthwiseGrower
     TreeConfig                             config_;
     std::mt19937                           feature_rng_;
     std::vector<std::vector<feature_id_t>> interaction_groups_;
-    EngineT                                builder_;
+    EngineT                                engine_;
 };
 
 template <HistogramEngine  EngineT   = CpuHistogramEngine,
@@ -120,7 +120,7 @@ class ObliviousGrower
   private:
     TreeConfig   config_;
     std::mt19937 feature_rng_;
-    EngineT      builder_;
+    EngineT      engine_;
 };
 
 template <HistogramEngine EngineT   = CpuHistogramEngine,
@@ -137,7 +137,7 @@ class LeafwiseGrower
     TreeConfig                             config_;
     std::mt19937                           feature_rng_;
     std::vector<std::vector<feature_id_t>> interaction_groups_;
-    EngineT                                builder_;
+    EngineT                                engine_;
 };
 
 } // namespace bonsai

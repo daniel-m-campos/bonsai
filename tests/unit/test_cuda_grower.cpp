@@ -1,6 +1,6 @@
 // CUDA histogram-backend parity tests. Compiled in every build; each case
 // SKIPs at runtime unless cuda_available(). They exercise the real device:
-// scenarios are sized above the builder's CPU-fallback cutoff so populate
+// scenarios are sized above the engine's CPU-fallback cutoff so populate
 // really launches kernels. GPU histograms accumulate per-chunk in float
 // (merged in double), and atomics add in arbitrary order, so comparisons
 // are tolerance-based rather than bit-exact.
@@ -29,7 +29,7 @@ namespace
 
 using namespace bonsai;
 
-// 4096 rows (comfortably above the GPU builder's CPU-fallback cutoff, so
+// 4096 rows (comfortably above the GPU engine's CPU-fallback cutoff, so
 // the device path actually runs) x 4 features with duplicates-heavy value
 // ranges and a NaN column so the missing bin is populated; seeded so
 // failures reproduce.
@@ -97,17 +97,17 @@ TEST_CASE("CudaHistogramEngine matches CPU histograms on all rows", "[cuda][hist
     std::vector<feature_id_t> selected(ds.n_features());
     std::iota(selected.begin(), selected.end(), feature_id_t{0});
 
-    CpuHistogramEngine  cpu_builder;
-    CudaHistogramEngine gpu_builder;
-    gpu_builder.begin_tree(ds, scenario.grad, scenario.hess);
+    CpuHistogramEngine  cpu_engine;
+    CudaHistogramEngine gpu_engine;
+    gpu_engine.begin_tree(ds, scenario.grad, scenario.hess);
 
     SplitInput cpu_node;
     cpu_node.rows = scenario.rows;
-    cpu_builder.populate(ds, scenario.grad, scenario.hess, cpu_node, selected);
+    cpu_engine.populate(ds, scenario.grad, scenario.hess, cpu_node, selected);
 
     SplitInput gpu_node;
     gpu_node.rows = scenario.rows;
-    gpu_builder.populate(ds, scenario.grad, scenario.hess, gpu_node, selected);
+    gpu_engine.populate(ds, scenario.grad, scenario.hess, gpu_node, selected);
 
     require_hists_match(cpu_node, gpu_node);
 }
@@ -130,17 +130,17 @@ TEST_CASE("CudaHistogramEngine matches CPU histograms on a row subset",
     }
     std::vector<feature_id_t> const selected{0, 2, 3};
 
-    CpuHistogramEngine  cpu_builder;
-    CudaHistogramEngine gpu_builder;
-    gpu_builder.begin_tree(ds, scenario.grad, scenario.hess);
+    CpuHistogramEngine  cpu_engine;
+    CudaHistogramEngine gpu_engine;
+    gpu_engine.begin_tree(ds, scenario.grad, scenario.hess);
 
     SplitInput cpu_node;
     cpu_node.rows = rows;
-    cpu_builder.populate(ds, scenario.grad, scenario.hess, cpu_node, selected);
+    cpu_engine.populate(ds, scenario.grad, scenario.hess, cpu_node, selected);
 
     SplitInput gpu_node;
     gpu_node.rows = rows;
-    gpu_builder.populate(ds, scenario.grad, scenario.hess, gpu_node, selected);
+    gpu_engine.populate(ds, scenario.grad, scenario.hess, gpu_node, selected);
 
     REQUIRE(gpu_node.hists[1].size() == 0); // unselected placeholder
     require_hists_match(cpu_node, gpu_node);
@@ -179,7 +179,7 @@ TEST_CASE("CudaDepthwiseGrower handles consecutive trees and datasets",
     {
         SKIP("no usable CUDA device");
     }
-    // One builder instance across two grows on one dataset, then a switch
+    // One engine instance across two grows on one dataset, then a switch
     // to a second dataset — exercises the upload cache in begin_tree.
     auto scenario_a = random_scenario();
     auto scenario_b = test::separable_4row();

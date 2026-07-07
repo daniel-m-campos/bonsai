@@ -18,7 +18,7 @@ bool cuda_available();
 
 // HistogramEngine that offloads histogram construction to the GPU
 // (src/cuda/histogram_engine.cu; a throwing stub backs it when built
-// without BONSAI_CUDA). GPU cells match the CPU builder to tolerance, not
+// without BONSAI_CUDA). GPU cells match the CPU engine to tolerance, not
 // bit-exactly: atomics accumulate in arbitrary order. Design and precision
 // scheme: docs/architecture/10-cuda.md.
 class CudaHistogramEngine

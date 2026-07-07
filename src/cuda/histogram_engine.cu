@@ -42,7 +42,7 @@ bool cuda_available()
     return cudaGetDeviceCount(&n) == cudaSuccess && n > 0;
 }
 
-// BONSAI_CUDA_PROFILE=1 accumulators, printed at builder destruction.
+// BONSAI_CUDA_PROFILE=1 accumulators, printed at engine destruction.
 struct ProfileCounters
 {
     using clock     = std::chrono::steady_clock;

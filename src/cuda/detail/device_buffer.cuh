@@ -77,7 +77,7 @@ template <typename T> class DeviceBuffer
 };
 
 // A host staging vector paired with its device mirror — the shape that recurs
-// throughout the builder's Impl. `host` is filled (or received) on the CPU;
+// throughout the engine's Impl. `host` is filled (or received) on the CPU;
 // sync() pushes it to the device, fetch() pulls a device result back. Mirrors
 // thrust's host_vector/device_vector duo without the dependency (decision 40:
 // the backend stays one self-contained TU).
