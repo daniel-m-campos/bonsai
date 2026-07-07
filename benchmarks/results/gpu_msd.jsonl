@@ -19,3 +19,15 @@
 {"ts": "2026-07-07T04:41:02+00:00", "git_sha": "e04c6f6", "gpu": "NVIDIA GeForce RTX 5090", "threads": 16, "variant": "xgb_gpu", "fit_s": 4.94, "predict_s": 0.01, "rmse": 8.9924, "profile": {}}
 {"ts": "2026-07-07T04:41:15+00:00", "git_sha": "e04c6f6", "gpu": "NVIDIA GeForce RTX 5090", "threads": 16, "variant": "bonsai_gpu", "fit_s": 3.0, "predict_s": 3.1, "rmse": 8.9911, "profile": {"cuda_upload": 0.27, "cuda_gpu": 0.27, "cuda_unpack": 0.0, "cuda_cpu_fallback": 0.0, "grow_find": 0.36, "grow_bookkeep": 0.01, "grow_partition": 0.1, "grow_populate": 0.09, "grow_finalize": 0.0}}
 {"ts": "2026-07-07T04:41:15+00:00", "git_sha": "e04c6f6", "gpu": "NVIDIA GeForce RTX 5090", "threads": 16, "variant": "xgb_gpu", "fit_s": 7.06, "predict_s": 0.01, "rmse": 8.9924, "profile": {}}
+{"ts": "2026-07-07T19:13:20+00:00", "git_sha": "d14c9ad", "gpu": "NVIDIA GeForce RTX 5090", "threads": 16, "variant": "bonsai_gpu", "fit_s": 2.61, "predict_s": 0.54, "rmse": 8.9911, "profile": {}}
+{"ts": "2026-07-07T19:13:20+00:00", "git_sha": "d14c9ad", "gpu": "NVIDIA GeForce RTX 5090", "threads": 16, "variant": "bonsai_obl_gpu", "fit_s": 3.49, "predict_s": 0.39, "rmse": 9.1745, "profile": {}}
+{"ts": "2026-07-07T19:13:29+00:00", "git_sha": "d14c9ad", "gpu": "NVIDIA GeForce RTX 5090", "threads": 16, "variant": "bonsai_gpu", "fit_s": 2.51, "predict_s": 0.54, "rmse": 8.9911, "profile": {}}
+{"ts": "2026-07-07T19:13:29+00:00", "git_sha": "d14c9ad", "gpu": "NVIDIA GeForce RTX 5090", "threads": 16, "variant": "bonsai_obl_gpu", "fit_s": 3.5, "predict_s": 0.39, "rmse": 9.1745, "profile": {}}
+{"ts": "2026-07-07T19:13:36+00:00", "git_sha": "d14c9ad", "gpu": "NVIDIA GeForce RTX 5090", "threads": 16, "variant": "bonsai_gpu", "fit_s": 2.67, "predict_s": 0.54, "rmse": 8.9911, "profile": {}}
+{"ts": "2026-07-07T19:13:36+00:00", "git_sha": "d14c9ad", "gpu": "NVIDIA GeForce RTX 5090", "threads": 16, "variant": "bonsai_obl_gpu", "fit_s": 3.55, "predict_s": 0.38, "rmse": 9.1745, "profile": {}}
+{"ts": "2026-07-07T19:17:16+00:00", "git_sha": "d7e91e7", "gpu": "NVIDIA GeForce RTX 5090", "threads": 16, "variant": "bonsai_gpu", "fit_s": 3.12, "predict_s": 3.8, "rmse": 8.9911, "profile": {}}
+{"ts": "2026-07-07T19:17:16+00:00", "git_sha": "d7e91e7", "gpu": "NVIDIA GeForce RTX 5090", "threads": 16, "variant": "bonsai_obl_gpu", "fit_s": 3.86, "predict_s": 3.45, "rmse": 9.1745, "profile": {}}
+{"ts": "2026-07-07T19:17:31+00:00", "git_sha": "d7e91e7", "gpu": "NVIDIA GeForce RTX 5090", "threads": 16, "variant": "bonsai_gpu", "fit_s": 2.98, "predict_s": 4.67, "rmse": 8.9911, "profile": {}}
+{"ts": "2026-07-07T19:17:31+00:00", "git_sha": "d7e91e7", "gpu": "NVIDIA GeForce RTX 5090", "threads": 16, "variant": "bonsai_obl_gpu", "fit_s": 3.97, "predict_s": 3.27, "rmse": 9.1745, "profile": {}}
+{"ts": "2026-07-07T19:17:47+00:00", "git_sha": "d7e91e7", "gpu": "NVIDIA GeForce RTX 5090", "threads": 16, "variant": "bonsai_gpu", "fit_s": 2.91, "predict_s": 2.92, "rmse": 8.9911, "profile": {}}
+{"ts": "2026-07-07T19:17:47+00:00", "git_sha": "d7e91e7", "gpu": "NVIDIA GeForce RTX 5090", "threads": 16, "variant": "bonsai_obl_gpu", "fit_s": 3.91, "predict_s": 3.17, "rmse": 9.1745, "profile": {}}

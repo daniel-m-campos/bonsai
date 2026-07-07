@@ -135,8 +135,8 @@ Measured on an RTX 5090 against each reference library, Year Prediction MSD (464
 
 | matchup (same tree strategy) | bonsai | reference | test RMSE (bonsai / ref) |
 |---|--:|--:|--|
-| `cuda_depthwise` vs **xgboost-GPU** (depthwise hist) | **3.0 s** | 4.8–7.1 s | 8.99 / 8.99 |
-| `cuda_oblivious` vs **CatBoost-GPU** (oblivious) | **3.9–4.1 s** | 7.3–8.2 s | 9.17 / 9.14 |
+| `cuda_depthwise` vs **xgboost-GPU** (depthwise hist) | **2.5–2.7 s** | 4.8–7.1 s | 8.99 / 8.99 |
+| `cuda_oblivious` vs **CatBoost-GPU** (oblivious) | **3.5 s** | 7.3–8.2 s | 9.17 / 9.14 |
 | `leafwise` (CPU) vs **LightGBM-GPU** (leaf-wise CUDA) | **11.1–11.5 s** | 12.0–12.9 s | 9.09 / 8.95 |
 
 bonsai wins each structure-matched comparison; the leafwise row is deliberately honest — bonsai has no device leafwise (best-first growth doesn't fit the level-batched resident plane), yet its CPU leafwise still beats LightGBM's CUDA backend on this card. On an A100, `cuda_depthwise` fits the same benchmark in 5.0 s vs 14.7 s for 16-thread CPU.
