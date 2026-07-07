@@ -143,7 +143,10 @@ struct CudaHistogramEngine::Impl
     Staged<int>            monotone;    // per feature
     DeviceBuffer<FeatBest> feat_best;
     Staged<FeatBest>       node_best;
-    Staged<uint32_t>       sofs; // small-node subset: ofs/cnt/slot
+    Staged<double>         level_child; // oblivious: 4 per node [gL,hL,gR,hR]
+    DeviceBuffer<double>   level_score; // oblivious: per (feature, dl, bin) scores
+    DeviceBuffer<int>      level_feas;  //   and all-nodes-feasible flags
+    Staged<uint32_t>       sofs;        // small-node subset: ofs/cnt/slot
     Staged<uint32_t>       scnt;
     Staged<uint32_t>       sslot;
 
@@ -350,6 +353,20 @@ struct CudaHistogramEngine::Impl
             child_sums[2 * i]       = {.sum_grad = b.gL, .sum_hess = b.hL};
             child_sums[(2 * i) + 1] = {.sum_grad = b.gR, .sum_hess = b.hR};
         }
+    }
+
+    // Oblivious level-find staging: node_sums only. The level kernel reads no
+    // bounds/monotone/interaction state (the oblivious grower rejects those
+    // constraints at construction), so the full stage_find_inputs is waste.
+    void stage_level_sums(std::span<SplitInput const> level)
+    {
+        node_sums.host.resize(2 * level.size());
+        for (size_t i = 0; i < level.size(); ++i)
+        {
+            node_sums.host[2 * i]       = level[i].sums.sum_grad;
+            node_sums.host[(2 * i) + 1] = level[i].sums.sum_hess;
+        }
+        node_sums.sync();
     }
 
     void ensure_dataset(Dataset const &dataset)
@@ -676,13 +693,12 @@ void CudaHistogramEngine::find_splits_many(Dataset const &ds, TreeConfig const &
 
     im.feat_best.reserve(n * im.n_selected);
     im.node_best.reserve(n);
-    find_kernel<<<dim3(im.n_selected, static_cast<uint32_t>(n)),
-                  dim3(32)>>>(im.cur().data(), im.features.device(), im.n_bins.data(),
-                              im.node_sums.device(), im.node_bounds.device(),
-                              any_mask ? im.allowed.device() : nullptr,
-                              im.monotone.device(), im.n_selected, im.stride,
-                              config.lambda_l1, config.lambda_l2, config.min_child_hess,
-                              config.min_gain_to_split, im.feat_best.data());
+    find_kernel<<<dim3(im.n_selected, static_cast<uint32_t>(n)), dim3(32)>>>(
+        im.cur().data(), im.features.device(), im.n_bins.data(), im.node_sums.device(),
+        im.node_bounds.device(), any_mask ? im.allowed.device() : nullptr,
+        im.monotone.device(), im.n_selected, im.stride, config.lambda_l1,
+        config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
+        im.feat_best.data());
     check(cudaGetLastError(), "find launch");
     reduce_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(32)>>>(
         im.feat_best.data(), im.n_selected, im.node_best.device());
@@ -695,6 +711,76 @@ void CudaHistogramEngine::find_splits_many(Dataset const &ds, TreeConfig const &
     lap(prof.gpu_s);
 
     im.unpack_splits(level, config, out, child_sums);
+    lap(prof.unpack_s);
+}
+
+void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
+                                           TreeConfig const           &config,
+                                           std::span<SplitInput const> level,
+                                           std::span<SplitOutput>      out,
+                                           std::span<HistCell>         child_sums)
+{
+    Impl        &im   = *impl_;
+    size_t const n    = level.size();
+    auto        &prof = im.prof_counters;
+    auto         lap  = prof.lap();
+
+    im.stage_level_sums(level);
+    lap(prof.upload_s);
+
+    // find -> reduce -> child-sums queue back to back (the child kernel reads
+    // the reduced winner on-device), so the level pays one sync at the fetch.
+    size_t const scratch = static_cast<size_t>(im.n_selected) * 2 * (im.stride / 2);
+    im.level_score.reserve(scratch);
+    im.level_feas.reserve(scratch);
+    im.feat_best.reserve(im.n_selected);
+    im.node_best.reserve(1);
+    im.level_child.reserve(4 * n);
+    level_find_kernel<<<dim3(im.n_selected), dim3(32)>>>(
+        im.cur().data(), im.features.device(), im.n_bins.data(), im.node_sums.device(),
+        im.n_selected, static_cast<uint32_t>(n), im.stride, config.lambda_l1,
+        config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
+        im.level_score.data(), im.level_feas.data(), im.feat_best.data());
+    check(cudaGetLastError(), "level find launch");
+    reduce_kernel<<<dim3(1), dim3(32)>>>(im.feat_best.data(), im.n_selected,
+                                         im.node_best.device());
+    check(cudaGetLastError(), "level reduce launch");
+    level_child_sums_kernel<<<dim3((static_cast<uint32_t>(n) + 127) / 128),
+                              dim3(128)>>>(
+        im.cur().data(), im.node_sums.device(), im.node_best.device(),
+        im.features.device(), im.n_bins.data(), static_cast<uint32_t>(n), im.n_selected,
+        im.stride, im.level_child.device());
+    check(cudaGetLastError(), "level child sums launch");
+    im.node_best.fetch(1); // DtoH, implicit sync
+    im.level_child.fetch(4 * n);
+    if (prof.enabled)
+    {
+        prof.launches += 3;
+    }
+    lap(prof.gpu_s);
+
+    // One split for the whole frontier, broadcast to every node; each node's
+    // (left, right) sums seed the children's SplitInput.sums for the next
+    // level's find (their device histograms are not host-scannable).
+    FeatBest const &b = im.node_best.host[0];
+    SplitOutput     split{};
+    if (b.valid != 0)
+    {
+        split = {.gain       = b.gain,
+                 .feature_id = static_cast<feature_id_t>(
+                     im.features.host[static_cast<size_t>(b.sel)]),
+                 .bin_id       = static_cast<bin_id_t>(b.bin),
+                 .default_left = b.dl != 0,
+                 .valid        = true};
+    }
+    for (size_t i = 0; i < n; ++i)
+    {
+        out[i]                  = split;
+        child_sums[2 * i]       = {.sum_grad = im.level_child.host[(4 * i) + 0],
+                                   .sum_hess = im.level_child.host[(4 * i) + 1]};
+        child_sums[(2 * i) + 1] = {.sum_grad = im.level_child.host[(4 * i) + 2],
+                                   .sum_hess = im.level_child.host[(4 * i) + 3]};
+    }
     lap(prof.unpack_s);
 }
 

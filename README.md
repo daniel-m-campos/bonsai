@@ -128,7 +128,17 @@ make test-cuda       # ctest against the CUDA build
 ./build-cuda/src/bonsai fit -c config.toml --set dispatch.grower_name=cuda_depthwise ...
 ```
 
-Training is device-resident ([docs/architecture/11-gpu-resident.md](docs/architecture/11-gpu-resident.md)): histograms, rows, and split finding all live on the GPU, with only split decisions and child counts crossing the bus per level (float shared-memory accumulation merged in double — RMSE matches the CPU grower to library-comparison precision). The host grow loop remains the single algorithm narrative and the decision-maker; saved models are ordinary `DenseTree`s, identical in format to `depthwise`, and predict on any build. The kernel TU ([src/cuda/histogram_builder.cu](src/cuda/histogram_builder.cu)) is CUDA C++ compiled by the project's own clang (`-x cuda`) — same C++23, same libc++, no nvcc — so kernels use bonsai types and the shared gain math directly. Set `BONSAI_CUDA_ARCH` if `native` detection is unavailable; `BONSAI_CUDA_PROFILE=1` / `BONSAI_GROW_PROFILE=1` print per-fit breakdowns. On an A100, Year Prediction MSD (464 k × 90, 200 iters, depth 8) fits end-to-end in 5.0 s vs 14.7 s for 16-thread CPU — xgboost-GPU's train phase on the same device is 1.8 s, with bonsai's grow loop at ~2.5 s and the difference dominated by CSV/binning outside the training path.
+Training is device-resident ([docs/architecture/11-gpu-resident.md](docs/architecture/11-gpu-resident.md)): histograms, rows, and split finding all live on the GPU, with only split decisions and child counts crossing the bus per level (float shared-memory accumulation merged in double — RMSE matches the CPU grower to library-comparison precision). The host grow loop remains the single algorithm narrative and the decision-maker; saved models are ordinary `DenseTree`s, identical in format to `depthwise`, and predict on any build. The kernel TU ([src/cuda/histogram_builder.cu](src/cuda/histogram_builder.cu)) is CUDA C++ compiled by the project's own clang (`-x cuda`) — same C++23, same libc++, no nvcc — so kernels use bonsai types and the shared gain math directly. Set `BONSAI_CUDA_ARCH` if `native` detection is unavailable; `BONSAI_CUDA_PROFILE=1` / `BONSAI_GROW_PROFILE=1` print per-fit breakdowns. Two growers run on the GPU: `cuda_depthwise` (fully device-resident) and `cuda_oblivious` (device level-find choosing one split per level across the whole frontier, CatBoost-style symmetric trees).
+
+Measured on an RTX 5090 against each reference library, Year Prediction MSD (464 k × 90, 200 iters, depth 8), every `fit` timing the full pipeline — CSV read + binning + train — via [scripts/bench_gpu.py](scripts/bench_gpu.py):
+
+| matchup (same tree strategy) | bonsai | reference | test RMSE (bonsai / ref) |
+|---|--:|--:|--|
+| `cuda_depthwise` vs **xgboost-GPU** (depthwise hist) | **3.0 s** | 4.8–7.1 s | 8.99 / 8.99 |
+| `cuda_oblivious` vs **CatBoost-GPU** (oblivious) | **3.9–4.1 s** | 7.3–8.2 s | 9.17 / 9.14 |
+| `leafwise` (CPU) vs **LightGBM-GPU** (leaf-wise CUDA) | **11.1–11.5 s** | 12.0–12.9 s | 9.09 / 8.95 |
+
+bonsai wins each structure-matched comparison; the leafwise row is deliberately honest — bonsai has no device leafwise (best-first growth doesn't fit the level-batched resident plane), yet its CPU leafwise still beats LightGBM's CUDA backend on this card. On an A100, `cuda_depthwise` fits the same benchmark in 5.0 s vs 14.7 s for 16-thread CPU.
 
 ## Extending bonsai
 

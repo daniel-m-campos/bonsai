@@ -77,6 +77,7 @@ concept GPULevelEngine =
         b.advance_level(ds, lops);
         b.finalize_rows(by_row);
         b.find_splits_many(ds, config, level, out, child_sums);
+        b.find_level_split(ds, config, level, out, child_sums);
     };
 
 struct CpuHistogramEngine
@@ -95,7 +96,8 @@ template <HistogramEngine EngineT   = CpuHistogramEngine,
 class DepthwiseGrower
 {
   public:
-    using Tree = DenseTree;
+    using Engine = EngineT;
+    using Tree   = DenseTree;
     explicit DepthwiseGrower(TreeConfig const &cfg);
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
                           row_index_view row_indices);
@@ -112,7 +114,8 @@ template <HistogramEngine  EngineT   = CpuHistogramEngine,
 class ObliviousGrower
 {
   public:
-    using Tree = ObliviousTree;
+    using Engine = EngineT;
+    using Tree   = ObliviousTree;
     explicit ObliviousGrower(TreeConfig const &cfg);
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
                           row_index_view row_indices);
@@ -128,7 +131,8 @@ template <HistogramEngine EngineT   = CpuHistogramEngine,
 class LeafwiseGrower
 {
   public:
-    using Tree = DenseTree;
+    using Engine = EngineT;
+    using Tree   = DenseTree;
     explicit LeafwiseGrower(TreeConfig const &cfg);
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
                           row_index_view row_indices);

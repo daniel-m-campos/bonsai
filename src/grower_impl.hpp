@@ -220,9 +220,17 @@ plan_level(Dataset const &ds, TreeConfig const &config,
         HistCell const ls = child_sums.empty() ? HistCell{} : child_sums[2 * size_t{i}];
         HistCell const rs =
             child_sums.empty() ? HistCell{} : child_sums[(2 * size_t{i}) + 1];
-        plan.splits.push_back({std::move(node), PendingSplit{}, split, left_id,
-                               right_id, parent_lo, parent_hi, std::move(parent_path),
-                               static_cast<uint32_t>(i), ls, rs});
+        plan.splits.push_back({.parent      = std::move(node),
+                               .p           = {},
+                               .split       = split,
+                               .left_id     = left_id,
+                               .right_id    = right_id,
+                               .parent_lo   = parent_lo,
+                               .parent_hi   = parent_hi,
+                               .parent_path = std::move(parent_path),
+                               .parent_slot = static_cast<uint32_t>(i),
+                               .left_sums   = ls,
+                               .right_sums  = rs});
     }
     lap(GrowProfiler::instance().bookkeep_s);
     return plan;
@@ -448,17 +456,20 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
         plan.splits.reserve(frontier.size());
         for (uint32_t i = 0; i < frontier.size(); ++i)
         {
-            plan.splits.push_back({std::move(frontier[i]),
-                                   gd::PendingSplit{},
-                                   split,
-                                   0,
-                                   0,
-                                   0.0,
-                                   0.0,
-                                   {},
-                                   i,
-                                   {},
-                                   {}});
+            HistCell const ls = child_sums.empty() ? HistCell{} : child_sums[2 * i];
+            HistCell const rs =
+                child_sums.empty() ? HistCell{} : child_sums[(2 * i) + 1];
+            plan.splits.push_back({.parent      = std::move(frontier[i]),
+                                   .p           = {},
+                                   .split       = split,
+                                   .left_id     = 0,
+                                   .right_id    = 0,
+                                   .parent_lo   = 0.0,
+                                   .parent_hi   = 0.0,
+                                   .parent_path = {},
+                                   .parent_slot = i,
+                                   .left_sums   = ls,
+                                   .right_sums  = rs});
         }
         step.partition(plan);
         step.build_children(plan);
@@ -480,12 +491,10 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
         auto const &leaf = frontier[li];
         float const v = gd::leaf_value(leaf.total_grad(), leaf.total_hess(), config_);
         leaf_table.push_back(v);
-        for (row_id_t r : leaf.rows)
-        {
-            values[r]   = v;
-            leaf_ids[r] = static_cast<node_id_t>(li);
-        }
     }
+    // Host plane stamps each leaf's rows; device plane stamps the resident
+    // segments and downloads the per-row assignment.
+    step.finalize_leaves(frontier, leaf_table, values, leaf_ids, row_indices);
 
     // Same stale-score hazard as route_unsampled: rows the sampler dropped
     // still need this tree's contribution in their train values.

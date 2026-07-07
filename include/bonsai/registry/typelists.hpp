@@ -17,7 +17,8 @@ using Objectives = TypeList<MSEObjective, LogLossObjective, MAEObjective,
                             HuberObjective, QuantileObjective, SoftmaxObjective>;
 using Growers =
     TypeList<DepthwiseGrower<CpuHistogramEngine>, ObliviousGrower<CpuHistogramEngine>,
-             LeafwiseGrower<CpuHistogramEngine>, CudaDepthwiseGrower>;
+             LeafwiseGrower<CpuHistogramEngine>, CudaDepthwiseGrower,
+             CudaObliviousGrower>;
 using Samplers = TypeList<AllRowsSampler, BernoulliSampler, GossSampler>;
 
 namespace detail
