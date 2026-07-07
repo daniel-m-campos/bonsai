@@ -381,7 +381,10 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
         size_t const sp = line.find(' ');
         float        label{};
         auto const   lend = sp == std::string_view::npos ? line.size() : sp;
-        std::from_chars(line.data(), line.data() + lend, label);
+        // Explicit end pointer bounds the read; no null terminator needed.
+        std::from_chars(
+            line.data(), // NOLINT(bugprone-suspicious-stringview-data-usage)
+            line.data() + lend, label);
         labels.push_back(label);
         rows.emplace_back();
 

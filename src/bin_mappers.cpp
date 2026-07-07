@@ -28,7 +28,9 @@ BinMappers BinMappers::fit(detail::ColumnBatch const &batch, BinMapperConfig con
     out.mappers_.reserve(slots.size());
     for (auto &s : slots)
     {
-        out.mappers_.push_back(std::move(*s));
+        // Every slot was filled by the loop above.
+        out.mappers_.push_back(
+            std::move(*s)); // NOLINT(bugprone-unchecked-optional-access)
     }
     out.feature_names_ = batch.feature_names;
     return out;

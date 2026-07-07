@@ -29,7 +29,7 @@ class BinMapper
     }
 
   private:
-    BinMapper(std::vector<float> cuts) : cuts_{std::move(cuts)} {}
+    explicit BinMapper(std::vector<float> cuts) : cuts_{std::move(cuts)} {}
 
     std::vector<float> cuts_;
 };

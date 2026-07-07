@@ -348,7 +348,8 @@ template <> struct FieldCodec<std::optional<float>>
     // Caller (dump_toml) skips the key when nullopt; precondition: has_value().
     static toml::value<double> to_toml(std::optional<float> const &v)
     {
-        return toml::value{static_cast<double>(*v)};
+        return toml::value{
+            static_cast<double>(*v)}; // NOLINT(bugprone-unchecked-optional-access)
     }
 };
 

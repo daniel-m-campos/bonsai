@@ -1,6 +1,7 @@
 #pragma once
 
 #include <concepts>
+#include <cstdint>
 #include <string_view>
 
 namespace bonsai
@@ -9,7 +10,7 @@ namespace bonsai
 // The kind of supervised-learning task an objective or metric applies to.
 // Used to type-check metric-vs-objective compatibility (e.g. reject
 // `accuracy` on a regression model).
-enum class TaskKind
+enum class TaskKind : uint8_t
 {
     regression,
     binary_classification,

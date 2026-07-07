@@ -80,11 +80,11 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
             }
             if (mc != 0)
             {
-                double const wL =
+                double const w_left =
                     bounded_leaf_weight(s.gL, s.hL, config, input.lo, input.hi);
-                double const wR =
+                double const w_right =
                     bounded_leaf_weight(s.gR, s.hR, config, input.lo, input.hi);
-                if (static_cast<double>(mc) * (wR - wL) < 0.0)
+                if (static_cast<double>(mc) * (w_right - w_left) < 0.0)
                 {
                     continue; // would break monotonicity in feature fid
                 }

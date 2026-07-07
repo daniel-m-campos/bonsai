@@ -151,8 +151,10 @@ float compute_auc(floats_view probs, floats_view labels)
     {
         return 1.0F; // degenerate: one class only
     }
-    double const u = rank_sum_pos - (static_cast<double>(n_pos) * (n_pos + 1) / 2.0);
-    return static_cast<float>(u / (static_cast<double>(n_pos) * n_neg));
+    double const u = rank_sum_pos - (static_cast<double>(n_pos) *
+                                     static_cast<double>(n_pos + 1) / 2.0);
+    return static_cast<float>(
+        u / (static_cast<double>(n_pos) * static_cast<double>(n_neg)));
 }
 
 float compute_mc_accuracy(floats_view class_ids, floats_view labels)

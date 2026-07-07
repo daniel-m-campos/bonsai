@@ -1,7 +1,9 @@
 CAVEMAN_URL  := https://raw.githubusercontent.com/juliusbrussee/caveman/main/skills/caveman/SKILL.md
 SKILLS_DIR   := .claude/skills
 SOURCES      := $(shell find src include tests benchmarks -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.cu' -o -name '*.cuh' \) 2>/dev/null)
-LINT_SOURCES := $(shell find src -type f -name '*.cpp' 2>/dev/null)
+# src/python is excluded: the nanobind NB_MODULE macro and capsule-deleter
+# FFI patterns trip cppcoreguidelines checks that don't apply to boundary code.
+LINT_SOURCES := $(shell find src -type f -name '*.cpp' -not -path 'src/python/*' 2>/dev/null)
 TOY_SENTINEL := tests/data/.toy-fetched
 
 # Toolchain root: homebrew LLVM on macOS, apt.llvm.org layout on Linux.
@@ -65,14 +67,19 @@ format:
 format-check:
 	@$(LLVM_BIN)/clang-format --dry-run --Werror $(SOURCES)
 
+# run-clang-tidy exits non-zero when findings exist; a non-zero exit with
+# no findings means the tool itself failed and must not pass silently.
 lint: build/build.ninja
-	@out=$$($(LLVM_BIN)/run-clang-tidy -quiet -use-color=0 \
+	@log=$$($(LLVM_BIN)/run-clang-tidy -quiet -use-color=0 \
 	    -clang-tidy-binary $(LLVM_BIN)/clang-tidy \
 	    $(LINT_EXTRA_ARGS) \
-	    -header-filter='include/bonsai/.*' -p build $(LINT_SOURCES) 2>/dev/null \
-	    | grep -E '(warning|error):' \
+	    -header-filter='include/bonsai/.*' -p build $(LINT_SOURCES) 2>&1); \
+	status=$$?; \
+	out=$$(echo "$$log" | grep -E '(warning|error):' \
 	    | grep -v -E '(c\+\+/v1|system-headers|too many)'); \
 	if [ -n "$$out" ]; then echo "$$out"; exit 1; fi; \
+	if [ $$status -ne 0 ]; then echo "$$log" | tail -20; \
+	    echo "lint: run-clang-tidy failed"; exit 1; fi; \
 	echo "lint: no findings."
 
 run: build

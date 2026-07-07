@@ -5,6 +5,13 @@
 # - modern-*: Suggests C++20/23 improvements (e.g., "use std::print", "use auto").
 # - performance-*: Flags expensive copies.
 # - readability-*: Enforces clear code style.
+#
+# The second disable block (decision 43) curates checks the codebase
+# deliberately does not satisfy: pointers/arithmetic at C/CUDA/codec
+# boundaries, reference members in view-like classes, callback F&& APIs
+# that use rather than forward, concept archetypes with unnamed params,
+# and established long functions. Re-enable one at a time in a dedicated
+# cleanup, never silently.
 Checks: >
   -*,
   bugprone-*,
@@ -13,7 +20,6 @@ Checks: >
   modernize-*,
   performance-*,
   readability-*,
-  misc-include-cleaner,
   -google-runtime-references,
   -readability-identifier-length,
   -readability-uppercase-literal-suffix,
@@ -23,6 +29,22 @@ Checks: >
   -modernize-use-nodiscard,
   -modernize-use-trailing-return-type,
   -cppcoreguidelines-pro-type-member-init,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-avoid-const-or-ref-data-members,
+  -cppcoreguidelines-special-member-functions,
+  -cppcoreguidelines-missing-std-forward,
+  -bugprone-easily-swappable-parameters,
+  -readability-convert-member-functions-to-static,
+  -readability-named-parameter,
+  -readability-function-size,
+  -readability-function-cognitive-complexity,
+  -readability-avoid-nested-conditional-operator,
+  -readability-math-missing-parentheses,
+  -readability-redundant-member-init,
+  -modernize-use-integer-sign-comparison,
+  -modernize-use-designated-initializers,
 
 # 2. Settings
 # Treat warnings as errors? (Like --strict in Python)
@@ -33,6 +55,3 @@ CheckOptions:
   # Enforce variable naming (snake_case is standard in C++ std lib)
   readability-identifier-naming.VariableCase: lower_case
   readability-identifier-naming.FunctionCase: lower_case
-
-  # Limit function length (forces modularity)
-  readability-function-size.LineThreshold: 88

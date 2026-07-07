@@ -36,9 +36,9 @@ std::vector<float> create_subsample(floats_view column, BinMapperConfig const &c
     else
     {
         subsample.reserve(cfg.n_samples);
-        std::ranges::sample(column | std::views::filter(is_not_nan),
-                            std::back_inserter(subsample), cfg.n_samples,
-                            std::mt19937(cfg.seed));
+        std::ranges::sample(
+            column | std::views::filter(is_not_nan), std::back_inserter(subsample),
+            static_cast<std::ptrdiff_t>(cfg.n_samples), std::mt19937(cfg.seed));
     }
     return subsample;
 }
@@ -58,7 +58,7 @@ std::vector<float> create_cuts(std::vector<float> &subsample, size_t step)
     auto               lo = subsample.begin();
     for (size_t k = step; k < subsample.size(); k += step)
     {
-        auto target = subsample.begin() + k;
+        auto target = subsample.begin() + static_cast<std::ptrdiff_t>(k);
         std::nth_element(lo, target, subsample.end());
         if (cuts.empty() || cuts.back() < *target)
         {
@@ -79,7 +79,7 @@ BinMapper BinMapper::fit(floats_view column, BinMapperConfig const &cfg)
     size_t const cut_budget = cfg.max_bin - 2;
     auto         subsample  = create_subsample(column, cfg);
     auto cuts = create_cuts(subsample, quantile_step(subsample.size(), cut_budget));
-    return {std::move(cuts)};
+    return BinMapper{std::move(cuts)};
 }
 
 bin_id_t BinMapper::transform(float x) const

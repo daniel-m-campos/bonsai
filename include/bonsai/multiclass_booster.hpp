@@ -49,33 +49,33 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
 
     void update_one_iter(Dataset const &train) override
     {
-        size_t const n = train.n_rows();
-        size_t const K = n_classes_;
+        size_t const n   = train.n_rows();
+        size_t const n_k = n_classes_;
         if (scores_.empty())
         {
             grad_.resize(n);
             hess_.resize(n);
-            init_scores_.assign(K, 0.0F);
+            init_scores_.assign(n_k, 0.0F);
             if (trees_.empty())
             {
                 // Log class priors, like lightgbm's boost_from_average.
-                std::vector<double> counts(K, 0.0);
+                std::vector<double> counts(n_k, 0.0);
                 for (float const y : train.labels())
                 {
-                    counts[class_of(y, K)] += 1.0;
+                    counts[class_of(y, n_k)] += 1.0;
                 }
-                for (size_t k = 0; k < K; ++k)
+                for (size_t k = 0; k < n_k; ++k)
                 {
                     init_scores_[k] = static_cast<float>(
                         std::log(std::max(counts[k], 1.0) / static_cast<double>(n)));
                 }
             }
-            scores_.assign(n * K, 0.0F);
+            scores_.assign(n * n_k, 0.0F);
             for (size_t i = 0; i < n; ++i)
             {
-                for (size_t k = 0; k < K; ++k)
+                for (size_t k = 0; k < n_k; ++k)
                 {
-                    scores_[(i * K) + k] = init_scores_[k];
+                    scores_[(i * n_k) + k] = init_scores_[k];
                 }
             }
             if (!trees_.empty())
@@ -85,36 +85,36 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                 {
                     std::vector<float> raw(n, 0.0F);
                     internal::accumulate_train_contribution(trees_[t], train, raw);
-                    size_t const k = t % K;
+                    size_t const k = t % n_k;
                     for (size_t i = 0; i < n; ++i)
                     {
-                        scores_[(i * K) + k] += config_.learning_rate * raw[i];
+                        scores_[(i * n_k) + k] += config_.learning_rate * raw[i];
                     }
                 }
             }
         }
 
         // Per-row softmax probabilities feed every class's gradients.
-        std::vector<float> probs(n * K);
+        std::vector<float> probs(n * n_k);
         parallel::for_each_index(
             n,
             [&](size_t i)
             {
-                double maxv = scores_[i * K];
-                for (size_t k = 1; k < K; ++k)
+                double maxv = scores_[i * n_k];
+                for (size_t k = 1; k < n_k; ++k)
                 {
-                    maxv = std::max(maxv, static_cast<double>(scores_[(i * K) + k]));
+                    maxv = std::max(maxv, static_cast<double>(scores_[(i * n_k) + k]));
                 }
                 double sum = 0.0;
-                for (size_t k = 0; k < K; ++k)
+                for (size_t k = 0; k < n_k; ++k)
                 {
-                    double const e     = std::exp(scores_[(i * K) + k] - maxv);
-                    probs[(i * K) + k] = static_cast<float>(e);
+                    double const e       = std::exp(scores_[(i * n_k) + k] - maxv);
+                    probs[(i * n_k) + k] = static_cast<float>(e);
                     sum += e;
                 }
-                for (size_t k = 0; k < K; ++k)
+                for (size_t k = 0; k < n_k; ++k)
                 {
-                    probs[(i * K) + k] /= static_cast<float>(sum);
+                    probs[(i * n_k) + k] /= static_cast<float>(sum);
                 }
             });
 
@@ -122,14 +122,14 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         {
             row_indices_.resize(n);
         }
-        for (size_t k = 0; k < K; ++k)
+        for (size_t k = 0; k < n_k; ++k)
         {
             parallel::for_each_index(
                 n,
                 [&](size_t i)
                 {
-                    float const p = probs[(i * K) + k];
-                    float const y = class_of(train.labels()[i], K) == k ? 1.0F : 0.0F;
+                    float const p = probs[(i * n_k) + k];
+                    float const y = class_of(train.labels()[i], n_k) == k ? 1.0F : 0.0F;
                     grad_[i]      = p - y;
                     hess_[i]      = std::max(2.0F * p * (1.0F - p), 1e-6F);
                 });
@@ -138,7 +138,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                 grower_.grow(train, grad_, hess_, {row_indices_.data(), n_selected});
             parallel::for_each_index(
                 n, [&](size_t i)
-                { scores_[(i * K) + k] += config_.learning_rate * leaf_values[i]; });
+                { scores_[(i * n_k) + k] += config_.learning_rate * leaf_values[i]; });
             trees_.push_back(std::move(tree));
         }
     }
@@ -296,10 +296,10 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     }
 
   private:
-    static size_t class_of(float label, size_t K)
+    static size_t class_of(float label, size_t n_k)
     {
-        auto const k = static_cast<long>(std::lround(label));
-        return k >= 0 && static_cast<size_t>(k) < K ? static_cast<size_t>(k) : 0;
+        auto const k = std::lround(label);
+        return k >= 0 && static_cast<size_t>(k) < n_k ? static_cast<size_t>(k) : 0;
     }
 
     // Raw (init + lr * tree sums) scores, n_rows x K, using the first
