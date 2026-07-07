@@ -91,6 +91,8 @@ model.save("model.msgpack")           # loadable by `bonsai predict` and vice ve
 
 Install with `pip install .` (scikit-build-core builds the extension), or for development `cmake -B build -DBONSAI_PYTHON=ON && cmake --build build --target _bonsai` and set `PYTHONPATH=build/python`. Requires `nanobind` and `numpy` at build time. `scripts/compare.py` automatically adds in-process "native" rows to the benchmark table when the module is importable, timed the same way as the reference libraries.
 
+`BonsaiRegressor(config="cfg.toml")` / `train(..., config=...)` load a TOML file as the base config (the CLI's `-c`); kwargs and `params` override it. For GPU training from Python, `make python-cuda` builds the extension in the CUDA tree (use `PYTHONPATH=build-cuda/python`), or `pip install . -C cmake.define.BONSAI_CUDA=ON -C cmake.define.BONSAI_CUDA_ARCH=sm_120`; `bonsai.cuda_available()` reports whether `cuda_*` growers can train on this machine.
+
 `bonsai info` lists every `(objective, grower, sampler)` triple the binary knows how to dispatch to (currently 6×4×3 = 72 combos; growers that can't train on the current machine, like `cuda_depthwise` without a GPU, are marked predict-only).
 
 ## Build

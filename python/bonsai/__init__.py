@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import numpy as np
 
-from ._bonsai import Model, default_config_toml, load, train
+from ._bonsai import Model, cuda_available, default_config_toml, load, train
 
-__all__ = ["BonsaiRegressor", "Model", "default_config_toml", "load", "train"]
+__all__ = [
+    "BonsaiRegressor",
+    "Model",
+    "cuda_available",
+    "default_config_toml",
+    "load",
+    "train",
+]
 
 
 def _as_2d_f32(X) -> np.ndarray:
@@ -30,6 +37,12 @@ class BonsaiRegressor:
     through ``params`` using dotted config keys, e.g.
     ``params={"tree.lambda_l1": 0.5, "sampler.top_rate": 0.2}`` — the same
     keys the CLI accepts via ``--set``.
+
+    ``config`` names a TOML file used as the base config (the CLI's ``-c``).
+    Keyword arguments and ``params`` always win over the file — including the
+    first-class kwargs at their defaults, which are always emitted. To defer
+    a knob to the file, set it there and leave it out of ``params``, or use
+    ``train()`` directly.
     """
 
     def __init__(
@@ -45,6 +58,7 @@ class BonsaiRegressor:
         n_threads: int = 0,
         random_seed: int = 42,
         params: dict | None = None,
+        config: str | None = None,
     ):
         self._params = {
             "booster.n_iters": n_iters,
@@ -59,6 +73,7 @@ class BonsaiRegressor:
             "parallel.n_threads": n_threads,
             **(params or {}),
         }
+        self._config = config
         self._model: Model | None = None
 
     def fit(self, X, y, eval_set: tuple | None = None,
@@ -69,7 +84,9 @@ class BonsaiRegressor:
         ev = None
         if eval_set is not None:
             ev = (_as_2d_f32(eval_set[0]), _as_1d_f32(eval_set[1]))
-        self._model = train(pairs, _as_2d_f32(X), _as_1d_f32(y), ev, init_model)
+        self._model = train(
+            pairs, _as_2d_f32(X), _as_1d_f32(y), ev, init_model, self._config
+        )
         return self
 
     def predict(self, X, num_iteration: int = 0) -> np.ndarray:

@@ -22,6 +22,7 @@
 #include "bonsai/cli/pipeline.hpp"
 #include "bonsai/config/config.hpp"
 #include "bonsai/config/toml.hpp"
+#include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/io/model.hpp"
@@ -197,10 +198,14 @@ class Model
     bonsai::Config                    cfg_;
 };
 
+// Precedence: TOML file (when given) provides the base, params override it —
+// the CLI's -c + --set ordering.
 bonsai::Config
-config_from_params(std::vector<std::pair<std::string, std::string>> const &params)
+config_from_params(std::vector<std::pair<std::string, std::string>> const &params,
+                   std::optional<std::string> const                       &config_path)
 {
-    bonsai::Config                        cfg;
+    bonsai::Config cfg =
+        config_path ? bonsai::config::load_toml(*config_path) : bonsai::Config{};
     std::vector<bonsai::config::Override> overrides;
     overrides.reserve(params.size());
     for (auto const &[key, value] : params)
@@ -214,9 +219,10 @@ config_from_params(std::vector<std::pair<std::string, std::string>> const &param
 Model train(std::vector<std::pair<std::string, std::string>> const &params,
             array_2d const &X, array_1d const &y,
             std::optional<std::pair<array_2d, array_1d>> const &eval_set,
-            std::optional<std::string> const                   &init_model)
+            std::optional<std::string> const                   &init_model,
+            std::optional<std::string> const                   &config)
 {
-    bonsai::Config const cfg = config_from_params(params);
+    bonsai::Config const cfg = config_from_params(params, config);
     bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
 
     std::optional<bonsai::io::LoadedBooster> init;
@@ -285,10 +291,15 @@ NB_MODULE(_bonsai, m)
 
     m.def("train", &train, nb::arg("params"), nb::arg("X"), nb::arg("y"),
           nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
+          nb::arg("config") = nb::none(),
           "Train a booster on row-major float32 features. `params` is a list "
           "of (dotted-key, value-string) config overrides, e.g. "
-          "('tree.max_depth', '8').");
+          "('tree.max_depth', '8'). `config` is a TOML file path used as the "
+          "base config; params override it (the CLI's -c + --set ordering).");
     m.def("load", &load, nb::arg("path"), "Load a model saved by Model.save.");
 
     m.def("default_config_toml", [] { return bonsai::config::dump_toml({}); });
+    m.def("cuda_available", &bonsai::cuda_available,
+          "True when the binary carries the CUDA backend and a usable device "
+          "is present (cuda_* growers can train).");
 }

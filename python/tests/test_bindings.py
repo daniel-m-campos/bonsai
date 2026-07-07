@@ -122,6 +122,47 @@ def test_pred_contribs_efficiency():
     np.testing.assert_allclose(c.sum(axis=1), p, atol=1e-3)
 
 
+def test_toml_config_base_and_precedence():
+    """config= is the base (CLI -c); explicit params override it (--set)."""
+    Xtr, ytr = load_csv(TRAIN_CSV)
+    with tempfile.TemporaryDirectory() as td:
+        toml = pathlib.Path(td) / "cfg.toml"
+        toml.write_text("[booster]\nn_iters = 7\n")
+
+        pairs = [("dispatch.grower_name", "depthwise")]
+        m = bonsai.train(pairs, Xtr[:200], ytr[:200], config=str(toml))
+        assert m.n_iters == 7
+
+        pairs.append(("booster.n_iters", "3"))
+        m = bonsai.train(pairs, Xtr[:200], ytr[:200], config=str(toml))
+        assert m.n_iters == 3
+
+        # BonsaiRegressor always emits its kwargs, so they win over the file.
+        r = bonsai.BonsaiRegressor(n_iters=4, config=str(toml)).fit(
+            Xtr[:200], ytr[:200]
+        )
+        assert r.n_iters_ == 4
+
+    try:
+        bonsai.train([], Xtr[:200], ytr[:200], config="/nonexistent/cfg.toml")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("expected an error for a missing config file")
+
+
+def test_cuda_available_reports():
+    """False on CPU-only builds; on a make python-cuda build with a device,
+    a cuda_* grower must actually train."""
+    assert isinstance(bonsai.cuda_available(), bool)
+    if bonsai.cuda_available():
+        Xtr, ytr = load_csv(TRAIN_CSV)
+        m = bonsai.BonsaiRegressor(
+            n_iters=5, grower="cuda_depthwise"
+        ).fit(Xtr[:1000], ytr[:1000])
+        assert m.n_iters_ == 5
+
+
 if __name__ == "__main__":
     test_fit_predict_rmse()
     test_parity_with_cli()
@@ -129,4 +170,6 @@ if __name__ == "__main__":
     test_bad_param_raises()
     test_feature_importance_agreement()
     test_pred_contribs_efficiency()
+    test_toml_config_base_and_precedence()
+    test_cuda_available_reports()
     print("all binding tests passed")
