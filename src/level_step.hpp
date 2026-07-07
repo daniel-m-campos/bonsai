@@ -539,7 +539,7 @@ class LevelStep<EngineT, SplitterT>
     // final slot with its leaf index and download the per-row assignment; the
     // host path already filled values via each leaf's rows.
     void finalize_leaves(std::vector<SplitInput> const &frontier,
-                         std::vector<float> const &leaf_table,
+                         std::vector<float> const      &leaf_table,
                          train_leaf_values &values, std::vector<node_id_t> &leaf_ids,
                          row_index_view row_indices)
     {

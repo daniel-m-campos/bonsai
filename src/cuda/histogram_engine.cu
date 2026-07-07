@@ -677,13 +677,12 @@ void CudaHistogramEngine::find_splits_many(Dataset const &ds, TreeConfig const &
 
     im.feat_best.reserve(n * im.n_selected);
     im.node_best.reserve(n);
-    find_kernel<<<dim3(im.n_selected, static_cast<uint32_t>(n)),
-                  dim3(32)>>>(im.cur().data(), im.features.device(), im.n_bins.data(),
-                              im.node_sums.device(), im.node_bounds.device(),
-                              any_mask ? im.allowed.device() : nullptr,
-                              im.monotone.device(), im.n_selected, im.stride,
-                              config.lambda_l1, config.lambda_l2, config.min_child_hess,
-                              config.min_gain_to_split, im.feat_best.data());
+    find_kernel<<<dim3(im.n_selected, static_cast<uint32_t>(n)), dim3(32)>>>(
+        im.cur().data(), im.features.device(), im.n_bins.data(), im.node_sums.device(),
+        im.node_bounds.device(), any_mask ? im.allowed.device() : nullptr,
+        im.monotone.device(), im.n_selected, im.stride, config.lambda_l1,
+        config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
+        im.feat_best.data());
     check(cudaGetLastError(), "find launch");
     reduce_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(32)>>>(
         im.feat_best.data(), im.n_selected, im.node_best.device());
@@ -742,26 +741,26 @@ void CudaHistogramEngine::find_level_split(Dataset const &ds, TreeConfig const &
     }
     if (b.valid != 0)
     {
-        auto const   sel = static_cast<uint32_t>(b.sel);
-        auto const   fid = static_cast<feature_id_t>(im.features.host[sel]);
-        auto const   nb  = static_cast<uint32_t>(ds.n_bins(fid));
-        split            = {.gain         = b.gain,
-                            .feature_id   = fid,
-                            .bin_id       = static_cast<bin_id_t>(b.bin),
-                            .default_left = b.dl != 0,
-                            .valid        = true};
+        auto const sel = static_cast<uint32_t>(b.sel);
+        auto const fid = static_cast<feature_id_t>(im.features.host[sel]);
+        auto const nb  = static_cast<uint32_t>(ds.n_bins(fid));
+        split          = {.gain         = b.gain,
+                          .feature_id   = fid,
+                          .bin_id       = static_cast<bin_id_t>(b.bin),
+                          .default_left = b.dl != 0,
+                          .valid        = true};
         im.level_child.reserve(4 * n);
         level_child_sums_kernel<<<dim3((static_cast<uint32_t>(n) + 127) / 128),
-                                  dim3(128)>>>(
-            im.cur().data(), im.node_sums.device(), sel, static_cast<uint32_t>(b.bin),
-            b.dl, static_cast<uint32_t>(n), im.n_selected, im.stride, nb,
-            im.level_child.device());
+                                  dim3(128)>>>(im.cur().data(), im.node_sums.device(),
+                                               sel, static_cast<uint32_t>(b.bin), b.dl,
+                                               static_cast<uint32_t>(n), im.n_selected,
+                                               im.stride, nb, im.level_child.device());
         check(cudaGetLastError(), "level child sums launch");
         im.level_child.fetch(4 * n);
         for (size_t i = 0; i < n; ++i)
         {
-            child_sums[2 * i] = {.sum_grad = im.level_child.host[(4 * i) + 0],
-                                 .sum_hess = im.level_child.host[(4 * i) + 1]};
+            child_sums[2 * i]       = {.sum_grad = im.level_child.host[(4 * i) + 0],
+                                       .sum_hess = im.level_child.host[(4 * i) + 1]};
             child_sums[(2 * i) + 1] = {.sum_grad = im.level_child.host[(4 * i) + 2],
                                        .sum_hess = im.level_child.host[(4 * i) + 3]};
         }

@@ -350,8 +350,8 @@ struct FeatBest
 // True when candidate a beats b under the serial scan's tie-break: higher
 // gain, then lower bin, then default_left first (dl 1 before 0). Ties never
 // replace in the serial `gain > best` loop, so equal gains keep the earlier.
-__device__ inline bool feat_better(double ga, int ba, int da, int va, double gb,
-                                   int bb, int db, int vb)
+inline __device__ bool feat_better(double ga, int ba, int da, int va, double gb, int bb,
+                                   int db, int vb)
 {
     if (va != vb)
     {
@@ -433,7 +433,7 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
         double         vg = (b < n_cut) ? cells[pair_off(b)] : 0.0;
         double         vh = (b < n_cut) ? cells[pair_off(b) + 1] : 0.0;
         // Warp inclusive scan (shuffle-up) of this tile's grad/hess.
-        double sg = vg;
+        double sg  = vg;
         double sh_ = vh;
         for (int off = 1; off < 32; off <<= 1)
         {
@@ -596,8 +596,9 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
         int    feasL = 1, feasR = 1;
         for (int k = 0; k < kcnt; ++k)
         {
-            uint32_t const p     = lane + (32U * static_cast<uint32_t>(k));
-            double const  *cells = hists + ((static_cast<size_t>(p) * n_sel + f) * stride);
+            uint32_t const p = lane + (32U * static_cast<uint32_t>(k));
+            double const  *cells =
+                hists + ((static_cast<size_t>(p) * n_sel + f) * stride);
             pg[k] += cells[pair_off(b)];
             ph[k] += cells[pair_off(b) + 1];
             double const gL1 = pg[k] + mg[k], hL1 = ph[k] + mh[k];
@@ -635,9 +636,15 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
                 double const g = csL - sum_parent;
                 if (g > best.gain && g >= min_gain)
                 {
-                    best = {.gain = g, .gL = 0, .hL = 0, .gR = 0, .hR = 0,
-                            .bin = static_cast<int32_t>(b), .dl = 1, .valid = 1,
-                            .sel = static_cast<int32_t>(f)};
+                    best = {.gain  = g,
+                            .gL    = 0,
+                            .hL    = 0,
+                            .gR    = 0,
+                            .hR    = 0,
+                            .bin   = static_cast<int32_t>(b),
+                            .dl    = 1,
+                            .valid = 1,
+                            .sel   = static_cast<int32_t>(f)};
                 }
             }
             if (feasR != 0)
@@ -645,9 +652,15 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
                 double const g = csR - sum_parent;
                 if (g > best.gain && g >= min_gain)
                 {
-                    best = {.gain = g, .gL = 0, .hL = 0, .gR = 0, .hR = 0,
-                            .bin = static_cast<int32_t>(b), .dl = 0, .valid = 1,
-                            .sel = static_cast<int32_t>(f)};
+                    best = {.gain  = g,
+                            .gL    = 0,
+                            .hL    = 0,
+                            .gR    = 0,
+                            .hR    = 0,
+                            .bin   = static_cast<int32_t>(b),
+                            .dl    = 0,
+                            .valid = 1,
+                            .sel   = static_cast<int32_t>(f)};
                 }
             }
         }
@@ -664,8 +677,8 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
 // children's SplitInput.sums (device histograms aren't host-scannable).
 __global__ void level_child_sums_kernel(double const *hists, double const *node_sums,
                                         uint32_t sel, uint32_t bin, int dl,
-                                        uint32_t n_nodes, uint32_t n_sel, uint32_t stride,
-                                        uint32_t nb, double *out4)
+                                        uint32_t n_nodes, uint32_t n_sel,
+                                        uint32_t stride, uint32_t nb, double *out4)
 {
     uint32_t const p = (blockIdx.x * blockDim.x) + threadIdx.x;
     if (p >= n_nodes)
@@ -683,14 +696,14 @@ __global__ void level_child_sums_kernel(double const *hists, double const *node_
         pg += cells[pair_off(b)];
         ph += cells[pair_off(b) + 1];
     }
-    double const gL      = pg + (dl != 0 ? miss_g : 0.0);
-    double const hL      = ph + (dl != 0 ? miss_h : 0.0);
-    double const gR      = (g - miss_g - pg) + (dl == 0 ? miss_g : 0.0);
-    double const hR      = (h - miss_h - ph) + (dl == 0 ? miss_h : 0.0);
-    out4[(4 * p) + 0]    = gL;
-    out4[(4 * p) + 1]    = hL;
-    out4[(4 * p) + 2]    = gR;
-    out4[(4 * p) + 3]    = hR;
+    double const gL   = pg + (dl != 0 ? miss_g : 0.0);
+    double const hL   = ph + (dl != 0 ? miss_h : 0.0);
+    double const gR   = (g - miss_g - pg) + (dl == 0 ? miss_g : 0.0);
+    double const hR   = (h - miss_h - ph) + (dl == 0 ? miss_h : 0.0);
+    out4[(4 * p) + 0] = gL;
+    out4[(4 * p) + 1] = hL;
+    out4[(4 * p) + 2] = gR;
+    out4[(4 * p) + 3] = hR;
 }
 
 // NOLINTEND(bugprone-easily-swappable-parameters,cppcoreguidelines-avoid-c-arrays,cppcoreguidelines-pro-bounds-pointer-arithmetic,modernize-avoid-c-arrays,cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-bounds-array-to-pointer-decay,readability-function-cognitive-complexity,readability-identifier-naming)
