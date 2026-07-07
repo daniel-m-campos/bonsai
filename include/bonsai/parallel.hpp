@@ -27,11 +27,17 @@ inline void set_n_threads(uint32_t n)
     internal::n_threads_slot() = static_cast<int>(n);
 }
 
+// Auto (n_threads = 0) caps the worker count: per-level parallel sections
+// are short, so on many-core hosts OpenMP barrier spin-wait dominates
+// useful work (issue #2: 60 vCPU ran 10x slower than 16). Explicit counts
+// pass through uncapped.
+inline constexpr int auto_thread_cap = 16;
+
 inline int n_threads()
 {
 #ifdef BONSAI_USE_OPENMP
     int const requested = internal::n_threads_slot();
-    return requested > 0 ? requested : omp_get_max_threads();
+    return requested > 0 ? requested : std::min(omp_get_max_threads(), auto_thread_cap);
 #else
     return 1;
 #endif
