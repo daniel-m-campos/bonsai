@@ -578,8 +578,8 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     // not use the device-resident plane (which keeps rows/histograms on the GPU
     // and has no single-node best-first path). The root is built directly via
     // populate — the CUDA engine's populate delegates to its CPU member, so
-    // this path is correct with either engine.
-    engine_.begin_tree(ds, grad, hess);
+    // this path is correct with either engine. begin_tree is skipped: it only
+    // stages device gradients the CPU-side populate never reads.
     SplitInput root;
     root.id = 0;
     root.rows.assign(row_indices.begin(), row_indices.end());
