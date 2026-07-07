@@ -26,7 +26,7 @@ grep -iE "registers|stack frame|spill|kernel" "$OUT/clang_ptxas.txt" || true
 
 echo "== nvcc build =="
 "$CUDA/bin/nvcc" "$SRC" -o "$OUT/bench_nvcc" \
-    -arch="$ARCH" -O3 -std=c++20 -I "$SHIM" \
+    -arch="$ARCH" -O3 -std=c++20 --expt-relaxed-constexpr -I "$SHIM" \
     -Xptxas -v 2>"$OUT/nvcc_ptxas.txt" || { cat "$OUT/nvcc_ptxas.txt"; exit 1; }
 grep -iE "registers|stack frame|spill|_kernel" "$OUT/nvcc_ptxas.txt" || true
 
@@ -35,7 +35,7 @@ echo "== run (nvcc)  ==" && "$OUT/bench_nvcc"
 
 echo "== SASS instruction profile (rough) =="
 for c in clang nvcc; do
-    cuobjdump -sass "$OUT/bench_$c" >"$OUT/$c.sass" 2>/dev/null || true
+    "$CUDA/bin/cuobjdump" -sass "$OUT/bench_$c" >"$OUT/$c.sass" 2>/dev/null || true
     dbl=$(grep -cE '\b(DADD|DMUL|DFMA|DSETP)\b' "$OUT/$c.sass" || true)
     atom=$(grep -cE '\b(ATOM|RED)\b' "$OUT/$c.sass" || true)
     tot=$(wc -l <"$OUT/$c.sass")
