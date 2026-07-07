@@ -50,21 +50,21 @@ size_t quantile_step(size_t subsample_size, size_t cut_budget)
     return std::max(subsample_size / cut_budget, 1UL);
 }
 
-// Pull out quantile values at stride `step` using nth_element on a
-// shrinking suffix. Drops duplicates and appends a +inf sentinel.
+// Sort once and read the quantile value at each stride: identical to the
+// previous shrinking-suffix nth_element per stride (both yield the exact
+// k-th order statistic) at a fraction of the element visits. Drops
+// duplicates and appends a +inf sentinel.
 std::vector<float> create_cuts(std::vector<float> &subsample, size_t step)
 {
+    std::sort(subsample.begin(), subsample.end());
     std::vector<float> cuts;
-    auto               lo = subsample.begin();
     for (size_t k = step; k < subsample.size(); k += step)
     {
-        auto target = subsample.begin() + static_cast<std::ptrdiff_t>(k);
-        std::nth_element(lo, target, subsample.end());
-        if (cuts.empty() || cuts.back() < *target)
+        float const v = subsample[k];
+        if (cuts.empty() || cuts.back() < v)
         {
-            cuts.push_back(*target);
+            cuts.push_back(v);
         }
-        lo = target + 1;
     }
     cuts.push_back(std::numeric_limits<float>::infinity());
     return cuts;
