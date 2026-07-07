@@ -102,6 +102,13 @@ python: build/build.ninja
 python-test: python $(TOY_SENTINEL)
 	@PYTHONPATH=build/python $(PYTHON) python/tests/test_bindings.py
 
+# CUDA-enabled extension in the CUDA tree; cuda_* growers can train.
+python-cuda: build-cuda/build.ninja
+	@cmake -B build-cuda -DBONSAI_PYTHON=ON -DBONSAI_OPENMP_STATIC=ON \
+	    -DPython_EXECUTABLE=$(abspath $(PYTHON)) >/dev/null
+	@cmake --build build-cuda --target _bonsai -j
+	@echo "module at build-cuda/python/bonsai — use PYTHONPATH=build-cuda/python"
+
 fit-benchmark: build $(TOY_SENTINEL)
 	@uv run scripts/compare.py --config configs/california_housing.toml $(ARGS)
 
@@ -128,6 +135,7 @@ help:
 	@echo "  make fit-benchmark      Build + compare bonsai vs lightgbm/catboost on cal housing."
 	@echo "  make bench-gpu          MSD ladder vs xgboost-GPU with profile breakdowns (GPU perf loop)."
 	@echo "  make python             Build the Python extension (PYTHON=... to pick the interpreter)."
+	@echo "  make python-cuda        Build the CUDA-enabled extension into build-cuda/python."
 	@echo "  make python-test        Build + run python/tests/test_bindings.py."
 	@echo "  make format             clang-format src/ + include/ + tests/ + benchmarks/ in place."
 	@echo "  make format-check       clang-format --dry-run --Werror (CI gate)."
@@ -146,4 +154,4 @@ $(SKILLS_DIR)/caveman/SKILL.md:
 skills-clean:
 	rm -rf $(SKILLS_DIR)
 
-.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint all run test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu python python-test skills skills-clean help
+.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint all run test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu python python-cuda python-test skills skills-clean help
