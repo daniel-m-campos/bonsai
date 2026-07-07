@@ -1,6 +1,8 @@
 # 11 — GPU-resident growing
 
 > **Status:** landed (decision 40; commits 556310b, a1a40c4, a644358 on cuda-phase2). A100 MSD ladder: 13.1 s (phase 2) → 7.5 (stage A) → 5.4 (stage B) → **5.0 s** (stage C) vs xgboost-GPU 1.8 s; RMSE 8.9911 at every stage; 392/392 both configs; CPU builds bit-identical. Grow-loop time is ~2.5 s — near xgboost's train phase — with CSV parse + binning (~2.5 s, outside this design's scope) now the largest remaining block. Baseline evidence: [reviews/2026-07-03-design-review-cuda.md](../reviews/2026-07-03-design-review-cuda.md).
+>
+> **Grower-side seam superseded by [`12-grower-backend.md`](12-grower-backend.md) (decision 41, landed):** the optional-hooks model this doc designed is replaced by the `LevelStep` compile-time strategy, `resident()` is retired, and the phase-2 copy-back path is deleted in favour of a CPU fallback. *The seam* below is kept as the phase-3 design record; the device-kernel stages (A/B/C) and the level state machine remain current.
 
 ## Why
 
@@ -31,7 +33,7 @@ The grow loop survives as the single algorithm narrative. Each level step become
 
 `SplitInput` gains `HistCell sums` and `size_t row_count`. In resident mode `hists` and `rows` stay empty — the struct degrades to node metadata (id, monotone bounds, interaction mask, path, sums, count); `totals()` reads `sums` and the finder's row-count guard reads `row_count`. The inspect path for tests and debugging is an explicit `download_histograms(node)` on the CUDA builder.
 
-Copy-back mode (the phase-2 path) is retained unchanged: the oblivious and leafwise growers keep using `populate`/`populate_many`, and the resident path degrades to it wholesale when level-histogram memory would not fit (deep trees) or `max_bin` exceeds the shared-memory budget. Resident mode is additional builder state, not a replacement.
+Copy-back mode (the phase-2 path) was retained through phase 3 as the degrade path, then retired by decision 41 once the resident path had proven out: today `begin_root` declining (oversized `max_bin`, buffers won't fit) falls back to **CPU** histogram building through the engine's own CPU member, and the oblivious/leafwise growers use the host `LevelStep` plane.
 
 ## Level state machine
 

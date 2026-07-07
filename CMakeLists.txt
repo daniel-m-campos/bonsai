@@ -83,7 +83,7 @@ endif()
 # every build (the registry headers are CUDA-free), so no config macro
 # exists: when BONSAI_CUDA is ON this target carries the real
 # histogram-kernel library, when OFF a stub TU that throws on training
-# (src/cuda/histogram_builder_stub.cpp, added in src/CMakeLists.txt).
+# (src/cuda/histogram_engine_stub.cpp, added in src/CMakeLists.txt).
 # Availability is a runtime question — bonsai::cuda_available().
 #
 # The kernel TU is CUDA C++ compiled by the project's own clang (-x cuda),
@@ -101,8 +101,8 @@ if(BONSAI_CUDA)
     find_package(CUDAToolkit REQUIRED)
     set(BONSAI_CUDA_ARCH "native" CACHE STRING
         "GPU architecture for clang --offload-arch (e.g. sm_87, or native)")
-    add_library(bonsai_cuda_kernels STATIC src/cuda/histogram_builder.cu)
-    set_source_files_properties(src/cuda/histogram_builder.cu
+    add_library(bonsai_cuda_kernels STATIC src/cuda/histogram_engine.cu)
+    set_source_files_properties(src/cuda/histogram_engine.cu
                                 PROPERTIES LANGUAGE CXX)
     target_compile_options(bonsai_cuda_kernels PRIVATE
         -x cuda

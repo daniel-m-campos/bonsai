@@ -30,13 +30,16 @@ add_library(bonsai_tree OBJECT
 # the real kernels via bonsai_gpu, OFF compiles the throwing stub.
 if(NOT BONSAI_CUDA)
     target_sources(bonsai_tree PRIVATE
-        cuda/histogram_builder_stub.cpp
+        cuda/histogram_engine_stub.cpp
     )
 endif()
 
 target_include_directories(bonsai_tree PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
+# grower.cpp and cuda/grower_cuda.cpp share the private grower_impl.hpp; src/
+# on the path lets both include it as "grower_impl.hpp".
+target_include_directories(bonsai_tree PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(bonsai_tree PUBLIC bonsai_data bonsai_split bonsai_parallel
                                          bonsai_gpu bonsai_warnings)

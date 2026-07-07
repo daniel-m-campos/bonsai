@@ -10,7 +10,8 @@
 
 #include "bonsai/bin_mappers.hpp"
 #include "bonsai/config/bin_mapper_config.hpp"
-#include "bonsai/cuda/histogram_builder.hpp"
+#include "bonsai/cuda/grower.hpp"
+#include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/types.hpp"

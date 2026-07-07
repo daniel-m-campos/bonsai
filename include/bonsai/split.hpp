@@ -21,13 +21,15 @@ struct SplitInput
     double lo = -std::numeric_limits<double>::infinity();
     double hi = std::numeric_limits<double>::infinity();
     // Features this node may split on under interaction constraints;
-    // empty = all allowed. Indexed by feature id.
+    // empty = all allowed. Indexed by feature id. The default member
+    // initializers here keep SplitInput a designated-init aggregate.
+    // NOLINTNEXTLINE(readability-redundant-member-init)
     std::vector<char> allowed = {};
     // Distinct features used on the path from the root to this node.
+    // NOLINTNEXTLINE(readability-redundant-member-init)
     std::vector<feature_id_t> path = {};
-    // Node grad/hess totals and row count, set when histograms are final.
-    // With a device-resident builder (phase 3) these are the node's only
-    // populated statistics: hists/rows stay empty on the host.
+    // Cached node totals + row count. A device-resident engine leaves
+    // hists/rows empty and sets these as the node's only host statistics.
     HistCell sums      = {};
     size_t   row_count = 0;
 
@@ -112,6 +114,8 @@ constexpr double score(double g, double h, double lambda)
     return (g * g) / (h + lambda);
 }
 
+// g and h are a fixed gradient/hessian pair, not interchangeable operands.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 constexpr double score(double g, double h, double l1, double l2)
 {
     double const t = l1_thresholded(g, l1);

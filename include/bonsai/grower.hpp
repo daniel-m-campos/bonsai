@@ -2,10 +2,12 @@
 
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/dataset.hpp"
+#include "bonsai/histogram.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
 #include <concepts>
+#include <cstdint>
 #include <functional>
 #include <random>
 #include <span>
@@ -14,7 +16,7 @@
 namespace bonsai
 {
 
-// A tree level's worth of nodes handed to a HistogramBuilder in one call.
+// A tree level's worth of nodes handed to a HistogramEngine in one call.
 using split_input_refs = std::span<std::reference_wrapper<SplitInput> const>;
 
 using train_leaf_values = std::vector<float>;
@@ -40,30 +42,56 @@ concept TreeGrower = requires(T g, Dataset const &ds, floats_view grad,
 };
 
 // Builds a node's per-feature histograms. begin_tree runs once per grow()
-// call so stateful backends can stage per-tree data (the CUDA builder
-// uploads gradients there); populate fills node.hists for the selected
-// features and leaves zero-binned placeholders the split finders skip.
+// call so stateful backends can stage per-tree data (the CUDA engine
+// uploads gradients there); populate fills the split input's hists for the
+// selected features and leaves zero-binned placeholders the finders skip.
 template <typename T>
-concept HistogramBuilder =
+concept HistogramEngine =
     requires(T b, Dataset const &ds, floats_view grad, floats_view hess,
-             SplitInput &node, std::span<feature_id_t const> selected) {
+             SplitInput &split_input, std::span<feature_id_t const> selected) {
         b.begin_tree(ds, grad, hess);
-        b.populate(ds, grad, hess, node, selected);
+        b.populate(ds, grad, hess, split_input, selected);
     };
 
-struct CpuHistogramBuilder
+// The GPU data plane: histograms and rows stay device-resident, so only
+// decisions and counts cross the bus (docs/architecture/12-grower-backend.md).
+// The LevelStep drives this whole cluster or none of it, so it is one concept
+// and not seven; begin_root's bool return is the per-tree mode (it declines
+// when the resident buffers cannot fit), captured once by the LevelStep.
+template <typename T>
+concept GPULevelEngine =
+    HistogramEngine<T> &&
+    requires(T b, Dataset const &ds, TreeConfig const &config, floats_view grad,
+             floats_view hess, SplitInput &root, std::span<feature_id_t const> selected,
+             std::span<typename T::LeafStamp const>   stamps,
+             std::span<typename T::PartitionOp const> pops,
+             std::span<typename T::LevelOp const> lops, std::span<uint32_t> counts,
+             std::span<SplitInput const> level, std::span<SplitOutput> out,
+             std::span<HistCell> child_sums, std::span<node_id_t> by_row) {
+        typename T::LevelOp;
+        typename T::PartitionOp;
+        typename T::LeafStamp;
+        { b.begin_root(ds, grad, hess, root, selected) } -> std::convertible_to<bool>;
+        b.stamp_leaves(stamps);
+        b.partition_level(ds, pops, counts);
+        b.advance_level(ds, lops);
+        b.finalize_rows(by_row);
+        b.find_splits_many(ds, config, level, out, child_sums);
+    };
+
+struct CpuHistogramEngine
 {
     void begin_tree(Dataset const & /*ds*/, floats_view /*grad*/, floats_view /*hess*/)
     {
     }
     void populate(Dataset const &ds, floats_view grad, floats_view hess,
-                  SplitInput &node, std::span<feature_id_t const> selected);
+                  SplitInput &split_input, std::span<feature_id_t const> selected);
 };
 
-static_assert(HistogramBuilder<CpuHistogramBuilder>);
+static_assert(HistogramEngine<CpuHistogramEngine>);
 
-template <NodeSplitFinder  SplitterT = HistogramNodeSplitFinder,
-          HistogramBuilder BuilderT  = CpuHistogramBuilder>
+template <HistogramEngine EngineT   = CpuHistogramEngine,
+          NodeSplitFinder SplitterT = HistogramNodeSplitFinder>
 class DepthwiseGrower
 {
   public:
@@ -76,11 +104,11 @@ class DepthwiseGrower
     TreeConfig                             config_;
     std::mt19937                           feature_rng_;
     std::vector<std::vector<feature_id_t>> interaction_groups_;
-    BuilderT                               builder_;
+    EngineT                                engine_;
 };
 
-template <LevelSplitFinder SplitterT = HistogramLevelSplitFinder,
-          HistogramBuilder BuilderT  = CpuHistogramBuilder>
+template <HistogramEngine  EngineT   = CpuHistogramEngine,
+          LevelSplitFinder SplitterT = HistogramLevelSplitFinder>
 class ObliviousGrower
 {
   public:
@@ -92,11 +120,11 @@ class ObliviousGrower
   private:
     TreeConfig   config_;
     std::mt19937 feature_rng_;
-    BuilderT     builder_;
+    EngineT      engine_;
 };
 
-template <NodeSplitFinder  SplitterT = HistogramNodeSplitFinder,
-          HistogramBuilder BuilderT  = CpuHistogramBuilder>
+template <HistogramEngine EngineT   = CpuHistogramEngine,
+          NodeSplitFinder SplitterT = HistogramNodeSplitFinder>
 class LeafwiseGrower
 {
   public:
@@ -109,7 +137,7 @@ class LeafwiseGrower
     TreeConfig                             config_;
     std::mt19937                           feature_rng_;
     std::vector<std::vector<feature_id_t>> interaction_groups_;
-    BuilderT                               builder_;
+    EngineT                                engine_;
 };
 
 } // namespace bonsai
