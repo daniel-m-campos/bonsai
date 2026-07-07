@@ -483,12 +483,15 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
         auto const &leaf = frontier[li];
         float const v = gd::leaf_value(leaf.total_grad(), leaf.total_hess(), config_);
         leaf_table.push_back(v);
-        for (row_id_t r : leaf.rows)
+        for (row_id_t r : leaf.rows) // device-empty on the GPU plane
         {
             values[r]   = v;
             leaf_ids[r] = static_cast<node_id_t>(li);
         }
     }
+    // GPU plane: rows are device-resident, so stamp the final leaves and
+    // download the per-row leaf assignment to fill values/leaf_ids.
+    step.finalize_leaves(frontier, leaf_table, values, leaf_ids, row_indices);
 
     // Same stale-score hazard as route_unsampled: rows the sampler dropped
     // still need this tree's contribution in their train values.

@@ -295,6 +295,16 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         }
     }
 
+    // Host oblivious finalize is a no-op: the grow loop already wrote values
+    // from each leaf's rows (device-empty on the GPU plane, handled there).
+    void finalize_leaves(std::vector<SplitInput> const & /*frontier*/,
+                         std::vector<float> const & /*leaf_table*/,
+                         train_leaf_values & /*values*/,
+                         std::vector<node_id_t> & /*leaf_ids*/,
+                         row_index_view /*row_indices*/)
+    {
+    }
+
     // --- shared host ops (the GPU specialization's fallback calls these) ----
 
     template <typename S>
@@ -521,6 +531,35 @@ class LevelStep<EngineT, SplitterT>
                 leaf_ids[r] = by_row[r];
                 values[r]   = nodes[by_row[r]].threshold_or_value;
             }
+        }
+    }
+
+    // Oblivious leaf finalize: the frontier nodes are the leaves, indexed by
+    // position into leaf_table. On device the rows are resident, so stamp each
+    // final slot with its leaf index and download the per-row assignment; the
+    // host path already filled values via each leaf's rows.
+    void finalize_leaves(std::vector<SplitInput> const &frontier,
+                         std::vector<float> const &leaf_table,
+                         train_leaf_values &values, std::vector<node_id_t> &leaf_ids,
+                         row_index_view row_indices)
+    {
+        if (!on_device_)
+        {
+            return;
+        }
+        std::vector<typename EngineT::LeafStamp> stamps;
+        stamps.reserve(frontier.size());
+        for (uint32_t i = 0; i < frontier.size(); ++i)
+        {
+            stamps.push_back({i, static_cast<node_id_t>(i)});
+        }
+        engine_.stamp_leaves(stamps);
+        std::vector<node_id_t> by_row(ds_.n_rows(), 0);
+        engine_.finalize_rows(by_row);
+        for (row_id_t const r : row_indices)
+        {
+            leaf_ids[r] = by_row[r];
+            values[r]   = leaf_table[by_row[r]];
         }
     }
 
