@@ -24,12 +24,18 @@ add_library(bonsai_tree OBJECT
     shap.cpp
 )
 
+if(BONSAI_CUDA)
+    target_sources(bonsai_tree PRIVATE
+        cuda/grower_cuda.cpp
+    )
+endif()
+
 target_include_directories(bonsai_tree PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
 
 target_link_libraries(bonsai_tree PUBLIC bonsai_data bonsai_split bonsai_parallel
-                                         bonsai_warnings)
+                                         bonsai_gpu bonsai_warnings)
 
 # ---- bonsai_split: SplitCandidate, SplitFinder concept, HistogramSplitFinder
 

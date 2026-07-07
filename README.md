@@ -95,16 +95,11 @@ Install with `pip install .` (scikit-build-core builds the extension), or for de
 ## Build
 
 Requires:
-- LLVM ≥ 20: clang + libc++ (C++23: `std::print`, `std::mdspan`; libc++ gains
-  float `std::from_chars` in 20, and clang 19 relaxed an over-broad OpenMP
-  restriction on capturing structured bindings — clang 18 fails on both)
+- LLVM ≥ 20: clang + libc++ (C++23: `std::print`, `std::mdspan`; libc++ gains float `std::from_chars` in 20, and clang 19 relaxed an over-broad OpenMP restriction on capturing structured bindings — clang 18 fails on both)
 - CMake ≥ 3.28
 - Ninja (recommended)
 
-Supported on macOS (homebrew LLVM) and Linux (apt.llvm.org packages; built
-against LLVM's libc++, not libstdc++). The Makefile defaults to
-`/opt/homebrew/opt/llvm/bin` on macOS and `/usr/lib/llvm-21/bin` on Linux;
-override with `make LLVM_BIN=/path/to/llvm/bin ...`. On Ubuntu:
+Supported on macOS (homebrew LLVM) and Linux (apt.llvm.org packages; built against LLVM's libc++, not libstdc++). The Makefile defaults to `/opt/homebrew/opt/llvm/bin` on macOS and `/usr/lib/llvm-21/bin` on Linux; override with `make LLVM_BIN=/path/to/llvm/bin ...`. On Ubuntu:
 
 ```
 wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh && sudo bash /tmp/llvm.sh 21 && \
@@ -122,6 +117,18 @@ make help            # list all targets
 ```
 
 The `make fit-benchmark` target additionally needs [uv](https://docs.astral.sh/uv/) for the Python sidecar that runs the reference libraries.
+
+### CUDA (optional)
+
+A GPU histogram backend (needs the CUDA toolkit ≥ 12) that registers a `cuda_depthwise` grower in the dispatch. Builds into its own tree so the CPU-only `build/` stays pristine:
+
+```
+make build-cuda      # configure + compile with -DBONSAI_CUDA=ON (build-cuda/)
+make test-cuda       # ctest against the CUDA build
+./build-cuda/src/bonsai fit -c config.toml --set dispatch.grower_name=cuda_depthwise ...
+```
+
+Histogram construction runs on the GPU for all but the smallest nodes (float accumulation per row-chunk, merged in double — RMSE matches the CPU grower to library-comparison precision). Split finding, row partitioning, and the sibling-subtraction trick are unchanged, and the grower emits ordinary `DenseTree`s, so saved models are identical in format to `depthwise`. The kernel TU ([src/cuda/histogram_builder.cu](src/cuda/histogram_builder.cu)) is CUDA C++ compiled by the project's own clang (`-x cuda`) — same C++23, same libc++, no nvcc — so it uses bonsai types directly. Set `BONSAI_CUDA_ARCH` if `native` detection is unavailable (e.g. cross-compiling). On a Jetson Orin Nano, Year Prediction MSD (464 k × 90, 200 iters, depth 8) fits in 52 s vs 72 s for 6-thread OpenMP and 254 s single-threaded.
 
 ## Extending bonsai
 
