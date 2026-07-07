@@ -539,6 +539,125 @@ __global__ void reduce_kernel(FeatBest const *per_feat, uint32_t n_sel, FeatBest
     out[node] = best;
 }
 
+// Oblivious level-find: one split for the whole frontier. For feature f, the
+// gain of a cut (bin, default_left) is sum over ALL frontier nodes of
+// score(left)+score(right) minus sum of node scores, and the cut must be
+// feasible (min_child_hess) for every node. One warp per feature; each lane
+// owns nodes {lane, lane+32, ...} (up to 32*MAXK), carrying their prefixes in
+// registers and reducing across lanes with shuffles. Mirrors
+// update_best_for_feature_for_level in split.cpp (tolerance-equal).
+__global__ void level_find_kernel(double const *hists, uint32_t const *features,
+                                  uint32_t const *n_bins, double const *node_sums,
+                                  uint32_t n_sel, uint32_t n_nodes, uint32_t stride,
+                                  double l1, double l2, double min_child_hess,
+                                  double min_gain, FeatBest *out_feat)
+{
+    constexpr int  MAXK = 8; // 32 * 8 = up to 256 frontier nodes (depth 8)
+    uint32_t const f    = blockIdx.x;
+    uint32_t const lane = threadIdx.x;
+    uint32_t const fid  = features[f];
+    uint32_t const nb   = n_bins[fid];
+    if (lane == 0)
+    {
+        out_feat[f] = FeatBest{};
+    }
+    if (nb < 2)
+    {
+        return;
+    }
+    uint32_t const n_cut = nb - 2;
+
+    double mg[MAXK], mh[MAXK], rg[MAXK], rh[MAXK], pg[MAXK], ph[MAXK];
+    int    kcnt        = 0;
+    double lane_parent = 0.0;
+    for (uint32_t p = lane; p < n_nodes && kcnt < MAXK; p += 32, ++kcnt)
+    {
+        double const *cells = hists + ((static_cast<size_t>(p) * n_sel + f) * stride);
+        double const  g     = node_sums[pair_off(p)];
+        double const  h     = node_sums[pair_off(p) + 1];
+        mg[kcnt]            = cells[pair_off(nb - 1)];
+        mh[kcnt]            = cells[pair_off(nb - 1) + 1];
+        rg[kcnt]            = g - mg[kcnt];
+        rh[kcnt]            = h - mh[kcnt];
+        pg[kcnt]            = 0.0;
+        ph[kcnt]            = 0.0;
+        lane_parent += score(g, h, l1, l2);
+    }
+    for (int o = 16; o > 0; o >>= 1)
+    {
+        lane_parent += __shfl_down_sync(0xffffffffU, lane_parent, o);
+    }
+    double const sum_parent = __shfl_sync(0xffffffffU, lane_parent, 0);
+
+    FeatBest best = {};
+    for (uint32_t b = 0; b < n_cut; ++b)
+    {
+        double csL = 0.0, csR = 0.0;
+        int    feasL = 1, feasR = 1;
+        for (int k = 0; k < kcnt; ++k)
+        {
+            uint32_t const p     = lane + (32U * static_cast<uint32_t>(k));
+            double const  *cells = hists + ((static_cast<size_t>(p) * n_sel + f) * stride);
+            pg[k] += cells[pair_off(b)];
+            ph[k] += cells[pair_off(b) + 1];
+            double const gL1 = pg[k] + mg[k], hL1 = ph[k] + mh[k];
+            double const gR1 = rg[k] - pg[k], hR1 = rh[k] - ph[k];
+            if (hL1 < min_child_hess || hR1 < min_child_hess)
+            {
+                feasL = 0;
+            }
+            else
+            {
+                csL += score(gL1, hL1, l1, l2) + score(gR1, hR1, l1, l2);
+            }
+            double const gL0 = pg[k], hL0 = ph[k];
+            double const gR0 = (rg[k] - pg[k]) + mg[k], hR0 = (rh[k] - ph[k]) + mh[k];
+            if (hL0 < min_child_hess || hR0 < min_child_hess)
+            {
+                feasR = 0;
+            }
+            else
+            {
+                csR += score(gL0, hL0, l1, l2) + score(gR0, hR0, l1, l2);
+            }
+        }
+        for (int o = 16; o > 0; o >>= 1)
+        {
+            csL += __shfl_down_sync(0xffffffffU, csL, o);
+            csR += __shfl_down_sync(0xffffffffU, csR, o);
+            feasL &= __shfl_down_sync(0xffffffffU, feasL, o);
+            feasR &= __shfl_down_sync(0xffffffffU, feasR, o);
+        }
+        if (lane == 0)
+        {
+            if (feasL != 0)
+            {
+                double const g = csL - sum_parent;
+                if (g > best.gain && g >= min_gain)
+                {
+                    best = {.gain = g, .gL = 0, .hL = 0, .gR = 0, .hR = 0,
+                            .bin = static_cast<int32_t>(b), .dl = 1, .valid = 1,
+                            .sel = static_cast<int32_t>(f)};
+                }
+            }
+            if (feasR != 0)
+            {
+                double const g = csR - sum_parent;
+                if (g > best.gain && g >= min_gain)
+                {
+                    best = {.gain = g, .gL = 0, .hL = 0, .gR = 0, .hR = 0,
+                            .bin = static_cast<int32_t>(b), .dl = 0, .valid = 1,
+                            .sel = static_cast<int32_t>(f)};
+                }
+            }
+        }
+    }
+    if (lane == 0)
+    {
+        out_feat[f] = best;
+    }
+}
+
 // NOLINTEND(bugprone-easily-swappable-parameters,cppcoreguidelines-avoid-c-arrays,cppcoreguidelines-pro-bounds-pointer-arithmetic,modernize-avoid-c-arrays,cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-bounds-array-to-pointer-decay,readability-function-cognitive-complexity,readability-identifier-naming)
 
 } // namespace

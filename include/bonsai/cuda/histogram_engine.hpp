@@ -99,6 +99,13 @@ class CudaHistogramEngine
     void find_splits_many(Dataset const &ds, TreeConfig const &config,
                           std::span<SplitInput const> level, std::span<SplitOutput> out,
                           std::span<HistCell> child_sums);
+    // Oblivious: ONE split for the whole frontier, chosen to maximize the gain
+    // summed across all nodes (feasible for every node). out is filled with
+    // that split for every slot; child_sums is zeroed (unused by the oblivious
+    // control plane). Enables ObliviousGrower<CudaHistogramEngine>.
+    void find_level_split(Dataset const &ds, TreeConfig const &config,
+                          std::span<SplitInput const> level, std::span<SplitOutput> out,
+                          std::span<HistCell> child_sums);
 
   private:
     struct Impl;

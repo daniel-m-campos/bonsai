@@ -698,6 +698,62 @@ void CudaHistogramEngine::find_splits_many(Dataset const &ds, TreeConfig const &
     lap(prof.unpack_s);
 }
 
+void CudaHistogramEngine::find_level_split(Dataset const &ds, TreeConfig const &config,
+                                           std::span<SplitInput const> level,
+                                           std::span<SplitOutput>      out,
+                                           std::span<HistCell>         child_sums)
+{
+    Impl        &im   = *impl_;
+    size_t const n    = level.size();
+    auto        &prof = im.prof_counters;
+    auto         lap  = prof.lap();
+
+    im.stage_find_inputs(level, config, ds); // node_sums, features, n_bins
+    lap(prof.upload_s);
+
+    im.feat_best.reserve(im.n_selected);
+    im.node_best.reserve(1);
+    level_find_kernel<<<dim3(im.n_selected), dim3(32)>>>(
+        im.cur().data(), im.features.device(), im.n_bins.data(), im.node_sums.device(),
+        im.n_selected, static_cast<uint32_t>(n), im.stride, config.lambda_l1,
+        config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
+        im.feat_best.data());
+    check(cudaGetLastError(), "level find launch");
+    reduce_kernel<<<dim3(1), dim3(32)>>>(im.feat_best.data(), im.n_selected,
+                                         im.node_best.device());
+    check(cudaGetLastError(), "level reduce launch");
+    im.node_best.fetch(1); // DtoH, implicit sync
+    if (prof.enabled)
+    {
+        prof.launches += 2;
+    }
+    lap(prof.gpu_s);
+
+    // One split for the whole frontier, broadcast to every node. child_sums is
+    // unused by the oblivious control plane (device partition/advance recompute
+    // the children); zero it for the interface.
+    FeatBest const &b = im.node_best.host[0];
+    SplitOutput     split{};
+    if (b.valid != 0)
+    {
+        split = {.gain       = b.gain,
+                 .feature_id = static_cast<feature_id_t>(
+                     im.features.host[static_cast<size_t>(b.sel)]),
+                 .bin_id       = static_cast<bin_id_t>(b.bin),
+                 .default_left = b.dl != 0,
+                 .valid        = true};
+    }
+    for (size_t i = 0; i < n; ++i)
+    {
+        out[i] = split;
+    }
+    for (auto &c : child_sums)
+    {
+        c = HistCell{};
+    }
+    lap(prof.unpack_s);
+}
+
 // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)
 
 } // namespace bonsai

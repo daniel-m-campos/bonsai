@@ -13,4 +13,10 @@ namespace bonsai
 // explicit instantiation lives in src/cuda/grower_cuda.cpp.
 using CudaDepthwiseGrower = DepthwiseGrower<CudaHistogramEngine>;
 
+// The "cuda_oblivious" grower: the oblivious (symmetric-tree) grow loop with
+// the GPU engine. Uses the device level-find (one split per level across all
+// frontier nodes); partition/advance are reused from the depthwise path.
+using CudaObliviousGrower =
+    ObliviousGrower<CudaHistogramEngine, HistogramLevelSplitFinder>;
+
 } // namespace bonsai

@@ -402,7 +402,16 @@ class LevelStep<EngineT, SplitterT>
             child_sums.clear();
             out.resize(current.size());
             child_sums.resize(2 * current.size());
-            engine_.find_splits_many(ds_, config_, current, out, child_sums);
+            // Oblivious (LevelSplitFinder) picks one split for the whole
+            // frontier; depthwise/leafwise pick one per node.
+            if constexpr (LevelSplitFinder<SplitterT>)
+            {
+                engine_.find_level_split(ds_, config_, current, out, child_sums);
+            }
+            else
+            {
+                engine_.find_splits_many(ds_, config_, current, out, child_sums);
+            }
         }
         else
         {

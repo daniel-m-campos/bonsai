@@ -24,11 +24,12 @@ namespace bonsai::test
 // TEMPLATE_LIST cases over the full registry stay unconditional.
 template <typename GrowerT> void skip_without_cuda()
 {
-    if constexpr (std::same_as<GrowerT, CudaDepthwiseGrower>)
+    if constexpr (std::same_as<GrowerT, CudaDepthwiseGrower> ||
+                  std::same_as<GrowerT, CudaObliviousGrower>)
     {
         if (!cuda_available())
         {
-            SKIP("cuda_depthwise needs a usable CUDA device");
+            SKIP("cuda grower needs a usable CUDA device");
         }
     }
 }
