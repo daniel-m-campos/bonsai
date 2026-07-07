@@ -25,12 +25,21 @@ struct SplitInput
     std::vector<char> allowed = {};
     // Distinct features used on the path from the root to this node.
     std::vector<feature_id_t> path = {};
+    // Node grad/hess totals and row count, set when histograms are final.
+    // With a device-resident builder (phase 3) these are the node's only
+    // populated statistics: hists/rows stay empty on the host.
+    HistCell sums      = {};
+    size_t   row_count = 0;
 
-    // Node-level totals from the first populated histogram (every populated
-    // feature sums the same rows). Unselected features under
-    // feature_fraction < 1 are zero-binned placeholders and are skipped.
+    // Node-level totals: the cached sums when set, else from the first
+    // populated histogram (every populated feature sums the same rows;
+    // unselected features are zero-binned placeholders and are skipped).
     HistCell totals() const
     {
+        if (row_count > 0)
+        {
+            return sums;
+        }
         for (auto const &h : hists)
         {
             if (h.size() != 0)
@@ -83,7 +92,9 @@ struct HistogramLevelSplitFinder
 
 // Soft-threshold on the gradient sum: XGBoost's L1 treatment. Zero when
 // |g| <= l1, else shrinks toward zero by l1.
-inline double l1_thresholded(double g, double l1)
+// constexpr: callable from CUDA device code (clang treats constexpr as
+// implicitly host+device), keeping one definition of the gain math.
+constexpr double l1_thresholded(double g, double l1)
 {
     if (g > l1)
     {
@@ -96,25 +107,32 @@ inline double l1_thresholded(double g, double l1)
     return 0.0;
 }
 
-inline double score(double g, double h, double lambda)
+constexpr double score(double g, double h, double lambda)
 {
     return (g * g) / (h + lambda);
 }
 
-inline double score(double g, double h, double l1, double l2)
+constexpr double score(double g, double h, double l1, double l2)
 {
     double const t = l1_thresholded(g, l1);
     return (t * t) / (h + l2);
 }
 
 // Newton leaf weight for the given sums, clamped to the node's monotone
-// bounds. Shared by the split finders (constraint checks) and growers
-// (leaf finalization / bound propagation).
+// bounds. Shared by the split finders (constraint checks), growers
+// (leaf finalization / bound propagation), and the CUDA find kernel
+// (scalar overload; TreeConfig holds vectors and cannot cross to device).
+constexpr double bounded_leaf_weight(double g, double h, double l1, double l2,
+                                     double lo, double hi)
+{
+    double const w = -l1_thresholded(g, l1) / (h + l2);
+    return std::clamp(w, lo, hi);
+}
+
 inline double bounded_leaf_weight(double g, double h, TreeConfig const &config,
                                   double lo, double hi)
 {
-    double const w = -l1_thresholded(g, config.lambda_l1) / (h + config.lambda_l2);
-    return std::clamp(w, lo, hi);
+    return bounded_leaf_weight(g, h, config.lambda_l1, config.lambda_l2, lo, hi);
 }
 
 // Per-feature monotone direction; features beyond the configured list are
