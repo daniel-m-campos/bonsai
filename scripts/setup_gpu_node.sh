@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-shot bonsai CUDA setup for a fresh x86_64 Ubuntu 22.04 GPU node
+# One-shot bonsai CUDA setup for a fresh x86_64 Ubuntu 22.04/24.04 GPU node
 # (validated on Thunder Compute 4x A100 standard VMs — use standard VMs
 # only; 1x/2x instances virtualize the GPU and are unusable for this —
 # or any bare-metal/passthrough GPU host, e.g. a RunPod/Lambda box).
@@ -29,7 +29,8 @@ fi
 # broken on the lean standard-VM image, so write the source line directly)
 if [ ! -x /usr/lib/llvm-21/bin/clang++ ]; then
     wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
-    echo "deb https://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main" | sudo tee /etc/apt/sources.list.d/llvm21.list >/dev/null
+    CODENAME=$(. /etc/os-release && echo "${UBUNTU_CODENAME:-jammy}")
+    echo "deb https://apt.llvm.org/${CODENAME}/ llvm-toolchain-${CODENAME}-21 main" | sudo tee /etc/apt/sources.list.d/llvm21.list >/dev/null
     sudo apt-get update -qq
     sudo apt-get install -y -qq clang-21 libc++-21-dev libc++abi-21-dev libomp-21-dev
 fi
@@ -42,7 +43,7 @@ command -v cmake >/dev/null 2>&1 && [ "$(cmake --version | head -1 | grep -oE '[
 # --- CUDA side-by-side install (clang-21 cannot target CUDA 13)
 CUDA_PKG="cuda-toolkit-${CUDA_VER/./-}"
 if [ ! -x "/usr/local/cuda-${CUDA_VER}/bin/nvcc" ]; then
-    wget -qO /tmp/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+    wget -qO /tmp/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu$(. /etc/os-release && echo "${VERSION_ID/./}")/x86_64/cuda-keyring_1.1-1_all.deb
     sudo dpkg -i /tmp/cuda-keyring.deb
     sudo apt-get update -qq
     sudo apt-get install -y -qq "$CUDA_PKG"
