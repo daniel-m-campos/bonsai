@@ -30,8 +30,20 @@ configure: build/build.ninja
 build: build/build.ninja
 	@cmake --build build -j
 
+build-cuda/build.ninja:
+	@cmake -DCMAKE_BUILD_TYPE=Release \
+	-DCMAKE_CXX_COMPILER=$(LLVM_BIN)/clang++ \
+	-DBONSAI_CUDA=ON \
+	-G Ninja -S . -B build-cuda
+
+build-cuda: build-cuda/build.ninja
+	@cmake --build build-cuda -j
+
+test-cuda: build-cuda $(TOY_SENTINEL)
+	@ctest --test-dir build-cuda
+
 clean:
-	@rm -rf build
+	@rm -rf build build-cuda
 
 rebuild: clean build
 
@@ -80,6 +92,8 @@ help:
 	@echo "  make build              Configure + compile."
 	@echo "  make rebuild            Clean + build."
 	@echo "  make test               Build + run ctest."
+	@echo "  make build-cuda         Configure + compile with the CUDA backend (build-cuda/)."
+	@echo "  make test-cuda          Build CUDA variant + run ctest against it."
 	@echo "  make run ARGS=...       Build + run ./build/src/bonsai with ARGS."
 	@echo "  make perf-benchmark     Build + run Catch2 perf microbenchmarks (ARGS forwarded)."
 	@echo "  make fit-benchmark      Build + compare bonsai vs lightgbm/catboost on cal housing."
@@ -101,4 +115,4 @@ $(SKILLS_DIR)/caveman/SKILL.md:
 skills-clean:
 	rm -rf $(SKILLS_DIR)
 
-.PHONY: configure build clean rebuild format lint all run test perf-benchmark fit-benchmark python python-test skills skills-clean help
+.PHONY: configure build build-cuda clean rebuild format lint all run test test-cuda perf-benchmark fit-benchmark python python-test skills skills-clean help

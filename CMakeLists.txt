@@ -29,9 +29,10 @@ endif()
 
 # On Linux, clang defaults to the system libstdc++, which on Ubuntu 22.04
 # (GCC 11) predates <print> and <mdspan>. Build against LLVM's libc++
-# instead, matching the macOS toolchain.
+# instead, matching the macOS toolchain. Scoped to CXX so the flag never
+# reaches nvcc's host-compiler pass on the CUDA kernel TU.
 if(NOT APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    add_compile_options(-stdlib=libc++)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-stdlib=libc++>)
     add_link_options(-stdlib=libc++)
 endif()
 
@@ -75,6 +76,44 @@ if(BONSAI_OPENMP)
     else()
         message(STATUS "OpenMP not found; bonsai builds serial")
     endif()
+endif()
+
+# ---- CUDA (optional) ---------------------------------------------------------
+# Interface target consumed by bonsai_tree. When BONSAI_CUDA is ON it carries
+# the histogram-kernel library and the BONSAI_USE_CUDA define that registers
+# the cuda_depthwise grower; when OFF it is empty and the build is identical
+# to before the backend existed.
+#
+# The kernel TU is CUDA C++ compiled by the project's own clang (-x cuda),
+# not nvcc — same C++23, same libc++, so it uses bonsai types directly and
+# no second toolchain or C ABI is involved.
+
+option(BONSAI_CUDA "Enable the CUDA histogram backend (cuda_depthwise grower)" OFF)
+
+add_library(bonsai_gpu INTERFACE)
+if(BONSAI_CUDA)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "BONSAI_CUDA compiles the kernel TU as clang CUDA "
+                            "C++; build with clang (the project default).")
+    endif()
+    find_package(CUDAToolkit REQUIRED)
+    set(BONSAI_CUDA_ARCH "native" CACHE STRING
+        "GPU architecture for clang --offload-arch (e.g. sm_87, or native)")
+    # The registered grower list changes with this define, so it must be
+    # visible to every TU that sees the registry typelists (src, tests,
+    # benchmarks, python) — a global define keeps them consistent.
+    add_compile_definitions(BONSAI_USE_CUDA)
+    add_library(bonsai_cuda_kernels STATIC src/cuda/histogram_builder.cu)
+    set_source_files_properties(src/cuda/histogram_builder.cu
+                                PROPERTIES LANGUAGE CXX)
+    target_compile_options(bonsai_cuda_kernels PRIVATE
+        -x cuda
+        --offload-arch=${BONSAI_CUDA_ARCH}
+        --cuda-path=${CUDAToolkit_LIBRARY_ROOT}
+        -Wno-unknown-cuda-version)
+    target_include_directories(bonsai_cuda_kernels PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(bonsai_cuda_kernels PRIVATE bonsai_warnings)
+    target_link_libraries(bonsai_gpu INTERFACE bonsai_cuda_kernels CUDA::cudart)
 endif()
 
 # ---- Dependencies via FetchContent ------------------------------------------
