@@ -49,9 +49,10 @@ void CudaHistogramBuilder::populate(Dataset const & /*ds*/, floats_view /*grad*/
     throw_unavailable();
 }
 
-void CudaHistogramBuilder::populate_many(
-    Dataset const & /*ds*/, floats_view /*grad*/, floats_view /*hess*/,
-    split_input_refs /*nodes*/, std::span<feature_id_t const> /*selected*/)
+void CudaHistogramBuilder::populate_many(Dataset const & /*ds*/, floats_view /*grad*/,
+                                         floats_view /*hess*/,
+                                         split_input_refs /*nodes*/,
+                                         std::span<feature_id_t const> /*selected*/)
 {
     throw_unavailable();
 }

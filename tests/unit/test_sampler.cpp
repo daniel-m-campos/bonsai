@@ -109,7 +109,7 @@ TEST_CASE("GossSampler: keeps top-|grad| rows and amplifies sampled rest",
     GossSampler s{cfg};
 
     // 10 rows; rows 3 and 7 have the largest |grad| -> always kept, unscaled.
-    std::vector<float> grad{0.1F, -0.2F, 0.1F, 5.0F, -0.1F,
+    std::vector<float>    grad{0.1F, -0.2F, 0.1F,  5.0F, -0.1F,
                             0.2F, 0.1F,  -4.0F, 0.2F, -0.1F};
     std::vector<float>    hess(10, 1.0F);
     std::vector<row_id_t> out(10);
@@ -132,7 +132,7 @@ TEST_CASE("GossSampler: keeps top-|grad| rows and amplifies sampled rest",
     }
     CHECK(has3);
     CHECK(has7);
-    CHECK(grad[3] == 5.0F);  // top rows unscaled
+    CHECK(grad[3] == 5.0F); // top rows unscaled
     CHECK(grad[7] == -4.0F);
 
     // Amplification factor (1 - 0.2) / 0.2 = 4 applied to the sampled rest.
@@ -157,7 +157,7 @@ TEST_CASE("GossSampler: same seed → same selection and scaling",
 
     auto run = [&]
     {
-        std::vector<float> grad{1.0F, -2.0F, 0.5F, 3.0F, -0.1F,
+        std::vector<float>    grad{1.0F, -2.0F, 0.5F,  3.0F, -0.1F,
                                 0.2F, 1.5F,  -0.4F, 0.8F, -1.2F};
         std::vector<float>    hess(10, 1.0F);
         std::vector<row_id_t> out(10);

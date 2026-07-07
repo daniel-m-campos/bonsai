@@ -18,8 +18,7 @@ namespace
 // cuda_depthwise is registered everywhere but trains only with a device.
 bool trains_here(std::string_view grower_name)
 {
-    return grower_name != impl_name<CudaDepthwiseGrower>::value ||
-           cuda_available();
+    return grower_name != impl_name<CudaDepthwiseGrower>::value || cuda_available();
 }
 
 } // namespace

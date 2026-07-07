@@ -34,8 +34,7 @@ int run_importance(ImportanceOpts const &opts)
     std::println("{:<24} {:>14} {:>8}", "feature", "gain", "split");
     for (size_t const f : order)
     {
-        auto const name =
-            f < names.size() ? names[f] : "f" + std::to_string(f);
+        auto const name = f < names.size() ? names[f] : "f" + std::to_string(f);
         std::println("{:<24} {:>14.2f} {:>8.0f}", name, gain[f], split[f]);
     }
     return EXIT_SUCCESS;

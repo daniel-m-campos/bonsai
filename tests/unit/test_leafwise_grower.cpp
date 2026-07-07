@@ -81,11 +81,9 @@ TEST_CASE("LeafwiseGrower: max_leaves=1 returns single root leaf",
 TEST_CASE("LeafwiseGrower: max_depth=0 returns single-leaf tree",
           "[grower][leafwise][edge]")
 {
-    auto             in = two_value_pair();
-    TreeConfig       cfg{.lambda_l2        = 1.0F,
-                         .max_depth        = 0,
-                         .min_data_in_leaf = 0,
-                         .max_leaves       = 31};
+    auto       in = two_value_pair();
+    TreeConfig cfg{
+        .lambda_l2 = 1.0F, .max_depth = 0, .min_data_in_leaf = 0, .max_leaves = 31};
     LeafwiseGrower<> grower{cfg};
     auto [tree, train_leaf_values, tree_lids] =
         grower.grow(in.built.ds, in.grad, in.hess, in.rows);
@@ -169,8 +167,8 @@ TEST_CASE("LeafwiseGrower: max_leaves=0 is unbounded (depth-capped only)",
 
     DepthwiseGrower<> dw{cfg};
     auto [dw_tree, dw_values, dw_tree_lids] = dw.grow(built.ds, grad, hess, rows);
-    for (auto const &pt : {std::vector<float>{0.0F, 0.0F}, {0.0F, 2.0F},
-                           {2.0F, 0.0F}, {2.0F, 2.0F}})
+    for (auto const &pt :
+         {std::vector<float>{0.0F, 0.0F}, {0.0F, 2.0F}, {2.0F, 0.0F}, {2.0F, 2.0F}})
     {
         CHECK(predict_one(tree, pt) == predict_one(dw_tree, pt));
     }
@@ -265,8 +263,8 @@ TEST_CASE("LeafwiseGrower: identical inputs grow identical trees",
 TEST_CASE("LeafwiseGrower: empty row_indices yields zero-valued single leaf",
           "[grower][leafwise][edge]")
 {
-    auto in  = uniform_3row();
-    in.rows  = {};
+    auto in = uniform_3row();
+    in.rows = {};
     TreeConfig       cfg{.min_child_hess   = 0.0F,
                          .lambda_l2        = 1.0F,
                          .max_depth        = 3,

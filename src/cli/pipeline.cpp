@@ -88,9 +88,9 @@ LabeledData load_labeled(std::string const &path, DataConfig const &data_cfg,
 } // namespace
 
 LoadedTrainValid load_train_and_valid_with_mappers(Config const &cfg,
-                                                   BinMappers mappers)
+                                                   BinMappers    mappers)
 {
-    auto train = load_labeled(cfg.data.train, cfg.data, mappers);
+    auto                       train = load_labeled(cfg.data.train, cfg.data, mappers);
     std::optional<LabeledData> valid;
     if (!cfg.data.valid.empty())
     {
@@ -126,12 +126,12 @@ LoadedTrainValid load_train_and_valid_from_csv(Config const &cfg)
                             .valid   = std::move(valid)};
 }
 
-std::unique_ptr<IBooster> train_with_progress(Config const           &cfg,
-                                              LoadedTrainValid const &loaded,
-                                              FitTickFn const        &on_tick,
+std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
+                                              LoadedTrainValid const   &loaded,
+                                              FitTickFn const          &on_tick,
                                               std::unique_ptr<IBooster> initial)
 {
-    auto booster = initial ? std::move(initial) : make_booster(cfg);
+    auto       booster = initial ? std::move(initial) : make_booster(cfg);
     auto const n_iters = cfg.booster_config.n_iters;
     auto const log_iv  = cfg.booster_config.log_intervals;
 
@@ -178,7 +178,7 @@ std::unique_ptr<IBooster> train_with_progress(Config const           &cfg,
 
     // Early stopping: incremental valid raw scores (score_base + per-tree
     // contributions) keep the per-iteration eval O(rows), not O(rows*trees).
-    auto const es_rounds = cfg.booster_config.early_stopping_rounds;
+    auto const es_rounds  = cfg.booster_config.early_stopping_rounds;
     bool const es_enabled = es_rounds > 0 && loaded.valid.has_value();
     if (es_enabled && cfg.booster_config.dart_drop_rate > 0.0F)
     {
@@ -222,9 +222,8 @@ std::unique_ptr<IBooster> train_with_progress(Config const           &cfg,
                 }
             }
             booster->accumulate_last_tree(loaded.valid->features.view(), es_scores);
-            float const loss =
-                eval_objective_by_name(cfg.dispatch.objective_name, cfg, es_scores,
-                                       loaded.valid->labels);
+            float const loss = eval_objective_by_name(cfg.dispatch.objective_name, cfg,
+                                                      es_scores, loaded.valid->labels);
             if (i == 0 || loss < best_loss)
             {
                 best_loss = loss;

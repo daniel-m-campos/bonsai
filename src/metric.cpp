@@ -9,8 +9,8 @@
 #include <functional>
 #include <limits>
 #include <numeric>
-#include <vector>
 #include <string_view>
+#include <vector>
 
 #include "bonsai/task.hpp"
 #include "bonsai/types.hpp"
@@ -122,8 +122,7 @@ float compute_auc(floats_view probs, floats_view labels)
 
     std::vector<size_t> order(n);
     std::iota(order.begin(), order.end(), size_t{0});
-    std::ranges::sort(order,
-                      [&](size_t a, size_t b) { return probs[a] < probs[b]; });
+    std::ranges::sort(order, [&](size_t a, size_t b) { return probs[a] < probs[b]; });
 
     double rank_sum_pos = 0.0;
     size_t n_pos        = 0;
@@ -152,8 +151,7 @@ float compute_auc(floats_view probs, floats_view labels)
     {
         return 1.0F; // degenerate: one class only
     }
-    double const u =
-        rank_sum_pos - (static_cast<double>(n_pos) * (n_pos + 1) / 2.0);
+    double const u = rank_sum_pos - (static_cast<double>(n_pos) * (n_pos + 1) / 2.0);
     return static_cast<float>(u / (static_cast<double>(n_pos) * n_neg));
 }
 

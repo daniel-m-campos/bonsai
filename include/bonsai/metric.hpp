@@ -49,13 +49,11 @@ inline constexpr Metric metric_logloss{.name    = "logloss",
 inline constexpr Metric metric_accuracy{.name    = "accuracy",
                                         .task    = TaskKind::binary_classification,
                                         .compute = &compute_accuracy};
-inline constexpr Metric metric_auc{.name    = "auc",
-                                   .task    = TaskKind::binary_classification,
-                                   .compute = &compute_auc};
-inline constexpr Metric metric_mc_accuracy{
-    .name    = "mc_accuracy",
-    .task    = TaskKind::multiclass_classification,
-    .compute = &compute_mc_accuracy};
+inline constexpr Metric metric_auc{
+    .name = "auc", .task = TaskKind::binary_classification, .compute = &compute_auc};
+inline constexpr Metric metric_mc_accuracy{.name = "mc_accuracy",
+                                           .task = TaskKind::multiclass_classification,
+                                           .compute = &compute_mc_accuracy};
 
 class MetricNotFoundError : public std::runtime_error
 {

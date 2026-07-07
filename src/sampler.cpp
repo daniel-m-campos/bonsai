@@ -73,11 +73,11 @@ GossSampler::GossSampler(Config const &cfg)
 size_t GossSampler::sample(floats_out grad, floats_out hess, std::mt19937 &rng,
                            row_index_out out_indices) const
 {
-    size_t const n     = out_indices.size();
-    auto const   top_k = static_cast<size_t>(
-        std::round(top_rate_ * static_cast<double>(n)));
-    auto const other_k = static_cast<size_t>(
-        std::round(other_rate_ * static_cast<double>(n)));
+    size_t const n = out_indices.size();
+    auto const   top_k =
+        static_cast<size_t>(std::round(top_rate_ * static_cast<double>(n)));
+    auto const other_k =
+        static_cast<size_t>(std::round(other_rate_ * static_cast<double>(n)));
     if (top_k == 0 || top_k >= n)
     {
         std::iota(out_indices.begin(), out_indices.end(), row_index_out::value_type{0});

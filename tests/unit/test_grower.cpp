@@ -234,7 +234,8 @@ TEST_CASE("DepthwiseGrower: unsampled rows still receive the tree's train values
                           .max_depth        = 2,
                           .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto [tree, values, tree_lids] = grower.grow(in.built.ds, in.grad, in.hess, sampled);
+    auto [tree, values, tree_lids] =
+        grower.grow(in.built.ds, in.grad, in.hess, sampled);
 
     float const oob_pred = predict_one(tree, std::vector<float>{0.9F});
     CHECK(values[2] == oob_pred);
@@ -253,7 +254,8 @@ TEST_CASE("DepthwiseGrower: lambda_l1 soft-thresholds leaf values",
                           .max_depth        = 1,
                           .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto [tree, values, tree_lids] = grower.grow(in.built.ds, in.grad, in.hess, in.rows);
+    auto [tree, values, tree_lids] =
+        grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     REQUIRE(tree.params().n_leaves == 2);
     CHECK(predict_one(tree, std::vector<float>{0.0F}) ==
@@ -274,7 +276,8 @@ TEST_CASE("DepthwiseGrower: large lambda_l1 kills all gain -> single zero leaf",
                           .max_depth        = 3,
                           .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto [tree, values, tree_lids] = grower.grow(in.built.ds, in.grad, in.hess, in.rows);
+    auto [tree, values, tree_lids] =
+        grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     CHECK(tree.params().n_leaves == 1);
     CHECK(predict_one(tree, std::vector<float>{0.5F}) == 0.0F);
@@ -301,7 +304,7 @@ TEST_CASE("DepthwiseGrower: monotone +1 forces non-decreasing predictions",
                              .lambda_l2        = 1.0F,
                              .max_depth        = 4,
                              .min_data_in_leaf = 0};
-    TreeConfig constrained        = unconstrained;
+    TreeConfig constrained           = unconstrained;
     constrained.monotone_constraints = {+1};
 
     auto predict_curve = [&](DenseTree const &tree)
@@ -353,7 +356,7 @@ TEST_CASE("LeafwiseGrower: monotone -1 forces non-increasing predictions",
 
     LeafwiseGrower<> grower{cfg};
     auto [tree, values, tree_lids] = grower.grow(built.ds, grad, hess, rows);
-    float prev          = predict_one(tree, std::vector<float>{0.0F});
+    float prev                     = predict_one(tree, std::vector<float>{0.0F});
     for (float x : {1.05F, 2.1F})
     {
         float const cur = predict_one(tree, std::vector<float>{x});
@@ -390,7 +393,7 @@ TEST_CASE("DepthwiseGrower: interaction constraints keep groups on separate path
     auto [tree, values, tree_lids] = grower.grow(built.ds, grad, hess, rows);
 
     // Walk every root-to-leaf path and collect the features used.
-    auto const &nodes = tree.nodes();
+    auto const                                               &nodes = tree.nodes();
     std::vector<std::pair<node_id_t, std::set<feature_id_t>>> stack{{0, {}}};
     while (!stack.empty())
     {
@@ -419,7 +422,8 @@ TEST_CASE("DepthwiseGrower: split gains are stamped on internal nodes",
                           .max_depth        = 1,
                           .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto [tree, values, tree_lids] = grower.grow(in.built.ds, in.grad, in.hess, in.rows);
+    auto [tree, values, tree_lids] =
+        grower.grow(in.built.ds, in.grad, in.hess, in.rows);
 
     auto const &gains = tree.split_gains();
     REQUIRE(gains.size() == tree.nodes().size());

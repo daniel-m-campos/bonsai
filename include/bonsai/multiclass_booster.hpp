@@ -29,8 +29,7 @@ namespace bonsai
 // eval() is the multiclass logloss. The 1-D Objective concept can't
 // express the K-output shape, which is why this is its own IBooster
 // implementation dispatched via BoosterFor<{softmax, G, Sa}>.
-template <TreeGrower Gr, Sampler Sa>
-class MulticlassBooster final : public IBooster
+template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBooster
 {
   public:
     using grower_type  = Gr;
@@ -38,9 +37,9 @@ class MulticlassBooster final : public IBooster
     using tree_type    = typename Gr::Tree;
 
     explicit MulticlassBooster(Config const &config)
-        : config_(config.booster_config),
-          n_classes_(config.objective.n_classes), grower_(config.tree_config),
-          sampler_(config), rng_(config.booster_config.random_seed)
+        : config_(config.booster_config), n_classes_(config.objective.n_classes),
+          grower_(config.tree_config), sampler_(config),
+          rng_(config.booster_config.random_seed)
     {
         if (n_classes_ < 2)
         {
@@ -68,8 +67,7 @@ class MulticlassBooster final : public IBooster
                 for (size_t k = 0; k < K; ++k)
                 {
                     init_scores_[k] = static_cast<float>(
-                        std::log(std::max(counts[k], 1.0) /
-                                 static_cast<double>(n)));
+                        std::log(std::max(counts[k], 1.0) / static_cast<double>(n)));
                 }
             }
             scores_.assign(n * K, 0.0F);
@@ -86,13 +84,11 @@ class MulticlassBooster final : public IBooster
                 for (size_t t = 0; t < trees_.size(); ++t)
                 {
                     std::vector<float> raw(n, 0.0F);
-                    internal::accumulate_train_contribution(trees_[t], train,
-                                                            raw);
+                    internal::accumulate_train_contribution(trees_[t], train, raw);
                     size_t const k = t % K;
                     for (size_t i = 0; i < n; ++i)
                     {
-                        scores_[(i * K) + k] +=
-                            config_.learning_rate * raw[i];
+                        scores_[(i * K) + k] += config_.learning_rate * raw[i];
                     }
                 }
             }
@@ -107,13 +103,12 @@ class MulticlassBooster final : public IBooster
                 double maxv = scores_[i * K];
                 for (size_t k = 1; k < K; ++k)
                 {
-                    maxv = std::max(maxv,
-                                    static_cast<double>(scores_[(i * K) + k]));
+                    maxv = std::max(maxv, static_cast<double>(scores_[(i * K) + k]));
                 }
                 double sum = 0.0;
                 for (size_t k = 0; k < K; ++k)
                 {
-                    double const e = std::exp(scores_[(i * K) + k] - maxv);
+                    double const e     = std::exp(scores_[(i * K) + k] - maxv);
                     probs[(i * K) + k] = static_cast<float>(e);
                     sum += e;
                 }
@@ -134,21 +129,16 @@ class MulticlassBooster final : public IBooster
                 [&](size_t i)
                 {
                     float const p = probs[(i * K) + k];
-                    float const y =
-                        class_of(train.labels()[i], K) == k ? 1.0F : 0.0F;
-                    grad_[i] = p - y;
-                    hess_[i] = std::max(2.0F * p * (1.0F - p), 1e-6F);
+                    float const y = class_of(train.labels()[i], K) == k ? 1.0F : 0.0F;
+                    grad_[i]      = p - y;
+                    hess_[i]      = std::max(2.0F * p * (1.0F - p), 1e-6F);
                 });
-            size_t const n_selected =
-                sampler_.sample(grad_, hess_, rng_, row_indices_);
-            auto [tree, leaf_values, leaf_ids] = grower_.grow(
-                train, grad_, hess_, {row_indices_.data(), n_selected});
-            parallel::for_each_index(n,
-                                     [&](size_t i) {
-                                         scores_[(i * K) + k] +=
-                                             config_.learning_rate *
-                                             leaf_values[i];
-                                     });
+            size_t const n_selected = sampler_.sample(grad_, hess_, rng_, row_indices_);
+            auto [tree, leaf_values, leaf_ids] =
+                grower_.grow(train, grad_, hess_, {row_indices_.data(), n_selected});
+            parallel::for_each_index(
+                n, [&](size_t i)
+                { scores_[(i * K) + k] += config_.learning_rate * leaf_values[i]; });
             trees_.push_back(std::move(tree));
         }
     }
@@ -159,27 +149,25 @@ class MulticlassBooster final : public IBooster
         predict_at(X, y_hat, 0);
     }
 
-    void predict_at(features_view X, floats_out y_hat,
-                    size_t n_rounds) const override
+    void predict_at(features_view X, floats_out y_hat, size_t n_rounds) const override
     {
         size_t const n = X.extent(0);
         assert(y_hat.size() == n);
         auto const scores = raw_scores(X, n_rounds);
-        parallel::for_each_index(
-            n,
-            [&](size_t i)
-            {
-                size_t best = 0;
-                for (size_t k = 1; k < n_classes_; ++k)
-                {
-                    if (scores[(i * n_classes_) + k] >
-                        scores[(i * n_classes_) + best])
-                    {
-                        best = k;
-                    }
-                }
-                y_hat[i] = static_cast<float>(best);
-            });
+        parallel::for_each_index(n,
+                                 [&](size_t i)
+                                 {
+                                     size_t best = 0;
+                                     for (size_t k = 1; k < n_classes_; ++k)
+                                     {
+                                         if (scores[(i * n_classes_) + k] >
+                                             scores[(i * n_classes_) + best])
+                                         {
+                                             best = k;
+                                         }
+                                     }
+                                     y_hat[i] = static_cast<float>(best);
+                                 });
     }
 
     // Multiclass logloss on raw scores.
@@ -193,8 +181,8 @@ class MulticlassBooster final : public IBooster
             double maxv = scores[i * n_classes_];
             for (size_t k = 1; k < n_classes_; ++k)
             {
-                maxv = std::max(maxv,
-                                static_cast<double>(scores[(i * n_classes_) + k]));
+                maxv =
+                    std::max(maxv, static_cast<double>(scores[(i * n_classes_) + k]));
             }
             double sum = 0.0;
             for (size_t k = 0; k < n_classes_; ++k)
@@ -236,16 +224,15 @@ class MulticlassBooster final : public IBooster
         size_t const n = X.extent(0);
         assert(out.size() == n * trees_.size());
         size_t const n_trees = trees_.size();
-        parallel::for_each_index(
-            n,
-            [&](size_t i)
-            {
-                for (size_t t = 0; t < n_trees; ++t)
-                {
-                    out[(i * n_trees) + t] =
-                        trees_[t].leaf_for(X, static_cast<row_id_t>(i));
-                }
-            });
+        parallel::for_each_index(n,
+                                 [&](size_t i)
+                                 {
+                                     for (size_t t = 0; t < n_trees; ++t)
+                                     {
+                                         out[(i * n_trees) + t] = trees_[t].leaf_for(
+                                             X, static_cast<row_id_t>(i));
+                                     }
+                                 });
     }
 
     std::string dump(std::span<std::string const> feature_names) const override
@@ -272,8 +259,7 @@ class MulticlassBooster final : public IBooster
         throw std::runtime_error(
             "early stopping is not supported for multiclass models yet");
     }
-    void accumulate_last_tree(features_view /*X*/,
-                              floats_out /*scores*/) const override
+    void accumulate_last_tree(features_view /*X*/, floats_out /*scores*/) const override
     {
         throw std::runtime_error(
             "early stopping is not supported for multiclass models yet");
@@ -313,8 +299,7 @@ class MulticlassBooster final : public IBooster
     static size_t class_of(float label, size_t K)
     {
         auto const k = static_cast<long>(std::lround(label));
-        return k >= 0 && static_cast<size_t>(k) < K ? static_cast<size_t>(k)
-                                                    : 0;
+        return k >= 0 && static_cast<size_t>(k) < K ? static_cast<size_t>(k) : 0;
     }
 
     // Raw (init + lr * tree sums) scores, n_rows x K, using the first
@@ -322,9 +307,7 @@ class MulticlassBooster final : public IBooster
     std::vector<float> raw_scores(features_view X, size_t n_rounds) const
     {
         size_t const n      = X.extent(0);
-        size_t const rounds = n_rounds == 0
-                                  ? n_iters()
-                                  : std::min(n_rounds, n_iters());
+        size_t const rounds = n_rounds == 0 ? n_iters() : std::min(n_rounds, n_iters());
         std::vector<float> scores(n * n_classes_, 0.0F);
         std::vector<float> raw(n);
         for (size_t k = 0; k < n_classes_; ++k)

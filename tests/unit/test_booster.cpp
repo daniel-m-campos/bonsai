@@ -8,11 +8,11 @@
 
 #include "bonsai/bin_mappers.hpp"
 #include "bonsai/booster.hpp"
-#include "bonsai/io/model.hpp"
-#include "bonsai/multiclass_booster.hpp"
 #include "bonsai/config/config.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
+#include "bonsai/io/model.hpp"
+#include "bonsai/multiclass_booster.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/registry/typelists.hpp"
 #include "bonsai/sampler.hpp"
@@ -325,9 +325,9 @@ TEST_CASE("Booster: DART trains, stays finite, and differs from plain GBDT",
     Dataset const train = make_dataset(batch);
     auto const    raw   = to_raw(batch);
 
-    Config cfg                          = tiny_cfg();
-    cfg.booster_config.learning_rate    = 0.3F;
-    Config dart_cfg                     = cfg;
+    Config cfg                             = tiny_cfg();
+    cfg.booster_config.learning_rate       = 0.3F;
+    Config dart_cfg                        = cfg;
     dart_cfg.booster_config.dart_drop_rate = 0.5F;
 
     MseBooster<DepthwiseGrower<>> plain{cfg};
@@ -358,9 +358,9 @@ TEST_CASE("Booster: DART is deterministic per seed", "[booster][dart][determinis
     Dataset const train = make_dataset(batch);
     auto const    raw   = to_raw(batch);
 
-    Config cfg                          = tiny_cfg();
-    cfg.booster_config.dart_drop_rate   = 0.5F;
-    cfg.booster_config.random_seed      = 123;
+    Config cfg                        = tiny_cfg();
+    cfg.booster_config.dart_drop_rate = 0.5F;
+    cfg.booster_config.random_seed    = 123;
 
     auto run = [&]
     {
@@ -382,7 +382,7 @@ TEST_CASE("Booster: feature_importance accumulates gain and split counts",
     auto const    batch = separable_batch();
     Dataset const train = make_dataset(batch);
 
-    Config cfg = tiny_cfg();
+    Config                        cfg = tiny_cfg();
     MseBooster<DepthwiseGrower<>> b{cfg};
     for (int i = 0; i < 5; ++i)
     {
@@ -416,9 +416,9 @@ TEST_CASE("Booster: MAE leaf renewal sets leaves to residual medians",
     // iteration reproduces the labels exactly: leaf = median(residuals).
     // The plain Newton step would give left = -G/(H+lambda) = 3/4 instead.
     detail::ColumnBatch batch{
-        .features = {{0.0F, 0.1F, 0.2F, 1.0F, 1.1F, 1.2F, 1.3F}},
-        .labels   = {-5.0F, -5.0F, -5.0F, 5.0F, 5.0F, 5.0F, 5.0F},
-        .weights  = {},
+        .features      = {{0.0F, 0.1F, 0.2F, 1.0F, 1.1F, 1.2F, 1.3F}},
+        .labels        = {-5.0F, -5.0F, -5.0F, 5.0F, 5.0F, 5.0F, 5.0F},
+        .weights       = {},
         .feature_names = {"a"},
     };
     Dataset const train = make_dataset(batch);
@@ -446,7 +446,7 @@ TEST_CASE("Booster: predict_at, staged, and leaf predictions are consistent",
     Dataset const train = make_dataset(batch);
     auto const    raw   = to_raw(batch);
 
-    Config cfg = tiny_cfg();
+    Config                        cfg = tiny_cfg();
     MseBooster<DepthwiseGrower<>> b{cfg};
     for (int i = 0; i < 6; ++i)
     {
@@ -507,7 +507,7 @@ TEST_CASE("MulticlassBooster: separable 3-class data reaches perfect accuracy",
     cfg.booster_config.learning_rate = 0.5F;
 
     MulticlassBooster<DepthwiseGrower<>, AllRowsSampler> b{cfg};
-    float loss_before = 0.0F;
+    float                                                loss_before = 0.0F;
     for (int i = 0; i < 20; ++i)
     {
         b.update_one_iter(train);
