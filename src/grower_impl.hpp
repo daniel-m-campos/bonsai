@@ -441,19 +441,25 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     Tree::LeafTable   leaf_table;
     train_leaf_values values(ds.n_rows(), 0.0F);
 
-    std::vector<SplitInput> frontier;
-    std::vector<SplitInput> next;
-    std::vector<bin_id_t>   level_bins;
-    std::vector<float>      level_gains;
-    auto const              selected =
+    std::vector<SplitInput>  frontier;
+    std::vector<SplitInput>  next;
+    std::vector<SplitOutput> splits;
+    std::vector<HistCell>    child_sums;
+    std::vector<bin_id_t>    level_bins;
+    std::vector<float>       level_gains;
+    auto const               selected =
         gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
-    builder_.begin_tree(ds, grad, hess);
-    frontier.push_back(gd::make_root(ds, grad, hess, row_indices, selected, builder_));
+
+    // Same data plane as depthwise; only the control plane differs (one split
+    // per level, broadcast to every frontier node; ObliviousTree bookkeeping).
+    gd::LevelStep<EngineT, SplitterT> step(builder_, ds, config_, grad, hess, selected);
+    frontier.push_back(step.make_root(row_indices));
 
     size_t depth = 0;
     while (depth < config_.max_depth)
     {
-        SplitOutput const split = SplitterT::find(frontier, config_);
+        step.find_splits(frontier, splits, child_sums);
+        SplitOutput const split = splits.front();
         if (!split.valid)
         {
             break;
@@ -464,28 +470,30 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
                                 .default_left = split.default_left});
         level_bins.push_back(split.bin_id);
         level_gains.push_back(static_cast<float>(split.gain));
-        // Same shape as the depthwise update: partition, batch-populate,
-        // subtract.
-        std::vector<gd::PendingSplit> pending(frontier.size());
-        parallel::for_each_index(frontier.size(),
-                                 [&](size_t i)
-                                 {
-                                     pending[i] = gd::partition_rows(
-                                         ds, std::move(frontier[i]), split, 0, 0);
-                                 });
-        std::vector<std::reference_wrapper<SplitInput>> smalls;
-        smalls.reserve(pending.size());
-        for (auto &p : pending)
+
+        gd::LevelPlan plan;
+        plan.splits.reserve(frontier.size());
+        for (uint32_t i = 0; i < frontier.size(); ++i)
         {
-            smalls.emplace_back(gd::smaller_child(p));
+            plan.splits.push_back({std::move(frontier[i]),
+                                   gd::PendingSplit{},
+                                   split,
+                                   0,
+                                   0,
+                                   0.0,
+                                   0.0,
+                                   {},
+                                   i,
+                                   {},
+                                   {}});
         }
-        gd::populate_nodes(ds, grad, hess, smalls, selected, builder_);
-        next.reserve(pending.size() * 2);
-        for (auto &p : pending)
+        step.partition(plan);
+        step.build_children(plan);
+        next.reserve(plan.splits.size() * 2);
+        for (auto &d : plan.splits)
         {
-            gd::finish_split(ds, p);
-            next.push_back(std::move(p.left));
-            next.push_back(std::move(p.right));
+            next.push_back(std::move(d.p.left));
+            next.push_back(std::move(d.p.right));
         }
         std::swap(frontier, next);
         next.clear();
