@@ -176,6 +176,8 @@ def main() -> int:
 
     runners = {"bonsai_gpu": lambda: run_bonsai("cuda_depthwise", args.threads, y_test),
                "bonsai_cpu": lambda: run_bonsai("depthwise", args.threads, y_test),
+               "bonsai_obl_gpu": lambda: run_bonsai("cuda_oblivious", args.threads, y_test),
+               "bonsai_leaf_gpu": lambda: run_bonsai("cuda_leafwise", args.threads, y_test),
                "xgb_cpu": lambda: run_xgb("cpu", args.threads, test, y_test),
                "xgb_gpu": lambda: run_xgb("cuda", args.threads, test, y_test),
                "lgbm_cpu": lambda: run_lgbm("cpu", args.threads, test, y_test),
