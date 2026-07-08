@@ -117,12 +117,18 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
         return;
     }
 
-    std::vector<HistCell> prefix_storage(n_parents * n_bins, HistCell{});
+    // Per-worker scratch reused across features and levels: a fresh
+    // n_parents x n_bins vector per call page-faults its whole footprint at
+    // high bin counts. fill_prefix overwrites every slot, so stale contents
+    // are never read.
+    static thread_local std::vector<HistCell> prefix_storage;
+    static thread_local std::vector<double>   real_grad;
+    static thread_local std::vector<double>   real_hess;
+    prefix_storage.resize(n_parents * n_bins);
+    real_grad.resize(n_parents);
+    real_hess.resize(n_parents);
     auto prefix = std::mdspan<HistCell, std::dextents<size_t, 2>>(prefix_storage.data(),
                                                                   n_parents, n_bins);
-
-    std::vector<double> real_grad(n_parents);
-    std::vector<double> real_hess(n_parents);
 
     double sum_parent_score = 0.0;
     for (size_t p = 0; p < n_parents; ++p)

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bonsai/detail/hist_pool.hpp"
 #include "bonsai/types.hpp"
 #include <algorithm>
 #include <cassert>
@@ -136,7 +137,7 @@ class Histogram
     }
 
   private:
-    std::vector<HistCell> cells_;
+    std::vector<HistCell, detail::PoolAllocator<HistCell>> cells_;
 };
 
 using histogram_view_t = std::span<Histogram const>;
