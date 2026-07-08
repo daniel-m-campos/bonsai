@@ -317,6 +317,21 @@ def build_grid(axes: list[str], smoke: bool) -> list[tuple[dict, int]]:
     return grid
 
 
+def load_resume(path: str) -> set[tuple]:
+    """Keys already measured (pods die: funds, spot reaps). ok/unsupported are
+    final; skipped/oom/timeout/error re-attempt — the new host may differ."""
+    done = set()
+    for line in pathlib.Path(path).read_text().splitlines():
+        if not line.strip():
+            continue
+        r = json.loads(line)
+        if r["status"] in ("ok", "unsupported"):
+            c = r["cell"]
+            done.add((r["variant"], r["threads"], r["repeat"], c["rows"],
+                      c["cols"], c["bins"]))
+    return done
+
+
 def classify_error(message: str) -> str:
     low = message.lower()
     if any(s in low for s in ("out of memory", "memoryerror", "bad_alloc",
@@ -371,6 +386,8 @@ def main() -> int:
     ap.add_argument("--timeout-cap", type=int, default=3600)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--smoke", action="store_true")
+    ap.add_argument("--resume", default=None,
+                    help="jsonl of prior results; ok/unsupported runs are skipped")
     ap.add_argument("--out", default=str(RESULTS))
     args = ap.parse_args()
 
@@ -407,6 +424,8 @@ def main() -> int:
               + (f" fit={payload['fit_s']}s r2={payload['r2_test']}"
                  if payload["status"] == "ok" else f" ({payload['message']})"))
 
+    done = load_resume(args.resume) if args.resume else set()
+
     warmed: set[str] = set()
     for cell, threads in grid:
         for variant in variants:
@@ -436,7 +455,9 @@ def main() -> int:
             elif cell["axis"] == "threads" and threads > (host["n_vcpu"] or 1):
                 skip = ("skipped", f"threads {threads} > {host['n_vcpu']} vcpus")
             if skip:
-                if not args.dry_run:
+                already = (variant, threads, 0, cell["rows"], cell["cols"],
+                           cell["bins"]) in done
+                if not args.dry_run and not already:
                     emit(cell_v, variant, threads, 0,
                          {"status": skip[0], "message": skip[1]})
                 else:
@@ -456,6 +477,11 @@ def main() -> int:
                         timeout=600)
                 warmed.add(lib)
             for rep in range(repeats):
+                if (variant, threads, rep, cell["rows"], cell["cols"],
+                        cell["bins"]) in done:
+                    print(f"  {variant:>24} t={threads:<3} {cell['rows']}x"
+                          f"{cell['cols']}x{cell['bins']} rep={rep} -> resume-skip")
+                    continue
                 spec = {"cell": cell_v, "variant": variant, "threads": threads}
                 emit(cell_v, variant, threads, rep, run_one(spec, timeout))
     return 0
