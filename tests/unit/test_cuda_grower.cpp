@@ -262,3 +262,57 @@ TEST_CASE("CudaDepthwiseGrower handles consecutive trees and datasets",
 }
 
 } // namespace
+
+TEST_CASE("CudaDepthwiseGrower matches CPU past the 48KiB shared-memory budget",
+          "[cuda][grower]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    // ~4095 bins per feature: over the static 48KiB budget (3072 bins), so
+    // this exercises the dynamic shared-memory opt-in on devices that grant
+    // it and the CPU fallback on devices that don't — parity must hold
+    // either way.
+    std::mt19937                          rng(11);
+    std::uniform_real_distribution<float> value(0.0F, 1.0F);
+    std::normal_distribution<float>       gradient(0.0F, 1.0F);
+    size_t const                          n = 16384;
+
+    detail::ColumnBatch batch;
+    batch.features.resize(3, std::vector<float>(n));
+    batch.feature_names = {"a", "b", "c"};
+    batch.labels.assign(n, 0.0F);
+    std::vector<float> grad(n);
+    std::vector<float> hess(n);
+    for (size_t r = 0; r < n; ++r)
+    {
+        batch.features[0][r] = value(rng);
+        batch.features[1][r] = value(rng);
+        batch.features[2][r] = value(rng);
+        grad[r]              = gradient(rng);
+        hess[r]              = 0.5F + value(rng);
+    }
+    BinMapperConfig bm;
+    bm.max_bin         = 4096;
+    BinMappers mappers = BinMappers::fit(batch, bm);
+    Dataset    ds      = Dataset::bin(batch, mappers, {});
+    REQUIRE(ds.n_bins(0) > 3072); // the scenario must actually cross the cliff
+
+    TreeConfig cfg;
+    cfg.max_depth        = 4;
+    cfg.min_data_in_leaf = 4;
+
+    DepthwiseGrower<CpuHistogramEngine> cpu_grower(cfg);
+    CudaDepthwiseGrower                 gpu_grower(cfg);
+
+    auto rows = test::iota_rows(n);
+    auto cpu  = cpu_grower.grow(ds, grad, hess, rows);
+    auto gpu  = gpu_grower.grow(ds, grad, hess, rows);
+
+    REQUIRE(cpu.values.size() == gpu.values.size());
+    for (size_t r = 0; r < cpu.values.size(); ++r)
+    {
+        REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
+    }
+}

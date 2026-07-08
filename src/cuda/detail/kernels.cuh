@@ -27,9 +27,10 @@ namespace
 // below roughly this size (knee measured on Jetson Orin Nano).
 constexpr size_t k_min_gpu_rows = 512;
 
-// Shared-memory histogram footprint cap (stride floats, 48 KiB/block
-// budget). Datasets binned past ~6k bins per feature fall back to the CPU
-// engine instead of failing the kernel launch at runtime.
+// Default shared-memory histogram footprint cap (stride floats, 48 KiB
+// static budget). The engine raises it at runtime to the device's opt-in
+// limit (~99 KiB on consumer parts, 227 KiB on sm_90), moving the CPU
+// fallback cliff from ~3k to ~6k+ bins per feature.
 constexpr size_t k_max_shared_bytes = 48UL * 1024UL;
 
 // Widened index of the first (grad) slot of pair i in a flat [grad0, hess0,

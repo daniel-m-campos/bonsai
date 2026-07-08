@@ -7,6 +7,8 @@
 #include <cuda.h>
 
 #include <cstddef>
+#include <cstdint>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -25,6 +27,73 @@ void check(cudaError_t rc, char const *what)
     }
 }
 
+// Stream-ordered allocation with the device mempool told to keep freed
+// memory: the default release threshold of 0 returns every free to the OS
+// at the next sync, and on GeForce drivers the resulting cudaMalloc/cudaFree
+// churn synchronizes the whole process (the 5090's ~11-14s per-fit overhead,
+// decision 48). BONSAI_CUDA_SYNC_ALLOC=1 restores plain cudaMalloc.
+inline bool use_async_alloc()
+{
+    static bool const enabled = []
+    {
+        if (std::getenv("BONSAI_CUDA_SYNC_ALLOC") != nullptr)
+        {
+            return false;
+        }
+        int dev = 0;
+        if (cudaGetDevice(&dev) != cudaSuccess)
+        {
+            return false;
+        }
+        int supported = 0;
+        if (cudaDeviceGetAttribute(&supported, cudaDevAttrMemoryPoolsSupported, dev) !=
+                cudaSuccess ||
+            supported == 0)
+        {
+            return false;
+        }
+        cudaMemPool_t pool{};
+        if (cudaDeviceGetDefaultMemPool(&pool, dev) != cudaSuccess)
+        {
+            return false;
+        }
+        uint64_t threshold = UINT64_MAX;
+        cudaMemPoolSetAttribute(pool, cudaMemPoolAttrReleaseThreshold, &threshold);
+        return true;
+    }();
+    return enabled;
+}
+
+inline void *alloc_device(size_t bytes)
+{
+    void *p = nullptr;
+    if (use_async_alloc())
+    {
+        check(cudaMallocAsync(&p, bytes, cudaStreamDefault), "mallocAsync");
+    }
+    else
+    {
+        check(cudaMalloc(&p, bytes), "malloc");
+    }
+    return p;
+}
+
+inline void free_device(void *p)
+{
+    if (p == nullptr)
+    {
+        return;
+    }
+    if (use_async_alloc())
+    {
+        cudaFreeAsync(p, cudaStreamDefault);
+    }
+    else
+    {
+        cudaFree(p);
+    }
+}
+
 // Owning device allocation, shaped after thrust::device_vector's capacity API
 // (data/reserve) but deliberately grow-only: capacity never shrinks and
 // contents are dropped on reallocation (callers re-upload per use), so no
@@ -35,7 +104,7 @@ template <typename T> class DeviceBuffer
     DeviceBuffer() = default;
     ~DeviceBuffer()
     {
-        cudaFree(ptr_);
+        free_device(ptr_);
     }
     DeviceBuffer(DeviceBuffer const &)            = delete;
     DeviceBuffer &operator=(DeviceBuffer const &) = delete;
@@ -58,10 +127,10 @@ template <typename T> class DeviceBuffer
         {
             grown *= 2;
         }
-        cudaFree(ptr_);
+        free_device(ptr_);
         ptr_      = nullptr;
         capacity_ = 0;
-        check(cudaMalloc(&ptr_, grown * sizeof(T)), "malloc");
+        ptr_      = static_cast<T *>(alloc_device(grown * sizeof(T)));
         capacity_ = grown;
     }
 
@@ -74,6 +143,31 @@ template <typename T> class DeviceBuffer
   private:
     T     *ptr_      = nullptr;
     size_t capacity_ = 0;
+};
+
+// Page-locked host staging: pinned transfers run at full PCIe rate and never
+// bounce through the driver's internal staging copy.
+template <typename T> class PinnedBuffer
+{
+  public:
+    explicit PinnedBuffer(size_t n)
+    {
+        check(cudaHostAlloc(&ptr_, n * sizeof(T), cudaHostAllocDefault), "hostAlloc");
+    }
+    ~PinnedBuffer()
+    {
+        cudaFreeHost(ptr_);
+    }
+    PinnedBuffer(PinnedBuffer const &)            = delete;
+    PinnedBuffer &operator=(PinnedBuffer const &) = delete;
+
+    T *data() const
+    {
+        return ptr_;
+    }
+
+  private:
+    T *ptr_ = nullptr;
 };
 
 // A host staging vector paired with its device mirror — the shape that recurs

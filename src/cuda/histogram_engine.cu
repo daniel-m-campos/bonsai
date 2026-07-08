@@ -7,6 +7,7 @@
 #include "bonsai/dataset.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/histogram.hpp"
+#include "bonsai/parallel.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
 
@@ -125,6 +126,44 @@ struct CudaHistogramEngine::Impl
     void const    *bins0   = nullptr;
     size_t         n_rows  = 0;
     size_t         n_feats = 0;
+
+    // Runtime shared-memory ceiling for the hist kernels: the opt-in limit
+    // when the device grants one (both BinT instantiations opted in), else
+    // the 48 KiB static budget. Resolved lazily on first use so engine
+    // construction never touches the CUDA runtime.
+    size_t shared_limit  = k_max_shared_bytes;
+    bool   shared_probed = false;
+
+    void init_shared_limit()
+    {
+        if (shared_probed)
+        {
+            return;
+        }
+        shared_probed = true;
+        int dev       = 0;
+        if (cudaGetDevice(&dev) != cudaSuccess)
+        {
+            return;
+        }
+        int optin = 0;
+        if (cudaDeviceGetAttribute(&optin, cudaDevAttrMaxSharedMemoryPerBlockOptin,
+                                   dev) != cudaSuccess ||
+            static_cast<size_t>(optin) <= k_max_shared_bytes)
+        {
+            return;
+        }
+        if (cudaFuncSetAttribute(hist_kernel<uint8_t>,
+                                 cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                 optin) == cudaSuccess &&
+            cudaFuncSetAttribute(hist_kernel<uint16_t>,
+                                 cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                 optin) == cudaSuccess)
+        {
+            shared_limit = static_cast<size_t>(optin);
+        }
+        cudaGetLastError(); // clear any sticky attribute error
+    }
 
     // Resident level state (phase 3): ping-pong per-level histogram buffers,
     // slot-indexed [slot][sel][2 * max_sel_bins] like `out`. cur() holds the
@@ -389,33 +428,44 @@ struct CudaHistogramEngine::Impl
             all_u8    = all_u8 && counts[f] <= 256;
         }
         bins_are_u8 = all_u8;
+        // One pinned staging buffer + one memcpy per matrix: pageable
+        // per-feature copies serialize on GeForce drivers (decision 48),
+        // and pinned transfers run at full PCIe rate.
+        size_t const cells = dataset.n_features() * dataset.n_rows();
         if (all_u8)
         {
-            bins8.reserve(dataset.n_features() * dataset.n_rows());
-            std::vector<uint8_t> narrow(dataset.n_rows());
-            for (size_t f = 0; f < dataset.n_features(); ++f)
-            {
-                auto const src = dataset.feature_bins(f);
-                for (size_t r = 0; r < src.size(); ++r)
-                {
-                    narrow[r] = static_cast<uint8_t>(src[r]);
-                }
-                check(cudaMemcpy(bins8.data() + (f * dataset.n_rows()), narrow.data(),
-                                 narrow.size(), cudaMemcpyHostToDevice),
-                      "upload bins");
-            }
+            bins8.reserve(cells);
+            PinnedBuffer<uint8_t> staging(cells);
+            parallel::for_each_index(dataset.n_features(),
+                                     [&](size_t f)
+                                     {
+                                         auto const src = dataset.feature_bins(f);
+                                         uint8_t   *dst =
+                                             staging.data() + (f * dataset.n_rows());
+                                         for (size_t r = 0; r < src.size(); ++r)
+                                         {
+                                             dst[r] = static_cast<uint8_t>(src[r]);
+                                         }
+                                     });
+            check(
+                cudaMemcpy(bins8.data(), staging.data(), cells, cudaMemcpyHostToDevice),
+                "upload bins");
         }
         else
         {
-            bins16.reserve(dataset.n_features() * dataset.n_rows());
-            for (size_t f = 0; f < dataset.n_features(); ++f)
-            {
-                check(cudaMemcpy(bins16.data() + (f * dataset.n_rows()),
-                                 dataset.feature_bins(f).data(),
-                                 dataset.n_rows() * sizeof(uint16_t),
-                                 cudaMemcpyHostToDevice),
-                      "upload bins");
-            }
+            bins16.reserve(cells);
+            PinnedBuffer<uint16_t> staging(cells);
+            parallel::for_each_index(dataset.n_features(),
+                                     [&](size_t f)
+                                     {
+                                         auto const src = dataset.feature_bins(f);
+                                         std::copy(src.begin(), src.end(),
+                                                   staging.data() +
+                                                       (f * dataset.n_rows()));
+                                     });
+            check(cudaMemcpy(bins16.data(), staging.data(), cells * sizeof(uint16_t),
+                             cudaMemcpyHostToDevice),
+                  "upload bins");
         }
         n_bins.upload(counts.data(), counts.size());
         ds      = &dataset;
@@ -466,7 +516,8 @@ bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
     {
         max_sel_bins = std::max(max_sel_bins, ds.n_bins(fid));
     }
-    if (selected.empty() || 4 * max_sel_bins * sizeof(float) > k_max_shared_bytes)
+    im.init_shared_limit();
+    if (selected.empty() || 4 * max_sel_bins * sizeof(float) > im.shared_limit)
     {
         return false; // the LevelStep falls back to host histogram building
     }
