@@ -17,6 +17,11 @@ class Dataset
   public:
     static Dataset bin(detail::ColumnBatch const &batch, BinMappers const &mappers,
                        DataConfig const &cfg);
+    // Row-major matrix path: transforms strided columns directly, no
+    // column-major float materialization. Bin ids identical to the
+    // ColumnBatch overload.
+    static Dataset bin(features_view X, floats_view labels, BinMappers const &mappers,
+                       DataConfig const &cfg);
 
     size_t n_rows() const;
     size_t n_features() const;
