@@ -36,16 +36,21 @@ inline Config resolve_config(CommonOpts const &opts)
     return cfg;
 }
 
-// Row-major contiguous feature buffer matching features_view.
+// Row-major contiguous feature buffer matching features_view. Either owns
+// its storage (CLI: built from a parsed CSV) or borrows a caller-owned
+// row-major matrix that must outlive it (Python module: the numpy array is
+// alive for the duration of the train call).
 struct FeatureBuffer
 {
     std::vector<float> data;
+    float const       *borrowed = nullptr;
     size_t             n_rows{};
     size_t             n_features{};
 
     features_view view() const
     {
-        return features_view{data.data(), n_rows, n_features};
+        return features_view{borrowed != nullptr ? borrowed : data.data(), n_rows,
+                             n_features};
     }
 };
 
