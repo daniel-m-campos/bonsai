@@ -39,6 +39,37 @@ BinMappers BinMappers::fit(detail::ColumnBatch const &batch, BinMapperConfig con
     return out;
 }
 
+BinMappers BinMappers::fit(features_view X, std::vector<std::string> feature_names,
+                           BinMapperConfig const &cfg)
+{
+    detail::IngestProfiler::Lap lap;
+    size_t const                n = X.extent(0);
+    size_t const                f = X.extent(1);
+    // Gathering a column into contiguous scratch feeds BinMapper::fit the
+    // exact sequence the ColumnBatch overload would — identical cuts.
+    std::vector<std::optional<BinMapper>> slots(f);
+    parallel::for_each_index(f,
+                             [&](size_t c)
+                             {
+                                 std::vector<float> column(n);
+                                 for (size_t r = 0; r < n; ++r)
+                                 {
+                                     column[r] = X[r, c];
+                                 }
+                                 slots[c] = BinMapper::fit(column, cfg);
+                             });
+    lap(detail::IngestProfiler::instance().fit_s);
+
+    std::vector<BinMapper> mappers;
+    mappers.reserve(f);
+    for (auto &s : slots)
+    {
+        // Every slot was filled by the loop above.
+        mappers.push_back(std::move(*s)); // NOLINT(bugprone-unchecked-optional-access)
+    }
+    return from_mappers(std::move(mappers), std::move(feature_names));
+}
+
 BinMapper const &BinMappers::operator[](size_t fid) const
 {
     return mappers_[fid];

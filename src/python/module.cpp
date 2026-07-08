@@ -42,57 +42,25 @@ bonsai::features_view as_view(array_2d const &X)
     return bonsai::features_view{X.data(), X.shape(0), X.shape(1)};
 }
 
-// Cache-blocked row-major -> column-major transpose, parallel over row
-// blocks. Each column element is written by exactly one thread, so the
-// result is bit-identical at any thread count.
-void fill_columns(bonsai::features_view src, std::vector<std::vector<float>> &cols)
-{
-    constexpr size_t tile = 64;
-    size_t const     n    = src.extent(0);
-    size_t const     f    = src.extent(1);
-    cols.assign(f, std::vector<float>(n));
-    size_t const n_blocks = (n + tile - 1) / tile;
-    bonsai::parallel::for_each_index(n_blocks,
-                                     [&](size_t rb)
-                                     {
-                                         size_t const r0 = rb * tile;
-                                         size_t const r1 = std::min(n, r0 + tile);
-                                         for (size_t c0 = 0; c0 < f; c0 += tile)
-                                         {
-                                             size_t const c1 = std::min(f, c0 + tile);
-                                             for (size_t r = r0; r < r1; ++r)
-                                             {
-                                                 for (size_t c = c0; c < c1; ++c)
-                                                 {
-                                                     cols[c][r] = src[r, c];
-                                                 }
-                                             }
-                                         }
-                                     });
-}
-
-// The FeatureBuffer borrows the numpy matrix (row-major float32, alive for
-// the duration of the train call) instead of copying it.
+// Bins straight from the row-major numpy matrix (no column-major float
+// materialization); the FeatureBuffer borrows the same buffer, which is
+// alive for the duration of the train call.
 bonsai::cli::LabeledData make_labeled(array_2d const &X, array_1d const &y,
                                       bonsai::BinMappers const &mappers,
                                       bonsai::Config const     &cfg)
 {
     size_t const n = X.shape(0);
-    size_t const f = X.shape(1);
-
-    bonsai::detail::ColumnBatch batch;
-    fill_columns(as_view(X), batch.features);
-    batch.labels.assign(y.data(), y.data() + n);
 
     bonsai::cli::FeatureBuffer buf;
     buf.n_rows     = n;
-    buf.n_features = f;
-    buf.borrowed   = std::span{X.data(), n * f};
+    buf.n_features = X.shape(1);
+    buf.borrowed   = std::span{X.data(), n * X.shape(1)};
 
-    return bonsai::cli::LabeledData{.dataset =
-                                        bonsai::Dataset::bin(batch, mappers, cfg.data),
-                                    .features = std::move(buf),
-                                    .labels   = std::move(batch.labels)};
+    return bonsai::cli::LabeledData{
+        .dataset  = bonsai::Dataset::bin(as_view(X), bonsai::floats_view{y.data(), n},
+                                         mappers, cfg.data),
+        .features = std::move(buf),
+        .labels   = std::vector<float>(y.data(), y.data() + n)};
 }
 
 // A trained model: booster + the bin mappers and config it was fit with.
@@ -268,32 +236,19 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
 
     nb::gil_scoped_release release;
 
-    // One ColumnBatch serves both the mapper fit and the binning; the old
-    // path materialized it twice (once here, once in make_labeled).
-    size_t const                n = X.shape(0);
-    size_t const                f = X.shape(1);
-    bonsai::detail::ColumnBatch batch;
-    fill_columns(as_view(X), batch.features);
-    batch.labels.assign(y.data(), y.data() + n);
-    batch.feature_names.reserve(f);
+    size_t const             f = X.shape(1);
+    std::vector<std::string> names;
+    names.reserve(f);
     for (size_t c = 0; c < f; ++c)
     {
-        batch.feature_names.push_back("f" + std::to_string(c));
+        names.push_back("f" + std::to_string(c));
     }
 
     bonsai::cli::LoadedTrainValid loaded;
-    loaded.mappers = init ? std::move(init->mappers)
-                          : bonsai::BinMappers::fit(batch, cfg.bin_mapper);
-
-    bonsai::cli::FeatureBuffer buf;
-    buf.n_rows     = n;
-    buf.n_features = f;
-    buf.borrowed   = std::span{X.data(), n * f};
-    loaded.train   = bonsai::cli::LabeledData{
-          .dataset  = bonsai::Dataset::bin(batch, loaded.mappers, cfg.data),
-          .features = std::move(buf),
-          .labels   = std::move(batch.labels)};
-    std::vector<std::vector<float>>{}.swap(batch.features); // free the columns
+    loaded.mappers =
+        init ? std::move(init->mappers)
+             : bonsai::BinMappers::fit(as_view(X), std::move(names), cfg.bin_mapper);
+    loaded.train = make_labeled(X, y, loaded.mappers, cfg);
     if (eval_set)
     {
         loaded.valid =

@@ -46,6 +46,32 @@ Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers
     return ds;
 }
 
+Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mappers,
+                     DataConfig const & /*cfg*/)
+{
+    assert(X.extent(1) == mappers.size());
+    detail::IngestProfiler::Lap lap;
+    Dataset                     ds;
+    ds.n_rows_  = labels.size();
+    ds.mappers_ = mappers;
+    ds.labels_.assign(labels.begin(), labels.end());
+    ds.features_.resize(X.extent(1));
+    ds.is_categorical_.assign(X.extent(1), false);
+    parallel::for_each_index(X.extent(1),
+                             [&](size_t f)
+                             {
+                                 auto &binned = ds.features_[f];
+                                 binned.resize(ds.n_rows_);
+                                 auto const &mapper = mappers[f];
+                                 for (size_t r = 0; r < ds.n_rows_; ++r)
+                                 {
+                                     binned[r] = mapper.transform(X[r, f]);
+                                 }
+                             });
+    lap(detail::IngestProfiler::instance().bin_s);
+    return ds;
+}
+
 size_t Dataset::n_rows() const
 {
     return n_rows_;

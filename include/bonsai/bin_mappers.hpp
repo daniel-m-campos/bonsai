@@ -9,6 +9,7 @@
 #include "bonsai/bin_mapper.hpp"
 #include "bonsai/config/bin_mapper_config.hpp"
 #include "bonsai/detail/column_batch.hpp"
+#include "bonsai/types.hpp"
 
 namespace bonsai
 {
@@ -17,6 +18,10 @@ class BinMappers
 {
   public:
     static BinMappers fit(detail::ColumnBatch const &batch, BinMapperConfig const &cfg);
+    // Row-major matrix path: each worker gathers one column into scratch and
+    // fits it, so cuts are bit-identical to the ColumnBatch overload.
+    static BinMappers fit(features_view X, std::vector<std::string> feature_names,
+                          BinMapperConfig const &cfg);
     static BinMappers from_mappers(std::vector<BinMapper>   mappers,
                                    std::vector<std::string> feature_names)
     {
