@@ -110,41 +110,44 @@ inline PendingSplit partition_rows(Dataset const &ds, SplitInput parent,
                                    SplitOutput const &s, node_id_t left_id,
                                    node_id_t right_id)
 {
-    auto const &bins      = ds.feature_bins(s.feature_id);
-    auto const  last_bin  = static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
-    auto        goes_left = [&](row_id_t r)
-    {
-        bin_id_t const b = bins[r];
-        if (b == last_bin)
-        {
-            return s.default_left;
-        }
-        return b <= s.bin_id;
-    };
+    auto const last_bin = static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
 
     PendingSplit p;
-    p.left.id     = left_id;
-    p.right.id    = right_id;
-    size_t n_left = 0;
-    for (row_id_t const r : parent.rows)
-    {
-        n_left += goes_left(r) ? 1 : 0;
-    }
-    p.left.rows.resize(n_left);
-    p.right.rows.resize(parent.rows.size() - n_left);
-    size_t li = 0;
-    size_t ri = 0;
-    for (row_id_t const r : parent.rows)
-    {
-        if (goes_left(r))
-        {
-            p.left.rows[li++] = r;
-        }
-        else
-        {
-            p.right.rows[ri++] = r;
-        }
-    }
+    p.left.id  = left_id;
+    p.right.id = right_id;
+    ds.visit_bins(s.feature_id,
+                  [&](auto bins)
+                  {
+                      auto goes_left = [&](row_id_t r)
+                      {
+                          bin_id_t const b = bins[r];
+                          if (b == last_bin)
+                          {
+                              return s.default_left;
+                          }
+                          return b <= s.bin_id;
+                      };
+                      size_t n_left = 0;
+                      for (row_id_t const r : parent.rows)
+                      {
+                          n_left += goes_left(r) ? 1 : 0;
+                      }
+                      p.left.rows.resize(n_left);
+                      p.right.rows.resize(parent.rows.size() - n_left);
+                      size_t li = 0;
+                      size_t ri = 0;
+                      for (row_id_t const r : parent.rows)
+                      {
+                          if (goes_left(r))
+                          {
+                              p.left.rows[li++] = r;
+                          }
+                          else
+                          {
+                              p.right.rows[ri++] = r;
+                          }
+                      }
+                  });
     p.parent_hists = std::move(parent.hists);
     return p;
 }
