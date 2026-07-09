@@ -34,7 +34,12 @@ bool all_fit_u8(BinMappers const &mappers)
 }
 
 // Shared bin loop: `read(f, r)` yields the raw float for (row, feature);
-// values are identical either width, so models stay byte-identical.
+// values are identical either width, so models stay byte-identical. Workers
+// own row tiles and visit every feature within the tile, so a row-major
+// source is pulled into cache once per tile instead of once per feature (a
+// straight column pass reads X[r, f] at n_features x 4B stride — ~25x line
+// amplification at 100 features). The tile size only reorders independent
+// writes; 64 u8 rows = one cache line per column, so tiles never share one.
 template <typename Read>
 void fill_binned(std::vector<std::vector<uint8_t>>  &u8,
                  std::vector<std::vector<uint16_t>> &u16, bool &u8_mode,
@@ -52,24 +57,40 @@ void fill_binned(std::vector<std::vector<uint8_t>>  &u8,
     parallel::for_each_index(n_features,
                              [&](size_t f)
                              {
-                                 auto const &mapper = mappers[f];
                                  if (u8_mode)
                                  {
-                                     auto &binned = u8[f];
-                                     binned.resize(n_rows);
-                                     for (size_t r = 0; r < n_rows; ++r)
-                                     {
-                                         binned[r] = static_cast<uint8_t>(
-                                             mapper.transform(read(f, r)));
-                                     }
+                                     u8[f].resize(n_rows);
                                  }
                                  else
                                  {
-                                     auto &binned = u16[f];
-                                     binned.resize(n_rows);
-                                     for (size_t r = 0; r < n_rows; ++r)
+                                     u16[f].resize(n_rows);
+                                 }
+                             });
+    constexpr size_t tile = 64;
+    parallel::for_each_index((n_rows + tile - 1) / tile,
+                             [&](size_t block)
+                             {
+                                 size_t const r0 = block * tile;
+                                 size_t const r1 = std::min(r0 + tile, n_rows);
+                                 for (size_t f = 0; f < n_features; ++f)
+                                 {
+                                     auto const &mapper = mappers[f];
+                                     if (u8_mode)
                                      {
-                                         binned[r] = mapper.transform(read(f, r));
+                                         uint8_t *const out = u8[f].data();
+                                         for (size_t r = r0; r < r1; ++r)
+                                         {
+                                             out[r] = static_cast<uint8_t>(
+                                                 mapper.transform(read(f, r)));
+                                         }
+                                     }
+                                     else
+                                     {
+                                         uint16_t *const out = u16[f].data();
+                                         for (size_t r = r0; r < r1; ++r)
+                                         {
+                                             out[r] = mapper.transform(read(f, r));
+                                         }
                                      }
                                  }
                              });

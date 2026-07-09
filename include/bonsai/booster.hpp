@@ -3,6 +3,7 @@
 #include "bonsai/config/booster_config.hpp"
 #include "bonsai/config/config.hpp"
 #include "bonsai/dataset.hpp"
+#include "bonsai/detail/fit_profiler.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/parallel.hpp"
@@ -296,6 +297,9 @@ class Booster final : public IBooster
             }
         }
 
+        auto                    &prof = detail::FitProfiler::instance();
+        detail::FitProfiler::Lap lap;
+
         // DART: drop a random subset of existing trees; gradients are
         // computed against the model without them, and afterwards both the
         // dropped trees and the new tree are rescaled (k/(k+1), 1/(k+1)).
@@ -325,6 +329,7 @@ class Booster final : public IBooster
             }
         }
 
+        lap(prof.dart_s);
         objective_.compute(scores_, train.labels(), grad_, hess_);
 
         if (!train.weights().empty())
@@ -335,15 +340,18 @@ class Booster final : public IBooster
                 hess_[i] *= train.weights()[i];
             }
         }
+        lap(prof.objective_s);
 
         if (row_indices_.size() != train.n_rows())
         {
             row_indices_.resize(train.n_rows());
         }
         size_t const n_selected = sampler_.sample(grad_, hess_, rng_, row_indices_);
+        lap(prof.sample_s);
 
         auto [tree, leaf_values, leaf_ids] =
             grower_.grow(train, grad_, hess_, {row_indices_.data(), n_selected});
+        lap(prof.grow_s);
 
         // Leaf renewal (constant-hessian objectives): replace each leaf's
         // Newton step with the objective's optimal value over the residuals
@@ -353,6 +361,7 @@ class Booster final : public IBooster
         {
             renew_leaves(tree, leaf_ids, leaf_values, train.labels());
         }
+        lap(prof.renew_s);
 
         if (!dropped.empty())
         {
@@ -385,6 +394,7 @@ class Booster final : public IBooster
                 scores_.size(), [&](size_t i)
                 { scores_[i] += config_.learning_rate * leaf_values[i]; });
         }
+        lap(prof.score_s);
 
         trees_.push_back(std::move(tree));
     }

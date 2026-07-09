@@ -261,12 +261,14 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
 
     SplitInput make_root(row_index_view row_indices)
     {
-        SplitInput root;
+        GrowProfiler::Lap lap;
+        SplitInput        root;
         root.id = 0;
         root.rows.assign(row_indices.begin(), row_indices.end());
         engine_.populate(ds_, grad_, hess_, root, selected_);
         root.sums      = root.totals();
         root.row_count = root.rows.size();
+        lap(GrowProfiler::instance().populate_s);
         return root;
     }
 
@@ -360,16 +362,127 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         }
     }
 
+    // Level-wide blocked partition: nodes decompose into fixed-size row
+    // blocks so one huge parent (the root) and many small deep nodes both
+    // fill every worker. Per block, count goes-left; a serial scan turns
+    // counts into stable scatter offsets; blocks then scatter concurrently.
+    // The output is the exact stable order of a serial pass — bit-identical
+    // at any thread count (integers only, no reductions).
     static void host_partition(Dataset const &ds, LevelPlan &plan)
     {
-        parallel::for_each_index(plan.splits.size(),
-                                 [&](size_t i)
-                                 {
-                                     DeferredSplit &d = plan.splits[i];
-                                     d.p =
-                                         partition_rows(ds, std::move(d.parent),
-                                                        d.split, d.left_id, d.right_id);
-                                 });
+        struct Block
+        {
+            size_t split_idx, k0, k1;
+            size_t n_left = 0, left0 = 0, right0 = 0;
+        };
+        constexpr size_t                       block_rows = 65536;
+        static thread_local std::vector<Block> blocks;
+        blocks.clear();
+        for (size_t i = 0; i < plan.splits.size(); ++i)
+        {
+            size_t const n = plan.splits[i].parent.rows.size();
+            for (size_t k0 = 0; k0 < n; k0 += block_rows)
+            {
+                blocks.push_back({i, k0, std::min(k0 + block_rows, n)});
+            }
+        }
+        // Capture raw pointers: naming a thread_local inside the parallel
+        // regions would resolve to each worker's own (empty) vector.
+        Block *const         blk          = blocks.data();
+        DeferredSplit *const splits       = plan.splits.data();
+        auto const           goes_left_of = [&ds](DeferredSplit const &d)
+        {
+            auto const last_bin =
+                static_cast<bin_id_t>(ds.n_bins(d.split.feature_id) - 1);
+            return [&d, last_bin](bin_id_t b)
+            { return b == last_bin ? d.split.default_left : b <= d.split.bin_id; };
+        };
+        parallel::for_each_index(
+            blocks.size(),
+            [&, blk, splits](size_t u)
+            {
+                Block               &b         = blk[u];
+                DeferredSplit const &d         = splits[b.split_idx];
+                auto const           goes_left = goes_left_of(d);
+                row_id_t const      *rows      = d.parent.rows.data();
+                ds.visit_bins(d.split.feature_id,
+                              [&](auto bins)
+                              {
+                                  size_t n_left = 0;
+                                  for (size_t k = b.k0; k < b.k1; ++k)
+                                  {
+                                      n_left += goes_left(bins[rows[k]]) ? 1 : 0;
+                                  }
+                                  b.n_left = n_left;
+                              });
+            });
+        size_t prev_split = static_cast<size_t>(-1);
+        size_t li         = 0;
+        size_t ri         = 0;
+        for (Block &b : blocks)
+        {
+            if (b.split_idx != prev_split)
+            {
+                if (prev_split != static_cast<size_t>(-1))
+                {
+                    finish_sizes(splits[prev_split], li, ri);
+                }
+                prev_split = b.split_idx;
+                li         = 0;
+                ri         = 0;
+            }
+            b.left0  = li;
+            b.right0 = ri;
+            li += b.n_left;
+            ri += (b.k1 - b.k0) - b.n_left;
+        }
+        if (prev_split != static_cast<size_t>(-1))
+        {
+            finish_sizes(splits[prev_split], li, ri);
+        }
+        parallel::for_each_index(
+            blocks.size(),
+            [&, blk, splits](size_t u)
+            {
+                Block const    &b         = blk[u];
+                DeferredSplit  &d         = splits[b.split_idx];
+                auto const      goes_left = goes_left_of(d);
+                row_id_t const *rows      = d.parent.rows.data();
+                row_id_t *const left      = d.p.left.rows.data() + b.left0;
+                row_id_t *const right     = d.p.right.rows.data() + b.right0;
+                ds.visit_bins(d.split.feature_id,
+                              [&](auto bins)
+                              {
+                                  size_t li2 = 0;
+                                  size_t ri2 = 0;
+                                  for (size_t k = b.k0; k < b.k1; ++k)
+                                  {
+                                      row_id_t const r = rows[k];
+                                      if (goes_left(bins[r]))
+                                      {
+                                          left[li2++] = r;
+                                      }
+                                      else
+                                      {
+                                          right[ri2++] = r;
+                                      }
+                                  }
+                              });
+            });
+        for (DeferredSplit &d : plan.splits)
+        {
+            d.p.left.id      = d.left_id;
+            d.p.right.id     = d.right_id;
+            d.p.parent_hists = std::move(d.parent.hists);
+            d.parent.rows.clear();
+            d.parent.rows.shrink_to_fit();
+        }
+    }
+
+    static void finish_sizes(DeferredSplit &d, size_t n_left, size_t n_right)
+    {
+        d.p.left.rows.resize(n_left);
+        d.p.right.rows.resize(n_right);
     }
 
     template <HistogramEngine E>
