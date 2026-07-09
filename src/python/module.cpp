@@ -37,13 +37,19 @@ namespace
 using array_2d = nb::ndarray<float const, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 using array_1d = nb::ndarray<float const, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 
+bonsai::features_view as_view(array_2d const &X)
+{
+    return bonsai::features_view{X.data(), X.shape(0), X.shape(1)};
+}
+
 // Cache-blocked row-major -> column-major transpose, parallel over row
 // blocks. Each column element is written by exactly one thread, so the
 // result is bit-identical at any thread count.
-void fill_columns(float const *src, size_t n, size_t f,
-                  std::vector<std::vector<float>> &cols)
+void fill_columns(bonsai::features_view src, std::vector<std::vector<float>> &cols)
 {
     constexpr size_t tile = 64;
+    size_t const     n    = src.extent(0);
+    size_t const     f    = src.extent(1);
     cols.assign(f, std::vector<float>(n));
     size_t const n_blocks = (n + tile - 1) / tile;
     bonsai::parallel::for_each_index(n_blocks,
@@ -58,7 +64,7 @@ void fill_columns(float const *src, size_t n, size_t f,
                                              {
                                                  for (size_t c = c0; c < c1; ++c)
                                                  {
-                                                     cols[c][r] = src[(r * f) + c];
+                                                     cols[c][r] = src[r, c];
                                                  }
                                              }
                                          }
@@ -75,13 +81,13 @@ bonsai::cli::LabeledData make_labeled(array_2d const &X, array_1d const &y,
     size_t const f = X.shape(1);
 
     bonsai::detail::ColumnBatch batch;
-    fill_columns(X.data(), n, f, batch.features);
+    fill_columns(as_view(X), batch.features);
     batch.labels.assign(y.data(), y.data() + n);
 
     bonsai::cli::FeatureBuffer buf;
     buf.n_rows     = n;
     buf.n_features = f;
-    buf.borrowed   = X.data();
+    buf.borrowed   = std::span{X.data(), n * f};
 
     return bonsai::cli::LabeledData{.dataset =
                                         bonsai::Dataset::bin(batch, mappers, cfg.data),
@@ -104,16 +110,17 @@ class Model
                                           size_t          num_iteration = 0) const
     {
         size_t const n   = X.shape(0);
-        auto        *out = new std::vector<float>(n, 0.0F);
+        auto         out = std::make_unique<std::vector<float>>(n, 0.0F);
         {
             nb::gil_scoped_release release;
             booster_->predict_at(bonsai::features_view{X.data(), n, X.shape(1)}, *out,
                                  num_iteration);
             bonsai::apply_link_inverse_by_name(cfg_.dispatch.objective_name, *out);
         }
-        nb::capsule owner(out, [](void *p) noexcept
+        auto       *raw = out.release();
+        nb::capsule owner(raw, [](void *p) noexcept
                           { delete static_cast<std::vector<float> *>(p); });
-        return {out->data(), {n}, owner};
+        return {raw->data(), {n}, owner};
     }
 
     // (n_iters, n_rows): prediction after each boosting iteration.
@@ -121,7 +128,7 @@ class Model
     {
         size_t const n   = X.shape(0);
         size_t const k   = booster_->n_iters();
-        auto        *out = new std::vector<float>(k * n, 0.0F);
+        auto         out = std::make_unique<std::vector<float>>(k * n, 0.0F);
         {
             nb::gil_scoped_release release;
             booster_->predict_staged(bonsai::features_view{X.data(), n, X.shape(1)},
@@ -133,9 +140,10 @@ class Model
                     bonsai::floats_out{out->data() + (t * n), n});
             }
         }
-        nb::capsule owner(out, [](void *p) noexcept
+        auto       *raw = out.release();
+        nb::capsule owner(raw, [](void *p) noexcept
                           { delete static_cast<std::vector<float> *>(p); });
-        return {out->data(), {k, n}, owner};
+        return {raw->data(), {k, n}, owner};
     }
 
     // (n_rows, n_iters): the leaf each row lands in, per tree.
@@ -143,15 +151,16 @@ class Model
     {
         size_t const n   = X.shape(0);
         size_t const k   = booster_->n_iters();
-        auto        *out = new std::vector<bonsai::node_id_t>(n * k, 0);
+        auto         out = std::make_unique<std::vector<bonsai::node_id_t>>(n * k, 0);
         {
             nb::gil_scoped_release release;
             booster_->predict_leaf(bonsai::features_view{X.data(), n, X.shape(1)},
                                    std::span<bonsai::node_id_t>{*out});
         }
-        nb::capsule owner(out, [](void *p) noexcept
+        auto       *raw = out.release();
+        nb::capsule owner(raw, [](void *p) noexcept
                           { delete static_cast<std::vector<bonsai::node_id_t> *>(p); });
-        return {out->data(), {n, k}, owner};
+        return {raw->data(), {n, k}, owner};
     }
 
     std::string dump() const
@@ -166,15 +175,16 @@ class Model
         size_t const n    = X.shape(0);
         size_t const nf   = X.shape(1);
         size_t const cols = nf + 1;
-        auto        *out  = new std::vector<double>(n * cols, 0.0);
+        auto         out  = std::make_unique<std::vector<double>>(n * cols, 0.0);
         {
             nb::gil_scoped_release release;
             booster_->pred_contribs(bonsai::features_view{X.data(), n, nf},
                                     std::span<double>{*out}, nf);
         }
-        nb::capsule owner(out, [](void *p) noexcept
+        auto       *raw = out.release();
+        nb::capsule owner(raw, [](void *p) noexcept
                           { delete static_cast<std::vector<double> *>(p); });
-        return {out->data(), {n, cols}, owner};
+        return {raw->data(), {n, cols}, owner};
     }
 
     void save(std::string const &path) const
@@ -198,11 +208,13 @@ class Model
             }
             throw std::invalid_argument("importance type must be 'gain' or 'split'");
         }();
-        auto *out = new std::vector<double>(booster_->feature_importance(t));
+        auto out =
+            std::make_unique<std::vector<double>>(booster_->feature_importance(t));
         out->resize(std::max(out->size(), mappers_.size()), 0.0);
-        nb::capsule owner(out, [](void *p) noexcept
+        auto       *raw = out.release();
+        nb::capsule owner(raw, [](void *p) noexcept
                           { delete static_cast<std::vector<double> *>(p); });
-        return {out->data(), {out->size()}, owner};
+        return {raw->data(), {raw->size()}, owner};
     }
 
     size_t n_iters() const
@@ -261,7 +273,7 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
     size_t const                n = X.shape(0);
     size_t const                f = X.shape(1);
     bonsai::detail::ColumnBatch batch;
-    fill_columns(X.data(), n, f, batch.features);
+    fill_columns(as_view(X), batch.features);
     batch.labels.assign(y.data(), y.data() + n);
     batch.feature_names.reserve(f);
     for (size_t c = 0; c < f; ++c)
@@ -276,7 +288,7 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
     bonsai::cli::FeatureBuffer buf;
     buf.n_rows     = n;
     buf.n_features = f;
-    buf.borrowed   = X.data();
+    buf.borrowed   = std::span{X.data(), n * f};
     loaded.train   = bonsai::cli::LabeledData{
           .dataset  = bonsai::Dataset::bin(batch, loaded.mappers, cfg.data),
           .features = std::move(buf),
