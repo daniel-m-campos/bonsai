@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -203,12 +204,25 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
             partial_cells += total_sel_bins;
         }
     }
-    static thread_local std::vector<HistCell> partials;
-    partials.assign(partial_cells, HistCell{});
+    // Uninitialized slab: each fill unit zeroes its own partial before use,
+    // so pages are first-touched by the worker that accumulates into them —
+    // a main-thread assign() would home every page on one NUMA node and
+    // make remote workers RMW across the interconnect.
+    // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays):
+    // unique_ptr<T[]> is the uninitialized-runtime-size idiom; a vector
+    // would value-initialize on the main thread, defeating first-touch.
+    static thread_local std::unique_ptr<HistCell[]> partials;
+    static thread_local size_t                      partials_cap = 0;
+    if (partial_cells > partials_cap)
+    {
+        partials     = std::make_unique_for_overwrite<HistCell[]>(partial_cells);
+        partials_cap = partial_cells;
+    }
+    // NOLINTEND(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
 
     // Capture raw pointers: naming a thread_local inside the parallel
     // regions would resolve to each worker's own (empty) container.
-    HistCell *const           parts     = partials.data();
+    HistCell *const           parts     = partials.get();
     size_t const             *off_ptr   = offsets.data();
     feature_id_t const *const sel_ptr   = selected.data();
     uint8_t const *const      rm_ptr    = ds.row_major_bins().data();
@@ -218,7 +232,11 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         units.size(),
         [&, parts, off_ptr, sel_ptr, rm_ptr, units_ptr](size_t u)
         {
-            FillUnit const                             &unit = units_ptr[u];
+            FillUnit const &unit = units_ptr[u];
+            if (unit.partial_off != direct_fill)
+            {
+                std::fill_n(parts + unit.partial_off, total_sel_bins, HistCell{});
+            }
             static thread_local std::vector<HistCell *> bases;
             bases.resize(n_sel);
             for (size_t s = 0; s < n_sel; ++s)
