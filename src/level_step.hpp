@@ -302,6 +302,14 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
                          train_leaf_values &values, std::vector<node_id_t> &leaf_ids,
                          row_index_view /*row_indices*/)
     {
+        host_finalize_leaves(frontier, leaf_table, values, leaf_ids);
+    }
+
+    static void host_finalize_leaves(std::vector<SplitInput> const &frontier,
+                                     std::vector<float> const      &leaf_table,
+                                     train_leaf_values             &values,
+                                     std::vector<node_id_t>        &leaf_ids)
+    {
         for (size_t li = 0; li < frontier.size(); ++li)
         {
             for (row_id_t const r : frontier[li].rows)
@@ -547,8 +555,9 @@ class LevelStep<EngineT, SplitterT>
 
     // Oblivious leaf finalize: the frontier nodes are the leaves, indexed by
     // position into leaf_table. On device the rows are resident, so stamp each
-    // final slot with its leaf index and download the per-row assignment; the
-    // host path already filled values via each leaf's rows.
+    // final slot with its leaf index and download the per-row assignment; in
+    // fallback mode the rows live on the host and must be stamped here — the
+    // early return that assumed otherwise trained silent garbage (issue #12).
     void finalize_leaves(std::vector<SplitInput> const &frontier,
                          std::vector<float> const      &leaf_table,
                          train_leaf_values &values, std::vector<node_id_t> &leaf_ids,
@@ -556,6 +565,7 @@ class LevelStep<EngineT, SplitterT>
     {
         if (!on_device_)
         {
+            HostStep::host_finalize_leaves(frontier, leaf_table, values, leaf_ids);
             return;
         }
         std::vector<typename EngineT::LeafStamp> stamps;
