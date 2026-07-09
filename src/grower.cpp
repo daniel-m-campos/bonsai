@@ -174,7 +174,7 @@ FillPlan const &plan_fill(split_input_refs nodes, size_t n_sel, size_t total_sel
 // first-touched by the worker that accumulates into them — a vector's
 // main-thread value-init would home every page on one NUMA node and make
 // remote workers RMW across the interconnect.
-HistCell *partials_slab(size_t n_cells)
+std::span<HistCell> partials_slab(size_t n_cells)
 {
     // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
     static thread_local std::unique_ptr<HistCell[]> slab;
@@ -185,7 +185,7 @@ HistCell *partials_slab(size_t n_cells)
         cap  = n_cells;
     }
     // NOLINTEND(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
-    return slab.get();
+    return {slab.get(), n_cells};
 }
 
 // Runs the plan's units in one parallel section: each accumulates its row
@@ -193,10 +193,11 @@ HistCell *partials_slab(size_t n_cells)
 // once per row.
 void run_fill(FillPlan const &plan, Dataset const &ds, floats_view grad,
               floats_view hess, std::span<feature_id_t const> selected,
-              SelectedOffsets const &offsets, HistCell *parts)
+              SelectedOffsets const &offsets, std::span<HistCell> partials)
 {
-    size_t const n_sel      = selected.size();
-    size_t const n_features = ds.n_features();
+    size_t const    n_sel      = selected.size();
+    size_t const    n_features = ds.n_features();
+    HistCell *const parts      = partials.data();
     // Capture raw pointers: naming a thread_local inside the parallel region
     // would resolve to each worker's own (empty) container.
     size_t const             *off_ptr   = offsets.cells.data();
@@ -241,8 +242,9 @@ void run_fill(FillPlan const &plan, Dataset const &ds, floats_view grad,
 // Adds multi-block nodes' partials into their histograms in ascending block
 // order, one (node, feature) pair per index.
 void merge_partials(FillPlan const &plan, std::span<feature_id_t const> selected,
-                    SelectedOffsets const &offsets, HistCell const *parts)
+                    SelectedOffsets const &offsets, std::span<HistCell const> partials)
 {
+    HistCell const *const     parts     = partials.data();
     size_t const              n_sel     = selected.size();
     size_t const             *off_ptr   = offsets.cells.data();
     feature_id_t const *const sel_ptr   = selected.data();
@@ -320,10 +322,10 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     }
     grower_detail::GrowProfiler::Lap row_lap;
     SelectedOffsets const            offsets = selected_offsets(ds, selected);
-    FillPlan const &plan  = plan_fill(nodes, selected.size(), offsets.total_cells);
-    HistCell *const parts = partials_slab(plan.partial_cells);
-    run_fill(plan, ds, grad, hess, selected, offsets, parts);
-    merge_partials(plan, selected, offsets, parts);
+    FillPlan const &plan = plan_fill(nodes, selected.size(), offsets.total_cells);
+    std::span<HistCell> const partials = partials_slab(plan.partial_cells);
+    run_fill(plan, ds, grad, hess, selected, offsets, partials);
+    merge_partials(plan, selected, offsets, partials);
     row_lap(prof.populate_row_s);
 }
 
