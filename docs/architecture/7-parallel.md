@@ -45,28 +45,35 @@ behind the same signature (see `6-dispatch.md` §"Backend placement").
 
 ## What is parallel
 
-Feature-parallel: histogram fill (`populate_from_rows`, with grad/hess
-gathered into node-row order first so every feature scan reads
-sequentially), split scans (per-feature bests merged serially in feature
-order to preserve the tie-break), histogram subtraction, binning, mapper
+Unit-parallel histogram fill for u8 (max_bin ≤ 255) data: a level's nodes
+become row-block work units over the dataset's row-major mirror
+(`CpuHistogramEngine::populate_many`, decision 49) — each unit reads its
+rows' bins as contiguous strips and accumulates into either the node's own
+cells (single-block nodes) or a private partial slab merged in fixed block
+order. Feature-parallel: histogram fill for u16 data (grad/hess gathered
+into node-row order first so every feature scan reads sequentially), split
+scans (per-feature bests merged serially in feature order to preserve the
+tie-break), histogram subtraction, partial-slab merges, binning, mapper
 fitting. Row-parallel: predict (both tree types), objective grad/hess,
 score updates, CSV row parsing, out-of-bag routing.
 
 ## The determinism contract
 
-**Models and predictions are bit-identical to a serial run at any thread
-count.** This is stronger than the fixed-thread-count contract the proposal
-committed to (decision 7), and it holds for one reason: no parallel site
-performs a cross-thread floating-point reduction. Each index — a feature's
-histogram, a row's prediction — is computed by exactly one thread, in the
-same iteration order a serial loop would use. FP non-associativity never
-gets a chance to matter.
-
-The trade documented for the future: row-parallel histogram building with
-per-thread partial histograms + ordered merge (the xgboost/LightGBM shape,
-and the main remaining fit-speed lever for few-feature datasets) would
-reintroduce merge-order sensitivity and relax the contract back to
-decision 7's fixed-N form. Take it consciously.
+**Models and predictions are bit-identical at a fixed configured thread
+count** — decision 7's contract. From v0.2.0 to decision 49 the codebase
+held a stronger any-thread-count guarantee (no parallel site performed a
+cross-thread FP reduction); the row-wise fill spends it deliberately: nodes
+large enough to split into multiple row blocks accumulate per-block partial
+histograms whose fixed-order merge makes sums a function of the block
+count, which derives from `n_threads`. Everything else — single-block
+nodes, the u16 feature-parallel fill, split scans, predictions — still
+matches the serial iteration order exactly, so the contract's dependence on
+thread count enters only through multi-block node sums. Block counts depend
+on node size, selection width, total selected bins, and the configured
+thread count — never on scheduling or timing — so a fixed `n_threads` is
+reproducible across runs and machines with the same core count under auto.
+Set `parallel.n_threads` explicitly when reproducibility across machines
+matters.
 
 ## Two libomp gotchas (hard-won)
 

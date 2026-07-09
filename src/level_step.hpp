@@ -41,6 +41,7 @@ struct GrowProfiler
 {
     bool const enabled = std::getenv("BONSAI_GROW_PROFILE") != nullptr;
     double find_s = 0, bookkeep_s = 0, partition_s = 0, populate_s = 0, finalize_s = 0;
+    double populate_adds = 0, populate_row_s = 0;
 
     static GrowProfiler &instance()
     {
@@ -55,8 +56,10 @@ struct GrowProfiler
         {
             std::println(stderr,
                          "grow-profile: find={:.2f}s bookkeep={:.2f}s "
-                         "partition={:.2f}s populate={:.2f}s finalize={:.2f}s",
-                         find_s, bookkeep_s, partition_s, populate_s, finalize_s);
+                         "partition={:.2f}s populate={:.2f}s finalize={:.2f}s "
+                         "adds={:.0f}M row_s={:.2f}s",
+                         find_s, bookkeep_s, partition_s, populate_s, finalize_s,
+                         populate_adds / 1e6, populate_row_s);
         }
     }
 
@@ -178,9 +181,19 @@ inline void populate_nodes(Dataset const &ds, floats_view grad, floats_view hess
                            split_input_refs nodes, feature_view selected,
                            EngineT &engine)
 {
-    for (SplitInput &node : nodes)
+    // Engines that batch a level's fills (CPU row-wise units) take the whole
+    // span; others fill node by node.
+    if constexpr (requires { engine.populate_many(ds, grad, hess, nodes, selected); })
     {
-        engine.populate(ds, grad, hess, node, selected);
+        engine.populate_many(ds, grad, hess, nodes, selected);
+        return;
+    }
+    else
+    {
+        for (SplitInput &node : nodes)
+        {
+            engine.populate(ds, grad, hess, node, selected);
+        }
     }
 }
 
