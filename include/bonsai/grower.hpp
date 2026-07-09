@@ -87,6 +87,11 @@ struct CpuHistogramEngine
     }
     void populate(Dataset const &ds, floats_view grad, floats_view hess,
                   SplitInput &split_input, std::span<feature_id_t const> selected);
+    // Level-batched fill: all of a level's nodes in one call, so row-wise
+    // work units from many small nodes share one parallel section
+    // (docs/architecture/7-parallel.md). populate() is the one-node case.
+    void populate_many(Dataset const &ds, floats_view grad, floats_view hess,
+                       split_input_refs nodes, std::span<feature_id_t const> selected);
 };
 
 static_assert(HistogramEngine<CpuHistogramEngine>);

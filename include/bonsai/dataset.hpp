@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -59,15 +60,23 @@ class Dataset
         return bins_are_u8_ ? features_u8_[fid][row] : features_u16_[fid][row];
     }
 
+    // Row-major mirror of the u8 columns (n_rows x n_features), built on
+    // first use by the row-wise histogram fill; empty when bins are u16
+    // (that fill stays feature-parallel). Lazy so CUDA and predict-only
+    // workflows never pay the +n_rows*n_features bytes. Safe unguarded:
+    // boosters grow one tree at a time, so first use is single-threaded.
+    std::span<uint8_t const> row_major_bins() const;
+
   private:
-    std::vector<std::vector<uint8_t>>  features_u8_;
-    std::vector<std::vector<uint16_t>> features_u16_;
-    bool                               bins_are_u8_ = false;
-    std::vector<float>                 labels_;
-    std::vector<float>                 weights_;
-    BinMappers                         mappers_;
-    std::vector<bool>                  is_categorical_;
-    size_t                             n_rows_ = 0;
+    std::vector<std::vector<uint8_t>>             features_u8_;
+    std::vector<std::vector<uint16_t>>            features_u16_;
+    mutable std::shared_ptr<std::vector<uint8_t>> row_major_;
+    bool                                          bins_are_u8_ = false;
+    std::vector<float>                            labels_;
+    std::vector<float>                            weights_;
+    BinMappers                                    mappers_;
+    std::vector<bool>                             is_categorical_;
+    size_t                                        n_rows_ = 0;
 };
 
 } // namespace bonsai

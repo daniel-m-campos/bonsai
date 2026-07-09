@@ -81,6 +81,13 @@ class Histogram
         return std::span{cells_};
     }
 
+    // Mutable view for the row-wise fill, which accumulates straight into
+    // single-block nodes' cells.
+    std::span<HistCell> cells()
+    {
+        return cells_;
+    }
+
     // Cut positions for binary splits: real bins minus the last one,
     // since "all real bins on the left, none on the right" is degenerate.
     cell_view_t cut_cells() const
@@ -124,6 +131,19 @@ class Histogram
         std::vector<HistCell> out(prefix_size());
         fill_prefix(out);
         return out;
+    }
+
+    // Accumulates a partial-histogram block (the row-wise fill's per-thread
+    // scratch). Callers merge partials in a fixed order, so sums depend on
+    // the thread count but not on scheduling.
+    void add_cells(cell_view_t src)
+    {
+        assert(src.size() == size());
+        for (size_t i = 0; i < cells_.size(); ++i)
+        {
+            cells_[i].sum_grad += src[i].sum_grad;
+            cells_[i].sum_hess += src[i].sum_hess;
+        }
     }
 
     Histogram &operator-=(Histogram const &other)
