@@ -109,9 +109,8 @@ inline void accumulate_train_contribution(DenseTree const &tree, Dataset const &
             while (!DenseTree::is_leaf(nodes[idx]))
             {
                 auto const &nd   = nodes[idx];
-                auto const &bins = ds.feature_bins(nd.feature_id);
                 auto const  last = static_cast<bin_id_t>(ds.n_bins(nd.feature_id) - 1);
-                bin_id_t const b = bins[r];
+                bin_id_t const b = ds.bin_at(nd.feature_id, r);
                 bool const     left = (b == last) ? nd.default_left : b <= tbin[idx];
                 idx                 = left ? nd.left : nd.right;
             }
@@ -138,9 +137,8 @@ inline void accumulate_train_contribution(ObliviousTree const &tree, Dataset con
             for (size_t lvl = 0; lvl < splits.size(); ++lvl)
             {
                 auto const &s    = splits[lvl];
-                auto const &bins = ds.feature_bins(s.feature_id);
                 auto const  last = static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
-                bin_id_t const b = bins[r];
+                bin_id_t const b = ds.bin_at(s.feature_id, r);
                 bool const     left = (b == last) ? s.default_left : b <= tbin[lvl];
                 index               = (index << 1U) | (left ? 0U : 1U);
             }

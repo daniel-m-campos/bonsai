@@ -48,16 +48,22 @@ void CpuHistogramEngine::populate(Dataset const &ds, floats_view grad, floats_vi
     }
     // Feature-parallel: each feature's histogram is owned by one thread and
     // filled in row order, so results are bit-identical at any thread count.
+    // visit_bins monomorphizes the fill per bin width; u8 storage halves the
+    // memory traffic of this loop, the dominant fit stage.
     parallel::for_each_index(selected.size(),
                              [&, og, oh](size_t s)
                              {
-                                 feature_id_t const fid  = selected[s];
-                                 Histogram         &h    = split_input.hists[fid];
-                                 auto const        &bins = ds.feature_bins(fid);
-                                 for (size_t k = 0; k < n; ++k)
-                                 {
-                                     h.add(bins[split_input.rows[k]], og[k], oh[k]);
-                                 }
+                                 feature_id_t const fid = selected[s];
+                                 Histogram         &h   = split_input.hists[fid];
+                                 ds.visit_bins(fid,
+                                               [&](auto bins)
+                                               {
+                                                   for (size_t k = 0; k < n; ++k)
+                                                   {
+                                                       h.add(bins[split_input.rows[k]],
+                                                             og[k], oh[k]);
+                                                   }
+                                               });
                              });
 }
 

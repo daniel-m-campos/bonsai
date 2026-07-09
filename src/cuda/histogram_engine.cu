@@ -410,42 +410,43 @@ struct CudaHistogramEngine::Impl
 
     void ensure_dataset(Dataset const &dataset)
     {
-        void const *first =
-            dataset.n_features() > 0
-                ? static_cast<void const *>(dataset.feature_bins(0).data())
-                : nullptr;
-        bool const same = ds == &dataset && bins0 == first &&
+        void const *first = dataset.n_features() > 0
+                                ? dataset.visit_bins(0, [](auto bins) -> void const *
+                                                     { return bins.data(); })
+                                : nullptr;
+        bool const  same  = ds == &dataset && bins0 == first &&
                           n_rows == dataset.n_rows() && n_feats == dataset.n_features();
         if (same)
         {
             return;
         }
         std::vector<uint32_t> counts(dataset.n_features());
-        bool                  all_u8 = true;
         for (size_t f = 0; f < dataset.n_features(); ++f)
         {
             counts[f] = static_cast<uint32_t>(dataset.n_bins(f));
-            all_u8    = all_u8 && counts[f] <= 256;
         }
-        bins_are_u8 = all_u8;
+        // The Dataset stores u8 exactly when every feature fits 256 bins,
+        // the same criterion the kernels dispatch on — no narrowing pass.
+        bins_are_u8 = dataset.bins_are_u8();
         // One pinned staging buffer + one memcpy per matrix: pageable
         // per-feature copies serialize on GeForce drivers (decision 48),
         // and pinned transfers run at full PCIe rate.
         size_t const cells = dataset.n_features() * dataset.n_rows();
-        if (all_u8)
+        if (bins_are_u8)
         {
             bins8.reserve(cells);
             PinnedBuffer<uint8_t> staging(cells);
             parallel::for_each_index(dataset.n_features(),
                                      [&](size_t f)
                                      {
-                                         auto const src = dataset.feature_bins(f);
-                                         uint8_t   *dst =
-                                             staging.data() + (f * dataset.n_rows());
-                                         for (size_t r = 0; r < src.size(); ++r)
-                                         {
-                                             dst[r] = static_cast<uint8_t>(src[r]);
-                                         }
+                                         dataset.visit_bins(
+                                             f,
+                                             [&](auto src)
+                                             {
+                                                 std::copy(src.begin(), src.end(),
+                                                           staging.data() +
+                                                               (f * dataset.n_rows()));
+                                             });
                                      });
             check(
                 cudaMemcpy(bins8.data(), staging.data(), cells, cudaMemcpyHostToDevice),
@@ -458,10 +459,14 @@ struct CudaHistogramEngine::Impl
             parallel::for_each_index(dataset.n_features(),
                                      [&](size_t f)
                                      {
-                                         auto const src = dataset.feature_bins(f);
-                                         std::copy(src.begin(), src.end(),
-                                                   staging.data() +
-                                                       (f * dataset.n_rows()));
+                                         dataset.visit_bins(
+                                             f,
+                                             [&](auto src)
+                                             {
+                                                 std::copy(src.begin(), src.end(),
+                                                           staging.data() +
+                                                               (f * dataset.n_rows()));
+                                             });
                                      });
             check(cudaMemcpy(bins16.data(), staging.data(), cells * sizeof(uint16_t),
                              cudaMemcpyHostToDevice),

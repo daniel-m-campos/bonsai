@@ -47,11 +47,10 @@ TEST_CASE(
     REQUIRE(ds.n_rows() == 4);
     for (size_t f = 0; f < ds.n_features(); ++f)
     {
-        auto bins = ds.feature_bins(f);
-        REQUIRE(bins.size() == ds.n_rows());
+        REQUIRE(ds.visit_bins(f, [](auto bins) { return bins.size(); }) == ds.n_rows());
         for (size_t r = 0; r < ds.n_rows(); ++r)
         {
-            CHECK(bins[r] == ds.mappers()[f].transform(batch.features[f][r]));
+            CHECK(ds.bin_at(f, r) == ds.mappers()[f].transform(batch.features[f][r]));
         }
     }
 }
@@ -123,9 +122,8 @@ TEST_CASE("Dataset: NaN row routes to missing bin (last bin)", "[dataset][missin
     BinMappers const mappers = BinMappers::fit(batch, BinMapperConfig{});
     Dataset const    ds      = Dataset::bin(batch, mappers, {});
 
-    auto bins = ds.feature_bins(0);
-    REQUIRE(bins.size() == 4);
-    CHECK(bins[2] == ds.n_bins(0) - 1);
+    REQUIRE(ds.visit_bins(0, [](auto bins) { return bins.size(); }) == 4);
+    CHECK(ds.bin_at(0, 2) == ds.n_bins(0) - 1);
 }
 
 TEST_CASE("row-major fit and bin match the ColumnBatch overloads exactly", "[dataset]")
@@ -177,9 +175,10 @@ TEST_CASE("row-major fit and bin match the ColumnBatch overloads exactly", "[dat
     REQUIRE(da.n_rows() == db.n_rows());
     for (size_t c = 0; c < f; ++c)
     {
-        auto const ba = da.feature_bins(c);
-        auto const bb = db.feature_bins(c);
-        REQUIRE(std::vector<bin_id_t>(ba.begin(), ba.end()) ==
-                std::vector<bin_id_t>(bb.begin(), bb.end()));
+        REQUIRE(da.bins_are_u8() == db.bins_are_u8());
+        for (size_t r = 0; r < da.n_rows(); ++r)
+        {
+            REQUIRE(da.bin_at(c, r) == db.bin_at(c, r));
+        }
     }
 }
