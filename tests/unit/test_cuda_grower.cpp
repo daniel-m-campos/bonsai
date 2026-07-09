@@ -316,3 +316,56 @@ TEST_CASE("CudaDepthwiseGrower matches CPU past the 48KiB shared-memory budget",
         REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
     }
 }
+
+TEST_CASE("CudaObliviousGrower host fallback matches ObliviousGrower (issue #12)",
+          "[cuda][grower]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    // ~16k bins per feature: 4*16384*4B = 256KiB of shared memory, past every
+    // device's opt-in ceiling, so begin_root declines and the whole tree runs
+    // the host-fallback plane. The fallback used to skip leaf stamping and
+    // silently train garbage (issue #12).
+    std::mt19937                          rng(13);
+    std::uniform_real_distribution<float> value(0.0F, 1.0F);
+    std::normal_distribution<float>       gradient(0.0F, 1.0F);
+    size_t const                          n = 40960;
+
+    detail::ColumnBatch batch;
+    batch.features.resize(2, std::vector<float>(n));
+    batch.feature_names = {"a", "b"};
+    batch.labels.assign(n, 0.0F);
+    std::vector<float> grad(n);
+    std::vector<float> hess(n);
+    for (size_t r = 0; r < n; ++r)
+    {
+        batch.features[0][r] = value(rng);
+        batch.features[1][r] = value(rng);
+        grad[r]              = gradient(rng);
+        hess[r]              = 0.5F + value(rng);
+    }
+    BinMapperConfig bm;
+    bm.max_bin         = 16384;
+    BinMappers mappers = BinMappers::fit(batch, bm);
+    Dataset    ds      = Dataset::bin(batch, mappers, {});
+    REQUIRE(4 * ds.n_bins(0) * sizeof(float) > 227UL * 1024UL); // must force fallback
+
+    TreeConfig cfg;
+    cfg.max_depth        = 4;
+    cfg.min_data_in_leaf = 4;
+
+    ObliviousGrower<CpuHistogramEngine> cpu_grower(cfg);
+    CudaObliviousGrower                 gpu_grower(cfg);
+
+    auto rows = test::iota_rows(n);
+    auto cpu  = cpu_grower.grow(ds, grad, hess, rows);
+    auto gpu  = gpu_grower.grow(ds, grad, hess, rows);
+
+    REQUIRE(cpu.values.size() == gpu.values.size());
+    for (size_t r = 0; r < cpu.values.size(); ++r)
+    {
+        REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
+    }
+}
