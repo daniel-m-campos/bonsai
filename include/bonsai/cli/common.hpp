@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -42,14 +43,14 @@ inline Config resolve_config(CommonOpts const &opts)
 // alive for the duration of the train call).
 struct FeatureBuffer
 {
-    std::vector<float> data;
-    float const       *borrowed = nullptr;
-    size_t             n_rows{};
-    size_t             n_features{};
+    std::vector<float>     data;
+    std::span<float const> borrowed;
+    size_t                 n_rows{};
+    size_t                 n_features{};
 
     features_view view() const
     {
-        return features_view{borrowed != nullptr ? borrowed : data.data(), n_rows,
+        return features_view{borrowed.empty() ? data.data() : borrowed.data(), n_rows,
                              n_features};
     }
 };
