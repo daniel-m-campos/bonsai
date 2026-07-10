@@ -11,9 +11,9 @@
 #include "bonsai/bin_mappers.hpp"
 #include "bonsai/config/data_config.hpp"
 #include "bonsai/detail/column_batch.hpp"
+#include "bonsai/detail/perf.hpp"
 #include "bonsai/parallel.hpp"
 #include "bonsai/types.hpp"
-#include "ingest_profiler.hpp"
 
 namespace bonsai
 {

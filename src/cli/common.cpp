@@ -3,8 +3,8 @@
 #include <cstddef>
 
 #include "bonsai/detail/column_batch.hpp"
+#include "bonsai/detail/perf.hpp"
 #include "bonsai/parallel.hpp"
-#include "ingest_profiler.hpp"
 
 namespace bonsai::cli
 {

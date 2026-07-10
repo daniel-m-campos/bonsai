@@ -10,8 +10,8 @@
 #include "bonsai/bin_mapper.hpp"
 #include "bonsai/config/bin_mapper_config.hpp"
 #include "bonsai/detail/column_batch.hpp"
+#include "bonsai/detail/perf.hpp"
 #include "bonsai/parallel.hpp"
-#include "ingest_profiler.hpp"
 
 namespace bonsai
 {

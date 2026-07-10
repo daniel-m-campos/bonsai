@@ -21,8 +21,8 @@
 #include "bonsai/config/data_config.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
+#include "bonsai/detail/perf.hpp"
 #include "bonsai/parallel.hpp"
-#include "ingest_profiler.hpp"
 
 namespace bonsai::detail::csv
 {
