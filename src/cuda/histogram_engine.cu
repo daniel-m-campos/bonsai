@@ -571,7 +571,8 @@ bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
         sg += grad[r];
         sh += hess[r];
     }
-    root.sums      = {.sum_grad = sg, .sum_hess = sh};
+    root.sums      = {.sum_grad = static_cast<float>(sg),
+                      .sum_hess = static_cast<float>(sh)};
     root.row_count = root.rows.size();
     if (im.prof_counters.enabled)
     {
