@@ -11,7 +11,7 @@
   <img alt="C++23" src="https://img.shields.io/badge/C%2B%2B-23-00599C?logo=cplusplus&logoColor=white">
   <img alt="CMake" src="https://img.shields.io/badge/CMake-%E2%89%A5%203.28-064F8C?logo=cmake&logoColor=white">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg"></a>
-  <img alt="tests" src="https://img.shields.io/badge/tests-443%20passing-success">
+  <img alt="tests" src="https://img.shields.io/badge/tests-449%20passing-success">
 </p>
 
 <p align="center">
@@ -143,7 +143,7 @@ Measured on an RTX 5090 against each reference library, Year Prediction MSD (464
 
 bonsai wins each structure-matched comparison; the leafwise row is deliberately honest — bonsai has no device leafwise (best-first growth doesn't fit the level-batched resident plane), yet its CPU leafwise still beats LightGBM's CUDA backend on this card. On an A100, `cuda_depthwise` fits the same benchmark in 5.0 s vs 14.7 s for 16-thread CPU.
 
-Beyond the head-to-head table, a synthetic scaling study sweeps rows (to 16M), cols (to 65k), and bins (to 65535) against all three libraries across five GPU generations — methodology in decision 46, data and log-log exponent fits in [benchmarks/results/scaling.md](benchmarks/results/scaling.md). The optimization rounds it seeded (decisions 47–48) cut the Python module's peak memory to 1.8× of the input matrix with byte-identical models, made 16k-bin CPU fits 5× faster on Linux, and moved the GPU histogram cliff from 3k to ~6k bins (17× on the 4095-bin cell). The same study caught a rentable GPU host with a 300µs sync round-trip — benchmark pods now pass a latency probe before any number is trusted (decision 48).
+Beyond the head-to-head table, a synthetic scaling study sweeps rows (to 16M), cols (to 65k), and bins (to 65535) against all three libraries across five GPU generations — methodology in decision 46, data and log-log exponent fits in [benchmarks/results/scaling.md](benchmarks/results/scaling.md). The optimization rounds it seeded (decisions 47–51) cut the Python module's peak memory to 1.8× of the input matrix, made 16k-bin CPU fits 5× faster on Linux, moved the GPU histogram cliff from 3k to ~6k bins (17× on the 4095-bin cell), and then rebuilt the CPU fit around a row-wise histogram fill over a row-major u8 mirror with float cells and double reductions (decisions 49–50) — a 16M×100 fit dropped from 317s to 114s across the rounds, reaching near-parity with LightGBM at scale and passing it on wide data, at R² identical to six decimals. The same study caught a rentable GPU host with a 300µs sync round-trip — benchmark pods now pass a latency probe before any number is trusted (decision 48), and rent from a pinned toolchain image (`ghcr.io/daniel-m-campos/bonsai-ci`).
 
 ## Extending bonsai
 
