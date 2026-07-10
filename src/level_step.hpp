@@ -12,6 +12,7 @@
 
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/dataset.hpp"
+#include "bonsai/detail/perf.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/histogram.hpp"
 #include "bonsai/parallel.hpp"
@@ -34,47 +35,7 @@ namespace bonsai::grower_detail
 
 using feature_view = std::span<feature_id_t const>;
 
-// Host-side counterpart of the CUDA engine's ProfileCounters: attributes a
-// fit's wall-clock across the grow loop's phases (BONSAI_GROW_PROFILE=1),
-// printed once at process exit.
-struct GrowProfiler
-{
-    bool const enabled = std::getenv("BONSAI_GROW_PROFILE") != nullptr;
-    double find_s = 0, bookkeep_s = 0, partition_s = 0, populate_s = 0, finalize_s = 0;
-    double populate_adds = 0, populate_row_s = 0;
-
-    static GrowProfiler &instance()
-    {
-        static GrowProfiler prof;
-        return prof;
-    }
-
-    ~GrowProfiler()
-    {
-        if (enabled &&
-            find_s + bookkeep_s + partition_s + populate_s + finalize_s > 0.0)
-        {
-            std::println(stderr,
-                         "grow-profile: find={:.2f}s bookkeep={:.2f}s "
-                         "partition={:.2f}s populate={:.2f}s finalize={:.2f}s "
-                         "adds={:.0f}M row_s={:.2f}s",
-                         find_s, bookkeep_s, partition_s, populate_s, finalize_s,
-                         populate_adds / 1e6, populate_row_s);
-        }
-    }
-
-    // Adds the time since construction (or the previous lap) into sink.
-    struct Lap
-    {
-        std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
-        void                                  operator()(double &sink)
-        {
-            auto const now = std::chrono::steady_clock::now();
-            sink += std::chrono::duration<double>(now - t0).count();
-            t0 = now;
-        }
-    };
-};
+using detail::GrowProfiler; // definitions live in bonsai/detail/perf.hpp
 
 inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
                              TreeConfig const &config, size_t &n_leaves,

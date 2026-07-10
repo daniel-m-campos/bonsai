@@ -3,7 +3,7 @@
 #include "bonsai/config/booster_config.hpp"
 #include "bonsai/config/config.hpp"
 #include "bonsai/dataset.hpp"
-#include "bonsai/detail/fit_profiler.hpp"
+#include "bonsai/detail/perf.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/parallel.hpp"
