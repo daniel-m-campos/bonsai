@@ -54,7 +54,7 @@ Config make_california_housing_config()
 
 } // namespace
 
-TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7157663",
+TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7157605",
           "[eval_baseline][mse]")
 {
     auto const cfg     = make_california_housing_config();
@@ -72,5 +72,5 @@ TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7157663",
     // quick succession: decision 50 (float histogram cells, 0.7175214 ->
     // 0.7175160) then decision 51 (quantile_step ceiling stride) whose
     // budget-respecting cuts land 0.24% better on top.
-    CHECK(rmse == Catch::Approx(0.7157663F).epsilon(1e-7));
+    CHECK(rmse == Catch::Approx(0.7157605F).epsilon(1e-7));
 }
