@@ -54,7 +54,7 @@ Config make_california_housing_config()
 
 } // namespace
 
-TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7175214",
+TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7175160",
           "[eval_baseline][mse]")
 {
     auto const cfg     = make_california_housing_config();
@@ -68,6 +68,7 @@ TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7175214",
     float const rmse = std::sqrt(mse);
 
     // Bit-exact pin. If this needs to change, the eval path's float-rounding
-    // semantics drifted -- investigate before relaxing.
-    CHECK(rmse == Catch::Approx(0.7175214F).epsilon(1e-7));
+    // semantics drifted -- investigate before relaxing. Re-pinned from
+    // 0.7175214 for decision 50 (float histogram cells), delta 5.4e-6.
+    CHECK(rmse == Catch::Approx(0.7175160F).epsilon(1e-7));
 }

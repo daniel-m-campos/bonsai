@@ -29,14 +29,15 @@ struct SplitSums
 // hoists that subtraction once per feature/parent so the inner loop
 // doesn't recompute it per bin/default_left. Single source of truth
 // for missing-routing semantics; shared by node and level finders.
-inline SplitSums split_sums_at(HistCell const &left_prefix, HistCell const &missing,
-                               double real_grad, double real_hess, bool default_left)
+inline SplitSums split_sums_at(double left_grad, double left_hess,
+                               HistCell const &missing, double real_grad,
+                               double real_hess, bool default_left)
 {
-    double const right_grad = real_grad - left_prefix.sum_grad;
-    double const right_hess = real_hess - left_prefix.sum_hess;
+    double const right_grad = real_grad - left_grad;
+    double const right_hess = real_hess - left_hess;
     return {
-        .gL = left_prefix.sum_grad + (default_left ? missing.sum_grad : 0.0),
-        .hL = left_prefix.sum_hess + (default_left ? missing.sum_hess : 0.0),
+        .gL = left_grad + (default_left ? missing.sum_grad : 0.0),
+        .hL = left_hess + (default_left ? missing.sum_hess : 0.0),
         .gR = right_grad + (!default_left ? missing.sum_grad : 0.0),
         .hR = right_hess + (!default_left ? missing.sum_hess : 0.0),
     };
@@ -64,15 +65,18 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
 
     int const mc = monotone_constraint_of(config, fid);
 
-    HistCell left_prefix{};
-    bin_id_t b = 0;
+    // Running left-side sums stay double: the scan crosses every cell, so
+    // float storage rounding must not compound across bins.
+    double   left_grad = 0.0;
+    double   left_hess = 0.0;
+    bin_id_t b         = 0;
     for (auto const &cell : hist.cut_cells())
     {
-        left_prefix.sum_grad += cell.sum_grad;
-        left_prefix.sum_hess += cell.sum_hess;
+        left_grad += cell.sum_grad;
+        left_hess += cell.sum_hess;
         for (bool const default_left : {true, false})
         {
-            auto const s = split_sums_at(left_prefix, missing_cell, real_grad,
+            auto const s = split_sums_at(left_grad, left_hess, missing_cell, real_grad,
                                          real_hess, default_left);
             if (s.hL < config.min_child_hess || s.hR < config.min_child_hess)
             {
@@ -150,9 +154,10 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
             bool   feasible           = true;
             for (size_t p = 0; p < n_parents; ++p)
             {
-                auto const &hist = frontier[p].hists[fid];
-                auto const s = split_sums_at(prefix[p, b], hist.missing(), real_grad[p],
-                                             real_hess[p], default_left);
+                auto const     &hist = frontier[p].hists[fid];
+                HistCell const &lp   = prefix[p, b];
+                auto const s = split_sums_at(lp.sum_grad, lp.sum_hess, hist.missing(),
+                                             real_grad[p], real_hess[p], default_left);
                 if (s.hL < config.min_child_hess || s.hR < config.min_child_hess)
                 {
                     feasible = false;

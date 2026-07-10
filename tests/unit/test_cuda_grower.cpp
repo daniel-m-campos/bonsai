@@ -75,11 +75,11 @@ void require_hists_match(SplitInput const &cpu, SplitInput const &gpu)
             auto const bin = static_cast<bin_id_t>(b);
             REQUIRE_THAT(
                 gpu.hists[f][bin].sum_grad,
-                Catch::Matchers::WithinRel(cpu.hists[f][bin].sum_grad, 1e-4) ||
+                Catch::Matchers::WithinRel(cpu.hists[f][bin].sum_grad, 1e-4F) ||
                     Catch::Matchers::WithinAbs(cpu.hists[f][bin].sum_grad, 1e-5));
             REQUIRE_THAT(
                 gpu.hists[f][bin].sum_hess,
-                Catch::Matchers::WithinRel(cpu.hists[f][bin].sum_hess, 1e-4) ||
+                Catch::Matchers::WithinRel(cpu.hists[f][bin].sum_hess, 1e-4F) ||
                     Catch::Matchers::WithinAbs(cpu.hists[f][bin].sum_hess, 1e-5));
         }
     }

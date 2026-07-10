@@ -11,10 +11,15 @@
 namespace bonsai
 {
 
+// float cells: gradients/hessians arrive as float, per-cell sums are bounded
+// by node size, and halving the cell halves the fill's memory traffic — the
+// dominant fit stage (decision 50). Reductions ACROSS cells (totals, prefix
+// scans, split running sums) accumulate in double and convert once at the
+// store, so only per-cell storage carries float rounding.
 struct HistCell
 {
-    double sum_grad = 0.0;
-    double sum_hess = 0.0;
+    float sum_grad = 0.0F;
+    float sum_hess = 0.0F;
 
     HistCell &operator-=(HistCell const &other)
     {
@@ -31,7 +36,7 @@ class Histogram
   public:
     explicit Histogram(size_t n_bins) : cells_(n_bins) {}
 
-    void add(bin_id_t bin, double grad, double hess)
+    void add(bin_id_t bin, float grad, float hess)
     {
         cells_[bin].sum_grad += grad;
         cells_[bin].sum_hess += hess;
@@ -52,13 +57,15 @@ class Histogram
     // instead of the histogram carrying running totals in add().
     HistCell totals() const
     {
-        HistCell t{};
+        double grad = 0.0;
+        double hess = 0.0;
         for (auto const &cell : cells_)
         {
-            t.sum_grad += cell.sum_grad;
-            t.sum_hess += cell.sum_hess;
+            grad += cell.sum_grad;
+            hess += cell.sum_hess;
         }
-        return t;
+        return {.sum_grad = static_cast<float>(grad),
+                .sum_hess = static_cast<float>(hess)};
     }
 
     HistCell const &operator[](bin_id_t bin) const
@@ -113,13 +120,15 @@ class Histogram
         {
             return; // degenerate hist (cells_.size() < 2): no cuts to scan
         }
-        HistCell run{};
-        size_t   i = 0;
+        double grad = 0.0;
+        double hess = 0.0;
+        size_t i    = 0;
         for (auto const &cell : cut_cells())
         {
-            run.sum_grad += cell.sum_grad;
-            run.sum_hess += cell.sum_hess;
-            out[i++] = run;
+            grad     = grad + cell.sum_grad;
+            hess     = hess + cell.sum_hess;
+            out[i++] = {.sum_grad = static_cast<float>(grad),
+                        .sum_hess = static_cast<float>(hess)};
         }
     }
 

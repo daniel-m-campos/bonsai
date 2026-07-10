@@ -131,16 +131,17 @@ Plug into `gain(...)` with whatever `λ`, pick the bigger. The splitter then dec
 
 ```cpp
 struct HistCell {
-    double sum_grad = 0.0;
-    double sum_hess = 0.0;
+    float sum_grad = 0.0F;
+    float sum_hess = 0.0F;
 };
 ```
 
-- **`double` accumulators.** Float storage upstream, double here. Matches xgb/lgbm; bandwidth halved in `Dataset` and gradient buffers, precision preserved at the reduction.
+- **`float` cells, `double` reductions** (decision 50; reversed the original `double`-cell choice after measurement). A cell's sum is bounded by its node's rows, so per-cell float rounding stays small; every reduction that *crosses* cells — `totals()`, `fill_prefix`, the split scan's running left sums — accumulates in `double` and converts once at the store. Halving the cell halved the fill's memory traffic for a measured 1.15–1.25× fit speedup at identical R² (six decimals at 8M rows); the eval-baseline RMSE moved 5.4e-6. The CUDA path had already validated the same shape (float per-chunk, double merge).
 - **AoS, not parallel arrays.** The build loop is the hot one (`O(n_rows)` per `(node, feature)`) and it scatters writes indexed by `bin`. AoS keeps grad+hess on one cache line per indexed update; SoA would force two cache lines in flight per row for no benefit, since the access pattern isn't sequential. Scoring is sequential but only `O(n_bins ≤ 256)` and not the bottleneck. xgb/lgbm both AoS.
 - **No count field.** `sum_hess` carries effective row count for MSE (`hess = 1` per row → `sum_hess == n_rows`); for logloss the count isn't needed by split scoring. If a future objective wants `min_data_in_leaf` independent of hessian, add a third lane then — not now.
+- **Degenerate-split guard.** Float sibling-subtraction noise sits far above the `gain > 0` gate's reach, so a cut that sends every row one way can score a tiny positive gain. The partition's row counts are ground truth: `demote_empty_splits` (and the leafwise equivalent) converts such splits back to leaves after partitioning.
 
-Rejected: `float` accumulators (loses precision on long columns; xgb/lgbm both use double); 32B padding to a cache line (wasteful — 4 bins per line is fine, the loop is sequential).
+Rejected: 32B padding to a cache line (wasteful — 4 bins per line is fine, the loop is sequential). A `hist_precision` config knob was considered and dropped: measurement showed no quality cost to carry the extra surface for.
 
 ## `Histogram` — one feature, one node
 
@@ -149,7 +150,7 @@ class Histogram {
 public:
     explicit Histogram(size_t n_bins);
 
-    void add(uint16_t bin, double grad, double hess);
+    void add(uint16_t bin, float grad, float hess);
     void clear();                                      // zero cells + totals, keep size
 
     HistCell const& operator[](size_t bin) const;

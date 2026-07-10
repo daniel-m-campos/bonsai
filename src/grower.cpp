@@ -227,8 +227,8 @@ void run_fill(FillPlan const &plan, Dataset const &ds, floats_view grad,
             {
                 size_t const         r  = rows[k];
                 uint8_t const *const rb = rm_ptr + (r * n_features);
-                double const         g  = grad[r];
-                double const         h  = hess[r];
+                float const          g  = grad[r];
+                float const          h  = hess[r];
                 for (size_t s = 0; s < n_sel; ++s)
                 {
                     HistCell &c = base_ptr[s][rb[sel_ptr[s]]];
