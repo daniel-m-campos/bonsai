@@ -347,7 +347,10 @@ TEST_CASE("CudaObliviousGrower host fallback matches ObliviousGrower (issue #12)
         hess[r]              = 0.5F + value(rng);
     }
     BinMapperConfig bm;
-    bm.max_bin         = 16384;
+    // 24576, not 16384: decision 51's ceiling stride caps cuts at the budget,
+    // and 40960 rows at 16384 now bin to ~13.7k bins — below the smem opt-in
+    // ceiling this test must exceed to guarantee the fallback path.
+    bm.max_bin         = 24576;
     BinMappers mappers = BinMappers::fit(batch, bm);
     Dataset    ds      = Dataset::bin(batch, mappers, {});
     REQUIRE(4 * ds.n_bins(0) * sizeof(float) > 227UL * 1024UL); // must force fallback
