@@ -78,6 +78,12 @@ Interpreter pinning: the nanobind module is ABI-tied to one Python — build it 
 
 Pod loop: toolchain + clone + build as in the GPU perf loop above, then `make python-cuda`, `make bench-scaling ARGS="--axis all --host-name <gpu-tag>"`, smoke-check the printed lines, and on the workstation `ssh pod cat .../benchmarks/results/scaling.jsonl >> benchmarks/results/scaling.jsonl` (jsonl appends compose), commit, delete the pod. Analyze with `uv run scripts/analyze_scaling.py` → `benchmarks/results/scaling.md` + log-log plots under `benchmarks/results/scaling/`; exponents are log-log slopes of fit_s per axis, with a joint 2D rows+cols fit de-confounding the shrinking-rows tail of the cols axis.
 
+### Pod image and startup (the RunPod decoder ring)
+
+Rent pods with `ghcr.io/daniel-m-campos/bonsai-ci:cuda12.4` (built from `docker/ci.Dockerfile` by the `ci-image` workflow): CUDA 12.4 toolkit, clang-21 + libc++, modern cmake/ninja, python 3.12 venv at `/opt/venv` with numpy/nanobind/lightgbm, and the FetchContent deps pre-cloned under `/opt/deps` — pod setup is clone + configure + build, nothing else. The `PUBLIC_KEY` env installs your key for direct SSH.
+
+Hard-won startup rules, image-independent: a pod's REST `desiredStatus: RUNNING` says nothing about the container — the GraphQL `pod { runtime { uptimeInSeconds } }` field is the API-side liveness signal (0 = never started; only the console shows *why*). CUDA-12.8-family images silently never start on 12.4-driver machines. A create call that returns an error can still create a billing pod — list and sweep after failures. Some machines are simply broken (missing `/dev/dri` nodes crash-loop `runc`); delete and re-roll rather than wait.
+
 ### Pod acceptance and the defective-host lesson
 
 One rentable 5090 machine measured a ~300µs GPU sync round-trip (healthy: 4µs) with perfect PCIe and bandwidth — enough to add 11–14s to every cuda fit and to masquerade as a bonsai regression until diagnosed (decision 48). Before benchmarking on any rented pod, run the 30-second sync-latency probe (compile `cudaMemsetAsync` + `cudaDeviceSynchronize` × 2000; reject the pod above 50µs/op) and a base-cell CPU sanity fit; the round-1 fleet rows for host `pod-NVIDIA-GeForce-RTX-5090` in `scaling.jsonl` carry this defect and must not be used for cuda timing comparisons — the `g1pre-`/`g1new-` rows are the healthy replacements.
