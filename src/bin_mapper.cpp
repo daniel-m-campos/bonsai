@@ -43,11 +43,14 @@ std::vector<float> create_subsample(floats_view column, BinMapperConfig const &c
     return subsample;
 }
 
-// Quantile-step over `subsample.size()` items targeting `cut_budget` cuts,
-// floored at 1 so dense subsamples still produce strictly-increasing cuts.
+// Quantile-step over `subsample.size()` items yielding at most `cut_budget`
+// cuts: the ceiling stride guarantees floor((n-1)/step) <= budget, where the
+// old floored stride overshot for subsamples not comfortably above the
+// budget — 400 distinct values at max_bin=255 produced 401 bins, silently
+// disqualifying small datasets from u8 storage (issue #17, decision 51).
 size_t quantile_step(size_t subsample_size, size_t cut_budget)
 {
-    return std::max(subsample_size / cut_budget, 1UL);
+    return std::max((subsample_size + cut_budget) / (cut_budget + 1), 1UL);
 }
 
 // Sort once and read the quantile value at each stride: identical to the
