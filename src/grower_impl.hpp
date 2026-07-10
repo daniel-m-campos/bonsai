@@ -236,6 +236,37 @@ plan_level(Dataset const &ds, TreeConfig const &config,
     return plan;
 }
 
+// Control plane, between partition and populate: a split whose partition
+// left one child empty is demoted back to a leaf. Float histogram cells put
+// subtraction noise well above the gain gate's reach (decision 50), so a
+// degenerate cut can score as a tiny positive gain; the partition's row
+// counts are ground truth. The pre-allocated child nodes remain as
+// unreachable placeholders — predict and SHAP both walk from the root.
+inline void demote_empty_splits(TreeConfig const &config, LevelPlan &plan,
+                                DenseTree::Nodes &nodes, size_t &n_leaves,
+                                train_leaf_values      &values,
+                                std::vector<node_id_t> &leaf_ids,
+                                std::vector<float>     &split_gains)
+{
+    std::erase_if(
+        plan.splits,
+        [&](DeferredSplit &d)
+        {
+            bool const left_empty  = d.p.left.rows.empty() && d.p.left.row_count == 0;
+            bool const right_empty = d.p.right.rows.empty() && d.p.right.row_count == 0;
+            if (!left_empty && !right_empty)
+            {
+                return false;
+            }
+            SplitInput &survivor = left_empty ? d.p.right : d.p.left;
+            d.parent.rows        = std::move(survivor.rows);
+            d.parent.hists       = std::move(d.p.parent_hists);
+            finalize_as_leaf(nodes, d.parent, config, n_leaves, values, leaf_ids);
+            split_gains[d.parent.id] = 0.0F;
+            return true;
+        });
+}
+
 // Control plane, second half of a level: record covers, propagate the
 // monotone bounds and interaction state both children need, and hand the
 // children off as the next frontier in original node order.
@@ -371,6 +402,8 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
             gd::plan_level(ds, config_, current, splits, child_sums, nodes, n_leaves,
                            values, split_bins, split_gains, covers, leaf_ids);
         step.partition(plan);
+        gd::demote_empty_splits(config_, plan, nodes, n_leaves, values, leaf_ids,
+                                split_gains);
         step.build_children(plan);
         gd::commit_children(ds, config_, interaction_groups_, plan, covers, current,
                             next);
@@ -624,8 +657,21 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
         auto const   parent_path = std::move(c.node.path);
         auto [left, right] = gd::split_node(ds, grad, hess, std::move(c.node), c.split,
                                             left_id, right_id, selected, engine_);
-        covers[left_id]    = static_cast<float>(left.rows.size());
-        covers[right_id]   = static_cast<float>(right.rows.size());
+        // A partition that leaves one child empty demotes the split back to
+        // a leaf — same ground-truth guard as the depthwise plan (decision
+        // 50); the pre-allocated children stay as unreachable placeholders.
+        if (left.rows.empty() || right.rows.empty())
+        {
+            SplitInput &survivor = left.rows.empty() ? right : left;
+            survivor.id          = c.node.id;
+            survivor.lo          = parent_lo;
+            survivor.hi          = parent_hi;
+            gd::finalize_as_leaf(nodes, survivor, config_, n_leaves, values, leaf_ids);
+            split_gains[c.node.id] = 0.0F;
+            continue;
+        }
+        covers[left_id]  = static_cast<float>(left.rows.size());
+        covers[right_id] = static_cast<float>(right.rows.size());
         gd::propagate_monotone_bounds(parent_lo, parent_hi, c.split, config_, left,
                                       right);
         gd::propagate_interaction_state(interaction_groups_, parent_path,

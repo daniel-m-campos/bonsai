@@ -389,8 +389,10 @@ struct CudaHistogramEngine::Impl
                                        .bin_id       = static_cast<bin_id_t>(b.bin),
                                        .default_left = b.dl != 0,
                                        .valid        = true};
-            child_sums[2 * i]       = {.sum_grad = b.gL, .sum_hess = b.hL};
-            child_sums[(2 * i) + 1] = {.sum_grad = b.gR, .sum_hess = b.hR};
+            child_sums[2 * i]       = {.sum_grad = static_cast<float>(b.gL),
+                                       .sum_hess = static_cast<float>(b.hL)};
+            child_sums[(2 * i) + 1] = {.sum_grad = static_cast<float>(b.gR),
+                                       .sum_hess = static_cast<float>(b.hR)};
         }
     }
 
@@ -831,11 +833,13 @@ void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
     }
     for (size_t i = 0; i < n; ++i)
     {
-        out[i]                  = split;
-        child_sums[2 * i]       = {.sum_grad = im.level_child.host[(4 * i) + 0],
-                                   .sum_hess = im.level_child.host[(4 * i) + 1]};
-        child_sums[(2 * i) + 1] = {.sum_grad = im.level_child.host[(4 * i) + 2],
-                                   .sum_hess = im.level_child.host[(4 * i) + 3]};
+        out[i]            = split;
+        child_sums[2 * i] = {
+            .sum_grad = static_cast<float>(im.level_child.host[(4 * i) + 0]),
+            .sum_hess = static_cast<float>(im.level_child.host[(4 * i) + 1])};
+        child_sums[(2 * i) + 1] = {
+            .sum_grad = static_cast<float>(im.level_child.host[(4 * i) + 2]),
+            .sum_hess = static_cast<float>(im.level_child.host[(4 * i) + 3])};
     }
     lap(prof.unpack_s);
 }
