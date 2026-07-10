@@ -1,6 +1,6 @@
 // Phase 1 parity-guarantee net. Pins the exact MSE eval output we want
 // preserved through the Phase 2 metric refactor: California Housing,
-// 20 iterations, default seed -> rmse=0.7175214.
+// 20 iterations, default seed -> rmse=0.7157657.
 //
 // Same recipe as the CLI smoke documented in the plan:
 //   bonsai fit -c configs/california_housing.toml --set booster.n_iters=20
@@ -54,7 +54,7 @@ Config make_california_housing_config()
 
 } // namespace
 
-TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7175160",
+TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7157663",
           "[eval_baseline][mse]")
 {
     auto const cfg     = make_california_housing_config();
@@ -68,7 +68,9 @@ TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7175160",
     float const rmse = std::sqrt(mse);
 
     // Bit-exact pin. If this needs to change, the eval path's float-rounding
-    // semantics drifted -- investigate before relaxing. Re-pinned from
-    // 0.7175214 for decision 50 (float histogram cells), delta 5.4e-6.
-    CHECK(rmse == Catch::Approx(0.7175160F).epsilon(1e-7));
+    // semantics drifted -- investigate before relaxing. Re-pinned twice in
+    // quick succession: decision 50 (float histogram cells, 0.7175214 ->
+    // 0.7175160) then decision 51 (quantile_step ceiling stride) whose
+    // budget-respecting cuts land 0.24% better on top.
+    CHECK(rmse == Catch::Approx(0.7157663F).epsilon(1e-7));
 }
