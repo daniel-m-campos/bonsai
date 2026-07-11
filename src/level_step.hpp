@@ -493,17 +493,20 @@ class LevelStep<EngineT, SplitterT>
 
     SplitInput make_root(row_index_view row_indices)
     {
-        SplitInput root;
+        GrowProfiler::Lap lap;
+        SplitInput        root;
         root.id = 0;
         root.rows.assign(row_indices.begin(), row_indices.end());
         on_device_ = engine_.begin_root(ds_, grad_, hess_, root, selected_);
         if (on_device_)
         {
+            lap(GrowProfiler::instance().populate_s);
             return root; // hists/rows stay device-resident; root carries sums
         }
         engine_.populate(ds_, grad_, hess_, root, selected_);
         root.sums      = root.totals();
         root.row_count = root.rows.size();
+        lap(GrowProfiler::instance().populate_s);
         return root;
     }
 
