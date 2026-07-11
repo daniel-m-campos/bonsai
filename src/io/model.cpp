@@ -129,15 +129,19 @@ json tree_to_json(ObliviousTree const &t)
     out["splits"] = t.splits();
     out["leaves"] = t.leaf_table();
     out["gains"]  = t.level_gains();
+    out["covers"] = t.leaf_covers();
     return out;
 }
 
 template <> ObliviousTree tree_from_json<ObliviousTree>(json const &j)
 {
+    // covers arrived after the format froze: absent in older models, which
+    // load fine and simply cannot answer pred_contribs.
     return ObliviousTree{
         j.at("splits").get<ObliviousTree::LevelSplits>(),
         j.at("leaves").get<ObliviousTree::LeafTable>(),
         j.at("gains").get<std::vector<float>>(),
+        j.value("covers", std::vector<float>{}),
     };
 }
 

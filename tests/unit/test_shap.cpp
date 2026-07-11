@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 #include "bonsai/booster.hpp"
@@ -10,6 +11,7 @@
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/grower.hpp"
+#include "bonsai/multiclass_booster.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/sampler.hpp"
 #include "bonsai/shap.hpp"
@@ -165,5 +167,130 @@ TEST_CASE("Booster: pred_contribs rows sum to the raw prediction", "[shap][boost
             sum += contribs[(r * 4) + c];
         }
         CHECK(sum == Catch::Approx(static_cast<double>(pred[r])).margin(1e-4));
+    }
+}
+
+TEST_CASE("Oblivious pred_contribs: dense expansion is exact and rows sum to "
+          "the raw prediction",
+          "[shap][oblivious]")
+{
+    detail::ColumnBatch batch = shap_batch();
+    batch.labels              = {1.0F, -1.0F, 2.0F, -2.0F, 0.5F, 3.0F, -0.5F, 1.5F};
+    BinMappers const mappers  = BinMappers::fit(batch, {});
+    Dataset const    train    = Dataset::bin(batch, mappers, {});
+
+    Config cfg;
+    cfg.tree_config.min_data_in_leaf = 0;
+    cfg.tree_config.min_child_hess   = 0.0F;
+    cfg.tree_config.max_depth        = 3;
+
+    Booster<MSEObjective, ObliviousGrower<>, AllRowsSampler> b{cfg};
+    for (int i = 0; i < 6; ++i)
+    {
+        b.update_one_iter(train);
+    }
+
+    std::vector<float> raw(8 * 3);
+    for (size_t r = 0; r < 8; ++r)
+    {
+        for (size_t f = 0; f < 3; ++f)
+        {
+            raw[(r * 3) + f] = batch.features[f][r];
+        }
+    }
+    features_view const X{raw.data(), 8, 3};
+
+    // The expansion must be prediction-identical to the oblivious walk.
+    for (auto const &tree : b.trees())
+    {
+        auto const         dense = dense_equivalent(tree);
+        std::vector<float> a(8, 0.0F);
+        std::vector<float> d(8, 0.0F);
+        tree.predict(X, a);
+        dense.predict(X, d);
+        for (size_t r = 0; r < 8; ++r)
+        {
+            REQUIRE(a[r] == d[r]);
+        }
+    }
+
+    // Efficiency: contributions + bias reproduce the ensemble prediction.
+    std::vector<double> contribs(8 * 4);
+    b.pred_contribs(X, contribs, 3);
+    std::vector<float> pred(8);
+    b.predict(X, pred);
+    for (size_t r = 0; r < 8; ++r)
+    {
+        double sum = 0.0;
+        for (size_t c = 0; c < 4; ++c)
+        {
+            sum += contribs[(r * 4) + c];
+        }
+        REQUIRE(sum == Catch::Approx(pred[r]).margin(1e-4));
+    }
+
+    // A cover-less tree (pre-recording model) explains itself.
+    ObliviousTree const bare{ObliviousTree::LevelSplits{},
+                             ObliviousTree::LeafTable{0.5F}};
+    REQUIRE_THROWS_AS(dense_equivalent(bare), std::invalid_argument);
+}
+
+TEST_CASE("Multiclass pred_contribs: per-class slices vote like predict",
+          "[shap][multiclass]")
+{
+    detail::ColumnBatch batch;
+    batch.features.resize(1);
+    batch.feature_names = {"x"};
+    for (int rep = 0; rep < 4; ++rep)
+    {
+        for (int k = 0; k < 3; ++k)
+        {
+            batch.features[0].push_back(static_cast<float>(k) + 0.1F +
+                                        (0.01F * static_cast<float>(rep)));
+            batch.labels.push_back(static_cast<float>(k));
+        }
+    }
+    BinMappers const mappers = BinMappers::fit(batch, {});
+    Dataset const    train   = Dataset::bin(batch, mappers, {});
+
+    Config cfg;
+    cfg.objective.n_classes          = 3;
+    cfg.tree_config.min_data_in_leaf = 0;
+    cfg.tree_config.min_child_hess   = 0.0F;
+
+    MulticlassBooster<DepthwiseGrower<>, AllRowsSampler> b{cfg};
+    for (int i = 0; i < 10; ++i)
+    {
+        b.update_one_iter(train);
+    }
+
+    size_t const        n = batch.labels.size();
+    std::vector<float>  raw(batch.features[0]);
+    features_view const X{raw.data(), n, 1};
+
+    std::vector<double> contribs(n * 3 * 2);
+    b.pred_contribs(X, contribs, 1);
+    std::vector<float> pred(n);
+    b.predict(X, pred);
+    for (size_t i = 0; i < n; ++i)
+    {
+        // Each class slice sums to that class's raw score; the argmax over
+        // those sums must therefore agree with predict().
+        size_t best      = 0;
+        double best_swum = -1e30;
+        for (size_t k = 0; k < 3; ++k)
+        {
+            double sum = 0.0;
+            for (size_t c = 0; c < 2; ++c)
+            {
+                sum += contribs[(((i * 3) + k) * 2) + c];
+            }
+            if (sum > best_swum)
+            {
+                best_swum = sum;
+                best      = k;
+            }
+        }
+        REQUIRE(static_cast<float>(best) == pred[i]);
     }
 }

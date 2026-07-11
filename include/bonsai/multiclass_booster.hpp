@@ -174,26 +174,50 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     // Multiclass logloss on raw scores.
     float eval(features_view X, floats_view labels) const override
     {
-        size_t const n      = X.extent(0);
-        auto const   scores = raw_scores(X, 0);
-        double       total  = 0.0;
-        for (size_t i = 0; i < n; ++i)
+        return logloss_from_scores(raw_scores(X, 0), labels);
+    }
+
+    // --- Early-stopping seam (IBooster): width-K raw-score matrix.
+    size_t score_width() const override
+    {
+        return n_classes_;
+    }
+
+    void seed_valid_scores(features_view X, std::span<float> out,
+                           size_t n_rounds) const override
+    {
+        if (n_rounds > 0)
         {
-            double maxv = scores[i * n_classes_];
-            for (size_t k = 1; k < n_classes_; ++k)
-            {
-                maxv =
-                    std::max(maxv, static_cast<double>(scores[(i * n_classes_) + k]));
-            }
-            double sum = 0.0;
-            for (size_t k = 0; k < n_classes_; ++k)
-            {
-                sum += std::exp(scores[(i * n_classes_) + k] - maxv);
-            }
-            size_t const y = class_of(labels[i], n_classes_);
-            total -= (scores[(i * n_classes_) + y] - maxv) - std::log(sum);
+            auto const scores = raw_scores(X, n_rounds);
+            std::ranges::copy(scores, out.begin());
+            return;
         }
-        return static_cast<float>(total / static_cast<double>(n));
+        for (size_t i = 0; i < out.size(); ++i)
+        {
+            out[i] = init_scores_.empty() ? 0.0F : init_scores_[i % n_classes_];
+        }
+    }
+
+    void accumulate_last_round(features_view X, floats_out scores) const override
+    {
+        assert(trees_.size() >= n_classes_);
+        size_t const       n     = X.extent(0);
+        size_t const       first = trees_.size() - n_classes_;
+        std::vector<float> raw(n);
+        for (size_t k = 0; k < n_classes_; ++k)
+        {
+            std::ranges::fill(raw, 0.0F);
+            trees_[first + k].predict(X, raw);
+            for (size_t i = 0; i < n; ++i)
+            {
+                scores[(i * n_classes_) + k] += config_.learning_rate * raw[i];
+            }
+        }
+    }
+
+    float valid_loss(std::span<float const> scores, floats_view labels) const override
+    {
+        return logloss_from_scores(scores, labels);
     }
 
     size_t n_iters() const override
@@ -248,22 +272,46 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         return out;
     }
 
-    void pred_contribs(features_view /*X*/, std::span<double> /*out*/,
-                       size_t /*n_features*/) const override
+    // Per-class TreeSHAP: out is (n_rows x n_classes x (n_features + 1)),
+    // row-major — class k's contributions for row i start at
+    // (i * K + k) * (n_features + 1). Each class's slice sums to that
+    // class's raw score (the efficiency property, per class).
+    void pred_contribs(features_view X, std::span<double> out,
+                       size_t n_features) const override
     {
-        throw std::runtime_error(
-            "pred_contribs is not supported for multiclass models yet");
-    }
-
-    float score_base() const override
-    {
-        throw std::runtime_error(
-            "early stopping is not supported for multiclass models yet");
-    }
-    void accumulate_last_tree(features_view /*X*/, floats_out /*scores*/) const override
-    {
-        throw std::runtime_error(
-            "early stopping is not supported for multiclass models yet");
+        if constexpr (!std::same_as<tree_type, DenseTree>)
+        {
+            throw std::runtime_error(
+                "pred_contribs for multiclass requires dense trees");
+        }
+        else
+        {
+            size_t const n    = X.extent(0);
+            size_t const cols = n_features + 1;
+            assert(out.size() == n * n_classes_ * cols);
+            parallel::for_each_index(
+                n,
+                [&](size_t i)
+                {
+                    for (size_t k = 0; k < n_classes_; ++k)
+                    {
+                        std::span<double> const phi =
+                            out.subspan(((i * n_classes_) + k) * cols, cols);
+                        std::ranges::fill(phi, 0.0);
+                        for (size_t t = k; t < trees_.size(); t += n_classes_)
+                        {
+                            internal::shap_one_row(trees_[t], X,
+                                                   static_cast<row_id_t>(i), phi);
+                        }
+                        for (double &v : phi)
+                        {
+                            v *= config_.learning_rate;
+                        }
+                        phi[n_features] +=
+                            init_scores_.empty() ? 0.0F : init_scores_[k];
+                    }
+                });
+        }
     }
 
     void truncate(size_t n_rounds) override
@@ -305,6 +353,29 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
 
     // Raw (init + lr * tree sums) scores, n_rows x K, using the first
     // n_rounds rounds (0 = all).
+    float logloss_from_scores(std::span<float const> scores, floats_view labels) const
+    {
+        size_t const n     = labels.size();
+        double       total = 0.0;
+        for (size_t i = 0; i < n; ++i)
+        {
+            double maxv = scores[i * n_classes_];
+            for (size_t k = 1; k < n_classes_; ++k)
+            {
+                maxv =
+                    std::max(maxv, static_cast<double>(scores[(i * n_classes_) + k]));
+            }
+            double sum = 0.0;
+            for (size_t k = 0; k < n_classes_; ++k)
+            {
+                sum += std::exp(scores[(i * n_classes_) + k] - maxv);
+            }
+            size_t const y = class_of(labels[i], n_classes_);
+            total -= (scores[(i * n_classes_) + y] - maxv) - std::log(sum);
+        }
+        return static_cast<float>(total / static_cast<double>(n));
+    }
+
     std::vector<float> raw_scores(features_view X, size_t n_rounds) const
     {
         size_t const n      = X.extent(0);

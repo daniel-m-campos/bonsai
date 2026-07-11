@@ -151,9 +151,14 @@ class ObliviousTree
         size_t n_leaves{};
     };
 
-    // level_gains: split gain per level; empty = unknown (see DenseTree).
+    // level_gains: split gain per level; leaf_covers: training rows per
+    // leaf slot (2^depth entries). Both optional, empty = unknown (see
+    // DenseTree) — leaf covers exist so TreeSHAP has its background
+    // distribution; models saved before they were recorded load with
+    // covers empty and pred_contribs explains why it can't run.
     ObliviousTree(LevelSplits splits, LeafTable values,
-                  std::vector<float> level_gains = {});
+                  std::vector<float> level_gains = {},
+                  std::vector<float> leaf_covers = {});
 
     // DART normalization: multiply every leaf contribution by `factor`.
     void scale_leaves(float factor)
@@ -196,13 +201,25 @@ class ObliviousTree
         return level_gains_;
     }
 
+    std::vector<float> const &leaf_covers() const
+    {
+        return leaf_covers_;
+    }
+
   private:
     float walk_row(features_view X, row_id_t i) const;
 
     LevelSplits        splits_;
     LeafTable          leaf_table_;
+    std::vector<float> leaf_covers_;
     Params             params_;
     std::vector<float> level_gains_;
 };
+
+// SHAP support: an oblivious tree is a perfect binary tree with one split
+// broadcast per level; expand it into the DenseTree shape (internal covers
+// aggregated bottom-up from the leaf covers) so TreeSHAP's cover-weighted
+// walk applies unchanged. Throws std::invalid_argument without leaf covers.
+DenseTree dense_equivalent(ObliviousTree const &tree);
 
 } // namespace bonsai

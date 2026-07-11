@@ -547,11 +547,16 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     std::vector<node_id_t> leaf_ids = std::move(recycled_ids_);
     leaf_ids.resize(ds.n_rows(), 0);
     leaf_table.reserve(frontier.size());
+    std::vector<float> leaf_covers;
+    leaf_covers.reserve(frontier.size());
     for (size_t li = 0; li < frontier.size(); ++li)
     {
         auto const &leaf = frontier[li];
         float const v = gd::leaf_value(leaf.total_grad(), leaf.total_hess(), config_);
         leaf_table.push_back(v);
+        // Device-plane rows are resident (rows empty, row_count set).
+        leaf_covers.push_back(
+            static_cast<float>(leaf.row_count > 0 ? leaf.row_count : leaf.rows.size()));
     }
     // Host plane stamps each leaf's rows; device plane stamps the resident
     // segments and downloads the per-row assignment.
@@ -595,7 +600,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     }
 
     return {.tree     = Tree(std::move(level_splits), std::move(leaf_table),
-                             std::move(level_gains)),
+                             std::move(level_gains), std::move(leaf_covers)),
             .values   = std::move(values),
             .leaf_ids = std::move(leaf_ids)};
 }
