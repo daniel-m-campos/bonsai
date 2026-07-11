@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "bonsai/bin_mappers.hpp"
@@ -102,37 +103,73 @@ void fill_binned(std::vector<std::vector<uint8_t>>  &u8,
 // cfg.missing_nan). Today ColumnBatch is assumed to carry NaNs for missing, so
 // the reader layer is responsible for any sentinel-to-NaN conversion upstream.
 Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers,
-                     DataConfig const & /*cfg*/)
+                     DataConfig const & /*cfg*/,
+                     std::shared_ptr<IngestPlane const> plane)
 {
     assert(batch.features.size() == mappers.size());
     detail::IngestProfiler::Lap lap;
     Dataset                     ds;
-    ds.n_rows_  = batch.labels.size();
-    ds.mappers_ = mappers;
-    ds.labels_  = batch.labels;
-    ds.weights_ = batch.weights;
+    ds.n_rows_     = batch.labels.size();
+    ds.n_features_ = batch.features.size();
+    ds.mappers_    = mappers;
+    ds.labels_     = batch.labels;
+    ds.weights_    = batch.weights;
     ds.is_categorical_.assign(batch.features.size(), false);
-    fill_binned(ds.features_u8_, ds.features_u16_, ds.bins_are_u8_,
-                batch.features.size(), ds.n_rows_, mappers,
-                [&](size_t f, size_t r) { return batch.features[f][r]; });
+    if (plane)
+    {
+        ds.plane_       = std::move(plane);
+        ds.host_stale_  = true;
+        ds.bins_are_u8_ = all_fit_u8(mappers);
+    }
+    else
+    {
+        fill_binned(ds.features_u8_, ds.features_u16_, ds.bins_are_u8_,
+                    batch.features.size(), ds.n_rows_, mappers,
+                    [&](size_t f, size_t r) { return batch.features[f][r]; });
+    }
     lap(detail::IngestProfiler::instance().bin_s);
     return ds;
 }
 
 Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mappers,
-                     DataConfig const & /*cfg*/)
+                     DataConfig const & /*cfg*/,
+                     std::shared_ptr<IngestPlane const> plane)
 {
     assert(X.extent(1) == mappers.size());
     detail::IngestProfiler::Lap lap;
     Dataset                     ds;
-    ds.n_rows_  = labels.size();
-    ds.mappers_ = mappers;
+    ds.n_rows_     = labels.size();
+    ds.n_features_ = X.extent(1);
+    ds.mappers_    = mappers;
     ds.labels_.assign(labels.begin(), labels.end());
     ds.is_categorical_.assign(X.extent(1), false);
-    fill_binned(ds.features_u8_, ds.features_u16_, ds.bins_are_u8_, X.extent(1),
-                ds.n_rows_, mappers, [&](size_t f, size_t r) { return X[r, f]; });
+    if (plane)
+    {
+        ds.plane_       = std::move(plane);
+        ds.host_stale_  = true;
+        ds.bins_are_u8_ = all_fit_u8(mappers);
+    }
+    else
+    {
+        fill_binned(ds.features_u8_, ds.features_u16_, ds.bins_are_u8_, X.extent(1),
+                    ds.n_rows_, mappers, [&](size_t f, size_t r) { return X[r, f]; });
+    }
     lap(detail::IngestProfiler::instance().bin_s);
     return ds;
+}
+
+// First host consumer of a plane-backed dataset: pull the binned columns
+// home once. bins_are_u8_ was fixed from the mappers at bin(); the plane
+// fills the matching width.
+void Dataset::ensure_host() const
+{
+    if (!host_stale_)
+    {
+        return;
+    }
+    plane_->materialize(features_u8_, features_u16_);
+    assert((bins_are_u8_ ? features_u8_.size() : features_u16_.size()) == n_features_);
+    host_stale_ = false;
 }
 
 size_t Dataset::n_rows() const
@@ -142,7 +179,7 @@ size_t Dataset::n_rows() const
 
 size_t Dataset::n_features() const
 {
-    return bins_are_u8_ ? features_u8_.size() : features_u16_.size();
+    return n_features_;
 }
 
 floats_view Dataset::labels() const
@@ -175,6 +212,10 @@ std::span<uint8_t const> Dataset::row_major_bins() const
     if (!bins_are_u8_)
     {
         return {};
+    }
+    if (host_stale_)
+    {
+        ensure_host();
     }
     if (!row_major_)
     {
