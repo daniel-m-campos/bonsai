@@ -630,13 +630,15 @@ class LevelStep<EngineT, SplitterT>
         lap(GrowProfiler::instance().populate_s);
     }
 
-    // End of tree: stamp the surviving frontier's device segments, then pull
-    // the per-row leaf assignment home once and stamp values/leaf_ids from it
+    // End of tree: stamp the surviving frontier's device segments, then hand
+    // the node value table to the engine, which maps every resident row to
+    // its leaf value on device and returns values/leaf_ids in two bulk copies
     // (host finalize_as_leaf writes the nodes; its row loop no-ops on empty
-    // device-mode rows).
+    // device-mode rows). Rows outside the sampled set get placeholder stamps
+    // here and are overwritten by route_unsampled.
     void end_tree(std::vector<SplitInput> const &current, DenseTree::Nodes &nodes,
                   size_t &n_leaves, train_leaf_values &values,
-                  std::vector<node_id_t> &leaf_ids, row_index_view row_indices)
+                  std::vector<node_id_t> &leaf_ids, row_index_view /*row_indices*/)
     {
         if (on_device_)
         {
@@ -654,13 +656,12 @@ class LevelStep<EngineT, SplitterT>
         }
         if (on_device_)
         {
-            std::vector<node_id_t> by_row(ds_.n_rows(), 0);
-            engine_.finalize_rows(by_row);
-            for (row_id_t const r : row_indices)
+            std::vector<float> node_vals(nodes.size());
+            for (size_t i = 0; i < nodes.size(); ++i)
             {
-                leaf_ids[r] = by_row[r];
-                values[r]   = nodes[by_row[r]].threshold_or_value;
+                node_vals[i] = nodes[i].threshold_or_value;
             }
+            engine_.finalize_tree(node_vals, values, leaf_ids);
         }
     }
 
@@ -672,7 +673,7 @@ class LevelStep<EngineT, SplitterT>
     void finalize_leaves(std::vector<SplitInput> const &frontier,
                          std::vector<float> const      &leaf_table,
                          train_leaf_values &values, std::vector<node_id_t> &leaf_ids,
-                         row_index_view row_indices)
+                         row_index_view /*row_indices*/)
     {
         if (!on_device_)
         {
@@ -686,13 +687,7 @@ class LevelStep<EngineT, SplitterT>
             stamps.push_back({i, static_cast<node_id_t>(i)});
         }
         engine_.stamp_leaves(stamps);
-        std::vector<node_id_t> by_row(ds_.n_rows(), 0);
-        engine_.finalize_rows(by_row);
-        for (row_id_t const r : row_indices)
-        {
-            leaf_ids[r] = by_row[r];
-            values[r]   = leaf_table[by_row[r]];
-        }
+        engine_.finalize_tree(leaf_table, values, leaf_ids);
     }
 
   private:
