@@ -109,6 +109,12 @@ struct GrowProfiler : Profiler<GrowProfiler>
     static constexpr char const *prefix = "grow-profile";
 
     double find_s = 0, bookkeep_s = 0, partition_s = 0, populate_s = 0, finalize_s = 0;
+    // Conservation buckets (doc 16): everything grow spends outside the
+    // phase laps above. setup = per-tree output allocs + feature sampling +
+    // the LevelStep ctor (begin_tree: gh upload, dataset residency);
+    // commit = demote + commit_children between the engine phases;
+    // assemble = gains/covers resize + Tree construction + result move-out.
+    double setup_s = 0, commit_s = 0, assemble_s = 0;
     double populate_adds = 0, populate_row_s = 0;
 
     static constexpr std::array fields = {
@@ -117,6 +123,9 @@ struct GrowProfiler : Profiler<GrowProfiler>
         std::pair{"partition", &GrowProfiler::partition_s},
         std::pair{"populate", &GrowProfiler::populate_s},
         std::pair{"finalize", &GrowProfiler::finalize_s},
+        std::pair{"setup", &GrowProfiler::setup_s},
+        std::pair{"commit", &GrowProfiler::commit_s},
+        std::pair{"assemble", &GrowProfiler::assemble_s},
     };
 
     std::string extra() const
