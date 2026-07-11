@@ -25,7 +25,8 @@ RUN wget -qO- https://astral.sh/uv/install.sh | sh \
 ENV PATH="/root/.local/bin:${PATH}"
 RUN uv venv --python 3.12 /opt/venv \
     && uv pip install --python /opt/venv/bin/python \
-        cmake ninja numpy nanobind scikit-learn pandas lightgbm
+        cmake ninja numpy nanobind scikit-learn pandas tabulate matplotlib \
+        lightgbm xgboost catboost
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # FetchContent sources, pre-cloned: pods point CMake at these via
@@ -37,8 +38,11 @@ RUN mkdir -p /opt/deps \
     && git clone -q --depth 1 --branch v3.11.3 https://github.com/nlohmann/json.git /opt/deps/json
 
 # RunPod-compatible entrypoint: installs the PUBLIC_KEY env into
-# authorized_keys and runs sshd in the foreground, matching what the
-# official runpod images' start scripts do for direct-IP SSH access.
+# authorized_keys and runs sshd in the foreground for direct-IP SSH access.
+# Known limitation: ssh.runpod.io proxy routing needs RunPod's in-image
+# agent (official images only), so pods on this image are reachable only
+# via publicIp:portMappings['22'] — machines that expose no public IP need
+# re-rolling. bench workers additionally need PYTHONPATH=build/python.
 COPY docker/start.sh /start.sh
 RUN chmod +x /start.sh
 CMD ["/start.sh"]
