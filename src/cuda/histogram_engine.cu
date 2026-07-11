@@ -49,6 +49,8 @@ struct ProfileCounters
     using clock     = std::chrono::steady_clock;
     bool   enabled  = std::getenv("BONSAI_CUDA_PROFILE") != nullptr;
     double upload_s = 0, gpu_s = 0, unpack_s = 0, cpu_s = 0;
+    double part_stage_s = 0, adv_stage_s = 0, find_stage_s = 0, lfind_stage_s = 0;
+    double gh_upload_s = 0, root_stage_s = 0;
     size_t launches = 0, gpu_nodes = 0, cpu_calls = 0;
 
     ProfileCounters()                                       = default;
@@ -92,8 +94,14 @@ struct ProfileCounters
                          "cuda-profile: upload={:.2f}s gpu={:.2f}s unpack={:.2f}s "
                          "cpu_fallback={:.2f}s | {} launches covering {} nodes, {} "
                          "cpu-fallback nodes",
-                         upload_s, gpu_s, unpack_s, cpu_s, launches, gpu_nodes,
-                         cpu_calls);
+                         part_stage_s + adv_stage_s + find_stage_s + lfind_stage_s,
+                         gpu_s, unpack_s, cpu_s, launches, gpu_nodes, cpu_calls);
+            std::println(stderr,
+                         "cuda-upload-decomp: gh={:.2f}s root_stage={:.2f}s "
+                         "part_stage={:.2f}s adv_stage={:.2f}s find_stage={:.2f}s "
+                         "lfind_stage={:.2f}s legacy={:.2f}s",
+                         gh_upload_s, root_stage_s, part_stage_s, adv_stage_s,
+                         find_stage_s, lfind_stage_s, upload_s);
         }
         catch (...)
         {
@@ -492,11 +500,13 @@ void CudaHistogramEngine::begin_tree(Dataset const &ds, floats_view grad,
                                      floats_view hess)
 {
     impl_->ensure_dataset(ds);
-    auto const n = static_cast<uint32_t>(grad.size());
+    auto       lap = impl_->prof_counters.lap();
+    auto const n   = static_cast<uint32_t>(grad.size());
     impl_->grad_raw.upload(grad.data(), grad.size());
     impl_->hess_raw.upload(hess.data(), hess.size());
     impl_->gh.reserve(grad.size());
     interleave(impl_->grad_raw.data(), impl_->hess_raw.data(), n, impl_->gh.data());
+    lap(impl_->prof_counters.gh_upload_s);
 }
 
 // Host-plane fallback: builds the node's histograms on the CPU. Runs only
@@ -533,7 +543,8 @@ bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
     im.features.host.assign(selected.begin(), selected.end());
     im.features.sync();
 
-    im.cur_is_a = true;
+    auto root_lap = im.prof_counters.lap();
+    im.cur_is_a   = true;
     im.cur().reserve(im.slot_doubles());
     check(cudaMemset(im.cur().data(), 0, im.slot_doubles() * sizeof(double)),
           "zero root slot");
@@ -545,6 +556,7 @@ bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
     im.row_cnt.sync();
     im.slots.host.assign(1, 0);
     im.slots.sync();
+    root_lap(im.prof_counters.root_stage_s);
     im.gh_ordered.reserve(root.rows.size());
     gather(im.gh.data(), im.rows.data(), n, im.gh_ordered.data());
     auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
@@ -635,7 +647,7 @@ void CudaHistogramEngine::partition_level(Dataset const & /*ds*/,
     im.flags.reserve(im.n_rows);
     im.block_counts.reserve(n * max_chunks);
     im.nl_dev.reserve(n);
-    lap(prof.upload_s);
+    lap(prof.part_stage_s);
 
     dim3 const grid(max_chunks, static_cast<uint32_t>(n));
     im.dispatch_bins(
@@ -687,7 +699,7 @@ void CudaHistogramEngine::advance_level(Dataset const &ds, std::span<LevelOp con
 
     // Rows are already device-resident; only the per-child layout stages here.
     size_t const max_rows = im.stage_children(ops);
-    lap(prof.upload_s);
+    lap(prof.adv_stage_s);
 
     size_t const child_slots = 2 * ops.size();
     im.other().reserve(child_slots * im.slot_doubles());
@@ -748,7 +760,7 @@ void CudaHistogramEngine::find_splits_many(Dataset const &ds, TreeConfig const &
     auto         lap  = prof.lap();
 
     bool const any_mask = im.stage_find_inputs(level, config, ds);
-    lap(prof.upload_s);
+    lap(prof.find_stage_s);
 
     im.feat_best.reserve(n * im.n_selected);
     im.node_best.reserve(n);
@@ -785,7 +797,7 @@ void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
     auto         lap  = prof.lap();
 
     im.stage_level_sums(level);
-    lap(prof.upload_s);
+    lap(prof.lfind_stage_s);
 
     // find -> reduce -> child-sums queue back to back (the child kernel reads
     // the reduced winner on-device), so the level pays one sync at the fetch.
