@@ -386,17 +386,16 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     -> GrowResult<Tree>
 {
     namespace gd = grower_detail;
-    Tree::Nodes              nodes;
-    train_leaf_values        values(ds.n_rows(), 0.0F);
-    std::vector<node_id_t>   leaf_ids(ds.n_rows(), 0);
-    std::vector<SplitInput>  current;
-    std::vector<SplitInput>  next;
-    std::vector<SplitOutput> splits;
-    std::vector<HistCell>    child_sums;
-    std::vector<bin_id_t>    split_bins(1, 0);
-    std::vector<float>       split_gains(1, 0.0F);
-    std::vector<float>       covers(1, static_cast<float>(row_indices.size()));
-    auto const               selected =
+    Tree::Nodes             nodes;
+    train_leaf_values       values(ds.n_rows(), 0.0F);
+    std::vector<node_id_t>  leaf_ids(ds.n_rows(), 0);
+    std::vector<SplitInput> current;
+    std::vector<SplitInput> next;
+    gd::LevelOutputs        level_out;
+    std::vector<bin_id_t>   split_bins(1, 0);
+    std::vector<float>      split_gains(1, 0.0F);
+    std::vector<float>      covers(1, static_cast<float>(row_indices.size()));
+    auto const              selected =
         gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
 
     // The LevelStep is the tree's data plane: host or GPU by engine type,
@@ -408,11 +407,11 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     size_t  n_leaves = 0;
     while (depth < config_.max_depth)
     {
-        step.find_splits(current, splits, child_sums);
-        auto plan =
-            gd::plan_level(ds, config_, current, splits, child_sums, nodes, n_leaves,
-                           values, split_bins, split_gains, covers, leaf_ids);
-        step.partition(plan);
+        step.open_level(current, level_out);
+        auto plan = gd::plan_level(ds, config_, current, level_out.splits,
+                                   level_out.child_sums, nodes, n_leaves, values,
+                                   split_bins, split_gains, covers, leaf_ids);
+        step.apply_level(plan);
         gd::demote_empty_splits(config_, plan, nodes, n_leaves, values, leaf_ids,
                                 split_gains);
         step.build_children(plan);
@@ -426,7 +425,7 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     }
     {
         gd::GrowProfiler::Lap flap;
-        step.finalize(current, nodes, n_leaves, values, leaf_ids, row_indices);
+        step.end_tree(current, nodes, n_leaves, values, leaf_ids, row_indices);
         gd::route_unsampled(ds, nodes, split_bins, row_indices, values, leaf_ids);
         flap(gd::GrowProfiler::instance().finalize_s);
     }
@@ -469,13 +468,12 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     Tree::LeafTable   leaf_table;
     train_leaf_values values(ds.n_rows(), 0.0F);
 
-    std::vector<SplitInput>  frontier;
-    std::vector<SplitInput>  next;
-    std::vector<SplitOutput> splits;
-    std::vector<HistCell>    child_sums;
-    std::vector<bin_id_t>    level_bins;
-    std::vector<float>       level_gains;
-    auto const               selected =
+    std::vector<SplitInput> frontier;
+    std::vector<SplitInput> next;
+    gd::LevelOutputs        level_out;
+    std::vector<bin_id_t>   level_bins;
+    std::vector<float>      level_gains;
+    auto const              selected =
         gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
 
     // Same data plane as depthwise; only the control plane differs (one split
@@ -486,8 +484,8 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     size_t depth = 0;
     while (depth < config_.max_depth)
     {
-        step.find_splits(frontier, splits, child_sums);
-        SplitOutput const split = splits.front();
+        step.open_level(frontier, level_out);
+        SplitOutput const split = level_out.splits.front();
         if (!split.valid)
         {
             break;
@@ -503,9 +501,11 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
         plan.splits.reserve(frontier.size());
         for (uint32_t i = 0; i < frontier.size(); ++i)
         {
-            HistCell const ls = child_sums.empty() ? HistCell{} : child_sums[2 * i];
-            HistCell const rs =
-                child_sums.empty() ? HistCell{} : child_sums[(2 * i) + 1];
+            HistCell const ls =
+                level_out.child_sums.empty() ? HistCell{} : level_out.child_sums[2 * i];
+            HistCell const rs = level_out.child_sums.empty()
+                                    ? HistCell{}
+                                    : level_out.child_sums[(2 * i) + 1];
             plan.splits.push_back({.parent      = std::move(frontier[i]),
                                    .p           = {},
                                    .split       = split,
@@ -518,7 +518,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
                                    .left_sums   = ls,
                                    .right_sums  = rs});
         }
-        step.partition(plan);
+        step.apply_level(plan);
         step.build_children(plan);
         next.reserve(plan.splits.size() * 2);
         for (auto &d : plan.splits)

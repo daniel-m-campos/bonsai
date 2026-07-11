@@ -1,9 +1,11 @@
 #pragma once
 
 // The grower's data plane (docs/architecture/12-grower-backend.md, decision
-// 41). LevelStep groups the per-tree data-plane steps — root setup, split
-// finding, row partitioning, child histogram construction, leaf finalize —
-// behind one interface, selected by engine type: the primary template is the
+// 41; transaction vocabulary from docs/architecture/14-engine-narrative.md,
+// decision 53). LevelStep groups the per-tree data-plane steps — root setup,
+// open_level (split finding), apply_level (row partitioning), child
+// histogram construction, end_tree (leaf finalize) — behind one interface,
+// selected by engine type: the primary template is the
 // host plane (the CPU engine, and any engine's CPU fallback); the
 // GPULevelEngine specialization is the device plane and holds the one runtime
 // fork (on_device vs fallback) the design allows. The grow loops stay the
@@ -206,6 +208,18 @@ struct LevelPlan
     std::vector<SlotLeaf>      leaves;
 };
 
+// The level-transaction vocabulary (decision 53): the same narrative on
+// both planes, with the backend an implementation detail. Step 1 of the
+// migration introduces the types and speaks them from the grow loops;
+// buffers stay caller-owned and reused across levels exactly as before.
+struct LevelOutputs
+{
+    std::vector<SplitOutput> splits;
+    // (left, right) sums per node from the find plane, 2 cells per node;
+    // empty on the host plane, which derives child sums by subtraction.
+    std::vector<HistCell> child_sums;
+};
+
 // ---------------------------------------------------------------------------
 // Host data plane: serves every HistogramEngine — the CPU engine, and any
 // engine's CPU fallback. Branch-free: no GPU concept appears below.
@@ -235,18 +249,20 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
 
     // Per-node splitter, or one level-wide find broadcast to every node when
     // the splitter is level-granular (the oblivious growth shape).
-    void find_splits(std::vector<SplitInput> const &current,
-                     std::vector<SplitOutput> &out, std::vector<HistCell> &child_sums)
+    // Level transaction, phase 1: split decisions for the whole frontier
+    // (decision 53). The frontier is the transaction's input; outputs are
+    // caller-owned and reused across levels.
+    void open_level(std::vector<SplitInput> const &frontier, LevelOutputs &out)
     {
         GrowProfiler::Lap lap;
-        host_find<SplitterT>(current, config_, out, child_sums);
+        host_find<SplitterT>(frontier, config_, out.splits, out.child_sums);
         lap(GrowProfiler::instance().find_s);
     }
 
     // Routes every split parent's rows into its children, one node per worker
     // (each partition touches only its own parent's rows: bit-identical to
     // serial at any thread count).
-    void partition(LevelPlan &plan)
+    void apply_level(LevelPlan &plan)
     {
         GrowProfiler::Lap lap;
         host_partition(ds_, plan);
@@ -264,7 +280,7 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
 
     // End of tree: the surviving frontier becomes leaves (values and row ids
     // stamped on the host).
-    void finalize(std::vector<SplitInput> const &current, DenseTree::Nodes &nodes,
+    void end_tree(std::vector<SplitInput> const &current, DenseTree::Nodes &nodes,
                   size_t &n_leaves, train_leaf_values &values,
                   std::vector<node_id_t> &leaf_ids, row_index_view /*row_indices*/)
     {
@@ -510,9 +526,11 @@ class LevelStep<EngineT, SplitterT>
         return root;
     }
 
-    void find_splits(std::vector<SplitInput> const &current,
-                     std::vector<SplitOutput> &out, std::vector<HistCell> &child_sums)
+    void open_level(std::vector<SplitInput> const &frontier, LevelOutputs &lout)
     {
+        auto             &out        = lout.splits;
+        auto             &child_sums = lout.child_sums;
+        auto const       &current    = frontier;
         GrowProfiler::Lap lap;
         if (on_device_)
         {
@@ -545,7 +563,7 @@ class LevelStep<EngineT, SplitterT>
     // Leaves stamp their device segments, splits partition on the device
     // (only child counts return), and each child's ids/sums/row_count fill in
     // from the counts — SplitInput degrades to node metadata on this plane.
-    void partition(LevelPlan &plan)
+    void apply_level(LevelPlan &plan)
     {
         GrowProfiler::Lap lap;
         if (on_device_)
@@ -616,7 +634,7 @@ class LevelStep<EngineT, SplitterT>
     // the per-row leaf assignment home once and stamp values/leaf_ids from it
     // (host finalize_as_leaf writes the nodes; its row loop no-ops on empty
     // device-mode rows).
-    void finalize(std::vector<SplitInput> const &current, DenseTree::Nodes &nodes,
+    void end_tree(std::vector<SplitInput> const &current, DenseTree::Nodes &nodes,
                   size_t &n_leaves, train_leaf_values &values,
                   std::vector<node_id_t> &leaf_ids, row_index_view row_indices)
     {
