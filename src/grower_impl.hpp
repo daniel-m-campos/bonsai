@@ -386,6 +386,7 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     -> GrowResult<Tree>
 {
     namespace gd = grower_detail;
+    gd::GrowProfiler::Lap   slap;
     Tree::Nodes             nodes;
     train_leaf_values       values(ds.n_rows(), 0.0F);
     std::vector<node_id_t>  leaf_ids(ds.n_rows(), 0);
@@ -401,6 +402,7 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     // The LevelStep is the tree's data plane: host or GPU by engine type,
     // opened per tree so a GPU engine can decline back to the host mid-fit.
     gd::LevelStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
+    slap(gd::GrowProfiler::instance().setup_s);
     current.push_back(step.make_root(row_indices));
     nodes.emplace_back(DenseTree::leaf(0.0F));
     uint8_t depth    = 0;
@@ -412,11 +414,15 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
                                    level_out.child_sums, nodes, n_leaves, values,
                                    split_bins, split_gains, covers, leaf_ids);
         step.apply_level(plan);
+        gd::GrowProfiler::Lap clap;
         gd::demote_empty_splits(config_, plan, nodes, n_leaves, values, leaf_ids,
                                 split_gains);
+        clap(gd::GrowProfiler::instance().commit_s);
         step.build_children(plan);
+        gd::GrowProfiler::Lap clap2;
         gd::commit_children(ds, config_, interaction_groups_, plan, covers, current,
                             next);
+        clap2(gd::GrowProfiler::instance().commit_s);
         if (current.empty())
         {
             break;
@@ -429,8 +435,10 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
         gd::route_unsampled(ds, nodes, split_bins, row_indices, values, leaf_ids);
         flap(gd::GrowProfiler::instance().finalize_s);
     }
+    gd::GrowProfiler::Lap alap;
     split_gains.resize(nodes.size(), 0.0F);
     covers.resize(nodes.size(), 0.0F);
+    alap(gd::GrowProfiler::instance().assemble_s);
 
     return {.tree     = Tree(std::move(nodes), {.depth = depth, .n_leaves = n_leaves},
                              std::move(split_gains), std::move(covers)),
@@ -464,9 +472,10 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     -> GrowResult<Tree>
 {
     namespace gd = grower_detail;
-    Tree::LevelSplits level_splits;
-    Tree::LeafTable   leaf_table;
-    train_leaf_values values(ds.n_rows(), 0.0F);
+    gd::GrowProfiler::Lap slap;
+    Tree::LevelSplits     level_splits;
+    Tree::LeafTable       leaf_table;
+    train_leaf_values     values(ds.n_rows(), 0.0F);
 
     std::vector<SplitInput> frontier;
     std::vector<SplitInput> next;
@@ -479,6 +488,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     // Same data plane as depthwise; only the control plane differs (one split
     // per level, broadcast to every frontier node; ObliviousTree bookkeeping).
     gd::LevelStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
+    slap(gd::GrowProfiler::instance().setup_s);
     frontier.push_back(step.make_root(row_indices));
 
     size_t depth = 0;
@@ -600,8 +610,9 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     -> GrowResult<Tree>
 {
     namespace gd = grower_detail;
-    Tree::Nodes       nodes;
-    train_leaf_values values(ds.n_rows(), 0.0F);
+    gd::GrowProfiler::Lap slap;
+    Tree::Nodes           nodes;
+    train_leaf_values     values(ds.n_rows(), 0.0F);
 
     // Max-heap on gain; ties broken by lower node id so growth is deterministic.
     auto gain_less = [](gd::Candidate const &a, gd::Candidate const &b)
@@ -627,7 +638,8 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     // the gain heap expands one node at a time (split_node), so there is no
     // level to batch — the LevelStep opens the tree and builds the root.
     gd::LevelStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
-    SplitInput                        root = step.make_root(row_indices);
+    slap(gd::GrowProfiler::instance().setup_s);
+    SplitInput root = step.make_root(row_indices);
     nodes.emplace_back(DenseTree::leaf(0.0F));
 
     size_t  n_leaves    = 0;
