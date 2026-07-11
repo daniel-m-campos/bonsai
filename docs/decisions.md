@@ -817,7 +817,9 @@ of a hope.
 
 **Rejected.** Continuing to phase B (device binning) or the API redesign on the unmeasured premise; debugging the experiment's residual 16M-only quality gap (r² 0.79 vs 0.89) once the timing verdict had already killed the approach.
 
-## 53. The level-transaction engine narrative (proposed)
+## 53. The level-transaction engine narrative (adopted)
+
+**Status.** Executed. Step 1 (transaction vocabulary on both planes, byte-identical) landed in PR #33; steps 2–3 landed as one change set: the identity row list cached on device and restored D2D per tree instead of re-uploaded (the avoidable share of the root line), and `end_tree` handing the node value table to the engine, which maps rows to leaf values on device and returns values/leaf ids in two bulk copies (replacing the finalize line's per-tree host stamping loop over every row). The Impl decomposition shipped in the same set. One deliberate deviation from the sketch below: `gh_ordered` lives in LevelPipeline, not GradientPlane — it is the level-row-ordered gather and ping-pongs with `gh_b`.
 
 **Decision (proposed).** The CPU/GPU engine APIs unify around a level-transaction narrative — `begin_tree` / `open_level(LevelInputs) → LevelOutputs` / `apply_level` / `end_tree() → TreeEpilogue` — with the backend an implementation detail, per the review commission on the device-residency design. The shape is derived from the measured 16M ledger (PR #31), not from a lever bet: the root becomes an ordinary one-node level (dissolving `begin_root`'s bespoke per-tree staging, the ledger's largest line at ~14s), `open_level`'s single-struct input batches the per-level staging by construction, and `end_tree` owning the per-row epilogue is where finalize residency (8.4s of per-tree D2H + host stamping) can land with its real motivation. `CudaHistogramEngine::Impl` (41 buffers) decomposes into DeviceData / GradientPlane / LevelPipeline planes with ledger-exposed lifetimes. Migration in three bit-identical-gated PRs: host plane first, device plane onto the transactions, then the device epilogue. Full design: `docs/architecture/14-engine-narrative.md`.
 

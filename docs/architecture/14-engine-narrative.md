@@ -1,8 +1,11 @@
 # 14 — One engine narrative: the level transaction
 
-> **Status:** proposed (decision 53). The API-consistency redesign the
-> device-residency review commissioned, planned against the measured 16M
-> ledger (PR #31) instead of the two premises measurement killed (doc 13).
+> **Status:** executed (decision 53). Step 1 (transaction vocabulary) in
+> PR #33; steps 2–3 (device rows cache, engine-owned tree epilogue) and the
+> Impl decomposition in the follow-up change set. The API-consistency
+> redesign the device-residency review commissioned, planned against the
+> measured 16M ledger (PR #31) instead of the two premises measurement
+> killed (doc 13).
 
 ## The commission
 
