@@ -53,6 +53,28 @@ how the rows axis is won.
   CPU fallback still use the host columns, which remain bit-identical by
   construction.
 
+## The API constraint phase 1 must solve first
+
+Two facts bound the design more tightly than the pipeline above suggests:
+
+1. **The engine never sees raw floats.** `CudaHistogramEngine` receives the
+   already-binned `Dataset`; the float matrix lives upstream (the module's
+   borrowed numpy span, the CLI's ColumnBatch). Device binning therefore
+   needs `Dataset` to carry a non-owning `raw_features()` view, set by both
+   `bin()` overloads — valid for the training call's duration under the
+   same lifetime contract `FeatureBuffer::borrowed` already establishes.
+2. **Host bins cannot be skipped, only their upload.** `route_unsampled`
+   (booster leaf-value stamping for sampler-dropped rows) and the engine's
+   CPU fallback read host binned columns during training. So phase 1's
+   honest savings at 16M×100 is the 6.0s upload replaced by a ~2.5–3s raw
+   stream, **not** the 4.9s host bin pass — projected 38 → ~33s, with the
+   remaining ~3s recoverable only by making host binning lazy for rows the
+   GPU path never touches (a follow-up with its own correctness argument,
+   or by moving `route_unsampled` device-side alongside `finalize_rows`).
+
+The 30s projection in the table above stands only if that follow-up lands;
+review should treat ~33s as phase 1's committed number.
+
 ## Phase 2 sketch (own PR, after phase 1 numbers)
 
 Device quantile fit: per feature, sample ≤n_samples rows on device (seeded
