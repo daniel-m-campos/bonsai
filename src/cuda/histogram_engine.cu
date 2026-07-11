@@ -1060,16 +1060,17 @@ void upload_cuts(BinMappers const &mappers, CutsTable &t)
     t.ofs.upload(ofs.data(), ofs.size());
 }
 
-// Mirror of begin_root's resident-path gate with every feature selected: if
-// the full frontier could never fit the shared budget, grow will fall back
-// to the host data plane, which wants host bins — decline device ingest and
-// keep today's eager host fill.
+// Mirror of begin_root's resident-path gate with every feature selected
+// (the hist kernel's shared budget holds ONE feature's histogram, so the
+// gate is the max single-feature bins, not the sum): if grow would fall
+// back to the host data plane — which wants host bins — decline device
+// ingest and keep today's eager host fill.
 bool ingest_would_decline(BinMappers const &mappers)
 {
-    size_t total_bins = 0;
+    size_t max_bins = 0;
     for (size_t f = 0; f < mappers.size(); ++f)
     {
-        total_bins += mappers[f].n_bins();
+        max_bins = std::max(max_bins, mappers[f].n_bins());
     }
     size_t ceiling = k_max_shared_bytes;
     int    dev     = 0;
@@ -1080,7 +1081,7 @@ bool ingest_would_decline(BinMappers const &mappers)
     {
         ceiling = std::max(ceiling, static_cast<size_t>(optin));
     }
-    return 4 * total_bins * sizeof(float) > ceiling;
+    return 4 * max_bins * sizeof(float) > ceiling;
 }
 
 std::shared_ptr<CudaIngestPlane> make_ingest_plane(BinMappers const &mappers,
