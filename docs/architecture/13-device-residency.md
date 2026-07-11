@@ -1,7 +1,10 @@
 # 13 — Full device residency: gradients first, binning second
 
-> **Status:** proposed (decision 52). Supersedes this document's first
-> draft, which led with device binning — the arithmetic below demoted it.
+> **Status:** REFUTED by measurement (decision 52, PR #28): skipping all
+> per-tree gradient uploads saved 3.7% of the 16M fit — `upload_s` is
+> per-level staging latency, not gradient bytes. Retained as the record of
+> two successive misattributions and the experiment that caught them; the
+> live lever is batching/pinning the per-level `Staged<>` syncs.
 
 ## Why, quantitatively
 
