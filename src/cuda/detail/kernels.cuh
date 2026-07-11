@@ -751,17 +751,33 @@ __global__ void exp_fill_kernel(float *out, float value, uint32_t n)
 // assignment and compute next-iteration MSE gradients in place. hess = 1.
 __global__ void exp_update_kernel(float *scores, float const *labels,
                                   uint32_t const *leaf_by_row, float const *node_values,
-                                  float lr, float *grad, float *hess, uint32_t n)
+                                  float lr, float *grad, float *hess, double *totals,
+                                  uint32_t n)
 {
     uint32_t const r = (blockIdx.x * blockDim.x) + threadIdx.x;
-    if (r >= n)
+    float          g = 0.0F;
+    if (r < n)
     {
-        return;
+        float const s = scores[r] + (lr * node_values[leaf_by_row[r]]);
+        scores[r]     = s;
+        g             = s - labels[r];
+        grad[r]       = g;
+        hess[r]       = 1.0F;
     }
-    float const s = scores[r] + (lr * node_values[leaf_by_row[r]]);
-    scores[r]     = s;
-    grad[r]       = s - labels[r];
-    hess[r]       = 1.0F;
+    // Root totals for begin_root: the host grad arrays are stale by design,
+    // so the device must own the sums the find plane seeds from.
+    __shared__ double block_g;
+    if (threadIdx.x == 0)
+    {
+        block_g = 0.0;
+    }
+    __syncthreads();
+    atomicAdd(&block_g, static_cast<double>(g));
+    __syncthreads();
+    if (threadIdx.x == 0)
+    {
+        atomicAdd(&totals[0], block_g);
+    }
 }
 
 // NOLINTEND(bugprone-easily-swappable-parameters,cppcoreguidelines-avoid-c-arrays,cppcoreguidelines-pro-bounds-pointer-arithmetic,modernize-avoid-c-arrays,cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-bounds-array-to-pointer-decay,readability-function-cognitive-complexity,readability-identifier-naming)

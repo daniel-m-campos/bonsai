@@ -205,6 +205,7 @@ struct CudaHistogramEngine::Impl
     DeviceBuffer<float>   exp_scores;
     DeviceBuffer<float>   exp_labels;
     DeviceBuffer<float>   exp_vals;
+    DeviceBuffer<double>  exp_totals; // [0] = grad sum; hess sum == n (hess = 1)
     bool                  exp_seeded = false;
     std::vector<uint32_t> slot_ofs; // current level's segment layout
     std::vector<uint32_t> slot_cnt;
@@ -578,10 +579,22 @@ bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
 
     double sg = 0.0;
     double sh = 0.0;
-    for (row_id_t const r : root.rows)
+    if (im.exp_seeded)
     {
-        sg += grad[r];
-        sh += hess[r];
+        // Host grads are stale under the device-grad experiment; the fused
+        // update kernel owns the totals (hess sum == n with hess = 1).
+        check(cudaMemcpy(&sg, im.exp_totals.data(), sizeof(double),
+                         cudaMemcpyDeviceToHost),
+              "exp totals copy");
+        sh = static_cast<double>(root.rows.size());
+    }
+    else
+    {
+        for (row_id_t const r : root.rows)
+        {
+            sg += grad[r];
+            sh += hess[r];
+        }
     }
     root.sums      = {.sum_grad = static_cast<float>(sg),
                       .sum_hess = static_cast<float>(sh)};
@@ -717,9 +730,12 @@ void CudaHistogramEngine::exp_end_tree(Dataset const         &ds,
     im.exp_vals.upload(node_values.data(), node_values.size());
     im.grad_raw.reserve(n);
     im.hess_raw.reserve(n);
+    im.exp_totals.reserve(1);
+    check(cudaMemset(im.exp_totals.data(), 0, sizeof(double)), "exp totals zero");
     exp_update_kernel<<<grid, block>>>(im.exp_scores.data(), im.exp_labels.data(),
                                        im.leaf_by_row.data(), im.exp_vals.data(), lr,
-                                       im.grad_raw.data(), im.hess_raw.data(), n);
+                                       im.grad_raw.data(), im.hess_raw.data(),
+                                       im.exp_totals.data(), n);
     check(cudaGetLastError(), "exp update launch");
     static char const *dump = std::getenv("BONSAI_EXP_DUMP");
     if (dump != nullptr)
