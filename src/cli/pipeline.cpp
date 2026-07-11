@@ -215,22 +215,15 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
         {
             if (i == 0)
             {
-                es_scores.resize(loaded.valid->features.n_rows);
-                if (booster->n_iters() > 1)
-                {
-                    // Warm start: seed with the pre-existing trees' scores
-                    // (raw = base + lr * sums), excluding the tree just added.
-                    booster->predict_at(loaded.valid->features.view(), es_scores,
-                                        booster->n_iters() - 1);
-                }
-                else
-                {
-                    std::ranges::fill(es_scores, booster->score_base());
-                }
+                // Warm start: seed with the pre-existing rounds' raw scores,
+                // excluding the round just added (0 rounds = base scores).
+                es_scores.resize(loaded.valid->features.n_rows *
+                                 booster->score_width());
+                booster->seed_valid_scores(loaded.valid->features.view(), es_scores,
+                                           booster->n_iters() - 1);
             }
-            booster->accumulate_last_tree(loaded.valid->features.view(), es_scores);
-            float const loss = eval_objective_by_name(cfg.dispatch.objective_name, cfg,
-                                                      es_scores, loaded.valid->labels);
+            booster->accumulate_last_round(loaded.valid->features.view(), es_scores);
+            float const loss = booster->valid_loss(es_scores, loaded.valid->labels);
             if (i == 0 || loss < best_loss)
             {
                 best_loss = loss;

@@ -144,12 +144,14 @@ class Model
 
     // (n_rows, n_features + 1): TreeSHAP contributions, last column = bias.
     // Rows sum to the raw (pre-link) prediction exactly.
+    // (n, n_features + 1); multiclass models return (n, K, n_features + 1).
     nb::ndarray<nb::numpy, double> pred_contribs(array_2d const &X) const
     {
-        size_t const n    = X.shape(0);
-        size_t const nf   = X.shape(1);
-        size_t const cols = nf + 1;
-        auto         out  = std::make_unique<std::vector<double>>(n * cols, 0.0);
+        size_t const n     = X.shape(0);
+        size_t const nf    = X.shape(1);
+        size_t const cols  = nf + 1;
+        size_t const width = booster_->score_width();
+        auto         out = std::make_unique<std::vector<double>>(n * width * cols, 0.0);
         {
             nb::gil_scoped_release release;
             booster_->pred_contribs(bonsai::features_view{X.data(), n, nf},
@@ -158,6 +160,10 @@ class Model
         auto       *raw = out.release();
         nb::capsule owner(raw, [](void *p) noexcept
                           { delete static_cast<std::vector<double> *>(p); });
+        if (width > 1)
+        {
+            return {raw->data(), {n, width, cols}, owner};
+        }
         return {raw->data(), {n, cols}, owner};
     }
 

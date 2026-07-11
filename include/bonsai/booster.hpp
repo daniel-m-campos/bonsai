@@ -65,16 +65,27 @@ class IBooster
 
     // TreeSHAP contributions: out is n_rows * (n_features + 1), row-major,
     // last column = bias (init score + expected tree values). Rows sum to
-    // the raw prediction exactly. Throws for tree types without SHAP
-    // support (oblivious) or models without covers.
+    // the raw prediction exactly. Throws for models without covers (saved
+    // before covers were recorded); multiclass fills one slice per class.
     virtual void pred_contribs(features_view X, std::span<double> out,
                                size_t n_features) const = 0;
 
-    // Incremental prediction support for early stopping: accumulate only the
-    // newest tree's (shrinkage-scaled) contribution into `scores`, a buffer
-    // the caller initialized to score_base() before the first tree.
-    virtual float score_base() const                                             = 0;
-    virtual void  accumulate_last_tree(features_view X, floats_out scores) const = 0;
+    // Incremental prediction support for early stopping, shape-agnostic so
+    // multiclass composes: the caller maintains a raw-score matrix of
+    // n_rows x score_width() (row-major, width 1 except softmax).
+    // seed_valid_scores fills it as of n_rounds boosting rounds (0 = base
+    // scores only — the warm-start seam); accumulate_last_round adds the
+    // newest round's tree(s); valid_loss scores it with the booster's own
+    // configured objective.
+    virtual size_t score_width() const
+    {
+        return 1;
+    }
+    virtual void  seed_valid_scores(features_view X, std::span<float> out,
+                                    size_t n_rounds) const                        = 0;
+    virtual void  accumulate_last_round(features_view X, floats_out scores) const = 0;
+    virtual float valid_loss(std::span<float const> scores,
+                             floats_view            labels) const                            = 0;
     // Drop trees beyond the first n_trees (keep the best iteration's model).
     virtual void truncate(size_t n_trees) = 0;
 };
@@ -165,13 +176,24 @@ inline void dump_tree(DenseTree const &tree, std::span<std::string const> names,
         auto const &n = nodes[id];
         if (DenseTree::is_leaf(n))
         {
-            out += "leaf=" + std::to_string(n.threshold_or_value) + "\n";
+            out += "leaf=" + std::to_string(n.threshold_or_value);
+            if (id < tree.covers().size())
+            {
+                out +=
+                    " cover=" + std::to_string(static_cast<size_t>(tree.covers()[id]));
+            }
+            out += "\n";
             return;
         }
         out += feature_label(names, n.feature_id) +
                " <= " + std::to_string(n.threshold_or_value) +
                (n.default_left ? " [nan->left]" : " [nan->right]") +
-               " gain=" + std::to_string(id < gains.size() ? gains[id] : 0.0F) + "\n";
+               " gain=" + std::to_string(id < gains.size() ? gains[id] : 0.0F);
+        if (id < tree.covers().size())
+        {
+            out += " cover=" + std::to_string(static_cast<size_t>(tree.covers()[id]));
+        }
+        out += "\n";
         self(self, n.left, depth + 1);
         self(self, n.right, depth + 1);
     };
@@ -243,12 +265,6 @@ inline void shap_one_row(DenseTree const &tree, features_view X, row_id_t row,
                          std::span<double> phi)
 {
     tree_shap(tree, X, row, phi);
-}
-
-inline void shap_one_row(ObliviousTree const & /*tree*/, features_view /*X*/,
-                         row_id_t /*row*/, std::span<double> /*phi*/)
-{
-    throw std::runtime_error("pred_contribs is not supported for oblivious trees");
 }
 
 } // namespace internal
@@ -523,6 +539,28 @@ class Booster final : public IBooster
     void pred_contribs(features_view X, std::span<double> out,
                        size_t n_features) const override
     {
+        if constexpr (std::same_as<tree_type, ObliviousTree>)
+        {
+            // Expand once per tree (2^depth nodes), not per row: TreeSHAP's
+            // cover-weighted walk then runs unchanged on the dense shape.
+            std::vector<DenseTree> dense;
+            dense.reserve(trees_.size());
+            for (auto const &tree : trees_)
+            {
+                dense.push_back(dense_equivalent(tree));
+            }
+            contribs_over(dense, X, out, n_features);
+        }
+        else
+        {
+            contribs_over(trees_, X, out, n_features);
+        }
+    }
+
+    template <typename Trees>
+    void contribs_over(Trees const &trees, features_view X, std::span<double> out,
+                       size_t n_features) const
+    {
         size_t const n    = X.extent(0);
         size_t const cols = n_features + 1;
         assert(out.size() == n * cols);
@@ -532,7 +570,7 @@ class Booster final : public IBooster
             {
                 std::span<double> const phi = out.subspan(i * cols, cols);
                 std::ranges::fill(phi, 0.0);
-                for (auto const &tree : trees_)
+                for (auto const &tree : trees)
                 {
                     internal::shap_one_row(tree, X, static_cast<row_id_t>(i), phi);
                 }
@@ -544,12 +582,23 @@ class Booster final : public IBooster
             });
     }
 
-    float score_base() const override
+    void seed_valid_scores(features_view X, std::span<float> out,
+                           size_t n_rounds) const override
     {
-        return init_score_;
+        if (n_rounds > 0)
+        {
+            predict_at(X, floats_out{out.data(), out.size()}, n_rounds);
+            return;
+        }
+        std::ranges::fill(out, init_score_);
     }
 
-    void accumulate_last_tree(features_view X, floats_out scores) const override
+    float valid_loss(std::span<float const> scores, floats_view labels) const override
+    {
+        return objective_.eval(floats_view{scores.data(), scores.size()}, labels);
+    }
+
+    void accumulate_last_round(features_view X, floats_out scores) const override
     {
         assert(!trees_.empty());
         assert(X.extent(0) == scores.size());

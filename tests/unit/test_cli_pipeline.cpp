@@ -2,6 +2,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -156,4 +158,68 @@ TEST_CASE("train_with_progress: warm start continues a saved model",
     {
         CHECK(pc[i] == Catch::Approx(ps[i]).margin(1e-4));
     }
+}
+
+TEST_CASE("train_with_progress: multiclass early stopping truncates whole rounds",
+          "[cli_pipeline][early_stop][multiclass]")
+{
+    // Three separable classes on one feature; train == valid, so the loss
+    // converges after a few rounds and patience must fire well before
+    // n_iters. Truncation must keep whole rounds (n_classes trees each).
+    auto const dir        = std::filesystem::temp_directory_path();
+    auto const train_path = dir / "bonsai_mc_train.csv";
+    auto const valid_path = dir / "bonsai_mc_valid.csv";
+    {
+        std::ofstream out(train_path);
+        out << "label,f1\n";
+        for (int rep = 0; rep < 4; ++rep)
+        {
+            out << "0," << 0.1 + rep * 0.01 << "\n";
+            out << "1," << 1.1 + rep * 0.01 << "\n";
+            out << "2," << 2.1 + rep * 0.01 << "\n";
+        }
+    }
+    {
+        // One contradictory label: as the model's margins grow, this row's
+        // logloss grows with them, so the valid loss eventually rises and
+        // patience can fire (a perfectly separable valid set improves
+        // monotonically forever under logloss).
+        std::ofstream out(valid_path);
+        out << "label,f1\n0,0.1\n1,1.1\n2,2.1\n1,0.11\n";
+    }
+    Config cfg;
+    cfg.data.train              = train_path.string();
+    cfg.data.valid              = {valid_path.string()};
+    cfg.dispatch.objective_name = "softmax";
+    cfg.objective.n_classes     = 3;
+    // Every distinct value gets its own cut, so the classes are
+    // bin-separable (stride-2 cuts merge 0.13 and 1.1 into one bin).
+    cfg.bin_mapper.max_bin                   = 100;
+    cfg.bin_mapper.n_samples                 = 100;
+    cfg.booster_config.n_iters               = 60;
+    cfg.booster_config.learning_rate         = 0.5F;
+    cfg.booster_config.early_stopping_rounds = 3;
+    cfg.tree_config.min_data_in_leaf         = 0;
+    cfg.tree_config.min_child_hess           = 0.0F;
+
+    auto const loaded  = load_train_and_valid_from_csv(cfg);
+    auto       booster = train_with_progress(cfg, loaded, {});
+    CHECK(booster->n_iters() < 60);
+
+    // Whole rounds only: the tree count must be a multiple of n_classes
+    // (n_iters() reports rounds, so seeing it at all proves the division).
+    // The truncated model still separates the three clean valid rows.
+    std::vector<float> preds(4);
+    booster->predict(loaded.valid->features.view(), preds);
+    CHECK(preds[0] == Catch::Approx(0.0F));
+    CHECK(preds[1] == Catch::Approx(1.0F));
+    CHECK(preds[2] == Catch::Approx(2.0F));
+
+    Config no_es                               = cfg;
+    no_es.booster_config.early_stopping_rounds = 0;
+    auto const loaded2                         = load_train_and_valid_from_csv(no_es);
+    auto       full = train_with_progress(no_es, loaded2, {});
+    CHECK(full->n_iters() == 60);
+    std::filesystem::remove(train_path);
+    std::filesystem::remove(valid_path);
 }
