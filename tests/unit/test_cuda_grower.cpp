@@ -372,3 +372,134 @@ TEST_CASE("CudaObliviousGrower host fallback matches ObliviousGrower (issue #12)
         REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
     }
 }
+
+// ---- The ingest transaction (decision 54) ------------------------------------
+
+TEST_CASE("cuda_ingest bins bit-identically to the host fill", "[cuda][ingest]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    std::mt19937                          rng(11);
+    std::uniform_real_distribution<float> value(0.0F, 1.0F);
+    size_t const                          n = 4096;
+
+    detail::ColumnBatch batch;
+    batch.features.resize(3, std::vector<float>(n));
+    batch.feature_names = {"a", "b", "c"};
+    batch.labels.assign(n, 0.0F);
+    for (size_t r = 0; r < n; ++r)
+    {
+        batch.features[0][r] = value(rng);
+        batch.features[1][r] = std::round(value(rng) * 8.0F); // few distinct bins
+        batch.features[2][r] =
+            (r % 5 == 0) ? std::numeric_limits<float>::quiet_NaN() : value(rng);
+    }
+    auto const mappers = BinMappers::fit(batch, BinMapperConfig{});
+    auto const host_ds = Dataset::bin(batch, mappers, {});
+
+    SECTION("feature-major arm (ColumnBatch)")
+    {
+        auto plane = cuda_ingest(batch, mappers);
+        REQUIRE(plane != nullptr);
+        auto const dev_ds = Dataset::bin(batch, mappers, {}, std::move(plane));
+        REQUIRE(dev_ds.bins_are_u8() == host_ds.bins_are_u8());
+        for (size_t f = 0; f < host_ds.n_features(); ++f)
+        {
+            for (size_t r = 0; r < n; ++r)
+            {
+                REQUIRE(dev_ds.bin_at(f, r) == host_ds.bin_at(f, r));
+            }
+        }
+    }
+
+    SECTION("row-major arm (features_view)")
+    {
+        std::vector<float> rowmajor(n * batch.features.size());
+        for (size_t r = 0; r < n; ++r)
+        {
+            for (size_t f = 0; f < batch.features.size(); ++f)
+            {
+                rowmajor[(r * batch.features.size()) + f] = batch.features[f][r];
+            }
+        }
+        features_view const X{rowmajor.data(), n, batch.features.size()};
+        auto                plane = cuda_ingest(X, mappers);
+        REQUIRE(plane != nullptr);
+        auto const dev_ds =
+            Dataset::bin(X, floats_view{batch.labels}, mappers, {}, std::move(plane));
+        for (size_t f = 0; f < host_ds.n_features(); ++f)
+        {
+            for (size_t r = 0; r < n; ++r)
+            {
+                REQUIRE(dev_ds.bin_at(f, r) == host_ds.bin_at(f, r));
+            }
+        }
+    }
+
+    SECTION("u16 bins (max_bin past 256)")
+    {
+        BinMapperConfig wide;
+        wide.max_bin      = 1000;
+        auto const m16    = BinMappers::fit(batch, wide);
+        auto const host16 = Dataset::bin(batch, m16, {});
+        auto       plane  = cuda_ingest(batch, m16);
+        REQUIRE(plane != nullptr);
+        auto const dev16 = Dataset::bin(batch, m16, {}, std::move(plane));
+        REQUIRE(dev16.bins_are_u8() == host16.bins_are_u8());
+        REQUIRE_FALSE(dev16.bins_are_u8());
+        for (size_t f = 0; f < host16.n_features(); ++f)
+        {
+            for (size_t r = 0; r < n; ++r)
+            {
+                REQUIRE(dev16.bin_at(f, r) == host16.bin_at(f, r));
+            }
+        }
+    }
+}
+
+TEST_CASE("CudaDepthwiseGrower trains identically on a device-binned dataset",
+          "[cuda][ingest][grower]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    auto        scenario = random_scenario();
+    auto const &host_ds  = scenario.built.ds;
+    auto        plane    = cuda_ingest(scenario.built.batch, scenario.built.mappers);
+    REQUIRE(plane != nullptr);
+    auto const dev_ds = Dataset::bin(scenario.built.batch, scenario.built.mappers, {},
+                                     std::move(plane));
+
+    TreeConfig cfg;
+    cfg.max_depth        = 5;
+    cfg.min_data_in_leaf = 4;
+    CudaDepthwiseGrower grower(cfg);
+
+    auto host_out = grower.grow(host_ds, scenario.grad, scenario.hess, scenario.rows);
+    auto dev_out  = grower.grow(dev_ds, scenario.grad, scenario.hess, scenario.rows);
+
+    REQUIRE(host_out.values.size() == dev_out.values.size());
+    for (size_t r = 0; r < host_out.values.size(); ++r)
+    {
+        REQUIRE_THAT(dev_out.values[r],
+                     Catch::Matchers::WithinAbs(host_out.values[r], 1e-5));
+    }
+
+    // Row subset: route_unsampled walks the tree via bin_at, forcing the
+    // lazy host materialization from the plane.
+    std::vector<row_id_t> half;
+    for (row_id_t r = 0; r < scenario.rows.size(); r += 2)
+    {
+        half.push_back(r);
+    }
+    auto host_sub = grower.grow(host_ds, scenario.grad, scenario.hess, half);
+    auto dev_sub  = grower.grow(dev_ds, scenario.grad, scenario.hess, half);
+    for (size_t r = 0; r < host_sub.values.size(); ++r)
+    {
+        REQUIRE_THAT(dev_sub.values[r],
+                     Catch::Matchers::WithinAbs(host_sub.values[r], 1e-5));
+    }
+}
