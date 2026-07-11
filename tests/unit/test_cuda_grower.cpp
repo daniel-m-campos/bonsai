@@ -481,11 +481,14 @@ TEST_CASE("CudaDepthwiseGrower trains identically on a device-binned dataset",
     auto host_out = grower.grow(host_ds, scenario.grad, scenario.hess, scenario.rows);
     auto dev_out  = grower.grow(dev_ds, scenario.grad, scenario.hess, scenario.rows);
 
+    // Bins are bit-identical (previous case), but two GPU fits differ in
+    // float-atomic accumulation order run to run — the suite's standard
+    // 1e-4 tolerance, same as the CPU-parity cases.
     REQUIRE(host_out.values.size() == dev_out.values.size());
     for (size_t r = 0; r < host_out.values.size(); ++r)
     {
         REQUIRE_THAT(dev_out.values[r],
-                     Catch::Matchers::WithinAbs(host_out.values[r], 1e-5));
+                     Catch::Matchers::WithinAbs(host_out.values[r], 1e-4));
     }
 
     // Row subset: route_unsampled walks the tree via bin_at, forcing the
@@ -500,6 +503,6 @@ TEST_CASE("CudaDepthwiseGrower trains identically on a device-binned dataset",
     for (size_t r = 0; r < host_sub.values.size(); ++r)
     {
         REQUIRE_THAT(dev_sub.values[r],
-                     Catch::Matchers::WithinAbs(host_sub.values[r], 1e-5));
+                     Catch::Matchers::WithinAbs(host_sub.values[r], 1e-4));
     }
 }
