@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cuda_runtime_api.h>
@@ -719,6 +720,22 @@ void CudaHistogramEngine::exp_end_tree(Dataset const         &ds,
                                        im.leaf_by_row.data(), im.exp_vals.data(), lr,
                                        im.grad_raw.data(), im.hess_raw.data(), n);
     check(cudaGetLastError(), "exp update launch");
+    static bool const debug = std::getenv("BONSAI_EXP_DEBUG") != nullptr;
+    if (debug)
+    {
+        std::array<float, 8> s8{};
+        std::array<uint32_t, 8> l8{};
+        check(cudaMemcpy(s8.data(), im.exp_scores.data(), sizeof(s8),
+                         cudaMemcpyDeviceToHost),
+              "dbg scores");
+        check(cudaMemcpy(l8.data(), im.leaf_by_row.data(), sizeof(l8),
+                         cudaMemcpyDeviceToHost),
+              "dbg leaves");
+        std::printf("EXPDBG s=%.6f,%.6f,%.6f,%.6f leaf=%u,%u,%u,%u v=%.6f,%.6f\n",
+                    s8[0], s8[1], s8[2], s8[3], l8[0], l8[1], l8[2], l8[3],
+                    node_values[l8[0]], node_values[l8[1]]);
+        std::fflush(stdout);
+    }
 }
 
 void CudaHistogramEngine::advance_level(Dataset const &ds, std::span<LevelOp const> ops)
