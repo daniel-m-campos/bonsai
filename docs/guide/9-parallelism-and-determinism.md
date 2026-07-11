@@ -9,8 +9,11 @@ Floating-point addition is not associative — $(a+b)+c \ne a+(b+c)$ in the
 last bit, so any parallel scheme that lets thread scheduling change the
 *order* of additions produces models that differ run to run. The reference
 libraries mostly accept this (fixed thread count → same model, different
-count → close-but-different). bonsai holds a stronger line: **the model is
-bit-identical to a serial run at any thread count.**
+count → close-but-different). bonsai's contract is the same, held
+deliberately rather than by accident: **the model is bit-identical across
+runs at a fixed thread count** — and for everything *except* the u8
+histogram fill, bit-identical to a serial run at any count. The one
+exception was bought, measured, and is this chapter's closing story.
 
 ## The math (of non-determinism)
 
@@ -21,11 +24,11 @@ models disagree visibly. Determinism is not about the average case — it's
 about ties, and gradient data produces exact ties routinely (symmetric
 gradients, duplicated rows).
 
-The design rule that buys any-thread-count determinism: **no
-cross-thread floating-point reductions.** Every accumulator must be
-written by exactly one thread, in the same order a serial loop would use.
-Parallelism then only chooses *which thread* computes each independent
-piece — never the order of additions within one.
+The design rule that buys determinism: **no unordered cross-thread
+floating-point reductions.** Every accumulator is either written by
+exactly one thread in serial order, or assembled from per-block partials
+merged in a *fixed* block order — so the addition order is a pure function
+of configuration, never of scheduling.
 
 ## In bonsai
 
@@ -35,22 +38,34 @@ piece — never the order of additions within one.
   asymmetric P/E cores stay busy) with a serial fallback. Worker count:
   `[parallel] n_threads`, 0 = all cores. Design notes in
   [architecture/7-parallel.md](../architecture/7-parallel.md).
-- Feature-parallel histogram fill (`populate_from_rows`,
-  [`src/grower.cpp`](../../src/grower.cpp)): each feature's histogram is
-  owned by one thread and filled in row order — determinism by ownership,
-  not by locks.
+- Histogram fill ([`src/grower.cpp`](../../src/grower.cpp)): u16 bins
+  keep the feature-parallel shape (`fill_feature_parallel`) — each
+  feature's histogram owned by one thread, filled in row order,
+  determinism by ownership. u8 bins use the row-wise fill
+  (`populate_many`/`run_fill`, decision 49): row *blocks* own partial
+  histograms over a row-major mirror, merged in fixed block order — the
+  block count derives from the configured thread count, which is exactly
+  where the fixed-count contract comes from.
 - Parallel split scan ([`src/split.cpp`](../../src/split.cpp)): each
   feature finds its own best independently; the winners merge **serially
   in feature order**, so gain ties break exactly as a serial scan would.
 - Row-parallel predict / gradients / scatter: one row, one thread, no
   shared accumulator.
 
-What bonsai does *not* do — and the price: row-parallel histogram
-building with per-thread partial histograms merged at the end (the
-xgboost/lightgbm shape). That's the remaining fit-speed lever for
-few-feature datasets, and taking it would relax the contract back to
-"deterministic at fixed thread count" because the merge is a cross-thread
-FP reduction. The trade is documented, not taken by accident.
+An earlier revision of this chapter ended: "row-parallel histogram
+building with per-thread partials is the remaining fit-speed lever, and
+taking it would relax the contract — documented, not taken by accident."
+The lever **was** then taken, deliberately (decision 49): ground-truth
+instrumentation showed deep sparse nodes filling at a fifth of the dense
+rate — a cache problem no feature-parallel scan could fix — and the
+row-wise fill bought a measured 1.6–1.7× on real cells for the narrowed
+contract above. The models are still exactly reproducible; you just have
+to hold `n_threads` fixed, like every reference library. What did NOT
+survive contact with measurement: a per-parity two-way split promising
+1.6× in a microbenchmark delivered nothing in the real loop (the
+microbenchmark's arrays were cache-resident; the streaming loop's are
+not), and an LLC-size-based automatic layout choice was rejected because
+it would have made *models* hardware-dependent.
 
 ## Try it
 
@@ -62,7 +77,10 @@ bonsai predict -c configs/year_prediction_msd.toml --model /tmp/t8.msgpack --out
 cmp /tmp/p1.csv /tmp/p8.csv && echo "bit-identical"
 ```
 
-Try the same with xgboost's `nthread` and diff the dumped models.
+With u16 bins (`max_bin > 255`) this compares equal at *any* thread pair;
+with u8 bins, re-run either side at the same `n_threads` twice and compare
+those — run-to-run identity is the contract. Try the same with xgboost's
+`nthread` and diff the dumped models.
 
 ## Gotchas & war stories
 
@@ -80,6 +98,13 @@ Try the same with xgboost's `nthread` and diff the dumped models.
   the module and export only the module-init symbol
   (`BONSAI_OPENMP_STATIC=ON`; decision 36). bonsai, xgboost, and lightgbm
   now interleave in one process.
+- **NUMA first-touch can halve your fill rate silently.** The row-wise
+  fill's partial-histogram slabs were first zeroed by the main thread —
+  which *homed every page on one socket* of a dual-socket EPYC; workers on
+  the other socket then paid remote-memory latency for every add (2× fill
+  penalty, 3.1× thread scaling). Per-block zeroing into
+  `make_unique_for_overwrite` storage fixed both (5.8× scaling). Where
+  memory is *touched first* decides where it lives.
 - **User time lies under OpenMP.** Idle workers spin-wait (blocktime), so
   `user` CPU time looks saturated even when threads are starved at
   barriers. Profile with a sampler and read the *stacks*, not the totals —

@@ -90,13 +90,30 @@ logloss. Raw scores stay in link space throughout training; the sigmoid
 | `huber` | $\mathrm{clamp}(F - y, \pm\delta)$ | $1$ | median | `[objective] huber_delta` |
 | `quantile` | $1-\alpha$ if $F > y$, else $-\alpha$ | $1$ | $\alpha$-quantile | `[objective] quantile_alpha` |
 
-Constant-hessian caveat: for MAE/quantile,
-$w^{\ast} = -G/(\text{count} + \lambda)$ is the *mean gradient*, and gradients
-are all $\pm 1$-ish — so leaf steps are tiny and convergence is slow at
-small $\eta$. The reference libraries "renew" such
-leaves with the residual median after growing; bonsai doesn't yet
-([feature_gap.md](../feature_gap.md) row 10), which costs ~10% MAE at
-matched settings. Documented, measured, honest.
+### Constant-hessian objectives and leaf renewal
+
+For MAE/quantile the hessian is a constant, so the Newton step
+$w^{\ast} = -G/(\text{count} + \lambda)$ degenerates to the *mean of ±1-ish
+gradients* — it points the right way but says nothing about *how far*, and
+convergence crawls at small $\eta$. The fix every library ships is **leaf
+renewal**: after the tree's structure is fixed, re-solve each leaf exactly,
+
+```math
+w^{\ast}_{\text{leaf}} = \arg\min_{w} \sum_{i \in \text{leaf}} \ell(y_i,\; F_i + w)
+```
+
+which for MAE is the **median** of the leaf's residuals $y_i - F_i$ (the
+minimizer of a sum of absolute values), for `quantile` the residuals'
+$\alpha$-quantile (the pinball loss's minimizer), and for Huber a clamped
+mean. The gradient step chose *which rows* belong together; renewal asks
+the loss itself *what value* serves them best.
+
+In bonsai: `renew_leaf` on the objective
+([`include/bonsai/objective.hpp`](../../include/bonsai/objective.hpp)) and
+the booster's `renew_leaves` pass, gated at compile time on the objective
+providing the method — MSE/logloss never pay a branch for it. Landing it
+closed a measured ~10% MAE gap vs the references
+([feature_gap.md](../feature_gap.md) row 10).
 
 ## Try it
 

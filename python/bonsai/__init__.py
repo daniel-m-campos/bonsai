@@ -1,4 +1,23 @@
-"""bonsai: histogram gradient-boosted trees, C++23 core."""
+"""bonsai: histogram gradient-boosted trees, C++23 core.
+
+Two API layers, both over the same native module:
+
+- ``train(params, X, y, ...)`` / ``load(path)`` return a ``Model`` — the
+  thin, explicit layer. ``params`` is a list of ``(dotted.key, value)``
+  pairs using exactly the keys the CLI accepts via ``--set`` (see
+  ``default_config_toml()`` for all of them). ``Model`` carries
+  ``predict / staged_predict / predict_leaf / pred_contribs (TreeSHAP) /
+  feature_importance / dump / save``.
+- ``BonsaiRegressor`` — an sklearn-style estimator wrapping the same
+  booster for pipelines and quick experiments.
+
+GPU training: pass ``dispatch.grower_name = "cuda_depthwise"`` (or
+``cuda_oblivious``); ``cuda_available()`` reports whether this build and
+machine can honor it. Models trained on GPU predict everywhere.
+
+The zero-to-hero walk-through lives in ``docs/guide/`` (start with
+chapter 0, one boosting round traced by hand on eight rows).
+"""
 
 from __future__ import annotations
 

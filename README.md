@@ -34,8 +34,8 @@ bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library a
 - **A guide, not just docs.** [docs/guide/](docs/guide/) explains how gradient boosting works chapter by chapter — concept, math, then the ~50 real lines that implement it here, then an experiment. Written against this codebase because it's small enough to actually read.
 - **Reference-library parity.** RMSE within tolerance of xgboost / lightgbm on the California Housing and Year Prediction MSD regression benchmarks, driven by a Python sidecar that runs all three reference libraries on the same config.
 - **Three growers.** `depthwise` (level-wise, XGBoost-style), `leafwise` (best-first with a `max_leaves` budget, LightGBM-style), and `oblivious` (symmetric, CatBoost-style) — selectable per run from config.
-- **Deterministic parallelism.** OpenMP across features and rows with no cross-thread reductions: models and predictions are bit-identical to a serial run at any thread count (`[parallel] n_threads`, 0 = all cores).
-- **CLI-first, config-driven.** CatBoost-style subcommands, a strict TOML config, and inline `--set key=value` overrides — no Python bindings required.
+- **Deterministic parallelism.** OpenMP across features and rows with ordered merges only: models and predictions are bit-identical across runs at a fixed thread count (`[parallel] n_threads`, 0 = capped auto), and bit-identical to serial at any count outside the u8 histogram fill (decision 49).
+- **CLI-first, config-driven.** CatBoost-style subcommands, a strict TOML config, and inline `--set key=value` overrides; Python bindings (`make python`) share the exact same seams.
 - **One-command build, no system dependencies.** CMake + FetchContent vendors every dependency; a clean checkout builds with a single command.
 
 ## Quick start
