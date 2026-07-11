@@ -118,7 +118,7 @@ Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers
     if (plane)
     {
         ds.plane_       = std::move(plane);
-        ds.host_stale_  = true;
+        ds.lazy_        = std::make_shared<HostBins>();
         ds.bins_are_u8_ = all_fit_u8(mappers);
     }
     else
@@ -146,7 +146,7 @@ Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mapp
     if (plane)
     {
         ds.plane_       = std::move(plane);
-        ds.host_stale_  = true;
+        ds.lazy_        = std::make_shared<HostBins>();
         ds.bins_are_u8_ = all_fit_u8(mappers);
     }
     else
@@ -156,20 +156,6 @@ Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mapp
     }
     lap(detail::IngestProfiler::instance().bin_s);
     return ds;
-}
-
-// First host consumer of a plane-backed dataset: pull the binned columns
-// home once. bins_are_u8_ was fixed from the mappers at bin(); the plane
-// fills the matching width.
-void Dataset::ensure_host() const
-{
-    if (!host_stale_)
-    {
-        return;
-    }
-    plane_->materialize(features_u8_, features_u16_);
-    assert((bins_are_u8_ ? features_u8_.size() : features_u16_.size()) == n_features_);
-    host_stale_ = false;
 }
 
 size_t Dataset::n_rows() const
@@ -213,13 +199,10 @@ std::span<uint8_t const> Dataset::row_major_bins() const
     {
         return {};
     }
-    if (host_stale_)
-    {
-        ensure_host();
-    }
+    auto const &cols = plane_ ? host_bins().u8 : features_u8_;
     if (!row_major_)
     {
-        size_t const f   = features_u8_.size();
+        size_t const f   = cols.size();
         auto         rm  = std::make_shared<std::vector<uint8_t>>(n_rows_ * f);
         uint8_t     *out = rm->data();
         // Tiled column-to-row transpose: each worker owns a row block, so
@@ -236,8 +219,7 @@ std::span<uint8_t const> Dataset::row_major_bins() const
                                          size_t const c1 = std::min(c0 + tile, f);
                                          for (size_t c = c0; c < c1; ++c)
                                          {
-                                             uint8_t const *col =
-                                                 features_u8_[c].data();
+                                             uint8_t const *col = cols[c].data();
                                              for (size_t r = r0; r < r1; ++r)
                                              {
                                                  out[(r * f) + c] = col[r];

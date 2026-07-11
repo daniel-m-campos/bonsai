@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <vector>
 
@@ -73,9 +74,14 @@ class Dataset
 
     template <typename F> decltype(auto) visit_bins(size_t fid, F &&f) const
     {
-        if (host_stale_)
+        if (plane_)
         {
-            ensure_host();
+            auto const &hb = host_bins();
+            if (bins_are_u8_)
+            {
+                return f(std::span<uint8_t const>{hb.u8[fid]});
+            }
+            return f(std::span<uint16_t const>{hb.u16[fid]});
         }
         if (bins_are_u8_)
         {
@@ -88,9 +94,10 @@ class Dataset
     // a per-column visitor buys nothing there); the branch predicts perfectly.
     bin_id_t bin_at(size_t fid, size_t row) const
     {
-        if (host_stale_)
+        if (plane_)
         {
-            ensure_host();
+            auto const &hb = host_bins();
+            return bins_are_u8_ ? hb.u8[fid][row] : hb.u16[fid][row];
         }
         return bins_are_u8_ ? features_u8_[fid][row] : features_u16_[fid][row];
     }
@@ -110,16 +117,30 @@ class Dataset
     std::span<uint8_t const> row_major_bins() const;
 
   private:
-    // Materializes host columns from the plane. Mutable + unguarded on the
-    // row_major_ precedent: boosters grow one tree at a time, so the first
-    // host consumer runs single-threaded.
-    void ensure_host() const;
+    // Lazily materialized host columns of a plane-backed dataset. The first
+    // host consumer can be a parallel loop (route_unsampled walks bin_at
+    // from every worker), so materialization synchronizes via call_once —
+    // the row_major_ single-threaded-first-use assumption does NOT hold
+    // here. Heap-allocated so Dataset copies share one materialization.
+    struct HostBins
+    {
+        std::vector<std::vector<uint8_t>>  u8;
+        std::vector<std::vector<uint16_t>> u16;
+        std::once_flag                     once;
+    };
 
-    mutable std::vector<std::vector<uint8_t>>     features_u8_;
-    mutable std::vector<std::vector<uint16_t>>    features_u16_;
+    HostBins const &host_bins() const
+    {
+        std::call_once(lazy_->once,
+                       [this] { plane_->materialize(lazy_->u8, lazy_->u16); });
+        return *lazy_;
+    }
+
+    std::vector<std::vector<uint8_t>>             features_u8_;
+    std::vector<std::vector<uint16_t>>            features_u16_;
     mutable std::shared_ptr<std::vector<uint8_t>> row_major_;
     std::shared_ptr<IngestPlane const>            plane_;
-    mutable bool                                  host_stale_  = false;
+    std::shared_ptr<HostBins>                     lazy_;
     bool                                          bins_are_u8_ = false;
     std::vector<float>                            labels_;
     std::vector<float>                            weights_;
