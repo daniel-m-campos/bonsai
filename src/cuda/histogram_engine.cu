@@ -50,7 +50,7 @@ struct ProfileCounters
     bool   enabled  = std::getenv("BONSAI_CUDA_PROFILE") != nullptr;
     double upload_s = 0, gpu_s = 0, unpack_s = 0, cpu_s = 0;
     double part_stage_s = 0, adv_stage_s = 0, find_stage_s = 0, lfind_stage_s = 0;
-    double gh_upload_s = 0, root_stage_s = 0;
+    double gh_upload_s = 0, root_stage_s = 0, gpu_wait_s = 0;
     size_t launches = 0, gpu_nodes = 0, cpu_calls = 0;
 
     ProfileCounters()                                       = default;
@@ -99,9 +99,9 @@ struct ProfileCounters
             std::println(stderr,
                          "cuda-upload-decomp: gh={:.2f}s root_stage={:.2f}s "
                          "part_stage={:.2f}s adv_stage={:.2f}s find_stage={:.2f}s "
-                         "lfind_stage={:.2f}s legacy={:.2f}s",
+                         "lfind_stage={:.2f}s gpu_wait={:.2f}s legacy={:.2f}s",
                          gh_upload_s, root_stage_s, part_stage_s, adv_stage_s,
-                         find_stage_s, lfind_stage_s, upload_s);
+                         find_stage_s, lfind_stage_s, gpu_wait_s, upload_s);
         }
         catch (...)
         {
@@ -759,6 +759,14 @@ void CudaHistogramEngine::find_splits_many(Dataset const &ds, TreeConfig const &
     auto        &prof = im.prof_counters;
     auto         lap  = prof.lap();
 
+    if (prof.enabled)
+    {
+        // Separate awaited async kernel time from true staging cost: the
+        // first Staged sync below otherwise absorbs the previous level's
+        // in-flight kernels into find_stage.
+        check(cudaDeviceSynchronize(), "profile wait");
+        lap(prof.gpu_wait_s);
+    }
     bool const any_mask = im.stage_find_inputs(level, config, ds);
     lap(prof.find_stage_s);
 
