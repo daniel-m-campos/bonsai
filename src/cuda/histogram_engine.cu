@@ -207,7 +207,14 @@ struct CudaHistogramEngine::Impl
     Staged<uint32_t>       nl_dev;       // per op: total left count
     Staged<uint32_t>       stamp_ids;
     DeviceBuffer<uint32_t> leaf_by_row; // per row id: final leaf node
-    std::vector<uint32_t>  slot_ofs;    // current level's segment layout
+    // Pristine root row list for full-data fits: partitioning ping-pongs
+    // the working rows buffer, so the identity permutation is cached once
+    // and restored device-to-device per tree instead of re-uploaded
+    // (decision 53 step 2). 0 = invalid; only ever the identity, which is
+    // what every sampler returns when its size equals n_rows.
+    DeviceBuffer<uint32_t> root_rows;
+    size_t                 root_rows_cached_n = 0;
+    std::vector<uint32_t>  slot_ofs; // current level's segment layout
     std::vector<uint32_t>  slot_cnt;
     std::vector<uint32_t>  next_ofs; // children layout, live after partition
     std::vector<uint32_t>  next_cnt;
@@ -437,7 +444,8 @@ struct CudaHistogramEngine::Impl
         }
         // The Dataset stores u8 exactly when every feature fits 256 bins,
         // the same criterion the kernels dispatch on — no narrowing pass.
-        bins_are_u8 = dataset.bins_are_u8();
+        bins_are_u8        = dataset.bins_are_u8();
+        root_rows_cached_n = 0;
         // One pinned staging buffer + one memcpy per matrix: pageable
         // per-feature copies serialize on GeForce drivers (decision 48),
         // and pinned transfers run at full PCIe rate.
@@ -549,7 +557,26 @@ bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
     check(cudaMemset(im.cur().data(), 0, im.slot_doubles() * sizeof(double)),
           "zero root slot");
     auto const n = static_cast<uint32_t>(root.rows.size());
-    im.rows.upload(root.rows.data(), root.rows.size());
+    im.rows.reserve(root.rows.size());
+    if (root.rows.size() == im.n_rows && im.root_rows_cached_n == im.n_rows)
+    {
+        check(cudaMemcpy(im.rows.data(), im.root_rows.data(),
+                         root.rows.size() * sizeof(uint32_t), cudaMemcpyDeviceToDevice),
+              "root rows restore");
+    }
+    else
+    {
+        im.rows.upload(root.rows.data(), root.rows.size());
+        if (root.rows.size() == im.n_rows)
+        {
+            im.root_rows.reserve(root.rows.size());
+            check(cudaMemcpy(im.root_rows.data(), im.rows.data(),
+                             root.rows.size() * sizeof(uint32_t),
+                             cudaMemcpyDeviceToDevice),
+                  "root rows cache");
+            im.root_rows_cached_n = im.n_rows;
+        }
+    }
     im.row_ofs.host.assign(1, 0);
     im.row_ofs.sync();
     im.row_cnt.host.assign(1, n);
