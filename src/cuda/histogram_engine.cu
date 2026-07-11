@@ -720,6 +720,17 @@ void CudaHistogramEngine::exp_end_tree(Dataset const         &ds,
                                        im.leaf_by_row.data(), im.exp_vals.data(), lr,
                                        im.grad_raw.data(), im.hess_raw.data(), n);
     check(cudaGetLastError(), "exp update launch");
+    static char const *dump = std::getenv("BONSAI_EXP_DUMP");
+    if (dump != nullptr)
+    {
+        std::vector<float> host_scores(n);
+        check(cudaMemcpy(host_scores.data(), im.exp_scores.data(), n * sizeof(float),
+                         cudaMemcpyDeviceToHost),
+              "dump scores");
+        std::FILE *f = std::fopen(dump, "ab");
+        std::fwrite(host_scores.data(), sizeof(float), n, f);
+        std::fclose(f);
+    }
     static bool const debug = std::getenv("BONSAI_EXP_DEBUG") != nullptr;
     if (debug)
     {
