@@ -397,6 +397,10 @@ class Booster final : public IBooster
         lap(prof.score_s);
 
         trees_.push_back(std::move(tree));
+        // Hand the output buffers back for the next tree (skips the
+        // per-tree zero-init; grower.hpp documents the write-before-read
+        // contract).
+        grower_.recycle(std::move(leaf_values), std::move(leaf_ids));
     }
 
     float eval(features_view X, floats_view labels) const override

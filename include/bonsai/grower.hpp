@@ -107,11 +107,24 @@ class DepthwiseGrower
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
                           row_index_view row_indices);
 
+    // Output-buffer recycling (PR #38's setup line): the booster hands the
+    // previous tree's buffers back; every element is overwritten before any
+    // read (host stamping + route_unsampled cover the row partition, the
+    // device epilogue writes all rows), so reuse skips the per-tree
+    // zero-init — 12.8GB of serial memset per 16M x 100 fit.
+    void recycle(train_leaf_values values, std::vector<node_id_t> leaf_ids)
+    {
+        recycled_values_ = std::move(values);
+        recycled_ids_    = std::move(leaf_ids);
+    }
+
   private:
     TreeConfig                             config_;
     std::mt19937                           feature_rng_;
     std::vector<std::vector<feature_id_t>> interaction_groups_;
     EngineT                                engine_;
+    train_leaf_values                      recycled_values_;
+    std::vector<node_id_t>                 recycled_ids_;
 };
 
 template <HistogramEngine  EngineT   = CpuHistogramEngine,
@@ -125,10 +138,23 @@ class ObliviousGrower
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
                           row_index_view row_indices);
 
+    // Output-buffer recycling (PR #38's setup line): the booster hands the
+    // previous tree's buffers back; every element is overwritten before any
+    // read (host stamping + route_unsampled cover the row partition, the
+    // device epilogue writes all rows), so reuse skips the per-tree
+    // zero-init — 12.8GB of serial memset per 16M x 100 fit.
+    void recycle(train_leaf_values values, std::vector<node_id_t> leaf_ids)
+    {
+        recycled_values_ = std::move(values);
+        recycled_ids_    = std::move(leaf_ids);
+    }
+
   private:
-    TreeConfig   config_;
-    std::mt19937 feature_rng_;
-    EngineT      engine_;
+    TreeConfig             config_;
+    std::mt19937           feature_rng_;
+    EngineT                engine_;
+    train_leaf_values      recycled_values_;
+    std::vector<node_id_t> recycled_ids_;
 };
 
 template <HistogramEngine EngineT   = CpuHistogramEngine,
@@ -142,11 +168,24 @@ class LeafwiseGrower
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
                           row_index_view row_indices);
 
+    // Output-buffer recycling (PR #38's setup line): the booster hands the
+    // previous tree's buffers back; every element is overwritten before any
+    // read (host stamping + route_unsampled cover the row partition, the
+    // device epilogue writes all rows), so reuse skips the per-tree
+    // zero-init — 12.8GB of serial memset per 16M x 100 fit.
+    void recycle(train_leaf_values values, std::vector<node_id_t> leaf_ids)
+    {
+        recycled_values_ = std::move(values);
+        recycled_ids_    = std::move(leaf_ids);
+    }
+
   private:
     TreeConfig                             config_;
     std::mt19937                           feature_rng_;
     std::vector<std::vector<feature_id_t>> interaction_groups_;
     EngineT                                engine_;
+    train_leaf_values                      recycled_values_;
+    std::vector<node_id_t>                 recycled_ids_;
 };
 
 } // namespace bonsai

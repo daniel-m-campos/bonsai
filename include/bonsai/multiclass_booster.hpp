@@ -140,6 +140,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                 n, [&](size_t i)
                 { scores_[(i * n_k) + k] += config_.learning_rate * leaf_values[i]; });
             trees_.push_back(std::move(tree));
+            grower_.recycle(std::move(leaf_values), std::move(leaf_ids));
         }
     }
 
