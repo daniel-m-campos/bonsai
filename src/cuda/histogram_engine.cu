@@ -199,10 +199,15 @@ struct CudaHistogramEngine::Impl
     Staged<uint32_t>       nl_dev;       // per op: total left count
     Staged<uint32_t>       stamp_ids;
     DeviceBuffer<uint32_t> leaf_by_row; // per row id: final leaf node
-    std::vector<uint32_t>  slot_ofs;    // current level's segment layout
-    std::vector<uint32_t>  slot_cnt;
-    std::vector<uint32_t>  next_ofs; // children layout, live after partition
-    std::vector<uint32_t>  next_cnt;
+    // BONSAI_EXP_DEVICE_GRAD probe state (throwaway; see exp_end_tree)
+    DeviceBuffer<float>   exp_scores;
+    DeviceBuffer<float>   exp_labels;
+    DeviceBuffer<float>   exp_vals;
+    bool                  exp_seeded = false;
+    std::vector<uint32_t> slot_ofs; // current level's segment layout
+    std::vector<uint32_t> slot_cnt;
+    std::vector<uint32_t> next_ofs; // children layout, live after partition
+    std::vector<uint32_t> next_cnt;
 
     DeviceBuffer<uint32_t> &cur_rows()
     {
@@ -493,8 +498,13 @@ void CudaHistogramEngine::begin_tree(Dataset const &ds, floats_view grad,
 {
     impl_->ensure_dataset(ds);
     auto const n = static_cast<uint32_t>(grad.size());
-    impl_->grad_raw.upload(grad.data(), grad.size());
-    impl_->hess_raw.upload(hess.data(), hess.size());
+    // Experiment: once exp_end_tree has seeded device gradients, the host
+    // arrays are stale by design and the per-tree upload is skipped.
+    if (!impl_->exp_seeded)
+    {
+        impl_->grad_raw.upload(grad.data(), grad.size());
+        impl_->hess_raw.upload(hess.data(), hess.size());
+    }
     impl_->gh.reserve(grad.size());
     interleave(impl_->grad_raw.data(), impl_->hess_raw.data(), n, impl_->gh.data());
 }
@@ -673,6 +683,42 @@ void CudaHistogramEngine::finalize_rows(std::span<node_id_t> leaf_by_row)
     check(cudaMemcpy(leaf_by_row.data(), im.leaf_by_row.data(),
                      leaf_by_row.size() * sizeof(node_id_t), cudaMemcpyDeviceToHost),
           "leaf ids copy");
+}
+
+void CudaHistogramEngine::exp_end_tree(Dataset const         &ds,
+                                       std::span<float const> node_values)
+{
+    Impl              &im = *impl_;
+    auto const         n  = static_cast<uint32_t>(ds.n_rows());
+    dim3 const         grid((n + 255) / 256);
+    dim3 const         block(256);
+    static float const lr = []
+    {
+        char const *e = std::getenv("BONSAI_EXP_LR");
+        return e != nullptr ? std::strtof(e, nullptr) : 0.1F;
+    }();
+    if (!im.exp_seeded)
+    {
+        im.exp_labels.upload(ds.labels().data(), n);
+        double mean = 0.0;
+        for (float const y : ds.labels())
+        {
+            mean += y;
+        }
+        mean /= n;
+        im.exp_scores.reserve(n);
+        exp_fill_kernel<<<grid, block>>>(im.exp_scores.data(), static_cast<float>(mean),
+                                         n);
+        check(cudaGetLastError(), "exp fill launch");
+        im.exp_seeded = true;
+    }
+    im.exp_vals.upload(node_values.data(), node_values.size());
+    im.grad_raw.reserve(n);
+    im.hess_raw.reserve(n);
+    exp_update_kernel<<<grid, block>>>(im.exp_scores.data(), im.exp_labels.data(),
+                                       im.leaf_by_row.data(), im.exp_vals.data(), lr,
+                                       im.grad_raw.data(), im.hess_raw.data(), n);
+    check(cudaGetLastError(), "exp update launch");
 }
 
 void CudaHistogramEngine::advance_level(Dataset const &ds, std::span<LevelOp const> ops)

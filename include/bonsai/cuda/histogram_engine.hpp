@@ -93,6 +93,11 @@ class CudaHistogramEngine
     // End of tree: the per-row leaf assignment (indexed by row id; only rows
     // this tree trained on carry fresh values).
     void finalize_rows(std::span<node_id_t> leaf_by_row);
+    // BONSAI_EXP_DEVICE_GRAD probe (decision 52 phase A): fused device
+    // score-update + MSE gradient pass from the resident row->leaf map;
+    // begin_tree then skips the per-tree grad/hess upload. Throwaway
+    // experiment plumbing behind the env flag, not the production API.
+    void exp_end_tree(Dataset const &ds, std::span<float const> node_values);
     // Best split per frontier node from the current level's device
     // histograms; child_sums receives the winning cut's (left, right) totals,
     // 2 cells per node. level[i] corresponds to slot i.

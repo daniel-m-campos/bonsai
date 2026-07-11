@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <cstdlib>
 #include <random>
 #include <span>
 #include <stdexcept>
@@ -330,7 +331,17 @@ class Booster final : public IBooster
         }
 
         lap(prof.dart_s);
-        objective_.compute(scores_, train.labels(), grad_, hess_);
+        // BONSAI_EXP_DEVICE_GRAD probe (decision 52 phase A): after the
+        // first tree the CUDA engine owns scores/gradients device-side, so
+        // the host objective, leaf renewal, and score update are skipped —
+        // host scores_/grad_ are stale by design for the experiment.
+        static bool const exp_device_grad =
+            std::getenv("BONSAI_EXP_DEVICE_GRAD") != nullptr;
+        bool const exp_skip_host = exp_device_grad && !trees_.empty();
+        if (!exp_skip_host)
+        {
+            objective_.compute(scores_, train.labels(), grad_, hess_);
+        }
 
         if (!train.weights().empty())
         {
@@ -359,7 +370,10 @@ class Booster final : public IBooster
         // DART, the dropped trees) — exactly the state gradients used.
         if constexpr (requires(std::span<float> r) { objective_.renew_leaf(r); })
         {
-            renew_leaves(tree, leaf_ids, leaf_values, train.labels());
+            if (!exp_device_grad)
+            {
+                renew_leaves(tree, leaf_ids, leaf_values, train.labels());
+            }
         }
         lap(prof.renew_s);
 
@@ -388,7 +402,7 @@ class Booster final : public IBooster
                                                         (new_scale * leaf_values[i]));
                                      });
         }
-        else
+        else if (!exp_device_grad)
         {
             parallel::for_each_index(
                 scores_.size(), [&](size_t i)

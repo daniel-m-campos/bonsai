@@ -79,6 +79,12 @@ void CudaHistogramEngine::finalize_rows(std::span<node_id_t> /*leaf_by_row*/)
     throw_unavailable();
 }
 
+void CudaHistogramEngine::exp_end_tree(Dataset const & /*ds*/,
+                                       std::span<float const> /*node_values*/)
+{
+    throw_unavailable();
+}
+
 void CudaHistogramEngine::find_splits_many(Dataset const & /*ds*/,
                                            TreeConfig const & /*config*/,
                                            std::span<SplitInput const> /*level*/,

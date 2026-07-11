@@ -735,6 +735,35 @@ __global__ void level_child_sums_kernel(double const *hists, double const *node_
     out4[(4 * p) + 3] = s.hR;
 }
 
+// --- BONSAI_EXP_DEVICE_GRAD experiment kernels (decision 52 phase A probe;
+// throwaway plumbing, not the production API) --------------------------------
+
+__global__ void exp_fill_kernel(float *out, float value, uint32_t n)
+{
+    uint32_t const r = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (r < n)
+    {
+        out[r] = value;
+    }
+}
+
+// Fused post-tree pass: apply the score update from the device row->leaf
+// assignment and compute next-iteration MSE gradients in place. hess = 1.
+__global__ void exp_update_kernel(float *scores, float const *labels,
+                                  uint32_t const *leaf_by_row, float const *node_values,
+                                  float lr, float *grad, float *hess, uint32_t n)
+{
+    uint32_t const r = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (r >= n)
+    {
+        return;
+    }
+    float const s = scores[r] + (lr * node_values[leaf_by_row[r]]);
+    scores[r]     = s;
+    grad[r]       = s - labels[r];
+    hess[r]       = 1.0F;
+}
+
 // NOLINTEND(bugprone-easily-swappable-parameters,cppcoreguidelines-avoid-c-arrays,cppcoreguidelines-pro-bounds-pointer-arithmetic,modernize-avoid-c-arrays,cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-bounds-array-to-pointer-decay,readability-function-cognitive-complexity,readability-identifier-naming)
 
 } // namespace

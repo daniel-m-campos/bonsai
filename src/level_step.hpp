@@ -640,6 +640,24 @@ class LevelStep<EngineT, SplitterT>
                 leaf_ids[r] = by_row[r];
                 values[r]   = nodes[by_row[r]].threshold_or_value;
             }
+            // BONSAI_EXP_DEVICE_GRAD probe (decision 52 phase A): hand the
+            // per-node leaf values to the engine's fused device update.
+            static bool const exp_device_grad =
+                std::getenv("BONSAI_EXP_DEVICE_GRAD") != nullptr;
+            if constexpr (requires {
+                              engine_.exp_end_tree(ds_, std::span<float const>{});
+                          })
+            {
+                if (exp_device_grad)
+                {
+                    std::vector<float> node_vals(nodes.size(), 0.0F);
+                    for (size_t i = 0; i < nodes.size(); ++i)
+                    {
+                        node_vals[i] = nodes[i].threshold_or_value;
+                    }
+                    engine_.exp_end_tree(ds_, node_vals);
+                }
+            }
         }
     }
 
