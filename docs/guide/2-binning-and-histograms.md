@@ -59,15 +59,25 @@ most important optimization in histogram GBT.
   maintained per `add` — two redundant double-adds per row×feature,
   duplicated across every feature of the node — and were hoisted to a
   once-per-node cell sweep (`totals()`; decision 33).
-- **Building per node** — `populate_from_rows` in
-  [`src/grower.cpp`](../../src/grower.cpp). Two details worth reading:
-  grad/hess are first *gathered into node-row order* so each of the ~90
-  per-feature scans streams memory sequentially instead of re-walking two
-  full arrays with scattered indices; and the feature loop is parallel —
-  each feature's histogram is owned by one thread ([chapter 9](9-parallelism-and-determinism.md)).
-- **The subtraction trick** — the tail of `split_node`, same file:
-  `populate_from_rows(small)`, then `large.hists[f] -= small.hists[f]`
-  feature-parallel, with the parent's histograms *moved*, not copied.
+- **Building per node** — `CpuHistogramEngine::populate_many` in
+  [`src/grower.cpp`](../../src/grower.cpp), which picks one of two fills.
+  u8 bins (the `max_bin ≤ 255` default) take the **row-wise fill**
+  (`run_fill`, decision 49): row blocks stream a row-major mirror of the
+  bins (`Dataset::row_major_bins`), reading each row's features as one
+  contiguous strip — full cache lines at any node sparsity — into
+  per-block partial histograms merged in fixed order. u16 bins keep the
+  **feature-parallel fill** (`fill_feature_parallel`): one thread owns one
+  feature's histogram and walks that column. Why two: the column walk
+  reads `bins[rows[k]]` at random row offsets, which is fine when a node
+  holds most rows and disastrous (one cache line per *byte* used) when a
+  deep node's rows are sparse — the row-wise shape fixed a measured 5×
+  dense-vs-sparse throughput gap ([chapter 9](9-parallelism-and-determinism.md)
+  has the determinism price).
+- **The subtraction trick** — `plan_level`/`build_children` route every
+  split so only the *smaller* child is populated and the larger derives by
+  cell-wise subtract with the parent's histograms *moved*, not copied
+  ([`src/level_step.hpp`](../../src/level_step.hpp)); the CUDA engine runs
+  the same plan with a subtract kernel on device histograms.
 
 ## Try it
 

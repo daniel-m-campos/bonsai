@@ -100,3 +100,13 @@ never mix ([tests/unit/test_grower.cpp](../../tests/unit/test_grower.cpp)).
   all; the same value on California Housing would zero half the leaves.
 - **A feature outside every interaction group isn't banned** — it can
   still split, just never *with* anything else on the path.
+
+## Appendix: why the midpoint fence is sufficient
+
+The claim to prove: with constraint $+1$ on feature $j$, the *whole tree's* prediction is non-decreasing in $x_j$ — not merely each individual split.
+
+Take two inputs $x, x'$ identical except $x_j \le x'_j$. Splits on any other feature route them identically, so their root-to-leaf paths can only diverge at splits **on $j$** — and there, $x$ goes left whenever $x'$ does not go further left, i.e. at the topmost divergence $x$ enters the left child and $x'$ the right.
+
+Now the fence does its work. At that constrained split with (bounded) child weights $w_L \le w_R$, the left subtree inherits the ceiling $m = (w_L + w_R)/2$ and the right subtree the floor $m$; every descendant leaf clamps into its inherited interval, and deeper constrained splits only narrow it. So $x$'s leaf value is $\le m$ and $x'$'s is $\ge m$, giving $f(x) \le f(x')$ — for *any* pair, hence monotonicity end-to-end. $\blacksquare$
+
+Why the *midpoint* rather than fencing left at $w_L$ and right at $w_R$? Any value in $[w_L, w_R]$ makes the proof go through; the midpoint just splits the remaining headroom evenly so neither subtree starts its refinement already pinned to its bound. And the proof shows exactly why rejection-only implementations fail ([gotchas](#gotchas--war-stories)): without inherited bounds, a *later, unconstrained* split can push a left-subtree leaf above $m$ — each split individually fine, the composition broken.
