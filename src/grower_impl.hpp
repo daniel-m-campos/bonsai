@@ -424,8 +424,12 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
         }
         ++depth;
     }
-    step.finalize(current, nodes, n_leaves, values, leaf_ids, row_indices);
-    gd::route_unsampled(ds, nodes, split_bins, row_indices, values, leaf_ids);
+    {
+        gd::GrowProfiler::Lap flap;
+        step.finalize(current, nodes, n_leaves, values, leaf_ids, row_indices);
+        gd::route_unsampled(ds, nodes, split_bins, row_indices, values, leaf_ids);
+        flap(gd::GrowProfiler::instance().finalize_s);
+    }
     split_gains.resize(nodes.size(), 0.0F);
     covers.resize(nodes.size(), 0.0F);
 
