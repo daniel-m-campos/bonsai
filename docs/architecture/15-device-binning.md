@@ -1,6 +1,6 @@
 # 15 — Device binning: ingest joins the transaction narrative
 
-> **Status:** proposed (decision 54). The last big ingest lever that does not change the model, planned against same-pod ledgers (PR #34/#35 runs) and the pipeline facts below. Framing: doc 16 — ingest is the one compute node still outside the transaction vocabulary; this design moves it inside rather than growing a side channel.
+> **Status:** implemented (decision 54; this change set). The last big ingest lever that does not change the model, planned against same-pod ledgers (PR #34/#35 runs) and the pipeline facts below. Framing: doc 16 — ingest is the one compute node still outside the transaction vocabulary; this design moves it inside rather than growing a side channel.
 
 ## The ledger line
 
@@ -10,7 +10,7 @@ xgboost's 16M edge (27.9s vs 37.4s in the re-baseline) is device binning: raw va
 
 ## Pipeline facts the design must respect
 
-- **Raw floats are not retained.** Both ingest paths (`ColumnBatch` from the Python module, `features_view` from CSV) are consumed by `Dataset::bin`; only binned columns survive. Device binning must therefore hook the ingest step itself — after `Dataset` construction the raw data is gone.
+- **Raw floats are not retained.** Both ingest paths (`features_view` borrowed from the Python module's numpy matrix, `ColumnBatch` from the CSV parser) are consumed by `Dataset::bin`; only binned columns survive. Device binning must therefore hook the ingest step itself — after `Dataset` construction the raw data is gone.
 - **Cuts are tiny and host-fitted.** `BinMappers::fit` subsamples ≤200k values per feature (`n_samples`), sorts once, strides (decision 51). Cuts per feature ≤ `max_bin` floats. `transform` semantics: NaN → last bin, else `lower_bound(cuts, x)`.
 - **In device mode, host bins have exactly two consumers.** (1) The fallback decline (`begin_root` refusing oversized `max_bin` → full CPU data plane); (2) `route_unsampled`'s `bin_at` random access, only when row sampling is on. The device plane partitions, finds, and stamps on device (stages A–D); host partition/populate arms run only in fallback mode.
 - **The stub build must stay CUDA-free.** `Dataset` is built long before any engine exists and cannot name CUDA types.
@@ -70,4 +70,4 @@ The remaining ~3.9s is `create_subsample`'s reservoir scan (`std::ranges::sample
 - **Engine-side rebinning** (host bins → device rebin): saves nothing — the host `transform` cost is the line item.
 - **Retaining raw floats on Dataset** so the engine can bin later: +6.4GB host RSS at 16M for a copy the ingest hook can stream through 128MB of staging.
 - **Device mapper-fit** in this round: RNG-identical reservoir sampling on device is not worth inventing; see phase 2.
-- **Uploading raw row-major and transposing on device for the module path**: `ColumnBatch` is already feature-major; the transposing kernel exists only for the CSV `features_view` arm.
+- ~~Transposing kernel only for CSV~~ — corrected during implementation: the module path bins straight from the borrowed row-major numpy view (`features_view`), and CSV parses into the feature-major `ColumnBatch`; the row-major arm is therefore the primary (bench) arm. Both arms shipped.
