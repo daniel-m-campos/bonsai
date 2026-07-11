@@ -146,13 +146,16 @@ template <typename T> class DeviceBuffer
 };
 
 // Page-locked host staging: pinned transfers run at full PCIe rate and never
-// bounce through the driver's internal staging copy.
+// bounce through the driver's internal staging copy. Grow-only like
+// DeviceBuffer (contents dropped on reallocation); the sized constructor
+// covers the one-shot uses.
 template <typename T> class PinnedBuffer
 {
   public:
+    PinnedBuffer() = default;
     explicit PinnedBuffer(size_t n)
     {
-        check(cudaHostAlloc(&ptr_, n * sizeof(T), cudaHostAllocDefault), "hostAlloc");
+        reserve(n);
     }
     ~PinnedBuffer()
     {
@@ -166,8 +169,30 @@ template <typename T> class PinnedBuffer
         return ptr_;
     }
 
+    void reserve(size_t needed)
+    {
+        if (needed <= capacity_)
+        {
+            return;
+        }
+        size_t grown = capacity_ == 0 ? needed : capacity_;
+        while (grown < needed)
+        {
+            grown *= 2;
+        }
+        cudaFreeHost(ptr_);
+        ptr_      = nullptr;
+        capacity_ = 0;
+        T *fresh  = nullptr;
+        check(cudaHostAlloc(&fresh, grown * sizeof(T), cudaHostAllocDefault),
+              "hostAlloc");
+        ptr_      = fresh;
+        capacity_ = grown;
+    }
+
   private:
-    T *ptr_ = nullptr;
+    T     *ptr_      = nullptr;
+    size_t capacity_ = 0;
 };
 
 // A host staging vector paired with its device mirror — the shape that recurs

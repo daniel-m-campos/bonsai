@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <memory>
@@ -210,7 +211,12 @@ struct CudaHistogramEngine::Impl
         size_t                 root_rows_cached_n = 0;
         DeviceBuffer<float>    epi_node_vals; // per-tree epilogue value table
         DeviceBuffer<float>    epi_values;    // per-row mapped values
-        std::vector<uint32_t>  slot_ofs;      // current level's segment layout
+        // Pinned bounce for the epilogue downloads: pageable D2H runs at a
+        // fraction of PCIe rate (the driver's chunked staging path), so the
+        // two per-tree 64MB copies land here and memcpy out to the callers.
+        PinnedBuffer<float>    epi_vals_host;
+        PinnedBuffer<uint32_t> epi_ids_host;
+        std::vector<uint32_t>  slot_ofs; // current level's segment layout
         std::vector<uint32_t>  slot_cnt;
         std::vector<uint32_t>  next_ofs; // children layout, live after partition
         std::vector<uint32_t>  next_cnt;
@@ -759,12 +765,19 @@ void CudaHistogramEngine::finalize_tree(std::span<float const> node_values,
         im.lvl.leaf_by_row.data(), im.lvl.epi_node_vals.data(),
         static_cast<uint32_t>(node_values.size()), im.lvl.epi_values.data(), n);
     check(cudaGetLastError(), "epilogue map launch");
-    check(cudaMemcpy(leaf_ids.data(), im.lvl.leaf_by_row.data(),
-                     leaf_ids.size() * sizeof(node_id_t), cudaMemcpyDeviceToHost),
+    im.lvl.epi_ids_host.reserve(leaf_ids.size());
+    im.lvl.epi_vals_host.reserve(values.size());
+    check(cudaMemcpyAsync(im.lvl.epi_ids_host.data(), im.lvl.leaf_by_row.data(),
+                          leaf_ids.size() * sizeof(uint32_t), cudaMemcpyDeviceToHost),
           "epilogue leaf ids copy");
-    check(cudaMemcpy(values.data(), im.lvl.epi_values.data(),
-                     values.size() * sizeof(float), cudaMemcpyDeviceToHost),
+    check(cudaMemcpyAsync(im.lvl.epi_vals_host.data(), im.lvl.epi_values.data(),
+                          values.size() * sizeof(float), cudaMemcpyDeviceToHost),
           "epilogue values copy");
+    check(cudaDeviceSynchronize(), "epilogue sync");
+    std::memcpy(leaf_ids.data(), im.lvl.epi_ids_host.data(),
+                leaf_ids.size() * sizeof(node_id_t));
+    std::memcpy(values.data(), im.lvl.epi_vals_host.data(),
+                values.size() * sizeof(float));
 }
 
 void CudaHistogramEngine::advance_level(Dataset const &ds, std::span<LevelOp const> ops)
