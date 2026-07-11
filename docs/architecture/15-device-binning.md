@@ -1,6 +1,6 @@
-# 15 — Device binning: the ingest plane joins the backend
+# 15 — Device binning: ingest joins the transaction narrative
 
-> **Status:** proposed (decision 54). The last big ingest lever that does not change the model, planned against same-pod ledgers (PR #34/#35 runs) and the pipeline facts below.
+> **Status:** proposed (decision 54). The last big ingest lever that does not change the model, planned against same-pod ledgers (PR #34/#35 runs) and the pipeline facts below. Framing: doc 16 — ingest is the one compute node still outside the transaction vocabulary; this design moves it inside rather than growing a side channel.
 
 ## The ledger line
 
@@ -17,33 +17,32 @@ xgboost's 16M edge (27.9s vs 37.4s in the re-baseline) is device binning: raw va
 
 ## Proposed shape
 
-### An opaque device plane on Dataset
+### Ingest is the zeroth transaction
 
-`Dataset` gains a `std::shared_ptr<DeviceBins>` — an opaque handle declared in `bonsai/cuda/device_bins.hpp`, defined inside the CUDA TU, null everywhere else (mirrors the lazy `row_major_` mirror precedent). It owns the feature-major device matrix (`u8` or `u16`), the per-feature bin counts, and the identity fields `ensure_dataset` checks today.
-
-```cpp
-// dataset.hpp — no CUDA types
-class DeviceBins;                       // opaque; defined in the CUDA TU
-std::shared_ptr<DeviceBins> device_bins_;  // null unless device-binned
-```
-
-`CudaHistogramEngine::ensure_dataset` adopts the handle when present (no host read, no staging copy, no upload) and keeps its current path as the fallback for host-binned datasets.
-
-### Binning on device at ingest
-
-A free function in the CUDA TU, called from `Dataset::bin` behind the handle-request flag:
+Doc 14 gave the backends one vocabulary — `begin_tree` / `open_level` / `apply_level` / `end_tree` — and the strain in this design's first draft (a CUDA pimpl sprouting on `Dataset`) came from ingest being the one compute node outside it. So ingest joins the narrative instead:
 
 ```
-bin_on_device(raw columns or row-major view, cuts tables) -> DeviceBins
+ingest(raw columns, fitted mappers) -> IngestPlane      // once per fit
+begin_tree / open_level / apply_level / end_tree        // unchanged
+```
+
+The host backend's ingest **is** today's `fill_binned` — CPU growers are untouched byte for byte. The CUDA backend's ingest streams raw columns to the device and bins there; its product, the `IngestPlane`, is an opaque handle (declared host-pure, defined in the CUDA TU, null in stub builds — the `row_major_` lazy-mirror precedent) owning the feature-major device matrix, the per-feature bin counts, and the identity fields `ensure_dataset` checks today. `Dataset` carries the handle as the transaction's receipt; it never looks inside. `ensure_dataset` recognizes and adopts its own plane (no host read, no staging copy, no upload) and keeps the current upload path for host-binned datasets.
+
+The pipeline seam: `Dataset::bin` cannot know the grower, but the train pipelines can — they select the ingest backend exactly the way growers dispatch (the `cuda` name prefix + `cuda_available()`) and hand `Dataset::bin` the hook. Plain `Dataset` construction takes the host default.
+
+### The CUDA ingest transaction
+
+```
+cuda ingest(raw columns or row-major view, cuts tables) -> IngestPlane
 ```
 
 - **Transfer**: raw floats stream through a double-buffered pinned staging pair (bounded, ~64MB each) with `cudaMemcpyAsync` — upload of chunk *k+1* overlaps the bin kernel of chunk *k*. Raw data never fully resides on device; total device footprint = staging + the binned matrix (same as today).
 - **Kernel**: one thread per cell; binary search over the feature's cut table in shared memory (cuts ≤ 255 floats/feature fit easily; u16 datasets read the table from global). `ColumnBatch` chunks are feature-major (kernel is a straight map); `features_view` chunks are row-major (kernel writes transposed — coalesced on the read side, the write pattern is the same scatter `fill_binned` does today).
 - **Exactness**: the kernel reproduces `transform` exactly — NaN → last bin, else `lower_bound`. Same cuts, same total order on floats ⇒ **bit-identical bins** to the host fill, which is the whole byte-identity argument: CPU-path models are untouched by construction, and device-path models must equal the before-models exactly (r² equality gate, as PR #34).
 
-### Who asks for it
+### Scope
 
-`Dataset::bin` cannot know the grower. The train pipelines can: `bonsai::train` / the CLI pipeline request device binning when the config's grower name has the `cuda` prefix (the `trains_here` convention) **and** `cuda_available()` — **and only for the training dataset**. Validation datasets never enter grow (eval predicts from raw features), so they keep the host path; plain `Dataset` construction — tests, CPU workflows, predict — never touches the device path either.
+Training dataset only: validation datasets never enter grow (eval predicts from raw features), so they keep the host ingest; tests, CPU workflows, and predict never see the device path.
 
 ### Host bins go lazy in device mode
 
@@ -54,7 +53,7 @@ When device binning ran, host binned columns are not materialized at ingest. The
 
 ## What this buys (projection, same-pod discipline)
 
-Replaced: host `bin` ~4.6s + unlapped 1.6GB upload ~0.5s. New cost: 6.4GB raw over PCIe, overlapped with the bin kernel ≈ 2.3–2.6s (pinned, PCIe4). **Projected: fit 39.4 → ~36.8–37.3s on the US-MO-1 host class.** Cross-pod absolutes are meaningless (~25% fleet spread measured between two L40S pods); the gate is the same-pod before/after delta.
+Replaced: host `bin` ~4.6s + unlapped 1.6GB upload ~0.5s. New cost: 6.4GB raw over PCIe, streamed and overlapped with the bin kernel — priced by the measured gh edge (12.8GB in 0.68s ⇒ ~19GB/s) at **~0.35–0.5s**, plus ~0.2s of kernel. (The first draft said 2.3–2.6s from stale intuition; `scripts/dag_model.py` corrected it — doc 16.) **Projected: fit 39.4 → ~34.8–35.3s on the US-MO-1 host class**, leaving mapper-fit as the dominant ingest line. Cross-pod absolutes are meaningless (~25% fleet spread measured between two L40S pods); the gate is the same-pod before/after delta.
 
 ## Instrumentation shipped with the round
 
@@ -67,6 +66,7 @@ The remaining ~3.9s is `create_subsample`'s reservoir scan (`std::ranges::sample
 
 ## Rejected
 
+- **A `DeviceBins` side channel on `Dataset` without the narrative verb** (this design's first draft): identical mechanics, but the API grows by exception instead of by vocabulary — the convolutedness the transaction narrative exists to prevent. Superseded by the ingest transaction.
 - **Engine-side rebinning** (host bins → device rebin): saves nothing — the host `transform` cost is the line item.
 - **Retaining raw floats on Dataset** so the engine can bin later: +6.4GB host RSS at 16M for a copy the ingest hook can stream through 128MB of staging.
 - **Device mapper-fit** in this round: RNG-identical reservoir sampling on device is not worth inventing; see phase 2.
