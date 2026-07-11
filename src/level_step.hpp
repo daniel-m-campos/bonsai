@@ -27,6 +27,7 @@
 #include <functional>
 #include <print>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -654,6 +655,17 @@ class LevelStep<EngineT, SplitterT>
                     for (size_t i = 0; i < nodes.size(); ++i)
                     {
                         node_vals[i] = nodes[i].threshold_or_value;
+                    }
+                    static char const *dump = std::getenv("BONSAI_EXP_DUMP");
+                    if (dump != nullptr)
+                    {
+                        std::string const vp = std::string(dump) + ".vals";
+                        std::FILE        *f  = std::fopen(vp.c_str(), "ab");
+                        auto const n_nodes   = static_cast<uint32_t>(node_vals.size());
+                        std::fwrite(&n_nodes, sizeof(n_nodes), 1, f);
+                        std::fwrite(node_vals.data(), sizeof(float), node_vals.size(),
+                                    f);
+                        std::fclose(f);
                     }
                     engine_.exp_end_tree(ds_, node_vals);
                 }
