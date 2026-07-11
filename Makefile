@@ -8,9 +8,18 @@ TOY_SENTINEL := tests/data/.toy-fetched
 
 # Toolchain root: homebrew LLVM on macOS, apt.llvm.org layout on Linux.
 # clang-tidy needs the macOS SDK sysroot spelled out; on Linux the driver
-# finds its own sysroot.
+# finds its own sysroot. CI pins LLVM 21; prefer the matching versioned keg
+# when installed — homebrew's mainline llvm drifted to 22, whose stricter
+# pedantic set (-Wc2y-extensions on Catch2's __COUNTER__) and reformats
+# break the repo. The llvm@21 bottle's libc++ also mislabels float
+# from_chars availability on macOS, hence the define.
 ifeq ($(shell uname -s),Darwin)
+ifneq ($(wildcard /opt/homebrew/opt/llvm@21/bin),)
+LLVM_BIN       ?= /opt/homebrew/opt/llvm@21/bin
+export CXXFLAGS := $(CXXFLAGS) -D_LIBCPP_DISABLE_AVAILABILITY
+else
 LLVM_BIN       ?= /opt/homebrew/opt/llvm/bin
+endif
 SDK_PATH       := $(shell xcrun --show-sdk-path)
 LINT_EXTRA_ARGS := -extra-arg=-isysroot -extra-arg=$(SDK_PATH)
 else
