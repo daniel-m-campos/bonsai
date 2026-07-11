@@ -20,10 +20,19 @@ namespace bonsai
 // plane as an opaque receipt and asks it to materialize host columns only
 // when a host consumer needs them. Host-pure: concrete planes are defined
 // by their backend (the CUDA TU); this header never names device types.
+//
+// Deliberate dynamic dispatch, the IBooster precedent: this TU boundary
+// makes compile-time dispatch impossible by construction, and the cost is
+// two indirect calls per fit. The algorithmic narrative stays static.
 class IngestPlane
 {
   public:
-    IngestPlane()                               = default;
+    // backend_tag identifies the minting backend by address (a TU-local
+    // anchor only that backend knows), so an engine can recognize and
+    // adopt its own plane by pointer equality instead of RTTI.
+    explicit IngestPlane(void const *backend_tag = nullptr) : backend_tag_(backend_tag)
+    {
+    }
     IngestPlane(IngestPlane const &)            = default;
     IngestPlane &operator=(IngestPlane const &) = default;
     IngestPlane(IngestPlane &&)                 = default;
@@ -35,6 +44,14 @@ class IngestPlane
     // fill over the same cuts.
     virtual void materialize(std::vector<std::vector<uint8_t>>  &u8,
                              std::vector<std::vector<uint16_t>> &u16) const = 0;
+
+    void const *backend_tag() const
+    {
+        return backend_tag_;
+    }
+
+  private:
+    void const *backend_tag_ = nullptr;
 };
 
 class Dataset

@@ -119,9 +119,19 @@ struct ProfileCounters
 // an opaque receipt; ensure_dataset adopts it instead of uploading host
 // columns; materialize() pulls host columns home once for the host
 // consumers (fallback decline, route_unsampled under row sampling).
+// TU-local backend identity: only this TU can mint planes carrying this
+// address, so ensure_dataset's tag compare + static_cast is exact.
+inline void const *cuda_backend_tag()
+{
+    static char const anchor = 0;
+    return &anchor;
+}
+
 class CudaIngestPlane final : public IngestPlane
 {
   public:
+    CudaIngestPlane() : IngestPlane(cuda_backend_tag()) {}
+
     DeviceBuffer<uint8_t>  bins8;
     DeviceBuffer<uint16_t> bins16;
     DeviceBuffer<uint32_t> n_bins; // per-feature bin counts
@@ -511,10 +521,11 @@ struct CudaHistogramEngine::Impl
     {
         // Device-binned dataset: adopt its plane — the matrix is already
         // resident; nothing crosses the bus. The plane pointer is the
-        // identity.
-        if (auto plane = std::dynamic_pointer_cast<CudaIngestPlane const>(
-                dataset.ingest_plane()))
+        // identity; the backend tag proves the concrete type without RTTI.
+        if (auto const &receipt = dataset.ingest_plane();
+            receipt && receipt->backend_tag() == cuda_backend_tag())
         {
+            auto plane = std::static_pointer_cast<CudaIngestPlane const>(receipt);
             if (data.adopted == plane)
             {
                 return;
