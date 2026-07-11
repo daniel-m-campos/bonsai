@@ -649,7 +649,8 @@ class LevelStep<EngineT, SplitterT>
                               engine_.exp_end_tree(ds_, std::span<float const>{});
                           })
             {
-                if (exp_device_grad)
+                static char const *dump_always = std::getenv("BONSAI_EXP_DUMP");
+                if (exp_device_grad || dump_always != nullptr)
                 {
                     std::vector<float> node_vals(nodes.size(), 0.0F);
                     for (size_t i = 0; i < nodes.size(); ++i)
@@ -667,7 +668,10 @@ class LevelStep<EngineT, SplitterT>
                                     f);
                         std::fclose(f);
                     }
-                    engine_.exp_end_tree(ds_, node_vals);
+                    if (exp_device_grad)
+                    {
+                        engine_.exp_end_tree(ds_, node_vals);
+                    }
                 }
             }
         }
