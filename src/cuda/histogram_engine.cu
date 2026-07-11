@@ -51,6 +51,7 @@ struct ProfileCounters
     double upload_s = 0, gpu_s = 0, unpack_s = 0, cpu_s = 0;
     double part_stage_s = 0, adv_stage_s = 0, find_stage_s = 0, lfind_stage_s = 0;
     double gh_upload_s = 0, root_stage_s = 0, gpu_wait_s = 0;
+    double bins_upload_s = 0, fin_wait_s = 0, fin_d2h_s = 0;
     size_t launches = 0, gpu_nodes = 0, cpu_calls = 0;
 
     ProfileCounters()                                       = default;
@@ -99,9 +100,11 @@ struct ProfileCounters
             std::println(stderr,
                          "cuda-upload-decomp: gh={:.2f}s root_stage={:.2f}s "
                          "part_stage={:.2f}s adv_stage={:.2f}s find_stage={:.2f}s "
-                         "lfind_stage={:.2f}s gpu_wait={:.2f}s legacy={:.2f}s",
+                         "lfind_stage={:.2f}s gpu_wait={:.2f}s legacy={:.2f}s "
+                         "bins_upload={:.2f}s fin_wait={:.2f}s fin_d2h={:.2f}s",
                          gh_upload_s, root_stage_s, part_stage_s, adv_stage_s,
-                         find_stage_s, lfind_stage_s, gpu_wait_s, upload_s);
+                         find_stage_s, lfind_stage_s, gpu_wait_s, upload_s,
+                         bins_upload_s, fin_wait_s, fin_d2h_s);
         }
         catch (...)
         {
@@ -465,6 +468,7 @@ struct CudaHistogramEngine::Impl
         {
             return;
         }
+        auto                  blap = prof_counters.lap();
         std::vector<uint32_t> counts(dataset.n_features());
         for (size_t f = 0; f < dataset.n_features(); ++f)
         {
@@ -519,6 +523,7 @@ struct CudaHistogramEngine::Impl
                   "upload bins");
         }
         data.n_bins.upload(counts.data(), counts.size());
+        blap(prof_counters.bins_upload_s);
         data.ds      = &dataset;
         data.bins0   = first;
         data.n_rows  = dataset.n_rows();
@@ -759,12 +764,19 @@ void CudaHistogramEngine::finalize_tree(std::span<float const> node_values,
         im.lvl.leaf_by_row.data(), im.lvl.epi_node_vals.data(),
         static_cast<uint32_t>(node_values.size()), im.lvl.epi_values.data(), n);
     check(cudaGetLastError(), "epilogue map launch");
+    auto flap = im.prof_counters.lap();
+    if (im.prof_counters.enabled)
+    {
+        check(cudaDeviceSynchronize(), "epilogue wait");
+        flap(im.prof_counters.fin_wait_s);
+    }
     check(cudaMemcpy(leaf_ids.data(), im.lvl.leaf_by_row.data(),
                      leaf_ids.size() * sizeof(node_id_t), cudaMemcpyDeviceToHost),
           "epilogue leaf ids copy");
     check(cudaMemcpy(values.data(), im.lvl.epi_values.data(),
                      values.size() * sizeof(float), cudaMemcpyDeviceToHost),
           "epilogue values copy");
+    flap(im.prof_counters.fin_d2h_s);
 }
 
 void CudaHistogramEngine::advance_level(Dataset const &ds, std::span<LevelOp const> ops)
