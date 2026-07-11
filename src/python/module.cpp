@@ -56,9 +56,15 @@ bonsai::cli::LabeledData make_labeled(array_2d const &X, array_1d const &y,
     buf.n_features = X.shape(1);
     buf.borrowed   = std::span{X.data(), n * X.shape(1)};
 
+    // The ingest transaction (decision 54): cuda growers bin on the device;
+    // cuda_ingest declines (nullptr) without a backend/device, keeping the
+    // host fill.
+    auto plane = cfg.dispatch.grower_name.starts_with("cuda")
+                     ? bonsai::cuda_ingest(as_view(X), mappers)
+                     : nullptr;
     return bonsai::cli::LabeledData{
         .dataset  = bonsai::Dataset::bin(as_view(X), bonsai::floats_view{y.data(), n},
-                                         mappers, cfg.data),
+                                         mappers, cfg.data, std::move(plane)),
         .features = std::move(buf),
         .labels   = std::vector<float>(y.data(), y.data() + n)};
 }

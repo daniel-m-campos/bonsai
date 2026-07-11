@@ -5,6 +5,7 @@
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/dataset.hpp"
+#include "bonsai/detail/perf.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/histogram.hpp"
 #include "bonsai/parallel.hpp"
@@ -113,6 +114,47 @@ struct ProfileCounters
     }
 };
 
+// The CUDA ingest transaction's product (decision 54, doc 15): the
+// feature-major binned matrix, resident from birth. Dataset carries it as
+// an opaque receipt; ensure_dataset adopts it instead of uploading host
+// columns; materialize() pulls host columns home once for the host
+// consumers (fallback decline, route_unsampled under row sampling).
+class CudaIngestPlane final : public IngestPlane
+{
+  public:
+    DeviceBuffer<uint8_t>  bins8;
+    DeviceBuffer<uint16_t> bins16;
+    DeviceBuffer<uint32_t> n_bins; // per-feature bin counts
+    bool                   bins_are_u8 = false;
+    size_t                 n_rows      = 0;
+    size_t                 n_feats     = 0;
+
+    void materialize(std::vector<std::vector<uint8_t>>  &u8,
+                     std::vector<std::vector<uint16_t>> &u16) const override
+    {
+        if (bins_are_u8)
+        {
+            u8.resize(n_feats);
+            for (size_t f = 0; f < n_feats; ++f)
+            {
+                u8[f].resize(n_rows);
+                check(cudaMemcpy(u8[f].data(), bins8.data() + (f * n_rows), n_rows,
+                                 cudaMemcpyDeviceToHost),
+                      "materialize bins");
+            }
+            return;
+        }
+        u16.resize(n_feats);
+        for (size_t f = 0; f < n_feats; ++f)
+        {
+            u16[f].resize(n_rows);
+            check(cudaMemcpy(u16[f].data(), bins16.data() + (f * n_rows),
+                             n_rows * sizeof(uint16_t), cudaMemcpyDeviceToHost),
+                  "materialize bins");
+        }
+    }
+};
+
 struct CudaHistogramEngine::Impl
 {
     // Dataset-resident plane (decision 53): the binned matrix and its
@@ -126,11 +168,21 @@ struct CudaHistogramEngine::Impl
         bool                   bins_are_u8 = false;
         DeviceBuffer<uint32_t> n_bins; // per-feature bin counts
 
+        // Adopted ingest plane: when the dataset was device-binned, the
+        // matrix already lives in the plane and the local buffers stay
+        // empty. Accessors below pick the live storage.
+        std::shared_ptr<CudaIngestPlane const> adopted;
+
         // Uploaded-dataset identity heuristic; any mismatch just re-uploads.
         Dataset const *ds      = nullptr;
         void const    *bins0   = nullptr;
         size_t         n_rows  = 0;
         size_t         n_feats = 0;
+
+        uint32_t const *n_bins_ptr() const
+        {
+            return adopted ? adopted->n_bins.data() : n_bins.data();
+        }
 
         // Calls fn with the active binned-matrix pointer (uint8 when every feature
         // fits 256 bins, else uint16) — the one branch every histogram and
@@ -139,11 +191,11 @@ struct CudaHistogramEngine::Impl
         {
             if (bins_are_u8)
             {
-                std::forward<F>(fn)(bins8.data());
+                std::forward<F>(fn)(adopted ? adopted->bins8.data() : bins8.data());
             }
             else
             {
-                std::forward<F>(fn)(bins16.data());
+                std::forward<F>(fn)(adopted ? adopted->bins16.data() : bins16.data());
             }
         }
     };
@@ -457,6 +509,26 @@ struct CudaHistogramEngine::Impl
 
     void ensure_dataset(Dataset const &dataset)
     {
+        // Device-binned dataset: adopt its plane — the matrix is already
+        // resident; nothing crosses the bus. The plane pointer is the
+        // identity.
+        if (auto plane = std::dynamic_pointer_cast<CudaIngestPlane const>(
+                dataset.ingest_plane()))
+        {
+            if (data.adopted == plane)
+            {
+                return;
+            }
+            data.adopted           = std::move(plane);
+            data.bins_are_u8       = data.adopted->bins_are_u8;
+            data.ds                = &dataset;
+            data.bins0             = data.adopted.get();
+            data.n_rows            = data.adopted->n_rows;
+            data.n_feats           = data.adopted->n_feats;
+            lvl.root_rows_cached_n = 0;
+            return;
+        }
+        data.adopted      = nullptr;
         void const *first = dataset.n_features() > 0
                                 ? dataset.visit_bins(0, [](auto bins) -> void const *
                                                      { return bins.data(); })
@@ -629,7 +701,7 @@ bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
             hist_kernel<<<grid, dim3(256), 2UL * im.lvl.stride * sizeof(float)>>>(
                 bins, im.lvl.gh_ordered.data(), im.lvl.rows.data(),
                 im.lvl.row_ofs.device(), im.lvl.row_cnt.device(),
-                im.lvl.features.device(), im.data.n_bins.data(),
+                im.lvl.features.device(), im.data.n_bins_ptr(),
                 static_cast<uint32_t>(ds.n_rows()), im.lvl.n_selected,
                 im.lvl.cur().data(), im.lvl.stride, im.lvl.slots.device());
         });
@@ -718,7 +790,7 @@ void CudaHistogramEngine::partition_level(Dataset const & /*ds*/,
         [&](auto const *bins)
         {
             route_count_kernel<<<grid, dim3(k_part_block)>>>(
-                bins, im.data.n_bins.data(), im.lvl.cur_rows().data(),
+                bins, im.data.n_bins_ptr(), im.lvl.cur_rows().data(),
                 im.lvl.part_ops.device(), static_cast<uint32_t>(im.data.n_rows),
                 max_chunks, im.lvl.flags.data(), im.lvl.block_counts.data());
         });
@@ -810,7 +882,7 @@ void CudaHistogramEngine::advance_level(Dataset const &ds, std::span<LevelOp con
                 hist_kernel<<<grid, dim3(256), 2UL * im.lvl.stride * sizeof(float)>>>(
                     bins, im.lvl.other_gh().data(), im.lvl.other_rows().data(),
                     im.lvl.row_ofs.device(), im.lvl.row_cnt.device(),
-                    im.lvl.features.device(), im.data.n_bins.data(),
+                    im.lvl.features.device(), im.data.n_bins_ptr(),
                     static_cast<uint32_t>(ds.n_rows()), im.lvl.n_selected,
                     im.lvl.other().data(), im.lvl.stride, im.lvl.slots.device());
             }
@@ -867,7 +939,7 @@ void CudaHistogramEngine::find_splits_many(Dataset const &ds, TreeConfig const &
     im.lvl.feat_best.reserve(n * im.lvl.n_selected);
     im.lvl.node_best.reserve(n);
     find_kernel<<<dim3(im.lvl.n_selected, static_cast<uint32_t>(n)), dim3(32)>>>(
-        im.lvl.cur().data(), im.lvl.features.device(), im.data.n_bins.data(),
+        im.lvl.cur().data(), im.lvl.features.device(), im.data.n_bins_ptr(),
         im.lvl.node_sums.device(), im.lvl.node_bounds.device(),
         any_mask ? im.lvl.allowed.device() : nullptr, im.lvl.monotone.device(),
         im.lvl.n_selected, im.lvl.stride, config.lambda_l1, config.lambda_l2,
@@ -911,7 +983,7 @@ void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
     im.lvl.node_best.reserve(1);
     im.lvl.level_child.reserve(4 * n);
     level_find_kernel<<<dim3(im.lvl.n_selected), dim3(32)>>>(
-        im.lvl.cur().data(), im.lvl.features.device(), im.data.n_bins.data(),
+        im.lvl.cur().data(), im.lvl.features.device(), im.data.n_bins_ptr(),
         im.lvl.node_sums.device(), im.lvl.n_selected, static_cast<uint32_t>(n),
         im.lvl.stride, config.lambda_l1, config.lambda_l2, config.min_child_hess,
         config.min_gain_to_split, im.lvl.level_score.data(), im.lvl.level_feas.data(),
@@ -923,7 +995,7 @@ void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
     level_child_sums_kernel<<<dim3((static_cast<uint32_t>(n) + 127) / 128),
                               dim3(128)>>>(
         im.lvl.cur().data(), im.lvl.node_sums.device(), im.lvl.node_best.device(),
-        im.lvl.features.device(), im.data.n_bins.data(), static_cast<uint32_t>(n),
+        im.lvl.features.device(), im.data.n_bins_ptr(), static_cast<uint32_t>(n),
         im.lvl.n_selected, im.lvl.stride, im.lvl.level_child.device());
     check(cudaGetLastError(), "level child sums launch");
     im.lvl.node_best.fetch(1); // DtoH, implicit sync
@@ -959,6 +1031,195 @@ void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
             .sum_hess = static_cast<float>(im.lvl.level_child.host[(4 * i) + 3])};
     }
     lap(prof.unpack_s);
+}
+
+// ---- The ingest transaction (decision 54) -----------------------------------
+
+namespace
+{
+
+// Concatenated per-feature cut tables + offsets (n_feats + 1), device-side.
+struct CutsTable
+{
+    DeviceBuffer<float>    cuts;
+    DeviceBuffer<uint32_t> ofs;
+};
+
+CutsTable upload_cuts(BinMappers const &mappers)
+{
+    std::vector<uint32_t> ofs(mappers.size() + 1, 0);
+    std::vector<float>    flat;
+    for (size_t f = 0; f < mappers.size(); ++f)
+    {
+        auto const cuts = mappers[f].cuts();
+        flat.insert(flat.end(), cuts.begin(), cuts.end());
+        ofs[f + 1] = static_cast<uint32_t>(flat.size());
+    }
+    CutsTable t;
+    t.cuts.upload(flat.data(), flat.size());
+    t.ofs.upload(ofs.data(), ofs.size());
+    return t;
+}
+
+// Mirror of begin_root's resident-path gate with every feature selected: if
+// the full frontier could never fit the shared budget, grow will fall back
+// to the host data plane, which wants host bins — decline device ingest and
+// keep today's eager host fill.
+bool ingest_would_decline(BinMappers const &mappers)
+{
+    size_t total_bins = 0;
+    for (size_t f = 0; f < mappers.size(); ++f)
+    {
+        total_bins += mappers[f].n_bins();
+    }
+    size_t ceiling = k_max_shared_bytes;
+    int    dev     = 0;
+    int    optin   = 0;
+    if (cudaGetDevice(&dev) == cudaSuccess &&
+        cudaDeviceGetAttribute(&optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, dev) ==
+            cudaSuccess)
+    {
+        ceiling = std::max(ceiling, static_cast<size_t>(optin));
+    }
+    return 4 * total_bins * sizeof(float) > ceiling;
+}
+
+std::shared_ptr<CudaIngestPlane> make_ingest_plane(BinMappers const &mappers,
+                                                   size_t            n_rows)
+{
+    auto                  plane = std::make_shared<CudaIngestPlane>();
+    std::vector<uint32_t> counts(mappers.size());
+    bool                  u8 = true;
+    for (size_t f = 0; f < mappers.size(); ++f)
+    {
+        counts[f] = static_cast<uint32_t>(mappers[f].n_bins());
+        u8        = u8 && counts[f] <= 256;
+    }
+    plane->bins_are_u8 = u8;
+    plane->n_rows      = n_rows;
+    plane->n_feats     = mappers.size();
+    plane->n_bins.upload(counts.data(), counts.size());
+    size_t const cells = n_rows * mappers.size();
+    if (u8)
+    {
+        plane->bins8.reserve(cells);
+    }
+    else
+    {
+        plane->bins16.reserve(cells);
+    }
+    return plane;
+}
+
+// Raw chunks stream through one device buffer, ~64MB a piece; each chunk is
+// copied then binned before the next (the copy dominates and already runs
+// at bus rate — dbin in ingest-profile says whether overlap is ever worth
+// the staging machinery).
+constexpr size_t k_ingest_chunk_bytes = 64UL * 1024UL * 1024UL;
+
+} // namespace
+
+std::shared_ptr<IngestPlane const> cuda_ingest(features_view     X,
+                                               BinMappers const &mappers)
+{
+    if (!cuda_available() || X.extent(0) == 0 || mappers.size() == 0 ||
+        ingest_would_decline(mappers))
+    {
+        return nullptr;
+    }
+    detail::IngestProfiler::Lap lap;
+    auto const                  n_rows  = X.extent(0);
+    auto const                  n_feats = mappers.size();
+    auto                        plane   = make_ingest_plane(mappers, n_rows);
+    auto const                  table   = upload_cuts(mappers);
+
+    size_t const rows_per_chunk =
+        std::max<size_t>(1, k_ingest_chunk_bytes / (n_feats * sizeof(float)));
+    DeviceBuffer<float> raw;
+    raw.reserve(rows_per_chunk * n_feats);
+    for (size_t row0 = 0; row0 < n_rows; row0 += rows_per_chunk)
+    {
+        auto const rows  = std::min(rows_per_chunk, n_rows - row0);
+        auto const cells = static_cast<uint32_t>(rows * n_feats);
+        check(cudaMemcpy(raw.data(), &X[row0, 0], cells * sizeof(float),
+                         cudaMemcpyHostToDevice),
+              "ingest raw upload");
+        dim3 const grid((cells + 255) / 256);
+        if (plane->bins_are_u8)
+        {
+            bin_rows_kernel<<<grid, dim3(256)>>>(
+                raw.data(), static_cast<uint32_t>(rows), static_cast<uint32_t>(row0),
+                static_cast<uint32_t>(n_feats), static_cast<uint32_t>(n_rows),
+                table.cuts.data(), table.ofs.data(), plane->bins8.data());
+        }
+        else
+        {
+            bin_rows_kernel<<<grid, dim3(256)>>>(
+                raw.data(), static_cast<uint32_t>(rows), static_cast<uint32_t>(row0),
+                static_cast<uint32_t>(n_feats), static_cast<uint32_t>(n_rows),
+                table.cuts.data(), table.ofs.data(), plane->bins16.data());
+        }
+        check(cudaGetLastError(), "ingest bin launch");
+    }
+    check(cudaDeviceSynchronize(), "ingest sync");
+    lap(detail::IngestProfiler::instance().dbin_s);
+    return plane;
+}
+
+std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const &batch,
+                                               BinMappers const          &mappers)
+{
+    if (!cuda_available() || batch.features.empty() || ingest_would_decline(mappers))
+    {
+        return nullptr;
+    }
+    detail::IngestProfiler::Lap lap;
+    auto const                  n_rows = batch.features[0].size();
+    auto                        plane  = make_ingest_plane(mappers, n_rows);
+    auto const                  table  = upload_cuts(mappers);
+
+    size_t const rows_per_chunk =
+        std::max<size_t>(1, k_ingest_chunk_bytes / sizeof(float));
+    DeviceBuffer<float> raw;
+    raw.reserve(std::min(rows_per_chunk, n_rows));
+    for (size_t f = 0; f < mappers.size(); ++f)
+    {
+        auto const     n_cuts = static_cast<uint32_t>(mappers[f].n_bins());
+        uint32_t const c0     = [&]
+        {
+            uint32_t ofs = 0;
+            for (size_t g = 0; g < f; ++g)
+            {
+                ofs += static_cast<uint32_t>(mappers[g].n_bins());
+            }
+            return ofs;
+        }();
+        for (size_t row0 = 0; row0 < n_rows; row0 += rows_per_chunk)
+        {
+            auto const n =
+                static_cast<uint32_t>(std::min(rows_per_chunk, n_rows - row0));
+            check(cudaMemcpy(raw.data(), batch.features[f].data() + row0,
+                             n * sizeof(float), cudaMemcpyHostToDevice),
+                  "ingest raw upload");
+            dim3 const grid((n + 255) / 256);
+            if (plane->bins_are_u8)
+            {
+                bin_col_kernel<<<grid, dim3(256)>>>(
+                    raw.data(), n, static_cast<uint32_t>(row0), table.cuts.data() + c0,
+                    n_cuts, plane->bins8.data() + (f * n_rows));
+            }
+            else
+            {
+                bin_col_kernel<<<grid, dim3(256)>>>(
+                    raw.data(), n, static_cast<uint32_t>(row0), table.cuts.data() + c0,
+                    n_cuts, plane->bins16.data() + (f * n_rows));
+            }
+            check(cudaGetLastError(), "ingest bin launch");
+        }
+    }
+    check(cudaDeviceSynchronize(), "ingest sync");
+    lap(detail::IngestProfiler::instance().dbin_s);
+    return plane;
 }
 
 // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)

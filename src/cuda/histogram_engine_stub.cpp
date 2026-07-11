@@ -95,6 +95,18 @@ void CudaHistogramEngine::find_splits_many(Dataset const & /*ds*/,
     throw_unavailable();
 }
 
+std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const & /*batch*/,
+                                               BinMappers const & /*mappers*/)
+{
+    return nullptr;
+}
+
+std::shared_ptr<IngestPlane const> cuda_ingest(features_view /*X*/,
+                                               BinMappers const & /*mappers*/)
+{
+    return nullptr;
+}
+
 void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
                                            TreeConfig const & /*config*/,
                                            std::span<SplitInput const> /*level*/,
