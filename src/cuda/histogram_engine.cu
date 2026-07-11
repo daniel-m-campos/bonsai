@@ -1045,7 +1045,8 @@ struct CutsTable
     DeviceBuffer<uint32_t> ofs;
 };
 
-CutsTable upload_cuts(BinMappers const &mappers)
+// Out-param: DeviceBuffer is deliberately pinned in place (no copy/move).
+void upload_cuts(BinMappers const &mappers, CutsTable &t)
 {
     std::vector<uint32_t> ofs(mappers.size() + 1, 0);
     std::vector<float>    flat;
@@ -1055,10 +1056,8 @@ CutsTable upload_cuts(BinMappers const &mappers)
         flat.insert(flat.end(), cuts.begin(), cuts.end());
         ofs[f + 1] = static_cast<uint32_t>(flat.size());
     }
-    CutsTable t;
     t.cuts.upload(flat.data(), flat.size());
     t.ofs.upload(ofs.data(), ofs.size());
-    return t;
 }
 
 // Mirror of begin_root's resident-path gate with every feature selected: if
@@ -1131,7 +1130,8 @@ std::shared_ptr<IngestPlane const> cuda_ingest(features_view     X,
     auto const                  n_rows  = X.extent(0);
     auto const                  n_feats = mappers.size();
     auto                        plane   = make_ingest_plane(mappers, n_rows);
-    auto const                  table   = upload_cuts(mappers);
+    CutsTable                   table;
+    upload_cuts(mappers, table);
 
     size_t const rows_per_chunk =
         std::max<size_t>(1, k_ingest_chunk_bytes / (n_feats * sizeof(float)));
@@ -1176,7 +1176,8 @@ std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const &batch,
     detail::IngestProfiler::Lap lap;
     auto const                  n_rows = batch.features[0].size();
     auto                        plane  = make_ingest_plane(mappers, n_rows);
-    auto const                  table  = upload_cuts(mappers);
+    CutsTable                   table;
+    upload_cuts(mappers, table);
 
     size_t const rows_per_chunk =
         std::max<size_t>(1, k_ingest_chunk_bytes / sizeof(float));
