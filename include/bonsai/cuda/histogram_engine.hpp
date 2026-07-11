@@ -16,6 +16,18 @@ namespace bonsai
 // needs this to be true. See docs/architecture/10-cuda.md.
 bool cuda_available();
 
+// The CUDA ingest transaction (decision 54, docs 15/16): bins raw features
+// on the device against host-fitted cuts and returns the resident plane for
+// Dataset::bin to carry. Returns nullptr — leaving the caller on the host
+// fill — when the build has no backend, no usable device is present, or the
+// dataset's total bins exceed the resident path's shared-memory ceiling
+// (grow would decline into the host fallback anyway). Bin ids are
+// bit-identical to the host fill over the same mappers.
+std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const &batch,
+                                               BinMappers const          &mappers);
+std::shared_ptr<IngestPlane const> cuda_ingest(features_view     X,
+                                               BinMappers const &mappers);
+
 // HistogramEngine that offloads histogram construction to the GPU
 // (src/cuda/histogram_engine.cu; a throwing stub backs it when built
 // without BONSAI_CUDA). GPU cells match the CPU engine to tolerance, not

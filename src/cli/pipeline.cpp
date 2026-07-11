@@ -1,5 +1,7 @@
 #include "bonsai/cli/pipeline.hpp"
 
+#include "bonsai/cuda/histogram_engine.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -32,7 +34,12 @@ LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path)
 {
     auto const batch   = detail::parse_input(path, cfg.data);
     auto       mappers = BinMappers::fit(batch, cfg.bin_mapper);
-    auto       train   = Dataset::bin(batch, mappers, cfg.data);
+    // The ingest transaction (decision 54): cuda growers bin on the device;
+    // cuda_ingest declines (nullptr) without a backend/device.
+    auto plane = cfg.dispatch.grower_name.starts_with("cuda")
+                     ? cuda_ingest(batch, mappers)
+                     : nullptr;
+    auto train = Dataset::bin(batch, mappers, cfg.data, std::move(plane));
     return LoadedTrain{.mappers = std::move(mappers), .train = std::move(train)};
 }
 

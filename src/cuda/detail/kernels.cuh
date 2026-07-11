@@ -735,6 +735,68 @@ __global__ void level_child_sums_kernel(double const *hists, double const *node_
     out4[(4 * p) + 3] = s.hR;
 }
 
+// Device twin of BinMapper::transform (decision 54): NaN -> last bin, else
+// the count of cuts strictly below x (std::lower_bound). Same comparisons
+// over the same host-fitted cuts => bit-identical bin ids to the host fill.
+template <typename BinT>
+inline __device__ BinT transform_bin(float x, float const *cuts, uint32_t n_cuts)
+{
+    if (isnan(x))
+    {
+        return static_cast<BinT>(n_cuts - 1);
+    }
+    uint32_t lo = 0;
+    uint32_t n  = n_cuts;
+    while (n > 0)
+    {
+        uint32_t const half = n / 2;
+        if (cuts[lo + half] < x)
+        {
+            lo += half + 1;
+            n -= half + 1;
+        }
+        else
+        {
+            n = half;
+        }
+    }
+    return static_cast<BinT>(lo);
+}
+
+// Ingest, row-major arm: bin a raw chunk (rows_in_chunk x n_feats, row-major)
+// into the feature-major binned matrix. Feature varies fastest across
+// threads, so raw reads coalesce; the byte-wide writes scatter at n_rows
+// stride — the pass is bounded by the raw H2D either way.
+template <typename BinT>
+__global__ void bin_rows_kernel(float const *chunk, uint32_t rows_in_chunk,
+                                uint32_t row0, uint32_t n_feats, uint32_t n_rows,
+                                float const *cuts, uint32_t const *cut_ofs, BinT *out)
+{
+    uint32_t const i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (i >= rows_in_chunk * n_feats)
+    {
+        return;
+    }
+    uint32_t const r  = i / n_feats;
+    uint32_t const f  = i % n_feats;
+    uint32_t const c0 = cut_ofs[f];
+    out[(static_cast<size_t>(f) * n_rows) + row0 + r] =
+        transform_bin<BinT>(chunk[i], cuts + c0, cut_ofs[f + 1] - c0);
+}
+
+// Ingest, feature-major arm (ColumnBatch): bin one column chunk in place.
+template <typename BinT>
+__global__ void bin_col_kernel(float const *col, uint32_t n, uint32_t row0,
+                               float const *cuts, uint32_t n_cuts, BinT *out_col)
+{
+    uint32_t const i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (i >= n)
+    {
+        return;
+    }
+    out_col[row0 + i] = transform_bin<BinT>(col[i], cuts, n_cuts);
+}
+
 // Tree epilogue: map each row's resident leaf assignment to its value.
 // Guarded: rows outside the sampled set can carry unstamped assignments;
 // their outputs are overwritten by route_unsampled on the host.
