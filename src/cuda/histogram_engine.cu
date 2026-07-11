@@ -23,6 +23,7 @@
 #include <memory>
 #include <print>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 #include <vector_types.h>
@@ -730,6 +731,14 @@ void CudaHistogramEngine::exp_end_tree(Dataset const         &ds,
         std::FILE *f = std::fopen(dump, "ab");
         std::fwrite(host_scores.data(), sizeof(float), n, f);
         std::fclose(f);
+        std::vector<uint32_t> host_leaves(n);
+        check(cudaMemcpy(host_leaves.data(), im.leaf_by_row.data(),
+                         n * sizeof(uint32_t), cudaMemcpyDeviceToHost),
+              "dump leaves");
+        std::string const lp = std::string(dump) + ".leaf";
+        std::FILE *fl = std::fopen(lp.c_str(), "ab");
+        std::fwrite(host_leaves.data(), sizeof(uint32_t), n, fl);
+        std::fclose(fl);
     }
     static bool const debug = std::getenv("BONSAI_EXP_DEBUG") != nullptr;
     if (debug)
