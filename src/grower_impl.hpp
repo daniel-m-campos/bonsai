@@ -386,10 +386,12 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     -> GrowResult<Tree>
 {
     namespace gd = grower_detail;
-    gd::GrowProfiler::Lap   slap;
-    Tree::Nodes             nodes;
-    train_leaf_values       values(ds.n_rows(), 0.0F);
-    std::vector<node_id_t>  leaf_ids(ds.n_rows(), 0);
+    gd::GrowProfiler::Lap  slap;
+    Tree::Nodes            nodes;
+    train_leaf_values      values   = std::move(recycled_values_);
+    std::vector<node_id_t> leaf_ids = std::move(recycled_ids_);
+    values.resize(ds.n_rows(), 0.0F); // no-op when recycled: write-before-read
+    leaf_ids.resize(ds.n_rows(), 0);
     std::vector<SplitInput> current;
     std::vector<SplitInput> next;
     gd::LevelOutputs        level_out;
@@ -475,7 +477,8 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     gd::GrowProfiler::Lap slap;
     Tree::LevelSplits     level_splits;
     Tree::LeafTable       leaf_table;
-    train_leaf_values     values(ds.n_rows(), 0.0F);
+    train_leaf_values     values = std::move(recycled_values_);
+    values.resize(ds.n_rows(), 0.0F); // no-op when recycled: write-before-read
 
     std::vector<SplitInput> frontier;
     std::vector<SplitInput> next;
@@ -541,7 +544,8 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
         ++depth;
     }
 
-    std::vector<node_id_t> leaf_ids(ds.n_rows(), 0);
+    std::vector<node_id_t> leaf_ids = std::move(recycled_ids_);
+    leaf_ids.resize(ds.n_rows(), 0);
     leaf_table.reserve(frontier.size());
     for (size_t li = 0; li < frontier.size(); ++li)
     {
@@ -612,7 +616,8 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     namespace gd = grower_detail;
     gd::GrowProfiler::Lap slap;
     Tree::Nodes           nodes;
-    train_leaf_values     values(ds.n_rows(), 0.0F);
+    train_leaf_values     values = std::move(recycled_values_);
+    values.resize(ds.n_rows(), 0.0F); // no-op when recycled: write-before-read
 
     // Max-heap on gain; ties broken by lower node id so growth is deterministic.
     auto gain_less = [](gd::Candidate const &a, gd::Candidate const &b)
@@ -629,7 +634,8 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     std::vector<bin_id_t>      split_bins(1, 0);
     std::vector<float>         split_gains(1, 0.0F);
     std::vector<float>         covers(1, static_cast<float>(row_indices.size()));
-    std::vector<node_id_t>     leaf_ids(ds.n_rows(), 0);
+    std::vector<node_id_t>     leaf_ids = std::move(recycled_ids_);
+    leaf_ids.resize(ds.n_rows(), 0);
 
     auto const selected =
         gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
