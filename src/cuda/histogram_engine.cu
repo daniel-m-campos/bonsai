@@ -112,28 +112,307 @@ struct ProfileCounters
 
 struct CudaHistogramEngine::Impl
 {
-    // One of bins8/bins16 per dataset (uint8 iff every feature fits 256
-    // bins); feature-major, n_features * n_rows.
-    DeviceBuffer<uint8_t>  bins8;
-    DeviceBuffer<uint16_t> bins16;
-    bool                   bins_are_u8 = false;
-    DeviceBuffer<uint32_t> n_bins;   // per-feature bin counts
-    DeviceBuffer<float>    grad_raw; // per-tree raw uploads, interleaved below
-    DeviceBuffer<float>    hess_raw;
-    DeviceBuffer<float2>   gh;         // interleaved (grad, hess) per row
-    DeviceBuffer<float2>   gh_ordered; // gathered into level row order
-    DeviceBuffer<uint32_t> rows;       // concatenated node row lists
-    Staged<uint32_t>       row_ofs;    // per batched node: offset into rows
-    Staged<uint32_t>       row_cnt;    // per batched node: row count
-    Staged<uint32_t>       features;
-    CpuHistogramEngine     cpu;
-    ProfileCounters        prof_counters;
+    // Dataset-resident plane (decision 53): the binned matrix and its
+    // identity, uploaded once per ensure_dataset and read by every launch.
+    struct DeviceData
+    {
+        // One of bins8/bins16 per dataset (uint8 iff every feature fits 256
+        // bins); feature-major, n_features * n_rows.
+        DeviceBuffer<uint8_t>  bins8;
+        DeviceBuffer<uint16_t> bins16;
+        bool                   bins_are_u8 = false;
+        DeviceBuffer<uint32_t> n_bins; // per-feature bin counts
 
-    // Uploaded-dataset identity heuristic; any mismatch just re-uploads.
-    Dataset const *ds      = nullptr;
-    void const    *bins0   = nullptr;
-    size_t         n_rows  = 0;
-    size_t         n_feats = 0;
+        // Uploaded-dataset identity heuristic; any mismatch just re-uploads.
+        Dataset const *ds      = nullptr;
+        void const    *bins0   = nullptr;
+        size_t         n_rows  = 0;
+        size_t         n_feats = 0;
+
+        // Calls fn with the active binned-matrix pointer (uint8 when every feature
+        // fits 256 bins, else uint16) — the one branch every histogram and
+        // partition launch shares.
+        template <typename F> void dispatch_bins(F &&fn)
+        {
+            if (bins_are_u8)
+            {
+                std::forward<F>(fn)(bins8.data());
+            }
+            else
+            {
+                std::forward<F>(fn)(bins16.data());
+            }
+        }
+    };
+
+    // Per-tree gradient plane: raw uploads interleaved into (grad, hess)
+    // pairs once per tree by populate.
+    struct GradientPlane
+    {
+        DeviceBuffer<float>  grad_raw; // per-tree raw uploads
+        DeviceBuffer<float>  hess_raw;
+        DeviceBuffer<float2> gh; // interleaved (grad, hess) per row
+    };
+
+    // Per-level pipeline (decision 53): resident rows, gathered gradients,
+    // and histograms ping-pong between parent and child sides; the Staged<>
+    // buffers feed each level's find, partition, and stamp launches.
+    // gh_ordered lives here rather than in the gradient plane because it is
+    // the level-row-ordered gather and ping-pongs with gh_b.
+    struct LevelPipeline
+    {
+        DeviceBuffer<uint32_t> rows;       // concatenated node row lists
+        DeviceBuffer<float2>   gh_ordered; // gathered into level row order
+        Staged<uint32_t>       row_ofs;    // per batched node: offset into rows
+        Staged<uint32_t>       row_cnt;    // per batched node: row count
+        Staged<uint32_t>       features;
+
+        // Resident level state (phase 3): ping-pong per-level histogram
+        // buffers, slot-indexed [slot][sel][2 * max_sel_bins] like `out`.
+        // cur() holds the frontier the next find reads; advance_level writes
+        // children into other() and swaps.
+        DeviceBuffer<double> level_a;
+        DeviceBuffer<double> level_b;
+        bool                 cur_is_a   = true;
+        uint32_t             n_selected = 0;
+        uint32_t             stride = 0;  // doubles per (slot, feature): 2*max_sel_bins
+        Staged<uint32_t>     slots;       // hist out_slot per batched small
+        Staged<uint32_t>     triples;     // (parent, small, large) per op
+        Staged<double>       node_sums;   // 2 per frontier node
+        Staged<double>       node_bounds; // lo, hi per frontier node
+        Staged<char>         allowed;     // n_nodes * n_sel, only when constrained
+        Staged<int>          monotone;    // per feature
+        DeviceBuffer<FeatBest> feat_best;
+        Staged<FeatBest>       node_best;
+        Staged<double>         level_child; // oblivious: 4 per node [gL,hL,gR,hR]
+        DeviceBuffer<double>   level_score; // oblivious: per (feature, dl, bin) scores
+        DeviceBuffer<int>      level_feas;  //   and all-nodes-feasible flags
+        Staged<uint32_t>       sofs;        // small-node subset: ofs/cnt/slot
+        Staged<uint32_t>       scnt;
+        Staged<uint32_t>       sslot;
+
+        // Stage B: resident rows. rows/gh_ordered are the "a" side; children
+        // scatter into the "b" side and the pair swaps with the hist buffers.
+        DeviceBuffer<uint32_t> rows_b;
+        DeviceBuffer<float2>   gh_b;
+        DeviceBuffer<uint8_t>  flags; // per-row route flag, scatter reuse
+        Staged<PartOpDev>      part_ops;
+        DeviceBuffer<uint32_t> block_counts; // per (op, chunk), scanned in place
+        Staged<uint32_t>       nl_dev;       // per op: total left count
+        Staged<uint32_t>       stamp_ids;
+        DeviceBuffer<uint32_t> leaf_by_row; // per row id: final leaf node
+        // Pristine root row list for full-data fits: partitioning ping-pongs
+        // the working rows buffer, so the identity permutation is cached once
+        // and restored device-to-device per tree instead of re-uploaded
+        // (decision 53 step 2). 0 = invalid; only ever the identity, which is
+        // what every sampler returns when its size equals n_rows.
+        DeviceBuffer<uint32_t> root_rows;
+        size_t                 root_rows_cached_n = 0;
+        DeviceBuffer<float>    epi_node_vals; // per-tree epilogue value table
+        DeviceBuffer<float>    epi_values;    // per-row mapped values
+        std::vector<uint32_t>  slot_ofs;      // current level's segment layout
+        std::vector<uint32_t>  slot_cnt;
+        std::vector<uint32_t>  next_ofs; // children layout, live after partition
+        std::vector<uint32_t>  next_cnt;
+
+        DeviceBuffer<uint32_t> &cur_rows()
+        {
+            return cur_is_a ? rows : rows_b;
+        }
+        DeviceBuffer<uint32_t> &other_rows()
+        {
+            return cur_is_a ? rows_b : rows;
+        }
+        DeviceBuffer<float2> &cur_gh()
+        {
+            return cur_is_a ? gh_ordered : gh_b;
+        }
+        DeviceBuffer<float2> &other_gh()
+        {
+            return cur_is_a ? gh_b : gh_ordered;
+        }
+        DeviceBuffer<double> &cur()
+        {
+            return cur_is_a ? level_a : level_b;
+        }
+        DeviceBuffer<double> &other()
+        {
+            return cur_is_a ? level_b : level_a;
+        }
+        size_t slot_doubles() const
+        {
+            return static_cast<size_t>(n_selected) * stride;
+        }
+
+        // Buckets each child op by the smaller child's size: nodes above the row
+        // cutoff stage into the shared-memory kernel's (row_ofs, row_cnt, slots),
+        // the rest into the direct-global kernel's (sofs, scnt, sslot); every op's
+        // (parent, small, large) triple stages for the subtract. Returns the
+        // largest small-child row count (sizes the shared kernel's chunk grid).
+        size_t stage_children(std::span<LevelOp const> ops)
+        {
+            size_t max_rows = 0;
+            row_ofs.clear();
+            row_cnt.clear();
+            slots.clear();
+            sofs.clear();
+            scnt.clear();
+            sslot.clear();
+            triples.clear();
+            for (LevelOp const &op : ops)
+            {
+                uint32_t const ofs = next_ofs[op.small_slot];
+                uint32_t const cnt = next_cnt[op.small_slot];
+                if (cnt >= k_min_gpu_rows)
+                {
+                    row_ofs.host.push_back(ofs);
+                    row_cnt.host.push_back(cnt);
+                    slots.host.push_back(op.small_slot);
+                    max_rows = std::max<size_t>(max_rows, cnt);
+                }
+                else
+                {
+                    sofs.host.push_back(ofs);
+                    scnt.host.push_back(cnt);
+                    sslot.host.push_back(op.small_slot);
+                }
+                triples.host.push_back(op.parent_slot);
+                triples.host.push_back(op.small_slot);
+                triples.host.push_back(op.large_slot);
+            }
+            if (!row_ofs.empty())
+            {
+                row_ofs.sync();
+                row_cnt.sync();
+                slots.sync();
+            }
+            if (!sofs.empty())
+            {
+                sofs.sync();
+                scnt.sync();
+                sslot.sync();
+            }
+            triples.sync();
+            return max_rows;
+        }
+
+        // Fills the child slots' (offset, count) layout from the device left-counts
+        // and echoes (n_left, n_right) per op back to the caller.
+        void layout_children(std::span<PartitionOp const> ops,
+                             std::span<uint32_t>          child_counts)
+        {
+            size_t const n = ops.size();
+            next_ofs.assign(2 * n, 0);
+            next_cnt.assign(2 * n, 0);
+            for (size_t k = 0; k < n; ++k)
+            {
+                uint32_t const nl           = nl_dev.host[k];
+                uint32_t const parent_ofs   = part_ops.host[k].ofs;
+                uint32_t const parent_cnt   = part_ops.host[k].cnt;
+                next_ofs[ops[k].left_slot]  = parent_ofs;
+                next_cnt[ops[k].left_slot]  = nl;
+                next_ofs[ops[k].right_slot] = parent_ofs + nl;
+                next_cnt[ops[k].right_slot] = parent_cnt - nl;
+                child_counts[2 * k]         = nl;
+                child_counts[(2 * k) + 1]   = parent_cnt - nl;
+            }
+        }
+
+        // Stages the per-node totals, monotone-bound box, optional allowed-feature
+        // mask, and per-feature monotone directions the find kernel reads. Returns
+        // whether any node carried a mask (the kernel gets nullptr otherwise).
+        bool stage_find_inputs(std::span<SplitInput const> level,
+                               TreeConfig const &config, Dataset const &ds)
+        {
+            size_t const n = level.size();
+            node_sums.host.resize(2 * n);
+            node_bounds.host.resize(2 * n);
+            bool any_mask = false;
+            for (size_t i = 0; i < n; ++i)
+            {
+                node_sums.host[2 * i]         = level[i].sums.sum_grad;
+                node_sums.host[(2 * i) + 1]   = level[i].sums.sum_hess;
+                node_bounds.host[2 * i]       = level[i].lo;
+                node_bounds.host[(2 * i) + 1] = level[i].hi;
+                any_mask                      = any_mask || !level[i].allowed.empty();
+            }
+            node_sums.sync();
+            node_bounds.sync();
+            if (any_mask)
+            {
+                allowed.host.resize(n * n_selected);
+                for (size_t i = 0; i < n; ++i)
+                {
+                    for (uint32_t s = 0; s < n_selected; ++s)
+                    {
+                        allowed.host[(i * n_selected) + s] =
+                            level[i].allowed.empty()
+                                ? char{1}
+                                : level[i].allowed[features.host[s]];
+                    }
+                }
+                allowed.sync();
+            }
+            monotone.host.resize(ds.n_features());
+            for (feature_id_t f = 0; f < ds.n_features(); ++f)
+            {
+                monotone.host[f] = monotone_constraint_of(config, f);
+            }
+            monotone.sync();
+            return any_mask;
+        }
+
+        // Translates each node's device-side best split into a host SplitOutput and
+        // its (left, right) child sums; a node with no valid split or too few rows
+        // to split emits an empty output.
+        void unpack_splits(std::span<SplitInput const> level, TreeConfig const &config,
+                           std::span<SplitOutput> out, std::span<HistCell> child_sums)
+        {
+            for (size_t i = 0; i < level.size(); ++i)
+            {
+                FeatBest const &b        = node_best.host[i];
+                bool const      eligible = level[i].row_count >=
+                                      2 * static_cast<size_t>(config.min_data_in_leaf);
+                if (b.valid == 0 || !eligible)
+                {
+                    out[i]                  = {};
+                    child_sums[2 * i]       = {};
+                    child_sums[(2 * i) + 1] = {};
+                    continue;
+                }
+                out[i]                  = {.gain       = b.gain,
+                                           .feature_id = static_cast<feature_id_t>(
+                              features.host[static_cast<size_t>(b.sel)]),
+                                           .bin_id       = static_cast<bin_id_t>(b.bin),
+                                           .default_left = b.dl != 0,
+                                           .valid        = true};
+                child_sums[2 * i]       = {.sum_grad = static_cast<float>(b.gL),
+                                           .sum_hess = static_cast<float>(b.hL)};
+                child_sums[(2 * i) + 1] = {.sum_grad = static_cast<float>(b.gR),
+                                           .sum_hess = static_cast<float>(b.hR)};
+            }
+        }
+
+        // Oblivious level-find staging: node_sums only. The level kernel reads no
+        // bounds/monotone/interaction state (the oblivious grower rejects those
+        // constraints at construction), so the full stage_find_inputs is waste.
+        void stage_level_sums(std::span<SplitInput const> level)
+        {
+            node_sums.host.resize(2 * level.size());
+            for (size_t i = 0; i < level.size(); ++i)
+            {
+                node_sums.host[2 * i]       = level[i].sums.sum_grad;
+                node_sums.host[(2 * i) + 1] = level[i].sums.sum_hess;
+            }
+            node_sums.sync();
+        }
+    };
+
+    DeviceData         data;
+    GradientPlane      grads;
+    LevelPipeline      lvl;
+    CpuHistogramEngine cpu;
+    ProfileCounters    prof_counters;
 
     // Runtime shared-memory ceiling for the hist kernels: the opt-in limit
     // when the device grants one (both BinT instantiations opted in), else
@@ -173,268 +452,15 @@ struct CudaHistogramEngine::Impl
         cudaGetLastError(); // clear any sticky attribute error
     }
 
-    // Resident level state (phase 3): ping-pong per-level histogram buffers,
-    // slot-indexed [slot][sel][2 * max_sel_bins] like `out`. cur() holds the
-    // frontier the next find reads; advance_level writes children into
-    // other() and swaps.
-    DeviceBuffer<double>   level_a;
-    DeviceBuffer<double>   level_b;
-    bool                   cur_is_a   = true;
-    uint32_t               n_selected = 0;
-    uint32_t               stride = 0;  // doubles per (slot, feature): 2*max_sel_bins
-    Staged<uint32_t>       slots;       // hist out_slot per batched small
-    Staged<uint32_t>       triples;     // (parent, small, large) per op
-    Staged<double>         node_sums;   // 2 per frontier node
-    Staged<double>         node_bounds; // lo, hi per frontier node
-    Staged<char>           allowed;     // n_nodes * n_sel, only when constrained
-    Staged<int>            monotone;    // per feature
-    DeviceBuffer<FeatBest> feat_best;
-    Staged<FeatBest>       node_best;
-    Staged<double>         level_child; // oblivious: 4 per node [gL,hL,gR,hR]
-    DeviceBuffer<double>   level_score; // oblivious: per (feature, dl, bin) scores
-    DeviceBuffer<int>      level_feas;  //   and all-nodes-feasible flags
-    Staged<uint32_t>       sofs;        // small-node subset: ofs/cnt/slot
-    Staged<uint32_t>       scnt;
-    Staged<uint32_t>       sslot;
-
-    // Stage B: resident rows. rows/gh_ordered are the "a" side; children
-    // scatter into the "b" side and the pair swaps with the hist buffers.
-    DeviceBuffer<uint32_t> rows_b;
-    DeviceBuffer<float2>   gh_b;
-    DeviceBuffer<uint8_t>  flags; // per-row route flag, scatter reuse
-    Staged<PartOpDev>      part_ops;
-    DeviceBuffer<uint32_t> block_counts; // per (op, chunk), scanned in place
-    Staged<uint32_t>       nl_dev;       // per op: total left count
-    Staged<uint32_t>       stamp_ids;
-    DeviceBuffer<uint32_t> leaf_by_row; // per row id: final leaf node
-    // Pristine root row list for full-data fits: partitioning ping-pongs
-    // the working rows buffer, so the identity permutation is cached once
-    // and restored device-to-device per tree instead of re-uploaded
-    // (decision 53 step 2). 0 = invalid; only ever the identity, which is
-    // what every sampler returns when its size equals n_rows.
-    DeviceBuffer<uint32_t> root_rows;
-    size_t                 root_rows_cached_n = 0;
-    DeviceBuffer<float>    epi_node_vals; // per-tree epilogue value table
-    DeviceBuffer<float>    epi_values;    // per-row mapped values
-    std::vector<uint32_t>  slot_ofs;      // current level's segment layout
-    std::vector<uint32_t>  slot_cnt;
-    std::vector<uint32_t>  next_ofs; // children layout, live after partition
-    std::vector<uint32_t>  next_cnt;
-
-    DeviceBuffer<uint32_t> &cur_rows()
-    {
-        return cur_is_a ? rows : rows_b;
-    }
-    DeviceBuffer<uint32_t> &other_rows()
-    {
-        return cur_is_a ? rows_b : rows;
-    }
-    DeviceBuffer<float2> &cur_gh()
-    {
-        return cur_is_a ? gh_ordered : gh_b;
-    }
-    DeviceBuffer<float2> &other_gh()
-    {
-        return cur_is_a ? gh_b : gh_ordered;
-    }
-    DeviceBuffer<double> &cur()
-    {
-        return cur_is_a ? level_a : level_b;
-    }
-    DeviceBuffer<double> &other()
-    {
-        return cur_is_a ? level_b : level_a;
-    }
-    size_t slot_doubles() const
-    {
-        return static_cast<size_t>(n_selected) * stride;
-    }
-
-    // Calls fn with the active binned-matrix pointer (uint8 when every feature
-    // fits 256 bins, else uint16) — the one branch every histogram and
-    // partition launch shares.
-    template <typename F> void dispatch_bins(F &&fn)
-    {
-        if (bins_are_u8)
-        {
-            std::forward<F>(fn)(bins8.data());
-        }
-        else
-        {
-            std::forward<F>(fn)(bins16.data());
-        }
-    }
-
-    // Buckets each child op by the smaller child's size: nodes above the row
-    // cutoff stage into the shared-memory kernel's (row_ofs, row_cnt, slots),
-    // the rest into the direct-global kernel's (sofs, scnt, sslot); every op's
-    // (parent, small, large) triple stages for the subtract. Returns the
-    // largest small-child row count (sizes the shared kernel's chunk grid).
-    size_t stage_children(std::span<LevelOp const> ops)
-    {
-        size_t max_rows = 0;
-        row_ofs.clear();
-        row_cnt.clear();
-        slots.clear();
-        sofs.clear();
-        scnt.clear();
-        sslot.clear();
-        triples.clear();
-        for (LevelOp const &op : ops)
-        {
-            uint32_t const ofs = next_ofs[op.small_slot];
-            uint32_t const cnt = next_cnt[op.small_slot];
-            if (cnt >= k_min_gpu_rows)
-            {
-                row_ofs.host.push_back(ofs);
-                row_cnt.host.push_back(cnt);
-                slots.host.push_back(op.small_slot);
-                max_rows = std::max<size_t>(max_rows, cnt);
-            }
-            else
-            {
-                sofs.host.push_back(ofs);
-                scnt.host.push_back(cnt);
-                sslot.host.push_back(op.small_slot);
-            }
-            triples.host.push_back(op.parent_slot);
-            triples.host.push_back(op.small_slot);
-            triples.host.push_back(op.large_slot);
-        }
-        if (!row_ofs.empty())
-        {
-            row_ofs.sync();
-            row_cnt.sync();
-            slots.sync();
-        }
-        if (!sofs.empty())
-        {
-            sofs.sync();
-            scnt.sync();
-            sslot.sync();
-        }
-        triples.sync();
-        return max_rows;
-    }
-
-    // Fills the child slots' (offset, count) layout from the device left-counts
-    // and echoes (n_left, n_right) per op back to the caller.
-    void layout_children(std::span<PartitionOp const> ops,
-                         std::span<uint32_t>          child_counts)
-    {
-        size_t const n = ops.size();
-        next_ofs.assign(2 * n, 0);
-        next_cnt.assign(2 * n, 0);
-        for (size_t k = 0; k < n; ++k)
-        {
-            uint32_t const nl           = nl_dev.host[k];
-            uint32_t const parent_ofs   = part_ops.host[k].ofs;
-            uint32_t const parent_cnt   = part_ops.host[k].cnt;
-            next_ofs[ops[k].left_slot]  = parent_ofs;
-            next_cnt[ops[k].left_slot]  = nl;
-            next_ofs[ops[k].right_slot] = parent_ofs + nl;
-            next_cnt[ops[k].right_slot] = parent_cnt - nl;
-            child_counts[2 * k]         = nl;
-            child_counts[(2 * k) + 1]   = parent_cnt - nl;
-        }
-    }
-
-    // Stages the per-node totals, monotone-bound box, optional allowed-feature
-    // mask, and per-feature monotone directions the find kernel reads. Returns
-    // whether any node carried a mask (the kernel gets nullptr otherwise).
-    bool stage_find_inputs(std::span<SplitInput const> level, TreeConfig const &config,
-                           Dataset const &ds)
-    {
-        size_t const n = level.size();
-        node_sums.host.resize(2 * n);
-        node_bounds.host.resize(2 * n);
-        bool any_mask = false;
-        for (size_t i = 0; i < n; ++i)
-        {
-            node_sums.host[2 * i]         = level[i].sums.sum_grad;
-            node_sums.host[(2 * i) + 1]   = level[i].sums.sum_hess;
-            node_bounds.host[2 * i]       = level[i].lo;
-            node_bounds.host[(2 * i) + 1] = level[i].hi;
-            any_mask                      = any_mask || !level[i].allowed.empty();
-        }
-        node_sums.sync();
-        node_bounds.sync();
-        if (any_mask)
-        {
-            allowed.host.resize(n * n_selected);
-            for (size_t i = 0; i < n; ++i)
-            {
-                for (uint32_t s = 0; s < n_selected; ++s)
-                {
-                    allowed.host[(i * n_selected) + s] =
-                        level[i].allowed.empty() ? char{1}
-                                                 : level[i].allowed[features.host[s]];
-                }
-            }
-            allowed.sync();
-        }
-        monotone.host.resize(ds.n_features());
-        for (feature_id_t f = 0; f < ds.n_features(); ++f)
-        {
-            monotone.host[f] = monotone_constraint_of(config, f);
-        }
-        monotone.sync();
-        return any_mask;
-    }
-
-    // Translates each node's device-side best split into a host SplitOutput and
-    // its (left, right) child sums; a node with no valid split or too few rows
-    // to split emits an empty output.
-    void unpack_splits(std::span<SplitInput const> level, TreeConfig const &config,
-                       std::span<SplitOutput> out, std::span<HistCell> child_sums)
-    {
-        for (size_t i = 0; i < level.size(); ++i)
-        {
-            FeatBest const &b = node_best.host[i];
-            bool const      eligible =
-                level[i].row_count >= 2 * static_cast<size_t>(config.min_data_in_leaf);
-            if (b.valid == 0 || !eligible)
-            {
-                out[i]                  = {};
-                child_sums[2 * i]       = {};
-                child_sums[(2 * i) + 1] = {};
-                continue;
-            }
-            out[i]                  = {.gain       = b.gain,
-                                       .feature_id = static_cast<feature_id_t>(
-                          features.host[static_cast<size_t>(b.sel)]),
-                                       .bin_id       = static_cast<bin_id_t>(b.bin),
-                                       .default_left = b.dl != 0,
-                                       .valid        = true};
-            child_sums[2 * i]       = {.sum_grad = static_cast<float>(b.gL),
-                                       .sum_hess = static_cast<float>(b.hL)};
-            child_sums[(2 * i) + 1] = {.sum_grad = static_cast<float>(b.gR),
-                                       .sum_hess = static_cast<float>(b.hR)};
-        }
-    }
-
-    // Oblivious level-find staging: node_sums only. The level kernel reads no
-    // bounds/monotone/interaction state (the oblivious grower rejects those
-    // constraints at construction), so the full stage_find_inputs is waste.
-    void stage_level_sums(std::span<SplitInput const> level)
-    {
-        node_sums.host.resize(2 * level.size());
-        for (size_t i = 0; i < level.size(); ++i)
-        {
-            node_sums.host[2 * i]       = level[i].sums.sum_grad;
-            node_sums.host[(2 * i) + 1] = level[i].sums.sum_hess;
-        }
-        node_sums.sync();
-    }
-
     void ensure_dataset(Dataset const &dataset)
     {
         void const *first = dataset.n_features() > 0
                                 ? dataset.visit_bins(0, [](auto bins) -> void const *
                                                      { return bins.data(); })
                                 : nullptr;
-        bool const  same  = ds == &dataset && bins0 == first &&
-                          n_rows == dataset.n_rows() && n_feats == dataset.n_features();
+        bool const  same  = data.ds == &dataset && data.bins0 == first &&
+                          data.n_rows == dataset.n_rows() &&
+                          data.n_feats == dataset.n_features();
         if (same)
         {
             return;
@@ -446,15 +472,15 @@ struct CudaHistogramEngine::Impl
         }
         // The Dataset stores u8 exactly when every feature fits 256 bins,
         // the same criterion the kernels dispatch on — no narrowing pass.
-        bins_are_u8        = dataset.bins_are_u8();
-        root_rows_cached_n = 0;
+        data.bins_are_u8       = dataset.bins_are_u8();
+        lvl.root_rows_cached_n = 0;
         // One pinned staging buffer + one memcpy per matrix: pageable
         // per-feature copies serialize on GeForce drivers (decision 48),
         // and pinned transfers run at full PCIe rate.
         size_t const cells = dataset.n_features() * dataset.n_rows();
-        if (bins_are_u8)
+        if (data.bins_are_u8)
         {
-            bins8.reserve(cells);
+            data.bins8.reserve(cells);
             PinnedBuffer<uint8_t> staging(cells);
             parallel::for_each_index(dataset.n_features(),
                                      [&](size_t f)
@@ -468,13 +494,13 @@ struct CudaHistogramEngine::Impl
                                                                (f * dataset.n_rows()));
                                              });
                                      });
-            check(
-                cudaMemcpy(bins8.data(), staging.data(), cells, cudaMemcpyHostToDevice),
-                "upload bins");
+            check(cudaMemcpy(data.bins8.data(), staging.data(), cells,
+                             cudaMemcpyHostToDevice),
+                  "upload bins");
         }
         else
         {
-            bins16.reserve(cells);
+            data.bins16.reserve(cells);
             PinnedBuffer<uint16_t> staging(cells);
             parallel::for_each_index(dataset.n_features(),
                                      [&](size_t f)
@@ -488,15 +514,15 @@ struct CudaHistogramEngine::Impl
                                                                (f * dataset.n_rows()));
                                              });
                                      });
-            check(cudaMemcpy(bins16.data(), staging.data(), cells * sizeof(uint16_t),
-                             cudaMemcpyHostToDevice),
+            check(cudaMemcpy(data.bins16.data(), staging.data(),
+                             cells * sizeof(uint16_t), cudaMemcpyHostToDevice),
                   "upload bins");
         }
-        n_bins.upload(counts.data(), counts.size());
-        ds      = &dataset;
-        bins0   = first;
-        n_rows  = dataset.n_rows();
-        n_feats = dataset.n_features();
+        data.n_bins.upload(counts.data(), counts.size());
+        data.ds      = &dataset;
+        data.bins0   = first;
+        data.n_rows  = dataset.n_rows();
+        data.n_feats = dataset.n_features();
     }
 };
 
@@ -512,10 +538,11 @@ void CudaHistogramEngine::begin_tree(Dataset const &ds, floats_view grad,
     impl_->ensure_dataset(ds);
     auto       lap = impl_->prof_counters.lap();
     auto const n   = static_cast<uint32_t>(grad.size());
-    impl_->grad_raw.upload(grad.data(), grad.size());
-    impl_->hess_raw.upload(hess.data(), hess.size());
-    impl_->gh.reserve(grad.size());
-    interleave(impl_->grad_raw.data(), impl_->hess_raw.data(), n, impl_->gh.data());
+    impl_->grads.grad_raw.upload(grad.data(), grad.size());
+    impl_->grads.hess_raw.upload(hess.data(), hess.size());
+    impl_->grads.gh.reserve(grad.size());
+    interleave(impl_->grads.grad_raw.data(), impl_->grads.hess_raw.data(), n,
+               impl_->grads.gh.data());
     lap(impl_->prof_counters.gh_upload_s);
 }
 
@@ -548,62 +575,64 @@ bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
     {
         return false; // the LevelStep falls back to host histogram building
     }
-    im.n_selected = static_cast<uint32_t>(selected.size());
-    im.stride     = static_cast<uint32_t>(2 * max_sel_bins);
-    im.features.host.assign(selected.begin(), selected.end());
-    im.features.sync();
+    im.lvl.n_selected = static_cast<uint32_t>(selected.size());
+    im.lvl.stride     = static_cast<uint32_t>(2 * max_sel_bins);
+    im.lvl.features.host.assign(selected.begin(), selected.end());
+    im.lvl.features.sync();
 
-    auto root_lap = im.prof_counters.lap();
-    im.cur_is_a   = true;
-    im.cur().reserve(im.slot_doubles());
-    check(cudaMemset(im.cur().data(), 0, im.slot_doubles() * sizeof(double)),
+    auto root_lap   = im.prof_counters.lap();
+    im.lvl.cur_is_a = true;
+    im.lvl.cur().reserve(im.lvl.slot_doubles());
+    check(cudaMemset(im.lvl.cur().data(), 0, im.lvl.slot_doubles() * sizeof(double)),
           "zero root slot");
     auto const n = static_cast<uint32_t>(root.rows.size());
-    im.rows.reserve(root.rows.size());
-    if (root.rows.size() == im.n_rows && im.root_rows_cached_n == im.n_rows)
+    im.lvl.rows.reserve(root.rows.size());
+    if (root.rows.size() == im.data.n_rows &&
+        im.lvl.root_rows_cached_n == im.data.n_rows)
     {
-        check(cudaMemcpy(im.rows.data(), im.root_rows.data(),
+        check(cudaMemcpy(im.lvl.rows.data(), im.lvl.root_rows.data(),
                          root.rows.size() * sizeof(uint32_t), cudaMemcpyDeviceToDevice),
               "root rows restore");
     }
     else
     {
-        im.rows.upload(root.rows.data(), root.rows.size());
-        if (root.rows.size() == im.n_rows)
+        im.lvl.rows.upload(root.rows.data(), root.rows.size());
+        if (root.rows.size() == im.data.n_rows)
         {
-            im.root_rows.reserve(root.rows.size());
-            check(cudaMemcpy(im.root_rows.data(), im.rows.data(),
+            im.lvl.root_rows.reserve(root.rows.size());
+            check(cudaMemcpy(im.lvl.root_rows.data(), im.lvl.rows.data(),
                              root.rows.size() * sizeof(uint32_t),
                              cudaMemcpyDeviceToDevice),
                   "root rows cache");
-            im.root_rows_cached_n = im.n_rows;
+            im.lvl.root_rows_cached_n = im.data.n_rows;
         }
     }
-    im.row_ofs.host.assign(1, 0);
-    im.row_ofs.sync();
-    im.row_cnt.host.assign(1, n);
-    im.row_cnt.sync();
-    im.slots.host.assign(1, 0);
-    im.slots.sync();
+    im.lvl.row_ofs.host.assign(1, 0);
+    im.lvl.row_ofs.sync();
+    im.lvl.row_cnt.host.assign(1, n);
+    im.lvl.row_cnt.sync();
+    im.lvl.slots.host.assign(1, 0);
+    im.lvl.slots.sync();
     root_lap(im.prof_counters.root_stage_s);
-    im.gh_ordered.reserve(root.rows.size());
-    gather(im.gh.data(), im.rows.data(), n, im.gh_ordered.data());
+    im.lvl.gh_ordered.reserve(root.rows.size());
+    gather(im.grads.gh.data(), im.lvl.rows.data(), n, im.lvl.gh_ordered.data());
     auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
-    dim3 const grid(im.n_selected, 1, n_chunks);
-    im.dispatch_bins(
+    dim3 const grid(im.lvl.n_selected, 1, n_chunks);
+    im.data.dispatch_bins(
         [&](auto const *bins)
         {
-            hist_kernel<<<grid, dim3(256), 2UL * im.stride * sizeof(float)>>>(
-                bins, im.gh_ordered.data(), im.rows.data(), im.row_ofs.device(),
-                im.row_cnt.device(), im.features.device(), im.n_bins.data(),
-                static_cast<uint32_t>(ds.n_rows()), im.n_selected, im.cur().data(),
-                im.stride, im.slots.device());
+            hist_kernel<<<grid, dim3(256), 2UL * im.lvl.stride * sizeof(float)>>>(
+                bins, im.lvl.gh_ordered.data(), im.lvl.rows.data(),
+                im.lvl.row_ofs.device(), im.lvl.row_cnt.device(),
+                im.lvl.features.device(), im.data.n_bins.data(),
+                static_cast<uint32_t>(ds.n_rows()), im.lvl.n_selected,
+                im.lvl.cur().data(), im.lvl.stride, im.lvl.slots.device());
         });
     check(cudaGetLastError(), "root hist launch");
 
-    im.slot_ofs.assign(1, 0);
-    im.slot_cnt.assign(1, n);
-    im.leaf_by_row.reserve(ds.n_rows());
+    im.lvl.slot_ofs.assign(1, 0);
+    im.lvl.slot_cnt.assign(1, n);
+    im.lvl.leaf_by_row.reserve(ds.n_rows());
 
     double sg = 0.0;
     double sh = 0.0;
@@ -630,19 +659,19 @@ void CudaHistogramEngine::stamp_leaves(std::span<LeafStamp const> stamps)
     {
         return;
     }
-    im.part_ops.clear();
-    im.stamp_ids.clear();
+    im.lvl.part_ops.clear();
+    im.lvl.stamp_ids.clear();
     for (LeafStamp const &st : stamps)
     {
-        im.part_ops.host.push_back(
-            {im.slot_ofs[st.slot], im.slot_cnt[st.slot], 0, 0, 0});
-        im.stamp_ids.host.push_back(st.node_id);
+        im.lvl.part_ops.host.push_back(
+            {im.lvl.slot_ofs[st.slot], im.lvl.slot_cnt[st.slot], 0, 0, 0});
+        im.lvl.stamp_ids.host.push_back(st.node_id);
     }
-    im.part_ops.sync();
-    im.stamp_ids.sync();
+    im.lvl.part_ops.sync();
+    im.lvl.stamp_ids.sync();
     stamp_kernel<<<dim3(static_cast<uint32_t>(stamps.size())), dim3(256)>>>(
-        im.cur_rows().data(), im.part_ops.device(), im.stamp_ids.device(),
-        im.leaf_by_row.data());
+        im.lvl.cur_rows().data(), im.lvl.part_ops.device(), im.lvl.stamp_ids.device(),
+        im.lvl.leaf_by_row.data());
     check(cudaGetLastError(), "stamp launch");
 }
 
@@ -653,8 +682,8 @@ void CudaHistogramEngine::partition_level(Dataset const & /*ds*/,
     Impl &im = *impl_;
     if (ops.empty())
     {
-        im.next_ofs.clear();
-        im.next_cnt.clear();
+        im.lvl.next_ofs.clear();
+        im.lvl.next_cnt.clear();
         return;
     }
     auto &prof = im.prof_counters;
@@ -662,56 +691,57 @@ void CudaHistogramEngine::partition_level(Dataset const & /*ds*/,
 
     size_t const n       = ops.size();
     uint32_t     max_cnt = 0;
-    im.part_ops.clear();
+    im.lvl.part_ops.clear();
     for (PartitionOp const &op : ops)
     {
-        uint32_t const cnt = im.slot_cnt[op.parent_slot];
-        im.part_ops.host.push_back({im.slot_ofs[op.parent_slot], cnt, op.feature_id,
-                                    op.bin_id, op.default_left ? 1U : 0U});
+        uint32_t const cnt = im.lvl.slot_cnt[op.parent_slot];
+        im.lvl.part_ops.host.push_back({im.lvl.slot_ofs[op.parent_slot], cnt,
+                                        op.feature_id, op.bin_id,
+                                        op.default_left ? 1U : 0U});
         max_cnt = std::max(max_cnt, cnt);
     }
-    im.part_ops.sync();
+    im.lvl.part_ops.sync();
     uint32_t const max_chunks =
         std::max(1U, (max_cnt + k_part_chunk - 1) / k_part_chunk);
-    im.flags.reserve(im.n_rows);
-    im.block_counts.reserve(n * max_chunks);
-    im.nl_dev.reserve(n);
+    im.lvl.flags.reserve(im.data.n_rows);
+    im.lvl.block_counts.reserve(n * max_chunks);
+    im.lvl.nl_dev.reserve(n);
     lap(prof.part_stage_s);
 
     dim3 const grid(max_chunks, static_cast<uint32_t>(n));
-    im.dispatch_bins(
+    im.data.dispatch_bins(
         [&](auto const *bins)
         {
             route_count_kernel<<<grid, dim3(k_part_block)>>>(
-                bins, im.n_bins.data(), im.cur_rows().data(), im.part_ops.device(),
-                static_cast<uint32_t>(im.n_rows), max_chunks, im.flags.data(),
-                im.block_counts.data());
+                bins, im.data.n_bins.data(), im.lvl.cur_rows().data(),
+                im.lvl.part_ops.device(), static_cast<uint32_t>(im.data.n_rows),
+                max_chunks, im.lvl.flags.data(), im.lvl.block_counts.data());
         });
     check(cudaGetLastError(), "route launch");
     seg_scan_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(32)>>>(
-        im.block_counts.data(), max_chunks, im.nl_dev.device());
+        im.lvl.block_counts.data(), max_chunks, im.lvl.nl_dev.device());
     check(cudaGetLastError(), "seg scan launch");
-    im.other_rows().reserve(im.n_rows);
-    im.other_gh().reserve(im.n_rows);
+    im.lvl.other_rows().reserve(im.data.n_rows);
+    im.lvl.other_gh().reserve(im.data.n_rows);
     scatter_kernel<<<grid, dim3(k_part_block)>>>(
-        im.cur_rows().data(), im.cur_gh().data(), im.flags.data(), im.part_ops.device(),
-        im.block_counts.data(), im.nl_dev.device(), max_chunks, im.other_rows().data(),
-        im.other_gh().data());
+        im.lvl.cur_rows().data(), im.lvl.cur_gh().data(), im.lvl.flags.data(),
+        im.lvl.part_ops.device(), im.lvl.block_counts.data(), im.lvl.nl_dev.device(),
+        max_chunks, im.lvl.other_rows().data(), im.lvl.other_gh().data());
     check(cudaGetLastError(), "scatter launch");
-    im.nl_dev.fetch(n); // DtoH, implicit sync
+    im.lvl.nl_dev.fetch(n); // DtoH, implicit sync
     if (prof.enabled)
     {
         ++prof.launches;
     }
     lap(prof.gpu_s);
 
-    im.layout_children(ops, child_counts);
+    im.lvl.layout_children(ops, child_counts);
 }
 
 void CudaHistogramEngine::finalize_rows(std::span<node_id_t> leaf_by_row)
 {
     Impl &im = *impl_;
-    check(cudaMemcpy(leaf_by_row.data(), im.leaf_by_row.data(),
+    check(cudaMemcpy(leaf_by_row.data(), im.lvl.leaf_by_row.data(),
                      leaf_by_row.size() * sizeof(node_id_t), cudaMemcpyDeviceToHost),
           "leaf ids copy");
 }
@@ -722,18 +752,18 @@ void CudaHistogramEngine::finalize_tree(std::span<float const> node_values,
 {
     Impl      &im = *impl_;
     auto const n  = static_cast<uint32_t>(values.size());
-    im.epi_node_vals.upload(node_values.data(), node_values.size());
-    im.epi_values.reserve(values.size());
+    im.lvl.epi_node_vals.upload(node_values.data(), node_values.size());
+    im.lvl.epi_values.reserve(values.size());
     dim3 const grid((n + 255) / 256);
     map_leaf_values_kernel<<<grid, dim3(256)>>>(
-        im.leaf_by_row.data(), im.epi_node_vals.data(),
-        static_cast<uint32_t>(node_values.size()), im.epi_values.data(), n);
+        im.lvl.leaf_by_row.data(), im.lvl.epi_node_vals.data(),
+        static_cast<uint32_t>(node_values.size()), im.lvl.epi_values.data(), n);
     check(cudaGetLastError(), "epilogue map launch");
-    check(cudaMemcpy(leaf_ids.data(), im.leaf_by_row.data(),
+    check(cudaMemcpy(leaf_ids.data(), im.lvl.leaf_by_row.data(),
                      leaf_ids.size() * sizeof(node_id_t), cudaMemcpyDeviceToHost),
           "epilogue leaf ids copy");
-    check(cudaMemcpy(values.data(), im.epi_values.data(), values.size() * sizeof(float),
-                     cudaMemcpyDeviceToHost),
+    check(cudaMemcpy(values.data(), im.lvl.epi_values.data(),
+                     values.size() * sizeof(float), cudaMemcpyDeviceToHost),
           "epilogue values copy");
 }
 
@@ -748,49 +778,51 @@ void CudaHistogramEngine::advance_level(Dataset const &ds, std::span<LevelOp con
     auto  lap  = prof.lap();
 
     // Rows are already device-resident; only the per-child layout stages here.
-    size_t const max_rows = im.stage_children(ops);
+    size_t const max_rows = im.lvl.stage_children(ops);
     lap(prof.adv_stage_s);
 
     size_t const child_slots = 2 * ops.size();
-    im.other().reserve(child_slots * im.slot_doubles());
-    check(cudaMemset(im.other().data(), 0,
-                     child_slots * im.slot_doubles() * sizeof(double)),
+    im.lvl.other().reserve(child_slots * im.lvl.slot_doubles());
+    check(cudaMemset(im.lvl.other().data(), 0,
+                     child_slots * im.lvl.slot_doubles() * sizeof(double)),
           "zero level");
-    im.dispatch_bins(
+    im.data.dispatch_bins(
         [&](auto const *bins)
         {
-            if (!im.row_ofs.empty())
+            if (!im.lvl.row_ofs.empty())
             {
                 auto const n_chunks = std::clamp<uint32_t>(
                     (static_cast<uint32_t>(max_rows) + 32767) / 32768, 1, 64);
-                dim3 const grid(im.n_selected, static_cast<uint32_t>(im.row_ofs.size()),
-                                n_chunks);
-                hist_kernel<<<grid, dim3(256), 2UL * im.stride * sizeof(float)>>>(
-                    bins, im.other_gh().data(), im.other_rows().data(),
-                    im.row_ofs.device(), im.row_cnt.device(), im.features.device(),
-                    im.n_bins.data(), static_cast<uint32_t>(ds.n_rows()), im.n_selected,
-                    im.other().data(), im.stride, im.slots.device());
+                dim3 const grid(im.lvl.n_selected,
+                                static_cast<uint32_t>(im.lvl.row_ofs.size()), n_chunks);
+                hist_kernel<<<grid, dim3(256), 2UL * im.lvl.stride * sizeof(float)>>>(
+                    bins, im.lvl.other_gh().data(), im.lvl.other_rows().data(),
+                    im.lvl.row_ofs.device(), im.lvl.row_cnt.device(),
+                    im.lvl.features.device(), im.data.n_bins.data(),
+                    static_cast<uint32_t>(ds.n_rows()), im.lvl.n_selected,
+                    im.lvl.other().data(), im.lvl.stride, im.lvl.slots.device());
             }
-            if (!im.sofs.empty())
+            if (!im.lvl.sofs.empty())
             {
-                hist_small_kernel<<<dim3(static_cast<uint32_t>(im.sofs.size())),
+                hist_small_kernel<<<dim3(static_cast<uint32_t>(im.lvl.sofs.size())),
                                     dim3(128)>>>(
-                    bins, im.other_gh().data(), im.other_rows().data(),
-                    im.sofs.device(), im.scnt.device(), im.features.device(),
-                    static_cast<uint32_t>(ds.n_rows()), im.n_selected,
-                    im.other().data(), im.stride, im.sslot.device());
+                    bins, im.lvl.other_gh().data(), im.lvl.other_rows().data(),
+                    im.lvl.sofs.device(), im.lvl.scnt.device(),
+                    im.lvl.features.device(), static_cast<uint32_t>(ds.n_rows()),
+                    im.lvl.n_selected, im.lvl.other().data(), im.lvl.stride,
+                    im.lvl.sslot.device());
             }
         });
     check(cudaGetLastError(), "level hist launch");
-    auto const sd = static_cast<uint32_t>(im.slot_doubles());
+    auto const sd = static_cast<uint32_t>(im.lvl.slot_doubles());
     subtract_kernel<<<dim3(std::clamp<uint32_t>((sd + 255) / 256, 1, 256),
                            static_cast<uint32_t>(ops.size())),
-                      dim3(256)>>>(im.cur().data(), im.other().data(),
-                                   im.triples.device(), sd);
+                      dim3(256)>>>(im.lvl.cur().data(), im.lvl.other().data(),
+                                   im.lvl.triples.device(), sd);
     check(cudaGetLastError(), "subtract launch");
-    im.cur_is_a = !im.cur_is_a;
-    im.slot_ofs = im.next_ofs;
-    im.slot_cnt = im.next_cnt;
+    im.lvl.cur_is_a = !im.lvl.cur_is_a;
+    im.lvl.slot_ofs = im.lvl.next_ofs;
+    im.lvl.slot_cnt = im.lvl.next_cnt;
     if (prof.enabled)
     {
         ++prof.launches;
@@ -817,29 +849,29 @@ void CudaHistogramEngine::find_splits_many(Dataset const &ds, TreeConfig const &
         check(cudaDeviceSynchronize(), "profile wait");
         lap(prof.gpu_wait_s);
     }
-    bool const any_mask = im.stage_find_inputs(level, config, ds);
+    bool const any_mask = im.lvl.stage_find_inputs(level, config, ds);
     lap(prof.find_stage_s);
 
-    im.feat_best.reserve(n * im.n_selected);
-    im.node_best.reserve(n);
-    find_kernel<<<dim3(im.n_selected, static_cast<uint32_t>(n)), dim3(32)>>>(
-        im.cur().data(), im.features.device(), im.n_bins.data(), im.node_sums.device(),
-        im.node_bounds.device(), any_mask ? im.allowed.device() : nullptr,
-        im.monotone.device(), im.n_selected, im.stride, config.lambda_l1,
-        config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
-        im.feat_best.data());
+    im.lvl.feat_best.reserve(n * im.lvl.n_selected);
+    im.lvl.node_best.reserve(n);
+    find_kernel<<<dim3(im.lvl.n_selected, static_cast<uint32_t>(n)), dim3(32)>>>(
+        im.lvl.cur().data(), im.lvl.features.device(), im.data.n_bins.data(),
+        im.lvl.node_sums.device(), im.lvl.node_bounds.device(),
+        any_mask ? im.lvl.allowed.device() : nullptr, im.lvl.monotone.device(),
+        im.lvl.n_selected, im.lvl.stride, config.lambda_l1, config.lambda_l2,
+        config.min_child_hess, config.min_gain_to_split, im.lvl.feat_best.data());
     check(cudaGetLastError(), "find launch");
     reduce_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(32)>>>(
-        im.feat_best.data(), im.n_selected, im.node_best.device());
+        im.lvl.feat_best.data(), im.lvl.n_selected, im.lvl.node_best.device());
     check(cudaGetLastError(), "reduce launch");
-    im.node_best.fetch(n); // DtoH, implicit sync
+    im.lvl.node_best.fetch(n); // DtoH, implicit sync
     if (prof.enabled)
     {
         ++prof.launches;
     }
     lap(prof.gpu_s);
 
-    im.unpack_splits(level, config, out, child_sums);
+    im.lvl.unpack_splits(level, config, out, child_sums);
     lap(prof.unpack_s);
 }
 
@@ -854,34 +886,36 @@ void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
     auto        &prof = im.prof_counters;
     auto         lap  = prof.lap();
 
-    im.stage_level_sums(level);
+    im.lvl.stage_level_sums(level);
     lap(prof.lfind_stage_s);
 
     // find -> reduce -> child-sums queue back to back (the child kernel reads
     // the reduced winner on-device), so the level pays one sync at the fetch.
-    size_t const scratch = static_cast<size_t>(im.n_selected) * 2 * (im.stride / 2);
-    im.level_score.reserve(scratch);
-    im.level_feas.reserve(scratch);
-    im.feat_best.reserve(im.n_selected);
-    im.node_best.reserve(1);
-    im.level_child.reserve(4 * n);
-    level_find_kernel<<<dim3(im.n_selected), dim3(32)>>>(
-        im.cur().data(), im.features.device(), im.n_bins.data(), im.node_sums.device(),
-        im.n_selected, static_cast<uint32_t>(n), im.stride, config.lambda_l1,
-        config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
-        im.level_score.data(), im.level_feas.data(), im.feat_best.data());
+    size_t const scratch =
+        static_cast<size_t>(im.lvl.n_selected) * 2 * (im.lvl.stride / 2);
+    im.lvl.level_score.reserve(scratch);
+    im.lvl.level_feas.reserve(scratch);
+    im.lvl.feat_best.reserve(im.lvl.n_selected);
+    im.lvl.node_best.reserve(1);
+    im.lvl.level_child.reserve(4 * n);
+    level_find_kernel<<<dim3(im.lvl.n_selected), dim3(32)>>>(
+        im.lvl.cur().data(), im.lvl.features.device(), im.data.n_bins.data(),
+        im.lvl.node_sums.device(), im.lvl.n_selected, static_cast<uint32_t>(n),
+        im.lvl.stride, config.lambda_l1, config.lambda_l2, config.min_child_hess,
+        config.min_gain_to_split, im.lvl.level_score.data(), im.lvl.level_feas.data(),
+        im.lvl.feat_best.data());
     check(cudaGetLastError(), "level find launch");
-    reduce_kernel<<<dim3(1), dim3(32)>>>(im.feat_best.data(), im.n_selected,
-                                         im.node_best.device());
+    reduce_kernel<<<dim3(1), dim3(32)>>>(im.lvl.feat_best.data(), im.lvl.n_selected,
+                                         im.lvl.node_best.device());
     check(cudaGetLastError(), "level reduce launch");
     level_child_sums_kernel<<<dim3((static_cast<uint32_t>(n) + 127) / 128),
                               dim3(128)>>>(
-        im.cur().data(), im.node_sums.device(), im.node_best.device(),
-        im.features.device(), im.n_bins.data(), static_cast<uint32_t>(n), im.n_selected,
-        im.stride, im.level_child.device());
+        im.lvl.cur().data(), im.lvl.node_sums.device(), im.lvl.node_best.device(),
+        im.lvl.features.device(), im.data.n_bins.data(), static_cast<uint32_t>(n),
+        im.lvl.n_selected, im.lvl.stride, im.lvl.level_child.device());
     check(cudaGetLastError(), "level child sums launch");
-    im.node_best.fetch(1); // DtoH, implicit sync
-    im.level_child.fetch(4 * n);
+    im.lvl.node_best.fetch(1); // DtoH, implicit sync
+    im.lvl.level_child.fetch(4 * n);
     if (prof.enabled)
     {
         prof.launches += 3;
@@ -891,13 +925,13 @@ void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
     // One split for the whole frontier, broadcast to every node; each node's
     // (left, right) sums seed the children's SplitInput.sums for the next
     // level's find (their device histograms are not host-scannable).
-    FeatBest const &b = im.node_best.host[0];
+    FeatBest const &b = im.lvl.node_best.host[0];
     SplitOutput     split{};
     if (b.valid != 0)
     {
         split = {.gain       = b.gain,
                  .feature_id = static_cast<feature_id_t>(
-                     im.features.host[static_cast<size_t>(b.sel)]),
+                     im.lvl.features.host[static_cast<size_t>(b.sel)]),
                  .bin_id       = static_cast<bin_id_t>(b.bin),
                  .default_left = b.dl != 0,
                  .valid        = true};
@@ -906,11 +940,11 @@ void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
     {
         out[i]            = split;
         child_sums[2 * i] = {
-            .sum_grad = static_cast<float>(im.level_child.host[(4 * i) + 0]),
-            .sum_hess = static_cast<float>(im.level_child.host[(4 * i) + 1])};
+            .sum_grad = static_cast<float>(im.lvl.level_child.host[(4 * i) + 0]),
+            .sum_hess = static_cast<float>(im.lvl.level_child.host[(4 * i) + 1])};
         child_sums[(2 * i) + 1] = {
-            .sum_grad = static_cast<float>(im.level_child.host[(4 * i) + 2]),
-            .sum_hess = static_cast<float>(im.level_child.host[(4 * i) + 3])};
+            .sum_grad = static_cast<float>(im.lvl.level_child.host[(4 * i) + 2]),
+            .sum_hess = static_cast<float>(im.lvl.level_child.host[(4 * i) + 3])};
     }
     lap(prof.unpack_s);
 }
