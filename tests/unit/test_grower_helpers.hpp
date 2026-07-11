@@ -43,15 +43,17 @@ inline float predict_one(TreeT const &tree, std::vector<float> row)
 
 struct Built
 {
-    BinMappers mappers;
-    Dataset    ds;
+    BinMappers          mappers;
+    Dataset             ds;
+    detail::ColumnBatch batch; // retained so ingest tests can re-bin the raw
 };
 
 inline Built build(detail::ColumnBatch batch)
 {
     BinMappers mappers = BinMappers::fit(batch, BinMapperConfig{});
     Dataset    ds      = Dataset::bin(batch, mappers, {});
-    return Built{.mappers = std::move(mappers), .ds = std::move(ds)};
+    return Built{
+        .mappers = std::move(mappers), .ds = std::move(ds), .batch = std::move(batch)};
 }
 
 inline std::vector<row_id_t> iota_rows(size_t n)
