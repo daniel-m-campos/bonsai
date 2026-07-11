@@ -27,6 +27,7 @@ add_executable(bonsai_tests
     unit/test_typelist.cpp
     unit/test_parallel.cpp
     unit/test_populate.cpp
+    unit/test_demote.cpp
     unit/test_make_booster.cpp
     unit/test_toml.cpp
     unit/test_model_io.cpp
@@ -53,6 +54,9 @@ target_link_libraries(bonsai_tests PRIVATE
 
 target_include_directories(bonsai_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    # grower_detail internals (level_step/grower_impl): the demote guard is
+    # control-plane logic only reachable deterministically by direct call.
+    ${CMAKE_SOURCE_DIR}/src
 )
 
 target_compile_definitions(bonsai_tests PRIVATE
