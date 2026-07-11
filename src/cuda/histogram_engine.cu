@@ -12,10 +12,10 @@
 #include "bonsai/types.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cuda_runtime_api.h>
@@ -734,7 +734,7 @@ void CudaHistogramEngine::exp_end_tree(Dataset const         &ds,
     static bool const debug = std::getenv("BONSAI_EXP_DEBUG") != nullptr;
     if (debug)
     {
-        std::array<float, 8> s8{};
+        std::array<float, 8>    s8{};
         std::array<uint32_t, 8> l8{};
         check(cudaMemcpy(s8.data(), im.exp_scores.data(), sizeof(s8),
                          cudaMemcpyDeviceToHost),

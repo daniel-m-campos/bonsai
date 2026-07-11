@@ -248,23 +248,34 @@ inline void demote_empty_splits(TreeConfig const &config, LevelPlan &plan,
                                 std::vector<node_id_t> &leaf_ids,
                                 std::vector<float>     &split_gains)
 {
-    std::erase_if(
-        plan.splits,
-        [&](DeferredSplit &d)
-        {
-            bool const left_empty  = d.p.left.rows.empty() && d.p.left.row_count == 0;
-            bool const right_empty = d.p.right.rows.empty() && d.p.right.row_count == 0;
-            if (!left_empty && !right_empty)
-            {
-                return false;
-            }
-            SplitInput &survivor = left_empty ? d.p.right : d.p.left;
-            d.parent.rows        = std::move(survivor.rows);
-            d.parent.hists       = std::move(d.p.parent_hists);
-            finalize_as_leaf(nodes, d.parent, config, n_leaves, values, leaf_ids);
-            split_gains[d.parent.id] = 0.0F;
-            return true;
-        });
+    std::erase_if(plan.splits,
+                  [&](DeferredSplit &d)
+                  {
+                      // Host plane only: device-partitioned children carry row_count
+                      // with empty rows, and the device has already scattered the
+                      // parent's rows into the child slots — demoting here would
+                      // orphan those rows' leaf stamps (leaf_by_row keeps garbage and
+                      // downstream reads run off the node table). A 0-row device
+                      // child is safe as an empty leaf: the next level's find marks
+                      // it ineligible and it is stamped like any other leaf.
+                      if (d.p.left.rows.empty() && d.p.right.rows.empty())
+                      {
+                          return false;
+                      }
+                      bool const left_empty  = d.p.left.rows.empty();
+                      bool const right_empty = d.p.right.rows.empty();
+                      if (!left_empty && !right_empty)
+                      {
+                          return false;
+                      }
+                      SplitInput &survivor = left_empty ? d.p.right : d.p.left;
+                      d.parent.rows        = std::move(survivor.rows);
+                      d.parent.hists       = std::move(d.p.parent_hists);
+                      finalize_as_leaf(nodes, d.parent, config, n_leaves, values,
+                                       leaf_ids);
+                      split_gains[d.parent.id] = 0.0F;
+                      return true;
+                  });
 }
 
 // Control plane, second half of a level: record covers, propagate the
