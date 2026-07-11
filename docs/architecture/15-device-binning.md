@@ -43,7 +43,7 @@ bin_on_device(raw columns or row-major view, cuts tables) -> DeviceBins
 
 ### Who asks for it
 
-`Dataset::bin` cannot know the grower. The train pipelines can: `bonsai::train` / the CLI pipeline request device binning when the config's grower name has the `cuda` prefix (the `trains_here` convention) **and** `cuda_available()`. Plain `Dataset` construction — tests, CPU workflows, predict — never touches the device path.
+`Dataset::bin` cannot know the grower. The train pipelines can: `bonsai::train` / the CLI pipeline request device binning when the config's grower name has the `cuda` prefix (the `trains_here` convention) **and** `cuda_available()` — **and only for the training dataset**. Validation datasets never enter grow (eval predicts from raw features), so they keep the host path; plain `Dataset` construction — tests, CPU workflows, predict — never touches the device path either.
 
 ### Host bins go lazy in device mode
 
