@@ -214,7 +214,9 @@ struct CudaHistogramEngine::Impl
     // what every sampler returns when its size equals n_rows.
     DeviceBuffer<uint32_t> root_rows;
     size_t                 root_rows_cached_n = 0;
-    std::vector<uint32_t>  slot_ofs; // current level's segment layout
+    DeviceBuffer<float>    epi_node_vals; // per-tree epilogue value table
+    DeviceBuffer<float>    epi_values;    // per-row mapped values
+    std::vector<uint32_t>  slot_ofs;      // current level's segment layout
     std::vector<uint32_t>  slot_cnt;
     std::vector<uint32_t>  next_ofs; // children layout, live after partition
     std::vector<uint32_t>  next_cnt;
@@ -712,6 +714,27 @@ void CudaHistogramEngine::finalize_rows(std::span<node_id_t> leaf_by_row)
     check(cudaMemcpy(leaf_by_row.data(), im.leaf_by_row.data(),
                      leaf_by_row.size() * sizeof(node_id_t), cudaMemcpyDeviceToHost),
           "leaf ids copy");
+}
+
+void CudaHistogramEngine::finalize_tree(std::span<float const> node_values,
+                                        std::span<float>       values,
+                                        std::span<node_id_t>   leaf_ids)
+{
+    Impl      &im = *impl_;
+    auto const n  = static_cast<uint32_t>(values.size());
+    im.epi_node_vals.upload(node_values.data(), node_values.size());
+    im.epi_values.reserve(values.size());
+    dim3 const grid((n + 255) / 256);
+    map_leaf_values_kernel<<<grid, dim3(256)>>>(
+        im.leaf_by_row.data(), im.epi_node_vals.data(),
+        static_cast<uint32_t>(node_values.size()), im.epi_values.data(), n);
+    check(cudaGetLastError(), "epilogue map launch");
+    check(cudaMemcpy(leaf_ids.data(), im.leaf_by_row.data(),
+                     leaf_ids.size() * sizeof(node_id_t), cudaMemcpyDeviceToHost),
+          "epilogue leaf ids copy");
+    check(cudaMemcpy(values.data(), im.epi_values.data(), values.size() * sizeof(float),
+                     cudaMemcpyDeviceToHost),
+          "epilogue values copy");
 }
 
 void CudaHistogramEngine::advance_level(Dataset const &ds, std::span<LevelOp const> ops)

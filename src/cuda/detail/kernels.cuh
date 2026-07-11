@@ -735,6 +735,22 @@ __global__ void level_child_sums_kernel(double const *hists, double const *node_
     out4[(4 * p) + 3] = s.hR;
 }
 
+// Tree epilogue: map each row's resident leaf assignment to its value.
+// Guarded: rows outside the sampled set can carry unstamped assignments;
+// their outputs are overwritten by route_unsampled on the host.
+__global__ void map_leaf_values_kernel(uint32_t const *leaf_by_row,
+                                       float const *node_values, uint32_t n_values,
+                                       float *values, uint32_t n)
+{
+    uint32_t const r = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (r >= n)
+    {
+        return;
+    }
+    uint32_t const leaf = leaf_by_row[r];
+    values[r]           = leaf < n_values ? node_values[leaf] : 0.0F;
+}
+
 // NOLINTEND(bugprone-easily-swappable-parameters,cppcoreguidelines-avoid-c-arrays,cppcoreguidelines-pro-bounds-pointer-arithmetic,modernize-avoid-c-arrays,cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-bounds-array-to-pointer-decay,readability-function-cognitive-complexity,readability-identifier-naming)
 
 } // namespace

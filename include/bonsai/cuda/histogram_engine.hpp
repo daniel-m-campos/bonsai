@@ -93,6 +93,12 @@ class CudaHistogramEngine
     // End of tree: the per-row leaf assignment (indexed by row id; only rows
     // this tree trained on carry fresh values).
     void finalize_rows(std::span<node_id_t> leaf_by_row);
+    // Tree epilogue, engine-owned (decision 53 step 3): maps the resident
+    // per-row leaf assignment through node_values on device and downloads
+    // values and leaf ids in two bulk copies — replacing the per-tree
+    // host stamping loop over every row.
+    void finalize_tree(std::span<float const> node_values, std::span<float> values,
+                       std::span<node_id_t> leaf_ids);
     // Best split per frontier node from the current level's device
     // histograms; child_sums receives the winning cut's (left, right) totals,
     // 2 cells per node. level[i] corresponds to slot i.
