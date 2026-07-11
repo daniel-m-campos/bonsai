@@ -241,7 +241,8 @@ PROFILE_RE = re.compile(r"(\w+)=([\d.]+)s")
 def parse_profiles(stderr: str) -> dict:
     prof = {}
     for line in stderr.splitlines():
-        if line.startswith(("cuda-profile:", "grow-profile:", "ingest-profile:")):
+        if line.startswith(("cuda-profile:", "grow-profile:", "ingest-profile:",
+                            "fit-profile:", "cuda-upload-decomp:")):
             prefix = line.split(":", 1)[0].removesuffix("-profile")
             for key, val in PROFILE_RE.findall(line):
                 prof[f"{prefix}_{key}"] = float(val)
@@ -352,7 +353,7 @@ def run_one(spec: dict, timeout: int) -> dict:
     env = dict(os.environ)
     if spec["variant"].startswith("bonsai"):
         env.update(BONSAI_GROW_PROFILE="1", BONSAI_INGEST_PROFILE="1",
-                   BONSAI_CUDA_PROFILE="1")
+                   BONSAI_CUDA_PROFILE="1", BONSAI_FIT_PROFILE="1")
     try:
         proc = subprocess.run([sys.executable, __file__, "--worker"],
                               input=json.dumps(spec), capture_output=True,

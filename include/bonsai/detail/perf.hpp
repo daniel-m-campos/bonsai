@@ -133,7 +133,8 @@ struct IngestProfiler : Profiler<IngestProfiler>
     static constexpr char const *env    = "BONSAI_INGEST_PROFILE";
     static constexpr char const *prefix = "ingest-profile";
 
-    double read_s = 0, index_s = 0, parse_s = 0, fit_s = 0, bin_s = 0, buffer_s = 0;
+    double read_s = 0, index_s = 0, parse_s = 0, fit_s = 0, bin_s = 0, buffer_s = 0,
+           dbin_s = 0;
 
     static constexpr std::array fields = {
         std::pair{"read", &IngestProfiler::read_s},
@@ -142,6 +143,7 @@ struct IngestProfiler : Profiler<IngestProfiler>
         std::pair{"mapper-fit", &IngestProfiler::fit_s},
         std::pair{"bin", &IngestProfiler::bin_s},
         std::pair{"buffer", &IngestProfiler::buffer_s},
+        std::pair{"dbin", &IngestProfiler::dbin_s},
     };
 };
 
