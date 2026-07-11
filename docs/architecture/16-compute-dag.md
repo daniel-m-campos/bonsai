@@ -1,6 +1,6 @@
 # 16 — The compute DAG: placement as a first-class design object
 
-> **Status:** framing document (proposed with decision 54). The transaction API (doc 14) made the backend an implementation detail; this doc makes the *cost* of that boundary explicit. Every optimization round since decision 49 has been a move on the graph below — this formalizes the game so moves can be priced before they are played.
+> **Status:** framing document (adopted with decision 54). The transaction API (doc 14) made the backend an implementation detail; this doc makes the *cost* of that boundary explicit. Every optimization round since decision 49 has been a move on the graph below — this formalizes the game so moves can be priced before they are played.
 
 ## The claim
 
