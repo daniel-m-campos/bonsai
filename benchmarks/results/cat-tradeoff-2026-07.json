@@ -1,0 +1,59 @@
+{
+ "amazon": {
+  "lgbm_ordinal": 0.8277797234491396,
+  "lgbm_native": 0.8571993045026041,
+  "catboost_ordinal": 0.7790957297778364,
+  "catboost_native": 0.8893784198035467,
+  "xgb_ordinal": 0.8052133462983717,
+  "xgb_native": 0.7877987177796822,
+  "bonsai_ordinal": 0.8307168402663325,
+  "bonsai_ts_a1": 0.850183968949832,
+  "bonsai_ts_a10": 0.8536045965455863,
+  "bonsai_ts4_a10": 0.851246992220977,
+  "bonsai_ts_plus_code": 0.8589957314259344,
+  "_seconds": 8.0,
+  "_n_cat": 9,
+  "_shape": [
+   32769,
+   9
+  ]
+ },
+ "adult": {
+  "lgbm_ordinal": 0.9301563699740398,
+  "lgbm_native": 0.9302711678097118,
+  "catboost_ordinal": 0.9268927278647079,
+  "catboost_native": 0.928279036510703,
+  "xgb_ordinal": 0.9275573713501051,
+  "xgb_native": 0.928347955838236,
+  "bonsai_ordinal": 0.9300001625045196,
+  "bonsai_ts_a1": 0.930579287986447,
+  "bonsai_ts_a10": 0.9302667279540855,
+  "bonsai_ts4_a10": 0.9303454846087906,
+  "bonsai_ts_plus_code": 0.930279583222337,
+  "_seconds": 13.9,
+  "_n_cat": 8,
+  "_shape": [
+   48842,
+   14
+  ]
+ },
+ "kick": {
+  "lgbm_ordinal": 0.7846271018488269,
+  "lgbm_native": 0.7666425560416963,
+  "catboost_ordinal": 0.7739703119432836,
+  "catboost_native": 0.7777452285817503,
+  "xgb_ordinal": 0.782680131223472,
+  "xgb_native": 0.7790966995558275,
+  "bonsai_ordinal": 0.7830426102352217,
+  "bonsai_ts_a1": 0.7774330575719368,
+  "bonsai_ts_a10": 0.7792485761129719,
+  "bonsai_ts4_a10": 0.7771169877473543,
+  "bonsai_ts_plus_code": 0.7797373900146569,
+  "_seconds": 30.3,
+  "_n_cat": 18,
+  "_shape": [
+   72983,
+   32
+  ]
+ }
+}
