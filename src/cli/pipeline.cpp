@@ -187,6 +187,13 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
     // contributions) keep the per-iteration eval O(rows), not O(rows*trees).
     auto const es_rounds  = cfg.booster_config.early_stopping_rounds;
     bool const es_enabled = es_rounds > 0 && loaded.valid.has_value();
+    if (es_enabled && loaded.valid->features.n_rows == 0)
+    {
+        // A zero-row valid set makes every loss NaN, and NaN never improves,
+        // so patience would fire at the first opportunity and silently
+        // truncate the model.
+        throw ConfigError("early stopping needs a non-empty validation set");
+    }
     if (es_enabled && cfg.booster_config.dart_drop_rate > 0.0F)
     {
         // DART rescales earlier trees each iteration, which invalidates the
@@ -197,6 +204,7 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
     std::vector<float> es_scores;
     float              best_loss = 0.0F;
     uint32_t           best_iter = 0;
+    size_t             es_base   = 0; // warm-start rounds present before this loop
 
     for (uint32_t i = 0; i < n_iters; ++i)
     {
@@ -217,10 +225,11 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
             {
                 // Warm start: seed with the pre-existing rounds' raw scores,
                 // excluding the round just added (0 rounds = base scores).
+                es_base = booster->n_iters() - 1;
                 es_scores.resize(loaded.valid->features.n_rows *
                                  booster->score_width());
                 booster->seed_valid_scores(loaded.valid->features.view(), es_scores,
-                                           booster->n_iters() - 1);
+                                           es_base);
             }
             booster->accumulate_last_round(loaded.valid->features.view(), es_scores);
             float const loss = booster->valid_loss(es_scores, loaded.valid->labels);
@@ -231,7 +240,9 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
             }
             else if (i - best_iter >= es_rounds)
             {
-                booster->truncate(best_iter + 1);
+                // best_iter counts THIS loop's rounds; keep the warm-start
+                // rounds the best loss was measured on top of.
+                booster->truncate(es_base + best_iter + 1);
                 std::println("fit: early stop at iter {} (best iter {}, valid {} "
                              "loss {})",
                              i + 1, best_iter + 1, cfg.dispatch.objective_name,

@@ -219,6 +219,15 @@ inline void dump_tree(ObliviousTree const &tree, std::span<std::string const> na
         out += " " + std::to_string(v);
     }
     out += "\n";
+    if (!tree.leaf_covers().empty())
+    {
+        out += "covers:";
+        for (float const c : tree.leaf_covers())
+        {
+            out += " " + std::to_string(static_cast<size_t>(c));
+        }
+        out += "\n";
+    }
 }
 
 // One tree's contribution to per-feature importance.

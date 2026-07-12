@@ -55,10 +55,13 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         {
             grad_.resize(n);
             hess_.resize(n);
-            init_scores_.assign(n_k, 0.0F);
             if (trees_.empty())
             {
-                // Log class priors, like lightgbm's boost_from_average.
+                // Log class priors, like lightgbm's boost_from_average. A
+                // warm-started booster keeps the priors it was loaded with —
+                // assigning zeros here shifted every class's base under the
+                // continued fit.
+                init_scores_.assign(n_k, 0.0F);
                 std::vector<double> counts(n_k, 0.0);
                 for (float const y : train.labels())
                 {
@@ -279,39 +282,52 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     void pred_contribs(features_view X, std::span<double> out,
                        size_t n_features) const override
     {
-        if constexpr (!std::same_as<tree_type, DenseTree>)
+        if constexpr (std::same_as<tree_type, ObliviousTree>)
         {
-            throw std::runtime_error(
-                "pred_contribs for multiclass requires dense trees");
+            std::vector<DenseTree> dense;
+            dense.reserve(trees_.size());
+            for (auto const &tree : trees_)
+            {
+                dense.push_back(dense_equivalent(tree));
+            }
+            contribs_over(dense, X, out, n_features);
         }
         else
         {
-            size_t const n    = X.extent(0);
-            size_t const cols = n_features + 1;
-            assert(out.size() == n * n_classes_ * cols);
-            parallel::for_each_index(
-                n,
-                [&](size_t i)
-                {
-                    for (size_t k = 0; k < n_classes_; ++k)
-                    {
-                        std::span<double> const phi =
-                            out.subspan(((i * n_classes_) + k) * cols, cols);
-                        std::ranges::fill(phi, 0.0);
-                        for (size_t t = k; t < trees_.size(); t += n_classes_)
-                        {
-                            internal::shap_one_row(trees_[t], X,
-                                                   static_cast<row_id_t>(i), phi);
-                        }
-                        for (double &v : phi)
-                        {
-                            v *= config_.learning_rate;
-                        }
-                        phi[n_features] +=
-                            init_scores_.empty() ? 0.0F : init_scores_[k];
-                    }
-                });
+            contribs_over(trees_, X, out, n_features);
         }
+    }
+
+    // Per-class TreeSHAP over any dense-shaped tree range; trees are flat
+    // round-major, so class k's trees stride by n_classes_.
+    template <typename Trees>
+    void contribs_over(Trees const &trees, features_view X, std::span<double> out,
+                       size_t n_features) const
+    {
+        size_t const n    = X.extent(0);
+        size_t const cols = n_features + 1;
+        assert(out.size() == n * n_classes_ * cols);
+        parallel::for_each_index(
+            n,
+            [&](size_t i)
+            {
+                for (size_t k = 0; k < n_classes_; ++k)
+                {
+                    std::span<double> const phi =
+                        out.subspan(((i * n_classes_) + k) * cols, cols);
+                    std::ranges::fill(phi, 0.0);
+                    for (size_t t = k; t < trees.size(); t += n_classes_)
+                    {
+                        internal::shap_one_row(trees[t], X, static_cast<row_id_t>(i),
+                                               phi);
+                    }
+                    for (double &v : phi)
+                    {
+                        v *= config_.learning_rate;
+                    }
+                    phi[n_features] += init_scores_.empty() ? 0.0F : init_scores_[k];
+                }
+            });
     }
 
     void truncate(size_t n_rounds) override
