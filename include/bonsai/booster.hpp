@@ -45,8 +45,8 @@ class IBooster
     // split that group into its own view (design review 2026-07-12).
 
     // --- training
-    virtual void   update_one_iter(Dataset const &train)            = 0;
-    virtual float  eval(features_view X, floats_view labels) const  = 0;
+    virtual void  update_one_iter(Dataset const &train)           = 0;
+    virtual float eval(features_view X, floats_view labels) const = 0;
     // --- prediction
     virtual void   predict(features_view X, floats_out y_hat) const = 0;
     virtual size_t n_iters() const                                  = 0;
