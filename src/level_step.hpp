@@ -47,11 +47,17 @@ inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
     auto const v   = static_cast<float>(bounded_leaf_weight(
         node.total_grad(), node.total_hess(), config, node.lo, node.hi));
     nodes[node.id] = DenseTree::leaf(v);
-    for (row_id_t r : node.rows)
-    {
-        values[r]   = v;
-        leaf_ids[r] = node.id;
-    }
+    // Row-parallel: each row is written exactly once with the same value,
+    // so the order is immaterial (byte-identical at any thread count). The
+    // stamping loops were ~17s of the 16M CPU fit on dual-EPYC hosts
+    // (issue #46's decomposition) — scattered writes that want bandwidth.
+    parallel::for_each_index(node.rows.size(),
+                             [&](size_t k)
+                             {
+                                 row_id_t const r = node.rows[k];
+                                 values[r]        = v;
+                                 leaf_ids[r]      = node.id;
+                             });
     ++n_leaves;
 }
 
@@ -305,14 +311,17 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
                                      train_leaf_values             &values,
                                      std::vector<node_id_t>        &leaf_ids)
     {
-        for (size_t li = 0; li < frontier.size(); ++li)
-        {
-            for (row_id_t const r : frontier[li].rows)
-            {
-                values[r]   = leaf_table[li];
-                leaf_ids[r] = static_cast<node_id_t>(li);
-            }
-        }
+        // Leaf-parallel: leaves partition the sampled rows, so writes never
+        // collide; dynamic scheduling absorbs the uneven leaf sizes.
+        parallel::for_each_index(frontier.size(),
+                                 [&](size_t li)
+                                 {
+                                     for (row_id_t const r : frontier[li].rows)
+                                     {
+                                         values[r]   = leaf_table[li];
+                                         leaf_ids[r] = static_cast<node_id_t>(li);
+                                     }
+                                 });
     }
 
     // --- shared host ops (the GPU specialization's fallback calls these) ----
