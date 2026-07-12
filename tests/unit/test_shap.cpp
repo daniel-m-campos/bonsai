@@ -1,6 +1,7 @@
 #include <array>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <cmath>
 #include <cstddef>
 #include <span>
 #include <stdexcept>
@@ -293,4 +294,51 @@ TEST_CASE("Multiclass pred_contribs: per-class slices vote like predict",
         }
         REQUIRE(static_cast<float>(best) == pred[i]);
     }
+}
+
+TEST_CASE("Oblivious dense expansion: dead slots route identically and SHAP "
+          "stays finite",
+          "[shap][oblivious]")
+{
+    // depth 2, feature 0 then feature 1; the (left, left) slot got no
+    // training rows. The expansion emits the dead slot verbatim, so every
+    // x — including one walking into the dead branch — routes identically,
+    // and tree_shap's zero-cover guard keeps phi finite with exact
+    // efficiency.
+    ObliviousTree const tree{
+        ObliviousTree::LevelSplits{
+            {.feature_id = 0, .threshold = 1.0F, .default_left = true},
+            {.feature_id = 1, .threshold = 1.0F, .default_left = true}},
+        ObliviousTree::LeafTable{0.0F, 10.0F, 20.0F, 30.0F},
+        {},
+        {0.0F, 4.0F, 3.0F, 5.0F}};
+    auto const dense = dense_equivalent(tree);
+
+    // Cover-positive corners agree exactly.
+    std::vector<float> raw{0.5F, 2.0F, 2.0F, 0.5F, 2.0F, 2.0F};
+    features_view      X{raw.data(), 3, 2};
+    std::vector<float> a(3, 0.0F);
+    std::vector<float> d(3, 0.0F);
+    tree.predict(X, a);
+    dense.predict(X, d);
+    for (size_t r = 0; r < 3; ++r)
+    {
+        REQUIRE(a[r] == d[r]);
+    }
+
+    // The dead (left, left) corner: both walks land on the no-evidence
+    // slot, and TreeSHAP reproduces its value exactly (sum(phi) == f(x)).
+    std::vector<float> dead_raw{0.5F, 0.5F};
+    features_view      Xd{dead_raw.data(), 1, 2};
+    std::vector<float> ao(1, 0.0F);
+    std::vector<float> ad(1, 0.0F);
+    tree.predict(Xd, ao);
+    dense.predict(Xd, ad);
+    REQUIRE(ao[0] == 0.0F);
+    REQUIRE(ad[0] == ao[0]);
+    std::vector<double> phi(3, 0.0);
+    tree_shap(dense, Xd, 0, phi);
+    REQUIRE(std::isfinite(phi[0]));
+    REQUIRE(std::isfinite(phi[1]));
+    REQUIRE(phi[0] + phi[1] + phi[2] == Catch::Approx(0.0).margin(1e-9));
 }

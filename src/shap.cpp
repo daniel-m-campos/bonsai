@@ -169,15 +169,26 @@ void recurse(ShapContext const &ctx, node_id_t node_id, std::vector<PathElement>
         }
     }
 
-    auto const feature = static_cast<int>(n.feature_id);
+    // A (zero=0, one=0) extension carries nothing: neither the instance nor
+    // any background mass flows down that branch, every pweight below it is
+    // zero, and unwinding such an element divides 0/0. Zero-cover branches
+    // exist — device-partitioned empty children pass through as kept leaves
+    // (PR #29), and oblivious trees expand with dead slots — so skip them
+    // instead of assuming them away. The hot branch still recurses whenever
+    // the instance follows it (one > 0), which is what makes sum(phi)
+    // reproduce f(x) even when x routes into a dead branch.
+    auto const   feature   = static_cast<int>(n.feature_id);
+    double const hot_zero  = incoming_zero * hot_frac;
+    double const cold_zero = incoming_zero * cold_frac;
+    if (hot_zero > 0.0 || incoming_one > 0.0)
     {
         auto hot_path = path; // Algorithm 2 duplicates the path per branch
-        recurse(ctx, hot, hot_path, length, incoming_zero * hot_frac, incoming_one,
-                feature);
+        recurse(ctx, hot, hot_path, length, hot_zero, incoming_one, feature);
     }
+    if (cold_zero > 0.0)
     {
         auto cold_path = path;
-        recurse(ctx, cold, cold_path, length, incoming_zero * cold_frac, 0.0, feature);
+        recurse(ctx, cold, cold_path, length, cold_zero, 0.0, feature);
     }
 }
 
