@@ -137,13 +137,15 @@ TEST_CASE(
     CHECK(s.gain == Catch::Approx(expected_gain).epsilon(1e-12));
 }
 
-TEST_CASE("HistogramLevelSplitFinder: rejects whole split when any parent violates "
-          "min_child_hess",
+TEST_CASE("HistogramLevelSplitFinder: an infeasible parent contributes zero gain "
+          "instead of vetoing the level cut",
           "[split][level][min_child_hess]")
 {
     // Parent A and B both have the obvious cut at bin 0, but B's children
-    // hess (0.5) is below min_child_hess (0.8). Whole (fid=0, b=0, *) is
-    // rejected. n_bins=3 so prefix_size=1: no other cut to fall back to.
+    // hess (0.5) is below min_child_hess (0.8). Pre-#60 the whole candidate
+    // was rejected — at real depths some frontier node is always near-empty,
+    // so every good cut died. Now B contributes its parent score (zero
+    // gain) and A's gain carries the cut.
     auto make_a = []
     {
         Histogram h{3};
@@ -166,8 +168,14 @@ TEST_CASE("HistogramLevelSplitFinder: rejects whole split when any parent violat
 
     SplitOutput const s = HistogramLevelSplitFinder::find(span, cfg);
 
-    CHECK_FALSE(s.valid);
-    CHECK(s.gain == 0.0);
+    CHECK(s.valid);
+    CHECK(s.feature_id == 0);
+    CHECK(s.bin_id == 0);
+    // Gain = A's children score minus A's parent score only (B nets zero).
+    auto const only_a = std::array{make_a()};
+    SplitOutput const a_alone =
+        HistogramLevelSplitFinder::find(FrontierInput{only_a}, cfg);
+    CHECK(s.gain == Catch::Approx(a_alone.gain));
 }
 
 TEST_CASE(
