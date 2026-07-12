@@ -45,13 +45,11 @@ def _model_sha(extra=()) -> str:
 # Attribution tiers for a cross-platform mismatch: full-sample kills the
 # mapper's sampling RNG; serial kills every parallel site; one iteration
 # kills accumulation drift. Whichever tier first diverges names the layer.
-for t in (1, 2, 4, 8):
-    print(f"t{t}_threads:",
-          _model_sha([("bin_mapper.n_samples", "500000"),
-                      ("parallel.n_threads", str(t))]))
-# Same-process repeat: if this differs from t8 above, the parallel path is
-# nondeterministic (timing), not architecture-dependent.
-print("t8_repeat:",
-      _model_sha([("bin_mapper.n_samples", "500000"),
-                  ("parallel.n_threads", "8")]))
+# Minimal diverging artifact: one tree, two threads. The dump is printed
+# line-tagged so the two CI jobs' logs can be diffed to the exact node.
+m1 = bonsai.train([*pairs, ("bin_mapper.n_samples", "500000"),
+                   ("parallel.n_threads", "2"), ("booster.n_iters", "1")],
+                  X, y)
+for line in m1.dump().splitlines():
+    print("DUMP:", line)
 print("sha256:", _model_sha())
