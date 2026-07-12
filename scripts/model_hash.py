@@ -33,8 +33,18 @@ print("data:", _sha(X), _sha(y))
 pairs = [("dispatch.grower_name", "depthwise"), ("booster.n_iters", "20"),
          ("booster.learning_rate", "0.1"), ("tree.max_depth", "8"),
          ("bin_mapper.max_bin", "255"), ("parallel.n_threads", "8")]
-m = bonsai.train(pairs, X, y)
-with tempfile.NamedTemporaryFile(suffix=".msgpack") as f:
-    m.save(f.name)
-    digest = hashlib.sha256(open(f.name, "rb").read()).hexdigest()[:16]
-print("sha256:", digest)
+
+
+def _model_sha(extra=()) -> str:
+    m = bonsai.train([*pairs, *extra], X, y)
+    with tempfile.NamedTemporaryFile(suffix=".msgpack") as f:
+        m.save(f.name)
+        return hashlib.sha256(open(f.name, "rb").read()).hexdigest()[:16]
+
+
+# The full-column variant skips the mapper's subsampling entirely: if it
+# matches across platforms while the default diverges, the divergence
+# lives in the sampling path (std::ranges::sample is implementation-
+# defined), not in training arithmetic.
+print("fullsample:", _model_sha([("bin_mapper.n_samples", "500000")]))
+print("sha256:", _model_sha())
