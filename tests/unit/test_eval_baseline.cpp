@@ -74,7 +74,10 @@ TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7157605",
     // duplicate-heavy columns, -> 0.7162500: +0.07% here, traded for -9%
     // on house_sales where the collapse was severe; campaign table in the
     // fix PR), issue #63 (count-weighted cuts on heavy-value columns,
-    // -> 0.71719: chance-band wobble traded for -2.2% on house_sales,
-    // decision 57).
-    CHECK(rmse == Catch::Approx(0.71719F).margin(1e-6));
+    // -> 0.71719 on arm64 / 0.71725 on x86-64: the new thresholds put one
+    // split on an fma-contraction knife edge, exposing that clang fused
+    // a*b+c only on targets with the instruction), decision 59
+    // (-ffp-contract=off on the host plane, -> 0.71725 on EVERY
+    // architecture — this pin is now platform-independent by construction).
+    CHECK(rmse == Catch::Approx(0.71725F).margin(1e-6));
 }

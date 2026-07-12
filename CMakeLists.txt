@@ -17,6 +17,15 @@ target_compile_options(bonsai_warnings INTERFACE
     -Wall -Wextra -Wpedantic -Werror
 )
 
+# Host-plane floats are contract-free: clang fuses a*b+c into a
+# single-rounded fma on targets that have the instruction (arm64) and not
+# on ones that don't (baseline x86-64), which made trained models
+# platform-dependent (decision 59 — the 0.71719-vs-0.71725 pin split).
+# With contraction off, models are bit-identical across architectures.
+# The CUDA kernel TU opts back out below: the device plane has its own
+# precision scheme and no cross-platform hash contract.
+add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-ffp-contract=off>)
+
 # When building with Homebrew LLVM clang on macOS, the SDK's libc++ may
 # lag the compiler's libc++ headers (e.g. __hash_memory only in newer
 # libc++). Point the linker at LLVM's libc++ if present so symbols match.
@@ -120,7 +129,11 @@ if(BONSAI_CUDA)
         -x cuda
         --offload-arch=${BONSAI_CUDA_ARCH}
         --cuda-path=${CUDAToolkit_LIBRARY_ROOT}
-        -Wno-unknown-cuda-version)
+        -Wno-unknown-cuda-version
+        # Target flags come last, overriding the directory-level
+        # -ffp-contract=off: fma is the native device op and the kernels'
+        # f32-chunk/f64-merge scheme owns its own precision story.
+        -ffp-contract=fast)
     target_include_directories(bonsai_cuda_kernels PRIVATE ${CMAKE_SOURCE_DIR}/include)
     # NVIDIA's headers #error on libc++ hosts on x86_64; this macro is their
     # sanctioned bypass (parity-validated on A100/sm_80). No-op on aarch64.
