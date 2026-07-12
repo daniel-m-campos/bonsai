@@ -63,4 +63,11 @@ void apply_overrides(Config &cfg, std::vector<Override> const &overrides)
     }
 }
 
+Config resolve(std::string const &toml_path, std::vector<Override> const &overrides)
+{
+    Config cfg = toml_path.empty() ? Config{} : load_toml(toml_path);
+    apply_overrides(cfg, overrides);
+    return cfg;
+}
+
 } // namespace bonsai::config

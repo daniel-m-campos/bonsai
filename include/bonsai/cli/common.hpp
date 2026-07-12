@@ -27,12 +27,7 @@ struct CommonOpts
 // (worker thread count) so every subcommand honors [parallel].
 inline Config resolve_config(CommonOpts const &opts)
 {
-    Config cfg;
-    if (!opts.config_path.empty())
-    {
-        cfg = config::load_toml(opts.config_path);
-    }
-    config::apply_overrides(cfg, opts.overrides);
+    Config cfg = config::resolve(opts.config_path, opts.overrides);
     parallel::set_n_threads(cfg.parallel.n_threads);
     return cfg;
 }

@@ -219,16 +219,13 @@ bonsai::Config
 config_from_params(std::vector<std::pair<std::string, std::string>> const &params,
                    std::optional<std::string> const                       &config_path)
 {
-    bonsai::Config cfg =
-        config_path ? bonsai::config::load_toml(*config_path) : bonsai::Config{};
     std::vector<bonsai::config::Override> overrides;
     overrides.reserve(params.size());
     for (auto const &[key, value] : params)
     {
         overrides.push_back({.key = key, .value = value});
     }
-    bonsai::config::apply_overrides(cfg, overrides);
-    return cfg;
+    return bonsai::config::resolve(config_path.value_or(""), overrides);
 }
 
 Model train(std::vector<std::pair<std::string, std::string>> const &params,
