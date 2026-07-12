@@ -24,10 +24,12 @@ from __future__ import annotations
 import numpy as np
 
 from ._bonsai import Model, cuda_available, default_config_toml, load, train
+from .encoding import OrderedTargetEncoder
 
 __all__ = [
     "BonsaiRegressor",
     "Model",
+    "OrderedTargetEncoder",
     "cuda_available",
     "default_config_toml",
     "load",
