@@ -41,7 +41,7 @@ def main() -> int:
           flush=True)
     req = urllib.request.Request(GZ_URL, headers={"User-Agent": "bonsai-fetch"})
     with (
-        urllib.request.urlopen(req) as resp,  # noqa: S310
+        urllib.request.urlopen(req) as resp,
         gzip.GzipFile(fileobj=resp) as gz,
         open(train_path, "w") as ftr,
         open(test_path, "w") as fte,

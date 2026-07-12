@@ -26,12 +26,11 @@ import re
 import subprocess
 import sys
 import time
-import tomllib
 
 import numpy as np
 import pandas as pd
-
 import reference_params as rp
+import tomllib
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 BINARY = REPO / "build-cuda" / "src" / "bonsai"
@@ -168,7 +167,8 @@ def run_catboost(device: str, threads: int, test, y_test) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--threads", type=int, default=16,
-                    help="host threads for bonsai / xgboost CPU (never 0 on many-core hosts: issue #2)")
+                    help="host threads for bonsai / xgboost CPU "
+                         "(never 0 on many-core hosts: issue #2)")
     ap.add_argument("--variants", default="bonsai_gpu,bonsai_cpu,xgb_cpu,xgb_gpu")
     args = ap.parse_args()
 

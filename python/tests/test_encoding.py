@@ -5,9 +5,8 @@ from __future__ import annotations
 
 import pathlib
 
-import numpy as np
-
 import bonsai
+import numpy as np
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 

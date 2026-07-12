@@ -23,7 +23,7 @@ is exactly the point.
     uv run scripts/dag_model.py --floor    # show the all-device floor math
 """
 import argparse
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 GB = 1e9
 

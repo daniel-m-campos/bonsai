@@ -98,7 +98,7 @@ class BonsaiRegressor:
         self._model: Model | None = None
 
     def fit(self, X, y, eval_set: tuple | None = None,
-            init_model: str | None = None) -> "BonsaiRegressor":
+            init_model: str | None = None) -> BonsaiRegressor:
         """init_model continues training from a saved .msgpack (warm start);
         binning reuses the loaded model's cut points."""
         pairs = [(k, _to_config_str(v)) for k, v in self._params.items()]
@@ -160,7 +160,7 @@ class BonsaiRegressor:
         self._model.save(path)
 
     @classmethod
-    def from_file(cls, path: str) -> "BonsaiRegressor":
+    def from_file(cls, path: str) -> BonsaiRegressor:
         out = cls()
         out._model = load(path)
         return out

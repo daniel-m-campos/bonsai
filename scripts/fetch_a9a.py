@@ -17,7 +17,7 @@ BASE = "https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/binary/"
 
 def fetch(name: str, out: pathlib.Path) -> None:
     req = urllib.request.Request(BASE + name, headers={"User-Agent": "bonsai"})
-    with urllib.request.urlopen(req) as resp:  # noqa: S310
+    with urllib.request.urlopen(req) as resp:
         text = resp.read().decode()
     lines = []
     for line in text.splitlines():
