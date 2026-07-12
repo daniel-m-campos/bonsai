@@ -93,7 +93,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: tests/data
-          key: toy-data-${{ hashFiles('scripts/fetch_toy.py') }}
+          key: toy-data-${{ hashFiles('scripts/fetch_toy.py', 'scripts/fetch_amazon.py') }}
       # lightgbm: test_bindings.py cross-checks feature importances against it.
       - run: uv venv .venv && uv pip install --python .venv/bin/python nanobind numpy lightgbm
       # test_bindings.py checks module-vs-CLI parity, so it needs the binary too.
