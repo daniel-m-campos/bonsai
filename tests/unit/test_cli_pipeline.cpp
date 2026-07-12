@@ -223,3 +223,95 @@ TEST_CASE("train_with_progress: multiclass early stopping truncates whole rounds
     std::filesystem::remove(train_path);
     std::filesystem::remove(valid_path);
 }
+
+TEST_CASE("train_with_progress: early stopping after warm start keeps the "
+          "warm rounds",
+          "[cli_pipeline][early_stop][warm_start]")
+{
+    // Train 5 rounds, save, continue with early stopping: the truncated
+    // model must keep the 5 warm rounds the best loss was measured on top
+    // of. The pre-fix truncate(best_iter + 1) kept only a session-local
+    // prefix of the WARM model.
+    Config cfg;
+    cfg.data.train                   = k_tiny_path;
+    cfg.data.valid                   = {k_tiny_path};
+    cfg.bin_mapper.max_bin           = 8;
+    cfg.bin_mapper.n_samples         = 100;
+    cfg.booster_config.n_iters       = 5;
+    cfg.booster_config.learning_rate = 0.5F;
+    cfg.tree_config.min_data_in_leaf = 0;
+    cfg.tree_config.min_child_hess   = 0.0F;
+
+    auto const loaded_a = load_train_and_valid_from_csv(cfg);
+    auto       first    = train_with_progress(cfg, loaded_a, {});
+    auto const tmp      = std::string{BONSAI_TESTS_DATA_DIR} + "/_warm_es_tmp.msgpack";
+    io::save_booster(*first, tmp, loaded_a.mappers, cfg);
+
+    Config more                               = cfg;
+    more.booster_config.n_iters               = 200;
+    more.booster_config.early_stopping_rounds = 3;
+    auto       reloaded                       = io::load_booster(tmp);
+    auto const loaded_b =
+        load_train_and_valid_with_mappers(more, std::move(reloaded.mappers));
+    auto continued =
+        train_with_progress(more, loaded_b, {}, std::move(reloaded.booster));
+    std::remove(tmp.c_str());
+
+    CHECK(continued->n_iters() >= 5);  // warm rounds survive truncation
+    CHECK(continued->n_iters() < 205); // and early stopping did fire
+}
+
+TEST_CASE("multiclass warm start keeps the loaded class priors",
+          "[cli_pipeline][warm_start][multiclass]")
+{
+    // Imbalanced classes make the log-prior init distinctly nonzero. After
+    // save/load + one continued round, seeding the ES score matrix at the
+    // warm round count must reproduce the loaded model's logloss exactly —
+    // the pre-fix lazy init zeroed init_scores_, shifting every class base.
+    auto const path = std::filesystem::temp_directory_path() / "bonsai_mc_prior.csv";
+    {
+        std::ofstream out(path);
+        out << "label,f1\n";
+        for (int rep = 0; rep < 8; ++rep)
+        {
+            out << "0," << 0.1 + rep * 0.01 << "\n";
+        }
+        out << "1,1.1\n2,2.1\n1,1.11\n2,2.11\n";
+    }
+    Config cfg;
+    cfg.data.train                   = path.string();
+    cfg.dispatch.objective_name      = "softmax";
+    cfg.objective.n_classes          = 3;
+    cfg.bin_mapper.max_bin           = 100;
+    cfg.bin_mapper.n_samples         = 100;
+    cfg.booster_config.n_iters       = 3;
+    cfg.tree_config.min_data_in_leaf = 0;
+    cfg.tree_config.min_child_hess   = 0.0F;
+
+    auto const loaded_a = load_train_and_valid_from_csv(cfg);
+    auto       first    = train_with_progress(cfg, loaded_a, {});
+    auto const tmp      = std::string{BONSAI_TESTS_DATA_DIR} + "/_mc_prior_tmp.msgpack";
+    io::save_booster(*first, tmp, loaded_a.mappers, cfg);
+
+    auto        reloaded = io::load_booster(tmp);
+    auto const &X        = loaded_a.train.features;
+    float const loaded_loss =
+        reloaded.booster->eval(X.view(), floats_view{loaded_a.train.labels});
+
+    Config one                 = cfg;
+    one.booster_config.n_iters = 1; // one continued round re-runs lazy init
+    auto const loaded_b =
+        load_train_and_valid_with_mappers(one, std::move(reloaded.mappers));
+    auto continued =
+        train_with_progress(one, loaded_b, {}, std::move(reloaded.booster));
+    std::remove(path.string().c_str());
+    std::remove(tmp.c_str());
+
+    // Seed the ES matrix as of the 3 warm rounds: with priors intact this
+    // is exactly the loaded model, so the losses match.
+    std::vector<float> seeded(X.n_rows * continued->score_width());
+    continued->seed_valid_scores(X.view(), seeded, 3);
+    float const seeded_loss =
+        continued->valid_loss(seeded, floats_view{loaded_a.train.labels});
+    CHECK(seeded_loss == Catch::Approx(loaded_loss).margin(1e-5));
+}
