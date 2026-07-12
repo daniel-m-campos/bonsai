@@ -61,12 +61,42 @@ std::vector<float> create_cuts(std::vector<float> &subsample, size_t step)
 {
     std::sort(subsample.begin(), subsample.end());
     std::vector<float> cuts;
-    for (size_t k = step; k < subsample.size(); k += step)
+    // Duplicate-heavy columns first (issue #61): the quantile stride walks
+    // duplicate runs and the dedup below then discards most of the budget —
+    // house_sales' 13-distinct-value bedrooms column got SEVEN cuts at
+    // max_bin 255. When the subsample's distinct values fit the budget,
+    // every distinct value becomes a cut and binning is exact, matching
+    // what lightgbm/xgboost do; the stride only kicks in above the budget.
+    size_t const budget     = (subsample.size() + step - 1) / step;
+    size_t       n_distinct = 0;
+    for (size_t k = 0; k < subsample.size(); ++k)
     {
-        float const v = subsample[k];
-        if (cuts.empty() || cuts.back() < v)
+        if (k == 0 || subsample[k] > subsample[k - 1])
         {
-            cuts.push_back(v);
+            ++n_distinct;
+        }
+    }
+    if (n_distinct <= budget)
+    {
+        // Every distinct value gets its own right-inclusive cut, so binning
+        // is exact and the +inf sentinel bin stays missing-only.
+        for (float const v : subsample)
+        {
+            if (cuts.empty() || cuts.back() < v)
+            {
+                cuts.push_back(v);
+            }
+        }
+    }
+    else
+    {
+        for (size_t k = step; k < subsample.size(); k += step)
+        {
+            float const v = subsample[k];
+            if (cuts.empty() || cuts.back() < v)
+            {
+                cuts.push_back(v);
+            }
         }
     }
     cuts.push_back(std::numeric_limits<float>::infinity());

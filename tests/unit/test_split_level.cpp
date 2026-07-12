@@ -172,7 +172,7 @@ TEST_CASE("HistogramLevelSplitFinder: an infeasible parent contributes zero gain
     CHECK(s.feature_id == 0);
     CHECK(s.bin_id == 0);
     // Gain = A's children score minus A's parent score only (B nets zero).
-    auto const only_a = std::array{make_a()};
+    auto const        only_a = std::array{make_a()};
     SplitOutput const a_alone =
         HistogramLevelSplitFinder::find(FrontierInput{only_a}, cfg);
     CHECK(s.gain == Catch::Approx(a_alone.gain));
