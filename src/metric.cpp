@@ -1,5 +1,7 @@
 #include "bonsai/metric.hpp"
 
+#include "bonsai/objective.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -20,28 +22,12 @@ namespace bonsai
 
 float compute_rmse(floats_view preds, floats_view labels)
 {
-    assert(preds.size() == labels.size());
-    assert(!preds.empty());
-    auto const  n  = static_cast<float>(preds.size());
-    float const ss = std::transform_reduce(preds.begin(), preds.end(), labels.begin(),
-                                           0.0F, std::plus<>(),
-                                           [](float const p, float const t)
-                                           {
-                                               double const d = p - t;
-                                               return d * d;
-                                           });
-    return std::sqrt(ss / n);
+    return std::sqrt(MSEObjective::eval(preds, labels));
 }
 
 float compute_mae(floats_view preds, floats_view labels)
 {
-    assert(preds.size() == labels.size());
-    assert(!preds.empty());
-    auto const  n = static_cast<float>(preds.size());
-    float const s = std::transform_reduce(
-        preds.begin(), preds.end(), labels.begin(), 0.0F, std::plus<>(),
-        [](float const p, float const t) { return std::abs(p - t); });
-    return s / n;
+    return MAEObjective::eval(preds, labels);
 }
 
 float compute_r2(floats_view preds, floats_view labels)
@@ -76,21 +62,13 @@ float compute_r2(floats_view preds, floats_view labels)
     return static_cast<float>(1.0 - (ss_res / ss_tot));
 }
 
-// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-float compute_logloss(floats_view probs, floats_view labels)
+// Single source of truth with the training loop: the objective's
+// softplus-stable BCE over raw scores (design review 2026-07-12 — the old
+// probability-domain copy clamped at 1e-7 and disagreed with early
+// stopping's numbers on confident models).
+float compute_logloss(floats_view raw_scores, floats_view labels)
 {
-    assert(probs.size() == labels.size());
-    assert(!probs.empty());
-    constexpr double eps = 1e-7;
-    double           ll  = 0.0;
-    for (size_t i = 0; i < probs.size(); ++i)
-    {
-        double const p = probs[i];
-        double const t = labels[i] > 0.5F ? 1.0 : 0.0;
-        ll -= (t * std::log(std::max(p, eps))) +
-              ((1.0 - t) * std::log(std::max(1.0 - p, eps)));
-    }
-    return static_cast<float>(ll / static_cast<double>(probs.size()));
+    return LogLossObjective::eval(raw_scores, labels);
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)

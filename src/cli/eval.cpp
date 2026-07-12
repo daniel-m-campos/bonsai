@@ -63,8 +63,9 @@ int run_eval(EvalOpts const &opts)
         return 2;
     }
 
-    auto sl = score_and_label_csv(*loaded.booster, path, data_cfg);
-    apply_link_inverse_by_name(loaded.cfg.dispatch.objective_name, sl.raw_scores);
+    auto sl    = score_and_label_csv(*loaded.booster, path, data_cfg);
+    auto preds = sl.raw_scores;
+    apply_link_inverse_by_name(loaded.cfg.dispatch.objective_name, preds);
 
     auto const task = task_kind_by_name(loaded.cfg.dispatch.objective_name);
     auto const names =
@@ -73,7 +74,7 @@ int run_eval(EvalOpts const &opts)
     for (auto const name : names)
     {
         auto const  m = resolve_metric_for_task(name, task);
-        float const v = m.compute(sl.raw_scores, sl.labels);
+        float const v = m.compute(m.from_raw ? sl.raw_scores : preds, sl.labels);
         std::print("{}={} ", m.name, v);
     }
     std::println("n={}", sl.raw_scores.size());

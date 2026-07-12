@@ -39,6 +39,8 @@ import time
 
 import numpy as np
 
+import reference_params as rp
+
 REPO = pathlib.Path(__file__).resolve().parents[1]
 RESULTS = REPO / "benchmarks" / "results" / "scaling.jsonl"
 
@@ -141,10 +143,10 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
     import xgboost as xgb
     c = spec["cell"]
     device = VARIANTS[spec["variant"]][1]
-    params = {"objective": "reg:squarederror", "learning_rate": c["lr"],
-              "max_depth": c["depth"], "min_child_weight": 20,
-              "reg_lambda": 1.0, "max_bin": c["bins_effective"],
-              "tree_method": "hist", "seed": c["seed"], "device": device,
+    params = {**rp.xgb_core(learning_rate=c["lr"], max_depth=c["depth"],
+                            min_data_in_leaf=20, lambda_l2=1.0,
+                            max_bin=c["bins_effective"], seed=c["seed"]),
+              "objective": "reg:squarederror", "device": device,
               "nthread": spec["threads"]}
     t0 = time.perf_counter()
     dtrain = xgb.QuantileDMatrix(X, label=y, max_bin=c["bins_effective"])
@@ -165,10 +167,11 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
     if device == "cuda":
         raise RuntimeError("unsupported: pip lightgbm lacks CUDA; source build "
                            "deferred to a later round")
-    params = {"objective": "regression", "learning_rate": c["lr"],
-              "max_depth": c["depth"], "num_leaves": 1 << c["depth"],
-              "min_data_in_leaf": 20, "lambda_l2": 1.0,
-              "max_bin": c["bins_effective"], "seed": c["seed"], "verbose": -1,
+    params = {**rp.lgbm_core(learning_rate=c["lr"], max_depth=c["depth"],
+                             num_leaves=1 << c["depth"], min_data_in_leaf=20,
+                             lambda_l2=1.0, max_bin=c["bins_effective"],
+                             seed=c["seed"]),
+              "objective": "regression",
               "device_type": device, "num_threads": spec["threads"]}
     t0 = time.perf_counter()
     dtrain = lgb.Dataset(X, label=y)
@@ -187,9 +190,10 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
     c = spec["cell"]
     device = VARIANTS[spec["variant"]][1]
     model = CatBoostRegressor(
-        iterations=c["iters"], learning_rate=c["lr"], depth=c["depth"],
-        l2_leaf_reg=1.0, border_count=c["bins_effective"],
-        random_seed=c["seed"], loss_function="RMSE",
+        **rp.catboost_core(learning_rate=c["lr"], max_depth=c["depth"],
+                           lambda_l2=1.0, max_bin=c["bins_effective"],
+                           seed=c["seed"], device=device),
+        iterations=c["iters"], loss_function="RMSE",
         task_type=("GPU" if device == "cuda" else "CPU"), devices="0",
         thread_count=spec["threads"], verbose=False)
     t0 = time.perf_counter()

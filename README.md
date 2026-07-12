@@ -30,7 +30,7 @@ bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library a
 ## Highlights
 
 - **Compile-time dispatch where it counts.** Components are C++ concepts; the runtime TOML config is resolved to a monomorphized `Booster<Objective, Grower, Splitter, Sampler>` exactly once at construction. Everything inside the training loop is statically dispatched — no virtual calls in the hot path.
-- **Concept-checked components.** Contract violations are caught at compile time, not runtime. Adding an objective, grower, split finder, or sampler is two edits and the dispatch table, CLI listing, and parametric tests expand automatically.
+- **Concept-checked components.** Contract violations are caught at compile time, not runtime. Adding a stateless grower or sampler is two edits; objectives add three trait specializations (link, task, default metrics) that static assertions demand by name. Either way the dispatch table, CLI listing, and parametric tests expand automatically — see [Extending bonsai](#extending-bonsai).
 - **A guide, not just docs.** [docs/guide/](docs/guide/) explains how gradient boosting works chapter by chapter — concept, math, then the ~50 real lines that implement it here, then an experiment. Written against this codebase because it's small enough to actually read.
 - **Reference-library performance, measured.** Same-machine sweeps against xgboost, lightgbm, and catboost at matched settings: the CUDA grower is the fastest full pipeline up to ~4M rows and trades the lead with xgboost-GPU at 16M within ±10% (host-dependent) at a third of the host memory; CPU growers beat lightgbm at 16M rows and on wide data. Numbers and caveats in [Performance](#performance); raw runs in `benchmarks/results/`.
 - **Three growers.** `depthwise` (level-wise, XGBoost-style), `leafwise` (best-first with a `max_leaves` budget, LightGBM-style), and `oblivious` (symmetric, CatBoost-style) — selectable per run from config.
@@ -169,12 +169,14 @@ Beyond the head-to-head table, a synthetic scaling study sweeps rows (to 16M), c
 
 ## Extending bonsai
 
-The minimum to add a new objective / grower / sampler is two edits:
+The minimum to add a new grower or sampler is two edits:
 
 1. Add the type to the matching list in [include/bonsai/registry/typelists.hpp](include/bonsai/registry/typelists.hpp).
 2. Specialize `impl_name<T>` in [include/bonsai/registry/names.hpp](include/bonsai/registry/names.hpp).
 
 The cartesian-product dispatch table, the `bonsai info` listing, and the parametric tests all expand automatically.
+
+A new **objective** takes the same two edits plus three trait specializations that static assertions will demand by name (so forgetting one is a compile error, not a runtime surprise): `link_inverse_of<T>` and `default_metrics_of<T>` in [include/bonsai/objective_traits.hpp](include/bonsai/objective_traits.hpp) (implementations in `src/objective_traits.cpp`), and its `task_of<T>` kind. Budget ~6 file touches end to end for a configured objective; the checklist order is typelist → name → traits → impl → config field → TOML section.
 
 Anything beyond a stateless impl needs a bit more:
 
