@@ -26,3 +26,17 @@ Datasets: amazon employee access (OpenML 4135 — 32.8k×9, every column a high-
 4. **On the repo's own amazon split** (`tests/data/amazon_*.csv`, the stage-1 files) the encoder measures +0.049 AUC (0.811 → 0.860), pinned in `python/tests/test_encoding.py`.
 
 Caveats: single split per dataset, seed 42, no per-dataset tuning — same convention as the quality campaign (`quality-campaign-2026-07.md`); AUC differences under ~0.003 are chance-band at these test sizes.
+
+## Follow-up: crossed pairs (decision 58 follow-up, same day)
+
+On the repo's amazon split (`tests/data/amazon_*.csv`; reproduce with `scripts/probe_crossed_ts.py`):
+
+| variant | AUC |
+|---|--:|
+| bonsai, singles TS + codes | 0.8604 |
+| bonsai, `cross=2` (36 pair-TS columns) | **0.8877** |
+| bonsai, + all 84 triple-TS columns | 0.8859 |
+| catboost native (full CTR crosses) | 0.8897 |
+| catboost native, `max_ctr_complexity=1` | 0.8587 |
+
+The control row settles the attribution: with crosses disabled, catboost falls *below* bonsai's singles line — crossed statistics were its entire remaining edge, and pair-TS preprocessing recovers them to within 0.002 (chance-band). Triples overfit and are not a default.
