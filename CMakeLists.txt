@@ -231,9 +231,10 @@ if(BONSAI_PYTHON)
     # (PYTHONPATH=build/python). Wheels install via the same target.
     set_target_properties(_bonsai PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/python/bonsai)
+    file(GLOB BONSAI_PY_SOURCES ${CMAKE_SOURCE_DIR}/python/bonsai/*.py)
     add_custom_command(TARGET _bonsai POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_SOURCE_DIR}/python/bonsai/__init__.py
-            ${CMAKE_BINARY_DIR}/python/bonsai/__init__.py)
+            ${BONSAI_PY_SOURCES}
+            ${CMAKE_BINARY_DIR}/python/bonsai/)
     install(TARGETS _bonsai LIBRARY DESTINATION bonsai)
 endif()
