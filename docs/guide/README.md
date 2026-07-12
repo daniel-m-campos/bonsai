@@ -29,6 +29,7 @@ the whole implementation.
 | 10 | [GPU training](10-gpu-training.md) | Where the host/device boundary goes, and the precision scheme that makes it honest |
 | 11 | [Performance engineering](11-performance-engineering.md) | The compute-DAG method: price moves before playing them |
 | 12 | [Multiclass](12-multiclass.md) | Softmax boosting: K trees per round and one diagonal approximation |
+| 13 | [Categorical features](13-categorical-features.md) | Ordered target statistics: the encoding that doesn't leak, and why the core stays numeric |
 
 ## The template
 
@@ -46,7 +47,7 @@ Every chapter has the same skeleton:
 
 Chapter 0 is the on-ramp; 1–4 are the core algorithm and build on each
 other. 5–9 are independent; read them as the corresponding knob becomes
-relevant. 10–12 assume the core and go where the engineering is.
+relevant. 10–13 assume the core and go where the engineering is.
 For design *rationale* (why this data layout, why this dispatch mechanism)
 see [architecture/](../architecture/); for the audit trail of every
 non-trivial choice, [decisions.md](../decisions.md).
