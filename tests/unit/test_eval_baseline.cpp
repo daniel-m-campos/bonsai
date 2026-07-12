@@ -73,6 +73,8 @@ TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7157605",
     // 51 (ceiling stride, -> 0.7157605), issue #61 (exact cuts for
     // duplicate-heavy columns, -> 0.7162500: +0.07% here, traded for -9%
     // on house_sales where the collapse was severe; campaign table in the
-    // fix PR).
-    CHECK(rmse == Catch::Approx(0.71625F).margin(1e-6));
+    // fix PR), issue #63 (count-weighted cuts on heavy-value columns,
+    // -> 0.71719: chance-band wobble traded for -2.2% on house_sales,
+    // decision 57).
+    CHECK(rmse == Catch::Approx(0.71719F).margin(1e-6));
 }

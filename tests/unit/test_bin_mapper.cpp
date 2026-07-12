@@ -68,6 +68,28 @@ TEST_CASE("BinMapper: duplicates are skipped", "[bin_mapper][fit][dup]")
     CHECK(mapper.cuts().size() <= 5);
 }
 
+TEST_CASE("BinMapper: a heavy value gets its own bin and the budget survives",
+          "[bin_mapper][fit][dup]")
+{
+    // 50 zeros + 1..44: distinct (45) exceeds the budget (6) and the zero
+    // run outweighs a mean bin. The stride walked the run and dedup burned
+    // the budget (issue #63); the greedy walk isolates the heavy value and
+    // still spends every cut.
+    std::vector<float> column(50, 0.0F);
+    for (int v = 1; v <= 44; ++v)
+    {
+        column.push_back(static_cast<float>(v));
+    }
+    BinMapperConfig cfg{.max_bin = 8, .n_samples = column.size()};
+    auto            mapper = BinMapper::fit(std::span(column), cfg);
+
+    CHECK(mapper.cuts().size() == 7); // full budget: 6 finite cuts + sentinel
+    CHECK(std::ranges::is_sorted(mapper.cuts()));
+    CHECK(std::ranges::adjacent_find(mapper.cuts()) == mapper.cuts().end());
+    CHECK(mapper.transform(0.0F) == 0); // the heavy value sits alone
+    CHECK(mapper.transform(1.0F) == 1);
+}
+
 TEST_CASE("BinMapper: subsamples deterministically on a large seeded column",
           "[bin_mapper][fit][n_samples]")
 {
