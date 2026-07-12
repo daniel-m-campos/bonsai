@@ -569,7 +569,10 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
             static_cast<float>(leaf.row_count > 0 ? leaf.row_count : leaf.rows.size()));
     }
     // Host plane stamps each leaf's rows; device plane stamps the resident
-    // segments and downloads the per-row assignment.
+    // segments and downloads the per-row assignment. Lapped as finalize:
+    // the 16M CPU decomposition (issue #46) found ~15s of stamping hiding
+    // in oblivious's conservation gap because only depthwise lapped it.
+    gd::GrowProfiler::Lap flap;
     step.finalize_leaves(frontier, leaf_table, values, leaf_ids, row_indices);
 
     // Same stale-score hazard as route_unsampled: rows the sampler dropped
@@ -590,6 +593,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
             values[r]   = leaf_table[index];
             leaf_ids[r] = static_cast<node_id_t>(index);
         });
+    flap(gd::GrowProfiler::instance().finalize_s);
 
     return {.tree     = Tree(std::move(level_splits), std::move(leaf_table),
                              std::move(level_gains), std::move(leaf_covers)),
