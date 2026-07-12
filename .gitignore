@@ -83,4 +83,7 @@ benchmarks/results/*.md
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/bonsai-policy/
+!.claude/skills/quality-gates/
+!.claude/skills/pod-validate/
+!.claude/skills/perf-round/
 tests/data/*.libsvm
