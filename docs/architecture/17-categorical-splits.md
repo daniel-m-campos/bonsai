@@ -1,6 +1,6 @@
 # 17 — Native categorical features: Fisher set splits (stage 2a) + ordered target statistics sketch (stage 2b)
 
-> **Status:** proposed design, not yet ratified — review pending. Feature-gap row 12, stage 2 ([`../feature_gap.md`](../feature_gap.md) §18).
+> **Status:** priced and DECLINED by measurement (decision 58, PR #67): each reference library's own categorical toggle measured native set splits at +0.029/+0.000/−0.018 AUC across amazon/adult/kick, while ordered-TS *preprocessing* (`OrderedTargetEncoder`, guide 13) beat lightgbm-native from outside the core — see `benchmarks/categorical-tradeoff-2026-07.md`. This design is retained as the priced option; the decision entry names the evidence that would reopen it. Feature-gap row 12, stage 2 ([`../feature_gap.md`](../feature_gap.md) §18).
 
 ## Motivation
 
