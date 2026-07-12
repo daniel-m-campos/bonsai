@@ -86,4 +86,5 @@ benchmarks/results/*.md
 !.claude/skills/quality-gates/
 !.claude/skills/pod-validate/
 !.claude/skills/perf-round/
+!.claude/skills/feature-admission/
 tests/data/*.libsvm
