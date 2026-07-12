@@ -43,6 +43,51 @@ inline SplitSums split_sums_at(double left_grad, double left_hess,
     };
 }
 
+// The per-candidate core shared by the node and level scans (issue #50):
+// child sums via split_sums_at, the min_child_hess feasibility gate, and
+// the two-child score — computed in exactly this operation order so both
+// finders make bit-identical decisions from identical histograms. Monotone
+// rejection stays node-only (the oblivious grower refuses constraints at
+// construction); the level scan adds cross-parent summation on top.
+struct CandidateScore
+{
+    SplitSums s;
+    double    children_score = 0.0;
+    bool      feasible       = false;
+};
+
+inline CandidateScore score_candidate(double left_grad, double left_hess,
+                                      HistCell const &missing, double real_grad,
+                                      double real_hess, bool default_left,
+                                      TreeConfig const &config)
+{
+    auto const s = split_sums_at(left_grad, left_hess, missing, real_grad, real_hess,
+                                 default_left);
+    if (s.hL < config.min_child_hess || s.hR < config.min_child_hess)
+    {
+        return {.s = s};
+    }
+    return {.s              = s,
+            .children_score = score(s.gL, s.hL, config.lambda_l1, config.lambda_l2) +
+                              score(s.gR, s.hR, config.lambda_l1, config.lambda_l2),
+            .feasible = true};
+}
+
+// Strict > keeps the earliest (bin, default_left) candidate on exact gain
+// ties in both scans, matching the serial order.
+inline void update_best(SplitOutput &best, double gain, feature_id_t fid, bin_id_t bin,
+                        bool default_left, TreeConfig const &config)
+{
+    if (gain > best.gain && gain >= config.min_gain_to_split)
+    {
+        best = {.gain         = gain,
+                .feature_id   = fid,
+                .bin_id       = bin,
+                .default_left = default_left,
+                .valid        = true};
+    }
+}
+
 inline void update_best_for_feature_for_node(SplitInput const &input, feature_id_t fid,
                                              HistCell const   &node_totals,
                                              TreeConfig const &config,
@@ -76,34 +121,25 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
         left_hess += cell.sum_hess;
         for (bool const default_left : {true, false})
         {
-            auto const s = split_sums_at(left_grad, left_hess, missing_cell, real_grad,
-                                         real_hess, default_left);
-            if (s.hL < config.min_child_hess || s.hR < config.min_child_hess)
+            auto const c = score_candidate(left_grad, left_hess, missing_cell,
+                                           real_grad, real_hess, default_left, config);
+            if (!c.feasible)
             {
                 continue;
             }
             if (mc != 0)
             {
                 double const w_left =
-                    bounded_leaf_weight(s.gL, s.hL, config, input.lo, input.hi);
+                    bounded_leaf_weight(c.s.gL, c.s.hL, config, input.lo, input.hi);
                 double const w_right =
-                    bounded_leaf_weight(s.gR, s.hR, config, input.lo, input.hi);
+                    bounded_leaf_weight(c.s.gR, c.s.hR, config, input.lo, input.hi);
                 if (static_cast<double>(mc) * (w_right - w_left) < 0.0)
                 {
                     continue; // would break monotonicity in feature fid
                 }
             }
-            double const gain = score(s.gL, s.hL, config.lambda_l1, config.lambda_l2) +
-                                score(s.gR, s.hR, config.lambda_l1, config.lambda_l2) -
-                                node_score;
-            if (gain > best.gain && gain >= config.min_gain_to_split)
-            {
-                best = {.gain         = gain,
-                        .feature_id   = fid,
-                        .bin_id       = b,
-                        .default_left = default_left,
-                        .valid        = true};
-            }
+            update_best(best, c.children_score - node_score, fid, b, default_left,
+                        config);
         }
         ++b;
     }
@@ -156,30 +192,22 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
             {
                 auto const     &hist = frontier[p].hists[fid];
                 HistCell const &lp   = prefix[p, b];
-                auto const s = split_sums_at(lp.sum_grad, lp.sum_hess, hist.missing(),
-                                             real_grad[p], real_hess[p], default_left);
-                if (s.hL < config.min_child_hess || s.hR < config.min_child_hess)
+                auto const      c =
+                    score_candidate(lp.sum_grad, lp.sum_hess, hist.missing(),
+                                    real_grad[p], real_hess[p], default_left, config);
+                if (!c.feasible)
                 {
                     feasible = false;
                     break;
                 }
-                sum_children_score +=
-                    score(s.gL, s.hL, config.lambda_l1, config.lambda_l2) +
-                    score(s.gR, s.hR, config.lambda_l1, config.lambda_l2);
+                sum_children_score += c.children_score;
             }
             if (!feasible)
             {
                 continue;
             }
-            double const gain = sum_children_score - sum_parent_score;
-            if (gain > best.gain && gain >= config.min_gain_to_split)
-            {
-                best = {.gain         = gain,
-                        .feature_id   = fid,
-                        .bin_id       = static_cast<bin_id_t>(b),
-                        .default_left = default_left,
-                        .valid        = true};
-            }
+            update_best(best, sum_children_score - sum_parent_score, fid,
+                        static_cast<bin_id_t>(b), default_left, config);
         }
     }
 }
