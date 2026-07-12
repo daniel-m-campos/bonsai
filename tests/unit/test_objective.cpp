@@ -1,16 +1,16 @@
+#include "bonsai/booster.hpp"
+#include "bonsai/dataset.hpp"
+#include "bonsai/detail/column_batch.hpp"
+#include "bonsai/grower.hpp"
+#include "bonsai/registry/objective_dispatch.hpp"
+#include "bonsai/sampler.hpp"
 #include <algorithm>
 #include <array>
 #include <catch2/catch_approx.hpp>
-#include <random>
-#include "bonsai/booster.hpp"
-#include "bonsai/registry/objective_dispatch.hpp"
-#include "bonsai/detail/column_batch.hpp"
-#include "bonsai/dataset.hpp"
-#include "bonsai/grower.hpp"
-#include "bonsai/sampler.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
 #include <cstddef>
+#include <random>
 #include <vector>
 
 #include "bonsai/objective.hpp"
@@ -357,15 +357,14 @@ TEST_CASE("Poisson end to end: recovers rates through the log link",
     detail::ColumnBatch batch;
     batch.features.resize(1);
     batch.feature_names = {"x"};
-    std::mt19937                    rng(3);
-    std::poisson_distribution<int>  low(1.0);
-    std::poisson_distribution<int>  high(8.0);
+    std::mt19937                   rng(3);
+    std::poisson_distribution<int> low(1.0);
+    std::poisson_distribution<int> high(8.0);
     for (int i = 0; i < 400; ++i)
     {
         float const x = static_cast<float>(i % 2);
         batch.features[0].push_back(x + 0.001F * static_cast<float>(i));
-        batch.labels.push_back(
-            static_cast<float>(x < 0.5F ? low(rng) : high(rng)));
+        batch.labels.push_back(static_cast<float>(x < 0.5F ? low(rng) : high(rng)));
     }
     BinMappers const mappers = BinMappers::fit(batch, {});
     Dataset const    train   = Dataset::bin(batch, mappers, {});

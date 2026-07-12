@@ -264,8 +264,8 @@ float clamped_exp(float raw)
 }
 } // namespace
 
-void PoissonObjective::compute(floats_view scores, floats_view targets,
-                               floats_out grad, floats_out hess)
+void PoissonObjective::compute(floats_view scores, floats_view targets, floats_out grad,
+                               floats_out hess)
 {
     assert(scores.size() == targets.size());
     parallel::for_each_index(scores.size(),
