@@ -32,11 +32,33 @@ bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library a
 - **Compile-time dispatch where it counts.** Components are C++ concepts; the runtime TOML config is resolved to a monomorphized `Booster<Objective, Grower, Splitter, Sampler>` exactly once at construction. Everything inside the training loop is statically dispatched — no virtual calls in the hot path.
 - **Concept-checked components.** Contract violations are caught at compile time, not runtime. Adding an objective, grower, split finder, or sampler is two edits and the dispatch table, CLI listing, and parametric tests expand automatically.
 - **A guide, not just docs.** [docs/guide/](docs/guide/) explains how gradient boosting works chapter by chapter — concept, math, then the ~50 real lines that implement it here, then an experiment. Written against this codebase because it's small enough to actually read.
-- **Reference-library parity.** RMSE within tolerance of xgboost / lightgbm on the California Housing and Year Prediction MSD regression benchmarks, driven by a Python sidecar that runs all three reference libraries on the same config.
+- **Reference-library performance, measured.** Same-machine sweeps against xgboost, lightgbm, and catboost at matched settings: the CUDA grower is the fastest full pipeline up to ~4M rows and trades the lead with xgboost-GPU at 16M within ±10% (host-dependent) at a third of the host memory; CPU growers beat lightgbm at 16M rows and on wide data. Numbers and caveats in [Performance](#performance); raw runs in `benchmarks/results/`.
 - **Three growers.** `depthwise` (level-wise, XGBoost-style), `leafwise` (best-first with a `max_leaves` budget, LightGBM-style), and `oblivious` (symmetric, CatBoost-style) — selectable per run from config.
 - **Deterministic parallelism.** OpenMP across features and rows with ordered merges only: models and predictions are bit-identical across runs at a fixed thread count (`[parallel] n_threads`, 0 = capped auto), and bit-identical to serial at any count outside the u8 histogram fill (decision 49).
 - **CLI-first, config-driven.** CatBoost-style subcommands, a strict TOML config, and inline `--set key=value` overrides; Python bindings (`make python`) share the exact same seams.
 - **One-command build, no system dependencies.** CMake + FetchContent vendors every dependency; a clean checkout builds with a single command.
+
+## Performance
+
+From the 2026-07 re-baseline (`benchmarks/results/rebaseline-2026-07.jsonl`): synthetic regression, `fit()` timed end-to-end **including each library's own binning/ingest**, 16-thread dual-EPYC hosts with an L40S, all variants on the same pod per cell. Test-set r² in parentheses.
+
+Scaling rows (100 features, 255 bins, 100 trees, depth 8):
+
+| rows | bonsai cuda | xgb cuda | catboost gpu | lgbm cpu | bonsai cpu (obl.) |
+|---|--:|--:|--:|--:|--:|
+| 1M | **1.3s** (.876) | 4.3s (.876) | 2.4s (.876) | 5.6s (.877) | 8.0s (.862) |
+| 4M | **5.3s** (.878) | 7.7s (.879) | 5.3s (.877) | 22.3s (.879) | 27.4s (.864) |
+| 16M | 24.3s (.879) | 21.7s (.880) | **18.9s** (.877) | 113.8s (.879) | 107.8s (.864) |
+
+Scaling features (1M rows):
+
+| cols | bonsai cuda | xgb cuda | catboost gpu | lgbm cpu |
+|---|--:|--:|--:|--:|
+| 256 | **3.3s** | 3.6s | 3.7s | 12.7s |
+| 1024 | 14.7s | 12.6s | **9.8s** | 73.5s |
+| 4096 | 54.7s | 51.0s | **37.0s** | 342.1s |
+
+Honest caveats, because benchmarks without them are advertising: identical-model GPUs across the rental fleet measure up to ~25% apart, so only same-pod columns compare (at 16M the bonsai/xgboost order *flips* between host classes — 26.9 vs 28.9 on one, 24.3 vs 21.7 on another); catboost-GPU's speed comes with a visible r² cost on these cells (its 254-bin cap and symmetric trees), and bonsai's own `oblivious` grower pays the same quality trade for its speed; bonsai's peak host RSS at 16M is 7.3GB vs xgboost's 22.1GB, and its predict is ~2× faster. The path from 3× behind to this table is [guide chapter 11](docs/guide/11-performance-engineering.md); the cut-quality residual vs xgboost (+0.001 r²) is decision 55.
 
 ## Quick start
 
