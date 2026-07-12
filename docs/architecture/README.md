@@ -22,7 +22,7 @@ Per-component design docs. Numbered roughly in build order. Source of truth for 
 | 14 | [`14-engine-narrative.md`](14-engine-narrative.md) — one engine narrative: the level transaction | executed (decision 53) |
 | 15 | [`15-device-binning.md`](15-device-binning.md) — device binning: ingest joins the transaction narrative | implemented (decision 54) |
 | 16 | [`16-compute-dag.md`](16-compute-dag.md) — the compute DAG: placement as a first-class design object | framing (decision 54) |
-| 17 | [`17-categorical-splits.md`](17-categorical-splits.md) — native categoricals: Fisher set splits + ordered-TS sketch | design (proposed) |
+| 17 | [`17-categorical-splits.md`](17-categorical-splits.md) — native categoricals: Fisher set splits + ordered-TS sketch | declined by measurement (decision 58) |
 
 ## Cross-cutting concerns
 
