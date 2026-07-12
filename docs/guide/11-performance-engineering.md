@@ -30,7 +30,7 @@ Every row is a real decision from [decisions.md](../decisions.md); the deltas ar
 
 | move | change on the graph | priced | measured |
 |---|---|---|---|
-| 49 row-wise fill | host node cost (cache behavior, not placement) | — | populate 1.6–1.7× |
+| 49 row-wise fill | host node cost (cache behavior, not placement) | — | fit 1.6–1.7× (populate 2.1×) |
 | 53 §2 rows cache | delete a 64MB/tree H2D edge | ~0.4s | root staging 0.42→0.04s |
 | 53 §3 epilogue | 16M-row host loop → device map + bulk D2H | several s | finalize 9.4→3.9s |
 | **52 device gradients** | delete the 12.8GB/fit gh H2D edge | **~0.9s → NO-GO** | experiment confirmed ~1.6s; killed |
@@ -63,7 +63,7 @@ uv run scripts/dag_model.py --floor
 
 # Reproduce a ledger line yourself (any machine with a CUDA device):
 BONSAI_GROW_PROFILE=1 BONSAI_CUDA_PROFILE=1 BONSAI_FIT_PROFILE=1 BONSAI_INGEST_PROFILE=1 \
-  bonsai bench --config configs/california_housing.toml --hp dispatch.grower_name=cuda_depthwise
+  bonsai bench --config configs/california_housing.toml --set dispatch.grower_name=cuda_depthwise
 ```
 
 Then check conservation: does `fit-profile`'s total explain the wall clock? Does `grow` equal the sum of `grow-profile`'s buckets? If not, you have found the next chapter of this story.
