@@ -35,7 +35,9 @@ jobs:
       - run: make python
       - id: hash
         run: |
-          h=$(PYTHONPATH=build/python .venv/bin/python scripts/model_hash.py | awk '/sha256:/{print $2}')
+          out=$(PYTHONPATH=build/python .venv/bin/python scripts/model_hash.py)
+          echo "$out"
+          h=$(echo "$out" | awk '/sha256:/{print $2}')
           echo "hash=$h" >> "$GITHUB_OUTPUT"
           echo "x86-64 linux hash: $h"
 
@@ -59,7 +61,9 @@ jobs:
       - run: make python
       - id: hash
         run: |
-          h=$(PYTHONPATH=build/python .venv/bin/python scripts/model_hash.py | awk '/sha256:/{print $2}')
+          out=$(PYTHONPATH=build/python .venv/bin/python scripts/model_hash.py)
+          echo "$out"
+          h=$(echo "$out" | awk '/sha256:/{print $2}')
           echo "hash=$h" >> "$GITHUB_OUTPUT"
           echo "arm64 macos hash: $h"
 
