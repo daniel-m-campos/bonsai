@@ -26,12 +26,11 @@ import json
 import pathlib
 import subprocess
 import time
-
-import reference_params
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+import reference_params
 import tomllib
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -260,7 +259,7 @@ def import_native_bonsai():
     import sys
     sys.path.insert(0, str(REPO_ROOT / "build" / "python"))
     try:
-        import bonsai as native  # noqa: PLC0415
+        import bonsai as native
         return native
     except ImportError:
         return None
@@ -460,15 +459,18 @@ def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
 def write_markdown(path: pathlib.Path, dataset: str, results: dict[str, Result]) -> None:
     width = max(len("library"), max(len(n) for n in results))
     rows = [
-        f"| {'library':<{width}} | rmse   | mae    | auc    | acc    | fit_seconds | predict_seconds |",
-        f"|{'-' * (width + 2)}|--------|--------|--------|--------|-------------|-----------------|",
+        f"| {'library':<{width}} | rmse   | mae    | auc    | acc    "
+        "| fit_seconds | predict_seconds |",
+        f"|{'-' * (width + 2)}|--------|--------|--------"
+        "|--------|-------------|-----------------|",
     ]
     import math
     for name, r in results.items():
         auc_s = "  -   " if math.isnan(r.auc) else f"{r.auc:6.4f}"
         acc_s = "  -   " if math.isnan(r.acc) else f"{r.acc:6.4f}"
         rows.append(
-            f"| {name:<{width}} | {r.rmse:6.4f} | {r.mae:6.4f} | {auc_s} | {acc_s} | {r.fit_seconds:11.3f} | {r.predict_seconds:15.3f} |"
+            f"| {name:<{width}} | {r.rmse:6.4f} | {r.mae:6.4f} | {auc_s} "
+            f"| {acc_s} | {r.fit_seconds:11.3f} | {r.predict_seconds:15.3f} |"
         )
     path.write_text(f"# {dataset} comparison\n\n" + "\n".join(rows) + "\n")
 

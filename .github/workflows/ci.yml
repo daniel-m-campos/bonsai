@@ -96,6 +96,8 @@ jobs:
           key: toy-data-${{ hashFiles('scripts/fetch_toy.py', 'scripts/fetch_amazon.py') }}
       # lightgbm: test_bindings.py cross-checks feature importances against it.
       - run: uv venv .venv && uv pip install --python .venv/bin/python nanobind numpy lightgbm
+      # ruff first: a lint finding shouldn't cost a build to discover.
+      - run: make lint-python
       # test_bindings.py checks module-vs-CLI parity, so it needs the binary too.
       - run: make build
       - run: make python-test

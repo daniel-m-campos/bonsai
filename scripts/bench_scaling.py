@@ -38,7 +38,6 @@ import sys
 import time
 
 import numpy as np
-
 import reference_params as rp
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -455,7 +454,8 @@ def main() -> int:
                 skip = ("unsupported", "bonsai bin_id_t is uint16 (max_bin <= 65535)")
             elif est_host_gb(cell["rows"], cell["cols"], cell["n_test"], lib) > \
                     0.8 * host["ram_gb"]:
-                skip = ("skipped", f"est {est_host_gb(cell['rows'], cell['cols'], cell['n_test'], lib):.1f}"
+                est = est_host_gb(cell["rows"], cell["cols"], cell["n_test"], lib)
+                skip = ("skipped", f"est {est:.1f}"
                                    f"GB > 0.8x{host['ram_gb']}GB RAM")
             elif cell["axis"] == "threads" and threads > (host["n_vcpu"] or 1):
                 skip = ("skipped", f"threads {threads} > {host['n_vcpu']} vcpus")

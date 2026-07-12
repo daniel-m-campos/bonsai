@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.pyplot as plt
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 
@@ -162,7 +162,6 @@ def main() -> int:
         if not exp.empty:
             lines += ["### Fitted exponents (fit_s ~ axis^a)", "",
                       md_table(exp), ""]
-        base = good[(good.host_name == host) & (good.cell_axis == "base")]
         base_raw = ok(raw)[(ok(raw).host_name == host)
                            & (ok(raw).cell_axis == "base")]
         if not base_raw.empty:

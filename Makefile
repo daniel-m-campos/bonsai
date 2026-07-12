@@ -77,6 +77,12 @@ format:
 format-check:
 	@$(LLVM_BIN)/clang-format --dry-run --Werror $(SOURCES)
 
+# Ruff, pinned the way LLVM is: linter drift breaks CI, not the code.
+RUFF_VERSION := 0.15.21
+
+lint-python:
+	@uvx ruff@$(RUFF_VERSION) check python scripts
+
 # run-clang-tidy exits non-zero when findings exist; a non-zero exit with
 # no findings means the tool itself failed and must not pass silently.
 lint: build/build.ninja
@@ -164,6 +170,7 @@ help:
 	@echo "  make format             clang-format src/ + include/ + tests/ + benchmarks/ in place."
 	@echo "  make format-check       clang-format --dry-run --Werror (CI gate)."
 	@echo "  make lint               clang-tidy on src/ (header-filtered to bonsai)."
+	@echo "  make lint-python        ruff on python/ + scripts/ (pinned via uvx)."
 	@echo "  make skills             Install project-local Claude Code skills (currently: caveman)."
 	@echo "  make skills-clean       Remove installed project-local skills."
 
@@ -178,4 +185,4 @@ $(SKILLS_DIR)/caveman/SKILL.md:
 skills-clean:
 	rm -rf $(SKILLS_DIR)
 
-.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint all run test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu bench-scaling python python-cuda python-test skills skills-clean help
+.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint lint-python all run test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu bench-scaling python python-cuda python-test skills skills-clean help

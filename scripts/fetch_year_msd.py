@@ -47,7 +47,7 @@ def main() -> int:
         return 0
 
     print(f"downloading {URL} (~200 MB compressed, ~440 MB uncompressed) ...", flush=True)
-    with urllib.request.urlopen(URL) as resp:  # noqa: S310
+    with urllib.request.urlopen(URL) as resp:
         zip_bytes = resp.read()
 
     print(f"extracting {ARCHIVE_MEMBER} ...", flush=True)
