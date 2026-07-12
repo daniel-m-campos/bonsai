@@ -170,14 +170,17 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
     auto prefix = std::mdspan<HistCell, std::dextents<size_t, 2>>(prefix_storage.data(),
                                                                   n_parents, n_bins);
 
+    static thread_local std::vector<double> parent_score;
+    parent_score.resize(n_parents);
     double sum_parent_score = 0.0;
     for (size_t p = 0; p < n_parents; ++p)
     {
         auto const &hist    = frontier[p].hists[fid];
         auto const &missing = hist.missing();
         hist.fill_prefix(std::span(&prefix[p, 0], n_bins));
-        sum_parent_score += score(node_totals[p].sum_grad, node_totals[p].sum_hess,
-                                  config.lambda_l1, config.lambda_l2);
+        parent_score[p] = score(node_totals[p].sum_grad, node_totals[p].sum_hess,
+                                config.lambda_l1, config.lambda_l2);
+        sum_parent_score += parent_score[p];
         real_grad[p] = node_totals[p].sum_grad - missing.sum_grad;
         real_hess[p] = node_totals[p].sum_hess - missing.sum_hess;
     }
@@ -187,7 +190,6 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
         for (bool const default_left : {true, false})
         {
             double sum_children_score = 0.0;
-            bool   feasible           = true;
             for (size_t p = 0; p < n_parents; ++p)
             {
                 auto const     &hist = frontier[p].hists[fid];
@@ -195,16 +197,14 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
                 auto const      c =
                     score_candidate(lp.sum_grad, lp.sum_hess, hist.missing(),
                                     real_grad[p], real_hess[p], default_left, config);
-                if (!c.feasible)
-                {
-                    feasible = false;
-                    break;
-                }
-                sum_children_score += c.children_score;
-            }
-            if (!feasible)
-            {
-                continue;
+                // A node whose children would fall under min_child_hess no
+                // longer vetoes the whole candidate (issue #60: at depth >= 5
+                // some frontier node is always near-empty, so every good cut
+                // was rejected and oblivious trailed catboost by 3-26%). It
+                // contributes its parent score instead — zero gain — and the
+                // broadcast split still applies to it; empty children are
+                // first-class (zero cover, SHAP-safe).
+                sum_children_score += c.feasible ? c.children_score : parent_score[p];
             }
             update_best(best, sum_children_score - sum_parent_score, fid,
                         static_cast<bin_id_t>(b), default_left, config);
