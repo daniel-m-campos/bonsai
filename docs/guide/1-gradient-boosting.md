@@ -89,6 +89,7 @@ logloss. Raw scores stay in link space throughout training; the sigmoid
 | `mae` | $\mathrm{sign}(F - y)$ | $1$ | median | constant hessian — see below |
 | `huber` | $\mathrm{clamp}(F - y, \pm\delta)$ | $1$ | median | `[objective] huber_delta` |
 | `quantile` | $1-\alpha$ if $F > y$, else $-\alpha$ | $1$ | $\alpha$-quantile | `[objective] quantile_alpha` |
+| `poisson` | $e^F - y$ | $e^F$ | $\log(\bar{y})$ | log link; labels must be ≥ 0; raw scores clamp so $e^F$ can't overflow |
 
 ### Constant-hessian objectives and leaf renewal
 

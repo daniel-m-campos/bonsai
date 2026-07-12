@@ -250,6 +250,63 @@ float QuantileObjective::renew_leaf(std::span<float> residuals) const
     return quantile_in_place(residuals, alpha_);
 }
 
+// Poisson NLL with a log link: L(F) = exp(F) - y*F (up to a y-only
+// constant), so grad = exp(F) - y and hess = exp(F). Raw scores clamp to
+// +-k_max_log before exp so a runaway leaf can't overflow to inf and poison
+// every later gradient — the guard role xgboost's max_delta_step plays.
+namespace
+{
+constexpr float k_max_log = 30.0F; // exp(30) ~ 1e13: far past any sane rate
+
+float clamped_exp(float raw)
+{
+    return std::exp(std::clamp(raw, -k_max_log, k_max_log));
+}
+} // namespace
+
+void PoissonObjective::compute(floats_view scores, floats_view targets,
+                               floats_out grad, floats_out hess)
+{
+    assert(scores.size() == targets.size());
+    parallel::for_each_index(scores.size(),
+                             [&](size_t i)
+                             {
+                                 float const rate = clamped_exp(scores[i]);
+                                 grad[i]          = rate - targets[i];
+                                 hess[i]          = rate;
+                             });
+}
+
+float PoissonObjective::eval(floats_view scores, floats_view targets)
+{
+    assert(scores.size() == targets.size());
+    double total = 0.0;
+    for (size_t i = 0; i < scores.size(); ++i)
+    {
+        float const f = std::clamp(scores[i], -k_max_log, k_max_log);
+        total += static_cast<double>(clamped_exp(f)) -
+                 (static_cast<double>(targets[i]) * static_cast<double>(f));
+    }
+    return static_cast<float>(total / static_cast<double>(scores.size()));
+}
+
+float PoissonObjective::init_score(floats_view targets)
+{
+    double sum = 0.0;
+    for (float const y : targets)
+    {
+        if (y < 0.0F || std::isnan(y))
+        {
+            throw std::invalid_argument(
+                "poisson objective requires non-negative labels");
+        }
+        sum += y;
+    }
+    double const mean = sum / static_cast<double>(std::max<size_t>(targets.size(), 1));
+    // log link; the epsilon keeps all-zero labels finite (log-rate floor).
+    return static_cast<float>(std::log(std::max(mean, 1e-9)));
+}
+
 // SoftmaxObjective: registry-thunk stubs (see the header note). The real
 // math lives in MulticlassBooster.
 void SoftmaxObjective::compute(floats_view /*preds*/, floats_view /*targets*/,

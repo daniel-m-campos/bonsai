@@ -52,6 +52,11 @@ template <> struct link_inverse_of<SoftmaxObjective>
     static void apply(floats_out /*scores*/) {}
 };
 
+template <> struct link_inverse_of<PoissonObjective>
+{
+    static void apply(floats_out scores); // exp: raw log-rates -> rates
+};
+
 // Task this objective serves. Determines which metrics are compatible.
 template <> struct task_of<MSEObjective>
 {
@@ -76,6 +81,10 @@ template <> struct task_of<QuantileObjective>
 template <> struct task_of<SoftmaxObjective>
 {
     static constexpr TaskKind value = TaskKind::multiclass_classification;
+};
+template <> struct task_of<PoissonObjective>
+{
+    static constexpr TaskKind value = TaskKind::regression;
 };
 
 // Default metric names to report when the user does not set `metrics.fit` /
@@ -107,6 +116,10 @@ template <> struct default_metrics_of<HuberObjective>
     static std::span<std::string_view const> value();
 };
 template <> struct default_metrics_of<QuantileObjective>
+{
+    static std::span<std::string_view const> value();
+};
+template <> struct default_metrics_of<PoissonObjective>
 {
     static std::span<std::string_view const> value();
 };
