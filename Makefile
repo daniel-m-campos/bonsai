@@ -5,6 +5,7 @@ SOURCES      := $(shell find src include tests benchmarks -type f \( -name '*.cp
 # FFI patterns trip cppcoreguidelines checks that don't apply to boundary code.
 LINT_SOURCES := $(shell find src -type f -name '*.cpp' -not -path 'src/python/*' 2>/dev/null)
 TOY_SENTINEL := tests/data/.toy-fetched
+AMAZON_SENTINEL := tests/data/.amazon-fetched
 
 # Toolchain root: homebrew LLVM on macOS, apt.llvm.org layout on Linux.
 # clang-tidy needs the macOS SDK sysroot spelled out; on Linux the driver
@@ -108,7 +109,7 @@ python: build/build.ninja
 	@cmake --build build --target _bonsai -j
 	@echo "module at build/python/bonsai — use PYTHONPATH=build/python"
 
-python-test: python $(TOY_SENTINEL)
+python-test: python $(TOY_SENTINEL) $(AMAZON_SENTINEL)
 	@PYTHONPATH=build/python $(PYTHON) python/tests/test_bindings.py
 	@PYTHONPATH=build/python $(PYTHON) python/tests/test_encoding.py
 
@@ -137,6 +138,11 @@ bench-scaling:
 
 $(TOY_SENTINEL):
 	@uv run scripts/fetch_toy.py
+	@touch $@
+
+# test_encoding.py's amazon quality pin needs the stage-1 CSVs (gitignored).
+$(AMAZON_SENTINEL):
+	@uv run scripts/fetch_amazon.py
 	@touch $@
 
 help:
