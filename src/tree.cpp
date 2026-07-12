@@ -77,25 +77,14 @@ DenseTree dense_equivalent(ObliviousTree const &tree)
     DenseTree::Nodes   nodes;
     std::vector<float> covers;
     std::vector<float> node_gains;
-    // Total training cover of the subtree rooted at (lvl, path): the sum of
-    // its leaf slots' covers.
-    auto subtree_cover = [&](size_t lvl, size_t path)
-    {
-        size_t const shift = depth - lvl;
-        float        total = 0.0F;
-        for (size_t j = path << shift; j < (path + 1) << shift; ++j)
-        {
-            total += lc[j];
-        }
-        return total;
-    };
     // Depth-first expansion; leaf slot = the walk's path bits (level 0 is
     // the most significant, left = 0), matching ObliviousTree::leaf_for.
-    // Zero-cover subtrees collapse into their sibling: no training row ever
-    // reached them (the broadcast split created the slot, not the data), and
-    // TreeSHAP's cover fractions would be 0/0 inside them. Training-row
-    // predictions are unaffected, which is what the efficiency property
-    // checks against.
+    // Zero-cover slots (the broadcast split created them, not the data) are
+    // emitted VERBATIM: routing stays identical to the oblivious walk for
+    // every x, so sum(phi) == predict holds exactly everywhere, and
+    // tree_shap skips zero-cover branches so their absent background mass
+    // contributes nothing (the same guard device-grown empty leaves rely
+    // on).
     auto build = [&](auto &&self, size_t lvl,
                      size_t path) -> std::pair<node_id_t, float>
     {
@@ -105,16 +94,6 @@ DenseTree dense_equivalent(ObliviousTree const &tree)
             covers.push_back(lc[path]);
             node_gains.push_back(0.0F);
             return {static_cast<node_id_t>(nodes.size() - 1), lc[path]};
-        }
-        bool const left_dead  = subtree_cover(lvl + 1, path << 1) == 0.0F;
-        bool const right_dead = subtree_cover(lvl + 1, (path << 1) | 1U) == 0.0F;
-        if (left_dead)
-        {
-            return self(self, lvl + 1, (path << 1) | 1U);
-        }
-        if (right_dead)
-        {
-            return self(self, lvl + 1, path << 1);
         }
         auto const id = static_cast<node_id_t>(nodes.size());
         nodes.push_back(DenseTree::leaf(0.0F)); // placeholder, patched below
