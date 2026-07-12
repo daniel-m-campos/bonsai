@@ -114,6 +114,14 @@ struct QuantileObjective
 // softmax math internally. The members below only satisfy the registry
 // thunks (eval table, link table); the 1-D eval cannot express K columns
 // and throws if reached.
+// A dispatch TAG wearing the Objective interface (design review 2026-07-12,
+// L finding — documented rather than re-typed): the K-output shape can't
+// satisfy the 1-D concept, so BoosterFor routes {softmax, G, Sa} to
+// MulticlassBooster and these methods are never called on the training
+// path. They must still exist and throw because the generic per-objective
+// trait tables (eval_table etc.) instantiate them for every typelist
+// member; a separate tag type would need the same stubs under a different
+// name.
 struct SoftmaxObjective
 {
     SoftmaxObjective() = default;

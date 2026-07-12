@@ -45,6 +45,16 @@ concept TreeGrower = requires(T g, Dataset const &ds, floats_view grad,
 // call so stateful backends can stage per-tree data (the CUDA engine
 // uploads gradients there); populate fills the split input's hists for the
 // selected features and leaves zero-binned placeholders the finders skip.
+//
+// The concept can only check the two signatures; the CONTRACT it stands
+// for is wider and enforced by the parity suite (design review 2026-07-12):
+// populate must accumulate exactly the node's rows' (grad, hess) into the
+// bins the Dataset's mappers define, cell sums summed in an order that is
+// a pure function of configuration (decision 49's determinism contract),
+// missing values in the last bin, and hists[f] sized n_bins(f) for every
+// selected f. A type satisfying the syntax while bending any of these
+// trains silently wrong models — see docs/guide/2 for what each clause is
+// load-bearing for.
 template <typename T>
 concept HistogramEngine =
     requires(T b, Dataset const &ds, floats_view grad, floats_view hess,
