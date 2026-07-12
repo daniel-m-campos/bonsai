@@ -46,7 +46,7 @@ Scaling rows (100 features, 255 bins, 100 trees, depth 8):
 
 | rows | bonsai cuda | xgb cuda | catboost gpu | lgbm cpu | bonsai cpu (obl.) |
 |---|--:|--:|--:|--:|--:|
-| 1M | **1.3s** (.876) | 4.3s (.876) | 2.4s (.876) | 5.6s (.877) | 8.0s (.862) |
+| 1M | **1.3s** (.876) | 1.7–4.3s (.876) | 2.4s (.876) | 5.6s (.877) | 8.0s (.862) |
 | 4M | **5.3s** (.878) | 7.7s (.879) | 5.3s (.877) | 22.3s (.879) | 27.4s (.864) |
 | 16M | 24.3s (.879) | 21.7s (.880) | **18.9s** (.877) | 113.8s (.879) | 107.8s (.864) |
 
@@ -58,7 +58,7 @@ Scaling features (1M rows):
 | 1024 | 14.7s | 12.6s | **9.8s** | 73.5s |
 | 4096 | 54.7s | 51.0s | **37.0s** | 342.1s |
 
-Honest caveats, because benchmarks without them are advertising: identical-model GPUs across the rental fleet measure up to ~25% apart, so only same-pod columns compare (at 16M the bonsai/xgboost order *flips* between host classes — 26.9 vs 28.9 on one, 24.3 vs 21.7 on another); catboost-GPU's speed comes with a visible r² cost on these cells (its 254-bin cap and symmetric trees), and bonsai's own `oblivious` grower pays the same quality trade for its speed; bonsai's peak host RSS at 16M is 7.3GB vs xgboost's 22.1GB, and its predict is ~2× faster. The path from 3× behind to this table is [guide chapter 11](docs/guide/11-performance-engineering.md); the cut-quality residual vs xgboost (+0.001 r²) is decision 55.
+Honest caveats, because benchmarks without them are advertising: identical-model GPUs across the rental fleet measure up to ~25% apart, so only same-pod columns compare (at 16M the bonsai/xgboost order *flips* between host classes — 26.9 vs 28.9 on one, 24.3 vs 21.7 on another); catboost-GPU's speed comes with a visible r² cost on these cells (its 254-bin cap and symmetric trees), and bonsai's own `oblivious` grower pays the same quality trade for its speed; bonsai's peak host RSS at 16M is 7.3GB vs xgboost's 22.2GB, and its predict is ~3× faster; the xgboost 1M cell is quoted as a range because its repeats disagreed across pods more than any other cell in the file. The path from 3× behind to this table is [guide chapter 11](docs/guide/11-performance-engineering.md); the cut-quality residual vs xgboost (+0.001 r²) is decision 55.
 
 ## Quick start
 
@@ -153,7 +153,7 @@ make test-cuda       # ctest against the CUDA build
 ./build-cuda/src/bonsai fit -c config.toml --set dispatch.grower_name=cuda_depthwise ...
 ```
 
-Training is device-resident ([docs/architecture/11-gpu-resident.md](docs/architecture/11-gpu-resident.md)): histograms, rows, and split finding all live on the GPU, with only split decisions and child counts crossing the bus per level (float shared-memory accumulation merged in double — RMSE matches the CPU grower to library-comparison precision). The host grow loop remains the single algorithm narrative and the decision-maker; saved models are ordinary `DenseTree`s, identical in format to `depthwise`, and predict on any build. The kernel TU ([src/cuda/histogram_builder.cu](src/cuda/histogram_builder.cu)) is CUDA C++ compiled by the project's own clang (`-x cuda`) — same C++23, same libc++, no nvcc — so kernels use bonsai types and the shared gain math directly. Set `BONSAI_CUDA_ARCH` if `native` detection is unavailable; `BONSAI_CUDA_PROFILE=1` / `BONSAI_GROW_PROFILE=1` print per-fit breakdowns. Two growers run on the GPU: `cuda_depthwise` (fully device-resident) and `cuda_oblivious` (device level-find choosing one split per level across the whole frontier, CatBoost-style symmetric trees).
+Training is device-resident ([docs/architecture/11-gpu-resident.md](docs/architecture/11-gpu-resident.md)): histograms, rows, and split finding all live on the GPU, with only split decisions and child counts crossing the bus per level (float shared-memory accumulation merged in double — RMSE matches the CPU grower to library-comparison precision). The host grow loop remains the single algorithm narrative and the decision-maker; saved models are ordinary `DenseTree`s, identical in format to `depthwise`, and predict on any build. The kernel TU ([src/cuda/histogram_engine.cu](src/cuda/histogram_builder.cu)) is CUDA C++ compiled by the project's own clang (`-x cuda`) — same C++23, same libc++, no nvcc — so kernels use bonsai types and the shared gain math directly. Set `BONSAI_CUDA_ARCH` if `native` detection is unavailable; `BONSAI_CUDA_PROFILE=1` / `BONSAI_GROW_PROFILE=1` print per-fit breakdowns. Two growers run on the GPU: `cuda_depthwise` (fully device-resident) and `cuda_oblivious` (device level-find choosing one split per level across the whole frontier, CatBoost-style symmetric trees).
 
 Measured on an RTX 5090 against each reference library, Year Prediction MSD (464 k × 90, 200 iters, depth 8), every `fit` timing the full pipeline — CSV read + binning + train — via [scripts/bench_gpu.py](scripts/bench_gpu.py):
 

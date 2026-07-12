@@ -26,7 +26,7 @@ The entire backend is one CUDA C++ translation unit, [`src/cuda/histogram_engine
 
 Follow one fit through the transactions:
 
-- **Ingest** — [`cuda_ingest`](../../src/cuda/histogram_engine.cu) (decision 54): raw feature values stream to the device in ~64MB chunks and a kernel bins them with a `lower_bound` that reproduces the host `transform` *exactly* — same cuts, same comparisons, bit-identical bin ids. The product, an `IngestPlane`, rides on the `Dataset` as an opaque receipt; host binned columns are never materialized unless a host consumer asks. At 16M×100 this replaced 4.6s of host binning plus a 1.6GB upload with ~0.7s of transfer+kernel.
+- **Ingest** — [`cuda_ingest`](../../src/cuda/histogram_engine.cu) (decision 54): raw feature values stream to the device in ~64MB chunks and a kernel bins them with a `lower_bound` that reproduces the host `transform` *exactly* — same cuts, same comparisons, bit-identical bin ids. The product, an `IngestPlane`, rides on the `Dataset` as an opaque receipt; host binned columns are never materialized unless a host consumer asks. At 16M×100 this replaced 4.6s of host binning plus a 1.6GB upload with ~0.5–0.9s of transfer+kernel (host-dependent).
 - **`begin_tree`** — the per-tree gradient upload, interleaved into `(g,h)` pairs on device.
 - **`open_level`** (find) — level histograms live in a slot-indexed device buffer that ping-pongs between parent and child levels. The find kernel gives each (node, feature) pair one **warp**: a shuffle-based prefix scan over the cells, per-lane gain scoring, and a shuffle argmax that reduces to the best split with a fixed tie-break. Only the per-node *decisions* (feature, bin, gain, child sums — a few hundred bytes) cross back to the host.
 - **`apply_level`** (partition) — route/count/scan/scatter kernels move each split node's row segment into stable left/right children entirely on device; the host receives two integers per split (the child row counts). Stability matters: it is what keeps the device partition semantically identical to the host one.
@@ -48,7 +48,7 @@ No CUDA device on your machine? The [RunPod runbook](../ops/runpod-runbook.md) g
 # Any fit, with the device profile lines:
 BONSAI_CUDA_PROFILE=1 BONSAI_GROW_PROFILE=1 \
   bonsai fit --config configs/california_housing.toml \
-  --hp dispatch.grower_name=cuda_depthwise
+  --set dispatch.grower_name=cuda_depthwise
 ```
 
 Read the `cuda-profile` line first: `upload` vs `gpu` vs `cpu_fallback` tells you whether the device path even ran (a large `cpu_fallback` means `max_bin` pushed past the shared-memory ceiling). Then `cuda-upload-decomp` splits every transfer by transaction — this is the line every optimization in chapter 11 was priced against.
