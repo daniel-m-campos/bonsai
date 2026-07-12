@@ -1,6 +1,13 @@
 #include <algorithm>
 #include <array>
 #include <catch2/catch_approx.hpp>
+#include <random>
+#include "bonsai/booster.hpp"
+#include "bonsai/registry/objective_dispatch.hpp"
+#include "bonsai/detail/column_batch.hpp"
+#include "bonsai/dataset.hpp"
+#include "bonsai/grower.hpp"
+#include "bonsai/sampler.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
 #include <cstddef>
@@ -308,4 +315,81 @@ TEST_CASE("QuantileObjective: pinball gradients and alpha-quantile init",
                               6.0F, 7.0F, 8.0F, 9.0F, 10.0F};
     // Nearest-rank on alpha * (n-1): round(0.9 * 9) = 8 -> value 9.
     CHECK(obj.init_score(labels) == 9.0F);
+}
+
+TEST_CASE("PoissonObjective: gradients, init, and the label guard",
+          "[objective][poisson]")
+{
+    // grad = exp(F) - y, hess = exp(F) at raw log-rates F.
+    std::vector<float> const scores{0.0F, std::log(4.0F)};
+    std::vector<float> const y{1.0F, 4.0F};
+    std::vector<float>       grad(2);
+    std::vector<float>       hess(2);
+    PoissonObjective::compute(scores, y, grad, hess);
+    CHECK(grad[0] == Catch::Approx(1.0F - 1.0F)); // exp(0) - 1
+    CHECK(hess[0] == Catch::Approx(1.0F));
+    CHECK(grad[1] == Catch::Approx(4.0F - 4.0F));
+    CHECK(hess[1] == Catch::Approx(4.0F));
+
+    // init = log(mean(y)); a perfectly-initialized model has zero mean grad.
+    float const init = PoissonObjective::init_score(y);
+    CHECK(init == Catch::Approx(std::log(2.5F)));
+
+    // Negative labels are a modeling error, loudly.
+    std::vector<float> const bad{1.0F, -0.5F};
+    CHECK_THROWS_AS(PoissonObjective::init_score(bad), std::invalid_argument);
+
+    // The clamp keeps a runaway raw score finite instead of inf-poisoning.
+    std::vector<float> const wild{100.0F};
+    std::vector<float> const y1{1.0F};
+    std::vector<float>       g1(1);
+    std::vector<float>       h1(1);
+    PoissonObjective::compute(wild, y1, g1, h1);
+    CHECK(std::isfinite(g1[0]));
+    CHECK(std::isfinite(h1[0]));
+}
+
+TEST_CASE("Poisson end to end: recovers rates through the log link",
+          "[objective][poisson][booster]")
+{
+    // Two regimes: rate ~1 below the split, rate ~8 above. After training,
+    // exp(raw predictions) should sit near the regime means.
+    detail::ColumnBatch batch;
+    batch.features.resize(1);
+    batch.feature_names = {"x"};
+    std::mt19937                    rng(3);
+    std::poisson_distribution<int>  low(1.0);
+    std::poisson_distribution<int>  high(8.0);
+    for (int i = 0; i < 400; ++i)
+    {
+        float const x = static_cast<float>(i % 2);
+        batch.features[0].push_back(x + 0.001F * static_cast<float>(i));
+        batch.labels.push_back(
+            static_cast<float>(x < 0.5F ? low(rng) : high(rng)));
+    }
+    BinMappers const mappers = BinMappers::fit(batch, {});
+    Dataset const    train   = Dataset::bin(batch, mappers, {});
+
+    Config cfg;
+    cfg.booster_config.n_iters       = 60;
+    cfg.booster_config.learning_rate = 0.2F;
+    cfg.tree_config.max_depth        = 3;
+    Booster<PoissonObjective, DepthwiseGrower<>, AllRowsSampler> b{cfg};
+    for (int i = 0; i < 60; ++i)
+    {
+        b.update_one_iter(train);
+    }
+
+    std::vector<float> raw(batch.features[0]);
+    features_view      X{raw.data(), raw.size(), 1};
+    std::vector<float> pred(raw.size());
+    b.predict(X, pred);
+    apply_link_inverse_by_name("poisson", pred);
+    double lo_sum = 0.0, hi_sum = 0.0;
+    for (size_t i = 0; i < pred.size(); ++i)
+    {
+        (raw[i] < 0.5F ? lo_sum : hi_sum) += pred[i];
+    }
+    CHECK(lo_sum / 200.0 == Catch::Approx(1.0).margin(0.35));
+    CHECK(hi_sum / 200.0 == Catch::Approx(8.0).margin(1.5));
 }

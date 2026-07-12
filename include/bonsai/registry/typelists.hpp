@@ -14,7 +14,7 @@ namespace bonsai
 {
 
 using Objectives = TypeList<MSEObjective, LogLossObjective, MAEObjective,
-                            HuberObjective, QuantileObjective, SoftmaxObjective>;
+                            HuberObjective, QuantileObjective, SoftmaxObjective, PoissonObjective>;
 using Growers =
     TypeList<DepthwiseGrower<CpuHistogramEngine>, ObliviousGrower<CpuHistogramEngine>,
              LeafwiseGrower<CpuHistogramEngine>, CudaDepthwiseGrower,

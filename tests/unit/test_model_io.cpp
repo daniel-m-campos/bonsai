@@ -133,6 +133,17 @@ template <> detail::ColumnBatch batch_for<QuantileObjective>()
     return batch_for<MSEObjective>();
 }
 
+template <> detail::ColumnBatch batch_for<PoissonObjective>()
+{
+    // Non-negative counts (the objective rejects negative labels).
+    return detail::ColumnBatch{
+        .features      = {{0.0F, 0.1F, 0.9F, 1.0F}},
+        .labels        = {0.0F, 1.0F, 3.0F, 5.0F},
+        .weights       = {},
+        .feature_names = {"a"},
+    };
+}
+
 template <> detail::ColumnBatch batch_for<SoftmaxObjective>()
 {
     // 3-class labels over the same separable feature.

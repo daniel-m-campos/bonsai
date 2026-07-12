@@ -30,6 +30,14 @@ void link_inverse_of<LogLossObjective>::apply(floats_out scores)
     }
 }
 
+void link_inverse_of<PoissonObjective>::apply(floats_out scores)
+{
+    for (float &v : scores)
+    {
+        v = std::exp(v);
+    }
+}
+
 std::string_view task_kind_name(TaskKind kind)
 {
     switch (kind)
@@ -72,6 +80,12 @@ std::span<std::string_view const> default_metrics_of<HuberObjective>::value()
 std::span<std::string_view const> default_metrics_of<QuantileObjective>::value()
 {
     static constexpr auto names = std::array<std::string_view, 2>{"mae", "rmse"};
+    return names;
+}
+
+std::span<std::string_view const> default_metrics_of<PoissonObjective>::value()
+{
+    static constexpr auto names = std::array<std::string_view, 2>{"rmse", "mae"};
     return names;
 }
 

@@ -162,6 +162,7 @@ def maybe_auc(pred: np.ndarray, y: np.ndarray) -> float:
 # Per-library objective-name mappings; parameterized losses pull
 # huber_delta / quantile_alpha from HP.
 XGB_OBJECTIVE = {
+    "poisson": "count:poisson",
     "mse": "reg:squarederror",
     "logloss": "binary:logistic",
     "softmax": "multi:softmax",
@@ -170,6 +171,7 @@ XGB_OBJECTIVE = {
     "quantile": "reg:quantileerror",
 }
 LGBM_OBJECTIVE = {
+    "poisson": "poisson",
     "mse": "regression",
     "logloss": "binary",
     "softmax": "multiclass",
@@ -178,6 +180,7 @@ LGBM_OBJECTIVE = {
     "quantile": "quantile",
 }
 CATBOOST_LOSS = {
+    "poisson": "Poisson",
     "mse": "RMSE",
     "logloss": "Logloss",
     "softmax": "MultiClass",

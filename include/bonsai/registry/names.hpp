@@ -51,6 +51,11 @@ template <> struct impl_name<QuantileObjective>
     static constexpr std::string_view value = "quantile";
 };
 
+template <> struct impl_name<PoissonObjective>
+{
+    static constexpr std::string_view value = "poisson";
+};
+
 template <> struct impl_name<SoftmaxObjective>
 {
     static constexpr std::string_view value = "softmax";

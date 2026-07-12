@@ -40,6 +40,21 @@ struct LogLossObjective
     static float init_score(floats_view labels);
 };
 
+// Poisson negative log-likelihood with a log link: raw scores are
+// log-rates, grad = exp(F) - y, hess = exp(F). Labels must be >= 0
+// (init_score throws otherwise). Raw scores are clamped to +-k_max_log
+// inside compute/eval so the exp never overflows — the same guard role
+// xgboost's max_delta_step plays for count:poisson.
+struct PoissonObjective
+{
+    PoissonObjective() = default;
+    explicit PoissonObjective(Config const &) {}
+    static void  compute(floats_view scores, floats_view targets, floats_out grad,
+                         floats_out hess);
+    static float eval(floats_view scores, floats_view targets);
+    static float init_score(floats_view targets);
+};
+
 // L1 loss: grad = sign(residual), hess = 1 (constant-hessian objective, so
 // min_child_hess acts as a row count). Leaf values are gradient means, not
 // residual medians — no leaf-renewal pass yet (LightGBM/XGBoost renew;
