@@ -1,0 +1,76 @@
+# The public proof of decision 59: an arm64 Mac and an x86-64 Linux box
+# train the model_hash.py reference model and must produce byte-identical
+# files. No reference library makes — or gates — this claim.
+name: cross-arch determinism
+
+on:
+  pull_request:
+  push:
+    branches: [main, fabel]
+
+concurrency:
+  group: xarch-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CMAKE_CXX_COMPILER_LAUNCHER: ccache
+
+jobs:
+  hash-x86-linux:
+    runs-on: ubuntu-24.04
+    outputs:
+      hash: ${{ steps.hash.outputs.hash }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-llvm
+      - uses: astral-sh/setup-uv@v5
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: hash-x86-linux
+      - uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-build-${{ hashFiles('CMakeLists.txt') }}
+      - run: uv venv .venv && uv pip install --python .venv/bin/python nanobind numpy
+      - run: make python
+      - id: hash
+        run: |
+          h=$(PYTHONPATH=build/python .venv/bin/python scripts/model_hash.py | awk '/sha256:/{print $2}')
+          echo "hash=$h" >> "$GITHUB_OUTPUT"
+          echo "x86-64 linux hash: $h"
+
+  hash-arm-macos:
+    runs-on: macos-15
+    outputs:
+      hash: ${{ steps.hash.outputs.hash }}
+    steps:
+      - uses: actions/checkout@v4
+      # Mirrors the Makefile's Darwin toolchain: the llvm@21 keg + libomp.
+      - run: brew install llvm@21 libomp ninja ccache
+      - uses: astral-sh/setup-uv@v5
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: hash-arm-macos
+      - uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-build-macos-${{ hashFiles('CMakeLists.txt') }}
+      - run: uv venv .venv && uv pip install --python .venv/bin/python nanobind numpy
+      - run: make python
+      - id: hash
+        run: |
+          h=$(PYTHONPATH=build/python .venv/bin/python scripts/model_hash.py | awk '/sha256:/{print $2}')
+          echo "hash=$h" >> "$GITHUB_OUTPUT"
+          echo "arm64 macos hash: $h"
+
+  compare:
+    needs: [hash-x86-linux, hash-arm-macos]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Same bits on every architecture
+        run: |
+          x86="${{ needs.hash-x86-linux.outputs.hash }}"
+          arm="${{ needs.hash-arm-macos.outputs.hash }}"
+          echo "x86-64 linux : $x86"
+          echo "arm64  macos : $arm"
+          test -n "$x86" && test -n "$arm" && test "$x86" = "$arm"
