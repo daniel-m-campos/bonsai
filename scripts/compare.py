@@ -439,7 +439,13 @@ def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     t1 = time.perf_counter()
     # CatBoostClassifier.predict returns an (n, 1) label column; flatten or
     # the metric comparisons broadcast to (n, n) (issue #59: letter acc 1/26).
-    pred = np.asarray(model.predict(test_df[feature_cols])).reshape(-1).astype(float)
+    # Binary AUC needs probabilities, not labels — every other library's
+    # binary path feeds scores, so labels here understated catboost by ~0.1.
+    if hp.objective == "logloss":
+        pred = np.asarray(model.predict_proba(test_df[feature_cols]))[:, 1]
+    else:
+        pred = (np.asarray(model.predict(test_df[feature_cols]))
+                .reshape(-1).astype(float))
     pred_s = time.perf_counter() - t1
     y = test_df["label"].to_numpy()
     mc = hp.objective == "softmax"
