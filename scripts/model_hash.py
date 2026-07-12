@@ -45,11 +45,13 @@ def _model_sha(extra=()) -> str:
 # Attribution tiers for a cross-platform mismatch: full-sample kills the
 # mapper's sampling RNG; serial kills every parallel site; one iteration
 # kills accumulation drift. Whichever tier first diverges names the layer.
-print("t1_serial_1iter:",
+for t in (1, 2, 4, 8):
+    print(f"t{t}_threads:",
+          _model_sha([("bin_mapper.n_samples", "500000"),
+                      ("parallel.n_threads", str(t))]))
+# Same-process repeat: if this differs from t8 above, the parallel path is
+# nondeterministic (timing), not architecture-dependent.
+print("t8_repeat:",
       _model_sha([("bin_mapper.n_samples", "500000"),
-                  ("parallel.n_threads", "1"), ("booster.n_iters", "1")]))
-print("t2_serial_20iter:",
-      _model_sha([("bin_mapper.n_samples", "500000"),
-                  ("parallel.n_threads", "1")]))
-print("fullsample:", _model_sha([("bin_mapper.n_samples", "500000")]))
+                  ("parallel.n_threads", "8")]))
 print("sha256:", _model_sha())
