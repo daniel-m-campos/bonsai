@@ -7,9 +7,8 @@ import pathlib
 import subprocess
 import tempfile
 
-import numpy as np
-
 import bonsai
+import numpy as np
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 TRAIN_CSV = REPO / "tests/data/california_housing_train.csv"

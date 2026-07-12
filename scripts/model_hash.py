@@ -13,7 +13,7 @@ import tempfile
 import numpy as np
 
 sys.path.insert(0, "build/python")
-import bonsai  # noqa: E402
+import bonsai
 
 rng = np.random.default_rng(np.random.SeedSequence([42, 500_000, 100]))
 X = rng.random((500_000, 100), dtype=np.float32)

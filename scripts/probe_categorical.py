@@ -17,7 +17,7 @@ from sklearn.datasets import fetch_openml
 from sklearn.metrics import roc_auc_score
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "build/python"))
-import bonsai  # noqa: E402
+import bonsai
 
 OUT = pathlib.Path(sys.argv[1])
 HP = dict(n_iters=200, lr=0.05, depth=6, leaves=63, min_leaf=20, l2=1.0,
@@ -142,7 +142,7 @@ for name, (did, all_cat) in DATASETS.items():
         r["xgb_ordinal"] = roc_auc_score(yte, m.predict_proba(Xte_c)[:, 1])
         m = XGBClassifier(**xb, enable_categorical=True).fit(Xtr_n, ytr)
         r["xgb_native"] = roc_auc_score(yte, m.predict_proba(Xte_n)[:, 1])
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         r["xgb_native_error"] = str(e)
 
     Xtr_f = Xtr_c.astype(np.float32)

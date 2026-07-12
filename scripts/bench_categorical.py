@@ -164,7 +164,7 @@ def main() -> int:
 
     out = REPO_ROOT / "benchmarks/results/amazon_cat.md"
     width = max(len(r[0]) for r in rows)
-    lines = [f"# amazon_cat (stage-1 categorical measurement)", "",
+    lines = ["# amazon_cat (stage-1 categorical measurement)", "",
              f"| {'setup':<{width}} | auc    | fit_s |",
              f"|{'-' * (width + 2)}|--------|-------|"]
     for label, a, f in rows:
