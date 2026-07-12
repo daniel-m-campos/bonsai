@@ -42,9 +42,14 @@ def _model_sha(extra=()) -> str:
         return hashlib.sha256(open(f.name, "rb").read()).hexdigest()[:16]
 
 
-# The full-column variant skips the mapper's subsampling entirely: if it
-# matches across platforms while the default diverges, the divergence
-# lives in the sampling path (std::ranges::sample is implementation-
-# defined), not in training arithmetic.
+# Attribution tiers for a cross-platform mismatch: full-sample kills the
+# mapper's sampling RNG; serial kills every parallel site; one iteration
+# kills accumulation drift. Whichever tier first diverges names the layer.
+print("t1_serial_1iter:",
+      _model_sha([("bin_mapper.n_samples", "500000"),
+                  ("parallel.n_threads", "1"), ("booster.n_iters", "1")]))
+print("t2_serial_20iter:",
+      _model_sha([("bin_mapper.n_samples", "500000"),
+                  ("parallel.n_threads", "1")]))
 print("fullsample:", _model_sha([("bin_mapper.n_samples", "500000")]))
 print("sha256:", _model_sha())
