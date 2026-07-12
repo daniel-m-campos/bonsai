@@ -28,11 +28,14 @@ add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-ffp-contract=off>)
 
 # When building with Homebrew LLVM clang on macOS, the SDK's libc++ may
 # lag the compiler's libc++ headers (e.g. __hash_memory only in newer
-# libc++). Point the linker at LLVM's libc++ if present so symbols match.
-if(APPLE AND CMAKE_CXX_COMPILER MATCHES "/opt/homebrew/opt/llvm/")
+# libc++). Point the linker at the KEG'S libc++ so symbols match — any keg,
+# versioned or not: the old "llvm/"-only match let llvm@21 builds link
+# against the stale SDK libc++ (undefined string-hash symbols on the
+# macos-15 CI runner; masked locally by a newer SDK).
+if(APPLE AND CMAKE_CXX_COMPILER MATCHES "(/opt/homebrew/opt/llvm[^/]*)/")
     add_link_options(
-        "-L/opt/homebrew/opt/llvm/lib/c++"
-        "-Wl,-rpath,/opt/homebrew/opt/llvm/lib/c++"
+        "-L${CMAKE_MATCH_1}/lib/c++"
+        "-Wl,-rpath,${CMAKE_MATCH_1}/lib/c++"
     )
 endif()
 
