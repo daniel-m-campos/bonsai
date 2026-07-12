@@ -25,8 +25,9 @@ TEST_CASE("BinMapper: small column produces one cut per distinct value plus sent
 
     CHECK(std::ranges::is_sorted(mapper.cuts()));
     CHECK(mapper.cuts().back() == f_inf);
-    // Bin 0 is (-inf, cuts[0]] so the smallest value gets no cut of its own.
-    std::vector<float> expected = {2.0F, 3.0F, 4.0F, 5.0F, f_inf};
+    // Distinct values fit the budget, so every one gets a right-inclusive
+    // cut (issue #61) and the +inf sentinel bin stays missing-only.
+    std::vector<float> expected = {1.0F, 2.0F, 3.0F, 4.0F, 5.0F, f_inf};
     CHECK(std::ranges::equal(mapper.cuts(), expected));
     CHECK(mapper.n_bins() == mapper.cuts().size());
 }
@@ -39,7 +40,7 @@ TEST_CASE("BinMapper: subsamples cuts when n_samples < column", "[bin_mapper][fi
 
     CHECK(std::ranges::is_sorted(mapper.cuts()));
     CHECK(mapper.cuts().back() == f_inf);
-    CHECK(mapper.cuts().size() <= cfg.n_samples);
+    CHECK(mapper.cuts().size() <= cfg.n_samples + 1);
 }
 
 TEST_CASE("BinMapper: reserves a missing bin when column contains NaN",
@@ -85,7 +86,7 @@ TEST_CASE("BinMapper: subsamples deterministically on a large seeded column",
 
     CHECK(std::ranges::is_sorted(mapper.cuts()));
     CHECK(mapper.cuts().back() == f_inf);
-    CHECK(mapper.cuts().size() <= n_samples);
+    CHECK(mapper.cuts().size() <= n_samples + 1);
 
     CHECK(std::ranges::equal(mapper.cuts(), mapper_again.cuts()));
 
@@ -151,7 +152,7 @@ TEST_CASE("BinMapper: NaNs are filtered out of the subsample branch",
     CHECK(std::ranges::none_of(mapper.cuts(), [](float x) { return std::isnan(x); }));
     CHECK(std::ranges::is_sorted(mapper.cuts()));
     CHECK(mapper.cuts().back() == f_inf);
-    CHECK(mapper.cuts().size() <= n_samples);
+    CHECK(mapper.cuts().size() <= n_samples + 1);
 }
 
 TEST_CASE("BinMapper: single-value column collapses to one cut plus sentinel",
@@ -183,15 +184,16 @@ TEST_CASE("BinMapper: transform routes values to half-open right-inclusive bins"
     std::vector<float> column = {1.0F, 2.0F, 3.0F, 4.0F, 5.0F};
     BinMapperConfig    cfg{.n_samples = column.size()};
     auto               mapper = BinMapper::fit(std::span(column), cfg);
-    // cuts = [2, 3, 4, 5, +inf]; bins are (-inf,2], (2,3], (3,4], (4,5], (5,+inf]
+    // cuts = [1, 2, 3, 4, 5, +inf]: one exact bin per distinct value,
+    // (5,+inf] reserved for missing.
 
     CHECK(mapper.transform(0.0F) == 0); // below first cut
-    CHECK(mapper.transform(2.0F) == 0); // exactly first cut, right-inclusive
-    CHECK(mapper.transform(2.5F) == 1); // between cuts
-    CHECK(mapper.transform(5.0F) == 3); // exactly last finite cut
+    CHECK(mapper.transform(2.0F) == 1); // exactly a cut, right-inclusive
+    CHECK(mapper.transform(2.5F) == 2); // between cuts
+    CHECK(mapper.transform(5.0F) == 4); // exactly last finite cut
     CHECK(mapper.transform(100.0F) ==
-          4);                            // above last finite cut, lands in sentinel bin
-    CHECK(mapper.transform(f_inf) == 4); // +inf also lands in sentinel bin
+          5);                            // above last finite cut, lands in sentinel bin
+    CHECK(mapper.transform(f_inf) == 5); // +inf also lands in sentinel bin
 }
 
 TEST_CASE("BinMapper: transform routes NaN to the missing bin",
