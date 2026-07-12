@@ -21,6 +21,15 @@ y = (X[:, :20].reshape(-1, 4, 5) * (0.6 ** np.arange(4))[None, :, None]) \
     .sum(axis=(1, 2)).astype(np.float32)
 y += rng.normal(0, y.std() * 0.33, len(y)).astype(np.float32)
 
+def _sha(a: np.ndarray) -> str:
+    return hashlib.sha256(a.tobytes()).hexdigest()[:16]
+
+
+# Printed so a cross-platform hash mismatch can be attributed: if the DATA
+# digests differ, numpy built different inputs (SIMD-width-dependent
+# reduction trees); only if they match is the divergence bonsai's.
+print("data:", _sha(X), _sha(y))
+
 pairs = [("dispatch.grower_name", "depthwise"), ("booster.n_iters", "20"),
          ("booster.learning_rate", "0.1"), ("tree.max_depth", "8"),
          ("bin_mapper.max_bin", "255"), ("parallel.n_threads", "8")]
