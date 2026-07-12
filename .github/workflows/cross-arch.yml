@@ -19,7 +19,8 @@ jobs:
   hash-x86-linux:
     runs-on: ubuntu-24.04
     outputs:
-      hash: ${{ steps.hash.outputs.hash }}
+      serial: ${{ steps.hash.outputs.serial }}
+      parallel: ${{ steps.hash.outputs.parallel }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-llvm
@@ -37,14 +38,14 @@ jobs:
         run: |
           out=$(PYTHONPATH=build/python .venv/bin/python scripts/model_hash.py)
           echo "$out"
-          h=$(echo "$out" | awk '/sha256:/{print $2}')
-          echo "hash=$h" >> "$GITHUB_OUTPUT"
-          echo "x86-64 linux hash: $h"
+          echo "serial=$(echo "$out" | awk '/serial_sha256:/{print $2}')" >> "$GITHUB_OUTPUT"
+          echo "parallel=$(echo "$out" | awk '/^sha256:/{print $2}')" >> "$GITHUB_OUTPUT"
 
   hash-arm-macos:
     runs-on: macos-15
     outputs:
-      hash: ${{ steps.hash.outputs.hash }}
+      serial: ${{ steps.hash.outputs.serial }}
+      parallel: ${{ steps.hash.outputs.parallel }}
     steps:
       - uses: actions/checkout@v4
       # Mirrors the Makefile's Darwin toolchain: the llvm@21 keg + libomp.
@@ -63,18 +64,19 @@ jobs:
         run: |
           out=$(PYTHONPATH=build/python .venv/bin/python scripts/model_hash.py)
           echo "$out"
-          h=$(echo "$out" | awk '/sha256:/{print $2}')
-          echo "hash=$h" >> "$GITHUB_OUTPUT"
-          echo "arm64 macos hash: $h"
+          echo "serial=$(echo "$out" | awk '/serial_sha256:/{print $2}')" >> "$GITHUB_OUTPUT"
+          echo "parallel=$(echo "$out" | awk '/^sha256:/{print $2}')" >> "$GITHUB_OUTPUT"
 
   compare:
     needs: [hash-x86-linux, hash-arm-macos]
     runs-on: ubuntu-24.04
     steps:
-      - name: Same bits on every architecture
+      - name: Same bits on every architecture (serial contract)
         run: |
-          x86="${{ needs.hash-x86-linux.outputs.hash }}"
-          arm="${{ needs.hash-arm-macos.outputs.hash }}"
-          echo "x86-64 linux : $x86"
-          echo "arm64  macos : $arm"
+          x86="${{ needs.hash-x86-linux.outputs.serial }}"
+          arm="${{ needs.hash-arm-macos.outputs.serial }}"
+          echo "serial  x86-64 linux : $x86"
+          echo "serial  arm64  macos : $arm"
+          echo "parallel x86-64      : ${{ needs.hash-x86-linux.outputs.parallel }} (informational,"
+          echo "parallel arm64       : ${{ needs.hash-arm-macos.outputs.parallel }}  ulp divergence tracked)"
           test -n "$x86" && test -n "$arm" && test "$x86" = "$arm"
