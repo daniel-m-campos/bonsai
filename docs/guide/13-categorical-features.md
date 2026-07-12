@@ -77,6 +77,28 @@ Every library's categorical machinery, toggled on/off at matched knobs, on three
 
 Native set splits — the feature that would have grown the 1,400-line core by a third — measure **+0.029 / +0.000 / −0.018** by lightgbm's own toggle: a coin flip that costs split-scan complexity even when it loses. The encoder beats it where it wins and is a per-dataset *choice* where it doesn't. catboost's remaining amazon edge comes from per-tree permutations and crossed-category statistics, which set splits wouldn't have bought either.
 
+## Crossing categories: the last of the gap
+
+catboost's remaining amazon edge is not its split machinery — it is *crossed* categorical statistics: the response rate of the (user, resource) **pair** carries signal neither column holds alone, and a depth-6 tree burns levels rediscovering it.
+
+Crosses are also just preprocessing: a pair of codes is one joint category (packed into an int64 key), and the same ordered TS applies:
+
+```python
+enc = bonsai.OrderedTargetEncoder(columns=range(9), cross=2)  # + C(9,2) pair columns
+```
+
+Measured on the repo's amazon split, with catboost's own cross-toggle as the control:
+
+| variant | AUC |
+|---|--:|
+| bonsai, singles TS + codes | 0.8604 |
+| **bonsai, `cross=2`** | **0.8877** |
+| bonsai, + triples | 0.8859 (overfits) |
+| catboost native, full CTR crosses | 0.8897 |
+| catboost native, crosses disabled (`max_ctr_complexity=1`) | 0.8587 |
+
+Two readings: the crosses *are* catboost's whole remaining edge (its no-cross line falls below our singles), and pair-TS closes the gap to 0.002 — chance-band at this test size. Pairs grow as $\binom{k}{2}$: fine at nine columns, a decision at ninety.
+
 ## Gotchas & war stories
 
 - **Never encode with plain (greedy) target statistics.** The single-appearance pathology above is not theoretical: it is why catboost exists. The stage-1 study ([feature_gap §18](../feature_gap.md)) measured plain K-fold encoding at 0.8462 on amazon vs 0.8590 ordered — causality is the load-bearing part.

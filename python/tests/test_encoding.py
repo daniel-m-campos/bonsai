@@ -84,6 +84,57 @@ def test_transform_full_stats_and_unseen():
     assert np.isfinite(t[1, 0])
 
 
+def test_cross_pairs_shape_and_unseen():
+    rng = np.random.default_rng(9)
+    X = rng.integers(0, 12, (1500, 3)).astype(np.float32)
+    y = (rng.random(1500) < 0.4).astype(np.float64)
+    enc = bonsai.OrderedTargetEncoder(columns=[0, 2], cross=2, seed=4)
+    a = enc.fit_transform(X, y)
+    # layout: 3 features + 2 kept codes + C(2,2)=1 pair column
+    assert a.shape == (1500, 3 + 2 + 1)
+    b = bonsai.OrderedTargetEncoder(columns=[0, 2], cross=2,
+                                    seed=4).fit_transform(X, y)
+    assert np.array_equal(a, b)
+    # a pair unseen in training resolves to the prior at transform
+    t = enc.transform(np.array([[99.0, 0.0, 99.0]], dtype=np.float32))
+    assert np.isclose(t[0, -1], y.mean(), atol=1e-5)
+    # a pair seen in training gets its full-stats smoothed mean
+    i, j = int(X[0, 0]), int(X[0, 2])
+    mask = (X[:, 0] == i) & (X[:, 2] == j)
+    expect = (y[mask].sum() + 10.0 * y.mean()) / (mask.sum() + 10.0)
+    t = enc.transform(np.array([[i, 0.0, j]], dtype=np.float32))
+    assert np.isclose(t[0, -1], expect, atol=1e-6)
+
+
+def test_cross_pairs_amazon_quality():
+    # The decision-58 follow-up pin: pair-TS closes catboost's crossed-CTR
+    # edge (probe: 0.8604 singles -> 0.8877 vs catboost-native 0.8897).
+    def load(p):
+        d = np.loadtxt(p, delimiter=",", skiprows=1, dtype=np.float32)
+        return d[:, 1:], d[:, 0]
+
+    Xtr, ytr = load(REPO / "tests/data/amazon_train.csv")
+    Xte, yte = load(REPO / "tests/data/amazon_test.csv")
+
+    def auc(y, s):
+        order = np.argsort(s)
+        r = np.empty(len(s))
+        r[order] = np.arange(1, len(s) + 1)
+        pos = y > 0.5
+        n_pos, n_neg = pos.sum(), (~pos).sum()
+        return (r[pos].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg)
+
+    enc = bonsai.OrderedTargetEncoder(columns=range(Xtr.shape[1]), cross=2)
+    m = bonsai.BonsaiRegressor(
+        n_iters=200, learning_rate=0.05, objective="logloss", max_depth=6,
+        grower="depthwise", random_seed=42,
+        params={"tree.min_data_in_leaf": 20, "tree.lambda_l2": 1.0,
+                "bin_mapper.max_bin": 255})
+    m.fit(enc.fit_transform(Xtr, ytr), ytr)
+    crossed = auc(yte, m.predict(enc.transform(Xte)))
+    assert crossed > 0.88, crossed
+
+
 def test_amazon_quality_pin():
     # The measured reason this module exists (decision 58): +0.03 AUC or
     # better over ordinal codes on the amazon access data, which clears the

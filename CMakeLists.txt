@@ -231,10 +231,14 @@ if(BONSAI_PYTHON)
     # (PYTHONPATH=build/python). Wheels install via the same target.
     set_target_properties(_bonsai PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/python/bonsai)
+    # A standalone target, not a _bonsai POST_BUILD: pure .py edits must
+    # refresh the package even when the extension is up to date. Glob runs
+    # at configure time — a NEW .py file needs one reconfigure.
     file(GLOB BONSAI_PY_SOURCES ${CMAKE_SOURCE_DIR}/python/bonsai/*.py)
-    add_custom_command(TARGET _bonsai POST_BUILD
+    add_custom_target(bonsai_py_package
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${BONSAI_PY_SOURCES}
             ${CMAKE_BINARY_DIR}/python/bonsai/)
+    add_dependencies(_bonsai bonsai_py_package)
     install(TARGETS _bonsai LIBRARY DESTINATION bonsai)
 endif()
