@@ -326,20 +326,22 @@ struct Candidate
 // Skipping this desynchronizes training scores from the real model for any
 // sampler that drops rows: gradients go stale and GOSS-style samplers, which
 // re-pick rows by |grad|, diverge outright.
-inline void route_unsampled(Dataset const &ds, DenseTree::Nodes const &nodes,
-                            std::vector<bin_id_t> const &split_bins,
-                            row_index_view sampled, train_leaf_values &values,
-                            std::vector<node_id_t> &leaf_ids)
+// Applies fn to every row NOT in `sampled` (which is ascending), in
+// parallel. The complement is materialized once so the parallel loop
+// indexes it directly; no-op when nothing was left out. Shared by the
+// growers' out-of-bag routing (issue #51 — the walk bodies differ per
+// tree shape, the complement never did).
+template <typename F>
+void for_each_unsampled(size_t n_rows, row_index_view sampled, F &&fn)
 {
-    size_t const n = ds.n_rows();
-    if (sampled.size() == n)
+    if (sampled.size() == n_rows)
     {
         return;
     }
     std::vector<row_id_t> oob;
-    oob.reserve(n - sampled.size());
+    oob.reserve(n_rows - sampled.size());
     size_t j = 0;
-    for (row_id_t r = 0; r < n; ++r)
+    for (row_id_t r = 0; r < n_rows; ++r)
     {
         if (j < sampled.size() && sampled[j] == r)
         {
@@ -348,23 +350,31 @@ inline void route_unsampled(Dataset const &ds, DenseTree::Nodes const &nodes,
         }
         oob.push_back(r);
     }
-    parallel::for_each_index(
-        oob.size(),
-        [&](size_t k)
-        {
-            row_id_t const r   = oob[k];
-            node_id_t      idx = 0;
-            while (!DenseTree::is_leaf(nodes[idx]))
-            {
-                auto const &nd   = nodes[idx];
-                auto const  last = static_cast<bin_id_t>(ds.n_bins(nd.feature_id) - 1);
-                bin_id_t const b = ds.bin_at(nd.feature_id, r);
-                bool const left  = (b == last) ? nd.default_left : b <= split_bins[idx];
-                idx              = left ? nd.left : nd.right;
-            }
-            values[r]   = nodes[idx].threshold_or_value;
-            leaf_ids[r] = idx;
-        });
+    parallel::for_each_index(oob.size(), [&](size_t k) { fn(oob[k]); });
+}
+
+inline void route_unsampled(Dataset const &ds, DenseTree::Nodes const &nodes,
+                            std::vector<bin_id_t> const &split_bins,
+                            row_index_view sampled, train_leaf_values &values,
+                            std::vector<node_id_t> &leaf_ids)
+{
+    for_each_unsampled(ds.n_rows(), sampled,
+                       [&](row_id_t r)
+                       {
+                           node_id_t idx = 0;
+                           while (!DenseTree::is_leaf(nodes[idx]))
+                           {
+                               auto const &nd = nodes[idx];
+                               auto const  last =
+                                   static_cast<bin_id_t>(ds.n_bins(nd.feature_id) - 1);
+                               bin_id_t const b = ds.bin_at(nd.feature_id, r);
+                               bool const     left =
+                                   (b == last) ? nd.default_left : b <= split_bins[idx];
+                               idx = left ? nd.left : nd.right;
+                           }
+                           values[r]   = nodes[idx].threshold_or_value;
+                           leaf_ids[r] = idx;
+                       });
 }
 
 } // namespace bonsai::grower_detail
@@ -564,40 +574,22 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
 
     // Same stale-score hazard as route_unsampled: rows the sampler dropped
     // still need this tree's contribution in their train values.
-    if (row_indices.size() != ds.n_rows())
-    {
-        std::vector<row_id_t> oob;
-        oob.reserve(ds.n_rows() - row_indices.size());
-        size_t j = 0;
-        for (row_id_t r = 0; r < ds.n_rows(); ++r)
+    gd::for_each_unsampled(
+        ds.n_rows(), row_indices,
+        [&](row_id_t r)
         {
-            if (j < row_indices.size() && row_indices[j] == r)
+            size_t index = 0;
+            for (size_t lvl = 0; lvl < level_splits.size(); ++lvl)
             {
-                ++j;
-                continue;
+                auto const &s    = level_splits[lvl];
+                auto const  last = static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
+                bin_id_t const b = ds.bin_at(s.feature_id, r);
+                bool const left  = (b == last) ? s.default_left : b <= level_bins[lvl];
+                index            = (index << 1U) | (left ? 0U : 1U);
             }
-            oob.push_back(r);
-        }
-        parallel::for_each_index(
-            oob.size(),
-            [&](size_t k)
-            {
-                row_id_t const r     = oob[k];
-                size_t         index = 0;
-                for (size_t lvl = 0; lvl < level_splits.size(); ++lvl)
-                {
-                    auto const &s = level_splits[lvl];
-                    auto const  last =
-                        static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
-                    bin_id_t const b = ds.bin_at(s.feature_id, r);
-                    bool const     left =
-                        (b == last) ? s.default_left : b <= level_bins[lvl];
-                    index = (index << 1U) | (left ? 0U : 1U);
-                }
-                values[r]   = leaf_table[index];
-                leaf_ids[r] = static_cast<node_id_t>(index);
-            });
-    }
+            values[r]   = leaf_table[index];
+            leaf_ids[r] = static_cast<node_id_t>(index);
+        });
 
     return {.tree     = Tree(std::move(level_splits), std::move(leaf_table),
                              std::move(level_gains), std::move(leaf_covers)),

@@ -326,33 +326,11 @@ class Booster final : public IBooster
         detail::FitProfiler::Lap lap;
 
         // DART: drop a random subset of existing trees; gradients are
-        // computed against the model without them, and afterwards both the
-        // dropped trees and the new tree are rescaled (k/(k+1), 1/(k+1)).
+        // computed against the model without them, and after the grow both
+        // the dropped trees and the new tree are rescaled (apply_dart_round).
         std::vector<size_t> dropped;
         std::vector<float>  dropped_sum;
-        if (config_.dart_drop_rate > 0.0F && !trees_.empty())
-        {
-            std::bernoulli_distribution drop(config_.dart_drop_rate);
-            for (size_t i = 0; i < trees_.size(); ++i)
-            {
-                if (drop(rng_))
-                {
-                    dropped.push_back(i);
-                }
-            }
-            if (!dropped.empty())
-            {
-                dropped_sum.assign(train.n_rows(), 0.0F);
-                for (size_t const i : dropped)
-                {
-                    internal::accumulate_train_contribution(trees_[i], train,
-                                                            dropped_sum);
-                }
-                parallel::for_each_index(
-                    scores_.size(), [&](size_t i)
-                    { scores_[i] -= config_.learning_rate * dropped_sum[i]; });
-            }
-        }
+        drop_dart_trees(train, dropped, dropped_sum);
 
         lap(prof.dart_s);
         objective_.compute(scores_, train.labels(), grad_, hess_);
@@ -390,28 +368,7 @@ class Booster final : public IBooster
 
         if (!dropped.empty())
         {
-            // xgboost's normalize_type="tree" factors: the new tree lands
-            // with weight lr/(k+lr) — comparable to a plain shrinkage step —
-            // and each dropped tree shrinks by k/(k+lr). (The original DART
-            // paper's 1/(k+1) assumes unshrunk trees and starves the new
-            // tree by ~1/lr when combined with a learning rate.)
-            auto const  k         = static_cast<float>(dropped.size());
-            float const new_scale = 1.0F / (k + config_.learning_rate);
-            float const old_scale = k / (k + config_.learning_rate);
-            tree.scale_leaves(new_scale);
-            for (size_t const i : dropped)
-            {
-                trees_[i].scale_leaves(old_scale);
-            }
-            // scores_ currently exclude the dropped trees entirely; add back
-            // their rescaled contribution plus the scaled new tree.
-            parallel::for_each_index(scores_.size(),
-                                     [&](size_t i)
-                                     {
-                                         scores_[i] += config_.learning_rate *
-                                                       ((old_scale * dropped_sum[i]) +
-                                                        (new_scale * leaf_values[i]));
-                                     });
+            apply_dart_round(tree, dropped, dropped_sum, leaf_values);
         }
         else
         {
@@ -456,6 +413,65 @@ class Booster final : public IBooster
 
     // Group rows by leaf, hand each leaf's residuals to the objective, and
     // overwrite both the tree's leaf values and the per-row training values.
+    // DART pre-grow half: pick this round's dropped trees and remove their
+    // contribution from scores_, so gradients see the model without them.
+    void drop_dart_trees(Dataset const &train, std::vector<size_t> &dropped,
+                         std::vector<float> &dropped_sum)
+    {
+        if (config_.dart_drop_rate <= 0.0F || trees_.empty())
+        {
+            return;
+        }
+        std::bernoulli_distribution drop(config_.dart_drop_rate);
+        for (size_t i = 0; i < trees_.size(); ++i)
+        {
+            if (drop(rng_))
+            {
+                dropped.push_back(i);
+            }
+        }
+        if (dropped.empty())
+        {
+            return;
+        }
+        dropped_sum.assign(train.n_rows(), 0.0F);
+        for (size_t const i : dropped)
+        {
+            internal::accumulate_train_contribution(trees_[i], train, dropped_sum);
+        }
+        parallel::for_each_index(
+            scores_.size(),
+            [&](size_t i) { scores_[i] -= config_.learning_rate * dropped_sum[i]; });
+    }
+
+    // DART post-grow half, xgboost's normalize_type="tree" factors: the new
+    // tree lands with weight lr/(k+lr) — comparable to a plain shrinkage
+    // step — and each dropped tree shrinks by k/(k+lr). (The original DART
+    // paper's 1/(k+1) assumes unshrunk trees and starves the new tree by
+    // ~1/lr when combined with a learning rate.) scores_ currently exclude
+    // the dropped trees entirely; add back their rescaled contribution plus
+    // the scaled new tree.
+    void apply_dart_round(tree_type &tree, std::vector<size_t> const &dropped,
+                          std::vector<float> const &dropped_sum,
+                          train_leaf_values const  &leaf_values)
+    {
+        auto const  k         = static_cast<float>(dropped.size());
+        float const new_scale = 1.0F / (k + config_.learning_rate);
+        float const old_scale = k / (k + config_.learning_rate);
+        tree.scale_leaves(new_scale);
+        for (size_t const i : dropped)
+        {
+            trees_[i].scale_leaves(old_scale);
+        }
+        parallel::for_each_index(scores_.size(),
+                                 [&](size_t i)
+                                 {
+                                     scores_[i] += config_.learning_rate *
+                                                   ((old_scale * dropped_sum[i]) +
+                                                    (new_scale * leaf_values[i]));
+                                 });
+    }
+
     void renew_leaves(tree_type &tree, std::vector<node_id_t> const &leaf_ids,
                       train_leaf_values &leaf_values, floats_view labels)
     {

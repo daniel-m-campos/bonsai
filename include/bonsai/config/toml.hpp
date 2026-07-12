@@ -33,4 +33,9 @@ struct Override
 
 void apply_overrides(Config &cfg, std::vector<Override> const &overrides);
 
+// The one precedence rule for every entry point (CLI and Python): optional
+// TOML file, then key=value overrides on top. Callers that own the process
+// thread pool (the CLI) additionally apply cfg.parallel afterwards.
+Config resolve(std::string const &toml_path, std::vector<Override> const &overrides);
+
 } // namespace bonsai::config

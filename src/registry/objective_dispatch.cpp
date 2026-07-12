@@ -64,61 +64,28 @@ template <typename O> std::span<std::string_view const> defaults_thunk()
     return default_metrics_of<O>::value();
 }
 
-constexpr auto create_link_table()
-{
-    std::array<LinkEntry, size_v<Objectives>> out{};
-    size_t                                    i = 0;
-    for_each_type<Objectives>(
-        [&i, &out]<typename O>()
-        {
-            static_assert(HasLinkInverse<O>,
-                          "Objective needs link_inverse_of specialization");
-            out[i++] = LinkEntry{impl_name<O>::value, &link_thunk<O>};
-        });
-    return out;
-}
-
-constexpr auto create_eval_table()
-{
-    std::array<EvalEntry, size_v<Objectives>> out{};
-    size_t                                    i = 0;
-    for_each_type<Objectives>(
-        [&i, &out]<typename O>()
-        { out[i++] = EvalEntry{impl_name<O>::value, &eval_thunk<O>}; });
-    return out;
-}
-
-constexpr auto create_task_table()
-{
-    std::array<TaskEntry, size_v<Objectives>> out{};
-    size_t                                    i = 0;
-    for_each_type<Objectives>(
-        [&i, &out]<typename O>()
-        {
-            static_assert(HasTaskKind<O>, "Objective needs task_of specialization");
-            out[i++] = TaskEntry{impl_name<O>::value, task_of<O>::value};
-        });
-    return out;
-}
-
-constexpr auto create_defaults_table()
-{
-    std::array<DefaultsEntry, size_v<Objectives>> out{};
-    size_t                                        i = 0;
-    for_each_type<Objectives>(
-        [&i, &out]<typename O>()
-        {
-            static_assert(HasDefaultMetricNames<O>,
-                          "Objective needs default_metrics_of specialization");
-            out[i++] = DefaultsEntry{impl_name<O>::value, &defaults_thunk<O>};
-        });
-    return out;
-}
-
-inline constexpr auto link_table     = create_link_table();
-inline constexpr auto eval_table     = create_eval_table();
-inline constexpr auto task_table     = create_task_table();
-inline constexpr auto defaults_table = create_defaults_table();
+inline constexpr auto link_table = make_table<Objectives, LinkEntry>(
+    []<typename O>()
+    {
+        static_assert(HasLinkInverse<O>,
+                      "Objective needs link_inverse_of specialization");
+        return LinkEntry{impl_name<O>::value, &link_thunk<O>};
+    });
+inline constexpr auto eval_table = make_table<Objectives, EvalEntry>(
+    []<typename O>() { return EvalEntry{impl_name<O>::value, &eval_thunk<O>}; });
+inline constexpr auto task_table = make_table<Objectives, TaskEntry>(
+    []<typename O>()
+    {
+        static_assert(HasTaskKind<O>, "Objective needs task_of specialization");
+        return TaskEntry{impl_name<O>::value, task_of<O>::value};
+    });
+inline constexpr auto defaults_table = make_table<Objectives, DefaultsEntry>(
+    []<typename O>()
+    {
+        static_assert(HasDefaultMetricNames<O>,
+                      "Objective needs default_metrics_of specialization");
+        return DefaultsEntry{impl_name<O>::value, &defaults_thunk<O>};
+    });
 
 } // namespace
 
