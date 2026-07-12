@@ -31,6 +31,8 @@ import tomllib
 import numpy as np
 import pandas as pd
 
+import reference_params as rp
+
 REPO = pathlib.Path(__file__).resolve().parents[1]
 BINARY = REPO / "build-cuda" / "src" / "bonsai"
 CONFIG = REPO / "configs" / "year_prediction_msd.toml"
@@ -86,13 +88,13 @@ def run_bonsai(grower: str, threads: int, y_test: np.ndarray) -> dict:
 def run_xgb(device: str, threads: int, test, y_test) -> dict:
     import xgboost as xgb
     cfg = tomllib.loads(CONFIG.read_text())
-    params = {"objective": "reg:squarederror",
-              "learning_rate": cfg["booster"]["learning_rate"],
-              "max_depth": cfg["tree"]["max_depth"],
-              "min_child_weight": cfg["tree"]["min_data_in_leaf"],
-              "reg_lambda": cfg["tree"]["lambda_l2"],
-              "max_bin": cfg["bin_mapper"]["max_bin"],
-              "tree_method": "hist", "seed": cfg["booster"]["random_seed"],
+    params = {**rp.xgb_core(learning_rate=cfg["booster"]["learning_rate"],
+                            max_depth=cfg["tree"]["max_depth"],
+                            min_data_in_leaf=cfg["tree"]["min_data_in_leaf"],
+                            lambda_l2=cfg["tree"]["lambda_l2"],
+                            max_bin=cfg["bin_mapper"]["max_bin"],
+                            seed=cfg["booster"]["random_seed"]),
+              "objective": "reg:squarederror",
               "device": device, **({"nthread": threads} if device == "cpu" else {})}
     t0 = time.perf_counter()
     train = pd.read_csv(REPO / cfg["data"]["train"])
@@ -114,13 +116,14 @@ def run_lgbm(device: str, threads: int, test, y_test) -> dict:
     import lightgbm as lgb
     cfg = tomllib.loads(CONFIG.read_text())
     depth = cfg["tree"]["max_depth"]
-    params = {"objective": "regression", "metric": "rmse",
-              "learning_rate": cfg["booster"]["learning_rate"],
-              "max_depth": depth, "num_leaves": 1 << depth,  # full depth-d tree
-              "min_data_in_leaf": cfg["tree"]["min_data_in_leaf"],
-              "lambda_l2": cfg["tree"]["lambda_l2"],
-              "max_bin": cfg["bin_mapper"]["max_bin"],
-              "seed": cfg["booster"]["random_seed"], "verbose": -1,
+    params = {**rp.lgbm_core(learning_rate=cfg["booster"]["learning_rate"],
+                             max_depth=depth,
+                             num_leaves=1 << depth,  # full depth-d tree
+                             min_data_in_leaf=cfg["tree"]["min_data_in_leaf"],
+                             lambda_l2=cfg["tree"]["lambda_l2"],
+                             max_bin=cfg["bin_mapper"]["max_bin"],
+                             seed=cfg["booster"]["random_seed"]),
+              "objective": "regression", "metric": "rmse",
               "device_type": device, "num_threads": threads}
     t0 = time.perf_counter()
     train = pd.read_csv(REPO / cfg["data"]["train"])
@@ -145,13 +148,12 @@ def run_catboost(device: str, threads: int, test, y_test) -> dict:
     feats = [c for c in train.columns if c != "label"]
     pool = Pool(train[feats], label=train["label"].to_numpy())
     model = CatBoostRegressor(
-        iterations=cfg["booster"]["n_iters"],
-        learning_rate=cfg["booster"]["learning_rate"],
-        depth=cfg["tree"]["max_depth"], l2_leaf_reg=cfg["tree"]["lambda_l2"],
-        # CatBoost caps border_count at 254 on GPU only.
-        border_count=(min(cfg["bin_mapper"]["max_bin"], 254) if device == "cuda"
-                      else cfg["bin_mapper"]["max_bin"]),
-        random_seed=cfg["booster"]["random_seed"], loss_function="RMSE",
+        **rp.catboost_core(learning_rate=cfg["booster"]["learning_rate"],
+                           max_depth=cfg["tree"]["max_depth"],
+                           lambda_l2=cfg["tree"]["lambda_l2"],
+                           max_bin=cfg["bin_mapper"]["max_bin"],
+                           seed=cfg["booster"]["random_seed"], device=device),
+        iterations=cfg["booster"]["n_iters"], loss_function="RMSE",
         task_type=("GPU" if device == "cuda" else "CPU"), devices="0",
         thread_count=threads, verbose=False)
     model.fit(pool)

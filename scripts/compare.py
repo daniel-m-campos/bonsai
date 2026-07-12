@@ -26,6 +26,8 @@ import json
 import pathlib
 import subprocess
 import time
+
+import reference_params
 from dataclasses import dataclass
 
 import numpy as np
@@ -312,16 +314,13 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
         **({"huber_slope": hp.huber_delta} if hp.objective == "huber" else {}),
         **({"quantile_alpha": hp.quantile_alpha}
            if hp.objective == "quantile" else {}),
-        "learning_rate": hp.learning_rate,
-        "max_depth": hp.max_depth,
+        **reference_params.xgb_core(
+            learning_rate=hp.learning_rate, max_depth=hp.max_depth,
+            min_data_in_leaf=hp.min_data_in_leaf, lambda_l2=hp.lambda_l2,
+            max_bin=hp.max_bin, seed=hp.random_seed),
         "max_leaves": hp.max_leaves,
-        "min_child_weight": hp.min_data_in_leaf,
-        "reg_lambda": hp.lambda_l2,
         "reg_alpha": hp.lambda_l1,
         "colsample_bytree": hp.feature_fraction,
-        "max_bin": hp.max_bin,
-        "tree_method": "hist",
-        "seed": hp.random_seed,
         **({"booster": "dart", "rate_drop": hp.dart_drop_rate,
             "normalize_type": "tree"} if hp.dart_drop_rate > 0 else {}),
         **({"monotone_constraints": "(" + ",".join(
@@ -368,16 +367,14 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
         **({"data_sample_strategy": "goss",
             "top_rate": hp.top_rate,
             "other_rate": hp.other_rate} if goss else {}),
-        "learning_rate": hp.learning_rate,
-        "max_depth": hp.max_depth,
-        "num_leaves": hp.max_leaves if hp.max_leaves > 0 else (1 << hp.max_depth) - 1,
-        "min_data_in_leaf": hp.min_data_in_leaf,
-        "lambda_l2": hp.lambda_l2,
+        **reference_params.lgbm_core(
+            learning_rate=hp.learning_rate, max_depth=hp.max_depth,
+            num_leaves=(hp.max_leaves if hp.max_leaves > 0
+                        else (1 << hp.max_depth) - 1),
+            min_data_in_leaf=hp.min_data_in_leaf, lambda_l2=hp.lambda_l2,
+            max_bin=hp.max_bin, seed=hp.random_seed),
         "lambda_l1": hp.lambda_l1,
         "feature_fraction": hp.feature_fraction,
-        "max_bin": hp.max_bin,
-        "verbose": -1,
-        "seed": hp.random_seed,
         **({"boosting": "dart", "drop_rate": hp.dart_drop_rate}
            if hp.dart_drop_rate > 0 else {}),
         **({"monotone_constraints": padded_constraints(hp, len(feature_cols))}

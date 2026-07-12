@@ -42,13 +42,13 @@ choose_metric_names(std::vector<std::string> const &override_names,
 }
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-void print_metric_row(std::string_view label, floats_view preds, floats_view labels,
-                      std::vector<Metric> const &metrics)
+void print_metric_row(std::string_view label, floats_view raw, floats_view preds,
+                      floats_view labels, std::vector<Metric> const &metrics)
 {
     std::print("{}:", label);
     for (auto const &m : metrics)
     {
-        std::print(" {}={}", m.name, m.compute(preds, labels));
+        std::print(" {}={}", m.name, m.compute(m.from_raw ? raw : preds, labels));
     }
 }
 
@@ -99,18 +99,24 @@ int run_fit(FitOpts const &opts)
 
     auto const on_tick = [&](FitTick const &tick)
     {
-        // Apply link inverse in place to train/valid scratch buffers, then
-        // compute metrics. Buffers are owned by train_with_progress and
-        // overwritten next tick.
+        // Metrics see raw scores (from_raw, e.g. logloss) or transformed
+        // predictions; keep the raw copy before the in-place link inverse.
+        // Buffers are owned by train_with_progress and overwritten next tick.
+        std::vector<float> const raw_train(tick.train_preds.begin(),
+                                           tick.train_preds.end());
         apply_link_inverse_by_name(obj_name, tick.train_preds);
 
         std::print("  [{}]", tick.iter);
-        print_metric_row(" train", tick.train_preds, tick.train_labels, metrics);
+        print_metric_row(" train", raw_train, tick.train_preds, tick.train_labels,
+                         metrics);
 
         if (!tick.valid_preds.empty())
         {
+            std::vector<float> const raw_valid(tick.valid_preds.begin(),
+                                               tick.valid_preds.end());
             apply_link_inverse_by_name(obj_name, tick.valid_preds);
-            print_metric_row(" | valid", tick.valid_preds, tick.valid_labels, metrics);
+            print_metric_row(" | valid", raw_valid, tick.valid_preds, tick.valid_labels,
+                             metrics);
         }
         std::println("");
     };

@@ -25,6 +25,13 @@ struct Metric
     std::string_view name;
     TaskKind         task;
     MetricFn         compute;
+    // Computed from raw (pre-link) scores rather than transformed
+    // predictions: the logloss metric delegates to the objective's
+    // softplus-stable eval, which needs the logits — the float32 sigmoid
+    // saturates first, and an epsilon clamp on probabilities put a floor
+    // under the reported loss that the early-stopping path (which always
+    // evaluated raw) never had. One number per model, both paths.
+    bool from_raw = false;
 };
 
 // Compute functions for the five built-ins. Free functions so Metric values
@@ -32,7 +39,7 @@ struct Metric
 float compute_rmse(floats_view preds, floats_view labels);
 float compute_mae(floats_view preds, floats_view labels);
 float compute_r2(floats_view preds, floats_view labels);
-float compute_logloss(floats_view probs, floats_view labels);
+float compute_logloss(floats_view raw_scores, floats_view labels);
 float compute_accuracy(floats_view probs, floats_view labels);
 float compute_auc(floats_view probs, floats_view labels);
 float compute_mc_accuracy(floats_view class_ids, floats_view labels);
@@ -43,9 +50,10 @@ inline constexpr Metric metric_mae{
     .name = "mae", .task = TaskKind::regression, .compute = &compute_mae};
 inline constexpr Metric metric_r2{
     .name = "r2", .task = TaskKind::regression, .compute = &compute_r2};
-inline constexpr Metric metric_logloss{.name    = "logloss",
-                                       .task    = TaskKind::binary_classification,
-                                       .compute = &compute_logloss};
+inline constexpr Metric metric_logloss{.name     = "logloss",
+                                       .task     = TaskKind::binary_classification,
+                                       .compute  = &compute_logloss,
+                                       .from_raw = true};
 inline constexpr Metric metric_accuracy{.name    = "accuracy",
                                         .task    = TaskKind::binary_classification,
                                         .compute = &compute_accuracy};

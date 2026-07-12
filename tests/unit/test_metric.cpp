@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "bonsai/metric.hpp"
+#include "bonsai/objective.hpp"
 #include "bonsai/task.hpp"
 
 using namespace bonsai; // NOLINT
@@ -48,19 +49,35 @@ TEST_CASE("compute_r2: constant labels yields NaN", "[metric][r2][degenerate]")
     CHECK(std::isnan(compute_r2(p, y)));
 }
 
-TEST_CASE("compute_logloss: confident correct -> ~0", "[metric][logloss]")
+TEST_CASE("compute_logloss: raw scores, confident correct -> ~0", "[metric][logloss]")
 {
-    // probs ~ 1 for label 1, probs ~ 0 for label 0
-    std::vector<float> const p{0.999F, 0.001F};
+    // Raw (pre-sigmoid) scores: +7 for label 1, -7 for label 0.
+    std::vector<float> const raw{7.0F, -7.0F};
     std::vector<float> const y{1.0F, 0.0F};
-    CHECK(compute_logloss(p, y) == Catch::Approx(0.0F).margin(1e-2));
+    CHECK(compute_logloss(raw, y) == Catch::Approx(0.0F).margin(1e-2));
 }
 
-TEST_CASE("compute_logloss: 0.5 predictions -> log(2)", "[metric][logloss]")
+TEST_CASE("compute_logloss: zero scores -> log(2)", "[metric][logloss]")
 {
-    std::vector<float> const p{0.5F, 0.5F};
+    std::vector<float> const raw{0.0F, 0.0F};
     std::vector<float> const y{1.0F, 0.0F};
-    CHECK(compute_logloss(p, y) == Catch::Approx(std::log(2.0F)).epsilon(1e-5));
+    CHECK(compute_logloss(raw, y) == Catch::Approx(std::log(2.0F)).epsilon(1e-5));
+}
+
+TEST_CASE("compute_logloss: one number per model — matches the objective's "
+          "eval past sigmoid saturation",
+          "[metric][logloss]")
+{
+    // At |raw| = 40 the float32 sigmoid saturates to exactly 0/1; the old
+    // probability-domain metric clamped at 1e-7 and reported ~16.1 for the
+    // wrong-side row regardless of confidence. The raw-domain kernel keeps
+    // the true ~40, and — the point of the design-review fix — agrees with
+    // LogLossObjective::eval, which early stopping uses.
+    std::vector<float> const raw{40.0F, 40.0F};
+    std::vector<float> const y{1.0F, 0.0F};
+    float const              m = compute_logloss(raw, y);
+    CHECK(m == Catch::Approx(LogLossObjective::eval(raw, y)));
+    CHECK(m == Catch::Approx(20.0F).epsilon(1e-3)); // (0 + 40) / 2
 }
 
 TEST_CASE("compute_accuracy: confident correct -> 1.0", "[metric][accuracy]")
