@@ -300,3 +300,9 @@ C++26 `P2996` static reflection lets the typelist itself be derived from a names
 - `proposal.md` §3.4 — the open question this doc closes.
 - `proposal.md` §3.5 — metaprogramming techniques used.
 - `decisions.md` — closed decisions on no-macros, no-aliases, static-in-hot-path.
+
+## The monomorphization budget (added 2026-07-12, design review)
+
+The registered-everywhere policy instantiates one monomorphized booster per (objective × grower × sampler) combination — 105 at seven objectives, and multiplicative in every new component. That buys the guarantees this doc argued for (uniform parametric testing, `bonsai info` completeness, no untested combos shippable), and today's compile-time and binary cost is acceptable. It will not stay acceptable by accident.
+
+**The budget: ~200 combinations.** Approaching it, in order of preference: (1) prune combinations that are semantically void rather than merely untested (a constraint like the oblivious grower's monotone rejection, expressed at the typelist level as a compile-time filter); (2) gate instantiation of expensive families behind a build option (the CUDA growers already have the stub precedent); (3) only then consider erasing a seam. Whichever applies, the parametric test suites must keep covering everything that remains instantiable — the policy's value was never the table, it was that nothing dispatchable is untested.

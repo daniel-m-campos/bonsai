@@ -36,14 +36,24 @@ enum class ImportanceType : uint8_t
 class IBooster
 {
   public:
-    virtual ~IBooster()                                             = default;
+    virtual ~IBooster() = default;
+
+    // The one type-erased boundary (with IngestPlane) in the system: three
+    // client groups share it deliberately rather than splitting into three
+    // interfaces — grouped below as training / prediction / introspection /
+    // the training-loop seam. If a third training-loop client ever appears,
+    // split that group into its own view (design review 2026-07-12).
+
+    // --- training
     virtual void   update_one_iter(Dataset const &train)            = 0;
     virtual float  eval(features_view X, floats_view labels) const  = 0;
+    // --- prediction
     virtual void   predict(features_view X, floats_out y_hat) const = 0;
     virtual size_t n_iters() const                                  = 0;
 
     // Per-feature importance summed over all trees, sized max feature id + 1
     // (callers pad to the full feature count).
+    // --- introspection
     virtual std::vector<double> feature_importance(ImportanceType type) const = 0;
 
     // Predict using only the first n_trees trees (0 = all). The plain
@@ -70,6 +80,7 @@ class IBooster
     virtual void pred_contribs(features_view X, std::span<double> out,
                                size_t n_features) const = 0;
 
+    // --- the training-loop seam (CLI pipeline only)
     // Incremental prediction support for early stopping, shape-agnostic so
     // multiclass composes: the caller maintains a raw-score matrix of
     // n_rows x score_width() (row-major, width 1 except softmax).
