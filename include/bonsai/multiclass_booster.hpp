@@ -23,8 +23,10 @@ namespace bonsai
 {
 
 // K-class softmax boosting: each round grows one tree per class on the
-// softmax gradients (grad_k = p_k - 1[y == k], hess_k = 2 p_k (1 - p_k),
-// xgboost's convention). trees_ is flat, round-major: tree for class k of
+// softmax gradients (grad_k = p_k - 1[y == k], hess_k = p_k (1 - p_k) —
+// the true diagonal Hessian; the factor-2 'xgboost convention' halves
+// every Newton step and cost 2x the iterations to match lightgbm at the
+// same learning rate, issue #62). trees_ is flat, round-major: tree for class k of
 // round r sits at index r * K + k. predict() emits argmax class ids;
 // eval() is the multiclass logloss. The 1-D Objective concept can't
 // express the K-output shape, which is why this is its own IBooster
@@ -134,7 +136,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                     float const p = probs[(i * n_k) + k];
                     float const y = class_of(train.labels()[i], n_k) == k ? 1.0F : 0.0F;
                     grad_[i]      = p - y;
-                    hess_[i]      = std::max(2.0F * p * (1.0F - p), 1e-6F);
+                    hess_[i]      = std::max(p * (1.0F - p), 1e-6F);
                 });
             size_t const n_selected = sampler_.sample(grad_, hess_, rng_, row_indices_);
             auto [tree, leaf_values, leaf_ids] =
