@@ -110,6 +110,7 @@ python: build/build.ninja
 
 python-test: python $(TOY_SENTINEL)
 	@PYTHONPATH=build/python $(PYTHON) python/tests/test_bindings.py
+	@PYTHONPATH=build/python $(PYTHON) python/tests/test_encoding.py
 
 # CUDA-enabled extension in the CUDA tree; cuda_* growers can train.
 python-cuda: build-cuda/build.ninja
