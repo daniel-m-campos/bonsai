@@ -133,7 +133,7 @@ Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers
 
 Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mappers,
                      DataConfig const & /*cfg*/,
-                     std::shared_ptr<IngestPlane const> plane)
+                     std::shared_ptr<IngestPlane const> plane, floats_view weights)
 {
     assert(X.extent(1) == mappers.size());
     detail::IngestProfiler::Lap lap;
@@ -142,6 +142,7 @@ Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mapp
     ds.n_features_ = X.extent(1);
     ds.mappers_    = mappers;
     ds.labels_.assign(labels.begin(), labels.end());
+    ds.weights_.assign(weights.begin(), weights.end());
     ds.is_categorical_.assign(X.extent(1), false);
     if (plane)
     {

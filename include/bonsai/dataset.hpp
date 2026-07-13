@@ -68,7 +68,8 @@ class Dataset
     // ColumnBatch overload.
     static Dataset bin(features_view X, floats_view labels, BinMappers const &mappers,
                        DataConfig const                  &cfg,
-                       std::shared_ptr<IngestPlane const> plane = nullptr);
+                       std::shared_ptr<IngestPlane const> plane   = nullptr,
+                       floats_view                        weights = {});
 
     size_t n_rows() const;
     size_t n_features() const;

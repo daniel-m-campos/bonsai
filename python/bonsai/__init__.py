@@ -97,16 +97,19 @@ class BonsaiRegressor:
         self._config = config
         self._model: Model | None = None
 
-    def fit(self, X, y, eval_set: tuple | None = None,
+    def fit(self, X, y, sample_weight=None, eval_set: tuple | None = None,
             init_model: str | None = None) -> BonsaiRegressor:
-        """init_model continues training from a saved .msgpack (warm start);
-        binning reuses the loaded model's cut points."""
+        """`sample_weight` scales each row's gradient and hessian (sklearn's
+        convention). init_model continues training from a saved .msgpack (warm
+        start); binning reuses the loaded model's cut points."""
         pairs = [(k, _to_config_str(v)) for k, v in self._params.items()]
         ev = None
         if eval_set is not None:
             ev = (_as_2d_f32(eval_set[0]), _as_1d_f32(eval_set[1]))
+        sw = None if sample_weight is None else _as_1d_f32(sample_weight)
         self._model = train(
-            pairs, _as_2d_f32(X), _as_1d_f32(y), ev, init_model, self._config
+            pairs, _as_2d_f32(X), _as_1d_f32(y), ev, init_model, self._config,
+            sample_weight=sw,
         )
         return self
 
