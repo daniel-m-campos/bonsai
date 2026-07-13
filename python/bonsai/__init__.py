@@ -24,6 +24,7 @@ from __future__ import annotations
 import inspect
 import tempfile
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 
@@ -95,6 +96,15 @@ class _BonsaiEstimator:
         early_stopping_rounds: int = 0,
         n_threads: int = 0,
         random_seed: int = 42,
+        n_estimators: int | None = None,
+        num_leaves: int | None = None,
+        random_state: int | None = None,
+        n_jobs: int | None = None,
+        reg_lambda: float | None = None,
+        reg_alpha: float | None = None,
+        max_bin: int | None = None,
+        min_child_samples: int | None = None,
+        colsample_bytree: float | None = None,
         params: dict | None = None,
         config: str | None = None,
     ):
@@ -107,6 +117,15 @@ class _BonsaiEstimator:
         self.early_stopping_rounds = early_stopping_rounds
         self.n_threads = n_threads
         self.random_seed = random_seed
+        self.n_estimators = n_estimators
+        self.num_leaves = num_leaves
+        self.random_state = random_state
+        self.n_jobs = n_jobs
+        self.reg_lambda = reg_lambda
+        self.reg_alpha = reg_alpha
+        self.max_bin = max_bin
+        self.min_child_samples = min_child_samples
+        self.colsample_bytree = colsample_bytree
         self.params = params
         self.config = config
         self._model: Model | None = None
@@ -117,11 +136,34 @@ class _BonsaiEstimator:
         ``classes_`` at fit time. Overridden per-subclass."""
         raise NotImplementedError
 
+    # xgboost/lightgbm-style constructor aliases -> bonsai dotted config key.
+    # Deliberately excludes `subsample` (bonsai's row-subsampling needs a
+    # `sampler` choice, not a 1:1 key — `sampler.subsample` is a no-op under
+    # the default `all_rows` sampler) and `min_child_weight` (bonsai's
+    # `min_child_hess` is close but not identical semantics). Both, and any
+    # other knob, go through `params=`.
+    _ALIAS_TO_KEY: ClassVar[dict[str, str]] = {
+        "n_estimators": "booster.n_iters",
+        "num_leaves": "tree.max_leaves",
+        "random_state": "booster.random_seed",
+        "n_jobs": "parallel.n_threads",
+        "reg_lambda": "tree.lambda_l2",
+        "reg_alpha": "tree.lambda_l1",
+        "max_bin": "bin_mapper.max_bin",
+        "min_child_samples": "tree.min_data_in_leaf",
+        "colsample_bytree": "tree.feature_fraction",
+    }
+
     def _build_pairs(self) -> list[tuple[str, str]]:
-        """Translate the first-class kwargs + ``params`` into the dotted
-        config keys the native ``train()`` expects. Kept out of ``__init__``
-        so constructor args stay raw attributes (required for
-        ``get_params``/``clone``)."""
+        """Translate the first-class kwargs + aliases + ``params`` into the
+        dotted config keys the native ``train()`` expects. Kept out of
+        ``__init__`` so constructor args stay raw attributes (required for
+        ``get_params``/``clone``).
+
+        Precedence (lowest to highest): canonical first-class kwargs, then
+        xgboost/lightgbm-style aliases (only those set, i.e. not ``None``),
+        then ``params`` (the power-user escape hatch always has the final
+        word)."""
         merged = {
             "booster.n_iters": self.n_iters,
             "booster.learning_rate": self.learning_rate,
@@ -133,8 +175,12 @@ class _BonsaiEstimator:
             "dispatch.sampler_name": self.sampler,
             "parallel.n_threads": self.n_threads,
             **self._objective_pairs(),
-            **(self.params or {}),
         }
+        for alias, key in self._ALIAS_TO_KEY.items():
+            value = getattr(self, alias)
+            if value is not None:
+                merged[key] = value
+        merged.update(self.params or {})
         return [(k, _to_config_str(v)) for k, v in merged.items()]
 
     def get_params(self, deep: bool = True) -> dict:
@@ -271,6 +317,16 @@ class BonsaiRegressor(_BonsaiEstimator):
     ``params={"tree.lambda_l1": 0.5, "sampler.top_rate": 0.2}`` — the same
     keys the CLI accepts via ``--set``.
 
+    xgboost/lightgbm-style aliases (``n_estimators``, ``num_leaves``,
+    ``random_state``, ``n_jobs``, ``reg_lambda``, ``reg_alpha``, ``max_bin``,
+    ``min_child_samples``, ``colsample_bytree``) are accepted so calls copied
+    from those libraries work unchanged; they default to ``None`` and, when
+    set, override the matching canonical kwarg (e.g. ``n_estimators`` wins
+    over ``n_iters``). ``subsample`` and ``min_child_weight`` are deliberately
+    **not** aliased — bonsai's row-subsampling needs a ``sampler`` choice
+    rather than a 1:1 key, and ``min_child_hess`` isn't identical semantics
+    to ``min_child_weight``; set those (or anything else) through ``params``.
+
     ``config`` names a TOML file used as the base config (the CLI's ``-c``).
     Keyword arguments and ``params`` always win over the file — including the
     first-class kwargs at their defaults, which are always emitted. To defer
@@ -292,6 +348,15 @@ class BonsaiRegressor(_BonsaiEstimator):
         early_stopping_rounds: int = 0,
         n_threads: int = 0,
         random_seed: int = 42,
+        n_estimators: int | None = None,
+        num_leaves: int | None = None,
+        random_state: int | None = None,
+        n_jobs: int | None = None,
+        reg_lambda: float | None = None,
+        reg_alpha: float | None = None,
+        max_bin: int | None = None,
+        min_child_samples: int | None = None,
+        colsample_bytree: float | None = None,
         params: dict | None = None,
         config: str | None = None,
     ):
@@ -305,6 +370,15 @@ class BonsaiRegressor(_BonsaiEstimator):
             early_stopping_rounds=early_stopping_rounds,
             n_threads=n_threads,
             random_seed=random_seed,
+            n_estimators=n_estimators,
+            num_leaves=num_leaves,
+            random_state=random_state,
+            n_jobs=n_jobs,
+            reg_lambda=reg_lambda,
+            reg_alpha=reg_alpha,
+            max_bin=max_bin,
+            min_child_samples=min_child_samples,
+            colsample_bytree=colsample_bytree,
             params=params,
             config=config,
         )
@@ -370,6 +444,12 @@ class BonsaiClassifier(_BonsaiEstimator):
     ``np.unique(y)``. Labels may be any hashable/orderable values (ints,
     strings, ...); they're encoded to ``0..K-1`` internally and decoded back
     to the original ``classes_`` values by ``predict``.
+
+    Same xgboost/lightgbm-style aliases as ``BonsaiRegressor`` (``n_estimators``,
+    ``num_leaves``, ``random_state``, ``n_jobs``, ``reg_lambda``, ``reg_alpha``,
+    ``max_bin``, ``min_child_samples``, ``colsample_bytree``); ``subsample`` and
+    ``min_child_weight`` are not aliased for the same reason — see
+    ``BonsaiRegressor``'s docstring — use ``params`` for those.
 
     ``predict_proba`` returns calibrated-ish probabilities only for the
     binary case (the native ``logloss`` objective predicts P(class 1)
