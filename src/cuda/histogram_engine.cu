@@ -53,6 +53,7 @@ struct ProfileCounters
     double part_stage_s = 0, adv_stage_s = 0, find_stage_s = 0, lfind_stage_s = 0;
     double gh_upload_s = 0, root_stage_s = 0, gpu_wait_s = 0;
     double bins_upload_s = 0, fin_wait_s = 0, fin_d2h_s = 0;
+    double find_kern_s = 0, find_d2h_s = 0;
     size_t launches = 0, gpu_nodes = 0, cpu_calls = 0;
 
     ProfileCounters()                                       = default;
@@ -102,10 +103,12 @@ struct ProfileCounters
                          "cuda-upload-decomp: gh={:.2f}s root_stage={:.2f}s "
                          "part_stage={:.2f}s adv_stage={:.2f}s find_stage={:.2f}s "
                          "lfind_stage={:.2f}s gpu_wait={:.2f}s legacy={:.2f}s "
-                         "bins_upload={:.2f}s fin_wait={:.2f}s fin_d2h={:.2f}s",
+                         "bins_upload={:.2f}s fin_wait={:.2f}s fin_d2h={:.2f}s "
+                         "find_kern={:.2f}s find_d2h={:.2f}s",
                          gh_upload_s, root_stage_s, part_stage_s, adv_stage_s,
                          find_stage_s, lfind_stage_s, gpu_wait_s, upload_s,
-                         bins_upload_s, fin_wait_s, fin_d2h_s);
+                         bins_upload_s, fin_wait_s, fin_d2h_s, find_kern_s,
+                         find_d2h_s);
         }
         catch (...)
         {
@@ -959,10 +962,18 @@ void CudaHistogramEngine::find_splits_many(Dataset const &ds, TreeConfig const &
     reduce_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(32)>>>(
         im.lvl.feat_best.data(), im.lvl.n_selected, im.lvl.node_best.device());
     check(cudaGetLastError(), "reduce launch");
+    if (prof.enabled)
+    {
+        // Peel the awaited kernel+reduce compute from the node_best D2H so a
+        // slow find lap can be attributed to FP64 scan time vs transfer.
+        check(cudaDeviceSynchronize(), "find kernel wait");
+        lap(prof.find_kern_s);
+    }
     im.lvl.node_best.fetch(n); // DtoH, implicit sync
     if (prof.enabled)
     {
         ++prof.launches;
+        lap(prof.find_d2h_s);
     }
     lap(prof.gpu_s);
 
