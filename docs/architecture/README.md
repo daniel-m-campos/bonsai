@@ -32,7 +32,7 @@ Per-component design docs. Numbered roughly in build order. Source of truth for 
 
 **Errors.** Component constructors validate their config slice, throw `ConfigError` with key path. No central validator. CLI top-level catches.
 
-**Determinism contract** — now *stronger* than originally specified (decision 7 promised fixed-thread-count byte equality). Because no parallel site performs a cross-thread floating-point reduction, models and predictions are **bit-identical to a serial run at any thread count** (decision 32). The weaker fixed-N contract returns only if row-parallel histograms with per-thread merges ever land; `7-parallel.md` spells out the trade.
+**Determinism contract** (decisions 32/59/60) — model bits are a pure function of the input, the config, and the **configured thread count**: the row-parallel fill's block plan scales with `parallel.n_threads`, so different N legitimately produce different (equally valid) bits, but a fixed N reproduces byte-for-byte on **any machine and any architecture** — arm64 and x86-64 train identical models (`-ffp-contract=off`, decision 59), gated per commit by the cross-arch CI workflow. The original any-thread-count claim (decision 32) predates the row-parallel fill; a silent serial fallback that once let *builds* differ is now a hard configure error (decision 60).
 
 **Precision.** Float storage, double accumulators. Matches xgb/lgbm.
 

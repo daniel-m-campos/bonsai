@@ -111,7 +111,8 @@ perf-benchmark: build
 # (override with PYTHON=/path/to/python).
 python: build/build.ninja
 	@cmake -B build -DBONSAI_PYTHON=ON -DBONSAI_OPENMP_STATIC=ON \
-	    -DPython_EXECUTABLE=$(abspath $(PYTHON)) >/dev/null
+	    -DPython_EXECUTABLE=$(abspath $(PYTHON)) \
+	    | grep -iE "openmp|error" || true
 	@cmake --build build --target _bonsai -j
 	@echo "module at build/python/bonsai — use PYTHONPATH=build/python"
 

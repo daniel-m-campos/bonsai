@@ -45,11 +45,11 @@ def _model_sha(extra=()) -> str:
 # Attribution tiers for a cross-platform mismatch: full-sample kills the
 # mapper's sampling RNG; serial kills every parallel site; one iteration
 # kills accumulation drift. Whichever tier first diverges names the layer.
-# Two hashes, two contracts. serial_sha256 is bit-identical across host
-# ARCHITECTURES (the cross-arch CI gate); sha256 (8 threads) is
-# bit-identical per platform at a fixed thread count — parallel runs
-# differ across architectures at the last ulp (structure identical, gains
-# +-1ulp; the attribution trail and remaining hunt live in the issue).
+# Two hashes, one contract at two thread counts: model bits depend only on
+# the input, the config, and the CONFIGURED thread count (the fill plan
+# scales block counts with it — docs/architecture/7-parallel.md), never on
+# the architecture (decisions 59/60). Both lines are asserted equal across
+# arm64/x86-64 by the cross-arch CI gate.
 print("serial_sha256:",
       _model_sha([("bin_mapper.n_samples", "500000"),
                   ("parallel.n_threads", "1")]))
