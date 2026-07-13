@@ -21,6 +21,10 @@ chapter 0, one boosting round traced by hand on eight rows).
 
 from __future__ import annotations
 
+import inspect
+import tempfile
+from pathlib import Path
+
 import numpy as np
 
 from ._bonsai import Model, cuda_available, default_config_toml, load, train
@@ -64,7 +68,16 @@ class BonsaiRegressor:
     first-class kwargs at their defaults, which are always emitted. To defer
     a knob to the file, set it there and leave it out of ``params``, or use
     ``train()`` directly.
+
+    Duck-types the scikit-learn estimator contract (``get_params`` /
+    ``set_params`` / ``score`` / ``_estimator_type``) without subclassing
+    ``sklearn.base.BaseEstimator`` — sklearn is never a runtime dependency of
+    this package, so ``clone``, ``Pipeline``, ``GridSearchCV`` and
+    ``cross_val_score`` all work, but ``import bonsai`` never needs sklearn
+    installed.
     """
+
+    _estimator_type = "regressor"
 
     def __init__(
         self,
@@ -81,34 +94,142 @@ class BonsaiRegressor:
         params: dict | None = None,
         config: str | None = None,
     ):
-        self._params = {
-            "booster.n_iters": n_iters,
-            "booster.learning_rate": learning_rate,
-            "booster.early_stopping_rounds": early_stopping_rounds,
-            "booster.random_seed": random_seed,
-            "tree.max_depth": max_depth,
-            "tree.max_leaves": max_leaves,
-            "dispatch.grower_name": grower,
-            "dispatch.sampler_name": sampler,
-            "dispatch.objective_name": objective,
-            "parallel.n_threads": n_threads,
-            **(params or {}),
-        }
-        self._config = config
+        self.n_iters = n_iters
+        self.learning_rate = learning_rate
+        self.max_depth = max_depth
+        self.max_leaves = max_leaves
+        self.grower = grower
+        self.sampler = sampler
+        self.objective = objective
+        self.early_stopping_rounds = early_stopping_rounds
+        self.n_threads = n_threads
+        self.random_seed = random_seed
+        self.params = params
+        self.config = config
         self._model: Model | None = None
+
+    def _build_pairs(self) -> list[tuple[str, str]]:
+        """Translate the first-class kwargs + ``params`` into the dotted
+        config keys the native ``train()`` expects. Kept out of ``__init__``
+        so constructor args stay raw attributes (required for
+        ``get_params``/``clone``)."""
+        merged = {
+            "booster.n_iters": self.n_iters,
+            "booster.learning_rate": self.learning_rate,
+            "booster.early_stopping_rounds": self.early_stopping_rounds,
+            "booster.random_seed": self.random_seed,
+            "tree.max_depth": self.max_depth,
+            "tree.max_leaves": self.max_leaves,
+            "dispatch.grower_name": self.grower,
+            "dispatch.sampler_name": self.sampler,
+            "dispatch.objective_name": self.objective,
+            "parallel.n_threads": self.n_threads,
+            **(self.params or {}),
+        }
+        return [(k, _to_config_str(v)) for k, v in merged.items()]
+
+    def get_params(self, deep: bool = True) -> dict:
+        """sklearn contract: one entry per ``__init__`` parameter, unchanged
+        since construction (``deep`` is accepted for API compatibility;
+        ``BonsaiRegressor`` has no nested estimators to recurse into)."""
+        names = [
+            p.name
+            for p in inspect.signature(self.__init__).parameters.values()
+            if p.name != "self"
+        ]
+        return {name: getattr(self, name) for name in names}
+
+    def set_params(self, **params) -> BonsaiRegressor:
+        """sklearn contract: set constructor attributes in place, return
+        self. Unknown names raise (sklearn's own estimators do the same)."""
+        valid = self.get_params(deep=False)
+        for key, value in params.items():
+            if key not in valid:
+                raise ValueError(
+                    f"Invalid parameter {key!r} for estimator {type(self).__name__}. "
+                    f"Valid parameters are: {sorted(valid)}."
+                )
+            setattr(self, key, value)
+        return self
+
+    def score(self, X, y, sample_weight=None) -> float:
+        """R² (coefficient of determination), matching sklearn's
+        ``RegressorMixin.score`` — computed by hand, no sklearn import."""
+        y_true = _as_1d_f32(y).astype(np.float64)
+        y_pred = np.asarray(self.predict(X), dtype=np.float64)
+        w = None if sample_weight is None else _as_1d_f32(sample_weight).astype(np.float64)
+
+        if w is None:
+            avg_true = y_true.mean()
+            ss_res = np.sum((y_true - y_pred) ** 2)
+            ss_tot = np.sum((y_true - avg_true) ** 2)
+        else:
+            avg_true = np.average(y_true, weights=w)
+            ss_res = np.sum(w * (y_true - y_pred) ** 2)
+            ss_tot = np.sum(w * (y_true - avg_true) ** 2)
+
+        if ss_tot == 0:
+            return 1.0 if ss_res == 0 else 0.0
+        return float(1.0 - ss_res / ss_tot)
+
+    def __sklearn_is_fitted__(self) -> bool:
+        """sklearn's ``check_is_fitted`` (used by ``Pipeline`` etc.) looks
+        for instance ``__dict__`` attributes ending in ``_``; ``n_iters_``
+        etc. are properties backed by ``_model``, so they never show up
+        there. This makes fitted-state detection exact instead of relying
+        on that naming convention."""
+        return self._model is not None
+
+    def __sklearn_tags__(self):
+        """Only needed because the installed sklearn (>=1.6) requires
+        ``__sklearn_tags__`` on any estimator passed through ``clone``,
+        ``Pipeline``, ``cross_val_score``, or ``GridSearchCV`` — even
+        duck-typed ones that never subclass ``BaseEstimator``. Built by hand
+        (mirroring what ``RegressorMixin``/``BaseEstimator`` produce) so
+        sklearn stays import-only-in-tests; empirically verified against
+        sklearn 1.8.0 (see test suite)."""
+        from sklearn.utils import InputTags, RegressorTags, Tags, TargetTags
+
+        return Tags(
+            estimator_type="regressor",
+            target_tags=TargetTags(required=True),
+            regressor_tags=RegressorTags(),
+            input_tags=InputTags(),
+        )
+
+    def __getstate__(self) -> dict:
+        state = self.__dict__.copy()
+        model = state.pop("_model", None)
+        if model is not None:
+            with tempfile.TemporaryDirectory() as td:
+                path = Path(td) / "m.msgpack"
+                model.save(str(path))
+                state["_model_bytes"] = path.read_bytes()
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        model_bytes = state.pop("_model_bytes", None)
+        self.__dict__.update(state)
+        if model_bytes is not None:
+            with tempfile.TemporaryDirectory() as td:
+                path = Path(td) / "m.msgpack"
+                path.write_bytes(model_bytes)
+                self._model = load(str(path))
+        else:
+            self._model = None
 
     def fit(self, X, y, sample_weight=None, eval_set: tuple | None = None,
             init_model: str | None = None) -> BonsaiRegressor:
         """`sample_weight` scales each row's gradient and hessian (sklearn's
         convention). init_model continues training from a saved .msgpack (warm
         start); binning reuses the loaded model's cut points."""
-        pairs = [(k, _to_config_str(v)) for k, v in self._params.items()]
+        pairs = self._build_pairs()
         ev = None
         if eval_set is not None:
             ev = (_as_2d_f32(eval_set[0]), _as_1d_f32(eval_set[1]))
         sw = None if sample_weight is None else _as_1d_f32(sample_weight)
         self._model = train(
-            pairs, _as_2d_f32(X), _as_1d_f32(y), ev, init_model, self._config,
+            pairs, _as_2d_f32(X), _as_1d_f32(y), ev, init_model, self.config,
             sample_weight=sw,
         )
         return self
