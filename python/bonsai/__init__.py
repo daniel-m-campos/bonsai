@@ -459,10 +459,9 @@ class BonsaiClassifier(_BonsaiEstimator):
     ``min_child_weight`` are not aliased for the same reason — see
     ``BonsaiRegressor``'s docstring — use ``params`` for those.
 
-    ``predict_proba`` returns calibrated-ish probabilities only for the
-    binary case (the native ``logloss`` objective predicts P(class 1)
-    directly); multiclass ``predict_proba`` is not yet available — see its
-    docstring.
+    ``predict_proba`` covers both cases: binary from the native ``logloss``
+    P(class 1), multiclass from the ``softmax`` booster's per-class
+    probabilities — see its docstring.
     """
 
     _estimator_type = "classifier"
@@ -503,6 +502,8 @@ class BonsaiClassifier(_BonsaiEstimator):
         convention). init_model continues training from a saved .msgpack (warm
         start); binning reuses the loaded model's cut points."""
         y_arr = np.asarray(y)
+        if y_arr.dtype.kind == "f" and np.isnan(y_arr).any():
+            raise ValueError("Input y contains NaN.")
         self.classes_ = np.unique(y_arr)
         self.n_classes_ = len(self.classes_)
         if self.n_classes_ < 2:
@@ -515,7 +516,19 @@ class BonsaiClassifier(_BonsaiEstimator):
         pairs = self._build_pairs()
         ev = None
         if eval_set is not None:
-            ev_y = np.searchsorted(self.classes_, np.asarray(eval_set[1]))
+            # A label the training fold never saw cannot be encoded; letting
+            # searchsorted guess silently corrupts the eval metric and early
+            # stopping, so reject it.
+            ev_y_arr = np.asarray(eval_set[1])
+            ev_y = np.clip(
+                np.searchsorted(self.classes_, ev_y_arr), 0, self.n_classes_ - 1
+            )
+            bad = self.classes_[ev_y] != ev_y_arr
+            if bad.any():
+                raise ValueError(
+                    f"eval_set labels {np.unique(ev_y_arr[bad])!r} are not in the "
+                    f"training classes {self.classes_!r}"
+                )
             ev = (_as_2d_f32(eval_set[0]), _as_1d_f32(ev_y))
         sw = None if sample_weight is None else _as_1d_f32(sample_weight)
         self._model = train(
@@ -550,3 +563,29 @@ class BonsaiClassifier(_BonsaiEstimator):
             p = np.asarray(self._model.predict(_as_2d_f32(X)), dtype=np.float64)
             return np.column_stack([1.0 - p, p])
         return np.asarray(self._model.predict_proba(_as_2d_f32(X)), dtype=np.float64)
+
+    @classmethod
+    def from_file(cls, path: str) -> BonsaiClassifier:
+        """Load a saved ``.msgpack`` classifier.
+
+        The native format stores only the booster, so ``classes_`` comes back
+        as the encoded ids ``0..K-1`` (xgboost's ``load_model`` convention) —
+        ``predict`` then returns those ids, not the label values passed to
+        ``fit``. Pickle the estimator to preserve original labels.
+        """
+        import tomllib
+
+        out = super().from_file(path)
+        cfg = tomllib.loads(out._model.config_toml)
+        objective = cfg.get("dispatch", {}).get("objective_name", "")
+        if objective == "logloss":
+            out.n_classes_ = 2
+        elif objective == "softmax":
+            out.n_classes_ = int(cfg["objective"]["n_classes"])
+        else:
+            raise ValueError(
+                f"{path!r} was trained with objective {objective!r}; "
+                "BonsaiClassifier.from_file needs a logloss or softmax model"
+            )
+        out.classes_ = np.arange(out.n_classes_)
+        return out
