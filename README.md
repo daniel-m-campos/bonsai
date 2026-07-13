@@ -58,7 +58,24 @@ Scaling features (1M rows):
 | 1024 | 14.7s | 12.6s | **9.8s** | 73.5s |
 | 4096 | 54.7s | 51.0s | **37.0s** | 342.1s |
 
+> The 16M cells above predate three optimizations (decisions 61/63/64) and are superseded: current same-pod 16M is `cuda_oblivious` **19.65s** vs catboost 18.85s at matched accuracy, and CPU `depthwise` ties xgboost-hist at **75.8s**. A full re-baseline across every cell is pending; the caveat below and the [claims table](#claims-and-proofs) carry the current numbers.
+
 Honest caveats, because benchmarks without them are advertising: identical-model GPUs across the rental fleet measure up to ~25% apart, so only same-pod columns compare (at 16M the bonsai/xgboost order *flips* between host classes — 26.9 vs 28.9 on one, 24.3 vs 21.7 on another); against catboost at 16M, bonsai's GPU oblivious grower matches accuracy (0.8749 vs 0.8751 at 100 trees, same pod) and lands within ~4% on speed (19.65s vs 18.85s), with its depthwise slightly more accurate (0.8776); bonsai strictly beats xgboost-GPU throughout ([benchmarks/gpu-pareto-16M-2026-07.md](benchmarks/gpu-pareto-16M-2026-07.md), decisions 62–64 — an earlier apparent gap was two bonsai issues since fixed: the oblivious accuracy bug and a per-feature binning pass that catboost didn't pay); bonsai's peak host RSS at 16M is 7.3GB vs xgboost's 22.2GB, and its predict is ~3× faster; the xgboost 1M cell is quoted as a range because its repeats disagreed across pods more than any other cell in the file. The path from 3× behind to this table is [guide chapter 11](docs/guide/11-performance-engineering.md); the cut-quality residual vs xgboost (+0.001 r²) is decision 55.
+
+## Claims and proofs
+
+Every performance or quality claim bonsai makes links to a reproducible run and the decision that records it — the point of a small, measured library is that you can check it.
+
+| Claim | Evidence |
+|---|---|
+| **Bit-identical models across CPU architectures** (arm64 == x86-64) at a fixed thread count — no reference library offers this | decisions [59](docs/decisions.md)/60; asserted per-commit by [`cross-arch.yml`](.github/workflows/cross-arch.yml) via [`scripts/model_hash.py`](scripts/model_hash.py) |
+| **Ties xgboost-hist at 16M rows on CPU** (75.8 vs 75.7s, same pod) | [decision 61](docs/decisions.md); [`benchmarks/results/cpu-prefetch-round-2026-07.jsonl`](benchmarks/results/cpu-prefetch-round-2026-07.jsonl) |
+| **Even with catboost on GPU accuracy, within ~4% on speed at 16M**; strictly beats xgboost-GPU | [gpu-pareto-16M](benchmarks/gpu-pareto-16M-2026-07.md) + [scale-edge](benchmarks/catboost-scale-edge-2026-07.md), decisions 62–64; [`scripts/gpu_pareto.py`](scripts/gpu_pareto.py) |
+| **Categorical parity with catboost within chance-band**, via preprocessing not an engine feature | [decision 58](docs/decisions.md); [categorical-tradeoff](benchmarks/categorical-tradeoff-2026-07.md); [`python/bonsai/encoding.py`](python/bonsai/encoding.py) |
+| **Best library on 9 of 10 real datasets** (CPU quality campaign) | [quality-campaign](benchmarks/quality-campaign-2026-07.md), decisions 56–57 |
+| **~3× less host memory than xgboost** at 16M (7.3 vs 22.2GB) and ~3× faster predict | [`benchmarks/results/rebaseline-2026-07.jsonl`](benchmarks/results/rebaseline-2026-07.jsonl) |
+| **Ranking is a measured, scoped gap** — a modest ~+0.015 NDCG@10 to a *listwise* loss, not pairwise LambdaRank | [ranking-tradeoff](benchmarks/ranking-tradeoff-2026-07.md); [`scripts/probe_ranking.py`](scripts/probe_ranking.py) |
+| **Every feature earns its place by measurement** — refutations are recorded too | the [feature-admission gate](.claude/skills/feature-admission/SKILL.md); declines in decisions 58/62 |
 
 ## Quick start
 
