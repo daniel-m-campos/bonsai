@@ -176,6 +176,38 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                                  });
     }
 
+    // Row-wise softmax of the class logits: out is n_rows * n_classes_,
+    // row-major (the per-class probabilities predict() argmaxes over).
+    void predict_proba(features_view X, std::span<double> out) const override
+    {
+        size_t const k = n_classes_;
+        size_t const n = X.extent(0);
+        assert(out.size() == n * k);
+        auto const scores = raw_scores(X, 0);
+        parallel::for_each_index(
+            n,
+            [&](size_t i)
+            {
+                double maxv = scores[i * k];
+                for (size_t c = 1; c < k; ++c)
+                {
+                    maxv = std::max(maxv, static_cast<double>(scores[(i * k) + c]));
+                }
+                double sum = 0.0;
+                for (size_t c = 0; c < k; ++c)
+                {
+                    double const e =
+                        std::exp(static_cast<double>(scores[(i * k) + c]) - maxv);
+                    out[(i * k) + c] = e;
+                    sum += e;
+                }
+                for (size_t c = 0; c < k; ++c)
+                {
+                    out[(i * k) + c] /= sum;
+                }
+            });
+    }
+
     // Multiclass logloss on raw scores.
     float eval(features_view X, floats_view labels) const override
     {

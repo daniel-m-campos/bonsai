@@ -98,6 +98,45 @@ class Model
         return {raw->data(), {n}, owner};
     }
 
+    // Per-class probabilities. Softmax models return (n_rows, n_classes) — a
+    // row-wise softmax of the class logits; width-1 objectives (logloss)
+    // return (n_rows,) with P(class 1) via the link inverse.
+    nb::ndarray<nb::numpy, double> predict_proba(array_2d const &X) const
+    {
+        size_t const n   = X.shape(0);
+        size_t const w   = booster_->score_width();
+        auto         out = std::make_unique<std::vector<double>>(n * w, 0.0);
+        {
+            nb::gil_scoped_release release;
+            if (w > 1)
+            {
+                booster_->predict_proba(bonsai::features_view{X.data(), n, X.shape(1)},
+                                        std::span<double>{*out});
+            }
+            else
+            {
+                std::vector<float> margins(n, 0.0F);
+                booster_->predict_at(bonsai::features_view{X.data(), n, X.shape(1)},
+                                     bonsai::floats_out{margins.data(), n}, 0);
+                bonsai::apply_link_inverse_by_name(
+                    cfg_.dispatch.objective_name,
+                    bonsai::floats_out{margins.data(), n});
+                for (size_t i = 0; i < n; ++i)
+                {
+                    (*out)[i] = margins[i];
+                }
+            }
+        }
+        auto       *raw = out.release();
+        nb::capsule owner(raw, [](void *p) noexcept
+                          { delete static_cast<std::vector<double> *>(p); });
+        if (w > 1)
+        {
+            return {raw->data(), {n, w}, owner};
+        }
+        return {raw->data(), {n}, owner};
+    }
+
     // (n_iters, n_rows): prediction after each boosting iteration.
     nb::ndarray<nb::numpy, float> staged_predict(array_2d const &X) const
     {
@@ -296,6 +335,7 @@ NB_MODULE(_bonsai, m)
 
     nb::class_<Model>(m, "Model")
         .def("predict", &Model::predict, nb::arg("X"), nb::arg("num_iteration") = 0)
+        .def("predict_proba", &Model::predict_proba, nb::arg("X"))
         .def("staged_predict", &Model::staged_predict, nb::arg("X"))
         .def("predict_leaf", &Model::predict_leaf, nb::arg("X"))
         .def("dump", &Model::dump)

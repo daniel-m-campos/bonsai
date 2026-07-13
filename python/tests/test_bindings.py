@@ -374,23 +374,21 @@ def test_classifier_non_01_labels():
     assert set(np.unique(pred_str)) <= {"a", "b"}
 
 
-def test_classifier_multiclass_predict_and_proba_not_implemented():
+def test_classifier_multiclass_predict_and_proba():
     X, y = _blobs_multiclass()
     m = bonsai.BonsaiClassifier(n_iters=50).fit(X, y)
 
     assert m.n_classes_ == 3
     pred = m.predict(X)
     assert set(np.unique(pred)) <= set(m.classes_)
+    assert m.score(X, y) > 0.8
 
-    acc = m.score(X, y)
-    assert acc > 0.8, acc
-
-    try:
-        m.predict_proba(X)
-    except NotImplementedError as e:
-        assert "predict_proba" in str(e) or "multiclass" in str(e).lower()
-    else:
-        raise AssertionError("expected NotImplementedError for multiclass predict_proba")
+    proba = m.predict_proba(X)
+    assert proba.shape == (len(X), 3)
+    assert np.allclose(proba.sum(axis=1), 1.0)
+    assert (proba >= 0).all() and (proba <= 1).all()
+    # argmax column maps back to the predicted label via classes_
+    assert np.array_equal(m.classes_[proba.argmax(axis=1)], pred)
 
 
 def test_classifier_too_few_classes_raises():
@@ -569,7 +567,7 @@ if __name__ == "__main__":
     test_pickle_round_trip_unfitted()
     test_classifier_binary_predict_and_proba()
     test_classifier_non_01_labels()
-    test_classifier_multiclass_predict_and_proba_not_implemented()
+    test_classifier_multiclass_predict_and_proba()
     test_classifier_too_few_classes_raises()
     test_classifier_get_set_params_round_trip()
     test_classifier_sklearn_clone()

@@ -66,6 +66,17 @@ class IBooster
     // the first k+1 trees).
     virtual void predict_staged(features_view X, floats_out out) const = 0;
 
+    // Per-class probabilities: out is n_rows * score_width(), row-major. Only
+    // the multiclass (softmax) booster implements it — a row-wise softmax of
+    // the class logits. Width-1 objectives expose P(class 1) via predict(),
+    // so the default throws.
+    virtual void predict_proba(features_view /*X*/, std::span<double> /*out*/) const
+    {
+        throw std::logic_error("predict_proba: per-class probabilities are only "
+                               "available for the multiclass (softmax) objective; "
+                               "width-1 objectives expose P via predict()");
+    }
+
     // Per-row, per-tree leaf indices (DenseTree node ids / ObliviousTree
     // table indices): out is n_rows * n_iters(), row-major by row.
     virtual void predict_leaf(features_view X, std::span<node_id_t> out) const = 0;
