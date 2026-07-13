@@ -80,7 +80,27 @@ runtime avoids deadlocks with xgboost/lightgbm's bundled libomp)" OFF)
 
 add_library(bonsai_parallel INTERFACE)
 if(BONSAI_OPENMP)
+    # Homebrew's libomp is keg-only and the llvm kegs ship no OpenMP of
+    # their own, so FindOpenMP fails on a stock Mac without hints. The
+    # failure used to be a silent serial fallback — and serial builds train
+    # different (valid, but not build-reproducible) model bits than
+    # parallel ones, which masqueraded as issue #72's cross-architecture
+    # divergence.
+    if(APPLE AND EXISTS /opt/homebrew/opt/libomp/include/omp.h
+       AND NOT DEFINED OpenMP_CXX_FLAGS)
+        set(OpenMP_CXX_FLAGS "-fopenmp;-I/opt/homebrew/opt/libomp/include")
+        set(OpenMP_CXX_LIB_NAMES omp)
+        set(OpenMP_omp_LIBRARY /opt/homebrew/opt/libomp/lib/libomp.dylib)
+    endif()
     find_package(OpenMP COMPONENTS CXX)
+    if(NOT OpenMP_CXX_FOUND)
+        message(FATAL_ERROR
+            "OpenMP not found. bonsai refuses the silent serial fallback: a "
+            "serial build trains different model bits than a parallel one "
+            "(issue #72). Install libomp (brew install libomp / apt install "
+            "libomp-21-dev) or pass -DBONSAI_OPENMP=OFF to build serial "
+            "deliberately.")
+    endif()
     if(OpenMP_CXX_FOUND)
         target_compile_definitions(bonsai_parallel INTERFACE BONSAI_USE_OPENMP)
         find_library(BONSAI_LIBOMP_A libomp.a
@@ -97,8 +117,6 @@ if(BONSAI_OPENMP)
             endif()
             target_link_libraries(bonsai_parallel INTERFACE OpenMP::OpenMP_CXX)
         endif()
-    else()
-        message(STATUS "OpenMP not found; bonsai builds serial")
     endif()
 endif()
 

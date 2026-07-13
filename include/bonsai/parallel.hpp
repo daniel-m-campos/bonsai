@@ -44,8 +44,10 @@ inline int n_threads()
 }
 
 // Runs f(i) for i in [0, n). Iterations must be independent. Each index is
-// processed by exactly one thread, so per-index outputs are bit-identical
-// to a serial run at any thread count (no cross-thread reductions).
+// processed by exactly one thread, so per-index OUTPUTS are bit-identical
+// at any thread count; sites whose work DECOMPOSITION consults
+// n_threads() (the fill plan) key the model bits to the configured count
+// — the fixed-N contract (docs/architecture/7-parallel.md).
 // Dynamic scheduling keeps asymmetric cores (e.g. P/E) busy; the chunk
 // size scales with n so per-chunk overhead stays negligible for big loops
 // while small loops still spread one index per thread.

@@ -71,12 +71,13 @@ jobs:
     needs: [hash-x86-linux, hash-arm-macos]
     runs-on: ubuntu-24.04
     steps:
-      - name: Same bits on every architecture (serial contract)
+      - name: Same bits on every architecture
         run: |
-          x86="${{ needs.hash-x86-linux.outputs.serial }}"
-          arm="${{ needs.hash-arm-macos.outputs.serial }}"
-          echo "serial  x86-64 linux : $x86"
-          echo "serial  arm64  macos : $arm"
-          echo "parallel x86-64      : ${{ needs.hash-x86-linux.outputs.parallel }} (informational,"
-          echo "parallel arm64       : ${{ needs.hash-arm-macos.outputs.parallel }}  ulp divergence tracked)"
-          test -n "$x86" && test -n "$arm" && test "$x86" = "$arm"
+          xs="${{ needs.hash-x86-linux.outputs.serial }}"
+          as="${{ needs.hash-arm-macos.outputs.serial }}"
+          xp="${{ needs.hash-x86-linux.outputs.parallel }}"
+          ap="${{ needs.hash-arm-macos.outputs.parallel }}"
+          echo "serial    x86-64 linux : $xs    arm64 macos : $as"
+          echo "parallel  x86-64 linux : $xp    arm64 macos : $ap"
+          test -n "$xs" && test -n "$as" && test "$xs" = "$as"
+          test -n "$xp" && test -n "$ap" && test "$xp" = "$ap"
