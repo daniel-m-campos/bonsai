@@ -1,5 +1,7 @@
 # GPU accuracy-vs-time frontier at 16M rows (2026-07)
 
+> **Follow-up (resolved):** the accuracy half of the gap this note reports was a bonsai bug, not catboost's algorithm — the GPU oblivious grower carried a split-selection defect (missing issue-#60 port) that cost it 0.011 r² at scale. Fixed, `cuda_oblivious` matches catboost's accuracy exactly (0.8749 vs 0.8751 at 100 iters); only a ~19% per-round kernel-speed gap remains. See [catboost-scale-edge-2026-07.md](catboost-scale-edge-2026-07.md) and decision 63. The frontier below is the *pre-fix* measurement that motivated the investigation.
+
 A benchmark without its losses is advertising. This one has a loss to report.
 
 ## What and why

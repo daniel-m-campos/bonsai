@@ -60,6 +60,39 @@ oblivious grower emits an `ObliviousTree` (level splits + leaf table) —
 [`include/bonsai/tree.hpp`](../../include/bonsai/tree.hpp). Selection is a
 config string: `dispatch.grower_name = depthwise | leafwise | oblivious`.
 
+## A second, orthogonal axis: the boosting scheme
+
+Growth structure — *where splits go* — is only one of two axes. The other is
+the **boosting scheme** — *how each row's gradient is computed*:
+
+- **Plain** (every library's default at scale, and bonsai's only mode): row
+  $i$'s gradient comes from the full current ensemble's prediction for row
+  $i$ — an ensemble that was trained on all rows, including $i$ itself.
+- **Ordered** (catboost's small-data mode): row $i$'s gradient comes from a
+  model trained only on the rows *before* $i$ in a random permutation, so
+  the gradient never sees $i$'s own label. This removes a subtle bias
+  catboost calls **prediction shift** — the same self-referential leak that
+  [ordered target statistics](13-categorical-features.md) fix for
+  categorical encodings, one level up.
+
+The two axes are independent: any structure composes with any scheme.
+catboost *bundles* oblivious trees with ordered boosting, but that is a
+packaging choice, not a dependency — you can grow depth-wise trees with
+ordered gradients, or oblivious trees with plain ones.
+
+Seen this way, bonsai already spans the **structure** axis more widely than
+either reference library — three growth disciplines to xgboost's two
+(depth/leaf) and catboost's one (oblivious). What it does not offer is the
+ordered *scheme*. That was a measured decision, not an oversight: toggling
+catboost's own `boosting_type` shows ordered boosting buys essentially zero
+test r² on high-signal numeric data (0.8722 vs 0.8720 plain at 200k rows)
+while costing ~7× the fit time, and catboost itself falls back to plain past
+~50k rows. Prediction shift is real, but it bites on small, noisy, or
+categorical problems — exactly where the target-statistics *encoder* already
+applies the ordered fix without a core change. The full ladder that priced
+this out is [decision 62–63](../decisions.md); the evidence is
+[benchmarks/catboost-scale-edge-2026-07.md](../../benchmarks/catboost-scale-edge-2026-07.md).
+
 ## Try it
 
 ```bash

@@ -1,0 +1,26 @@
+{"door": "ordered", "rows": 200000, "iters": 100, "learner": "catboost_ordered", "fit_s": 17.06, "r2_test": 0.8722}
+{"door": "ordered", "rows": 200000, "iters": 100, "learner": "catboost_plain", "fit_s": 2.51, "r2_test": 0.872}
+{"door": "ordered", "rows": 200000, "iters": 100, "learner": "bonsai_oblivious", "fit_s": 3.91, "r2_test": 0.8747}
+{"door": "ordered", "rows": 200000, "iters": 200, "learner": "catboost_ordered", "fit_s": 30.59, "r2_test": 0.8932}
+{"door": "ordered", "rows": 200000, "iters": 200, "learner": "catboost_plain", "fit_s": 4.66, "r2_test": 0.8937}
+{"door": "ordered", "rows": 200000, "iters": 200, "learner": "bonsai_oblivious", "fit_s": 7.3, "r2_test": 0.894}
+{"door": "ordered", "rows": 1000000, "iters": 100, "learner": "catboost_ordered", "fit_s": 63.22, "r2_test": 0.8754}
+{"door": "ordered", "rows": 1000000, "iters": 100, "learner": "catboost_plain", "fit_s": 8.36, "r2_test": 0.876}
+{"door": "ordered", "rows": 1000000, "iters": 100, "learner": "bonsai_oblivious", "fit_s": 9.98, "r2_test": 0.8766}
+{"door": "bins", "rows": 1000000, "learner": "catboost_plain", "n_samples": null, "fit_s": 8.01, "r2_test": 0.876}
+{"door": "bins", "rows": 1000000, "learner": "bonsai_oblivious", "n_samples": 200000, "fit_s": 9.76, "r2_test": 0.8766}
+{"door": "bins", "rows": 1000000, "learner": "bonsai_oblivious", "n_samples": 1000000, "fit_s": 9.98, "r2_test": 0.8766}
+{"door": "bins", "rows": 4000000, "learner": "catboost_plain", "n_samples": null, "fit_s": 36.73, "r2_test": 0.8762}
+{"door": "bins", "rows": 4000000, "learner": "bonsai_oblivious", "n_samples": 200000, "fit_s": 34.36, "r2_test": 0.8763}
+{"door": "bins", "rows": 4000000, "learner": "bonsai_oblivious", "n_samples": 1000000, "fit_s": 35.4, "r2_test": 0.8766}
+{"door": "bins", "rows": 4000000, "learner": "bonsai_oblivious", "n_samples": 4000000, "fit_s": 36.62, "r2_test": 0.8764}
+{"door": "isolate", "rows": 16000000, "learner": "catboost_plain_cpu", "fit_s": 157.67, "r2_test": 0.8744}
+{"door": "isolate", "rows": 16000000, "learner": "bonsai_oblivious_cpu", "fit_s": 171.75, "r2_test": 0.8749}
+{"door": "isolate", "rows": 16000000, "learner": "bonsai_depthwise_cpu", "fit_s": 151.93, "r2_test": 0.8782}
+{"door": "gpu", "rows": 16000000, "iters": 100, "learner": "bonsai_cuda_oblivious_prefix", "fit_s": null, "r2_test": 0.8638, "note": "pre-fix, from gpu-pareto-16M jsonl"}
+{"door": "gpu", "rows": 16000000, "iters": 100, "learner": "bonsai_cuda_oblivious_fixed", "fit_s": 29.21, "r2_test": 0.8749}
+{"door": "gpu", "rows": 16000000, "iters": 160, "learner": "bonsai_cuda_oblivious_fixed", "fit_s": 41.03, "r2_test": 0.8913}
+{"door": "gpu", "rows": 16000000, "iters": 100, "learner": "bonsai_cuda_depthwise", "fit_s": 30.37, "r2_test": 0.8776}
+{"door": "gpu", "rows": 16000000, "iters": 100, "learner": "catboost_gpu", "fit_s": 23.81, "r2_test": 0.8751}
+{"door": "gpu", "rows": 16000000, "iters": 150, "learner": "catboost_gpu", "fit_s": 28.37, "r2_test": 0.8892}
+{"door": "gpu", "rows": 16000000, "iters": 200, "learner": "catboost_gpu", "fit_s": 32.19, "r2_test": 0.8944}
