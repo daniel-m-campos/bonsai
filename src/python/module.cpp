@@ -47,7 +47,8 @@ bonsai::features_view as_view(array_2d const &X)
 // alive for the duration of the train call.
 bonsai::cli::LabeledData make_labeled(array_2d const &X, array_1d const &y,
                                       bonsai::BinMappers const &mappers,
-                                      bonsai::Config const     &cfg)
+                                      bonsai::Config const     &cfg,
+                                      bonsai::floats_view       weights = {})
 {
     size_t const n = X.shape(0);
 
@@ -64,7 +65,7 @@ bonsai::cli::LabeledData make_labeled(array_2d const &X, array_1d const &y,
                      : nullptr;
     return bonsai::cli::LabeledData{
         .dataset  = bonsai::Dataset::bin(as_view(X), bonsai::floats_view{y.data(), n},
-                                         mappers, cfg.data, std::move(plane)),
+                                         mappers, cfg.data, std::move(plane), weights),
         .features = std::move(buf),
         .labels   = std::vector<float>(y.data(), y.data() + n)};
 }
@@ -232,10 +233,17 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
             array_2d const &X, array_1d const &y,
             std::optional<std::pair<array_2d, array_1d>> const &eval_set,
             std::optional<std::string> const                   &init_model,
-            std::optional<std::string> const                   &config)
+            std::optional<std::string> const                   &config,
+            std::optional<array_1d> const                      &sample_weight)
 {
     bonsai::Config const cfg = config_from_params(params, config);
     bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
+
+    if (sample_weight && sample_weight->shape(0) != X.shape(0))
+    {
+        throw std::invalid_argument(
+            "sample_weight length must equal the number of rows");
+    }
 
     std::optional<bonsai::io::LoadedBooster> init;
     if (init_model)
@@ -257,7 +265,11 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
     loaded.mappers =
         init ? std::move(init->mappers)
              : bonsai::BinMappers::fit(as_view(X), std::move(names), cfg.bin_mapper);
-    loaded.train = make_labeled(X, y, loaded.mappers, cfg);
+    bonsai::floats_view const wview =
+        sample_weight
+            ? bonsai::floats_view{sample_weight->data(), sample_weight->shape(0)}
+            : bonsai::floats_view{};
+    loaded.train = make_labeled(X, y, loaded.mappers, cfg, wview);
     if (eval_set)
     {
         loaded.valid =
@@ -295,11 +307,13 @@ NB_MODULE(_bonsai, m)
 
     m.def("train", &train, nb::arg("params"), nb::arg("X"), nb::arg("y"),
           nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
-          nb::arg("config") = nb::none(),
+          nb::arg("config") = nb::none(), nb::arg("sample_weight") = nb::none(),
           "Train a booster on row-major float32 features. `params` is a list "
           "of (dotted-key, value-string) config overrides, e.g. "
           "('tree.max_depth', '8'). `config` is a TOML file path used as the "
-          "base config; params override it (the CLI's -c + --set ordering).");
+          "base config; params override it (the CLI's -c + --set ordering). "
+          "`sample_weight` is an optional float32 per-row weight vector "
+          "(scales each row's gradient and hessian).");
     m.def("load", &load, nb::arg("path"), "Load a model saved by Model.save.");
 
     m.def("default_config_toml", [] { return bonsai::config::dump_toml({}); });

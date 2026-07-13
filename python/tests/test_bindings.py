@@ -65,6 +65,48 @@ def test_parity_with_cli():
     np.testing.assert_allclose(py_pred, cli_pred, rtol=0, atol=2e-4)
 
 
+def test_sample_weight_ones_is_identity():
+    """Uniform weights of 1.0 multiply every gradient/hessian by 1 — the model
+    must be identical to fitting with no weights at all."""
+    Xtr, ytr = load_csv(TRAIN_CSV)
+    Xte, _ = load_csv(TEST_CSV)
+    base = bonsai.BonsaiRegressor(**CH_PARAMS).fit(Xtr, ytr).predict(Xte)
+    ones = np.ones(len(ytr), dtype=np.float32)
+    weighted = (
+        bonsai.BonsaiRegressor(**CH_PARAMS).fit(Xtr, ytr, sample_weight=ones).predict(Xte)
+    )
+    np.testing.assert_array_equal(base, weighted)
+
+
+def test_sample_weight_shifts_toward_upweighted_rows():
+    """With uninformative features the tree can only fit the (weighted) mean,
+    so heavily upweighting the high-target rows must raise predictions."""
+    rng = np.random.default_rng(0)
+    n = 4000
+    X = rng.random((n, 5), dtype=np.float32)  # pure noise, no signal
+    y = np.concatenate([np.zeros(n // 2), np.full(n // 2, 10.0)]).astype(np.float32)
+    params = dict(n_iters=50, learning_rate=0.1, max_depth=4)
+
+    uniform = bonsai.BonsaiRegressor(**params).fit(X, y).predict(X).mean()
+    w = np.where(y > 5, 100.0, 1.0).astype(np.float32)  # upweight the tens
+    up = bonsai.BonsaiRegressor(**params).fit(X, y, sample_weight=w).predict(X).mean()
+
+    assert uniform < 6.0  # ~weighted-uniform mean, near 5
+    assert up > 9.0  # dragged toward the upweighted target of 10
+    assert up > uniform + 3.0
+
+
+def test_sample_weight_length_mismatch_raises():
+    X = np.zeros((10, 3), dtype=np.float32)
+    y = np.zeros(10, dtype=np.float32)
+    try:
+        bonsai.BonsaiRegressor(n_iters=5).fit(X, y, sample_weight=np.ones(9, dtype=np.float32))
+    except Exception as e:
+        assert "sample_weight" in str(e)
+    else:
+        raise AssertionError("expected a length-mismatch error")
+
+
 def test_early_stopping_stops():
     Xtr, ytr = load_csv(TRAIN_CSV)
     m = bonsai.BonsaiRegressor(
