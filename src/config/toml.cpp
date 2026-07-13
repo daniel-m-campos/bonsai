@@ -55,6 +55,19 @@ Config parse_toml(std::string_view text)
     }
 }
 
+bool toml_has_section(std::string const &path, std::string_view section)
+{
+    try
+    {
+        auto const root = toml::parse_file(path);
+        return root.contains(section);
+    }
+    catch (toml::parse_error const &e)
+    {
+        throw ConfigError(std::string{"config: TOML parse error: "} + e.what());
+    }
+}
+
 void apply_overrides(Config &cfg, std::vector<Override> const &overrides)
 {
     for (auto const &ov : overrides)

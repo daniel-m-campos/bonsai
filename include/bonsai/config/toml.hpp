@@ -23,6 +23,12 @@ Config parse_toml(std::string_view text);
 // `bonsai params`.
 std::string dump_toml(Config const &cfg);
 
+// Whether the TOML file contains the named top-level section, regardless of
+// the values it sets. Value comparison cannot distinguish an absent section
+// from one that explicitly restates the defaults; callers that fix a section
+// elsewhere (a prebuilt Dataset) need the structural answer.
+bool toml_has_section(std::string const &path, std::string_view section);
+
 // Apply CLI dotted-key overrides like "tree.max_depth=8" to an existing
 // Config (last write wins). Throws ConfigError on unknown key or bad value.
 struct Override

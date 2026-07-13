@@ -573,22 +573,23 @@ def test_reusable_dataset_bit_identical_and_guard():
         raise AssertionError("expected bin_mapper param override to be rejected")
 
     # ...and reject a config file that carries a [bin_mapper] section, which
-    # would otherwise be silently ignored (binning comes from the Dataset)
-    import tempfile
-
-    with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
-        f.write("[bin_mapper]\nmax_bin = 63\n")
-        bad_cfg = f.name
-    try:
-        bonsai.train([], ds, config=bad_cfg)
-    except Exception as e:
-        assert "bin_mapper" in str(e)
-    else:
-        raise AssertionError("expected config-file bin_mapper to be rejected")
+    # would otherwise be silently ignored (binning comes from the Dataset).
+    # The check is structural: even a section that restates the defaults
+    # (max_bin = 255) is an explicit override and must be rejected.
+    for section in ("[bin_mapper]\nmax_bin = 63\n", "[bin_mapper]\nmax_bin = 255\n"):
+        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+            f.write(section)
+            bad_cfg = f.name
+        try:
+            bonsai.train([], ds, config=bad_cfg)
+        except Exception as e:
+            assert "bin_mapper" in str(e)
+        else:
+            raise AssertionError(f"expected config-file rejection for: {section!r}")
 
     # a config file with only non-bin params must NOT false-positive, even when
     # the Dataset itself was binned with a non-default max_bin
-    ds63 = bonsai.Dataset(X, y, max_bin=63)
+    ds63 = bonsai.Dataset(X, y, max_bin=63, min_data_in_bin=3)
     with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
         f.write("[tree]\nmax_depth = 4\n")
         ok_cfg = f.name

@@ -81,7 +81,7 @@ class Dataset
 {
   public:
     Dataset(array_2d const &X, array_1d const &y, std::optional<array_1d> const &weight,
-            int max_bin, size_t n_samples, uint64_t seed)
+            int max_bin, size_t n_samples, uint64_t seed, int min_data_in_bin)
         : x_(X), y_(y), weight_(weight)
     {
         if (y.shape(0) != X.shape(0))
@@ -94,9 +94,10 @@ class Dataset
                 "Dataset: len(weight) must equal the row count");
         }
         bonsai::Config cfg;
-        cfg.bin_mapper.max_bin   = max_bin;
-        cfg.bin_mapper.n_samples = n_samples;
-        cfg.bin_mapper.seed      = seed;
+        cfg.bin_mapper.max_bin         = max_bin;
+        cfg.bin_mapper.n_samples       = n_samples;
+        cfg.bin_mapper.seed            = seed;
+        cfg.bin_mapper.min_data_in_bin = min_data_in_bin;
 
         size_t const             f = X.shape(1);
         std::vector<std::string> names;
@@ -400,21 +401,21 @@ Model train_dataset(std::vector<std::pair<std::string, std::string>> const &para
         {
             throw std::invalid_argument(
                 "bin_mapper.* is fixed when training from a prebuilt Dataset; set "
-                "max_bin/n_samples/seed at Dataset construction instead");
+                "max_bin/n_samples/seed/min_data_in_bin at Dataset construction "
+                "instead");
         }
     }
     // The config file can also carry a [bin_mapper] section; it would be
     // silently ignored (binning comes from the Dataset), so reject it too.
-    // Compare the file alone against the struct defaults: this fires only when
-    // the file actually sets a bin_mapper value, independent of how the Dataset
-    // itself was binned (so a custom-binned Dataset isn't falsely flagged).
-    if (config &&
-        config_from_params({}, config).bin_mapper != bonsai::BinMapperConfig{})
+    // The check is structural (section presence, not values): a file that
+    // explicitly restates the defaults is still an override the user asked
+    // for, and value comparison cannot see it.
+    if (config && bonsai::config::toml_has_section(*config, "bin_mapper"))
     {
         throw std::invalid_argument(
             "the config file sets bin_mapper.*, which is fixed when training from "
-            "a prebuilt Dataset; set max_bin/n_samples/seed at Dataset "
-            "construction instead");
+            "a prebuilt Dataset; set max_bin/n_samples/seed/min_data_in_bin at "
+            "Dataset construction instead");
     }
     bonsai::Config const cfg = config_from_params(params, config);
     bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
@@ -457,14 +458,15 @@ NB_MODULE(_bonsai, m)
 
     nb::class_<Dataset>(m, "Dataset")
         .def(nb::init<array_2d const &, array_1d const &,
-                      std::optional<array_1d> const &, int, size_t, uint64_t>(),
+                      std::optional<array_1d> const &, int, size_t, uint64_t, int>(),
              nb::arg("X"), nb::arg("y"), nb::arg("weight") = nb::none(),
              nb::arg("max_bin") = 255, nb::arg("n_samples") = 200000,
-             nb::arg("seed") = 0,
+             nb::arg("seed") = 0, nb::arg("min_data_in_bin") = 1,
              "A pre-binned dataset. Bins X once at construction and is reused "
              "across train(params, dataset) calls (hyperparameter search / CV), "
              "skipping the per-fit bin pass; on GPU the resident matrix uploads "
-             "once and is cached. max_bin/n_samples/seed are fixed here.")
+             "once and is cached. All bin_mapper settings "
+             "(max_bin/n_samples/seed/min_data_in_bin) are fixed here.")
         .def_prop_ro("n_rows", &Dataset::n_rows)
         .def_prop_ro("n_features", &Dataset::n_features);
 
