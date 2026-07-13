@@ -97,7 +97,6 @@ class Dataset
         cfg.bin_mapper.max_bin   = max_bin;
         cfg.bin_mapper.n_samples = n_samples;
         cfg.bin_mapper.seed      = seed;
-        baked_                   = cfg.bin_mapper;
 
         size_t const             f = X.shape(1);
         std::vector<std::string> names;
@@ -133,7 +132,6 @@ class Dataset
     array_1d                      y_;
     std::optional<array_1d>       weight_;
     bonsai::cli::LoadedTrainValid loaded_;
-    bonsai::BinMapperConfig       baked_;
 };
 
 // A trained model: booster + the bin mappers and config it was fit with.
@@ -389,7 +387,8 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
 // Train on a prebuilt Dataset: reuses its binning (skips BinMappers::fit +
 // Dataset::bin) and, on GPU, its resident matrix across calls. Only training
 // hyperparameters vary per call; binning is fixed by the Dataset, so
-// bin_mapper.* overrides are rejected rather than silently ignored.
+// bin_mapper.* overrides are rejected rather than silently ignored — whether
+// they arrive as a param pair or inside the config file.
 Model train_dataset(std::vector<std::pair<std::string, std::string>> const &params,
                     Dataset const                                          &dataset,
                     std::optional<std::string> const                       &init_model,
@@ -403,6 +402,19 @@ Model train_dataset(std::vector<std::pair<std::string, std::string>> const &para
                 "bin_mapper.* is fixed when training from a prebuilt Dataset; set "
                 "max_bin/n_samples/seed at Dataset construction instead");
         }
+    }
+    // The config file can also carry a [bin_mapper] section; it would be
+    // silently ignored (binning comes from the Dataset), so reject it too.
+    // Compare the file alone against the struct defaults: this fires only when
+    // the file actually sets a bin_mapper value, independent of how the Dataset
+    // itself was binned (so a custom-binned Dataset isn't falsely flagged).
+    if (config &&
+        config_from_params({}, config).bin_mapper != bonsai::BinMapperConfig{})
+    {
+        throw std::invalid_argument(
+            "the config file sets bin_mapper.*, which is fixed when training from "
+            "a prebuilt Dataset; set max_bin/n_samples/seed at Dataset "
+            "construction instead");
     }
     bonsai::Config const cfg = config_from_params(params, config);
     bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
