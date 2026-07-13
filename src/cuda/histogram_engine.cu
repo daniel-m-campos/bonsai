@@ -253,7 +253,6 @@ struct CudaHistogramEngine::Impl
         Staged<FeatBest>       node_best;
         Staged<double>         level_child; // oblivious: 4 per node [gL,hL,gR,hR]
         DeviceBuffer<double>   level_score; // oblivious: per (feature, dl, bin) scores
-        DeviceBuffer<int>      level_feas;  //   and all-nodes-feasible flags
         Staged<uint32_t>       sofs;        // small-node subset: ofs/cnt/slot
         Staged<uint32_t>       scnt;
         Staged<uint32_t>       sslot;
@@ -999,7 +998,6 @@ void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
     size_t const scratch =
         static_cast<size_t>(im.lvl.n_selected) * 2 * (im.lvl.stride / 2);
     im.lvl.level_score.reserve(scratch);
-    im.lvl.level_feas.reserve(scratch);
     im.lvl.feat_best.reserve(im.lvl.n_selected);
     im.lvl.node_best.reserve(1);
     im.lvl.level_child.reserve(4 * n);
@@ -1007,8 +1005,7 @@ void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
         im.lvl.cur().data(), im.lvl.features.device(), im.data.n_bins_ptr(),
         im.lvl.node_sums.device(), im.lvl.n_selected, static_cast<uint32_t>(n),
         im.lvl.stride, config.lambda_l1, config.lambda_l2, config.min_child_hess,
-        config.min_gain_to_split, im.lvl.level_score.data(), im.lvl.level_feas.data(),
-        im.lvl.feat_best.data());
+        config.min_gain_to_split, im.lvl.level_score.data(), im.lvl.feat_best.data());
     check(cudaGetLastError(), "level find launch");
     reduce_kernel<<<dim3(1), dim3(32)>>>(im.lvl.feat_best.data(), im.lvl.n_selected,
                                          im.lvl.node_best.device());
