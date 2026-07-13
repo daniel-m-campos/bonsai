@@ -14,6 +14,11 @@ class BinMapper
 {
   public:
     static BinMapper fit(floats_view column, BinMapperConfig const &cfg);
+    // Cuts from an already-gathered, NaN-free working set. The row-sample-once
+    // path (BinMappers::fit) draws one shared row sample and gathers each
+    // feature's values at those rows, so the O(n) reservoir pass runs once for
+    // the whole matrix instead of once per feature.
+    static BinMapper from_sample(std::vector<float> sample, BinMapperConfig const &cfg);
     static BinMapper from_cuts(std::vector<float> cuts)
     {
         return BinMapper{std::move(cuts)};

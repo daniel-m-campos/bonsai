@@ -163,10 +163,15 @@ std::vector<float> create_cuts(std::vector<float> &subsample, size_t cut_budget)
 BinMapper BinMapper::fit(floats_view column, BinMapperConfig const &cfg)
 {
     assert(cfg.max_bin > 2);
+    return from_sample(create_subsample(column, cfg), cfg);
+}
+
+BinMapper BinMapper::from_sample(std::vector<float> sample, BinMapperConfig const &cfg)
+{
+    assert(cfg.max_bin > 2);
     // 1 bin for the +inf sentinel, another for the missing slot.
     size_t const cut_budget = cfg.max_bin - 2;
-    auto         subsample  = create_subsample(column, cfg);
-    auto         cuts       = create_cuts(subsample, cut_budget);
+    auto         cuts       = create_cuts(sample, cut_budget);
     return BinMapper{std::move(cuts)};
 }
 
