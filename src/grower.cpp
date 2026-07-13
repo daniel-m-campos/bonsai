@@ -223,8 +223,24 @@ void run_fill(FillPlan const &plan, Dataset const &ds, floats_view grad,
             }
             HistCell **const base_ptr = bases.data();
             row_id_t const  *rows     = unit.node.get().rows.data();
+            // Software prefetch: below the root, a node's rows are an
+            // ascending SUBSET, so successive mirror strips sit at irregular
+            // strides the hardware prefetcher cannot follow — the populate
+            // ledger showed the row loop DRAM-latency-bound at depth (the
+            // 16M cell: 78s of a 107s fit). Pull the strip (two lines at
+            // 100 u8 features) and the grad/hess pair a fixed distance
+            // ahead; reads only, so results are bit-identical.
+            constexpr size_t k_ahead = 16;
             for (size_t k = unit.k0; k < unit.k1; ++k)
             {
+                if (k + k_ahead < unit.k1)
+                {
+                    size_t const rp = rows[k + k_ahead];
+                    __builtin_prefetch(rm_ptr + (rp * n_features), 0, 0);
+                    __builtin_prefetch(rm_ptr + (rp * n_features) + 64, 0, 0);
+                    __builtin_prefetch(&grad[rp], 0, 0);
+                    __builtin_prefetch(&hess[rp], 0, 0);
+                }
                 size_t const         r  = rows[k];
                 uint8_t const *const rb = rm_ptr + (r * n_features);
                 float const          g  = grad[r];
