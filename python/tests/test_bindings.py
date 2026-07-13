@@ -564,13 +564,35 @@ def test_reusable_dataset_bit_identical_and_guard():
     np.testing.assert_array_equal(ref, got)
     # reuse with different hyperparameters (no re-bin)
     assert np.asarray(bonsai.train([("booster.n_iters", "10")], ds).predict(X)).shape == (3000,)
-    # binning is fixed by the Dataset
+    # binning is fixed by the Dataset — reject a bin_mapper param override
     try:
         bonsai.train([("bin_mapper.max_bin", "63")], ds)
     except Exception as e:
         assert "bin_mapper" in str(e)
     else:
-        raise AssertionError("expected bin_mapper override to be rejected")
+        raise AssertionError("expected bin_mapper param override to be rejected")
+
+    # ...and reject a config file that carries a [bin_mapper] section, which
+    # would otherwise be silently ignored (binning comes from the Dataset)
+    import tempfile
+
+    with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+        f.write("[bin_mapper]\nmax_bin = 63\n")
+        bad_cfg = f.name
+    try:
+        bonsai.train([], ds, config=bad_cfg)
+    except Exception as e:
+        assert "bin_mapper" in str(e)
+    else:
+        raise AssertionError("expected config-file bin_mapper to be rejected")
+
+    # a config file with only non-bin params must NOT false-positive, even when
+    # the Dataset itself was binned with a non-default max_bin
+    ds63 = bonsai.Dataset(X, y, max_bin=63)
+    with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+        f.write("[tree]\nmax_depth = 4\n")
+        ok_cfg = f.name
+    assert np.asarray(bonsai.train([], ds63, config=ok_cfg).predict(X)).shape == (3000,)
 
 if __name__ == "__main__":
     test_fit_predict_rmse()
