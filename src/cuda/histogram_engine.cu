@@ -107,8 +107,7 @@ struct ProfileCounters
                          "find_kern={:.2f}s find_d2h={:.2f}s",
                          gh_upload_s, root_stage_s, part_stage_s, adv_stage_s,
                          find_stage_s, lfind_stage_s, gpu_wait_s, upload_s,
-                         bins_upload_s, fin_wait_s, fin_d2h_s, find_kern_s,
-                         find_d2h_s);
+                         bins_upload_s, fin_wait_s, fin_d2h_s, find_kern_s, find_d2h_s);
         }
         catch (...)
         {
