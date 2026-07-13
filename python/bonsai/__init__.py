@@ -8,8 +8,8 @@ Two API layers, both over the same native module:
   ``default_config_toml()`` for all of them). ``Model`` carries
   ``predict / staged_predict / predict_leaf / pred_contribs (TreeSHAP) /
   feature_importance / dump / save``.
-- ``BonsaiRegressor`` — an sklearn-style estimator wrapping the same
-  booster for pipelines and quick experiments.
+- ``BonsaiRegressor`` / ``BonsaiClassifier`` — sklearn-style estimators
+  wrapping the same booster for pipelines and quick experiments.
 
 GPU training: pass ``dispatch.grower_name = "cuda_depthwise"`` (or
 ``cuda_oblivious``); ``cuda_available()`` reports whether this build and
@@ -31,6 +31,7 @@ from ._bonsai import Model, cuda_available, default_config_toml, load, train
 from .encoding import OrderedTargetEncoder
 
 __all__ = [
+    "BonsaiClassifier",
     "BonsaiRegressor",
     "Model",
     "OrderedTargetEncoder",
@@ -55,19 +56,17 @@ def _as_1d_f32(y) -> np.ndarray:
     return a
 
 
-class BonsaiRegressor:
-    """sklearn-style wrapper around the native booster.
+def _to_config_str(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (list, tuple)):
+        return ",".join(str(x) for x in v)
+    return str(v)
 
-    First-class arguments cover the common knobs; anything else can be set
-    through ``params`` using dotted config keys, e.g.
-    ``params={"tree.lambda_l1": 0.5, "sampler.top_rate": 0.2}`` — the same
-    keys the CLI accepts via ``--set``.
 
-    ``config`` names a TOML file used as the base config (the CLI's ``-c``).
-    Keyword arguments and ``params`` always win over the file — including the
-    first-class kwargs at their defaults, which are always emitted. To defer
-    a knob to the file, set it there and leave it out of ``params``, or use
-    ``train()`` directly.
+class _BonsaiEstimator:
+    """Shared sklearn-contract machinery for ``BonsaiRegressor`` and
+    ``BonsaiClassifier``.
 
     Duck-types the scikit-learn estimator contract (``get_params`` /
     ``set_params`` / ``score`` / ``_estimator_type``) without subclassing
@@ -75,9 +74,15 @@ class BonsaiRegressor:
     this package, so ``clone``, ``Pipeline``, ``GridSearchCV`` and
     ``cross_val_score`` all work, but ``import bonsai`` never needs sklearn
     installed.
-    """
 
-    _estimator_type = "regressor"
+    Not part of the public API — subclasses (``BonsaiRegressor``,
+    ``BonsaiClassifier``) are what users construct. Holds only what's
+    identical between them: parameter bookkeeping, config-pair building
+    (minus the objective, which each subclass supplies), pickling, and the
+    fitted/tag hooks sklearn's tooling looks for. ``_estimator_type``,
+    ``score``, and ``fit``/``predict`` stay per-subclass since binary/
+    multiclass/regression targets and outputs genuinely differ.
+    """
 
     def __init__(
         self,
@@ -87,7 +92,6 @@ class BonsaiRegressor:
         max_leaves: int = 31,
         grower: str = "leafwise",
         sampler: str = "all_rows",
-        objective: str = "mse",
         early_stopping_rounds: int = 0,
         n_threads: int = 0,
         random_seed: int = 42,
@@ -100,13 +104,18 @@ class BonsaiRegressor:
         self.max_leaves = max_leaves
         self.grower = grower
         self.sampler = sampler
-        self.objective = objective
         self.early_stopping_rounds = early_stopping_rounds
         self.n_threads = n_threads
         self.random_seed = random_seed
         self.params = params
         self.config = config
         self._model: Model | None = None
+
+    def _objective_pairs(self) -> dict[str, str]:
+        """Config keys the objective needs. ``BonsaiRegressor`` exposes a
+        fixed ``objective`` kwarg; ``BonsaiClassifier`` derives it from
+        ``classes_`` at fit time. Overridden per-subclass."""
+        raise NotImplementedError
 
     def _build_pairs(self) -> list[tuple[str, str]]:
         """Translate the first-class kwargs + ``params`` into the dotted
@@ -122,8 +131,8 @@ class BonsaiRegressor:
             "tree.max_leaves": self.max_leaves,
             "dispatch.grower_name": self.grower,
             "dispatch.sampler_name": self.sampler,
-            "dispatch.objective_name": self.objective,
             "parallel.n_threads": self.n_threads,
+            **self._objective_pairs(),
             **(self.params or {}),
         }
         return [(k, _to_config_str(v)) for k, v in merged.items()]
@@ -131,7 +140,7 @@ class BonsaiRegressor:
     def get_params(self, deep: bool = True) -> dict:
         """sklearn contract: one entry per ``__init__`` parameter, unchanged
         since construction (``deep`` is accepted for API compatibility;
-        ``BonsaiRegressor`` has no nested estimators to recurse into)."""
+        these estimators have no nested estimators to recurse into)."""
         names = [
             p.name
             for p in inspect.signature(self.__init__).parameters.values()
@@ -139,7 +148,7 @@ class BonsaiRegressor:
         ]
         return {name: getattr(self, name) for name in names}
 
-    def set_params(self, **params) -> BonsaiRegressor:
+    def set_params(self, **params):
         """sklearn contract: set constructor attributes in place, return
         self. Unknown names raise (sklearn's own estimators do the same)."""
         valid = self.get_params(deep=False)
@@ -151,26 +160,6 @@ class BonsaiRegressor:
                 )
             setattr(self, key, value)
         return self
-
-    def score(self, X, y, sample_weight=None) -> float:
-        """R² (coefficient of determination), matching sklearn's
-        ``RegressorMixin.score`` — computed by hand, no sklearn import."""
-        y_true = _as_1d_f32(y).astype(np.float64)
-        y_pred = np.asarray(self.predict(X), dtype=np.float64)
-        w = None if sample_weight is None else _as_1d_f32(sample_weight).astype(np.float64)
-
-        if w is None:
-            avg_true = y_true.mean()
-            ss_res = np.sum((y_true - y_pred) ** 2)
-            ss_tot = np.sum((y_true - avg_true) ** 2)
-        else:
-            avg_true = np.average(y_true, weights=w)
-            ss_res = np.sum(w * (y_true - y_pred) ** 2)
-            ss_tot = np.sum(w * (y_true - avg_true) ** 2)
-
-        if ss_tot == 0:
-            return 1.0 if ss_res == 0 else 0.0
-        return float(1.0 - ss_res / ss_tot)
 
     def __sklearn_is_fitted__(self) -> bool:
         """sklearn's ``check_is_fitted`` (used by ``Pipeline`` etc.) looks
@@ -185,17 +174,11 @@ class BonsaiRegressor:
         ``__sklearn_tags__`` on any estimator passed through ``clone``,
         ``Pipeline``, ``cross_val_score``, or ``GridSearchCV`` — even
         duck-typed ones that never subclass ``BaseEstimator``. Built by hand
-        (mirroring what ``RegressorMixin``/``BaseEstimator`` produce) so
-        sklearn stays import-only-in-tests; empirically verified against
-        sklearn 1.8.0 (see test suite)."""
-        from sklearn.utils import InputTags, RegressorTags, Tags, TargetTags
-
-        return Tags(
-            estimator_type="regressor",
-            target_tags=TargetTags(required=True),
-            regressor_tags=RegressorTags(),
-            input_tags=InputTags(),
-        )
+        (mirroring what ``RegressorMixin``/``ClassifierMixin``/
+        ``BaseEstimator`` produce) so sklearn stays import-only-in-tests;
+        empirically verified against the installed sklearn (see test
+        suite). Subclasses fill in the estimator-type-specific tag."""
+        raise NotImplementedError
 
     def __getstate__(self) -> dict:
         state = self.__dict__.copy()
@@ -217,22 +200,6 @@ class BonsaiRegressor:
                 self._model = load(str(path))
         else:
             self._model = None
-
-    def fit(self, X, y, sample_weight=None, eval_set: tuple | None = None,
-            init_model: str | None = None) -> BonsaiRegressor:
-        """`sample_weight` scales each row's gradient and hessian (sklearn's
-        convention). init_model continues training from a saved .msgpack (warm
-        start); binning reuses the loaded model's cut points."""
-        pairs = self._build_pairs()
-        ev = None
-        if eval_set is not None:
-            ev = (_as_2d_f32(eval_set[0]), _as_1d_f32(eval_set[1]))
-        sw = None if sample_weight is None else _as_1d_f32(sample_weight)
-        self._model = train(
-            pairs, _as_2d_f32(X), _as_1d_f32(y), ev, init_model, self.config,
-            sample_weight=sw,
-        )
-        return self
 
     def predict(self, X, num_iteration: int = 0) -> np.ndarray:
         if self._model is None:
@@ -284,7 +251,7 @@ class BonsaiRegressor:
         self._model.save(path)
 
     @classmethod
-    def from_file(cls, path: str) -> BonsaiRegressor:
+    def from_file(cls, path: str):
         out = cls()
         out._model = load(path)
         return out
@@ -296,9 +263,213 @@ class BonsaiRegressor:
         return self._model.n_iters
 
 
-def _to_config_str(v) -> str:
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, (list, tuple)):
-        return ",".join(str(x) for x in v)
-    return str(v)
+class BonsaiRegressor(_BonsaiEstimator):
+    """sklearn-style wrapper around the native booster.
+
+    First-class arguments cover the common knobs; anything else can be set
+    through ``params`` using dotted config keys, e.g.
+    ``params={"tree.lambda_l1": 0.5, "sampler.top_rate": 0.2}`` — the same
+    keys the CLI accepts via ``--set``.
+
+    ``config`` names a TOML file used as the base config (the CLI's ``-c``).
+    Keyword arguments and ``params`` always win over the file — including the
+    first-class kwargs at their defaults, which are always emitted. To defer
+    a knob to the file, set it there and leave it out of ``params``, or use
+    ``train()`` directly.
+    """
+
+    _estimator_type = "regressor"
+
+    def __init__(
+        self,
+        n_iters: int = 100,
+        learning_rate: float = 0.05,
+        max_depth: int = 6,
+        max_leaves: int = 31,
+        grower: str = "leafwise",
+        sampler: str = "all_rows",
+        objective: str = "mse",
+        early_stopping_rounds: int = 0,
+        n_threads: int = 0,
+        random_seed: int = 42,
+        params: dict | None = None,
+        config: str | None = None,
+    ):
+        super().__init__(
+            n_iters=n_iters,
+            learning_rate=learning_rate,
+            max_depth=max_depth,
+            max_leaves=max_leaves,
+            grower=grower,
+            sampler=sampler,
+            early_stopping_rounds=early_stopping_rounds,
+            n_threads=n_threads,
+            random_seed=random_seed,
+            params=params,
+            config=config,
+        )
+        self.objective = objective
+
+    def _objective_pairs(self) -> dict[str, str]:
+        return {"dispatch.objective_name": self.objective}
+
+    def score(self, X, y, sample_weight=None) -> float:
+        """R² (coefficient of determination), matching sklearn's
+        ``RegressorMixin.score`` — computed by hand, no sklearn import."""
+        y_true = _as_1d_f32(y).astype(np.float64)
+        y_pred = np.asarray(self.predict(X), dtype=np.float64)
+        w = None if sample_weight is None else _as_1d_f32(sample_weight).astype(np.float64)
+
+        if w is None:
+            avg_true = y_true.mean()
+            ss_res = np.sum((y_true - y_pred) ** 2)
+            ss_tot = np.sum((y_true - avg_true) ** 2)
+        else:
+            avg_true = np.average(y_true, weights=w)
+            ss_res = np.sum(w * (y_true - y_pred) ** 2)
+            ss_tot = np.sum(w * (y_true - avg_true) ** 2)
+
+        if ss_tot == 0:
+            return 1.0 if ss_res == 0 else 0.0
+        return float(1.0 - ss_res / ss_tot)
+
+    def __sklearn_tags__(self):
+        from sklearn.utils import InputTags, RegressorTags, Tags, TargetTags
+
+        return Tags(
+            estimator_type="regressor",
+            target_tags=TargetTags(required=True),
+            regressor_tags=RegressorTags(),
+            input_tags=InputTags(),
+        )
+
+    def fit(self, X, y, sample_weight=None, eval_set: tuple | None = None,
+            init_model: str | None = None) -> BonsaiRegressor:
+        """`sample_weight` scales each row's gradient and hessian (sklearn's
+        convention). init_model continues training from a saved .msgpack (warm
+        start); binning reuses the loaded model's cut points."""
+        pairs = self._build_pairs()
+        ev = None
+        if eval_set is not None:
+            ev = (_as_2d_f32(eval_set[0]), _as_1d_f32(eval_set[1]))
+        sw = None if sample_weight is None else _as_1d_f32(sample_weight)
+        self._model = train(
+            pairs, _as_2d_f32(X), _as_1d_f32(y), ev, init_model, self.config,
+            sample_weight=sw,
+        )
+        return self
+
+
+class BonsaiClassifier(_BonsaiEstimator):
+    """sklearn-style classifier wrapping the native booster's ``logloss``
+    (binary) and ``softmax`` (multiclass) objectives.
+
+    Same first-class knobs as ``BonsaiRegressor`` except there is no
+    ``objective`` argument — ``fit`` picks ``logloss`` for two classes or
+    ``softmax`` (with ``objective.n_classes`` set) for more, based on
+    ``np.unique(y)``. Labels may be any hashable/orderable values (ints,
+    strings, ...); they're encoded to ``0..K-1`` internally and decoded back
+    to the original ``classes_`` values by ``predict``.
+
+    ``predict_proba`` returns calibrated-ish probabilities only for the
+    binary case (the native ``logloss`` objective predicts P(class 1)
+    directly); multiclass ``predict_proba`` is not yet available — see its
+    docstring.
+    """
+
+    _estimator_type = "classifier"
+
+    def _objective_pairs(self) -> dict[str, str]:
+        if self.n_classes_ == 2:
+            return {"dispatch.objective_name": "logloss"}
+        return {
+            "dispatch.objective_name": "softmax",
+            "objective.n_classes": self.n_classes_,
+        }
+
+    def score(self, X, y, sample_weight=None) -> float:
+        """Accuracy, matching sklearn's ``ClassifierMixin.score`` — computed
+        by hand, no sklearn import."""
+        y_true = np.asarray(y)
+        y_pred = np.asarray(self.predict(X))
+        correct = (y_true == y_pred).astype(np.float64)
+
+        if sample_weight is None:
+            return float(correct.mean())
+        w = _as_1d_f32(sample_weight).astype(np.float64)
+        return float(np.average(correct, weights=w))
+
+    def __sklearn_tags__(self):
+        from sklearn.utils import ClassifierTags, InputTags, Tags, TargetTags
+
+        return Tags(
+            estimator_type="classifier",
+            target_tags=TargetTags(required=True),
+            classifier_tags=ClassifierTags(),
+            input_tags=InputTags(),
+        )
+
+    def fit(self, X, y, sample_weight=None, eval_set: tuple | None = None,
+            init_model: str | None = None) -> BonsaiClassifier:
+        """`sample_weight` scales each row's gradient and hessian (sklearn's
+        convention). init_model continues training from a saved .msgpack (warm
+        start); binning reuses the loaded model's cut points."""
+        y_arr = np.asarray(y)
+        self.classes_ = np.unique(y_arr)
+        self.n_classes_ = len(self.classes_)
+        if self.n_classes_ < 2:
+            raise ValueError(
+                f"BonsaiClassifier needs at least 2 classes, got {self.n_classes_} "
+                f"({self.classes_!r})"
+            )
+        y_enc = np.searchsorted(self.classes_, y_arr).astype(np.float32)
+
+        pairs = self._build_pairs()
+        ev = None
+        if eval_set is not None:
+            ev_y = np.searchsorted(self.classes_, np.asarray(eval_set[1]))
+            ev = (_as_2d_f32(eval_set[0]), _as_1d_f32(ev_y))
+        sw = None if sample_weight is None else _as_1d_f32(sample_weight)
+        self._model = train(
+            pairs, _as_2d_f32(X), y_enc, ev, init_model, self.config,
+            sample_weight=sw,
+        )
+        return self
+
+    def predict(self, X, num_iteration: int = 0) -> np.ndarray:
+        """Original class labels (from ``classes_``), not the encoded
+        ``0..K-1`` ids the native booster works in."""
+        if self._model is None:
+            raise RuntimeError("fit() or load first")
+        raw = np.asarray(self._model.predict(_as_2d_f32(X), num_iteration))
+        if self.n_classes_ == 2:
+            idx = (raw >= 0.5).astype(np.int64)
+        else:
+            idx = raw.astype(np.int64)
+        return self.classes_[idx]
+
+    def predict_proba(self, X) -> np.ndarray:
+        """(n_rows, n_classes) class probabilities.
+
+        Binary only for now: the native ``logloss`` objective's
+        ``Model.predict`` already returns P(class 1) directly, so this is
+        just ``[1 - p, p]``. Multiclass ``softmax`` currently has
+        ``Model.predict`` return argmax class ids rather than per-class
+        scores — ``predict()`` works for multiclass, but per-class
+        probabilities need a booster-side change (a follow-up to #84;
+        tracking a raw-score / per-class-scores accessor on the multiclass
+        booster).
+        """
+        if self._model is None:
+            raise RuntimeError("fit() or load first")
+        if self.n_classes_ != 2:
+            raise NotImplementedError(
+                "predict_proba is only implemented for binary classification. "
+                "The native softmax objective's Model.predict returns argmax "
+                "class ids, not per-class scores, so multiclass probabilities "
+                "aren't available yet (predict() still works). This needs a "
+                "booster-side accessor for per-class raw scores — tracked as "
+                "a follow-up to #84."
+            )
+        p = np.asarray(self._model.predict(_as_2d_f32(X)), dtype=np.float64)
+        return np.column_stack([1.0 - p, p])

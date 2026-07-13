@@ -319,6 +319,143 @@ def test_pickle_round_trip_unfitted():
     assert restored._model is None
 
 
+# ---------------------------------------------------------------------------
+# BonsaiClassifier
+# ---------------------------------------------------------------------------
+
+
+def _separable_binary(n=2000, seed=0):
+    rng = np.random.default_rng(seed)
+    X = rng.normal(size=(n, 4)).astype(np.float32)
+    logits = 3.0 * X[:, 0] - 2.0 * X[:, 1]
+    y = (logits > 0).astype(np.float32)
+    return X, y
+
+
+def _blobs_multiclass(n=1500, seed=0):
+    rng = np.random.default_rng(seed)
+    centers = np.array([[0.0, 0.0], [5.0, 5.0], [5.0, -5.0]], dtype=np.float32)
+    labels = rng.integers(0, 3, size=n)
+    X = (centers[labels] + rng.normal(scale=0.6, size=(n, 2))).astype(np.float32)
+    return X, labels.astype(np.float32)
+
+
+def test_classifier_binary_predict_and_proba():
+    X, y = _separable_binary()
+    m = bonsai.BonsaiClassifier(n_iters=50).fit(X, y)
+
+    pred = m.predict(X)
+    assert set(np.unique(pred)) <= set(m.classes_)
+
+    proba = m.predict_proba(X)
+    assert proba.shape == (X.shape[0], 2)
+    assert np.all(proba >= 0.0) and np.all(proba <= 1.0)
+    np.testing.assert_allclose(proba.sum(axis=1), 1.0, atol=1e-6)
+
+    acc = m.score(X, y)
+    assert acc > 0.9, acc
+
+
+def test_classifier_non_01_labels():
+    X, y01 = _separable_binary()
+
+    # integer labels not starting at 0
+    y_int = np.where(y01 == 0, 10, 20).astype(np.int64)
+    m_int = bonsai.BonsaiClassifier(n_iters=50).fit(X, y_int)
+    np.testing.assert_array_equal(m_int.classes_, [10, 20])
+    pred_int = m_int.predict(X)
+    assert set(np.unique(pred_int)) <= {10, 20}
+
+    # string labels
+    y_str = np.where(y01 == 0, "a", "b")
+    m_str = bonsai.BonsaiClassifier(n_iters=50).fit(X, y_str)
+    np.testing.assert_array_equal(m_str.classes_, ["a", "b"])
+    pred_str = m_str.predict(X)
+    assert set(np.unique(pred_str)) <= {"a", "b"}
+
+
+def test_classifier_multiclass_predict_and_proba_not_implemented():
+    X, y = _blobs_multiclass()
+    m = bonsai.BonsaiClassifier(n_iters=50).fit(X, y)
+
+    assert m.n_classes_ == 3
+    pred = m.predict(X)
+    assert set(np.unique(pred)) <= set(m.classes_)
+
+    acc = m.score(X, y)
+    assert acc > 0.8, acc
+
+    try:
+        m.predict_proba(X)
+    except NotImplementedError as e:
+        assert "predict_proba" in str(e) or "multiclass" in str(e).lower()
+    else:
+        raise AssertionError("expected NotImplementedError for multiclass predict_proba")
+
+
+def test_classifier_too_few_classes_raises():
+    X = np.zeros((10, 3), dtype=np.float32)
+    y = np.zeros(10, dtype=np.float32)
+    try:
+        bonsai.BonsaiClassifier(n_iters=5).fit(X, y)
+    except ValueError as e:
+        assert "class" in str(e).lower()
+    else:
+        raise AssertionError("expected ValueError for a single class")
+
+
+def test_classifier_get_set_params_round_trip():
+    est = bonsai.BonsaiClassifier(n_iters=17, learning_rate=0.2, max_depth=4)
+    params = est.get_params()
+    assert "objective" not in params
+    assert params["n_iters"] == 17
+
+    clone_est = type(est)(**est.get_params())
+    assert clone_est.get_params() == params
+
+    est.set_params(n_iters=99)
+    assert est.n_iters == 99
+
+
+def test_classifier_sklearn_clone():
+    try:
+        import sklearn.base
+    except ImportError:
+        return
+
+    est = bonsai.BonsaiClassifier(n_iters=17, learning_rate=0.2, max_depth=4)
+    cloned = sklearn.base.clone(est)
+    assert cloned is not est
+    assert cloned.get_params() == est.get_params()
+    assert cloned._model is None
+
+
+def test_classifier_sklearn_cross_val_score():
+    try:
+        import sklearn.model_selection
+    except ImportError:
+        return
+
+    X, y = _separable_binary()
+    scores = sklearn.model_selection.cross_val_score(
+        bonsai.BonsaiClassifier(n_iters=20), X, y, cv=3
+    )
+    assert len(scores) == 3
+    assert all(np.isfinite(scores))
+
+
+def test_classifier_pickle_round_trip_fitted():
+    X, y = _separable_binary()
+    m = bonsai.BonsaiClassifier(n_iters=20).fit(X, y)
+    before = m.predict(X)
+
+    restored = pickle.loads(pickle.dumps(m))
+    after = restored.predict(X)
+
+    assert np.array_equal(before, after)
+    np.testing.assert_array_equal(restored.classes_, m.classes_)
+
+
 if __name__ == "__main__":
     test_fit_predict_rmse()
     test_parity_with_cli()
@@ -336,4 +473,12 @@ if __name__ == "__main__":
     test_sklearn_pipeline()
     test_pickle_round_trip_fitted()
     test_pickle_round_trip_unfitted()
+    test_classifier_binary_predict_and_proba()
+    test_classifier_non_01_labels()
+    test_classifier_multiclass_predict_and_proba_not_implemented()
+    test_classifier_too_few_classes_raises()
+    test_classifier_get_set_params_round_trip()
+    test_classifier_sklearn_clone()
+    test_classifier_sklearn_cross_val_score()
+    test_classifier_pickle_round_trip_fitted()
     print("all binding tests passed")
