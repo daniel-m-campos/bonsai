@@ -32,7 +32,7 @@ bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library a
 - **Compile-time dispatch where it counts.** Components are C++ concepts; the runtime TOML config is resolved to a monomorphized `Booster<Objective, Grower, Splitter, Sampler>` exactly once at construction. Everything inside the training loop is statically dispatched — no virtual calls in the hot path.
 - **Concept-checked components.** Contract violations are caught at compile time, not runtime. Adding a stateless grower or sampler is two edits; objectives add three trait specializations (link, task, default metrics) that static assertions demand by name. Either way the dispatch table, CLI listing, and parametric tests expand automatically — see [Extending bonsai](#extending-bonsai).
 - **A guide, not just docs.** [docs/guide/](docs/guide/) explains how gradient boosting works chapter by chapter — concept, math, then the ~50 real lines that implement it here, then an experiment. Written against this codebase because it's small enough to actually read.
-- **Reference-library performance, measured.** Same-machine sweeps against xgboost, lightgbm, and catboost at matched settings: the CUDA grower is the fastest full pipeline up to ~4M rows and trades the lead with xgboost-GPU at 16M within ±10% (host-dependent) at a third of the host memory; CPU growers beat lightgbm at 16M rows and on wide data, and tie xgboost-hist at 16M (75.8 vs 75.7s, decision 61). Numbers and caveats in [Performance](#performance); raw runs in `benchmarks/results/`.
+- **Reference-library performance, measured.** Same-pod sweeps against xgboost, lightgbm, and catboost at matched settings: the CUDA grower owns the fastest slot at every row scale — its `oblivious` grower edges catboost-GPU and beats xgboost-GPU at 16M (18.4 / 18.5 / 19.9s, matched accuracy) at ~3× less host memory (7 vs 19–22GB); CPU growers beat lightgbm at 16M and on wide data, and tie xgboost-hist at 16M. Numbers and caveats in [Performance](#performance); raw runs in `benchmarks/results/`.
 - **Three growers.** `depthwise` (level-wise, XGBoost-style), `leafwise` (best-first with a `max_leaves` budget, LightGBM-style), and `oblivious` (symmetric, CatBoost-style) — selectable per run from config.
 - **Deterministic parallelism.** OpenMP across features and rows with ordered merges only: models and predictions are bit-identical across runs at a fixed thread count (`[parallel] n_threads`, 0 = capped auto), and bit-identical to serial at any count outside the u8 histogram fill (decision 49).
 - **CLI-first, config-driven.** CatBoost-style subcommands, a strict TOML config, and inline `--set key=value` overrides; Python bindings (`make python`) share the exact same seams.
@@ -40,27 +40,26 @@ bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library a
 
 ## Performance
 
-From the 2026-07 re-baseline (`benchmarks/results/rebaseline-2026-07.jsonl`): synthetic regression, `fit()` timed end-to-end **including each library's own binning/ingest**, 16-thread dual-EPYC hosts with an L40S, all variants on the same pod per cell. Test-set r² in parentheses.
+From the 2026-07-13 re-baseline (`benchmarks/results/rebaseline-2026-07.jsonl`): synthetic regression, `fit()` timed end-to-end **including each library's own binning/ingest**, a 16-thread dual-EPYC-9554 host with an L40S, every variant on the same pod per cell. Test-set r² in parentheses; bonsai's two GPU growers are shown separately (`depthwise` trades a little speed for accuracy, `oblivious` is the symmetric-tree match to catboost).
 
 Scaling rows (100 features, 255 bins, 100 trees, depth 8):
 
-| rows | bonsai cuda | xgb cuda | catboost gpu | lgbm cpu | bonsai cpu (obl.) |
-|---|--:|--:|--:|--:|--:|
-| 1M | **1.3s** (.876) | 1.7–4.3s (.876) | 2.4s (.876) | 5.6s (.877) | 8.0s (.862) |
-| 4M | **5.3s** (.878) | 7.7s (.879) | 5.3s (.877) | 22.3s (.879) | 27.4s (.864) |
-| 16M | 24.3s (.879) | 21.7s (.880) | **18.9s** (.877) | 113.8s (.879) | 107.8s (.864) |
+| rows | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu | lgbm cpu | bonsai cpu obl |
+|---|--:|--:|--:|--:|--:|--:|
+| 250k | **0.5s** (.871) | 1.0s (.875) | 0.8s (.872) | 1.6s (.875) | 2.5s (.872) | 5.2s (.875) |
+| 1M | **1.1s** (.876) | 1.5s (.876) | 1.7s (.876) | 2.3s (.876) | 5.1s (.877) | 7.8s (.876) |
+| 4M | 4.5s (.878) | **4.4s** (.875) | 5.3s (.878) | 5.0s (.877) | 19.9s (.879) | 20.2s (.875) |
+| 16M | 20.5s (.879) | **18.4s** (.876) | 19.9s (.880) | 18.5s (.876) | 111.3s (.879) | 73.3s (.876) |
 
 Scaling features (1M rows):
 
-| cols | bonsai cuda | xgb cuda | catboost gpu | lgbm cpu |
-|---|--:|--:|--:|--:|
-| 256 | **3.3s** | 3.6s | 3.7s | 12.7s |
-| 1024 | 14.7s | 12.6s | **9.8s** | 73.5s |
-| 4096 | 54.7s | 51.0s | **37.0s** | 342.1s |
+| cols | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu | lgbm cpu |
+|---|--:|--:|--:|--:|--:|
+| 256 | **2.8s** | 2.9s | 3.6s | 3.5s | 11.5s |
+| 1024 | 11.2s | 10.6s | 12.5s | **9.7s** | 59.2s |
+| 4096 | 44.2s | 41.9s | 50.6s | **35.8s** | 256.2s |
 
-> The 16M cells above predate three optimizations (decisions 61/63/64) and are superseded: current same-pod 16M is `cuda_oblivious` **19.65s** vs catboost 18.85s at matched accuracy, and CPU `depthwise` ties xgboost-hist at **75.8s**. A full re-baseline across every cell is pending; the caveat below and the [claims table](#claims-and-proofs) carry the current numbers.
-
-Honest caveats, because benchmarks without them are advertising: identical-model GPUs across the rental fleet measure up to ~25% apart, so only same-pod columns compare (at 16M the bonsai/xgboost order *flips* between host classes — 26.9 vs 28.9 on one, 24.3 vs 21.7 on another); against catboost at 16M, bonsai's GPU oblivious grower matches accuracy (0.8749 vs 0.8751 at 100 trees, same pod) and lands within ~4% on speed (19.65s vs 18.85s), with its depthwise slightly more accurate (0.8776); bonsai strictly beats xgboost-GPU throughout ([benchmarks/gpu-pareto-16M-2026-07.md](benchmarks/gpu-pareto-16M-2026-07.md), decisions 62–64 — an earlier apparent gap was two bonsai issues since fixed: the oblivious accuracy bug and a per-feature binning pass that catboost didn't pay); bonsai's peak host RSS at 16M is 7.3GB vs xgboost's 22.2GB, and its predict is ~3× faster; the xgboost 1M cell is quoted as a range because its repeats disagreed across pods more than any other cell in the file. The path from 3× behind to this table is [guide chapter 11](docs/guide/11-performance-engineering.md); the cut-quality residual vs xgboost (+0.001 r²) is decision 55.
+Honest caveats, because benchmarks without them are advertising: identical-model GPUs across the rental fleet measure up to ~25% apart, so only same-pod columns compare. bonsai owns the fastest slot at every row scale — `depthwise` up to 1M, and `oblivious` at 4M/16M, where it edges catboost (16M: **18.4s vs 18.5s**, both .876) and beats xgboost-GPU (19.9s); its `depthwise` runs slightly hotter (20.5s) for slightly more accuracy (.879). On wide data catboost keeps the lead (1024/4096 cols), with bonsai second and ahead of xgboost-GPU. bonsai's peak host RSS at 16M is **7.0GB vs xgboost's 22.2GB and catboost's 19.4GB** (a ~3× edge), and its predict is ~3× faster. Two earlier apparent gaps against catboost were bonsai bugs, since fixed — the oblivious accuracy defect (decision 63; note the old table's .864 CPU-oblivious r² was that bug, now .876) and a per-feature binning pass catboost didn't pay (decision 64). The path from 3× behind to this table is [guide chapter 11](docs/guide/11-performance-engineering.md); the cut-quality residual vs xgboost (+0.001 r²) is decision 55.
 
 ## Claims and proofs
 
@@ -70,7 +69,7 @@ Every performance or quality claim bonsai makes links to a reproducible run and 
 |---|---|
 | **Bit-identical models across CPU architectures** (arm64 == x86-64) at a fixed thread count — no reference library offers this | decisions [59](docs/decisions.md)/60; asserted per-commit by [`cross-arch.yml`](.github/workflows/cross-arch.yml) via [`scripts/model_hash.py`](scripts/model_hash.py) |
 | **Ties xgboost-hist at 16M rows on CPU** (75.8 vs 75.7s, same pod) | [decision 61](docs/decisions.md); [`benchmarks/results/cpu-prefetch-round-2026-07.jsonl`](benchmarks/results/cpu-prefetch-round-2026-07.jsonl) |
-| **Even with catboost on GPU accuracy, within ~4% on speed at 16M**; strictly beats xgboost-GPU | [gpu-pareto-16M](benchmarks/gpu-pareto-16M-2026-07.md) + [scale-edge](benchmarks/catboost-scale-edge-2026-07.md), decisions 62–64; [`scripts/gpu_pareto.py`](scripts/gpu_pareto.py) |
+| **Fastest GPU slot at every row scale**; at 16M `oblivious` edges catboost (18.4 vs 18.5s) and beats xgboost-GPU (19.9s) at matched accuracy | [rebaseline jsonl](benchmarks/results/rebaseline-2026-07.jsonl), [scale-edge](benchmarks/catboost-scale-edge-2026-07.md), decisions 62–64; [`scripts/gpu_pareto.py`](scripts/gpu_pareto.py) |
 | **Categorical parity with catboost within chance-band**, via preprocessing not an engine feature | [decision 58](docs/decisions.md); [categorical-tradeoff](benchmarks/categorical-tradeoff-2026-07.md); [`python/bonsai/encoding.py`](python/bonsai/encoding.py) |
 | **Best library on 9 of 10 real datasets** (CPU quality campaign) | [quality-campaign](benchmarks/quality-campaign-2026-07.md), decisions 56–57 |
 | **~3× less host memory than xgboost** at 16M (7.3 vs 22.2GB) and ~3× faster predict | [`benchmarks/results/rebaseline-2026-07.jsonl`](benchmarks/results/rebaseline-2026-07.jsonl) |
