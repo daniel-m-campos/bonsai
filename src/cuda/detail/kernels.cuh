@@ -372,11 +372,6 @@ inline __device__ double warp_sum(double v)
     return __shfl_sync(0xffffffffU, v, 0);
 }
 
-inline __device__ int warp_all(int v)
-{
-    return __all_sync(0xffffffffU, v != 0) ? 1 : 0;
-}
-
 // True when candidate a beats b under the serial scan's tie-break: higher
 // gain, then lower bin, then default_left first (dl 1 before 0). Ties never
 // replace in the serial `gain > best` loop, so equal gains keep the earlier.
@@ -571,18 +566,19 @@ __global__ void reduce_kernel(FeatBest const *per_feat, uint32_t n_sel, FeatBest
 
 // Oblivious level-find: one split for the whole frontier. For feature f, the
 // gain of a cut (bin, default_left) is the sum over ALL frontier nodes of
-// score(left) + score(right) minus the sum of node scores, and the cut must
-// be feasible (min_child_hess) for every node. One warp per feature: nodes
-// are processed in chunks of 32 (one per lane), each chunk's per-bin child
-// scores and feasibility warp-reduce into shared per-bin accumulators, so any
-// frontier width works. A final lane-0 scan picks the best (bin, dl). Mirrors
+// score(left) + score(right) minus the sum of node scores. A node whose cut is
+// infeasible (min_child_hess) contributes its parent score instead of a child
+// score — zero gain, no veto (issue #60). One warp per feature: nodes are
+// processed in chunks of 32 (one per lane), each chunk's per-bin child scores
+// warp-reduce into per-feature scratch accumulators, so any frontier width
+// works. A final lane-0 scan picks the best (bin, dl). Mirrors
 // update_best_for_feature_for_level in split.cpp (tolerance-equal).
 __global__ void level_find_kernel(double const *hists, uint32_t const *features,
                                   uint32_t const *n_bins, double const *node_sums,
                                   uint32_t n_sel, uint32_t n_nodes, uint32_t stride,
                                   double l1, double l2, double min_child_hess,
                                   double min_gain, double *score_scratch,
-                                  int *feas_scratch, FeatBest *out_feat)
+                                  FeatBest *out_feat)
 {
     // Per-feature scratch slice [2][max_cut]: bin width can exceed any shared
     // budget on the u16-bin path, and this warp is the slice's only writer.
@@ -593,8 +589,6 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
     uint32_t const nb         = n_bins[fid];
     double        *s_score[2] = {score_scratch + (static_cast<size_t>(f) * 2 * max_cut),
                                  score_scratch + ((static_cast<size_t>(f) * 2 + 1) * max_cut)};
-    int           *s_feas[2]  = {feas_scratch + (static_cast<size_t>(f) * 2 * max_cut),
-                                 feas_scratch + ((static_cast<size_t>(f) * 2 + 1) * max_cut)};
     double         parent_sum = 0.0;
 
     if (lane == 0)
@@ -611,7 +605,6 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
         for (int dl = 0; dl < 2; ++dl)
         {
             s_score[dl][b] = 0.0;
-            s_feas[dl][b]  = 1;
         }
     }
     __syncwarp();
@@ -622,13 +615,14 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
         bool const     active = p < n_nodes;
         double const  *cells =
             active ? hists + ((static_cast<size_t>(p) * n_sel + f) * stride) : nullptr;
-        double const g      = active ? node_sums[pair_off(p)] : 0.0;
-        double const h      = active ? node_sums[pair_off(p) + 1] : 0.0;
-        double const miss_g = active ? cells[pair_off(nb - 1)] : 0.0;
-        double const miss_h = active ? cells[pair_off(nb - 1) + 1] : 0.0;
-        double const real_g = g - miss_g;
-        double const real_h = h - miss_h;
-        parent_sum += warp_sum(active ? score(g, h, l1, l2) : 0.0);
+        double const g       = active ? node_sums[pair_off(p)] : 0.0;
+        double const h       = active ? node_sums[pair_off(p) + 1] : 0.0;
+        double const miss_g  = active ? cells[pair_off(nb - 1)] : 0.0;
+        double const miss_h  = active ? cells[pair_off(nb - 1) + 1] : 0.0;
+        double const real_g  = g - miss_g;
+        double const real_h  = h - miss_h;
+        double const node_ps = active ? score(g, h, l1, l2) : 0.0;
+        parent_sum += warp_sum(node_ps);
 
         double pg = 0.0;
         double ph = 0.0;
@@ -643,17 +637,22 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
             {
                 auto const s =
                     split_sums_dev(pg, ph, miss_g, miss_h, real_g, real_h, dl);
-                bool const ok =
-                    !active || (s.hL >= min_child_hess && s.hR >= min_child_hess);
-                double const cs   = (active && ok) ? score(s.gL, s.hL, l1, l2) +
-                                                       score(s.gR, s.hR, l1, l2)
-                                                   : 0.0;
-                int const    feas = warp_all(ok ? 1 : 0);
-                double const sum  = warp_sum(cs);
+                // Issue #60, ported from the CPU level find (split.cpp): an
+                // infeasible node does NOT veto the whole level candidate — it
+                // contributes its parent score (zero gain) and the broadcast
+                // split still applies to it. At depth >= 5 some frontier node is
+                // always near-empty, so vetoing rejected every good deep cut and
+                // GPU oblivious trailed its own CPU grower (and catboost) at scale.
+                bool const   ok = s.hL >= min_child_hess && s.hR >= min_child_hess;
+                double const cs =
+                    !active
+                        ? 0.0
+                        : (ok ? score(s.gL, s.hL, l1, l2) + score(s.gR, s.hR, l1, l2)
+                              : node_ps);
+                double const sum = warp_sum(cs);
                 if (lane == 0)
                 {
                     s_score[dl][b] += sum;
-                    s_feas[dl][b] &= feas;
                 }
             }
         }
@@ -667,10 +666,6 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
         {
             for (int dl = 1; dl >= 0; --dl)
             {
-                if (s_feas[dl][b] == 0)
-                {
-                    continue;
-                }
                 double const gain = s_score[dl][b] - parent_sum;
                 if (gain > best.gain && gain >= min_gain)
                 {

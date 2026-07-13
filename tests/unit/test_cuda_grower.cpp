@@ -228,6 +228,42 @@ TEST_CASE("CudaObliviousGrower survives frontiers wider than one node chunk",
     }
 }
 
+TEST_CASE("CudaObliviousGrower matches CPU when deep nodes go infeasible (issue #60)",
+          "[cuda][grower]")
+{
+    // The CPU level-find lets an infeasible node contribute its parent score
+    // (zero gain) rather than veto the whole level candidate (split.cpp,
+    // issue #60). The device level-find originally kept the veto, so at depth
+    // >= 5 — where some frontier node is always near-empty — GPU oblivious
+    // chose worse splits than its own CPU grower and silently lost accuracy at
+    // scale (0.011 test r2 at 16M). A high min_child_hess forces that
+    // infeasibility at shallow depth so the divergence reproduces on 4k rows:
+    // pre-fix this REQUIRE fails; with the parent-score port it holds.
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
+
+    TreeConfig cfg;
+    cfg.max_depth        = 7;
+    cfg.min_data_in_leaf = 1;
+    cfg.min_child_hess   = 6.0; // deep children fall under this, going infeasible
+
+    ObliviousGrower<CpuHistogramEngine> cpu_grower(cfg);
+    CudaObliviousGrower                 gpu_grower(cfg);
+
+    auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+
+    REQUIRE(cpu.values.size() == gpu.values.size());
+    for (size_t r = 0; r < cpu.values.size(); ++r)
+    {
+        REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
+    }
+}
+
 TEST_CASE("CudaDepthwiseGrower handles consecutive trees and datasets",
           "[cuda][grower]")
 {
