@@ -1,0 +1,10 @@
+{"regime": "graded", "learner": "bonsai_regression", "ndcg_at_10": 0.6623}
+{"regime": "graded", "learner": "lgbm_regression", "ndcg_at_10": 0.6653}
+{"regime": "graded", "learner": "lgbm_lambdarank", "ndcg_at_10": 0.6601}
+{"regime": "graded", "learner": "xgb_rank_ndcg", "ndcg_at_10": 0.6673}
+{"regime": "graded", "learner": "catboost_yetirank", "ndcg_at_10": 0.6679}
+{"regime": "search", "learner": "bonsai_regression", "ndcg_at_10": 0.3028}
+{"regime": "search", "learner": "lgbm_regression", "ndcg_at_10": 0.2972}
+{"regime": "search", "learner": "lgbm_lambdarank", "ndcg_at_10": 0.3023}
+{"regime": "search", "learner": "xgb_rank_ndcg", "ndcg_at_10": 0.3084}
+{"regime": "search", "learner": "catboost_yetirank", "ndcg_at_10": 0.3132}
