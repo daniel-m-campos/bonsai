@@ -4,6 +4,7 @@ python/tests -q  (or plain `python python/tests/test_bindings.py`)."""
 from __future__ import annotations
 
 import pathlib
+import pickle
 import subprocess
 import tempfile
 
@@ -204,6 +205,120 @@ def test_cuda_available_reports():
         assert m.n_iters_ == 5
 
 
+def test_get_set_params_round_trip():
+    est = bonsai.BonsaiRegressor(n_iters=17, learning_rate=0.2, max_depth=4)
+    params = est.get_params()
+    assert params["n_iters"] == 17
+    assert params["learning_rate"] == 0.2
+    assert params["max_depth"] == 4
+
+    clone_est = type(est)(**est.get_params())
+    assert clone_est.get_params() == params
+
+    est.set_params(n_iters=99)
+    assert est.n_iters == 99
+    assert est.get_params()["n_iters"] == 99
+
+    try:
+        est.set_params(not_a_real_param=1)
+    except ValueError as e:
+        assert "not_a_real_param" in str(e)
+    else:
+        raise AssertionError("expected ValueError for unknown param")
+
+
+def test_score_r2_matches_hand_computation():
+    Xtr, ytr = load_csv(TRAIN_CSV)
+    Xte, yte = load_csv(TEST_CSV)
+    m = bonsai.BonsaiRegressor(n_iters=50).fit(Xtr, ytr)
+    pred = m.predict(Xte)
+
+    ss_res = np.sum((yte - pred) ** 2)
+    ss_tot = np.sum((yte - yte.mean()) ** 2)
+    expected = 1.0 - ss_res / ss_tot
+
+    assert abs(m.score(Xte, yte) - expected) < 1e-9
+
+
+def test_sklearn_clone():
+    try:
+        import sklearn.base
+    except ImportError:
+        return
+
+    est = bonsai.BonsaiRegressor(n_iters=17, learning_rate=0.2, max_depth=4)
+    cloned = sklearn.base.clone(est)
+    assert cloned is not est
+    assert cloned.get_params() == est.get_params()
+    assert cloned._model is None
+
+
+def test_sklearn_cross_val_score():
+    try:
+        import sklearn.model_selection
+    except ImportError:
+        return
+
+    Xtr, ytr = load_csv(TRAIN_CSV)
+    scores = sklearn.model_selection.cross_val_score(
+        bonsai.BonsaiRegressor(n_iters=20), Xtr[:600], ytr[:600], cv=3
+    )
+    assert len(scores) == 3
+    assert all(np.isfinite(scores))
+
+
+def test_sklearn_grid_search_cv():
+    try:
+        import sklearn.model_selection
+    except ImportError:
+        return
+
+    Xtr, ytr = load_csv(TRAIN_CSV)
+    gs = sklearn.model_selection.GridSearchCV(
+        bonsai.BonsaiRegressor(), {"n_iters": [10, 20]}, cv=2
+    )
+    gs.fit(Xtr[:400], ytr[:400])
+    assert gs.best_params_["n_iters"] in (10, 20)
+
+
+def test_sklearn_pipeline():
+    try:
+        import sklearn.pipeline
+        import sklearn.preprocessing
+    except ImportError:
+        return
+
+    Xtr, ytr = load_csv(TRAIN_CSV)
+    pipe = sklearn.pipeline.Pipeline([
+        ("sc", sklearn.preprocessing.StandardScaler()),
+        ("gb", bonsai.BonsaiRegressor(n_iters=20)),
+    ])
+    pipe.fit(Xtr[:400], ytr[:400])
+    pred = pipe.predict(Xtr[:400])
+    assert pred.shape == (400,)
+    assert np.all(np.isfinite(pred))
+
+
+def test_pickle_round_trip_fitted():
+    Xtr, ytr = load_csv(TRAIN_CSV)
+    Xte, _ = load_csv(TEST_CSV)
+    m = bonsai.BonsaiRegressor(n_iters=20).fit(Xtr, ytr)
+    before = m.predict(Xte)
+
+    restored = pickle.loads(pickle.dumps(m))
+    after = restored.predict(Xte)
+
+    assert np.array_equal(before, after)
+    assert restored.n_iters_ == m.n_iters_
+
+
+def test_pickle_round_trip_unfitted():
+    m = bonsai.BonsaiRegressor(n_iters=20, max_depth=3)
+    restored = pickle.loads(pickle.dumps(m))
+    assert restored.get_params() == m.get_params()
+    assert restored._model is None
+
+
 if __name__ == "__main__":
     test_fit_predict_rmse()
     test_parity_with_cli()
@@ -213,4 +328,12 @@ if __name__ == "__main__":
     test_pred_contribs_efficiency()
     test_toml_config_base_and_precedence()
     test_cuda_available_reports()
+    test_get_set_params_round_trip()
+    test_score_r2_matches_hand_computation()
+    test_sklearn_clone()
+    test_sklearn_cross_val_score()
+    test_sklearn_grid_search_cv()
+    test_sklearn_pipeline()
+    test_pickle_round_trip_fitted()
+    test_pickle_round_trip_unfitted()
     print("all binding tests passed")
