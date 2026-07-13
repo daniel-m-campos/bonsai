@@ -548,8 +548,33 @@ def test_alias_pickle_fitted_predicts_identically():
     assert restored.get_params()["reg_lambda"] == 0.5
 
 
+
+def test_reusable_dataset_bit_identical_and_guard():
+    rng = np.random.default_rng(0)
+    X = rng.random((3000, 15), dtype=np.float32)
+    y = (X[:, 0] + rng.normal(0, 0.1, 3000)).astype(np.float32)
+    pairs = [("dispatch.grower_name", "depthwise"), ("booster.n_iters", "40"),
+             ("tree.max_depth", "6")]
+    ref = np.asarray(bonsai.train(pairs, X, y).predict(X))
+
+    ds = bonsai.Dataset(X, y, max_bin=255)
+    assert ds.n_rows == 3000 and ds.n_features == 15
+    # bin-once reuse must equal fitting from (X, y) bit for bit
+    got = np.asarray(bonsai.train(pairs, ds).predict(X))
+    np.testing.assert_array_equal(ref, got)
+    # reuse with different hyperparameters (no re-bin)
+    assert np.asarray(bonsai.train([("booster.n_iters", "10")], ds).predict(X)).shape == (3000,)
+    # binning is fixed by the Dataset
+    try:
+        bonsai.train([("bin_mapper.max_bin", "63")], ds)
+    except Exception as e:
+        assert "bin_mapper" in str(e)
+    else:
+        raise AssertionError("expected bin_mapper override to be rejected")
+
 if __name__ == "__main__":
     test_fit_predict_rmse()
+    test_reusable_dataset_bit_identical_and_guard()
     test_parity_with_cli()
     test_early_stopping_stops()
     test_bad_param_raises()

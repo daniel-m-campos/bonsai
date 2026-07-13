@@ -28,12 +28,20 @@ from typing import ClassVar
 
 import numpy as np
 
-from ._bonsai import Model, cuda_available, default_config_toml, load, train
+from ._bonsai import (
+    Dataset,
+    Model,
+    cuda_available,
+    default_config_toml,
+    load,
+    train,
+)
 from .encoding import OrderedTargetEncoder
 
 __all__ = [
     "BonsaiClassifier",
     "BonsaiRegressor",
+    "Dataset",
     "Model",
     "OrderedTargetEncoder",
     "cuda_available",

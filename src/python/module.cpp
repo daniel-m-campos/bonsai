@@ -70,6 +70,72 @@ bonsai::cli::LabeledData make_labeled(array_2d const &X, array_1d const &y,
         .labels   = std::vector<float>(y.data(), y.data() + n)};
 }
 
+// A reusable pre-binned dataset (decision 65): binning runs once at
+// construction, and the SAME bonsai::Dataset is fed to every train() call, so a
+// hyperparameter sweep or CV loop skips the per-fit bin pass. On GPU the
+// resident-matrix upload-skip cache (ensure_dataset) fires because the object
+// address is stable across fits. Holds the numpy X/y (and optional weight)
+// alive so the FeatureBuffer's borrow of the row-major matrix stays valid.
+// Binning is host-resident; a CUDA fit uploads once on first use and caches.
+class Dataset
+{
+  public:
+    Dataset(array_2d const &X, array_1d const &y, std::optional<array_1d> const &weight,
+            int max_bin, size_t n_samples, uint64_t seed)
+        : x_(X), y_(y), weight_(weight)
+    {
+        if (y.shape(0) != X.shape(0))
+        {
+            throw std::invalid_argument("Dataset: len(y) must equal the row count");
+        }
+        if (weight && weight->shape(0) != X.shape(0))
+        {
+            throw std::invalid_argument(
+                "Dataset: len(weight) must equal the row count");
+        }
+        bonsai::Config cfg;
+        cfg.bin_mapper.max_bin   = max_bin;
+        cfg.bin_mapper.n_samples = n_samples;
+        cfg.bin_mapper.seed      = seed;
+        baked_                   = cfg.bin_mapper;
+
+        size_t const             f = X.shape(1);
+        std::vector<std::string> names;
+        names.reserve(f);
+        for (size_t c = 0; c < f; ++c)
+        {
+            names.push_back("f" + std::to_string(c));
+        }
+        bonsai::floats_view const w =
+            weight ? bonsai::floats_view{weight->data(), weight->shape(0)}
+                   : bonsai::floats_view{};
+        nb::gil_scoped_release release;
+        loaded_.mappers =
+            bonsai::BinMappers::fit(as_view(X), std::move(names), cfg.bin_mapper);
+        loaded_.train = make_labeled(X, y, loaded_.mappers, cfg, w);
+    }
+
+    size_t n_rows() const
+    {
+        return loaded_.train.labels.size();
+    }
+    size_t n_features() const
+    {
+        return x_.shape(1);
+    }
+    bonsai::cli::LoadedTrainValid const &loaded() const
+    {
+        return loaded_;
+    }
+
+  private:
+    array_2d                      x_;
+    array_1d                      y_;
+    std::optional<array_1d>       weight_;
+    bonsai::cli::LoadedTrainValid loaded_;
+    bonsai::BinMapperConfig       baked_;
+};
+
 // A trained model: booster + the bin mappers and config it was fit with.
 class Model
 {
@@ -320,6 +386,38 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
     return Model{std::move(booster), std::move(loaded.mappers), cfg};
 }
 
+// Train on a prebuilt Dataset: reuses its binning (skips BinMappers::fit +
+// Dataset::bin) and, on GPU, its resident matrix across calls. Only training
+// hyperparameters vary per call; binning is fixed by the Dataset, so
+// bin_mapper.* overrides are rejected rather than silently ignored.
+Model train_dataset(std::vector<std::pair<std::string, std::string>> const &params,
+                    Dataset const                                          &dataset,
+                    std::optional<std::string> const                       &init_model,
+                    std::optional<std::string> const                       &config)
+{
+    for (auto const &[key, value] : params)
+    {
+        if (key.starts_with("bin_mapper."))
+        {
+            throw std::invalid_argument(
+                "bin_mapper.* is fixed when training from a prebuilt Dataset; set "
+                "max_bin/n_samples/seed at Dataset construction instead");
+        }
+    }
+    bonsai::Config const cfg = config_from_params(params, config);
+    bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
+
+    std::optional<bonsai::io::LoadedBooster> init;
+    if (init_model)
+    {
+        init.emplace(bonsai::io::load_booster(*init_model));
+    }
+    nb::gil_scoped_release release;
+    auto                   booster = bonsai::cli::train_with_progress(
+        cfg, dataset.loaded(), {}, init ? std::move(init->booster) : nullptr);
+    return Model{std::move(booster), dataset.loaded().mappers, cfg};
+}
+
 Model load(std::string const &path)
 {
     auto loaded = bonsai::io::load_booster(path);
@@ -345,6 +443,19 @@ NB_MODULE(_bonsai, m)
         .def_prop_ro("n_iters", &Model::n_iters)
         .def_prop_ro("config_toml", &Model::config_toml);
 
+    nb::class_<Dataset>(m, "Dataset")
+        .def(nb::init<array_2d const &, array_1d const &,
+                      std::optional<array_1d> const &, int, size_t, uint64_t>(),
+             nb::arg("X"), nb::arg("y"), nb::arg("weight") = nb::none(),
+             nb::arg("max_bin") = 255, nb::arg("n_samples") = 200000,
+             nb::arg("seed") = 0,
+             "A pre-binned dataset. Bins X once at construction and is reused "
+             "across train(params, dataset) calls (hyperparameter search / CV), "
+             "skipping the per-fit bin pass; on GPU the resident matrix uploads "
+             "once and is cached. max_bin/n_samples/seed are fixed here.")
+        .def_prop_ro("n_rows", &Dataset::n_rows)
+        .def_prop_ro("n_features", &Dataset::n_features);
+
     m.def("train", &train, nb::arg("params"), nb::arg("X"), nb::arg("y"),
           nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
           nb::arg("config") = nb::none(), nb::arg("sample_weight") = nb::none(),
@@ -354,6 +465,10 @@ NB_MODULE(_bonsai, m)
           "base config; params override it (the CLI's -c + --set ordering). "
           "`sample_weight` is an optional float32 per-row weight vector "
           "(scales each row's gradient and hessian).");
+    m.def("train", &train_dataset, nb::arg("params"), nb::arg("dataset"),
+          nb::arg("init_model") = nb::none(), nb::arg("config") = nb::none(),
+          "Train on a prebuilt Dataset, reusing its binning across calls. "
+          "bin_mapper.* overrides are rejected (binning is fixed by the Dataset).");
     m.def("load", &load, nb::arg("path"), "Load a model saved by Model.save.");
 
     m.def("default_config_toml", [] { return bonsai::config::dump_toml({}); });
