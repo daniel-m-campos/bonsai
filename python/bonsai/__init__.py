@@ -449,27 +449,16 @@ class BonsaiClassifier(_BonsaiEstimator):
         return self.classes_[idx]
 
     def predict_proba(self, X) -> np.ndarray:
-        """(n_rows, n_classes) class probabilities.
+        """(n_rows, n_classes) class probabilities, columns in ``classes_``
+        order.
 
-        Binary only for now: the native ``logloss`` objective's
-        ``Model.predict`` already returns P(class 1) directly, so this is
-        just ``[1 - p, p]``. Multiclass ``softmax`` currently has
-        ``Model.predict`` return argmax class ids rather than per-class
-        scores — ``predict()`` works for multiclass, but per-class
-        probabilities need a booster-side change (a follow-up to #84;
-        tracking a raw-score / per-class-scores accessor on the multiclass
-        booster).
+        Binary uses the ``logloss`` objective's P(class 1) directly
+        (``[1 - p, p]``); multiclass uses the ``softmax`` booster's per-class
+        probabilities (a row-wise softmax of the class logits).
         """
         if self._model is None:
             raise RuntimeError("fit() or load first")
-        if self.n_classes_ != 2:
-            raise NotImplementedError(
-                "predict_proba is only implemented for binary classification. "
-                "The native softmax objective's Model.predict returns argmax "
-                "class ids, not per-class scores, so multiclass probabilities "
-                "aren't available yet (predict() still works). This needs a "
-                "booster-side accessor for per-class raw scores — tracked as "
-                "a follow-up to #84."
-            )
-        p = np.asarray(self._model.predict(_as_2d_f32(X)), dtype=np.float64)
-        return np.column_stack([1.0 - p, p])
+        if self.n_classes_ == 2:
+            p = np.asarray(self._model.predict(_as_2d_f32(X)), dtype=np.float64)
+            return np.column_stack([1.0 - p, p])
+        return np.asarray(self._model.predict_proba(_as_2d_f32(X)), dtype=np.float64)
