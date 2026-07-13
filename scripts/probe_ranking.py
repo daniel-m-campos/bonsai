@@ -17,8 +17,13 @@ the model must order docs within groups. Two regimes:
 
     python scripts/probe_ranking.py --regime search --out results/rank.jsonl
 
-Provisional per benchmarks/ranking-tradeoff-2026-07.md; a real LETOR/MSLR run is
-the pre-registered gate before any final decline.
+For the real gate, point --real at a dir holding lightgbm's MQ2008 fold
+(rank.train, rank.train.query, rank.test, rank.test.query from
+LightGBM/examples/lambdarank):
+
+    python scripts/probe_ranking.py --real /path/to/mq2008 --out results/rank_real.jsonl
+
+Verdict and numbers in benchmarks/ranking-tradeoff-2026-07.md.
 """
 import argparse
 import json
@@ -50,8 +55,10 @@ def make(rng, w, n_queries, edges_q):
 def ndcg_at_10(y_true, y_score, groups):
     out, off = [], 0
     for g in groups:
-        out.append(ndcg_score(y_true[off:off + g][None, :], y_score[off:off + g][None, :], k=10))
+        yt, ys = y_true[off:off + g], y_score[off:off + g]
         off += g
+        if g >= 2 and len(set(yt)) > 1:  # NDCG is undefined for a constant group
+            out.append(ndcg_score(yt[None, :], ys[None, :], k=10))
     return float(np.mean(out))
 
 
@@ -103,28 +110,48 @@ def learners(Xtr, ytr, gtr, Xte):
 gte_global = None
 
 
+def load_letor(directory):
+    # lightgbm's MQ2008 fold: svmlight rows + a .query file of group sizes.
+    from sklearn.datasets import load_svmlight_file
+
+    def one(split):
+        x, y = load_svmlight_file(f"{directory}/rank.{split}")
+        g = np.loadtxt(f"{directory}/rank.{split}.query", dtype=int)
+        return x.toarray().astype(np.float32), y.astype(np.float32), g
+
+    return one("train"), one("test")
+
+
 def main() -> int:
     global gte_global
     ap = argparse.ArgumentParser()
     ap.add_argument("--regime", choices=list(CUTS), default="search")
+    ap.add_argument("--real", default=None,
+                    help="dir with lightgbm-format rank.{train,test}{,.query} "
+                         "(MQ2008); overrides --regime with real graded relevance")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
-    rng = np.random.default_rng(0)
-    w = rng.normal(size=N_INFORMATIVE)
-    edges = CUTS[args.regime]
-    Xtr, ytr, gtr = make(rng, w, 3000, edges)
-    Xte, yte, gte = make(rng, w, 1000, edges)
+    if args.real:
+        (Xtr, ytr, gtr), (Xte, yte, gte) = load_letor(args.real)
+        tag = "mq2008"
+    else:
+        rng = np.random.default_rng(0)
+        w = rng.normal(size=N_INFORMATIVE)
+        edges = CUTS[args.regime]
+        Xtr, ytr, gtr = make(rng, w, 3000, edges)
+        Xte, yte, gte = make(rng, w, 1000, edges)
+        tag = args.regime
     gte_global = gte
-    print(f"regime={args.regime} train {Xtr.shape} test {Xte.shape}", file=sys.stderr, flush=True)
+    print(f"data={tag} train {Xtr.shape} test {Xte.shape}", file=sys.stderr, flush=True)
 
     rows = []
     for name, fn in learners(Xtr, ytr, gtr, Xte).items():
         try:
             nd = ndcg_at_10(yte, fn(), gte)
-            rows.append({"regime": args.regime, "learner": name, "ndcg_at_10": round(nd, 4)})
+            rows.append({"data": tag, "learner": name, "ndcg_at_10": round(nd, 4)})
         except Exception as exc:
-            rows.append({"regime": args.regime, "learner": name, "error": str(exc)})
+            rows.append({"data": tag, "learner": name, "error": str(exc)})
         print("ROW " + json.dumps(rows[-1]), flush=True)
     if args.out:
         with open(args.out, "w") as fh:

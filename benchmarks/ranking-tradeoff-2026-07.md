@@ -20,8 +20,20 @@ The pairwise ranking objective — the exact issue-#58 target — buys essential
 
 Against the admission axes, LambdaRank scores poorly: it wants query groups threaded through the CSV/Python data layer, a new pairwise-gradient objective, an NDCG metric, and task plumbing — for ≤0.005 NDCG@10 that regression already captures, on this evidence.
 
-## Provisional verdict and the gate
+## The gate: real MQ2008 (LETOR 4.0)
 
-**Provisionally defer LambdaRank.** The pairwise objective does not clear the bar; if ranking is ever built, catboost's result points at *listwise* (YetiRank-style) as the better target, not pairwise LambdaRank.
+The pre-registered gate — a real graded-relevance run — was run on MQ2008 (3005 train / 768 test docs, 201 / 50 queries, grades 0–4, 300 features; the fold lightgbm ships), same NDCG@10 harness, `scripts/probe_ranking.py --real`. 200 trees below; a 300-tree run is shown alongside because the fold is small enough that the count matters.
 
-This rests on synthetic data, and the admission rule requires standings to move *across multiple datasets*. So the decision is not final: the **pre-registered gate** before a firm decline is one real LETOR/MSLR run (MQ2008 or MSLR-WEB10K Fold1) through the same NDCG@10 harness. If real graded-relevance data shows lambdarank clearing regression by a margin that matters, this reopens; if it echoes the synthetic wash, decision-log it as declined-by-measurement (the [categorical precedent](../docs/decisions.md), decision 58). A LETOR mirror was not reachable when this probe ran; the run is queued, not skipped.
+| learner | NDCG@10, 200 trees | 300 trees |
+|---|--:|--:|
+| lgbm regression | 0.7714 | 0.7576 |
+| lgbm **lambdarank** | 0.7662 | 0.7693 |
+| **bonsai regression** (today) | 0.7720 | 0.7709 |
+| xgb **rank:ndcg** | **0.7866** | **0.7861** |
+| catboost **YetiRank** | 0.7746 | 0.7930 |
+
+Real data moves the standings where synthetic did not, but the fold is small (50 test queries) and noisy — catboost YetiRank alone swings 0.7746 → 0.7930 between the two tree counts, roughly the size of the effect being measured. The signal that survives that noise: **xgb's *listwise* `rank:ndcg` beats bonsai regression by a stable ~+0.015** (0.7866 / 0.7861 vs 0.7720 / 0.7709) at both counts. The pairwise **LambdaRank** that issue #58 proposes does *not* — lgbm's lambdarank sits at or below bonsai's plain regression in both runs. So the real, reproducible gap is to a listwise loss, and it is modest.
+
+## Verdict
+
+**Ranking is a real but modest parity gap — a stable ~+0.015 NDCG@10 to a listwise loss (`rank:ndcg`), not to the pairwise LambdaRank of issue #58, which bonsai's regression already matches.** Recommendation: reframe #58 from "pairwise LambdaRank" to a *scoped, listwise-first* project (an `NDCG`/`YetiRank`-style objective plus query groups in the data layer and an NDCG metric), and confirm the margin across MSLR-WEB10K folds before committing, since one small fold with count-sensitive numbers drives it. This is the honest inverse of the categorical result (decision 58): there preprocessing matched the engine feature and it was declined; here no preprocessing substitutes for a ranking loss and the measured gain is real, so the feature is admissible — once its target is the listwise loss the data actually rewards.

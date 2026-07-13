@@ -8,3 +8,8 @@
 {"regime": "search", "learner": "lgbm_lambdarank", "ndcg_at_10": 0.3023}
 {"regime": "search", "learner": "xgb_rank_ndcg", "ndcg_at_10": 0.3084}
 {"regime": "search", "learner": "catboost_yetirank", "ndcg_at_10": 0.3132}
+{"data": "mq2008", "learner": "bonsai_regression", "ndcg_at_10": 0.772}
+{"data": "mq2008", "learner": "lgbm_regression", "ndcg_at_10": 0.7714}
+{"data": "mq2008", "learner": "lgbm_lambdarank", "ndcg_at_10": 0.7662}
+{"data": "mq2008", "learner": "xgb_rank_ndcg", "ndcg_at_10": 0.7866}
+{"data": "mq2008", "learner": "catboost_yetirank", "ndcg_at_10": 0.7746}
