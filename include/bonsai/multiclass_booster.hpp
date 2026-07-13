@@ -127,6 +127,10 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         {
             row_indices_.resize(n);
         }
+        // Sample weights scale grad/hess, matching the single-output booster;
+        // w.empty() multiplies by exactly 1.0F, keeping unweighted fits
+        // bit-identical.
+        auto const w = train.weights();
         for (size_t k = 0; k < n_k; ++k)
         {
             parallel::for_each_index(
@@ -135,8 +139,9 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                 {
                     float const p = probs[(i * n_k) + k];
                     float const y = class_of(train.labels()[i], n_k) == k ? 1.0F : 0.0F;
-                    grad_[i]      = p - y;
-                    hess_[i]      = std::max(p * (1.0F - p), 1e-6F);
+                    float const wi = w.empty() ? 1.0F : w[i];
+                    grad_[i]       = (p - y) * wi;
+                    hess_[i]       = std::max(p * (1.0F - p), 1e-6F) * wi;
                 });
             size_t const n_selected = sampler_.sample(grad_, hess_, rng_, row_indices_);
             auto [tree, leaf_values, leaf_ids] =

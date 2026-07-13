@@ -548,7 +548,6 @@ def test_alias_pickle_fitted_predicts_identically():
     assert restored.get_params()["reg_lambda"] == 0.5
 
 
-
 def test_reusable_dataset_bit_identical_and_guard():
     rng = np.random.default_rng(0)
     X = rng.random((3000, 15), dtype=np.float32)
@@ -595,6 +594,104 @@ def test_reusable_dataset_bit_identical_and_guard():
         ok_cfg = f.name
     assert np.asarray(bonsai.train([], ds63, config=ok_cfg).predict(X)).shape == (3000,)
 
+
+def _three_class_data(n=3000, seed=0):
+    rng = np.random.default_rng(seed)
+    X = rng.random((n, 6), dtype=np.float32)
+    y = np.digitize(X[:, 0] + 0.3 * rng.random(n), [0.45, 0.85]).astype(np.float32)
+    return X, y
+
+
+def test_multiclass_sample_weight_applied():
+    """The softmax booster must scale grad/hess by sample_weight (it silently
+    ignored it before): upweighting one class shifts probability mass toward
+    it, and all-ones weights stay bit-identical to no weights."""
+    X, y = _three_class_data()
+    params = dict(n_iters=30, learning_rate=0.1, max_depth=4)
+
+    base = bonsai.BonsaiClassifier(**params).fit(X, y)
+    ones = bonsai.BonsaiClassifier(**params).fit(
+        X, y, sample_weight=np.ones(len(y), dtype=np.float32)
+    )
+    np.testing.assert_array_equal(base.predict_proba(X), ones.predict_proba(X))
+
+    w = np.where(y == 0, 20.0, 1.0).astype(np.float32)
+    up = bonsai.BonsaiClassifier(**params).fit(X, y, sample_weight=w)
+    p_base = base.predict_proba(X)[:, 0].mean()
+    p_up = up.predict_proba(X)[:, 0].mean()
+    assert p_up > p_base + 0.05, (p_base, p_up)
+
+
+def test_classifier_from_file_restores_class_metadata():
+    """from_file used to crash predict/predict_proba (classes_/n_classes_ were
+    only set by fit). It now restores them as encoded ids 0..K-1."""
+    X, y = _three_class_data()
+    for labels in (y, (y * 3 + 1)):  # encoded ids differ from raw labels
+        m = bonsai.BonsaiClassifier(n_iters=10).fit(X, labels)
+        with tempfile.TemporaryDirectory() as td:
+            path = str(pathlib.Path(td) / "clf.msgpack")
+            m.save(path)
+            restored = bonsai.BonsaiClassifier.from_file(path)
+        assert restored.n_classes_ == 3
+        assert np.array_equal(restored.classes_, np.arange(3))
+        # same decisions, in encoded-id space
+        expected = np.searchsorted(m.classes_, m.predict(X))
+        assert np.array_equal(restored.predict(X), expected)
+        assert restored.predict_proba(X).shape == (len(X), 3)
+
+    # binary round-trips too
+    yb = (y > 0).astype(np.float32)
+    m = bonsai.BonsaiClassifier(n_iters=10).fit(X, yb)
+    with tempfile.TemporaryDirectory() as td:
+        path = str(pathlib.Path(td) / "clf.msgpack")
+        m.save(path)
+        restored = bonsai.BonsaiClassifier.from_file(path)
+    assert restored.n_classes_ == 2
+    assert np.array_equal(restored.predict(X), m.predict(X).astype(np.int64))
+
+    # a regression model is not a classifier: refuse rather than mislabel
+    Xr, yr = load_csv(TRAIN_CSV)
+    with tempfile.TemporaryDirectory() as td:
+        path = str(pathlib.Path(td) / "reg.msgpack")
+        bonsai.BonsaiRegressor(n_iters=5).fit(Xr[:500], yr[:500]).save(path)
+        try:
+            bonsai.BonsaiClassifier.from_file(path)
+        except ValueError as e:
+            assert "objective" in str(e)
+        else:
+            raise AssertionError("expected from_file to reject an mse model")
+
+
+def test_classifier_eval_set_unseen_label_raises():
+    """Labels the training fold never saw cannot be encoded; silently
+    mis-encoding them corrupted the eval metric and early stopping."""
+    X, y = _three_class_data()
+    Xv, yv = X[:200].copy(), y[:200].copy()
+    for bad_label in (5.0, 0.5, -3.0):  # out of range and in-between
+        yv_bad = yv.copy()
+        yv_bad[:10] = bad_label
+        try:
+            bonsai.BonsaiClassifier(n_iters=5).fit(X, y, eval_set=(Xv, yv_bad))
+        except ValueError as e:
+            assert "eval_set" in str(e)
+        else:
+            raise AssertionError(f"expected unseen label {bad_label} to raise")
+    # a valid eval_set still works
+    bonsai.BonsaiClassifier(n_iters=5).fit(X, y, eval_set=(Xv, yv))
+
+
+def test_classifier_nan_labels_raise():
+    X, y = _three_class_data()
+    y = y.copy()
+    y[0] = np.nan
+    try:
+        bonsai.BonsaiClassifier(n_iters=5).fit(X, y)
+    except ValueError as e:
+        assert "NaN" in str(e)
+    else:
+        raise AssertionError("expected NaN labels to raise")
+
+
 if __name__ == "__main__":
     test_fit_predict_rmse()
     test_reusable_dataset_bit_identical_and_guard()
@@ -629,4 +726,8 @@ if __name__ == "__main__":
     test_alias_end_to_end_fit()
     test_alias_sklearn_clone_round_trip()
     test_alias_pickle_fitted_predicts_identically()
+    test_multiclass_sample_weight_applied()
+    test_classifier_from_file_restores_class_metadata()
+    test_classifier_eval_set_unseen_label_raises()
+    test_classifier_nan_labels_raise()
     print("all binding tests passed")
