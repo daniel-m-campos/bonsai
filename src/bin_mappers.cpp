@@ -1,7 +1,13 @@
 #include "bonsai/bin_mappers.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
+#include <iterator>
 #include <optional>
+#include <random>
+#include <ranges>
 #include <span>
 #include <string>
 #include <utility>
@@ -16,15 +22,78 @@
 namespace bonsai
 {
 
+namespace
+{
+
+// One shared row sample for the whole matrix (decision 64): every feature's
+// cuts come from the same rows, so the O(n) selection pass runs once instead of
+// once per feature (mapper-fit was ~5-8s of a 16M fit). Empty result means
+// "n_rows <= n_samples, use every row" — the whole-column path, unchanged and
+// bit-identical for datasets that fit the sample.
+std::vector<uint32_t> sample_rows(size_t n_rows, BinMapperConfig const &cfg)
+{
+    if (n_rows <= cfg.n_samples)
+    {
+        return {};
+    }
+    std::vector<uint32_t> picked;
+    picked.reserve(cfg.n_samples);
+    std::ranges::sample(std::views::iota(uint32_t{0}, static_cast<uint32_t>(n_rows)),
+                        std::back_inserter(picked),
+                        static_cast<std::ptrdiff_t>(cfg.n_samples),
+                        std::mt19937(cfg.seed));
+    return picked;
+}
+
+// Gather one feature's NaN-free values at the shared sample rows (or the whole
+// column when the sample is empty), the working set BinMapper::from_sample cuts.
+template <typename ColumnFn>
+std::vector<float> gather(std::span<uint32_t const> rows, size_t n_rows, ColumnFn value)
+{
+    std::vector<float> out;
+    if (rows.empty())
+    {
+        out.reserve(n_rows);
+        for (size_t r = 0; r < n_rows; ++r)
+        {
+            float const v = value(r);
+            if (!std::isnan(v))
+            {
+                out.push_back(v);
+            }
+        }
+        return out;
+    }
+    out.reserve(rows.size());
+    for (uint32_t const r : rows)
+    {
+        float const v = value(r);
+        if (!std::isnan(v))
+        {
+            out.push_back(v);
+        }
+    }
+    return out;
+}
+
+} // namespace
+
 BinMappers BinMappers::fit(detail::ColumnBatch const &batch, BinMapperConfig const &cfg)
 {
     detail::IngestProfiler::Lap lap;
-    // Feature-parallel; each fit draws its own seeded rng, so results are
-    // identical to a serial pass. Optional slots because BinMapper has no
-    // default constructor.
+    // One shared row sample, then feature-parallel gather+cut. Optional slots
+    // because BinMapper has no default constructor.
+    size_t const n_rows = batch.features.empty() ? 0 : batch.features[0].size();
+    auto const   rows   = sample_rows(n_rows, cfg);
     std::vector<std::optional<BinMapper>> slots(batch.features.size());
-    parallel::for_each_index(batch.features.size(), [&](size_t f)
-                             { slots[f] = BinMapper::fit(batch.features[f], cfg); });
+    parallel::for_each_index(
+        batch.features.size(),
+        [&](size_t f)
+        {
+            auto const &col = batch.features[f];
+            slots[f]        = BinMapper::from_sample(
+                gather(rows, n_rows, [&](size_t r) { return col[r]; }), cfg);
+        });
     lap(detail::IngestProfiler::instance().fit_s);
 
     BinMappers out;
@@ -45,18 +114,18 @@ BinMappers BinMappers::fit(features_view X, std::vector<std::string> feature_nam
     detail::IngestProfiler::Lap lap;
     size_t const                n = X.extent(0);
     size_t const                f = X.extent(1);
-    // Gathering a column into contiguous scratch feeds BinMapper::fit the
-    // exact sequence the ColumnBatch overload would — identical cuts.
+    // One shared row sample, then each feature gathers only those rows straight
+    // from the row-major matrix — no full-column scratch, and the O(n) sample
+    // runs once for the matrix instead of once per feature (identical cuts to
+    // the ColumnBatch overload for the same sample).
+    auto const                            rows = sample_rows(n, cfg);
     std::vector<std::optional<BinMapper>> slots(f);
     parallel::for_each_index(f,
                              [&](size_t c)
                              {
-                                 std::vector<float> column(n);
-                                 for (size_t r = 0; r < n; ++r)
-                                 {
-                                     column[r] = X[r, c];
-                                 }
-                                 slots[c] = BinMapper::fit(column, cfg);
+                                 slots[c] = BinMapper::from_sample(
+                                     gather(rows, n, [&](size_t r) { return X[r, c]; }),
+                                     cfg);
                              });
     lap(detail::IngestProfiler::instance().fit_s);
 
