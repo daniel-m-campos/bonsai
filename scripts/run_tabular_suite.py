@@ -51,8 +51,11 @@ def fit_predict(variant, Xtr, ytr, Xte, kind):
     if variant == "xgb":
         import xgboost as xgb
         cls = xgb.XGBClassifier if kind == "auc" else xgb.XGBRegressor
+        # min_child_weight = min_data_in_leaf is the campaign mapping
+        # (scripts/reference_params.py); 1 gave xgb ~20x smaller leaves than
+        # the other libraries were allowed and skewed the first run.
         m = cls(n_estimators=200, learning_rate=0.05, max_depth=6, max_bin=255,
-                tree_method="hist", reg_lambda=1.0, min_child_weight=1,
+                tree_method="hist", reg_lambda=1.0, min_child_weight=20,
                 random_state=42, n_jobs=8).fit(Xtr, ytr)
         return m.predict_proba(Xte)[:, 1] if kind == "auc" else m.predict(Xte)
     if variant == "lgbm":
