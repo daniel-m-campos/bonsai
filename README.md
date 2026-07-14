@@ -11,7 +11,7 @@
   <img alt="C++23" src="https://img.shields.io/badge/C%2B%2B-23-00599C?logo=cplusplus&logoColor=white">
   <img alt="CMake" src="https://img.shields.io/badge/CMake-%E2%89%A5%203.28-064F8C?logo=cmake&logoColor=white">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg"></a>
-  <img alt="tests" src="https://img.shields.io/badge/tests-449%20passing-success">
+  <img alt="tests" src="https://img.shields.io/badge/tests-498%20passing-success">
 </p>
 
 <p align="center">
@@ -131,7 +131,7 @@ Install with `pip install .` (scikit-build-core builds the extension), or for de
 
 `BonsaiRegressor(config="cfg.toml")` / `train(..., config=...)` load a TOML file as the base config (the CLI's `-c`); kwargs and `params` override it. For GPU training from Python, `make python-cuda` builds the extension in the CUDA tree (use `PYTHONPATH=build-cuda/python`), or `pip install . -C cmake.define.BONSAI_CUDA=ON -C cmake.define.BONSAI_CUDA_ARCH=sm_120`; `bonsai.cuda_available()` reports whether `cuda_*` growers can train on this machine.
 
-`bonsai info` lists every `(objective, grower, sampler)` triple the binary knows how to dispatch to (currently 6×4×3 = 72 combos; growers that can't train on the current machine, like `cuda_depthwise` without a GPU, are marked predict-only).
+`bonsai info` lists every `(objective, grower, sampler)` triple the binary knows how to dispatch to (currently 7×5×3 = 105 combos; growers that can't train on the current machine, like `cuda_depthwise` without a GPU, are marked predict-only).
 
 ## Build
 
@@ -169,19 +169,9 @@ make test-cuda       # ctest against the CUDA build
 ./build-cuda/src/bonsai fit -c config.toml --set dispatch.grower_name=cuda_depthwise ...
 ```
 
-Training is device-resident ([docs/architecture/11-gpu-resident.md](docs/architecture/11-gpu-resident.md)): histograms, rows, and split finding all live on the GPU, with only split decisions and child counts crossing the bus per level (float shared-memory accumulation merged in double — RMSE matches the CPU grower to library-comparison precision). The host grow loop remains the single algorithm narrative and the decision-maker; saved models are ordinary `DenseTree`s, identical in format to `depthwise`, and predict on any build. The kernel TU ([src/cuda/histogram_engine.cu](src/cuda/histogram_builder.cu)) is CUDA C++ compiled by the project's own clang (`-x cuda`) — same C++23, same libc++, no nvcc — so kernels use bonsai types and the shared gain math directly. Set `BONSAI_CUDA_ARCH` if `native` detection is unavailable; `BONSAI_CUDA_PROFILE=1` / `BONSAI_GROW_PROFILE=1` print per-fit breakdowns. Two growers run on the GPU: `cuda_depthwise` (fully device-resident) and `cuda_oblivious` (device level-find choosing one split per level across the whole frontier, CatBoost-style symmetric trees).
+Training is device-resident ([docs/architecture/11-gpu-resident.md](docs/architecture/11-gpu-resident.md)): histograms, rows, and split finding all live on the GPU, with only split decisions and child counts crossing the bus per level (float shared-memory accumulation merged in double — RMSE matches the CPU grower to library-comparison precision). The host grow loop remains the single algorithm narrative and the decision-maker; saved models are ordinary `DenseTree`s, identical in format to `depthwise`, and predict on any build. The kernel TU ([src/cuda/histogram_engine.cu](src/cuda/histogram_engine.cu)) is CUDA C++ compiled by the project's own clang (`-x cuda`) — same C++23, same libc++, no nvcc — so kernels use bonsai types and the shared gain math directly. Set `BONSAI_CUDA_ARCH` if `native` detection is unavailable; `BONSAI_CUDA_PROFILE=1` / `BONSAI_GROW_PROFILE=1` print per-fit breakdowns. Two growers run on the GPU: `cuda_depthwise` (fully device-resident) and `cuda_oblivious` (device level-find choosing one split per level across the whole frontier, CatBoost-style symmetric trees).
 
-Measured on an RTX 5090 against each reference library, Year Prediction MSD (464 k × 90, 200 iters, depth 8), every `fit` timing the full pipeline — CSV read + binning + train — via [scripts/bench_gpu.py](scripts/bench_gpu.py):
-
-| matchup (same tree strategy) | bonsai | reference | test RMSE (bonsai / ref) |
-|---|--:|--:|--|
-| `cuda_depthwise` vs **xgboost-GPU** (depthwise hist) | **2.5–2.7 s** | 4.8–7.1 s | 8.99 / 8.99 |
-| `cuda_oblivious` vs **CatBoost-GPU** (oblivious) | **3.5 s** | 7.3–8.2 s | 9.17 / 9.14 |
-| `leafwise` (CPU) vs **LightGBM-GPU** (leaf-wise CUDA) | **11.1–11.5 s** | 12.0–12.9 s | 9.09 / 8.95 |
-
-bonsai wins each structure-matched comparison; the leafwise row is deliberately honest — bonsai has no device leafwise (best-first growth doesn't fit the level-batched resident plane), yet its CPU leafwise still beats LightGBM's CUDA backend on this card. On an A100, `cuda_depthwise` fits the same benchmark in 5.0 s vs 14.7 s for 16-thread CPU.
-
-Beyond the head-to-head table, a synthetic scaling study sweeps rows (to 16M), cols (to 65k), and bins (to 65535) against all three libraries across five GPU generations — methodology in decision 46, data and log-log exponent fits in [benchmarks/results/scaling.md](benchmarks/results/scaling.md). The optimization rounds it seeded (decisions 47–51) cut the Python module's peak memory to 1.8× of the input matrix, made 16k-bin CPU fits 5× faster on Linux, moved the GPU histogram cliff from 3k to ~6k bins (17× on the 4095-bin cell), and then rebuilt the CPU fit around a row-wise histogram fill over a row-major u8 mirror with float cells and double reductions (decisions 49–50) — a 16M×100 fit dropped from 317s to 114s across the rounds, reaching near-parity with LightGBM at scale and passing it on wide data, at R² identical to six decimals. The same study caught a rentable GPU host with a 300µs sync round-trip — benchmark pods now pass a latency probe before any number is trusted (decision 48), and rent from a pinned toolchain image (`ghcr.io/daniel-m-campos/bonsai-ci`).
+GPU-vs-reference numbers live in [Performance](#performance) (same-pod, matched settings). A wider synthetic scaling study — rows to 16M, cols to 65k, bins to 65535, across five GPU generations — is in [benchmarks/results/scaling.md](benchmarks/results/scaling.md) (methodology in decision 46); the optimization rounds it seeded are the story of [guide chapter 11](docs/guide/11-performance-engineering.md).
 
 ## Extending bonsai
 
