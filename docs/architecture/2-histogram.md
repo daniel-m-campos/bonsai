@@ -25,7 +25,7 @@ g[i] = ∂L/∂s   evaluated at s[i], y[i]      // gradient
 h[i] = ∂²L/∂s² evaluated at s[i], y[i]      // hessian
 ```
 
-For MSE: `g[i] = s[i] − y[i]`, `h[i] = 1`. For binary logloss: `p = σ(s)`; `g = p − y`; `h = p·(1 − p)`. Both are pointwise — no cross-row dependence — so `g` and `h` are flat `vector<double>` of length `n_rows`, recomputed once per iteration before the tree is grown.
+For MSE: `g[i] = s[i] − y[i]`, `h[i] = 1`. For binary logloss: `p = σ(s)`; `g = p − y`; `h = p·(1 − p)`. Both are pointwise (no cross-row dependence), so `g` and `h` are flat `vector<double>` of length `n_rows`, recomputed once per iteration before the tree is grown.
 
 The grower's job: build *one* tree that, when its leaf values are added to `s[i]`, reduces the next iteration's loss the most. Histogram machinery exists to find that tree's splits cheaply.
 
@@ -72,13 +72,13 @@ Pre-binning collapses thresholds: there are only `n_bins` (≤256) distinct cut 
        score gain(L, R); track best
    ```
 
-   `O(n_bins)` per feature. Cumulative left-sums; right is the real-bin total minus left, no second pass over bins. `b` runs `1 .. n_bins - 2` because the candidate cut sits *between* adjacent real-valued bins — `n_bins - 2` real bins yield `n_bins - 3` interior cuts plus the cut after bin 0, i.e. `b = 1 .. n_bins - 2` putting bins `0..b-1` on the left. The missing bin (`n_bins - 1`) is excluded from the sweep entirely; how its rows are routed is the splitter's call (see below).
+   `O(n_bins)` per feature. Cumulative left-sums; right is the real-bin total minus left, no second pass over bins. `b` runs `1 .. n_bins - 2` because the candidate cut sits *between* adjacent real-valued bins: `n_bins - 2` real bins yield `n_bins - 3` interior cuts plus the cut after bin 0, i.e. `b = 1 .. n_bins - 2` putting bins `0..b-1` on the left. The missing bin (`n_bins - 1`) is excluded from the sweep entirely; how its rows are routed is the splitter's call (see below).
 
-   Total per node: `O(n_rows · n_features)` build + `O(n_bins · n_features)` score. The first term dominates. Going from `n_thresholds` candidates per feature (originally `O(n_rows)`) to `n_bins` (≤256) is the whole point — and it's paid for in the scoring loop, not the build loop.
+   Total per node: `O(n_rows · n_features)` build + `O(n_bins · n_features)` score. The first term dominates. Going from `n_thresholds` candidates per feature (originally `O(n_rows)`) to `n_bins` (≤256) is the whole point, and it's paid for in the scoring loop, not the build loop.
 
 ### Why subtraction halves it
 
-When a node splits into children `L` and `R`, both children need histograms before they themselves can be split. Naive cost: scan both child row sets — total `n_parent_rows` work per feature, same as building the parent.
+When a node splits into children `L` and `R`, both children need histograms before they themselves can be split. Naive cost: scan both child row sets, total `n_parent_rows` work per feature, same as building the parent.
 
 But: `hist_parent[b] = hist_L[b] + hist_R[b]` exactly, bin by bin (every parent row went somewhere). So if we already have `hist_parent` cached and we scan only the smaller child to build its histogram, we can compute the larger child's histogram by subtraction:
 
@@ -93,10 +93,10 @@ The row-scan cost goes from `n_parent` to `min(n_L, n_R) ≤ n_parent / 2`. Halv
 `BinMapper` reserves the **last** bin (`n_bins - 1`) for missing/sentinel values. Real-valued bins occupy `0 .. n_bins - 2`, separated by right-edge cuts in `cuts_` (the final cut is a `+inf` sentinel; NaN short-circuits straight to the missing slot). This matches LightGBM's convention.
 
 For real-valued split scoring, candidate thresholds live *between*
-adjacent real-valued bins — cut positions `0|1, 1|2, ..., (n-3)|(n-2)`
+adjacent real-valued bins: cut positions `0|1, 1|2, ..., (n-3)|(n-2)`
 where `n = n_bins`. The scoring loop above sweeps exactly those. The missing bin sits outside that sweep: its `(sum_grad, sum_hess)` cell is honest accumulated data, but it doesn't participate in the "left vs right of cut" partition.
 
-How missing rows *are* routed at split time is a question for `SplitFinder` — typical strategies: send all missing left, send all missing right, score both and pick the better. Whichever strategy the splitter uses, it reads the missing bin's totals separately and folds them into one side's `(G, H)` before computing gain. The histogram itself doesn't pick a strategy; it just keeps the missing cell available.
+How missing rows *are* routed at split time is a question for `SplitFinder`; typical strategies: send all missing left, send all missing right, score both and pick the better. Whichever strategy the splitter uses, it reads the missing bin's totals separately and folds them into one side's `(G, H)` before computing gain. The histogram itself doesn't pick a strategy; it just keeps the missing cell available.
 
 ### Tiny worked example
 
@@ -136,14 +136,14 @@ struct HistCell {
 };
 ```
 
-- **`float` cells, `double` reductions** (decision 50; reversed the original `double`-cell choice after measurement). A cell's sum is bounded by its node's rows, so per-cell float rounding stays small; every reduction that *crosses* cells — `totals()`, `fill_prefix`, the split scan's running left sums — accumulates in `double` and converts once at the store. Halving the cell halved the fill's memory traffic for a measured 1.15–1.25× fit speedup at identical R² (six decimals at 8M rows); the eval-baseline RMSE moved 5.4e-6. The CUDA path had already validated the same shape (float per-chunk, double merge).
+- **`float` cells, `double` reductions** (decision 50; reversed the original `double`-cell choice after measurement). A cell's sum is bounded by its node's rows, so per-cell float rounding stays small; every reduction that *crosses* cells (`totals()`, `fill_prefix`, the split scan's running left sums) accumulates in `double` and converts once at the store. Halving the cell halved the fill's memory traffic for a measured 1.15–1.25× fit speedup at identical R² (six decimals at 8M rows); the eval-baseline RMSE moved 5.4e-6. The CUDA path had already validated the same shape (float per-chunk, double merge).
 - **AoS, not parallel arrays.** The build loop is the hot one (`O(n_rows)` per `(node, feature)`) and it scatters writes indexed by `bin`. AoS keeps grad+hess on one cache line per indexed update; SoA would force two cache lines in flight per row for no benefit, since the access pattern isn't sequential. Scoring is sequential but only `O(n_bins ≤ 256)` and not the bottleneck. xgb/lgbm both AoS.
-- **No count field.** `sum_hess` carries effective row count for MSE (`hess = 1` per row → `sum_hess == n_rows`); for logloss the count isn't needed by split scoring. If a future objective wants `min_data_in_leaf` independent of hessian, add a third lane then — not now.
+- **No count field.** `sum_hess` carries effective row count for MSE (`hess = 1` per row → `sum_hess == n_rows`); for logloss the count isn't needed by split scoring. If a future objective wants `min_data_in_leaf` independent of hessian, add a third lane then, not now.
 - **Degenerate-split guard.** Float sibling-subtraction noise sits far above the `gain > 0` gate's reach, so a cut that sends every row one way can score a tiny positive gain. The partition's row counts are ground truth: `demote_empty_splits` (and the leafwise equivalent) converts such splits back to leaves after partitioning.
 
-Rejected: 32B padding to a cache line (wasteful — 4 bins per line is fine, the loop is sequential). A `hist_precision` config knob was considered and dropped: measurement showed no quality cost to carry the extra surface for.
+Rejected: 32B padding to a cache line (wasteful: 4 bins per line is fine, the loop is sequential). A `hist_precision` config knob was considered and dropped: measurement showed no quality cost to carry the extra surface for.
 
-## `Histogram` — one feature, one node
+## `Histogram`: one feature, one node
 
 ```cpp
 class Histogram {
@@ -174,9 +174,9 @@ private:
 
 - One `Histogram` per `(node, feature)`. The grower owns the matrix of these (see §"Ownership" below).
 - `size() == n_bins[fid]`, not `max_bin`. Variable per feature because `BinMapper::fit` deduplicates collisions and does low-cardinality fallback (decision 1 in [`../decisions.md`](../decisions.md)).
-- `clear()` zeros the cells and totals in place; `size()` is invariant. Histograms are allocated once per `(node-slot, feature)` and reused across iterations — `clear()` is the reset, not a destructor.
-- `operator-=` is the subtraction trick primitive; precondition `size() == other.size()`. Asserted in debug, UB otherwise — this is a hot path called per `(child, feature)`. The cell loop and the two scalar total subtractions are fused so the trick stays a single call site.
-- Node totals: **no longer maintained in `add()`** (decision 33). The running scalar pair cost two redundant double-adds per row × feature and duplicated the same node-level totals across every feature. Histograms now carry cells only; node totals are one O(n_bins) cell sweep (`Histogram::totals()`), computed once per node via `SplitInput::totals()` — which uses the first *populated* histogram, since `feature_fraction < 1` leaves unselected features as zero-binned placeholders.
+- `clear()` zeros the cells and totals in place; `size()` is invariant. Histograms are allocated once per `(node-slot, feature)` and reused across iterations; `clear()` is the reset, not a destructor.
+- `operator-=` is the subtraction trick primitive; precondition `size() == other.size()`. Asserted in debug, UB otherwise; this is a hot path called per `(child, feature)`. The cell loop and the two scalar total subtractions are fused so the trick stays a single call site.
+- Node totals: **no longer maintained in `add()`** (decision 33). The running scalar pair cost two redundant double-adds per row × feature and duplicated the same node-level totals across every feature. Histograms now carry cells only; node totals are one O(n_bins) cell sweep (`Histogram::totals()`), computed once per node via `SplitInput::totals()`, which uses the first *populated* histogram, since `feature_fraction < 1` leaves unselected features as zero-binned placeholders.
 
 The missing-bin cell (`cells_[n_bins - 1]`) accumulates like any other; the histogram doesn't know about missing semantics. Split scoring is what excludes it from the real-valued sweep.
 
@@ -184,13 +184,13 @@ The missing-bin cell (`cells_[n_bins - 1]`) accumulates like any other; the hist
 
 A node's histograms across all features = `vector<Histogram>` indexed by `fid`. Per-feature, not flattened across features, because:
 
-- Bucket count varies per feature (decision 1). A flattened `vector<HistCell>` would need a per-feature offset table — same indirection cost without the type-level clarity.
+- Bucket count varies per feature (decision 1). A flattened `vector<HistCell>` would need a per-feature offset table: same indirection cost without the type-level clarity.
 - Subtraction is per-(node, feature). `feat_hist[fid] -= sibling[fid]` reads one contiguous run.
 - Parallel construction is feature-parallel in the OpenMP backend (Phase 3). Per-feature handles drop straight into a `parallel_for over fid`.
 
 Lives in the grower (`3-tree.md`), not in `Dataset`. Histograms are training-time scratch; `Dataset` is immutable input. Allocating in the grower lets the grower reuse arenas across nodes.
 
-## Subtraction trick — API
+## Subtraction trick: API
 
 The algorithm is in §"Why subtraction halves it" above. The shape it takes in the grower:
 
@@ -200,7 +200,7 @@ auto large_hist = parent_hist;                     // copy
 large_hist -= small_hist;                          // subtraction
 ```
 
-The copy is `n_bins * 16B` per feature — cheap relative to the row scan it replaces. If profiling later shows the copy as hot, switch to in-place: `parent_hist -= small_hist; large = parent_hist;` — but parent is needed for both subtractions only on the *first* split of a node, so the simple form is fine.
+The copy is `n_bins * 16B` per feature, cheap relative to the row scan it replaces. If profiling later shows the copy as hot, switch to in-place: `parent_hist -= small_hist; large = parent_hist;`, but parent is needed for both subtractions only on the *first* split of a node, so the simple form is fine.
 
 ## Parallel construction
 
@@ -217,23 +217,23 @@ The pattern:
 
 1. Each thread owns a private `vector<HistCell>` sized for the feature (or for the full feature × bin grid, for feature-parallel).
 2. Threads scan their row ranges, accumulating into private cells only. No cross-thread writes during scan.
-3. Final merge sums per-thread partials into the canonical histogram. Order doesn't have to be `tid`-major — it just has to be reproducible at fixed `n_threads`.
+3. Final merge sums per-thread partials into the canonical histogram. Order doesn't have to be `tid`-major; it just has to be reproducible at fixed `n_threads`.
 
 Cost: `n_threads * n_features * n_bins * 16B` of scratch. Forecast on the planned YearPredictionMSD perf benchmark (90 features, 255 bins, 8 threads): ~2.8MB. Fine.
 
-`ParallelBackend` (concept, see [`7-parallel.md`](7-parallel.md)) wraps the row-range scan + per-thread reduction so the same `Histogram::build` template instantiates against `SerialBackend`, `OpenMPBackend`, `StdExecBackend`. Histogram itself doesn't know which backend it's running against — it exposes the `add` / `clear` / `-=` primitives and trusts the backend to schedule.
+`ParallelBackend` (concept, see [`7-parallel.md`](7-parallel.md)) wraps the row-range scan + per-thread reduction so the same `Histogram::build` template instantiates against `SerialBackend`, `OpenMPBackend`, `StdExecBackend`. Histogram itself doesn't know which backend it's running against; it exposes the `add` / `clear` / `-=` primitives and trusts the backend to schedule.
 
 ## Hot loop notes
 
 The build pseudocode is in §"Why a histogram makes that cheap." Two implementation notes that don't fit there:
 
-- **Root vs descendant.** At the root, `rows` is implicit `0..n_rows` and the loop is a straight sequential scan of `col` and `grad`/`hess`. At a descendant node, `rows` is the indirection list the grower maintains — same loop, different access pattern. SIMD opportunities differ between the two; phase 1 doesn't try to vectorize either.
+- **Root vs descendant.** At the root, `rows` is implicit `0..n_rows` and the loop is a straight sequential scan of `col` and `grad`/`hess`. At a descendant node, `rows` is the indirection list the grower maintains: same loop, different access pattern. SIMD opportunities differ between the two; phase 1 doesn't try to vectorize either.
 - **Inlining.** `Histogram::add` must inline through to the cell write. Definition lives in the header.
 
 ## What's not here
 
 - Where node-row partitioning lives (the `rows` span above) → [`3-tree.md`](3-tree.md).
-- Split scoring — how the histogram is *consumed* — also [`3-tree.md`](3-tree.md).
+- Split scoring (how the histogram is *consumed*) also [`3-tree.md`](3-tree.md).
 - Parallel build and the determinism contract → [`7-parallel.md`](7-parallel.md) (feature-parallel fill with ordered gradients; shipped, decision 32).
 - Categorical histograms (Phase 4). Layout is the same; what changes is split scoring (partition-based, not threshold-based).
 - Serialization. Histograms are training-time scratch and don't round-trip to disk.

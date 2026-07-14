@@ -4,7 +4,7 @@
 
 ## Shape
 
-Strongly-typed nested structs in C++; TOML on disk; CLI overrides via dotted keys. Resolution order: struct defaults → TOML file → CLI flags. Last write wins. Strict parsing — unknown TOML keys are an error.
+Strongly-typed nested structs in C++; TOML on disk; CLI overrides via dotted keys. Resolution order: struct defaults → TOML file → CLI flags. Last write wins. Strict parsing: unknown TOML keys are an error.
 
 ```cpp
 namespace bonsai {
@@ -18,7 +18,7 @@ struct Config {
     MetricsConfig   metrics;
     ParallelConfig  parallel;   // [parallel] n_threads (decision 32)
     ObjectiveConfig objective;  // [objective] huber_delta, quantile_alpha
-    // IOConfig — TBD
+    // IOConfig: TBD
 };
 
 }
@@ -91,7 +91,7 @@ seed = 0
 The proposal sketched `missing = "nan"` and `missing = "value:<float>"`. The struct above splits that into two fields for clarity:
 
 - `missing_nan` (default `true`): NaN inputs route to bin 0 in `BinMapper::transform`, and `BinMapper::fit` skips NaNs in quantile computation.
-- `missing_sentinel` (default `nullopt`): if set, that exact float value is also treated as missing — routes to bin 0, skipped in quantile.
+- `missing_sentinel` (default `nullopt`): if set, that exact float value is also treated as missing: routes to bin 0, skipped in quantile.
 
 Both can be active simultaneously. If both are off (`missing_nan = false` and `missing_sentinel = nullopt`), no missing-value handling: NaN inputs are undefined behavior in `transform`, and any NaN in fit poisons the quantile sort. `BinMapper::fit` validates and throws `ConfigError` if this case occurs.
 
@@ -183,13 +183,13 @@ namespace bonsai::config {
 `toml++` with strict mode (reject unknown keys). Each struct gets a hand-written deserializer in `config/parse.cpp`; no reflection-based auto-mapping. Errors throw `ConfigError` with a key path:
 `"data.format: unknown value 'tsv', expected csv|parquet|libsvm"`.
 
-The on-disk *model file* (`bonsai::io::save_booster`) serializes the same Config to JSON-in-msgpack via `NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE` macros, not through this codec — see decision 29 for the rationale (less code at the cost of duplicating the field list).
+The on-disk *model file* (`bonsai::io::save_booster`) serializes the same Config to JSON-in-msgpack via `NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE` macros, not through this codec; see decision 29 for the rationale (less code at the cost of duplicating the field list).
 
 ## What's not here
 
-- `SplitConfig`, `IOConfig` — added as their components are designed (`SamplerConfig`, `ParallelConfig`, `ObjectiveConfig` since landed).
-- TOML→struct deserializer details — pinned down when `parse_toml` is implemented.
-- Profiles / presets — explicitly rejected (decision *reserved*; was ADR-005 in the original sketch, kept as a non-goal).
+- `SplitConfig`, `IOConfig`: added as their components are designed (`SamplerConfig`, `ParallelConfig`, `ObjectiveConfig` since landed).
+- TOML→struct deserializer details: pinned down when `parse_toml` is implemented.
+- Profiles / presets: explicitly rejected (decision *reserved*; was ADR-005 in the original sketch, kept as a non-goal).
 
 ## Cross-references
 

@@ -8,9 +8,9 @@
 
 Shared helpers live in `src/cli/common.{hpp,cpp}`:
 
-- `CommonOpts { config_path, overrides }` — the two flags every subcommand wants.
-- `resolve_config(CommonOpts)` — load TOML, apply overrides, return a `Config`.
-- `to_feature_buffer(ColumnBatch)` — row-major float matrix for `IBooster::predict`.
+- `CommonOpts { config_path, overrides }`: the two flags every subcommand wants.
+- `resolve_config(CommonOpts)`: load TOML, apply overrides, return a `Config`.
+- `to_feature_buffer(ColumnBatch)`: row-major float matrix for `IBooster::predict`.
 
 ## Subcommands
 
@@ -37,18 +37,18 @@ For classification objectives (currently `logloss`) the CLI applies the link inv
 
 ## Exit codes
 
-- `0` — success.
-- `1` — runtime error (CSV parse error, missing file, IO failure, `ConfigError` from override or TOML). The error message is on stderr.
-- `2` — usage error (missing required option, like `data.train` empty for `fit`).
+- `0`: success.
+- `1`: runtime error (CSV parse error, missing file, IO failure, `ConfigError` from override or TOML). The error message is on stderr.
+- `2`: usage error (missing required option, like `data.train` empty for `fit`).
 
 ## What's not here
 
 Fit-time progress is text-based (`std::print` from `on_tick`), gated on `booster.log_intervals` (see [`8-config.md`](8-config.md)). No `indicators` progress bars yet.
 
-- `--early-stopping-rounds` on `fit` — deferred until eval-during-fit is wired.
-- Multi-validation (`[data].valid`) — only the first path is consumed for per-iter eval metrics; additional entries log a stderr warning. Multiple simultaneous valid sets deferred.
+- `--early-stopping-rounds` on `fit`: deferred until eval-during-fit is wired.
+- Multi-validation (`[data].valid`): only the first path is consumed for per-iter eval metrics; additional entries log a stderr warning. Multiple simultaneous valid sets deferred.
 
 ## Cross-references
 
-- [`8-config.md`](8-config.md) — TOML schema + override syntax.
-- [`6-dispatch.md`](6-dispatch.md) — `info` reads from the same registry the CLI uses to instantiate boosters.
+- [`8-config.md`](8-config.md): TOML schema + override syntax.
+- [`6-dispatch.md`](6-dispatch.md): `info` reads from the same registry the CLI uses to instantiate boosters.

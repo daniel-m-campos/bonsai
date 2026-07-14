@@ -8,13 +8,13 @@
 - Where the **score accumulator** lives, how it's initialized (initial bias), and how `Objective`'s link inverse plugs into the predict path.
 - Where the **sampler** runs in each iteration (decision 12).
 - Where **sample weights** are applied (decision 25).
-- The `IBooster` interface — the minimal virtual surface used at the config boundary (decision 26).
+- The `IBooster` interface: the minimal virtual surface used at the config boundary (decision 26).
 - Predict / save / load surface.
 
 Out of scope:
-- Dispatch / registry shape — done in `6-dispatch.md` + decision 26.
-- ParallelBackend integration — `7-parallel.md` (deferred).
-- TOML / Config schema — `8-config.md`.
+- Dispatch / registry shape: done in `6-dispatch.md` + decision 26.
+- ParallelBackend integration: `7-parallel.md` (deferred).
+- TOML / Config schema: `8-config.md`.
 
 ## Why a class template, not a base class
 
@@ -67,7 +67,7 @@ private:
 Resolved:
 - **`Obj` is purely-static.** `4-objective.md` pins `T::compute` / `T::eval` as static functions; no member stored. If a future objective needs config, revisit.
 - **Booster borrows the `Dataset`.** Lifetime sits with the CLI; `Booster::update_one_iter` takes a `Dataset const&`. Saved model is `BinMappers` + trees + init_score, no Dataset.
-- **Ctor takes only `Config`; first `update_one_iter` does data- dependent init.** Sizing `scores_`/`grad_`/`hess_` to `n_train_rows` and computing `init_score_` from labels both need a `Dataset`, but pushing them into the ctor would force every dispatch-table factory (see `6-dispatch.md`) to thread a `Dataset` through, and would give `load_booster` no symmetric construction path (loaded boosters have no training data — they restore `init_score_` and `trees_` from disk). Cost is one `if (scores_.empty())` guard at the top of `update_one_iter`; predicted-taken on every iter after the first. `load_booster` writes the state directly post-ctor and the guard short-circuits.
+- **Ctor takes only `Config`; first `update_one_iter` does data- dependent init.** Sizing `scores_`/`grad_`/`hess_` to `n_train_rows` and computing `init_score_` from labels both need a `Dataset`, but pushing them into the ctor would force every dispatch-table factory (see `6-dispatch.md`) to thread a `Dataset` through, and would give `load_booster` no symmetric construction path (loaded boosters have no training data; they restore `init_score_` and `trees_` from disk). Cost is one `if (scores_.empty())` guard at the top of `update_one_iter`; predicted-taken on every iter after the first. `load_booster` writes the state directly post-ctor and the guard short-circuits.
 - **Booster does not own `BinMappers`.** Decision 3: trees store raw float thresholds, predict path doesn't need `BinMappers`.
 
 ## `update_one_iter` semantics
@@ -105,9 +105,9 @@ Notes:
 - Steps 1–2 always touch the full row set; sampling (step 3) only affects what the **grower** sees. Sampling-first would save the
   grad/hess pass on dropped rows, but (a) GOSS samples *on* `|grad|`
   and needs it computed first, (b) the grad/hess pass is ~5–10% of `update_one_iter` while histogram building (which sampling actually targets) is 60–80%, (c) keeping order grad-then-sample avoids a "does this sampler need grad?" flag on the `Sampler` concept. xgb + lgbm do the same.
-- Step 5: applying `learning_rate` at score-update time (not at leaf-write time) keeps `Tree::predict` honest at predict time — saved trees carry raw leaf values, the booster reapplies the rate. This matches xgb's "shrinkage = booster concern" model.
-- Step 5 calls `tree.predict(train_rows)` — re-walks the tree per training row. Simple, clean, reuses the predict path. Cost is one extra `O(n_rows × depth)` walk per iter; at MVP scale (depth ≤ 8, n_rows ~500K) ~4M comparisons, small compared to histogram building.
-- **Phase 2 optimization (deferred until benchmarking justifies it).** All three reference libraries (xgb `position_`, lgbm `data_partition_`, catboost `leaf_indices`) already have the row → leaf mapping in the grower as a byproduct of growing — they reuse it for the score update instead of calling predict. If profiling shows step 5 as a measurable fraction of `update_one_iter`, change grower return from `Tree` to `(Tree, std::vector<float> train_leaf_values)` and replace step 5 with a flat add. Pure additive change to the grower→booster boundary; `Tree` stays clean.
+- Step 5: applying `learning_rate` at score-update time (not at leaf-write time) keeps `Tree::predict` honest at predict time. Saved trees carry raw leaf values, the booster reapplies the rate. This matches xgb's "shrinkage = booster concern" model.
+- Step 5 calls `tree.predict(train_rows)`, re-walking the tree per training row. Simple, clean, reuses the predict path. Cost is one extra `O(n_rows × depth)` walk per iter; at MVP scale (depth ≤ 8, n_rows ~500K) ~4M comparisons, small compared to histogram building.
+- **Phase 2 optimization (deferred until benchmarking justifies it).** All three reference libraries (xgb `position_`, lgbm `data_partition_`, catboost `leaf_indices`) already have the row → leaf mapping in the grower as a byproduct of growing. They reuse it for the score update instead of calling predict. If profiling shows step 5 as a measurable fraction of `update_one_iter`, change grower return from `Tree` to `(Tree, std::vector<float> train_leaf_values)` and replace step 5 with a flat add. Pure additive change to the grower→booster boundary; `Tree` stays clean.
 
 ## Initial score (bias)
 
@@ -119,7 +119,7 @@ Per decision 22, the booster owns the initial bias. Three sources, in priority o
    - **Logloss**: `log(p / (1-p))` where `p = mean(labels)`, clamped to avoid `log(0)`.
 3. Else (e.g., already-fit booster being continued): the value stored in the saved model.
 
-Computation lives in `Booster::compute_init_score(Obj, Dataset)` (static-dispatch on `Obj` via overload or `if constexpr`). **Not** a member of `Objective` — that's the rejection in decision 22.
+Computation lives in `Booster::compute_init_score(Obj, Dataset)` (static-dispatch on `Obj` via overload or `if constexpr`). **Not** a member of `Objective`: that's the rejection in decision 22.
 
 Called from the lazy-init path (step 0 of `update_one_iter`), not the ctor: the ctor takes only `Config` (see "Class shape" resolved bullets), and `load_booster` writes `init_score_` directly from disk without going through this function.
 
@@ -127,8 +127,8 @@ Called from the lazy-init path (step 0 of `update_one_iter`), not the ctor: the 
 
 Two cases:
 
-1. **Raw-score predict** — sums tree predictions plus `init_score`, applies `learning_rate` per tree. Returns raw scores.
-2. **User-facing predict** — calls raw-score predict, then applies the objective's link inverse:
+1. **Raw-score predict**: sums tree predictions plus `init_score`, applies `learning_rate` per tree. Returns raw scores.
+2. **User-facing predict**: calls raw-score predict, then applies the objective's link inverse:
    - **MSE**: identity.
    - **Logloss**: sigmoid.
 
@@ -146,11 +146,11 @@ struct LoadedBooster { std::unique_ptr<IBooster> booster;
 LoadedBooster load_booster(std::string const& path);
 ```
 
-Rationale: `load` needs the objective/grower/splitter/sampler types *before* it has a `Booster` to dispatch on — it reads the names from disk, then calls into the same registry path `make_booster` uses. That's structurally the dispatch boundary, not a member function. `save` is the symmetric counterpart and lives next to `load`.
+Rationale: `load` needs the objective/grower/splitter/sampler types *before* it has a `Booster` to dispatch on. It reads the names from disk, then calls into the same registry path `make_booster` uses. That's structurally the dispatch boundary, not a member function. `save` is the symmetric counterpart and lives next to `load`.
 
 What gets written: the full training `Config` (six sub-structs, decision 29) under `"config"`, `BinMappers` (diagnostic only per decision 3), `init_score`, trees in their tree-specific serialization. On-disk format is msgpack-encoded JSON; the JSON shape comes from `NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE` macros in `src/io/model.cpp` (decision 29 for the why-not-codec rationale).
 
-`IBooster` exposes whatever minimal accessors `save_booster` needs (e.g., `for_each_tree`, `init_score()`, `learning_rate()`) — these are the same accessors the CLI uses for inspection commands, not save- specific surface.
+`IBooster` exposes whatever minimal accessors `save_booster` needs (e.g., `for_each_tree`, `init_score()`, `learning_rate()`). These are the same accessors the CLI uses for inspection commands, not save- specific surface.
 
 ## Sampler
 
@@ -173,13 +173,13 @@ Static members, same shape as `Objective` and `SplitFinder`. Returns the count o
 
 Identity sampler: writes `0..n_rows-1`, returns `n_rows`. Compiles out trivially under inlining; the booster's call site is the same shape regardless of sampler.
 
-### `BernoulliSampler`, `GossSampler` — shipped
+### `BernoulliSampler`, `GossSampler` (shipped)
 
-Both landed (decisions 27, 34). GOSS forced one concept change: `sample()` takes **mutable** grad/hess spans so the sampler can amplify the retained small-gradient rows in place — the booster recomputes both from the objective every iteration, so the scaling never outlives its tree. GOSS benchmarking also exposed the out-of-bag stale-score bug (decision 34): every row must receive the tree's contribution in `GrowResult.values`, sampled or not (`route_unsampled`).
+Both landed (decisions 27, 34). GOSS forced one concept change: `sample()` takes **mutable** grad/hess spans so the sampler can amplify the retained small-gradient rows in place. The booster recomputes both from the objective every iteration, so the scaling never outlives its tree. GOSS benchmarking also exposed the out-of-bag stale-score bug (decision 34): every row must receive the tree's contribution in `GrowResult.values`, sampled or not (`route_unsampled`).
 
 ### Instance samplers and objectives
 
-Samplers are Config-constructed instances (subsample rate, GOSS rates). Objectives followed in decision 35 for the same reason (huber_delta, quantile_alpha); the booster holds `objective_` and calls through it — statics still satisfy the instance-call syntax, so MSE/LogLoss kept their static methods. The booster also implements DART (decision 35: per-iteration tree dropout with bin-space routing) and the incremental early-stopping hooks (`score_base` / `accumulate_last_tree` / `truncate`, decision 34), plus `feature_importance` (decision 37).
+Samplers are Config-constructed instances (subsample rate, GOSS rates). Objectives followed in decision 35 for the same reason (huber_delta, quantile_alpha); the booster holds `objective_` and calls through it. Statics still satisfy the instance-call syntax, so MSE/LogLoss kept their static methods. The booster also implements DART (decision 35: per-iteration tree dropout with bin-space routing) and the incremental early-stopping hooks (`score_base` / `accumulate_last_tree` / `truncate`, decision 34), plus `feature_importance` (decision 37).
 
 ## Threading touchpoints (foreshadowing `7-parallel.md`)
 
@@ -193,13 +193,13 @@ Samplers are Config-constructed instances (subsample rate, GOSS rates). Objectiv
 
 ## What's not here
 
-- `Objective` impls — `4-objective.md`.
-- `Tree`, growers, splitters — `3-tree.md`.
-- Sampler concept + `NoSampler` impl — TBD doc; sketched in decision 12.
-- Dispatch / registry — `6-dispatch.md`.
-- Threading — `7-parallel.md`.
-- Model file format — TBD.
-- CLI plumbing — `9-cli.md`.
+- `Objective` impls: `4-objective.md`.
+- `Tree`, growers, splitters: `3-tree.md`.
+- Sampler concept + `NoSampler` impl: TBD doc; sketched in decision 12.
+- Dispatch / registry: `6-dispatch.md`.
+- Threading: `7-parallel.md`.
+- Model file format: TBD.
+- CLI plumbing: `9-cli.md`.
 
 ## Resolved choices in this doc
 
@@ -213,7 +213,7 @@ Samplers are Config-constructed instances (subsample rate, GOSS rates). Objectiv
 
 - Ratify everything above into a single `decisions.md` entry (likely
   27) once the user is happy with the doc.
-- Section header / sketch refinements — wording, member ordering, whether `IBooster`'s minimal surface is exactly what's listed.
+- Section header / sketch refinements: wording, member ordering, whether `IBooster`'s minimal surface is exactly what's listed.
 
 ## Cross-references
 
