@@ -101,6 +101,8 @@ nav:
       - 11. Performance engineering: guide/11-performance-engineering.md
       - 12. Multiclass: guide/12-multiclass.md
       - 13. Categorical features: guide/13-categorical-features.md
+  - Lineage:
+      - CatBoost: lineage/catboost.md
   - Design:
       - Architecture: architecture/README.md
       - Decisions log: decisions.md

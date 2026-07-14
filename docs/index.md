@@ -2,24 +2,34 @@
 
 **Histogram gradient-boosted trees with a C++23 core — written to be read.**
 
-bonsai is a from-scratch GBT library that trains as fast as the production libraries — on GPU, faster at every row scale we measured — while staying small enough to actually read. Every performance and quality claim links to a reproducible run and the decision that recorded it.
+```
+pip install <wheel from the latest release>   # Linux, macOS arm64, Python 3.9–3.13, no toolchain
+```
 
-This site is being assembled from the project's living documents. Four doors are planned; two are open today.
+bonsai is a from-scratch GBT library small enough to read in a sitting and fast enough to take seriously: on GPU it holds the fastest slot at every row scale we measured — edging catboost and beating xgboost at 16M rows at matched accuracy, on ~3× less memory — and every one of those words links to a reproducible run.
 
-## Learn
+It exists because the great boosting libraries are wonderful to use and nearly impossible to read, and understanding them shouldn't require archaeology.
 
-Gradient boosting from math to code: each chapter takes one concept from intuition, through the mathematics, to the ~50 real lines that implement it here, to an experiment you can run against xgboost, lightgbm, and catboost.
+## This site is a love story
 
-Start with [chapter 0 — a tree by hand](guide/0-a-tree-by-hand.md): one boosting round traced on eight rows.
+xgboost proved boosting could be an industrial tool; lightgbm made it fast enough to be a default; catboost made it careful about its own biases.
 
-## Design
+bonsai is built out of their ideas — adopted where measurement agreed, rebuilt smaller where it didn't, declined with evidence where the benefit failed to reproduce — and this site narrates those debts alongside the API, because a library that stands on three giants should say so in its documentation, not just its bibliography.
 
-How the implementation landed where it did, and what it owes to the libraries that came before it — the [architecture notes](architecture/README.md) and the full [decisions log](decisions.md), including the hypotheses that were refuted along the way. Refutations are deliverables here.
+The claims stay honest in both directions: where bonsai wins, the run is linked; where it still loses — catboost on wide data, xgboost's last +0.001 r² of cut quality — that's linked too.
 
-## Use *(coming)*
+## Four doors
 
-The API tour: two layers over one engine — scikit-learn-shaped estimators for pipelines, an explicit `train(params, ...)` layer whose dotted keys are exactly the CLI's `--set` keys, and one `.msgpack` model format that round-trips everywhere. Prebuilt wheels: `pip install`, no toolchain.
+**[Learn](guide/README.md)** — gradient boosting from math to code: each chapter takes one concept from intuition, through the mathematics, to the ~50 real lines that implement it, to an experiment against the reference libraries. Start with [a tree traced by hand on eight rows](guide/0-a-tree-by-hand.md).
 
-## Method *(coming)*
+**Use** *(being written)* — the whole API in one mental model: sklearn-shaped estimators and an explicit `train(params, ...)` layer over the same engine, dotted config keys that are exactly the CLI's `--set` keys, one `.msgpack` model that round-trips everywhere.
 
-The data-driven HPC/ML discipline behind the results, written to transfer to other systems: instrument-first optimization (decompose → price → implement → validate → record), the feature-admission gate (prototype at zero core cost, pre-registered kill criteria), same-pod benchmarking, and bit-exact determinism as a testable contract.
+**[Lineage](lineage/catboost.md)** — what bonsai owes each of its ancestors, idea by idea: adopted, rebuilt, or measured and respectfully declined. [CatBoost](lineage/catboost.md) is written; xgboost and lightgbm are next.
+
+**Method** *(being written)* — the data-driven HPC discipline behind the results, portable to other systems: instrument-first optimization, a feature-admission gate with pre-registered kill criteria, same-pod benchmarking, and bit-exact determinism as a testable contract.
+
+## The engineering notebook
+
+The [decisions log](decisions.md) is the project's raw narrative — sixty-six numbered decisions including the refuted hypotheses, kept because a result you can't audit is advertising.
+
+The [architecture notes](architecture/README.md) are its structured companion: one document per subsystem, written once, referenced instead of repeated.
