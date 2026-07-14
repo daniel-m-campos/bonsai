@@ -106,7 +106,9 @@ nav:
       - 12. Multiclass: guide/12-multiclass.md
       - 13. Categorical features: guide/13-categorical-features.md
   - Use:
+      - Install: use/install.md
       - The API in one read: use/api-tour.md
+      - Building from source: use/building.md
   - Lineage:
       - XGBoost: lineage/xgboost.md
       - LightGBM: lineage/lightgbm.md

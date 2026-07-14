@@ -30,7 +30,7 @@ bench = ["xgboost", "lightgbm", "catboost", "scikit-learn", "pandas", "openml"]
 
 [project.urls]
 Repository = "https://github.com/daniel-m-campos/bonsai"
-Documentation = "https://github.com/daniel-m-campos/bonsai/tree/main/docs/guide"
+Documentation = "https://daniel-m-campos.github.io/bonsai/"
 Changelog = "https://github.com/daniel-m-campos/bonsai/blob/main/CHANGELOG.md"
 
 [tool.scikit-build]

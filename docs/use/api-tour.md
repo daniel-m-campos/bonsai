@@ -8,13 +8,11 @@ bonsai's entire API follows from three facts. Everything else is detail.
 
 ## Install
 
-Grab the wheel for your platform from the [latest release](https://github.com/daniel-m-campos/bonsai/releases/latest) (Linux x86_64/aarch64, macOS arm64; Python 3.9 to 3.13; no toolchain needed):
+One command against the latest release's assets; [Install](install.md) has the full story (wheel matrix, GPU support, docker, extras) and [Building from source](building.md) covers everything past a wheel:
 
 ```
-pip install <wheel url>
+pip install bonsai-gbt --find-links https://github.com/daniel-m-campos/bonsai/releases/expanded_assets/v1.3.0
 ```
-
-Building from source instead needs LLVM 20+ and CMake; see the [README](https://github.com/daniel-m-campos/bonsai/blob/main/README.md#build).
 
 ## The estimator layer
 
