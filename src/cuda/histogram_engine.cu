@@ -54,6 +54,11 @@ struct ProfileCounters
     double gh_upload_s = 0, root_stage_s = 0, gpu_wait_s = 0;
     double bins_upload_s = 0, fin_wait_s = 0, fin_d2h_s = 0;
     double find_kern_s = 0, find_d2h_s = 0;
+    // Marginal-round decomposition (decision 71 campaign): device-side spans
+    // from event pairs read at the next profile sync, plus the begin_root
+    // host reduction, so every millisecond of the round has a name.
+    double root_sums_s = 0, adv_memset_s = 0, adv_hist_s = 0, adv_sub_s = 0;
+    double root_hist_s = 0;
     size_t launches = 0, gpu_nodes = 0, cpu_calls = 0;
 
     ProfileCounters()                                       = default;
@@ -108,6 +113,10 @@ struct ProfileCounters
                          gh_upload_s, root_stage_s, part_stage_s, adv_stage_s,
                          find_stage_s, lfind_stage_s, gpu_wait_s, upload_s,
                          bins_upload_s, fin_wait_s, fin_d2h_s, find_kern_s, find_d2h_s);
+            std::println(stderr,
+                         "cuda-round-decomp: root_sums={:.2f}s root_hist={:.2f}s "
+                         "adv_memset={:.2f}s adv_hist={:.2f}s adv_sub={:.2f}s",
+                         root_sums_s, root_hist_s, adv_memset_s, adv_hist_s, adv_sub_s);
         }
         catch (...)
         {
@@ -280,6 +289,68 @@ struct CudaHistogramEngine::Impl
         std::vector<uint32_t>  slot_cnt;
         std::vector<uint32_t>  next_ofs; // children layout, live after partition
         std::vector<uint32_t>  next_cnt;
+
+        // Profile-only (decision 71 campaign): event pairs bracketing the
+        // async histogram-build phases, recorded at launch and read at the
+        // next profile sync so measuring never serializes the pipeline.
+        // ev[0..3]: memset start, memset end / hist start, hist end /
+        // subtract start, subtract end. Root builds record ev[1]..ev[2] only.
+        cudaEvent_t prof_ev[4]       = {};
+        bool        prof_ev_ready    = false; // events created
+        bool        prof_ev_recorded = false; // a build awaits reading
+        bool        prof_ev_root     = false; // recorded span is a root build
+
+        void prof_record_begin(bool root)
+        {
+            if (!prof_ev_ready)
+            {
+                for (auto &e : prof_ev)
+                {
+                    check(cudaEventCreate(&e), "profile event create");
+                }
+                prof_ev_ready = true;
+            }
+            prof_ev_root = root;
+            if (!root)
+            {
+                check(cudaEventRecord(prof_ev[0]), "profile event record");
+            }
+        }
+
+        // Call only after a sync that guarantees the recorded events are past.
+        void prof_read(ProfileCounters &prof)
+        {
+            if (!prof_ev_recorded)
+            {
+                return;
+            }
+            prof_ev_recorded = false;
+            float ms         = 0.0F;
+            check(cudaEventElapsedTime(&ms, prof_ev[1], prof_ev[2]),
+                  "profile event hist");
+            (prof_ev_root ? prof.root_hist_s : prof.adv_hist_s) += ms / 1e3;
+            if (prof_ev_root)
+            {
+                return;
+            }
+            check(cudaEventElapsedTime(&ms, prof_ev[0], prof_ev[1]),
+                  "profile event memset");
+            prof.adv_memset_s += ms / 1e3;
+            check(cudaEventElapsedTime(&ms, prof_ev[2], prof_ev[3]),
+                  "profile event subtract");
+            prof.adv_sub_s += ms / 1e3;
+        }
+
+        ~LevelPipeline()
+        {
+            if (prof_ev_ready)
+            {
+                for (auto &e : prof_ev)
+                {
+                    cudaEventDestroy(e);
+                }
+            }
+        }
 
         DeviceBuffer<uint32_t> &cur_rows()
         {
@@ -707,6 +778,11 @@ bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
     gather(im.grads.gh.data(), im.lvl.rows.data(), n, im.lvl.gh_ordered.data());
     auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
     dim3 const grid(im.lvl.n_selected, 1, n_chunks);
+    if (im.prof_counters.enabled)
+    {
+        im.lvl.prof_record_begin(/*root=*/true);
+        check(cudaEventRecord(im.lvl.prof_ev[1]), "profile event record");
+    }
     im.data.dispatch_bins(
         [&](auto const *bins)
         {
@@ -718,13 +794,19 @@ bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
                 im.lvl.cur().data(), im.lvl.stride, im.lvl.slots.device());
         });
     check(cudaGetLastError(), "root hist launch");
+    if (im.prof_counters.enabled)
+    {
+        check(cudaEventRecord(im.lvl.prof_ev[2]), "profile event record");
+        im.lvl.prof_ev_recorded = true;
+    }
 
     im.lvl.slot_ofs.assign(1, 0);
     im.lvl.slot_cnt.assign(1, n);
     im.lvl.leaf_by_row.reserve(ds.n_rows());
 
-    double sg = 0.0;
-    double sh = 0.0;
+    auto   sums_lap = im.prof_counters.lap();
+    double sg       = 0.0;
+    double sh       = 0.0;
     for (row_id_t const r : root.rows)
     {
         sg += grad[r];
@@ -733,6 +815,7 @@ bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
     root.sums      = {.sum_grad = static_cast<float>(sg),
                       .sum_hess = static_cast<float>(sh)};
     root.row_count = root.rows.size();
+    sums_lap(im.prof_counters.root_sums_s);
     if (im.prof_counters.enabled)
     {
         ++im.prof_counters.launches;
@@ -853,6 +936,7 @@ void CudaHistogramEngine::finalize_tree(std::span<float const> node_values,
     {
         check(cudaDeviceSynchronize(), "epilogue wait");
         flap(im.prof_counters.fin_wait_s);
+        im.lvl.prof_read(im.prof_counters);
     }
     check(cudaMemcpy(leaf_ids.data(), im.lvl.leaf_by_row.data(),
                      leaf_ids.size() * sizeof(node_id_t), cudaMemcpyDeviceToHost),
@@ -879,9 +963,17 @@ void CudaHistogramEngine::advance_level(Dataset const &ds, std::span<LevelOp con
 
     size_t const child_slots = 2 * ops.size();
     im.lvl.other().reserve(child_slots * im.lvl.slot_doubles());
+    if (prof.enabled)
+    {
+        im.lvl.prof_record_begin(/*root=*/false);
+    }
     check(cudaMemset(im.lvl.other().data(), 0,
                      child_slots * im.lvl.slot_doubles() * sizeof(double)),
           "zero level");
+    if (prof.enabled)
+    {
+        check(cudaEventRecord(im.lvl.prof_ev[1]), "profile event record");
+    }
     im.data.dispatch_bins(
         [&](auto const *bins)
         {
@@ -910,12 +1002,21 @@ void CudaHistogramEngine::advance_level(Dataset const &ds, std::span<LevelOp con
             }
         });
     check(cudaGetLastError(), "level hist launch");
+    if (prof.enabled)
+    {
+        check(cudaEventRecord(im.lvl.prof_ev[2]), "profile event record");
+    }
     auto const sd = static_cast<uint32_t>(im.lvl.slot_doubles());
     subtract_kernel<<<dim3(std::clamp<uint32_t>((sd + 255) / 256, 1, 256),
                            static_cast<uint32_t>(ops.size())),
                       dim3(256)>>>(im.lvl.cur().data(), im.lvl.other().data(),
                                    im.lvl.triples.device(), sd);
     check(cudaGetLastError(), "subtract launch");
+    if (prof.enabled)
+    {
+        check(cudaEventRecord(im.lvl.prof_ev[3]), "profile event record");
+        im.lvl.prof_ev_recorded = true;
+    }
     im.lvl.cur_is_a = !im.lvl.cur_is_a;
     im.lvl.slot_ofs = im.lvl.next_ofs;
     im.lvl.slot_cnt = im.lvl.next_cnt;
@@ -944,6 +1045,7 @@ void CudaHistogramEngine::find_splits_many(Dataset const &ds, TreeConfig const &
         // in-flight kernels into find_stage.
         check(cudaDeviceSynchronize(), "profile wait");
         lap(prof.gpu_wait_s);
+        im.lvl.prof_read(prof);
     }
     bool const any_mask = im.lvl.stage_find_inputs(level, config, ds);
     lap(prof.find_stage_s);
@@ -990,6 +1092,16 @@ void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
     auto        &prof = im.prof_counters;
     auto         lap  = prof.lap();
 
+    if (prof.enabled)
+    {
+        // Same peel as find_splits_many: without it, the first Staged sync
+        // below absorbs the previous level's in-flight histogram kernels
+        // into lfind_stage, misattributing device compute as staging (the
+        // decision-62 lesson, replayed on the oblivious path).
+        check(cudaDeviceSynchronize(), "profile wait");
+        lap(prof.gpu_wait_s);
+        im.lvl.prof_read(prof);
+    }
     im.lvl.stage_level_sums(level);
     lap(prof.lfind_stage_s);
 
