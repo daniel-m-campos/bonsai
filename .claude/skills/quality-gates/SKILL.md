@@ -17,7 +17,7 @@ Capture the byte-identity baseline FIRST (a baseline taken after edits proves no
 make python && PYTHONPATH=build/python python3 scripts/model_hash.py
 ```
 
-Record the printed `sha256:` value. As of 2026-07 the fabel baseline is `97a7418f3b0f11ed`, but always capture fresh — the hash legitimately changes when a decision-gated model change lands.
+Record the printed `sha256:` value. As of 2026-07 the baseline is `97a7418f3b0f11ed`, but always capture fresh — the hash legitimately changes when a decision-gated model change lands.
 
 ## Per commit
 
