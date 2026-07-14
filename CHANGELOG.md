@@ -2,12 +2,21 @@
 
 All notable changes to bonsai. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags. Design rationale for anything below lives in [`docs/decisions.md`](docs/decisions.md).
 
-## [Unreleased]
+## [1.3.0] - 2026-07-14
+
+GPU training from a 2.3MB pip install, and the benchmark harness ships in the package.
 
 ### Added
 - **CUDA in the linux x86_64 wheel** (decision 70): GPU training out of the box on any NVIDIA driver R525+, SASS for sm_70 through sm_120 plus a compute_90 PTX forward-JIT floor, cudart statically linked. The whole backend costs 2.33MB of wheel (vs ~300MB for xgboost's GPU wheel) and behaves exactly like a CPU wheel on GPU-less machines. Every release's CUDA wheel is validated on rented GPU hardware before it attaches; the byte-identity model-hash gate now runs across all three wheel platforms on every build.
 - **Runtime docker image**: `ghcr.io/daniel-m-campos/bonsai:cuda` with the CUDA wheel preinstalled, RunPod-ready (sshd entrypoint); the release gate boots this exact image, so the image and the wheel are validated together.
 - **`bonsai.bench` in the wheel** (decision 69): `pip install bonsai-gbt[bench]` reproduces the published benchmark tables; `python -m bonsai.bench.grinsztajn out.jsonl --report` re-runs the external standings suite. Normative rules in the [benchmark charter](https://daniel-m-campos.github.io/bonsai/method/benchmark-protocol/).
+
+### Fixed
+- `Model.n_classes` reports 0 unless the model was trained with the softmax objective (binary classifiers no longer masquerade as multiclass).
+- Linux wheels vendored a dynamic libomp while claiming static linkage; the workflow now documents the vendoring honestly (issue #134).
+
+### Changed
+- CLI `fit` no longer runs the binning pass on validation sets (issue #119): per-iteration eval reads features and labels only, so the binned data had no readers and the pass was pure waste in every early-stopping run.
 
 ## [1.2.0] - 2026-07-13
 
