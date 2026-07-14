@@ -18,6 +18,7 @@ output is byte-stable for a given input set.
 from __future__ import annotations
 
 import json
+import math
 import pathlib
 import subprocess
 import sys
@@ -26,8 +27,10 @@ from collections import defaultdict
 REPO = pathlib.Path(__file__).resolve().parents[1]
 RESULTS = REPO / "benchmarks" / "results"
 OUT = REPO / "docs" / "method" / "results.md"
+ASSETS = REPO / "docs" / "method" / "assets"
 
 consumed: set[str] = set()
+charts: dict[str, str] = {}  # filename -> svg, written to docs/method/assets/
 
 
 def load_jsonl(name: str) -> list[dict]:
@@ -62,6 +65,128 @@ def provenance(files: list[str], note: str) -> str:
     links = ", ".join(
         f"[`{f}`](../../benchmarks/results/{f})" for f in files)
     return f"*Source: {links}. {note}*"
+
+
+# ---- SVG charts ---------------------------------------------------------------
+# Hand-rolled SVG (stdlib only) so the images are byte-stable and the CI drift
+# check covers them exactly like the tables. One color per library everywhere;
+# solid strokes are GPU variants, dashed are CPU. Text and grid in mid-grays so
+# the site's light and dark themes both read.
+
+LIB_COLOR = {
+    "bonsai": "#2e7d32",
+    "xgboost": "#1f77b4",
+    "lightgbm": "#8e6bbf",
+    "catboost": "#e08f1a",
+}
+LIB_COLOR["xgb"] = LIB_COLOR["xgboost"]
+LIB_COLOR["lgbm"] = LIB_COLOR["lightgbm"]
+TEXT = "#8a8a8a"
+GRID = "#808080"
+FONT = "font-family='system-ui,sans-serif'"
+
+
+def _svg(width: int, height: int, body: list[str]) -> str:
+    return (f"<svg xmlns='http://www.w3.org/2000/svg' width='{width}' "
+            f"height='{height}' viewBox='0 0 {width} {height}'>\n"
+            + "\n".join(body) + "\n</svg>\n")
+
+
+def _text(x, y, s, size=11, anchor="start", color=TEXT, weight="normal") -> str:
+    return (f"<text x='{x}' y='{y}' font-size='{size}' fill='{color}' "
+            f"{FONT} text-anchor='{anchor}' font-weight='{weight}'>{s}</text>")
+
+
+def _legend(items: list[tuple[str, str, str]], x: int, y: int) -> list[str]:
+    out = []
+    for i, (label, color, dash) in enumerate(items):
+        yy = y + i * 17
+        out.append(f"<line x1='{x}' y1='{yy - 4}' x2='{x + 22}' y2='{yy - 4}' "
+                   f"stroke='{color}' stroke-width='2.5'{dash}/>")
+        out.append(_text(x + 28, y + i * 17, label))
+    return out
+
+
+def _dash(cpu: bool) -> str:
+    return " stroke-dasharray='6 4'" if cpu else ""
+
+
+def bar_chart(fname: str, title: str, rows: list[tuple[str, float, str]],
+              x_max: float, note: str) -> None:
+    """Horizontal bars: rows = (label, value, annotation); lower is better."""
+    w, h, left, top = 720, 60 + 34 * len(rows) + 30, 110, 42
+    plot_w = w - left - 150
+    body = [_text(left, 22, title, size=13, weight="bold")]
+    for i, (label, value, note_txt) in enumerate(rows):
+        y = top + i * 34
+        bw = round(plot_w * value / x_max, 1)
+        color = LIB_COLOR.get(label, TEXT)
+        body.append(_text(left - 8, y + 14, label, anchor="end"))
+        body.append(f"<rect x='{left}' y='{y}' width='{bw}' height='20' "
+                    f"rx='3' fill='{color}' fill-opacity='0.85'/>")
+        body.append(_text(left + bw + 8, y + 14,
+                          f"{value:.2f}&#160;&#160;{note_txt}"))
+    body.append(_text(left, top + len(rows) * 34 + 18, note, size=10))
+    charts[fname] = _svg(w, h, body)
+
+
+def line_chart(fname: str, title: str, y_label: str,
+               series: list[tuple[str, str, bool, list[tuple[float, float]]]],
+               x_ticks: list[tuple[float, str]], log_x=True, log_y=True,
+               width=760, height=400, y_ticks=None,
+               point_labels=None) -> None:
+    """series = (label, color, is_cpu, [(x, y)]). Log-log by default."""
+    left, right, top, bottom = 64, 170, 42, 44
+    pw, ph = width - left - right, height - top - bottom
+
+    def tx(v):
+        return math.log10(v) if log_x else v
+
+    def ty(v):
+        return math.log10(v) if log_y else v
+
+    xs = [tx(x) for _, _, _, pts in series for x, _ in pts]
+    ys = [ty(y) for _, _, _, pts in series for _, y in pts]
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
+    y0 -= (y1 - y0) * 0.06 or 0.05
+    y1 += (y1 - y0) * 0.06 or 0.05
+
+    def px(v):
+        return round(left + (tx(v) - x0) / (x1 - x0) * pw, 1)
+
+    def py(v):
+        return round(top + ph - (ty(v) - y0) / (y1 - y0) * ph, 1)
+
+    body = [_text(left, 22, title, size=13, weight="bold")]
+    if y_ticks is None and log_y:
+        lo, hi = math.floor(y0), math.ceil(y1)
+        y_ticks = [(10.0 ** e, f"{10 ** e:g}") for e in range(lo, hi + 1)
+                   if y0 <= e <= y1]
+    for v, label in y_ticks or []:
+        yy = py(v)
+        body.append(f"<line x1='{left}' y1='{yy}' x2='{left + pw}' y2='{yy}' "
+                    f"stroke='{GRID}' stroke-opacity='0.22'/>")
+        body.append(_text(left - 8, yy + 4, label, anchor="end"))
+    for v, label in x_ticks:
+        xx = px(v)
+        body.append(f"<line x1='{xx}' y1='{top}' x2='{xx}' y2='{top + ph}' "
+                    f"stroke='{GRID}' stroke-opacity='0.12'/>")
+        body.append(_text(xx, top + ph + 18, label, anchor="middle"))
+    body.append(_text(left - 44, top - 12, y_label, size=10))
+    for _label, color, cpu, pts in series:
+        path = " ".join(f"{px(x)},{py(y)}" for x, y in pts)
+        body.append(f"<polyline points='{path}' fill='none' stroke='{color}' "
+                    f"stroke-width='2.5'{_dash(cpu)}/>")
+        for x, y in pts:
+            body.append(f"<circle cx='{px(x)}' cy='{py(y)}' r='3.2' "
+                        f"fill='{color}'/>")
+    if point_labels:
+        for x, y, s in point_labels:
+            body.append(_text(px(x) + 6, py(y) - 7, s, size=9))
+    body.extend(_legend([(lbl, c, _dash(cpu)) for lbl, c, cpu, _ in series],
+                        left + pw + 18, top + 12))
+    charts[fname] = _svg(width, height, body)
 
 
 # ---- Quality: Grinsztajn standings ------------------------------------------
@@ -127,6 +252,12 @@ def grinsztajn_section() -> str:
     table, suite_ranks, n = _standings(main)
     rows = [[lib, fmt(mean, 2), str(w)] for lib, mean, w in table]
     campaign = md_table(["library", "mean rank", "outright wins"], rows)
+    bar_chart(
+        "grinsztajn-rank.svg",
+        f"Grinsztajn suite: mean rank across {n} tasks (lower is better)",
+        [(lib, mean, f"{w} outright wins") for lib, mean, w in table],
+        x_max=4.0,
+        note="55 OpenML tasks, 3 seeds, campaign knobs, best variant per library (decision 68)")
 
     suites = sorted({s for s, _ in suite_ranks})
     libs = [lib for lib, _, _ in table]
@@ -146,6 +277,8 @@ def grinsztajn_section() -> str:
 ### External standings: the Grinsztajn suite
 
 The [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) at the paper-medium protocol: {n} OpenML tasks, three seeds, campaign knobs for every library (decision 68). Best variant per library, average rank across tasks, lower is better.
+
+![Grinsztajn mean rank by library](assets/grinsztajn-rank.svg)
 
 {campaign}
 
@@ -286,6 +419,17 @@ REBASE_VARIANTS = [
     ("bonsai_oblivious", "bonsai cpu obl"),
 ]
 
+# Chart styling: (display label, color, is_cpu). bonsai's two CUDA growers get
+# two greens; CPU variants are dashed everywhere.
+VARIANT_STYLE = {
+    "bonsai_cuda_depthwise": ("bonsai cuda dw", "#1b5e20", False),
+    "bonsai_cuda_oblivious": ("bonsai cuda obl", "#4caf50", False),
+    "xgb_cuda": ("xgb cuda", LIB_COLOR["xgboost"], False),
+    "catboost_gpu": ("catboost gpu", LIB_COLOR["catboost"], False),
+    "lgbm_cpu": ("lgbm cpu", LIB_COLOR["lightgbm"], True),
+    "bonsai_oblivious": ("bonsai cpu obl", "#4caf50", True),
+}
+
 
 def _cell_best(rows: list[dict]) -> dict[tuple, dict]:
     best: dict[tuple, dict] = {}
@@ -322,15 +466,42 @@ def rebaseline_section() -> str:
         ["cols", *[lbl for _, lbl in REBASE_VARIANTS]],
         [[str(c), *[_fmt_cell(best, 1_000_000, c, v) for v, _ in REBASE_VARIANTS]]
          for c in col_axis])
+
+    def series_for(cells: list[tuple[int, int]]):
+        out = []
+        for variant, (label, color, cpu) in VARIANT_STYLE.items():
+            pts = [(x, best[(r, c, variant)]["fit_s"])
+                   for x, (r, c) in cells if (r, c, variant) in best]
+            if pts:
+                out.append((label, color, cpu, pts))
+        return out
+
+    line_chart(
+        "rebaseline-rows.svg",
+        "Fit seconds vs rows (100 features, log-log; lower is better)",
+        "fit seconds",
+        series_for([(n, (n, 100)) for n in row_axis]),
+        x_ticks=[(n, human(n)) for n in row_axis])
+    line_chart(
+        "rebaseline-cols.svg",
+        "Fit seconds vs features (1M rows, log-log; lower is better)",
+        "fit seconds",
+        series_for([(c, (1_000_000, c)) for c in col_axis]),
+        x_ticks=[(c, str(c)) for c in col_axis])
+
     return f"""## Perf division
 
 ### The re-baseline: fit seconds at scale
 
 Same-pod sweep ({host['cpu_model']}, {host['gpu']}), synthetic regression, `fit()` timed end to end including each library's own ingest, best of repeats, test r² in parentheses.
 
+![Fit seconds vs rows](assets/rebaseline-rows.svg)
+
 Scaling rows (100 features):
 
 {rows_table}
+
+![Fit seconds vs features](assets/rebaseline-cols.svg)
 
 Scaling features (1M rows):
 
@@ -382,6 +553,24 @@ def perf_tracks_section() -> str:
         ["variant", "iters", "fit_s", "test r2"],
         [[r["variant"], str(r["iters"]), fmt(r["fit_s"], 2), fmt(r["r2_test"], 4)]
          for r in pareto])
+    par_series = []
+    par_labels = []
+    for v in par_variants:
+        label, color, cpu = VARIANT_STYLE.get(v, (v, TEXT, False))
+        pts = sorted((r["fit_s"], r["r2_test"]) for r in pareto if r["variant"] == v)
+        par_series.append((label, color, cpu, pts))
+        for r in pareto:
+            if r["variant"] == v:
+                par_labels.append((r["fit_s"], r["r2_test"], str(r["iters"])))
+    line_chart(
+        "gpu-pareto-16M.svg",
+        "16M rows: accuracy vs fit time by iteration count (up-left is better)",
+        "test r2",
+        par_series,
+        x_ticks=[(s, f"{s}s") for s in (20, 30, 40, 50)],
+        log_x=False, log_y=False, height=420,
+        y_ticks=[(v, f"{v:.2f}") for v in (0.84, 0.86, 0.88)],
+        point_labels=par_labels)
 
     edge = load_jsonl("catboost-scale-edge-2026-07.jsonl")
 
@@ -418,6 +607,8 @@ Latest run per device on the YearPredictionMSD pipeline benchmark (full history 
 {provenance(["cpu-prefetch-round-2026-07.jsonl"], "Decision 61: software prefetch closed the 16M CPU gap to xgboost-hist on this pod.")}
 
 ### GPU accuracy-vs-time frontier at 16M
+
+![Accuracy vs fit time at 16M rows](assets/gpu-pareto-16M.svg)
 
 {par_table}
 
@@ -477,16 +668,24 @@ def main() -> int:
               "Wire them into scripts/render_results.py or remove them "
               "(use it or remove it).", file=sys.stderr)
         return 1
+    outputs: dict[pathlib.Path, str] = {OUT: text}
+    for fname, svg in charts.items():
+        outputs[ASSETS / fname] = svg
     if "--check" in sys.argv:
-        if OUT.read_text() != text:
-            print("ERROR: docs/method/results.md is stale; run "
+        stale = [p for p, content in outputs.items()
+                 if not p.exists() or p.read_text() != content]
+        if stale:
+            names = ", ".join(str(p.relative_to(REPO)) for p in stale)
+            print(f"ERROR: stale generated files: {names}; run "
                   "python3 scripts/render_results.py", file=sys.stderr)
             return 1
-        print("results ledger: in sync")
+        print(f"results ledger: in sync ({len(charts)} charts)")
         return 0
-    OUT.write_text(text)
+    ASSETS.mkdir(parents=True, exist_ok=True)
+    for p, content in outputs.items():
+        p.write_text(content)
     print(f"wrote {OUT.relative_to(REPO)} ({len(text.splitlines())} lines, "
-          f"{len(consumed)} data files consumed)")
+          f"{len(consumed)} data files consumed) + {len(charts)} charts")
     return 0
 
 
