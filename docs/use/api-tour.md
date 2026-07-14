@@ -64,7 +64,7 @@ for params in grid:
 
 Bin settings are sealed into the `Dataset`; a `bin_mapper.*` override in `params` or a config file raises instead of silently diverging.
 
-`Model` carries the full prediction surface: `predict` (with `num_iteration` for truncated ensembles), `predict_proba`, `staged_predict`, `predict_leaf`, `pred_contribs` (exact TreeSHAP), `importance("gain")`/`importance("split")`, `dump`, and `save`.
+`Model` carries the full prediction surface: `predict` (with `num_iteration` for truncated ensembles), `predict_proba`, `staged_predict`, `predict_leaf`, `pred_contribs` (exact TreeSHAP), `feature_importance("gain")`/`feature_importance("split")`, `dump`, and `save`.
 
 ## The CLI
 

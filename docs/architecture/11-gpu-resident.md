@@ -1,6 +1,6 @@
 # 11: GPU-resident growing
 
-> **Status:** landed (decisions 40–42). Training for `cuda_depthwise` and `cuda_oblivious` is fully device-resident: histograms, rows, and split finding live on the GPU, and only split decisions and child counts cross the bus per level. The grower-side seam is the `LevelStep` strategy of [`12-grower-backend.md`](12-grower-backend.md) (decision 41); this doc owns the device plane: buffers, kernels, precision, and measured results. Historical design narrative: [reviews/2026-07-03-design-review-cuda.md](../reviews/2026-07-03-design-review-cuda.md).
+> **Status:** landed (decisions 40–42). Training for `cuda_depthwise` and `cuda_oblivious` is fully device-resident: histograms, rows, and split finding live on the GPU, and only split decisions and child counts cross the bus per level. The grower-side seam is the `LevelStep` strategy of [`12-grower-backend.md`](12-grower-backend.md) (decision 41); this doc owns the device plane: buffers, kernels, precision, and measured results. Historical design narrative: [reviews/2026-07-03-design-review-cuda.md](https://github.com/daniel-m-campos/bonsai/blob/main/docs/reviews/2026-07-03-design-review-cuda.md).
 
 ## Why device-resident
 

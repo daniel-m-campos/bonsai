@@ -1,5 +1,6 @@
 // KaTeX auto-render for arithmatex generic output (```math fences render as
-// <div class="arithmatex">\[...\]</div>; inline stays $...$ if ever used).
+// <div class="arithmatex">\[...\]</div>). Single-dollar inline math is
+// deliberately not configured; use \( ... \) if inline math is ever needed.
 document$.subscribe(() => {
   renderMathInElement(document.body, {
     delimiters: [

@@ -39,7 +39,7 @@ What this buys, measured (same-pod L40S, 16M rows × 100 features × 100 trees, 
 
 ## Try it
 
-No CUDA device on your machine? The [RunPod runbook](../ops/runpod-runbook.md) gets you a validated GPU session for well under a dollar.
+No CUDA device on your machine? The [RunPod runbook](https://github.com/daniel-m-campos/bonsai/blob/main/docs/ops/runpod-runbook.md) gets you a validated GPU session for well under a dollar.
 
 ```bash
 # The device suite: SKIPs without a GPU, exercises real kernels with one.

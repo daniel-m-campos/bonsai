@@ -10,7 +10,7 @@ At 16M rows, the GPU grow profile showed 8.4 seconds in the split-find lap, the 
 
 Instrumenting first, with a profile-gated sync that split the lap into kernel-compute versus transfer, showed the find kernel actually costs 0.17 seconds. The 8.4 seconds was the profiler's opening `cudaDeviceSynchronize` catching the previous level's asynchronous histogram kernels: async work billed to whoever synchronizes next. Every hypothesis banked for the round was refuted by one measurement, and the rewrite was cancelled before any kernel code was written ([decision 62](../decisions.md)).
 
-The same discipline, run in the other direction, produced the project's best single win: an instruction-level cost ledger of the 16M CPU fit showed the histogram fill loop DRAM-latency-bound (82 of 107 seconds), predicted that a software prefetch would close most of it, and the one-line change landed within the ledger's estimate: 75.8 seconds, a dead tie with xgboost-hist ([decision 61](../decisions.md)).
+The same discipline, run in the other direction, produced the project's best single win: an instruction-level cost ledger of the 16M CPU fit showed the histogram fill loop DRAM-latency-bound (82 of 107 seconds), predicted that a software prefetch would close most of it, and the one-line change landed within the ledger's estimate: 107 seconds down to 75.8, a dead tie with xgboost-hist's 75.7 in the same session ([decision 61](../decisions.md); on a later pod xgboost leads by ~7%, and the CPU order is recorded as host-dependent).
 
 ## The corollary: microbenchmarks lie too
 

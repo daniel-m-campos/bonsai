@@ -1,6 +1,6 @@
 # 17: Native categorical features: Fisher set splits (stage 2a) + ordered target statistics sketch (stage 2b)
 
-> **Status:** priced and DECLINED by measurement (decision 58, PR #67): each reference library's own categorical toggle measured native set splits at +0.029/+0.000/−0.018 AUC across amazon/adult/kick, while ordered-TS *preprocessing* (`OrderedTargetEncoder`, guide 13) beat lightgbm-native from outside the core; see `benchmarks/categorical-tradeoff-2026-07.md`. This design is retained as the priced option; the decision entry names the evidence that would reopen it. Feature-gap row 12, stage 2 ([`../feature_gap.md`](../feature_gap.md) §18).
+> **Status:** priced and DECLINED by measurement (decision 58, PR #67): each reference library's own categorical toggle measured native set splits at +0.029/+0.000/−0.018 AUC across amazon/adult/kick, while ordered-TS *preprocessing* (`OrderedTargetEncoder`, guide 13) beat lightgbm-native from outside the core; see `benchmarks/categorical-tradeoff-2026-07.md`. This design is retained as the priced option; the decision entry names the evidence that would reopen it. Feature-gap row 12, stage 2 ([`../feature_gap.md`](https://github.com/daniel-m-campos/bonsai/blob/main/docs/feature_gap.md) §18).
 
 ## Motivation
 
@@ -129,7 +129,7 @@ None of that changes the level-transaction vocabulary (decision 53); it is find/
 
 Numeric-only datasets must be **byte-identical** before/after every 2a PR (`scripts/model_hash.py` gate; the quality-gates ritual); the feature is additive and the numeric scan path must not move.
 
-Categorical output has no baseline to hash against, so it is **quality-table validated**: `scripts/bench_categorical.py` on Amazon, target ≥ +0.007 AUC over bonsai-numeric (≈ 0.8549, the lightgbm-native line), recorded in [`../feature_gap.md`](../feature_gap.md) §18 as the stage-2a row.
+Categorical output has no baseline to hash against, so it is **quality-table validated**: `scripts/bench_categorical.py` on Amazon, target ≥ +0.007 AUC over bonsai-numeric (≈ 0.8549, the lightgbm-native line), recorded in [`../feature_gap.md`](https://github.com/daniel-m-campos/bonsai/blob/main/docs/feature_gap.md) §18 as the stage-2a row.
 
 ## Stage 2b: ordered target statistics (sketch)
 

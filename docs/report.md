@@ -201,7 +201,9 @@ some; decisions 42–66 in the [decisions log](decisions.md) narrate it.
   at 16M rows bonsai `cuda_oblivious` fits in 18.4s vs catboost-GPU 18.5s
   (both 0.876 test r²) and xgboost-GPU 19.9s, at ~3× less host memory
   (7.0 vs 19–22GB); bonsai holds the fastest GPU slot at every row scale
-  tested. On CPU, bonsai ties xgboost-hist at 16M (75.8 vs 75.7s) and
+  tested. On CPU at 16M the xgboost-hist order is host-dependent (a dead
+  tie, 75.8 vs 75.7s, in the prefetch session; xgboost ahead 68.0 vs 73.1s
+  on the re-baseline pod) and bonsai
   beats lightgbm at scale and on wide data. Catboost keeps the wide-data
   GPU lead (1024–4096 columns); xgboost keeps a +0.001 r² cut-quality
   edge (decision 55) — both recorded, not argued with.
