@@ -934,3 +934,13 @@ That reframed the question from kernel speed to the whole **accuracy-vs-time fro
 **Consequence.** PyPI publish is deliberately deferred until trusted publishing is registered (`bonsai-gbt` name + pypi.org trusted publisher, an owner action); wheels ship via GitHub Releases in the meantime. CUDA wheels are out of scope here and tracked as issue #99: the design is a fat-arch linux x86_64 leg plus a rented-GPU validation gate before assets attach, since GitHub-hosted runners can build CUDA but never execute it.
 
 **Rejected.** A `manylinux_2_28` container image to reach older distros (a documented follow-up, not blocking; no user has asked); PyPI publish in this PR (needs the owner-side trusted-publisher registration first).
+
+## 68. The Grinsztajn benchmark becomes the standings suite; bonsai has the best mean rank (adopted)
+
+**Decision.** Adopt the 55-task Grinsztajn et al. (2022) benchmark (OpenML suites 297/298/299/304) as the external standings suite, replacing the hand-picked internal ten as the citable table (`scripts/run_tabular_suite.py`, `benchmarks/grinsztajn-2026-07.md`; the internal campaign stays as the fast smoke tier). At the paper's medium protocol and campaign-matched knobs across 990 fits: bonsai has the best library mean rank, 2.04 vs xgboost 2.11, lightgbm 2.53, catboost 3.33, with the most consistent profile in the field: second place or better on 44 of 55 datasets and last exactly once. xgboost keeps the most outright wins (26 vs bonsai's 10): it is the peak library at small-data knobs, bonsai the consistency library. bonsai leads categorical regression outright (mean rank 1.77).
+
+**Why external.** A self-picked suite invites a selection-bias objection that no honesty of execution can answer; a published benchmark selected by third parties removes it. The claim format also improves: distributional (mean rank, head-to-head, rank distribution) instead of a win count over ten.
+
+**Caveats recorded with the numbers.** The 10k-row cap is decision 55's regime (xgboost's cut-quality edge at its strongest); ordinal codes strip catboost's categorical machinery (uniform convention, undersells catboost on categorical tracks); depthwise and leafwise coincide at these knobs so library-level best-variant ranking is used.
+
+**Rejected.** OpenML-CC18 (image-flattened datasets dilute the tabular story); TabZilla-176 (volume over curation); running references on GPU for wall-clock (GPU paths change reference numerics and reproducibility; accuracy standings are hardware-independent). TabArena submission (the living leaderboard with external protocol) is the post-promo follow-up, not rejected.
