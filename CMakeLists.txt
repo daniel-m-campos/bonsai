@@ -142,14 +142,11 @@ if(BONSAI_CUDA)
     endif()
     find_package(CUDAToolkit REQUIRED)
     set(BONSAI_CUDA_ARCH "native" CACHE STRING
-        "GPU architecture(s) for clang --offload-arch (e.g. sm_87, native, or a "
-        "semicolon list like sm_80;sm_90 for a fat binary)")
+        "GPU architecture(s) for clang --offload-arch: sm_87, native, or a semicolon list for a fat binary")
     set(BONSAI_CUDA_PTX_ARCH "" CACHE STRING
-        "Embed PTX for this single arch only (e.g. sm_90) instead of clang's "
-        "default per-arch PTX; forward-JIT floor for wheels")
+        "Embed PTX for this single arch only (wheels' forward-JIT floor); empty keeps clang's per-arch PTX")
     option(BONSAI_CUDA_STATIC_RUNTIME
-        "Link cudart statically so the binary has no CUDA runtime DT_NEEDED "
-        "(wheels; the driver is still dlopen'd at runtime)" OFF)
+        "Link cudart statically so the binary has no CUDA runtime DT_NEEDED (wheels)" OFF)
     add_library(bonsai_cuda_kernels STATIC src/cuda/histogram_engine.cu)
     set_source_files_properties(src/cuda/histogram_engine.cu
                                 PROPERTIES LANGUAGE CXX)
