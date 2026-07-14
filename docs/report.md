@@ -5,8 +5,11 @@
 > **This document is a dated snapshot** of the project at MVP completion
 > (git tag `mpcs-submission`). The claims about missing parallelism, two
 > growers, and the speed gap were true then and are preserved as the
-> point-in-time record. For what changed since, jump to the
-> [Addendum](#addendum-2026-07) at the bottom.
+> point-in-time record — every performance number below is historical.
+> For what changed since, see the addenda at the bottom; for current
+> numbers, the [README performance section](../README.md#performance) and
+> the committed runs in [`benchmarks/results/`](../benchmarks/results/)
+> are the living source of truth.
 
 ## Summary
 
@@ -158,15 +161,16 @@ landed, in four tagged pushes (see `git tag -n`):
   subsampled training), early stopping, L1, MAE/Huber/quantile objectives,
   monotone + interaction constraints, DART. Each feature was A/B'd with
   the same knob enabled in xgboost/lightgbm/catboost; tables live in
-  [feature_gap.md](feature_gap.md).
+  [feature_gap.md](https://github.com/daniel-m-campos/bonsai/blob/main/docs/feature_gap.md).
 - **`v0.4.0` — Python bindings** (decision 36): nanobind module,
   sklearn-style `BonsaiRegressor`, models interchangeable with the CLI,
   static libomp so bonsai coexists with xgboost/lightgbm in one process.
 - **Feature importance** (decision 37): split-count + gain, CLI and
   Python surfaces.
 
-Current standing on YearPredictionMSD (200 iters, in-process "native"
-timing like the references; `benchmarks/results/msd_native.*`):
+Standing on YearPredictionMSD as of that addendum (200 iters, in-process
+"native" timing like the references; `benchmarks/results/msd_native.*` —
+historical; see the second addendum below for where things stand now):
 
 | library | rmse | fit_s | predict_s |
 |---|---|---|---|
@@ -180,4 +184,46 @@ With early stopping enabled for everyone, all five libraries converge to
 RMSE 8.96–9.00 and bonsai leafwise lands between xgboost and lightgbm.
 The dispatch grid is 5 objectives × 3 growers × 3 samplers = 45 combos,
 316 C++ tests + a Python binding suite. Remaining backlog:
-[feature_gap.md](feature_gap.md) rows 10–17.
+[feature_gap.md](https://github.com/daniel-m-campos/bonsai/blob/main/docs/feature_gap.md) rows 10–17.
+
+## Addendum (2026-07-13, v1.2.0)
+
+The month after the first addendum closed the speed gap entirely and then
+some; decisions 42–66 in the [decisions log](decisions.md) narrate it.
+
+- **CUDA backend, device-resident training** (decisions 42–54): two GPU
+  growers (`cuda_depthwise`, `cuda_oblivious`) with histograms, rows, and
+  split finding on the device; kernels compiled by the project's own clang
+  (`-x cuda`, same C++23, same libc++, no nvcc). Models trained on GPU
+  predict everywhere.
+- **The current score, same pod, matched settings** (decisions 62–64;
+  [`benchmarks/results/rebaseline-2026-07.jsonl`](../benchmarks/results/rebaseline-2026-07.jsonl)):
+  at 16M rows bonsai `cuda_oblivious` fits in 18.4s vs catboost-GPU 18.5s
+  (both 0.876 test r²) and xgboost-GPU 19.9s, at ~3× less host memory
+  (7.0 vs 19–22GB); bonsai holds the fastest GPU slot at every row scale
+  tested. On CPU, bonsai ties xgboost-hist at 16M (75.8 vs 75.7s) and
+  beats lightgbm at scale and on wide data. Catboost keeps the wide-data
+  GPU lead (1024–4096 columns); xgboost keeps a +0.001 r² cut-quality
+  edge (decision 55) — both recorded, not argued with.
+- **Quality campaign** (decisions 56–57): best library on 9 of 10 real
+  datasets against all three references at matched settings.
+- **Bit-exact determinism as a contract** (decisions 59–60): models are
+  byte-identical across CPU architectures (arm64 == x86-64) and thread
+  counts, enforced per-commit by a cross-arch CI gate. No reference
+  library offers this.
+- **Python surface grown to parity where it matters**: `BonsaiClassifier`
+  (binary + multiclass with `predict_proba`), `sample_weight`,
+  sklearn-compatible estimators with no sklearn runtime dependency,
+  xgboost-style constructor aliases, a reusable pre-binned `Dataset` for
+  hyperparameter sweeps (decision 65), leak-free ordered target statistics
+  as preprocessing (decision 58).
+- **Distribution**: prebuilt wheels on GitHub Releases for Linux
+  x86_64/aarch64 and macOS arm64, Python 3.9–3.13, no toolchain required
+  (decision 66); every wheel smoke-tested in a clean venv before upload.
+- The dispatch grid is now 7 objectives × 5 growers × 3 samplers = 105
+  combos; 498 C++ tests plus the Python binding suite.
+
+Remaining measured gaps, tracked openly: listwise ranking (~+0.015
+NDCG@10, scoped in the ranking study), catboost's native categorical
+machinery on categorical-heavy data (stage-2 designs exist, admission
+gated on measurement), and the wide-data GPU lead above.

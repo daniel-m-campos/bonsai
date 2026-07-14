@@ -1,16 +1,18 @@
 # Project Context — GBT Library
 
-> **Purpose of this doc**: Single-source briefing for any agent (or future-you) picking up this project. Captures decisions made, rationale, what's deferred, and what's out of scope. Keep this updated as decisions evolve; it's the first thing any new session should read.
+> **This is a historical planning document**, frozen from the project's early phase (status lines and counts below reflect ~v0.4.0). It is preserved as provenance — the plan the project escalated beyond. The living records are the [decisions log](decisions.md) (66 entries), the [README](https://github.com/daniel-m-campos/bonsai/blob/main/README.md) for current performance, and the [retrospective's addenda](report.md#addendum-2026-07-13-v120) for the arc since.
+
+> **Original purpose**: Single-source briefing for any agent (or future-you) picking up this project. Captures decisions made, rationale, what's deferred, and what's out of scope.
 
 ## 1. Project in two sentences
 
-A from-scratch C++23 implementation of a histogram-based gradient boosted trees library — three growers, five objectives, three samplers, constraints, DART, OpenMP parallelism, a CLI, and Python bindings — benchmarked head-to-head against xgboost / lightgbm / catboost. Status (2026-07): RMSE parity achieved on both regression datasets; the living feature tracker is [feature_gap.md](feature_gap.md), the audit trail is [decisions.md](decisions.md) (36 entries), and milestones are git-tagged (`mpcs-submission`, `v0.2.0`–`v0.4.0`).
+A from-scratch C++23 implementation of a histogram-based gradient boosted trees library — three growers, five objectives, three samplers, constraints, DART, OpenMP parallelism, a CLI, and Python bindings — benchmarked head-to-head against xgboost / lightgbm / catboost. Status (2026-07): RMSE parity achieved on both regression datasets; the living feature tracker is [feature_gap.md](https://github.com/daniel-m-campos/bonsai/blob/main/docs/feature_gap.md), the audit trail is [decisions.md](decisions.md) (36 entries), and milestones are git-tagged (`mpcs-submission`, `v0.2.0`–`v0.4.0`).
 
 ## 2. Goals and non-goals
 
 **Goals (updated 2026-07; original MVP goals all met):**
 - Regression RMSE parity with the reference libraries — **achieved** on California Housing and Year Prediction MSD (leafwise lands between xgboost and lightgbm with early stopping).
-- Feature parity on the reference libraries' regression surface — tracked row-by-row in [feature_gap.md](feature_gap.md); rows 1–9 landed with per-feature A/B tables, rows 10–17 planned.
+- Feature parity on the reference libraries' regression surface — tracked row-by-row in [feature_gap.md](https://github.com/daniel-m-campos/bonsai/blob/main/docs/feature_gap.md); rows 1–9 landed with per-feature A/B tables, rows 10–17 planned.
 - Deterministic parallelism: OpenMP behind a one-function seam; models bit-identical to serial at any thread count (decision 32).
 - Clean extension API spanning the conceptual surface of all three reference libraries — demonstrated: 5 objectives × 3 growers × 3 samplers, all registry-dispatched.
 - CLI-first **plus** Python bindings (nanobind, `BonsaiRegressor`; decision 36) — models interchangeable between the two.
@@ -157,7 +159,7 @@ include/bonsai/
 **Phase 2.5: CLI design + cleanup** (inserted 2026-05-18, decision 28). Before turning on parallelism, take a pass on CLI usability, the typed-config surface, and the small things glossed over during the Phase 1/2 sprints. Items captured as concrete tasks during the work, not pre-listed here. No new spine, no parallel backends; refactors are fair game now that AI assistance is open.
 
 3. **Phase 3: Parallelism — done (decision 32, v0.2.0).** OpenMP feature/row parallelism behind `parallel::for_each_index`; determinism strengthened to bit-identical at ANY thread count (no cross-thread reductions). std::execution backend dropped — no second implementation earns the abstraction yet.
-4. **Phase 4: Extensions — mostly done (decisions 31, 34–36, v0.3.0–v0.4.0).** Landed: leafwise grower, GOSS, robust objectives, monotone/interaction constraints, DART, early stopping, L1, feature importance, Python bindings. Remaining items live in [feature_gap.md](feature_gap.md) rows 10–17 (leaf renewal, classification benchmark, categorical, prediction extras, warm start, TreeSHAP, multiclass, sparse).
+4. **Phase 4: Extensions — mostly done (decisions 31, 34–36, v0.3.0–v0.4.0).** Landed: leafwise grower, GOSS, robust objectives, monotone/interaction constraints, DART, early stopping, L1, feature importance, Python bindings. Remaining items live in [feature_gap.md](https://github.com/daniel-m-campos/bonsai/blob/main/docs/feature_gap.md) rows 10–17 (leaf renewal, classification benchmark, categorical, prediction extras, warm start, TreeSHAP, multiclass, sparse).
 5. **Stretch:** C++26 reflection branch for the registry.
 
 Phases are ordered, not time-boxed. No week assignments.
