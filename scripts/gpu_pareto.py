@@ -21,11 +21,13 @@ import time
 sys.path.insert(0, "scripts")
 import bench_scaling as bs
 
-# variant -> iteration ladder. Reference libs get a longer ladder because they
-# converge past bonsai's accuracy and the frontier needs their far points.
+# variant -> iteration ladder. The pre-fix run capped bonsai's ladders low
+# because the oblivious split defect (decision 63) kept it out of the deep
+# end; post-fix its per-round accuracy matches catboost's, so every library
+# now gets far points into the r2 > 0.89 region.
 LADDERS = {
-    "bonsai_cuda_depthwise": [60, 80, 100, 130],
-    "bonsai_cuda_oblivious": [60, 80, 100, 130, 160],
+    "bonsai_cuda_depthwise": [60, 80, 100, 130, 200, 300],
+    "bonsai_cuda_oblivious": [60, 80, 100, 130, 200, 300, 450],
     "xgb_cuda": [100, 150, 200, 300],
     "catboost_gpu": [100, 150, 200, 300, 450],
 }
