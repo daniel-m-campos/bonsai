@@ -743,6 +743,19 @@ def test_classifier_eval_set_unseen_label_raises():
     bonsai.BonsaiClassifier(n_iters=5).fit(X, y, eval_set=(Xv, yv))
 
 
+def test_model_n_classes_semantics():
+    """n_classes is 0 unless the model is softmax; the config-struct default
+    of 3 must never leak out of a regression or binary model."""
+    X, y = _three_class_data(500)
+    m3 = bonsai.BonsaiClassifier(n_iters=3).fit(X, y)._model
+    assert m3.objective_name == "softmax" and m3.n_classes == 3
+    yb = (y > 0).astype(np.float32)
+    mb = bonsai.BonsaiClassifier(n_iters=3).fit(X, yb)._model
+    assert mb.objective_name == "logloss" and mb.n_classes == 0
+    mr = bonsai.train([("booster.n_iters", "3")], X, y)
+    assert mr.objective_name == "mse" and mr.n_classes == 0
+
+
 def test_classifier_nan_labels_raise():
     X, y = _three_class_data()
     y = y.copy()
@@ -797,4 +810,5 @@ if __name__ == "__main__":
     test_classifier_from_file_restores_class_metadata()
     test_classifier_eval_set_unseen_label_raises()
     test_classifier_nan_labels_raise()
+    test_model_n_classes_semantics()
     print("all binding tests passed")

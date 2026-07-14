@@ -346,7 +346,9 @@ class Model
 
     size_t n_classes() const
     {
-        return cfg_.objective.n_classes;
+        // The config struct default is 3; surfacing it for non-softmax models
+        // would hand callers a plausible-but-meaningless class count.
+        return cfg_.dispatch.objective_name == "softmax" ? cfg_.objective.n_classes : 0;
     }
 
   private:
@@ -505,8 +507,8 @@ NB_MODULE(_bonsai, m)
                      "The objective this model was trained with (e.g. mse, "
                      "logloss, softmax).")
         .def_prop_ro("n_classes", &Model::n_classes,
-                     "objective.n_classes from the training config; "
-                     "meaningful for softmax models.");
+                     "Class count for softmax models; 0 for every other "
+                     "objective (including binary logloss).");
 
     nb::class_<Dataset>(m, "Dataset")
         .def(nb::init<array_2d const &, array_1d const &,
