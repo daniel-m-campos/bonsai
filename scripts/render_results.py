@@ -567,7 +567,7 @@ def perf_tracks_section() -> str:
         "16M rows: accuracy vs fit time by iteration count (up-left is better)",
         "test r2",
         par_series,
-        x_ticks=[(s, f"{s}s") for s in (20, 30, 40, 50)],
+        x_ticks=[(s, f"{s}s") for s in (15, 30, 45, 60)],
         log_x=False, log_y=False, height=420,
         y_ticks=[(v, f"{v:.2f}") for v in (0.84, 0.86, 0.88)],
         point_labels=par_labels)
@@ -612,7 +612,7 @@ Latest run per device on the YearPredictionMSD pipeline benchmark (full history 
 
 {par_table}
 
-{provenance(["gpu-pareto-16M-2026-07.jsonl"], "Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md) (banner-annotated; pre-dates the decision 63 oblivious fix).")}
+{provenance(["gpu-pareto-16M-2026-07.jsonl"], "Post-fix re-run (2026-07-14, decision 71): bonsai owns the fast end and the accuracy ceiling; catboost's 2x cheaper marginal round owns time-to-accuracy above r2 0.885. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md).")}
 
 ### Ordered boosting at scale (catboost door)
 
