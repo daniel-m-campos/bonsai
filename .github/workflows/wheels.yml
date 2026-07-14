@@ -9,6 +9,13 @@ name: wheels
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: >-
+          Existing release tag to (re-)upload built assets to, e.g. after a
+          flaked publish run. Leave empty for a plain build-only dispatch.
+        type: string
+        default: ""
   pull_request:
     paths:
       - ".github/workflows/wheels.yml"
@@ -126,10 +133,58 @@ jobs:
           name: sdist
           path: dist/*.tar.gz
 
+  # The sdist is a separate build path from the wheel jobs (setup.py-style
+  # source build via scikit-build-core) and had never actually been
+  # pip-installed anywhere; this compiles it from source the way an end user
+  # without a prebuilt wheel for their platform would.
+  sdist-install-test:
+    needs: sdist
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install LLVM toolchain (Linux)
+        run: |
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          sudo bash /tmp/llvm.sh 21
+          sudo apt-get install -y libc++-21-dev libc++abi-21-dev libomp-21-dev \
+            ninja-build
+
+      - name: Install sdist into a clean venv
+        env:
+          CMAKE_BUILD_PARALLEL_LEVEL: "4"
+        run: |
+          export CC=/usr/lib/llvm-21/bin/clang CXX=/usr/lib/llvm-21/bin/clang++
+          python -m venv /tmp/sdist-install
+          /tmp/sdist-install/bin/pip -q install numpy
+          /tmp/sdist-install/bin/pip -v install dist/*.tar.gz
+
+      - name: Import + fit smoke
+        run: |
+          /tmp/sdist-install/bin/python - <<'EOF'
+          import bonsai, numpy as np
+          rng = np.random.default_rng(0)
+          X = rng.random((2000, 8), dtype=np.float32)
+          y = (X[:, 0] * 2 + rng.normal(0, 0.1, 2000)).astype(np.float32)
+          r2 = bonsai.BonsaiRegressor(n_iters=20).fit(X, y).score(X, y)
+          assert r2 > 0.8, r2
+          print("sdist install OK: r2 =", round(r2, 4))
+          EOF
+
   publish:
-    # Attach everything to the GitHub Release that triggered the run.
-    if: github.event_name == 'release'
-    needs: [build, sdist]
+    # Attach everything to the GitHub Release that triggered the run, or
+    # (workflow_dispatch with a tag) re-upload to an existing release —
+    # e.g. recovering from a flaked publish run without cutting a new tag.
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
+    needs: [build, sdist, sdist-install-test]
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     permissions:
@@ -139,8 +194,37 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+
+      - name: Resolve target tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # This repo once shipped a release with pyproject.toml stale at 0.6.0
+      # after a v1.0.0 tag; the sdist filename is the built source of truth
+      # for "what version did we actually package", so check it against the
+      # tag before anything gets uploaded.
+      - name: Verify tag matches packaged version
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          version="${tag#v}"
+          sdist_path="$(ls dist/bonsai_gbt-*.tar.gz)"
+          sdist_name="$(basename "$sdist_path")"
+          sdist_version="${sdist_name#bonsai_gbt-}"
+          sdist_version="${sdist_version%.tar.gz}"
+          if [ "$sdist_version" != "$version" ]; then
+            echo "::error::tag '$tag' (version '$version') does not match" \
+              "packaged sdist version '$sdist_version' ($sdist_name)"
+            exit 1
+          fi
+          echo "tag $tag matches packaged version $sdist_version"
+
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" dist/* \
+          gh release upload "${{ steps.tag.outputs.tag }}" dist/* \
             --repo "${{ github.repository }}" --clobber

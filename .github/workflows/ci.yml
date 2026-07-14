@@ -79,13 +79,20 @@ jobs:
 
   python:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      # 3.9 is the pyproject floor, 3.12 is uv's modern default; a tomllib
+      # import once broke on 3.10 because only the floor-or-newer end of
+      # this range was ever exercised.
+      matrix:
+        python: ["3.9", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-llvm
       - uses: astral-sh/setup-uv@v5
       - uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: python
+          key: python-${{ matrix.python }}
       - uses: actions/cache@v4
         with:
           path: build/_deps
@@ -95,7 +102,7 @@ jobs:
           path: tests/data
           key: toy-data-${{ hashFiles('scripts/fetch_toy.py', 'scripts/fetch_amazon.py') }}
       # lightgbm: test_bindings.py cross-checks feature importances against it.
-      - run: uv venv .venv && uv pip install --python .venv/bin/python nanobind numpy lightgbm scikit-learn
+      - run: uv venv --python ${{ matrix.python }} .venv && uv pip install --python .venv/bin/python nanobind numpy lightgbm scikit-learn
       # ruff first: a lint finding shouldn't cost a build to discover.
       - run: make lint-python
       # test_bindings.py checks module-vs-CLI parity, so it needs the binary too.
