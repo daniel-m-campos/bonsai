@@ -484,6 +484,8 @@ class BonsaiClassifier(_BonsaiEstimator):
         if sample_weight is None:
             return float(correct.mean())
         w = _as_1d_f32(sample_weight).astype(np.float64)
+        if w.sum() == 0.0:
+            raise ValueError("sample_weight sums to zero; accuracy is undefined")
         return float(np.average(correct, weights=w))
 
     def __sklearn_tags__(self):

@@ -595,6 +595,69 @@ def test_reusable_dataset_bit_identical_and_guard():
     assert np.asarray(bonsai.train([], ds63, config=ok_cfg).predict(X)).shape == (3000,)
 
 
+def test_dataset_eval_set_early_stopping():
+    """train(params, dataset, eval_set=...) bins the valid set with the
+    Dataset's mappers and enables early stopping — the MVP gap where
+    early_stopping params silently did nothing in the Dataset path."""
+    rng = np.random.default_rng(0)
+    X = rng.random((4000, 10), dtype=np.float32)
+    y = (X[:, 0] * 2 + rng.normal(0, 0.3, 4000)).astype(np.float32)
+    Xt, yt, Xv, yv = X[:3000], y[:3000], X[3000:], y[3000:]
+
+    ds = bonsai.Dataset(Xt, yt)
+    pairs = [("booster.n_iters", "400"), ("booster.learning_rate", "0.3"),
+             ("booster.early_stopping_rounds", "10")]
+    m = bonsai.train(pairs, ds, eval_set=(Xv, yv))
+    assert m.n_iters < 400, m.n_iters
+
+    # same call without eval_set trains to completion (no valid, no stopping)
+    m_full = bonsai.train([("booster.n_iters", "30")], ds)
+    assert m_full.n_iters == 30
+
+    # eval_set path must match the (X, y) path bit for bit under equal binning
+    ref = bonsai.train(pairs, Xt, yt, eval_set=(Xv, yv))
+    np.testing.assert_array_equal(
+        np.asarray(ref.predict(Xv)), np.asarray(m.predict(Xv))
+    )
+
+
+def test_predict_proba_rejects_regression_objective():
+    Xtr, ytr = load_csv(TRAIN_CSV)
+    m = bonsai.train([("booster.n_iters", "5")], Xtr[:500], ytr[:500])
+    try:
+        m.predict_proba(Xtr[:10])
+    except Exception as e:
+        assert "classification" in str(e) and "mse" in str(e)
+    else:
+        raise AssertionError("expected predict_proba on an mse model to raise")
+
+
+def test_classifier_score_zero_weights_raise():
+    X, y = _three_class_data(300)
+    clf = bonsai.BonsaiClassifier(n_iters=5).fit(X, y)
+    try:
+        clf.score(X, y, sample_weight=np.zeros(len(y), dtype=np.float32))
+    except ValueError as e:
+        assert "zero" in str(e)
+    else:
+        raise AssertionError("expected zero weights to raise")
+
+
+def test_alias_table_matches_init_signatures():
+    """The alias set is maintained in three places (base __init__, the
+    _ALIAS_TO_KEY table, BonsaiRegressor's re-declared __init__); this pins
+    them together so adding an alias in one place can't silently drift."""
+    import inspect
+
+    aliases = set(bonsai.BonsaiClassifier._ALIAS_TO_KEY)
+    for cls in (bonsai.BonsaiRegressor, bonsai.BonsaiClassifier):
+        params = set(inspect.signature(cls.__init__).parameters) - {"self"}
+        missing = aliases - params
+        assert not missing, f"{cls.__name__}.__init__ missing aliases: {missing}"
+        est = cls()
+        assert aliases <= set(est.get_params()), "get_params must cover aliases"
+
+
 def _three_class_data(n=3000, seed=0):
     rng = np.random.default_rng(seed)
     X = rng.random((n, 6), dtype=np.float32)
@@ -726,6 +789,10 @@ if __name__ == "__main__":
     test_alias_end_to_end_fit()
     test_alias_sklearn_clone_round_trip()
     test_alias_pickle_fitted_predicts_identically()
+    test_dataset_eval_set_early_stopping()
+    test_predict_proba_rejects_regression_objective()
+    test_classifier_score_zero_weights_raise()
+    test_alias_table_matches_init_signatures()
     test_multiclass_sample_weight_applied()
     test_classifier_from_file_restores_class_metadata()
     test_classifier_eval_set_unseen_label_raises()

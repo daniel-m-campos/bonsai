@@ -95,6 +95,16 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
                                               FitTickFn const          &on_tick = {},
                                               std::unique_ptr<IBooster> initial = {});
 
+// Same, but train and valid arrive separately (valid may be null). Lets a
+// caller pair a long-lived pre-binned train set with a per-call validation
+// set without copying the train LabeledData (the copy would also change the
+// Dataset address that keys the GPU upload-skip cache, decision 54).
+std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
+                                              LabeledData const        &train,
+                                              LabeledData const        *valid,
+                                              FitTickFn const          &on_tick = {},
+                                              std::unique_ptr<IBooster> initial = {});
+
 struct ScoredBatch
 {
     FeatureBuffer      features;

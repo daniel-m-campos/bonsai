@@ -138,6 +138,17 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
                                               FitTickFn const          &on_tick,
                                               std::unique_ptr<IBooster> initial)
 {
+    return train_with_progress(cfg, loaded.train,
+                               loaded.valid ? &*loaded.valid : nullptr, on_tick,
+                               std::move(initial));
+}
+
+std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
+                                              LabeledData const        &train,
+                                              LabeledData const        *valid,
+                                              FitTickFn const          &on_tick,
+                                              std::unique_ptr<IBooster> initial)
+{
     auto       booster = initial ? std::move(initial) : make_booster(cfg);
     auto const n_iters = cfg.booster_config.n_iters;
     auto const log_iv  = cfg.booster_config.log_intervals;
@@ -149,29 +160,29 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
         ticks_enabled ? std::max<uint32_t>(1, n_iters / std::max<uint32_t>(1, log_iv))
                       : n_iters;
 
-    std::vector<float> train_preds(loaded.train.features.n_rows);
+    std::vector<float> train_preds(train.features.n_rows);
     std::vector<float> valid_preds;
-    if (loaded.valid.has_value())
+    if (valid != nullptr)
     {
-        valid_preds.resize(loaded.valid->features.n_rows);
+        valid_preds.resize(valid->features.n_rows);
     }
 
     auto fire_tick = [&](size_t iter)
     {
-        booster->predict(loaded.train.features.view(), train_preds);
+        booster->predict(train.features.view(), train_preds);
         floats_out  v_preds;
         floats_view v_labels;
-        if (loaded.valid.has_value())
+        if (valid != nullptr)
         {
-            booster->predict(loaded.valid->features.view(), valid_preds);
+            booster->predict(valid->features.view(), valid_preds);
             v_preds  = valid_preds;
-            v_labels = loaded.valid->labels;
+            v_labels = valid->labels;
         }
         on_tick(FitTick{
             .iter         = iter,
             .n_iters      = static_cast<size_t>(n_iters),
             .train_preds  = train_preds,
-            .train_labels = loaded.train.labels,
+            .train_labels = train.labels,
             .valid_preds  = v_preds,
             .valid_labels = v_labels,
         });
@@ -186,8 +197,8 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
     // Early stopping: incremental valid raw scores (score_base + per-tree
     // contributions) keep the per-iteration eval O(rows), not O(rows*trees).
     auto const es_rounds  = cfg.booster_config.early_stopping_rounds;
-    bool const es_enabled = es_rounds > 0 && loaded.valid.has_value();
-    if (es_enabled && loaded.valid->features.n_rows == 0)
+    bool const es_enabled = es_rounds > 0 && valid != nullptr;
+    if (es_enabled && valid->features.n_rows == 0)
     {
         // A zero-row valid set makes every loss NaN, and NaN never improves,
         // so patience would fire at the first opportunity and silently
@@ -208,7 +219,7 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
 
     for (uint32_t i = 0; i < n_iters; ++i)
     {
-        booster->update_one_iter(loaded.train.dataset);
+        booster->update_one_iter(train.dataset);
         if (ticks_enabled)
         {
             auto const one_based = static_cast<uint32_t>(i + 1);
@@ -226,13 +237,11 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
                 // Warm start: seed with the pre-existing rounds' raw scores,
                 // excluding the round just added (0 rounds = base scores).
                 es_base = booster->n_iters() - 1;
-                es_scores.resize(loaded.valid->features.n_rows *
-                                 booster->score_width());
-                booster->seed_valid_scores(loaded.valid->features.view(), es_scores,
-                                           es_base);
+                es_scores.resize(valid->features.n_rows * booster->score_width());
+                booster->seed_valid_scores(valid->features.view(), es_scores, es_base);
             }
-            booster->accumulate_last_round(loaded.valid->features.view(), es_scores);
-            float const loss = booster->valid_loss(es_scores, loaded.valid->labels);
+            booster->accumulate_last_round(valid->features.view(), es_scores);
+            float const loss = booster->valid_loss(es_scores, valid->labels);
             if (i == 0 || loss < best_loss)
             {
                 best_loss = loss;
