@@ -11,6 +11,22 @@ requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [{ name = "Daniel M Campos" }]
 dependencies = ["numpy>=1.26"]
+keywords = ["gradient-boosting", "machine-learning", "gbdt", "decision-trees"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C++",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Repository = "https://github.com/daniel-m-campos/bonsai"
+Documentation = "https://github.com/daniel-m-campos/bonsai/tree/main/docs/guide"
+Changelog = "https://github.com/daniel-m-campos/bonsai/blob/main/CHANGELOG.md"
 
 [tool.scikit-build]
 minimum-version = "0.10"
