@@ -148,7 +148,7 @@ def report(out_path):
     df = pd.DataFrame([r for r in rows if r["status"] == "ok"])
     mean = df.groupby(["suite", "dataset", "variant"])["metric"].mean().reset_index()
     ranks = []
-    for (s, d), g in mean.groupby(["suite", "dataset"]):
+    for (_s, _d), g in mean.groupby(["suite", "dataset"]):
         g = g.copy()
         g["rank"] = g["metric"].rank(ascending=False)
         ranks.append(g)
