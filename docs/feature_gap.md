@@ -22,12 +22,14 @@ one can "enable" in the reference libraries for an A/B.
 | 9 | Feature importance (split count + gain) | `get_score` | `feature_importance` | `get_feature_importance` | No fit/predict impact; table-stakes introspection. Split-count is free; gain needs per-node gains stored at grow time | **landed** |
 | 10 | Leaf renewal for MAE/quantile | built in (adaptive trees) | `RenewTreeOutput` | built in | Closes the known ~10% MAE gap vs refs on MAE/quantile objectives (see results log §5) | **landed** |
 | 11 | Classification benchmark (AUC) | n/a (harness) | n/a | n/a | logloss objective exists but is only unit-tested; needs a live dataset (e.g. Higgs subset) + AUC column in compare.py | **landed** |
-| 12 | Categorical features | one-hot / partition | native (Fisher) | ordered target stats | Biggest real-world capability gap; stage 1 (measure it) done — see results log §18. Native set splits are worth ~+0.007 AUC vs bonsai today on Amazon; ordered target statistics ~+0.034 | **measured** (stage 1) |
+| 12 | Categorical features | one-hot / partition | native (Fisher) | ordered target stats | Resolved outside the core: ordered-TS preprocessing (`OrderedTargetEncoder`, guide 13) beats lightgbm-native and, with crossed pairs, ties catboost-native; native set splits measured as a coin flip by lightgbm's own toggle and declined (see §18 addendum) | **resolved** (decision 58: encoder, not engine) |
 | 13 | Prediction extras: staged predict, `pred_leaf`, tree dump | yes | yes | yes | Debug/introspection; small, each independent | **landed** |
 | 14 | Warm start / training continuation | `xgb_model` | `init_model` | `init_model` | Fit latency for iterative workflows; booster already saves/loads full state | **landed** |
 | 15 | TreeSHAP (`pred_contribs`) | yes | yes | yes | Modern attribution standard; real algorithm, sized as its own project | **landed** |
 | 16 | Multi-class / softmax objective | yes | yes | yes | K-output leaves touch Objective, Booster, and Tree — largest structural change | **landed** |
 | 17 | Sparse-input handling / EFB | yes | yes (EFB) | yes | Needs a sparse dataset in the harness to enable or measure anything | **landed** (input format; sparse *compute* stays engine work) |
+| 18 | Ranking objectives | `rank:ndcg` / `rank:pairwise` | `lambdarank` | `YetiRank` | MQ2008 gate (`scripts/probe_ranking.py --real`): a stable ~+0.015 NDCG@10 gap to xgboost's *listwise* loss only; pairwise lambdarank showed no edge over bonsai regression | **open** (issue #58 reframed listwise-first by the gate) |
+| 19 | Per-feature bin budgets / manual bin edges | — | `max_bin_by_feature`, forced bin edges | `per_float_feature_quantization` | Auto per-feature budgets priced at max_bin 255 and declined: importance/inverse/headroom policies all landed inside the chance band (`benchmarks/binning-tradeoff-2026-07.md`); explicit user-supplied edges stay open as a deployment capability, spec in architecture doc 18 | **declined (partial)** (decision 67) |
 
 Measurement protocol, per implemented feature: enable the equivalent knob in
 bonsai and every reference library that has it, run
@@ -406,3 +408,5 @@ lightgbm-native) exists on exactly the workload native splits target.
 One-hot via LIBSVM input is not a practical alternative here (7.5k
 distinct values in one column → ~15k dense features after
 materialization).
+
+**Stage-2 addendum (2026-07-12, decision 58): resolved as an encoder, not an engine feature.** The stage-2 probe (`scripts/probe_categorical.py`, evidence in `benchmarks/categorical-tradeoff-2026-07.md`) toggled each reference library's own categorical machinery at matched knobs on amazon/adult/kick: native Fisher set splits measured +0.029 / +0.000 / −0.018 AUC by lightgbm's own toggle, a coin flip whose complexity every user would carry, and the architecture-doc-17 engine design was priced and declined. What shipped instead is ~100 lines of preprocessing: `OrderedTargetEncoder` (guide chapter 13) at 0.8590 beats lightgbm-native (0.8572), and crossed pairs (`cross=2`, the decision 58 follow-up) reach 0.8877 vs catboost-native 0.8897, chance-band at this test size. The stage-1 table above is the as-run record and stays frozen; its AUC values differ from the stage-2 numbers because `bench_categorical.py` and the probe use different split protocols.
