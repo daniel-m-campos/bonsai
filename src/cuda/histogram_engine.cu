@@ -792,7 +792,7 @@ bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
     im.lvl.slots.host.assign(1, 0);
     im.lvl.slots.sync();
     root_lap(im.prof_counters.root_stage_s);
-    im.lvl.gh_ordered.reserve(root.rows.size());
+    im.lvl.gh_ordered.reserve(n);
     gather(im.grads.gh.data(), im.lvl.rows.data(), n, im.lvl.gh_ordered.data());
     auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
     dim3 const grid(im.lvl.n_selected, 1, n_chunks);
