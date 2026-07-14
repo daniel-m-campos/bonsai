@@ -31,4 +31,11 @@ with tempfile.TemporaryDirectory() as td:
 
 ds = bonsai.Dataset(X, y)
 bonsai.train([("booster.n_iters", "5")], ds)
+
+# bonsai.bench ships in the wheel and must import (numpy-only paths) even
+# without the [bench] extra installed.
+from bonsai.bench import metrics, synth  # noqa: E402
+
+Xs, ys, _, _ = synth.gen_data(1000, 10, seed=0, n_test=100, informative=10)
+assert Xs.shape == (1000, 10) and metrics.r2(ys, ys) == 1.0
 print("smoke OK: r2 =", round(float(r2), 4))
