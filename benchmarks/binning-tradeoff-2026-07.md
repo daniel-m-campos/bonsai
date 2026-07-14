@@ -21,4 +21,4 @@ Findings:
 3. **Decision 55's residual does not close.** Headroom on MSD moves −0.0003; the cut-quality gap is not a resolution-allocation problem.
 4. **The emulation is the feature.** Users with genuine domain-mandated bins (regulatory buckets, known discontinuities) can bin exactly today: pre-discretize to bin ids and stock bonsai reproduces the scheme bit-exactly via the distinct-value rule. `scripts/probe_binning.py`'s `ManualBinner` is the reference recipe.
 
-Verdict: **declined by measurement**; no engine API. Reopening criteria: a memory-constrained regime where the global budget must drop (max_bin ≤ 64, where saturation no longer holds and allocation could matter), or a real workload where domain-mandated bins measurably beat quantile bins.
+Verdict: automatic accuracy-motivated budgets **declined by measurement**. Explicit user-supplied edges are a separate, unmeasured axis: the emulation is train-time exact but keeps the binning outside the model artifact (predict requires the transform forever), which is a deployment question this probe does not adjudicate; see decision 67 and architecture doc 18 for the API design and its admission gate.
