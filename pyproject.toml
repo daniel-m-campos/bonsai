@@ -7,7 +7,7 @@ name = "bonsai-gbt"
 version = "1.1.0"
 description = "Histogram gradient-boosted trees with a C++23 core"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [{ name = "Daniel M Campos" }]
 dependencies = ["numpy>=1.26"]
@@ -43,7 +43,7 @@ BONSAI_OPENMP_STATIC = "ON"
 # pinned in the Makefile the way LLVM is — formatter/linter drift breaks CI).
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "UP", "NPY", "RUF"]
