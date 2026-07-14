@@ -10,6 +10,8 @@ Every committed data file under [`benchmarks/results/`](../../benchmarks/results
 
 The [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) at the paper-medium protocol: 55 OpenML tasks, three seeds, campaign knobs for every library (decision 68). Best variant per library, average rank across tasks, lower is better.
 
+![Grinsztajn mean rank by library](assets/grinsztajn-rank.svg)
+
 | library | mean rank | outright wins |
 |---|---|---|
 | bonsai | 1.73 | 27 |
@@ -178,6 +180,8 @@ NDCG@10 by regime; the stable gap is to listwise losses only, so issue #58 is sc
 
 Same-pod sweep (AMD EPYC 9554 64-Core Processor, NVIDIA L40S), synthetic regression, `fit()` timed end to end including each library's own ingest, best of repeats, test r² in parentheses.
 
+![Fit seconds vs rows](assets/rebaseline-rows.svg)
+
 Scaling rows (100 features):
 
 | rows | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu | lgbm cpu | bonsai cpu obl |
@@ -186,6 +190,8 @@ Scaling rows (100 features):
 | 1M | 1.1s (.876) | 1.4s (.876) | 1.7s (.876) | 2.3s (.876) | 5.0s (.877) | 7.3s (.876) |
 | 4M | 4.5s (.878) | 4.4s (.875) | 5.3s (.878) | 5.0s (.877) | 19.9s (.879) | 20.2s (.875) |
 | 16M | 20.5s (.879) | 18.4s (.876) | 19.9s (.880) | 18.5s (.876) | 111.3s (.879) | 73.3s (.876) |
+
+![Fit seconds vs features](assets/rebaseline-cols.svg)
 
 Scaling features (1M rows):
 
@@ -228,6 +234,8 @@ Latest run per device on the YearPredictionMSD pipeline benchmark (full history 
 *Source: [`cpu-prefetch-round-2026-07.jsonl`](../../benchmarks/results/cpu-prefetch-round-2026-07.jsonl). Decision 61: software prefetch closed the 16M CPU gap to xgboost-hist on this pod.*
 
 ### GPU accuracy-vs-time frontier at 16M
+
+![Accuracy vs fit time at 16M rows](assets/gpu-pareto-16M.svg)
 
 | variant | iters | fit_s | test r2 |
 |---|---|---|---|
