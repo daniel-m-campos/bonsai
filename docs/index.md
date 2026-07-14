@@ -22,7 +22,7 @@ One property none of the reference libraries offer: models are bit-identical acr
 
 **Lineage**: the assimilation, idea by idea: what each reference library contributed, and whether measurement here adopted it, rebuilt it smaller, or declined it with the evidence recorded. [XGBoost](lineage/xgboost.md) · [LightGBM](lineage/lightgbm.md) · [CatBoost](lineage/catboost.md).
 
-**Method** *(being written)*: the measurement discipline that governed the scope escalation, portable to other performance-critical systems: instrument-first optimization, a feature-admission gate with pre-registered kill criteria, same-pod benchmarking, and bit-exact determinism as a testable contract.
+**[Method](method/README.md)**: the measurement discipline that governed the scope escalation, portable to other performance-critical systems: [instrument-first optimization](method/instrument-first.md), a [feature-admission gate](method/feature-admission.md) with pre-registered kill criteria, [same-pod benchmarking](method/benchmarking.md), and [bit-exact determinism](method/determinism.md) as a testable contract.
 
 ## The engineering notebook
 
