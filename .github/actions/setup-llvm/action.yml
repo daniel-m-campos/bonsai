@@ -1,15 +1,28 @@
 name: setup-llvm
-description: clang-21 + libc++ + libomp from apt.llvm.org (matches Makefile LLVM_BIN)
+description: >-
+  clang-21 + libc++ + libomp (matches Makefile LLVM_BIN). apt.llvm.org on
+  Linux (any Ubuntu codename, detected), homebrew on macOS. One source of
+  truth for the toolchain version across ci.yml and wheels.yml.
+inputs:
+  packages:
+    description: apt package list (Linux only; macOS always installs llvm@21 libomp ninja)
+    required: false
+    default: >-
+      clang-21 clang-tools-21 clang-tidy-21 clang-format-21 libc++-21-dev
+      libc++abi-21-dev libomp-21-dev ninja-build ccache
 runs:
   using: composite
   steps:
     - shell: bash
       run: |
+        if [ "$RUNNER_OS" = "macOS" ]; then
+          brew install llvm@21 libomp ninja
+          exit 0
+        fi
+        codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
         wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
           | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
-        echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" \
+        echo "deb http://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-21 main" \
           | sudo tee /etc/apt/sources.list.d/llvm21.list >/dev/null
         sudo apt-get update -qq
-        sudo apt-get install -y -qq clang-21 clang-tools-21 clang-tidy-21 \
-          clang-format-21 libc++-21-dev libc++abi-21-dev libomp-21-dev \
-          ninja-build ccache
+        sudo apt-get install -y -qq ${{ inputs.packages }}

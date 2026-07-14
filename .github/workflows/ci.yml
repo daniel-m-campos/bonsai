@@ -37,7 +37,33 @@ env:
   CMAKE_CXX_COMPILER_LAUNCHER: ccache
 
 jobs:
+  # Classifies what changed so heavy jobs can skip when only snippet-tested
+  # prose (docs/use/**, README.md) is touched; the workflow-level paths
+  # filter already excludes pure prose entirely.
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+      snippets: ${{ steps.filter.outputs.snippets }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            snippets:
+              - "docs/use/**"
+              - "README.md"
+            code:
+              - "**"
+              - "!docs/**"
+              - "!README.md"
+              - "!CHANGELOG.md"
+              - "!mkdocs.yml"
+
   build-test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -58,6 +84,8 @@ jobs:
       - run: make test
 
   sanitize:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -81,6 +109,8 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
 
   format:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -88,6 +118,8 @@ jobs:
       - run: make format-check
 
   tidy:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -100,6 +132,8 @@ jobs:
       - run: make lint
 
   python:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.snippets == 'true'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -133,6 +167,8 @@ jobs:
 
   # Compile-only: no GPU runners, but the kernel TU should not silently rot.
   cuda-compile:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
