@@ -92,6 +92,17 @@ LabeledData load_labeled(std::string const &path, DataConfig const &data_cfg,
     return make_labeled(detail::parse_input(path, data_cfg), data_cfg, mappers);
 }
 
+// Validation sets feed train_with_progress, which reads features and labels
+// only; skip the Dataset::bin pass (the binned data would have no readers).
+LabeledData load_valid_labeled(std::string const &path, DataConfig const &data_cfg)
+{
+    auto               batch    = detail::parse_input(path, data_cfg);
+    auto               features = to_feature_buffer(batch);
+    std::vector<float> labels(batch.labels.begin(), batch.labels.end());
+    return LabeledData{
+        .dataset = {}, .features = std::move(features), .labels = std::move(labels)};
+}
+
 } // namespace
 
 LoadedTrainValid load_train_and_valid_with_mappers(Config const &cfg,
@@ -101,7 +112,7 @@ LoadedTrainValid load_train_and_valid_with_mappers(Config const &cfg,
     std::optional<LabeledData> valid;
     if (!cfg.data.valid.empty())
     {
-        valid = load_labeled(cfg.data.valid[0], cfg.data, mappers);
+        valid = load_valid_labeled(cfg.data.valid[0], cfg.data);
     }
     return LoadedTrainValid{.mappers = std::move(mappers),
                             .train   = std::move(train),
@@ -125,7 +136,7 @@ LoadedTrainValid load_train_and_valid_from_csv(Config const &cfg)
                          "for per-iter eval metrics",
                          cfg.data.valid.size());
         }
-        valid = load_labeled(cfg.data.valid[0], cfg.data, mappers);
+        valid = load_valid_labeled(cfg.data.valid[0], cfg.data);
     }
 
     return LoadedTrainValid{.mappers = std::move(mappers),
