@@ -543,8 +543,12 @@ class LevelStep<EngineT, SplitterT>
         if (identity)
         {
             // The host fallback walks explicit row lists; materialize the
-            // identity only on this cold path.
+            // identity only on this cold path. row_count must drop back to 0
+            // or totals() would return the zeroed cached sums instead of the
+            // histogram totals populate is about to build (SplitInput's
+            // cached-statistics contract).
             root.rows.assign(row_indices.begin(), row_indices.end());
+            root.row_count = 0;
             lap(GrowProfiler::instance().assign_s);
         }
         engine_.populate(ds_, grad_, hess_, root, selected_);
