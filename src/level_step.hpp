@@ -277,7 +277,7 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
 
     // Fills every smaller child's histograms in one engine call; the larger
     // sibling derives by subtraction.
-    void build_children(LevelPlan &plan)
+    void build_children(LevelPlan &plan, bool /*last*/ = false)
     {
         GrowProfiler::Lap lap;
         host_build_children(engine_, ds_, grad_, hess_, selected_, plan);
@@ -521,13 +521,31 @@ class LevelStep<EngineT, SplitterT>
         GrowProfiler::Lap lap;
         SplitInput        root;
         root.id = 0;
-        root.rows.assign(row_indices.begin(), row_indices.end());
+        // Full-data fits pass the identity by contract (empty rows +
+        // row_count): the 64MB host copy and its upload never happen; the
+        // engine builds/caches the identity on device (decision 71).
+        bool const identity = row_indices.size() == ds_.n_rows();
+        if (identity)
+        {
+            root.row_count = row_indices.size();
+        }
+        else
+        {
+            root.rows.assign(row_indices.begin(), row_indices.end());
+        }
         lap(GrowProfiler::instance().assign_s);
         on_device_ = engine_.begin_root(ds_, grad_, hess_, root, selected_);
         if (on_device_)
         {
             lap(GrowProfiler::instance().populate_s);
             return root; // hists/rows stay device-resident; root carries sums
+        }
+        if (identity)
+        {
+            // The host fallback walks explicit row lists; materialize the
+            // identity only on this cold path.
+            root.rows.assign(row_indices.begin(), row_indices.end());
+            lap(GrowProfiler::instance().assign_s);
         }
         engine_.populate(ds_, grad_, hess_, root, selected_);
         root.sums      = root.totals();
@@ -617,11 +635,20 @@ class LevelStep<EngineT, SplitterT>
     // Smaller children build from their device row segments; the larger
     // derive on-device as parent minus smaller, then the child level becomes
     // current.
-    void build_children(LevelPlan &plan)
+    void build_children(LevelPlan &plan, bool last = false)
     {
         GrowProfiler::Lap lap;
         if (on_device_)
         {
+            if (last)
+            {
+                // The last level's children are leaves: their histograms are
+                // never read, so skip the build and keep the layout flip
+                // stamping depends on (decision 71).
+                engine_.advance_layout_only();
+                lap(GrowProfiler::instance().populate_s);
+                return;
+            }
             std::vector<typename EngineT::LevelOp> ops;
             ops.reserve(plan.splits.size());
             for (uint32_t k = 0; k < plan.splits.size(); ++k)

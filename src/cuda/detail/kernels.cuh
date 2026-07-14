@@ -808,6 +808,66 @@ __global__ void map_leaf_values_kernel(uint32_t const *leaf_by_row,
     values[r]           = leaf < n_values ? node_values[leaf] : 0.0F;
 }
 
+// Identity row list built on device (decision 71 campaign): full-data fits
+// never ship the 64MB identity permutation over the bus or build it on host.
+__global__ void iota_kernel(uint32_t *out, uint32_t n)
+{
+    uint32_t const i = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (i < n)
+    {
+        out[i] = i;
+    }
+}
+
+// Deterministic two-pass grad/hess totals over the interleaved gh buffer:
+// fixed grid, fixed in-block reduction order, single-block second pass, so
+// run-to-run bits never depend on scheduling (no atomics).
+__global__ void sum_gh_pass1_kernel(float2 const *gh, uint32_t n, double2 *partial)
+{
+    __shared__ double sg[256];
+    __shared__ double sh[256];
+    double            g = 0.0;
+    double            h = 0.0;
+    for (uint32_t i = (blockIdx.x * blockDim.x) + threadIdx.x; i < n;
+         i += gridDim.x * blockDim.x)
+    {
+        g += gh[i].x;
+        h += gh[i].y;
+    }
+    sg[threadIdx.x] = g;
+    sh[threadIdx.x] = h;
+    __syncthreads();
+    for (uint32_t s = blockDim.x / 2; s > 0; s >>= 1U)
+    {
+        if (threadIdx.x < s)
+        {
+            sg[threadIdx.x] += sg[threadIdx.x + s];
+            sh[threadIdx.x] += sh[threadIdx.x + s];
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0)
+    {
+        partial[blockIdx.x] = {sg[0], sh[0]};
+    }
+}
+
+__global__ void sum_gh_pass2_kernel(double2 const *partial, uint32_t n_blocks,
+                                    double2 *out)
+{
+    if (threadIdx.x == 0 && blockIdx.x == 0)
+    {
+        double g = 0.0;
+        double h = 0.0;
+        for (uint32_t b = 0; b < n_blocks; ++b)
+        {
+            g += partial[b].x;
+            h += partial[b].y;
+        }
+        *out = {g, h};
+    }
+}
+
 // NOLINTEND(bugprone-easily-swappable-parameters,cppcoreguidelines-avoid-c-arrays,cppcoreguidelines-pro-bounds-pointer-arithmetic,modernize-avoid-c-arrays,cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-bounds-array-to-pointer-decay,readability-function-cognitive-complexity,readability-identifier-naming)
 
 } // namespace
