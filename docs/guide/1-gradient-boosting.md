@@ -1,4 +1,4 @@
-# 1 — Gradient boosting
+# 1. Gradient boosting
 
 ## The idea
 
@@ -12,7 +12,7 @@ is weak.
 The word *gradient* is literal: "how wrong the current sum is" is the
 gradient of the loss with respect to the current prediction, evaluated at
 each training row. A tree fit to the negative gradient is one step of
-gradient descent — performed in function space instead of parameter space.
+gradient descent, performed in function space instead of parameter space.
 
 ## The math
 
@@ -49,32 +49,32 @@ where $T$ shrinks $G$ toward zero by $\alpha$
 (see [chapter 6](6-regularization-and-constraints.md)).
 
 Shrinkage $\eta$ then scales each tree's contribution. Small $\eta$ means each
-tree corrects only a fraction of the residual — slower, but successive
+tree corrects only a fraction of the residual, slower, but successive
 trees get to vote on overlapping mistakes, which regularizes.
 
 ## In bonsai
 
 One boosting round is [`Booster::update_one_iter`](../../include/bonsai/booster.hpp):
 
-1. `objective_.compute(scores_, labels, grad_, hess_)` — per-row g/h from
+1. `objective_.compute(scores_, labels, grad_, hess_)`: per-row g/h from
    the current raw scores. The objectives live in
    [`src/objective.cpp`](../../src/objective.cpp); MSE is the two-line loop
    `grad[i] = preds[i] - targets[i]; hess[i] = 1`.
-2. `sampler_.sample(...)` — pick this round's rows ([chapter 5](5-sampling.md)).
-3. `grower_.grow(train, grad_, hess_, rows)` — build one tree on those
+2. `sampler_.sample(...)`: pick this round's rows ([chapter 5](5-sampling.md)).
+3. `grower_.grow(train, grad_, hess_, rows)`: build one tree on those
    gradients ([chapters 2–4](2-binning-and-histograms.md)).
-4. `scores_[i] += learning_rate * leaf_values[i]` — advance every row's
-   running prediction. `GrowResult.values` carries each row's leaf value —
+4. `scores_[i] += learning_rate * leaf_values[i]`: advance every row's
+   running prediction. `GrowResult.values` carries each row's leaf value,
    including rows the sampler skipped, which are routed through the
    finished tree (`route_unsampled` in [`src/grower.cpp`](../../src/grower.cpp);
    the bug this prevents is chapter 5's war story).
 
 The leaf-value formula is `bounded_leaf_weight` in
-[`include/bonsai/split.hpp`](../../include/bonsai/split.hpp) — literally
+[`include/bonsai/split.hpp`](../../include/bonsai/split.hpp): literally
 $-T(G, \alpha) / (H + \lambda)$ with $T$ = `l1_thresholded`, clamped to
 monotone bounds.
 
-The starting point `base` is `Objective::init_score` — the mean for MSE,
+The starting point `base` is `Objective::init_score`: the mean for MSE,
 the median for MAE, the $\alpha$-quantile for quantile loss, log-odds for
 logloss. Raw scores stay in link space throughout training; the sigmoid
 (for logloss) is applied only at the outermost predict
@@ -86,7 +86,7 @@ logloss. Raw scores stay in link space throughout training; the sigmoid
 |---|---|---|---|---|
 | `mse` | $F - y$ | $1$ | mean | the reference path |
 | `logloss` | $p - y$ | $p(1-p)$ | log-odds | raw-score space; sigmoid at predict |
-| `mae` | $\mathrm{sign}(F - y)$ | $1$ | median | constant hessian — see below |
+| `mae` | $\mathrm{sign}(F - y)$ | $1$ | median | constant hessian, see below |
 | `huber` | $\mathrm{clamp}(F - y, \pm\delta)$ | $1$ | median | `[objective] huber_delta` |
 | `quantile` | $1-\alpha$ if $F > y$, else $-\alpha$ | $1$ | $\alpha$-quantile | `[objective] quantile_alpha` |
 | `poisson` | $e^F - y$ | $e^F$ | $\log(\bar{y})$ | log link; labels must be ≥ 0; raw scores clamp so $e^F$ can't overflow |
@@ -95,7 +95,7 @@ logloss. Raw scores stay in link space throughout training; the sigmoid
 
 For MAE/quantile the hessian is a constant, so the Newton step
 $w^{\ast} = -G/(\text{count} + \lambda)$ degenerates to the *mean of ±1-ish
-gradients* — it points the right way but says nothing about *how far*, and
+gradients*, it points the right way but says nothing about *how far*, and
 convergence crawls at small $\eta$. The fix every library ships is **leaf
 renewal**: after the tree's structure is fixed, re-solve each leaf exactly,
 
@@ -112,7 +112,7 @@ the loss itself *what value* serves them best.
 In bonsai: `renew_leaf` on the objective
 ([`include/bonsai/objective.hpp`](../../include/bonsai/objective.hpp)) and
 the booster's `renew_leaves` pass, gated at compile time on the objective
-providing the method — MSE/logloss never pay a branch for it. Landing it
+providing the method. MSE/logloss never pay a branch for it. Landing it
 closed a measured ~10% MAE gap vs the references
 ([feature_gap.md](../feature_gap.md) row 10).
 
@@ -131,16 +131,16 @@ import bonsai
 m = bonsai.BonsaiRegressor(n_iters=200, learning_rate=0.05).fit(X, y)
 ```
 
-Halve the learning rate and double `n_iters`: RMSE improves slightly —
-same total step budget, more votes per mistake.
+Halve the learning rate and double `n_iters`: RMSE improves slightly
+(same total step budget, more votes per mistake).
 
 ## Gotchas & war stories
 
 - **Gradients must be computed against the *real* model.** Every row's
   score has to advance every round, sampled or not. bonsai shipped for
-  weeks with out-of-bag rows silently frozen — see chapter 5.
+  weeks with out-of-bag rows silently frozen. See chapter 5.
 - **`hess` is a row-count under constant-hessian objectives**, so
   `min_child_hess` quietly changes meaning between `mse` and `mae`.
 - **Raw scores vs predictions**: everything internal is raw-score space.
-  If you eval logloss models by hand, apply the sigmoid first — the CLI's
+  If you eval logloss models by hand, apply the sigmoid first: the CLI's
   `predict` already does.
