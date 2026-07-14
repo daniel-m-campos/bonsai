@@ -1,0 +1,138 @@
+# Prebuilt CPU-only wheels so users get `pip install` without LLVM/CMake.
+# Native-runner builds (not manylinux containers): the official LLVM release
+# binaries need a newer glibc than manylinux_2_28 ships, so we build on
+# ubuntu-22.04 (glibc 2.35) and tag manylinux_2_35 — Ubuntu 22.04+/Debian 12+.
+# auditwheel/delocate vendor libc++ (and libunwind) into the wheel; libomp is
+# statically linked by BONSAI_OPENMP_STATIC. Wheels attach to the GitHub
+# Release on publish; PyPI is a follow-up (needs trusted-publisher setup).
+name: wheels
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/wheels.yml"
+      - "pyproject.toml"
+  release:
+    types: [published]
+
+concurrency:
+  group: wheels-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-22.04-arm, macos-14]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install LLVM toolchain (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          sudo bash /tmp/llvm.sh 21
+          sudo apt-get install -y libc++-21-dev libc++abi-21-dev libomp-21-dev \
+            ninja-build patchelf
+
+      - name: Install LLVM toolchain (macOS)
+        if: runner.os == 'macOS'
+        run: brew install llvm@21 libomp ninja
+
+      - name: Build wheel
+        env:
+          CMAKE_BUILD_PARALLEL_LEVEL: "4"
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            export CC=/usr/lib/llvm-21/bin/clang CXX=/usr/lib/llvm-21/bin/clang++
+          else
+            export CC="$(brew --prefix llvm@21)/bin/clang"
+            export CXX="$(brew --prefix llvm@21)/bin/clang++"
+            # llvm@21 bottle's libc++ mislabels float from_chars availability
+            export CXXFLAGS="-D_LIBCPP_DISABLE_AVAILABILITY"
+            export MACOSX_DEPLOYMENT_TARGET="14.0"
+          fi
+          python -m pip wheel . -w dist --no-deps
+
+      - name: Repair wheel (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          python -m pip install auditwheel
+          arch="$(uname -m)"
+          python -m auditwheel repair --plat "manylinux_2_35_${arch}" \
+            -w wheelhouse dist/*.whl
+
+      - name: Repair wheel (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          python -m pip install delocate
+          delocate-wheel -w wheelhouse -v dist/*.whl
+
+      - name: Smoke test in a clean venv
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip -q install wheelhouse/*.whl
+          /tmp/smoke/bin/python - <<'EOF'
+          import bonsai, numpy as np
+          rng = np.random.default_rng(0)
+          X = rng.random((2000, 8), dtype=np.float32)
+          y = (X[:, 0] * 2 + rng.normal(0, 0.1, 2000)).astype(np.float32)
+          r2 = bonsai.BonsaiRegressor(n_iters=20).fit(X, y).score(X, y)
+          assert r2 > 0.8, r2
+          yc = (X[:, 1] > 0.5).astype(np.float32)
+          proba = bonsai.BonsaiClassifier(n_iters=10).fit(X, yc).predict_proba(X)
+          assert proba.shape == (2000, 2)
+          ds = bonsai.Dataset(X, y)
+          bonsai.train([("booster.n_iters", "5")], ds)
+          print("wheel OK: r2 =", round(r2, 4))
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}-py${{ matrix.python }}
+          path: wheelhouse/*.whl
+
+  sdist:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install build
+          python -m build --sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  publish:
+    # Attach everything to the GitHub Release that triggered the run.
+    if: github.event_name == 'release'
+    needs: [build, sdist]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" dist/* \
+            --repo "${{ github.repository }}" --clobber
