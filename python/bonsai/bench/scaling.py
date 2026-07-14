@@ -375,7 +375,7 @@ def main() -> int:
 
     def emit(cell, variant, threads, repeat, payload):
         line = {"schema": runlog.SCHEMA_VERSION,
-                "ts": datetime.datetime.now(datetime.UTC)
+                "ts": datetime.datetime.now(datetime.timezone.utc)
                 .isoformat(timespec="seconds"),
                 "git_sha": git_sha, "division": "perf", "suite": "scaling",
                 "timing_mode": "in_memory", "knobs": knobs,

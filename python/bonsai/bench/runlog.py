@@ -86,7 +86,7 @@ def emit_row(path: str | pathlib.Path, *, division: str, suite: str,
         assert timing_mode in TIMING_MODES, timing_mode
     row = {
         "schema": SCHEMA_VERSION,
-        "ts": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
         "git_sha": git_sha(),
         "division": division,
         "suite": suite,
