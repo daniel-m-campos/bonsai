@@ -1,0 +1,34 @@
+name: setup-cuda
+description: >-
+  CUDA toolkit for clang CUDA builds on GPU-less runners (no driver): nvcc's
+  ptxas/fatbinary, cudart dev, curand dev. One source of truth for the CUDA
+  build-toolkit version across ci.yml and wheels.yml. The pod image
+  (docker/ci.Dockerfile) deliberately stays at 12.4 — that pin is the RunPod
+  driver-compatibility ceiling for container start, not a build toolkit.
+inputs:
+  version:
+    description: CUDA toolkit version (major.minor); 12.x only — clang cannot target CUDA 13
+    required: false
+    default: "12.8"
+outputs:
+  root:
+    description: CUDAToolkit_ROOT path for CMake
+    value: ${{ steps.install.outputs.root }}
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      id: install
+      run: |
+        # x86_64 repo path: every CUDA build target in this repo is linux
+        # x86_64 (wheels leg, cuda-compile); aarch64 CUDA is out of scope.
+        distro="ubuntu$(. /etc/os-release && echo "${VERSION_ID/./}")"
+        wget -q "https://developer.download.nvidia.com/compute/cuda/repos/${distro}/x86_64/cuda-keyring_1.1-1_all.deb"
+        sudo dpkg -i cuda-keyring_1.1-1_all.deb
+        sudo apt-get update -qq
+        # libcurand-dev: clang's __clang_cuda_runtime_wrapper.h includes
+        # curand device headers unconditionally.
+        pkg="${{ inputs.version }}"; pkg="${pkg/./-}"
+        sudo apt-get install -y -qq "cuda-nvcc-${pkg}" \
+          "cuda-cudart-dev-${pkg}" "libcurand-dev-${pkg}"
+        echo "root=/usr/local/cuda-${{ inputs.version }}" >> "$GITHUB_OUTPUT"

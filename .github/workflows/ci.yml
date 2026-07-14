@@ -180,20 +180,13 @@ jobs:
         with:
           path: build-cuda/_deps
           key: deps-cuda-${{ hashFiles('CMakeLists.txt') }}
-      - name: Install CUDA toolkit headers (no driver)
-        run: |
-          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
-          sudo dpkg -i cuda-keyring_1.1-1_all.deb
-          sudo apt-get update -qq
-          # libcurand-dev: clang's __clang_cuda_runtime_wrapper.h includes
-          # curand device headers unconditionally.
-          sudo apt-get install -y -qq cuda-nvcc-12-6 cuda-cudart-dev-12-6 \
-            libcurand-dev-12-6
+      - uses: ./.github/actions/setup-cuda
+        id: cuda
       - name: Configure and build (sm_80, tests off)
         run: |
           cmake -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER=/usr/lib/llvm-21/bin/clang++ \
             -DBONSAI_CUDA=ON -DBONSAI_CUDA_ARCH=sm_80 -DBONSAI_TESTS=OFF \
-            -DCUDAToolkit_ROOT=/usr/local/cuda-12.6 \
+            -DCUDAToolkit_ROOT=${{ steps.cuda.outputs.root }} \
             -G Ninja -S . -B build-cuda
           cmake --build build-cuda -j
