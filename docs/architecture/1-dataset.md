@@ -213,5 +213,5 @@ Note: `BinMapper::fit` and `Dataset::bin` are static factory methods (named-cons
 ## Cross-references
 
 - [`../decisions.md`](../decisions.md) entries 1–6 are source of truth.
-- [`../proposal.md` §3.1–3.3](../proposal.md) for performance-sensitive surfaces.
-- [`../context.md` §4](../context.md) for the original briefing-level summary.
+- [`../proposal.md` §3.1–3.3](https://github.com/daniel-m-campos/bonsai/blob/main/docs/proposal.md) for performance-sensitive surfaces.
+- [`../context.md` §4](https://github.com/daniel-m-campos/bonsai/blob/main/docs/context.md) for the original briefing-level summary.

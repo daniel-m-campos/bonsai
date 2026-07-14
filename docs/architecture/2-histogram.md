@@ -241,5 +241,5 @@ The build pseudocode is in §"Why a histogram makes that cheap." Two implementat
 ## Cross-references
 
 - [`../decisions.md`](../decisions.md) entry 1 (binning, missing-bin reservation) and entry 4 (column-major, `uint16_t` storage).
-- [`../proposal.md` §3.2](../proposal.md) for the performance-sensitive surface list (subtraction trick, deterministic reductions, double accumulators).
+- [`../proposal.md` §3.2](https://github.com/daniel-m-campos/bonsai/blob/main/docs/proposal.md) for the performance-sensitive surface list (subtraction trick, deterministic reductions, double accumulators).
 - [`1-dataset.md`](1-dataset.md) for the column input shape.

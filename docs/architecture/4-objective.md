@@ -4,7 +4,7 @@
 
 ## Why MSE and binary logloss together
 
-The proposal ([`../proposal.md` §1](../proposal.md)) commits to both in Phase 1 for the same reason `3-tree.md` lands two trees: two implementations of an open concept catch single-impl assumptions that one wouldn't. Concretely, MSE has constant unit hessian (`h = 1` per row), so any code path that conflates "row count" with `sum_hess` keeps working under MSE and quietly breaks under logloss (`h = p * (1 - p)`, in (0, 0.25]). Shipping both exercises `min_child_hess` (decision 20), the leaf-value formula `-G / (H + λ)` (decision 14 / `3-tree.md`), and the determinism contract (decision 7) under both flat and variable hessian regimes.
+The proposal ([`../proposal.md` §1](https://github.com/daniel-m-campos/bonsai/blob/main/docs/proposal.md)) commits to both in Phase 1 for the same reason `3-tree.md` lands two trees: two implementations of an open concept catch single-impl assumptions that one wouldn't. Concretely, MSE has constant unit hessian (`h = 1` per row), so any code path that conflates "row count" with `sum_hess` keeps working under MSE and quietly breaks under logloss (`h = p * (1 - p)`, in (0, 0.25]). Shipping both exercises `min_child_hess` (decision 20), the leaf-value formula `-G / (H + λ)` (decision 14 / `3-tree.md`), and the determinism contract (decision 7) under both flat and variable hessian regimes.
 
 The cost is one extra concrete `Objective` type plus a logloss-aware test path. Sample weighting is out of scope for the concept itself (see "What's not here").
 
@@ -131,6 +131,6 @@ Parity tests against xgboost/LightGBM live at the booster level (end-to-end), no
 ## Cross-references
 
 - [`../decisions.md`](../decisions.md) entries 21–25 (this doc's ratifying decisions); entries 7 (determinism), 14 (static dispatch shape), 20 (regularization knobs) for context.
-- [`../proposal.md` §1, §3](../proposal.md) for the Phase 1 scope commitment to MSE + logloss and the static-dispatch ethos.
+- [`../proposal.md` §1, §3](https://github.com/daniel-m-campos/bonsai/blob/main/docs/proposal.md) for the Phase 1 scope commitment to MSE + logloss and the static-dispatch ethos.
 - [`3-tree.md`](3-tree.md) for the leaf-value formula `-G / (H + λ)` that consumes the grad/hess this concept produces.
 - `5-booster.md` (TBD) for initial score, link inverse, sample weighting, and the `update_one_iter` loop that drives `compute`.

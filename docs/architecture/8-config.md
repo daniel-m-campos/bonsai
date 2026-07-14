@@ -195,4 +195,4 @@ The on-disk *model file* (`bonsai::io::save_booster`) serializes the same Config
 
 - [`1-dataset.md`](1-dataset.md) consumes `DataConfig` and `BinMapperConfig`.
 - [`../decisions.md`](../decisions.md) entry 1 (binning strategy) for the `bin_mapper` knobs.
-- [`../proposal.md` §3.7](../proposal.md) for the original config schema sketch.
+- [`../proposal.md` §3.7](https://github.com/daniel-m-campos/bonsai/blob/main/docs/proposal.md) for the original config schema sketch.
