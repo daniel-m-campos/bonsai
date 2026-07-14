@@ -1,0 +1,110 @@
+site_name: bonsai
+site_description: Histogram gradient-boosted trees with a C++23 core — written to be read.
+site_url: https://daniel-m-campos.github.io/bonsai/
+repo_url: https://github.com/daniel-m-campos/bonsai
+repo_name: daniel-m-campos/bonsai
+docs_dir: docs
+
+theme:
+  name: material
+  logo: assets/bonsai-logo.png
+  favicon: assets/bonsai-logo.png
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: green
+      accent: light green
+      toggle:
+        icon: material/brightness-7
+        name: dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: green
+      accent: light green
+      toggle:
+        icon: material/brightness-4
+        name: light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+# Internal material stays out of the public site: ops/ (infra runbook),
+# conversations/ and reviews/ (working notes), legacy standalone notes.
+exclude_docs: |
+  ops/
+  conversations/
+  reviews/
+  hooks/
+  feature_gap.md
+  leafwise_grower.md
+
+hooks:
+  - docs/hooks/repo_links.py
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+        - name: math
+          class: arithmatex
+          format: !!python/object/apply:pymdownx.arithmatex.arithmatex_fenced_format
+            kwds:
+              mode: generic
+              tag: div
+
+extra_javascript:
+  - javascripts/katex.js
+  - https://unpkg.com/katex@0/dist/katex.min.js
+  - https://unpkg.com/katex@0/dist/contrib/auto-render.min.js
+
+extra_css:
+  - https://unpkg.com/katex@0/dist/katex.min.css
+
+nav:
+  - Home: index.md
+  - Learn:
+      - The guide: guide/README.md
+      - 0. A tree by hand: guide/0-a-tree-by-hand.md
+      - 1. Gradient boosting: guide/1-gradient-boosting.md
+      - 2. Binning and histograms: guide/2-binning-and-histograms.md
+      - 3. Finding splits: guide/3-finding-splits.md
+      - 4. Growing trees: guide/4-growing-trees.md
+      - 5. Sampling: guide/5-sampling.md
+      - 6. Regularization and constraints: guide/6-regularization-and-constraints.md
+      - 7. Early stopping and DART: guide/7-early-stopping-and-dart.md
+      - 8. Feature importance: guide/8-feature-importance.md
+      - 9. Parallelism and determinism: guide/9-parallelism-and-determinism.md
+      - 10. GPU training: guide/10-gpu-training.md
+      - 11. Performance engineering: guide/11-performance-engineering.md
+      - 12. Multiclass: guide/12-multiclass.md
+      - 13. Categorical features: guide/13-categorical-features.md
+  - Design:
+      - Architecture: architecture/README.md
+      - Decisions log: decisions.md
+  - Project:
+      - Retrospective: report.md
+      - Proposal: proposal.md
+      - Context and roadmap: context.md
