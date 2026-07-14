@@ -1,3 +1,8 @@
+# PROVENANCE NOTE (decision 69): this probe is a completed experiment whose
+# committed evidence was produced by this exact code; it stays as-run rather
+# than being refactored onto bonsai.bench. NEW probes must import their knobs
+# and reference-library mappings from bonsai.bench.params and their metrics
+# from bonsai.bench.metrics.
 # Per-feature bin budget probe (issue #63 residual; decision 55 hypothesis):
 # measure the BENEFIT side of per-feature binning with zero bonsai C++ changes.
 #   1. Reference toggle: lightgbm's own max_bin_by_feature ON vs OFF at
