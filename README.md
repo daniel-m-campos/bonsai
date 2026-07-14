@@ -41,7 +41,7 @@ bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library a
 
 ## Performance
 
-From the 2026-07-13 re-baseline (`benchmarks/results/rebaseline-2026-07.jsonl`): synthetic regression, `fit()` timed end-to-end **including each library's own binning/ingest**, a 16-thread dual-EPYC-9554 host with an L40S, every variant on the same pod per cell. Test-set r² in parentheses; bonsai's two GPU growers are shown separately (`depthwise` trades a little speed for accuracy, `oblivious` is the symmetric-tree match to catboost).
+From the 2026-07-13 re-baseline (`benchmarks/results/rebaseline-2026-07.jsonl`; protocol: [benchmark charter](https://daniel-m-campos.github.io/bonsai/method/benchmark-protocol/)): synthetic regression, `fit()` timed end-to-end **including each library's own binning/ingest**, a 16-thread dual-EPYC-9554 host with an L40S, every variant on the same pod per cell. Test-set r² in parentheses; bonsai's two GPU growers are shown separately (`depthwise` trades a little speed for accuracy, `oblivious` is the symmetric-tree match to catboost).
 
 Scaling rows (100 features, 255 bins, 100 trees, depth 8):
 
@@ -64,7 +64,7 @@ Honest caveats, because benchmarks without them are advertising: identical-model
 
 ## Claims and proofs
 
-Every performance or quality claim bonsai makes links to a reproducible run and the decision that records it; the point of a small, measured library is that you can check it.
+Every performance or quality claim bonsai makes links to a reproducible run and the decision that records it; the point of a small, measured library is that you can check it. The rules every number follows are the [benchmark charter](https://daniel-m-campos.github.io/bonsai/method/benchmark-protocol/), and `pip install bonsai-gbt[bench]` lets you re-run the standings table yourself.
 
 | Claim | Evidence |
 |---|---|

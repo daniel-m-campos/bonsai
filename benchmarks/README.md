@@ -1,5 +1,7 @@
 # Benchmarks
 
+> The normative protocol (divisions, suites, primary metrics, timing modes, the result-row schema) is [docs/method/benchmark-protocol.md](../docs/method/benchmark-protocol.md); this file is the operational how-to-run companion.
+
 ## Reference-library comparison
 
 bonsai vs xgboost, lightgbm, catboost on a CSV regression dataset. All four libraries see the same hyperparameters by reading them out of the bonsai TOML config.
