@@ -20,7 +20,7 @@ One property none of the reference libraries offer: models are bit-identical acr
 
 **Use** *(being written)* — the whole API in one mental model: sklearn-shaped estimators and an explicit `train(params, ...)` layer over the same engine, dotted config keys that are exactly the CLI's `--set` keys, one `.msgpack` model that round-trips everywhere.
 
-**[Lineage](lineage/catboost.md)** — the assimilation, idea by idea: what each reference library contributed, and whether measurement here adopted it, rebuilt it smaller, or declined it with the evidence recorded. [CatBoost](lineage/catboost.md) is written; xgboost and lightgbm are next.
+**Lineage** — the assimilation, idea by idea: what each reference library contributed, and whether measurement here adopted it, rebuilt it smaller, or declined it with the evidence recorded. [XGBoost](lineage/xgboost.md) · [LightGBM](lineage/lightgbm.md) · [CatBoost](lineage/catboost.md).
 
 **Method** *(being written)* — the measurement discipline that governed the scope escalation, portable to other performance-critical systems: instrument-first optimization, a feature-admission gate with pre-registered kill criteria, same-pod benchmarking, and bit-exact determinism as a testable contract.
 
