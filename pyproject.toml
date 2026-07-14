@@ -23,6 +23,11 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
+[project.optional-dependencies]
+# Everything bonsai.bench needs to reproduce the published benchmark tables:
+#   pip install bonsai-gbt[bench] && python -m bonsai.bench.grinsztajn out.jsonl
+bench = ["xgboost", "lightgbm", "catboost", "scikit-learn", "pandas", "openml"]
+
 [project.urls]
 Repository = "https://github.com/daniel-m-campos/bonsai"
 Documentation = "https://github.com/daniel-m-campos/bonsai/tree/main/docs/guide"
