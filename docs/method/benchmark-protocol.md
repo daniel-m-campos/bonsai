@@ -14,6 +14,8 @@ Every result row belongs to exactly one division, and both run what MLPerf would
 
 **quality**: accuracy claims. The metric is primary; timing may be recorded but is never citable from a quality row. **perf**: latency, throughput, and memory claims. Every row declares its `timing_mode`; accuracy is recorded only as a sanity guard.
 
+The current evidence, rendered whole from every committed results file, is [the results ledger](results.md); this page is the rules it follows.
+
 ## Suites
 
 | suite | division | datasets (tier) | primary metric | results file | runner | decision |
