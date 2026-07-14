@@ -7,7 +7,7 @@ name: ci-image
 on:
   workflow_dispatch:
   push:
-    branches: [fabel]
+    branches: [main]
     paths: ["docker/**", ".github/workflows/ci-image.yml"]
 
 permissions:

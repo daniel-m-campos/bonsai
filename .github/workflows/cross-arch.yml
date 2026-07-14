@@ -14,7 +14,7 @@ on:
       - "!mkdocs.yml"
       - "!.github/workflows/docs-site.yml"
   push:
-    branches: [main, fabel]
+    branches: [main]
     # The hash gate proves C++ behavior; prose (including doc snippets,
     # which the CI python job covers) can never change model bytes.
     paths:

@@ -14,7 +14,7 @@ on:
       - "!CHANGELOG.md"
       - "!.github/workflows/docs-site.yml"
   push:
-    branches: [main, fabel]
+    branches: [main]
     # Prose-only changes skip the build. Include-with-negation instead of
     # paths-ignore so NEW docs subdirectories are excluded automatically;
     # docs/use/** is re-included because the python job executes its code
