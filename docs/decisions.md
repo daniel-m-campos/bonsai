@@ -659,7 +659,7 @@ to read. War stories are real ones from this log (OOB stale scores §34,
 DART's k+1 trap §35, the two-libomp deadlock §36, the split-vs-gain
 disagreement above). Stale narrative docs were refreshed in the same pass
 (context, report addendum, architecture 2–8, new 7-parallel.md), and
-milestones are now git-tagged (`mpcs-submission`, `v0.2.0`–`v0.5.0`).
+milestones are now git-tagged (the MVP submission tag, `v0.2.0`–`v0.5.0`).
 
 ## 38. Completing the non-categorical gap: rows 10-17 in one push
 

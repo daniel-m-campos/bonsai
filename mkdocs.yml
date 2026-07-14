@@ -43,6 +43,9 @@ exclude_docs: |
   hooks/
   feature_gap.md
   leafwise_grower.md
+  report.md
+  proposal.md
+  context.md
 
 hooks:
   - docs/hooks/repo_links.py
@@ -108,8 +111,4 @@ nav:
   - Design:
       - Architecture: architecture/README.md
       - Decisions log: decisions.md
-  - Project:
-      - How bonsai is built: about.md
-      - Retrospective (with current addenda): report.md
-      - Original proposal: proposal.md
-      - Original plan (historical): context.md
+  - About: about.md

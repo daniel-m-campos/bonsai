@@ -4,9 +4,9 @@
 
 ## Why two trees from day one
 
-Phase 1 ships **both** a depth-wise grower (`DepthwiseGrower` → `DenseTree`) and an oblivious grower (`ObliviousGrower` → `ObliviousTree`). The proposal puts oblivious in Phase 4 ([`../proposal.md` §7.1](../proposal.md)); we pull it forward.
+Phase 1 ships **both** a depth-wise grower (`DepthwiseGrower` → `DenseTree`) and an oblivious grower (`ObliviousGrower` → `ObliviousTree`). The proposal puts oblivious in Phase 4 ([`../proposal.md` §7.1](https://github.com/daniel-m-campos/bonsai/blob/main/docs/proposal.md)); we pull it forward.
 
-The reason: the oblivious tree has a fundamentally different on-disk shape than the depth-wise tree (per-level splits + leaf table vs flat node array), and the predict kernel is structurally different (fixed- depth branchless gather vs walk-until-leaf). If only depth-wise ships in Phase 1, the `Tree` concept and the `TreeGrower::Tree` associated type are aspirational — they accommodate a hypothetical second tree type but never get exercised. Pulling oblivious forward forces both the `Tree` concept and the `Booster<Gr, ...>` propagation of `typename Gr::Tree` to be honest from day one. Same rationale as landing logloss alongside MSE in Phase 1 ([`../proposal.md` §1](../proposal.md)): two implementations of an open concept catch regression-only assumptions that one wouldn't.
+The reason: the oblivious tree has a fundamentally different on-disk shape than the depth-wise tree (per-level splits + leaf table vs flat node array), and the predict kernel is structurally different (fixed- depth branchless gather vs walk-until-leaf). If only depth-wise ships in Phase 1, the `Tree` concept and the `TreeGrower::Tree` associated type are aspirational — they accommodate a hypothetical second tree type but never get exercised. Pulling oblivious forward forces both the `Tree` concept and the `Booster<Gr, ...>` propagation of `typename Gr::Tree` to be honest from day one. Same rationale as landing logloss alongside MSE in Phase 1 ([`../proposal.md` §1](https://github.com/daniel-m-campos/bonsai/blob/main/docs/proposal.md)): two implementations of an open concept catch regression-only assumptions that one wouldn't.
 
 The cost is one extra grower + one extra tree type of spine code, plus a second parity target (depth-wise vs xgboost/LightGBM, oblivious vs CatBoost). Both targets share the same regression dataset (California Housing for integration; YearPredictionMSD is held back as the post-parallelism perf benchmark).
 
@@ -503,6 +503,6 @@ Cross-thread-count reproducibility is *not* promised; predictions agree within n
 ## Cross-references
 
 - [`../decisions.md`](../decisions.md) entries 8–14 (this doc's ratifying decisions); entries 1, 3, 4, 7 (binning, float thresholds, column-major storage, determinism) for the inputs the grower consumes.
-- [`../proposal.md` §3.1, §3.4](../proposal.md) for the `TreeGrower` / `SplitFinder` extension points and the static- dispatch ethos.
+- [`../proposal.md` §3.1, §3.4](https://github.com/daniel-m-campos/bonsai/blob/main/docs/proposal.md) for the `TreeGrower` / `SplitFinder` extension points and the static- dispatch ethos.
 - [`1-dataset.md`](1-dataset.md) for `Dataset` shape and missing-bin convention.
 - [`2-histogram.md`](2-histogram.md) for `Histogram` shape, the subtraction trick, and the determinism contract for parallel build.
