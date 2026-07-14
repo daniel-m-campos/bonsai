@@ -5,8 +5,18 @@ name: cross-arch determinism
 
 on:
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+      - "mkdocs.yml"
+      - ".github/workflows/docs-site.yml"
   push:
     branches: [main, fabel]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+      - "mkdocs.yml"
+      - ".github/workflows/docs-site.yml"
 
 concurrency:
   group: xarch-${{ github.ref }}
