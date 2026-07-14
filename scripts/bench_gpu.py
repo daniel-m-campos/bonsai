@@ -199,7 +199,10 @@ def main() -> int:
         print(f"running {name} ...", flush=True)
         results[name] = runners[name]()
         with RESULTS.open("a") as f:
-            f.write(json.dumps({"ts": ts, "git_sha": sha, "gpu": gpu, "threads": args.threads,
+            f.write(json.dumps({"schema": 1, "division": "perf", "suite": "gpu_msd",
+                                "timing_mode": "pipeline", "dataset": "year_msd",
+                                "task": "reg",
+                                "ts": ts, "git_sha": sha, "gpu": gpu, "threads": args.threads,
                                 "variant": name, **results[name]}) + "\n")
 
     ref = results.get("xgb_gpu", {}).get("fit_s")

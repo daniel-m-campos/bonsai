@@ -33,6 +33,11 @@ import pandas as pd
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "build" / "python"))
 
+# STUDY_KNOBS: this stage-1 study deliberately deviates from the campaign
+# regime (bonsai.bench.params.CAMPAIGN: 200 iters, lr 0.05, depth 6). The
+# committed evidence (categorical-tradeoff-2026-07.md, decision 58) was
+# adjudicated at THESE knobs; per decision 69 they stay annotated rather
+# than rerun, which would reopen a settled decision for zero information.
 N_ITERS = 300
 LR = 0.1
 SEED = 42

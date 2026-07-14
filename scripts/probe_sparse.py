@@ -1,3 +1,8 @@
+# PROVENANCE NOTE (decision 69): this probe is a completed experiment whose
+# committed evidence was produced by this exact code; it stays as-run rather
+# than being refactored onto bonsai.bench. NEW probes must import their knobs
+# and reference-library mappings from bonsai.bench.params and their metrics
+# from bonsai.bench.metrics.
 # Sparse/EFB probe (crown week, feature-admission step 1-2): is sparse
 # input the remaining forcing function, and does preprocessing rescue it?
 #   Q1 width ladder on real text (rcv1): bonsai-dense vs lgbm/xgb sparse —
