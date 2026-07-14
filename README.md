@@ -69,11 +69,11 @@ Every performance or quality claim bonsai makes links to a reproducible run and 
 | Claim | Evidence |
 |---|---|
 | **Bit-identical models across CPU architectures** (arm64 == x86-64) at a fixed thread count; no reference library offers this | decisions [59](docs/decisions.md)/60; asserted per-commit by [`cross-arch.yml`](.github/workflows/cross-arch.yml) via [`scripts/model_hash.py`](scripts/model_hash.py) |
-| **Ties xgboost-hist at 16M rows on CPU** (75.8 vs 75.7s, same pod) | [decision 61](docs/decisions.md); [`benchmarks/results/cpu-prefetch-round-2026-07.jsonl`](benchmarks/results/cpu-prefetch-round-2026-07.jsonl) |
+| **Within ~8% of xgboost-hist at 16M rows on CPU, host-dependent**: a dead tie in the prefetch-round session (75.8 vs 75.7s, same pod), xgboost ahead on the re-baseline pod (73.1 vs 68.0s) | [decision 61](docs/decisions.md); [`cpu-prefetch-round jsonl`](benchmarks/results/cpu-prefetch-round-2026-07.jsonl); [`rebaseline jsonl`](benchmarks/results/rebaseline-2026-07.jsonl) |
 | **Fastest GPU slot at every row scale**; at 16M `oblivious` edges catboost (18.4 vs 18.5s) and beats xgboost-GPU (19.9s) at matched accuracy | [rebaseline jsonl](benchmarks/results/rebaseline-2026-07.jsonl), [scale-edge](benchmarks/catboost-scale-edge-2026-07.md), decisions 62–64; [`scripts/gpu_pareto.py`](scripts/gpu_pareto.py) |
 | **Categorical parity with catboost within chance-band**, via preprocessing not an engine feature | [decision 58](docs/decisions.md); [categorical-tradeoff](benchmarks/categorical-tradeoff-2026-07.md); [`python/bonsai/encoding.py`](python/bonsai/encoding.py) |
 | **Best library on 9 of 10 real datasets** (CPU quality campaign) | [quality-campaign](benchmarks/quality-campaign-2026-07.md), decisions 56–57 |
-| **~3× less host memory than xgboost** at 16M (7.3 vs 22.2GB) and ~3× faster predict | [`benchmarks/results/rebaseline-2026-07.jsonl`](benchmarks/results/rebaseline-2026-07.jsonl) |
+| **~3× less host memory than xgboost** at 16M (7.0 vs 22.2GB) and ~3× faster predict | [`benchmarks/results/rebaseline-2026-07.jsonl`](benchmarks/results/rebaseline-2026-07.jsonl) |
 | **Ranking is a measured, scoped gap**: a modest ~+0.015 NDCG@10 to a *listwise* loss, not pairwise LambdaRank | [ranking-tradeoff](benchmarks/ranking-tradeoff-2026-07.md); [`scripts/probe_ranking.py`](scripts/probe_ranking.py) |
 | **Every feature earns its place by measurement**: refutations are recorded too | the [feature-admission gate](.claude/skills/feature-admission/SKILL.md); declines in decisions 58/62 |
 

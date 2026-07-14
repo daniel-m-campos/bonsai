@@ -70,19 +70,38 @@ bonsai::cli::LabeledData make_labeled(array_2d const &X, array_1d const &y,
         .labels   = std::vector<float>(y.data(), y.data() + n)};
 }
 
+// Validation-only LabeledData: train_with_progress reads a valid set's
+// features and labels, never its binned dataset, so skip Dataset::bin and
+// the device ingest entirely (a wasted bin pass plus, under cuda growers, a
+// wasted GPU upload per call).
+bonsai::cli::LabeledData make_valid_labeled(array_2d const &X, array_1d const &y)
+{
+    size_t const n = X.shape(0);
+
+    bonsai::cli::FeatureBuffer buf;
+    buf.n_rows     = n;
+    buf.n_features = X.shape(1);
+    buf.borrowed   = std::span{X.data(), n * X.shape(1)};
+    return bonsai::cli::LabeledData{.dataset  = {},
+                                    .features = std::move(buf),
+                                    .labels =
+                                        std::vector<float>(y.data(), y.data() + n)};
+}
+
 // A reusable pre-binned dataset (decision 65): binning runs once at
 // construction, and the SAME bonsai::Dataset is fed to every train() call, so a
 // hyperparameter sweep or CV loop skips the per-fit bin pass. On GPU the
 // resident-matrix upload-skip cache (ensure_dataset) fires because the object
-// address is stable across fits. Holds the numpy X/y (and optional weight)
-// alive so the FeatureBuffer's borrow of the row-major matrix stays valid.
+// address is stable across fits. Holds the numpy X alive because the
+// FeatureBuffer borrows the row-major matrix; y and weight are copied out by
+// Dataset::bin during construction and are not retained.
 // Binning is host-resident; a CUDA fit uploads once on first use and caches.
 class Dataset
 {
   public:
     Dataset(array_2d const &X, array_1d const &y, std::optional<array_1d> const &weight,
             int max_bin, size_t n_samples, uint64_t seed, int min_data_in_bin)
-        : x_(X), y_(y), weight_(weight)
+        : x_(X)
     {
         if (y.shape(0) != X.shape(0))
         {
@@ -130,8 +149,6 @@ class Dataset
 
   private:
     array_2d                      x_;
-    array_1d                      y_;
-    std::optional<array_1d>       weight_;
     bonsai::cli::LoadedTrainValid loaded_;
 };
 
@@ -396,8 +413,7 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
     loaded.train = make_labeled(X, y, loaded.mappers, cfg, wview);
     if (eval_set)
     {
-        loaded.valid =
-            make_labeled(eval_set->first, eval_set->second, loaded.mappers, cfg);
+        loaded.valid = make_valid_labeled(eval_set->first, eval_set->second);
     }
 
     auto booster = bonsai::cli::train_with_progress(
@@ -447,14 +463,13 @@ Model train_dataset(std::vector<std::pair<std::string, std::string>> const &para
         init.emplace(bonsai::io::load_booster(*init_model));
     }
     nb::gil_scoped_release release;
-    // The valid set is per-call state binned with the Dataset's mappers; the
-    // train side stays the Dataset's own LabeledData (no copy — a copy would
-    // also change the address that keys the GPU upload-skip cache).
+    // The valid set is per-call state; the train side stays the Dataset's own
+    // LabeledData (no copy: a copy would also change the address that keys
+    // the GPU upload-skip cache).
     std::optional<bonsai::cli::LabeledData> valid;
     if (eval_set)
     {
-        valid = make_labeled(eval_set->first, eval_set->second,
-                             dataset.loaded().mappers, cfg);
+        valid = make_valid_labeled(eval_set->first, eval_set->second);
     }
     auto booster = bonsai::cli::train_with_progress(
         cfg, dataset.loaded().train, valid ? &*valid : nullptr, {},

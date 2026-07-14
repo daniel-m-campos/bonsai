@@ -114,7 +114,7 @@ In bonsai: `renew_leaf` on the objective
 the booster's `renew_leaves` pass, gated at compile time on the objective
 providing the method. MSE/logloss never pay a branch for it. Landing it
 closed a measured ~10% MAE gap vs the references
-([feature_gap.md](../feature_gap.md) row 10).
+([feature_gap.md](https://github.com/daniel-m-campos/bonsai/blob/main/docs/feature_gap.md) row 10).
 
 ## Try it
 

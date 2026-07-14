@@ -24,7 +24,7 @@ bonsai uses the true hessian. Compatibility with a convention was not worth a 2�
 
 ## The score today
 
-On CPU at 16M rows, bonsai and xgboost-hist are a dead tie: 75.8s vs 75.7s, same pod, same session. The tie was earned one measured change at a time; the final step was a software prefetch in the histogram fill loop, priced from an instruction-level cost ledger before the code was written ([decision 61](https://github.com/daniel-m-campos/bonsai/blob/main/docs/decisions.md), [guide chapter 11](../guide/11-performance-engineering.md)).
+On CPU at 16M rows the order is host-dependent: a dead tie on the prefetch-round pod (75.8s vs 75.7s, same session), xgboost ahead on the re-baseline pod (bonsai 73.1s vs 68.0s, ~7% faster). The tie was earned one measured change at a time; the final step was a software prefetch in the histogram fill loop, priced from an instruction-level cost ledger before the code was written ([decision 61](https://github.com/daniel-m-campos/bonsai/blob/main/docs/decisions.md), [guide chapter 11](../guide/11-performance-engineering.md)).
 
 On GPU at 16M rows bonsai is ahead: `cuda_oblivious` 18.4s and `cuda_depthwise` 20.5s against xgboost-GPU's 19.9s, at ~3× less host memory (7.0 vs 22.2 GB) and ~3× faster predict.
 

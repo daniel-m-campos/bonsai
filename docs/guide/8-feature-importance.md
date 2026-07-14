@@ -109,7 +109,7 @@ modes to keep in mind:
 - When the stakes are real, corroborate with **permutation importance**
   (shuffle a feature at predict time, watch the metric drop) or **SHAP**
   (per-prediction attribution with a consistency guarantee), both on the
-  backlog ([feature_gap.md](../feature_gap.md) row 15).
+  backlog ([feature_gap.md](https://github.com/daniel-m-campos/bonsai/blob/main/docs/feature_gap.md) row 15).
 
 ## Gotchas & war stories
 

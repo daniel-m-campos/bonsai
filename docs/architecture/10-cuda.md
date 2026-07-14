@@ -1,6 +1,6 @@
 # 10: CUDA histogram backend
 
-> **Status:** working (Jetson Orin Nano sm_87; validated on A100 sm_80/x86_64). Registered as the `cuda_depthwise` grower. Perf story and measured ladders: [reviews/2026-07-03-design-review-cuda.md](../reviews/2026-07-03-design-review-cuda.md).
+> **Status:** working (Jetson Orin Nano sm_87; validated on A100 sm_80/x86_64). Registered as the `cuda_depthwise` grower. Perf story and measured ladders: [reviews/2026-07-03-design-review-cuda.md](https://github.com/daniel-m-campos/bonsai/blob/main/docs/reviews/2026-07-03-design-review-cuda.md).
 >
 > **The grower-side seam was redesigned by [`12-grower-backend.md`](12-grower-backend.md) (decision 41, landed):** the `LevelStep` compile-time strategy replaced the optional-hook dispatch, and `populate_many` + the GPU copy-back path were retired for a CPU fallback. The kernel, precision scheme, and registration story below are current.
 

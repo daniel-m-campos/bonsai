@@ -12,7 +12,8 @@ import posixpath
 import re
 
 REPO_BLOB = "https://github.com/daniel-m-campos/bonsai/blob/main/"
-LINK = re.compile(r"(\]\()(\.\.?/[^)#\s]*)([^)]*\))")
+REPO_RAW = "https://raw.githubusercontent.com/daniel-m-campos/bonsai/main/"
+LINK = re.compile(r"(!?\]\()(\.\.?/[^)#\s]*)([^)]*\))")
 
 
 def on_page_markdown(markdown, page, config, files):
@@ -22,6 +23,8 @@ def on_page_markdown(markdown, page, config, files):
         target = posixpath.normpath(posixpath.join("docs", page_dir, m.group(2)))
         if target.startswith("docs/"):
             return m.group(0)  # stays inside the site; leave it alone
-        return m.group(1) + REPO_BLOB + target + m.group(3)
+        # images need raw bytes; the blob URL serves an HTML page
+        base = REPO_RAW if m.group(1).startswith("!") else REPO_BLOB
+        return m.group(1) + base + target + m.group(3)
 
     return LINK.sub(rewrite, markdown)

@@ -49,11 +49,12 @@ def test_doc_python_snippets():
     total = 0
     for doc in DOCS:
         fences = FENCE.findall(doc.read_text())
-        assert fences, f"{doc.relative_to(REPO)}: expected python fences"
+        if not fences:
+            continue  # prose-only page; nothing to execute
         for i, code in enumerate(fences):
             # Speed: cap illustrative iteration counts; the point is that the
             # API calls resolve and run, not the model quality.
-            code = code.replace("n_iters=200", "n_iters=8")
+            code = re.sub(r"n_iters=\d+", "n_iters=8", code)
             ns = _prelude()
             cwd = os.getcwd()
             with tempfile.TemporaryDirectory() as td:
