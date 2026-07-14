@@ -3,8 +3,10 @@
 **Histogram gradient-boosted trees with a C++23 core.**
 
 ```
-pip install <wheel from the latest release>   # Linux, macOS arm64, Python 3.9–3.13, no toolchain
+pip install bonsai-gbt --find-links https://github.com/daniel-m-campos/bonsai/releases/expanded_assets/v1.3.0
 ```
+
+Linux and macOS arm64, Python 3.9 to 3.13, no toolchain; on linux x86_64 the wheel trains on GPU out of the box. Details, docker, and extras: [Install](use/install.md).
 
 bonsai began as a learning project: rebuild gradient-boosted trees from first principles to understand how the production libraries actually work, in a small codebase that takes modern C++23 and software design as seriously as the algorithms.
 
@@ -18,7 +20,7 @@ One property none of the reference libraries offer: models are bit-identical acr
 
 **[Learn](guide/README.md)**: the learning project, kept as a product: each chapter takes one concept from intuition, through the mathematics, to the ~50 real lines that implement it, to an experiment against the reference libraries. Start with [a tree traced by hand on eight rows](guide/0-a-tree-by-hand.md).
 
-**[Use](use/api-tour.md)**: the whole API in one read: sklearn-shaped estimators and an explicit `train(params, ...)` layer over the same engine, dotted config keys that are exactly the CLI's `--set` keys, one `.msgpack` model that round-trips everywhere.
+**[Use](use/install.md)**: [install in one command](use/install.md), then [the whole API in one read](use/api-tour.md): sklearn-shaped estimators and an explicit `train(params, ...)` layer over the same engine, dotted config keys that are exactly the CLI's `--set` keys, one `.msgpack` model that round-trips everywhere. [Building from source](use/building.md) when a wheel is not enough.
 
 **Lineage**: the assimilation, idea by idea: what each reference library contributed, and whether measurement here adopted it, rebuilt it smaller, or declined it with the evidence recorded. [XGBoost](lineage/xgboost.md) · [LightGBM](lineage/lightgbm.md) · [CatBoost](lineage/catboost.md).
 
@@ -26,6 +28,6 @@ One property none of the reference libraries offer: models are bit-identical acr
 
 ## The engineering notebook
 
-The [decisions log](decisions.md) records the project's sixty-six numbered decisions, including the hypotheses that measurement refuted; they are the raw material behind every claim on this site.
+The [decisions log](decisions.md) records the project's numbered decisions, including the hypotheses that measurement refuted; they are the raw material behind every claim on this site.
 
 The [architecture notes](architecture/README.md) are its structured companion: one document per subsystem, written once, referenced instead of repeated.
