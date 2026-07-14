@@ -270,3 +270,204 @@ jobs:
         run: |
           gh release upload "${{ steps.tag.outputs.tag }}" dist/* \
             --repo "${{ github.repository }}" --clobber
+
+  # ---- The GPU release gate (issue #99) --------------------------------------
+  # GitHub runners build CUDA but can never execute it, so the CUDA wheel and
+  # the runtime image are proven on a rented RunPod L40S before promotion:
+  # candidate image (wheel baked in) -> a pod boots that exact image -> on-pod
+  # smoke (cuda growers train, CPU parity bands, model hash equals CI's) ->
+  # promote (attach the wheel, retag the image). One rented session proves
+  # both artifacts; a red gate withholds only the CUDA artifacts, the CPU
+  # release from `publish` stands. Needs the RUNPOD_API_KEY repo secret, and
+  # the ghcr.io/<owner>/bonsai package must be public (RunPod pulls
+  # anonymously; one-time flip after the first candidate push).
+
+  runtime-image-candidate:
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
+    needs: [build, hash-compare]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve target tag
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            tag="${{ github.event.release.tag_name }}"
+          else
+            tag="${{ inputs.tag }}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${{ github.repository_owner }}/bonsai" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-cuda-*
+          path: dist
+          merge-multiple: true
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the candidate image
+        run: |
+          IMG="${{ steps.meta.outputs.image }}:candidate-${{ steps.meta.outputs.tag }}"
+          docker build -f docker/runtime.Dockerfile -t "$IMG" .
+          docker push "$IMG"
+
+  validate-cuda:
+    needs: [runtime-image-candidate]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      RUNPOD_KEY: ${{ secrets.RUNPOD_API_KEY }}
+      POD_NAME: bonsai-wheel-gate-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The CI-side hash the pod must reproduce (host plane on real hardware).
+      - uses: actions/download-artifact@v4
+        with:
+          name: model-hash-ubuntu-22.04
+          path: expected
+
+      - name: Ephemeral SSH keypair
+        run: ssh-keygen -t ed25519 -N "" -f /tmp/podkey
+
+      - name: Rent an L40S on the candidate image
+        id: pod
+        run: |
+          set -euo pipefail
+          IMG="${{ needs.runtime-image-candidate.outputs.image }}:candidate-${{ needs.runtime-image-candidate.outputs.tag }}"
+          PUB="$(cat /tmp/podkey.pub)"
+          create() {
+            curl -sf https://rest.runpod.io/v1/pods \
+              -H "Authorization: Bearer $RUNPOD_KEY" -H 'content-type: application/json' \
+              -d "{\"name\": \"$POD_NAME\", \"imageName\": \"$IMG\",
+                   \"gpuTypeIds\": [\"NVIDIA L40S\"], \"gpuCount\": 1,
+                   \"cloudType\": \"SECURE\", \"containerDiskInGb\": 20,
+                   \"ports\": [\"22/tcp\"], \"env\": {\"PUBLIC_KEY\": \"$PUB\"}}" \
+              | jq -r .id
+          }
+          # Two attempts: pods occasionally land without a public IP or never
+          # start (runbook failure table); each attempt polls up to 6 minutes
+          # on the GraphQL runtime, the only truthful liveness signal.
+          for attempt in 1 2; do
+            POD="$(create)"
+            echo "attempt ${attempt}: pod ${POD}"
+            echo "pod_id=${POD}" >> "$GITHUB_OUTPUT"
+            for i in $(seq 1 36); do
+              sleep 10
+              OUT=$(curl -s https://api.runpod.io/graphql \
+                -H "Authorization: Bearer $RUNPOD_KEY" -H 'content-type: application/json' \
+                -d "{\"query\":\"query{pod(input:{podId:\\\"$POD\\\"}){runtime{uptimeInSeconds ports{ip isIpPublic privatePort publicPort}}}}\"}")
+              IP=$(echo "$OUT" | jq -r '.data.pod.runtime.ports[]? | select(.isIpPublic and .privatePort==22) | .ip' | head -1)
+              PORT=$(echo "$OUT" | jq -r '.data.pod.runtime.ports[]? | select(.isIpPublic and .privatePort==22) | .publicPort' | head -1)
+              if [ -n "${IP}" ] && [ "${IP}" != "null" ]; then
+                echo "ip=${IP}" >> "$GITHUB_OUTPUT"
+                echo "port=${PORT}" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            done
+            echo "attempt ${attempt}: no public SSH endpoint after 6m; re-rolling"
+            curl -s -X DELETE "https://rest.runpod.io/v1/pods/$POD" \
+              -H "Authorization: Bearer $RUNPOD_KEY" || true
+          done
+          echo "::error::no usable pod after 2 attempts"
+          exit 1
+
+      - name: On-pod validation
+        run: |
+          set -euo pipefail
+          OPTS="-i /tmp/podkey -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15"
+          HOST="root@${{ steps.pod.outputs.ip }}"
+          SSH="ssh $OPTS -p ${{ steps.pod.outputs.port }} $HOST"
+          for i in $(seq 1 12); do $SSH true 2>/dev/null && break; sleep 10; done
+          # Recorded per release: which driver floor was actually exercised.
+          $SSH 'nvidia-smi --query-gpu=name,driver_version --format=csv,noheader'
+          scp $OPTS -P ${{ steps.pod.outputs.port }} \
+            scripts/wheel_smoke.py scripts/wheel_smoke_cuda.py \
+            scripts/model_hash.py "$HOST":/root/
+          $SSH 'python3 /root/wheel_smoke.py && python3 /root/wheel_smoke_cuda.py'
+          $SSH 'python3 /root/model_hash.py' | tee pod-hash.txt
+          grep sha256 expected/model-hash.txt > expected-lines.txt
+          grep sha256 pod-hash.txt > pod-lines.txt
+          diff expected-lines.txt pod-lines.txt
+          echo "pod model hash matches CI"
+
+      - name: Tear down the pod
+        if: always() && steps.pod.outputs.pod_id != ''
+        run: |
+          curl -s -X DELETE "https://rest.runpod.io/v1/pods/${{ steps.pod.outputs.pod_id }}" \
+            -H "Authorization: Bearer $RUNPOD_KEY" || true
+
+      # Unattended spend needs a loud backstop: no gate pod may survive the
+      # job, whatever happened above.
+      - name: Sweep for surviving gate pods
+        if: always()
+        run: |
+          sweep() {
+            curl -s https://rest.runpod.io/v1/pods -H "Authorization: Bearer $RUNPOD_KEY" \
+              | jq -r '(.pods // .)[]? | select(.name != null)
+                       | select(.name | startswith("bonsai-wheel-gate")) | .id'
+          }
+          sleep 5
+          for p in $(sweep); do
+            echo "deleting leftover pod ${p}"
+            curl -s -X DELETE "https://rest.runpod.io/v1/pods/${p}" \
+              -H "Authorization: Bearer $RUNPOD_KEY"
+          done
+          sleep 5
+          REMAIN="$(sweep)"
+          if [ -n "$REMAIN" ]; then
+            echo "::error::gate pods still alive after sweep: ${REMAIN} — delete manually and check billing"
+            exit 1
+          fi
+          echo "sweep clean: no gate pods remain"
+
+  promote:
+    needs: [runtime-image-candidate, validate-cuda, publish]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-cuda-*
+          path: dist
+          merge-multiple: true
+
+      - name: Attach the validated CUDA wheels
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum dist/*.whl
+          gh release upload "${{ needs.runtime-image-candidate.outputs.tag }}" dist/*.whl \
+            --repo "${{ github.repository }}" --clobber
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote the candidate image
+        run: |
+          IMG="${{ needs.runtime-image-candidate.outputs.image }}"
+          TAG="${{ needs.runtime-image-candidate.outputs.tag }}"
+          docker pull "$IMG:candidate-$TAG"
+          docker tag "$IMG:candidate-$TAG" "$IMG:$TAG-cuda"
+          docker tag "$IMG:candidate-$TAG" "$IMG:cuda"
+          docker push "$IMG:$TAG-cuda"
+          docker push "$IMG:cuda"
