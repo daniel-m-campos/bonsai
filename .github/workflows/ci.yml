@@ -2,40 +2,30 @@ name: CI
 
 on:
   pull_request:
-    # Prose-only changes skip the build; README.md and docs/use/** stay
-    # in because the python job executes their code snippets.
-    paths-ignore:
-      - "docs/guide/**"
-      - "docs/architecture/**"
-      - "docs/lineage/**"
-      - "docs/assets/**"
-      - "docs/javascripts/**"
-      - "docs/hooks/**"
-      - "docs/ops/**"
-      - "docs/conversations/**"
-      - "docs/reviews/**"
-      - "docs/*.md"
-      - "mkdocs.yml"
-      - "CHANGELOG.md"
-      - ".github/workflows/docs-site.yml"
+    # Prose-only changes skip the build. Include-with-negation instead of
+    # paths-ignore so NEW docs subdirectories are excluded automatically;
+    # docs/use/** is re-included because the python job executes its code
+    # snippets (README.md stays in via '**').
+    paths:
+      - "**"
+      - "!docs/**"
+      - "docs/use/**"
+      - "!mkdocs.yml"
+      - "!CHANGELOG.md"
+      - "!.github/workflows/docs-site.yml"
   push:
     branches: [main, fabel]
-    # Prose-only changes skip the build; README.md and docs/use/** stay
-    # in because the python job executes their code snippets.
-    paths-ignore:
-      - "docs/guide/**"
-      - "docs/architecture/**"
-      - "docs/lineage/**"
-      - "docs/assets/**"
-      - "docs/javascripts/**"
-      - "docs/hooks/**"
-      - "docs/ops/**"
-      - "docs/conversations/**"
-      - "docs/reviews/**"
-      - "docs/*.md"
-      - "mkdocs.yml"
-      - "CHANGELOG.md"
-      - ".github/workflows/docs-site.yml"
+    # Prose-only changes skip the build. Include-with-negation instead of
+    # paths-ignore so NEW docs subdirectories are excluded automatically;
+    # docs/use/** is re-included because the python job executes its code
+    # snippets (README.md stays in via '**').
+    paths:
+      - "**"
+      - "!docs/**"
+      - "docs/use/**"
+      - "!mkdocs.yml"
+      - "!CHANGELOG.md"
+      - "!.github/workflows/docs-site.yml"
 
 concurrency:
   group: ci-${{ github.ref }}
