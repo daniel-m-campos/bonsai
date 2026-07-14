@@ -101,27 +101,18 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
 
         // Per-row softmax probabilities feed every class's gradients.
         std::vector<float> probs(n * n_k);
-        parallel::for_each_index(
-            n,
-            [&](size_t i)
-            {
-                double maxv = scores_[i * n_k];
-                for (size_t k = 1; k < n_k; ++k)
-                {
-                    maxv = std::max(maxv, static_cast<double>(scores_[(i * n_k) + k]));
-                }
-                double sum = 0.0;
-                for (size_t k = 0; k < n_k; ++k)
-                {
-                    double const e       = std::exp(scores_[(i * n_k) + k] - maxv);
-                    probs[(i * n_k) + k] = static_cast<float>(e);
-                    sum += e;
-                }
-                for (size_t k = 0; k < n_k; ++k)
-                {
-                    probs[(i * n_k) + k] /= static_cast<float>(sum);
-                }
-            });
+        parallel::for_each_index(n,
+                                 [&](size_t i)
+                                 {
+                                     size_t const base      = i * n_k;
+                                     auto const [maxv, sum] = row_softmax_exp(
+                                         scores_, base, n_k, [&](size_t k, double e)
+                                         { probs[base + k] = static_cast<float>(e); });
+                                     for (size_t k = 0; k < n_k; ++k)
+                                     {
+                                         probs[base + k] /= static_cast<float>(sum);
+                                     }
+                                 });
 
         if (row_indices_.size() != n)
         {
@@ -189,28 +180,18 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         size_t const n = X.extent(0);
         assert(out.size() == n * k);
         auto const scores = raw_scores(X, 0);
-        parallel::for_each_index(
-            n,
-            [&](size_t i)
-            {
-                double maxv = scores[i * k];
-                for (size_t c = 1; c < k; ++c)
-                {
-                    maxv = std::max(maxv, static_cast<double>(scores[(i * k) + c]));
-                }
-                double sum = 0.0;
-                for (size_t c = 0; c < k; ++c)
-                {
-                    double const e =
-                        std::exp(static_cast<double>(scores[(i * k) + c]) - maxv);
-                    out[(i * k) + c] = e;
-                    sum += e;
-                }
-                for (size_t c = 0; c < k; ++c)
-                {
-                    out[(i * k) + c] /= sum;
-                }
-            });
+        parallel::for_each_index(n,
+                                 [&](size_t i)
+                                 {
+                                     size_t const base      = i * k;
+                                     auto const [maxv, sum] = row_softmax_exp(
+                                         scores, base, k, [&](size_t c, double e)
+                                         { out[base + c] = e; });
+                                     for (size_t c = 0; c < k; ++c)
+                                     {
+                                         out[base + c] /= sum;
+                                     }
+                                 });
     }
 
     // Multiclass logloss on raw scores.
@@ -406,6 +387,35 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         return k >= 0 && static_cast<size_t>(k) < n_k ? static_cast<size_t>(k) : 0;
     }
 
+    // Numerically-stable softmax of one row's K logits: max-subtract, then
+    // exp each class (in double) into sink(k, e). Returns {maxv, sum(e)} for
+    // the caller to normalize (probs) or form a loss. scores may be float or
+    // double; the exp argument promotes to double either way, so every call
+    // site's op order is preserved. base is the row's flat offset (row * K).
+    struct RowSoftmax
+    {
+        double maxv;
+        double sum;
+    };
+    template <typename Scores, typename Sink>
+    static RowSoftmax row_softmax_exp(Scores const &scores, size_t base, size_t k_count,
+                                      Sink &&sink)
+    {
+        double maxv = scores[base];
+        for (size_t k = 1; k < k_count; ++k)
+        {
+            maxv = std::max(maxv, static_cast<double>(scores[base + k]));
+        }
+        double sum = 0.0;
+        for (size_t k = 0; k < k_count; ++k)
+        {
+            double const e = std::exp(scores[base + k] - maxv);
+            sink(k, e);
+            sum += e;
+        }
+        return {maxv, sum};
+    }
+
     // Raw (init + lr * tree sums) scores, n_rows x K, using the first
     // n_rounds rounds (0 = all).
     float logloss_from_scores(std::span<float const> scores, floats_view labels) const
@@ -414,19 +424,13 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         double       total = 0.0;
         for (size_t i = 0; i < n; ++i)
         {
-            double maxv = scores[i * n_classes_];
-            for (size_t k = 1; k < n_classes_; ++k)
-            {
-                maxv =
-                    std::max(maxv, static_cast<double>(scores[(i * n_classes_) + k]));
-            }
-            double sum = 0.0;
-            for (size_t k = 0; k < n_classes_; ++k)
-            {
-                sum += std::exp(scores[(i * n_classes_) + k] - maxv);
-            }
+            size_t const base = i * n_classes_;
+            // Loss needs the exp-sum and max but no per-class probs, so the
+            // sink is a no-op.
+            auto const [maxv, sum] =
+                row_softmax_exp(scores, base, n_classes_, [](size_t, double) {});
             size_t const y = class_of(labels[i], n_classes_);
-            total -= (scores[(i * n_classes_) + y] - maxv) - std::log(sum);
+            total -= (scores[base + y] - maxv) - std::log(sum);
         }
         return static_cast<float>(total / static_cast<double>(n));
     }
