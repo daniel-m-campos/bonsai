@@ -110,6 +110,12 @@ nav:
       - XGBoost: lineage/xgboost.md
       - LightGBM: lineage/lightgbm.md
       - CatBoost: lineage/catboost.md
+  - Method:
+      - The method: method/README.md
+      - Instrument first: method/instrument-first.md
+      - The feature-admission gate: method/feature-admission.md
+      - Benchmarks you can trust: method/benchmarking.md
+      - Determinism as a contract: method/determinism.md
   - Design:
       - Architecture: architecture/README.md
       - Decisions log: decisions.md
