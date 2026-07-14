@@ -5,7 +5,7 @@ the *math*; the code that connects them is hundreds of thousands of lines
 tuned past readability. This guide is the missing middle, and it is the
 reason bonsai exists: every chapter takes one concept from intuition,
 through the (light) math, to the **actual lines in this repository that
-implement it** — usually a few dozen — and ends with an experiment you can
+implement it** (usually a few dozen), and ends with an experiment you can
 run against xgboost, lightgbm, and catboost with the same knob turned.
 
 The code the guide references is the shipping code, not a simplification.
@@ -20,7 +20,7 @@ the whole implementation.
 | 1 | [Gradient boosting](1-gradient-boosting.md) | Why trees fit *gradients*, why second order, where leaf values come from |
 | 2 | [Binning & histograms](2-binning-and-histograms.md) | Why 255 buckets beat exact splits, and the subtraction trick |
 | 3 | [Finding splits](3-finding-splits.md) | The gain formula, one prefix scan, and where missing values go |
-| 4 | [Growing trees](4-growing-trees.md) | Depth-wise vs best-first vs oblivious — three answers to "which leaf next?" |
+| 4 | [Growing trees](4-growing-trees.md) | Depth-wise vs best-first vs oblivious: three answers to "which leaf next?" |
 | 5 | [Sampling](5-sampling.md) | Training on fewer rows: Bernoulli, GOSS, and a bug worth learning from |
 | 6 | [Regularization & constraints](6-regularization-and-constraints.md) | L1/L2, column sampling, monotone and interaction constraints |
 | 7 | [Early stopping & DART](7-early-stopping-and-dart.md) | Knowing when to stop, and dropout for trees |
@@ -35,11 +35,11 @@ the whole implementation.
 
 Every chapter has the same skeleton:
 
-- **The idea** — what problem this solves, in plain language.
-- **The math** — just enough notation to make the code inevitable.
-- **In bonsai** — the real implementation, with file links.
-- **Try it** — CLI and Python commands, and what to look for.
-- **Gotchas & war stories** — where the [decision log](../decisions.md)
+- **The idea**: what problem this solves, in plain language.
+- **The math**: just enough notation to make the code inevitable.
+- **In bonsai**: the real implementation, with file links.
+- **Try it**: CLI and Python commands, and what to look for.
+- **Gotchas & war stories**: where the [decision log](../decisions.md)
   supplies genuine ones (a divergence bug, a deadlock, a factor-of-20
   normalization mistake), not hypotheticals.
 

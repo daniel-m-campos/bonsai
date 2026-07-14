@@ -1,11 +1,11 @@
-# 3 — Finding splits
+# 3. Finding splits
 
 ## The idea
 
 A node holds a set of rows. A split sends each row left or right by
 comparing one feature to one threshold. The best split is the one that
-lets the two children correct the loss better than the parent could alone
-— and with histograms, evaluating *every* candidate threshold of a feature
+lets the two children correct the loss better than the parent could alone,
+and with histograms, evaluating *every* candidate threshold of a feature
 costs one scan over its ~255 cells.
 
 ## The math
@@ -35,8 +35,8 @@ is scored in O(1), each feature independently, and the best (feature, bin)
 wins.
 
 **Missing values** get their own reserved bin, excluded from the prefix
-walk. For every candidate, bonsai scores *both* routings — NaNs-left and
-NaNs-right — and keeps the better (`default_left` on the split). That is
+walk. For every candidate, bonsai scores *both* routings (NaNs-left and
+NaNs-right) and keeps the better (`default_left` on the split). That is
 xgboost's "learned default direction": the data decides where missing
 belongs, per split.
 
@@ -44,7 +44,7 @@ belongs, per split.
 
 All of it is [`src/split.cpp`](../../src/split.cpp):
 
-- `update_best_for_feature_for_node` — the per-feature scan. Read it
+- `update_best_for_feature_for_node`: the per-feature scan. Read it
   top to bottom: hoist the node score and the real (non-missing) totals,
   then for each cut cell accumulate the prefix and score both
   `default_left` routings via `split_sums_at`, the single source of truth
@@ -54,20 +54,20 @@ All of it is [`src/split.cpp`](../../src/split.cpp):
   soft threshold inside `score(G, H, α, λ)`
   ([`split.hpp`](../../include/bonsai/split.hpp)), monotone rejection and
   interaction-constraint masking ([chapter 6](6-regularization-and-constraints.md)).
-- `HistogramNodeSplitFinder::find` — the feature loop, parallel, with the
+- `HistogramNodeSplitFinder::find`: the feature loop, parallel, with the
   per-feature bests merged **serially in feature order** afterward so ties
   break identically to a serial scan (lowest feature id wins). There is
   also a *level* finder used by the oblivious grower which scores one
   shared split summed across a whole frontier
   (`update_best_for_feature_for_level`).
-- Applying the winner — `split_node` in
+- Applying the winner: `split_node` in
   [`src/grower.cpp`](../../src/grower.cpp): a stable two-pass scatter of
   the parent's rows (bin-compare against the split bin, missing routed by
   `default_left`), then the subtraction trick from chapter 2.
 
 The float threshold stored in the tree is `cuts[bin]`, so bin-space
-routing during training and float-space routing at predict agree exactly
-— an invariant several later features lean on (out-of-bag routing, DART).
+routing during training and float-space routing at predict agree exactly:
+an invariant several later features lean on (out-of-bag routing, DART).
 
 ## Try it
 
@@ -92,8 +92,8 @@ m.predict(x)   # finite — NaN followed each split's default_left
   strictly-greater comparisons everywhere + merge in ascending feature
   order. The parallel finder was shaped around preserving exactly this.
 - **`gain > best.gain` with `best.gain = 0`** means "no positive-gain
-  split" and "no split" are the same condition — a node with nothing to
+  split" and "no split" are the same condition: a node with nothing to
   say becomes a leaf even if depth remains.
-- **Score both NaN routings even on NaN-free data** — cheap, and it makes
+- **Score both NaN routings even on NaN-free data**: cheap, and it makes
   fit-time behavior independent of whether missing values appear later at
   predict time.
