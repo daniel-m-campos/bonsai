@@ -129,9 +129,9 @@ pred = model.predict(X_test)
 model.save("model.msgpack")           # loadable by `bonsai predict` and vice versa
 ```
 
-Prebuilt wheels for Linux (x86_64/aarch64) and macOS arm64, Python 3.9–3.13, ship with every [release](https://github.com/daniel-m-campos/bonsai/releases/latest); `pip install` the wheel for your platform with no toolchain. From source: `pip install .` (scikit-build-core builds the extension), or for development `cmake -B build -DBONSAI_PYTHON=ON && cmake --build build --target _bonsai` and set `PYTHONPATH=build/python`. Requires `nanobind` and `numpy` at build time. `scripts/compare.py` automatically adds in-process "native" rows to the benchmark table when the module is importable, timed the same way as the reference libraries.
+Prebuilt wheels for Linux (x86_64/aarch64) and macOS arm64, Python 3.9–3.13, ship with every [release](https://github.com/daniel-m-campos/bonsai/releases/latest); `pip install` the wheel for your platform with no toolchain. The linux x86_64 wheel is CUDA-enabled at 2.3MB total (xgboost's GPU wheel is ~300MB): GPU training works out of the box on any NVIDIA driver R525+ (SASS for sm_70 through sm_120, forward-JIT beyond), on a GPU-less machine it behaves exactly like a CPU wheel, and every release's CUDA wheel passes a live GPU validation before it attaches (decision 70). From source: `pip install .` (scikit-build-core builds the extension), or for development `cmake -B build -DBONSAI_PYTHON=ON && cmake --build build --target _bonsai` and set `PYTHONPATH=build/python`. Requires `nanobind` and `numpy` at build time. `scripts/compare.py` automatically adds in-process "native" rows to the benchmark table when the module is importable, timed the same way as the reference libraries.
 
-`BonsaiRegressor(config="cfg.toml")` / `train(..., config=...)` load a TOML file as the base config (the CLI's `-c`); kwargs and `params` override it. For GPU training from Python, `make python-cuda` builds the extension in the CUDA tree (use `PYTHONPATH=build-cuda/python`), or `pip install . -C cmake.define.BONSAI_CUDA=ON -C cmake.define.BONSAI_CUDA_ARCH=sm_120`; `bonsai.cuda_available()` reports whether `cuda_*` growers can train on this machine.
+`BonsaiRegressor(config="cfg.toml")` / `train(..., config=...)` load a TOML file as the base config (the CLI's `-c`); kwargs and `params` override it. For GPU training from Python on linux x86_64, the release wheel is enough: `BonsaiRegressor(grower="cuda_depthwise")`. Elsewhere, `make python-cuda` builds the extension in the CUDA tree (use `PYTHONPATH=build-cuda/python`), or `pip install . -C cmake.define.BONSAI_CUDA=ON -C cmake.define.BONSAI_CUDA_ARCH=sm_120`; `bonsai.cuda_available()` reports whether `cuda_*` growers can train on this machine. A docker on-ramp with the wheel preinstalled ships as `ghcr.io/daniel-m-campos/bonsai:cuda` (RunPod-ready, sshd entrypoint).
 
 `bonsai info` lists every `(objective, grower, sampler)` triple the binary knows how to dispatch to (currently 7×5×3 = 105 combos; growers that can't train on the current machine, like `cuda_depthwise` without a GPU, are marked predict-only).
 
@@ -163,7 +163,7 @@ The `make fit-benchmark` target additionally needs [uv](https://docs.astral.sh/u
 
 ### CUDA (optional)
 
-A GPU histogram backend (needs the CUDA toolkit ≥ 12) behind the `cuda_depthwise` grower. The grower is registered in every build (models trained with it load and predict anywhere, and `bonsai info` marks it predict-only where no device is available), but training needs a binary built with the backend, which lives in its own tree so the CPU-only `build/` stays pristine:
+A GPU histogram backend (needs the CUDA toolkit ≥ 12; clang cannot target CUDA 13) behind the `cuda_depthwise` grower. The grower is registered in every build (models trained with it load and predict anywhere, and `bonsai info` marks it predict-only where no device is available). Python users on linux x86_64 get the backend prebuilt in the release wheel; building it yourself needs its own tree so the CPU-only `build/` stays pristine:
 
 ```
 make build-cuda      # configure + compile with -DBONSAI_CUDA=ON (build-cuda/)

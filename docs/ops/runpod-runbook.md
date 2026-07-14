@@ -1,6 +1,8 @@
 # RunPod validation runbook — every workflow on the CLI
 
 > **Status:** operational reference. Every command block here was used live during the 2026-07 optimization campaign; the failure-mode table at the end is the decoder ring for when they misbehave. GPU changes are validated on rented pods because the dev Mac has no CUDA device — the loop is: create pod → wait for SSH → clone/build → run the `[cuda]` suite + a profiled benchmark → read the profile lines → delete the pod.
+>
+> **Release wheels validate themselves**: wheels.yml's `validate-cuda` job (decision 70) automates this loop per release with the `RUNPOD_API_KEY` repo secret, booting the candidate runtime image (`ghcr.io/daniel-m-campos/bonsai:candidate-<tag>`) and running the wheel smokes on it, with an unconditional teardown and leftover-pod sweep. This runbook remains the manual path for development sessions, benchmarks, and anything the gate doesn't cover.
 
 ## 0. Prerequisites
 
