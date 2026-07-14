@@ -117,6 +117,7 @@ nav:
       - The feature-admission gate: method/feature-admission.md
       - Benchmarks you can trust: method/benchmarking.md
       - The benchmark protocol: method/benchmark-protocol.md
+      - The results ledger: method/results.md
       - Determinism as a contract: method/determinism.md
   - Design:
       - Architecture: architecture/README.md

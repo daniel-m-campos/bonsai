@@ -58,3 +58,6 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 [tool.ruff.lint.per-file-ignores]
 # The compute-DAG cost table reads as aligned rows; wrapping would break it.
 "scripts/dag_model.py" = ["E501"]
+# Template strings ARE the generated page's one-line markdown paragraphs;
+# wrapping them would hard-wrap the rendered prose.
+"scripts/render_results.py" = ["E501"]

@@ -161,6 +161,9 @@ jobs:
       - run: uv venv --python ${{ matrix.python }} .venv && uv pip install --python .venv/bin/python nanobind numpy lightgbm scikit-learn
       # ruff first: a lint finding shouldn't cost a build to discover.
       - run: make lint-python
+      # The results ledger is generated from benchmarks/results/; a stale
+      # page or an unwired committed data file fails here (stdlib only).
+      - run: python3 scripts/render_results.py --check
       # test_bindings.py checks module-vs-CLI parity, so it needs the binary too.
       - run: make build
       - run: make python-test
