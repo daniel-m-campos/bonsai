@@ -4,7 +4,7 @@
 
 ## Why bin
 
-Histogram GBT scans bins, not raw values. `float32` cell → small integer bin index. Split-finding goes from `O(n_rows)` candidates per feature to `O(max_bin)`. `uint8` is 4× smaller than `float32` — memory and cache wins are the side benefit.
+Histogram GBT scans bins, not raw values. `float32` cell → small integer bin index. Split-finding goes from `O(n_rows)` candidates per feature to `O(max_bin)`. `uint8` is 4× smaller than `float32`: memory and cache wins are the side benefit.
 
 Train/val/test must use the **same** bin boundaries; otherwise "feature 7 < bin 3" means different things across splits and the model is broken on eval. `BinMappers` is fit once on training data, reused everywhere.
 
@@ -43,7 +43,7 @@ Plain aggregate: raw `float` columns, no binning, no invariants beyond "all feat
 
 Why it exists: `BinMappers::fit` and `Dataset::bin` both need raw column data. The reader produces a `ColumnBatch`; the consumers take it as input. Without this shared intermediate, you'd either parse the file twice or collapse `fit` and `bin` into one factory (rejected as decision 2).
 
-CLI default: parse twice on the train path (cheap for California Housing). If that ever matters — once larger datasets like YearPredictionMSD enter the perf benchmark — the CLI can call `csv::parse` directly once and pass the same `ColumnBatch` to both `fit` and `bin`.
+CLI default: parse twice on the train path (cheap for California Housing). If that ever matters (once larger datasets like YearPredictionMSD enter the perf benchmark), the CLI can call `csv::parse` directly once and pass the same `ColumnBatch` to both `fit` and `bin`.
 
 ## `BinMapper`
 
@@ -141,10 +141,10 @@ private:
 ### Layout (decision 4)
 
 - **Column-major.** Row-major destroys cache on histogram scans.
-- **Uniform `bin_id_t` storage** for all binned columns. Doesn't matter if a feature has 8 bins or 250 — same width.
+- **Uniform `bin_id_t` storage** for all binned columns. Doesn't matter if a feature has 8 bins or 250: same width.
 - Group columns (ranking) are non-goals.
 
-Rejected: `std::variant<vector<uint8_t>, vector<uint16_t>>` per feature to halve memory on small-bin features. Forecast savings on planned perf datasets: ~45MB on YearPredictionMSD, ~308MB on Higgs — neither pressure-tests modern hardware. Cost was variant dispatch (a `visit_column` wrapper at every column scan). Rejected for MVP. Reversible if memory becomes the bottleneck on a future dataset.
+Rejected: `std::variant<vector<uint8_t>, vector<uint16_t>>` per feature to halve memory on small-bin features. Forecast savings on planned perf datasets: ~45MB on YearPredictionMSD, ~308MB on Higgs; neither pressure-tests modern hardware. Cost was variant dispatch (a `visit_column` wrapper at every column scan). Rejected for MVP. Reversible if memory becomes the bottleneck on a future dataset.
 
 ### Histogram inner loop
 
@@ -158,7 +158,7 @@ Direct array indexing. No variant, no dispatch.
 
 ## Trees store float thresholds (decision 3)
 
-Tree node split = `(feature_id, threshold: float)`. Predict reads raw `float`, no re-binning. `TreeGrower` finds best split as `(fid, bin_idx)`, converts to `threshold = cuts[bin_idx]` when writing the node — one lookup per finalized split.
+Tree node split = `(feature_id, threshold: float)`. Predict reads raw `float`, no re-binning. `TreeGrower` finds best split as `(fid, bin_idx)`, converts to `threshold = cuts[bin_idx]` when writing the node: one lookup per finalized split.
 
 Knock-on: predict path doesn't need `BinMappers`. Single tree walk over raw floats. `BinMappers` in the model file is for diagnostics + reproducibility, not load-bearing for predict.
 
