@@ -25,15 +25,15 @@
 
 ## What is bonsai?
 
-bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library and command-line tool written in C++23. It pairs a small, concept-checked component API (objectives, growers, split finders, samplers) with compile-time dispatch in the training hot path, and ships a benchmark harness that pits it against xgboost, lightgbm, and catboost on real data. The aim is a readable, thoroughly documented GBT — a reference-grade implementation that still lands within RMSE tolerance of the production libraries.
+bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library and command-line tool written in C++23. It pairs a small, concept-checked component API (objectives, growers, split finders, samplers) with compile-time dispatch in the training hot path, and ships a benchmark harness that pits it against xgboost, lightgbm, and catboost on real data. The aim is a readable, thoroughly documented GBT: a reference-grade implementation that still lands within RMSE tolerance of the production libraries.
 
 ## Highlights
 
-- **Compile-time dispatch where it counts.** Components are C++ concepts; the runtime TOML config is resolved to a monomorphized `Booster<Objective, Grower, Splitter, Sampler>` exactly once at construction. Everything inside the training loop is statically dispatched — no virtual calls in the hot path.
-- **Concept-checked components.** Contract violations are caught at compile time, not runtime. Adding a stateless grower or sampler is two edits; objectives add three trait specializations (link, task, default metrics) that static assertions demand by name. Either way the dispatch table, CLI listing, and parametric tests expand automatically — see [Extending bonsai](#extending-bonsai).
-- **A guide, not just docs.** [docs/guide/](docs/guide/) explains how gradient boosting works chapter by chapter — concept, math, then the ~50 real lines that implement it here, then an experiment. Written against this codebase because it's small enough to actually read.
-- **Reference-library performance, measured.** Same-pod sweeps against xgboost, lightgbm, and catboost at matched settings: the CUDA grower owns the fastest slot at every row scale — its `oblivious` grower edges catboost-GPU and beats xgboost-GPU at 16M (18.4 / 18.5 / 19.9s, matched accuracy) at ~3× less host memory (7 vs 19–22GB); CPU growers beat lightgbm at 16M and on wide data, and tie xgboost-hist at 16M. Numbers and caveats in [Performance](#performance); raw runs in `benchmarks/results/`.
-- **Three growers.** `depthwise` (level-wise, XGBoost-style), `leafwise` (best-first with a `max_leaves` budget, LightGBM-style), and `oblivious` (symmetric, CatBoost-style) — selectable per run from config.
+- **Compile-time dispatch where it counts.** Components are C++ concepts; the runtime TOML config is resolved to a monomorphized `Booster<Objective, Grower, Splitter, Sampler>` exactly once at construction. Everything inside the training loop is statically dispatched, with no virtual calls in the hot path.
+- **Concept-checked components.** Contract violations are caught at compile time, not runtime. Adding a stateless grower or sampler is two edits; objectives add three trait specializations (link, task, default metrics) that static assertions demand by name. Either way the dispatch table, CLI listing, and parametric tests expand automatically; see [Extending bonsai](#extending-bonsai).
+- **A guide, not just docs.** [docs/guide/](docs/guide/) explains how gradient boosting works chapter by chapter: concept, math, then the ~50 real lines that implement it here, then an experiment. Written against this codebase because it's small enough to actually read.
+- **Reference-library performance, measured.** Same-pod sweeps against xgboost, lightgbm, and catboost at matched settings: the CUDA grower owns the fastest slot at every row scale: its `oblivious` grower edges catboost-GPU and beats xgboost-GPU at 16M (18.4 / 18.5 / 19.9s, matched accuracy) at ~3× less host memory (7 vs 19–22GB); CPU growers beat lightgbm at 16M and on wide data, and tie xgboost-hist at 16M. Numbers and caveats in [Performance](#performance); raw runs in `benchmarks/results/`.
+- **Three growers.** `depthwise` (level-wise, XGBoost-style), `leafwise` (best-first with a `max_leaves` budget, LightGBM-style), and `oblivious` (symmetric, CatBoost-style), selectable per run from config.
 - **Deterministic parallelism.** OpenMP across features and rows with ordered merges only: models and predictions are bit-identical across runs at a fixed thread count (`[parallel] n_threads`, 0 = capped auto), and bit-identical to serial at any count outside the u8 histogram fill (decision 49).
 - **CLI-first, config-driven.** CatBoost-style subcommands, a strict TOML config, and inline `--set key=value` overrides; Python bindings (`make python`) share the exact same seams.
 - **One-command build, no system dependencies.** CMake + FetchContent vendors every dependency; a clean checkout builds with a single command.
@@ -59,22 +59,22 @@ Scaling features (1M rows):
 | 1024 | 11.2s | 10.6s | 12.5s | **9.7s** | 59.2s |
 | 4096 | 44.2s | 41.9s | 50.6s | **35.8s** | 256.2s |
 
-Honest caveats, because benchmarks without them are advertising: identical-model GPUs across the rental fleet measure up to ~25% apart, so only same-pod columns compare. bonsai owns the fastest slot at every row scale — `depthwise` up to 1M, and `oblivious` at 4M/16M, where it edges catboost (16M: **18.4s vs 18.5s**, both .876) and beats xgboost-GPU (19.9s); its `depthwise` runs slightly hotter (20.5s) for slightly more accuracy (.879). On wide data catboost keeps the lead (1024/4096 cols), with bonsai second and ahead of xgboost-GPU. bonsai's peak host RSS at 16M is **7.0GB vs xgboost's 22.2GB and catboost's 19.4GB** (a ~3× edge), and its predict is ~3× faster. Two earlier apparent gaps against catboost were bonsai bugs, since fixed — the oblivious accuracy defect (decision 63; note the old table's .864 CPU-oblivious r² was that bug, now .876) and a per-feature binning pass catboost didn't pay (decision 64). The path from 3× behind to this table is [guide chapter 11](docs/guide/11-performance-engineering.md); the cut-quality residual vs xgboost (+0.001 r²) is decision 55.
+Honest caveats, because benchmarks without them are advertising: identical-model GPUs across the rental fleet measure up to ~25% apart, so only same-pod columns compare. bonsai owns the fastest slot at every row scale: `depthwise` up to 1M, and `oblivious` at 4M/16M, where it edges catboost (16M: **18.4s vs 18.5s**, both .876) and beats xgboost-GPU (19.9s); its `depthwise` runs slightly hotter (20.5s) for slightly more accuracy (.879). On wide data catboost keeps the lead (1024/4096 cols), with bonsai second and ahead of xgboost-GPU. bonsai's peak host RSS at 16M is **7.0GB vs xgboost's 22.2GB and catboost's 19.4GB** (a ~3× edge), and its predict is ~3× faster. Two earlier apparent gaps against catboost were bonsai bugs, since fixed: the oblivious accuracy defect (decision 63; note the old table's .864 CPU-oblivious r² was that bug, now .876) and a per-feature binning pass catboost didn't pay (decision 64). The path from 3× behind to this table is [guide chapter 11](docs/guide/11-performance-engineering.md); the cut-quality residual vs xgboost (+0.001 r²) is decision 55.
 
 ## Claims and proofs
 
-Every performance or quality claim bonsai makes links to a reproducible run and the decision that records it — the point of a small, measured library is that you can check it.
+Every performance or quality claim bonsai makes links to a reproducible run and the decision that records it; the point of a small, measured library is that you can check it.
 
 | Claim | Evidence |
 |---|---|
-| **Bit-identical models across CPU architectures** (arm64 == x86-64) at a fixed thread count — no reference library offers this | decisions [59](docs/decisions.md)/60; asserted per-commit by [`cross-arch.yml`](.github/workflows/cross-arch.yml) via [`scripts/model_hash.py`](scripts/model_hash.py) |
+| **Bit-identical models across CPU architectures** (arm64 == x86-64) at a fixed thread count; no reference library offers this | decisions [59](docs/decisions.md)/60; asserted per-commit by [`cross-arch.yml`](.github/workflows/cross-arch.yml) via [`scripts/model_hash.py`](scripts/model_hash.py) |
 | **Ties xgboost-hist at 16M rows on CPU** (75.8 vs 75.7s, same pod) | [decision 61](docs/decisions.md); [`benchmarks/results/cpu-prefetch-round-2026-07.jsonl`](benchmarks/results/cpu-prefetch-round-2026-07.jsonl) |
 | **Fastest GPU slot at every row scale**; at 16M `oblivious` edges catboost (18.4 vs 18.5s) and beats xgboost-GPU (19.9s) at matched accuracy | [rebaseline jsonl](benchmarks/results/rebaseline-2026-07.jsonl), [scale-edge](benchmarks/catboost-scale-edge-2026-07.md), decisions 62–64; [`scripts/gpu_pareto.py`](scripts/gpu_pareto.py) |
 | **Categorical parity with catboost within chance-band**, via preprocessing not an engine feature | [decision 58](docs/decisions.md); [categorical-tradeoff](benchmarks/categorical-tradeoff-2026-07.md); [`python/bonsai/encoding.py`](python/bonsai/encoding.py) |
 | **Best library on 9 of 10 real datasets** (CPU quality campaign) | [quality-campaign](benchmarks/quality-campaign-2026-07.md), decisions 56–57 |
 | **~3× less host memory than xgboost** at 16M (7.3 vs 22.2GB) and ~3× faster predict | [`benchmarks/results/rebaseline-2026-07.jsonl`](benchmarks/results/rebaseline-2026-07.jsonl) |
-| **Ranking is a measured, scoped gap** — a modest ~+0.015 NDCG@10 to a *listwise* loss, not pairwise LambdaRank | [ranking-tradeoff](benchmarks/ranking-tradeoff-2026-07.md); [`scripts/probe_ranking.py`](scripts/probe_ranking.py) |
-| **Every feature earns its place by measurement** — refutations are recorded too | the [feature-admission gate](.claude/skills/feature-admission/SKILL.md); declines in decisions 58/62 |
+| **Ranking is a measured, scoped gap**: a modest ~+0.015 NDCG@10 to a *listwise* loss, not pairwise LambdaRank | [ranking-tradeoff](benchmarks/ranking-tradeoff-2026-07.md); [`scripts/probe_ranking.py`](scripts/probe_ranking.py) |
+| **Every feature earns its place by measurement**: refutations are recorded too | the [feature-admission gate](.claude/skills/feature-admission/SKILL.md); declines in decisions 58/62 |
 
 ## Quick start
 
@@ -112,7 +112,7 @@ Append `--dump-config` to any subcommand to print the resolved config (after `-c
 
 ### Python
 
-A nanobind extension wraps the same training pipeline the CLI uses — numpy in, numpy out, models interchangeable with the CLI's `.msgpack` format:
+A nanobind extension wraps the same training pipeline the CLI uses: numpy in, numpy out, models interchangeable with the CLI's `.msgpack` format:
 
 ```python
 import bonsai
@@ -136,7 +136,7 @@ Install with `pip install .` (scikit-build-core builds the extension), or for de
 ## Build
 
 Requires:
-- LLVM ≥ 20: clang + libc++ (C++23: `std::print`, `std::mdspan`; libc++ gains float `std::from_chars` in 20, and clang 19 relaxed an over-broad OpenMP restriction on capturing structured bindings — clang 18 fails on both)
+- LLVM ≥ 20: clang + libc++ (C++23: `std::print`, `std::mdspan`; libc++ gains float `std::from_chars` in 20, and clang 19 relaxed an over-broad OpenMP restriction on capturing structured bindings; clang 18 fails on both)
 - CMake ≥ 3.28
 - Ninja (recommended)
 
@@ -161,7 +161,7 @@ The `make fit-benchmark` target additionally needs [uv](https://docs.astral.sh/u
 
 ### CUDA (optional)
 
-A GPU histogram backend (needs the CUDA toolkit ≥ 12) behind the `cuda_depthwise` grower. The grower is registered in every build — models trained with it load and predict anywhere, and `bonsai info` marks it predict-only where no device is available — but training needs a binary built with the backend, which lives in its own tree so the CPU-only `build/` stays pristine:
+A GPU histogram backend (needs the CUDA toolkit ≥ 12) behind the `cuda_depthwise` grower. The grower is registered in every build (models trained with it load and predict anywhere, and `bonsai info` marks it predict-only where no device is available), but training needs a binary built with the backend, which lives in its own tree so the CPU-only `build/` stays pristine:
 
 ```
 make build-cuda      # configure + compile with -DBONSAI_CUDA=ON (build-cuda/)
@@ -169,9 +169,9 @@ make test-cuda       # ctest against the CUDA build
 ./build-cuda/src/bonsai fit -c config.toml --set dispatch.grower_name=cuda_depthwise ...
 ```
 
-Training is device-resident ([docs/architecture/11-gpu-resident.md](docs/architecture/11-gpu-resident.md)): histograms, rows, and split finding all live on the GPU, with only split decisions and child counts crossing the bus per level (float shared-memory accumulation merged in double — RMSE matches the CPU grower to library-comparison precision). The host grow loop remains the single algorithm narrative and the decision-maker; saved models are ordinary `DenseTree`s, identical in format to `depthwise`, and predict on any build. The kernel TU ([src/cuda/histogram_engine.cu](src/cuda/histogram_engine.cu)) is CUDA C++ compiled by the project's own clang (`-x cuda`) — same C++23, same libc++, no nvcc — so kernels use bonsai types and the shared gain math directly. Set `BONSAI_CUDA_ARCH` if `native` detection is unavailable; `BONSAI_CUDA_PROFILE=1` / `BONSAI_GROW_PROFILE=1` print per-fit breakdowns. Two growers run on the GPU: `cuda_depthwise` (fully device-resident) and `cuda_oblivious` (device level-find choosing one split per level across the whole frontier, CatBoost-style symmetric trees).
+Training is device-resident ([docs/architecture/11-gpu-resident.md](docs/architecture/11-gpu-resident.md)): histograms, rows, and split finding all live on the GPU, with only split decisions and child counts crossing the bus per level (float shared-memory accumulation merged in double; RMSE matches the CPU grower to library-comparison precision). The host grow loop remains the single algorithm narrative and the decision-maker; saved models are ordinary `DenseTree`s, identical in format to `depthwise`, and predict on any build. The kernel TU ([src/cuda/histogram_engine.cu](src/cuda/histogram_engine.cu)) is CUDA C++ compiled by the project's own clang (`-x cuda`), same C++23, same libc++, no nvcc, so kernels use bonsai types and the shared gain math directly. Set `BONSAI_CUDA_ARCH` if `native` detection is unavailable; `BONSAI_CUDA_PROFILE=1` / `BONSAI_GROW_PROFILE=1` print per-fit breakdowns. Two growers run on the GPU: `cuda_depthwise` (fully device-resident) and `cuda_oblivious` (device level-find choosing one split per level across the whole frontier, CatBoost-style symmetric trees).
 
-GPU-vs-reference numbers live in [Performance](#performance) (same-pod, matched settings). A wider synthetic scaling study — rows to 16M, cols to 65k, bins to 65535, across five GPU generations — is in [benchmarks/results/scaling.md](benchmarks/results/scaling.md) (methodology in decision 46); the optimization rounds it seeded are the story of [guide chapter 11](docs/guide/11-performance-engineering.md).
+GPU-vs-reference numbers live in [Performance](#performance) (same-pod, matched settings). A wider synthetic scaling study (rows to 16M, cols to 65k, bins to 65535, across five GPU generations) is in [benchmarks/results/scaling.md](benchmarks/results/scaling.md) (methodology in decision 46); the optimization rounds it seeded are the story of [guide chapter 11](docs/guide/11-performance-engineering.md).
 
 ## Extending bonsai
 
@@ -206,7 +206,7 @@ docs/             design + decision logs
 
 ## Documentation
 
-- **[docs/guide/](docs/guide/): the bonsai guide** — gradient boosting from math to code. Each chapter takes one concept (histograms, split finding, GOSS, DART, feature importance, determinism…) from intuition through the actual implementing code to an experiment you can run against the reference libraries. This is the differentiator: reference libraries document parameters; the guide documents *mechanics*, against readable code.
+- **[docs/guide/](docs/guide/): the bonsai guide**: gradient boosting from math to code. Each chapter takes one concept (histograms, split finding, GOSS, DART, feature importance, determinism…) from intuition through the actual implementing code to an experiment you can run against the reference libraries. This is the differentiator: reference libraries document parameters; the guide documents *mechanics*, against readable code.
 - [docs/report.md](docs/report.md): project retrospective (what was built, performance vs reference libraries, reflections, deferred work) + 2026-07 addendum.
 - [docs/proposal.md](docs/proposal.md): initial project proposal.
 - [docs/architecture/](docs/architecture/): per-component design notes.
