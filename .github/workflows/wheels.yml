@@ -90,8 +90,16 @@ jobs:
           r2 = bonsai.BonsaiRegressor(n_iters=20).fit(X, y).score(X, y)
           assert r2 > 0.8, r2
           yc = (X[:, 1] > 0.5).astype(np.float32)
-          proba = bonsai.BonsaiClassifier(n_iters=10).fit(X, yc).predict_proba(X)
-          assert proba.shape == (2000, 2)
+          clf = bonsai.BonsaiClassifier(n_iters=10).fit(X, yc)
+          assert clf.predict_proba(X).shape == (2000, 2)
+          # save/from_file round-trip: caught a tomllib-on-3.10 break once,
+          # so every leg of the version matrix exercises it
+          import tempfile, os
+          with tempfile.TemporaryDirectory() as td:
+              p = os.path.join(td, "clf.msgpack")
+              clf.save(p)
+              restored = bonsai.BonsaiClassifier.from_file(p)
+              assert restored.predict(X).shape == (2000,)
           ds = bonsai.Dataset(X, y)
           bonsai.train([("booster.n_iters", "5")], ds)
           print("wheel OK: r2 =", round(r2, 4))
