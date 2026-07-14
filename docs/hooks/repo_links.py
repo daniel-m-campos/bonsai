@@ -8,11 +8,17 @@ markdown keeps the relative form; only the rendered site gets absolute URLs.
 
 from __future__ import annotations
 
+import os
 import posixpath
 import re
 
-REPO_BLOB = "https://github.com/daniel-m-campos/bonsai/blob/main/"
-REPO_RAW = "https://raw.githubusercontent.com/daniel-m-campos/bonsai/main/"
+# Pin rewritten links to the deployed commit when building in CI (GITHUB_SHA
+# is set by Actions): line anchors like src/split.cpp#L120 then reference the
+# code the prose was written against, instead of drifting as main moves.
+# Local builds fall back to main.
+_REF = os.environ.get("GITHUB_SHA", "main")
+REPO_BLOB = f"https://github.com/daniel-m-campos/bonsai/blob/{_REF}/"
+REPO_RAW = f"https://raw.githubusercontent.com/daniel-m-campos/bonsai/{_REF}/"
 LINK = re.compile(r"(!?\]\()(\.\.?/[^)#\s]*)([^)]*\))")
 
 
