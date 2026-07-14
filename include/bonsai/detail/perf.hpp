@@ -115,6 +115,9 @@ struct GrowProfiler : Profiler<GrowProfiler>
     // commit = demote + commit_children between the engine phases;
     // assemble = gains/covers resize + Tree construction + result move-out.
     double setup_s = 0, commit_s = 0, assemble_s = 0;
+    // assign = make_root's host copy of the sampler's row list (64MB/tree at
+    // 16M full-data fits); a rung-0 conservation split of populate.
+    double assign_s      = 0;
     double populate_adds = 0, populate_row_s = 0;
 
     static constexpr std::array fields = {
@@ -126,6 +129,7 @@ struct GrowProfiler : Profiler<GrowProfiler>
         std::pair{"setup", &GrowProfiler::setup_s},
         std::pair{"commit", &GrowProfiler::commit_s},
         std::pair{"assemble", &GrowProfiler::assemble_s},
+        std::pair{"assign", &GrowProfiler::assign_s},
     };
 
     std::string extra() const

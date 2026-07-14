@@ -58,7 +58,7 @@ struct ProfileCounters
     // from event pairs read at the next profile sync, plus the begin_root
     // host reduction, so every millisecond of the round has a name.
     double root_sums_s = 0, adv_memset_s = 0, adv_hist_s = 0, adv_sub_s = 0;
-    double root_hist_s = 0;
+    double root_hist_s = 0, fin_stamp_s = 0, fin_map_s = 0;
     size_t launches = 0, gpu_nodes = 0, cpu_calls = 0;
 
     ProfileCounters()                                       = default;
@@ -115,8 +115,10 @@ struct ProfileCounters
                          bins_upload_s, fin_wait_s, fin_d2h_s, find_kern_s, find_d2h_s);
             std::println(stderr,
                          "cuda-round-decomp: root_sums={:.2f}s root_hist={:.2f}s "
-                         "adv_memset={:.2f}s adv_hist={:.2f}s adv_sub={:.2f}s",
-                         root_sums_s, root_hist_s, adv_memset_s, adv_hist_s, adv_sub_s);
+                         "adv_memset={:.2f}s adv_hist={:.2f}s adv_sub={:.2f}s "
+                         "fin_stamp={:.2f}s fin_map={:.2f}s",
+                         root_sums_s, root_hist_s, adv_memset_s, adv_hist_s, adv_sub_s,
+                         fin_stamp_s, fin_map_s);
         }
         catch (...)
         {
@@ -831,6 +833,7 @@ void CudaHistogramEngine::stamp_leaves(std::span<LeafStamp const> stamps)
     {
         return;
     }
+    auto stamp_lap = im.prof_counters.lap();
     im.lvl.part_ops.clear();
     im.lvl.stamp_ids.clear();
     for (LeafStamp const &st : stamps)
@@ -845,6 +848,7 @@ void CudaHistogramEngine::stamp_leaves(std::span<LeafStamp const> stamps)
         im.lvl.cur_rows().data(), im.lvl.part_ops.device(), im.lvl.stamp_ids.device(),
         im.lvl.leaf_by_row.data());
     check(cudaGetLastError(), "stamp launch");
+    stamp_lap(im.prof_counters.fin_stamp_s);
 }
 
 void CudaHistogramEngine::partition_level(Dataset const & /*ds*/,
@@ -922,8 +926,9 @@ void CudaHistogramEngine::finalize_tree(std::span<float const> node_values,
                                         std::span<float>       values,
                                         std::span<node_id_t>   leaf_ids)
 {
-    Impl      &im = *impl_;
-    auto const n  = static_cast<uint32_t>(values.size());
+    Impl      &im      = *impl_;
+    auto       map_lap = im.prof_counters.lap();
+    auto const n       = static_cast<uint32_t>(values.size());
     im.lvl.epi_node_vals.upload(node_values.data(), node_values.size());
     im.lvl.epi_values.reserve(values.size());
     dim3 const grid((n + 255) / 256);
@@ -931,6 +936,7 @@ void CudaHistogramEngine::finalize_tree(std::span<float const> node_values,
         im.lvl.leaf_by_row.data(), im.lvl.epi_node_vals.data(),
         static_cast<uint32_t>(node_values.size()), im.lvl.epi_values.data(), n);
     check(cudaGetLastError(), "epilogue map launch");
+    map_lap(im.prof_counters.fin_map_s);
     auto flap = im.prof_counters.lap();
     if (im.prof_counters.enabled)
     {

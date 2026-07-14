@@ -522,6 +522,7 @@ class LevelStep<EngineT, SplitterT>
         SplitInput        root;
         root.id = 0;
         root.rows.assign(row_indices.begin(), row_indices.end());
+        lap(GrowProfiler::instance().assign_s);
         on_device_ = engine_.begin_root(ds_, grad_, hess_, root, selected_);
         if (on_device_)
         {
