@@ -1,10 +1,19 @@
-# Prebuilt CPU-only wheels so users get `pip install` without LLVM/CMake.
+# Prebuilt wheels so users get `pip install` without LLVM/CMake.
 # Native-runner builds (not manylinux containers): the official LLVM release
 # binaries need a newer glibc than manylinux_2_28 ships, so we build on
 # ubuntu-22.04 (glibc 2.35) and tag manylinux_2_35 — Ubuntu 22.04+/Debian 12+.
-# auditwheel/delocate vendor libc++ (and libunwind) into the wheel; libomp is
-# statically linked by BONSAI_OPENMP_STATIC. Wheels attach to the GitHub
-# Release on publish; PyPI is a follow-up (needs trusted-publisher setup).
+#
+# The linux x86_64 wheel is CUDA-enabled (issue #99): 7-arch SASS plus an
+# sm_90 PTX forward-JIT floor, cudart linked statically so GPU-less hosts
+# import cleanly (cuda_available() == False; leg-0 measured 2.33MB total).
+# It is withheld from the release auto-attach pending the GPU pod gate.
+# arm64 and macOS wheels stay CPU-only.
+#
+# auditwheel/delocate vendor libc++ (and libunwind) into the wheel. libomp is
+# static on macOS but vendored DYNAMIC on Linux: apt.llvm.org ships no
+# libomp.a, so BONSAI_OPENMP_STATIC falls back and auditwheel's name-mangled
+# copy provides the private runtime instead (issue #134). Wheels attach to
+# the GitHub Release on publish; PyPI is a follow-up (trusted publishing).
 name: wheels
 
 on:
@@ -19,6 +28,8 @@ on:
   pull_request:
     paths:
       - ".github/workflows/wheels.yml"
+      - ".github/actions/setup-llvm/**"
+      - ".github/actions/setup-cuda/**"
       - "pyproject.toml"
   release:
     types: [published]
@@ -39,6 +50,10 @@ jobs:
         # PRs build one python leg per OS (the ci python job already covers
         # the 3.9 floor); releases and dispatches build the full fan.
         python: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.9", "3.10", "3.11", "3.12", "3.13"]') }}
+        # The linux x86_64 leg carries the CUDA backend (issue #99).
+        include:
+          - os: ubuntu-22.04
+            cuda: true
     steps:
       - uses: actions/checkout@v4
 
@@ -52,10 +67,15 @@ jobs:
             clang-21 libc++-21-dev libc++abi-21-dev libomp-21-dev ninja-build
             patchelf
 
+      - uses: ./.github/actions/setup-cuda
+        if: matrix.cuda
+        id: cuda
+
       - name: Build wheel
         env:
           CMAKE_BUILD_PARALLEL_LEVEL: "4"
         run: |
+          EXTRA=()
           if [ "${{ runner.os }}" = "Linux" ]; then
             export CC=/usr/lib/llvm-21/bin/clang CXX=/usr/lib/llvm-21/bin/clang++
           else
@@ -65,7 +85,18 @@ jobs:
             export CXXFLAGS="-D_LIBCPP_DISABLE_AVAILABILITY"
             export MACOSX_DEPLOYMENT_TARGET="14.0"
           fi
-          python -m pip wheel . -w dist --no-deps
+          if [ "${{ matrix.cuda }}" = "true" ]; then
+            # Fat SASS for every real arch, one PTX floor for forward-JIT
+            # (sm_100+ JITs from compute_90), static cudart so the extension
+            # has no CUDA DT_NEEDED. Sizes/costs measured on the leg-0 probe:
+            # https://github.com/daniel-m-campos/bonsai/issues/99
+            EXTRA=(-C cmake.define.BONSAI_CUDA=ON
+                   -C "cmake.define.BONSAI_CUDA_ARCH=sm_70;sm_75;sm_80;sm_86;sm_89;sm_90;sm_120"
+                   -C cmake.define.BONSAI_CUDA_PTX_ARCH=sm_90
+                   -C cmake.define.BONSAI_CUDA_STATIC_RUNTIME=ON
+                   -C cmake.define.CUDAToolkit_ROOT=${{ steps.cuda.outputs.root }})
+          fi
+          python -m pip wheel . -w dist --no-deps "${EXTRA[@]}"
 
       - name: Repair wheel (Linux)
         if: runner.os == 'Linux'
@@ -86,11 +117,45 @@ jobs:
           python -m venv /tmp/smoke
           /tmp/smoke/bin/pip -q install wheelhouse/*.whl
           /tmp/smoke/bin/python scripts/wheel_smoke.py
+          if [ "${{ matrix.cuda }}" = "true" ]; then
+            /tmp/smoke/bin/python scripts/wheel_smoke_gpu_absent.py
+          fi
+
+      # Byte-identity across the fold-in: every leg hashes the same fixed
+      # model from inside its smoke venv and the hash-compare job asserts
+      # equality — the cross-arch determinism contract (decisions 59/60),
+      # proven here on the shipped artifacts with CUDA folded into one leg.
+      - name: Model hash from the installed wheel
+        if: matrix.python == '3.12'
+        run: /tmp/smoke/bin/python scripts/model_hash.py | tee model-hash.txt
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.python == '3.12'
+        with:
+          name: model-hash-${{ matrix.os }}
+          path: model-hash.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wheel-${{ matrix.os }}-py${{ matrix.python }}
+          name: wheel-${{ matrix.cuda && 'cuda' || matrix.os }}-py${{ matrix.python }}
           path: wheelhouse/*.whl
+
+  hash-compare:
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: model-hash-*
+          path: hashes
+      - run: |
+          grep -H . hashes/*/model-hash.txt
+          n=$(sha256sum hashes/*/model-hash.txt | awk '{print $1}' | sort -u | wc -l)
+          if [ "$n" != "1" ]; then
+            echo "::error::model hash split across wheel legs — the CUDA fold-in or a platform touched the host plane"
+            exit 1
+          fi
 
   sdist:
     runs-on: ubuntu-22.04
@@ -150,7 +215,7 @@ jobs:
     # (workflow_dispatch with a tag) re-upload to an existing release —
     # e.g. recovering from a flaked publish run without cutting a new tag.
     if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
-    needs: [build, sdist, sdist-install-test]
+    needs: [build, sdist, sdist-install-test, hash-compare]
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     permissions:
@@ -160,6 +225,17 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+
+      # The linux x86_64 wheel is the CUDA-enabled one; it attaches only
+      # after passing on a real GPU (the pod gate), never straight from a
+      # GPU-less build. arm64/macOS wheels and the sdist attach here.
+      - name: Withhold the CUDA wheel pending the GPU gate
+        run: |
+          rm -f dist/model-hash.txt
+          ls dist/
+          rm -f dist/*manylinux*_x86_64*.whl
+          echo "after withholding the CUDA (linux x86_64) wheel:"
+          ls dist/
 
       - name: Resolve target tag
         id: tag
