@@ -90,6 +90,22 @@ GPU training currently needs a source build with `BONSAI_CUDA=ON`; prebuilt CUDA
 
 `mse` (default), `mae`, `huber`, `quantile`, `poisson`, `logloss`, `softmax`. The estimators pick classification objectives automatically from your labels; the explicit layer sets `dispatch.objective_name`. Ranking objectives are a measured, scoped gap, not an accident of omission.
 
+## Reproducing the benchmarks
+
+The harness behind every published table ships in the package. `pip install bonsai-gbt[bench]` adds the reference libraries, then `python -m bonsai.bench.grinsztajn out.jsonl --report` re-runs the external standings suite. The building blocks are importable directly:
+
+```python
+from bonsai.bench import metrics, params, synth
+
+X_train, y_train, X_test, y_test = synth.gen_data(
+    10_000, 20, seed=42, n_test=1_000, informative=20)
+model = bonsai.BonsaiRegressor(n_iters=8).fit(X_train, y_train)
+print(round(metrics.r2(y_test, model.predict(X_test)), 3),
+      params.CAMPAIGN["iters"])
+```
+
+The protocol (divisions, metrics, timing modes) is the [benchmark charter](https://daniel-m-campos.github.io/bonsai/method/benchmark-protocol/).
+
 ## What to read next
 
 The [guide](../guide/README.md) explains what every knob actually does, mechanism first: growers in [chapter 4](../guide/4-growing-trees.md), sampling in [chapter 5](../guide/5-sampling.md), regularization and constraints in [chapter 6](../guide/6-regularization-and-constraints.md), early stopping and DART in [chapter 7](../guide/7-early-stopping-and-dart.md).
