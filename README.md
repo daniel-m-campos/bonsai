@@ -15,10 +15,11 @@
 </p>
 
 <p align="center">
-  <a href="docs/proposal.md">Proposal</a> &nbsp;·&nbsp;
-  <a href="docs/architecture/">Architecture</a> &nbsp;·&nbsp;
-  <a href="docs/decisions.md">Decisions</a> &nbsp;·&nbsp;
-  <a href="docs/report.md">Retrospective</a>
+  <a href="https://daniel-m-campos.github.io/bonsai/"><b>Documentation</b></a> &nbsp;·&nbsp;
+  <a href="https://daniel-m-campos.github.io/bonsai/guide/">Guide</a> &nbsp;·&nbsp;
+  <a href="https://daniel-m-campos.github.io/bonsai/lineage/xgboost/">Lineage</a> &nbsp;·&nbsp;
+  <a href="https://daniel-m-campos.github.io/bonsai/decisions/">Decisions</a> &nbsp;·&nbsp;
+  <a href="https://github.com/daniel-m-campos/bonsai/releases/latest">Releases</a>
 </p>
 
 ---
@@ -127,7 +128,7 @@ pred = model.predict(X_test)
 model.save("model.msgpack")           # loadable by `bonsai predict` and vice versa
 ```
 
-Install with `pip install .` (scikit-build-core builds the extension), or for development `cmake -B build -DBONSAI_PYTHON=ON && cmake --build build --target _bonsai` and set `PYTHONPATH=build/python`. Requires `nanobind` and `numpy` at build time. `scripts/compare.py` automatically adds in-process "native" rows to the benchmark table when the module is importable, timed the same way as the reference libraries.
+Prebuilt wheels for Linux (x86_64/aarch64) and macOS arm64, Python 3.9–3.13, ship with every [release](https://github.com/daniel-m-campos/bonsai/releases/latest); `pip install` the wheel for your platform with no toolchain. From source: `pip install .` (scikit-build-core builds the extension), or for development `cmake -B build -DBONSAI_PYTHON=ON && cmake --build build --target _bonsai` and set `PYTHONPATH=build/python`. Requires `nanobind` and `numpy` at build time. `scripts/compare.py` automatically adds in-process "native" rows to the benchmark table when the module is importable, timed the same way as the reference libraries.
 
 `BonsaiRegressor(config="cfg.toml")` / `train(..., config=...)` load a TOML file as the base config (the CLI's `-c`); kwargs and `params` override it. For GPU training from Python, `make python-cuda` builds the extension in the CUDA tree (use `PYTHONPATH=build-cuda/python`), or `pip install . -C cmake.define.BONSAI_CUDA=ON -C cmake.define.BONSAI_CUDA_ARCH=sm_120`; `bonsai.cuda_available()` reports whether `cuda_*` growers can train on this machine.
 
@@ -205,6 +206,8 @@ docs/             design + decision logs
 ```
 
 ## Documentation
+
+Everything below is published at **[daniel-m-campos.github.io/bonsai](https://daniel-m-campos.github.io/bonsai/)**: the guide, the lineage pages, the architecture notes, and the decisions log, with rendered math and diagrams.
 
 - **[docs/guide/](docs/guide/): the bonsai guide**: gradient boosting from math to code. Each chapter takes one concept (histograms, split finding, GOSS, DART, feature importance, determinism…) from intuition through the actual implementing code to an experiment you can run against the reference libraries. This is the differentiator: reference libraries document parameters; the guide documents *mechanics*, against readable code.
 - [docs/report.md](docs/report.md): project retrospective (what was built, performance vs reference libraries, reflections, deferred work) + 2026-07 addendum.
