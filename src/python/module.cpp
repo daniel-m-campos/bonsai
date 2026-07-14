@@ -168,6 +168,16 @@ class Model
     // return (n_rows,) with P(class 1) via the link inverse.
     nb::ndarray<nb::numpy, double> predict_proba(array_2d const &X) const
     {
+        // Only classification objectives define probabilities; the mse link
+        // inverse is the identity, so without this guard a regression model
+        // would return raw margins silently mislabeled as P(class 1).
+        if (booster_->score_width() == 1 && cfg_.dispatch.objective_name != "logloss")
+        {
+            throw std::invalid_argument(
+                "predict_proba is only defined for classification objectives "
+                "(logloss/softmax); this model was trained with '" +
+                cfg_.dispatch.objective_name + "'");
+        }
         size_t const n   = X.shape(0);
         size_t const w   = booster_->score_width();
         auto         out = std::make_unique<std::vector<double>>(n * w, 0.0);
@@ -402,6 +412,7 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
 // they arrive as a param pair or inside the config file.
 Model train_dataset(std::vector<std::pair<std::string, std::string>> const &params,
                     Dataset const                                          &dataset,
+                    std::optional<std::pair<array_2d, array_1d>> const     &eval_set,
                     std::optional<std::string> const                       &init_model,
                     std::optional<std::string> const                       &config)
 {
@@ -436,8 +447,18 @@ Model train_dataset(std::vector<std::pair<std::string, std::string>> const &para
         init.emplace(bonsai::io::load_booster(*init_model));
     }
     nb::gil_scoped_release release;
-    auto                   booster = bonsai::cli::train_with_progress(
-        cfg, dataset.loaded(), {}, init ? std::move(init->booster) : nullptr);
+    // The valid set is per-call state binned with the Dataset's mappers; the
+    // train side stays the Dataset's own LabeledData (no copy — a copy would
+    // also change the address that keys the GPU upload-skip cache).
+    std::optional<bonsai::cli::LabeledData> valid;
+    if (eval_set)
+    {
+        valid = make_labeled(eval_set->first, eval_set->second,
+                             dataset.loaded().mappers, cfg);
+    }
+    auto booster = bonsai::cli::train_with_progress(
+        cfg, dataset.loaded().train, valid ? &*valid : nullptr, {},
+        init ? std::move(init->booster) : nullptr);
     return Model{std::move(booster), dataset.loaded().mappers, cfg};
 }
 
@@ -496,9 +517,12 @@ NB_MODULE(_bonsai, m)
           "`sample_weight` is an optional float32 per-row weight vector "
           "(scales each row's gradient and hessian).");
     m.def("train", &train_dataset, nb::arg("params"), nb::arg("dataset"),
-          nb::arg("init_model") = nb::none(), nb::arg("config") = nb::none(),
+          nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
+          nb::arg("config") = nb::none(),
           "Train on a prebuilt Dataset, reusing its binning across calls. "
-          "bin_mapper.* overrides are rejected (binning is fixed by the Dataset).");
+          "bin_mapper.* overrides are rejected (binning is fixed by the Dataset). "
+          "`eval_set=(Xv, yv)` is binned per call with the Dataset's mappers and "
+          "enables per-iter eval and early stopping.");
     m.def("load", &load, nb::arg("path"), "Load a model saved by Model.save.");
 
     m.def("default_config_toml", [] { return bonsai::config::dump_toml({}); });
