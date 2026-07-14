@@ -2,6 +2,13 @@
 
 All notable changes to bonsai. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags. Design rationale for anything below lives in [`docs/decisions.md`](docs/decisions.md).
 
+## [Unreleased]
+
+### Added
+- **CUDA in the linux x86_64 wheel** (decision 70): GPU training out of the box on any NVIDIA driver R525+, SASS for sm_70 through sm_120 plus a compute_90 PTX forward-JIT floor, cudart statically linked. The whole backend costs 2.33MB of wheel (vs ~300MB for xgboost's GPU wheel) and behaves exactly like a CPU wheel on GPU-less machines. Every release's CUDA wheel is validated on rented GPU hardware before it attaches; the byte-identity model-hash gate now runs across all three wheel platforms on every build.
+- **Runtime docker image**: `ghcr.io/daniel-m-campos/bonsai:cuda` with the CUDA wheel preinstalled, RunPod-ready (sshd entrypoint); the release gate boots this exact image, so the image and the wheel are validated together.
+- **`bonsai.bench` in the wheel** (decision 69): `pip install bonsai-gbt[bench]` reproduces the published benchmark tables; `python -m bonsai.bench.grinsztajn out.jsonl --report` re-runs the external standings suite. Normative rules in the [benchmark charter](https://daniel-m-campos.github.io/bonsai/method/benchmark-protocol/).
+
 ## [1.2.0] - 2026-07-13
 
 Install without a toolchain, reuse binning across fits, and a round of classifier correctness fixes surfaced by an adversarial post-release review.

@@ -9,6 +9,8 @@ description: >
 
 The human-readable version of this workflow with every failure mode explained is `docs/ops/runpod-runbook.md` — read it if anything below misbehaves. This file is the agent fast path.
 
+Release wheels do NOT need this skill: wheels.yml's `validate-cuda` job self-validates every release on a rented pod (decision 70). Use this skill for development sessions, benchmarks, and ad-hoc GPU validation.
+
 ## Invariants (violating any of these wastes money or corrupts results)
 
 1. `PUBLIC_KEY` env at create time is mandatory; it cannot be added later.
