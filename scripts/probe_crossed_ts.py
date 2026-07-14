@@ -1,3 +1,8 @@
+# PROVENANCE NOTE (decision 69): this probe is a completed experiment whose
+# committed evidence was produced by this exact code; it stays as-run rather
+# than being refactored onto bonsai.bench. NEW probes must import their knobs
+# and reference-library mappings from bonsai.bench.params and their metrics
+# from bonsai.bench.metrics.
 # Crossed-TS probe (crown week): can crossed-category ordered TS close
 # catboost's remaining amazon edge from preprocessing alone?
 # Uses the repo's pinned amazon split (tests/data) so numbers compose with

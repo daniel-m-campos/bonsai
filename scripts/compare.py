@@ -105,6 +105,7 @@ def hp_from(cfg: dict) -> HP:
 class Result:
     rmse: float
     mae: float
+    r2: float
     fit_seconds: float
     predict_seconds: float
     auc: float = float("nan")
@@ -137,6 +138,11 @@ def padded_constraints(hp: HP, n_features: int) -> list:
 
 def rmse(pred: np.ndarray, y: np.ndarray) -> float:
     return float(np.sqrt(np.mean((pred - y) ** 2)))
+
+
+def r2(pred: np.ndarray, y: np.ndarray) -> float:
+    from bonsai.bench import metrics
+    return metrics.r2(y, pred)
 
 
 def mae(pred: np.ndarray, y: np.ndarray) -> float:
@@ -232,6 +238,7 @@ def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str,
 
     mc = hp.objective == "softmax"
     return Result(rmse=rmse(pred, y_test), mae=mae(pred, y_test),
+                  r2=r2(pred, y_test),
                   auc=maybe_auc(pred, y_test), acc=maybe_acc(pred, y_test, mc),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
@@ -298,7 +305,8 @@ def run_bonsai_native(native, cfg: dict, train_df, test_df, hp: HP, grower: str,
 
     y = test_df["label"].to_numpy()
     mc = hp.objective == "softmax"
-    return Result(rmse=rmse(pred, y), mae=mae(pred, y), auc=maybe_auc(pred, y),
+    return Result(rmse=rmse(pred, y), mae=mae(pred, y), r2=r2(pred, y),
+                  auc=maybe_auc(pred, y),
                   acc=maybe_acc(pred, y, mc),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
@@ -348,7 +356,8 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     pred_s = time.perf_counter() - t1
     y = test_df["label"].to_numpy()
     mc = hp.objective == "softmax"
-    return Result(rmse=rmse(pred, y), mae=mae(pred, y), auc=maybe_auc(pred, y),
+    return Result(rmse=rmse(pred, y), mae=mae(pred, y), r2=r2(pred, y),
+                  auc=maybe_auc(pred, y),
                   acc=maybe_acc(pred, y, mc),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
@@ -404,7 +413,8 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
     pred_s = time.perf_counter() - t1
     y = test_df["label"].to_numpy()
     mc = hp.objective == "softmax"
-    return Result(rmse=rmse(pred, y), mae=mae(pred, y), auc=maybe_auc(pred, y),
+    return Result(rmse=rmse(pred, y), mae=mae(pred, y), r2=r2(pred, y),
+                  auc=maybe_auc(pred, y),
                   acc=maybe_acc(pred, y, mc),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
@@ -451,7 +461,8 @@ def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     pred_s = time.perf_counter() - t1
     y = test_df["label"].to_numpy()
     mc = hp.objective == "softmax"
-    return Result(rmse=rmse(pred, y), mae=mae(pred, y), auc=maybe_auc(pred, y),
+    return Result(rmse=rmse(pred, y), mae=mae(pred, y), r2=r2(pred, y),
+                  auc=maybe_auc(pred, y),
                   acc=maybe_acc(pred, y, mc),
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
@@ -459,9 +470,9 @@ def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
 def write_markdown(path: pathlib.Path, dataset: str, results: dict[str, Result]) -> None:
     width = max(len("library"), max(len(n) for n in results))
     rows = [
-        f"| {'library':<{width}} | rmse   | mae    | auc    | acc    "
+        f"| {'library':<{width}} | rmse   | mae    | r2     | auc    | acc    "
         "| fit_seconds | predict_seconds |",
-        f"|{'-' * (width + 2)}|--------|--------|--------"
+        f"|{'-' * (width + 2)}|--------|--------|--------|--------"
         "|--------|-------------|-----------------|",
     ]
     import math
@@ -469,10 +480,16 @@ def write_markdown(path: pathlib.Path, dataset: str, results: dict[str, Result])
         auc_s = "  -   " if math.isnan(r.auc) else f"{r.auc:6.4f}"
         acc_s = "  -   " if math.isnan(r.acc) else f"{r.acc:6.4f}"
         rows.append(
-            f"| {name:<{width}} | {r.rmse:6.4f} | {r.mae:6.4f} | {auc_s} "
-            f"| {acc_s} | {r.fit_seconds:11.3f} | {r.predict_seconds:15.3f} |"
+            f"| {name:<{width}} | {r.rmse:6.4f} | {r.mae:6.4f} | {r.r2:6.4f} "
+            f"| {auc_s} | {acc_s} | {r.fit_seconds:11.3f} "
+            f"| {r.predict_seconds:15.3f} |"
         )
-    path.write_text(f"# {dataset} comparison\n\n" + "\n".join(rows) + "\n")
+    note = ("Timing modes (docs/method/benchmark-protocol.md): `bonsai` rows "
+            "time the CLI pipeline end to end (CSV read + fit + model I/O, "
+            "timing_mode=pipeline); `*_native` and reference rows time "
+            "in-process from arrays (timing_mode=in_memory).\n\n")
+    path.write_text(f"# {dataset} comparison\n\n" + note + "\n".join(rows)
+                    + "\n")
 
 
 def main() -> int:
