@@ -142,13 +142,28 @@ if(BONSAI_CUDA)
     endif()
     find_package(CUDAToolkit REQUIRED)
     set(BONSAI_CUDA_ARCH "native" CACHE STRING
-        "GPU architecture for clang --offload-arch (e.g. sm_87, or native)")
+        "GPU architecture(s) for clang --offload-arch (e.g. sm_87, native, or a "
+        "semicolon list like sm_80;sm_90 for a fat binary)")
+    set(BONSAI_CUDA_PTX_ARCH "" CACHE STRING
+        "Embed PTX for this single arch only (e.g. sm_90) instead of clang's "
+        "default per-arch PTX; forward-JIT floor for wheels")
+    option(BONSAI_CUDA_STATIC_RUNTIME
+        "Link cudart statically so the binary has no CUDA runtime DT_NEEDED "
+        "(wheels; the driver is still dlopen'd at runtime)" OFF)
     add_library(bonsai_cuda_kernels STATIC src/cuda/histogram_engine.cu)
     set_source_files_properties(src/cuda/histogram_engine.cu
                                 PROPERTIES LANGUAGE CXX)
+    set(bonsai_cuda_arch_flags "")
+    foreach(arch IN LISTS BONSAI_CUDA_ARCH)
+        list(APPEND bonsai_cuda_arch_flags "--offload-arch=${arch}")
+    endforeach()
+    if(BONSAI_CUDA_PTX_ARCH)
+        list(APPEND bonsai_cuda_arch_flags
+            "--no-cuda-include-ptx=all" "--cuda-include-ptx=${BONSAI_CUDA_PTX_ARCH}")
+    endif()
     target_compile_options(bonsai_cuda_kernels PRIVATE
         -x cuda
-        --offload-arch=${BONSAI_CUDA_ARCH}
+        ${bonsai_cuda_arch_flags}
         --cuda-path=${CUDAToolkit_LIBRARY_ROOT}
         -Wno-unknown-cuda-version
         # Target flags come last, overriding the directory-level
@@ -162,7 +177,11 @@ if(BONSAI_CUDA)
     # bonsai_parallel gives the CPU-fallback path across-node OpenMP; clang
     # compiles OpenMP host code and CUDA in the same TU without conflict.
     target_link_libraries(bonsai_cuda_kernels PRIVATE bonsai_parallel bonsai_warnings)
-    target_link_libraries(bonsai_gpu INTERFACE bonsai_cuda_kernels CUDA::cudart)
+    if(BONSAI_CUDA_STATIC_RUNTIME)
+        target_link_libraries(bonsai_gpu INTERFACE bonsai_cuda_kernels CUDA::cudart_static)
+    else()
+        target_link_libraries(bonsai_gpu INTERFACE bonsai_cuda_kernels CUDA::cudart)
+    endif()
 endif()
 
 # ---- Dependencies via FetchContent ------------------------------------------

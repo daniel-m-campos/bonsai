@@ -31,13 +31,13 @@ jobs:
   build:
     name: ${{ matrix.os }} / py${{ matrix.python }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-22.04-arm, macos-14]
-        # PRs build one python leg per OS (the ci python job already covers
-        # the 3.9 floor); releases and dispatches build the full fan.
+        # PROBE BRANCH: linux x86_64 only — this branch exists to measure the
+        # CUDA wheel (issue #99 leg 0) and is never merged.
+        os: [ubuntu-22.04]
         python: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.9", "3.10", "3.11", "3.12", "3.13"]') }}
     steps:
       - uses: actions/checkout@v4
@@ -52,20 +52,42 @@ jobs:
             clang-21 libc++-21-dev libc++abi-21-dev libomp-21-dev ninja-build
             patchelf
 
-      - name: Build wheel
+      - name: Install CUDA toolkit 12.8 (probe)
+        run: |
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update -q
+          sudo apt-get install -y -q cuda-nvcc-12-8 cuda-cudart-dev-12-8 libcurand-dev-12-8 cuda-cuobjdump-12-8
+
+      - name: Build wheels (probe matrix)
         env:
           CMAKE_BUILD_PARALLEL_LEVEL: "4"
         run: |
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            export CC=/usr/lib/llvm-21/bin/clang CXX=/usr/lib/llvm-21/bin/clang++
-          else
-            export CC="$(brew --prefix llvm@21)/bin/clang"
-            export CXX="$(brew --prefix llvm@21)/bin/clang++"
-            # llvm@21 bottle's libc++ mislabels float from_chars availability
-            export CXXFLAGS="-D_LIBCPP_DISABLE_AVAILABILITY"
-            export MACOSX_DEPLOYMENT_TARGET="14.0"
-          fi
-          python -m pip wheel . -w dist --no-deps
+          export CC=/usr/lib/llvm-21/bin/clang CXX=/usr/lib/llvm-21/bin/clang++
+          COMMON=(-C cmake.define.BONSAI_CUDA=ON
+                  -C cmake.define.CUDAToolkit_ROOT=/usr/local/cuda-12.8
+                  -C cmake.define.BONSAI_CUDA_STATIC_RUNTIME=ON)
+          FULL="sm_70;sm_75;sm_80;sm_86;sm_89;sm_90;sm_120"
+
+          echo "::group::A control: sm_80 SASS + sm_80 PTX"
+          time python -m pip wheel . -w dist-a --no-deps "${COMMON[@]}" \
+            -C cmake.define.BONSAI_CUDA_ARCH=sm_80 \
+            -C cmake.define.BONSAI_CUDA_PTX_ARCH=sm_80
+          echo "::endgroup::"
+
+          echo "::group::B candidate: full SASS list + PTX floor sm_90"
+          time python -m pip wheel . -w dist --no-deps "${COMMON[@]}" \
+            -C "cmake.define.BONSAI_CUDA_ARCH=${FULL}" \
+            -C cmake.define.BONSAI_CUDA_PTX_ARCH=sm_90
+          echo "::endgroup::"
+
+          echo "::group::C full SASS list + clang default per-arch PTX"
+          time python -m pip wheel . -w dist-c --no-deps "${COMMON[@]}" \
+            -C "cmake.define.BONSAI_CUDA_ARCH=${FULL}"
+          echo "::endgroup::"
+
+          echo "== raw wheel sizes (pre-repair) =="
+          ls -l dist-a dist dist-c
 
       - name: Repair wheel (Linux)
         if: runner.os == 'Linux'
@@ -81,11 +103,30 @@ jobs:
           python -m pip install delocate
           delocate-wheel -w wheelhouse -v dist/*.whl
 
+      - name: Probe measurements on the candidate wheel
+        run: |
+          echo "== post-repair wheel size =="
+          ls -l wheelhouse
+          mkdir -p /tmp/wx && cd /tmp/wx
+          unzip -qo "$GITHUB_WORKSPACE"/wheelhouse/*.whl
+          SO=$(ls bonsai/_bonsai*.so)
+          echo "== extension size =="; ls -l "$SO"
+          echo "== DT_NEEDED (must have no libcudart/libcuda) =="
+          readelf -d "$SO" | grep NEEDED
+          echo "== exported cuda symbols (must be none) =="
+          nm -D --defined-only "$SO" | grep -i cuda || echo "none"
+          echo "== fatbin arch inventory =="
+          /usr/local/cuda-12.8/bin/cuobjdump --list-elf "$SO" || true
+          /usr/local/cuda-12.8/bin/cuobjdump --list-ptx "$SO" || true
+
       - name: Smoke test in a clean venv
         run: |
           python -m venv /tmp/smoke
           /tmp/smoke/bin/pip -q install wheelhouse/*.whl
           /tmp/smoke/bin/python scripts/wheel_smoke.py
+          # GPU-less contract on the CUDA wheel: import works, availability
+          # reports false, CPU training is intact (wheel_smoke covers train).
+          /tmp/smoke/bin/python -c "import bonsai; assert bonsai.cuda_available() is False; print('cuda_available() -> False on a GPU-less runner')"
 
       - uses: actions/upload-artifact@v4
         with:
