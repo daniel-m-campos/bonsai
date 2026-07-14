@@ -239,26 +239,30 @@ Latest run per device on the YearPredictionMSD pipeline benchmark (full history 
 
 | variant | iters | fit_s | test r2 |
 |---|---|---|---|
-| bonsai_cuda_depthwise | 60 | 20.09 | 0.8455 |
-| bonsai_cuda_depthwise | 80 | 25.15 | 0.8666 |
-| bonsai_cuda_depthwise | 100 | 30.16 | 0.8776 |
-| bonsai_cuda_depthwise | 130 | 36.78 | 0.8860 |
-| xgb_cuda | 100 | 36.69 | 0.8776 |
-| xgb_cuda | 150 | 39.95 | 0.8886 |
-| xgb_cuda | 200 | 43.42 | 0.8919 |
-| xgb_cuda | 300 | 48.81 | 0.8934 |
-| catboost_gpu | 100 | 24.08 | 0.8751 |
-| catboost_gpu | 150 | 28.35 | 0.8892 |
-| catboost_gpu | 200 | 32.75 | 0.8944 |
-| catboost_gpu | 300 | 40.33 | 0.8973 |
-| catboost_gpu | 450 | 51.43 | 0.8980 |
-| bonsai_cuda_oblivious | 60 | 19.35 | 0.8316 |
-| bonsai_cuda_oblivious | 80 | 24.01 | 0.8531 |
-| bonsai_cuda_oblivious | 100 | 28.05 | 0.8638 |
-| bonsai_cuda_oblivious | 130 | 33.85 | 0.8758 |
-| bonsai_cuda_oblivious | 160 | 39.32 | 0.8829 |
+| bonsai_cuda_depthwise | 60 | 13.79 | 0.8455 |
+| bonsai_cuda_depthwise | 80 | 17.93 | 0.8666 |
+| bonsai_cuda_depthwise | 100 | 21.79 | 0.8776 |
+| bonsai_cuda_depthwise | 130 | 27.75 | 0.8860 |
+| bonsai_cuda_depthwise | 200 | 41.04 | 0.8918 |
+| bonsai_cuda_depthwise | 300 | 59.19 | 0.8934 |
+| bonsai_cuda_oblivious | 60 | 13.15 | 0.8380 |
+| bonsai_cuda_oblivious | 80 | 16.56 | 0.8609 |
+| bonsai_cuda_oblivious | 100 | 20.10 | 0.8749 |
+| bonsai_cuda_oblivious | 130 | 25.16 | 0.8861 |
+| bonsai_cuda_oblivious | 200 | 36.32 | 0.8948 |
+| bonsai_cuda_oblivious | 300 | 51.91 | 0.8974 |
+| bonsai_cuda_oblivious | 450 | 74.46 | 0.8981 |
+| xgb_cuda | 100 | 28.11 | 0.8776 |
+| xgb_cuda | 150 | 30.54 | 0.8886 |
+| xgb_cuda | 200 | 33.89 | 0.8919 |
+| xgb_cuda | 300 | 39.76 | 0.8934 |
+| catboost_gpu | 100 | 19.47 | 0.8751 |
+| catboost_gpu | 150 | 23.72 | 0.8892 |
+| catboost_gpu | 200 | 27.71 | 0.8944 |
+| catboost_gpu | 300 | 35.11 | 0.8973 |
+| catboost_gpu | 450 | 46.43 | 0.8980 |
 
-*Source: [`gpu-pareto-16M-2026-07.jsonl`](../../benchmarks/results/gpu-pareto-16M-2026-07.jsonl). Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md) (banner-annotated; pre-dates the decision 63 oblivious fix).*
+*Source: [`gpu-pareto-16M-2026-07.jsonl`](../../benchmarks/results/gpu-pareto-16M-2026-07.jsonl). Post-fix re-run (2026-07-14, decision 71): bonsai owns the fast end and the accuracy ceiling; catboost's 2x cheaper marginal round owns time-to-accuracy above r2 0.885. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md).*
 
 ### Ordered boosting at scale (catboost door)
 
