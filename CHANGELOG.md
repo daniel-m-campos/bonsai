@@ -2,6 +2,25 @@
 
 All notable changes to bonsai. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags. Design rationale for anything below lives in [`docs/decisions.md`](docs/decisions.md).
 
+## [1.2.0] — 2026-07-13
+
+Install without a toolchain, reuse binning across fits, and a round of classifier correctness fixes surfaced by an adversarial post-release review.
+
+### Added
+- **Prebuilt wheels on GitHub Releases** — Linux x86_64/aarch64 (`manylinux_2_35`, Ubuntu 22.04+/Debian 12+) and macOS arm64, Python 3.10–3.13. `pip install` the wheel with no LLVM/CMake; libc++ is vendored into the wheel, OpenMP statically linked. Every wheel is smoke-tested in a clean venv (fit, `predict_proba`, `Dataset`, `save`/`from_file`) before it ships. CPU-only; GPU training remains a source build.
+- **Reusable pre-binned `bonsai.Dataset`** — bin once, train many: `ds = bonsai.Dataset(X, y); bonsai.train(params, ds)` skips the per-fit bin pass across a hyperparameter search or CV loop, bit-identical to fitting from `(X, y)`. On GPU the resident-matrix upload-skip cache now fires across fits (decision 54). Bin settings are sealed at construction — `bin_mapper.*` overrides are rejected whether they arrive as params or inside a config file (decision 65).
+- **Multiclass `predict_proba`** — `(n, K)` row-wise softmax probabilities; completes `BonsaiClassifier` (the 1.1.0 follow-up).
+- **xgboost/lightgbm-style constructor aliases** on both estimators: `n_estimators`, `num_leaves`, `random_state`, `n_jobs`, `reg_lambda`, `reg_alpha`, `max_bin`, `min_child_samples`, `colsample_bytree`.
+- `Model.objective_name` / `Model.n_classes` read-only properties.
+
+### Fixed
+- **Multiclass `sample_weight` was silently ignored** — the softmax gradient/hessian loop never applied per-row weights (the single-output booster did); a weighted 3-class fit was bit-identical to unweighted. Weights now scale grad/hess; unweighted fits are unchanged bit-for-bit.
+- **`BonsaiClassifier.from_file` crashed `predict`/`predict_proba`** — class metadata was only set by `fit`. Restored from the saved model as encoded ids `0..K-1` (xgboost's `load_model` convention; pickle preserves original label values), and non-classifier models are rejected instead of mislabeled. The first fix also imported `tomllib` (3.11+ stdlib) and broke on Python 3.10 — now dependency-free via the new `Model` properties.
+- **`eval_set` labels absent from the training classes now raise** instead of being silently mis-encoded — previously they corrupted the validation metric and fired early stopping tens of iterations early with no error. NaN labels are rejected like sklearn.
+
+### Docs
+- README: superseded RTX-5090 benchmark table and duplicated scaling history removed; stale facts corrected (test count, dispatch-combo count).
+
 ## [1.1.0] — 2026-07-13
 
 The crown-week release: measured parity-or-better against xgboost, lightgbm, and catboost, plus a scikit-learn-shaped Python surface.
