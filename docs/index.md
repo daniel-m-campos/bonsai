@@ -18,7 +18,7 @@ One property none of the reference libraries offer: models are bit-identical acr
 
 **[Learn](guide/README.md)**: the learning project, kept as a product: each chapter takes one concept from intuition, through the mathematics, to the ~50 real lines that implement it, to an experiment against the reference libraries. Start with [a tree traced by hand on eight rows](guide/0-a-tree-by-hand.md).
 
-**Use** *(being written)*: the whole API in one mental model: sklearn-shaped estimators and an explicit `train(params, ...)` layer over the same engine, dotted config keys that are exactly the CLI's `--set` keys, one `.msgpack` model that round-trips everywhere.
+**[Use](use/api-tour.md)**: the whole API in one read: sklearn-shaped estimators and an explicit `train(params, ...)` layer over the same engine, dotted config keys that are exactly the CLI's `--set` keys, one `.msgpack` model that round-trips everywhere.
 
 **Lineage**: the assimilation, idea by idea: what each reference library contributed, and whether measurement here adopted it, rebuilt it smaller, or declined it with the evidence recorded. [XGBoost](lineage/xgboost.md) · [LightGBM](lineage/lightgbm.md) · [CatBoost](lineage/catboost.md).
 
