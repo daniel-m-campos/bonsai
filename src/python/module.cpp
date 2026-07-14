@@ -312,6 +312,16 @@ class Model
         return bonsai::config::dump_toml(cfg_);
     }
 
+    std::string objective_name() const
+    {
+        return cfg_.dispatch.objective_name;
+    }
+
+    size_t n_classes() const
+    {
+        return cfg_.objective.n_classes;
+    }
+
   private:
     std::unique_ptr<bonsai::IBooster> booster_;
     bonsai::BinMappers                mappers_;
@@ -454,7 +464,13 @@ NB_MODULE(_bonsai, m)
         .def("feature_importance", &Model::feature_importance, nb::arg("type") = "gain")
         .def("save", &Model::save, nb::arg("path"))
         .def_prop_ro("n_iters", &Model::n_iters)
-        .def_prop_ro("config_toml", &Model::config_toml);
+        .def_prop_ro("config_toml", &Model::config_toml)
+        .def_prop_ro("objective_name", &Model::objective_name,
+                     "The objective this model was trained with (e.g. mse, "
+                     "logloss, softmax).")
+        .def_prop_ro("n_classes", &Model::n_classes,
+                     "objective.n_classes from the training config; "
+                     "meaningful for softmax models.");
 
     nb::class_<Dataset>(m, "Dataset")
         .def(nb::init<array_2d const &, array_1d const &,

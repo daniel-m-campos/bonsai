@@ -573,15 +573,12 @@ class BonsaiClassifier(_BonsaiEstimator):
         ``predict`` then returns those ids, not the label values passed to
         ``fit``. Pickle the estimator to preserve original labels.
         """
-        import tomllib
-
         out = super().from_file(path)
-        cfg = tomllib.loads(out._model.config_toml)
-        objective = cfg.get("dispatch", {}).get("objective_name", "")
+        objective = out._model.objective_name
         if objective == "logloss":
             out.n_classes_ = 2
         elif objective == "softmax":
-            out.n_classes_ = int(cfg["objective"]["n_classes"])
+            out.n_classes_ = int(out._model.n_classes)
         else:
             raise ValueError(
                 f"{path!r} was trained with objective {objective!r}; "
