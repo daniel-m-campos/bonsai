@@ -362,7 +362,12 @@ jobs:
           # start (runbook failure table); each attempt polls up to 6 minutes
           # on the GraphQL runtime, the only truthful liveness signal.
           for attempt in 1 2; do
-            POD="$(create)"
+            POD="$(create || true)"
+            if [ -z "${POD}" ] || [ "${POD}" = "null" ]; then
+              echo "attempt ${attempt}: pod create call failed"
+              sleep 15
+              continue
+            fi
             echo "attempt ${attempt}: pod ${POD}"
             echo "pod_id=${POD}" >> "$GITHUB_OUTPUT"
             for i in $(seq 1 36); do
