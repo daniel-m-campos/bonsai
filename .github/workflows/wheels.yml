@@ -420,9 +420,13 @@ jobs:
       - name: Sweep for surviving gate pods
         if: always()
         run: |
+          # The REST list wraps pods in "items"; tolerate a bare array too.
+          # (`.pods // .` was a jq ERROR on arrays, so the first dry run's
+          # sweep crashed without verifying: the one failure it must not have.)
           sweep() {
             curl -s https://rest.runpod.io/v1/pods -H "Authorization: Bearer $RUNPOD_KEY" \
-              | jq -r '(.pods // .)[]? | select(.name != null)
+              | jq -r '(if type == "array" then . else (.items // []) end)[]?
+                       | select(.name != null)
                        | select(.name | startswith("bonsai-wheel-gate")) | .id'
           }
           sleep 5
