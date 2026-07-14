@@ -36,6 +36,9 @@ theme:
 
 # Internal material stays out of the public site: ops/ (infra runbook),
 # conversations/ and reviews/ (working notes), legacy standalone notes.
+# CONVENTION: new internal material goes INSIDE one of the excluded
+# directories above; a new top-level docs/*.md is published by default, so
+# only create one when it belongs on the site.
 exclude_docs: |
   ops/
   conversations/
