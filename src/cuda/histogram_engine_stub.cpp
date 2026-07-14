@@ -74,6 +74,8 @@ void CudaHistogramEngine::advance_level(Dataset const & /*ds*/,
     throw_unavailable();
 }
 
+void CudaHistogramEngine::advance_layout_only() {}
+
 void CudaHistogramEngine::finalize_rows(std::span<node_id_t> /*leaf_by_row*/)
 {
     throw_unavailable();

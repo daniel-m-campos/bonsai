@@ -285,6 +285,8 @@ struct CudaHistogramEngine::Impl
         // what every sampler returns when its size equals n_rows.
         DeviceBuffer<uint32_t> root_rows;
         size_t                 root_rows_cached_n = 0;
+        DeviceBuffer<double2>  sum_partial;   // root-sum pass-1 block partials
+        DeviceBuffer<double2>  sum_out;       // root-sum result (1 element)
         DeviceBuffer<float>    epi_node_vals; // per-tree epilogue value table
         DeviceBuffer<float>    epi_values;    // per-row mapped values
         std::vector<uint32_t>  slot_ofs;      // current level's segment layout
@@ -742,28 +744,42 @@ bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
     im.lvl.features.host.assign(selected.begin(), selected.end());
     im.lvl.features.sync();
 
+    // Identity contract (decision 71 campaign): a full-data fit passes empty
+    // rows + row_count == n_rows; the identity never touches the host or the
+    // bus (built by iota_kernel once, cached, restored D2D per tree).
+    bool const identity = root.rows.empty() && root.row_count == im.data.n_rows;
+    auto const n = static_cast<uint32_t>(identity ? root.row_count : root.rows.size());
+
     auto root_lap   = im.prof_counters.lap();
     im.lvl.cur_is_a = true;
     im.lvl.cur().reserve(im.lvl.slot_doubles());
     check(cudaMemset(im.lvl.cur().data(), 0, im.lvl.slot_doubles() * sizeof(double)),
           "zero root slot");
-    auto const n = static_cast<uint32_t>(root.rows.size());
-    im.lvl.rows.reserve(root.rows.size());
-    if (root.rows.size() == im.data.n_rows &&
+    im.lvl.rows.reserve(n);
+    if (static_cast<size_t>(n) == im.data.n_rows &&
         im.lvl.root_rows_cached_n == im.data.n_rows)
     {
         check(cudaMemcpy(im.lvl.rows.data(), im.lvl.root_rows.data(),
-                         root.rows.size() * sizeof(uint32_t), cudaMemcpyDeviceToDevice),
+                         static_cast<size_t>(n) * sizeof(uint32_t),
+                         cudaMemcpyDeviceToDevice),
               "root rows restore");
     }
     else
     {
-        im.lvl.rows.upload(root.rows.data(), root.rows.size());
-        if (root.rows.size() == im.data.n_rows)
+        if (identity)
         {
-            im.lvl.root_rows.reserve(root.rows.size());
+            iota_kernel<<<dim3((n + 255) / 256), dim3(256)>>>(im.lvl.rows.data(), n);
+            check(cudaGetLastError(), "iota launch");
+        }
+        else
+        {
+            im.lvl.rows.upload(root.rows.data(), root.rows.size());
+        }
+        if (static_cast<size_t>(n) == im.data.n_rows)
+        {
+            im.lvl.root_rows.reserve(n);
             check(cudaMemcpy(im.lvl.root_rows.data(), im.lvl.rows.data(),
-                             root.rows.size() * sizeof(uint32_t),
+                             static_cast<size_t>(n) * sizeof(uint32_t),
                              cudaMemcpyDeviceToDevice),
                   "root rows cache");
             im.lvl.root_rows_cached_n = im.data.n_rows;
@@ -806,17 +822,42 @@ bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
     im.lvl.slot_cnt.assign(1, n);
     im.lvl.leaf_by_row.reserve(ds.n_rows());
 
-    auto   sums_lap = im.prof_counters.lap();
-    double sg       = 0.0;
-    double sh       = 0.0;
-    for (row_id_t const r : root.rows)
+    auto sums_lap = im.prof_counters.lap();
+    if (identity)
     {
-        sg += grad[r];
-        sh += hess[r];
+        // Deterministic two-pass device reduce over the uploaded gh buffer
+        // replaces the 16M-row host loop; the 16B fetch drains only the sum
+        // kernels (queued before the root histogram build above).
+        constexpr uint32_t k_sum_blocks = 64;
+        im.lvl.sum_partial.reserve(k_sum_blocks);
+        im.lvl.sum_out.reserve(1);
+        sum_gh_pass1_kernel<<<dim3(k_sum_blocks), dim3(256)>>>(
+            im.grads.gh.data(), n, im.lvl.sum_partial.data());
+        check(cudaGetLastError(), "root sum pass1 launch");
+        sum_gh_pass2_kernel<<<dim3(1), dim3(32)>>>(im.lvl.sum_partial.data(),
+                                                   k_sum_blocks, im.lvl.sum_out.data());
+        check(cudaGetLastError(), "root sum pass2 launch");
+        double2 sums{};
+        check(cudaMemcpy(&sums, im.lvl.sum_out.data(), sizeof(double2),
+                         cudaMemcpyDeviceToHost),
+              "root sums fetch");
+        root.sums      = {.sum_grad = static_cast<float>(sums.x),
+                          .sum_hess = static_cast<float>(sums.y)};
+        root.row_count = n;
     }
-    root.sums      = {.sum_grad = static_cast<float>(sg),
-                      .sum_hess = static_cast<float>(sh)};
-    root.row_count = root.rows.size();
+    else
+    {
+        double sg = 0.0;
+        double sh = 0.0;
+        for (row_id_t const r : root.rows)
+        {
+            sg += grad[r];
+            sh += hess[r];
+        }
+        root.sums      = {.sum_grad = static_cast<float>(sg),
+                          .sum_hess = static_cast<float>(sh)};
+        root.row_count = root.rows.size();
+    }
     sums_lap(im.prof_counters.root_sums_s);
     if (im.prof_counters.enabled)
     {
@@ -1032,6 +1073,17 @@ void CudaHistogramEngine::advance_level(Dataset const &ds, std::span<LevelOp con
         prof.gpu_nodes += child_slots;
     }
     lap(prof.gpu_s);
+}
+
+// Final-level advance (decision 71 campaign): the children of the last
+// level are leaves, so their histograms are never read by any find; only
+// the layout flip survives so stamping sees the final segments.
+void CudaHistogramEngine::advance_layout_only()
+{
+    Impl &im        = *impl_;
+    im.lvl.cur_is_a = !im.lvl.cur_is_a;
+    im.lvl.slot_ofs = im.lvl.next_ofs;
+    im.lvl.slot_cnt = im.lvl.next_cnt;
 }
 
 void CudaHistogramEngine::find_splits_many(Dataset const &ds, TreeConfig const &config,

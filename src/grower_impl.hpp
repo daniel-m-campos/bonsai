@@ -430,7 +430,7 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
         gd::demote_empty_splits(config_, plan, nodes, n_leaves, values, leaf_ids,
                                 split_gains);
         clap(gd::GrowProfiler::instance().commit_s);
-        step.build_children(plan);
+        step.build_children(plan, depth + 1 >= config_.max_depth);
         gd::GrowProfiler::Lap clap2;
         gd::commit_children(ds, config_, interaction_groups_, plan, covers, current,
                             next);
@@ -542,7 +542,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
                                    .right_sums  = rs});
         }
         step.apply_level(plan);
-        step.build_children(plan);
+        step.build_children(plan, depth + 1 >= config_.max_depth);
         next.reserve(plan.splits.size() * 2);
         for (auto &d : plan.splits)
         {

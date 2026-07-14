@@ -102,6 +102,9 @@ class CudaHistogramEngine
     // Populates all smaller children and subtracts all larger ones, then
     // makes the child level current.
     void advance_level(Dataset const &ds, std::span<LevelOp const> ops);
+    // Last level of a tree: children are leaves, their histograms unread;
+    // performs only the segment-layout flip that stamping depends on.
+    void advance_layout_only();
     // End of tree: the per-row leaf assignment (indexed by row id; only rows
     // this tree trained on carry fresh values).
     void finalize_rows(std::span<node_id_t> leaf_by_row);
