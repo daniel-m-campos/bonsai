@@ -910,3 +910,27 @@ That reframed the question from kernel speed to the whole **accuracy-vs-time fro
 **Consequence.** Measured same-pod at 16M (L40S, 100 iters): `cuda_oblivious` **19.65s vs catboost 18.85s** at matched accuracy (0.8749 vs 0.8751) — a ~4% residual, down from the ~19% §63 flagged, with mapper-fit falling from ~5.7s to 0.77s of the fit. Combined with §63's accuracy fix, bonsai's GPU oblivious went from *slower and less accurate* to *even on accuracy, within 4% on speed*. Every large CPU fit gets the same ~8s ingest saving. It is the standard lightgbm/xgboost approach (sample rows once); bonsai had simply not adopted it.
 
 **Rejected.** Preserving the exact per-feature reservoir bits (would keep the 100× O(n) cost for no quality gain, since the sample is quality-neutral); a bit-preserving fast path only for NaN-free columns (fragile — depends on `std::ranges::sample`'s implementation-defined selection matching a hand-rolled reservoir — and still O(n) per feature to detect NaN).
+
+## 65. Reusable pre-binned Dataset with a sealed bin config (adopted)
+
+**Decision.** PR #91 adds a Python-level `bonsai.Dataset(X, y, weight=None, max_bin=255, n_samples=200000, seed=0, min_data_in_bin=1)` that runs `BinMappers::fit` + `Dataset::bin` once at construction, then feeds the same `bonsai::Dataset` to every `train(params, dataset)` call. A hyperparameter sweep or CV loop skips the per-fit bin pass entirely. Verified bit-identical to fitting from `(X, y)` directly.
+
+**Consequence.** Because the object address is now stable across fits, the CUDA resident-matrix upload-skip cache (decision 54's `ensure_dataset`) actually fires for the first time — previously every `train()` built a fresh `Dataset`, so the cache never hit. Lifetime is simple: the wrapper pins the numpy `X` buffer, and `FeatureBuffer` borrows it row-major with no float materialization.
+
+**Sealing the bin config.** `bin_mapper.*` overrides via `params` are rejected by key-prefix at the Python boundary. The harder case is a config *file*: value comparison can't distinguish an absent section from one explicitly restating defaults, so a file setting `max_bin = 255` against a `Dataset` built with `max_bin=63` must still error rather than silently discard the Dataset's binning. Two follow-up commits on PR #91 closed this: `f899e52` added a structural check, `config::toml_has_section()`, that tests for section presence rather than value equality, and a further pass made the guard general and exposed `min_data_in_bin`.
+
+**Rejected / deferred.** Disk persistence, row-subsetting for CV, and `fit(dataset)` on the sklearn estimators are deliberate non-goals of this MVP. The `eval_set`/early-stopping path in `train(dataset)` was a known gap in the MVP, tracked and closed separately (see branch `feat/dataset-eval-set`).
+
+## 66. Prebuilt wheels from native runners, not manylinux containers (adopted)
+
+**Decision.** PR #94 + #98, shipped in v1.2.0: 15 wheels + sdist attach to the GitHub Release automatically on `release: published`. Matrix is {ubuntu-22.04, ubuntu-22.04-arm, macos-14} × py{3.9–3.13}, CPU-only.
+
+**Why not cibuildwheel/manylinux.** bonsai requires LLVM ≥ 20 with libc++ (C++23 `std::print`/`std::mdspan`). The official LLVM release binaries need a newer glibc than the `manylinux_2_28` container ships, so wheels build on plain runners with apt.llvm.org LLVM 21 (Linux) / brew `llvm@21` (macOS) instead. `auditwheel`/`delocate` vendor libc++ (+ libc++abi/libunwind) into each wheel; OpenMP is statically linked via the pre-existing `BONSAI_OPENMP_STATIC`, so zero C++ changes were needed to make this work. `auditwheel` tagged the result `manylinux_2_34` (dual-tagged `2_35`) — actual glibc floor 2.34, so RHEL 9/Alma 9 are covered, a better floor than the Ubuntu 22.04+ design target implied.
+
+**Python floor.** Lowered to 3.9 in PR #98 (concrete user use case, reversing an earlier decline). Four touchpoints, not one: `requires-python`, the CMake `find_package(Python)` floor (a pyproject-only audit missed this — the local 3.9 build caught it), the wheels matrix (now 15 legs), and `ruff target-version=py39` so 3.10+-only syntax can't regress in.
+
+**Verification.** Every wheel installs into a clean venv and runs a smoke script: regressor fit, classifier `predict_proba`, `Dataset` train, and — added after PR #95 found `from_file` broke on Python 3.10 because `tomllib` is 3.11+ stdlib and the original smoke test never called it — a save/`from_file` round-trip across the whole version matrix.
+
+**Consequence.** PyPI publish is deliberately deferred until trusted publishing is registered (`bonsai-gbt` name + pypi.org trusted publisher, an owner action); wheels ship via GitHub Releases in the meantime. CUDA wheels are out of scope here and tracked as issue #99: the design is a fat-arch linux x86_64 leg plus a rented-GPU validation gate before assets attach, since GitHub-hosted runners can build CUDA but never execute it.
+
+**Rejected.** A `manylinux_2_28` container image to reach older distros (a documented follow-up, not blocking — no user has asked); PyPI publish in this PR (needs the owner-side trusted-publisher registration first).
