@@ -1,22 +1,18 @@
 # bonsai
 
-**Histogram gradient-boosted trees with a C++23 core — written to be read.**
+**Histogram gradient-boosted trees with a C++23 core.**
 
 ```
 pip install <wheel from the latest release>   # Linux, macOS arm64, Python 3.9–3.13, no toolchain
 ```
 
-bonsai is a from-scratch GBT library small enough to read in a sitting and fast enough to take seriously: on GPU it holds the fastest slot at every row scale we measured — edging catboost and beating xgboost at 16M rows at matched accuracy, on ~3× less memory — and every one of those words links to a reproducible run.
+bonsai is a from-scratch gradient-boosted trees library built around two problems the established libraries don't solve: their implementations are effectively unreadable, and their performance claims are hard to reproduce.
 
-It exists because the great boosting libraries are wonderful to use and nearly impossible to read, and understanding them shouldn't require archaeology.
+It incorporates the core ideas of xgboost, lightgbm, and catboost — histogram training, leaf-wise and symmetric tree growth, leak-free target statistics — in a codebase small enough to read in a sitting, and it competes with them directly: on GPU it holds the fastest slot at every row scale we measured, edging catboost and beating xgboost at 16M rows at matched accuracy, on ~3× less host memory.
 
-## This site is a love story
+Every performance and quality claim links to a reproducible run, in both directions: where bonsai wins, the run is linked; where it still loses — catboost on wide data, xgboost's last +0.001 r² of cut quality — that is linked too.
 
-xgboost proved boosting could be an industrial tool; lightgbm made it fast enough to be a default; catboost made it careful about its own biases.
-
-bonsai is built out of their ideas — adopted where measurement agreed, rebuilt smaller where it didn't, declined with evidence where the benefit failed to reproduce — and this site narrates those debts alongside the API, because a library that stands on three giants should say so in its documentation, not just its bibliography.
-
-The claims stay honest in both directions: where bonsai wins, the run is linked; where it still loses — catboost on wide data, xgboost's last +0.001 r² of cut quality — that's linked too.
+It also offers something none of the reference libraries do: models that are bit-identical across CPU architectures and across thread counts, enforced per-commit in CI.
 
 ## Four doors
 
@@ -24,12 +20,12 @@ The claims stay honest in both directions: where bonsai wins, the run is linked;
 
 **Use** *(being written)* — the whole API in one mental model: sklearn-shaped estimators and an explicit `train(params, ...)` layer over the same engine, dotted config keys that are exactly the CLI's `--set` keys, one `.msgpack` model that round-trips everywhere.
 
-**[Lineage](lineage/catboost.md)** — what bonsai owes each of its ancestors, idea by idea: adopted, rebuilt, or measured and respectfully declined. [CatBoost](lineage/catboost.md) is written; xgboost and lightgbm are next.
+**[Lineage](lineage/catboost.md)** — where each major idea came from and what happened when we measured it here: adopted, rebuilt smaller, or declined with the evidence recorded. [CatBoost](lineage/catboost.md) is written; xgboost and lightgbm are next.
 
-**Method** *(being written)* — the data-driven HPC discipline behind the results, portable to other systems: instrument-first optimization, a feature-admission gate with pre-registered kill criteria, same-pod benchmarking, and bit-exact determinism as a testable contract.
+**Method** *(being written)* — the measurement discipline behind the results, portable to other performance-critical systems: instrument-first optimization, a feature-admission gate with pre-registered kill criteria, same-pod benchmarking, and bit-exact determinism as a testable contract.
 
 ## The engineering notebook
 
-The [decisions log](decisions.md) is the project's raw narrative — sixty-six numbered decisions including the refuted hypotheses, kept because a result you can't audit is advertising.
+The [decisions log](decisions.md) records the project's sixty-six numbered decisions, including the hypotheses that measurement refuted — the raw material behind every claim on this site.
 
 The [architecture notes](architecture/README.md) are its structured companion: one document per subsystem, written once, referenced instead of repeated.
