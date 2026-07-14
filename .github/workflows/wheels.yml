@@ -36,7 +36,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, ubuntu-22.04-arm, macos-14]
-        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        # PRs build one python leg per OS (the ci python job already covers
+        # the 3.9 floor); releases and dispatches build the full fan.
+        python: ${{ github.event_name == 'pull_request' && fromJSON('["3.12"]') || fromJSON('["3.9", "3.10", "3.11", "3.12", "3.13"]') }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,17 +46,11 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
-      - name: Install LLVM toolchain (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
-          sudo bash /tmp/llvm.sh 21
-          sudo apt-get install -y libc++-21-dev libc++abi-21-dev libomp-21-dev \
-            ninja-build patchelf
-
-      - name: Install LLVM toolchain (macOS)
-        if: runner.os == 'macOS'
-        run: brew install llvm@21 libomp ninja
+      - uses: ./.github/actions/setup-llvm
+        with:
+          packages: >-
+            clang-21 libc++-21-dev libc++abi-21-dev libomp-21-dev ninja-build
+            patchelf
 
       - name: Build wheel
         env:
@@ -89,28 +85,7 @@ jobs:
         run: |
           python -m venv /tmp/smoke
           /tmp/smoke/bin/pip -q install wheelhouse/*.whl
-          /tmp/smoke/bin/python - <<'EOF'
-          import bonsai, numpy as np
-          rng = np.random.default_rng(0)
-          X = rng.random((2000, 8), dtype=np.float32)
-          y = (X[:, 0] * 2 + rng.normal(0, 0.1, 2000)).astype(np.float32)
-          r2 = bonsai.BonsaiRegressor(n_iters=20).fit(X, y).score(X, y)
-          assert r2 > 0.8, r2
-          yc = (X[:, 1] > 0.5).astype(np.float32)
-          clf = bonsai.BonsaiClassifier(n_iters=10).fit(X, yc)
-          assert clf.predict_proba(X).shape == (2000, 2)
-          # save/from_file round-trip: caught a tomllib-on-3.10 break once,
-          # so every leg of the version matrix exercises it
-          import tempfile, os
-          with tempfile.TemporaryDirectory() as td:
-              p = os.path.join(td, "clf.msgpack")
-              clf.save(p)
-              restored = bonsai.BonsaiClassifier.from_file(p)
-              assert restored.predict(X).shape == (2000,)
-          ds = bonsai.Dataset(X, y)
-          bonsai.train([("booster.n_iters", "5")], ds)
-          print("wheel OK: r2 =", round(r2, 4))
-          EOF
+          /tmp/smoke/bin/python scripts/wheel_smoke.py
 
       - uses: actions/upload-artifact@v4
         with:
@@ -142,6 +117,8 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: sdist
@@ -151,12 +128,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install LLVM toolchain (Linux)
-        run: |
-          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
-          sudo bash /tmp/llvm.sh 21
-          sudo apt-get install -y libc++-21-dev libc++abi-21-dev libomp-21-dev \
-            ninja-build
+      - uses: ./.github/actions/setup-llvm
+        with:
+          packages: >-
+            clang-21 libc++-21-dev libc++abi-21-dev libomp-21-dev ninja-build
 
       - name: Install sdist into a clean venv
         env:
@@ -167,17 +142,8 @@ jobs:
           /tmp/sdist-install/bin/pip -q install numpy
           /tmp/sdist-install/bin/pip -v install dist/*.tar.gz
 
-      - name: Import + fit smoke
-        run: |
-          /tmp/sdist-install/bin/python - <<'EOF'
-          import bonsai, numpy as np
-          rng = np.random.default_rng(0)
-          X = rng.random((2000, 8), dtype=np.float32)
-          y = (X[:, 0] * 2 + rng.normal(0, 0.1, 2000)).astype(np.float32)
-          r2 = bonsai.BonsaiRegressor(n_iters=20).fit(X, y).score(X, y)
-          assert r2 > 0.8, r2
-          print("sdist install OK: r2 =", round(r2, 4))
-          EOF
+      - name: Smoke test
+        run: /tmp/sdist-install/bin/python scripts/wheel_smoke.py
 
   publish:
     # Attach everything to the GitHub Release that triggered the run, or
