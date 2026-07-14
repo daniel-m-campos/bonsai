@@ -8,7 +8,7 @@ pip install <wheel from the latest release>   # Linux, macOS arm64, Python 3.9�
 
 bonsai began as a learning project: rebuild gradient-boosted trees from first principles to understand how the production libraries actually work, in a small codebase that takes modern C++23 and software design as seriously as the algorithms.
 
-The scope escalated. Working with AI-assisted development, milestones that were meant to be the finish line kept falling — CPU parity, then GPU parity, then GPU leads — and the ambition grew with them: assimilate the defining ideas of xgboost, lightgbm, and catboost into one small library, match or beat their performance, and keep the code clean enough that reading it is still the point.
+The scope escalated. [Developed with Anthropic's Claude](about.md) — the recent phases with Claude Fable 5 — milestones that were meant to be the finish line kept falling: CPU parity, then GPU parity, then GPU leads. The ambition grew with them: assimilate the defining ideas of xgboost, lightgbm, and catboost into one small library, match or beat their performance, and keep the code clean enough that reading it is still the point.
 
 Where that landed, measured on shared hardware at matched settings: on GPU, bonsai holds the fastest slot at every row scale tested — edging catboost and beating xgboost at 16M rows at matched accuracy, on ~3× less host memory. Where it still loses — catboost on wide data, xgboost's last +0.001 r² of cut quality — the runs are linked with the same prominence as the wins.
 

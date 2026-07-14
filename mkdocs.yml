@@ -107,6 +107,7 @@ nav:
       - Architecture: architecture/README.md
       - Decisions log: decisions.md
   - Project:
+      - How bonsai is built: about.md
       - Retrospective: report.md
       - Proposal: proposal.md
       - Context and roadmap: context.md
