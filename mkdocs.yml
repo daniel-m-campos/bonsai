@@ -108,6 +108,6 @@ nav:
       - Decisions log: decisions.md
   - Project:
       - How bonsai is built: about.md
-      - Retrospective: report.md
-      - Proposal: proposal.md
-      - Context and roadmap: context.md
+      - Retrospective (with current addenda): report.md
+      - Original proposal: proposal.md
+      - Original plan (historical): context.md
