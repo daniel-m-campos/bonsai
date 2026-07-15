@@ -120,7 +120,13 @@ def bar_chart(fname: str, title: str, rows: list[tuple[str, float, str]],
     for i, (label, value, note_txt) in enumerate(rows):
         y = top + i * 34
         bw = round(plot_w * value / x_max, 1)
-        color = LIB_COLOR.get(label, TEXT)
+        color = LIB_COLOR.get(label)
+        if color is None:  # variant names: color by library prefix
+            for lib in ("bonsai", "xgb", "lgbm", "catboost"):
+                if label.startswith(lib):
+                    color = LIB_COLOR[lib if lib != "catboost" else "catboost"]
+                    break
+            color = color or TEXT
         body.append(_text(left - 8, y + 14, label, anchor="end"))
         body.append(f"<rect x='{left}' y='{y}' width='{bw}' height='20' "
                     f"rx='3' fill='{color}' fill-opacity='0.85'/>")
@@ -634,6 +640,56 @@ Every committed data file under [`benchmarks/results/`](../../benchmarks/results
 """
 
 
+
+def airline_section() -> str:
+    rows = [r for r in load_jsonl("airline-2026-07.jsonl") if r["status"] == "ok"]
+
+    def cell(variant, size, depth):
+        m = [r for r in rows if r["variant"] == variant and r["size"] == size
+             and r["knobs"]["depth"] == depth]
+        return f"{m[0]['fit_s']:.1f}s / {m[0]['auc_test']:.4f}" if m else "-"
+
+    variants = []
+    for r in rows:
+        if r["variant"] not in variants:
+            variants.append(r["variant"])
+
+    tables = []
+    for depth, label in ((8, "campaign knobs (depth 8)"),
+                         (10, "Pafka protocol (depth 10)")):
+        tables.append(f"**{label}**, fit seconds / test AUC:\n\n" + md_table(
+            ["variant", "0.1m", "1m", "10m"],
+            [[v, cell(v, "0.1m", depth), cell(v, "1m", depth),
+              cell(v, "10m", depth)] for v in variants]))
+
+    def lib_of(v):
+        return ("bonsai" if v.startswith("bonsai")
+                else "xgb" if v.startswith("xgb")
+                else "lgbm" if v.startswith("lgbm") else "catboost")
+
+    bars = sorted(((r["variant"], r["fit_s"], f"AUC {r['auc_test']:.4f}")
+                   for r in rows
+                   if r["size"] == "10m" and r["knobs"]["depth"] == 8),
+                  key=lambda t: t[1])
+    bar_chart("airline-10m.svg", "airline 10M rows: fit seconds (depth 8, one pod)",
+              [(v, s, note) for v, s, note in bars],
+              max(s for _v, s, _n in bars),
+              "bonsai_ts_* = OrderedTargetEncoder pipeline (encode time included); "
+              "all rows same-pod L40S")
+    return f"""## Airline delays: the real-data speed ladder
+
+The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC), both the campaign knob shape and Pafka's depth-10 protocol, all rows one pod. `bonsai_ts_*` rows are the labeled exception to the uniform ordinal-code convention (OrderedTargetEncoder pipeline; `fit_s` includes the encode).
+
+![airline 10M fit seconds](assets/airline-10m.svg)
+
+{tables[0]}
+
+{tables[1]}
+
+{provenance(["airline-2026-07.jsonl"], "One L40S (SECURE US-NC-1, driver 570.124.06), 2026-07-15, post-decision-74 code. A bonsai variant has the best AUC in every cell from 1M up under both protocols; xgboost-GPU owns raw speed on this narrow shape. Evidence: [benchmarks/airline-2026-07.md](../../benchmarks/airline-2026-07.md).")}
+"""
+
+
 def render() -> str:
     parts = [
         HEADER,
@@ -642,6 +698,7 @@ def render() -> str:
         probes_section(),
         rebaseline_section(),
         perf_tracks_section(),
+        airline_section(),
     ]
     return "\n".join(parts)
 

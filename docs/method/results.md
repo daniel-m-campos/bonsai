@@ -298,3 +298,47 @@ The probe behind decisions 62 to 64: catboost's Ordered vs Plain modes against b
 | gpu | 16,000,000 | catboost_gpu | iters=200 | 32.19 | 0.8944 |
 
 *Source: [`catboost-scale-edge-2026-07.jsonl`](../../benchmarks/results/catboost-scale-edge-2026-07.jsonl). Evidence: [benchmarks/catboost-scale-edge-2026-07.md](../../benchmarks/catboost-scale-edge-2026-07.md).*
+
+## Airline delays: the real-data speed ladder
+
+The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC), both the campaign knob shape and Pafka's depth-10 protocol, all rows one pod. `bonsai_ts_*` rows are the labeled exception to the uniform ordinal-code convention (OrderedTargetEncoder pipeline; `fit_s` includes the encode).
+
+![airline 10M fit seconds](assets/airline-10m.svg)
+
+**campaign knobs (depth 8)**, fit seconds / test AUC:
+
+| variant | 0.1m | 1m | 10m |
+|---|---|---|---|
+| bonsai_depthwise | 2.6s / 0.7260 | 7.0s / 0.7447 | 35.3s / 0.7468 |
+| bonsai_oblivious | 1.6s / 0.7218 | 5.2s / 0.7256 | 40.0s / 0.7264 |
+| bonsai_cuda_depthwise | 0.3s / 0.7268 | 0.8s / 0.7447 | 5.5s / 0.7467 |
+| bonsai_cuda_oblivious | 0.9s / 0.7218 | 1.4s / 0.7253 | 6.1s / 0.7264 |
+| bonsai_ts_depthwise | 2.8s / 0.7238 | 9.5s / 0.7462 | 72.6s / 0.7498 |
+| bonsai_ts_oblivious | 2.7s / 0.7247 | 8.9s / 0.7326 | 73.6s / 0.7339 |
+| bonsai_ts_cuda_depthwise | 0.5s / 0.7239 | 3.1s / 0.7460 | 37.8s / 0.7498 |
+| bonsai_ts_cuda_oblivious | 1.1s / 0.7247 | 3.6s / 0.7326 | 38.3s / 0.7339 |
+| xgb_hist | 0.9s / 0.7264 | 3.6s / 0.7429 | 29.9s / 0.7469 |
+| xgb_cuda | 0.2s / 0.7257 | 0.6s / 0.7438 | 3.2s / 0.7476 |
+| lgbm_cpu | 1.7s / 0.7264 | 4.2s / 0.7448 | 19.7s / 0.7459 |
+| catboost_cpu | 1.0s / 0.7167 | 5.7s / 0.7234 | 37.5s / 0.7245 |
+| catboost_gpu | 0.5s / 0.7167 | 0.8s / 0.7229 | 5.4s / 0.7254 |
+
+**Pafka protocol (depth 10)**, fit seconds / test AUC:
+
+| variant | 0.1m | 1m | 10m |
+|---|---|---|---|
+| bonsai_depthwise | 3.1s / 0.7242 | 12.2s / 0.7547 | 47.8s / 0.7596 |
+| bonsai_oblivious | 4.0s / 0.7208 | 8.7s / 0.7305 | 50.3s / 0.7310 |
+| bonsai_cuda_depthwise | 0.3s / 0.7244 | 1.0s / 0.7535 | 6.2s / 0.7594 |
+| bonsai_cuda_oblivious | 1.7s / 0.7208 | 2.4s / 0.7301 | 7.2s / 0.7310 |
+| bonsai_ts_depthwise | 6.2s / 0.7206 | 15.2s / 0.7529 | 83.8s / 0.7615 |
+| bonsai_ts_oblivious | 6.9s / 0.7249 | 13.7s / 0.7361 | 80.8s / 0.7368 |
+| bonsai_ts_cuda_depthwise | 0.6s / 0.7206 | 3.2s / 0.7537 | 38.2s / 0.7610 |
+| bonsai_ts_cuda_oblivious | 2.1s / 0.7249 | 4.8s / 0.7361 | 39.9s / 0.7368 |
+| xgb_hist | 1.0s / 0.7260 | 2.6s / 0.7502 | 36.9s / 0.7580 |
+| xgb_cuda | 0.3s / 0.7253 | 0.8s / 0.7489 | 3.8s / 0.7579 |
+| lgbm_cpu | 2.4s / 0.7248 | 8.0s / 0.7516 | 29.2s / 0.7600 |
+| catboost_cpu | 2.0s / 0.7177 | 6.3s / 0.7284 | 49.4s / 0.7295 |
+| catboost_gpu | 0.7s / 0.7163 | 1.1s / 0.7287 | 6.3s / 0.7304 |
+
+*Source: [`airline-2026-07.jsonl`](../../benchmarks/results/airline-2026-07.jsonl). One L40S (SECURE US-NC-1, driver 570.124.06), 2026-07-15, post-decision-74 code. A bonsai variant has the best AUC in every cell from 1M up under both protocols; xgboost-GPU owns raw speed on this narrow shape. Evidence: [benchmarks/airline-2026-07.md](../../benchmarks/airline-2026-07.md).*
