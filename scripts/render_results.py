@@ -612,7 +612,7 @@ Latest run per device on the YearPredictionMSD pipeline benchmark (full history 
 
 {par_table}
 
-{provenance(["gpu-pareto-16M-2026-07.jsonl"], "Post-fix re-run (2026-07-14, decision 71): bonsai owns the fast end and the accuracy ceiling; catboost's 2x cheaper marginal round owns time-to-accuracy above r2 0.885. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md).")}
+{provenance(["gpu-pareto-16M-2026-07.jsonl"], "Post-campaign re-run (2026-07-15, decision 72): bonsai is first to every accuracy up to r2 ~0.895, ties catboost through the plateau, and holds the 0.8981 ceiling; the marginal round fell 155 to 104 ms. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md).")}
 
 ### Ordered boosting at scale (catboost door)
 

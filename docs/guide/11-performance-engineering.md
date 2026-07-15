@@ -37,6 +37,10 @@ Every row is a real decision from [decisions.md](../decisions.md); the deltas ar
 | **35 pinned epilogue D2H** | reroute D2H via pinned + memcpy | **unpriceable** (finalize was an aggregate) | refuted: 3.78→4.45s (*worse*) |
 | 54 device binning | delete 4.6s host bin node + 1.6GB edge; add a 6.4GB streamed edge | ~4.5s | fit 37.9→31.3s |
 | 38 buffer recycling | delete a 12.8GB/fit host *memset* node | ~6s | fit 34.7→26.9s |
+| 72 identity contract | delete a 64MB/tree host identity copy + its staging | 33ms/round | grow/round 181→148ms |
+| 72 device root sums | 16M-row host reduce → deterministic two-pass kernel | ~12ms/round | landed within price |
+| 72 final-level skip | delete the last level's write-only histogram build | ~18ms/round | grow/round → 125ms |
+| **72 epilogue sync, memset, pinned gh** | three more levers from the same table | **0.1ms / 0.5ms / break-even → killed** | never implemented |
 
 Four of these deserve the space:
 
@@ -44,6 +48,7 @@ Four of these deserve the space:
 - **PR #35 is rule 2.** The finalize line read 3.9s and intuition said "pageable D2H is slow, pin it". But finalize was an *aggregate* (stamp kernels + map kernel + sync + copies) and the actual copy share was small; the pinned route added a 128MB/tree memcpy and measured **worse**. The counters that would have priced it correctly (`fin_wait`/`fin_d2h`) were added the next day, and no line has been designed against un-decomposed since.
 - **Decision 54 is the canonical "min-bytes ≠ min-time".** Device binning *increases* boundary traffic 4× (6.4GB of raw floats instead of 1.6GB of binned bytes) and still wins big, because the edge is cheaper than the 4.6s host node it deletes, and the model, fed the measured gh-edge bandwidth, re-priced the design's own draft (which had guessed 2.4s for the transfer; it's ~0.5s) *while the design was being written*.
 - **PR #38 is rule 3 twice over.** Conservation said fit − grow − ingest left **12s attributed to nothing**. New buckets named it in one pod run: the per-tree zero-initialization of the output vectors, 12.8GB of `memset` per fit that every profiler had filed under "grow". Deleting it (the booster recycles the buffers; every element is provably written before read) was worth more than any kernel this campaign, and its correctness proof is the byte-identical model hash with tree *n+1* starting from tree *n*'s garbage.
+- **The decision-72 rows are the method compressed into one round.** The target was the oblivious grower's 155ms marginal round (decision 71's residue). Rung 0 built the price list before any lever: a profile-only sync peel replayed the decision-62 lesson (6.1s filed under find staging was really the previous level's histogram kernels draining at the next sync), and conservation flushed two residues nothing else explained, the identity copy and the final level's write-only build. Six levers were priced from that one table; three landed for ~63ms, and three were killed for a combined price under a millisecond, the cheapest refutations of any campaign. Result: 181→125ms per round (fit 19.4→13.9s), r² four-decimal identical, CPU hash byte-identical. What remains is ~72ms of histogram kernel plus ~35ms of partition and bus, which is a *kernel engineering* boundary, not a placement one: the floor section's distinction, measured.
 
 ## In bonsai: what the abstraction looks like as C++
 
