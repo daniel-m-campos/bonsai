@@ -14,14 +14,19 @@
 #include "bonsai/types.hpp"
 #include "test_grower_helpers.hpp"
 
+#include "bonsai/config/errors.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <limits>
 #include <numeric>
 #include <random>
+#include <set>
+#include <utility>
 #include <vector>
 
 namespace
@@ -541,4 +546,139 @@ TEST_CASE("CudaDepthwiseGrower trains identically on a device-binned dataset",
         REQUIRE_THAT(dev_sub.values[r],
                      Catch::Matchers::WithinAbs(host_sub.values[r], 1e-4));
     }
+}
+
+// ---- Constraints on the device plane (issue #149) ----------------------------
+
+TEST_CASE("CudaDepthwiseGrower: monotone +1 forces non-decreasing predictions",
+          "[cuda][grower][monotone]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    // Three value groups whose gradient means swing down-up (-1, +2, -2), so
+    // the unconstrained tree is non-monotone in the feature — the CPU monotone
+    // test's data shape, sized to 4096 rows so the device find really runs.
+    std::mt19937                          rng(17);
+    std::uniform_real_distribution<float> jitter(0.0F, 0.8F);
+    size_t const                          n = 4096;
+
+    detail::ColumnBatch batch;
+    batch.features.resize(1, std::vector<float>(n));
+    batch.feature_names = {"a"};
+    batch.labels.assign(n, 0.0F);
+    std::vector<float>         grad(n);
+    std::vector<float>         hess(n, 1.0F);
+    std::array<float, 3> const group_grad{-1.0F, +2.0F, -2.0F};
+    for (size_t r = 0; r < n; ++r)
+    {
+        size_t const g       = r % 3;
+        batch.features[0][r] = static_cast<float>(g) + jitter(rng);
+        grad[r]              = group_grad[g];
+    }
+    auto built = test::build(std::move(batch));
+    auto rows  = test::iota_rows(n);
+
+    TreeConfig unconstrained;
+    unconstrained.max_depth          = 4;
+    unconstrained.min_data_in_leaf   = 4;
+    TreeConfig constrained           = unconstrained;
+    constrained.monotone_constraints = {+1};
+
+    auto predict_curve = [&](DenseTree const &tree)
+    {
+        std::vector<float> out;
+        for (float x : {0.4F, 1.4F, 2.4F})
+        {
+            out.push_back(test::predict_one(tree, std::vector<float>{x}));
+        }
+        return out;
+    };
+
+    // Sanity: the unconstrained GPU tree is non-monotone on this data,
+    // otherwise the constrained assertion below would pass vacuously.
+    CudaDepthwiseGrower free_grower(unconstrained);
+    auto                free_out   = free_grower.grow(built.ds, grad, hess, rows);
+    auto const          free_curve = predict_curve(free_out.tree);
+    REQUIRE((free_curve[1] < free_curve[0] || free_curve[2] < free_curve[1]));
+
+    CudaDepthwiseGrower gpu_grower(constrained);
+    auto                gpu   = gpu_grower.grow(built.ds, grad, hess, rows);
+    auto const          curve = predict_curve(gpu.tree);
+    CHECK(curve[0] <= curve[1]);
+    CHECK(curve[1] <= curve[2]);
+
+    // Same constrained config on the CPU plane: the device find mirrors the
+    // CPU bound-propagation scheme, so predictions agree to the suite band.
+    DepthwiseGrower<CpuHistogramEngine> cpu_grower(constrained);
+    auto cpu = cpu_grower.grow(built.ds, grad, hess, rows);
+    REQUIRE(cpu.values.size() == gpu.values.size());
+    for (size_t r = 0; r < cpu.values.size(); ++r)
+    {
+        REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
+    }
+}
+
+TEST_CASE("CudaDepthwiseGrower: interaction constraints keep groups on separate paths",
+          "[cuda][grower][interaction]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
+
+    TreeConfig cfg;
+    cfg.max_depth               = 5;
+    cfg.min_data_in_leaf        = 4;
+    cfg.interaction_constraints = {"0,1", "2,3"};
+
+    CudaDepthwiseGrower gpu_grower(cfg);
+    auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+
+    // Walk every root-to-leaf path; no path may mix features across groups.
+    auto const &nodes = gpu.tree.nodes();
+    REQUIRE(gpu.tree.params().n_leaves > 1); // the walk must not be vacuous
+    std::vector<std::pair<node_id_t, std::set<feature_id_t>>> stack{{0, {}}};
+    while (!stack.empty())
+    {
+        auto [id, used] = stack.back();
+        stack.pop_back();
+        auto const &node = nodes[id];
+        if (DenseTree::is_leaf(node))
+        {
+            bool const mixes_groups = (used.contains(0) || used.contains(1)) &&
+                                      (used.contains(2) || used.contains(3));
+            CHECK(!mixes_groups);
+            continue;
+        }
+        used.insert(node.feature_id);
+        stack.push_back({node.left, used});
+        stack.push_back({node.right, used});
+    }
+
+    DepthwiseGrower<CpuHistogramEngine> cpu_grower(cfg);
+    auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    REQUIRE(cpu.values.size() == gpu.values.size());
+    for (size_t r = 0; r < cpu.values.size(); ++r)
+    {
+        REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
+    }
+}
+
+TEST_CASE("CudaObliviousGrower rejects constraints at construction",
+          "[cuda][grower][monotone]")
+{
+    // Construction-time contract (shared with the CPU oblivious grower); the
+    // engine allocates lazily, so this pins the ConfigError on every build,
+    // device or not — no SKIP.
+    TreeConfig mono;
+    mono.monotone_constraints = {+1};
+    REQUIRE_THROWS_AS(CudaObliviousGrower(mono), ConfigError);
+
+    TreeConfig inter;
+    inter.interaction_constraints = {"0", "1"};
+    REQUIRE_THROWS_AS(CudaObliviousGrower(inter), ConfigError);
 }
