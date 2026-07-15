@@ -85,6 +85,13 @@ REGISTRY = {
         "UCI Covertype", "UCI, research use",
         "first 500k rows train, remainder test",
         ("covtype_train.csv", "covtype_test.csv")),
+    "airline": Dataset(
+        "airline", "perf-scale", "binary",
+        "benchm-ml airline on-time (Szilard Pafka, github.com/szilard/benchm-ml; "
+        "s3://benchm-ml--main)", "US DOT public data, benchmark redistribution",
+        "upstream fixed splits: train-{0.1m,1m,10m}.csv + shared 100k test.csv; "
+        "ordinal codes fit on train (bonsai.bench.airline)",
+        ("train-0.1m.csv", "train-1m.csv", "train-10m.csv", "airline_test.csv")),
     "higgs": Dataset(
         "higgs", "perf-scale", "binary",
         "UCI HIGGS (first 550k of 11M rows)", "UCI, CC BY 4.0",
