@@ -18,6 +18,14 @@ unseen in train map to -1. This strips catboost's native categorical
 machinery, the same documented trade the Grinsztajn suite makes; the
 comparison measures histogram engines, not encoders.
 
+The bonsai_ts_* variants are the labeled EXCEPTION to that convention: they
+feed bonsai through OrderedTargetEncoder (decision 58) first, so the ordinal
+code spaces become causal target-mean features. Rows carry encoding=
+"ordered_ts" (vs "ordinal") and fit_s includes the encoding time (it is part
+of that pipeline's wall clock; encode_s is also recorded separately). They
+answer "what does the shipped categorical story buy on this data", not the
+uniform engine comparison.
+
 Rows are labeled division="perf", timing_mode="in_memory" (schema v1,
 bonsai.bench.runlog) with AUC as the quality column (metrics.auc, the
 protocol's binary primary). Same-pod discipline applies: only rows from one
@@ -59,6 +67,10 @@ VARIANTS = {
     "bonsai_oblivious": ("bonsai", "cpu"),
     "bonsai_cuda_depthwise": ("bonsai", "cuda"),
     "bonsai_cuda_oblivious": ("bonsai", "cuda"),
+    "bonsai_ts_depthwise": ("bonsai", "cpu"),
+    "bonsai_ts_oblivious": ("bonsai", "cpu"),
+    "bonsai_ts_cuda_depthwise": ("bonsai", "cuda"),
+    "bonsai_ts_cuda_oblivious": ("bonsai", "cuda"),
     "xgb_hist": ("xgb", "cpu"),
     "xgb_cuda": ("xgb", "cuda"),
     "lgbm_cpu": ("lgbm", "cpu"),
@@ -211,13 +223,29 @@ def worker(spec: dict) -> dict:
     X, y, Xte, yte = _encode(spec["size"])
     lib, device = VARIANTS[spec["variant"]]
     run = RUNNERS[lib]
+    encode_s = 0.0
+    if spec["variant"].startswith("bonsai_ts_"):
+        from ..encoding import OrderedTargetEncoder
+        t0 = time.perf_counter()
+        enc = OrderedTargetEncoder(columns=range(len(CATEGORICAL)),
+                                   seed=spec["knobs"]["seed"])
+        X = np.ascontiguousarray(enc.fit_transform(X, y), dtype=np.float32)
+        Xte = np.ascontiguousarray(enc.transform(Xte), dtype=np.float32)
+        encode_s = time.perf_counter() - t0
+        # run_bonsai reads the grower name off the variant; hand it the
+        # plain spelling. The parent's emitted row keeps the ts_ name.
+        spec = dict(spec, variant=spec["variant"].replace("_ts_", "_", 1))
     if device == "cuda":
         micro = dict(spec, knobs=dict(spec["knobs"], iters=5))
         run(micro, X[:8192], y[:8192], Xte[:1024], yte[:1024])
     out = run(spec, X, y, Xte, yte)
     ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     out["peak_rss_gb"] = round(ru / (2**30 if sys.platform == "darwin" else 2**20), 2)
-    out["fit_s"] = round(out["fit_s"], 3)
+    # A pipeline's wall clock includes its preprocessing: encode_s folds into
+    # fit_s and is also recorded on its own so the split stays visible.
+    out["fit_s"] = round(out["fit_s"] + encode_s, 3)
+    if encode_s:
+        out["encode_s"] = round(encode_s, 3)
     out["predict_s"] = round(out["predict_s"], 3)
     out["auc_test"] = round(out["auc_test"], 4)
     return out
@@ -247,6 +275,8 @@ def main() -> int:
         _encode(size)  # fetch + parse once in the parent; workers hit the cache
         for variant in variants:
             knobs = dict(KNOBS, depth=args.depth, iters=args.iters)
+            encoding = ("ordered_ts" if variant.startswith("bonsai_ts_")
+                        else "ordinal")
             spec = {"size": size, "variant": variant, "threads": args.threads,
                     "knobs": knobs}
             proc = subprocess.run(
@@ -259,14 +289,15 @@ def main() -> int:
                 status = "unsupported" if "unsupported" in proc.stderr else "error"
                 runlog.emit_row(args.out, division="perf", suite="airline",
                                 knobs=knobs, host=host, timing_mode="in_memory",
-                                size=size, variant=variant, status=status,
-                                error=proc.stderr.strip()[-400:])
+                                size=size, variant=variant, encoding=encoding,
+                                status=status, error=proc.stderr.strip()[-400:])
                 print(f"{size} {variant}: {status}", flush=True)
                 continue
             out = json.loads(line.removeprefix("RESULT "))
             runlog.emit_row(args.out, division="perf", suite="airline",
                             knobs=knobs, host=host, timing_mode="in_memory",
-                            size=size, variant=variant, status="ok", **out)
+                            size=size, variant=variant, encoding=encoding,
+                            status="ok", **out)
             print(f"{size} {variant}: fit {out['fit_s']}s "
                   f"auc {out['auc_test']}", flush=True)
     return 0
