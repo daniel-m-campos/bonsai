@@ -48,7 +48,7 @@ Four of these deserve the space:
 - **PR #35 is rule 2.** The finalize line read 3.9s and intuition said "pageable D2H is slow, pin it". But finalize was an *aggregate* (stamp kernels + map kernel + sync + copies) and the actual copy share was small; the pinned route added a 128MB/tree memcpy and measured **worse**. The counters that would have priced it correctly (`fin_wait`/`fin_d2h`) were added the next day, and no line has been designed against un-decomposed since.
 - **Decision 54 is the canonical "min-bytes ≠ min-time".** Device binning *increases* boundary traffic 4× (6.4GB of raw floats instead of 1.6GB of binned bytes) and still wins big, because the edge is cheaper than the 4.6s host node it deletes, and the model, fed the measured gh-edge bandwidth, re-priced the design's own draft (which had guessed 2.4s for the transfer; it's ~0.5s) *while the design was being written*.
 - **PR #38 is rule 3 twice over.** Conservation said fit − grow − ingest left **12s attributed to nothing**. New buckets named it in one pod run: the per-tree zero-initialization of the output vectors, 12.8GB of `memset` per fit that every profiler had filed under "grow". Deleting it (the booster recycles the buffers; every element is provably written before read) was worth more than any kernel this campaign, and its correctness proof is the byte-identical model hash with tree *n+1* starting from tree *n*'s garbage.
-- **The decision-72 rows are the method compressed into one round.** The target was the oblivious grower's 155ms marginal round (decision 71's residue). Rung 0 built the price list before any lever: a profile-only sync peel replayed the decision-62 lesson (6.1s filed under find staging was really the previous level's histogram kernels draining at the next sync), and conservation flushed two residues nothing else explained, the identity copy and the final level's write-only build. Six levers were priced from that one table; three landed for ~63ms, and three were killed for a combined price under a millisecond, the cheapest refutations of any campaign. Result: 181→125ms per round (fit 19.4→13.9s), r² four-decimal identical, CPU hash byte-identical. What remains is ~72ms of histogram kernel plus ~35ms of partition and bus, which is a *kernel engineering* boundary, not a placement one: the floor section's distinction, measured.
+- **The decision-72 rows are the method compressed into one round.** The target was the oblivious grower's 155ms marginal round (decision 71's residue). Rung 0 built the price list before any lever: a profile-only sync peel replayed the decision-62 lesson (6.1s filed under find staging was really the previous level's histogram kernels draining at the next sync), and conservation flushed two residues nothing else explained, the identity copy and the final level's write-only build. Six levers were priced from that one table; three landed for ~63ms, and three were killed for a combined price under a millisecond, the cheapest refutations of any campaign. Result: 181→125ms per round (fit 19.4→13.9s), r² four-decimal identical, CPU hash byte-identical. What remains is ~72ms of histogram kernel plus ~32ms of partition and bus, which is a *kernel engineering* boundary, not a placement one: the floor section's distinction, measured. The whole round is walked step by step in [the worked round](#the-worked-round-181-milliseconds-named-and-cut) below.
 
 ## In bonsai: what the abstraction looks like as C++
 
@@ -59,6 +59,94 @@ The DAG is not a diagram on the side; it is load-bearing in the code's shapes:
 - **Opaque receipts + backend tags at TU firewalls**: [`IngestPlane`](../../include/bonsai/dataset.hpp) is the one sanctioned virtual interface besides `IBooster`: the host TU cannot name CUDA types, so compile-time dispatch is impossible *by construction* there, and even then, recognition is a TU-local tag address, not RTTI. Everywhere else: concepts, `if constexpr (requires ...)`, and typelists.
 - **Profile-gated laps**: every phase brackets itself with a `Lap` that is a no-op unless the env var is set ([`include/bonsai/detail/perf.hpp`](../../include/bonsai/detail/perf.hpp)), including profile-only `cudaDeviceSynchronize` calls that split *wait* from *work* in async lines. The constants in the model are these lines; instrumentation ships **before** the optimization it prices, in the same PR.
 - **Immovable buffers**: `DeviceBuffer` deliberately has no copy *or move*; aggregates holding one are filled by out-param. The compiler enforcing "device memory does not silently relocate" caught a bug in this very campaign at CI time.
+
+## The worked round: 181 milliseconds, named and cut
+
+The rules above are abstract until you watch them applied once, end to end, at the altitude where the measuring actually happens. This section replays the decision-72 campaign as that walkthrough: what physically runs where in one GPU tree level, what each profiler number does and does not include, how the misattribution was detected, how conservation flushed the dark matter, and how the levers were priced, landed, or killed. Every number is from the committed record (PR #148, decision 72, and the doc-16 constants).
+
+### The stage: one oblivious level, host and device
+
+The host is the control plane (doc 12): it must observe each level's split decision before opening the next. The device does the heavy compute. The connection is a single in-order CUDA stream, which means every operation queued on it runs in submission order, and a *synchronous* copy cannot start until everything queued before it has finished.
+
+```mermaid
+sequenceDiagram
+    participant H as host control plane<br/>(level_step.hpp laps)
+    participant Q as CUDA stream (in-order)
+    Note over H,Q: level L ends: apply_level
+    H->>Q: queue memset + hist + subtract kernels for level L+1 (async, host returns immediately)
+    H->>H: commit_children, demote (host bookkeeping, runs while the device works)
+    Note over H,Q: level L+1 begins: find_level_split
+    H->>Q: stage node sums, a ~KB synchronous H2D (stage_level_sums)
+    Note over Q: the copy is queued behind the whole histogram build.<br/>The host blocks here until the build finishes.
+    Q-->>H: copy completes
+    H->>Q: level-find + reduce kernels, then the chosen-split D2H (sync)
+    Q-->>H: split decision, a few bytes
+    H->>H: pick the split, open level L+2 (doc 12 contract)
+```
+
+The trap is in the middle: the histogram build for level L+1 was queued *asynchronously* at the end of level L, so its cost does not appear in the lap that queued it. It appears wherever the next synchronous operation happens to sit, which is the kilobyte-sized staging copy at the top of `find_level_split`. The host lap around that copy reads tens of milliseconds for a transfer that physically costs microseconds.
+
+### What a number means before you trust it
+
+Three instruments measure this loop, and they measure different things:
+
+| instrument | what it reads | what it includes | what it cannot see |
+|---|---|---|---|
+| host `Lap` (`GrowProfiler`, level_step.hpp) | wall time between two host-code points | compute, transfers, *and any waiting on the device* | which device work it waited on |
+| `cudaEvent` pair (`cuda-round-decomp`) | device time between two stream points | only the kernels between the events | host time, and anything on other streams |
+| profile-only peel sync (`gpu_wait`) | an explicit `cudaDeviceSynchronize` lapped by the host, compiled out in production | the wait that was about to be absorbed by whatever synced next | nothing; that is its job: it converts "absorbed somewhere" into a named bucket |
+
+A host lap that contains a hidden sync inherits someone else's compute. An event pair never lies about *what* ran but says nothing about whether anyone *waited* on it. The peel tells you the wait; the events tell you the work; the two need not be equal, because work that overlaps host bookkeeping is real compute but free wall clock.
+
+### Step 1: conservation, and the smell
+
+The campaign opened with the round at 181ms/round on the rung-0 pod (fit 19.43s at the 16M x 100 cell). The host buckets summed to the wall clock, so conservation held at the top, but one line failed the physical sniff test: the find lap carried ~61ms/round labeled as *staging*, and staging moves kilobytes. A kilobyte copy that reads 61ms is not slow, it is mislabeled: rule 3 of doc 16, a bucket you cannot decompose is a bucket you cannot trust, and a bucket whose bytes cannot cost its milliseconds is already decomposed for you: it is somebody else's time.
+
+This was not even a new lesson: decision 62 had caught the identical misattribution in the depthwise plane a week earlier and added the peel there. The oblivious plane simply had no peel yet.
+
+### Step 2: relocate the wait, name the work
+
+Rung 0 added two things to the oblivious path, both compiled out without `BONSAI_CUDA_PROFILE`: the peel sync at the top of `find_level_split` (histogram_engine.cu, lapped as `gpu_wait`), and `cudaEvent` pairs around the async memset/hist/subtract chain (read only after an existing sync, so measuring adds no serialization). The staging label collapsed to its physical microseconds; `gpu_wait` inherited the ~61ms honestly; and the events named the underlying work: `adv_hist` 84ms/round of histogram-kernel compute. The gap between the 84ms of work and the ~61ms of wait is the overlap with host bookkeeping, wall clock the async schedule was already hiding, which is exactly what you want more of, not less.
+
+### Step 3: conservation again, finer, and the dark matter
+
+With the wait relocated, the round's buckets were re-summed against the wall clock, and two residues fell out that no existing label explained:
+
+- **`assign` 33ms/round**: a new lap on the only un-lapped block in `make_root` revealed a 64MB-per-tree *host* copy of the sampler's row list, made even on full-data fits where the list is the identity permutation the device could build itself with one trivial kernel.
+- **`fin_stamp` 22ms/round**: the event spans showed a full histogram build for the final level, whose children are all leaves. Nothing ever reads those histograms. The build was write-only work that the layout bookkeeping (`advance_layout_only`) could replace.
+
+Neither residue was visible before the relocation, because both were drowned inside buckets that also contained the misattributed build. Dark matter hides behind misattribution; you flush it in dependency order.
+
+### Step 4: the price list, with the kills pre-registered
+
+Six levers were priced from the rung-0 table before any implementation, each with a kill criterion written down first:
+
+| lever | priced at | kill criterion | verdict |
+|---|--:|---|---|
+| identity contract (delete the host row copy) | 33ms | priced under 10ms | landed: round 181→148ms |
+| device root sums (delete a 16M-row host reduce) | ~12ms | priced under 10ms | landed |
+| final-level skip (delete the write-only build) | ~18ms | priced under 5ms | landed: round → 125ms |
+| epilogue sync scope | priced from its lap | under 5ms | **killed at 0.1ms** |
+| per-level memset | priced from its event | under 5ms | **killed at 0.5ms** |
+| pinned gh staging | desk arithmetic | no measured overlap win | **killed at break-even** |
+
+The three kills cost a combined price under one millisecond to refute, because the table priced them before anyone wrote a kernel. That is the entire economic argument for instrument-first: refutation is cheapest at the price-list stage and most expensive after implementation.
+
+### Step 5: gates, and the outside view
+
+Each landed lever passed the same gates: `[cuda]` suite on device, r² identical to four decimals at the 16M cell, and the CPU `model_hash` byte-identical (a GPU-only change must not move the host plane; the suite caught two real bugs on the way, both recorded in PR #148). Same-pod: round 181→125ms, fit 19.43→13.88s.
+
+Then the frontier re-run measured the campaign from the outside (decision 72): marginal round 155→104ms in the ladder decomposition, the bonsai-catboost crossover pushed from ~100 rounds to ~320, past both libraries' accuracy plateaus, and every shared r² point reproduced to four decimals across pods. The remaining round is ~72ms of histogram kernel plus ~32ms of partition and bus, and the campaign's last recorded act was *not spending* the kernel rung: the 80ms gate was not met and the frontier no longer needed it.
+
+### The checklist that generalizes
+
+1. Sum the buckets against the wall clock at every altitude (fit, grow, round). An unexplained gap is the next target; a perfectly-explained clock with a physically impossible line item is a misattribution.
+2. In async systems, cost appears at the next sync, not at the call site. Find every synchronous operation and ask what it might be draining.
+3. Peel waits from work with profile-only syncs; name work with event pairs read at existing syncs. Neither changes the production schedule.
+4. Expect wait ≤ work when overlap exists; the difference is wall clock the schedule already saved you.
+5. Price every lever from the measured table before implementing, and write the kill criterion first.
+6. Gate behavior, not just speed: metric identity and byte-identical hashes for planes the change must not touch.
+7. Re-measure from the outside when done; the profiled delta and the end-to-end delta must tell the same story.
 
 ## Try it
 
