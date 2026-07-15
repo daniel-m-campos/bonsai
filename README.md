@@ -78,10 +78,10 @@ On the [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815), 
 
 | library | mean rank | outright wins |
 |---|--:|--:|
-| **bonsai** | **1.73** | **27** |
-| lightgbm | 2.35 | 10 |
-| xgboost | 2.73 | 9 |
-| catboost | 3.20 | 9 |
+| **bonsai** | **1.44** | **36** |
+| lightgbm | 2.51 | 5 |
+| xgboost | 2.84 | 6 |
+| catboost | 3.22 | 8 |
 
 The one knob that translates ambiguously between libraries is bracketed: under xgboost's own `min_child_weight=1` convention the top two swap on mean rank (2.11 vs 2.04) while bonsai keeps the most second-or-better finishes; both runs are in the ledger. Reproduce either: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl --report`.
 
@@ -105,7 +105,7 @@ Every claim links a reproducible run and the decision that records it; the point
 | Claim | Evidence |
 |---|---|
 | **Bit-identical models across CPU architectures** (arm64 == x86-64) at a fixed thread count; no reference library offers this | decisions [59/60](https://daniel-m-campos.github.io/bonsai/decisions/); asserted per-commit by [`cross-arch.yml`](.github/workflows/cross-arch.yml) via [`scripts/model_hash.py`](scripts/model_hash.py) |
-| **Best mean rank on the 55-task Grinsztajn benchmark under either min_child_weight convention** (27 outright wins; second-or-better on 44/55, last once) | [grinsztajn-2026-07](benchmarks/grinsztajn-2026-07.md), [decision 68](https://daniel-m-campos.github.io/bonsai/decisions/) |
+| **Best mean rank on the 55-task Grinsztajn benchmark under either min_child_weight convention** (36 outright wins; second-or-better on 50/55, never last) | [grinsztajn-2026-07](benchmarks/grinsztajn-2026-07.md), [decision 68](https://daniel-m-campos.github.io/bonsai/decisions/) |
 | **Fastest GPU slot at every row scale**; at 16M `oblivious` edges catboost and beats xgboost-GPU at matched accuracy | [rebaseline jsonl](benchmarks/results/rebaseline-2026-07.jsonl), [scale-edge](benchmarks/catboost-scale-edge-2026-07.md), decisions [62-64](https://daniel-m-campos.github.io/bonsai/decisions/) |
 | **The only GBT whose GPU path ships in a 2.3MB pip install, validated on live GPU hardware per release** | [decision 70](https://daniel-m-campos.github.io/bonsai/decisions/); [`wheels.yml`](.github/workflows/wheels.yml) |
 | **Within ~8% of xgboost-hist at 16M rows on CPU, host-dependent**: a dead tie on one pod, xgboost ahead on another | [decision 61](https://daniel-m-campos.github.io/bonsai/decisions/); [prefetch-round jsonl](benchmarks/results/cpu-prefetch-round-2026-07.jsonl) |

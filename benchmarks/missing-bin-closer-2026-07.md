@@ -28,6 +28,10 @@ The capped-sensor case is the realistic catastrophe: a 10%-heavy cap value carry
 
 The amazon −0.002 was checked against a null yardstick: the off-arm's own sensitivity to `max_bin` 253/254/255/256 spans 0.0034 (0.8179-0.8212), so the closer's delta is inside the dataset's ordinary bin-configuration churn (decision-55 threshold-placement noise on high-cardinality ID codes). Seeds do not perturb this config; the null perturbation is the honest error bar.
 
+## Standings re-validation (Grinsztajn, the citable table)
+
+The bonsai arms of the 55-task suite were re-run on the closer build against frozen reference rows (same protocol and seeds). Mean rank 1.73 to 1.44, wins 27 to 36, second-or-better 44 to 50, never last (was once). Value-level the moves are mostly in-band (43 of 55 inside 0.001; 8 up, 4 down, worst −0.0040), but the 10k-row cap makes the greedy path nearly universal (461 of 495 fits changed) and the suite's many near-tie second places broke systematically toward bonsai. `year`, the decision-55 named residual, recovered +0.0036 of its +0.0066 gap. Details in `benchmarks/grinsztajn-2026-07.md` (superseded in place).
+
 ## Verdict
 
-Adopted (decision 74) on robustness and invariant grounds with the standings-neutral suite recorded honestly: the sentinel bin is NaN-only on every path, the train/predict skew is gone, the cost is a budget slot that was already reserved. Canonical hashes moved (serial `09dbf47353033362`, sampled `ca7174cb1560221e`); California pin 0.71725→0.7153 (−0.27%, in-band).
+Adopted (decision 74) on robustness and invariant grounds, with the standings re-validation coming back positive rather than neutral: the sentinel bin is NaN-only on every path, the train/predict skew is gone, the cost is a budget slot that was already reserved. Canonical hashes moved (serial `09dbf47353033362`, sampled `ca7174cb1560221e`); California pin 0.71725→0.7153 (−0.27%, in-band).

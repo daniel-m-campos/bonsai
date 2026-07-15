@@ -5,7 +5,7 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 ## [Unreleased]
 
 ### Fixed
-- **The missing bin is NaN-only on every fitting path** (decision 74, issue #155): fitted cuts now end with a `FLT_MAX` top-band closer, so finite values above the last cut (a stride path's top tail, a capped column's heavy maximum, rows beyond the bin sample) get a real splittable bin instead of training as missing, which also removes a train/predict routing skew for those rows. Models change only where a leak existed; on the quality suite the deltas are inside the chance band, while capped-column synthetics recover up to half the lost variance (evidence: `benchmarks/missing-bin-closer-2026-07.md`).
+- **The missing bin is NaN-only on every fitting path** (decision 74, issue #155): fitted cuts now end with a `FLT_MAX` top-band closer, so finite values above the last cut (a stride path's top tail, a capped column's heavy maximum, rows beyond the bin sample) get a real splittable bin instead of training as missing, which also removes a train/predict routing skew for those rows. Models change only where a leak existed; capped-column synthetics recover up to half the lost variance, and on the re-validated Grinsztajn standings bonsai's mean rank improves 1.73 to 1.44 with 36 of 55 outright wins and no last-place finishes (evidence: `benchmarks/missing-bin-closer-2026-07.md`).
 
 ## [1.3.0] - 2026-07-14
 

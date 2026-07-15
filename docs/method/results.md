@@ -14,28 +14,28 @@ The [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) at t
 
 | library | mean rank | outright wins |
 |---|---|---|
-| bonsai | 1.73 | 27 |
-| lgbm | 2.35 | 10 |
-| xgb | 2.73 | 9 |
-| catboost | 3.20 | 9 |
+| bonsai | 1.44 | 36 |
+| lgbm | 2.51 | 5 |
+| xgb | 2.84 | 6 |
+| catboost | 3.22 | 8 |
 
 Per-suite mean rank:
 
 | library | cat_clf | cat_reg | num_clf | num_reg |
 |---|---|---|---|---|
-| bonsai | 1.29 | 1.77 | 1.80 | 1.80 |
-| lgbm | 2.29 | 2.62 | 2.33 | 2.20 |
-| xgb | 3.57 | 2.38 | 2.87 | 2.55 |
-| catboost | 2.86 | 3.23 | 3.00 | 3.45 |
+| bonsai | 1.29 | 1.46 | 1.67 | 1.30 |
+| lgbm | 2.29 | 2.77 | 2.47 | 2.45 |
+| xgb | 3.57 | 2.54 | 2.87 | 2.75 |
+| catboost | 2.86 | 3.23 | 3.00 | 3.50 |
 
 Sensitivity: xgboost's campaign mapping sets `min_child_weight=20` (hessian-weighted, the knob-translation bracket recorded in decision 68); replacing its rows with the `min_child_weight=1` run gives the other end of the bracket:
 
 | library | mean rank | outright wins |
 |---|---|---|
-| bonsai | 2.04 | 10 |
-| xgb | 2.11 | 26 |
-| lgbm | 2.53 | 10 |
-| catboost | 3.33 | 9 |
+| bonsai | 1.78 | 18 |
+| xgb | 2.18 | 23 |
+| lgbm | 2.69 | 6 |
+| catboost | 3.35 | 8 |
 
 Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl --report`.
 
