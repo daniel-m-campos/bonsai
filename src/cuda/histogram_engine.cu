@@ -792,6 +792,22 @@ bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
     im.lvl.slots.host.assign(1, 0);
     im.lvl.slots.sync();
     root_lap(im.prof_counters.root_stage_s);
+    if (identity)
+    {
+        // Deterministic two-pass device reduce over the uploaded gh buffer
+        // replaces the 16M-row host loop (decision 71 campaign); queued
+        // before the histogram build so the later 16B fetch drains only
+        // these two small kernels.
+        constexpr uint32_t k_sum_blocks = 64;
+        im.lvl.sum_partial.reserve(k_sum_blocks);
+        im.lvl.sum_out.reserve(1);
+        sum_gh_pass1_kernel<<<dim3(k_sum_blocks), dim3(256)>>>(
+            im.grads.gh.data(), n, im.lvl.sum_partial.data());
+        check(cudaGetLastError(), "root sum pass1 launch");
+        sum_gh_pass2_kernel<<<dim3(1), dim3(32)>>>(im.lvl.sum_partial.data(),
+                                                   k_sum_blocks, im.lvl.sum_out.data());
+        check(cudaGetLastError(), "root sum pass2 launch");
+    }
     im.lvl.gh_ordered.reserve(n);
     gather(im.grads.gh.data(), im.lvl.rows.data(), n, im.lvl.gh_ordered.data());
     auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
@@ -825,18 +841,8 @@ bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
     auto sums_lap = im.prof_counters.lap();
     if (identity)
     {
-        // Deterministic two-pass device reduce over the uploaded gh buffer
-        // replaces the 16M-row host loop; the 16B fetch drains only the sum
-        // kernels (queued before the root histogram build above).
-        constexpr uint32_t k_sum_blocks = 64;
-        im.lvl.sum_partial.reserve(k_sum_blocks);
-        im.lvl.sum_out.reserve(1);
-        sum_gh_pass1_kernel<<<dim3(k_sum_blocks), dim3(256)>>>(
-            im.grads.gh.data(), n, im.lvl.sum_partial.data());
-        check(cudaGetLastError(), "root sum pass1 launch");
-        sum_gh_pass2_kernel<<<dim3(1), dim3(32)>>>(im.lvl.sum_partial.data(),
-                                                   k_sum_blocks, im.lvl.sum_out.data());
-        check(cudaGetLastError(), "root sum pass2 launch");
+        // The sum kernels were queued ahead of the root histogram build, so
+        // this 16B fetch waits only on them, not on the hist kernel.
         double2 sums{};
         check(cudaMemcpy(&sums, im.lvl.sum_out.data(), sizeof(double2),
                          cudaMemcpyDeviceToHost),
