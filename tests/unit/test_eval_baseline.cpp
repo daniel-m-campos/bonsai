@@ -78,6 +78,10 @@ TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7157605",
     // split on an fma-contraction knife edge, exposing that clang fused
     // a*b+c only on targets with the instruction), decision 59
     // (-ffp-contract=off on the host plane, -> 0.71725 on EVERY
-    // architecture — this pin is now platform-independent by construction).
-    CHECK(rmse == Catch::Approx(0.71725F).margin(1e-6));
+    // architecture — this pin is now platform-independent by construction),
+    // decision 74 (FLT_MAX top-band closer: the sentinel bin is NaN-only on
+    // every fitting path, -> 0.7153: -0.27% here, inside the chance band;
+    // the leak synthetics in scripts/probe_missing_bin.py are the real
+    // motivation).
+    CHECK(rmse == Catch::Approx(0.7153F).margin(1e-6));
 }

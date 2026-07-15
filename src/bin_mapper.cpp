@@ -2,7 +2,6 @@
 #include <cassert>
 #include <cmath>
 #include <cstddef>
-#include <cstdlib>
 #include <iterator>
 #include <limits>
 #include <numeric>
@@ -109,12 +108,14 @@ std::vector<float> greedy_weighted_cuts(std::vector<float> const  &vals,
 // Sort once, run-length encode into (distinct value, count) pairs, then
 // place at most `cut_budget` cuts by the lightest rule that is exact for
 // the column's shape. Distinct values within the budget: one right-inclusive
-// cut per value — binning is exact and the +inf sentinel bin stays
-// missing-only (issue #61). Above the budget with every value lighter than
-// a mean bin: the quantile stride, which IS the count-weighted allocation
-// when no value can overflow a bin (ceiling stride per decision 51). Only
-// heavy-value columns pay the greedy walk (issue #63) — the rule is per
-// column, so all-continuous datasets are untouched by it.
+// cut per value — binning is exact (issue #61). Above the budget with every
+// value lighter than a mean bin: the quantile stride, which IS the
+// count-weighted allocation when no value can overflow a bin (ceiling stride
+// per decision 51). Only heavy-value columns pay the greedy walk (issue #63)
+// — the rule is per column, so all-continuous datasets are untouched by it.
+// Every path ends with the FLT_MAX closer + the +inf sentinel, so the
+// sentinel bin is missing-only BY CONSTRUCTION on all paths (decision 74;
+// previously only the distinct path within the sample guaranteed it).
 std::vector<float> create_cuts(std::vector<float> &subsample, size_t cut_budget)
 {
     std::sort(subsample.begin(), subsample.end());
@@ -155,11 +156,13 @@ std::vector<float> create_cuts(std::vector<float> &subsample, size_t cut_budget)
             }
         }
     }
-    // Probe toggle for issue #155 (not a supported knob): a FLT_MAX top-band
-    // closer before the sentinel, so no finite value bins as missing. The
-    // reserved budget slot (from_sample's max_bin - 2) absorbs the extra bin.
-    static bool const closer = std::getenv("BONSAI_BIN_CLOSER") != nullptr;
-    if (closer && (cuts.empty() || cuts.back() < std::numeric_limits<float>::max()))
+    // The FLT_MAX top-band closer (issue #155, decision 74): every finite
+    // value above the last placed cut gets a real, splittable bin instead of
+    // leaking into the NaN sentinel, which also removes a train/predict
+    // routing skew (leaked rows trained by default_left but predict by raw
+    // threshold). The reserved budget slot (from_sample's max_bin - 2)
+    // absorbs the extra bin.
+    if (cuts.empty() || cuts.back() < std::numeric_limits<float>::max())
     {
         cuts.push_back(std::numeric_limits<float>::max());
     }
@@ -178,7 +181,8 @@ BinMapper BinMapper::fit(floats_view column, BinMapperConfig const &cfg)
 BinMapper BinMapper::from_sample(std::vector<float> sample, BinMapperConfig const &cfg)
 {
     assert(cfg.max_bin > 2);
-    // 1 bin for the +inf sentinel, another for the missing slot.
+    // The two reserved slots are the FLT_MAX closer and the +inf missing
+    // sentinel that create_cuts appends (decision 74).
     size_t const cut_budget = cfg.max_bin - 2;
     auto         cuts       = create_cuts(sample, cut_budget);
     return BinMapper{std::move(cuts)};

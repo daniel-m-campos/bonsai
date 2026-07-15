@@ -26,8 +26,10 @@ TEST_CASE("BinMapper: small column produces one cut per distinct value plus sent
     CHECK(std::ranges::is_sorted(mapper.cuts()));
     CHECK(mapper.cuts().back() == f_inf);
     // Distinct values fit the budget, so every one gets a right-inclusive
-    // cut (issue #61) and the +inf sentinel bin stays missing-only.
-    std::vector<float> expected = {1.0F, 2.0F, 3.0F, 4.0F, 5.0F, f_inf};
+    // cut (issue #61); the FLT_MAX closer (decision 74) keeps the sentinel
+    // missing-only even for out-of-sample values above the observed max.
+    std::vector<float> expected = {
+        1.0F, 2.0F, 3.0F, 4.0F, 5.0F, std::numeric_limits<float>::max(), f_inf};
     CHECK(std::ranges::equal(mapper.cuts(), expected));
     CHECK(mapper.n_bins() == mapper.cuts().size());
 }
@@ -40,7 +42,7 @@ TEST_CASE("BinMapper: subsamples cuts when n_samples < column", "[bin_mapper][fi
 
     CHECK(std::ranges::is_sorted(mapper.cuts()));
     CHECK(mapper.cuts().back() == f_inf);
-    CHECK(mapper.cuts().size() <= cfg.n_samples + 1);
+    CHECK(mapper.cuts().size() <= cfg.n_samples + 2); // + closer + sentinel
 }
 
 TEST_CASE("BinMapper: reserves a missing bin when column contains NaN",
@@ -64,8 +66,8 @@ TEST_CASE("BinMapper: duplicates are skipped", "[bin_mapper][fit][dup]")
     CHECK(std::ranges::is_sorted(mapper.cuts()));
     CHECK(mapper.cuts().back() == f_inf);
     CHECK(std::ranges::adjacent_find(mapper.cuts()) == mapper.cuts().end());
-    // 5 values, one duplicate, so at most 4 distinct cuts + sentinel.
-    CHECK(mapper.cuts().size() <= 5);
+    // 5 values, one duplicate: at most 4 distinct cuts + closer + sentinel.
+    CHECK(mapper.cuts().size() <= 6);
 }
 
 TEST_CASE("BinMapper: a heavy value gets its own bin and the budget survives",
@@ -83,7 +85,7 @@ TEST_CASE("BinMapper: a heavy value gets its own bin and the budget survives",
     BinMapperConfig cfg{.max_bin = 8, .n_samples = column.size()};
     auto            mapper = BinMapper::fit(std::span(column), cfg);
 
-    CHECK(mapper.cuts().size() == 7); // full budget: 6 finite cuts + sentinel
+    CHECK(mapper.cuts().size() == 8); // full budget: 6 cuts + closer + sentinel
     CHECK(std::ranges::is_sorted(mapper.cuts()));
     CHECK(std::ranges::adjacent_find(mapper.cuts()) == mapper.cuts().end());
     CHECK(mapper.transform(0.0F) == 0); // the heavy value sits alone
@@ -108,7 +110,7 @@ TEST_CASE("BinMapper: subsamples deterministically on a large seeded column",
 
     CHECK(std::ranges::is_sorted(mapper.cuts()));
     CHECK(mapper.cuts().back() == f_inf);
-    CHECK(mapper.cuts().size() <= n_samples + 1);
+    CHECK(mapper.cuts().size() <= n_samples + 2); // + closer + sentinel
 
     CHECK(std::ranges::equal(mapper.cuts(), mapper_again.cuts()));
 
@@ -149,8 +151,9 @@ TEST_CASE("BinMapper: max_bin reserves a slot for the missing bin",
     BinMapperConfig cfg{.max_bin = 8, .n_samples = column.size()};
     auto            mapper = BinMapper::fit(std::span(column), cfg);
 
-    // Total bin budget includes the missing bin, so cuts <= max_bin - 1.
-    CHECK(mapper.cuts().size() <= static_cast<size_t>(cfg.max_bin) - 1);
+    // The budget's two reserved slots are now spent explicitly: the
+    // FLT_MAX closer and the +inf missing sentinel (decision 74).
+    CHECK(mapper.cuts().size() <= static_cast<size_t>(cfg.max_bin));
 }
 
 TEST_CASE("BinMapper: NaNs are filtered out of the subsample branch",
@@ -174,7 +177,7 @@ TEST_CASE("BinMapper: NaNs are filtered out of the subsample branch",
     CHECK(std::ranges::none_of(mapper.cuts(), [](float x) { return std::isnan(x); }));
     CHECK(std::ranges::is_sorted(mapper.cuts()));
     CHECK(mapper.cuts().back() == f_inf);
-    CHECK(mapper.cuts().size() <= n_samples + 1);
+    CHECK(mapper.cuts().size() <= n_samples + 2); // + closer + sentinel
 }
 
 TEST_CASE("BinMapper: single-value column collapses to one cut plus sentinel",
@@ -184,10 +187,10 @@ TEST_CASE("BinMapper: single-value column collapses to one cut plus sentinel",
     BinMapperConfig    cfg{.n_samples = column.size()};
     auto               mapper = BinMapper::fit(std::span(column), cfg);
 
-    CHECK(mapper.cuts().size() == 2);
+    CHECK(mapper.cuts().size() == 3); // value + closer + sentinel
     CHECK(mapper.cuts().front() == 3.0F);
     CHECK(mapper.cuts().back() == f_inf);
-    CHECK(mapper.n_bins() == 2);
+    CHECK(mapper.n_bins() == 3);
 }
 
 TEST_CASE("BinMapper: all-NaN column emits only the sentinel", "[bin_mapper][fit][nan]")
@@ -196,8 +199,52 @@ TEST_CASE("BinMapper: all-NaN column emits only the sentinel", "[bin_mapper][fit
     BinMapperConfig    cfg{.n_samples = column.size()};
     auto               mapper = BinMapper::fit(std::span(column), cfg);
 
-    CHECK(mapper.cuts().size() == 1);
-    CHECK(mapper.cuts().front() == f_inf);
+    CHECK(mapper.cuts().size() == 2); // closer + sentinel
+    CHECK(mapper.cuts().front() == std::numeric_limits<float>::max());
+    CHECK(mapper.cuts().back() == f_inf);
+}
+
+TEST_CASE("BinMapper: the missing bin is NaN-only on every fitting path (issue #155)",
+          "[bin_mapper][fit][closer]")
+{
+    // Pre-decision-74, the stride and greedy paths leaked their top values
+    // into the sentinel (trained as missing, predicted by raw threshold: a
+    // train/predict routing skew). One case per path: the observed maximum
+    // and an out-of-sample larger value must both bin BELOW the sentinel.
+    auto check_nan_only = [](BinMapper const &m, float observed_max)
+    {
+        auto const sentinel = static_cast<bin_id_t>(m.n_bins() - 1);
+        CHECK(m.transform(observed_max) < sentinel);
+        CHECK(m.transform(observed_max * 2.0F) < sentinel); // out-of-sample
+        CHECK(m.transform(f_nan) == sentinel);
+    };
+
+    SECTION("stride path (continuous, over budget)")
+    {
+        std::mt19937                          rng(0x155);
+        std::uniform_real_distribution<float> dist(0.0F, 50.0F);
+        std::vector<float>                    column(100);
+        std::ranges::generate(column, [&] { return dist(rng); });
+        BinMapperConfig cfg{.max_bin = 8, .n_samples = column.size()};
+        check_nan_only(BinMapper::fit(std::span(column), cfg),
+                       std::ranges::max(column));
+    }
+    SECTION("greedy path (heavy value at the max, the capped-sensor shape)")
+    {
+        std::vector<float> column(50, 9.0F); // capped run at the maximum
+        for (int v = 1; v <= 44; ++v)
+        {
+            column.push_back(static_cast<float>(v) / 10.0F);
+        }
+        BinMapperConfig cfg{.max_bin = 8, .n_samples = column.size()};
+        check_nan_only(BinMapper::fit(std::span(column), cfg), 9.0F);
+    }
+    SECTION("distinct path (out-of-sample values above the sampled max)")
+    {
+        std::vector<float> column = {1.0F, 2.0F, 3.0F};
+        BinMapperConfig    cfg{.n_samples = column.size()};
+        check_nan_only(BinMapper::fit(std::span(column), cfg), 3.0F);
+    }
 }
 
 TEST_CASE("BinMapper: transform routes values to half-open right-inclusive bins",
@@ -206,16 +253,15 @@ TEST_CASE("BinMapper: transform routes values to half-open right-inclusive bins"
     std::vector<float> column = {1.0F, 2.0F, 3.0F, 4.0F, 5.0F};
     BinMapperConfig    cfg{.n_samples = column.size()};
     auto               mapper = BinMapper::fit(std::span(column), cfg);
-    // cuts = [1, 2, 3, 4, 5, +inf]: one exact bin per distinct value,
-    // (5,+inf] reserved for missing.
+    // cuts = [1, 2, 3, 4, 5, FLT_MAX, +inf]: one exact bin per distinct
+    // value, the closer's top band above 5, and a NaN-only sentinel.
 
-    CHECK(mapper.transform(0.0F) == 0); // below first cut
-    CHECK(mapper.transform(2.0F) == 1); // exactly a cut, right-inclusive
-    CHECK(mapper.transform(2.5F) == 2); // between cuts
-    CHECK(mapper.transform(5.0F) == 4); // exactly last finite cut
-    CHECK(mapper.transform(100.0F) ==
-          5);                            // above last finite cut, lands in sentinel bin
-    CHECK(mapper.transform(f_inf) == 5); // +inf also lands in sentinel bin
+    CHECK(mapper.transform(0.0F) == 0);   // below first cut
+    CHECK(mapper.transform(2.0F) == 1);   // exactly a cut, right-inclusive
+    CHECK(mapper.transform(2.5F) == 2);   // between cuts
+    CHECK(mapper.transform(5.0F) == 4);   // exactly last observed cut
+    CHECK(mapper.transform(100.0F) == 5); // above the observed max: the closer band
+    CHECK(mapper.transform(f_inf) == 6);  // non-finite joins NaN in the sentinel
 }
 
 TEST_CASE("BinMapper: transform routes NaN to the missing bin",
