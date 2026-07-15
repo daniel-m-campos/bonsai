@@ -89,4 +89,6 @@ benchmarks/results/*.md
 !.claude/skills/feature-admission/
 tests/data/*.libsvm
 tests/data/.amazon-fetched
+# bonsai.bench.airline's parsed-array cache beside the (already-ignored) CSVs
+tests/data/*.npz
 site/
