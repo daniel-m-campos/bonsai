@@ -4,6 +4,7 @@
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/map.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
@@ -11,6 +12,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <map>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -100,7 +102,8 @@ class Dataset
 {
   public:
     Dataset(array_2d const &X, array_1d const &y, std::optional<array_1d> const &weight,
-            int max_bin, size_t n_samples, uint64_t seed, int min_data_in_bin)
+            int max_bin, size_t n_samples, uint64_t seed, int min_data_in_bin,
+            std::optional<std::map<size_t, array_1d>> const &bin_edges)
         : x_(X)
     {
         if (y.shape(0) != X.shape(0))
@@ -125,13 +128,26 @@ class Dataset
         {
             names.push_back("f" + std::to_string(c));
         }
+        // Copy the edge arrays out while the GIL is held; validation
+        // (finite, strictly increasing, in-range column) happens inside
+        // BinMappers::fit and surfaces as bonsai::ConfigError.
+        bonsai::BinEdges edges;
+        if (bin_edges)
+        {
+            edges.reserve(bin_edges->size());
+            for (auto const &[col, arr] : *bin_edges)
+            {
+                edges.emplace_back(
+                    col, std::vector<float>(arr.data(), arr.data() + arr.shape(0)));
+            }
+        }
         bonsai::floats_view const w =
             weight ? bonsai::floats_view{weight->data(), weight->shape(0)}
                    : bonsai::floats_view{};
         nb::gil_scoped_release release;
-        loaded_.mappers =
-            bonsai::BinMappers::fit(as_view(X), std::move(names), cfg.bin_mapper);
-        loaded_.train = make_labeled(X, y, loaded_.mappers, cfg, w);
+        loaded_.mappers = bonsai::BinMappers::fit(as_view(X), std::move(names),
+                                                  cfg.bin_mapper, edges);
+        loaded_.train   = make_labeled(X, y, loaded_.mappers, cfg, w);
     }
 
     size_t n_rows() const
@@ -512,15 +528,22 @@ NB_MODULE(_bonsai, m)
 
     nb::class_<Dataset>(m, "Dataset")
         .def(nb::init<array_2d const &, array_1d const &,
-                      std::optional<array_1d> const &, int, size_t, uint64_t, int>(),
+                      std::optional<array_1d> const &, int, size_t, uint64_t, int,
+                      std::optional<std::map<size_t, array_1d>> const &>(),
              nb::arg("X"), nb::arg("y"), nb::arg("weight") = nb::none(),
              nb::arg("max_bin") = 255, nb::arg("n_samples") = 200000,
              nb::arg("seed") = 0, nb::arg("min_data_in_bin") = 1,
+             nb::arg("bin_edges") = nb::none(),
              "A pre-binned dataset. Bins X once at construction and is reused "
              "across train(params, dataset) calls (hyperparameter search / CV), "
              "skipping the per-fit bin pass; on GPU the resident matrix uploads "
              "once and is cached. All bin_mapper settings "
-             "(max_bin/n_samples/seed/min_data_in_bin) are fixed here.")
+             "(max_bin/n_samples/seed/min_data_in_bin) are fixed here. "
+             "`bin_edges` maps a column index to its explicit interior cut "
+             "points (strictly increasing float32 array; k edges give k+1 "
+             "bins); listed columns skip quantile fitting and the edges "
+             "travel inside the model artifact, so predict/save/load work on "
+             "raw values with no external transform.")
         .def_prop_ro("n_rows", &Dataset::n_rows)
         .def_prop_ro("n_features", &Dataset::n_features);
 

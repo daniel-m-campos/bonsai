@@ -595,6 +595,54 @@ def test_reusable_dataset_bit_identical_and_guard():
     assert np.asarray(bonsai.train([], ds63, config=ok_cfg).predict(X)).shape == (3000,)
 
 
+def test_dataset_bin_edges_carries_domain_bands_in_the_artifact():
+    """Doc 18: explicit bin_edges travel inside the model artifact, so predict
+    on raw values respects the domain bands with no external transform — the
+    property pre-binning (the decision-67 emulation) structurally cannot have."""
+    rng = np.random.default_rng(7)
+    n = 5000
+    age = rng.uniform(0.0, 100.0, n).astype(np.float32)
+    noise = rng.random((n, 2), dtype=np.float32)
+    X = np.column_stack([age, noise]).astype(np.float32)
+    band = np.digitize(age, [18.0, 65.0]).astype(np.float32)
+    y = (band * 2.0 + rng.normal(0, 0.05, n)).astype(np.float32)
+
+    ds = bonsai.Dataset(X, y, bin_edges={0: np.array([18.0, 65.0], dtype=np.float32)})
+    m = bonsai.train([("booster.n_iters", "30"), ("tree.max_depth", "4")], ds)
+
+    # Within a band the model cannot distinguish raw values: the only cuts on
+    # feature 0 are the two domain edges.
+    probe = np.array([[5.0, 0.5, 0.5], [17.9, 0.5, 0.5],
+                      [18.1, 0.5, 0.5], [64.0, 0.5, 0.5],
+                      [66.0, 0.5, 0.5], [99.0, 0.5, 0.5]], dtype=np.float32)
+    p = np.asarray(m.predict(probe))
+    assert p[0] == p[1] and p[2] == p[3] and p[4] == p[5]
+    # ...and across bands it must distinguish: the bands are the signal.
+    assert p[0] < p[2] < p[4]
+
+    # Edges are right-inclusive, the fitted-cut convention: 18.0 is minor.
+    edge = np.asarray(m.predict(np.array([[18.0, 0.5, 0.5]], dtype=np.float32)))
+    assert edge[0] == p[0]
+
+    # The artifact round-trips: a reloaded model predicts byte-identically on
+    # raw values with no external transform.
+    with tempfile.NamedTemporaryFile(suffix=".bonsai", delete=False) as f:
+        model_path = f.name
+    m.save(model_path)
+    np.testing.assert_array_equal(np.asarray(bonsai.load(model_path).predict(probe)), p)
+
+    # Malformed edges are rejected at Dataset construction.
+    for bad in ({0: np.array([65.0, 18.0], dtype=np.float32)},   # decreasing
+                {0: np.array([], dtype=np.float32)},             # empty
+                {9: np.array([1.0], dtype=np.float32)}):         # no such column
+        try:
+            bonsai.Dataset(X, y, bin_edges=bad)
+        except Exception as e:
+            assert "bin_edges" in str(e)
+        else:
+            raise AssertionError(f"expected bin_edges rejection for {bad}")
+
+
 def test_dataset_eval_set_early_stopping():
     """train(params, dataset, eval_set=...) bins the valid set with the
     Dataset's mappers and enables early stopping — the MVP gap where
@@ -802,6 +850,7 @@ if __name__ == "__main__":
     test_alias_end_to_end_fit()
     test_alias_sklearn_clone_round_trip()
     test_alias_pickle_fitted_predicts_identically()
+    test_dataset_bin_edges_carries_domain_bands_in_the_artifact()
     test_dataset_eval_set_early_stopping()
     test_predict_proba_rejects_regression_objective()
     test_classifier_score_zero_weights_raise()

@@ -12,6 +12,7 @@
 
 #include "bonsai/bin_mapper.hpp"
 #include "bonsai/config/bin_mapper_config.hpp"
+#include "bonsai/config/errors.hpp"
 #include "bonsai/types.hpp"
 
 namespace bonsai
@@ -186,6 +187,35 @@ BinMapper BinMapper::from_sample(std::vector<float> sample, BinMapperConfig cons
     size_t const cut_budget = cfg.max_bin - 2;
     auto         cuts       = create_cuts(sample, cut_budget);
     return BinMapper{std::move(cuts)};
+}
+
+BinMapper BinMapper::from_edges(std::vector<float> edges)
+{
+    if (edges.empty())
+    {
+        throw ConfigError("bin_edges: a column's edge list must not be empty");
+    }
+    for (size_t i = 0; i < edges.size(); ++i)
+    {
+        if (!std::isfinite(edges[i]) || edges[i] >= std::numeric_limits<float>::max())
+        {
+            throw ConfigError("bin_edges: edges must be finite (the top band "
+                              "and the missing bin are implicit)");
+        }
+        if (i > 0 && edges[i] <= edges[i - 1])
+        {
+            throw ConfigError("bin_edges: edges must be strictly increasing");
+        }
+    }
+    // Two appended cuts, not one: the split scan never offers the last real
+    // bin as a candidate (histogram.hpp cut_cells, degenerate for fitted
+    // columns whose observed maximum defines the last cut). User edges are
+    // domain statements, so the band ABOVE the last edge must be a real,
+    // splittable bin: FLT_MAX closes it, and the +inf sentinel keeps the
+    // missing bin NaN-only, exactly one usable band per edge boundary.
+    edges.push_back(std::numeric_limits<float>::max());
+    edges.push_back(std::numeric_limits<float>::infinity());
+    return BinMapper{std::move(edges)};
 }
 
 bin_id_t BinMapper::transform(float x) const

@@ -1,11 +1,14 @@
+#include <algorithm>
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
+#include <limits>
 #include <random>
 #include <string>
 #include <vector>
 
 #include "bonsai/bin_mappers.hpp"
 #include "bonsai/config/bin_mapper_config.hpp"
+#include "bonsai/config/errors.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/types.hpp"
 
@@ -165,4 +168,53 @@ TEST_CASE("BinMappers: ColumnBatch and features_view overloads agree above n_sam
             CHECK(cb[i] == cv[i]);
         }
     }
+}
+
+TEST_CASE("BinMappers: bin_edges overrides one column, fits the rest identically",
+          "[bin_mappers][edges]")
+{
+    auto const      batch = random_batch(4096, 3);
+    BinMapperConfig cfg;
+
+    auto const plain    = BinMappers::fit(batch, cfg);
+    auto const overrode = BinMappers::fit(batch, cfg, {{1, {0.25F, 0.5F, 0.75F}}});
+
+    // The overridden column carries exactly the user edges plus the sentinel.
+    std::vector<float> const expected = {0.25F, 0.5F, 0.75F,
+                                         std::numeric_limits<float>::max(),
+                                         std::numeric_limits<float>::infinity()};
+    CHECK(std::ranges::equal(overrode[1].cuts(), expected));
+    // Untouched columns are bit-identical to the no-override fit: the shared
+    // row sample is drawn the same way and the fitting path never sees the
+    // override.
+    for (size_t f : {0UL, 2UL})
+    {
+        CHECK(std::ranges::equal(overrode[f].cuts(), plain[f].cuts()));
+    }
+}
+
+TEST_CASE("BinMappers: bin_edges rejects bad column indices", "[bin_mappers][edges]")
+{
+    auto const      batch = random_batch(64, 2);
+    BinMapperConfig cfg;
+
+    CHECK_THROWS_AS(BinMappers::fit(batch, cfg, {{2, {0.5F}}}), ConfigError);
+    CHECK_THROWS_AS(BinMappers::fit(batch, cfg, {{0, {0.5F}}, {0, {0.7F}}}),
+                    ConfigError);
+}
+
+TEST_CASE("BinMappers: row-major fit honors bin_edges the same way",
+          "[bin_mappers][edges]")
+{
+    // 8 rows x 2 features, row-major.
+    std::vector<float>  data = {0.1F, 1.0F, 0.2F, 2.0F, 0.3F, 3.0F, 0.4F, 4.0F,
+                                0.5F, 5.0F, 0.6F, 6.0F, 0.7F, 7.0F, 0.8F, 8.0F};
+    features_view const X{data.data(), 8, 2};
+    BinMapperConfig     cfg;
+
+    auto const mappers = BinMappers::fit(X, {"a", "b"}, cfg, {{0, {0.45F}}});
+    std::vector<float> const expected = {0.45F, std::numeric_limits<float>::max(),
+                                         std::numeric_limits<float>::infinity()};
+    CHECK(std::ranges::equal(mappers[0].cuts(), expected));
+    CHECK(mappers[1].n_bins() > 2); // fitted as usual
 }

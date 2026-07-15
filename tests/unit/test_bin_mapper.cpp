@@ -10,6 +10,7 @@
 
 #include "bonsai/bin_mapper.hpp"
 #include "bonsai/config/bin_mapper_config.hpp"
+#include "bonsai/config/errors.hpp"
 
 using namespace bonsai; // NOLINT
 
@@ -295,4 +296,39 @@ TEST_CASE("BinMapper: transform is monotonic over the fitted column",
         CHECK(bin >= last);
         last = bin;
     }
+}
+
+TEST_CASE("BinMapper: from_edges appends the sentinel and bins right-inclusive",
+          "[bin_mapper][edges]")
+{
+    auto const mapper = BinMapper::from_edges({0.0F, 18.0F, 65.0F});
+
+    // Two appended cuts: FLT_MAX closes the top band as a REAL bin (the split
+    // scan never offers the last real bin as a candidate, so without it the
+    // last user edge would be dead), and +inf keeps the missing bin NaN-only.
+    std::vector<float> const expected = {0.0F, 18.0F, 65.0F,
+                                         std::numeric_limits<float>::max(), f_inf};
+    CHECK(std::ranges::equal(mapper.cuts(), expected));
+    CHECK(mapper.n_bins() == 5); // k edges -> k+1 usable bands + missing
+    // Right-inclusive, matching the fitted-cut convention (guide ch.0).
+    CHECK(mapper.transform(-3.0F) == 0);
+    CHECK(mapper.transform(0.0F) == 0);
+    CHECK(mapper.transform(17.9F) == 1);
+    CHECK(mapper.transform(18.0F) == 1);
+    CHECK(mapper.transform(64.0F) == 2);
+    // Above the last edge is its own real band; missing stays NaN-only.
+    CHECK(mapper.transform(66.0F) == 3);
+    CHECK(mapper.transform(f_nan) == 4);
+}
+
+TEST_CASE("BinMapper: from_edges rejects malformed edge lists", "[bin_mapper][edges]")
+{
+    CHECK_THROWS_AS(BinMapper::from_edges({}), ConfigError);
+    CHECK_THROWS_AS(BinMapper::from_edges({1.0F, 1.0F}), ConfigError); // not strict
+    CHECK_THROWS_AS(BinMapper::from_edges({2.0F, 1.0F}), ConfigError); // decreasing
+    CHECK_THROWS_AS(BinMapper::from_edges({0.0F, f_inf}),
+                    ConfigError);                                 // sentinel is ours
+    CHECK_THROWS_AS(BinMapper::from_edges({f_nan}), ConfigError); // not finite
+    CHECK_THROWS_AS(BinMapper::from_edges({std::numeric_limits<float>::max()}),
+                    ConfigError); // FLT_MAX is the reserved top-band cut
 }

@@ -14,14 +14,21 @@
 namespace bonsai
 {
 
+// Explicit interior cut points for select columns (doc 18): column index to
+// strictly increasing finite edges. Listed columns skip sampling and fitting
+// entirely (BinMapper::from_edges); unlisted columns fit as usual, so the
+// default {} is bit-identical to no overrides.
+using BinEdges = std::vector<std::pair<size_t, std::vector<float>>>;
+
 class BinMappers
 {
   public:
-    static BinMappers fit(detail::ColumnBatch const &batch, BinMapperConfig const &cfg);
+    static BinMappers fit(detail::ColumnBatch const &batch, BinMapperConfig const &cfg,
+                          BinEdges const &bin_edges = {});
     // Row-major matrix path: each worker gathers one column into scratch and
     // fits it, so cuts are bit-identical to the ColumnBatch overload.
     static BinMappers fit(features_view X, std::vector<std::string> feature_names,
-                          BinMapperConfig const &cfg);
+                          BinMapperConfig const &cfg, BinEdges const &bin_edges = {});
     static BinMappers from_mappers(std::vector<BinMapper>   mappers,
                                    std::vector<std::string> feature_names)
     {

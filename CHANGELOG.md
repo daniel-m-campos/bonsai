@@ -4,8 +4,14 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+## [Unreleased]
+
+### Added
+- **Explicit bin edges on `Dataset`** (decision 73, architecture doc 18): `bonsai.Dataset(X, y, bin_edges={col: edges})` bins listed columns at user-supplied cut points (regulatory bands, clinical thresholds, incumbent-scheme parity) instead of fitted quantiles. The edges travel inside the model artifact like fitted cuts, so `predict`, `save`, and `load` work on raw values with no external transform; k edges give k+1 splittable bands plus the NaN-only missing bin. Unlisted columns fit exactly as before (byte-identical models when the argument is omitted).
+
 ### Fixed
 - **The missing bin is NaN-only on every fitting path** (decision 74, issue #155): fitted cuts now end with a `FLT_MAX` top-band closer, so finite values above the last cut (a stride path's top tail, a capped column's heavy maximum, rows beyond the bin sample) get a real splittable bin instead of training as missing, which also removes a train/predict routing skew for those rows. Models change only where a leak existed; capped-column synthetics recover up to half the lost variance, and on the re-validated Grinsztajn standings bonsai's mean rank improves 1.73 to 1.44 with 36 of 55 outright wins and no last-place finishes (evidence: `benchmarks/missing-bin-closer-2026-07.md`).
+
 
 ## [1.3.0] - 2026-07-14
 

@@ -1,6 +1,6 @@
-# 18. Manual bin edges: the design (specified, admission-gated)
+# 18. Manual bin edges: the design (built)
 
-> Status: **priced, not built**. Decision 67 declined automatic per-feature bin budgets on accuracy evidence; this doc specifies the remaining capability, explicit user-supplied edges, and the gate that admits it: a concrete workload that needs domain-mandated bins inside the model artifact.
+> Status: **built** (decision 73; the admission signal was the owner ranking it on the roadmap). Decision 67 declined automatic per-feature bin budgets on accuracy evidence; this doc specified the remaining capability, explicit user-supplied edges, and it shipped as specified with one discovered refinement: `from_edges` appends a `FLT_MAX` top-band cut before the `+inf` sentinel, because the split scan never offers the last real bin as a candidate (degenerate for fitted columns whose observed maximum defines the last cut), and without it the last user edge would be silently dead. k edges therefore give k+1 real, splittable bands plus a NaN-only missing bin.
 
 ## The problem the emulation cannot solve
 

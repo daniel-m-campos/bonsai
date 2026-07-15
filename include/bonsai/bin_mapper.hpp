@@ -23,8 +23,14 @@ class BinMapper
     {
         return BinMapper{std::move(cuts)};
     }
-    bin_id_t transform(float x) const;
-    size_t   n_bins() const
+    // User-supplied interior cut points (doc 18): validates (finite, strictly
+    // increasing, non-empty; ConfigError otherwise) and appends the FLT_MAX
+    // top-band cut plus the +inf missing sentinel, so callers pass only the
+    // domain edges and every edge is a live split candidate. from_cuts stays
+    // the trusted path for the model loader's own serialized cuts.
+    static BinMapper from_edges(std::vector<float> edges);
+    bin_id_t         transform(float x) const;
+    size_t           n_bins() const
     {
         return cuts_.size();
     }
