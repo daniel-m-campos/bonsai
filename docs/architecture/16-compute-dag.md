@@ -10,48 +10,43 @@ The training narrative is a small compute DAG. Nodes are the algorithmic steps; 
 
 ## The graph
 
-Solid boxes are host-pinned (constraints below), rounded are device-feasible; dashed edges cross the placement boundary and are priced in bytes. Costs: 16M×100×255, L40S US-MO-1, post-decision-53 (PR #35 baseline run, fit 39.4s).
+Solid boxes are host-pinned (constraints below), rounded are device-feasible; dashed edges cross the placement boundary and are priced in bytes. Costs: 16M×100×255 `cuda_depthwise`, L40S US-NC-1, 2026-07-15, post decisions 54/49/38/72 (fit 15.70s; this graph's first published constants were the PR #35-era 39.4s fit, and every delta between the two is a row in the moves table below or in guide 11's).
 
 ```mermaid
 flowchart TD
     subgraph ingest [ingest — once per fit]
         X[/"raw X (6.4GB f32)"/]
-        MF["mapper-fit 3.9s\n(subsample+sort cuts)"]
-        BIN("bin 4.6s\n1.6G lower_bound")
-        UP["bins upload ~0.5s\n1.6GB H2D (unlapped)"]
+        MF["mapper-fit 0.45s\n(subsample+sort cuts)"]
+        BIN("device bin 0.55s\nkernel + streamed upload")
         X --> MF --> BIN
-        X --> BIN
-        BIN -. "1.6GB H2D" .-> UP
+        X -. "6.4GB H2D pinned\n~0.2s overlapped" .-> BIN
     end
 
     subgraph tree ["tree loop — ×100"]
-        GH["gradients/scores\n(host, in unattributed)"]
-        GHUP["gh upload 0.7s total\n128MB/tree H2D"]
+        GH["gradients/scores 0.5s\n(host, fit-profile lines)"]
+        GHUP["gh upload 0.9s total\n128MB/tree H2D"]
         subgraph level ["level loop — ×8"]
-            POP("hist populate 5.1s\nroot + level kernels")
-            FIND("find 7.8s\nkernel compute")
+            POP("hist build 7.9s\nroot + level kernels, event-timed")
+            FIND("find 0.13s\nkernel (decision 62's honest number)")
             DEC["split decisions\n~KB D2H per level"]
-            PART("partition 1.6s\nroute/scan/scatter")
+            PART("partition 1.9s\nroute/scan/scatter")
         end
-        EPI("epilogue 3.8–4.5s\nmap kernel + 128MB/tree D2H")
-        SU["score update\n(host, in unattributed)"]
-        GH -. "128MB/tree" .-> GHUP --> POP
-        UP --> POP
+        RS("root sums 1.0s\ntwo-pass reduce (decision 72)")
+        EPI("epilogue 1.3s\nmap 0.33 + 128MB/tree D2H 0.94")
+        SU["score update\n(host, in gradients/scores)"]
+        GH -. "128MB/tree" .-> GHUP --> RS --> POP
+        BIN --> POP
         POP --> FIND -. "per-level sync" .-> DEC --> PART --> POP
         PART --> EPI -. "128MB/tree" .-> SU --> GH
     end
 
-    UNATTR["unattributed 12.1s\nColumnBatch transpose, grad/hess,\nsampler, score update — DECOMPOSE FIRST"]
-
     classDef dev fill:#e8f4e8,stroke:#2a7,stroke-width:1px
     classDef host fill:#eef,stroke:#55a,stroke-width:1px
-    classDef dark fill:#fee,stroke:#a55,stroke-width:2px
-    class POP,FIND,PART,EPI,BIN dev
-    class MF,GH,SU,DEC,UP,GHUP host
-    class UNATTR dark
+    class POP,FIND,PART,EPI,BIN,RS dev
+    class MF,GH,SU,DEC,GHUP host
 ```
 
-**Conservation rule.** The node costs must sum to the measured fit. Today they don't: `fit 39.4 − grow 18.9 − ingest 8.4 = 12.1s unattributed` (module-path ColumnBatch build, gradient/hessian computation, sampler fill, score update, none lapped at fit level). The graph's first output is therefore not an optimization but an instrumentation demand: **the largest line in the fit is currently invisible.** This is the third time conservation has flushed dark matter (make_root misattribution, the unlapped `ensure_dataset` upload). `FitProfiler` exists; the module path needs its laps wired.
+**Conservation rule.** The node costs must sum to the measured fit, and as of decision 72 they do: `grow 14.05 + ingest 1.47 + objective/sample/score 0.51 ≈ fit 15.70`, with the grow buckets themselves closing against the event-timed kernel spans (`cuda-round-decomp`). It took three flushes of dark matter to get here (make_root misattribution, the unlapped `ensure_dataset` upload, and the 12.1s module-path block that PR #38 named as a serial 12.8GB memset), plus the decision-62 peel that split *wait* from *work* in the find line. When a future change reopens a gap between the sum and the wall clock, that gap is the next target, not noise.
 
 ## Placement constraints (pinned nodes)
 
@@ -67,7 +62,8 @@ flowchart TD
 | 53 step 3 (epilogue) | 16M-row host loop → kernel + 128MB/tree D2H | several s | finalize 9.35→3.90 |
 | 52 (device gradients) | delete 128MB/tree H2D, move grad compute | **~0.7–0.9s: NO-GO by arithmetic** | experiment measured 1.6s of 42.5; killed |
 | 35 (pinned epilogue D2H) | reroute D2H through pinned + memcpy | *unpriceable: finalize line undecomposed* | refuted (3.78→4.45) |
-| 54 (device binning) | delete 4.6s host node + 1.6GB H2D; add 6.4GB H2D streamed | ~4.5s | pending |
+| 54 (device binning) | delete 4.6s host node + 1.6GB H2D; add 6.4GB H2D streamed | ~4.5s | fit 37.9→31.3 |
+| 72 (marginal round) | delete identity copy + host root reduce + final-level build; three more levers priced 0.1/0.5/0ms and killed | ~63ms/round | round 181→125ms |
 
 The model corrected its own author while being written: the design draft priced the 6.4GB raw upload at ~2.4s from stale intuition; the measured gh edge (12.8GB in 0.68s ⇒ ~19GB/s) prices it at **~0.35–0.5s**, nearly doubling decision 54's projected win. Arithmetic beats intuition even when the intuition is a week old.
 
@@ -91,15 +87,16 @@ flowchart LR
 For any placement, makespan ≥ (host-pinned work) + (device compute) + (irreducible boundary traffic), minus overlap. With today's kernels and everything feasible moved to device:
 
 ```
-raw ingest transfer   ~0.5s   (once, streamed)
-mapper-fit (pinned)   ~3.9s
-device compute        ~14s    (find 7.6 + hist ~5 + partition ~1 + epilogue kernel ~0.2)
+raw ingest transfer   ~0.2s   (once, streamed + overlapped)
+mapper-fit (pinned)   ~0.45s
+device compute        ~11.3s  (hist build 7.9 + partition 1.9 + root sums 1.0 + epilogue map 0.33 + find 0.13)
+gh + epilogue edges   ~1.8s   (12.8GB each way, measured)
 per-level sync floor  ~0.02s  (healthy host)
 ```
 
-≈ **19s + the unattributed remainder**, which is why the unattributed 12.1s must be decomposed *before* the next placement bet: if most of it is gradient/score host loops, device residency of the objective (the refuted-as-upload-saving decision 52, revisited as *compute* placement) re-enters the game with a real price tag; if it is ColumnBatch transpose, the lever is module-side and no placement move touches it.
+≈ **13.9s against a measured 15.70s fit**: the placement game is nearly played out, and the model says so by arithmetic. The old version of this section demanded the 12.1s unattributed block be decomposed before any bet; that demand was met (PR #38 named it, decision 72 closed the last per-round residues), and the reward is a floor tight enough to trust.
 
-The floor also bounds ambition honestly: placement alone cannot beat `device compute ≈ 14s`; below that line the levers are kernel engineering (find's 7.6s is the largest) and algorithm changes, not residency.
+The floor also bounds ambition honestly: placement alone cannot beat `device compute ≈ 11.3s`, and **the histogram build is now 70% of that line**. Below the floor the levers are kernel engineering (the build's occupancy/layout, decision 72's named residue at ~72ms of the oblivious round's ~125ms) and algorithm changes, not residency. The find kernel, once believed to be the 7.6s giant, is 0.13s: decision 62's peel relocated the weight to where it always was.
 
 ## What this is for
 
