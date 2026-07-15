@@ -1,0 +1,43 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='720' height='532' viewBox='0 0 720 532'>
+<text x='110' y='22' font-size='13' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='bold'>airline 10M rows: fit seconds (depth 8, one pod)</text>
+<text x='102' y='56' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>xgb_cuda</text>
+<rect x='110' y='42' width='20.1' height='20' rx='3' fill='#1f77b4' fill-opacity='0.85'/>
+<text x='138.1' y='56' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>3.22&#160;&#160;AUC 0.7476</text>
+<text x='102' y='90' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>catboost_gpu</text>
+<rect x='110' y='76' width='33.5' height='20' rx='3' fill='#e08f1a' fill-opacity='0.85'/>
+<text x='151.5' y='90' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>5.35&#160;&#160;AUC 0.7254</text>
+<text x='102' y='124' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>bonsai_cuda_depthwise</text>
+<rect x='110' y='110' width='34.4' height='20' rx='3' fill='#2e7d32' fill-opacity='0.85'/>
+<text x='152.4' y='124' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>5.51&#160;&#160;AUC 0.7467</text>
+<text x='102' y='158' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>bonsai_cuda_oblivious</text>
+<rect x='110' y='144' width='37.9' height='20' rx='3' fill='#2e7d32' fill-opacity='0.85'/>
+<text x='155.9' y='158' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>6.07&#160;&#160;AUC 0.7264</text>
+<text x='102' y='192' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>lgbm_cpu</text>
+<rect x='110' y='178' width='122.9' height='20' rx='3' fill='#8e6bbf' fill-opacity='0.85'/>
+<text x='240.9' y='192' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>19.67&#160;&#160;AUC 0.7459</text>
+<text x='102' y='226' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>xgb_hist</text>
+<rect x='110' y='212' width='187.0' height='20' rx='3' fill='#1f77b4' fill-opacity='0.85'/>
+<text x='305.0' y='226' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>29.92&#160;&#160;AUC 0.7469</text>
+<text x='102' y='260' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>bonsai_depthwise</text>
+<rect x='110' y='246' width='220.9' height='20' rx='3' fill='#2e7d32' fill-opacity='0.85'/>
+<text x='338.9' y='260' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>35.34&#160;&#160;AUC 0.7468</text>
+<text x='102' y='294' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>catboost_cpu</text>
+<rect x='110' y='280' width='234.6' height='20' rx='3' fill='#e08f1a' fill-opacity='0.85'/>
+<text x='352.6' y='294' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>37.53&#160;&#160;AUC 0.7245</text>
+<text x='102' y='328' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>bonsai_ts_cuda_depthwise</text>
+<rect x='110' y='314' width='236.0' height='20' rx='3' fill='#2e7d32' fill-opacity='0.85'/>
+<text x='354.0' y='328' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>37.76&#160;&#160;AUC 0.7498</text>
+<text x='102' y='362' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>bonsai_ts_cuda_oblivious</text>
+<rect x='110' y='348' width='239.2' height='20' rx='3' fill='#2e7d32' fill-opacity='0.85'/>
+<text x='357.2' y='362' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>38.28&#160;&#160;AUC 0.7339</text>
+<text x='102' y='396' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>bonsai_oblivious</text>
+<rect x='110' y='382' width='249.8' height='20' rx='3' fill='#2e7d32' fill-opacity='0.85'/>
+<text x='367.8' y='396' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>39.97&#160;&#160;AUC 0.7264</text>
+<text x='102' y='430' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>bonsai_ts_depthwise</text>
+<rect x='110' y='416' width='453.8' height='20' rx='3' fill='#2e7d32' fill-opacity='0.85'/>
+<text x='571.8' y='430' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>72.60&#160;&#160;AUC 0.7498</text>
+<text x='102' y='464' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>bonsai_ts_oblivious</text>
+<rect x='110' y='450' width='460.0' height='20' rx='3' fill='#2e7d32' fill-opacity='0.85'/>
+<text x='578.0' y='464' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>73.59&#160;&#160;AUC 0.7339</text>
+<text x='110' y='502' font-size='10' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>bonsai_ts_* = OrderedTargetEncoder pipeline (encode time included); all rows same-pod L40S</text>
+</svg>
