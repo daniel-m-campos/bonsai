@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <iterator>
 #include <limits>
 #include <numeric>
@@ -153,6 +154,14 @@ std::vector<float> create_cuts(std::vector<float> &subsample, size_t cut_budget)
                 cuts.push_back(v);
             }
         }
+    }
+    // Probe toggle for issue #155 (not a supported knob): a FLT_MAX top-band
+    // closer before the sentinel, so no finite value bins as missing. The
+    // reserved budget slot (from_sample's max_bin - 2) absorbs the extra bin.
+    static bool const closer = std::getenv("BONSAI_BIN_CLOSER") != nullptr;
+    if (closer && (cuts.empty() || cuts.back() < std::numeric_limits<float>::max()))
+    {
+        cuts.push_back(std::numeric_limits<float>::max());
     }
     cuts.push_back(std::numeric_limits<float>::infinity());
     return cuts;
