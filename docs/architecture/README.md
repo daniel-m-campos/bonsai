@@ -23,6 +23,8 @@ Per-component design docs. Numbered roughly in build order. Source of truth for 
 | 15 | [`15-device-binning.md`](15-device-binning.md): device binning: ingest joins the transaction narrative | implemented (decision 54) |
 | 16 | [`16-compute-dag.md`](16-compute-dag.md): the compute DAG: placement as a first-class design object | framing (decision 54) |
 | 17 | [`17-categorical-splits.md`](17-categorical-splits.md): native categoricals: Fisher set splits + ordered-TS sketch | declined by measurement (decision 58) |
+| 18 | [`18-manual-bin-edges.md`](18-manual-bin-edges.md): explicit bin edges in the model artifact | shipped (decision 73) |
+| 19 | [`19-multi-gpu.md`](19-multi-gpu.md): single-node multi-GPU: a data-parallel backend beside the single-GPU one | design, not built (issue #159) |
 
 ## Cross-cutting concerns
 
