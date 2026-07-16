@@ -42,7 +42,12 @@ build.targets = ["_bonsai"]
 [tool.scikit-build.cmake.define]
 BONSAI_PYTHON = "ON"
 BONSAI_TESTS = "OFF"
-BONSAI_OPENMP_STATIC = "ON"
+# BONSAI_OPENMP_STATIC is set by the wheel jobs (wheels.yml), not here: the
+# wheels want a private static libomp to avoid the xgboost/lightgbm libomp
+# deadlock, and can vendor a dynamic copy where no libomp.a exists (Linux,
+# via auditwheel). An sdist / from-source `pip install` cannot vendor, so it
+# must be free to fall back to a plain dynamic link instead of hard-failing
+# on a system without a static libomp (issue #134).
 
 # Ruff: python linting for python/ and scripts/ (make lint-python; version
 # pinned in the Makefile the way LLVM is — formatter/linter drift breaks CI).

@@ -75,9 +75,16 @@ jobs:
         env:
           CMAKE_BUILD_PARALLEL_LEVEL: "4"
         run: |
-          EXTRA=()
+          # Wheels want the private static libomp runtime (avoids the
+          # xgboost/lightgbm libomp deadlock). Set here, not in pyproject, so
+          # the sdist/from-source path stays free to link dynamically (#134).
+          EXTRA=(-C cmake.define.BONSAI_OPENMP_STATIC=ON)
           if [ "${{ runner.os }}" = "Linux" ]; then
             export CC=/usr/lib/llvm-21/bin/clang CXX=/usr/lib/llvm-21/bin/clang++
+            # apt.llvm.org ships no libomp.a, so the static link falls back to
+            # the dynamic runtime; auditwheel vendors a private copy below, so
+            # acknowledge the fallback explicitly (else CMake hard-errors, #134).
+            EXTRA+=(-C cmake.define.BONSAI_OPENMP_DYNAMIC_FALLBACK_OK=ON)
           else
             export CC="$(brew --prefix llvm@21)/bin/clang"
             export CXX="$(brew --prefix llvm@21)/bin/clang++"
@@ -90,11 +97,12 @@ jobs:
             # (sm_100+ JITs from compute_90), static cudart so the extension
             # has no CUDA DT_NEEDED. Sizes/costs measured on the leg-0 probe:
             # https://github.com/daniel-m-campos/bonsai/issues/99
-            EXTRA=(-C cmake.define.BONSAI_CUDA=ON
-                   -C "cmake.define.BONSAI_CUDA_ARCH=sm_70;sm_75;sm_80;sm_86;sm_89;sm_90;sm_120"
-                   -C cmake.define.BONSAI_CUDA_PTX_ARCH=sm_90
-                   -C cmake.define.BONSAI_CUDA_STATIC_RUNTIME=ON
-                   -C cmake.define.CUDAToolkit_ROOT=${{ steps.cuda.outputs.root }})
+            # Append: the Linux branch above already set VENDORED_OK, so keep it.
+            EXTRA+=(-C cmake.define.BONSAI_CUDA=ON
+                    -C "cmake.define.BONSAI_CUDA_ARCH=sm_70;sm_75;sm_80;sm_86;sm_89;sm_90;sm_120"
+                    -C cmake.define.BONSAI_CUDA_PTX_ARCH=sm_90
+                    -C cmake.define.BONSAI_CUDA_STATIC_RUNTIME=ON
+                    -C cmake.define.CUDAToolkit_ROOT=${{ steps.cuda.outputs.root }})
           fi
           python -m pip wheel . -w dist --no-deps "${EXTRA[@]}"
 

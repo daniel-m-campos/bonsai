@@ -77,6 +77,16 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 option(BONSAI_OPENMP_STATIC
        "Link libomp statically (required for the Python module: a private \
 runtime avoids deadlocks with xgboost/lightgbm's bundled libomp)" OFF)
+# Permit a BONSAI_OPENMP_STATIC build to fall back to the dynamic runtime when
+# no libomp.a exists. Set it only where the dynamic link is safe: the wheel
+# jobs (auditwheel/delocate vendor a private libomp.so) and non-shipping
+# dev/CI builds (make python). Without it the fallback is a hard error, because
+# a plain dynamic link in a REDISTRIBUTED artifact reintroduces exactly the
+# xgboost/lightgbm libomp deadlock the static link exists to prevent, and a
+# silent linkage switch is the class of bug decision 60 outlawed.
+option(BONSAI_OPENMP_DYNAMIC_FALLBACK_OK
+       "Permit BONSAI_OPENMP_STATIC to link libomp dynamically when no libomp.a \
+exists (wheels vendor it; dev/CI builds are not redistributed)" OFF)
 
 add_library(bonsai_parallel INTERFACE)
 if(BONSAI_OPENMP)
@@ -111,9 +121,21 @@ if(BONSAI_OPENMP)
             target_link_libraries(bonsai_parallel INTERFACE ${BONSAI_LIBOMP_A})
             message(STATUS "OpenMP: static ${BONSAI_LIBOMP_A}")
         else()
+            if(BONSAI_OPENMP_STATIC AND NOT BONSAI_OPENMP_DYNAMIC_FALLBACK_OK)
+                message(FATAL_ERROR
+                    "BONSAI_OPENMP_STATIC is set but libomp.a was not found. "
+                    "bonsai refuses the silent dynamic fallback: in a "
+                    "redistributed artifact a plain dynamic libomp reintroduces "
+                    "the xgboost/lightgbm deadlock the static link exists to "
+                    "prevent (the same loudness rule as the serial fallback, "
+                    "issue #72). Install a static libomp, or pass "
+                    "-DBONSAI_OPENMP_DYNAMIC_FALLBACK_OK=ON when the dynamic "
+                    "link is safe: a downstream tool (auditwheel/delocate) "
+                    "vendors it, or this is a dev/CI build (issue #134).")
+            endif()
             if(BONSAI_OPENMP_STATIC)
-                message(WARNING "BONSAI_OPENMP_STATIC set but libomp.a not found; "
-                                "falling back to the dynamic runtime")
+                message(STATUS "OpenMP: dynamic libomp fallback "
+                               "(BONSAI_OPENMP_DYNAMIC_FALLBACK_OK)")
             endif()
             target_link_libraries(bonsai_parallel INTERFACE OpenMP::OpenMP_CXX)
         endif()
