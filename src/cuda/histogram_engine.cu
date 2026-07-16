@@ -2,6 +2,7 @@
 // the build. Design, batching, and precision scheme:
 // docs/architecture/10-cuda.md.
 
+#include "bonsai/config/errors.hpp"
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/dataset.hpp"
@@ -42,6 +43,37 @@ bool cuda_available()
 {
     int n = 0;
     return cudaGetDeviceCount(&n) == cudaSuccess && n > 0;
+}
+
+void cuda_select_device(uint32_t device_id)
+{
+    int n = 0;
+    if (cudaGetDeviceCount(&n) != cudaSuccess)
+    {
+        n = 0;
+    }
+    if (device_id == 0)
+    {
+        // The default device: set it when one exists, stay a no-op on
+        // GPU-less hosts so graceful degradation (begin_root declines,
+        // host fallback trains) is untouched.
+        if (n > 0)
+        {
+            cudaSetDevice(0);
+        }
+        return;
+    }
+    if (std::cmp_greater_equal(device_id, n))
+    {
+        throw ConfigError("parallel.device_id " + std::to_string(device_id) +
+                          " is out of range: " + std::to_string(n) +
+                          " CUDA device(s) visible");
+    }
+    if (cudaSetDevice(static_cast<int>(device_id)) != cudaSuccess)
+    {
+        throw ConfigError("parallel.device_id " + std::to_string(device_id) +
+                          ": cudaSetDevice failed");
+    }
 }
 
 // BONSAI_CUDA_PROFILE=1 accumulators, printed at engine destruction.

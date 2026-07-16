@@ -682,3 +682,51 @@ TEST_CASE("CudaObliviousGrower rejects constraints at construction",
     inter.interaction_constraints = {"0", "1"};
     REQUIRE_THROWS_AS(CudaObliviousGrower(inter), ConfigError);
 }
+
+TEST_CASE("cuda_select_device: rejects an out-of-range device id", "[cuda][edge]")
+{
+    // Deterministic on every build: the stub throws for any nonzero id, and
+    // the real backend throws when the id is at or above the visible count.
+    REQUIRE_THROWS_AS(bonsai::cuda_select_device(10000), bonsai::ConfigError);
+}
+
+TEST_CASE("cuda_select_device: id 0 is accepted everywhere", "[cuda][edge]")
+{
+    // The config default: a no-op without a device, cudaSetDevice(0) with
+    // one. Either way it must not throw, so CPU configs and GPU-less hosts
+    // are untouched by the knob existing.
+    REQUIRE_NOTHROW(bonsai::cuda_select_device(0));
+}
+
+TEST_CASE("cuda_select_device: a second device trains when present", "[cuda][grower]")
+{
+    if (!bonsai::cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    try
+    {
+        bonsai::cuda_select_device(1);
+    }
+    catch (bonsai::ConfigError const &)
+    {
+        SKIP("single-GPU host");
+    }
+    // Placed on device 1: a small fit must match the CPU grower end to end
+    // there, the same parity bar as the device-0 cases above.
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
+    TreeConfig  cfg;
+    cfg.max_depth        = 5;
+    cfg.min_data_in_leaf = 4;
+    DepthwiseGrower<CpuHistogramEngine> cpu_grower(cfg);
+    CudaDepthwiseGrower                 gpu_grower(cfg);
+    auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    REQUIRE(cpu.values.size() == gpu.values.size());
+    for (size_t r = 0; r < cpu.values.size(); ++r)
+    {
+        REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
+    }
+    bonsai::cuda_select_device(0); // restore for subsequent [cuda] cases
+}

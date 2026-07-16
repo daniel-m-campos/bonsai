@@ -61,7 +61,12 @@ bonsai::cli::LabeledData make_labeled(array_2d const &X, array_1d const &y,
 
     // The ingest transaction (decision 54): cuda growers bin on the device;
     // cuda_ingest declines (nullptr) without a backend/device, keeping the
-    // host fill.
+    // host fill. Device placement first (issue #158): cudaSetDevice is
+    // thread-local and this thread is about to mint the device plane.
+    if (cfg.dispatch.grower_name.starts_with("cuda"))
+    {
+        bonsai::cuda_select_device(cfg.parallel.device_id);
+    }
     auto plane = cfg.dispatch.grower_name.starts_with("cuda")
                      ? bonsai::cuda_ingest(as_view(X), mappers)
                      : nullptr;

@@ -266,3 +266,12 @@ TEST_CASE("dump_toml: round-trip on non-default Config exercises every codec typ
     CHECK(round_trip.metrics.fit == original.metrics.fit);
     CHECK(round_trip.metrics.eval == original.metrics.eval);
 }
+
+TEST_CASE("Overrides: parallel.device_id parses to ParallelConfig", "[overrides][fit]")
+{
+    bonsai::Config                              cfg;
+    std::vector<bonsai::config::Override> const ovs = {{"parallel.device_id", "3"}};
+    bonsai::config::apply_overrides(cfg, ovs);
+    REQUIRE(cfg.parallel.device_id == 3);
+    REQUIRE(bonsai::Config{}.parallel.device_id == 0);
+}

@@ -30,12 +30,30 @@
 namespace bonsai::cli
 {
 
+namespace
+{
+
+// Device placement (parallel.device_id, issue #158) happens at every entry
+// that precedes device work, because cudaSetDevice is thread-local: ingest
+// and training may run on different threads (the Python Dataset flow). CPU
+// growers never touch it.
+void select_device_for(Config const &cfg)
+{
+    if (cfg.dispatch.grower_name.starts_with("cuda"))
+    {
+        cuda_select_device(cfg.parallel.device_id);
+    }
+}
+
+} // namespace
+
 LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path)
 {
     auto const batch   = detail::parse_input(path, cfg.data);
     auto       mappers = BinMappers::fit(batch, cfg.bin_mapper);
     // The ingest transaction (decision 54): cuda growers bin on the device;
     // cuda_ingest declines (nullptr) without a backend/device.
+    select_device_for(cfg);
     auto plane = cfg.dispatch.grower_name.starts_with("cuda")
                      ? cuda_ingest(batch, mappers)
                      : nullptr;
@@ -46,6 +64,7 @@ LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path)
 std::unique_ptr<IBooster> train_in_memory(Config const &cfg, Dataset const &train,
                                           ProgressFn const &on_progress)
 {
+    select_device_for(cfg);
     auto       booster = make_booster(cfg);
     auto const n_iters = cfg.booster_config.n_iters;
     for (uint32_t i = 0; i < n_iters; ++i)
@@ -160,6 +179,7 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
                                               FitTickFn const          &on_tick,
                                               std::unique_ptr<IBooster> initial)
 {
+    select_device_for(cfg);
     auto       booster = initial ? std::move(initial) : make_booster(cfg);
     auto const n_iters = cfg.booster_config.n_iters;
     auto const log_iv  = cfg.booster_config.log_intervals;
