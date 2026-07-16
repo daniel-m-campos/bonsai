@@ -16,6 +16,14 @@ namespace bonsai
 // needs this to be true. See docs/architecture/10-cuda.md.
 bool cuda_available();
 
+// Select the CUDA device for subsequent device work on the CALLING thread
+// (parallel.device_id, issue #158). 0 selects the default device when one
+// exists and is a no-op otherwise, so the config default changes nothing on
+// GPU-less hosts (graceful degradation intact); a nonzero id is validated
+// against the visible device count, and out-of-range or a CUDA-less build
+// throws ConfigError. Placement only: model bits are unaffected.
+void cuda_select_device(uint32_t device_id);
+
 // The CUDA ingest transaction (decision 54, docs 15/16): bins raw features
 // on the device against host-fitted cuts and returns the resident plane for
 // Dataset::bin to carry. Returns nullptr — leaving the caller on the host

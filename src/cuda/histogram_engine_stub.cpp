@@ -1,10 +1,12 @@
 // CUDA-less stand-in for CudaHistogramEngine (BONSAI_CUDA=OFF builds):
 // construction succeeds so load/predict work, training throws.
 
+#include "bonsai/config/errors.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
 #include <memory>
 #include <span>
 #include <stdexcept>
+#include <string>
 
 namespace bonsai
 {
@@ -24,6 +26,18 @@ namespace
 bool cuda_available()
 {
     return false;
+}
+
+void cuda_select_device(uint32_t device_id)
+{
+    // 0 is the ambient default everywhere; a nonzero id in a CUDA-less
+    // build is a misconfiguration and must be loud (decision 60's rule).
+    if (device_id != 0)
+    {
+        throw ConfigError("parallel.device_id " + std::to_string(device_id) +
+                          " requires a CUDA build (-DBONSAI_CUDA=ON); this "
+                          "binary was built without the CUDA backend");
+    }
 }
 
 struct CudaHistogramEngine::Impl
