@@ -19,11 +19,13 @@ The host-side split-decision contract (doc 12) is what makes data-parallel a sma
 Data-parallel GBM partitions rows across devices; each device owns a shard. Per level:
 
 1. Each device builds partial histograms over its shard. This is exactly what `begin_root` / `advance_level` already do per device.
-2. **All-reduce the histograms across devices.** This is the one genuinely new operation.
-3. Find the split on the reduced histogram. Reuses the existing find kernel on a coordinator device (see below).
+2. **Reduce the histograms to a coordinator device.** This is the one genuinely new operation, and it is a reduce, not an all-reduce: only the SMALLER children's partials need to cross devices, because the coordinator holds the global parent from the previous level and derives each larger child as parent_global minus small_global. That roughly halves cross-device traffic versus reducing both children.
+3. Find the split on the reduced histogram. Reuses the existing find kernel on the coordinator (see below).
 4. Each device partitions its own shard through the chosen split. `partition_level` is already per-shard; no rows cross devices.
 
-The tree comes out identical on every device because every device sees the same reduced histogram. So the only new cross-device traffic is the reduction between build and find; row partitioning stays embarrassingly parallel. The architecture was, incidentally, already shaped for this.
+The tree comes out identical on every device because every decision is made on the one global histogram. So the only new cross-device traffic is the reduction between build and find; row partitioning stays embarrassingly parallel. The architecture was, incidentally, already shaped for this.
+
+Traffic pricing (16M x 100 x 255): a level's reduction is roughly frontier_slots x total_bins x 16B per cell, ~50-100MB at the deepest levels with the smaller-children-only scheme. Over PCIe (~25GB/s effective) that is ~2-4ms per level per device; over NVLink (600GB/s) ~0.1ms. Across 8 levels x 100 trees the PCIe tax is seconds per fit and the NVLink tax is noise: the interconnect is the experiment's independent variable, which drives the validation hardware below.
 
 ```mermaid
 flowchart TD
@@ -36,8 +38,8 @@ flowchart TD
         B1["build partial hist\n(shard 1)"]
         P1["partition shard 1"]
     end
-    B0 --> AR{{"all-reduce\nhistograms"}}
-    B1 -. "NVLink / peer" .-> AR
+    B0 --> AR{{"reduce histograms\n(smaller children only)"}}
+    B1 -. "NVLink / peer,\nor host-staged" .-> AR
     AR --> F0
     F0 -. "SplitOutput to host\n(doc 12 contract)" .-> P0
     F0 -. "chosen cut (broadcast)" .-> P1
@@ -51,7 +53,7 @@ flowchart TD
 
 **New (additive).**
 - `MultiCudaHistogramEngine`, satisfying `HistogramEngine` + `GPULevelEngine`. Fans each op across N devices.
-- A histogram all-reduce (NCCL `allReduce`, or hand-rolled peer-to-peer memcpy + add kernel), inserted inside `begin_root` / `advance_level` after the per-device build, before find.
+- The histogram reduction (hand-rolled peer memcpy + add kernel first, zero new deps; NCCL only if measured to matter), inserted inside `begin_root` / `advance_level` after the per-device build, before find. **It must ship with a host-staged fallback** (pinned bounce buffer + add): cloud multi-GPU pods frequently disable peer access (IOMMU/ACS in virtualized secure cloud, even on same-board SXM parts), so the engine probes `cudaDeviceCanAccessPeer` at construction and takes the peer path only when it is real. Every measurement is labeled with the regime it ran in.
 - A sharded ingest (`cuda_ingest_sharded`) producing a multi-shard `IngestPlane`, additive next to `cuda_ingest` ([`histogram_engine.cu:143`](../../src/cuda/histogram_engine.cu)) at the same call site that already selects the CUDA plane ([`module.cpp:66`](../../src/python/module.cpp)).
 - Config `parallel.device_ids` (the list sibling of #158's `parallel.device_id`) and grower names `cuda_multi_depthwise` / `cuda_multi_oblivious`.
 
@@ -59,7 +61,7 @@ flowchart TD
 
 ## Find-split placement
 
-`find_splits_many` / `find_level_split` currently run on the device against device histograms. The simplest multi-GPU scheme is **reduce-to-coordinator**: all-reduce the histogram onto device 0, run the existing find kernel there, and let the host decision fan back out (the cut is tiny; broadcasting it is free). This reuses the single-GPU find almost verbatim. An alternative all-reduces to every device so each runs find redundantly (deterministic, trivial extra compute); reduce-to-coordinator is the phase-1 choice.
+`find_splits_many` / `find_level_split` currently run on the device against device histograms. The simplest multi-GPU scheme is **reduce-to-coordinator**: sum the partials onto device 0, run the existing find kernel there, and let the host decision fan back out (the cut is tiny; broadcasting it is free). This reuses the single-GPU find almost verbatim. An alternative all-reduces to every device so each runs find redundantly (deterministic, trivial extra compute, double the traffic); reduce-to-coordinator is the phase-1 choice.
 
 ## Reproducibility
 
@@ -68,7 +70,8 @@ The CPU plane is hash-canonical (`scripts/model_hash.py` is CPU-only); the GPU p
 ## Costs and risks (honest)
 
 - **Sublinear speedup.** The level budget is already staging-bound (~104ms/round post decision 72, much of it transfer). A cross-device reduction every level means expect roughly 2-3x on 4 GPUs, not 4x, and interconnect dominates (NVLink far ahead of PCIe). Admitted for a use case that values the capability over the ROI.
-- **NCCL (or hand-rolled peer reduction)** is a new dependency, gated behind the multi-GPU build so CPU and single-GPU builds never link it.
+- **No-P2P clouds.** Peer access is a host property, not a card property: virtualized pods often disable it. The host-staged fallback keeps the engine functional there, at a real bandwidth cost; the `cudaDeviceCanAccessPeer` probe plus a `p2pBandwidthLatencyTest` run open every validation session so numbers are never attributed to the wrong regime.
+- **NCCL, if ever adopted,** is a new dependency gated behind the multi-GPU build so CPU and single-GPU builds never link it; phase 1 hand-rolls the reduction (the bonsai-ci image ships no NCCL).
 - **Testing needs a physical multi-GPU box.** CI cannot validate it; use the same skip-on-single-GPU pattern as #158 plus a manual/pod validation.
 - **Stragglers.** The reduction waits on the slowest shard; even row-sharding handles the common case, an uneven or mismatched card costs the difference.
 
@@ -76,8 +79,8 @@ The CPU plane is hash-canonical (`scripts/model_hash.py` is CPU-only); the GPU p
 
 1. Land #158 (`parallel.device_id`): the foundation, `device_id` becoming `device_ids`.
 2. Extract `CudaDeviceContext` from `CudaHistogramEngine::Impl`: behavior-neutral, hash-gated, single-GPU identical.
-3. Build `MultiCudaHistogramEngine` over N contexts with reduce-to-coordinator all-reduce.
+3. Build `MultiCudaHistogramEngine` over N contexts with the reduce-to-coordinator scheme (peer path + host-staged fallback).
 4. Add sharded ingest, the grower instantiations, and the registry/dispatch entries.
-5. Validate on a multi-GPU box: tolerance match vs single-GPU at a fixed device count, and the scaling ladder (1/2/4 GPUs) at 16M+ rows.
+5. Validate on multi-GPU pods: tolerance match vs single-GPU at a fixed device count, then the scaling ladder (1/2/4 GPUs) at 16M+ rows. The ladder is **same-pod** (the 1-GPU baseline runs on GPU 0 of the multi-GPU host; fleet spread makes cross-pod comparisons noise), opens with the P2P gate, and measures BOTH interconnect regimes: 4x L40S (PCIe floor, same sm_89 silicon as every published bonsai GPU number, ~$4/hr secure) and 4x A100 SXM (NVLink 600GB/s headroom, sm_80 already validated, ~$6/hr secure); 2x A40 (~$0.9/hr) serves for P3 correctness bring-up and the fallback path. A100 PCIe is dominated (same interconnect class as L40S, older arch, more cost); H100 is overkill for a scaling-shape question.
 
 Each step is new code beside old code, not surgery through it. That containment is the whole reason the feature is admitted.
