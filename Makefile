@@ -111,6 +111,7 @@ perf-benchmark: build
 # (override with PYTHON=/path/to/python).
 python: build/build.ninja
 	@cmake -B build -DBONSAI_PYTHON=ON -DBONSAI_OPENMP_STATIC=ON \
+	    -DBONSAI_OPENMP_DYNAMIC_FALLBACK_OK=ON \
 	    -DPython_EXECUTABLE=$(abspath $(PYTHON)) \
 	    | grep -iE "openmp|error" || true
 	@cmake --build build --target _bonsai -j
@@ -125,6 +126,7 @@ python-test: python $(TOY_SENTINEL) $(AMAZON_SENTINEL)
 # CUDA-enabled extension in the CUDA tree; cuda_* growers can train.
 python-cuda: build-cuda/build.ninja
 	@cmake -B build-cuda -DBONSAI_PYTHON=ON -DBONSAI_OPENMP_STATIC=ON \
+	    -DBONSAI_OPENMP_DYNAMIC_FALLBACK_OK=ON \
 	    -DPython_EXECUTABLE=$(abspath $(PYTHON)) >/dev/null
 	@cmake --build build-cuda --target _bonsai -j
 	@echo "module at build-cuda/python/bonsai — use PYTHONPATH=build-cuda/python"
