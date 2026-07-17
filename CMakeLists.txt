@@ -169,8 +169,10 @@ if(BONSAI_CUDA)
         "Embed PTX for this single arch only (wheels' forward-JIT floor); empty keeps clang's per-arch PTX")
     option(BONSAI_CUDA_STATIC_RUNTIME
         "Link cudart statically so the binary has no CUDA runtime DT_NEEDED (wheels)" OFF)
-    add_library(bonsai_cuda_kernels STATIC src/cuda/histogram_engine.cu)
+    add_library(bonsai_cuda_kernels STATIC src/cuda/histogram_engine.cu
+                                           src/cuda/detail/device_context.cu)
     set_source_files_properties(src/cuda/histogram_engine.cu
+                                src/cuda/detail/device_context.cu
                                 PROPERTIES LANGUAGE CXX)
     set(bonsai_cuda_arch_flags "")
     foreach(arch IN LISTS BONSAI_CUDA_ARCH)

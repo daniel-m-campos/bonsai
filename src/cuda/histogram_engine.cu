@@ -30,10 +30,15 @@
 
 #include "detail/device_buffer.cuh"
 #include "detail/device_context.cuh"
-#include "detail/kernels.cuh"
+#include "detail/ingest_kernels.cuh"
 
 namespace bonsai
 {
+
+// The device buffers, ingest plane, and CudaDeviceContext now live in
+// namespace bonsai::cuda_detail (external linkage, shared with the
+// device-context TU); name them unqualified throughout this TU.
+using namespace cuda_detail;
 
 // Flat device/host buffers throughout this file are offset by hand (docs/
 // architecture/10-cuda.md); grad/hess travel as an adjacent pair everywhere
