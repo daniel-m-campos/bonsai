@@ -205,22 +205,6 @@ def test_cuda_available_reports():
         assert m.n_iters_ == 5
 
 
-def test_cuda_multi_grower_trains():
-    """The data-parallel grower is reachable from Python (architecture doc 19).
-    On a CUDA build with a device, two contexts on device 0 (device_ids="0,0")
-    train and score sanely; a CPU-only build has nothing to run."""
-    if not bonsai.cuda_available():
-        return
-    Xtr, ytr = load_csv(TRAIN_CSV)
-    m = bonsai.BonsaiRegressor(
-        n_iters=5,
-        grower="cuda_multi_depthwise",
-        params={"parallel.device_ids": "0,0"},
-    ).fit(Xtr[:1000], ytr[:1000])
-    assert m.n_iters_ == 5
-    assert m.score(Xtr[:1000], ytr[:1000]) > 0.5
-
-
 def test_get_set_params_round_trip():
     est = bonsai.BonsaiRegressor(n_iters=17, learning_rate=0.2, max_depth=4)
     params = est.get_params()
@@ -842,7 +826,6 @@ if __name__ == "__main__":
     test_pred_contribs_efficiency()
     test_toml_config_base_and_precedence()
     test_cuda_available_reports()
-    test_cuda_multi_grower_trains()
     test_get_set_params_round_trip()
     test_score_r2_matches_hand_computation()
     test_sklearn_clone()

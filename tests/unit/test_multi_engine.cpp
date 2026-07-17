@@ -6,15 +6,12 @@
 // multi path is N contexts on ONE device (duplicate ids), so tests 2 and 3 run
 // on any GPU host; two distinct real devices (test 5) SKIP on a single-GPU box.
 
-#include "bonsai/booster.hpp"
-#include "bonsai/config/config.hpp"
 #include "bonsai/config/errors.hpp"
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/cuda/grower.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/cuda/multi_engine.hpp"
 #include "bonsai/grower.hpp"
-#include "bonsai/registry/make_booster.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
 #include "test_grower_helpers.hpp"
@@ -191,75 +188,6 @@ TEST_CASE("MultiCudaHistogramEngine: host-staged reduction matches the peer path
     auto m = multi.grow(ds, scenario.grad, scenario.hess, scenario.rows);
     auto s = single.grow(ds, scenario.grad, scenario.hess, scenario.rows);
     require_values_close(s, m);
-}
-
-TEST_CASE("cuda_multi_depthwise: trains via make_booster and matches cuda_depthwise",
-          "[cuda][grower]")
-{
-    if (!cuda_available())
-    {
-        SKIP("no usable CUDA device");
-    }
-    DeviceSetGuard guard;
-
-    // A 4096-row regression scenario (above the device path's CPU-fallback
-    // cutoff) with a real signal so training actually splits.
-    std::mt19937                          rng(11);
-    std::uniform_real_distribution<float> value(0.0F, 1.0F);
-    size_t const                          n = 4096;
-    detail::ColumnBatch                   batch;
-    batch.features.resize(3, std::vector<float>(n));
-    batch.feature_names = {"a", "b", "c"};
-    batch.labels.assign(n, 0.0F);
-    std::vector<float> raw(n * 3);
-    for (size_t r = 0; r < n; ++r)
-    {
-        float const a        = value(rng);
-        float const b        = value(rng);
-        float const c        = value(rng);
-        batch.features[0][r] = a;
-        batch.features[1][r] = b;
-        batch.features[2][r] = c;
-        batch.labels[r]      = (2.0F * a) - b + (0.5F * c);
-        raw[(r * 3) + 0]     = a;
-        raw[(r * 3) + 1]     = b;
-        raw[(r * 3) + 2]     = c;
-    }
-    auto const  built = test::build(std::move(batch));
-    auto const &ds    = built.ds;
-
-    Config cfg;
-    cfg.dispatch.objective_name = "mse";
-    cfg.dispatch.sampler_name   = "all_rows";
-    cfg.tree_config.max_depth   = 5;
-
-    // The multi grower captures its device set at construction: two contexts on
-    // device 0 (the single-GPU shard harness). The single-GPU reference is
-    // built after resetting to the default (current) device.
-    std::array<uint32_t, 2> const ids{0, 0};
-    cuda_select_devices(ids);
-    cfg.dispatch.grower_name = "cuda_multi_depthwise";
-    auto multi               = make_booster(cfg);
-
-    cuda_select_devices(std::span<uint32_t const>{});
-    cfg.dispatch.grower_name = "cuda_depthwise";
-    auto single              = make_booster(cfg);
-
-    constexpr int n_iters = 5;
-    for (int i = 0; i < n_iters; ++i)
-    {
-        multi->update_one_iter(ds);
-        single->update_one_iter(ds);
-    }
-
-    std::vector<float> y_multi(n);
-    std::vector<float> y_single(n);
-    multi->predict(features_view{raw.data(), n, 3}, y_multi);
-    single->predict(features_view{raw.data(), n, 3}, y_single);
-    for (size_t r = 0; r < n; ++r)
-    {
-        REQUIRE_THAT(y_multi[r], Catch::Matchers::WithinAbs(y_single[r], 1e-4));
-    }
 }
 
 TEST_CASE("cuda_select_devices: rejects an out-of-range device id", "[cuda][edge]")

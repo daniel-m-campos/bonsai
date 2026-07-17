@@ -84,10 +84,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DispatchConfig, objective_name, grower_name,
                                    sampler_name)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(SamplerConfig, subsample, top_rate, other_rate)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(MetricsConfig, fit, eval)
-// device_id and device_ids are deliberately absent: placement is a runtime
-// property, not a model property (a model trained on device 3, or across a
-// device set, must not insist on that hardware later), and their absence keeps
-// every pre-#158 artifact loading unchanged.
+// device_id is deliberately absent: placement is a runtime property, not a
+// model property (a model trained on device 3 must not insist on device 3
+// later), and its absence keeps every pre-#158 artifact loading unchanged.
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ParallelConfig, n_threads)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ObjectiveConfig, huber_delta, quantile_alpha,
                                    n_classes)
