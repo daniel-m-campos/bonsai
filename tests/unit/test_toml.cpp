@@ -1,6 +1,4 @@
-#include <cstdint>
 #include <string>
-#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -276,41 +274,4 @@ TEST_CASE("Overrides: parallel.device_id parses to ParallelConfig", "[overrides]
     bonsai::config::apply_overrides(cfg, ovs);
     REQUIRE(cfg.parallel.device_id == 3);
     REQUIRE(bonsai::Config{}.parallel.device_id == 0);
-}
-
-TEST_CASE("Toml: parallel.device_ids parses from an integer array", "[toml][fit]")
-{
-    constexpr auto kText = R"(
-[parallel]
-device_ids = [0, 1, 3]
-)";
-    auto const     cfg   = bonsai::config::parse_toml(kText);
-    REQUIRE(cfg.parallel.device_ids == std::vector<uint32_t>{0, 1, 3});
-    // Untouched default is empty.
-    REQUIRE(bonsai::Config{}.parallel.device_ids.empty());
-}
-
-TEST_CASE("Overrides: parallel.device_ids parses from a comma-separated string",
-          "[overrides][fit]")
-{
-    bonsai::Config                              cfg;
-    std::vector<bonsai::config::Override> const ovs = {{"parallel.device_ids", "0,1"}};
-    bonsai::config::apply_overrides(cfg, ovs);
-    REQUIRE(cfg.parallel.device_ids == std::vector<uint32_t>{0, 1});
-}
-
-TEST_CASE("Overrides: parallel.device_ids rejects a non-integer token",
-          "[overrides][edge]")
-{
-    bonsai::Config                              cfg;
-    std::vector<bonsai::config::Override> const ovs = {{"parallel.device_ids", "0,x"}};
-    REQUIRE_THROWS_AS(bonsai::config::apply_overrides(cfg, ovs), bonsai::ConfigError);
-}
-
-TEST_CASE("Overrides: parallel.device_ids rejects a negative token",
-          "[overrides][edge]")
-{
-    bonsai::Config                              cfg;
-    std::vector<bonsai::config::Override> const ovs = {{"parallel.device_ids", "0,-1"}};
-    REQUIRE_THROWS_AS(bonsai::config::apply_overrides(cfg, ovs), bonsai::ConfigError);
 }

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "bonsai/cuda/histogram_engine.hpp"
-#include "bonsai/cuda/multi_engine.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/split.hpp"
 
@@ -19,15 +18,5 @@ using CudaDepthwiseGrower = DepthwiseGrower<CudaHistogramEngine>;
 // frontier nodes); partition/advance are reused from the depthwise path.
 using CudaObliviousGrower =
     ObliviousGrower<CudaHistogramEngine, HistogramLevelSplitFinder>;
-
-// The "cuda_multi_depthwise" grower: the depthwise grow loop over the
-// data-parallel engine (docs/architecture/19-multi-gpu.md). Selected by
-// parallel.device_ids; the single-GPU cuda_depthwise path is untouched.
-using CudaMultiDepthwiseGrower = DepthwiseGrower<MultiCudaHistogramEngine>;
-
-// The "cuda_multi_oblivious" grower: the oblivious grow loop over the same
-// engine, using the device level-find.
-using CudaMultiObliviousGrower =
-    ObliviousGrower<MultiCudaHistogramEngine, HistogramLevelSplitFinder>;
 
 } // namespace bonsai

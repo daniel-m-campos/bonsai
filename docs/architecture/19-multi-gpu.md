@@ -77,10 +77,10 @@ The CPU plane is hash-canonical (`scripts/model_hash.py` is CPU-only); the GPU p
 
 ## Phasing
 
-1. Land #158 (`parallel.device_id`): the foundation, `device_id` becoming `device_ids`. **Done.**
-2. Extract `CudaDeviceContext` from `CudaHistogramEngine::Impl`: behavior-neutral, hash-gated, single-GPU identical. **Done.**
-3. Build `MultiCudaHistogramEngine` over N contexts with the reduce-to-coordinator scheme (peer path + host-staged fallback). **Done.**
-4. Split in two. **(a) Done:** the grower instantiations (`cuda_multi_depthwise` / `cuda_multi_oblivious`), the `parallel.device_ids` config key, and the registry/CLI/Python dispatch entries, so the multi engine is reachable and parity-tested from every front end. **(b) Deferred:** sharded ingest (`cuda_ingest_sharded` producing a multi-shard `IngestPlane`), pending the P5 pricing that decides whether a per-device plane earns its keep over the current host-resident upload-per-device path.
+1. Land #158 (`parallel.device_id`): the foundation, `device_id` becoming `device_ids`.
+2. Extract `CudaDeviceContext` from `CudaHistogramEngine::Impl`: behavior-neutral, hash-gated, single-GPU identical.
+3. Build `MultiCudaHistogramEngine` over N contexts with the reduce-to-coordinator scheme (peer path + host-staged fallback).
+4. Add sharded ingest, the grower instantiations, and the registry/dispatch entries.
 5. Validate on multi-GPU pods: tolerance match vs single-GPU at a fixed device count, then the scaling ladder (1/2/4 GPUs) at 16M+ rows. The ladder is **same-pod** (the 1-GPU baseline runs on GPU 0 of the multi-GPU host; fleet spread makes cross-pod comparisons noise), opens with the P2P gate, and measures BOTH interconnect regimes: 4x L40S (PCIe floor, same sm_89 silicon as every published bonsai GPU number, ~$4/hr secure) and 4x A100 SXM (NVLink 600GB/s headroom, sm_80 already validated, ~$6/hr secure); 2x A40 (~$0.9/hr) serves for P3 correctness bring-up and the fallback path. A100 PCIe is dominated (same interconnect class as L40S, older arch, more cost); H100 is overkill for a scaling-shape question.
 
 Each step is new code beside old code, not surgery through it. That containment is the whole reason the feature is admitted.
