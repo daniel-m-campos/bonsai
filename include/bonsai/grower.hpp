@@ -77,7 +77,9 @@ concept GPULevelEngine =
              std::span<typename T::PartitionOp const> pops,
              std::span<typename T::LevelOp const> lops, std::span<uint32_t> counts,
              std::span<SplitInput const> level, std::span<SplitOutput> out,
-             std::span<HistCell> child_sums, std::span<node_id_t> by_row) {
+             std::span<HistCell> child_sums, std::span<node_id_t> by_row,
+             std::span<float const> node_values, std::span<float> values,
+             std::span<node_id_t> leaf_ids) {
         typename T::LevelOp;
         typename T::PartitionOp;
         typename T::LeafStamp;
@@ -85,7 +87,9 @@ concept GPULevelEngine =
         b.stamp_leaves(stamps);
         b.partition_level(ds, pops, counts);
         b.advance_level(ds, lops);
+        b.advance_layout_only();
         b.finalize_rows(by_row);
+        b.finalize_tree(node_values, values, leaf_ids);
         b.find_splits_many(ds, config, level, out, child_sums);
         b.find_level_split(ds, config, level, out, child_sums);
     };
