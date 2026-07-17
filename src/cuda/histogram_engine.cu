@@ -82,6 +82,38 @@ void cuda_select_device(uint32_t device_id)
     }
 }
 
+namespace
+{
+// The multi-GPU shard set. Not thread-safe against concurrent train calls.
+std::vector<uint32_t> g_selected_devices;
+} // namespace
+
+void cuda_select_devices(std::span<uint32_t const> ids)
+{
+    int n = 0;
+    if (cudaGetDeviceCount(&n) != cudaSuccess)
+    {
+        n = 0;
+    }
+    for (uint32_t const id : ids)
+    {
+        // Duplicate ids are allowed (N contexts on one device); only the
+        // range is validated, id by id, mirroring cuda_select_device.
+        if (std::cmp_greater_equal(id, n))
+        {
+            throw ConfigError("parallel.device_ids entry " + std::to_string(id) +
+                              " is out of range: " + std::to_string(n) +
+                              " CUDA device(s) visible");
+        }
+    }
+    g_selected_devices.assign(ids.begin(), ids.end());
+}
+
+std::vector<uint32_t> cuda_selected_devices()
+{
+    return g_selected_devices;
+}
+
 // The device-resident state (CudaDeviceContext) plus the CPU fallback engine
 // used when begin_root declines the resident path. The engine forwards its
 // device methods to ctx and keeps the fallback branches (populate) on cpu.

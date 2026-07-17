@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <vector>
 
 namespace bonsai
 {
@@ -23,6 +24,17 @@ bool cuda_available();
 // against the visible device count, and out-of-range or a CUDA-less build
 // throws ConfigError. Placement only: model bits are unaffected.
 void cuda_select_device(uint32_t device_id);
+
+// The device set MultiCudaHistogramEngine shards over (parallel.device_ids,
+// issue #159, docs/architecture/19-multi-gpu.md). Each id is validated
+// against the visible device count exactly like cuda_select_device; an
+// out-of-range id or a CUDA-less build throws ConfigError naming the id and
+// count. Duplicate ids are allowed on purpose: N contexts on one device is
+// the single-GPU validation harness for the whole multi path. An empty set
+// (the default) means "the current device only". Not thread-safe against
+// concurrent train calls.
+void                  cuda_select_devices(std::span<uint32_t const> ids);
+std::vector<uint32_t> cuda_selected_devices();
 
 // The CUDA ingest transaction (decision 54, docs 15/16): bins raw features
 // on the device against host-fitted cuts and returns the resident plane for
