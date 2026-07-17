@@ -44,7 +44,7 @@ struct FeatBest
 // Device-side view of one PartitionOp plus its parent segment.
 struct PartOpDev
 {
-    uint32_t ofs, cnt, fid, bin, dl;
+    uint32_t offset, count, fid, bin, dl;
 };
 
 inline void check(cudaError_t rc, char const *what)
@@ -59,8 +59,8 @@ inline void check(cudaError_t rc, char const *what)
 // Stream-ordered allocation with the device mempool told to keep freed
 // memory: the default release threshold of 0 returns every free to the OS
 // at the next sync, and on GeForce drivers the resulting cudaMalloc/cudaFree
-// churn synchronizes the whole process (the 5090's ~11-14s per-fit overhead,
-// decision 48). BONSAI_CUDA_SYNC_ALLOC=1 restores plain cudaMalloc.
+// churn synchronizes the whole process (the 5090's ~11-14s per-fit
+// overhead). BONSAI_CUDA_SYNC_ALLOC=1 restores plain cudaMalloc.
 inline bool use_async_alloc()
 {
     static bool const enabled = []
@@ -202,8 +202,8 @@ template <typename T> class PinnedBuffer
 // A host staging vector paired with its device mirror — the shape that recurs
 // throughout the engine's Impl. `host` is filled (or received) on the CPU;
 // sync() pushes it to the device, fetch() pulls a device result back. Mirrors
-// thrust's host_vector/device_vector duo without the dependency (decision 40:
-// the backend stays one self-contained TU).
+// thrust's host_vector/device_vector duo without the dependency (the backend
+// stays one self-contained TU).
 template <typename T> struct Staged
 {
     std::vector<T>  host;

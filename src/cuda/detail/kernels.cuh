@@ -92,8 +92,8 @@ inline void gather(float2 const *gh, uint32_t const *rows, uint32_t n,
 // rounding stays bounded per <= 32k-row chunk.
 template <typename BinT>
 __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
-                            uint32_t const *rows, uint32_t const *row_ofs,
-                            uint32_t const *row_cnt, uint32_t const *features,
+                            uint32_t const *rows, uint32_t const *row_offsets,
+                            uint32_t const *row_counts, uint32_t const *features,
                             uint32_t const *n_bins, uint32_t n_rows, uint32_t n_sel,
                             double *out, uint32_t stride, uint32_t const *out_slot)
 {
@@ -107,14 +107,14 @@ __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
         sh[i] = 0.0F;
     }
     __syncthreads();
-    float          *my  = sh + (static_cast<size_t>((threadIdx.x >> 5) & 1U) * 2 * nb);
-    BinT const     *fb  = bins + (static_cast<size_t>(f) * n_rows);
-    uint32_t const  ofs = row_ofs[node];
-    uint32_t const *nrows = rows + ofs;
-    float2 const   *ngh   = gh_ordered + ofs;
-    uint32_t const  cnt   = row_cnt[node];
-    uint32_t const  span  = gridDim.z * blockDim.x;
-    for (uint32_t k = (blockIdx.z * blockDim.x) + threadIdx.x; k < cnt; k += span)
+    float          *my = sh + (static_cast<size_t>((threadIdx.x >> 5) & 1U) * 2 * nb);
+    BinT const     *fb = bins + (static_cast<size_t>(f) * n_rows);
+    uint32_t const  offset = row_offsets[node];
+    uint32_t const *nrows  = rows + offset;
+    float2 const   *ngh    = gh_ordered + offset;
+    uint32_t const  count  = row_counts[node];
+    uint32_t const  span   = gridDim.z * blockDim.x;
+    for (uint32_t k = (blockIdx.z * blockDim.x) + threadIdx.x; k < count; k += span)
     {
         uint32_t const b = fb[nrows[k]];
         float2 const   v = ngh[k];
@@ -139,21 +139,21 @@ __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
 // accumulates row visits straight into the node's global slot in double.
 template <typename BinT>
 __global__ void hist_small_kernel(BinT const *bins, float2 const *gh_ordered,
-                                  uint32_t const *rows, uint32_t const *row_ofs,
-                                  uint32_t const *row_cnt, uint32_t const *features,
+                                  uint32_t const *rows, uint32_t const *row_offsets,
+                                  uint32_t const *row_counts, uint32_t const *features,
                                   uint32_t n_rows, uint32_t n_sel, double *out,
                                   uint32_t stride, uint32_t const *out_slot)
 {
-    uint32_t const  node = blockIdx.x;
-    uint32_t const  cnt  = row_cnt[node];
-    uint32_t const  ofs  = row_ofs[node];
-    uint32_t const *nr   = rows + ofs;
-    float2 const   *ngh  = gh_ordered + ofs;
-    double         *o    = out + (static_cast<size_t>(out_slot[node]) * n_sel * stride);
-    for (uint32_t k = threadIdx.x; k < cnt * n_sel; k += blockDim.x)
+    uint32_t const  node   = blockIdx.x;
+    uint32_t const  count  = row_counts[node];
+    uint32_t const  offset = row_offsets[node];
+    uint32_t const *nr     = rows + offset;
+    float2 const   *ngh    = gh_ordered + offset;
+    double         *o = out + (static_cast<size_t>(out_slot[node]) * n_sel * stride);
+    for (uint32_t k = threadIdx.x; k < count * n_sel; k += blockDim.x)
     {
-        uint32_t const sel = k / cnt;
-        uint32_t const i   = k % cnt;
+        uint32_t const sel = k / count;
+        uint32_t const i   = k % count;
         uint32_t const b = bins[(static_cast<size_t>(features[sel]) * n_rows) + nr[i]];
         float2 const   v = ngh[i];
         atomicAdd(&o[(sel * stride) + (2 * b)], static_cast<double>(v.x));
@@ -161,7 +161,7 @@ __global__ void hist_small_kernel(BinT const *bins, float2 const *gh_ordered,
     }
 }
 
-// --- Stage B: device row partitioning (docs/architecture/11-gpu-resident.md).
+// --- Device row partitioning (docs/architecture/11-gpu-resident.md).
 // Rows live in ping-pong segment buffers; each split routes its parent
 // segment into stable left/right child segments via count -> scan -> scatter
 // (hand-rolled: no CUB, the TU stays self-contained). CHUNK rows per block,
@@ -201,10 +201,10 @@ __global__ void route_count_kernel(BinT const *bins, uint32_t const *n_bins,
     for (uint32_t j = 0; j < k_part_rows_per_thread; ++j)
     {
         uint32_t const i = base + (threadIdx.x * k_part_rows_per_thread) + j;
-        if (i < op.cnt)
+        if (i < op.count)
         {
-            bool const l = goes_left_dev(fb[rows[op.ofs + i]], last, op.bin, op.dl);
-            flags[op.ofs + i] = l ? 1 : 0;
+            bool const l = goes_left_dev(fb[rows[op.offset + i]], last, op.bin, op.dl);
+            flags[op.offset + i] = l ? 1 : 0;
             mine += l ? 1U : 0U;
         }
     }
@@ -259,7 +259,7 @@ __global__ void scatter_kernel(uint32_t const *rows_in, float2 const *gh_in,
     for (uint32_t j = 0; j < k_part_rows_per_thread; ++j)
     {
         uint32_t const i = base + (threadIdx.x * k_part_rows_per_thread) + j;
-        mine += (i < op.cnt && flags[op.ofs + i] != 0) ? 1U : 0U;
+        mine += (i < op.count && flags[op.offset + i] != 0) ? 1U : 0U;
     }
     sh[threadIdx.x + 1] = mine;
     if (threadIdx.x == 0)
@@ -287,22 +287,22 @@ __global__ void scatter_kernel(uint32_t const *rows_in, float2 const *gh_in,
     for (uint32_t j = 0; j < k_part_rows_per_thread; ++j)
     {
         uint32_t const i = base + (threadIdx.x * k_part_rows_per_thread) + j;
-        if (i >= op.cnt)
+        if (i >= op.count)
         {
             break;
         }
         uint32_t dst = 0;
-        if (flags[op.ofs + i] != 0)
+        if (flags[op.offset + i] != 0)
         {
-            dst = op.ofs + lefts;
+            dst = op.offset + lefts;
             ++lefts;
         }
         else
         {
-            dst = op.ofs + nl_total + (before + j - lefts);
+            dst = op.offset + nl_total + (before + j - lefts);
         }
-        rows_out[dst] = rows_in[op.ofs + i];
-        gh_out[dst]   = gh_in[op.ofs + i];
+        rows_out[dst] = rows_in[op.offset + i];
+        gh_out[dst]   = gh_in[op.offset + i];
     }
 }
 
@@ -312,9 +312,9 @@ __global__ void stamp_kernel(uint32_t const *rows, PartOpDev const *segs,
 {
     PartOpDev const seg = segs[blockIdx.x];
     uint32_t const  id  = node_ids[blockIdx.x];
-    for (uint32_t i = threadIdx.x; i < seg.cnt; i += blockDim.x)
+    for (uint32_t i = threadIdx.x; i < seg.count; i += blockDim.x)
     {
-        leaf_by_row[rows[seg.ofs + i]] = id;
+        leaf_by_row[rows[seg.offset + i]] = id;
     }
 }
 
@@ -562,7 +562,7 @@ __global__ void reduce_kernel(FeatBest const *per_feat, uint32_t n_sel, FeatBest
 // gain of a cut (bin, default_left) is the sum over ALL frontier nodes of
 // score(left) + score(right) minus the sum of node scores. A node whose cut is
 // infeasible (min_child_hess) contributes its parent score instead of a child
-// score — zero gain, no veto (issue #60). One warp per feature: nodes are
+// score (zero gain, no veto). One warp per feature: nodes are
 // processed in chunks of 32 (one per lane), each chunk's per-bin child scores
 // warp-reduce into per-feature scratch accumulators, so any frontier width
 // works. A final lane-0 scan picks the best (bin, dl). Mirrors
@@ -631,12 +631,12 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
             {
                 auto const s =
                     split_sums_dev(pg, ph, miss_g, miss_h, real_g, real_h, dl);
-                // Issue #60, ported from the CPU level find (split.cpp): an
-                // infeasible node does NOT veto the whole level candidate — it
-                // contributes its parent score (zero gain) and the broadcast
-                // split still applies to it. At depth >= 5 some frontier node is
-                // always near-empty, so vetoing rejected every good deep cut and
-                // GPU oblivious trailed its own CPU grower (and catboost) at scale.
+                // Ported from the CPU level find (split.cpp): an infeasible
+                // node does NOT veto the whole level candidate. It contributes
+                // its parent score (zero gain) and the broadcast split still
+                // applies to it. At depth >= 5 some frontier node is always
+                // near-empty, so vetoing rejected every good deep cut and GPU
+                // oblivious trailed its own CPU grower (and catboost) at scale.
                 bool const   ok = s.hL >= min_child_hess && s.hR >= min_child_hess;
                 double const cs =
                     !active
@@ -743,7 +743,7 @@ __global__ void map_leaf_values_kernel(uint32_t const *leaf_by_row,
     values[r]           = leaf < n_values ? node_values[leaf] : 0.0F;
 }
 
-// Identity row list built on device (decision 71 campaign): full-data fits
+// Identity row list built on device: full-data fits
 // never ship the 64MB identity permutation over the bus or build it on host.
 __global__ void iota_kernel(uint32_t *out, uint32_t n)
 {

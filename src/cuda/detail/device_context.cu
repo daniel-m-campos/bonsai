@@ -114,6 +114,157 @@ CudaDeviceContext::LevelPipeline::~LevelPipeline()
     }
 }
 
+size_t CudaDeviceContext::LevelPipeline::stage_children(
+    std::span<CudaHistogramEngine::LevelOp const> ops)
+{
+    size_t max_rows = 0;
+    row_offsets.clear();
+    row_counts.clear();
+    slots.clear();
+    small_offsets.clear();
+    small_counts.clear();
+    small_slots.clear();
+    triples.clear();
+    for (CudaHistogramEngine::LevelOp const &op : ops)
+    {
+        uint32_t const offset = next_offsets[op.small_slot];
+        uint32_t const count  = next_counts[op.small_slot];
+        if (count >= k_min_gpu_rows)
+        {
+            row_offsets.host.push_back(offset);
+            row_counts.host.push_back(count);
+            slots.host.push_back(op.small_slot);
+            max_rows = std::max<size_t>(max_rows, count);
+        }
+        else
+        {
+            small_offsets.host.push_back(offset);
+            small_counts.host.push_back(count);
+            small_slots.host.push_back(op.small_slot);
+        }
+        triples.host.push_back(op.parent_slot);
+        triples.host.push_back(op.small_slot);
+        triples.host.push_back(op.large_slot);
+    }
+    if (!row_offsets.empty())
+    {
+        row_offsets.sync();
+        row_counts.sync();
+        slots.sync();
+    }
+    if (!small_offsets.empty())
+    {
+        small_offsets.sync();
+        small_counts.sync();
+        small_slots.sync();
+    }
+    triples.sync();
+    return max_rows;
+}
+
+void CudaDeviceContext::LevelPipeline::layout_children(
+    std::span<CudaHistogramEngine::PartitionOp const> ops,
+    std::span<uint32_t>                               child_counts)
+{
+    size_t const n = ops.size();
+    next_offsets.assign(2 * n, 0);
+    next_counts.assign(2 * n, 0);
+    for (size_t k = 0; k < n; ++k)
+    {
+        uint32_t const nl               = nl_dev.host[k];
+        uint32_t const parent_offset    = part_ops.host[k].offset;
+        uint32_t const parent_count     = part_ops.host[k].count;
+        next_offsets[ops[k].left_slot]  = parent_offset;
+        next_counts[ops[k].left_slot]   = nl;
+        next_offsets[ops[k].right_slot] = parent_offset + nl;
+        next_counts[ops[k].right_slot]  = parent_count - nl;
+        child_counts[2 * k]             = nl;
+        child_counts[(2 * k) + 1]       = parent_count - nl;
+    }
+}
+
+bool CudaDeviceContext::LevelPipeline::stage_find_inputs(
+    std::span<SplitInput const> level, TreeConfig const &config, Dataset const &ds)
+{
+    size_t const n = level.size();
+    node_sums.host.resize(2 * n);
+    node_bounds.host.resize(2 * n);
+    bool any_mask = false;
+    for (size_t i = 0; i < n; ++i)
+    {
+        node_sums.host[2 * i]         = level[i].sums.sum_grad;
+        node_sums.host[(2 * i) + 1]   = level[i].sums.sum_hess;
+        node_bounds.host[2 * i]       = level[i].lo;
+        node_bounds.host[(2 * i) + 1] = level[i].hi;
+        any_mask                      = any_mask || !level[i].allowed.empty();
+    }
+    node_sums.sync();
+    node_bounds.sync();
+    if (any_mask)
+    {
+        allowed.host.resize(n * n_selected);
+        for (size_t i = 0; i < n; ++i)
+        {
+            for (uint32_t s = 0; s < n_selected; ++s)
+            {
+                allowed.host[(i * n_selected) + s] =
+                    level[i].allowed.empty() ? char{1}
+                                             : level[i].allowed[features.host[s]];
+            }
+        }
+        allowed.sync();
+    }
+    monotone.host.resize(ds.n_features());
+    for (feature_id_t f = 0; f < ds.n_features(); ++f)
+    {
+        monotone.host[f] = monotone_constraint_of(config, f);
+    }
+    monotone.sync();
+    return any_mask;
+}
+
+void CudaDeviceContext::LevelPipeline::unpack_splits(std::span<SplitInput const> level,
+                                                     TreeConfig const           &config,
+                                                     std::span<SplitOutput>      out,
+                                                     std::span<HistCell> child_sums)
+{
+    for (size_t i = 0; i < level.size(); ++i)
+    {
+        FeatBest const &b = node_best.host[i];
+        bool const      eligible =
+            level[i].row_count >= 2 * static_cast<size_t>(config.min_data_in_leaf);
+        if (b.valid == 0 || !eligible)
+        {
+            out[i]                  = {};
+            child_sums[2 * i]       = {};
+            child_sums[(2 * i) + 1] = {};
+            continue;
+        }
+        out[i]                  = {.gain       = b.gain,
+                                   .feature_id = static_cast<feature_id_t>(
+                      features.host[static_cast<size_t>(b.sel)]),
+                                   .bin_id       = static_cast<bin_id_t>(b.bin),
+                                   .default_left = b.dl != 0,
+                                   .valid        = true};
+        child_sums[2 * i]       = {.sum_grad = static_cast<float>(b.gL),
+                                   .sum_hess = static_cast<float>(b.hL)};
+        child_sums[(2 * i) + 1] = {.sum_grad = static_cast<float>(b.gR),
+                                   .sum_hess = static_cast<float>(b.hR)};
+    }
+}
+
+void CudaDeviceContext::LevelPipeline::stage_level_sums(
+    std::span<SplitInput const> level)
+{
+    node_sums.host.resize(2 * level.size());
+    for (size_t i = 0; i < level.size(); ++i)
+    {
+        node_sums.host[2 * i]       = level[i].sums.sum_grad;
+        node_sums.host[(2 * i) + 1] = level[i].sums.sum_hess;
+    }
+    node_sums.sync();
+}
+
 void CudaDeviceContext::init_shared_limit()
 {
     if (shared_probed)
@@ -160,10 +311,10 @@ void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
         }
         data.adopted           = std::move(plane);
         data.bins_are_u8       = data.adopted->bins_are_u8;
-        data.ds                = &dataset;
-        data.bins0             = data.adopted.get();
-        data.n_rows            = data.adopted->n_rows;
-        data.n_feats           = data.adopted->n_feats;
+        data.key               = {.dataset = &dataset,
+                                  .bins0   = data.adopted.get(),
+                                  .n_rows  = data.adopted->n_rows,
+                                  .n_feats = data.adopted->n_feats};
         lvl.root_rows_cached_n = 0;
         return;
     }
@@ -172,10 +323,10 @@ void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
                             ? dataset.visit_bins(0, [](auto bins) -> void const *
                                                  { return bins.data(); })
                             : nullptr;
-    bool const  same  = data.ds == &dataset && data.bins0 == first &&
-                      data.n_rows == dataset.n_rows() &&
-                      data.n_feats == dataset.n_features();
-    if (same)
+    if (data.key == DatasetKey{.dataset = &dataset,
+                               .bins0   = first,
+                               .n_rows  = dataset.n_rows(),
+                               .n_feats = dataset.n_features()})
     {
         return;
     }
@@ -190,8 +341,8 @@ void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
     data.bins_are_u8       = dataset.bins_are_u8();
     lvl.root_rows_cached_n = 0;
     // One pinned staging buffer + one memcpy per matrix: pageable
-    // per-feature copies serialize on GeForce drivers (decision 48),
-    // and pinned transfers run at full PCIe rate.
+    // per-feature copies serialize on GeForce drivers, and pinned
+    // transfers run at full PCIe rate.
     size_t const cells = dataset.n_features() * dataset.n_rows();
     if (data.bins_are_u8)
     {
@@ -235,10 +386,10 @@ void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
     }
     data.n_bins.upload(counts.data(), counts.size());
     blap(prof_counters.bins_upload_s);
-    data.ds      = &dataset;
-    data.bins0   = first;
-    data.n_rows  = dataset.n_rows();
-    data.n_feats = dataset.n_features();
+    data.key = {.dataset = &dataset,
+                .bins0   = first,
+                .n_rows  = dataset.n_rows(),
+                .n_feats = dataset.n_features()};
 }
 
 void CudaDeviceContext::begin_tree(Dataset const &ds, floats_view grad,
@@ -273,10 +424,10 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     lvl.features.host.assign(selected.begin(), selected.end());
     lvl.features.sync();
 
-    // Identity contract (decision 71 campaign): a full-data fit passes empty
-    // rows + row_count == n_rows; the identity never touches the host or the
-    // bus (built by iota_kernel once, cached, restored D2D per tree).
-    bool const identity = root.rows.empty() && root.row_count == data.n_rows;
+    // Identity contract: a full-data fit passes empty rows + row_count ==
+    // n_rows; the identity never touches the host or the bus (built by
+    // iota_kernel once, cached, restored D2D per tree).
+    bool const identity = root.rows.empty() && root.row_count == data.key.n_rows;
     auto const n = static_cast<uint32_t>(identity ? root.row_count : root.rows.size());
 
     auto root_lap = prof_counters.lap();
@@ -285,7 +436,8 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     check(cudaMemset(lvl.cur().data(), 0, lvl.slot_doubles() * sizeof(double)),
           "zero root slot");
     lvl.rows.reserve(n);
-    if (static_cast<size_t>(n) == data.n_rows && lvl.root_rows_cached_n == data.n_rows)
+    if (static_cast<size_t>(n) == data.key.n_rows &&
+        lvl.root_rows_cached_n == data.key.n_rows)
     {
         check(cudaMemcpy(lvl.rows.data(), lvl.root_rows.data(),
                          static_cast<size_t>(n) * sizeof(uint32_t),
@@ -303,29 +455,28 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
         {
             lvl.rows.upload(root.rows.data(), root.rows.size());
         }
-        if (static_cast<size_t>(n) == data.n_rows)
+        if (static_cast<size_t>(n) == data.key.n_rows)
         {
             lvl.root_rows.reserve(n);
             check(cudaMemcpy(lvl.root_rows.data(), lvl.rows.data(),
                              static_cast<size_t>(n) * sizeof(uint32_t),
                              cudaMemcpyDeviceToDevice),
                   "root rows cache");
-            lvl.root_rows_cached_n = data.n_rows;
+            lvl.root_rows_cached_n = data.key.n_rows;
         }
     }
-    lvl.row_ofs.host.assign(1, 0);
-    lvl.row_ofs.sync();
-    lvl.row_cnt.host.assign(1, n);
-    lvl.row_cnt.sync();
+    lvl.row_offsets.host.assign(1, 0);
+    lvl.row_offsets.sync();
+    lvl.row_counts.host.assign(1, n);
+    lvl.row_counts.sync();
     lvl.slots.host.assign(1, 0);
     lvl.slots.sync();
     root_lap(prof_counters.root_stage_s);
     if (identity)
     {
         // Deterministic two-pass device reduce over the uploaded gh buffer
-        // replaces the 16M-row host loop (decision 71 campaign); queued
-        // before the histogram build so the later 16B fetch drains only
-        // these two small kernels.
+        // replaces the 16M-row host loop; queued before the histogram build
+        // so the later 16B fetch drains only these two small kernels.
         constexpr uint32_t k_sum_blocks = 64;
         lvl.sum_partial.reserve(k_sum_blocks);
         lvl.sum_out.reserve(1);
@@ -349,8 +500,8 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
         [&](auto const *bins)
         {
             hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
-                bins, lvl.gh_ordered.data(), lvl.rows.data(), lvl.row_ofs.device(),
-                lvl.row_cnt.device(), lvl.features.device(), data.n_bins_ptr(),
+                bins, lvl.gh_ordered.data(), lvl.rows.data(), lvl.row_offsets.device(),
+                lvl.row_counts.device(), lvl.features.device(), data.n_bins_ptr(),
                 static_cast<uint32_t>(ds.n_rows()), lvl.n_selected, lvl.cur().data(),
                 lvl.stride, lvl.slots.device());
         });
@@ -361,8 +512,8 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
         lvl.prof_ev_recorded = true;
     }
 
-    lvl.slot_ofs.assign(1, 0);
-    lvl.slot_cnt.assign(1, n);
+    lvl.slot_offsets.assign(1, 0);
+    lvl.slot_counts.assign(1, n);
     lvl.leaf_by_row.reserve(ds.n_rows());
 
     auto sums_lap = prof_counters.lap();
@@ -413,7 +564,7 @@ void CudaDeviceContext::stamp_leaves(
     for (CudaHistogramEngine::LeafStamp const &st : stamps)
     {
         lvl.part_ops.host.push_back(
-            {lvl.slot_ofs[st.slot], lvl.slot_cnt[st.slot], 0, 0, 0});
+            {lvl.slot_offsets[st.slot], lvl.slot_counts[st.slot], 0, 0, 0});
         lvl.stamp_ids.host.push_back(st.node_id);
     }
     lvl.part_ops.sync();
@@ -431,8 +582,8 @@ void CudaDeviceContext::partition_level(
 {
     if (ops.empty())
     {
-        lvl.next_ofs.clear();
-        lvl.next_cnt.clear();
+        lvl.next_offsets.clear();
+        lvl.next_counts.clear();
         return;
     }
     auto &prof = prof_counters;
@@ -443,15 +594,16 @@ void CudaDeviceContext::partition_level(
     lvl.part_ops.clear();
     for (CudaHistogramEngine::PartitionOp const &op : ops)
     {
-        uint32_t const cnt = lvl.slot_cnt[op.parent_slot];
-        lvl.part_ops.host.push_back({lvl.slot_ofs[op.parent_slot], cnt, op.feature_id,
-                                     op.bin_id, op.default_left ? 1U : 0U});
-        max_cnt = std::max(max_cnt, cnt);
+        uint32_t const count = lvl.slot_counts[op.parent_slot];
+        lvl.part_ops.host.push_back({lvl.slot_offsets[op.parent_slot], count,
+                                     op.feature_id, op.bin_id,
+                                     op.default_left ? 1U : 0U});
+        max_cnt = std::max(max_cnt, count);
     }
     lvl.part_ops.sync();
     uint32_t const max_chunks =
         std::max(1U, (max_cnt + k_part_chunk - 1) / k_part_chunk);
-    lvl.flags.reserve(data.n_rows);
+    lvl.flags.reserve(data.key.n_rows);
     lvl.block_counts.reserve(n * max_chunks);
     lvl.nl_dev.reserve(n);
     lap(prof.part_stage_s);
@@ -462,15 +614,15 @@ void CudaDeviceContext::partition_level(
         {
             route_count_kernel<<<grid, dim3(k_part_block)>>>(
                 bins, data.n_bins_ptr(), lvl.cur_rows().data(), lvl.part_ops.device(),
-                static_cast<uint32_t>(data.n_rows), max_chunks, lvl.flags.data(),
+                static_cast<uint32_t>(data.key.n_rows), max_chunks, lvl.flags.data(),
                 lvl.block_counts.data());
         });
     check(cudaGetLastError(), "route launch");
     seg_scan_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(32)>>>(
         lvl.block_counts.data(), max_chunks, lvl.nl_dev.device());
     check(cudaGetLastError(), "seg scan launch");
-    lvl.other_rows().reserve(data.n_rows);
-    lvl.other_gh().reserve(data.n_rows);
+    lvl.other_rows().reserve(data.key.n_rows);
+    lvl.other_gh().reserve(data.key.n_rows);
     scatter_kernel<<<grid, dim3(k_part_block)>>>(
         lvl.cur_rows().data(), lvl.cur_gh().data(), lvl.flags.data(),
         lvl.part_ops.device(), lvl.block_counts.data(), lvl.nl_dev.device(), max_chunks,
@@ -553,26 +705,29 @@ void CudaDeviceContext::advance_level(Dataset const                             
     data.dispatch_bins(
         [&](auto const *bins)
         {
-            if (!lvl.row_ofs.empty())
+            if (!lvl.row_offsets.empty())
             {
                 auto const n_chunks = std::clamp<uint32_t>(
                     (static_cast<uint32_t>(max_rows) + 32767) / 32768, 1, 64);
                 dim3 const grid(lvl.n_selected,
-                                static_cast<uint32_t>(lvl.row_ofs.size()), n_chunks);
+                                static_cast<uint32_t>(lvl.row_offsets.size()),
+                                n_chunks);
                 hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
                     bins, lvl.other_gh().data(), lvl.other_rows().data(),
-                    lvl.row_ofs.device(), lvl.row_cnt.device(), lvl.features.device(),
-                    data.n_bins_ptr(), static_cast<uint32_t>(ds.n_rows()),
-                    lvl.n_selected, lvl.other().data(), lvl.stride, lvl.slots.device());
-            }
-            if (!lvl.sofs.empty())
-            {
-                hist_small_kernel<<<dim3(static_cast<uint32_t>(lvl.sofs.size())),
-                                    dim3(128)>>>(
-                    bins, lvl.other_gh().data(), lvl.other_rows().data(),
-                    lvl.sofs.device(), lvl.scnt.device(), lvl.features.device(),
+                    lvl.row_offsets.device(), lvl.row_counts.device(),
+                    lvl.features.device(), data.n_bins_ptr(),
                     static_cast<uint32_t>(ds.n_rows()), lvl.n_selected,
-                    lvl.other().data(), lvl.stride, lvl.sslot.device());
+                    lvl.other().data(), lvl.stride, lvl.slots.device());
+            }
+            if (!lvl.small_offsets.empty())
+            {
+                hist_small_kernel<<<
+                    dim3(static_cast<uint32_t>(lvl.small_offsets.size())), dim3(128)>>>(
+                    bins, lvl.other_gh().data(), lvl.other_rows().data(),
+                    lvl.small_offsets.device(), lvl.small_counts.device(),
+                    lvl.features.device(), static_cast<uint32_t>(ds.n_rows()),
+                    lvl.n_selected, lvl.other().data(), lvl.stride,
+                    lvl.small_slots.device());
             }
         });
     check(cudaGetLastError(), "level hist launch");
@@ -591,9 +746,9 @@ void CudaDeviceContext::advance_level(Dataset const                             
         check(cudaEventRecord(lvl.prof_ev[3]), "profile event record");
         lvl.prof_ev_recorded = true;
     }
-    lvl.cur_is_a = !lvl.cur_is_a;
-    lvl.slot_ofs = lvl.next_ofs;
-    lvl.slot_cnt = lvl.next_cnt;
+    lvl.cur_is_a     = !lvl.cur_is_a;
+    lvl.slot_offsets = lvl.next_offsets;
+    lvl.slot_counts  = lvl.next_counts;
     if (prof.enabled)
     {
         ++prof.launches;
@@ -604,9 +759,9 @@ void CudaDeviceContext::advance_level(Dataset const                             
 
 void CudaDeviceContext::advance_layout_only()
 {
-    lvl.cur_is_a = !lvl.cur_is_a;
-    lvl.slot_ofs = lvl.next_ofs;
-    lvl.slot_cnt = lvl.next_cnt;
+    lvl.cur_is_a     = !lvl.cur_is_a;
+    lvl.slot_offsets = lvl.next_offsets;
+    lvl.slot_counts  = lvl.next_counts;
 }
 
 void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &config,
@@ -675,8 +830,7 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
     {
         // Same peel as find_splits_many: without it, the first Staged sync
         // below absorbs the previous level's in-flight histogram kernels
-        // into lfind_stage, misattributing device compute as staging (the
-        // decision-62 lesson, replayed on the oblivious path).
+        // into lfind_stage, misattributing device compute as staging.
         check(cudaDeviceSynchronize(), "profile wait");
         lap(prof.gpu_wait_s);
         lvl.prof_read(prof);
