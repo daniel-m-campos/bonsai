@@ -1,9 +1,14 @@
 #pragma once
 
-// Device kernels and their PODs/constants, extracted from
-// histogram_engine.cu for readability (docs/architecture/10-cuda.md). Still
-// one translation unit: this header is included only by that .cu, inside
-// bonsai's anonymous namespace. The scan math (score, bounded_leaf_weight)
+// The level/find/partition device kernels, extracted from histogram_engine.cu
+// for readability (docs/architecture/10-cuda.md). Included by the
+// device-context TU that launches them; the ingest arm's kernels live in
+// ingest_kernels.cuh so each TU includes only the kernels it uses. The kernels
+// stay anonymous and private to each including TU. The host/device shared PODs
+// and tuning constants they exchange (FeatBest, PartOpDev, k_min_gpu_rows,
+// k_max_shared_bytes) live in device_buffer.cuh with external linkage, so the
+// device-context header can name them as data-member types without pulling
+// these kernels into a second TU. The scan math (score, bounded_leaf_weight)
 // comes from split.hpp and is constexpr, hence device-callable.
 
 #include <algorithm>
@@ -15,23 +20,19 @@
 
 #include "bonsai/split.hpp"
 
+#include "device_buffer.cuh"
+
 namespace bonsai
 {
 namespace
 {
 
+// k_min_gpu_rows, k_max_shared_bytes, FeatBest, and PartOpDev live in
+// device_buffer.cuh (external, shared across the CUDA TUs); this directive
+// makes them nameable here unqualified.
+using namespace cuda_detail;
+
 // NOLINTBEGIN(bugprone-easily-swappable-parameters,cppcoreguidelines-avoid-c-arrays,cppcoreguidelines-pro-bounds-pointer-arithmetic,modernize-avoid-c-arrays,cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-bounds-array-to-pointer-decay,readability-function-cognitive-complexity,readability-identifier-naming)
-
-// Nodes with fewer rows than this build on the CPU: the kernel launch +
-// synchronous copy-back round trip outweighs the histogram work itself
-// below roughly this size (knee measured on Jetson Orin Nano).
-constexpr size_t k_min_gpu_rows = 512;
-
-// Default shared-memory histogram footprint cap (stride floats, 48 KiB
-// static budget). The engine raises it at runtime to the device's opt-in
-// limit (~99 KiB on consumer parts, 227 KiB on sm_90), moving the CPU
-// fallback cliff from ~3k to ~6k+ bins per feature.
-constexpr size_t k_max_shared_bytes = 48UL * 1024UL;
 
 // Widened index of the first (grad) slot of pair i in a flat [grad0, hess0,
 // grad1, hess1, ...] array; the hess slot is pair_off(i) + 1.
@@ -170,11 +171,8 @@ constexpr uint32_t k_part_rows_per_thread = 16;
 constexpr uint32_t k_part_block           = 256;
 constexpr uint32_t k_part_chunk           = k_part_block * k_part_rows_per_thread;
 
-// Device-side view of one PartitionOp plus its parent segment.
-struct PartOpDev
-{
-    uint32_t ofs, cnt, fid, bin, dl;
-};
+// PartOpDev (device-side view of one PartitionOp plus its parent segment)
+// lives in device_buffer.cuh.
 
 inline __device__ bool goes_left_dev(uint32_t b, uint32_t last_bin, uint32_t bin,
                                      uint32_t dl)
@@ -337,12 +335,8 @@ __global__ void subtract_kernel(double const *parents, double *children,
     }
 }
 
-// Per-(node, feature) best split. 56-byte POD; dl encodes default_left.
-struct FeatBest
-{
-    double  gain, gL, hL, gR, hR;
-    int32_t bin, dl, valid, sel;
-};
+// FeatBest (per-(node, feature) best split; dl encodes default_left) lives in
+// device_buffer.cuh.
 
 // The (left, right) grad/hess of a cut, given the inclusive prefix through
 // its bin and the missing cell routed by default_left. Device mirror of
@@ -730,67 +724,8 @@ __global__ void level_child_sums_kernel(double const *hists, double const *node_
     out4[(4 * p) + 3] = s.hR;
 }
 
-// Device twin of BinMapper::transform (decision 54): NaN -> last bin, else
-// the count of cuts strictly below x (std::lower_bound). Same comparisons
-// over the same host-fitted cuts => bit-identical bin ids to the host fill.
-template <typename BinT>
-inline __device__ BinT transform_bin(float x, float const *cuts, uint32_t n_cuts)
-{
-    if (isnan(x))
-    {
-        return static_cast<BinT>(n_cuts - 1);
-    }
-    uint32_t lo = 0;
-    uint32_t n  = n_cuts;
-    while (n > 0)
-    {
-        uint32_t const half = n / 2;
-        if (cuts[lo + half] < x)
-        {
-            lo += half + 1;
-            n -= half + 1;
-        }
-        else
-        {
-            n = half;
-        }
-    }
-    return static_cast<BinT>(lo);
-}
-
-// Ingest, row-major arm: bin a raw chunk (rows_in_chunk x n_feats, row-major)
-// into the feature-major binned matrix. Feature varies fastest across
-// threads, so raw reads coalesce; the byte-wide writes scatter at n_rows
-// stride — the pass is bounded by the raw H2D either way.
-template <typename BinT>
-__global__ void bin_rows_kernel(float const *chunk, uint32_t rows_in_chunk,
-                                uint32_t row0, uint32_t n_feats, uint32_t n_rows,
-                                float const *cuts, uint32_t const *cut_ofs, BinT *out)
-{
-    uint32_t const i = (blockIdx.x * blockDim.x) + threadIdx.x;
-    if (i >= rows_in_chunk * n_feats)
-    {
-        return;
-    }
-    uint32_t const r  = i / n_feats;
-    uint32_t const f  = i % n_feats;
-    uint32_t const c0 = cut_ofs[f];
-    out[(static_cast<size_t>(f) * n_rows) + row0 + r] =
-        transform_bin<BinT>(chunk[i], cuts + c0, cut_ofs[f + 1] - c0);
-}
-
-// Ingest, feature-major arm (ColumnBatch): bin one column chunk in place.
-template <typename BinT>
-__global__ void bin_col_kernel(float const *col, uint32_t n, uint32_t row0,
-                               float const *cuts, uint32_t n_cuts, BinT *out_col)
-{
-    uint32_t const i = (blockIdx.x * blockDim.x) + threadIdx.x;
-    if (i >= n)
-    {
-        return;
-    }
-    out_col[row0 + i] = transform_bin<BinT>(col[i], cuts, n_cuts);
-}
+// transform_bin, bin_rows_kernel, and bin_col_kernel (the ingest arm) live in
+// ingest_kernels.cuh so the ingest TU includes only the kernels it launches.
 
 // Tree epilogue: map each row's resident leaf assignment to its value.
 // Guarded: rows outside the sampled set can carry unstamped assignments;

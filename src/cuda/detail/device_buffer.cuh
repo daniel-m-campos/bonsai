@@ -1,8 +1,13 @@
 #pragma once
 
-// Owning device allocation and the host/device staging pair it backs,
-// extracted from histogram_engine.cu for readability. Injected into bonsai's
-// anonymous namespace: this header is included by exactly that one TU.
+// Owning device allocation and the host/device staging pair it backs, plus the
+// small POD types and tuning constants that cross the host/device boundary.
+// Shared by the CUDA translation units (the single-GPU histogram_engine.cu and
+// the device-context implementation TU; docs/architecture/19-multi-gpu.md):
+// everything here has external linkage in namespace bonsai::cuda_detail and
+// references no internal-linkage entity, so including it from more than one TU
+// is ODR-clean. These are kernel-free RAII/utility templates and PODs; the
+// kernels that consume them stay anonymous in kernels.cuh, private per TU.
 
 #include <cuda.h>
 
@@ -15,10 +20,34 @@
 
 namespace bonsai
 {
-namespace
+namespace cuda_detail
 {
 
-void check(cudaError_t rc, char const *what)
+// Nodes with fewer rows than this build on the CPU: the kernel launch +
+// synchronous copy-back round trip outweighs the histogram work itself
+// below roughly this size (knee measured on Jetson Orin Nano).
+inline constexpr size_t k_min_gpu_rows = 512;
+
+// Default shared-memory histogram footprint cap (stride floats, 48 KiB
+// static budget). The engine raises it at runtime to the device's opt-in
+// limit (~99 KiB on consumer parts, 227 KiB on sm_90), moving the CPU
+// fallback cliff from ~3k to ~6k+ bins per feature.
+inline constexpr size_t k_max_shared_bytes = 48UL * 1024UL;
+
+// Per-(node, feature) best split. 56-byte POD; dl encodes default_left.
+struct FeatBest
+{
+    double  gain, gL, hL, gR, hR;
+    int32_t bin, dl, valid, sel;
+};
+
+// Device-side view of one PartitionOp plus its parent segment.
+struct PartOpDev
+{
+    uint32_t ofs, cnt, fid, bin, dl;
+};
+
+inline void check(cudaError_t rc, char const *what)
 {
     if (rc != cudaSuccess)
     {
@@ -217,5 +246,5 @@ template <typename T> struct Staged
     }
 };
 
-} // namespace
+} // namespace cuda_detail
 } // namespace bonsai
