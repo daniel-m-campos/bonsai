@@ -743,6 +743,58 @@ __global__ void map_leaf_values_kernel(uint32_t const *leaf_by_row,
     values[r]           = leaf < n_values ? node_values[leaf] : 0.0F;
 }
 
+// Device-resident MSE gradient: per row g = score - label, h = 1, written
+// interleaved straight into the gh pair buffer. Replaces the host objective
+// pass plus the per-tree grad/hess upload and interleave.
+__global__ void gh_from_scores_kernel(float const *scores, float const *labels,
+                                      uint32_t n, float2 *gh)
+{
+    uint32_t const span = gridDim.x * blockDim.x;
+    for (uint32_t r = (blockIdx.x * blockDim.x) + threadIdx.x; r < n; r += span)
+    {
+        gh[r] = {.x = scores[r] - labels[r], .y = 1.0F};
+    }
+}
+
+inline void gh_from_scores(float const *scores, float const *labels, uint32_t n,
+                           float2 *gh)
+{
+    gh_from_scores_kernel<<<dim3(std::clamp<uint32_t>(n / 256, 1, 1024)), dim3(256)>>>(
+        scores, labels, n, gh);
+    check(cudaGetLastError(), "gh_from_scores launch");
+}
+
+// Resident tree epilogue: walk the finished tree in bin space for every row
+// and fuse scores[r] += lr * leaf_value on device. The routing (bin == last
+// -> default_left, else bin <= split_bin) mirrors route_unsampled and the
+// device partition exactly, so sampled and out-of-bag rows both land on the
+// same leaf the host path would pick. Node arrays are SoA (feature, split_bin,
+// left, right, default_left, is_leaf, value); the walk starts at node 0.
+template <typename BinT>
+__global__ void route_add_kernel(BinT const *bins, uint32_t const *n_bins,
+                                 uint32_t n_rows, uint32_t const *feature,
+                                 uint32_t const *split_bin, uint32_t const *left,
+                                 uint32_t const *right, uint32_t const *default_left,
+                                 uint32_t const *is_leaf, float const *value, float lr,
+                                 float *scores, uint32_t n)
+{
+    uint32_t const r = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (r >= n)
+    {
+        return;
+    }
+    uint32_t idx = 0;
+    while (is_leaf[idx] == 0)
+    {
+        uint32_t const f    = feature[idx];
+        uint32_t const last = n_bins[f] - 1;
+        uint32_t const b    = bins[(static_cast<size_t>(f) * n_rows) + r];
+        bool const l = (b == last) ? (default_left[idx] != 0) : (b <= split_bin[idx]);
+        idx          = l ? left[idx] : right[idx];
+    }
+    scores[r] += lr * value[idx];
+}
+
 // Identity row list built on device: full-data fits
 // never ship the 64MB identity permutation over the bus or build it on host.
 __global__ void iota_kernel(uint32_t *out, uint32_t n)

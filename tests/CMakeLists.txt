@@ -37,6 +37,7 @@ add_executable(bonsai_tests
 # Compiled in every build; the cases SKIP at runtime when no usable CUDA
 # device is present (cuda_available()).
 target_sources(bonsai_tests PRIVATE unit/test_cuda_grower.cpp)
+target_sources(bonsai_tests PRIVATE unit/test_cuda_resident.cpp)
 
 target_link_libraries(bonsai_tests PRIVATE
     bonsai_data

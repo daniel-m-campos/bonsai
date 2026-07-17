@@ -3,6 +3,7 @@
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/histogram.hpp"
+#include "bonsai/objective_traits.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
@@ -79,10 +80,13 @@ concept GPULevelEngine =
              std::span<SplitInput const> level, std::span<SplitOutput> out,
              std::span<HistCell> child_sums, std::span<node_id_t> by_row,
              std::span<float const> node_values, std::span<float> values,
-             std::span<node_id_t> leaf_ids) {
+             std::span<node_id_t> leaf_ids, std::span<float const> init_scores,
+             std::span<typename T::ResidentNode const> res_nodes,
+             std::span<float>                          scores_out) {
         typename T::LevelOp;
         typename T::PartitionOp;
         typename T::LeafStamp;
+        typename T::ResidentNode;
         { b.begin_root(ds, grad, hess, root, selected) } -> std::convertible_to<bool>;
         b.stamp_leaves(stamps);
         b.partition_level(ds, pops, counts);
@@ -92,6 +96,12 @@ concept GPULevelEngine =
         b.finalize_tree(node_values, values, leaf_ids);
         b.find_splits_many(ds, config, level, out, child_sums);
         b.find_level_split(ds, config, level, out, child_sums);
+        {
+            b.resident_begin(ds, DeviceObjectiveKind::mse, init_scores, 1.0F)
+        } -> std::convertible_to<bool>;
+        { b.resident_armed() } -> std::convertible_to<bool>;
+        b.resident_finalize(res_nodes);
+        b.resident_end(scores_out);
     };
 
 struct CpuHistogramEngine
@@ -132,6 +142,38 @@ class DepthwiseGrower
         recycled_ids_    = std::move(leaf_ids);
     }
 
+    // Device-resident objective seam: forward to the engine when it offers one
+    // (GPU) and remember whether it armed, so grow() can skip the host-side
+    // per-row output the resident finalize replaces. A no-op returning false on
+    // engines without the seam (the CPU plane), keeping the booster generic.
+    bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
+                        std::span<float const> scores, float learning_rate)
+    {
+        if constexpr (requires {
+                          engine_.resident_begin(ds, kind, scores, learning_rate);
+                      })
+        {
+            resident_ = engine_.resident_begin(ds, kind, scores, learning_rate);
+            return resident_;
+        }
+        else
+        {
+            return false;
+        }
+    }
+    void resident_end(std::span<float> scores)
+    {
+        if constexpr (requires { engine_.resident_end(scores); })
+        {
+            engine_.resident_end(scores);
+        }
+        resident_ = false;
+    }
+    bool resident() const
+    {
+        return resident_;
+    }
+
   private:
     TreeConfig                             config_;
     std::mt19937                           feature_rng_;
@@ -139,6 +181,7 @@ class DepthwiseGrower
     EngineT                                engine_;
     train_leaf_values                      recycled_values_;
     std::vector<node_id_t>                 recycled_ids_;
+    bool                                   resident_ = false;
 };
 
 template <HistogramEngine  EngineT   = CpuHistogramEngine,
@@ -163,12 +206,42 @@ class ObliviousGrower
         recycled_ids_    = std::move(leaf_ids);
     }
 
+    // Device-resident objective seam (see DepthwiseGrower::resident_begin).
+    bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
+                        std::span<float const> scores, float learning_rate)
+    {
+        if constexpr (requires {
+                          engine_.resident_begin(ds, kind, scores, learning_rate);
+                      })
+        {
+            resident_ = engine_.resident_begin(ds, kind, scores, learning_rate);
+            return resident_;
+        }
+        else
+        {
+            return false;
+        }
+    }
+    void resident_end(std::span<float> scores)
+    {
+        if constexpr (requires { engine_.resident_end(scores); })
+        {
+            engine_.resident_end(scores);
+        }
+        resident_ = false;
+    }
+    bool resident() const
+    {
+        return resident_;
+    }
+
   private:
     TreeConfig             config_;
     std::mt19937           feature_rng_;
     EngineT                engine_;
     train_leaf_values      recycled_values_;
     std::vector<node_id_t> recycled_ids_;
+    bool                   resident_ = false;
 };
 
 template <HistogramEngine EngineT   = CpuHistogramEngine,
@@ -191,6 +264,19 @@ class LeafwiseGrower
     {
         recycled_values_ = std::move(values);
         recycled_ids_    = std::move(leaf_ids);
+    }
+
+    // The leafwise grow loop has no resident finalize path, so it never arms
+    // the seam; these keep the booster's generic call sites well-formed.
+    static bool resident_begin(Dataset const &, DeviceObjectiveKind,
+                               std::span<float const>, float)
+    {
+        return false;
+    }
+    static void resident_end(std::span<float>) {}
+    static bool resident()
+    {
+        return false;
     }
 
   private:

@@ -396,12 +396,19 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     -> GrowResult<Tree>
 {
     namespace gd = grower_detail;
+    // Resident mode: the device derives gradients and fuses the score update,
+    // so grow produces no per-row values/leaf_ids and skips the out-of-bag
+    // routing the host score loop would consume.
+    bool const             resident = this->resident();
     gd::GrowProfiler::Lap  slap;
     Tree::Nodes            nodes;
     train_leaf_values      values   = std::move(recycled_values_);
     std::vector<node_id_t> leaf_ids = std::move(recycled_ids_);
-    values.resize(ds.n_rows(), 0.0F); // no-op when recycled: write-before-read
-    leaf_ids.resize(ds.n_rows(), 0);
+    if (!resident)
+    {
+        values.resize(ds.n_rows(), 0.0F); // no-op when recycled: write-before-read
+        leaf_ids.resize(ds.n_rows(), 0);
+    }
     std::vector<SplitInput> current;
     std::vector<SplitInput> next;
     gd::LevelOutputs        level_out;
@@ -444,7 +451,10 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     {
         gd::GrowProfiler::Lap flap;
         step.end_tree(current, nodes, n_leaves, values, leaf_ids, row_indices);
-        gd::route_unsampled(ds, nodes, split_bins, row_indices, values, leaf_ids);
+        if (!resident)
+        {
+            gd::route_unsampled(ds, nodes, split_bins, row_indices, values, leaf_ids);
+        }
         flap(gd::GrowProfiler::instance().finalize_s);
     }
     gd::GrowProfiler::Lap alap;
@@ -483,12 +493,16 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
                                                row_index_view row_indices)
     -> GrowResult<Tree>
 {
-    namespace gd = grower_detail;
+    namespace gd                   = grower_detail;
+    bool const            resident = this->resident();
     gd::GrowProfiler::Lap slap;
     Tree::LevelSplits     level_splits;
     Tree::LeafTable       leaf_table;
     train_leaf_values     values = std::move(recycled_values_);
-    values.resize(ds.n_rows(), 0.0F); // no-op when recycled: write-before-read
+    if (!resident)
+    {
+        values.resize(ds.n_rows(), 0.0F); // no-op when recycled: write-before-read
+    }
 
     std::vector<SplitInput> frontier;
     std::vector<SplitInput> next;
@@ -555,7 +569,10 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     }
 
     std::vector<node_id_t> leaf_ids = std::move(recycled_ids_);
-    leaf_ids.resize(ds.n_rows(), 0);
+    if (!resident)
+    {
+        leaf_ids.resize(ds.n_rows(), 0);
+    }
     leaf_table.reserve(frontier.size());
     std::vector<float> leaf_covers;
     leaf_covers.reserve(frontier.size());
@@ -573,26 +590,34 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     // the 16M CPU decomposition (issue #46) found ~15s of stamping hiding
     // in oblivious's conservation gap because only depthwise lapped it.
     gd::GrowProfiler::Lap flap;
-    step.finalize_leaves(frontier, leaf_table, values, leaf_ids, row_indices);
+    step.finalize_leaves(frontier, leaf_table, values, leaf_ids, row_indices,
+                         std::span<ObliviousTree::LevelSplit const>{level_splits},
+                         std::span<bin_id_t const>{level_bins});
 
     // Same stale-score hazard as route_unsampled: rows the sampler dropped
-    // still need this tree's contribution in their train values.
-    gd::for_each_unsampled(
-        ds.n_rows(), row_indices,
-        [&](row_id_t r)
-        {
-            size_t index = 0;
-            for (size_t lvl = 0; lvl < level_splits.size(); ++lvl)
+    // still need this tree's contribution in their train values. In resident
+    // mode the device route+add already scored every row, sampled or not.
+    if (!resident)
+    {
+        gd::for_each_unsampled(
+            ds.n_rows(), row_indices,
+            [&](row_id_t r)
             {
-                auto const &s    = level_splits[lvl];
-                auto const  last = static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
-                bin_id_t const b = ds.bin_at(s.feature_id, r);
-                bool const left  = (b == last) ? s.default_left : b <= level_bins[lvl];
-                index            = (index << 1U) | (left ? 0U : 1U);
-            }
-            values[r]   = leaf_table[index];
-            leaf_ids[r] = static_cast<node_id_t>(index);
-        });
+                size_t index = 0;
+                for (size_t lvl = 0; lvl < level_splits.size(); ++lvl)
+                {
+                    auto const &s = level_splits[lvl];
+                    auto const  last =
+                        static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
+                    bin_id_t const b = ds.bin_at(s.feature_id, r);
+                    bool const     left =
+                        (b == last) ? s.default_left : b <= level_bins[lvl];
+                    index = (index << 1U) | (left ? 0U : 1U);
+                }
+                values[r]   = leaf_table[index];
+                leaf_ids[r] = static_cast<node_id_t>(index);
+            });
+    }
     flap(gd::GrowProfiler::instance().finalize_s);
 
     return {.tree     = Tree(std::move(level_splits), std::move(leaf_table),

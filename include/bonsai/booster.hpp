@@ -6,6 +6,7 @@
 #include "bonsai/detail/perf.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/objective.hpp"
+#include "bonsai/objective_traits.hpp"
 #include "bonsai/parallel.hpp"
 #include "bonsai/sampler.hpp"
 #include "bonsai/shap.hpp"
@@ -13,6 +14,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <cstdlib>
+#include <numeric>
 #include <random>
 #include <span>
 #include <stdexcept>
@@ -344,6 +347,42 @@ class Booster final : public IBooster
             }
         }
 
+        // Device-resident objective: when the grower keeps labels and scores on
+        // the GPU and derives grad/hess there, the whole host objective / score
+        // round-trip is skipped. Gated at compile time on the objective (must
+        // have a device gradient) and the sampler (must not read gradients),
+        // and at run time on no DART, no sample weights, and the escape hatch.
+        if constexpr (device_objective_kind<objective_type> !=
+                          DeviceObjectiveKind::none &&
+                      (std::same_as<sampler_type, AllRowsSampler> ||
+                       std::same_as<sampler_type, BernoulliSampler>) )
+        {
+            bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;
+            bool const runtime_ok  = config_.dart_drop_rate <= 0.0F &&
+                                    train.weights().empty() && !host_forced;
+            if (runtime_ok)
+            {
+                if (!resident_active_)
+                {
+                    resident_active_ = grower_.resident_begin(
+                        train, device_objective_kind<objective_type>,
+                        std::span<float const>{scores_}, config_.learning_rate);
+                }
+                if (resident_active_)
+                {
+                    resident_round(train);
+                    return;
+                }
+            }
+            else if (resident_active_)
+            {
+                // The config is fixed per booster, so this cannot flip mid-fit;
+                // guarded anyway so host scores_ is authoritative if it ever does.
+                grower_.resident_end(std::span<float>{scores_});
+                resident_active_ = false;
+            }
+        }
+
         auto                    &prof = detail::FitProfiler::instance();
         detail::FitProfiler::Lap lap;
 
@@ -367,11 +406,7 @@ class Booster final : public IBooster
         }
         lap(prof.objective_s);
 
-        if (row_indices_.size() != train.n_rows())
-        {
-            row_indices_.resize(train.n_rows());
-        }
-        size_t const n_selected = sampler_.sample(grad_, hess_, rng_, row_indices_);
+        size_t const n_selected = refill_row_indices(train);
         lap(prof.sample_s);
 
         auto [tree, leaf_values, leaf_ids] =
@@ -405,6 +440,49 @@ class Booster final : public IBooster
         // per-tree zero-init; grower.hpp documents the write-before-read
         // contract).
         grower_.recycle(std::move(leaf_values), std::move(leaf_ids));
+    }
+
+    // Fills row_indices_ for this tree. AllRowsSampler is deterministic
+    // identity, so once row_indices_ holds the full iota only its size need be
+    // checked: the per-tree refill (a measurable membw cost at scale) is
+    // skipped. The content is byte-identical to calling sample() every tree, so
+    // the model is unchanged. Other samplers draw fresh indices each tree.
+    size_t refill_row_indices(Dataset const &train)
+    {
+        if constexpr (std::same_as<sampler_type, AllRowsSampler>)
+        {
+            if (row_indices_.size() != train.n_rows())
+            {
+                row_indices_.resize(train.n_rows());
+                std::iota(row_indices_.begin(), row_indices_.end(), row_id_t{0});
+            }
+            return row_indices_.size();
+        }
+        else
+        {
+            if (row_indices_.size() != train.n_rows())
+            {
+                row_indices_.resize(train.n_rows());
+            }
+            return sampler_.sample(grad_, hess_, rng_, row_indices_);
+        }
+    }
+
+    // One boosting round with the resident objective armed: no host objective,
+    // no weights loop, no leaf renewal (MSE has none), no host score update.
+    // The sampler still runs (Bernoulli needs its indices; AllRows is the
+    // freebie above) and grow returns an empty per-row output: the device
+    // already derived the gradients and fused the score update.
+    void resident_round(Dataset const &train)
+    {
+        auto                    &prof = detail::FitProfiler::instance();
+        detail::FitProfiler::Lap lap;
+        size_t const             n_selected = refill_row_indices(train);
+        lap(prof.sample_s);
+        auto res = grower_.grow(train, floats_view{}, floats_view{},
+                                {row_indices_.data(), n_selected});
+        lap(prof.grow_s);
+        trees_.push_back(std::move(res.tree));
     }
 
     float eval(features_view X, floats_view labels) const override
@@ -693,7 +771,8 @@ class Booster final : public IBooster
     std::vector<float>     grad_;
     std::vector<float>     hess_;
     std::vector<row_id_t>  row_indices_;
-    float                  init_score_ = 0.0F;
+    float                  init_score_      = 0.0F;
+    bool                   resident_active_ = false;
 };
 
 } // namespace bonsai

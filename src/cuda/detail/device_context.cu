@@ -396,6 +396,18 @@ void CudaDeviceContext::begin_tree(Dataset const &ds, floats_view grad,
                                    floats_view hess)
 {
     ensure_dataset(ds);
+    if (resident.armed)
+    {
+        // Resident mode: grad/hess arrive empty; derive them on device from the
+        // resident scores and labels straight into the gh pair buffer.
+        auto       lap = prof_counters.lap();
+        auto const n   = static_cast<uint32_t>(resident.n_rows);
+        grads.gh.reserve(resident.n_rows);
+        gh_from_scores(resident.scores.data(), resident.labels.data(), n,
+                       grads.gh.data());
+        lap(prof_counters.obj_kernel_s);
+        return;
+    }
     auto       lap = prof_counters.lap();
     auto const n   = static_cast<uint32_t>(grad.size());
     grads.grad_raw.upload(grad.data(), grad.size());
@@ -525,6 +537,27 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
         check(cudaMemcpy(&sums, lvl.sum_out.data(), sizeof(double2),
                          cudaMemcpyDeviceToHost),
               "root sums fetch");
+        root.sums      = {.sum_grad = static_cast<float>(sums.x),
+                          .sum_hess = static_cast<float>(sums.y)};
+        root.row_count = n;
+    }
+    else if (resident.armed)
+    {
+        // Resident mode with a row subset (Bernoulli): grad/hess are empty on
+        // the host, so reduce the gathered subset's gh on device instead.
+        constexpr uint32_t k_sum_blocks = 64;
+        lvl.sum_partial.reserve(k_sum_blocks);
+        lvl.sum_out.reserve(1);
+        sum_gh_pass1_kernel<<<dim3(k_sum_blocks), dim3(256)>>>(lvl.gh_ordered.data(), n,
+                                                               lvl.sum_partial.data());
+        check(cudaGetLastError(), "resident root sum pass1 launch");
+        sum_gh_pass2_kernel<<<dim3(1), dim3(32)>>>(lvl.sum_partial.data(), k_sum_blocks,
+                                                   lvl.sum_out.data());
+        check(cudaGetLastError(), "resident root sum pass2 launch");
+        double2 sums{};
+        check(cudaMemcpy(&sums, lvl.sum_out.data(), sizeof(double2),
+                         cudaMemcpyDeviceToHost),
+              "resident root sums fetch");
         root.sums      = {.sum_grad = static_cast<float>(sums.x),
                           .sum_hess = static_cast<float>(sums.y)};
         root.row_count = n;
@@ -893,6 +926,103 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
             .sum_hess = static_cast<float>(lvl.level_child.host[(4 * i) + 3])};
     }
     lap(prof.unpack_s);
+}
+
+bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
+                                       std::span<float const> initial_scores,
+                                       float                  learning_rate)
+{
+    if (kind != DeviceObjectiveKind::mse)
+    {
+        return false;
+    }
+    ensure_dataset(ds);
+    init_shared_limit();
+    // Capacity must be decidable once per fit: every tree's begin_root must
+    // stay device-resident, or a per-node host fallback would read the empty
+    // resident grad/hess spans. Feature subsampling only ever narrows the
+    // selected set, so the worst case is the single widest feature; if that
+    // fits the shared budget (begin_root's exact decline predicate), no tree
+    // can decline.
+    size_t max_bins = 0;
+    for (size_t f = 0; f < ds.n_features(); ++f)
+    {
+        max_bins = std::max(max_bins, ds.n_bins(f));
+    }
+    if (ds.n_features() == 0 || 4 * max_bins * sizeof(float) > shared_limit)
+    {
+        return false;
+    }
+    if (!(resident.labels_key == data.key))
+    {
+        resident.labels.upload(ds.labels().data(), ds.labels().size());
+        resident.labels_key = data.key;
+    }
+    resident.scores.upload(initial_scores.data(), initial_scores.size());
+    resident.n_rows        = ds.n_rows();
+    resident.learning_rate = learning_rate;
+    resident.armed         = true;
+    return true;
+}
+
+void CudaDeviceContext::resident_finalize(
+    std::span<CudaHistogramEngine::ResidentNode const> nodes)
+{
+    auto         lap = prof_counters.lap();
+    size_t const nn  = nodes.size();
+    resident.node_feature.host.resize(nn);
+    resident.node_split_bin.host.resize(nn);
+    resident.node_left.host.resize(nn);
+    resident.node_right.host.resize(nn);
+    resident.node_default_left.host.resize(nn);
+    resident.node_is_leaf.host.resize(nn);
+    resident.node_value.host.resize(nn);
+    for (size_t i = 0; i < nn; ++i)
+    {
+        CudaHistogramEngine::ResidentNode const &rn = nodes[i];
+        resident.node_feature.host[i]               = rn.feature_id;
+        resident.node_split_bin.host[i]             = rn.split_bin;
+        resident.node_left.host[i]                  = rn.left;
+        resident.node_right.host[i]                 = rn.right;
+        resident.node_default_left.host[i]          = rn.default_left ? 1U : 0U;
+        resident.node_is_leaf.host[i]               = rn.is_leaf ? 1U : 0U;
+        resident.node_value.host[i]                 = rn.value;
+    }
+    resident.node_feature.sync();
+    resident.node_split_bin.sync();
+    resident.node_left.sync();
+    resident.node_right.sync();
+    resident.node_default_left.sync();
+    resident.node_is_leaf.sync();
+    resident.node_value.sync();
+
+    auto const n = static_cast<uint32_t>(resident.n_rows);
+    dim3 const grid((n + 255) / 256);
+    data.dispatch_bins(
+        [&](auto const *bins)
+        {
+            route_add_kernel<<<grid, dim3(256)>>>(
+                bins, data.n_bins_ptr(), static_cast<uint32_t>(data.key.n_rows),
+                resident.node_feature.device(), resident.node_split_bin.device(),
+                resident.node_left.device(), resident.node_right.device(),
+                resident.node_default_left.device(), resident.node_is_leaf.device(),
+                resident.node_value.device(), resident.learning_rate,
+                resident.scores.data(), n);
+        });
+    check(cudaGetLastError(), "resident route+add launch");
+    lap(prof_counters.score_kernel_s);
+}
+
+void CudaDeviceContext::resident_end(std::span<float> scores_out)
+{
+    if (!resident.armed)
+    {
+        return;
+    }
+    check(cudaMemcpy(scores_out.data(), resident.scores.data(),
+                     scores_out.size() * sizeof(float), cudaMemcpyDeviceToHost),
+          "resident scores fetch");
+    resident.armed = false;
 }
 
 // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)

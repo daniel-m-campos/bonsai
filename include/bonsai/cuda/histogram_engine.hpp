@@ -2,6 +2,7 @@
 
 #include "bonsai/dataset.hpp"
 #include "bonsai/grower.hpp"
+#include "bonsai/objective_traits.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
 #include <cstdint>
@@ -93,6 +94,22 @@ class CudaHistogramEngine
         node_id_t node_id;
     };
 
+    // One flattened tree node the device-resident epilogue walks in bin space
+    // to fuse the per-row score update (docs/architecture/10-cuda.md). Internal
+    // nodes carry the split (feature, bin, missing routing, children); leaves
+    // carry the contribution. Dense trees map their nodes one-to-one; oblivious
+    // trees synthesize the perfect-tree numbering (children 2i+1 / 2i+2).
+    struct ResidentNode
+    {
+        feature_id_t feature_id   = 0;
+        bin_id_t     split_bin    = 0;
+        node_id_t    left         = 0;
+        node_id_t    right        = 0;
+        float        value        = 0.0F;
+        bool         default_left = false;
+        bool         is_leaf      = false;
+    };
+
     // Starts the resident path for this tree: builds the root histogram into
     // slot 0 and fills root.sums/row_count. Returns false (leaving root
     // untouched) when the resident path cannot run — no device, or a feature's
@@ -136,6 +153,22 @@ class CudaHistogramEngine
     void find_level_split(Dataset const &ds, TreeConfig const &config,
                           std::span<SplitInput const> level, std::span<SplitOutput> out,
                           std::span<HistCell> child_sums);
+
+    // --- Device-resident objective (docs/architecture/10-cuda.md). Labels and
+    // the per-row score vector live on the device for the whole fit. Per tree
+    // the engine derives grad/hess from them on device (no host objective, no
+    // gh upload); the resident finalize walks the finished tree in bin space
+    // and fuses scores[r] += lr * value on device (no values/leaf_ids D2H).
+    // resident_begin uploads labels (keyed by dataset identity) and the initial
+    // scores once, and returns false when the objective is unsupported or the
+    // capacity that lets every tree stay device-resident does not hold: the
+    // caller then trains on the host path unchanged. resident_end downloads the
+    // scores so the host copy is authoritative again.
+    bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
+                        std::span<float const> initial_scores, float learning_rate);
+    bool resident_armed() const;
+    void resident_finalize(std::span<ResidentNode const> nodes);
+    void resident_end(std::span<float> scores_out);
 
   private:
     struct Impl;
