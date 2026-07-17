@@ -3,12 +3,10 @@
 
 #include "bonsai/config/errors.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
-#include <cstdint>
 #include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
 namespace bonsai
 {
@@ -40,33 +38,6 @@ void cuda_select_device(uint32_t device_id)
                           " requires a CUDA build (-DBONSAI_CUDA=ON); this "
                           "binary was built without the CUDA backend");
     }
-}
-
-namespace
-{
-// Not thread-safe against concurrent train calls.
-std::vector<uint32_t> g_selected_devices;
-} // namespace
-
-void cuda_select_devices(std::span<uint32_t const> ids)
-{
-    // Empty or {0} is the ambient default (a no-op); any other id in a
-    // CUDA-less build is a misconfiguration and must be loud.
-    for (uint32_t const id : ids)
-    {
-        if (id != 0)
-        {
-            throw ConfigError("parallel.device_ids entry " + std::to_string(id) +
-                              " requires a CUDA build (-DBONSAI_CUDA=ON); this "
-                              "binary was built without the CUDA backend");
-        }
-    }
-    g_selected_devices.assign(ids.begin(), ids.end());
-}
-
-std::vector<uint32_t> cuda_selected_devices()
-{
-    return g_selected_devices;
 }
 
 struct CudaHistogramEngine::Impl
