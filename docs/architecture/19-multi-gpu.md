@@ -1,6 +1,6 @@
 # 19: Single-node multi-GPU: a data-parallel backend beside the single-GPU one
 
-> **Status:** design (not built). Admitted on a contained-blast-radius basis, not the usual market-benefit bar (`feature-admission`): the single-GPU engine and its whole tuning history stay untouched, so the cost is additive and isolated behind the engine concept. Tracking issue: #159. Prerequisite: #158 (`parallel.device_id`).
+> **Status:** experiment, parked (decision 76). Built and validated through the full doc plan (P1-P4a plus a five-lever optimization round), then measured to END-TO-END PARITY with single-GPU at both 16M and 64M rows on 4x A100 NVLink: the floor is the host-computed gradient stream (host-memory-bandwidth-bound) plus the reduction's correctness syncs, an architectural property, not a tuning residue. The engine, registry surface, and all five levers live on the `experiment/multi-gpu` branch; main keeps the single-device `parallel.device_id` (fit-parallel sweeps are the multi-GPU story that scales linearly today). Reopener: a device-resident objective (each GPU computing its shard's grad/hess from resident scores), which is also the single-GPU engine's own next frontier.
 
 ## The claim
 
