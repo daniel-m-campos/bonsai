@@ -56,6 +56,10 @@ struct ProfileCounters
     // host reduction, so every millisecond of the round has a name.
     double root_sums_s = 0, adv_memset_s = 0, adv_hist_s = 0, adv_sub_s = 0;
     double root_hist_s = 0, fin_stamp_s = 0, fin_map_s = 0;
+    // begin_tree sub-phase decomposition (doc 19 P6 L4): the per-tree gradient
+    // slice's host stage into pinned memory, the H2D upload of the two raw
+    // arrays, and the interleave kernel (awaited only under profiling).
+    double bt_stage_s = 0, bt_h2d_s = 0, bt_interleave_s = 0;
     size_t launches = 0, gpu_nodes = 0, cpu_calls = 0;
 
     ProfileCounters()                                       = default;
@@ -116,6 +120,10 @@ struct ProfileCounters
                          "fin_stamp={:.2f}s fin_map={:.2f}s",
                          root_sums_s, root_hist_s, adv_memset_s, adv_hist_s, adv_sub_s,
                          fin_stamp_s, fin_map_s);
+            std::println(stderr,
+                         "cuda-begin-tree-decomp: stage={:.3f}s h2d={:.3f}s "
+                         "interleave={:.3f}s",
+                         bt_stage_s, bt_h2d_s, bt_interleave_s);
         }
         catch (...)
         {
@@ -217,6 +225,14 @@ struct CudaDeviceContext
         DeviceBuffer<float>  grad_raw; // per-tree raw uploads
         DeviceBuffer<float>  hess_raw;
         DeviceBuffer<float2> gh; // interleaved (grad, hess) per row
+        // Pinned host staging for the per-tree gradient slice: pageable H2D
+        // from the caller's vectors serializes across the multi engine's
+        // concurrent fan-out uploads on GeForce drivers (decision 48), so the
+        // slice copies into page-locked memory first and DMAs at full PCIe
+        // rate. Grown to the largest slice seen and reused across trees.
+        std::unique_ptr<PinnedBuffer<float>> grad_pin;
+        std::unique_ptr<PinnedBuffer<float>> hess_pin;
+        size_t                               pin_cap = 0;
     };
 
     // Per-level pipeline (decision 53): resident rows, gathered gradients,

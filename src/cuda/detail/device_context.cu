@@ -245,19 +245,44 @@ void CudaDeviceContext::begin_tree(Dataset const &ds, floats_view grad,
                                    floats_view hess, size_t offset, size_t count)
 {
     ensure_dataset(ds);
-    auto         lap = prof_counters.lap();
-    size_t const cnt = count == SIZE_MAX ? grad.size() : count;
-    auto const   n   = static_cast<uint32_t>(cnt);
+    auto         lap  = prof_counters.lap();
+    bool const   prof = prof_counters.enabled;
+    size_t const cnt  = count == SIZE_MAX ? grad.size() : count;
+    auto const   n    = static_cast<uint32_t>(cnt);
     // Only the shard's slice crosses the bus; gh stays full-length and keeps
     // global row indexing, so the interleave writes gh[offset + r] and the
     // raw staging buffers hold just the slice. offset == 0, count == full
     // reproduces the single-GPU upload byte-for-byte.
-    grads.grad_raw.upload(grad.data() + offset, cnt);
-    grads.hess_raw.upload(hess.data() + offset, cnt);
+    // (a) Stage the pageable slice into pinned memory: the identical floats
+    // reach identical positions, so the device gh bytes are unchanged.
+    if (cnt > grads.pin_cap)
+    {
+        grads.grad_pin =
+            std::make_unique<PinnedBuffer<float>>(std::max<size_t>(cnt, 1));
+        grads.hess_pin =
+            std::make_unique<PinnedBuffer<float>>(std::max<size_t>(cnt, 1));
+        grads.pin_cap = cnt;
+    }
+    std::copy(grad.data() + offset, grad.data() + offset + cnt, grads.grad_pin->data());
+    std::copy(hess.data() + offset, hess.data() + offset + cnt, grads.hess_pin->data());
+    lap(prof_counters.bt_stage_s);
+    // (b) H2D of the two raw arrays from pinned memory (cudaMemcpy blocks the
+    // host, so the lap already measures the transfer without an extra sync).
+    grads.grad_raw.upload(grads.grad_pin->data(), cnt);
+    grads.hess_raw.upload(grads.hess_pin->data(), cnt);
+    lap(prof_counters.bt_h2d_s);
+    // (c) Interleave kernel; awaited only under profiling so the production
+    // path keeps it in flight for begin_root's gather to consume in order.
     grads.gh.reserve(grad.size());
     interleave(grads.grad_raw.data(), grads.hess_raw.data(), n,
                grads.gh.data() + offset);
-    lap(prof_counters.gh_upload_s);
+    if (prof)
+    {
+        check(cudaDeviceSynchronize(), "begin_tree interleave wait");
+    }
+    lap(prof_counters.bt_interleave_s);
+    prof_counters.gh_upload_s = prof_counters.bt_stage_s + prof_counters.bt_h2d_s +
+                                prof_counters.bt_interleave_s;
 }
 
 bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,

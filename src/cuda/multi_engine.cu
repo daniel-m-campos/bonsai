@@ -172,11 +172,64 @@ struct MultiCudaHistogramEngine::Impl
     CpuHistogramEngine cpu;     // host-fallback fill when begin_root declines
 
     // Coordinator-owned (devices[0]) reduction buffers. scratch holds the
-    // running global histogram, staging one shard's partial before it folds in.
+    // running global histogram; the two staging buffers double-buffer the
+    // shard partials so shard k+1's copy overlaps shard k's fold (doc 19 P6
+    // L4). A copy stream carries the transfers and a fold stream the
+    // accumulates, both non-default so they overlap; events gate buffer reuse
+    // and the fold's read. Kept off the legacy default stream, whose implicit
+    // cross-stream sync would serialize the two. Created lazily, torn down in
+    // ~Impl on the coordinator device.
     DeviceBuffer<double>                  scratch;
-    DeviceBuffer<double>                  staging;
-    std::unique_ptr<PinnedBuffer<double>> pinned; // host-staged bounce buffer
-    size_t                                pinned_cap = 0;
+    DeviceBuffer<double>                  staging[2];
+    std::unique_ptr<PinnedBuffer<double>> pinned[2]; // host-staged bounce, paired
+    size_t                                pinned_cap    = 0;
+    cudaStream_t                          copy_stream   = nullptr;
+    cudaStream_t                          fold_stream   = nullptr;
+    cudaEvent_t                           copy_done[2]  = {};
+    cudaEvent_t                           accum_done[2] = {};
+    bool                                  pipe_ready    = false;
+
+    ~Impl()
+    {
+        if (!pipe_ready)
+        {
+            return;
+        }
+        cudaSetDevice(static_cast<int>(devices[0]));
+        for (cudaEvent_t const e : copy_done)
+        {
+            cudaEventDestroy(e);
+        }
+        for (cudaEvent_t const e : accum_done)
+        {
+            cudaEventDestroy(e);
+        }
+        cudaStreamDestroy(copy_stream);
+        cudaStreamDestroy(fold_stream);
+    }
+
+    // Lazily builds the reduction streams and events on the current (coord)
+    // device. Timing is off; only ordering matters.
+    void ensure_pipe()
+    {
+        if (pipe_ready)
+        {
+            return;
+        }
+        check(cudaStreamCreate(&copy_stream), "multi reduce copy stream");
+        check(cudaStreamCreate(&fold_stream), "multi reduce fold stream");
+        for (cudaEvent_t &e : copy_done)
+        {
+            check(cudaEventCreateWithFlags(&e, cudaEventDisableTiming),
+                  "multi reduce copy event");
+        }
+        for (cudaEvent_t &e : accum_done)
+        {
+            check(cudaEventCreateWithFlags(&e, cudaEventDisableTiming),
+                  "multi reduce accum event");
+        }
+        pipe_ready = true;
+    }
 
     // Row sharding for N > 1. rows = the global row ids a context owns; a
     // contiguous identity range merges with one copy per shard, a sliced
@@ -206,14 +259,15 @@ struct MultiCudaHistogramEngine::Impl
         return ctxs.size();
     }
 
-    double *host_stage(size_t count)
+    double *host_stage(size_t count, size_t which)
     {
         if (count > pinned_cap)
         {
-            pinned     = std::make_unique<PinnedBuffer<double>>(count);
+            pinned[0]  = std::make_unique<PinnedBuffer<double>>(count);
+            pinned[1]  = std::make_unique<PinnedBuffer<double>>(count);
             pinned_cap = count;
         }
-        return pinned->data();
+        return pinned[which]->data();
     }
 
     // Reduces every shard's live level histogram (total doubles, slot-indexed)
@@ -225,45 +279,81 @@ struct MultiCudaHistogramEngine::Impl
     {
         auto const coord = static_cast<int>(devices[0]);
         check(cudaSetDevice(coord), "multi reduce set coord");
+        ensure_pipe();
         scratch.reserve(total);
-        staging.reserve(total);
+        staging[0].reserve(total);
+        staging[1].reserve(total);
         check(cudaDeviceSynchronize(), "multi reduce coord sync");
+        // Seed scratch with the coordinator's own partial on the default
+        // stream; the legacy stream's implicit sync makes the first fold and
+        // the first copy wait on this before they touch scratch/staging.
         check(cudaMemcpy(scratch.data(), ctxs[0]->lvl.cur().data(),
                          total * sizeof(double), cudaMemcpyDeviceToDevice),
               "multi reduce coord copy");
+        auto const blocks =
+            std::clamp<uint32_t>(static_cast<uint32_t>((total + 255) / 256), 1, 1024);
+        // Ascending device id order is preserved and every fold runs on the
+        // single fold stream in issue order, so the summation stays
+        // deterministic. staging[b] alternates: shard k+1 copies into the free
+        // buffer while shard k folds from the other.
         for (size_t k = 1; k < ctxs.size(); ++k)
         {
+            size_t const  b   = (k - 1) & 1U;
             double const *src = ctxs[k]->lvl.cur().data();
+            // Reusing staging[b] must wait until the fold that last read it
+            // (two shards back) has drained; the first two shards skip it.
+            if (k > 2)
+            {
+                check(cudaStreamWaitEvent(copy_stream, accum_done[b], 0),
+                      "multi reduce reuse wait");
+            }
             check(cudaSetDevice(static_cast<int>(devices[k])),
                   "multi reduce set shard");
+            // Pre-read sync stays: default-stream ordering does not cross
+            // devices, so this proves shard k's histogram is complete.
             check(cudaDeviceSynchronize(), "multi reduce shard sync");
             if (peer_ok[k] != 0)
             {
-                check(cudaMemcpyPeer(staging.data(), coord, src,
-                                     static_cast<int>(devices[k]),
-                                     total * sizeof(double)),
+                check(cudaSetDevice(coord), "multi reduce set coord peer");
+                check(cudaMemcpyPeerAsync(staging[b].data(), coord, src,
+                                          static_cast<int>(devices[k]),
+                                          total * sizeof(double), copy_stream),
                       "multi reduce peer copy");
             }
             else
             {
-                double *host = host_stage(total);
+                // Reusing pinned[b] for the d2h must wait until the prior h2d
+                // that read it (two shards back) has drained; the fold gated on
+                // that h2d, so its event proves the buffer is free.
+                if (k > 2)
+                {
+                    check(cudaEventSynchronize(accum_done[b]),
+                          "multi reduce pinned reuse wait");
+                }
+                double *host = host_stage(total, b);
                 check(cudaMemcpy(host, src, total * sizeof(double),
                                  cudaMemcpyDeviceToHost),
                       "multi reduce d2h");
                 check(cudaSetDevice(coord), "multi reduce set coord h2d");
-                check(cudaMemcpy(staging.data(), host, total * sizeof(double),
-                                 cudaMemcpyHostToDevice),
+                check(cudaMemcpyAsync(staging[b].data(), host, total * sizeof(double),
+                                      cudaMemcpyHostToDevice, copy_stream),
                       "multi reduce h2d");
             }
-            check(cudaSetDevice(coord), "multi reduce set coord accum");
-            auto const blocks = std::clamp<uint32_t>(
-                static_cast<uint32_t>((total + 255) / 256), 1, 1024);
-            accumulate_kernel<<<dim3(blocks), dim3(256)>>>(scratch.data(),
-                                                           staging.data(), total);
+            check(cudaEventRecord(copy_done[b], copy_stream),
+                  "multi reduce copy event");
+            // Fold on the fold stream after the copy lands; folds chain in
+            // order on this one stream, so the running sum is deterministic.
+            check(cudaStreamWaitEvent(fold_stream, copy_done[b], 0),
+                  "multi reduce fold wait");
+            accumulate_kernel<<<dim3(blocks), dim3(256), 0, fold_stream>>>(
+                scratch.data(), staging[b].data(), total);
             check(cudaGetLastError(), "multi accumulate launch");
-            // Sync so the next shard's staging write cannot race this fold-in.
-            check(cudaDeviceSynchronize(), "multi accumulate sync");
+            check(cudaEventRecord(accum_done[b], fold_stream),
+                  "multi reduce accum event");
         }
+        // Drain the last fold before find reads scratch on the default stream.
+        check(cudaSetDevice(coord), "multi reduce set coord drain");
+        check(cudaDeviceSynchronize(), "multi reduce drain");
     }
 
     // Writes shard k's owned entries from a full-length host scratch into the
