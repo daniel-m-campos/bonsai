@@ -52,6 +52,20 @@ The same source builds and passes the full suite on Jetson (sm_87, aarch64, CUDA
 
 The release wheel for linux x86_64 ships this backend (decision 70): the one kernel TU is fatbinned for `sm_70` through `sm_120` with a compute_90 PTX floor for forward-JIT (`BONSAI_CUDA_ARCH` accepts a list; `BONSAI_CUDA_PTX_ARCH` pins the PTX), and cudart is linked statically (`BONSAI_CUDA_STATIC_RUNTIME`) so the extension has no CUDA `DT_NEEDED` and imports on GPU-less hosts, where the always-registered design makes the wheel behave exactly like a CPU one. Measured cost of all of it: the wheel grows to 2.33MB and the build gains ~5 seconds. Every release's CUDA wheel is exercised on rented GPU hardware before it attaches; the gate boots a runtime image with the wheel baked in, so the docker on-ramp is validated in the same session.
 
+## The device context lifecycle
+
+`CudaHistogramEngine` owns exactly one `CudaDeviceContext` (declared in [`src/cuda/detail/device_context.cuh`](../../src/cuda/detail/device_context.cuh), bodies in `device_context.cu`) and forwards every device call through it. The context divides its resident state into three planes by lifetime: `DeviceData` (the dataset-resident binned matrix), `GradientPlane` (the per-tree gradients), and `LevelPipeline` (the per-level rows, histograms, and staging buffers). One fit walks them in this order.
+
+`ensure_dataset` uploads the feature-major binned matrix into `DeviceData`, or adopts it in place when the dataset was device-binned (the ingest plane already holds it). The upload is skipped when the incoming dataset matches the resident one, keyed by a `DatasetKey` value: a dataset pointer, the first column's address, and the row and feature counts, all compared by address or value and never dereferenced, so a stale key is harmless and at worst re-uploads.
+
+`begin_tree` uploads that tree's raw gradients and hessians into `GradientPlane` and interleaves them into a packed `(grad, hess)` array on the device.
+
+`begin_root` decides the resident mode: it sizes the shared-memory histogram budget and, if a feature's bins exceed it, returns false so the `LevelStep` falls back to host histogram building. Otherwise it builds the root histogram into `LevelPipeline`, gathers the gradients into level-row order, and (for a full-data fit) computes the root gradient sums with a deterministic two-pass device reduction.
+
+The level loop then repeats over `LevelPipeline`. `find_splits_many` (depthwise) or `find_level_split` (oblivious) scans the current-frontier histograms on the device and unpacks each node's winning split back to the host. `partition_level` routes each parent segment into stable left and right child segments by a count/scan/scatter over the resident rows. `advance_level` builds the children's histograms in one pass over the smaller siblings and derives the larger by subtraction, then flips `LevelPipeline`'s ping-pong buffers so the children become the next frontier.
+
+`finalize_rows` copies the per-row leaf assignments home, and `finalize_tree` maps each row's resident leaf to its value with an epilogue kernel and copies the leaf ids and values back to the host.
+
 ## Deferred
 
 Device-resident row partitioning and split finding (the full gpu_hist architecture; the measured remainder of the gap to xgboost-GPU: on A100 our kernels take ~2s of a 12s MSD fit while xgboost-GPU completes entirely in 1.8s, so host orchestration is now the whole gap), a `[cuda]` config section for the cutoff constants, a `Dataset` version id to replace the pointer-identity upload cache, CUDA variants of the oblivious/leafwise growers (one typelist line each, when wanted).
