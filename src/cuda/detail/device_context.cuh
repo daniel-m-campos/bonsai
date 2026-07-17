@@ -129,8 +129,12 @@ struct ProfileCounters
 // an opaque receipt; ensure_dataset adopts it instead of uploading host
 // columns; materialize() pulls host columns home once for the host
 // consumers (fallback decline, route_unsampled under row sampling).
-// TU-local backend identity: only this TU can mint planes carrying this
-// address, so ensure_dataset's tag compare + static_cast is exact.
+// The problem this solves: ensure_dataset receives a shared_ptr<IngestPlane>
+// (the base type) and must prove it is really a CudaIngestPlane before
+// downcasting, without RTTI. Every plane carries an opaque tag pointer, and
+// this function is the only source of this backend's tag (the address of a
+// function-local static, unique process-wide), so tag equality proves the
+// concrete type and makes the static_cast sound.
 inline void const *cuda_backend_tag()
 {
     static char const anchor = 0;
@@ -196,7 +200,9 @@ struct CudaDeviceContext
         // empty. Accessors below pick the live storage.
         std::shared_ptr<CudaIngestPlane const> adopted;
 
-        // Uploaded-dataset identity heuristic; any mismatch just re-uploads.
+        // Uploaded-dataset identity cookies: compared by address to skip a
+        // redundant re-upload of the same Dataset, never dereferenced. A
+        // mismatch is harmless, the matrix just re-uploads.
         Dataset const *ds      = nullptr;
         void const    *bins0   = nullptr;
         size_t         n_rows  = 0;
