@@ -1,8 +1,10 @@
+#include <algorithm>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -174,6 +176,39 @@ TEST_CASE("make_booster: unknown sampler name throws UnknownImplError",
     Config cfg                = tiny_cfg();
     cfg.dispatch.sampler_name = "no_such_sampler";
     CHECK_THROWS_AS(make_booster(cfg), UnknownImplError);
+}
+
+TEST_CASE("make_booster: cuda_multi_* growers resolve and construct",
+          "[registry][make_booster]")
+{
+    // Construction resolves in every build (the multi stub constructs; only
+    // training needs a device), for mse and logloss over the all_rows sampler.
+    for (std::string_view const grower :
+         {"cuda_multi_depthwise", "cuda_multi_oblivious"})
+    {
+        for (std::string_view const objective : {"mse", "logloss"})
+        {
+            Config cfg                  = tiny_cfg();
+            cfg.dispatch.objective_name = std::string{objective};
+            cfg.dispatch.grower_name    = std::string{grower};
+            cfg.dispatch.sampler_name   = "all_rows";
+            auto const booster          = make_booster(cfg);
+            CHECK(booster != nullptr);
+        }
+    }
+}
+
+TEST_CASE("available_combos: contains the cuda_multi_* growers",
+          "[registry][make_booster]")
+{
+    auto const combos = available_combos();
+    auto const has    = [&](std::string_view grower)
+    {
+        return std::any_of(combos.begin(), combos.end(), [&](AvailableCombo const &c)
+                           { return c.grower_name == grower; });
+    };
+    CHECK(has("cuda_multi_depthwise"));
+    CHECK(has("cuda_multi_oblivious"));
 }
 
 TEMPLATE_LIST_TEST_CASE("make_booster: parity with direct instantiation",

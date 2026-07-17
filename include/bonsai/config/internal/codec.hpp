@@ -323,6 +323,69 @@ template <> struct FieldCodec<std::vector<int>>
     }
 };
 
+// -------------------- std::vector<uint32_t> ----------------------------------
+
+template <> struct FieldCodec<std::vector<uint32_t>>
+{
+    static ParseResult<std::vector<uint32_t>> from_toml(toml::node const &node)
+    {
+        auto const *arr = node.as_array();
+        if (arr == nullptr)
+        {
+            return std::unexpected("must be an array of integers");
+        }
+        std::vector<uint32_t> out;
+        out.reserve(arr->size());
+        for (auto const &item : *arr)
+        {
+            auto r = read_uint_from_toml<uint32_t>(item);
+            if (!r)
+            {
+                return std::unexpected(r.error());
+            }
+            out.push_back(*r);
+        }
+        return out;
+    }
+    // Comma-separated: --set parallel.device_ids=0,1; empty string -> empty vec.
+    static ParseResult<std::vector<uint32_t>> from_string(std::string_view value)
+    {
+        std::vector<uint32_t> out;
+        if (value.empty())
+        {
+            return out;
+        }
+        size_t start = 0;
+        while (start <= value.size())
+        {
+            size_t const comma = value.find(',', start);
+            size_t const end   = comma == std::string_view::npos ? value.size() : comma;
+            auto const   item  = value.substr(start, end - start);
+            auto         r     = read_uint_from_string<uint32_t>(item);
+            if (!r)
+            {
+                return std::unexpected(r.error());
+            }
+            out.push_back(*r);
+            if (comma == std::string_view::npos)
+            {
+                break;
+            }
+            start = comma + 1;
+        }
+        return out;
+    }
+    static toml::array to_toml(std::vector<uint32_t> const &v)
+    {
+        toml::array a;
+        for (auto const x : v)
+        {
+            a.push_back(static_cast<int64_t>(x));
+        }
+        return a;
+    }
+};
+
 // -------------------- std::optional<float> -----------------------------------
 
 template <> struct FieldCodec<std::optional<float>>

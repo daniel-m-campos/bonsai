@@ -12,6 +12,7 @@
 #include "bonsai/config/bin_mapper_config.hpp"
 #include "bonsai/cuda/grower.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
+#include "bonsai/cuda/multi_engine.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/types.hpp"
@@ -24,7 +25,8 @@ namespace bonsai::test
 // TEMPLATE_LIST cases over the full registry stay unconditional.
 template <typename GrowerT> void skip_without_cuda()
 {
-    if constexpr (std::same_as<typename GrowerT::Engine, CudaHistogramEngine>)
+    if constexpr (std::same_as<typename GrowerT::Engine, CudaHistogramEngine> ||
+                  std::same_as<typename GrowerT::Engine, MultiCudaHistogramEngine>)
     {
         if (!cuda_available())
         {
