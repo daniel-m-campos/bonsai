@@ -612,13 +612,11 @@ void CudaDeviceContext::advance_layout_only()
 void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &config,
                                          std::span<SplitInput const> level,
                                          std::span<SplitOutput>      out,
-                                         std::span<HistCell>         child_sums,
-                                         double const               *hists_override)
+                                         std::span<HistCell>         child_sums)
 {
-    size_t const  n     = level.size();
-    double const *hists = hists_override != nullptr ? hists_override : lvl.cur().data();
-    auto         &prof  = prof_counters;
-    auto          lap   = prof.lap();
+    size_t const n    = level.size();
+    auto        &prof = prof_counters;
+    auto         lap  = prof.lap();
 
     if (prof.enabled)
     {
@@ -635,11 +633,11 @@ void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &co
     lvl.feat_best.reserve(n * lvl.n_selected);
     lvl.node_best.reserve(n);
     find_kernel<<<dim3(lvl.n_selected, static_cast<uint32_t>(n)), dim3(32)>>>(
-        hists, lvl.features.device(), data.n_bins_ptr(), lvl.node_sums.device(),
-        lvl.node_bounds.device(), any_mask ? lvl.allowed.device() : nullptr,
-        lvl.monotone.device(), lvl.n_selected, lvl.stride, config.lambda_l1,
-        config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
-        lvl.feat_best.data());
+        lvl.cur().data(), lvl.features.device(), data.n_bins_ptr(),
+        lvl.node_sums.device(), lvl.node_bounds.device(),
+        any_mask ? lvl.allowed.device() : nullptr, lvl.monotone.device(),
+        lvl.n_selected, lvl.stride, config.lambda_l1, config.lambda_l2,
+        config.min_child_hess, config.min_gain_to_split, lvl.feat_best.data());
     check(cudaGetLastError(), "find launch");
     reduce_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(32)>>>(
         lvl.feat_best.data(), lvl.n_selected, lvl.node_best.device());
@@ -667,13 +665,11 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
                                          TreeConfig const           &config,
                                          std::span<SplitInput const> level,
                                          std::span<SplitOutput>      out,
-                                         std::span<HistCell>         child_sums,
-                                         double const               *hists_override)
+                                         std::span<HistCell>         child_sums)
 {
-    size_t const  n     = level.size();
-    double const *hists = hists_override != nullptr ? hists_override : lvl.cur().data();
-    auto         &prof  = prof_counters;
-    auto          lap   = prof.lap();
+    size_t const n    = level.size();
+    auto        &prof = prof_counters;
+    auto         lap  = prof.lap();
 
     if (prof.enabled)
     {
@@ -696,19 +692,19 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
     lvl.node_best.reserve(1);
     lvl.level_child.reserve(4 * n);
     level_find_kernel<<<dim3(lvl.n_selected), dim3(32)>>>(
-        hists, lvl.features.device(), data.n_bins_ptr(), lvl.node_sums.device(),
-        lvl.n_selected, static_cast<uint32_t>(n), lvl.stride, config.lambda_l1,
-        config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
-        lvl.level_score.data(), lvl.feat_best.data());
+        lvl.cur().data(), lvl.features.device(), data.n_bins_ptr(),
+        lvl.node_sums.device(), lvl.n_selected, static_cast<uint32_t>(n), lvl.stride,
+        config.lambda_l1, config.lambda_l2, config.min_child_hess,
+        config.min_gain_to_split, lvl.level_score.data(), lvl.feat_best.data());
     check(cudaGetLastError(), "level find launch");
     reduce_kernel<<<dim3(1), dim3(32)>>>(lvl.feat_best.data(), lvl.n_selected,
                                          lvl.node_best.device());
     check(cudaGetLastError(), "level reduce launch");
     level_child_sums_kernel<<<dim3((static_cast<uint32_t>(n) + 127) / 128),
                               dim3(128)>>>(
-        hists, lvl.node_sums.device(), lvl.node_best.device(), lvl.features.device(),
-        data.n_bins_ptr(), static_cast<uint32_t>(n), lvl.n_selected, lvl.stride,
-        lvl.level_child.device());
+        lvl.cur().data(), lvl.node_sums.device(), lvl.node_best.device(),
+        lvl.features.device(), data.n_bins_ptr(), static_cast<uint32_t>(n),
+        lvl.n_selected, lvl.stride, lvl.level_child.device());
     check(cudaGetLastError(), "level child sums launch");
     lvl.node_best.fetch(1); // DtoH, implicit sync
     lvl.level_child.fetch(4 * n);

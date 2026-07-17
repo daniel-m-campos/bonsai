@@ -519,20 +519,12 @@ struct CudaDeviceContext
     // level are leaves, so their histograms are never read by any find; only
     // the layout flip survives so stamping sees the final segments.
     void advance_layout_only();
-    // hists_override, when non-null, replaces lvl.cur() as the level histogram
-    // source the find kernels scan (same slot-indexed layout, slot_doubles()
-    // doubles per slot). MultiCudaHistogramEngine passes the coordinator's
-    // reduced-across-shards buffer so find runs on the global histogram
-    // (docs/architecture/19-multi-gpu.md); the default keeps the single-GPU
-    // path byte-for-byte unchanged.
     void find_splits_many(Dataset const &ds, TreeConfig const &config,
                           std::span<SplitInput const> level, std::span<SplitOutput> out,
-                          std::span<HistCell> child_sums,
-                          double const       *hists_override = nullptr);
+                          std::span<HistCell> child_sums);
     void find_level_split(Dataset const &ds, TreeConfig const &config,
                           std::span<SplitInput const> level, std::span<SplitOutput> out,
-                          std::span<HistCell> child_sums,
-                          double const       *hists_override = nullptr);
+                          std::span<HistCell> child_sums);
 };
 
 // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)
