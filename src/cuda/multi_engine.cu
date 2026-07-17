@@ -16,12 +16,18 @@
 #include "bonsai/types.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cuda_runtime_api.h>
+#include <exception>
 #include <memory>
+#include <mutex>
+#include <print>
 #include <span>
+#include <thread>
 #include <vector>
 
 #include "detail/device_buffer.cuh"
@@ -48,6 +54,113 @@ __global__ void accumulate_kernel(double *scratch, double const *staging, size_t
         scratch[i] += staging[i];
     }
 }
+
+// Runs fn(k) for k in [0,N) across devices concurrently: N-1 worker threads
+// plus the caller thread for the last context. Each worker binds its device
+// (cudaSetDevice is thread-local) before fn. The first thrown exception is
+// captured and rethrown on the caller after every thread joins. N == 1 calls
+// fn(0) inline so the degenerate path carries no thread overhead.
+template <typename Fn>
+void fan_out(std::vector<uint32_t> const &devices, size_t N, Fn &&fn)
+{
+    if (N == 1)
+    {
+        check(cudaSetDevice(static_cast<int>(devices[0])), "multi fan set");
+        fn(0);
+        return;
+    }
+    std::mutex         mtx;
+    std::exception_ptr first;
+    auto               worker = [&](size_t k)
+    {
+        try
+        {
+            check(cudaSetDevice(static_cast<int>(devices[k])), "multi fan set");
+            fn(k);
+        }
+        catch (...)
+        {
+            std::lock_guard<std::mutex> const lock(mtx);
+            if (!first)
+            {
+                first = std::current_exception();
+            }
+        }
+    };
+    std::vector<std::thread> pool;
+    pool.reserve(N - 1);
+    for (size_t k = 0; k + 1 < N; ++k)
+    {
+        pool.emplace_back(worker, k);
+    }
+    worker(N - 1);
+    for (std::thread &t : pool)
+    {
+        t.join();
+    }
+    if (first)
+    {
+        std::rethrow_exception(first);
+    }
+}
+
+// BONSAI_MULTI_PROFILE=1 wall-clock accumulators, printed at engine
+// destruction. Cheap steady_clock laps on the caller thread around each
+// fan-out join; no per-device breakdown. reduce is a subphase of find.
+struct MultiProfile
+{
+    using clock         = std::chrono::steady_clock;
+    bool   enabled      = std::getenv("BONSAI_MULTI_PROFILE") != nullptr;
+    double begin_tree_s = 0, begin_root_s = 0, advance_s = 0, partition_s = 0;
+    double find_s = 0, reduce_s = 0, finalize_s = 0;
+
+    struct Lap
+    {
+        bool              enabled;
+        clock::time_point t0 = clock::now();
+        void              operator()(double &sink)
+        {
+            if (!enabled)
+            {
+                return;
+            }
+            auto const t1 = clock::now();
+            sink += std::chrono::duration<double>(t1 - t0).count();
+            t0 = t1;
+        }
+    };
+    Lap lap()
+    {
+        return Lap{.enabled = enabled};
+    }
+
+    MultiProfile()                                    = default;
+    MultiProfile(MultiProfile const &)                = delete;
+    MultiProfile &operator=(MultiProfile const &)     = delete;
+    MultiProfile(MultiProfile &&) noexcept            = delete;
+    MultiProfile &operator=(MultiProfile &&) noexcept = delete;
+
+    ~MultiProfile()
+    {
+        if (!enabled)
+        {
+            return;
+        }
+        try
+        {
+            std::println(stderr,
+                         "multi-profile: begin_tree={:.3f}s begin_root={:.3f}s "
+                         "advance={:.3f}s partition={:.3f}s find={:.3f}s "
+                         "reduce={:.3f}s finalize={:.3f}s",
+                         begin_tree_s, begin_root_s, advance_s, partition_s, find_s,
+                         reduce_s, finalize_s);
+        }
+        catch (...)
+        {
+            std::fputs("multi-profile: failed to format profile line\n", stderr);
+        }
+    }
+};
 
 } // namespace
 
@@ -76,6 +189,8 @@ struct MultiCudaHistogramEngine::Impl
     };
     std::vector<Shard> shards;
     bool               contiguous = false;
+
+    MultiProfile prof;
 
     size_t n() const
     {
@@ -239,12 +354,10 @@ MultiCudaHistogramEngine::operator=(MultiCudaHistogramEngine &&) noexcept = defa
 void MultiCudaHistogramEngine::begin_tree(Dataset const &ds, floats_view grad,
                                           floats_view hess)
 {
-    for (size_t k = 0; k < impl_->n(); ++k)
-    {
-        check(cudaSetDevice(static_cast<int>(impl_->devices[k])),
-              "multi begin_tree set");
-        impl_->ctxs[k]->begin_tree(ds, grad, hess);
-    }
+    auto lap = impl_->prof.lap();
+    fan_out(impl_->devices, impl_->n(),
+            [&](size_t k) { impl_->ctxs[k]->begin_tree(ds, grad, hess); });
+    lap(impl_->prof.begin_tree_s);
 }
 
 void MultiCudaHistogramEngine::populate(Dataset const &ds, floats_view grad,
@@ -298,26 +411,44 @@ bool MultiCudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
         }
     }
 
+    // Per-shard SplitInputs built on the caller; each thread reads and fills
+    // its own so the begin_root calls fan out without sharing state.
+    std::vector<SplitInput> si(N);
+    for (size_t k = 0; k < N; ++k)
+    {
+        si[k].id      = root.id;
+        si[k].lo      = root.lo;
+        si[k].hi      = root.hi;
+        si[k].allowed = root.allowed;
+        si[k].rows    = impl_->shards[k].rows;
+    }
+    std::vector<char> ok(N, 1);
+    auto              lap = impl_->prof.lap();
+    fan_out(impl_->devices, N,
+            [&](size_t k)
+            {
+                ok[k] = impl_->ctxs[k]->begin_root(ds, grad, hess, si[k], selected)
+                            ? char{1}
+                            : char{0};
+            });
+    lap(impl_->prof.begin_root_s);
+
+    // Any decline drops the whole engine to host fallback.
+    for (size_t k = 0; k < N; ++k)
+    {
+        if (ok[k] == 0)
+        {
+            return false;
+        }
+    }
     double grad_sum    = 0.0;
     double hess_sum    = 0.0;
     size_t total_count = 0;
     for (size_t k = 0; k < N; ++k)
     {
-        check(cudaSetDevice(static_cast<int>(impl_->devices[k])),
-              "multi root shard set");
-        SplitInput shard;
-        shard.id      = root.id;
-        shard.lo      = root.lo;
-        shard.hi      = root.hi;
-        shard.allowed = root.allowed;
-        shard.rows    = impl_->shards[k].rows;
-        if (!impl_->ctxs[k]->begin_root(ds, grad, hess, shard, selected))
-        {
-            return false; // any decline drops the whole engine to host fallback
-        }
-        grad_sum += shard.sums.sum_grad;
-        hess_sum += shard.sums.sum_hess;
-        total_count += shard.row_count;
+        grad_sum += si[k].sums.sum_grad;
+        hess_sum += si[k].sums.sum_hess;
+        total_count += si[k].row_count;
     }
     root.sums      = {.sum_grad = static_cast<float>(grad_sum),
                       .sum_hess = static_cast<float>(hess_sum)};
@@ -327,11 +458,8 @@ bool MultiCudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
 
 void MultiCudaHistogramEngine::stamp_leaves(std::span<LeafStamp const> stamps)
 {
-    for (size_t k = 0; k < impl_->n(); ++k)
-    {
-        check(cudaSetDevice(static_cast<int>(impl_->devices[k])), "multi stamp set");
-        impl_->ctxs[k]->stamp_leaves(stamps);
-    }
+    fan_out(impl_->devices, impl_->n(),
+            [&](size_t k) { impl_->ctxs[k]->stamp_leaves(stamps); });
 }
 
 void MultiCudaHistogramEngine::partition_level(Dataset const               &ds,
@@ -346,16 +474,19 @@ void MultiCudaHistogramEngine::partition_level(Dataset const               &ds,
         return;
     }
     std::fill(child_counts.begin(), child_counts.end(), uint32_t{0});
-    std::vector<uint32_t> local(child_counts.size());
+    // Per-shard counts buffers so the fan-out writes never collide; summed on
+    // the caller after join.
+    std::vector<std::vector<uint32_t>> locals(
+        N, std::vector<uint32_t>(child_counts.size()));
+    auto lap = impl_->prof.lap();
+    fan_out(impl_->devices, N,
+            [&](size_t k) { impl_->ctxs[k]->partition_level(ds, ops, locals[k]); });
+    lap(impl_->prof.partition_s);
     for (size_t k = 0; k < N; ++k)
     {
-        check(cudaSetDevice(static_cast<int>(impl_->devices[k])),
-              "multi part shard set");
-        std::fill(local.begin(), local.end(), uint32_t{0});
-        impl_->ctxs[k]->partition_level(ds, ops, local);
         for (size_t i = 0; i < child_counts.size(); ++i)
         {
-            child_counts[i] += local[i];
+            child_counts[i] += locals[k][i];
         }
     }
 }
@@ -363,20 +494,16 @@ void MultiCudaHistogramEngine::partition_level(Dataset const               &ds,
 void MultiCudaHistogramEngine::advance_level(Dataset const           &ds,
                                              std::span<LevelOp const> ops)
 {
-    for (size_t k = 0; k < impl_->n(); ++k)
-    {
-        check(cudaSetDevice(static_cast<int>(impl_->devices[k])), "multi advance set");
-        impl_->ctxs[k]->advance_level(ds, ops);
-    }
+    auto lap = impl_->prof.lap();
+    fan_out(impl_->devices, impl_->n(),
+            [&](size_t k) { impl_->ctxs[k]->advance_level(ds, ops); });
+    lap(impl_->prof.advance_s);
 }
 
 void MultiCudaHistogramEngine::advance_layout_only()
 {
-    for (size_t k = 0; k < impl_->n(); ++k)
-    {
-        check(cudaSetDevice(static_cast<int>(impl_->devices[k])), "multi layout set");
-        impl_->ctxs[k]->advance_layout_only();
-    }
+    fan_out(impl_->devices, impl_->n(),
+            [&](size_t k) { impl_->ctxs[k]->advance_layout_only(); });
 }
 
 void MultiCudaHistogramEngine::finalize_rows(std::span<node_id_t> leaf_by_row)
@@ -388,13 +515,17 @@ void MultiCudaHistogramEngine::finalize_rows(std::span<node_id_t> leaf_by_row)
         impl_->ctxs[0]->finalize_rows(leaf_by_row);
         return;
     }
-    std::vector<node_id_t> scratch(leaf_by_row.size());
+    // Per-shard scratch so the fan-out fills never collide; the merge into the
+    // caller's output stays serial after join.
+    std::vector<std::vector<node_id_t>> scratch(
+        N, std::vector<node_id_t>(leaf_by_row.size()));
+    auto lap = impl_->prof.lap();
+    fan_out(impl_->devices, N,
+            [&](size_t k) { impl_->ctxs[k]->finalize_rows(scratch[k]); });
+    lap(impl_->prof.finalize_s);
     for (size_t k = 0; k < N; ++k)
     {
-        check(cudaSetDevice(static_cast<int>(impl_->devices[k])),
-              "multi fin_rows shard set");
-        impl_->ctxs[k]->finalize_rows(scratch);
-        impl_->merge_shard<node_id_t>(k, scratch, leaf_by_row);
+        impl_->merge_shard<node_id_t>(k, scratch[k], leaf_by_row);
     }
 }
 
@@ -409,15 +540,19 @@ void MultiCudaHistogramEngine::finalize_tree(std::span<float const> node_values,
         impl_->ctxs[0]->finalize_tree(node_values, values, leaf_ids);
         return;
     }
-    std::vector<float>     vscratch(values.size());
-    std::vector<node_id_t> iscratch(leaf_ids.size());
+    // Per-shard scratch so the fan-out fills never collide; the merge into the
+    // caller's outputs stays serial after join.
+    std::vector<std::vector<float>>     vscratch(N, std::vector<float>(values.size()));
+    std::vector<std::vector<node_id_t>> iscratch(
+        N, std::vector<node_id_t>(leaf_ids.size()));
+    auto lap = impl_->prof.lap();
+    fan_out(impl_->devices, N, [&](size_t k)
+            { impl_->ctxs[k]->finalize_tree(node_values, vscratch[k], iscratch[k]); });
+    lap(impl_->prof.finalize_s);
     for (size_t k = 0; k < N; ++k)
     {
-        check(cudaSetDevice(static_cast<int>(impl_->devices[k])),
-              "multi fin_tree shard set");
-        impl_->ctxs[k]->finalize_tree(node_values, vscratch, iscratch);
-        impl_->merge_shard<float>(k, vscratch, values);
-        impl_->merge_shard<node_id_t>(k, iscratch, leaf_ids);
+        impl_->merge_shard<float>(k, vscratch[k], values);
+        impl_->merge_shard<node_id_t>(k, iscratch[k], leaf_ids);
     }
 }
 
@@ -434,11 +569,15 @@ void MultiCudaHistogramEngine::find_splits_many(Dataset const              &ds,
         impl_->ctxs[0]->find_splits_many(ds, config, level, out, child_sums);
         return;
     }
-    size_t const total = level.size() * impl_->ctxs[0]->lvl.slot_doubles();
+    auto         find_lap   = impl_->prof.lap();
+    size_t const total      = level.size() * impl_->ctxs[0]->lvl.slot_doubles();
+    auto         reduce_lap = impl_->prof.lap();
     impl_->reduce_level(total);
+    reduce_lap(impl_->prof.reduce_s);
     check(cudaSetDevice(static_cast<int>(impl_->devices[0])), "multi find coord set");
     impl_->ctxs[0]->find_splits_many(ds, config, level, out, child_sums,
                                      impl_->scratch.data());
+    find_lap(impl_->prof.find_s);
 }
 
 void MultiCudaHistogramEngine::find_level_split(Dataset const              &ds,
@@ -454,11 +593,15 @@ void MultiCudaHistogramEngine::find_level_split(Dataset const              &ds,
         impl_->ctxs[0]->find_level_split(ds, config, level, out, child_sums);
         return;
     }
-    size_t const total = level.size() * impl_->ctxs[0]->lvl.slot_doubles();
+    auto         find_lap   = impl_->prof.lap();
+    size_t const total      = level.size() * impl_->ctxs[0]->lvl.slot_doubles();
+    auto         reduce_lap = impl_->prof.lap();
     impl_->reduce_level(total);
+    reduce_lap(impl_->prof.reduce_s);
     check(cudaSetDevice(static_cast<int>(impl_->devices[0])), "multi lfind coord set");
     impl_->ctxs[0]->find_level_split(ds, config, level, out, child_sums,
                                      impl_->scratch.data());
+    find_lap(impl_->prof.find_s);
 }
 
 // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)
