@@ -511,8 +511,14 @@ struct CudaDeviceContext
                          std::span<CudaHistogramEngine::PartitionOp const> ops,
                          std::span<uint32_t> child_counts);
     void finalize_rows(std::span<node_id_t> leaf_by_row);
+    // offset/count slice the two D2H downloads into the caller spans; the
+    // defaults copy the whole span so single-GPU stays byte-for-byte. The map
+    // kernel always runs the full range. MultiCudaHistogramEngine passes each
+    // shard's [offset, offset + count) so every context writes only its own
+    // rows into the shared output (docs/architecture/19-multi-gpu.md).
     void finalize_tree(std::span<float const> node_values, std::span<float> values,
-                       std::span<node_id_t> leaf_ids);
+                       std::span<node_id_t> leaf_ids, size_t offset = 0,
+                       size_t count = SIZE_MAX);
     void advance_level(Dataset const                                &ds,
                        std::span<CudaHistogramEngine::LevelOp const> ops);
     // Final-level advance (decision 71 campaign): the children of the last

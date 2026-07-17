@@ -112,7 +112,7 @@ struct MultiProfile
     using clock         = std::chrono::steady_clock;
     bool   enabled      = std::getenv("BONSAI_MULTI_PROFILE") != nullptr;
     double begin_tree_s = 0, begin_root_s = 0, advance_s = 0, partition_s = 0;
-    double find_s = 0, reduce_s = 0, finalize_s = 0;
+    double find_s = 0, reduce_s = 0, finalize_rows_s = 0, finalize_s = 0;
 
     struct Lap
     {
@@ -151,9 +151,9 @@ struct MultiProfile
             std::println(stderr,
                          "multi-profile: begin_tree={:.3f}s begin_root={:.3f}s "
                          "advance={:.3f}s partition={:.3f}s find={:.3f}s "
-                         "reduce={:.3f}s finalize={:.3f}s",
+                         "reduce={:.3f}s finalize_rows={:.3f}s finalize={:.3f}s",
                          begin_tree_s, begin_root_s, advance_s, partition_s, find_s,
-                         reduce_s, finalize_s);
+                         reduce_s, finalize_rows_s, finalize_s);
         }
         catch (...)
         {
@@ -189,6 +189,15 @@ struct MultiCudaHistogramEngine::Impl
     };
     std::vector<Shard> shards;
     bool               contiguous = false;
+
+    // begin_root shard cache. The identity shards depend only on (total, N),
+    // so an unchanged full-data fit reuses the row vectors and their per-context
+    // SplitInputs instead of rebuilding N of them every tree. si holds the
+    // per-context begin_root inputs; only the scalar/allowed fields refresh per
+    // tree, the row vectors stay put on reuse.
+    std::vector<SplitInput> si;
+    size_t                  cached_total    = 0;
+    bool                    cached_identity = false;
 
     MultiProfile prof;
 
@@ -383,44 +392,57 @@ bool MultiCudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
     // Shard the ROOT's row space into N contiguous chunks. The identity
     // (empty rows, full row_count) becomes explicit per-shard ranges: the
     // shards cannot use begin_root's identity fast path (acceptable at
-    // bring-up). A sampled row vector slices directly.
-    impl_->shards.assign(N, {});
+    // bring-up). A sampled row vector slices directly. An identity fit whose
+    // boundaries and total match the previous tree reuses the cached shard row
+    // vectors and their SplitInputs; only sampled fits (or a changed total)
+    // rebuild them.
     bool const   identity = root.rows.empty();
     size_t const total    = identity ? root.row_count : root.rows.size();
     impl_->contiguous     = identity;
-    for (size_t k = 0; k < N; ++k)
+    bool const reuse      = identity && impl_->cached_identity &&
+                       impl_->cached_total == total && impl_->shards.size() == N &&
+                       impl_->si.size() == N;
+    if (!reuse)
     {
-        size_t const lo = (total * k) / N;
-        size_t const hi = (total * (k + 1)) / N;
-        Impl::Shard &sh = impl_->shards[k];
-        sh.lo           = lo;
-        sh.hi           = hi;
-        sh.rows.resize(hi - lo);
-        if (identity)
+        impl_->shards.assign(N, {});
+        impl_->si.assign(N, {});
+        for (size_t k = 0; k < N; ++k)
         {
-            for (size_t r = lo; r < hi; ++r)
+            size_t const lo = (total * k) / N;
+            size_t const hi = (total * (k + 1)) / N;
+            Impl::Shard &sh = impl_->shards[k];
+            sh.lo           = lo;
+            sh.hi           = hi;
+            sh.rows.resize(hi - lo);
+            if (identity)
             {
-                sh.rows[r - lo] = static_cast<row_id_t>(r);
+                for (size_t r = lo; r < hi; ++r)
+                {
+                    sh.rows[r - lo] = static_cast<row_id_t>(r);
+                }
             }
+            else
+            {
+                std::copy(root.rows.begin() + static_cast<std::ptrdiff_t>(lo),
+                          root.rows.begin() + static_cast<std::ptrdiff_t>(hi),
+                          sh.rows.begin());
+            }
+            impl_->si[k].rows = sh.rows;
         }
-        else
-        {
-            std::copy(root.rows.begin() + static_cast<std::ptrdiff_t>(lo),
-                      root.rows.begin() + static_cast<std::ptrdiff_t>(hi),
-                      sh.rows.begin());
-        }
+        impl_->cached_identity = identity;
+        impl_->cached_total    = total;
     }
 
-    // Per-shard SplitInputs built on the caller; each thread reads and fills
-    // its own so the begin_root calls fan out without sharing state.
-    std::vector<SplitInput> si(N);
+    // Per-shard SplitInputs; the row vectors are cached above, so only the
+    // per-tree scalar and allowed-mask fields refresh here. Each thread reads
+    // and fills its own so the begin_root calls fan out without sharing state.
+    std::vector<SplitInput> &si = impl_->si;
     for (size_t k = 0; k < N; ++k)
     {
         si[k].id      = root.id;
         si[k].lo      = root.lo;
         si[k].hi      = root.hi;
         si[k].allowed = root.allowed;
-        si[k].rows    = impl_->shards[k].rows;
     }
     std::vector<char> ok(N, 1);
     auto              lap = impl_->prof.lap();
@@ -515,18 +537,36 @@ void MultiCudaHistogramEngine::finalize_rows(std::span<node_id_t> leaf_by_row)
         impl_->ctxs[0]->finalize_rows(leaf_by_row);
         return;
     }
-    // Per-shard scratch so the fan-out fills never collide; the merge into the
-    // caller's output stays serial after join.
-    std::vector<std::vector<node_id_t>> scratch(
-        N, std::vector<node_id_t>(leaf_by_row.size()));
     auto lap = impl_->prof.lap();
-    fan_out(impl_->devices, N,
-            [&](size_t k) { impl_->ctxs[k]->finalize_rows(scratch[k]); });
-    lap(impl_->prof.finalize_s);
-    for (size_t k = 0; k < N; ++k)
+    if (impl_->contiguous)
     {
-        impl_->merge_shard<node_id_t>(k, scratch[k], leaf_by_row);
+        // Disjoint [lo, hi) destinations: each context copies only its shard's
+        // slice of its device leaf_by_row straight into the caller's span. No
+        // host scratch, no merge; the fan-out writes never collide.
+        fan_out(impl_->devices, N,
+                [&](size_t k)
+                {
+                    Impl::Shard const &sh = impl_->shards[k];
+                    check(cudaMemcpy(leaf_by_row.data() + sh.lo,
+                                     impl_->ctxs[k]->lvl.leaf_by_row.data() + sh.lo,
+                                     (sh.hi - sh.lo) * sizeof(node_id_t),
+                                     cudaMemcpyDeviceToHost),
+                          "multi fin_rows slice d2h");
+                });
     }
+    else
+    {
+        // Sampled: rows are non-contiguous, keep the per-shard scratch + merge.
+        std::vector<std::vector<node_id_t>> scratch(
+            N, std::vector<node_id_t>(leaf_by_row.size()));
+        fan_out(impl_->devices, N,
+                [&](size_t k) { impl_->ctxs[k]->finalize_rows(scratch[k]); });
+        for (size_t k = 0; k < N; ++k)
+        {
+            impl_->merge_shard<node_id_t>(k, scratch[k], leaf_by_row);
+        }
+    }
+    lap(impl_->prof.finalize_rows_s);
 }
 
 void MultiCudaHistogramEngine::finalize_tree(std::span<float const> node_values,
@@ -540,20 +580,36 @@ void MultiCudaHistogramEngine::finalize_tree(std::span<float const> node_values,
         impl_->ctxs[0]->finalize_tree(node_values, values, leaf_ids);
         return;
     }
-    // Per-shard scratch so the fan-out fills never collide; the merge into the
-    // caller's outputs stays serial after join.
-    std::vector<std::vector<float>>     vscratch(N, std::vector<float>(values.size()));
-    std::vector<std::vector<node_id_t>> iscratch(
-        N, std::vector<node_id_t>(leaf_ids.size()));
     auto lap = impl_->prof.lap();
-    fan_out(impl_->devices, N, [&](size_t k)
-            { impl_->ctxs[k]->finalize_tree(node_values, vscratch[k], iscratch[k]); });
-    lap(impl_->prof.finalize_s);
-    for (size_t k = 0; k < N; ++k)
+    if (impl_->contiguous)
     {
-        impl_->merge_shard<float>(k, vscratch[k], values);
-        impl_->merge_shard<node_id_t>(k, iscratch[k], leaf_ids);
+        // Each context maps its device values (full range, cheap) then downloads
+        // only its shard's [lo, hi) slice into the caller's spans. Disjoint
+        // offsets make the shared-output writes collision-free; no host scratch.
+        fan_out(impl_->devices, N,
+                [&](size_t k)
+                {
+                    Impl::Shard const &sh = impl_->shards[k];
+                    impl_->ctxs[k]->finalize_tree(node_values, values, leaf_ids, sh.lo,
+                                                  sh.hi - sh.lo);
+                });
     }
+    else
+    {
+        // Sampled: rows are non-contiguous, keep the per-shard scratch + merge.
+        std::vector<std::vector<float>> vscratch(N, std::vector<float>(values.size()));
+        std::vector<std::vector<node_id_t>> iscratch(
+            N, std::vector<node_id_t>(leaf_ids.size()));
+        fan_out(
+            impl_->devices, N, [&](size_t k)
+            { impl_->ctxs[k]->finalize_tree(node_values, vscratch[k], iscratch[k]); });
+        for (size_t k = 0; k < N; ++k)
+        {
+            impl_->merge_shard<float>(k, vscratch[k], values);
+            impl_->merge_shard<node_id_t>(k, iscratch[k], leaf_ids);
+        }
+    }
+    lap(impl_->prof.finalize_s);
 }
 
 void MultiCudaHistogramEngine::find_splits_many(Dataset const              &ds,

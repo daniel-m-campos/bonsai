@@ -495,7 +495,8 @@ void CudaDeviceContext::finalize_rows(std::span<node_id_t> leaf_by_row)
 
 void CudaDeviceContext::finalize_tree(std::span<float const> node_values,
                                       std::span<float>       values,
-                                      std::span<node_id_t>   leaf_ids)
+                                      std::span<node_id_t> leaf_ids, size_t offset,
+                                      size_t count)
 {
     auto       map_lap = prof_counters.lap();
     auto const n       = static_cast<uint32_t>(values.size());
@@ -514,11 +515,12 @@ void CudaDeviceContext::finalize_tree(std::span<float const> node_values,
         flap(prof_counters.fin_wait_s);
         lvl.prof_read(prof_counters);
     }
-    check(cudaMemcpy(leaf_ids.data(), lvl.leaf_by_row.data(),
-                     leaf_ids.size() * sizeof(node_id_t), cudaMemcpyDeviceToHost),
+    size_t const cnt = count == SIZE_MAX ? leaf_ids.size() : count;
+    check(cudaMemcpy(leaf_ids.data() + offset, lvl.leaf_by_row.data() + offset,
+                     cnt * sizeof(node_id_t), cudaMemcpyDeviceToHost),
           "epilogue leaf ids copy");
-    check(cudaMemcpy(values.data(), lvl.epi_values.data(),
-                     values.size() * sizeof(float), cudaMemcpyDeviceToHost),
+    check(cudaMemcpy(values.data() + offset, lvl.epi_values.data() + offset,
+                     cnt * sizeof(float), cudaMemcpyDeviceToHost),
           "epilogue values copy");
     flap(prof_counters.fin_d2h_s);
 }
