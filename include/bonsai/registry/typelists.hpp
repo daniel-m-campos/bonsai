@@ -19,7 +19,7 @@ using Objectives =
 using Growers =
     TypeList<DepthwiseGrower<CpuHistogramEngine>, ObliviousGrower<CpuHistogramEngine>,
              LeafwiseGrower<CpuHistogramEngine>, CudaDepthwiseGrower,
-             CudaObliviousGrower>;
+             CudaObliviousGrower, CudaMultiDepthwiseGrower, CudaMultiObliviousGrower>;
 using Samplers = TypeList<AllRowsSampler, BernoulliSampler, GossSampler>;
 
 namespace detail

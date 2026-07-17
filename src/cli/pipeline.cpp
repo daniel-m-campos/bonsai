@@ -11,6 +11,7 @@
 #include <print>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -33,13 +34,28 @@ namespace bonsai::cli
 namespace
 {
 
-// Device placement (parallel.device_id, issue #158) happens at every entry
-// that precedes device work, because cudaSetDevice is thread-local: ingest
-// and training may run on different threads (the Python Dataset flow). CPU
-// growers never touch it.
+// Device placement (issues #158/#159) happens at every entry that precedes
+// device work, because cudaSetDevice is thread-local: ingest and training may
+// run on different threads (the Python Dataset flow). CPU growers never touch
+// it. Single-GPU cuda_* growers take parallel.device_id; cuda_multi_* growers
+// take the parallel.device_ids set. Setting both is ambiguous and rejected.
 void select_device_for(Config const &cfg)
 {
-    if (cfg.dispatch.grower_name.starts_with("cuda"))
+    std::string_view const grower = cfg.dispatch.grower_name;
+    if (!grower.starts_with("cuda"))
+    {
+        return;
+    }
+    if (cfg.parallel.device_id != 0 && !cfg.parallel.device_ids.empty())
+    {
+        throw ConfigError("set parallel.device_id (single-GPU cuda_* growers) or "
+                          "parallel.device_ids (cuda_multi_* growers), not both");
+    }
+    if (grower.starts_with("cuda_multi"))
+    {
+        cuda_select_devices(cfg.parallel.device_ids);
+    }
+    else
     {
         cuda_select_device(cfg.parallel.device_id);
     }
@@ -52,9 +68,12 @@ LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path)
     auto const batch   = detail::parse_input(path, cfg.data);
     auto       mappers = BinMappers::fit(batch, cfg.bin_mapper);
     // The ingest transaction (decision 54): cuda growers bin on the device;
-    // cuda_ingest declines (nullptr) without a backend/device.
+    // cuda_ingest declines (nullptr) without a backend/device. cuda_multi_*
+    // growers skip the plane: each device uploads its own copy, and a
+    // per-device plane is a later optimization (docs/architecture/19).
     select_device_for(cfg);
-    auto plane = cfg.dispatch.grower_name.starts_with("cuda")
+    auto plane = (cfg.dispatch.grower_name.starts_with("cuda") &&
+                  !cfg.dispatch.grower_name.starts_with("cuda_multi"))
                      ? cuda_ingest(batch, mappers)
                      : nullptr;
     auto train = Dataset::bin(batch, mappers, cfg.data, std::move(plane));

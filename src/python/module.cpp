@@ -16,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 
 #include "bonsai/bin_mappers.hpp"
@@ -23,6 +24,7 @@
 #include "bonsai/cli/common.hpp"
 #include "bonsai/cli/pipeline.hpp"
 #include "bonsai/config/config.hpp"
+#include "bonsai/config/errors.hpp"
 #include "bonsai/config/toml.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/dataset.hpp"
@@ -44,6 +46,33 @@ bonsai::features_view as_view(array_2d const &X)
     return bonsai::features_view{X.data(), X.shape(0), X.shape(1)};
 }
 
+// Device placement seam, mirroring cli::select_device_for (issues #158/#159):
+// single-GPU cuda_* growers select parallel.device_id, cuda_multi_* growers
+// select the parallel.device_ids set; setting both knobs is rejected. CPU
+// growers never touch the device.
+void select_device_for(bonsai::Config const &cfg)
+{
+    std::string_view const grower = cfg.dispatch.grower_name;
+    if (!grower.starts_with("cuda"))
+    {
+        return;
+    }
+    if (cfg.parallel.device_id != 0 && !cfg.parallel.device_ids.empty())
+    {
+        throw bonsai::ConfigError(
+            "set parallel.device_id (single-GPU cuda_* growers) or "
+            "parallel.device_ids (cuda_multi_* growers), not both");
+    }
+    if (grower.starts_with("cuda_multi"))
+    {
+        bonsai::cuda_select_devices(cfg.parallel.device_ids);
+    }
+    else
+    {
+        bonsai::cuda_select_device(cfg.parallel.device_id);
+    }
+}
+
 // Bins straight from the row-major numpy matrix (no column-major float
 // materialization); the FeatureBuffer borrows the same buffer, which is
 // alive for the duration of the train call.
@@ -61,13 +90,13 @@ bonsai::cli::LabeledData make_labeled(array_2d const &X, array_1d const &y,
 
     // The ingest transaction (decision 54): cuda growers bin on the device;
     // cuda_ingest declines (nullptr) without a backend/device, keeping the
-    // host fill. Device placement first (issue #158): cudaSetDevice is
+    // host fill. Device placement first (issues #158/#159): cudaSetDevice is
     // thread-local and this thread is about to mint the device plane.
-    if (cfg.dispatch.grower_name.starts_with("cuda"))
-    {
-        bonsai::cuda_select_device(cfg.parallel.device_id);
-    }
-    auto plane = cfg.dispatch.grower_name.starts_with("cuda")
+    // cuda_multi_* growers skip the plane: each device uploads its own copy,
+    // and a per-device plane is a later optimization (docs/architecture/19).
+    select_device_for(cfg);
+    auto plane = (cfg.dispatch.grower_name.starts_with("cuda") &&
+                  !cfg.dispatch.grower_name.starts_with("cuda_multi"))
                      ? bonsai::cuda_ingest(as_view(X), mappers)
                      : nullptr;
     return bonsai::cli::LabeledData{
