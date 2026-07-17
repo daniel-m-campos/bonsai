@@ -503,7 +503,15 @@ struct CudaDeviceContext
 
     void init_shared_limit();
     void ensure_dataset(Dataset const &dataset);
-    void begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
+    // offset/count slice the per-tree gradient upload: only grad/hess
+    // [offset, offset + count) is uploaded and interleaved into the same
+    // positions of the full-length gh buffer; the defaults upload the whole
+    // stream so single-GPU stays byte-for-byte. gh keeps global row indexing,
+    // so the rows outside the slice hold stale values no shard row list ever
+    // gathers. MultiCudaHistogramEngine passes each identity shard's
+    // [lo, hi - lo) (docs/architecture/19-multi-gpu.md).
+    void begin_tree(Dataset const &ds, floats_view grad, floats_view hess,
+                    size_t offset = 0, size_t count = SIZE_MAX);
     bool begin_root(Dataset const &ds, floats_view grad, floats_view hess,
                     SplitInput &root, std::span<feature_id_t const> selected);
     void stamp_leaves(std::span<CudaHistogramEngine::LeafStamp const> stamps);

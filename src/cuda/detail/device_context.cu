@@ -242,15 +242,21 @@ void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
 }
 
 void CudaDeviceContext::begin_tree(Dataset const &ds, floats_view grad,
-                                   floats_view hess)
+                                   floats_view hess, size_t offset, size_t count)
 {
     ensure_dataset(ds);
-    auto       lap = prof_counters.lap();
-    auto const n   = static_cast<uint32_t>(grad.size());
-    grads.grad_raw.upload(grad.data(), grad.size());
-    grads.hess_raw.upload(hess.data(), hess.size());
+    auto         lap = prof_counters.lap();
+    size_t const cnt = count == SIZE_MAX ? grad.size() : count;
+    auto const   n   = static_cast<uint32_t>(cnt);
+    // Only the shard's slice crosses the bus; gh stays full-length and keeps
+    // global row indexing, so the interleave writes gh[offset + r] and the
+    // raw staging buffers hold just the slice. offset == 0, count == full
+    // reproduces the single-GPU upload byte-for-byte.
+    grads.grad_raw.upload(grad.data() + offset, cnt);
+    grads.hess_raw.upload(hess.data() + offset, cnt);
     grads.gh.reserve(grad.size());
-    interleave(grads.grad_raw.data(), grads.hess_raw.data(), n, grads.gh.data());
+    interleave(grads.grad_raw.data(), grads.hess_raw.data(), n,
+               grads.gh.data() + offset);
     lap(prof_counters.gh_upload_s);
 }
 

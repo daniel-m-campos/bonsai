@@ -363,9 +363,32 @@ MultiCudaHistogramEngine::operator=(MultiCudaHistogramEngine &&) noexcept = defa
 void MultiCudaHistogramEngine::begin_tree(Dataset const &ds, floats_view grad,
                                           floats_view hess)
 {
-    auto lap = impl_->prof.lap();
-    fan_out(impl_->devices, impl_->n(),
-            [&](size_t k) { impl_->ctxs[k]->begin_tree(ds, grad, hess); });
+    auto         lap = impl_->prof.lap();
+    size_t const N   = impl_->n();
+    // The full gradient stream is the same 51GB-per-fit upload on every device.
+    // When the last begin_root left a contiguous identity sharding, each shard
+    // needs only its own [lo, hi) of that stream: gh stays full-length so
+    // begin_root's gather still indexes it by global row id, and the shard's
+    // row list only ever gathers rows in [lo, hi). N == 1, a sampled sharding
+    // (arbitrary global rows per shard), and the pre-first-root state upload
+    // the whole stream. The sampler is fixed for a fit, so a contiguous flag
+    // set by the previous tree's begin_root still describes this tree.
+    if (N == 1 || !impl_->contiguous)
+    {
+        fan_out(impl_->devices, N,
+                [&](size_t k) { impl_->ctxs[k]->begin_tree(ds, grad, hess); });
+    }
+    else
+    {
+        size_t const total = grad.size();
+        fan_out(impl_->devices, N,
+                [&](size_t k)
+                {
+                    size_t const lo = (total * k) / N;
+                    size_t const hi = (total * (k + 1)) / N;
+                    impl_->ctxs[k]->begin_tree(ds, grad, hess, lo, hi - lo);
+                });
+    }
     lap(impl_->prof.begin_tree_s);
 }
 
