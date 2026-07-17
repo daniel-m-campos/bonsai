@@ -42,12 +42,16 @@ void cuda_select_device(uint32_t device_id)
     }
 }
 
+namespace
+{
+// Not thread-safe against concurrent train calls.
+std::vector<uint32_t> g_selected_devices;
+} // namespace
+
 void cuda_select_devices(std::span<uint32_t const> ids)
 {
     // Empty or {0} is the ambient default (a no-op); any other id in a
-    // CUDA-less build is a misconfiguration and must be loud. Nothing is
-    // stored: without a backend the selection can never be consumed, so the
-    // stub stays stateless.
+    // CUDA-less build is a misconfiguration and must be loud.
     for (uint32_t const id : ids)
     {
         if (id != 0)
@@ -57,11 +61,12 @@ void cuda_select_devices(std::span<uint32_t const> ids)
                               "binary was built without the CUDA backend");
         }
     }
+    g_selected_devices.assign(ids.begin(), ids.end());
 }
 
 std::vector<uint32_t> cuda_selected_devices()
 {
-    return {};
+    return g_selected_devices;
 }
 
 struct CudaHistogramEngine::Impl
