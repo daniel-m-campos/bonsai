@@ -21,6 +21,7 @@
 #include "bonsai/split.hpp"
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -28,6 +29,7 @@
 #include <cstdlib>
 #include <functional>
 #include <print>
+#include <ranges>
 #include <span>
 #include <utility>
 #include <vector>
@@ -297,11 +299,15 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
     }
 
     // Oblivious leaf finalize, host plane: each frontier node is a leaf,
-    // indexed by position into leaf_table; stamp its rows directly.
+    // indexed by position into leaf_table; stamp its rows directly. The level
+    // split/bin spans feed only the GPU resident finalize; the host ignores
+    // them.
     void finalize_leaves(std::vector<SplitInput> const &frontier,
                          std::vector<float> const      &leaf_table,
                          train_leaf_values &values, std::vector<node_id_t> &leaf_ids,
-                         row_index_view /*row_indices*/)
+                         row_index_view /*row_indices*/,
+                         std::span<ObliviousTree::LevelSplit const> /*level_splits*/,
+                         std::span<bin_id_t const> /*level_bins*/)
     {
         host_finalize_leaves(frontier, leaf_table, values, leaf_ids);
     }
@@ -681,7 +687,8 @@ class LevelStep<EngineT, SplitterT>
                   size_t &n_leaves, train_leaf_values &values,
                   std::vector<node_id_t> &leaf_ids, row_index_view /*row_indices*/)
     {
-        if (on_device_)
+        bool const resident = on_device_ && engine_.resident_armed();
+        if (on_device_ && !resident)
         {
             std::vector<typename EngineT::LeafStamp> stamps;
             stamps.reserve(current.size());
@@ -694,6 +701,34 @@ class LevelStep<EngineT, SplitterT>
         for (auto const &input : current)
         {
             finalize_as_leaf(nodes, input, config_, n_leaves, values, leaf_ids);
+        }
+        if (resident)
+        {
+            // The finished dense tree routes every row on device; no stamp, no
+            // values/leaf_ids D2H. split_bin reconstructs exactly from the
+            // threshold (the grower set threshold = cuts[bin]).
+            std::vector<typename EngineT::ResidentNode> table(nodes.size());
+            for (size_t i = 0; i < nodes.size(); ++i)
+            {
+                DenseTree::Node const          &nd = nodes[i];
+                typename EngineT::ResidentNode &rn = table[i];
+                if (DenseTree::is_leaf(nd))
+                {
+                    rn.is_leaf = true;
+                    rn.value   = nd.threshold_or_value;
+                    continue;
+                }
+                rn.feature_id   = nd.feature_id;
+                rn.left         = nd.left;
+                rn.right        = nd.right;
+                rn.default_left = nd.default_left;
+                auto const cuts = ds_.mappers()[nd.feature_id].cuts();
+                rn.split_bin    = static_cast<bin_id_t>(
+                    std::ranges::lower_bound(cuts, nd.threshold_or_value) -
+                    cuts.begin());
+            }
+            engine_.resident_finalize(table);
+            return;
         }
         if (on_device_)
         {
@@ -714,11 +749,50 @@ class LevelStep<EngineT, SplitterT>
     void finalize_leaves(std::vector<SplitInput> const &frontier,
                          std::vector<float> const      &leaf_table,
                          train_leaf_values &values, std::vector<node_id_t> &leaf_ids,
-                         row_index_view /*row_indices*/)
+                         row_index_view /*row_indices*/,
+                         std::span<ObliviousTree::LevelSplit const> level_splits,
+                         std::span<bin_id_t const>                  level_bins)
     {
         if (!on_device_)
         {
             HostStep::host_finalize_leaves(frontier, leaf_table, values, leaf_ids);
+            return;
+        }
+        if (engine_.resident_armed())
+        {
+            // Synthesize the perfect-tree node numbering (children 2i+1 / 2i+2)
+            // from the per-level splits so the one device route+add kernel
+            // serves both tree shapes; leaves 2^D-1 .. hold leaf_table in
+            // left-to-right order (the oblivious index is exactly that order).
+            size_t const depth      = level_splits.size();
+            size_t const n_internal = (size_t{1} << depth) - 1;
+            size_t const n_leaves   = size_t{1} << depth;
+            std::vector<typename EngineT::ResidentNode> table(n_internal + n_leaves);
+            for (size_t i = 0; i < n_internal; ++i)
+            {
+                size_t lvl = 0;
+                size_t cap = 1;
+                size_t off = i;
+                while (off >= cap)
+                {
+                    off -= cap;
+                    cap <<= 1U;
+                    ++lvl;
+                }
+                typename EngineT::ResidentNode &rn = table[i];
+                rn.feature_id                      = level_splits[lvl].feature_id;
+                rn.split_bin                       = level_bins[lvl];
+                rn.default_left                    = level_splits[lvl].default_left;
+                rn.left  = static_cast<node_id_t>((2 * i) + 1);
+                rn.right = static_cast<node_id_t>((2 * i) + 2);
+            }
+            for (size_t j = 0; j < n_leaves; ++j)
+            {
+                typename EngineT::ResidentNode &rn = table[n_internal + j];
+                rn.is_leaf                         = true;
+                rn.value                           = leaf_table[j];
+            }
+            engine_.resident_finalize(table);
             return;
         }
         std::vector<typename EngineT::LeafStamp> stamps;

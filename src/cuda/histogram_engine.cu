@@ -174,6 +174,28 @@ void CudaHistogramEngine::find_level_split(Dataset const &ds, TreeConfig const &
     impl_->ctx.find_level_split(ds, config, level, out, child_sums);
 }
 
+bool CudaHistogramEngine::resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
+                                         std::span<float const> initial_scores,
+                                         float                  learning_rate)
+{
+    return impl_->ctx.resident_begin(ds, kind, initial_scores, learning_rate);
+}
+
+bool CudaHistogramEngine::resident_armed() const
+{
+    return impl_->ctx.resident_armed();
+}
+
+void CudaHistogramEngine::resident_finalize(std::span<ResidentNode const> nodes)
+{
+    impl_->ctx.resident_finalize(nodes);
+}
+
+void CudaHistogramEngine::resident_end(std::span<float> scores_out)
+{
+    impl_->ctx.resident_end(scores_out);
+}
+
 // ---- The ingest transaction (decision 54) -----------------------------------
 
 namespace

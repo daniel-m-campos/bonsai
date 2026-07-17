@@ -245,9 +245,31 @@ struct CudaDeviceContext
         void stage_level_sums(std::span<SplitInput const> level);
     };
 
+    // Device-resident objective plane: labels and the per-row score vector live
+    // here for the whole fit. begin_tree derives gh from them; the resident
+    // finalize walks the finished tree (SoA node arrays) and fuses the score
+    // update. Labels are keyed by dataset identity so a re-fit skips re-upload.
+    struct ResidentPlane
+    {
+        DeviceBuffer<float> labels;
+        DeviceBuffer<float> scores;
+        DatasetKey          labels_key;
+        Staged<uint32_t>    node_feature;
+        Staged<uint32_t>    node_split_bin;
+        Staged<uint32_t>    node_left;
+        Staged<uint32_t>    node_right;
+        Staged<uint32_t>    node_default_left;
+        Staged<uint32_t>    node_is_leaf;
+        Staged<float>       node_value;
+        bool                armed         = false;
+        float               learning_rate = 0.0F;
+        size_t              n_rows        = 0;
+    };
+
     DeviceData      data;
     GradientPlane   grads;
     LevelPipeline   lvl;
+    ResidentPlane   resident;
     ProfileCounters prof_counters;
 
     // Runtime shared-memory ceiling for the hist kernels: the opt-in limit
@@ -281,6 +303,15 @@ struct CudaDeviceContext
     void find_level_split(Dataset const &ds, TreeConfig const &config,
                           std::span<SplitInput const> level, std::span<SplitOutput> out,
                           std::span<HistCell> child_sums);
+
+    bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
+                        std::span<float const> initial_scores, float learning_rate);
+    bool resident_armed() const
+    {
+        return resident.armed;
+    }
+    void resident_finalize(std::span<CudaHistogramEngine::ResidentNode const> nodes);
+    void resident_end(std::span<float> scores_out);
 };
 
 // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)

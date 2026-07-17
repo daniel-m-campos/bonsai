@@ -132,4 +132,21 @@ void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
     throw_unavailable();
 }
 
+bool CudaHistogramEngine::resident_begin(Dataset const & /*ds*/,
+                                         DeviceObjectiveKind /*kind*/,
+                                         std::span<float const> /*initial_scores*/,
+                                         float /*learning_rate*/)
+{
+    return false;
+}
+
+bool CudaHistogramEngine::resident_armed() const
+{
+    return false;
+}
+
+void CudaHistogramEngine::resident_finalize(std::span<ResidentNode const> /*nodes*/) {}
+
+void CudaHistogramEngine::resident_end(std::span<float> /*scores_out*/) {}
+
 } // namespace bonsai

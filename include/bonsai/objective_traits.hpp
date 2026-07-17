@@ -1,6 +1,7 @@
 #pragma once
 
 #include <concepts>
+#include <cstdint>
 #include <span>
 #include <string_view>
 
@@ -10,6 +11,31 @@
 
 namespace bonsai
 {
+
+// Objectives whose gradient and hessian a device backend can derive from
+// resident scores and labels, with no host objective pass and no per-tree
+// gradient upload. Squared error is the trivial case: g = score - label,
+// h = 1. The booster and the CUDA engine share this tag so the resident
+// seam is decided once, and this core header carries no CUDA include.
+enum class DeviceObjectiveKind : uint8_t
+{
+    none,
+    mse,
+};
+
+template <typename Objective> struct device_objective_kind_of
+{
+    static constexpr DeviceObjectiveKind value = DeviceObjectiveKind::none;
+};
+
+template <> struct device_objective_kind_of<MSEObjective>
+{
+    static constexpr DeviceObjectiveKind value = DeviceObjectiveKind::mse;
+};
+
+template <typename Objective>
+inline constexpr DeviceObjectiveKind device_objective_kind =
+    device_objective_kind_of<Objective>::value;
 
 // Inverse link function for objective T, applied in place. Identity for
 // regression objectives; sigmoid for binary classification. CLI-only concern
