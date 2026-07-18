@@ -1,14 +1,23 @@
-# The method
+# Results
 
-bonsai's results come from a small set of working rules, applied without exception, and the rules transfer to any performance-critical numerical system. This section states each one, shows the bonsai episode that earned it, and notes what it looks like outside a GBT library.
+Every performance and accuracy claim on this site comes from a committed benchmark run, on named hardware, at matched settings. This page states what we measure and gives the headline numbers. [The results ledger](results.md) holds the full evidence, generated from every committed results file.
 
-The common thread: measurement replaces argument. A hypothesis is priced before it is implemented, a change ships with the measurement that justifies it, and a refutation is written down with the same care as a win, because the refutation is what stops the next person from paying for the same idea twice.
+## What we measure
 
-The four disciplines:
+Two divisions, kept apart. Quality rows make accuracy claims, where the metric is primary and timing is never citable. Perf rows make speed and memory claims, where accuracy is recorded only as a sanity guard. The [benchmark protocol](benchmark-protocol.md) is the normative charter: divisions, suites, metrics, timing modes, and the row schema.
 
-1. **[Instrument first](instrument-first.md)**: decompose and price before optimizing anything; profilers lie at sync boundaries.
-2. **[The feature-admission gate](feature-admission.md)**: prototype at zero core cost, define the kill criteria before the experiment, record the declines.
-3. **[Benchmarks you can trust](benchmarking.md)**: same-hardware comparisons only, probe the hardware before believing it, commit the raw runs. The normative rules (divisions, suites, metrics, timing modes, the row schema) are the [benchmark protocol](benchmark-protocol.md).
-4. **[Determinism as a contract](determinism.md)**: bit-identical outputs as a CI-enforced invariant, which turns refactoring and AI-assisted development into verifiable operations.
+The only citable standings table is the Grinsztajn suite: 55 tasks selected by third parties. That removes the selection-bias objection a self-picked suite cannot answer.
 
-The raw feed behind all four is the [decisions log](../decisions.md): numbered, dated, with the rejected alternatives recorded next to the adopted ones. [How bonsai is built](../about.md) explains why the discipline matters twice over in a human-plus-AI workflow.
+## Three headline numbers
+
+All three are GPU, same-pod, at 16M rows.
+
+- **Speed.** bonsai holds the fastest slot at every row scale tested. At 16M it fits in 18.4 seconds against catboost's 18.5 and xgboost-GPU's 19.9, all at 0.876 r² ([the re-baseline](results.md#the-re-baseline-fit-seconds-at-scale)).
+- **Memory.** Peak host RSS at 16M is 7.0GB against xgboost's 22.2GB and catboost's 19.4GB, roughly 3x less. Predict is about 3x faster ([the ledger](results.md#perf-division)).
+- **Determinism.** Models are bit-identical across CPU architectures and thread counts, enforced per commit in CI. No reference library offers this ([the contract](../design/determinism.md)).
+
+Losses are recorded with the wins. On wide data catboost keeps the lead, with bonsai second. xgboost holds the last 0.001 r² of cut quality on some tasks. Both are in [the ledger](results.md).
+
+## How we decide
+
+Two rules govern every change: price a change before you build it, and admit a feature only when measurement earns its place. Both are on [how we decide](how-we-decide.md), with the episodes that earned them. The raw feed behind every number is the [decisions log](../decisions.md).

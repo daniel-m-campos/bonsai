@@ -1,6 +1,6 @@
 # The benchmark protocol
 
-This page is the normative charter behind every published bonsai number; [Benchmarks you can trust](benchmarking.md) explains why the rules exist, this page states what they are. Reproduce the headline table yourself:
+This page is the normative charter behind every published bonsai number. The rules exist because cloud hardware is not a controlled instrument, and a benchmark without its raw data is an anecdote. Reproduce the headline table yourself:
 
 ```
 pip install bonsai-gbt[bench]
@@ -52,6 +52,8 @@ Two named sets in `bonsai.bench.params`: CAMPAIGN (200 iters, lr 0.05, depth 6, 
 ## Hardware rules
 
 Comparative perf numbers come only from the same machine in the same session (rental-fleet variance reaches ~25%). Rented hosts must pass the 30-second sync-latency probe (round-trips over 50µs reject the pod, decision 48). Quality rows are hardware-independent by construction: references run their CPU paths, bonsai models are bit-identical across architectures by contract.
+
+Same-machine control is also what makes a competitor gap debuggable. Two apparent catboost advantages localized to bonsai bugs precisely because everything else was held equal: an accuracy gap that traced to a GPU kernel veto (decision 63), and a binning-cost gap that was a per-feature sampling pass catboost does not pay (decision 64, a 24x mapper speedup after the fix).
 
 ## The row schema
 
