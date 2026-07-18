@@ -362,11 +362,13 @@ class Booster final : public IBooster
 
         if (!train.weights().empty())
         {
-            for (size_t i = 0; i < grad_.size(); ++i)
-            {
-                grad_[i] *= train.weights()[i];
-                hess_[i] *= train.weights()[i];
-            }
+            // Elementwise, no reduction: parallel order cannot change a bit.
+            parallel::for_each_index(grad_.size(),
+                                     [&](size_t i)
+                                     {
+                                         grad_[i] *= train.weights()[i];
+                                         hess_[i] *= train.weights()[i];
+                                     });
         }
         lap(prof.objective_s);
 

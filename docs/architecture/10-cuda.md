@@ -66,7 +66,7 @@ The level loop then repeats over `LevelPipeline`. `find_splits_many` (depthwise)
 
 `finalize_rows` copies the per-row leaf assignments home, and `finalize_tree` maps each row's resident leaf to its value with an epilogue kernel and copies the leaf ids and values back to the host.
 
-When the booster arms the device-resident objective (an eligible objective with no DART, no sample weights, and a sampler that never reads gradient values), the boundary crossings above disappear for the whole fit: labels and initial scores upload once, `begin_tree` derives the packed `(grad, hess)` array on the device from the resident scores, and the finalize step replaces the stamp-and-copy epilogue with one kernel that routes every row through the finished tree in bin space and adds its leaf value into the resident scores. Per tree, nothing crosses the bus; the host scores are synchronized once when the fit leaves resident mode. `BONSAI_HOST_OBJECTIVE=1` forces the host path.
+When the booster arms the device-resident objective (MSE, LogLoss, or Poisson, weighted or not, with no DART and a sampler that never reads gradient values), the boundary crossings above disappear for the whole fit: labels and initial scores upload once, `begin_tree` derives the packed `(grad, hess)` array on the device from the resident scores, and the finalize step replaces the stamp-and-copy epilogue with one kernel that routes every row through the finished tree in bin space and adds its leaf value into the resident scores. Per tree, nothing crosses the bus; the host scores are synchronized once when the fit leaves resident mode. `BONSAI_HOST_OBJECTIVE=1` forces the host path.
 
 ## Deferred
 
