@@ -388,6 +388,15 @@ def probes_section() -> str:
         ["learner", *[f"{g} (NDCG@10)" for g in regimes]],
         [[ln, *[fmt(cell.get((ln, g))) for g in regimes]] for ln in learners])
 
+    tap = load_jsonl("tabarena-cat-probe-2026-07.jsonl")
+    tap_ch = [r for r in tap if r["subset"] == "cat_heavy"]
+    tap_table = md_table(
+        ["dataset", "cat native", "cat ablated", "bonsai_ts", "categorical share",
+         "remaining gap"],
+        [[r["dataset"], fmt(r["cat_native"]), fmt(r["cat_ablated"]),
+          fmt(r["bonsai_ts"]), fmt(r["categorical_share"]), fmt(r["remaining_gap"])]
+         for r in sorted(tap_ch, key=lambda r: r["categorical_share"])])
+
     return f"""### Probe: per-feature bin budgets (declined, decision 67)
 
 Test r² under per-feature bin-budget policies at a 255-bin default; no policy moved standings outside the chance band.
@@ -411,6 +420,14 @@ NDCG@10 by regime; the stable gap is to listwise losses only, so issue #58 is sc
 {rank_table}
 
 {provenance(["ranking-tradeoff-2026-07.jsonl"], "Probe: [scripts/probe_ranking.py](../../scripts/probe_ranking.py); evidence [benchmarks/ranking-tradeoff-2026-07.md](../../benchmarks/ranking-tradeoff-2026-07.md).")}
+
+### Probe: catboost's categorical machinery priced by its own toggle (reopener predicate, decision 80)
+
+On the cat-heavy TabArena subset, catboost native vs the same model with categoricals ordinal-encoded: the toggle prices the machinery at 68% of catboost's remaining lead over bonsai_ts (mean share -0.0099 of -0.0147); the pure-numeric control is bit-identical in both arms. Where the price is largest, ablated catboost loses to bonsai_ts outright.
+
+{tap_table}
+
+{provenance(["tabarena-cat-probe-2026-07.jsonl"], "Probe: [scripts/probe_tabarena_cat.py](../../scripts/probe_tabarena_cat.py); evidence [benchmarks/tabarena-cat-probe-2026-07.md](../../benchmarks/tabarena-cat-probe-2026-07.md). Lower is better for every metric column (error/log-loss form).")}
 """
 
 
