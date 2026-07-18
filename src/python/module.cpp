@@ -531,14 +531,19 @@ NB_MODULE(_bonsai, m)
                      "Class count for softmax models; 0 for every other "
                      "objective (including binary logloss).");
 
+    // Defaults come from the binning config struct, not repeated literals, so
+    // the Python surface tracks the one source of truth.
+    constexpr bonsai::BinMapperConfig k_bin_defaults{};
     nb::class_<Dataset>(m, "Dataset")
         .def(nb::init<array_2d const &, array_1d const &,
                       std::optional<array_1d> const &, int, size_t, uint64_t, int,
                       std::optional<std::map<size_t, array_1d>> const &>(),
              nb::arg("X"), nb::arg("y"), nb::arg("weight") = nb::none(),
-             nb::arg("max_bin") = 255, nb::arg("n_samples") = 200000,
-             nb::arg("seed") = 0, nb::arg("min_data_in_bin") = 1,
-             nb::arg("bin_edges") = nb::none(),
+             nb::arg("max_bin")         = k_bin_defaults.max_bin,
+             nb::arg("n_samples")       = k_bin_defaults.n_samples,
+             nb::arg("seed")            = k_bin_defaults.seed,
+             nb::arg("min_data_in_bin") = k_bin_defaults.min_data_in_bin,
+             nb::arg("bin_edges")       = nb::none(),
              "A pre-binned dataset. Bins X once at construction and is reused "
              "across train(params, dataset) calls (hyperparameter search / CV), "
              "skipping the per-fit bin pass; on GPU the resident matrix uploads "
