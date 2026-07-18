@@ -36,6 +36,11 @@ namespace bonsai
 namespace cuda_detail
 {
 
+// Root-sum device reduce launch width: pass 1 runs this many blocks to produce
+// partial gh sums, pass 2 folds them to the single total. Shared by the
+// identity and resident-subset root paths so both launch the same grid.
+constexpr uint32_t k_sum_blocks = 64;
+
 // Flat device/host buffers throughout this file are offset by hand (docs/
 // architecture/10-cuda.md); grad/hess travel as an adjacent pair everywhere
 // in this API, matching the gradient-boosting literature's convention.
@@ -489,7 +494,6 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
         // Deterministic two-pass device reduce over the uploaded gh buffer
         // replaces the 16M-row host loop; queued before the histogram build
         // so the later 16B fetch drains only these two small kernels.
-        constexpr uint32_t k_sum_blocks = 64;
         lvl.sum_partial.reserve(k_sum_blocks);
         lvl.sum_out.reserve(1);
         sum_gh_pass1_kernel<<<dim3(k_sum_blocks), dim3(256)>>>(grads.gh.data(), n,
@@ -545,7 +549,6 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     {
         // Resident mode with a row subset (Bernoulli): grad/hess are empty on
         // the host, so reduce the gathered subset's gh on device instead.
-        constexpr uint32_t k_sum_blocks = 64;
         lvl.sum_partial.reserve(k_sum_blocks);
         lvl.sum_out.reserve(1);
         sum_gh_pass1_kernel<<<dim3(k_sum_blocks), dim3(256)>>>(lvl.gh_ordered.data(), n,

@@ -22,6 +22,24 @@ using split_input_refs = std::span<std::reference_wrapper<SplitInput> const>;
 
 using train_leaf_values = std::vector<float>;
 
+// Output-buffer recycling: the booster hands the previous tree's per-row
+// buffers back so the next grow reuses the allocation instead of the per-tree
+// zero-init, 12.8GB of serial memset per 16M x 100 fit. Safe because every
+// element is overwritten before any read (host stamping and route_unsampled
+// cover the row partition, the device epilogue writes all rows). One home for
+// the two buffers so this contract is stated once for all three growers.
+struct RecycledOutputs
+{
+    train_leaf_values      values;
+    std::vector<node_id_t> leaf_ids;
+
+    void set(train_leaf_values v, std::vector<node_id_t> ids)
+    {
+        values   = std::move(v);
+        leaf_ids = std::move(ids);
+    }
+};
+
 template <typename TreeT> struct GrowResult
 {
     TreeT             tree;
@@ -158,15 +176,9 @@ class DepthwiseGrower
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
                           row_index_view row_indices);
 
-    // Output-buffer recycling (PR #38's setup line): the booster hands the
-    // previous tree's buffers back; every element is overwritten before any
-    // read (host stamping + route_unsampled cover the row partition, the
-    // device epilogue writes all rows), so reuse skips the per-tree
-    // zero-init — 12.8GB of serial memset per 16M x 100 fit.
     void recycle(train_leaf_values values, std::vector<node_id_t> leaf_ids)
     {
-        recycled_values_ = std::move(values);
-        recycled_ids_    = std::move(leaf_ids);
+        recycled_.set(std::move(values), std::move(leaf_ids));
     }
 
     // Remembers whether the engine armed, so grow() can skip the host-side
@@ -192,8 +204,7 @@ class DepthwiseGrower
     std::mt19937                           feature_rng_;
     std::vector<std::vector<feature_id_t>> interaction_groups_;
     EngineT                                engine_;
-    train_leaf_values                      recycled_values_;
-    std::vector<node_id_t>                 recycled_ids_;
+    RecycledOutputs                        recycled_;
     bool                                   resident_ = false;
 };
 
@@ -208,15 +219,9 @@ class ObliviousGrower
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
                           row_index_view row_indices);
 
-    // Output-buffer recycling (PR #38's setup line): the booster hands the
-    // previous tree's buffers back; every element is overwritten before any
-    // read (host stamping + route_unsampled cover the row partition, the
-    // device epilogue writes all rows), so reuse skips the per-tree
-    // zero-init — 12.8GB of serial memset per 16M x 100 fit.
     void recycle(train_leaf_values values, std::vector<node_id_t> leaf_ids)
     {
-        recycled_values_ = std::move(values);
-        recycled_ids_    = std::move(leaf_ids);
+        recycled_.set(std::move(values), std::move(leaf_ids));
     }
 
     // Device-resident objective seam (see DepthwiseGrower::resident_begin).
@@ -237,12 +242,11 @@ class ObliviousGrower
     }
 
   private:
-    TreeConfig             config_;
-    std::mt19937           feature_rng_;
-    EngineT                engine_;
-    train_leaf_values      recycled_values_;
-    std::vector<node_id_t> recycled_ids_;
-    bool                   resident_ = false;
+    TreeConfig      config_;
+    std::mt19937    feature_rng_;
+    EngineT         engine_;
+    RecycledOutputs recycled_;
+    bool            resident_ = false;
 };
 
 template <HistogramEngine EngineT   = CpuHistogramEngine,
@@ -256,15 +260,9 @@ class LeafwiseGrower
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
                           row_index_view row_indices);
 
-    // Output-buffer recycling (PR #38's setup line): the booster hands the
-    // previous tree's buffers back; every element is overwritten before any
-    // read (host stamping + route_unsampled cover the row partition, the
-    // device epilogue writes all rows), so reuse skips the per-tree
-    // zero-init — 12.8GB of serial memset per 16M x 100 fit.
     void recycle(train_leaf_values values, std::vector<node_id_t> leaf_ids)
     {
-        recycled_values_ = std::move(values);
-        recycled_ids_    = std::move(leaf_ids);
+        recycled_.set(std::move(values), std::move(leaf_ids));
     }
 
     // The leafwise grow loop has no resident finalize path, so it never arms
@@ -285,8 +283,7 @@ class LeafwiseGrower
     std::mt19937                           feature_rng_;
     std::vector<std::vector<feature_id_t>> interaction_groups_;
     EngineT                                engine_;
-    train_leaf_values                      recycled_values_;
-    std::vector<node_id_t>                 recycled_ids_;
+    RecycledOutputs                        recycled_;
 };
 
 } // namespace bonsai

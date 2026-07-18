@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -79,6 +80,24 @@ class Dataset
     BinMappers const &mappers() const;
     size_t            n_bins(size_t fid) const;
     bool              is_categorical(size_t fid) const;
+
+    // Feature f's strictly increasing bin cut points.
+    std::span<float const> cuts(feature_id_t f) const
+    {
+        return mappers_[f].cuts();
+    }
+
+    // The bin a stored split threshold came from. The grower records
+    // threshold = cuts(f)[bin] and cuts are strictly increasing, so
+    // lower_bound recovers that bin exactly. The one inversion of the grower's
+    // threshold step; every route that reconstructs a bin from a threshold
+    // (DART, warm start, the resident device epilogue) goes through here.
+    bin_id_t bin_of_threshold(feature_id_t f, float threshold) const
+    {
+        auto const c = cuts(f);
+        return static_cast<bin_id_t>(std::ranges::lower_bound(c, threshold) -
+                                     c.begin());
+    }
 
     // Binned columns store 8-bit when every feature fits 256 bins (the
     // max_bin=255 default) — halving the memory traffic of the histogram
@@ -167,5 +186,16 @@ class Dataset
     size_t                                        n_rows_     = 0;
     size_t                                        n_features_ = 0;
 };
+
+// The one host routing truth: which child a row takes at an internal node.
+// The last bin holds missing values and follows default_left; every other bin
+// routes left iff it is at or below the split bin. The device kernels
+// (goes_left_dev and route_add_kernel's walk in kernels.cuh) mirror this and
+// the [cuda] parity suite enforces lockstep.
+inline bool routes_left(bin_id_t bin, bin_id_t last_bin, bin_id_t split_bin,
+                        bool default_left)
+{
+    return bin == last_bin ? default_left : bin <= split_bin;
+}
 
 } // namespace bonsai

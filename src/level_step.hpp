@@ -89,39 +89,33 @@ inline PendingSplit partition_rows(Dataset const &ds, SplitInput parent,
     PendingSplit p;
     p.left.id  = left_id;
     p.right.id = right_id;
-    ds.visit_bins(s.feature_id,
-                  [&](auto bins)
-                  {
-                      auto goes_left = [&](row_id_t r)
-                      {
-                          bin_id_t const b = bins[r];
-                          if (b == last_bin)
-                          {
-                              return s.default_left;
-                          }
-                          return b <= s.bin_id;
-                      };
-                      size_t n_left = 0;
-                      for (row_id_t const r : parent.rows)
-                      {
-                          n_left += goes_left(r) ? 1 : 0;
-                      }
-                      p.left.rows.resize(n_left);
-                      p.right.rows.resize(parent.rows.size() - n_left);
-                      size_t li = 0;
-                      size_t ri = 0;
-                      for (row_id_t const r : parent.rows)
-                      {
-                          if (goes_left(r))
-                          {
-                              p.left.rows[li++] = r;
-                          }
-                          else
-                          {
-                              p.right.rows[ri++] = r;
-                          }
-                      }
-                  });
+    ds.visit_bins(
+        s.feature_id,
+        [&](auto bins)
+        {
+            auto goes_left = [&](row_id_t r)
+            { return routes_left(bins[r], last_bin, s.bin_id, s.default_left); };
+            size_t n_left = 0;
+            for (row_id_t const r : parent.rows)
+            {
+                n_left += goes_left(r) ? 1 : 0;
+            }
+            p.left.rows.resize(n_left);
+            p.right.rows.resize(parent.rows.size() - n_left);
+            size_t li = 0;
+            size_t ri = 0;
+            for (row_id_t const r : parent.rows)
+            {
+                if (goes_left(r))
+                {
+                    p.left.rows[li++] = r;
+                }
+                else
+                {
+                    p.right.rows[ri++] = r;
+                }
+            }
+        });
     p.parent_hists = std::move(parent.hists);
     return p;
 }
@@ -387,7 +381,7 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
             auto const last_bin =
                 static_cast<bin_id_t>(ds.n_bins(d.split.feature_id) - 1);
             return [&d, last_bin](bin_id_t b)
-            { return b == last_bin ? d.split.default_left : b <= d.split.bin_id; };
+            { return routes_left(b, last_bin, d.split.bin_id, d.split.default_left); };
         };
         parallel::for_each_index(
             blocks.size(),
@@ -722,10 +716,8 @@ class LevelStep<EngineT, SplitterT>
                 rn.left         = nd.left;
                 rn.right        = nd.right;
                 rn.default_left = nd.default_left;
-                auto const cuts = ds_.mappers()[nd.feature_id].cuts();
-                rn.split_bin    = static_cast<bin_id_t>(
-                    std::ranges::lower_bound(cuts, nd.threshold_or_value) -
-                    cuts.begin());
+                rn.split_bin =
+                    ds_.bin_of_threshold(nd.feature_id, nd.threshold_or_value);
             }
             engine_.resident_finalize(table);
             return;

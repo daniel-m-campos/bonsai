@@ -119,10 +119,9 @@ namespace internal
 {
 
 // Accumulate a tree's (unscaled-by-lr) train contribution into `out` by
-// routing rows in bin space. Thresholds map back to their bins exactly —
-// the grower sets threshold = cuts[bin], and the binner is right-inclusive,
-// so lower_bound(cuts, threshold) recovers the split bin. Used by DART to
-// subtract dropped trees without caching per-tree train predictions.
+// routing rows in bin space. ds.bin_of_threshold recovers each internal
+// node's split bin from its stored threshold. Used by DART to subtract
+// dropped trees without caching per-tree train predictions.
 inline void accumulate_train_contribution(DenseTree const &tree, Dataset const &ds,
                                           floats_out out)
 {
@@ -132,10 +131,8 @@ inline void accumulate_train_contribution(DenseTree const &tree, Dataset const &
     {
         if (!DenseTree::is_leaf(nodes[i]))
         {
-            auto const cuts = ds.mappers()[nodes[i].feature_id].cuts();
-            tbin[i]         = static_cast<bin_id_t>(
-                std::ranges::lower_bound(cuts, nodes[i].threshold_or_value) -
-                cuts.begin());
+            tbin[i] =
+                ds.bin_of_threshold(nodes[i].feature_id, nodes[i].threshold_or_value);
         }
     }
     parallel::for_each_index(
@@ -148,7 +145,7 @@ inline void accumulate_train_contribution(DenseTree const &tree, Dataset const &
                 auto const &nd   = nodes[idx];
                 auto const  last = static_cast<bin_id_t>(ds.n_bins(nd.feature_id) - 1);
                 bin_id_t const b = ds.bin_at(nd.feature_id, r);
-                bool const     left = (b == last) ? nd.default_left : b <= tbin[idx];
+                bool const     left = routes_left(b, last, tbin[idx], nd.default_left);
                 idx                 = left ? nd.left : nd.right;
             }
             out[r] += nodes[idx].threshold_or_value;
@@ -162,9 +159,7 @@ inline void accumulate_train_contribution(ObliviousTree const &tree, Dataset con
     std::vector<bin_id_t> tbin(splits.size(), 0);
     for (size_t lvl = 0; lvl < splits.size(); ++lvl)
     {
-        auto const cuts = ds.mappers()[splits[lvl].feature_id].cuts();
-        tbin[lvl]       = static_cast<bin_id_t>(
-            std::ranges::lower_bound(cuts, splits[lvl].threshold) - cuts.begin());
+        tbin[lvl] = ds.bin_of_threshold(splits[lvl].feature_id, splits[lvl].threshold);
     }
     parallel::for_each_index(
         ds.n_rows(),
@@ -176,7 +171,7 @@ inline void accumulate_train_contribution(ObliviousTree const &tree, Dataset con
                 auto const &s    = splits[lvl];
                 auto const  last = static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
                 bin_id_t const b = ds.bin_at(s.feature_id, r);
-                bool const     left = (b == last) ? s.default_left : b <= tbin[lvl];
+                bool const     left = routes_left(b, last, tbin[lvl], s.default_left);
                 index               = (index << 1U) | (left ? 0U : 1U);
             }
             out[r] += tree.leaf_table()[index];
