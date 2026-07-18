@@ -239,30 +239,30 @@ Latest run per device on the YearPredictionMSD pipeline benchmark (full history 
 
 | variant | iters | fit_s | test r2 |
 |---|---|---|---|
-| bonsai_cuda_depthwise | 60 | 9.88 | 0.8455 |
-| bonsai_cuda_depthwise | 80 | 12.72 | 0.8666 |
-| bonsai_cuda_depthwise | 100 | 15.69 | 0.8776 |
-| bonsai_cuda_depthwise | 130 | 19.14 | 0.8860 |
-| bonsai_cuda_depthwise | 200 | 27.26 | 0.8918 |
-| bonsai_cuda_depthwise | 300 | 39.29 | 0.8934 |
-| bonsai_cuda_oblivious | 60 | 9.22 | 0.8380 |
-| bonsai_cuda_oblivious | 80 | 11.58 | 0.8609 |
-| bonsai_cuda_oblivious | 100 | 13.86 | 0.8749 |
-| bonsai_cuda_oblivious | 130 | 17.03 | 0.8861 |
-| bonsai_cuda_oblivious | 200 | 24.47 | 0.8948 |
-| bonsai_cuda_oblivious | 300 | 35.28 | 0.8974 |
-| bonsai_cuda_oblivious | 450 | 49.64 | 0.8981 |
-| xgb_cuda | 100 | 28.01 | 0.8776 |
-| xgb_cuda | 150 | 31.47 | 0.8886 |
-| xgb_cuda | 200 | 34.61 | 0.8919 |
-| xgb_cuda | 300 | 41.04 | 0.8934 |
-| catboost_gpu | 100 | 19.69 | 0.8751 |
-| catboost_gpu | 150 | 23.92 | 0.8892 |
-| catboost_gpu | 200 | 27.88 | 0.8944 |
-| catboost_gpu | 300 | 35.08 | 0.8973 |
-| catboost_gpu | 450 | 46.57 | 0.8980 |
+| bonsai_cuda_depthwise | 60 | 7.73 | 0.8459 |
+| bonsai_cuda_depthwise | 80 | 9.70 | 0.8669 |
+| bonsai_cuda_depthwise | 100 | 11.65 | 0.8777 |
+| bonsai_cuda_depthwise | 130 | 14.48 | 0.8859 |
+| bonsai_cuda_depthwise | 200 | 20.81 | 0.8918 |
+| bonsai_cuda_depthwise | 300 | 28.76 | 0.8934 |
+| bonsai_cuda_oblivious | 60 | 7.04 | 0.8386 |
+| bonsai_cuda_oblivious | 80 | 8.65 | 0.8613 |
+| bonsai_cuda_oblivious | 100 | 10.16 | 0.8743 |
+| bonsai_cuda_oblivious | 130 | 12.45 | 0.8852 |
+| bonsai_cuda_oblivious | 200 | 17.13 | 0.8946 |
+| bonsai_cuda_oblivious | 300 | 23.36 | 0.8973 |
+| bonsai_cuda_oblivious | 450 | 31.93 | 0.8979 |
+| xgb_cuda | 100 | 26.31 | 0.8776 |
+| xgb_cuda | 150 | 29.09 | 0.8886 |
+| xgb_cuda | 200 | 33.15 | 0.8919 |
+| xgb_cuda | 300 | 38.04 | 0.8934 |
+| catboost_gpu | 100 | 18.96 | 0.8751 |
+| catboost_gpu | 150 | 23.60 | 0.8901 |
+| catboost_gpu | 200 | 27.54 | 0.8944 |
+| catboost_gpu | 300 | 35.02 | 0.8973 |
+| catboost_gpu | 450 | 46.43 | 0.8980 |
 
-*Source: [`gpu-pareto-16M-2026-07.jsonl`](../../benchmarks/results/gpu-pareto-16M-2026-07.jsonl). Post-campaign re-run (2026-07-15, decision 72): bonsai is first to every accuracy up to r2 ~0.895, ties catboost through the plateau, and holds the 0.8981 ceiling; the marginal round fell 155 to 104 ms. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md).*
+*Source: [`gpu-pareto-16M-2026-07.jsonl`](../../benchmarks/results/gpu-pareto-16M-2026-07.jsonl). Post-resident-objective re-run (2026-07-18, decision 78): bonsai is first to every measured accuracy at every horizon; the marginal round fell 104 to 64 ms, below catboost's 78 on the same pod, and the last crossover is gone. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md).*
 
 ### Ordered boosting at scale (catboost door)
 
