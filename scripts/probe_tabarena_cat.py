@@ -66,7 +66,6 @@ OUT_JSONL = Path(
 for pkg in sorted((TABARENA_DIR / "packages").glob("*/src")):
     sys.path.insert(0, str(pkg))
 
-import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 from autogluon.tabular.models.catboost.catboost_model import CatBoostModel  # noqa: E402
 
@@ -143,7 +142,8 @@ def build_partition() -> tuple[pd.DataFrame, list[str], list[str]]:
         .reset_index()
     )
     m = piv.merge(
-        md[["dataset_name", "num_features", "percentage_cat_features", "num_cat_est", "num_instances"]],
+        md[["dataset_name", "num_features", "percentage_cat_features",
+            "num_cat_est", "num_instances"]],
         left_on="dataset",
         right_on="dataset_name",
         how="left",
@@ -248,7 +248,8 @@ def main() -> None:
         # Lower metric_error is better throughout.
         row["categorical_share"] = row["cat_native"] - row["cat_ablated"]  # <0 => cats help cat
         row["remaining_gap"] = row["cat_native"] - row["bonsai_ts"]  # <0 => cat beats bts
-        row["noncat_share"] = row["cat_ablated"] - row["bonsai_ts"]  # <0 => cat beats bts even ablated
+        # negative: catboost beats bonsai_ts even without its machinery
+        row["noncat_share"] = row["cat_ablated"] - row["bonsai_ts"]
         rows.append(row)
 
     OUT_JSONL.parent.mkdir(parents=True, exist_ok=True)
@@ -271,7 +272,8 @@ def main() -> None:
         print(f"  mean categorical_share (native-ablated): {g['categorical_share'].mean():+.5f}")
         print(f"  mean remaining_gap    (native-bts)     : {g['remaining_gap'].mean():+.5f}")
         print(f"  mean noncat_share     (ablated-bts)    : {g['noncat_share'].mean():+.5f}")
-        print(f"  native vs cached max |delta|           : {(g['cat_native']-g['cat_cached']).abs().max():.5f}")
+        fidelity = (g["cat_native"] - g["cat_cached"]).abs().max()
+        print(f"  native vs cached max |delta|           : {fidelity:.5f}")
 
     print(f"\nwrote {OUT_JSONL}  ({len(rows)} rows)  wall {time.time()-t0:.1f}s")
 
