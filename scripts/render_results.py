@@ -690,6 +690,27 @@ The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC),
 """
 
 
+
+def ceiling_section() -> str:
+    raw = load_jsonl("single-card-ceiling-2026-07.jsonl")
+    meta = raw[0]["meta"]
+    rows = raw[1:]
+    table = md_table(
+        ["rows", "train() wall", "peak device mem", "throughput", "train r2 (1M sample)"],
+        [[f"{r['rows'] // 1_000_000}M", f"{r['fit_s']:.0f}s",
+          f"{r['peak_dev_mib'] / 1024:.1f} GiB",
+          f"{r['rows_per_s'] / 1e6:.1f}M rows/s", fmt(r["r2_train_1m"], 4)]
+         for r in rows])
+    prov = provenance(
+        ["single-card-ceiling-2026-07.jsonl"],
+        "Single-pod ladder (2026-07-18, " + meta["gpu"] + "): a 500M x 100 "
+        "float32 matrix trains end to end on one 80GB card at 71.6 GiB peak, "
+        "60 rounds in 8.5 minutes, with the device-resident objective keeping "
+        "the fit loop bus-free. Evidence: "
+        "[benchmarks/single-card-ceiling-2026-07.md]"
+        "(../../benchmarks/single-card-ceiling-2026-07.md).")
+    return "## The single-card ceiling\n\n" + table + "\n\n" + prov + "\n"
+
 def render() -> str:
     parts = [
         HEADER,
@@ -699,6 +720,7 @@ def render() -> str:
         rebaseline_section(),
         perf_tracks_section(),
         airline_section(),
+        ceiling_section(),
     ]
     return "\n".join(parts)
 

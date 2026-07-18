@@ -1,0 +1,5 @@
+{"meta": {"gpu": "NVIDIA A100-SXM4-80GB", "cols": 100, "iters": 60, "grower": "cuda_oblivious", "objective": "mse", "bins": 255, "depth": 8, "date": "2026-07-18", "protocol": "single pod, one 500M-row float32 memmap, ladder as prefix views, train() wall time includes device ingest and binning"}}
+{"rows": 300000000, "fit_s": 328.5, "peak_dev_mib": 43175, "r2_train_1m": 0.8305, "rows_per_s": 54798118}
+{"rows": 400000000, "fit_s": 414.2, "peak_dev_mib": 57383, "r2_train_1m": 0.8303, "rows_per_s": 57944234}
+{"rows": 450000000, "fit_s": 465.1, "peak_dev_mib": 64519, "r2_train_1m": 0.834, "rows_per_s": 58048540}
+{"rows": 500000000, "fit_s": 512.6, "peak_dev_mib": 71623, "r2_train_1m": 0.8329, "rows_per_s": 58527323}
