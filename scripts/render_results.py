@@ -618,7 +618,7 @@ Latest run per device on the YearPredictionMSD pipeline benchmark (full history 
 
 {par_table}
 
-{provenance(["gpu-pareto-16M-2026-07.jsonl"], "Post-campaign re-run (2026-07-15, decision 72): bonsai is first to every accuracy up to r2 ~0.895, ties catboost through the plateau, and holds the 0.8981 ceiling; the marginal round fell 155 to 104 ms. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md).")}
+{provenance(["gpu-pareto-16M-2026-07.jsonl"], "Post-resident-objective re-run (2026-07-18, decision 78): bonsai is first to every measured accuracy at every horizon; the marginal round fell 104 to 64 ms, below catboost's 78 on the same pod, and the last crossover is gone. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md).")}
 
 ### Ordered boosting at scale (catboost door)
 
