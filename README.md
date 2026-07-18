@@ -113,7 +113,7 @@ Every claim links a reproducible run and the decision that records it; the point
 | **Categorical parity with catboost within chance-band**, via preprocessing not an engine feature | [decision 58](https://daniel-m-campos.github.io/bonsai/decisions/); [categorical-tradeoff](benchmarks/categorical-tradeoff-2026-07.md); [`encoding.py`](python/bonsai/encoding.py) |
 | **~3x less host memory than xgboost at 16M** (7.0 vs 22.2GB) and ~3x faster predict | [rebaseline jsonl](benchmarks/results/rebaseline-2026-07.jsonl) |
 | **Ranking is a measured, scoped gap**: ~+0.015 NDCG@10 to a listwise loss, not pairwise LambdaRank | [ranking-tradeoff](benchmarks/ranking-tradeoff-2026-07.md); [`probe_ranking.py`](scripts/probe_ranking.py) |
-| **Every feature earns its place by measurement**; refutations are recorded too | the [feature-admission gate](https://daniel-m-campos.github.io/bonsai/method/feature-admission/); declines in decisions 58/62/67 |
+| **Every feature earns its place by measurement**; refutations are recorded too | the [feature-admission gate](https://daniel-m-campos.github.io/bonsai/method/how-we-decide/); declines in decisions 58/62/67 |
 
 ## Documentation
 
