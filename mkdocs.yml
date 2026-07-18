@@ -40,6 +40,8 @@ theme:
 # directories above; a new top-level docs/*.md is published by default, so
 # only create one when it belongs on the site.
 exclude_docs: |
+  STYLE.md
+  FEEDBACK.md
   ops/
   conversations/
   reviews/
