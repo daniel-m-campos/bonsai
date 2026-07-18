@@ -15,12 +15,15 @@ namespace bonsai
 // Objectives whose gradient and hessian a device backend can derive from
 // resident scores and labels, with no host objective pass and no per-tree
 // gradient upload. Squared error is the trivial case: g = score - label,
-// h = 1. The booster and the CUDA engine share this tag so the resident
-// seam is decided once, and this core header carries no CUDA include.
+// h = 1. LogLoss and Poisson add a transcendental per row (sigmoid, exp) but
+// stay two-line kernels. The booster and the CUDA engine share this tag so the
+// resident seam is decided once, and this core header carries no CUDA include.
 enum class DeviceObjectiveKind : uint8_t
 {
     none,
     mse,
+    logloss,
+    poisson,
 };
 
 template <typename Objective> struct device_objective_kind_of
@@ -31,6 +34,16 @@ template <typename Objective> struct device_objective_kind_of
 template <> struct device_objective_kind_of<MSEObjective>
 {
     static constexpr DeviceObjectiveKind value = DeviceObjectiveKind::mse;
+};
+
+template <> struct device_objective_kind_of<LogLossObjective>
+{
+    static constexpr DeviceObjectiveKind value = DeviceObjectiveKind::logloss;
+};
+
+template <> struct device_objective_kind_of<PoissonObjective>
+{
+    static constexpr DeviceObjectiveKind value = DeviceObjectiveKind::poisson;
 };
 
 template <typename Objective>

@@ -408,7 +408,9 @@ void CudaDeviceContext::begin_tree(Dataset const &ds, floats_view grad,
         auto       lap = prof_counters.lap();
         auto const n   = static_cast<uint32_t>(resident.n_rows);
         grads.gh.reserve(resident.n_rows);
-        gh_from_scores(resident.scores.data(), resident.labels.data(), n,
+        gh_from_scores(resident.kind, resident.weighted, resident.scores.data(),
+                       resident.labels.data(),
+                       resident.weighted ? resident.weights.data() : nullptr, n,
                        grads.gh.data());
         lap(prof_counters.obj_kernel_s);
         return;
@@ -935,7 +937,8 @@ bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind ki
                                        std::span<float const> initial_scores,
                                        float                  learning_rate)
 {
-    if (kind != DeviceObjectiveKind::mse)
+    if (kind != DeviceObjectiveKind::mse && kind != DeviceObjectiveKind::logloss &&
+        kind != DeviceObjectiveKind::poisson)
     {
         return false;
     }
@@ -960,9 +963,15 @@ bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind ki
     if (!(resident.labels_key == data.key))
     {
         resident.labels.upload(ds.labels().data(), ds.labels().size());
+        if (!ds.weights().empty())
+        {
+            resident.weights.upload(ds.weights().data(), ds.weights().size());
+        }
         resident.labels_key = data.key;
     }
     resident.scores.upload(initial_scores.data(), initial_scores.size());
+    resident.kind          = kind;
+    resident.weighted      = !ds.weights().empty();
     resident.n_rows        = ds.n_rows();
     resident.learning_rate = learning_rate;
     resident.armed         = true;

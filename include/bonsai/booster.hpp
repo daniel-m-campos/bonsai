@@ -436,10 +436,12 @@ class Booster final : public IBooster
     // the GPU and derives grad/hess there, the whole host objective / score
     // round-trip is skipped and this returns true. Gated at compile time on
     // the objective (must have a device gradient) and the sampler (must not
-    // read gradients), and at run time on no DART, no sample weights, and the
-    // escape hatch. The resident state is armed for ONE Dataset: a different
-    // one (or a runtime gate flipping) syncs scores home and disarms, so the
-    // host path always resumes with the same state it would have had.
+    // read gradients), and at run time on no DART and the escape hatch. Sample
+    // weights are handled device-side (the gradient kernel scales grad/hess by
+    // the resident weight), so a weighted fit stays eligible. The resident
+    // state is armed for ONE Dataset: a different one (or a runtime gate
+    // flipping) syncs scores home and disarms, so the host path always resumes
+    // with the same state it would have had.
     bool try_resident_round(Dataset const &train)
     {
         if constexpr (device_objective_kind<objective_type> !=
@@ -448,8 +450,7 @@ class Booster final : public IBooster
                        std::same_as<sampler_type, BernoulliSampler>) )
         {
             bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;
-            bool const runtime_ok  = config_.dart_drop_rate <= 0.0F &&
-                                    train.weights().empty() && !host_forced;
+            bool const runtime_ok  = config_.dart_drop_rate <= 0.0F && !host_forced;
             if (resident_active_ && (!runtime_ok || resident_train_ != &train))
             {
                 grower_.resident_end(std::span<float>{scores_});
@@ -473,10 +474,10 @@ class Booster final : public IBooster
     }
 
     // One boosting round with the resident objective armed: no host objective,
-    // no weights loop, no leaf renewal (MSE has none), no host score update.
-    // The sampler still runs (Bernoulli needs its indices; AllRows is the
-    // freebie above) and grow returns an empty per-row output: the device
-    // already derived the gradients and fused the score update.
+    // no weights loop, no leaf renewal (the eligible objectives have none), no
+    // host score update. The sampler still runs (Bernoulli needs its indices;
+    // AllRows is the freebie above) and grow returns an empty per-row output:
+    // the device already derived the gradients and fused the score update.
     void resident_round(Dataset const &train)
     {
         auto                    &prof = detail::FitProfiler::instance();
