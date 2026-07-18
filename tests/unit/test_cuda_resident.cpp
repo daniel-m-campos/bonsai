@@ -55,7 +55,11 @@ struct RegData
 // A linear-signal regression scenario with light noise: comfortably above the
 // engine's CPU-fallback cutoff so the device path (and thus resident mode)
 // really runs, and learnable enough that r2 is a meaningful sanity gate.
-RegData make_regression(size_t n, size_t nf, uint32_t seed, bool binary = false)
+// `weighted` attaches non-uniform per-row weights, drawn AFTER the feature and
+// label stream so the same seed yields identical features/labels with and
+// without them (the "weights actually change the model" A/B relies on that).
+RegData make_regression(size_t n, size_t nf, uint32_t seed, bool binary = false,
+                        bool weighted = false)
 {
     std::mt19937                          rng(seed);
     std::uniform_real_distribution<float> u(0.0F, 1.0F);
@@ -102,6 +106,66 @@ RegData make_regression(size_t n, size_t nf, uint32_t seed, bool binary = false)
         for (size_t r = 0; r < n; ++r)
         {
             batch.labels[r] = signal[r];
+        }
+    }
+    if (weighted)
+    {
+        batch.weights.assign(n, 0.0F);
+        for (size_t r = 0; r < n; ++r)
+        {
+            batch.weights[r] = 0.25F + (3.75F * u(rng)); // in [0.25, 4.0]
+        }
+    }
+    std::vector<float> y(batch.labels.begin(), batch.labels.end());
+    return RegData{.built      = test::build(std::move(batch)),
+                   .raw        = std::move(raw),
+                   .y          = std::move(y),
+                   .n_rows     = n,
+                   .n_features = nf};
+}
+
+// Count-valued targets for Poisson: y ~ round(exp(signal)), y >= 0. `log_rate_offset`
+// shifts every log-rate, so a large positive offset lands the init score and
+// the per-row scores in the clamp region (|score| > k_poisson_max_log), driving
+// the device kernel's fminf/fmaxf clamp on every gradient.
+RegData make_counts(size_t n, size_t nf, uint32_t seed, float log_rate_offset = 0.0F,
+                    bool weighted = false)
+{
+    std::mt19937                          rng(seed);
+    std::uniform_real_distribution<float> u(0.0F, 1.0F);
+    std::vector<float>                    coef(nf);
+    for (float &c : coef)
+    {
+        c = (u(rng) * 1.2F) - 0.4F;
+    }
+    detail::ColumnBatch batch;
+    batch.features.assign(nf, std::vector<float>(n));
+    batch.feature_names.resize(nf);
+    for (size_t j = 0; j < nf; ++j)
+    {
+        batch.feature_names[j] = "f" + std::to_string(j);
+    }
+    batch.labels.assign(n, 0.0F);
+    std::vector<float> raw(n * nf);
+    for (size_t r = 0; r < n; ++r)
+    {
+        float s = 0.0F;
+        for (size_t j = 0; j < nf; ++j)
+        {
+            float const v        = u(rng);
+            batch.features[j][r] = v;
+            raw[(r * nf) + j]    = v;
+            s += coef[j] * v;
+        }
+        double const rate = std::exp(static_cast<double>(s + log_rate_offset));
+        batch.labels[r]   = static_cast<float>(std::llround(rate));
+    }
+    if (weighted)
+    {
+        batch.weights.assign(n, 0.0F);
+        for (size_t r = 0; r < n; ++r)
+        {
+            batch.weights[r] = 0.25F + (3.75F * u(rng));
         }
     }
     std::vector<float> y(batch.labels.begin(), batch.labels.end());
@@ -197,6 +261,11 @@ template <typename G>
 using MseBernoulliBooster = Booster<MSEObjective, G, BernoulliSampler>;
 template <typename G>
 using LogLossBooster = Booster<LogLossObjective, G, AllRowsSampler>;
+template <typename G>
+using LogLossBernoulliBooster = Booster<LogLossObjective, G, BernoulliSampler>;
+template <typename G>
+using PoissonBooster                   = Booster<PoissonObjective, G, AllRowsSampler>;
+template <typename G> using MaeBooster = Booster<MAEObjective, G, AllRowsSampler>;
 
 } // namespace
 
@@ -345,28 +414,182 @@ TEST_CASE("Escape hatch: BONSAI_HOST_OBJECTIVE forces the host path",
     REQUIRE(r2_of(host, data.y) == Catch::Approx(r2_of(res, data.y)).margin(1e-4));
 }
 
-TEST_CASE("LogLoss takes the host path and trains on GPU", "[cuda][resident]")
+double accuracy_of(std::vector<float> const &pred, std::vector<float> const &y)
+{
+    size_t correct = 0;
+    for (size_t i = 0; i < y.size(); ++i)
+    {
+        float const p = 1.0F / (1.0F + std::exp(-pred[i]));
+        if ((p >= 0.5F ? 1.0F : 0.0F) == y[i])
+        {
+            ++correct;
+        }
+    }
+    return static_cast<double>(correct) / static_cast<double>(y.size());
+}
+
+TEST_CASE("Resident LogLoss matches host-objective GPU (depthwise)", "[cuda][resident]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident LogLoss needs a usable CUDA device");
+    }
+    auto const data = make_regression(8192, 6, 31, /*binary=*/true);
+    auto const cfg  = reg_cfg();
+    // device_objective_kind<LogLoss> is logloss, so the resident sigmoid kernel
+    // derives (p - y, p(1 - p)) on device; the host arm forces the CPU objective.
+    auto const host =
+        fit_predict<LogLossBooster<CudaDepthwiseGrower>>(cfg, data, 40, true);
+    auto const res =
+        fit_predict<LogLossBooster<CudaDepthwiseGrower>>(cfg, data, 40, false);
+    report("logloss", host, res, data.y);
+
+    // Identity fit: both arms build histograms and root sums on device, so the
+    // only divergence is the sigmoid's transcendental ulp plus atomic-add order.
+    // The four-decimal r2 convention holds; predictions agree closely.
+    REQUIRE(accuracy_of(res, data.y) > 0.9);
+    REQUIRE(r2_of(res, data.y) == Catch::Approx(r2_of(host, data.y)).margin(1e-4));
+    REQUIRE(max_abs_diff(host, res) < 5e-2F);
+}
+
+TEST_CASE("Resident LogLoss matches host-objective GPU (oblivious)", "[cuda][resident]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident LogLoss needs a usable CUDA device");
+    }
+    auto const data = make_regression(8192, 6, 37, /*binary=*/true);
+    auto const cfg  = reg_cfg();
+    auto const host =
+        fit_predict<LogLossBooster<CudaObliviousGrower>>(cfg, data, 40, true);
+    auto const res =
+        fit_predict<LogLossBooster<CudaObliviousGrower>>(cfg, data, 40, false);
+    report("logloss-ob", host, res, data.y);
+
+    REQUIRE(accuracy_of(res, data.y) > 0.9);
+    REQUIRE(r2_of(res, data.y) == Catch::Approx(r2_of(host, data.y)).margin(1e-4));
+    REQUIRE(max_abs_diff(host, res) < 5e-2F);
+}
+
+TEST_CASE("Resident Poisson matches host-objective GPU (depthwise)", "[cuda][resident]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident Poisson needs a usable CUDA device");
+    }
+    auto const data = make_counts(8192, 6, 41);
+    auto const cfg  = reg_cfg();
+    // device_objective_kind<Poisson> is poisson: the resident kernel clamps the
+    // score, exponentiates, and writes (mu - y, mu) exactly as the host does.
+    auto const host =
+        fit_predict<PoissonBooster<CudaDepthwiseGrower>>(cfg, data, 40, true);
+    auto const res =
+        fit_predict<PoissonBooster<CudaDepthwiseGrower>>(cfg, data, 40, false);
+    report("poisson", host, res, data.y);
+
+    REQUIRE(std::isfinite(r2_of(res, data.y)));
+    REQUIRE(r2_of(res, data.y) == Catch::Approx(r2_of(host, data.y)).margin(1e-4));
+    REQUIRE(max_abs_diff(host, res) < 5e-2F);
+}
+
+TEST_CASE("Resident Poisson clamps runaway scores, parity holds at the clamp",
+          "[cuda][resident]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident Poisson needs a usable CUDA device");
+    }
+    // Counts around exp(31.5): the init score log(mean) > k_poisson_max_log, so
+    // every row's score sits in the clamp region from round one and the device
+    // kernel's fminf/fmaxf fires each gradient. Both arms clamp to the same
+    // constant, so parity holds and no score turns to inf/nan.
+    auto const data           = make_counts(4096, 4, 43, /*log_rate_offset=*/31.5F);
+    Config     cfg            = reg_cfg();
+    cfg.tree_config.max_depth = 3;
+    auto const host =
+        fit_predict<PoissonBooster<CudaDepthwiseGrower>>(cfg, data, 12, true);
+    auto const res =
+        fit_predict<PoissonBooster<CudaDepthwiseGrower>>(cfg, data, 12, false);
+    report("poisson-clamp", host, res, data.y);
+
+    for (float const p : res)
+    {
+        REQUIRE(std::isfinite(p));
+    }
+    REQUIRE(r2_of(res, data.y) == Catch::Approx(r2_of(host, data.y)).margin(1e-3));
+    REQUIRE(max_abs_diff(host, res) < 1e-1F);
+}
+
+TEST_CASE(
+    "Resident weighted MSE matches host-objective GPU and differs from unweighted",
+    "[cuda][resident]")
 {
     if (!cuda_available())
     {
         SKIP("resident MSE needs a usable CUDA device");
     }
-    auto const data = make_regression(8192, 6, 31, /*binary=*/true);
-    auto const cfg  = reg_cfg();
-    // device_objective_kind<LogLoss> is none, so the resident block is compiled
-    // out and LogLoss trains through the host objective path on the GPU grower.
-    auto const pred =
-        fit_predict<LogLossBooster<CudaDepthwiseGrower>>(cfg, data, 40, false);
-    size_t correct = 0;
-    for (size_t i = 0; i < data.n_rows; ++i)
+    auto const wdata =
+        make_regression(8192, 6, 47, /*binary=*/false, /*weighted=*/true);
+    auto const udata =
+        make_regression(8192, 6, 47, /*binary=*/false, /*weighted=*/false);
+    auto const cfg = reg_cfg();
+
+    // Weighted resident vs weighted host: the device kernel scales (grad, hess)
+    // by the resident weight, the same multiply the host arm applies on the CPU.
+    auto const host =
+        fit_predict<MseBooster<CudaDepthwiseGrower>>(cfg, wdata, 40, true);
+    auto const res =
+        fit_predict<MseBooster<CudaDepthwiseGrower>>(cfg, wdata, 40, false);
+    report("wmse", host, res, wdata.y);
+    REQUIRE(r2_of(res, wdata.y) == Catch::Approx(r2_of(host, wdata.y)).margin(1e-4));
+    REQUIRE(max_abs_diff(host, res) < 2e-2F);
+
+    // Same features/labels, no weights: the weighted model must actually differ,
+    // proving the weights reached the device gradient (not silently dropped).
+    auto const unweighted =
+        fit_predict<MseBooster<CudaDepthwiseGrower>>(cfg, udata, 40, false);
+    REQUIRE(max_abs_diff(res, unweighted) > 1e-3F);
+}
+
+TEST_CASE("Resident weighted LogLoss under Bernoulli sampling matches host",
+          "[cuda][resident]")
+{
+    if (!cuda_available())
     {
-        float const p = 1.0F / (1.0F + std::exp(-pred[i]));
-        if ((p >= 0.5F ? 1.0F : 0.0F) == data.y[i])
-        {
-            ++correct;
-        }
+        SKIP("resident LogLoss needs a usable CUDA device");
     }
-    double const acc = static_cast<double>(correct) / static_cast<double>(data.n_rows);
-    INFO("logloss accuracy=" << acc);
-    REQUIRE(acc > 0.9);
+    auto   data = make_regression(8192, 6, 53, /*binary=*/true, /*weighted=*/true);
+    Config cfg  = reg_cfg();
+    cfg.sampler.subsample = 0.7F; // Bernoulli row sampling on top of weights
+
+    auto const host =
+        fit_predict<LogLossBernoulliBooster<CudaDepthwiseGrower>>(cfg, data, 40, true);
+    auto const res =
+        fit_predict<LogLossBernoulliBooster<CudaDepthwiseGrower>>(cfg, data, 40, false);
+    report("wlogloss-bern", host, res, data.y);
+
+    // Bernoulli subsets reduce differently on host (serial) vs device (blocked),
+    // widening the band as the MSE-Bernoulli case documents; both stay accurate.
+    REQUIRE(accuracy_of(res, data.y) > 0.85);
+    REQUIRE(r2_of(res, data.y) == Catch::Approx(r2_of(host, data.y)).margin(3e-3));
+    REQUIRE(max_abs_diff(host, res) < 0.35F);
+}
+
+TEST_CASE("MAE stays on the host path, the escape hatch is a no-op", "[cuda][resident]")
+{
+    if (!cuda_available())
+    {
+        SKIP("this MAE proxy needs a usable CUDA device");
+    }
+    auto const data = make_regression(8192, 6, 59);
+    auto const cfg  = reg_cfg();
+    // device_objective_kind<MAE> is none, so try_resident_round is compiled out
+    // and MAE always trains on the host objective path. The behavioral proof:
+    // BONSAI_HOST_OBJECTIVE has no path to toggle, so forcing it changes nothing
+    // and the two models are byte-for-byte identical (a resident objective would
+    // diverge here on the atomic-order tolerance).
+    auto const def = fit_predict<MaeBooster<CudaDepthwiseGrower>>(cfg, data, 40, false);
+    auto const forced =
+        fit_predict<MaeBooster<CudaDepthwiseGrower>>(cfg, data, 40, true);
+    REQUIRE(max_abs_diff(def, forced) == 0.0F);
 }

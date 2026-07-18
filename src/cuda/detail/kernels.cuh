@@ -18,6 +18,7 @@
 
 #include <vector_types.h>
 
+#include "bonsai/objective_traits.hpp"
 #include "bonsai/split.hpp"
 
 #include "device_buffer.cuh"
@@ -744,24 +745,94 @@ __global__ void map_leaf_values_kernel(uint32_t const *leaf_by_row,
     values[r]           = leaf < n_values ? node_values[leaf] : 0.0F;
 }
 
-// Device-resident MSE gradient: per row g = score - label, h = 1, written
-// interleaved straight into the gh pair buffer. Replaces the host objective
-// pass plus the per-tree grad/hess upload and interleave.
+// Device-resident objective gradient: per row derive (grad, hess) from the
+// resident score and label and write them interleaved straight into the gh
+// pair buffer, replacing the host objective pass plus the per-tree grad/hess
+// upload and interleave. The per-row formulas mirror src/objective.cpp exactly
+// in float (expf, no fast-math intrinsics, so the transcendental matches the
+// host's std::exp to ulp). Weighted rows scale both grad and hess by w[r],
+// the same host multiply the resident path skips.
+template <DeviceObjectiveKind Kind, bool Weighted>
 __global__ void gh_from_scores_kernel(float const *scores, float const *labels,
-                                      uint32_t n, float2 *gh)
+                                      float const *weights, uint32_t n, float2 *gh)
 {
     uint32_t const span = gridDim.x * blockDim.x;
     for (uint32_t r = (blockIdx.x * blockDim.x) + threadIdx.x; r < n; r += span)
     {
-        gh[r] = {.x = scores[r] - labels[r], .y = 1.0F};
+        float const s = scores[r];
+        float const y = labels[r];
+        float       g = 0.0F;
+        float       h = 0.0F;
+        if constexpr (Kind == DeviceObjectiveKind::mse)
+        {
+            g = s - y;
+            h = 1.0F;
+        }
+        else if constexpr (Kind == DeviceObjectiveKind::logloss)
+        {
+            float const p = 1.0F / (1.0F + expf(-s));
+            g             = p - y;
+            h             = p * (1.0F - p);
+        }
+        else if constexpr (Kind == DeviceObjectiveKind::poisson)
+        {
+            float const sc = fminf(fmaxf(s, -k_poisson_max_log), k_poisson_max_log);
+            float const mu = expf(sc);
+            g              = mu - y;
+            h              = mu;
+        }
+        if constexpr (Weighted)
+        {
+            float const w = weights[r];
+            g *= w;
+            h *= w;
+        }
+        gh[r] = {.x = g, .y = h};
     }
 }
 
-inline void gh_from_scores(float const *scores, float const *labels, uint32_t n,
+template <DeviceObjectiveKind Kind>
+inline void gh_from_scores_weighted(bool weighted, float const *scores,
+                                    float const *labels, float const *weights,
+                                    uint32_t n, float2 *gh, dim3 grid, dim3 block)
+{
+    if (weighted)
+    {
+        gh_from_scores_kernel<Kind, true>
+            <<<grid, block>>>(scores, labels, weights, n, gh);
+    }
+    else
+    {
+        gh_from_scores_kernel<Kind, false>
+            <<<grid, block>>>(scores, labels, weights, n, gh);
+    }
+}
+
+// Runtime dispatch on the resident objective kind to the matching compile-time
+// instantiation. `none` never reaches here (resident_begin rejects it).
+inline void gh_from_scores(DeviceObjectiveKind kind, bool weighted, float const *scores,
+                           float const *labels, float const *weights, uint32_t n,
                            float2 *gh)
 {
-    gh_from_scores_kernel<<<dim3(std::clamp<uint32_t>(n / 256, 1, 1024)), dim3(256)>>>(
-        scores, labels, n, gh);
+    dim3 const grid(std::clamp<uint32_t>(n / 256, 1, 1024));
+    dim3 const block(256);
+    switch (kind)
+    {
+    case DeviceObjectiveKind::mse:
+        gh_from_scores_weighted<DeviceObjectiveKind::mse>(weighted, scores, labels,
+                                                          weights, n, gh, grid, block);
+        break;
+    case DeviceObjectiveKind::logloss:
+        gh_from_scores_weighted<DeviceObjectiveKind::logloss>(
+            weighted, scores, labels, weights, n, gh, grid, block);
+        break;
+    case DeviceObjectiveKind::poisson:
+        gh_from_scores_weighted<DeviceObjectiveKind::poisson>(
+            weighted, scores, labels, weights, n, gh, grid, block);
+        break;
+    case DeviceObjectiveKind::none:
+        break;
+    }
     check(cudaGetLastError(), "gh_from_scores launch");
 }
 

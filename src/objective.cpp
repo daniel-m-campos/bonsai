@@ -252,15 +252,15 @@ float QuantileObjective::renew_leaf(std::span<float> residuals) const
 
 // Poisson NLL with a log link: L(F) = exp(F) - y*F (up to a y-only
 // constant), so grad = exp(F) - y and hess = exp(F). Raw scores clamp to
-// +-k_max_log before exp so a runaway leaf can't overflow to inf and poison
-// every later gradient — the guard role xgboost's max_delta_step plays.
+// +-k_poisson_max_log before exp so a runaway leaf can't overflow to inf and
+// poison every later gradient, the guard role xgboost's max_delta_step plays.
+// The clamp constant lives in objective.hpp so the device gradient kernel
+// shares it.
 namespace
 {
-constexpr float k_max_log = 30.0F; // exp(30) ~ 1e13: far past any sane rate
-
 float clamped_exp(float raw)
 {
-    return std::exp(std::clamp(raw, -k_max_log, k_max_log));
+    return std::exp(std::clamp(raw, -k_poisson_max_log, k_poisson_max_log));
 }
 } // namespace
 
@@ -283,7 +283,7 @@ float PoissonObjective::eval(floats_view scores, floats_view targets)
     double total = 0.0;
     for (size_t i = 0; i < scores.size(); ++i)
     {
-        float const f = std::clamp(scores[i], -k_max_log, k_max_log);
+        float const f = std::clamp(scores[i], -k_poisson_max_log, k_poisson_max_log);
         total += static_cast<double>(clamped_exp(f)) -
                  (static_cast<double>(targets[i]) * static_cast<double>(f));
     }

@@ -159,8 +159,9 @@ class CudaHistogramEngine
     // the engine derives grad/hess from them on device (no host objective, no
     // gh upload); the resident finalize walks the finished tree in bin space
     // and fuses scores[r] += lr * value on device (no values/leaf_ids D2H).
-    // resident_begin uploads labels (keyed by dataset identity) and the initial
-    // scores once, and returns false when the objective is unsupported or the
+    // resident_begin uploads labels and, when the dataset is weighted, the row
+    // weights (both keyed by dataset identity) plus the initial scores once, and
+    // returns false when the objective is unsupported or the
     // capacity that lets every tree stay device-resident does not hold: the
     // caller then trains on the host path unchanged. resident_end downloads the
     // scores so the host copy is authoritative again.

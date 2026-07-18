@@ -246,13 +246,15 @@ struct CudaDeviceContext
     };
 
     // Device-resident objective plane: labels and the per-row score vector live
-    // here for the whole fit. begin_tree derives gh from them; the resident
-    // finalize walks the finished tree (SoA node arrays) and fuses the score
-    // update. Labels are keyed by dataset identity so a re-fit skips re-upload.
+    // here for the whole fit. begin_tree derives gh from them by the kind's
+    // gradient kernel; the resident finalize walks the finished tree (SoA node
+    // arrays) and fuses the score update. Labels (and weights, when the dataset
+    // carries them) are keyed by dataset identity so a re-fit skips re-upload.
     struct ResidentPlane
     {
         DeviceBuffer<float> labels;
         DeviceBuffer<float> scores;
+        DeviceBuffer<float> weights; // uploaded only when the dataset is weighted
         DatasetKey          labels_key;
         Staged<uint32_t>    node_feature;
         Staged<uint32_t>    node_split_bin;
@@ -261,6 +263,8 @@ struct CudaDeviceContext
         Staged<uint32_t>    node_default_left;
         Staged<uint32_t>    node_is_leaf;
         Staged<float>       node_value;
+        DeviceObjectiveKind kind          = DeviceObjectiveKind::none;
+        bool                weighted      = false;
         bool                armed         = false;
         float               learning_rate = 0.0F;
         size_t              n_rows        = 0;

@@ -40,10 +40,16 @@ struct LogLossObjective
     static float init_score(floats_view labels);
 };
 
+// Poisson raw-score clamp: log-rates clamp to +-this before exp so a runaway
+// leaf cannot overflow to inf and poison every later gradient. exp(30) ~ 1e13,
+// far past any sane rate. Named here so the host objective and the device
+// gradient kernel clamp with one identical constant.
+inline constexpr float k_poisson_max_log = 30.0F;
+
 // Poisson negative log-likelihood with a log link: raw scores are
 // log-rates, grad = exp(F) - y, hess = exp(F). Labels must be >= 0
-// (init_score throws otherwise). Raw scores are clamped to +-k_max_log
-// inside compute/eval so the exp never overflows — the same guard role
+// (init_score throws otherwise). Raw scores are clamped to +-k_poisson_max_log
+// inside compute/eval so the exp never overflows, the same guard role
 // xgboost's max_delta_step plays for count:poisson.
 struct PoissonObjective
 {
