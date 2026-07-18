@@ -16,7 +16,7 @@ This is not an aesthetic. A bit-exact contract turns "did this change alter beha
 
 **Features that provably cost nothing when off.** New per-row weighting multiplies gradients by 1.0 when unweighted, which is exact in IEEE arithmetic, so every existing model stays byte-identical and the hash gate verifies it. The pattern generalizes: design the off-state of a feature to be arithmetically inert, then let the gate prove it.
 
-**AI-assisted development without trust.** Large parts of bonsai are written by Claude ([how bonsai is built](../about.md)). The reason that works is precisely this contract: an implementation campaign cannot silently change numerical behavior, because the gate would catch the changed bytes. Verification substitutes for trust at exactly the point where trust is weakest.
+**AI-assisted development without trust.** Large parts of bonsai are written by Claude ([built with Claude](../index.md#built-with-claude)). The reason that works is precisely this contract: an implementation campaign cannot silently change numerical behavior, because the gate would catch the changed bytes. Verification substitutes for trust at exactly the point where trust is weakest.
 
 ## Transferring it
 

@@ -45,9 +45,11 @@ Every chapter has the same skeleton:
 
 ## Reading order
 
-Chapter 0 is the on-ramp; 1–4 are the core algorithm and build on each
-other. 5–9 are independent; read them as the corresponding knob becomes
-relevant. 10–13 assume the core and go where the engineering is.
+Chapter 0 is the on-ramp. Chapters 1 to 4 are the core algorithm and build
+on each other. Chapters 5 to 9 are independent; read each as the matching
+knob becomes relevant. Chapters 10 and 11 go where the engineering is: GPU
+training, then performance. Chapters 12 and 13 are applied chapters that put
+the core to work: multiclass, then categorical features.
 For design *rationale* (why this data layout, why this dispatch mechanism)
-see [architecture/](../architecture/); for the audit trail of every
-non-trivial choice, [decisions.md](../decisions.md).
+see the [architecture notes](../architecture/README.md); for the audit trail
+of every non-trivial choice, [decisions.md](../decisions.md).

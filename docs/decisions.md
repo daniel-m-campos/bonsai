@@ -1,5 +1,7 @@
 # Decisions
 
+This log is the historical engineering record, kept for reference and for agents working in the codebase. The curated design pages live in the [Design](design/determinism.md) section.
+
 Append-only log. Order = decision order. Caveman style. New entries at bottom.
 
 ---

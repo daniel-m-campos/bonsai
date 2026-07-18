@@ -10,9 +10,9 @@ Linux and macOS arm64, Python 3.9 to 3.13, no toolchain; on linux x86_64 the whe
 
 bonsai began as a learning project: rebuild gradient-boosted trees from first principles to understand how the production libraries actually work, in a small codebase that takes modern C++23 and software design as seriously as the algorithms.
 
-The scope escalated. [Developed with Claude](about.md), milestones that were meant to be the finish line kept falling: CPU parity, then GPU parity, then GPU leads. The ambition grew with them: assimilate the defining ideas of xgboost, lightgbm, and catboost into one small library, match or beat their performance, and keep the code clean enough that reading it is still the point.
+The scope escalated. [Built with Claude](#built-with-claude), milestones that were meant to be the finish line kept falling: CPU parity, then GPU parity, then GPU leads. The ambition grew with them: assimilate the defining ideas of xgboost, lightgbm, and catboost into one small library, match or beat their performance, and keep the code clean enough that reading it is still the point.
 
-Where that landed, measured on shared hardware at matched settings: on GPU, bonsai holds the fastest slot at every row scale tested, edging catboost and beating xgboost at 16M rows at matched accuracy, on ~3× less host memory. Where it still loses (catboost on wide data, xgboost's last +0.001 r² of cut quality), the runs are linked with the same prominence as the wins.
+Where that landed, measured on shared hardware at matched settings: on GPU, bonsai holds the fastest slot at every row scale tested, edging catboost and beating xgboost at 16M rows at matched accuracy, on ~3x less host memory. Where it still loses (catboost on wide data, xgboost's last 0.001 r² of cut quality), the runs are linked with the same prominence as the wins.
 
 One property none of the reference libraries offer: models are bit-identical across CPU architectures and thread counts, enforced per-commit in CI.
 
@@ -22,12 +22,10 @@ One property none of the reference libraries offer: models are bit-identical acr
 
 **[Use](use/install.md)**: [install in one command](use/install.md), then [the whole API in one read](use/api-tour.md): sklearn-shaped estimators and an explicit `train(params, ...)` layer over the same engine, dotted config keys that are exactly the CLI's `--set` keys, one `.msgpack` model that round-trips everywhere. [Building from source](use/building.md) when a wheel is not enough.
 
-**Lineage**: the assimilation, idea by idea: what each reference library contributed, and whether measurement here adopted it, rebuilt it smaller, or declined it with the evidence recorded. [XGBoost](lineage/xgboost.md) · [LightGBM](lineage/lightgbm.md) · [CatBoost](lineage/catboost.md).
+**[Results](method/README.md)**: every speed and accuracy claim as a committed run on named hardware. The three headline numbers first, then [the benchmark protocol](method/benchmark-protocol.md), [how we decide](method/how-we-decide.md), and the full [results ledger](method/results.md).
 
-**[Method](method/README.md)**: the measurement discipline that governed the scope escalation, portable to other performance-critical systems: [instrument-first optimization](method/instrument-first.md), a [feature-admission gate](method/feature-admission.md) with pre-registered kill criteria, [same-pod benchmarking](method/benchmarking.md), and [bit-exact determinism](method/determinism.md) as a testable contract.
+**[Design](design/determinism.md)**: the contracts the engine keeps, starting with [determinism](design/determinism.md), bit-identical models as a testable property. The historical record sits in the archive: the [architecture notes](architecture/README.md), the [decisions log](decisions.md), and the [lineage](lineage/xgboost.md) of xgboost, lightgbm, and catboost.
 
-## The engineering notebook
+## Built with Claude
 
-The [decisions log](decisions.md) records the project's numbered decisions, including the hypotheses that measurement refuted; they are the raw material behind every claim on this site.
-
-The [architecture notes](architecture/README.md) are its structured companion: one document per subsystem, written once, referenced instead of repeated.
+bonsai is built by a human maintainer working with Claude. What makes that trustworthy is verification, not trust. Models are bit-identical per commit in CI, performance claims come from committed same-pod runs, and every feature passes an admission gate with pre-registered kill criteria. Refuted hypotheses are recorded next to the adopted ones in the [decisions log](decisions.md). Every commit carries a session trailer linking the session that produced it.
