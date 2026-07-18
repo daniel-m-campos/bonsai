@@ -174,6 +174,27 @@ NDCG@10 by regime; the stable gap is to listwise losses only, so issue #58 is sc
 
 *Source: [`ranking-tradeoff-2026-07.jsonl`](../../benchmarks/results/ranking-tradeoff-2026-07.jsonl). Probe: [scripts/probe_ranking.py](../../scripts/probe_ranking.py); evidence [benchmarks/ranking-tradeoff-2026-07.md](../../benchmarks/ranking-tradeoff-2026-07.md).*
 
+### Probe: catboost's categorical machinery priced by its own toggle (reopener predicate, decision 80)
+
+On the cat-heavy TabArena subset, catboost native vs the same model with categoricals ordinal-encoded: the toggle prices the machinery at 68% of catboost's remaining lead over bonsai_ts (mean share -0.0099 of -0.0147); the pure-numeric control is bit-identical in both arms. Where the price is largest, ablated catboost loses to bonsai_ts outright.
+
+| dataset | cat native | cat ablated | bonsai_ts | categorical share | remaining gap |
+|---|---|---|---|---|---|
+| Amazon_employee_access | 0.1287 | 0.1765 | 0.1522 | -0.0478 | -0.0235 |
+| kddcup09_appetency | 0.1581 | 0.1773 | 0.1696 | -0.0193 | -0.0115 |
+| splice | 0.0905 | 0.1098 | 0.1054 | -0.0192 | -0.0149 |
+| in_vehicle_coupon_recommendation | 0.1533 | 0.1669 | 0.1901 | -0.0135 | -0.0368 |
+| Marketing_Campaign | 0.0670 | 0.0754 | 0.0743 | -0.0083 | -0.0073 |
+| credit-g | 0.2123 | 0.2202 | 0.2247 | -0.0079 | -0.0124 |
+| anneal | 0.0518 | 0.0539 | 0.0700 | -0.0021 | -0.0183 |
+| Bank_Customer_Churn | 0.1229 | 0.1248 | 0.1301 | -0.0018 | -0.0072 |
+| customer_satisfaction_in_airline | 0.0052 | 0.0057 | 0.0065 | -0.0005 | -0.0013 |
+| NATICUSdroid | 0.0140 | 0.0140 | 0.0152 | 0.0000 | -0.0011 |
+| qsar-biodeg | 0.0753 | 0.0752 | 0.0889 | 0.0001 | -0.0136 |
+| MIC | 0.4634 | 0.4618 | 0.4913 | 0.0016 | -0.0280 |
+
+*Source: [`tabarena-cat-probe-2026-07.jsonl`](../../benchmarks/results/tabarena-cat-probe-2026-07.jsonl). Probe: [scripts/probe_tabarena_cat.py](../../scripts/probe_tabarena_cat.py); evidence [benchmarks/tabarena-cat-probe-2026-07.md](../../benchmarks/tabarena-cat-probe-2026-07.md). Lower is better for every metric column (error/log-loss form).*
+
 ## Perf division
 
 ### The re-baseline: fit seconds at scale
