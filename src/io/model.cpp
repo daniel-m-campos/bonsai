@@ -1,6 +1,8 @@
 #include "bonsai/io/model.hpp"
 #include "nlohmann/adl_serializer.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
@@ -90,18 +92,12 @@ inline constexpr std::size_t k_num_sections =
 // is runtime placement: a model trained on device 3 must not insist on
 // device 3 at load, and its absence keeps every artifact byte-identical to
 // the pre-descriptor serializer.
-constexpr std::string_view k_persist_skip[] = {"device_id"};
+constexpr std::array k_persist_skip{std::string_view{"device_id"}};
 
 constexpr bool persist_skip(std::string_view leaf)
 {
-    for (std::string_view skip : k_persist_skip)
-    {
-        if (skip == leaf)
-        {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(k_persist_skip,
+                               [leaf](std::string_view skip) { return skip == leaf; });
 }
 
 template <typename Sub, std::size_t... I>
