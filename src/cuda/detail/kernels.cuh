@@ -174,6 +174,7 @@ constexpr uint32_t k_part_chunk           = k_part_block * k_part_rows_per_threa
 // PartOpDev (device-side view of one PartitionOp plus its parent segment)
 // lives in device_buffer.cuh.
 
+// Mirrors routes_left in dataset.hpp; the [cuda] parity suite enforces lockstep.
 inline __device__ bool goes_left_dev(uint32_t b, uint32_t last_bin, uint32_t bin,
                                      uint32_t dl)
 {
@@ -765,11 +766,12 @@ inline void gh_from_scores(float const *scores, float const *labels, uint32_t n,
 }
 
 // Resident tree epilogue: walk the finished tree in bin space for every row
-// and fuse scores[r] += lr * leaf_value on device. The routing (bin == last
-// -> default_left, else bin <= split_bin) mirrors route_unsampled and the
-// device partition exactly, so sampled and out-of-bag rows both land on the
-// same leaf the host path would pick. Node arrays are SoA (feature, split_bin,
-// left, right, default_left, is_leaf, value); the walk starts at node 0.
+// and fuse scores[r] += lr * leaf_value on device. The routing mirrors
+// routes_left in dataset.hpp (bin == last -> default_left, else bin <=
+// split_bin) and the [cuda] parity suite enforces lockstep, so sampled and
+// out-of-bag rows both land on the same leaf the host path would pick. Node
+// arrays are SoA (feature, split_bin, left, right, default_left, is_leaf,
+// value); the walk starts at node 0.
 template <typename BinT>
 __global__ void route_add_kernel(BinT const *bins, uint32_t const *n_bins,
                                  uint32_t n_rows, uint32_t const *feature,

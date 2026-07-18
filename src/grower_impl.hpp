@@ -175,6 +175,32 @@ inline std::vector<feature_id_t> sample_features(size_t n_features, float fracti
     return selected; // std::sample preserves order -> sorted
 }
 
+// Commits one split into the dense node table: appends the two child leaf
+// placeholders, records the parent's split bin and gain, grows the per-node
+// arrays in lockstep, and rewrites parent node `id` as the internal split.
+// covers is only resized here; the caller fills covers[left]/covers[right]
+// once row counts are known. Returns the freshly allocated (left_id,
+// right_id). Shared by the depthwise plan and the leafwise heap loop.
+inline std::pair<node_id_t, node_id_t>
+commit_split_node(DenseTree::Nodes &nodes, std::vector<bin_id_t> &split_bins,
+                  std::vector<float> &split_gains, std::vector<float> &covers,
+                  Dataset const &ds, node_id_t id, SplitOutput const &out)
+{
+    node_id_t const left_id = nodes.size();
+    nodes.emplace_back(DenseTree::leaf(0.0F));
+    node_id_t const right_id = nodes.size();
+    nodes.emplace_back(DenseTree::leaf(0.0F));
+    split_bins.resize(nodes.size(), 0);
+    split_bins[id] = out.bin_id;
+    split_gains.resize(nodes.size(), 0.0F);
+    split_gains[id] = static_cast<float>(out.gain);
+    covers.resize(nodes.size(), 0.0F);
+    float const threshold = ds.cuts(out.feature_id)[out.bin_id];
+    nodes[id] = DenseTree::internal(out.feature_id, threshold, left_id, right_id,
+                                    out.default_left);
+    return {left_id, right_id};
+}
+
 // Control plane, first half of a level: serial tree bookkeeping. Decides
 // leaf-vs-split per frontier node, writes the tree's internal nodes and
 // per-node stats, and defers the data-plane work (partition + histograms)
@@ -200,19 +226,8 @@ plan_level(Dataset const &ds, TreeConfig const &config,
             finalize_as_leaf(nodes, node, config, n_leaves, values, leaf_ids);
             continue;
         }
-        node_id_t const left_id = nodes.size();
-        nodes.emplace_back(DenseTree::leaf(0.0F));
-        node_id_t const right_id = nodes.size();
-        nodes.emplace_back(DenseTree::leaf(0.0F));
-        split_bins.resize(nodes.size(), 0);
-        split_bins[node.id] = split.bin_id;
-        split_gains.resize(nodes.size(), 0.0F);
-        split_gains[node.id] = static_cast<float>(split.gain);
-        covers.resize(nodes.size(), 0.0F);
-
-        float const threshold = ds.mappers()[split.feature_id].cuts()[split.bin_id];
-        nodes[node.id] = DenseTree::internal(split.feature_id, threshold, left_id,
-                                             right_id, split.default_left);
+        auto const [left_id, right_id] = commit_split_node(
+            nodes, split_bins, split_gains, covers, ds, node.id, split);
 
         double const   parent_lo   = node.lo;
         double const   parent_hi   = node.hi;
@@ -368,9 +383,9 @@ inline void route_unsampled(Dataset const &ds, DenseTree::Nodes const &nodes,
                                auto const  last =
                                    static_cast<bin_id_t>(ds.n_bins(nd.feature_id) - 1);
                                bin_id_t const b = ds.bin_at(nd.feature_id, r);
-                               bool const     left =
-                                   (b == last) ? nd.default_left : b <= split_bins[idx];
-                               idx = left ? nd.left : nd.right;
+                               bool const left  = routes_left(b, last, split_bins[idx],
+                                                              nd.default_left);
+                               idx              = left ? nd.left : nd.right;
                            }
                            values[r]   = nodes[idx].threshold_or_value;
                            leaf_ids[r] = idx;
@@ -402,8 +417,8 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     bool const             resident = this->resident();
     gd::GrowProfiler::Lap  slap;
     Tree::Nodes            nodes;
-    train_leaf_values      values   = std::move(recycled_values_);
-    std::vector<node_id_t> leaf_ids = std::move(recycled_ids_);
+    train_leaf_values      values   = std::move(recycled_.values);
+    std::vector<node_id_t> leaf_ids = std::move(recycled_.leaf_ids);
     if (!resident)
     {
         values.resize(ds.n_rows(), 0.0F); // no-op when recycled: write-before-read
@@ -498,7 +513,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     gd::GrowProfiler::Lap slap;
     Tree::LevelSplits     level_splits;
     Tree::LeafTable       leaf_table;
-    train_leaf_values     values = std::move(recycled_values_);
+    train_leaf_values     values = std::move(recycled_.values);
     if (!resident)
     {
         values.resize(ds.n_rows(), 0.0F); // no-op when recycled: write-before-read
@@ -527,7 +542,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
         {
             break;
         }
-        float const threshold = ds.mappers()[split.feature_id].cuts()[split.bin_id];
+        float const threshold = ds.cuts(split.feature_id)[split.bin_id];
         level_splits.push_back({.feature_id   = split.feature_id,
                                 .threshold    = threshold,
                                 .default_left = split.default_left});
@@ -568,7 +583,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
         ++depth;
     }
 
-    std::vector<node_id_t> leaf_ids = std::move(recycled_ids_);
+    std::vector<node_id_t> leaf_ids = std::move(recycled_.leaf_ids);
     if (!resident)
     {
         leaf_ids.resize(ds.n_rows(), 0);
@@ -611,7 +626,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
                         static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
                     bin_id_t const b = ds.bin_at(s.feature_id, r);
                     bool const     left =
-                        (b == last) ? s.default_left : b <= level_bins[lvl];
+                        routes_left(b, last, level_bins[lvl], s.default_left);
                     index = (index << 1U) | (left ? 0U : 1U);
                 }
                 values[r]   = leaf_table[index];
@@ -642,7 +657,7 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     namespace gd = grower_detail;
     gd::GrowProfiler::Lap slap;
     Tree::Nodes           nodes;
-    train_leaf_values     values = std::move(recycled_values_);
+    train_leaf_values     values = std::move(recycled_.values);
     values.resize(ds.n_rows(), 0.0F); // no-op when recycled: write-before-read
 
     // Max-heap on gain; ties broken by lower node id so growth is deterministic.
@@ -660,7 +675,7 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     std::vector<bin_id_t>      split_bins(1, 0);
     std::vector<float>         split_gains(1, 0.0F);
     std::vector<float>         covers(1, static_cast<float>(row_indices.size()));
-    std::vector<node_id_t>     leaf_ids = std::move(recycled_ids_);
+    std::vector<node_id_t>     leaf_ids = std::move(recycled_.leaf_ids);
     leaf_ids.resize(ds.n_rows(), 0);
 
     auto const selected =
@@ -697,19 +712,8 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
         gd::Candidate c = std::move(heap.back());
         heap.pop_back();
 
-        node_id_t const left_id = nodes.size();
-        nodes.emplace_back(DenseTree::leaf(0.0F));
-        node_id_t const right_id = nodes.size();
-        nodes.emplace_back(DenseTree::leaf(0.0F));
-        split_bins.resize(nodes.size(), 0);
-        split_bins[c.node.id] = c.split.bin_id;
-        split_gains.resize(nodes.size(), 0.0F);
-        split_gains[c.node.id] = static_cast<float>(c.split.gain);
-        covers.resize(nodes.size(), 0.0F);
-
-        float const threshold = ds.mappers()[c.split.feature_id].cuts()[c.split.bin_id];
-        nodes[c.node.id] = DenseTree::internal(c.split.feature_id, threshold, left_id,
-                                               right_id, c.split.default_left);
+        auto const [left_id, right_id] = gd::commit_split_node(
+            nodes, split_bins, split_gains, covers, ds, c.node.id, c.split);
 
         double const parent_lo   = c.node.lo;
         double const parent_hi   = c.node.hi;
