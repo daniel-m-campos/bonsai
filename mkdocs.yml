@@ -1,5 +1,5 @@
 site_name: bonsai
-site_description: Histogram gradient-boosted trees with a C++23 core — written to be read.
+site_description: Histogram gradient-boosted trees with a C++23 core, written to be read.
 site_url: https://daniel-m-campos.github.io/bonsai/
 repo_url: https://github.com/daniel-m-campos/bonsai
 repo_name: daniel-m-campos/bonsai
@@ -93,37 +93,35 @@ nav:
   - Home: index.md
   - Learn:
       - The guide: guide/README.md
-      - 0. A tree by hand: guide/0-a-tree-by-hand.md
-      - 1. Gradient boosting: guide/1-gradient-boosting.md
-      - 2. Binning and histograms: guide/2-binning-and-histograms.md
-      - 3. Finding splits: guide/3-finding-splits.md
-      - 4. Growing trees: guide/4-growing-trees.md
-      - 5. Sampling: guide/5-sampling.md
-      - 6. Regularization and constraints: guide/6-regularization-and-constraints.md
-      - 7. Early stopping and DART: guide/7-early-stopping-and-dart.md
-      - 8. Feature importance: guide/8-feature-importance.md
-      - 9. Parallelism and determinism: guide/9-parallelism-and-determinism.md
-      - 10. GPU training: guide/10-gpu-training.md
-      - 11. Performance engineering: guide/11-performance-engineering.md
-      - 12. Multiclass: guide/12-multiclass.md
-      - 13. Categorical features: guide/13-categorical-features.md
+      - The algorithm:
+          - 0. A tree by hand: guide/0-a-tree-by-hand.md
+          - 1. Gradient boosting: guide/1-gradient-boosting.md
+          - 2. Binning and histograms: guide/2-binning-and-histograms.md
+          - 3. Finding splits: guide/3-finding-splits.md
+          - 4. Growing trees: guide/4-growing-trees.md
+          - 5. Sampling: guide/5-sampling.md
+          - 6. Regularization and constraints: guide/6-regularization-and-constraints.md
+          - 7. Early stopping and DART: guide/7-early-stopping-and-dart.md
+          - 8. Feature importance: guide/8-feature-importance.md
+          - 9. Parallelism and determinism: guide/9-parallelism-and-determinism.md
+          - 10. GPU training: guide/10-gpu-training.md
+          - 11. Performance engineering: guide/11-performance-engineering.md
+          - 12. Multiclass: guide/12-multiclass.md
+          - 13. Categorical features: guide/13-categorical-features.md
   - Use:
       - Install: use/install.md
       - The API in one read: use/api-tour.md
       - Building from source: use/building.md
-  - Lineage:
-      - XGBoost: lineage/xgboost.md
-      - LightGBM: lineage/lightgbm.md
-      - CatBoost: lineage/catboost.md
-  - Method:
-      - The method: method/README.md
-      - Instrument first: method/instrument-first.md
-      - The feature-admission gate: method/feature-admission.md
-      - Benchmarks you can trust: method/benchmarking.md
+  - Results:
+      - Overview: method/README.md
+      - The results: method/results.md
       - The benchmark protocol: method/benchmark-protocol.md
-      - The results ledger: method/results.md
-      - Determinism as a contract: method/determinism.md
+      - How we decide: method/how-we-decide.md
   - Design:
-      - Architecture: architecture/README.md
-      - Decisions log: decisions.md
-  - About: about.md
+      - Determinism as a contract: design/determinism.md
+      - Archive:
+          - Architecture notes: architecture/README.md
+          - Decisions log: decisions.md
+          - "Lineage: XGBoost": lineage/xgboost.md
+          - "Lineage: LightGBM": lineage/lightgbm.md
+          - "Lineage: CatBoost": lineage/catboost.md
