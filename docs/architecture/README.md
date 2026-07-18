@@ -1,5 +1,7 @@
 # Architecture
 
+These notes are the historical engineering record, kept for reference and for agents working in the codebase. The curated design pages live in the [Design](../design/determinism.md) section.
+
 Per-component design docs. Numbered roughly in build order. Source of truth for choices is [`../decisions.md`](../decisions.md); when a doc disagrees, decisions wins.
 
 ## Contents
