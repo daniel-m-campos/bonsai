@@ -342,3 +342,14 @@ The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC),
 | catboost_gpu | 0.7s / 0.7163 | 1.1s / 0.7287 | 6.3s / 0.7304 |
 
 *Source: [`airline-2026-07.jsonl`](../../benchmarks/results/airline-2026-07.jsonl). One L40S (SECURE US-NC-1, driver 570.124.06), 2026-07-15, post-decision-74 code. A bonsai variant has the best AUC in every cell from 1M up under both protocols; xgboost-GPU owns raw speed on this narrow shape. Evidence: [benchmarks/airline-2026-07.md](../../benchmarks/airline-2026-07.md).*
+
+## The single-card ceiling
+
+| rows | train() wall | peak device mem | throughput | train r2 (1M sample) |
+|---|---|---|---|---|
+| 300M | 328s | 42.2 GiB | 54.8M rows/s | 0.8305 |
+| 400M | 414s | 56.0 GiB | 57.9M rows/s | 0.8303 |
+| 450M | 465s | 63.0 GiB | 58.0M rows/s | 0.8340 |
+| 500M | 513s | 69.9 GiB | 58.5M rows/s | 0.8329 |
+
+*Source: [`single-card-ceiling-2026-07.jsonl`](../../benchmarks/results/single-card-ceiling-2026-07.jsonl). Single-pod ladder (2026-07-18, NVIDIA A100-SXM4-80GB): a 500M x 100 float32 matrix trains end to end on one 80GB card at 71.6 GiB peak, 60 rounds in 8.5 minutes, with the device-resident objective keeping the fit loop bus-free. Evidence: [benchmarks/single-card-ceiling-2026-07.md](../../benchmarks/single-card-ceiling-2026-07.md).*
