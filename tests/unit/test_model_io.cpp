@@ -1,7 +1,11 @@
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <ios>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -55,6 +59,13 @@ RawFeatures to_raw(detail::ColumnBatch const &batch)
     }
     return RawFeatures{
         .data = std::move(data), .n_rows = n_rows, .n_features = n_features};
+}
+
+std::vector<uint8_t> read_file_bytes(std::string const &path)
+{
+    std::ifstream in(path, std::ios::binary);
+    return std::vector<uint8_t>{std::istreambuf_iterator<char>(in),
+                                std::istreambuf_iterator<char>()};
 }
 
 struct TempPath
@@ -263,6 +274,35 @@ TEST_CASE("ModelIo: full Config round-trips via save/load", "[model_io][config]"
     auto const loaded2 = io::load_booster(tmp.str());
     REQUIRE(loaded2.cfg == cfg);
     REQUIRE_FALSE(loaded2.cfg.data.missing_sentinel.has_value());
+}
+
+TEST_CASE("ModelIo: committed v7 fixtures re-save byte-identically",
+          "[model_io][fixture]")
+{
+    // Persistence byte-proof. Each fixture was written by the format-v7
+    // serializer and committed before the config serializers moved to the
+    // section descriptors. load -> save must reproduce the exact bytes:
+    // nlohmann sorts object keys, so byte equality is key-set equality. A
+    // mismatch here means the persisted JSON key set changed. The regressor
+    // covers the single-booster path (init_score); the softmax model covers
+    // MulticlassBooster (init_scores).
+    for (auto const *name :
+         {"fixture_v7_regressor.bonsai", "fixture_v7_softmax.bonsai"})
+    {
+        CAPTURE(name);
+        auto const path     = std::string{BONSAI_TESTS_DATA_DIR} + "/" + name;
+        auto const original = read_file_bytes(path);
+        REQUIRE_FALSE(original.empty());
+
+        auto loaded = io::load_booster(path);
+        REQUIRE(loaded.booster != nullptr);
+
+        TempPath const tmp;
+        io::save_booster(*loaded.booster, tmp.str(), loaded.mappers, loaded.cfg);
+        auto const resaved = read_file_bytes(tmp.str());
+
+        REQUIRE(resaved == original);
+    }
 }
 
 TEST_CASE("ModelIo: bad magic throws", "[model_io][edge]")
