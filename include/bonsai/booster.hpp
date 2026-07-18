@@ -347,40 +347,9 @@ class Booster final : public IBooster
             }
         }
 
-        // Device-resident objective: when the grower keeps labels and scores on
-        // the GPU and derives grad/hess there, the whole host objective / score
-        // round-trip is skipped. Gated at compile time on the objective (must
-        // have a device gradient) and the sampler (must not read gradients),
-        // and at run time on no DART, no sample weights, and the escape hatch.
-        if constexpr (device_objective_kind<objective_type> !=
-                          DeviceObjectiveKind::none &&
-                      (std::same_as<sampler_type, AllRowsSampler> ||
-                       std::same_as<sampler_type, BernoulliSampler>) )
+        if (try_resident_round(train))
         {
-            bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;
-            bool const runtime_ok  = config_.dart_drop_rate <= 0.0F &&
-                                    train.weights().empty() && !host_forced;
-            if (runtime_ok)
-            {
-                if (!resident_active_)
-                {
-                    resident_active_ = grower_.resident_begin(
-                        train, device_objective_kind<objective_type>,
-                        std::span<float const>{scores_}, config_.learning_rate);
-                }
-                if (resident_active_)
-                {
-                    resident_round(train);
-                    return;
-                }
-            }
-            else if (resident_active_)
-            {
-                // The config is fixed per booster, so this cannot flip mid-fit;
-                // guarded anyway so host scores_ is authoritative if it ever does.
-                grower_.resident_end(std::span<float>{scores_});
-                resident_active_ = false;
-            }
+            return;
         }
 
         auto                    &prof = detail::FitProfiler::instance();
@@ -466,6 +435,46 @@ class Booster final : public IBooster
             }
             return sampler_.sample(grad_, hess_, rng_, row_indices_);
         }
+    }
+
+    // Device-resident objective: when the grower keeps labels and scores on
+    // the GPU and derives grad/hess there, the whole host objective / score
+    // round-trip is skipped and this returns true. Gated at compile time on
+    // the objective (must have a device gradient) and the sampler (must not
+    // read gradients), and at run time on no DART, no sample weights, and the
+    // escape hatch. The resident state is armed for ONE Dataset: a different
+    // one (or a runtime gate flipping) syncs scores home and disarms, so the
+    // host path always resumes with the same state it would have had.
+    bool try_resident_round(Dataset const &train)
+    {
+        if constexpr (device_objective_kind<objective_type> !=
+                          DeviceObjectiveKind::none &&
+                      (std::same_as<sampler_type, AllRowsSampler> ||
+                       std::same_as<sampler_type, BernoulliSampler>) )
+        {
+            bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;
+            bool const runtime_ok  = config_.dart_drop_rate <= 0.0F &&
+                                    train.weights().empty() && !host_forced;
+            if (resident_active_ && (!runtime_ok || resident_train_ != &train))
+            {
+                grower_.resident_end(std::span<float>{scores_});
+                resident_active_ = false;
+                resident_train_  = nullptr;
+            }
+            if (runtime_ok && !resident_active_)
+            {
+                resident_active_ = grower_.resident_begin(
+                    train, device_objective_kind<objective_type>,
+                    std::span<float const>{scores_}, config_.learning_rate);
+                resident_train_ = resident_active_ ? &train : nullptr;
+            }
+            if (resident_active_)
+            {
+                resident_round(train);
+                return true;
+            }
+        }
+        return false;
     }
 
     // One boosting round with the resident objective armed: no host objective,
@@ -767,12 +776,17 @@ class Booster final : public IBooster
     sampler_type           sampler_;
     std::mt19937           rng_;
     std::vector<tree_type> trees_;
-    std::vector<float>     scores_;
-    std::vector<float>     grad_;
-    std::vector<float>     hess_;
-    std::vector<row_id_t>  row_indices_;
-    float                  init_score_      = 0.0F;
-    bool                   resident_active_ = false;
+    // Stale while the resident objective is armed (the device copy is
+    // authoritative); resident_end syncs it before any host-path read.
+    std::vector<float>    scores_;
+    std::vector<float>    grad_;
+    std::vector<float>    hess_;
+    std::vector<row_id_t> row_indices_;
+    float                 init_score_      = 0.0F;
+    bool                  resident_active_ = false;
+    // Identity cookie for the Dataset the resident state was armed on:
+    // compared by address only, never dereferenced through.
+    Dataset const *resident_train_ = nullptr;
 };
 
 } // namespace bonsai
