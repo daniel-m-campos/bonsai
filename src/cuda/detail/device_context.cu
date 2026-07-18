@@ -427,7 +427,7 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
         max_sel_bins = std::max(max_sel_bins, ds.n_bins(fid));
     }
     init_shared_limit();
-    if (selected.empty() || 4 * max_sel_bins * sizeof(float) > shared_limit)
+    if (selected.empty() || !hist_budget_ok(max_sel_bins))
     {
         return false; // the LevelStep falls back to host histogram building
     }
@@ -942,14 +942,15 @@ bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind ki
     // stay device-resident, or a per-node host fallback would read the empty
     // resident grad/hess spans. Feature subsampling only ever narrows the
     // selected set, so the worst case is the single widest feature; if that
-    // fits the shared budget (begin_root's exact decline predicate), no tree
-    // can decline.
+    // fits the shared budget (hist_budget_ok, the same predicate begin_root
+    // applies), no tree can decline.
     size_t max_bins = 0;
     for (size_t f = 0; f < ds.n_features(); ++f)
     {
         max_bins = std::max(max_bins, ds.n_bins(f));
     }
-    if (ds.n_features() == 0 || 4 * max_bins * sizeof(float) > shared_limit)
+    if (ds.n_features() == 0 || initial_scores.size() != ds.n_rows() ||
+        !hist_budget_ok(max_bins))
     {
         return false;
     }

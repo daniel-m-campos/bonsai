@@ -120,6 +120,33 @@ struct CpuHistogramEngine
 
 static_assert(HistogramEngine<CpuHistogramEngine>);
 
+// Device-resident objective seam, shared by every grower: forward to the
+// engine when it offers one and report whether it armed. A compiled no-op
+// returning false on engines without the seam (the CPU plane), keeping the
+// booster generic.
+template <typename EngineT>
+bool engine_resident_begin(EngineT &engine, Dataset const &ds, DeviceObjectiveKind kind,
+                           std::span<float const> scores, float learning_rate)
+{
+    if constexpr (requires { engine.resident_begin(ds, kind, scores, learning_rate); })
+    {
+        return engine.resident_begin(ds, kind, scores, learning_rate);
+    }
+    else
+    {
+        return false;
+    }
+}
+
+template <typename EngineT>
+void engine_resident_end(EngineT &engine, std::span<float> scores)
+{
+    if constexpr (requires { engine.resident_end(scores); })
+    {
+        engine.resident_end(scores);
+    }
+}
+
 template <HistogramEngine EngineT   = CpuHistogramEngine,
           NodeSplitFinder SplitterT = HistogramNodeSplitFinder>
 class DepthwiseGrower
@@ -142,31 +169,17 @@ class DepthwiseGrower
         recycled_ids_    = std::move(leaf_ids);
     }
 
-    // Device-resident objective seam: forward to the engine when it offers one
-    // (GPU) and remember whether it armed, so grow() can skip the host-side
-    // per-row output the resident finalize replaces. A no-op returning false on
-    // engines without the seam (the CPU plane), keeping the booster generic.
+    // Remembers whether the engine armed, so grow() can skip the host-side
+    // per-row output the resident finalize replaces.
     bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
                         std::span<float const> scores, float learning_rate)
     {
-        if constexpr (requires {
-                          engine_.resident_begin(ds, kind, scores, learning_rate);
-                      })
-        {
-            resident_ = engine_.resident_begin(ds, kind, scores, learning_rate);
-            return resident_;
-        }
-        else
-        {
-            return false;
-        }
+        resident_ = engine_resident_begin(engine_, ds, kind, scores, learning_rate);
+        return resident_;
     }
     void resident_end(std::span<float> scores)
     {
-        if constexpr (requires { engine_.resident_end(scores); })
-        {
-            engine_.resident_end(scores);
-        }
+        engine_resident_end(engine_, scores);
         resident_ = false;
     }
     bool resident() const
@@ -210,24 +223,12 @@ class ObliviousGrower
     bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
                         std::span<float const> scores, float learning_rate)
     {
-        if constexpr (requires {
-                          engine_.resident_begin(ds, kind, scores, learning_rate);
-                      })
-        {
-            resident_ = engine_.resident_begin(ds, kind, scores, learning_rate);
-            return resident_;
-        }
-        else
-        {
-            return false;
-        }
+        resident_ = engine_resident_begin(engine_, ds, kind, scores, learning_rate);
+        return resident_;
     }
     void resident_end(std::span<float> scores)
     {
-        if constexpr (requires { engine_.resident_end(scores); })
-        {
-            engine_.resident_end(scores);
-        }
+        engine_resident_end(engine_, scores);
         resident_ = false;
     }
     bool resident() const

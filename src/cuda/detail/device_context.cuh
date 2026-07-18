@@ -279,6 +279,17 @@ struct CudaDeviceContext
     size_t shared_limit  = k_max_shared_bytes;
     bool   shared_probed = false;
 
+    // The one histogram-capacity predicate: a node's per-feature scratch is
+    // 4 * bins floats in shared memory. begin_root declines a tree with it,
+    // and resident_begin must apply the SAME test (once per fit, on the
+    // worst-case feature) so no tree can decline into a host-gradient path
+    // after the resident mode armed. Any new decline condition must land
+    // here, visible to both callers.
+    bool hist_budget_ok(size_t max_bins) const
+    {
+        return 4 * max_bins * sizeof(float) <= shared_limit;
+    }
+
     void init_shared_limit();
     void ensure_dataset(Dataset const &dataset);
     void begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
