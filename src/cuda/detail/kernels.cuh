@@ -791,48 +791,47 @@ __global__ void gh_from_scores_kernel(float const *scores, float const *labels,
     }
 }
 
-template <DeviceObjectiveKind Kind>
-inline void gh_from_scores_weighted(bool weighted, float const *scores,
-                                    float const *labels, float const *weights,
-                                    uint32_t n, float2 *gh, dim3 grid, dim3 block)
+// Calls fn with the kind as a compile-time constant, the dispatch_bins idiom
+// for the objective enum. `none` dispatches nothing (resident_begin rejects
+// it before any launch).
+template <typename F> inline void visit_objective_kind(DeviceObjectiveKind kind, F &&fn)
 {
-    if (weighted)
+    switch (kind)
     {
-        gh_from_scores_kernel<Kind, true>
-            <<<grid, block>>>(scores, labels, weights, n, gh);
-    }
-    else
-    {
-        gh_from_scores_kernel<Kind, false>
-            <<<grid, block>>>(scores, labels, weights, n, gh);
+    case DeviceObjectiveKind::mse:
+        fn.template operator()<DeviceObjectiveKind::mse>();
+        return;
+    case DeviceObjectiveKind::logloss:
+        fn.template operator()<DeviceObjectiveKind::logloss>();
+        return;
+    case DeviceObjectiveKind::poisson:
+        fn.template operator()<DeviceObjectiveKind::poisson>();
+        return;
+    case DeviceObjectiveKind::none:
+        return;
     }
 }
 
-// Runtime dispatch on the resident objective kind to the matching compile-time
-// instantiation. `none` never reaches here (resident_begin rejects it).
 inline void gh_from_scores(DeviceObjectiveKind kind, bool weighted, float const *scores,
                            float const *labels, float const *weights, uint32_t n,
                            float2 *gh)
 {
     dim3 const grid(std::clamp<uint32_t>(n / 256, 1, 1024));
     dim3 const block(256);
-    switch (kind)
-    {
-    case DeviceObjectiveKind::mse:
-        gh_from_scores_weighted<DeviceObjectiveKind::mse>(weighted, scores, labels,
-                                                          weights, n, gh, grid, block);
-        break;
-    case DeviceObjectiveKind::logloss:
-        gh_from_scores_weighted<DeviceObjectiveKind::logloss>(
-            weighted, scores, labels, weights, n, gh, grid, block);
-        break;
-    case DeviceObjectiveKind::poisson:
-        gh_from_scores_weighted<DeviceObjectiveKind::poisson>(
-            weighted, scores, labels, weights, n, gh, grid, block);
-        break;
-    case DeviceObjectiveKind::none:
-        break;
-    }
+    visit_objective_kind(kind,
+                         [&]<DeviceObjectiveKind K>()
+                         {
+                             if (weighted)
+                             {
+                                 gh_from_scores_kernel<K, true>
+                                     <<<grid, block>>>(scores, labels, weights, n, gh);
+                             }
+                             else
+                             {
+                                 gh_from_scores_kernel<K, false>
+                                     <<<grid, block>>>(scores, labels, weights, n, gh);
+                             }
+                         });
     check(cudaGetLastError(), "gh_from_scores launch");
 }
 
