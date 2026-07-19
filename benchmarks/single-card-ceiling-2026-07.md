@@ -6,12 +6,12 @@ The u8-bin arithmetic has always implied that one 80GB card holds a half-billion
 
 | rows | train() wall | peak device memory | throughput (rows x iters / s) | train r2 (1M sample) |
 |--:|--:|--:|--:|--:|
-| 300M | 328.5s | 43.2 GiB | 54.8M rows/s | 0.8305 |
-| 400M | 414.2s | 57.4 GiB | 57.9M rows/s | 0.8303 |
-| 450M | 465.1s | 64.5 GiB | 58.0M rows/s | 0.8340 |
-| **500M** | **512.6s** | **71.6 GiB** | **58.5M rows/s** | 0.8329 |
+| 300M | 328.5s | 42.2 GiB | 54.8M rows/s | 0.8305 |
+| 400M | 414.2s | 56.0 GiB | 57.9M rows/s | 0.8303 |
+| 450M | 465.1s | 63.0 GiB | 58.0M rows/s | 0.8340 |
+| **500M** | **512.6s** | **69.9 GiB** | **58.5M rows/s** | 0.8329 |
 
-Every rung passed; the ladder never hit the card. Wall time is the whole `train()` call: chunked host-to-device ingest, device binning, mapper fit, and all 60 boosting rounds. Device memory grows at ~14.2 GiB per 100M rows (1 byte per cell of binned matrix plus ~4.2 bytes per row of resident fit state), which extrapolates the true ceiling to roughly 550M rows x 100 on this card.
+Every rung passed; the ladder never hit the card. Wall time is the whole `train()` call: chunked host-to-device ingest, device binning, mapper fit, and all 60 boosting rounds. Device memory grows at ~13.9 GiB per 100M rows (1 byte per cell of binned matrix plus ~4.2 bytes per row of resident fit state), which extrapolates the true ceiling to roughly 570M rows x 100 on this card.
 
 ## Reading it
 
@@ -21,6 +21,6 @@ The device-resident objective (decisions 77-79) is what keeps the fit loop bus-f
 
 ## Honest caveats
 
-Synthetic data (the bench Friedman-1 recipe, chunked with a pilot-chunk noise scale), one pod, one run per rung; wall times carry the usual ~25% fleet spread and the r2 column is a 1M-row train-sample proxy, not a held-out test. The ~550M extrapolated ceiling is arithmetic beyond the last measured rung, not a measurement. Ingest dominates the wall time at this scale (the 60-round boosting portion is a minority of the 512.6s); workloads reusing a `bonsai.Dataset` across fits pay it once.
+Synthetic data (the bench Friedman-1 recipe, chunked with a pilot-chunk noise scale), one pod, one run per rung; wall times carry the usual ~25% fleet spread and the r2 column is a 1M-row train-sample proxy, not a held-out test. The ~570M extrapolated ceiling is arithmetic beyond the last measured rung, not a measurement. Ingest dominates the wall time at this scale (the 60-round boosting portion is a minority of the 512.6s); workloads reusing a `bonsai.Dataset` across fits pay it once.
 
 Protocol and raw rows: `results/single-card-ceiling-2026-07.jsonl`; the generator ladder script lives with the campaign records (issue #171 lineage).

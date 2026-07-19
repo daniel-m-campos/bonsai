@@ -14,12 +14,12 @@ One RunPod A100-SXM4-80GB ran one process. A 500M by 100 float32 Friedman-1 matr
 
 | rows | train() wall | peak device memory | throughput | train r2 (1M sample) |
 |--:|--:|--:|--:|--:|
-| 300M | 328.5s | 43.2 GiB | 54.8M rows/s | 0.8305 |
-| 400M | 414.2s | 57.4 GiB | 57.9M rows/s | 0.8303 |
-| 450M | 465.1s | 64.5 GiB | 58.0M rows/s | 0.8340 |
-| **500M** | **512.6s** | **71.6 GiB** | **58.5M rows/s** | 0.8329 |
+| 300M | 328.5s | 42.2 GiB | 54.8M rows/s | 0.8305 |
+| 400M | 414.2s | 56.0 GiB | 57.9M rows/s | 0.8303 |
+| 450M | 465.1s | 63.0 GiB | 58.0M rows/s | 0.8340 |
+| **500M** | **512.6s** | **69.9 GiB** | **58.5M rows/s** | 0.8329 |
 
-Every rung passed and the ladder never hit the card. Device memory grows at about 14.2 GiB per 100M rows. At 500M that is 71.6 GiB of the 80, roughly 8 GiB to spare.
+Every rung passed and the ladder never hit the card. Device memory grows at about 13.9 GiB per 100M rows. At 500M that is 69.9 GiB of the 80, roughly 8 GiB to spare.
 
 ## Reading it
 
@@ -39,11 +39,11 @@ XGBoost's GPU histogram method wants roughly 8 bytes per cell before its externa
 
 The data is synthetic, one pod, one run per rung, so the walls carry the usual 25% fleet spread. The r2 column is a 1M-row train-sample proxy, not a held-out test score.
 
-The 550M extrapolated ceiling is arithmetic beyond the last measured rung, not a measurement, so it is labeled as arithmetic. Ingest dominates the wall at this scale, and the 60-round boosting portion is the minority. A workload reusing one `bonsai.Dataset` across fits pays the ingest once.
+The 570M extrapolated ceiling is arithmetic beyond the last measured rung, not a measurement, so it is labeled as arithmetic. Ingest dominates the wall at this scale, and the 60-round boosting portion is the minority. A workload reusing one `bonsai.Dataset` across fits pays the ingest once.
 
 ## What it teaches
 
-- **Capacity claims are measurements, not arithmetic.** The u8 storage math implied the half-billion-row cell for months. It became a claim only when a ladder trained it, and the extrapolated 550M is still flagged as arithmetic because nothing measured it.
+- **Capacity claims are measurements, not arithmetic.** The u8 storage math implied the half-billion-row cell for months. It became a claim only when a ladder trained it, and the extrapolated 570M is still flagged as arithmetic because nothing measured it.
 - **Rising throughput means fixed costs amortize.** The curve climbed from 54.8 to 58.5M row-iterations per second with scale. When you see that shape, look for the cliff, and report honestly when there is none.
 
 ## The record
