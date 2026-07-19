@@ -18,8 +18,16 @@ pip install bonsai-gbt --find-links https://github.com/daniel-m-campos/bonsai/re
 
 If you know scikit-learn, you know this layer:
 
-```python
+```{.python .run}
 import bonsai
+import numpy as np
+
+rng = np.random.default_rng(0)
+X = rng.random((600, 8), dtype=np.float32)
+y = (X[:, 0] * 2 + rng.normal(0, 0.2, 600)).astype(np.float32)
+X_train, y_train = X[:400], y[:400]
+X_valid, y_valid = X[400:], y[400:]
+X_test, w = X[400:], np.ones(400, dtype=np.float32)
 
 model = bonsai.BonsaiRegressor(
     n_iters=200, learning_rate=0.05, grower="leafwise",
@@ -92,7 +100,8 @@ On linux x86_64 the release wheel trains on GPU out of the box: any NVIDIA drive
 
 The harness behind every published table ships in the package. `pip install bonsai-gbt[bench]` adds the reference libraries, then `python -m bonsai.bench.grinsztajn out.jsonl --report` re-runs the external standings suite. The building blocks are importable directly:
 
-```python
+```{.python .run}
+import bonsai
 from bonsai.bench import metrics, params, synth
 
 X_train, y_train, X_test, y_test = synth.gen_data(
