@@ -45,7 +45,7 @@
       "year": 2015,
       "title": "DART",
       "idea": "Drop a random subset of existing trees before each round, borrowing dropout from neural networks.",
-      "attribution": "Vinayak and Gilad-Bachrach, AISTATS 2015",
+      "attribution": "Rashmi and Gilad-Bachrach, AISTATS 2015",
       "link": "https://arxiv.org/abs/1505.01866",
       "adopters": ["xgboost", "lightgbm", "bonsai"],
       "bonsai_status": "adopted",
