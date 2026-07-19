@@ -46,7 +46,7 @@ template <typename TreeT> struct GrowResult
     train_leaf_values values;
     // Per train row: the leaf that produced values[r] — DenseTree node id,
     // or ObliviousTree leaf-table index. Lets the booster regroup rows by
-    // leaf (leaf renewal for constant-hessian objectives).
+    // leaf (leaf renewal for surrogate-hessian objectives).
     std::vector<node_id_t> leaf_ids;
 };
 
