@@ -41,11 +41,11 @@ concept Objective = std::constructible_from<T, Config const &> &&
 
 Why constructible from `Config`: parameterized losses (Huber delta, quantile alpha) carry state.
 Parameter-free objectives keep static methods, which still satisfy the instance call ([objective doc](../architecture/4-objective.md)).
-The `renew_leaf` extension serves constant-hessian objectives (MAE, Huber, Quantile).
+The `renew_leaf` extension serves surrogate-hessian objectives (MAE, Huber, Quantile), where `h = 1` stands in for a second derivative that is zero or discontinuous. Their Newton step is a heuristic, so the booster replaces each leaf with the loss-optimal value over its residuals. MSE also has a constant hessian, exactly 1, but needs no renewal: its Newton step is the residual mean, already the exact minimizer of squared error.
 They replace the Newton leaf value with the loss-optimal one.
 The booster detects the method with `if constexpr (requires(std::span<float> r) { objective_.renew_leaf(r); })`, and skips the pass otherwise.
 What a new objective must honor: `compute` overwrites grad and hess rather than accumulating (decision 24).
-Add `renew_leaf` only when the hessian is constant.
+Add `renew_leaf` only when the Newton step differs from the loss-optimal leaf value, that is, when the hessian is a surrogate.
 Lives in [`include/bonsai/objective.hpp`](../../include/bonsai/objective.hpp).
 
 ## TreeGrower: three growth strategies as types
