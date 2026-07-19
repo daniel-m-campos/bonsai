@@ -721,7 +721,7 @@ def ceiling_section() -> str:
     prov = provenance(
         ["single-card-ceiling-2026-07.jsonl"],
         "Single-pod ladder (2026-07-18, " + meta["gpu"] + "): a 500M x 100 "
-        "float32 matrix trains end to end on one 80GB card at 71.6 GiB peak, "
+        "float32 matrix trains end to end on one 80GB card at 69.9 GiB peak, "
         "60 rounds in 8.5 minutes, with the device-resident objective keeping "
         "the fit loop bus-free. Evidence: "
         "[benchmarks/single-card-ceiling-2026-07.md]"

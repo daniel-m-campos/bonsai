@@ -373,4 +373,4 @@ The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC),
 | 450M | 465s | 63.0 GiB | 58.0M rows/s | 0.8340 |
 | 500M | 513s | 69.9 GiB | 58.5M rows/s | 0.8329 |
 
-*Source: [`single-card-ceiling-2026-07.jsonl`](../../benchmarks/results/single-card-ceiling-2026-07.jsonl). Single-pod ladder (2026-07-18, NVIDIA A100-SXM4-80GB): a 500M x 100 float32 matrix trains end to end on one 80GB card at 71.6 GiB peak, 60 rounds in 8.5 minutes, with the device-resident objective keeping the fit loop bus-free. Evidence: [benchmarks/single-card-ceiling-2026-07.md](../../benchmarks/single-card-ceiling-2026-07.md).*
+*Source: [`single-card-ceiling-2026-07.jsonl`](../../benchmarks/results/single-card-ceiling-2026-07.jsonl). Single-pod ladder (2026-07-18, NVIDIA A100-SXM4-80GB): a 500M x 100 float32 matrix trains end to end on one 80GB card at 69.9 GiB peak, 60 rounds in 8.5 minutes, with the device-resident objective keeping the fit loop bus-free. Evidence: [benchmarks/single-card-ceiling-2026-07.md](../../benchmarks/single-card-ceiling-2026-07.md).*
