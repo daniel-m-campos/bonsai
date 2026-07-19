@@ -38,20 +38,7 @@ The Makefile finds the toolchain at `/usr/lib/llvm-21/bin` (Linux) or homebrew's
 
 ## The make-target map
 
-| target | what it does | tree |
-|---|---|---|
-| `make build` | configure + compile the CLI, library, and tests | `build/` |
-| `make test` | build, fetch the small pinned test datasets, run ctest | `build/` |
-| `make rebuild` | clean + build | all |
-| `make configure` | CMake configure only (needed once after adding new Python files) | `build/` |
-| `make python` | build the `_bonsai` extension for the dev tree | `build/python/` |
-| `make python-test` | python + run the binding, bench, encoding, and doc-snippet suites | `build/` |
-| `make build-cuda` / `test-cuda` | the same with `-DBONSAI_CUDA=ON` | `build-cuda/` |
-| `make python-cuda` | the CUDA-enabled Python extension | `build-cuda/python/` |
-| `make test-asan` | ASan + UBSan build and test run (CI-only on macOS, see below) | `build-asan/` |
-| `make format` / `lint` / `lint-python` | clang-format, clang-tidy, ruff | |
-| `make fit-benchmark` | run the reference-library comparison harness (needs [uv](https://docs.astral.sh/uv/)) | `build/` |
-| `make help` | the full list | |
+Every make target, generated from the Makefile so it never drifts, is on the [Make targets](make-map.md) page. `make help` prints the common ones in the terminal.
 
 ## OpenMP is required, loudly
 

@@ -28,7 +28,7 @@ LLVM_BIN       ?= /usr/lib/llvm-21/bin
 LINT_EXTRA_ARGS :=
 endif
 
-all: build
+all: build  ## Default target; same as build.
 
 PYTHON ?= .venv/bin/python
 
@@ -37,9 +37,9 @@ build/build.ninja:
 	-DCMAKE_CXX_COMPILER=$(LLVM_BIN)/clang++ \
 	-G Ninja -S . -B build
 
-configure: build/build.ninja
+configure: build/build.ninja  ## Run CMake configure only, no compile (build/).
 
-build: build/build.ninja
+build: build/build.ninja  ## Configure and compile the CLI, library, and tests (build/).
 	@cmake --build build -j
 
 build-cuda/build.ninja:
@@ -48,10 +48,10 @@ build-cuda/build.ninja:
 	-DBONSAI_CUDA=ON \
 	-G Ninja -S . -B build-cuda
 
-build-cuda: build-cuda/build.ninja
+build-cuda: build-cuda/build.ninja  ## Configure and compile with the CUDA backend (build-cuda/).
 	@cmake --build build-cuda -j
 
-test-cuda: build-cuda $(TOY_SENTINEL)
+test-cuda: build-cuda $(TOY_SENTINEL)  ## Build the CUDA variant and run ctest against it.
 	@ctest --test-dir build-cuda
 
 build-asan/build.ninja:
@@ -60,32 +60,32 @@ build-asan/build.ninja:
 	-DBONSAI_SANITIZE=ON \
 	-G Ninja -S . -B build-asan
 
-build-asan: build-asan/build.ninja
+build-asan: build-asan/build.ninja  ## Build the ASan + UBSan variant (build-asan/).
 	@cmake --build build-asan -j
 
-test-asan: build-asan $(TOY_SENTINEL)
+test-asan: build-asan $(TOY_SENTINEL)  ## Build the ASan + UBSan variant and run ctest (CI-only on macOS).
 	@ctest --test-dir build-asan
 
-clean:
+clean:  ## Remove build/, build-cuda/, and build-asan/.
 	@rm -rf build build-cuda build-asan
 
-rebuild: clean build
+rebuild: clean build  ## Clean, then build.
 
-format:
+format:  ## clang-format in place over src/, include/, tests/, benchmarks/.
 	@$(LLVM_BIN)/clang-format -i $(SOURCES)
 
-format-check:
+format-check:  ## Check formatting with clang-format --dry-run --Werror (CI gate).
 	@$(LLVM_BIN)/clang-format --dry-run --Werror $(SOURCES)
 
 # Ruff, pinned the way LLVM is: linter drift breaks CI, not the code.
 RUFF_VERSION := 0.15.21
 
-lint-python:
+lint-python:  ## Run ruff over python/ and scripts/ (pinned via uvx).
 	@uvx ruff@$(RUFF_VERSION) check python scripts
 
 # run-clang-tidy exits non-zero when findings exist; a non-zero exit with
 # no findings means the tool itself failed and must not pass silently.
-lint: build/build.ninja
+lint: build/build.ninja  ## Run clang-tidy over src/, header-filtered to bonsai.
 	@log=$$($(LLVM_BIN)/run-clang-tidy -quiet -use-color=0 \
 	    -clang-tidy-binary $(LLVM_BIN)/clang-tidy \
 	    $(LINT_EXTRA_ARGS) \
@@ -98,18 +98,27 @@ lint: build/build.ninja
 	    echo "lint: run-clang-tidy failed"; exit 1; fi; \
 	echo "lint: no findings."
 
-run: build
+run: build  ## Build, then run ./build/src/bonsai with ARGS.
 	@./build/src/bonsai $(ARGS)
 
-test: build $(TOY_SENTINEL)
+# Re-extract the parameters reference input from the built CLI, then rerender
+# docs/use/parameters.md. `bonsai params` dumps the default Config as TOML
+# straight from the structs; the extract step needs Python 3.11+ (tomllib).
+# CI runs only render_params.py --check against the committed JSON, so it
+# never rebuilds the CLI to verify the page.
+params-json: build  ## Re-extract docs/use/parameters.src.json from the built CLI and rerender the page.
+	@./build/src/bonsai params | python3 scripts/render_params.py --extract
+	@python3 scripts/render_params.py
+
+test: build $(TOY_SENTINEL)  ## Build, fetch the pinned test datasets, run ctest.
 	@ctest --test-dir build
 
-perf-benchmark: build
+perf-benchmark: build  ## Build and run the Catch2 perf microbenchmarks (ARGS forwarded).
 	@./build/benchmarks/bonsai_bench $(ARGS)
 
 # Python extension. Needs a python with nanobind + numpy installed
 # (override with PYTHON=/path/to/python).
-python: build/build.ninja
+python: build/build.ninja  ## Build the _bonsai Python extension into build/python/.
 	@cmake -B build -DBONSAI_PYTHON=ON -DBONSAI_OPENMP_STATIC=ON \
 	    -DBONSAI_OPENMP_DYNAMIC_FALLBACK_OK=ON \
 	    -DPython_EXECUTABLE=$(abspath $(PYTHON)) \
@@ -117,33 +126,33 @@ python: build/build.ninja
 	@cmake --build build --target _bonsai -j
 	@echo "module at build/python/bonsai — use PYTHONPATH=build/python"
 
-python-test: python $(TOY_SENTINEL) $(AMAZON_SENTINEL)
+python-test: python $(TOY_SENTINEL) $(AMAZON_SENTINEL)  ## Build the extension and run the Python test suites.
 	@PYTHONPATH=build/python $(PYTHON) python/tests/test_bindings.py
 	@PYTHONPATH=build/python $(PYTHON) python/tests/test_encoding.py
 	@PYTHONPATH=build/python $(PYTHON) python/tests/test_doc_snippets.py
 	@PYTHONPATH=build/python $(PYTHON) python/tests/test_bench.py
 
 # CUDA-enabled extension in the CUDA tree; cuda_* growers can train.
-python-cuda: build-cuda/build.ninja
+python-cuda: build-cuda/build.ninja  ## Build the CUDA-enabled Python extension into build-cuda/python/.
 	@cmake -B build-cuda -DBONSAI_PYTHON=ON -DBONSAI_OPENMP_STATIC=ON \
 	    -DBONSAI_OPENMP_DYNAMIC_FALLBACK_OK=ON \
 	    -DPython_EXECUTABLE=$(abspath $(PYTHON)) >/dev/null
 	@cmake --build build-cuda --target _bonsai -j
 	@echo "module at build-cuda/python/bonsai — use PYTHONPATH=build-cuda/python"
 
-fit-benchmark: build $(TOY_SENTINEL)
+fit-benchmark: build $(TOY_SENTINEL)  ## Compare bonsai against reference libraries on California housing.
 	@uv run scripts/compare.py --config configs/california_housing.toml $(ARGS)
 
 # GPU perf loop (benchmarks/README.md): MSD ladder vs xgboost-GPU,
 # appends benchmarks/results/gpu_msd.jsonl. Needs the MSD dataset
 # (scripts/fetch_year_msd.py) and a CUDA-capable host.
-bench-gpu: build-cuda
+bench-gpu: build-cuda  ## Run the MSD GPU ladder vs xgboost-GPU with profile breakdowns.
 	@BONSAI_CUDA_PROFILE=1 BONSAI_GROW_PROFILE=1 uv run scripts/bench_gpu.py $(ARGS)
 
 # Scaling suite (benchmarks/README.md): synthetic rows/cols/bins/threads
 # sweep vs xgboost/lightgbm/catboost, appends benchmarks/results/scaling.jsonl.
 # Uses the CUDA module tree when present, else the CPU one.
-bench-scaling:
+bench-scaling:  ## Run the synthetic rows/cols/bins/threads scaling sweep.
 	@PYTHONPATH=$(if $(wildcard build-cuda/python),build-cuda/python,build/python) \
 	    uv run scripts/bench_scaling.py $(ARGS)
 
@@ -156,7 +165,7 @@ $(AMAZON_SENTINEL):
 	@uv run scripts/fetch_amazon.py
 	@touch $@
 
-help:
+help:  ## List the common make targets.
 	@echo "Targets:"
 	@echo "  make build              Configure + compile."
 	@echo "  make rebuild            Clean + build."
@@ -176,10 +185,11 @@ help:
 	@echo "  make format-check       clang-format --dry-run --Werror (CI gate)."
 	@echo "  make lint               clang-tidy on src/ (header-filtered to bonsai)."
 	@echo "  make lint-python        ruff on python/ + scripts/ (pinned via uvx)."
+	@echo "  make params-json        Re-extract the parameters reference from the built CLI."
 	@echo "  make skills             Install project-local Claude Code skills (currently: caveman)."
 	@echo "  make skills-clean       Remove installed project-local skills."
 
-skills: $(SKILLS_DIR)/caveman/SKILL.md
+skills: $(SKILLS_DIR)/caveman/SKILL.md  ## Install project-local Claude Code skills (currently caveman).
 
 $(SKILLS_DIR)/caveman/SKILL.md:
 	@mkdir -p $(@D)
@@ -187,7 +197,7 @@ $(SKILLS_DIR)/caveman/SKILL.md:
 	@curl -fsSL $(CAVEMAN_URL) -o $@
 	@echo "Done. Restart Claude Code (or trigger a skill rediscovery) to pick it up."
 
-skills-clean:
+skills-clean:  ## Remove installed project-local skills.
 	rm -rf $(SKILLS_DIR)
 
-.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint lint-python all run test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu bench-scaling python python-cuda python-test skills skills-clean help
+.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint lint-python all run params-json test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu bench-scaling python python-cuda python-test skills skills-clean help
