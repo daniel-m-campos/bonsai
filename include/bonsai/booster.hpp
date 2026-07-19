@@ -379,7 +379,7 @@ class Booster final : public IBooster
             grower_.grow(train, grad_, hess_, {row_indices_.data(), n_selected});
         lap(prof.grow_s);
 
-        // Leaf renewal (constant-hessian objectives): replace each leaf's
+        // Leaf renewal (surrogate-hessian objectives): replace each leaf's
         // Newton step with the objective's optimal value over the residuals
         // of the rows it covers. scores_ still exclude this tree (and, under
         // DART, the dropped trees) — exactly the state gradients used.
