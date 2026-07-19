@@ -111,7 +111,9 @@ nav:
   - Use:
       - Install: use/install.md
       - The API in one read: use/api-tour.md
+      - Parameters: use/parameters.md
       - Building from source: use/building.md
+      - Make targets: use/make-map.md
   - Results:
       - Overview: method/README.md
       - The results: method/results.md

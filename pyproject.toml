@@ -66,3 +66,6 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 # Template strings ARE the generated page's one-line markdown paragraphs;
 # wrapping them would hard-wrap the rendered prose.
 "scripts/render_results.py" = ["E501"]
+# Same reason: the effect lines and page headers are one-line paragraphs.
+"scripts/render_params.py" = ["E501"]
+"scripts/render_make_map.py" = ["E501"]
