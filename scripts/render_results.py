@@ -292,7 +292,7 @@ Per-suite mean rank:
 
 {per_suite}
 
-Sensitivity: xgboost's campaign mapping sets `min_child_weight=20` (hessian-weighted, the knob-translation bracket recorded in decision 68); replacing its rows with the `min_child_weight=1` run gives the other end of the bracket:
+Sensitivity: XGBoost's campaign mapping sets `min_child_weight=20` (hessian-weighted, the knob-translation bracket recorded in decision 68); replacing its rows with the `min_child_weight=1` run gives the other end of the bracket:
 
 {sensitivity}
 
@@ -421,9 +421,9 @@ NDCG@10 by regime; the stable gap is to listwise losses only, so issue #58 is sc
 
 {provenance(["ranking-tradeoff-2026-07.jsonl"], "Probe: [scripts/probe_ranking.py](../../scripts/probe_ranking.py); evidence [benchmarks/ranking-tradeoff-2026-07.md](../../benchmarks/ranking-tradeoff-2026-07.md).")}
 
-### Probe: catboost's categorical machinery priced by its own toggle (reopener predicate, decision 80)
+### Probe: CatBoost's categorical machinery priced by its own toggle (reopener predicate, decision 80)
 
-On the cat-heavy TabArena subset, catboost native vs the same model with categoricals ordinal-encoded: the toggle prices the machinery at 68% of catboost's remaining lead over bonsai_ts (mean share -0.0099 of -0.0147); the pure-numeric control is bit-identical in both arms. Where the price is largest, ablated catboost loses to bonsai_ts outright.
+On the cat-heavy TabArena subset, CatBoost native vs the same model with categoricals ordinal-encoded: the toggle prices the machinery at 68% of CatBoost's remaining lead over bonsai_ts (mean share -0.0099 of -0.0147); the pure-numeric control is bit-identical in both arms. Where the price is largest, ablated CatBoost loses to bonsai_ts outright.
 
 {tap_table}
 
@@ -627,7 +627,7 @@ Latest run per device on the YearPredictionMSD pipeline benchmark (full history 
 
 {pre_table}
 
-{provenance(["cpu-prefetch-round-2026-07.jsonl"], "Decision 61: software prefetch closed the 16M CPU gap to xgboost-hist on this pod.")}
+{provenance(["cpu-prefetch-round-2026-07.jsonl"], "Decision 61: software prefetch closed the 16M CPU gap to XGBoost-hist on this pod.")}
 
 ### GPU accuracy-vs-time frontier at 16M
 
@@ -635,11 +635,11 @@ Latest run per device on the YearPredictionMSD pipeline benchmark (full history 
 
 {par_table}
 
-{provenance(["gpu-pareto-16M-2026-07.jsonl"], "Post-resident-objective re-run (2026-07-18, decision 78): bonsai is first to every measured accuracy at every horizon; the marginal round fell 104 to 64 ms, below catboost's 78 on the same pod, and the last crossover is gone. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md).")}
+{provenance(["gpu-pareto-16M-2026-07.jsonl"], "Post-resident-objective re-run (2026-07-18, decision 78): bonsai is first to every measured accuracy at every horizon; the marginal round fell 104 to 64 ms, below CatBoost's 78 on the same pod, and the last crossover is gone. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md).")}
 
-### Ordered boosting at scale (catboost door)
+### Ordered boosting at scale (CatBoost door)
 
-The probe behind decisions 62 to 64: catboost's Ordered vs Plain modes against bonsai oblivious as rows grow.
+The probe behind decisions 62 to 64: CatBoost's Ordered vs Plain modes against bonsai oblivious as rows grow.
 
 {edge_table}
 
@@ -703,7 +703,7 @@ The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC),
 
 {tables[1]}
 
-{provenance(["airline-2026-07.jsonl"], "One L40S (SECURE US-NC-1, driver 570.124.06), 2026-07-15, post-decision-74 code. A bonsai variant has the best AUC in every cell from 1M up under both protocols; xgboost-GPU owns raw speed on this narrow shape. Evidence: [benchmarks/airline-2026-07.md](../../benchmarks/airline-2026-07.md).")}
+{provenance(["airline-2026-07.jsonl"], "One L40S (SECURE US-NC-1, driver 570.124.06), 2026-07-15, post-decision-74 code. A bonsai variant has the best AUC in every cell from 1M up under both protocols; XGBoost-GPU owns raw speed on this narrow shape. Evidence: [benchmarks/airline-2026-07.md](../../benchmarks/airline-2026-07.md).")}
 """
 
 

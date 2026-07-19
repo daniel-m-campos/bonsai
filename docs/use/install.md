@@ -44,7 +44,7 @@ If `cuda_available()` is `True`, pass `grower="cuda_depthwise"` (or `"cuda_obliv
 pip install "bonsai-gbt[bench]" --find-links https://github.com/daniel-m-campos/bonsai/releases/expanded_assets/v1.3.0
 ```
 
-The extra pulls xgboost, lightgbm, catboost, scikit-learn, pandas, and openml: everything `bonsai.bench` needs to reproduce the published benchmark tables. `python -m bonsai.bench.grinsztajn out.jsonl --report` re-runs the external standings suite under the [benchmark protocol](../method/benchmark-protocol.md).
+The extra pulls XGBoost, LightGBM, CatBoost, scikit-learn, pandas, and openml: everything `bonsai.bench` needs to reproduce the published benchmark tables. `python -m bonsai.bench.grinsztajn out.jsonl --report` re-runs the external standings suite under the [benchmark protocol](../method/benchmark-protocol.md).
 
 ## Docker
 

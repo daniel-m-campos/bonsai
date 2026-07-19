@@ -13,8 +13,8 @@ caches.
 
 The blur costs almost nothing: with 255 quantile bins, candidate
 thresholds sit at every ~0.4th percentile of the feature. Splits between
-them were statistically indistinguishable anyway, which is why xgboost
-(`tree_method=hist`), lightgbm, and catboost all default to this.
+them were statistically indistinguishable anyway, which is why XGBoost
+(`tree_method=hist`), LightGBM, and CatBoost all default to this.
 
 ## The math
 

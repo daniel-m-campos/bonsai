@@ -20,4 +20,4 @@ This is not an aesthetic. A bit-exact contract turns "did this change alter beha
 
 ## Transferring it
 
-Any numerical system can adopt the ladder: fix the reduction orders (deterministic parallelism is a design choice, not a performance sacrifice; bonsai ties xgboost with it), pin the floating-point environment (contraction, denormals), then hash a reference output in CI on more than one architecture. The gate is a few lines of workflow; the property it enforces is the difference between refactoring a numerical codebase and gambling with it.
+Any numerical system can adopt the ladder: fix the reduction orders (deterministic parallelism is a design choice, not a performance sacrifice; bonsai ties XGBoost with it), pin the floating-point environment (contraction, denormals), then hash a reference output in CI on more than one architecture. The gate is a few lines of workflow; the property it enforces is the difference between refactoring a numerical codebase and gambling with it.

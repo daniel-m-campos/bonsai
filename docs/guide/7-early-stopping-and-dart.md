@@ -40,7 +40,7 @@ uv run scripts/compare.py --config configs/year_prediction_msd.toml \
 
 Measured (feature_gap §3): with everyone stopping on the same 90/10 split,
 all five libraries converge to RMSE 8.96–9.00, and bonsai leafwise lands
-*between* xgboost and lightgbm, erasing the gap a fixed 200-iteration
+*between* XGBoost and LightGBM, erasing the gap a fixed 200-iteration
 budget showed.
 
 ## DART
@@ -55,7 +55,7 @@ gradients, then rescale so the ensemble's expected output is preserved.
 
 ### The math
 
-Drop $k$ trees; fit the new tree; then normalize (xgboost's
+Drop $k$ trees; fit the new tree; then normalize (XGBoost's
 `normalize_type="tree"`, with learning rate $\eta$):
 
 ```math
@@ -83,7 +83,7 @@ cache is a non-starter): route rows through the tree *in bin space*:
 back to its bin with one `lower_bound` over the mapper cuts, exact because
 thresholds are cut values (the same invariant chapter 5's fix uses).
 
-Config: `booster.dart_drop_rate` (xgboost `rate_drop`, lightgbm
+Config: `booster.dart_drop_rate` (XGBoost `rate_drop`, LightGBM
 `drop_rate`). Incompatible with early stopping by construction: DART
 rescales *earlier* trees each round, which invalidates incrementally
 accumulated valid scores, so the combination throws.
@@ -97,14 +97,14 @@ uv run scripts/compare.py --config configs/california_housing.toml \
 
 Measured (feature_gap §8): DART regularizes: everyone lands *above* their
 plain-GBDT RMSE at a fixed 200-round budget, and bonsai's implementation
-degrades least (0.593 vs xgboost 0.626, lightgbm 0.702).
+degrades least (0.593 vs XGBoost 0.626, LightGBM 0.702).
 
 ## Gotchas & war stories
 
 - **The $k+1$ trap.** bonsai first implemented the DART paper's
   $1/(k+1)$ normalization literally. RMSE: 0.88 (*worse than every
   reference*) because with $\eta = 0.05$ each new tree landed $\sim 20$x
-  too small to matter. Switching to $k+\eta$ (what xgboost actually does)
+  too small to matter. Switching to $k+\eta$ (what XGBoost actually does)
   moved bonsai to best in
   the DART field in one line. Read the paper *and* the reference source.
 - **Early stopping evaluates in raw-score space**: the objective's own

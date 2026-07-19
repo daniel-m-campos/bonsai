@@ -35,7 +35,7 @@ Follow one fit through the transactions:
 
 The host control plane between transactions is [`src/level_step.hpp`](../../src/level_step.hpp) and the growers, the same `plan_level`/`commit_children` logic the CPU path uses, because it *is* the CPU path's logic. When the device declines (a feature's bins exceed the shared-memory budget), the same grower runs the same tree on the host engine mid-fit.
 
-What this buys, measured (same-pod L40S, 16M rows × 100 features × 100 trees, `fit()` timed end-to-end including binning): **bonsai 26.9s vs xgboost-GPU 28.9s, at a third of the host memory (7.3GB vs 22.1GB)**. The path from 3× slower to ahead is [chapter 11](11-performance-engineering.md).
+What this buys, measured (same-pod L40S, 16M rows × 100 features × 100 trees, `fit()` timed end-to-end including binning): **bonsai 26.9s vs XGBoost-GPU 28.9s, at a third of the host memory (7.3GB vs 22.1GB)**. The path from 3× slower to ahead is [chapter 11](11-performance-engineering.md).
 
 ## Try it
 

@@ -43,17 +43,17 @@ One implementation, `bonsai.bench.metrics`. Primary metric per task, the only on
 
 ## Timing
 
-Two modes, declared per row. `in_memory`: fit timed from in-memory arrays, including each library's own ingest (bonsai binning, xgboost QuantileDMatrix, lgb.Dataset, catboost Pool); the scaling and rebaseline convention. `pipeline`: fit timed end to end including CSV read; the gpu_msd and CLI-compare convention. Numbers from different modes are never compared against each other. predict_s always times prediction from a raw test matrix.
+Two modes, declared per row. `in_memory`: fit timed from in-memory arrays, including each library's own ingest (bonsai binning, XGBoost QuantileDMatrix, lgb.Dataset, CatBoost Pool); the scaling and rebaseline convention. `pipeline`: fit timed end to end including CSV read; the gpu_msd and CLI-compare convention. Numbers from different modes are never compared against each other. predict_s always times prediction from a raw test matrix.
 
 ## Knobs
 
-Two named sets in `bonsai.bench.params`: CAMPAIGN (200 iters, lr 0.05, depth 6, 255 bins) for quality, SCALING (100 iters, lr 0.1, depth 8) for perf. Two lightgbm leaf conventions exist by declaration, not drift: `num_leaves_campaign(depth)` = (1 << depth) - 1 and `num_leaves_full(depth)` = 1 << depth; each row records which. Reference mappings (including catboost's GPU border cap and xgboost's hessian-weighted min_child_weight, whose two readings bracket xgboost per decision 68's correction) live only in `params.py`; re-deriving them by hand caused a published correction once and is the one prohibited act.
+Two named sets in `bonsai.bench.params`: CAMPAIGN (200 iters, lr 0.05, depth 6, 255 bins) for quality, SCALING (100 iters, lr 0.1, depth 8) for perf. Two LightGBM leaf conventions exist by declaration, not drift: `num_leaves_campaign(depth)` = (1 << depth) - 1 and `num_leaves_full(depth)` = 1 << depth; each row records which. Reference mappings (including CatBoost's GPU border cap and XGBoost's hessian-weighted min_child_weight, whose two readings bracket XGBoost per decision 68's correction) live only in `params.py`; re-deriving them by hand caused a published correction once and is the one prohibited act.
 
 ## Hardware rules
 
 Comparative perf numbers come only from the same machine in the same session (rental-fleet variance reaches ~25%). Rented hosts must pass the 30-second sync-latency probe (round-trips over 50µs reject the pod, decision 48). Quality rows are hardware-independent by construction: references run their CPU paths, bonsai models are bit-identical across architectures by contract.
 
-Same-machine control is also what makes a competitor gap debuggable. Two apparent catboost advantages localized to bonsai bugs precisely because everything else was held equal: an accuracy gap that traced to a GPU kernel veto (decision 63), and a binning-cost gap that was a per-feature sampling pass catboost does not pay (decision 64, a 24x mapper speedup after the fix).
+Same-machine control is also what makes a competitor gap debuggable. Two apparent CatBoost advantages localized to bonsai bugs precisely because everything else was held equal: an accuracy gap that traced to a GPU kernel veto (decision 63), and a binning-cost gap that was a per-feature sampling pass CatBoost does not pay (decision 64, a 24x mapper speedup after the fix).
 
 ## The row schema
 

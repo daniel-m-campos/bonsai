@@ -6,13 +6,13 @@ Chapters 2–3 explain how to split *one* node. A grower decides **which
 node to split next**, and that scheduling choice is most of what
 distinguishes the three reference libraries:
 
-- **Depth-wise** (xgboost's default): split every node at depth `d`
+- **Depth-wise** (XGBoost's default): split every node at depth `d`
   before touching depth `d+1`. Balanced trees, capped by `max_depth`.
-- **Leaf-wise / best-first** (lightgbm's default): always split the single
+- **Leaf-wise / best-first** (LightGBM's default): always split the single
   leaf (anywhere in the tree) whose best split has the highest gain.
   Deliberately *unbalanced*: for a fixed leaf budget (`max_leaves`), it
   drives training loss down fastest, at higher overfitting risk.
-- **Oblivious / symmetric** (catboost): every node at a level shares *one*
+- **Oblivious / symmetric** (CatBoost): every node at a level shares *one*
   split. The tree is a perfect table (2^depth leaves indexed by a
   bitstring) which makes predict extremely fast and acts as a strong
   regularizer.
@@ -68,25 +68,25 @@ the **boosting scheme** (*how each row's gradient is computed*):
 - **Plain** (every library's default at scale, and bonsai's only mode): row
   $i$'s gradient comes from the full current ensemble's prediction for row
   $i$, an ensemble that was trained on all rows, including $i$ itself.
-- **Ordered** (catboost's small-data mode): row $i$'s gradient comes from a
+- **Ordered** (CatBoost's small-data mode): row $i$'s gradient comes from a
   model trained only on the rows *before* $i$ in a random permutation, so
   the gradient never sees $i$'s own label. This removes a subtle bias
-  catboost calls **prediction shift**, the same self-referential leak that
+  CatBoost calls **prediction shift**, the same self-referential leak that
   [ordered target statistics](13-categorical-features.md) fix for
   categorical encodings, one level up.
 
 The two axes are independent: any structure composes with any scheme.
-catboost *bundles* oblivious trees with ordered boosting, but that is a
+CatBoost *bundles* oblivious trees with ordered boosting, but that is a
 packaging choice, not a dependency: you can grow depth-wise trees with
 ordered gradients, or oblivious trees with plain ones.
 
 Seen this way, bonsai already spans the **structure** axis more widely than
-either reference library, three growth disciplines to xgboost's two
-(depth/leaf) and catboost's one (oblivious). What it does not offer is the
+either reference library, three growth disciplines to XGBoost's two
+(depth/leaf) and CatBoost's one (oblivious). What it does not offer is the
 ordered *scheme*. That was a measured decision, not an oversight: toggling
-catboost's own `boosting_type` shows ordered boosting buys essentially zero
+CatBoost's own `boosting_type` shows ordered boosting buys essentially zero
 test r² on high-signal numeric data (0.8722 vs 0.8720 plain at 200k rows)
-while costing ~7× the fit time, and catboost itself falls back to plain past
+while costing ~7× the fit time, and CatBoost itself falls back to plain past
 ~50k rows. Prediction shift is real, but it bites on small, noisy, or
 categorical problems: exactly where the target-statistics *encoder* already
 applies the ordered fix without a core change. The full ladder that priced
@@ -118,5 +118,5 @@ nodes, oblivious trades a little RMSE for the fastest predict.
   summed histograms.** The score is quadratic in $G$, so folding histograms
   first computes the wrong thing. The original implementation did, and
   produced degenerate trees whose failure mode looked plausible enough to
-  get rationalized (decision 30). The re-implementation matches catboost's
+  get rationalized (decision 30). The re-implementation matches CatBoost's
   per-leaf aggregation.
