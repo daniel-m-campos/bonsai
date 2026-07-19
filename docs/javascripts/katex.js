@@ -2,6 +2,7 @@
 // <div class="arithmatex">\[...\]</div>). Single-dollar inline math is
 // deliberately not configured; use \( ... \) if inline math is ever needed.
 document$.subscribe(() => {
+  if (typeof renderMathInElement === "undefined") return;
   renderMathInElement(document.body, {
     delimiters: [
       { left: "\\[", right: "\\]", display: true },
