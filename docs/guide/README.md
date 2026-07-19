@@ -6,7 +6,7 @@ tuned past readability. This guide is the missing middle, and it is the
 reason bonsai exists: every chapter takes one concept from intuition,
 through the (light) math, to the **actual lines in this repository that
 implement it** (usually a few dozen), and ends with an experiment you can
-run against xgboost, lightgbm, and catboost with the same knob turned.
+run against XGBoost, LightGBM, and CatBoost with the same knob turned.
 
 The code the guide references is the shipping code, not a simplification.
 When a chapter says "this is all there is to GOSS", the linked function is

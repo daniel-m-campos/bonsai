@@ -26,7 +26,7 @@
 
 ## What is bonsai?
 
-bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library and command-line tool written in C++23. It pairs a small, concept-checked component API (objectives, growers, split finders, samplers) with compile-time dispatch in the training hot path, and ships the benchmark harness that pits it against xgboost, lightgbm, and catboost on real data. The aim is a readable, thoroughly documented GBT: a reference-grade implementation that competes with the production libraries instead of merely tolerating comparison with them.
+bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library and command-line tool written in C++23. It pairs a small, concept-checked component API (objectives, growers, split finders, samplers) with compile-time dispatch in the training hot path, and ships the benchmark harness that pits it against XGBoost, LightGBM, and CatBoost on real data. The aim is a readable, thoroughly documented GBT: a reference-grade implementation that competes with the production libraries instead of merely tolerating comparison with them.
 
 - **Compile-time dispatch, concept-checked components.** The runtime TOML config resolves once to a monomorphized `Booster<Objective, Grower, Splitter, Sampler>`; no virtual calls in the hot path, and contract violations fail at compile time. Adding a component is a [short recipe](https://daniel-m-campos.github.io/bonsai/use/building/#extending-bonsai).
 - **Five growers, one engine.** `depthwise` (XGBoost-style), `leafwise` (LightGBM-style), `oblivious` (CatBoost-style), and their CUDA twins `cuda_depthwise` / `cuda_oblivious`; with 7 objectives and 3 samplers the dispatch space is 105 statically-typed combinations, selectable per run from config.
@@ -83,7 +83,7 @@ On the [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815), 
 | xgboost | 2.84 | 6 |
 | catboost | 3.22 | 8 |
 
-The one knob that translates ambiguously between libraries is bracketed: under xgboost's own `min_child_weight=1` convention the top two swap on mean rank (2.11 vs 2.04) while bonsai keeps the most second-or-better finishes; both runs are in the ledger. Reproduce either: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl --report`.
+The one knob that translates ambiguously between libraries is bracketed: under XGBoost's own `min_child_weight=1` convention the top two swap on mean rank (2.11 vs 2.04) while bonsai keeps the most second-or-better finishes; both runs are in the ledger. Reproduce either: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl --report`.
 
 ### Perf: fit seconds at scale
 
@@ -96,7 +96,7 @@ From the same-pod 2026-07 re-baseline (dual-EPYC-9554 host with an L40S; `fit()`
 | 4M | 4.5s (.878) | **4.4s** (.875) | 5.3s (.878) | 5.0s (.877) | 19.9s (.879) | 20.2s (.875) |
 | 16M | 20.5s (.879) | **18.4s** (.876) | 19.9s (.880) | 18.5s (.876) | 111.3s (.879) | 73.3s (.876) |
 
-Honest caveats, because benchmarks without them are advertising: identical-model GPUs across the rental fleet measure up to ~25% apart, so only same-pod columns compare. bonsai owns the fastest slot at every row scale, edging catboost at 16M (18.4 vs 18.5s, both .876) and beating xgboost-GPU (19.9s); on wide data catboost keeps the lead, with bonsai second (the cols-scaling table is in [the ledger](https://daniel-m-campos.github.io/bonsai/method/results/)). Off the fixed-iteration axis, the 16M accuracy-vs-time frontier now belongs to bonsai: fastest to every measured accuracy up to ~.895 r², a statistical tie with catboost through the .897-.898 plateau, and the measured ceiling (.8981); catboost's remaining edge is a cheaper marginal round that pays off only past ~450 rounds at this scale (decision 72, chart in the ledger). Peak host RSS at 16M is 7.0GB vs xgboost's 22.2GB and catboost's 19.4GB, and predict is ~3x faster. Two earlier apparent gaps against catboost were bonsai bugs, since fixed (decisions 63/64); the path from 3x behind to this table is [guide chapter 11](https://daniel-m-campos.github.io/bonsai/guide/11-performance-engineering/).
+Honest caveats, because benchmarks without them are advertising: identical-model GPUs across the rental fleet measure up to ~25% apart, so only same-pod columns compare. bonsai owns the fastest slot at every row scale, edging CatBoost at 16M (18.4 vs 18.5s, both .876) and beating XGBoost-GPU (19.9s); on wide data CatBoost keeps the lead, with bonsai second (the cols-scaling table is in [the ledger](https://daniel-m-campos.github.io/bonsai/method/results/)). Off the fixed-iteration axis, the 16M accuracy-vs-time frontier now belongs to bonsai: fastest to every measured accuracy up to ~.895 r², a statistical tie with CatBoost through the .897-.898 plateau, and the measured ceiling (.8981); CatBoost's remaining edge is a cheaper marginal round that pays off only past ~450 rounds at this scale (decision 72, chart in the ledger). Peak host RSS at 16M is 7.0GB vs XGBoost's 22.2GB and CatBoost's 19.4GB, and predict is ~3x faster. Two earlier apparent gaps against CatBoost were bonsai bugs, since fixed (decisions 63/64); the path from 3x behind to this table is [guide chapter 11](https://daniel-m-campos.github.io/bonsai/guide/11-performance-engineering/).
 
 ## Claims and proofs
 
@@ -121,7 +121,7 @@ The home is **[daniel-m-campos.github.io/bonsai](https://daniel-m-campos.github.
 
 - **[Learn](https://daniel-m-campos.github.io/bonsai/guide/)**: gradient boosting from intuition to the shipping code, one concept per chapter, each with an experiment against the reference libraries.
 - **[Use](https://daniel-m-campos.github.io/bonsai/use/install/)**: [install](https://daniel-m-campos.github.io/bonsai/use/install/), [the API in one read](https://daniel-m-campos.github.io/bonsai/use/api-tour/), [building from source](https://daniel-m-campos.github.io/bonsai/use/building/).
-- **[Lineage](https://daniel-m-campos.github.io/bonsai/lineage/xgboost/)**: what xgboost, lightgbm, and catboost each contributed, and whether measurement adopted, rebuilt, or declined it.
+- **[Lineage](https://daniel-m-campos.github.io/bonsai/lineage/xgboost/)**: what XGBoost, LightGBM, and CatBoost each contributed, and whether measurement adopted, rebuilt, or declined it.
 - **[Method](https://daniel-m-campos.github.io/bonsai/method/)**: the measurement discipline, portable beyond GBTs; its rules in the [benchmark charter](https://daniel-m-campos.github.io/bonsai/method/benchmark-protocol/) and its evidence in [the results ledger](https://daniel-m-campos.github.io/bonsai/method/results/).
 - The engineering notebook: the [decisions log](https://daniel-m-campos.github.io/bonsai/decisions/) and the [architecture notes](https://daniel-m-campos.github.io/bonsai/architecture/).
 

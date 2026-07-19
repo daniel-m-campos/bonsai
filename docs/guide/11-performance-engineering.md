@@ -2,7 +2,7 @@
 
 ## The idea
 
-Chapter 10 showed *where* the GPU boundary sits. This chapter is about **how you find out where it should sit**: the method behind the July 2026 campaign that took the 16M-row fit from ~43s to 26.9s and past xgboost-GPU, told through its real moves and, more instructively, its real refutations.
+Chapter 10 showed *where* the GPU boundary sits. This chapter is about **how you find out where it should sit**: the method behind the July 2026 campaign that took the 16M-row fit from ~43s to 26.9s and past XGBoost-GPU, told through its real moves and, more instructively, its real refutations.
 
 The reframing that made the campaign systematic: training is a small **compute DAG**. Nodes are the algorithmic steps (bin, gradients, per level: build/find/partition, epilogue, score update); each node has a measured cost per feasible placement (host or device); edges carry data, and an edge crossing the placement boundary costs `bytes / bandwidth(direction)`. Choosing an implementation *is* choosing a placement plus a schedule. General DAG placement is NP-hard; this DAG has ~10 node types and at most six with free placement, so **exhaustive enumeration is trivial**: the entire difficulty is honest constants. ([architecture/16](../architecture/16-compute-dag.md) is the reference; `scripts/dag_model.py` is the living evaluator.)
 
@@ -30,7 +30,7 @@ Every row is a real decision from [decisions.md](../decisions.md); the deltas ar
 
 | move | change on the graph | priced | measured |
 |---|---|---|---|
-| 49 row-wise fill | host node cost (cache behavior, not placement) | — | fit 1.6–1.7× (populate 2.1×) |
+| 49 row-wise fill | host node cost (cache behavior, not placement) | n/a | fit 1.6–1.7× (populate 2.1×) |
 | 53 §2 rows cache | delete a 64MB/tree H2D edge | ~0.4s | root staging 0.42→0.04s |
 | 53 §3 epilogue | 16M-row host loop → device map + bulk D2H | several s | finalize 9.4→3.9s |
 | **52 device gradients** | delete the 12.8GB/fit gh H2D edge | **~0.9s → NO-GO** | experiment confirmed ~1.6s; killed |
@@ -136,7 +136,7 @@ The three kills cost a combined price under one millisecond to refute, because t
 
 Each landed lever passed the same gates: `[cuda]` suite on device, r² identical to four decimals at the 16M cell, and the CPU `model_hash` byte-identical (a GPU-only change must not move the host plane; the suite caught two real bugs on the way, both recorded in PR #148). Same-pod: round 181→125ms, fit 19.43→13.88s.
 
-Then the frontier re-run measured the campaign from the outside (decision 72): marginal round 155→104ms in the ladder decomposition, the bonsai-catboost crossover pushed from ~100 rounds to ~320, past both libraries' accuracy plateaus, and every shared r² point reproduced to four decimals across pods. The remaining round is ~72ms of histogram kernel plus ~32ms of partition and bus, and the campaign's last recorded act was *not spending* the kernel rung: the 80ms gate was not met and the frontier no longer needed it.
+Then the frontier re-run measured the campaign from the outside (decision 72): marginal round 155→104ms in the ladder decomposition, the bonsai-CatBoost crossover pushed from ~100 rounds to ~320, past both libraries' accuracy plateaus, and every shared r² point reproduced to four decimals across pods. The remaining round is ~72ms of histogram kernel plus ~32ms of partition and bus, and the campaign's last recorded act was *not spending* the kernel rung: the 80ms gate was not met and the frontier no longer needed it.
 
 ### The checklist that generalizes
 

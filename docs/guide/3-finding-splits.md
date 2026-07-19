@@ -37,7 +37,7 @@ wins.
 **Missing values** get their own reserved bin, excluded from the prefix
 walk. For every candidate, bonsai scores *both* routings (NaNs-left and
 NaNs-right) and keeps the better (`default_left` on the split). That is
-xgboost's "learned default direction": the data decides where missing
+XGBoost's "learned default direction": the data decides where missing
 belongs, per split.
 
 ## In bonsai

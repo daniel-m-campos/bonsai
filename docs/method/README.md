@@ -12,11 +12,11 @@ The only citable standings table is the Grinsztajn suite: 55 tasks selected by t
 
 All three are GPU, same-pod, at 16M rows.
 
-- **Speed.** On the 16M GPU frontier bonsai reaches every measured accuracy first, at every horizon: the marginal boosting round costs 64ms against catboost's 78 on the same pod, and the fixed cost is 3.8s against catboost's 11.7 ([the frontier](results.md#gpu-accuracy-vs-time-frontier-at-16m)).
-- **Memory.** Peak host RSS at 16M is 7.0GB against xgboost's 22.2GB and catboost's 19.4GB, roughly 3x less. Predict is about 3x faster ([the ledger](results.md#perf-division)).
+- **Speed.** On the 16M GPU frontier bonsai reaches every measured accuracy first, at every horizon: the marginal boosting round costs 64ms against CatBoost's 78 on the same pod, and the fixed cost is 3.8s against CatBoost's 11.7 ([the frontier](results.md#gpu-accuracy-vs-time-frontier-at-16m)).
+- **Memory.** Peak host RSS at 16M is 7.0GB against XGBoost's 22.2GB and CatBoost's 19.4GB, roughly 3x less. Predict is about 3x faster ([the ledger](results.md#perf-division)).
 - **Determinism.** Models are bit-identical across CPU architectures and thread counts, enforced per commit in CI. No reference library offers this ([the contract](../design/determinism.md)).
 
-Losses are recorded with the wins. On wide data catboost keeps the lead, with bonsai second. xgboost holds the last 0.001 r² of cut quality on some tasks. Both are in [the ledger](results.md).
+Losses are recorded with the wins. On wide data CatBoost keeps the lead, with bonsai second. XGBoost holds the last 0.001 r² of cut quality on some tasks. Both are in [the ledger](results.md).
 
 ## How we decide
 

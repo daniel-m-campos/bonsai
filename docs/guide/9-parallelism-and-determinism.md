@@ -54,7 +54,7 @@ of configuration, never of scheduling.
 
 An earlier revision of this chapter ended: "row-parallel histogram
 building with per-thread partials is the remaining fit-speed lever, and
-taking it would relax the contract — documented, not taken by accident."
+taking it would relax the contract (documented, not taken by accident)."
 The lever **was** then taken, deliberately (decision 49): ground-truth
 instrumentation showed deep sparse nodes filling at a fifth of the dense
 rate (a cache problem no feature-parallel scan could fix), and the
@@ -79,7 +79,7 @@ cmp /tmp/p1.csv /tmp/p8.csv && echo "bit-identical"
 
 With u16 bins (`max_bin > 255`) this compares equal at *any* thread pair;
 with u8 bins, re-run either side at the same `n_threads` twice and compare
-those: run-to-run identity is the contract. Try the same with xgboost's
+those: run-to-run identity is the contract. Try the same with XGBoost's
 `nthread` and diff the dumped models.
 
 ## Gotchas & war stories
@@ -91,12 +91,12 @@ those: run-to-run identity is the contract. Try the same with xgboost's
   data pointers before entering the region. If you use OpenMP with any
   TLS, this one is waiting for you.
 - **Two OpenMP runtimes in one process deadlock.** The Python extension
-  originally linked Homebrew's `libomp.dylib`; the moment xgboost (which
+  originally linked Homebrew's `libomp.dylib`; the moment XGBoost (which
   bundles its own libomp) built a DMatrix in the same process, one OpenMP
   call stack spanned *two different libomp images* and parked forever at a
   join barrier. Fix, standard for wheels: link libomp **statically** into
   the module and export only the module-init symbol
-  (`BONSAI_OPENMP_STATIC=ON`; decision 36). bonsai, xgboost, and lightgbm
+  (`BONSAI_OPENMP_STATIC=ON`; decision 36). bonsai, XGBoost, and LightGBM
   now interleave in one process.
 - **NUMA first-touch can halve your fill rate silently.** The row-wise
   fill's partial-histogram slabs were first zeroed by the main thread,

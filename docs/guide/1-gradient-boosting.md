@@ -32,7 +32,7 @@ both evaluated at the current prediction $F_{m-1}(x_i)$. For squared error
 $L = \tfrac{1}{2}(F-y)^2$ these are simply $g = F - y$ (the residual) and
 $h = 1$.
 
-Why carry the hessian? Second-order (Newton) boosting, the xgboost
+Why carry the hessian? Second-order (Newton) boosting, the XGBoost
 formulation: approximate the loss of adding value $w$ to every row in some
 leaf with a second-order Taylor expansion, add an L2 penalty
 $\tfrac{1}{2}\lambda w^2$, and minimize:

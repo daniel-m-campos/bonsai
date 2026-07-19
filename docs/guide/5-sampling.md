@@ -8,7 +8,7 @@ siblings, which regularizes like bagging. Two disciplines ship:
 
 - **Bernoulli** (uniform): keep each row with probability `p` per
   iteration. Simple, unbiased, the classic `subsample`.
-- **GOSS**: Gradient-based One-Side Sampling (lightgbm's invention). Rows
+- **GOSS**: Gradient-based One-Side Sampling (LightGBM's invention). Rows
   with large |gradient| are the ones the model is *wrong about*, so keep
   all of those and only a thin uniform sample of the well-predicted rest.
   Most of the information for choosing splits lives in the big gradients.
@@ -51,7 +51,7 @@ uv run scripts/compare.py --config configs/year_prediction_msd.toml \
 
 Measured on YearPredictionMSD (feature_gap.md §2): GOSS *improved*
 leafwise RMSE (9.0871 → 9.0757) while cutting fit time, the same
-direction and magnitude as lightgbm's own GOSS delta.
+direction and magnitude as LightGBM's own GOSS delta.
 
 ## Gotchas & war stories
 
@@ -80,5 +80,5 @@ tree's prediction for that row, sampled or not.*
 
 Two lessons: a sampler that reacts to model state (GOSS) turns quiet
 staleness into a feedback loop; and cross-library benchmarks are
-correctness tests: lightgbm's GOSS landing at 9.07 while ours sat at 24.7
+correctness tests: LightGBM's GOSS landing at 9.07 while ours sat at 24.7
 was the whole diagnosis.

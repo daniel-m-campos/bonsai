@@ -10,9 +10,9 @@ Linux and macOS arm64, Python 3.9 to 3.13, no toolchain; on linux x86_64 the whe
 
 bonsai began as a learning project: rebuild gradient-boosted trees from first principles to understand how the production libraries actually work, in a small codebase that takes modern C++23 and software design as seriously as the algorithms.
 
-The scope escalated. [Built with Claude](#built-with-claude), milestones that were meant to be the finish line kept falling: CPU parity, then GPU parity, then GPU leads. The ambition grew with them: assimilate the defining ideas of xgboost, lightgbm, and catboost into one small library, match or beat their performance, and keep the code clean enough that reading it is still the point.
+The scope escalated. [Built with Claude](#built-with-claude), milestones that were meant to be the finish line kept falling: CPU parity, then GPU parity, then GPU leads. The ambition grew with them: assimilate the defining ideas of XGBoost, LightGBM, and CatBoost into one small library, match or beat their performance, and keep the code clean enough that reading it is still the point.
 
-Where that landed, measured on shared hardware at matched settings: on GPU, bonsai holds the fastest slot at every row scale tested, edging catboost and beating xgboost at 16M rows at matched accuracy, on ~3x less host memory. Where it still loses (catboost on wide data, xgboost's last 0.001 r² of cut quality), the runs are linked with the same prominence as the wins.
+Where that landed, measured on shared hardware at matched settings: on GPU, bonsai holds the fastest slot at every row scale tested, edging CatBoost and beating XGBoost at 16M rows at matched accuracy, on ~3x less host memory. Where it still loses (CatBoost on wide data, XGBoost's last 0.001 r² of cut quality), the runs are linked with the same prominence as the wins.
 
 One property none of the reference libraries offer: models are bit-identical across CPU architectures and thread counts, enforced per-commit in CI.
 
@@ -24,7 +24,7 @@ One property none of the reference libraries offer: models are bit-identical acr
 
 **[Results](method/README.md)**: every speed and accuracy claim as a committed run on named hardware. The three headline numbers first, then [the benchmark protocol](method/benchmark-protocol.md), [how we decide](method/how-we-decide.md), and the full [results ledger](method/results.md).
 
-**[Design](design/determinism.md)**: the contracts the engine keeps, starting with [determinism](design/determinism.md), bit-identical models as a testable property. The historical record sits in the archive: the [architecture notes](architecture/README.md), the [decisions log](decisions.md), and the [lineage](lineage/xgboost.md) of xgboost, lightgbm, and catboost.
+**[Design](design/determinism.md)**: the contracts the engine keeps, starting with [determinism](design/determinism.md), bit-identical models as a testable property. The historical record sits in the archive: the [architecture notes](architecture/README.md), the [decisions log](decisions.md), and the [lineage](lineage/xgboost.md) of XGBoost, LightGBM, and CatBoost.
 
 ## Built with Claude
 

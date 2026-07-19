@@ -37,7 +37,7 @@ Fine-grained, high-cardinality features invite many low-value splits;
 a dominant feature may be spent in a handful of huge root-level splits and
 never touched again. Split-count rewards the former; gain rewards the
 latter. Gain is the answer to "which feature reduced the loss", which is
-usually the question being asked; hence it's lightgbm's recommended type
+usually the question being asked; hence it's LightGBM's recommended type
 and sklearn's `feature_importances_` semantics.
 
 ## In bonsai
@@ -84,7 +84,7 @@ many fine-grained, individually-small splits (there's no single latitude
 threshold worth much). One model, two rankings, both "correct": they
 answer different questions.
 
-This isn't a bonsai quirk. Run lightgbm on the same data and it produces
+This isn't a bonsai quirk. Run LightGBM on the same data and it produces
 the same disagreement (gain → MedInc, split → Longitude); the binding test
 `test_feature_importance_agreement`
 ([python/tests/test_bindings.py](../../python/tests/test_bindings.py))
@@ -115,7 +115,7 @@ modes to keep in mind:
 
 - The agreement test originally asserted MedInc would top *both* types,
   and failed, with Longitude winning split-count at 1,900 to 1,129. That
-  "failure" is the textbook lesson of this chapter, and lightgbm
+  "failure" is the textbook lesson of this chapter, and LightGBM
   reproduced it exactly. The test now asserts the disagreement.
 - **Gain is stamped or it's gone.** Storing it costs 4 bytes per node;
   reconstructing it later would require re-running training. If you're
