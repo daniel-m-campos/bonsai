@@ -171,6 +171,9 @@ jobs:
       # The make-target map is generated from the Makefile's ## comments; a
       # stale page fails here (stdlib only).
       - run: python3 scripts/render_make_map.py --check
+      # Mechanical STYLE.md checks (em-dash, library casing, banned phrases)
+      # over the published, non-archive pages plus README.md (stdlib only).
+      - run: python3 scripts/docs_lint.py
       # test_bindings.py checks module-vs-CLI parity, so it needs the binary too.
       - run: make build
       - run: make python-test
