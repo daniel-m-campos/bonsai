@@ -35,10 +35,10 @@ Everything is in [`include/bonsai/multiclass_booster.hpp`](../../include/bonsai/
 
 ## Try it
 
-```bash
-# 3-class synthetic via the Python module:
-python3 - <<'EOF'
-import numpy as np, bonsai
+```{.python .run}
+import numpy as np
+import bonsai
+
 rng = np.random.default_rng(0)
 X = rng.normal(size=(5000, 8)).astype(np.float32)
 y = (X[:, 0] + 0.5 * X[:, 1] > 0).astype(np.float32) + (X[:, 2] > 1)
@@ -49,7 +49,6 @@ model = bonsai.train([
 ], X, y)
 pred = np.asarray(model.predict(X))
 print("train accuracy:", (pred == y).mean())
-EOF
 ```
 
 Watch the model size: 50 iterations × 3 classes = **150 trees**. Multiclass training cost scales linearly in $K$: this is true of every GBT library and routinely surprises people coming from neural nets, where extra classes are one wider layer.

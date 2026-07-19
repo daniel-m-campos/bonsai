@@ -63,32 +63,36 @@ leaf values, not the histograms that produced them). So:
 
 ## Try it
 
-```bash
-bonsai fit -c configs/california_housing.toml --model /tmp/ch.msgpack
-bonsai importance --model /tmp/ch.msgpack
+```{.python .run}
+import numpy as np
+import bonsai
+
+rng = np.random.default_rng(0)
+n = 6000
+f0 = rng.normal(size=n)           # a step: strong signal in one threshold
+f1 = rng.uniform(-3.0, 3.0, n)    # a wiggle: signal spread over many splits
+rest = rng.normal(size=(n, 4))
+X = np.column_stack([f0, f1, rest]).astype(np.float32)
+y = (4.0 * np.sign(f0) + np.sin(3.0 * f1) + rng.normal(0, 0.1, n)).astype(np.float32)
+
+m = bonsai.BonsaiRegressor(n_iters=120).fit(X, y)
+gain = np.asarray(m.importance("gain"))
+split = np.asarray(m.importance("split"))
+print("gain :", gain.round(1))
+print("split:", split)
+print("gain top:", int(gain.argmax()), " split top:", int(split.argmax()))
 ```
 
-```
-feature                            gain    split
-MedInc                        113908.28     1129
-AveOccup                       26356.98     1078
-Longitude                      22254.56     1900
-Latitude                       19820.84     1889
-...
-```
+Read the two rankings against each other. Feature 0 tops **gain**: one
+threshold on its step captures most of the loss. Feature 1 tops **split
+count**: its wiggle has no single decisive cut, so trees carve it with
+many small splits. One model, two rankings, both "correct": they answer
+different questions.
 
-Look at that table twice. By **gain**, median income dominates house
-value, 4–5x anything else. By **split count**, the winners are
-Longitude/Latitude: geography is genuinely predictive but only through
-many fine-grained, individually-small splits (there's no single latitude
-threshold worth much). One model, two rankings, both "correct": they
-answer different questions.
-
-This isn't a bonsai quirk. Run LightGBM on the same data and it produces
-the same disagreement (gain → MedInc, split → Longitude); the binding test
-`test_feature_importance_agreement`
-([python/tests/test_bindings.py](../../python/tests/test_bindings.py))
-asserts exactly that cross-library agreement, including the disagreement.
+On California Housing the same split appears, gain ranking median income
+first and split count ranking Longitude and Latitude. LightGBM reproduces
+it, pinned by `test_feature_importance_agreement`
+([python/tests/test_bindings.py](../../python/tests/test_bindings.py)).
 
 ## What to distrust
 

@@ -118,17 +118,20 @@ closed a measured ~10% MAE gap vs the references
 
 ## Try it
 
-```bash
-# Watch the training loss fall (log a tick every ~20 iters):
-bonsai fit -c configs/california_housing.toml --set booster.log_intervals=10
+Fit with the default squared error, then swap the loss with one kwarg:
 
-# Same model, robust loss:
-bonsai fit -c configs/california_housing.toml --set dispatch.objective_name=huber
-```
-
-```python
+```{.python .run}
+import numpy as np
 import bonsai
-m = bonsai.BonsaiRegressor(n_iters=200, learning_rate=0.05).fit(X, y)
+
+rng = np.random.default_rng(0)
+X = rng.normal(size=(4000, 8)).astype(np.float32)
+y = (X[:, 0] * 2.0 + X[:, 1] + rng.normal(0, 0.1, 4000)).astype(np.float32)
+
+mse = bonsai.BonsaiRegressor(n_iters=200, learning_rate=0.05).fit(X, y)
+huber = bonsai.BonsaiRegressor(objective="huber", n_iters=200).fit(X, y)
+print("mse   R2:", round(mse.score(X, y), 4))
+print("huber R2:", round(huber.score(X, y), 4))
 ```
 
 Halve the learning rate and double `n_iters`: RMSE improves slightly
