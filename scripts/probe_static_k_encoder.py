@@ -69,7 +69,9 @@ POOL_JSONL = Path(
 )
 PROBE_OUT_DIR = Path(os.environ.get("PROBE_OUT_DIR", str(TABARENA_DIR / "tmp_scripts")))
 OUT_JSONL = Path(
-    os.environ.get("OUT_JSONL", str(REPO / "benchmarks/results/static-k-encoder-probe-2026-07.jsonl"))
+    os.environ.get(
+        "OUT_JSONL",
+        str(REPO / "benchmarks/results/static-k-encoder-probe-2026-07.jsonl"))
 )
 
 # bonsai's build (imported inside the model _fit) and the gauge's tmp_scripts (for
@@ -80,7 +82,7 @@ sys.path.insert(0, str(TABARENA_DIR / "tmp_scripts"))
 for pkg in sorted((TABARENA_DIR / "packages").glob("*/src")):
     sys.path.insert(0, str(pkg))
 
-from bonsai_model import BonsaiModel, BonsaiTSModel  # noqa: E402
+from bonsai_model import BonsaiTSModel  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # The three arms. K=1 is the stock wrapper, unmodified. K>=2 replaces the single
@@ -332,7 +334,8 @@ def _report(rows: list[dict], ks: list[int]) -> None:
                   f"improve={imp:+.5f}  recovery={r[f'recovery_k{k}']:+.3f}  [{band}]")
         print(f"  POOL mean recovery (n=12)      : {np.mean(recs):+.3f}")
         print(f"  BINARY mean recovery (n={len(binary)})     : {np.mean(recs_bin):+.3f}")
-        print(f"  POOL mean improve (metric)     : {np.mean([r[f'improve_k{k}'] for r in rows]):+.5f}")
+        pool_improve = np.mean([r[f"improve_k{k}"] for r in rows])
+        print(f"  POOL mean improve (metric)     : {pool_improve:+.5f}")
         print(f"  BINARY mean improve (metric)   : "
               f"{np.mean([r[f'improve_k{k}'] for r in binary]):+.5f}")
 
