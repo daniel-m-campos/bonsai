@@ -171,6 +171,10 @@ jobs:
       # The make-target map is generated from the Makefile's ## comments; a
       # stale page fails here (stdlib only).
       - run: python3 scripts/render_make_map.py --check
+      # The GBT history timeline is generated from docs/learn/timeline.json; a
+      # stale page, an invalid entry, or a broken bonsai_link fails here
+      # (stdlib only).
+      - run: python3 scripts/render_timeline.py --check
       # Mechanical STYLE.md checks (em-dash, library casing, banned phrases)
       # over the published, non-archive pages plus README.md (stdlib only).
       - run: python3 scripts/docs_lint.py
