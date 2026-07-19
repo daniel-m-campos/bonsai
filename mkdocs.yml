@@ -129,6 +129,9 @@ nav:
       - How we decide: method/how-we-decide.md
       - What to use when: method/what-to-use-when.md
   - Design:
+      - The system map: design/system-map.md
+      - Concepts to types: design/api-tour-concepts.md
+      - The HPC tension: design/the-hpc-tension.md
       - Determinism as a contract: design/determinism.md
       - Archive:
           - Architecture notes: architecture/README.md

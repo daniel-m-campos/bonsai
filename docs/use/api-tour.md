@@ -116,3 +116,5 @@ The protocol (divisions, metrics, timing modes) is the [benchmark charter](https
 ## What to read next
 
 The [guide](../guide/README.md) explains what every knob actually does, mechanism first: growers in [chapter 4](../guide/4-growing-trees.md), sampling in [chapter 5](../guide/5-sampling.md), regularization and constraints in [chapter 6](../guide/6-regularization-and-constraints.md), early stopping and DART in [chapter 7](../guide/7-early-stopping-and-dart.md).
+
+This page is the surface you call. To extend the engine, read [Concepts to types](../design/api-tour-concepts.md). It is this page's mirror image: the concepts you satisfy to add an objective, a grower, or a compute backend.
