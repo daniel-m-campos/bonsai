@@ -404,6 +404,13 @@ def probes_section() -> str:
           fmt(r.get("cat_plain_matched"))]
          for r in sorted(ob, key=lambda r: r["dataset"])])
 
+    sk = load_jsonl("static-k-encoder-probe-2026-07.jsonl")
+    sk_table = md_table(
+        ["dataset", "bonsai_ts (K=1)", "K=4", "K=8", "CatBoost native"],
+        [[r["dataset"], fmt(r.get("ts_k1")), fmt(r.get("ts_k4")), fmt(r.get("ts_k8")),
+          fmt(r.get("cat_native"))]
+         for r in sorted(sk, key=lambda r: r["dataset"])])
+
     return f"""### Probe: per-feature bin budgets (declined, decision 67)
 
 Test r² under per-feature bin-budget policies at a 255-bin default; no policy moved standings outside the chance band.
@@ -443,6 +450,14 @@ On 12 small pure-numeric datasets at matched knobs, Ordered beats Plain beyond t
 {ob_table}
 
 {provenance(["ordered-boosting-probe-2026-07.jsonl"], "Probe: [scripts/probe_ordered_boosting_rung0.py](../../scripts/probe_ordered_boosting_rung0.py); evidence [benchmarks/ordered-boosting-probe-2026-07.md](../../benchmarks/ordered-boosting-probe-2026-07.md).")}
+
+### Probe: static K-permutation target statistics (declined, decision 82)
+
+K-averaged ordered target statistics as plain preprocessing recover a negative share of the gap to native CatBoost on the cat-heavy pool (K=8 pool mean -0.026): the average converges toward leave-one-out statistics while the single ordering's noise was implicit regularization. The categorical substance is the per-split machinery. Lower is better in every metric column.
+
+{sk_table}
+
+{provenance(["static-k-encoder-probe-2026-07.jsonl"], "Probe: [scripts/probe_static_k_encoder.py](../../scripts/probe_static_k_encoder.py); evidence [benchmarks/static-k-encoder-probe-2026-07.md](../../benchmarks/static-k-encoder-probe-2026-07.md).")}
 """
 
 

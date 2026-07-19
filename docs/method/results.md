@@ -216,6 +216,27 @@ On 12 small pure-numeric datasets at matched knobs, Ordered beats Plain beyond t
 
 *Source: [`ordered-boosting-probe-2026-07.jsonl`](../../benchmarks/results/ordered-boosting-probe-2026-07.jsonl). Probe: [scripts/probe_ordered_boosting_rung0.py](../../scripts/probe_ordered_boosting_rung0.py); evidence [benchmarks/ordered-boosting-probe-2026-07.md](../../benchmarks/ordered-boosting-probe-2026-07.md).*
 
+### Probe: static K-permutation target statistics (declined, decision 82)
+
+K-averaged ordered target statistics as plain preprocessing recover a negative share of the gap to native CatBoost on the cat-heavy pool (K=8 pool mean -0.026): the average converges toward leave-one-out statistics while the single ordering's noise was implicit regularization. The categorical substance is the per-split machinery. Lower is better in every metric column.
+
+| dataset | bonsai_ts (K=1) | K=4 | K=8 | CatBoost native |
+|---|---|---|---|---|
+| Amazon_employee_access | 0.1522 | 0.1550 | 0.1555 | 0.1287 |
+| Bank_Customer_Churn | 0.1301 | 0.1294 | 0.1294 | 0.1229 |
+| MIC | 0.4913 | 0.4913 | 0.4913 | 0.4634 |
+| Marketing_Campaign | 0.0743 | 0.0719 | 0.0722 | 0.0670 |
+| NATICUSdroid | 0.0152 | 0.0152 | 0.0152 | 0.0140 |
+| anneal | 0.0700 | 0.0700 | 0.0700 | 0.0518 |
+| credit-g | 0.2247 | 0.2138 | 0.2317 | 0.2123 |
+| customer_satisfaction_in_airline | 0.0065 | 0.0065 | 0.0066 | 0.0052 |
+| in_vehicle_coupon_recommendation | 0.1901 | 0.1882 | 0.1878 | 0.1533 |
+| kddcup09_appetency | 0.1696 | 0.1719 | 0.1703 | 0.1581 |
+| qsar-biodeg | 0.0889 | 0.0906 | 0.0883 | 0.0753 |
+| splice | 0.1054 | 0.1054 | 0.1054 | 0.0905 |
+
+*Source: [`static-k-encoder-probe-2026-07.jsonl`](../../benchmarks/results/static-k-encoder-probe-2026-07.jsonl). Probe: [scripts/probe_static_k_encoder.py](../../scripts/probe_static_k_encoder.py); evidence [benchmarks/static-k-encoder-probe-2026-07.md](../../benchmarks/static-k-encoder-probe-2026-07.md).*
+
 ## Perf division
 
 ### The re-baseline: fit seconds at scale
