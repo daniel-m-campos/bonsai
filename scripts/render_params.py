@@ -86,7 +86,7 @@ EFFECTS = {
     "sampler.top_rate": "goss sampler: fraction of large-gradient rows always kept. Higher retains more of the informative rows goss prioritizes.",
     "sampler.other_rate": "goss sampler: fraction sampled from the remaining small-gradient rows. Higher samples more, nearer full-data accuracy but slower.",
     # bin_mapper
-    "bin_mapper.max_bin": "Histogram bins per feature. More bins mean finer splits and slower training; below about 64 accuracy degrades on continuous features.",
+    "bin_mapper.max_bin": "Histogram bins per feature. More bins give finer split candidates at higher histogram cost; measured standings use 255 and were insensitive to small changes near it.",
     "bin_mapper.n_samples": "Rows sampled to compute bin edges. More gives more accurate quantiles at higher binning cost; the default already stabilizes edges.",
     "bin_mapper.seed": "Seeds the row sample used for bin-edge quantiles. Fixing it keeps bin boundaries reproducible across runs.",
     "bin_mapper.min_data_in_bin": "Minimum rows per histogram bin. Higher values merge sparse bins, coarsening splits and guarding against noise-driven cuts.",
