@@ -44,9 +44,17 @@ Selection: `dispatch.sampler_name = all_rows | bernoulli | goss`, with
 
 ## Try it
 
-```bash
-uv run scripts/compare.py --config configs/year_prediction_msd.toml \
-    --growers leafwise --samplers all_rows,goss
+```{.python .run}
+import numpy as np
+import bonsai
+
+rng = np.random.default_rng(0)
+X = rng.normal(size=(6000, 12)).astype(np.float32)
+y = (X[:, 0] * 2.0 + X[:, 3] + rng.normal(0, 0.1, 6000)).astype(np.float32)
+
+for sampler in ("all_rows", "goss"):
+    m = bonsai.BonsaiRegressor(n_iters=100, sampler=sampler).fit(X, y)
+    print(f"{sampler:9s}  R2={m.score(X, y):.4f}")
 ```
 
 Measured on YearPredictionMSD (feature_gap.md §2): GOSS *improved*

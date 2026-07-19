@@ -69,17 +69,26 @@ than silently ignoring them.
 
 ## Try it
 
-```bash
-# Monotone: house value non-decreasing in median income:
-# every library pays the same ~2% RMSE for the guarantee (feature_gap §6):
-uv run scripts/compare.py --config configs/california_housing.toml \
-    --hp tree.monotone_constraints=1 --growers depthwise,leafwise --samplers all_rows
+```{.python .run}
+import numpy as np
+import bonsai
 
-# Interaction: economics {0-3} may not mix with geography {4-7}, ~9% RMSE,
-# identically across bonsai/xgboost/lightgbm (feature_gap §7):
-uv run scripts/compare.py --config configs/california_housing.toml \
-    --hp tree.interaction_constraints=0+1+2+3,4+5+6+7 \
-    --growers depthwise,leafwise --samplers all_rows
+rng = np.random.default_rng(0)
+X = rng.normal(size=(4000, 8)).astype(np.float32)
+y = (X[:, 0] * 2.0 + X[:, 1] + rng.normal(0, 0.1, 4000)).astype(np.float32)
+
+# Monotone: prediction non-decreasing in feature 0.
+mono = bonsai.BonsaiRegressor(
+    n_iters=60, grower="depthwise",
+    params={"tree.monotone_constraints": "1,0,0,0,0,0,0,0"}).fit(X, y)
+
+# Interaction: features 0-3 may not mix with 4-7 on any path.
+inter = bonsai.BonsaiRegressor(
+    n_iters=60, grower="depthwise",
+    params={"tree.interaction_constraints": "0+1+2+3,4+5+6+7"}).fit(X, y)
+
+print("monotone    R2:", round(mono.score(X, y), 4))
+print("interaction R2:", round(inter.score(X, y), 4))
 ```
 
 The unit tests are readable specs: `[grower][monotone]` asserts a

@@ -32,10 +32,21 @@ Config: `booster.early_stopping_rounds` + a `data.valid` CSV (Python:
 
 ### Try it
 
-```bash
-uv run scripts/compare.py --config configs/year_prediction_msd.toml \
-    --hp booster.early_stopping_rounds=20 --hp booster.n_iters=400 \
-    --hp booster.learning_rate=0.15 --growers leafwise --samplers all_rows
+```{.python .run}
+import numpy as np
+import bonsai
+
+rng = np.random.default_rng(0)
+X = rng.normal(size=(6000, 12)).astype(np.float32)
+y = (X[:, 0] * 2.0 + X[:, 3] + rng.normal(0, 0.2, 6000)).astype(np.float32)
+Xtr, ytr = X[:5000], y[:5000]
+Xv, yv = X[5000:], y[5000:]
+
+m = bonsai.BonsaiRegressor(
+    n_iters=400, learning_rate=0.15, grower="leafwise",
+    early_stopping_rounds=20).fit(Xtr, ytr, eval_set=(Xv, yv))
+print("stopped at iteration:", m.n_iters_)
+print("valid R2:", round(m.score(Xv, yv), 4))
 ```
 
 Measured (feature_gap §3): with everyone stopping on the same 90/10 split,
@@ -90,9 +101,20 @@ accumulated valid scores, so the combination throws.
 
 ### Try it
 
-```bash
-uv run scripts/compare.py --config configs/california_housing.toml \
-    --hp booster.dart_drop_rate=0.1 --growers depthwise,leafwise --samplers all_rows
+```{.python .run}
+import numpy as np
+import bonsai
+
+rng = np.random.default_rng(0)
+X = rng.normal(size=(4000, 8)).astype(np.float32)
+y = (X[:, 0] * 2.0 + X[:, 1] + rng.normal(0, 0.1, 4000)).astype(np.float32)
+
+plain = bonsai.BonsaiRegressor(n_iters=100, grower="depthwise").fit(X, y)
+dart = bonsai.BonsaiRegressor(
+    n_iters=100, grower="depthwise",
+    params={"booster.dart_drop_rate": 0.1}).fit(X, y)
+print("plain R2:", round(plain.score(X, y), 4))
+print("dart  R2:", round(dart.score(X, y), 4))
 ```
 
 Measured (feature_gap §8): DART regularizes: everyone lands *above* their

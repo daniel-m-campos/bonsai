@@ -71,18 +71,27 @@ an invariant several later features lean on (out-of-bag routing, DART).
 
 ## Try it
 
-```bash
-# Starve splits of evidence and watch trees shrink:
-bonsai fit -c configs/california_housing.toml \
-    --set tree.min_child_hess=200 --set booster.log_intervals=10
-```
+Raise the evidence a split needs, then watch a missing feature still land
+on a finite leaf:
 
-```python
-# The learned NaN direction in action: predict with a missing feature.
-import numpy as np, bonsai
-m = bonsai.BonsaiRegressor(n_iters=50).fit(X, y)
-x = X[:1].copy(); x[0, 0] = np.nan
-m.predict(x)   # finite — NaN followed each split's default_left
+```{.python .run}
+import numpy as np
+import bonsai
+
+rng = np.random.default_rng(0)
+X = rng.normal(size=(3000, 6)).astype(np.float32)
+y = (X[:, 0] + X[:, 1] * X[:, 2] + rng.normal(0, 0.1, 3000)).astype(np.float32)
+
+# min_child_hess is the split's evidence floor; raise it and trees stay shallow.
+loose = bonsai.BonsaiRegressor(n_iters=50).fit(X, y)
+strict = bonsai.BonsaiRegressor(n_iters=50, params={"tree.min_child_hess": 500}).fit(X, y)
+print("loose  R2:", round(loose.score(X, y), 4))
+print("strict R2:", round(strict.score(X, y), 4))
+
+# The learned NaN direction: a missing feature follows each split's default_left.
+x = X[:1].copy()
+x[0, 0] = np.nan
+print("NaN prediction:", float(np.asarray(loose.predict(x))[0]))
 ```
 
 ## Gotchas & war stories

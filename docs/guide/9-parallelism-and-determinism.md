@@ -69,12 +69,24 @@ it would have made *models* hardware-dependent.
 
 ## Try it
 
-```bash
-bonsai fit -c configs/year_prediction_msd.toml --set parallel.n_threads=1 --model /tmp/t1.msgpack
-bonsai fit -c configs/year_prediction_msd.toml --set parallel.n_threads=8 --model /tmp/t8.msgpack
-bonsai predict -c configs/year_prediction_msd.toml --model /tmp/t1.msgpack --out /tmp/p1.csv
-bonsai predict -c configs/year_prediction_msd.toml --model /tmp/t8.msgpack --out /tmp/p8.csv
-cmp /tmp/p1.csv /tmp/p8.csv && echo "bit-identical"
+```{.python .run}
+import numpy as np
+import bonsai
+
+rng = np.random.default_rng(0)
+X = rng.normal(size=(5000, 10)).astype(np.float32)
+y = (X[:, 0] * 2.0 + X[:, 1] + rng.normal(0, 0.1, 5000)).astype(np.float32)
+
+
+def fit(n_threads):
+    # u16 bins (max_bin > 255) are bit-identical at any thread count.
+    return bonsai.BonsaiRegressor(
+        n_iters=50, max_bin=511, n_threads=n_threads).fit(X, y)
+
+
+p1 = np.asarray(fit(1).predict(X))
+p8 = np.asarray(fit(8).predict(X))
+print("bit-identical:", np.array_equal(p1, p8))
 ```
 
 With u16 bins (`max_bin > 255`) this compares equal at *any* thread pair;

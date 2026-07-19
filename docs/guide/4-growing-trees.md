@@ -17,6 +17,42 @@ distinguishes the three reference libraries:
   bitstring) which makes predict extremely fast and acts as a strong
   regularizer.
 
+The growth order is the whole difference. Depth-wise fills a level before
+the next; leaf-wise always expands the highest-gain leaf. The nodes below
+carry their growth order, on the same split budget:
+
+```mermaid
+graph TD
+  subgraph DW["depth-wise: level by level"]
+    A1((1)) --> A2((2))
+    A1 --> A3((3))
+    A2 --> a1[leaf]
+    A2 --> a2[leaf]
+    A3 --> a3[leaf]
+    A3 --> a4[leaf]
+  end
+  subgraph LW["leaf-wise: best gain first"]
+    B1((1)) --> B2((2))
+    B1 --> b1[leaf]
+    B2 --> B3((3))
+    B2 --> b2[leaf]
+    B3 --> b3[leaf]
+    B3 --> b4[leaf]
+  end
+```
+
+An oblivious tree spends one split per level, shared by every node on it.
+The leaves become a flat table indexed by the path bits, which is why
+predict is a branchless bit-gather:
+
+```mermaid
+graph TD
+  A["depth 0: one split, test f3"] -->|b0=0| B["depth 1: one split, test f7"]
+  A -->|b0=1| B
+  B -->|b1=0| T["leaf table<br/>bits 00..11 pick w0..w3"]
+  B -->|b1=1| T
+```
+
 ## The math
 
 There's no new math, only a queue discipline over the same gain scores:
@@ -95,10 +131,18 @@ this out is [decision 62–63](../decisions.md); the evidence is
 
 ## Try it
 
-```bash
-# Same leaf budget, three disciplines:
-uv run scripts/compare.py --config configs/year_prediction_msd.toml \
-    --growers depthwise,leafwise,oblivious --samplers all_rows
+```{.python .run}
+import numpy as np
+import bonsai
+
+rng = np.random.default_rng(0)
+X = rng.normal(size=(4000, 10)).astype(np.float32)
+y = (X[:, 0] + X[:, 1] * X[:, 2] + rng.normal(0, 0.1, 4000)).astype(np.float32)
+
+for grower in ("depthwise", "leafwise", "oblivious"):
+    m = bonsai.BonsaiRegressor(n_iters=60, grower=grower).fit(X, y)
+    rmse = float(np.sqrt(np.mean((np.asarray(m.predict(X)) - y) ** 2)))
+    print(f"{grower:10s}  train RMSE={rmse:.4f}")
 ```
 
 Expect the ordering the benchmarks reproduce every time: leaf-wise is the

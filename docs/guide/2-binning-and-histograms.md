@@ -16,6 +16,22 @@ thresholds sit at every ~0.4th percentile of the feature. Splits between
 them were statistically indistinguishable anyway, which is why XGBoost
 (`tree_method=hist`), LightGBM, and CatBoost all default to this.
 
+## The pipeline
+
+A column travels the same five stages every fit, from raw floats to the
+per-node histogram the split search scans:
+
+```mermaid
+flowchart LR
+  A[raw column<br/>float32] --> B[reservoir sample<br/>~200k rows]
+  B --> C[quantiles<br/>at fixed stride]
+  C --> D[cut points<br/>plus FLT_MAX, inf]
+  D --> E[u8 bins to 255<br/>u16 above]
+  E --> F[histogram<br/>sum g, sum h per bin]
+```
+
+Cuts are fit once, up front; the histogram is rebuilt per node.
+
 ## The math
 
 Binning maps value to bucket via quantile cut points
@@ -79,17 +95,75 @@ most important optimization in histogram GBT.
   ([`src/level_step.hpp`](../../src/level_step.hpp)); the CUDA engine runs
   the same plan with a subtract kernel on device histograms.
 
-## Try it
+## Missing values
 
-```bash
-# Coarser bins: how much accuracy do 32 buckets really cost?
-uv run scripts/compare.py --config configs/california_housing.toml \
-    --hp bin_mapper.max_bin=32 --growers leafwise --samplers all_rows
+Every column reserves its last bin for NaN. That bin never enters the
+threshold scan. Each split instead learns a `default_left` bit, the side
+missing rows follow, chosen by whichever direction scores higher gain.
+One tree can route NaN left at one node and right at another.
+
+Finite values above the last real cut used to bin as missing. Training
+routed them by `default_left`, but prediction sent them right of every
+threshold, so the same row could route two ways. The
+[missing-bin case](../learn/engine/2-the-missing-bin.md) closed that skew
+(decisions 73 and 74).
+
+## The Dataset API
+
+Bin edges can also come from you, not from quantiles. Pass `bin_edges`
+to `bonsai.Dataset` and the listed features bin at your cut points, which
+then travel inside the saved model. A domain band like age brackets stays
+identical from training to deployment, with no external transform to
+drift:
+
+```{.python .run}
+import numpy as np
+import bonsai
+
+rng = np.random.default_rng(0)
+n = 2000
+age = rng.uniform(0.0, 100.0, n).astype(np.float32)
+noise = rng.random((n, 2), dtype=np.float32)
+X = np.column_stack([age, noise]).astype(np.float32)
+band = np.digitize(age, [18.0, 65.0]).astype(np.float32)
+y = (band * 2.0 + rng.normal(0, 0.05, n)).astype(np.float32)
+
+# Column 0 bins at the two domain edges; the rest fit as usual.
+ds = bonsai.Dataset(X, y, bin_edges={0: np.array([18.0, 65.0], dtype=np.float32)})
+model = bonsai.train([("booster.n_iters", "30"), ("tree.max_depth", "4")], ds)
+
+# The edges live in the model, so predict reads raw ages.
+probe = np.array([[10.0, 0.5, 0.5], [40.0, 0.5, 0.5], [80.0, 0.5, 0.5]],
+                 dtype=np.float32)
+print(np.asarray(model.predict(probe)).round(2))
 ```
 
-On California Housing, dropping 255 → 32 bins moves RMSE by well under 1%
-for every library (the blur really is cheap) while histogram scans get
-8× shorter.
+The bands are right-inclusive, so `18.0` bins with the group below it.
+Edges must be finite and strictly increasing; bad columns and duplicates
+raise a config error ([decision 73](../decisions.md)).
+
+## Try it
+
+Coarser bins trade split resolution for speed. Set `max_bin` low and
+watch accuracy hold on smooth features:
+
+```{.python .run}
+import numpy as np
+import bonsai
+
+rng = np.random.default_rng(0)
+X = rng.normal(size=(4000, 8)).astype(np.float32)
+y = (X[:, 0] * 2.0 + X[:, 1] + rng.normal(0, 0.1, 4000)).astype(np.float32)
+
+for max_bin in (32, 255):
+    m = bonsai.BonsaiRegressor(n_iters=60, max_bin=max_bin).fit(X, y)
+    rmse = float(np.sqrt(np.mean((np.asarray(m.predict(X)) - y) ** 2)))
+    print(f"max_bin={max_bin:3d}  train RMSE={rmse:.4f}")
+```
+
+On California Housing, dropping 255 to 32 bins moves RMSE by well under 1%
+for every library. Histogram scans get 8x shorter: the blur really is
+cheap.
 
 ## Gotchas & war stories
 

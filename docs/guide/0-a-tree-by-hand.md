@@ -75,10 +75,11 @@ That's the entire algorithm. Everything else in this guide (deeper trees, more f
 
 Python (in-memory numpy, the same eight rows):
 
-```bash
-make python && PYTHONPATH=build/python python3 - <<'EOF'
-import numpy as np, bonsai
-X = np.array([[0.2],[0.5],[0.9],[1.4],[2.1],[2.6],[3.3],[3.8]], dtype=np.float32)
+```{.python .run}
+import numpy as np
+import bonsai
+
+X = np.array([[0.2], [0.5], [0.9], [1.4], [2.1], [2.6], [3.3], [3.8]], dtype=np.float32)
 y = np.array([1.0, 1.2, 0.9, 1.1, 3.0, 3.2, 2.9, 3.1], dtype=np.float32)
 model = bonsai.train([
     ("booster.n_iters", "20"), ("booster.learning_rate", "0.3"),
@@ -86,7 +87,6 @@ model = bonsai.train([
 ], X, y)
 print(np.asarray(model.predict(X)).round(2))
 print(model.dump())   # the trees, with the split thresholds and gains
-EOF
 ```
 
 `model.dump()`'s first tree reads `f0 <= 1.400000 ... gain=6.400000` with leaves `-0.8` and `+0.8`: the threshold, gain, and leaf values you just derived, to the printed digit. From here:
