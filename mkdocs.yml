@@ -108,6 +108,10 @@ nav:
           - 11. Performance engineering: guide/11-performance-engineering.md
           - 12. Multiclass: guide/12-multiclass.md
           - 13. Categorical features: guide/13-categorical-features.md
+      - The engine:
+          - The engine track: learn/engine/README.md
+          - E1. The marginal round: learn/engine/1-the-marginal-round.md
+          - E2. The missing bin: learn/engine/2-the-missing-bin.md
       - How we got here: learn/timeline.md
   - Use:
       - Install: use/install.md
