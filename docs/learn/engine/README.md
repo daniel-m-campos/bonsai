@@ -23,9 +23,6 @@ Four rules recur across every case.
 
 - **E1. [The marginal round](1-the-marginal-round.md).** Instrumentation cancels a kernel rewrite, then a price list cuts the 16M round from 155 to 104 ms.
 - **E2. [The missing bin](2-the-missing-bin.md).** An acceptance test fails, and the fix closes a train/predict skew hiding in every fitted model.
-
-Coming:
-
-- **E3. The multi-GPU verdict.** A data-parallel engine, built and measured to parity, then parked as an experiment.
-- **E4. The resident objective.** Deleting the per-tree host round-trip, and the round falls again from 104 to 64 ms.
-- **E5. The single-card ceiling.** 500M rows by 100 features trained end to end on one 80GB card.
+- **E3. [The parity verdict](3-the-parity-verdict.md).** A data-parallel multi-GPU engine, built and measured to parity, then parked as an experiment.
+- **E4. [The resident objective](4-the-resident-objective.md).** Deleting the per-tree host round-trip, and the round falls again from 104 to 64 ms.
+- **E5. [The ceiling](5-the-ceiling.md).** 500M rows by 100 features trained end to end on one 80GB card.
