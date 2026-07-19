@@ -2,7 +2,6 @@
 
 The seams in [the system map](system-map.md) are concepts, one type per backend.
 This page is where those seams meet performance: the GPU.
-It is the bridge a maintainer asked for.
 The honest story is that a concept can only check so much.
 The rest is held by tests, and by rules the code refuses to break.
 
