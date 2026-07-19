@@ -195,6 +195,27 @@ On the cat-heavy TabArena subset, CatBoost native vs the same model with categor
 
 *Source: [`tabarena-cat-probe-2026-07.jsonl`](../../benchmarks/results/tabarena-cat-probe-2026-07.jsonl). Probe: [scripts/probe_tabarena_cat.py](../../scripts/probe_tabarena_cat.py); evidence [benchmarks/tabarena-cat-probe-2026-07.md](../../benchmarks/tabarena-cat-probe-2026-07.md). Lower is better for every metric column (error/log-loss form).*
 
+### Probe: ordered boosting priced by CatBoost's own toggle (declined, decision 81)
+
+On 12 small pure-numeric datasets at matched knobs, Ordered beats Plain beyond the chance band on 0 of 12 and is distinctly worse where the toggle moves most, at 3.9x the train time. The mechanism is not the small-data edge; the campaign died at rung 0 as pre-registered. Lower is better in both metric columns.
+
+| dataset | metric | CatBoost Ordered (matched) | CatBoost Plain (matched) |
+|---|---|---|---|
+| MagicTelescope | one_minus_auc | 0.0594 | 0.0578 |
+| QSAR-TID-11 | rmse | 0.9232 | 0.8950 |
+| QSAR_fish_toxicity | rmse | 0.9679 | 0.9522 |
+| banknote | one_minus_auc | 0.0000 | 0.0001 |
+| breast_cancer | one_minus_auc | 0.0067 | 0.0038 |
+| concrete_compressive_strength | rmse | 5.0237 | 4.7311 |
+| houses | rmse | 0.2294 | 0.2269 |
+| phoneme | one_minus_auc | 0.0681 | 0.0618 |
+| pima_diabetes | one_minus_auc | 0.1760 | 0.1770 |
+| spambase | one_minus_auc | 0.0110 | 0.0113 |
+| superconductivity | rmse | 10.8729 | 10.2908 |
+| wind | rmse | 2.9736 | 2.9580 |
+
+*Source: [`ordered-boosting-probe-2026-07.jsonl`](../../benchmarks/results/ordered-boosting-probe-2026-07.jsonl). Probe: [scripts/probe_ordered_boosting_rung0.py](../../scripts/probe_ordered_boosting_rung0.py); evidence [benchmarks/ordered-boosting-probe-2026-07.md](../../benchmarks/ordered-boosting-probe-2026-07.md).*
+
 ## Perf division
 
 ### The re-baseline: fit seconds at scale

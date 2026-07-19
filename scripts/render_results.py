@@ -397,6 +397,13 @@ def probes_section() -> str:
           fmt(r["bonsai_ts"]), fmt(r["categorical_share"]), fmt(r["remaining_gap"])]
          for r in sorted(tap_ch, key=lambda r: r["categorical_share"])])
 
+    ob = load_jsonl("ordered-boosting-probe-2026-07.jsonl")
+    ob_table = md_table(
+        ["dataset", "metric", "CatBoost Ordered (matched)", "CatBoost Plain (matched)"],
+        [[r["dataset"], r["metric"], fmt(r.get("cat_ordered_matched")),
+          fmt(r.get("cat_plain_matched"))]
+         for r in sorted(ob, key=lambda r: r["dataset"])])
+
     return f"""### Probe: per-feature bin budgets (declined, decision 67)
 
 Test r² under per-feature bin-budget policies at a 255-bin default; no policy moved standings outside the chance band.
@@ -428,6 +435,14 @@ On the cat-heavy TabArena subset, CatBoost native vs the same model with categor
 {tap_table}
 
 {provenance(["tabarena-cat-probe-2026-07.jsonl"], "Probe: [scripts/probe_tabarena_cat.py](../../scripts/probe_tabarena_cat.py); evidence [benchmarks/tabarena-cat-probe-2026-07.md](../../benchmarks/tabarena-cat-probe-2026-07.md). Lower is better for every metric column (error/log-loss form).")}
+
+### Probe: ordered boosting priced by CatBoost's own toggle (declined, decision 81)
+
+On 12 small pure-numeric datasets at matched knobs, Ordered beats Plain beyond the chance band on 0 of 12 and is distinctly worse where the toggle moves most, at 3.9x the train time. The mechanism is not the small-data edge; the campaign died at rung 0 as pre-registered. Lower is better in both metric columns.
+
+{ob_table}
+
+{provenance(["ordered-boosting-probe-2026-07.jsonl"], "Probe: [scripts/probe_ordered_boosting_rung0.py](../../scripts/probe_ordered_boosting_rung0.py); evidence [benchmarks/ordered-boosting-probe-2026-07.md](../../benchmarks/ordered-boosting-probe-2026-07.md).")}
 """
 
 
