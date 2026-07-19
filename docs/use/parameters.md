@@ -63,7 +63,7 @@ Histogram binning: how feature values become the bins that splits search over.
 
 | parameter | type | default | effect |
 |---|---|---|---|
-| `max_bin` | integer | `255` | Histogram bins per feature. More bins mean finer splits and slower training; below about 64 accuracy degrades on continuous features. |
+| `max_bin` | integer | `255` | Histogram bins per feature. More bins give finer split candidates at higher histogram cost; measured standings use 255 and were insensitive to small changes near it. |
 | `min_data_in_bin` | integer | `1` | Minimum rows per histogram bin. Higher values merge sparse bins, coarsening splits and guarding against noise-driven cuts. |
 | `n_samples` | integer | `200000` | Rows sampled to compute bin edges. More gives more accurate quantiles at higher binning cost; the default already stabilizes edges. |
 | `seed` | integer | `0` | Seeds the row sample used for bin-edge quantiles. Fixing it keeps bin boundaries reproducible across runs. |
