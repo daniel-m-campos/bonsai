@@ -1,0 +1,225 @@
+{
+  "title": "The gradient-boosted-tree lineage",
+  "milestones": [
+    {
+      "year": 1984,
+      "title": "CART",
+      "idea": "Recursive binary splits, one prediction per leaf: the regression tree every booster still grows.",
+      "attribution": "Breiman, Friedman, Olshen, and Stone, 1984",
+      "link": "https://www.routledge.com/Classification-and-Regression-Trees/Breiman-Friedman-Stone-Olshen/p/book/9780412048418",
+      "adopters": ["xgboost", "lightgbm", "catboost", "bonsai"],
+      "bonsai_status": "adopted",
+      "bonsai_link": "../guide/0-a-tree-by-hand.md"
+    },
+    {
+      "year": 1997,
+      "title": "AdaBoost",
+      "idea": "Combine many weak learners by reweighting the examples each one gets wrong.",
+      "attribution": "Freund and Schapire, JCSS 1997",
+      "link": "https://doi.org/10.1006/jcss.1997.1504",
+      "adopters": [],
+      "bonsai_status": "adapted",
+      "bonsai_link": "../guide/1-gradient-boosting.md"
+    },
+    {
+      "year": 2001,
+      "title": "Gradient boosting machines",
+      "idea": "Fit each new tree to the gradient of the loss, so boosting becomes gradient descent in function space.",
+      "attribution": "Friedman, Annals of Statistics 2001",
+      "link": "https://doi.org/10.1214/aos/1013203451",
+      "adopters": ["xgboost", "lightgbm", "catboost", "bonsai"],
+      "bonsai_status": "adopted",
+      "bonsai_link": "../guide/1-gradient-boosting.md"
+    },
+    {
+      "year": 2002,
+      "title": "Stochastic gradient boosting",
+      "idea": "Subsample the rows before each tree, trading a little bias for lower variance and faster fits.",
+      "attribution": "Friedman, CSDA 2002",
+      "link": "https://doi.org/10.1016/S0167-9473(01)00065-2",
+      "adopters": ["xgboost", "lightgbm", "catboost", "bonsai"],
+      "bonsai_status": "adopted",
+      "bonsai_link": "../guide/5-sampling.md"
+    },
+    {
+      "year": 2015,
+      "title": "DART",
+      "idea": "Drop a random subset of existing trees before each round, borrowing dropout from neural networks.",
+      "attribution": "Vinayak and Gilad-Bachrach, AISTATS 2015",
+      "link": "https://arxiv.org/abs/1505.01866",
+      "adopters": ["xgboost", "lightgbm", "bonsai"],
+      "bonsai_status": "adopted",
+      "bonsai_link": "../guide/7-early-stopping-and-dart.md"
+    },
+    {
+      "year": 2016,
+      "title": "Regularized objective",
+      "idea": "Score splits with a regularized second-order (Newton) objective and read leaf values from the same gradient and hessian sums.",
+      "attribution": "Chen and Guestrin, KDD 2016",
+      "link": "https://arxiv.org/abs/1603.02754",
+      "adopters": ["xgboost", "lightgbm", "catboost", "bonsai"],
+      "bonsai_status": "adopted",
+      "bonsai_link": "../guide/3-finding-splits.md"
+    },
+    {
+      "year": 2016,
+      "title": "Weighted quantile sketch",
+      "idea": "Propose split points from hessian-weighted quantiles, keeping approximate split finding accurate at scale.",
+      "attribution": "Chen and Guestrin, KDD 2016",
+      "link": "https://arxiv.org/abs/1603.02754",
+      "adopters": ["xgboost", "bonsai"],
+      "bonsai_status": "adapted",
+      "bonsai_link": "../decisions.md#64-one-shared-row-sample-for-binning-not-one-reservoir-pass-per-feature-adopted"
+    },
+    {
+      "year": 2016,
+      "title": "Sparsity-aware split finding",
+      "idea": "Learn one default branch direction per split in a single pass over the present values, for missing and implicitly-zero entries.",
+      "attribution": "Chen and Guestrin, KDD 2016",
+      "link": "https://arxiv.org/abs/1603.02754",
+      "adopters": ["xgboost"],
+      "bonsai_status": "declined",
+      "bonsai_link": "../guide/3-finding-splits.md"
+    },
+    {
+      "year": 2017,
+      "title": "Histogram binning",
+      "idea": "Bucket each feature into a few hundred bins, so splits search over bins, not raw values.",
+      "attribution": "Ke et al., NeurIPS 2017",
+      "link": "https://proceedings.neurips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html",
+      "adopters": ["xgboost", "lightgbm", "catboost", "bonsai"],
+      "bonsai_status": "adopted",
+      "bonsai_link": "../guide/2-binning-and-histograms.md"
+    },
+    {
+      "year": 2017,
+      "title": "GOSS",
+      "idea": "Keep every large-gradient row and subsample the rest, focusing the fit on the hard examples.",
+      "attribution": "Ke et al., NeurIPS 2017",
+      "link": "https://proceedings.neurips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html",
+      "adopters": ["lightgbm", "bonsai"],
+      "bonsai_status": "adopted",
+      "bonsai_link": "../guide/5-sampling.md"
+    },
+    {
+      "year": 2017,
+      "title": "EFB",
+      "idea": "Bundle mutually exclusive sparse features into one, shrinking the feature count with little accuracy loss.",
+      "attribution": "Ke et al., NeurIPS 2017",
+      "link": "https://proceedings.neurips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html",
+      "adopters": ["lightgbm"],
+      "bonsai_status": "declined",
+      "bonsai_link": "../lineage/lightgbm.md#not-yet-measured-efb"
+    },
+    {
+      "year": 2017,
+      "title": "Leaf-wise growth",
+      "idea": "Grow the single highest-gain leaf next instead of a whole level, cutting loss faster per node.",
+      "attribution": "Ke et al. (LightGBM), NeurIPS 2017",
+      "link": "https://proceedings.neurips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html",
+      "adopters": ["xgboost", "lightgbm", "bonsai"],
+      "bonsai_status": "adopted",
+      "bonsai_link": "../guide/4-growing-trees.md"
+    },
+    {
+      "year": 2017,
+      "title": "GPU histogram training",
+      "idea": "Build the split histograms on the GPU, moving the training bottleneck onto the device.",
+      "attribution": "Mitchell and Frank, PeerJ CS 2017",
+      "link": "https://doi.org/10.7717/peerj-cs.127",
+      "adopters": ["xgboost", "lightgbm", "catboost", "bonsai"],
+      "bonsai_status": "adopted",
+      "bonsai_link": "../guide/10-gpu-training.md"
+    },
+    {
+      "year": 2018,
+      "title": "Oblivious trees",
+      "idea": "Use the same split across a whole tree level, giving symmetric trees and branch-free prediction.",
+      "attribution": "Prokhorenkova et al., NeurIPS 2018",
+      "link": "https://arxiv.org/abs/1706.09516",
+      "adopters": ["catboost", "bonsai"],
+      "bonsai_status": "adopted",
+      "bonsai_link": "../guide/4-growing-trees.md"
+    },
+    {
+      "year": 2018,
+      "title": "Ordered target statistics",
+      "idea": "Encode a category by the target mean over only the rows seen before it, so the statistic cannot leak the label.",
+      "attribution": "Prokhorenkova et al., NeurIPS 2018",
+      "link": "https://arxiv.org/abs/1706.09516",
+      "adopters": ["catboost", "bonsai"],
+      "bonsai_status": "adapted",
+      "bonsai_link": "../decisions.md#58-categoricals-resolved-by-measurement-an-encoder-not-an-engine-feature-adopted"
+    },
+    {
+      "year": 2018,
+      "title": "Ordered boosting",
+      "idea": "Score each row with a model trained without it, removing the target leakage of ordinary boosting.",
+      "attribution": "Prokhorenkova et al., NeurIPS 2018",
+      "link": "https://arxiv.org/abs/1706.09516",
+      "adopters": ["catboost"],
+      "bonsai_status": "tbd",
+      "bonsai_link": "../decisions.md#80-the-categorical-reopener-predicate-is-established-the-build-decision-waits-for-launch-strategy-adopted"
+    },
+    {
+      "year": 2018,
+      "title": "TreeSHAP",
+      "idea": "Compute exact Shapley feature attributions for a tree ensemble in polynomial time.",
+      "attribution": "Lundberg, Erion, and Lee, 2018",
+      "link": "https://arxiv.org/abs/1802.03888",
+      "adopters": ["xgboost", "lightgbm", "catboost", "bonsai"],
+      "bonsai_status": "adopted",
+      "bonsai_link": "../guide/8-feature-importance.md"
+    },
+    {
+      "year": 2019,
+      "title": "Monotone and interaction constraints",
+      "idea": "Constrain a feature's effect to one direction, or restrict which features may interact on a path.",
+      "attribution": "XGBoost and LightGBM engineering, circa 2019",
+      "link": null,
+      "adopters": ["xgboost", "lightgbm", "bonsai"],
+      "bonsai_status": "adopted",
+      "bonsai_link": "../guide/6-regularization-and-constraints.md"
+    },
+    {
+      "year": 2019,
+      "title": "scikit-learn HistGradientBoosting",
+      "idea": "Ship a histogram gradient-boosting estimator in the standard scikit-learn API.",
+      "attribution": "scikit-learn 0.21, 2019",
+      "link": "https://scikit-learn.org/stable/modules/ensemble.html#histogram-based-gradient-boosting",
+      "adopters": ["bonsai"],
+      "bonsai_status": "adopted",
+      "bonsai_link": "../use/api-tour.md"
+    },
+    {
+      "year": 2026,
+      "title": "Cross-architecture reproducibility",
+      "idea": "Produce byte-identical models across host architectures at a fixed thread count.",
+      "attribution": "bonsai, 2026 (decision 59)",
+      "link": null,
+      "adopters": ["bonsai"],
+      "bonsai_status": "origin",
+      "bonsai_link": "../design/determinism.md"
+    },
+    {
+      "year": 2026,
+      "title": "Device-resident objective",
+      "idea": "Derive each tree's gradients on the GPU and fuse leaf values into resident scores, deleting the per-tree host round-trip.",
+      "attribution": "bonsai, 2026 (decisions 77 to 79)",
+      "link": null,
+      "adopters": ["bonsai"],
+      "bonsai_status": "origin",
+      "bonsai_link": "../decisions.md#77-the-device-resident-objective-the-per-tree-host-round-trip-deleted-adopted"
+    },
+    {
+      "year": 2026,
+      "title": "The single-card ceiling",
+      "idea": "Measure how large a dataset one GPU trains end to end: a 500M by 100 float32 matrix on one 80GB card.",
+      "attribution": "bonsai, 2026",
+      "link": null,
+      "adopters": ["bonsai"],
+      "bonsai_status": "origin",
+      "bonsai_link": "../method/results.md#the-single-card-ceiling"
+    }
+  ]
+}

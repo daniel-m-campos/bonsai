@@ -108,6 +108,7 @@ nav:
           - 11. Performance engineering: guide/11-performance-engineering.md
           - 12. Multiclass: guide/12-multiclass.md
           - 13. Categorical features: guide/13-categorical-features.md
+      - How we got here: learn/timeline.md
   - Use:
       - Install: use/install.md
       - The API in one read: use/api-tour.md

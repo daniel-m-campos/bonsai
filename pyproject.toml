@@ -69,3 +69,4 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 # Same reason: the effect lines and page headers are one-line paragraphs.
 "scripts/render_params.py" = ["E501"]
 "scripts/render_make_map.py" = ["E501"]
+"scripts/render_timeline.py" = ["E501"]
