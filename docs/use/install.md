@@ -28,8 +28,13 @@ Every release's CUDA wheel is validated on rented GPU hardware before it attache
 
 ## Check it works
 
-```python
+```{.python .run}
 import bonsai
+import numpy as np
+
+rng = np.random.default_rng(0)
+X_train = rng.random((500, 8), dtype=np.float32)
+y_train = (X_train[:, 0] * 2 + rng.normal(0, 0.1, 500)).astype(np.float32)
 
 model = bonsai.BonsaiRegressor(n_iters=20).fit(X_train, y_train)
 print("r2:", round(model.score(X_train, y_train), 3))

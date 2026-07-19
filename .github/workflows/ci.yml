@@ -177,6 +177,11 @@ jobs:
       # test_bindings.py checks module-vs-CLI parity, so it needs the binary too.
       - run: make build
       - run: make python-test
+      # Every ```{.python .run} example in the published docs, executed against
+      # the module built by python-test (build/python). Uses the venv python
+      # so numpy and the ABI-matched extension resolve; GPU blocks are listed
+      # and skipped without --gpu.
+      - run: PYTHONPATH=build/python .venv/bin/python scripts/run_docs_examples.py
 
   # Compile-only: no GPU runners, but the kernel TU should not silently rot.
   cuda-compile:
