@@ -12,7 +12,7 @@ python -m bonsai.bench.grinsztajn out.jsonl --report
 
 Every result row belongs to exactly one division, and both run what MLPerf would call closed: matched knobs across libraries, no per-model tuning.
 
-**quality**: accuracy claims. The metric is primary; timing may be recorded but is never citable from a quality row. **perf**: latency, throughput, and memory claims. Every row declares its `timing_mode`; accuracy is recorded only as a sanity guard.
+**quality**: accuracy claims. The metric is primary; timing may be recorded but is never citable from a quality row. **perf**: latency, throughput, and memory claims. Every row declares its `timing_mode`; accuracy is recorded only as a sanity guard. A third division, [code](#the-code-division), measures the bonsai tree itself and is self-only by construction.
 
 The current evidence, rendered whole from every committed results file, is [the results ledger](results.md); this page is the rules it follows.
 
@@ -62,3 +62,24 @@ Schema v1 (`bonsai.bench.runlog`): every row carries `schema, ts, git_sha, divis
 ## Amendments
 
 History is append-only: committed rows are never edited or regenerated. Corrections are banner annotations on the evidence document plus a decisions-log entry (the pattern of decisions 48, 63, and 68). Superseded artifacts are deleted from the tree; git history is the archive.
+
+## The code division
+
+The code division measures bonsai itself, self-only: no comparative claim against any other library is made or implied. It exists so the readable-core statement is falsifiable; a claim about code you can read must come with counts you can check.
+
+The tool is [lizard](https://github.com/terryyin/lizard), pinned as `uvx lizard@1.23.0` and run by `scripts/measure_complexity.py`. Per plane it records file count, LOC (`wc -l`), lizard NLOC, function count, and mean and max cyclomatic complexity (CCN). Results land in `results/code-metrics-2026-07.jsonl` and render into [the results ledger](results.md); the meta row carries the tool version and the measured git SHA.
+
+| plane | contents |
+|---|---|
+| core_headers | `include/bonsai/**` except `cuda/` and `cli/` |
+| engine_impl | `src/**` except `cuda/`, `cli/`, `python/` |
+| cuda_plane | `src/cuda/**`, `include/bonsai/cuda/**` |
+| bindings_cli | `src/python/**`, `src/cli/**`, `include/bonsai/cli/**`, `python/bonsai/**` except `bench/` |
+| bench_tooling | `python/bonsai/bench/**`, `scripts/*.py`, `benchmarks/*.cpp` |
+| tests | `tests/**`, `python/tests/**` |
+
+Non-claims, stated once: LOC alone is not quality, and a small number is not an argument. The numbers describe this tree at one SHA and nothing else.
+
+The five highest-CCN functions across the core planes are published by name. Naming our own worst functions is deliberate; an offender list its author curates away is marketing, not measurement.
+
+Re-measurement supersedes the results file in place (decision 69): a new run at a new SHA replaces it, and git history is the archive. The append-only rule of the other divisions does not apply; the tree has exactly one current state, so there is nothing to append.

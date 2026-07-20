@@ -437,3 +437,31 @@ The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC),
 | 500M | 513s | 69.9 GiB | 58.5M rows/s | 0.8329 |
 
 *Source: [`single-card-ceiling-2026-07.jsonl`](../../benchmarks/results/single-card-ceiling-2026-07.jsonl). Single-pod ladder (2026-07-18, NVIDIA A100-SXM4-80GB): a 500M x 100 float32 matrix trains end to end on one 80GB card at 69.9 GiB peak, 60 rounds in 8.5 minutes, with the device-resident objective keeping the fit loop bus-free. Evidence: [benchmarks/single-card-ceiling-2026-07.md](../../benchmarks/single-card-ceiling-2026-07.md).*
+
+## The code division
+
+Self-measurement of the bonsai tree, no comparison: line counts and lizard complexity per plane at one SHA. LOC is `wc -l`; NLOC is lizard's non-blank, non-comment count; CCN is cyclomatic complexity (independent paths through a function). The plane map and the non-claims: [the benchmark protocol](benchmark-protocol.md#the-code-division).
+
+| plane | files | LOC | NLOC | functions | mean CCN | max CCN |
+|---|---|---|---|---|---|---|
+| core_headers | 54 | 4926 | 3614 | 214 | 2.04 | 15 |
+| engine_impl | 19 | 5289 | 4387 | 205 | 3.17 | 29 |
+| cuda_plane | 12 | 3582 | 2824 | 133 | 3.02 | 24 |
+| bindings_cli | 17 | 2641 | 2000 | 112 | 2.50 | 21 |
+| bench_tooling | 49 | 8314 | 5844 | 302 | 4.09 | 33 |
+| tests | 39 | 9319 | 7368 | 435 | 1.69 | 12 |
+| all | 190 | 34071 | 26037 | 1401 | - | - |
+
+The five highest-CCN functions across `core_headers` + `engine_impl`, published by name; a curated offender list would be marketing.
+
+| function | file | CCN | NLOC |
+|---|---|---|---|
+| `bonsai::detail::csv::parse` | `src/io/csv.cpp` | 29 | 143 |
+| `bonsai::detail::libsvm::parse` | `src/io/csv.cpp` | 20 | 99 |
+| `bonsai::MulticlassBooster::update_one_iter` | `include/bonsai/multiclass_booster.hpp` | 15 | 84 |
+| `bonsai::greedy_weighted_cuts` | `src/bin_mapper.cpp` | 15 | 51 |
+| `bonsai::LeafwiseGrower<EngineT,SplitterT>::grow` | `src/grower_impl.hpp` | 15 | 109 |
+
+Surface counts: 45 config parameters, 105 registered dispatch combinations (7 objectives x 5 growers x 3 samplers), and 9 public Python names. Dependencies: 1 Python runtime dependency (numpy) and 3 compiled-in C++ libraries (CLI11, nlohmann_json, tomlplusplus), the rule stated in the protocol.
+
+*Source: [`code-metrics-2026-07.jsonl`](../../benchmarks/results/code-metrics-2026-07.jsonl). lizard 1.23.0 (`uvx lizard@1.23.0`) at `974f5c622760`, 2026-07-20; regenerate with [scripts/measure_complexity.py](../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).*

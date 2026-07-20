@@ -774,6 +774,54 @@ def ceiling_section() -> str:
         "(../../benchmarks/single-card-ceiling-2026-07.md).")
     return "## The single-card ceiling\n\n" + table + "\n\n" + prov + "\n"
 
+def code_metrics_section() -> str:
+    rows = load_jsonl("code-metrics-2026-07.jsonl")
+    meta = next(r for r in rows if r["kind"] == "meta")
+    planes = [r for r in rows if r["kind"] == "plane"]
+    offenders = [r for r in rows if r["kind"] == "offender"]
+    s = next(r for r in rows if r["kind"] == "surface")
+
+    plane_table = md_table(
+        ["plane", "files", "LOC", "NLOC", "functions", "mean CCN", "max CCN"],
+        [[p["plane"], str(p["files"]), str(p["loc"]), str(p["nloc"]),
+          str(p["functions"]), fmt(p["ccn_mean"], 2), str(p["ccn_max"])]
+         for p in planes]
+        + [["all", *[str(sum(p[k] for p in planes))
+                     for k in ("files", "loc", "nloc", "functions")], "-", "-"]])
+
+    offender_table = md_table(
+        ["function", "file", "CCN", "NLOC"],
+        [[f"`{o['function']}`", f"`{o['file']}`", str(o["ccn"]), str(o["nloc"])]
+         for o in offenders])
+
+    d = s["dispatch_factors"]
+    py_dep = "dependency" if s["python_runtime_deps"] == 1 else "dependencies"
+    surface_line = (
+        f"Surface counts: {s['parameters']} config parameters, "
+        f"{s['dispatch_combinations']} registered dispatch combinations "
+        f"({d['objectives']} objectives x {d['growers']} growers x {d['samplers']} samplers), "
+        f"and {s['python_public_api']} public Python names. "
+        f"Dependencies: {s['python_runtime_deps']} Python runtime {py_dep} "
+        f"({', '.join(s['python_runtime_dep_names'])}) and {s['cpp_compiled_deps']} "
+        f"compiled-in C++ libraries ({', '.join(s['cpp_compiled_dep_names'])}), "
+        f"the rule stated in the protocol.")
+
+    return f"""## The code division
+
+Self-measurement of the bonsai tree, no comparison: line counts and lizard complexity per plane at one SHA. LOC is `wc -l`; NLOC is lizard's non-blank, non-comment count; CCN is cyclomatic complexity (independent paths through a function). The plane map and the non-claims: [the benchmark protocol](benchmark-protocol.md#the-code-division).
+
+{plane_table}
+
+The five highest-CCN functions across `core_headers` + `engine_impl`, published by name; a curated offender list would be marketing.
+
+{offender_table}
+
+{surface_line}
+
+{provenance(["code-metrics-2026-07.jsonl"], f"lizard {meta['tool_version']} (`{meta['tool_pin']}`) at `{meta['git_sha'][:12]}`, {meta['date']}; regenerate with [scripts/measure_complexity.py](../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).")}
+"""
+
+
 def render() -> str:
     parts = [
         HEADER,
@@ -784,6 +832,7 @@ def render() -> str:
         perf_tracks_section(),
         airline_section(),
         ceiling_section(),
+        code_metrics_section(),
     ]
     return "\n".join(parts)
 
