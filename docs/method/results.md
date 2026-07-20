@@ -237,6 +237,27 @@ K-averaged ordered target statistics as plain preprocessing recover a negative s
 
 *Source: [`static-k-encoder-probe-2026-07.jsonl`](../../benchmarks/results/static-k-encoder-probe-2026-07.jsonl). Probe: [scripts/probe_static_k_encoder.py](../../scripts/probe_static_k_encoder.py); evidence [benchmarks/static-k-encoder-probe-2026-07.md](../../benchmarks/static-k-encoder-probe-2026-07.md).*
 
+### Probe: a per-dataset learning-rate rule (declined, decision 83)
+
+Even a validation-selected oracle over eight rates gains nothing on the pool (it wins validation 10 of 12 but test only 6 of 12, the overfit signature), and CatBoost's own automatic rate transplants to a no-op in a tight band around the shipped 0.05. Lower is better in the metric columns.
+
+| dataset | default (0.05) | oracle | oracle lr | CatBoost auto-lr |
+|---|---|---|---|---|
+| MagicTelescope | 0.0612 | 0.0642 | 0.20 | 0.058 |
+| QSAR-TID-11 | 0.8829 | 0.8895 | 0.08 | 0.061 |
+| QSAR_fish_toxicity | 1.0335 | 1.0220 | 0.08 | 0.045 |
+| banknote | 0.0000 | 0.0001 | 0.01 | 0.030 |
+| breast_cancer | 0.0061 | 0.0067 | 0.30 | 0.024 |
+| concrete_compressive_strength | 4.5874 | 4.5857 | 0.12 | 0.046 |
+| houses | 0.2282 | 0.2277 | 0.03 | 0.074 |
+| phoneme | 0.0676 | 0.0651 | 0.03 | 0.042 |
+| pima_diabetes | 0.1675 | 0.1661 | 0.12 | 0.026 |
+| spambase | 0.0105 | 0.0114 | 0.12 | 0.041 |
+| superconductivity | 9.8563 | 9.8563 | 0.05 | 0.075 |
+| wind | 3.0207 | 3.0198 | 0.02 | 0.063 |
+
+*Source: [`lr-rule-probe-2026-07.jsonl`](../../benchmarks/results/lr-rule-probe-2026-07.jsonl). Probe: [scripts/probe_lr_rule.py](../../scripts/probe_lr_rule.py); evidence [benchmarks/lr-rule-probe-2026-07.md](../../benchmarks/lr-rule-probe-2026-07.md).*
+
 ## Perf division
 
 ### The re-baseline: fit seconds at scale

@@ -411,6 +411,14 @@ def probes_section() -> str:
           fmt(r.get("cat_native"))]
          for r in sorted(sk, key=lambda r: r["dataset"])])
 
+    lr = load_jsonl("lr-rule-probe-2026-07.jsonl")
+    lr_table = md_table(
+        ["dataset", "default (0.05)", "oracle", "oracle lr", "CatBoost auto-lr"],
+        [[r["dataset"], fmt(r["bonsai_default"]["test"]),
+          fmt(r["bonsai_oracle"]["test"]), fmt(r["bonsai_oracle"]["chosen_lr"], 2),
+          fmt(r["bonsai_cat_rule"]["transplanted_lr"], 3)]
+         for r in sorted(lr, key=lambda r: r["dataset"])])
+
     return f"""### Probe: per-feature bin budgets (declined, decision 67)
 
 Test r² under per-feature bin-budget policies at a 255-bin default; no policy moved standings outside the chance band.
@@ -458,6 +466,14 @@ K-averaged ordered target statistics as plain preprocessing recover a negative s
 {sk_table}
 
 {provenance(["static-k-encoder-probe-2026-07.jsonl"], "Probe: [scripts/probe_static_k_encoder.py](../../scripts/probe_static_k_encoder.py); evidence [benchmarks/static-k-encoder-probe-2026-07.md](../../benchmarks/static-k-encoder-probe-2026-07.md).")}
+
+### Probe: a per-dataset learning-rate rule (declined, decision 83)
+
+Even a validation-selected oracle over eight rates gains nothing on the pool (it wins validation 10 of 12 but test only 6 of 12, the overfit signature), and CatBoost's own automatic rate transplants to a no-op in a tight band around the shipped 0.05. Lower is better in the metric columns.
+
+{lr_table}
+
+{provenance(["lr-rule-probe-2026-07.jsonl"], "Probe: [scripts/probe_lr_rule.py](../../scripts/probe_lr_rule.py); evidence [benchmarks/lr-rule-probe-2026-07.md](../../benchmarks/lr-rule-probe-2026-07.md).")}
 """
 
 
