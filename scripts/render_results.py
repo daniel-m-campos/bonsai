@@ -419,6 +419,16 @@ def probes_section() -> str:
           fmt(r["bonsai_cat_rule"]["transplanted_lr"], 3)]
          for r in sorted(lr, key=lambda r: r["dataset"])])
 
+    bi = load_jsonl("bagging-interaction-probe-2026-07.jsonl")
+    bi_table = md_table(
+        ["dataset", "metric", "bag gain bonsai", "bag gain cat", "interaction",
+         "randomization share", "in band"],
+        [[r["dataset"], r["metric"], fmt(r.get("bagging_gain_bonsai")),
+          fmt(r.get("bagging_gain_cat")), fmt(r.get("interaction")),
+          fmt(r.get("randomization_share")),
+          "yes" if r.get("interaction_in_band") else "no"]
+         for r in sorted(bi, key=lambda r: r["dataset"])])
+
     return f"""### Probe: per-feature bin budgets (declined, decision 67)
 
 Test r² under per-feature bin-budget policies at a 255-bin default; no policy moved standings outside the chance band.
@@ -474,6 +484,14 @@ Even a validation-selected oracle over eight rates gains nothing on the pool (it
 {lr_table}
 
 {provenance(["lr-rule-probe-2026-07.jsonl"], "Probe: [scripts/probe_lr_rule.py](../../scripts/probe_lr_rule.py); evidence [benchmarks/lr-rule-probe-2026-07.md](../../benchmarks/lr-rule-probe-2026-07.md).")}
+
+### Probe: the bagged-protocol randomization interaction (declined, decision 85)
+
+Decision 81's last reopener: is CatBoost's small-data lead a bagged-protocol interaction, its randomization defaults decorrelating ensemble members where bonsai's deterministic ones cannot? Priced at zero core cost on the 12-dataset pure-numeric pool. The headline interaction, (cat single minus cat bag8) minus (bonsai single minus bonsai bag8), is negative in both pool means and inside the chance band on 7 of 12; of the 5 out-of-band cases 4 favor bonsai, and the neutralization arm shows stock CatBoost randomization is null under bagging. 8-fold data-bagging already gives bonsai the decorrelation. Lower is better; positive share means the lever lowers error.
+
+{bi_table}
+
+{provenance(["bagging-interaction-probe-2026-07.jsonl"], "Probe: [scripts/probe_bagging_interaction.py](../../scripts/probe_bagging_interaction.py); evidence [benchmarks/bagging-interaction-probe-2026-07.md](../../benchmarks/bagging-interaction-probe-2026-07.md).")}
 """
 
 
