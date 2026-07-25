@@ -429,6 +429,51 @@ def probes_section() -> str:
           "yes" if r.get("interaction_in_band") else "no"]
          for r in sorted(bi, key=lambda r: r["dataset"])])
 
+    sv = load_jsonl("selection-survey-2026-07.jsonl")
+    sv_base = {r["dataset"]: r["error"] for r in sv
+               if r["row_type"] == "baseline"}
+    sv_wall = {(r["dataset"], r["method"]): r["wall_s"] for r in sv
+               if r["row_type"] == "selection_meta"}
+    sv_curve: dict = defaultdict(dict)
+    for r in sv:
+        if r["row_type"] == "curve":
+            sv_curve[(r["dataset"], r["method"])][r["k"]] = r["error"]
+    SV_COLORS = {
+        "corr": "#9e9e9e", "mutual_info": "#607d8b", "gain": "#2e7d32",
+        "split": "#8bc34a", "shap_train": "#1f77b4", "shap_val": "#01579b",
+        "perm_val": "#8e6bbf", "rfe_gain": "#e08f1a", "forward": "#c62828",
+    }
+    sc = "superconductivity"
+    series = []
+    for m, color in SV_COLORS.items():
+        pts = sorted(sv_curve[(sc, m)].items())
+        if pts:
+            series.append((m, color, m in ("corr", "mutual_info", "split"),
+                           [(float(k), v) for k, v in pts]))
+    line_chart(
+        "selection-survey.svg",
+        "Selection-method survey: holdout rmse vs features kept "
+        "(superconductivity, 81 features)",
+        "holdout rmse",
+        series,
+        x_ticks=[(4, "4"), (8, "8"), (16, "16"), (32, "32"), (64, "64")],
+        log_x=True, log_y=False,
+        y_ticks=[(v, f"{v:.1f}") for v in (10.0, 11.0, 12.0, 13.0)])
+
+    def sv_row(ds, m, ks):
+        cells = [fmt(sv_curve[(ds, m)].get(k), 3) for k in ks]
+        return [m, *cells, fmt(sv_wall.get((ds, m)), 1)]
+
+    sv_table = md_table(
+        ["method", "k=64", "k=32", "k=16", "k=8", "k=4", "selection wall (s)"],
+        [sv_row(sc, m, [64, 32, 16, 8, 4]) for m in SV_COLORS
+         if (sc, m) in sv_curve])
+    sv_qsar_table = md_table(
+        ["method", "k=512", "k=256", "k=128", "k=64", "k=32",
+         "selection wall (s)"],
+        [sv_row("QSAR-TID-11", m, [512, 256, 128, 64, 32]) for m in SV_COLORS
+         if ("QSAR-TID-11", m) in sv_curve])
+
     fs = load_jsonl("feature-selection-probe-2026-07.jsonl")
     fs_table = md_table(
         ["dataset", "grower", "regime", "metric", "k / total", "bonsai all",
@@ -512,6 +557,20 @@ Does a refit-based shadow-feature selector (append a permuted copy of every colu
 {fs_table}
 
 {provenance(["feature-selection-probe-2026-07.jsonl"], "Probe: [scripts/probe_feature_selection.py](../../scripts/probe_feature_selection.py); evidence [benchmarks/feature-selection-probe-2026-07.md](../../benchmarks/feature-selection-probe-2026-07.md).")}
+
+#### The selection-method survey (guide 14 worked example)
+
+Nine selection methods, one shared judge: each method produces a feature ranking, every ranking is refit at matched knobs on its top-k down a budget ladder, and error is read on an untouched holdout (superconductivity, 81 real features, baseline rmse {fmt(sv_base.get("superconductivity"), 5)}). Guide chapter 14 reads these curves; they add no verdict weight to decision 86.
+
+![Selection-method survey](assets/selection-survey.svg)
+
+{sv_table}
+
+The wide-short footnote, QSAR-TID-11 (1024 features, baseline rmse {fmt(sv_base.get("QSAR-TID-11"), 5)}); forward selection is omitted at this width (its candidate-fit count scales with the feature count):
+
+{sv_qsar_table}
+
+{provenance(["selection-survey-2026-07.jsonl"], "Survey: [scripts/probe_selection_survey.py](../../scripts/probe_selection_survey.py); evidence [benchmarks/selection-survey-2026-07.md](../../benchmarks/selection-survey-2026-07.md).")}
 """
 
 
