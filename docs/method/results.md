@@ -315,6 +315,39 @@ Does a refit-based shadow-feature selector (append a permuted copy of every colu
 
 *Source: [`feature-selection-probe-2026-07.jsonl`](../../benchmarks/results/feature-selection-probe-2026-07.jsonl). Probe: [scripts/probe_feature_selection.py](../../scripts/probe_feature_selection.py); evidence [benchmarks/feature-selection-probe-2026-07.md](../../benchmarks/feature-selection-probe-2026-07.md).*
 
+#### The selection-method survey (guide 14 worked example)
+
+Nine selection methods, one shared judge: each method produces a feature ranking, every ranking is refit at matched knobs on its top-k down a budget ladder, and error is read on an untouched holdout (superconductivity, 81 real features, baseline rmse 9.85628). Guide chapter 14 reads these curves; they add no verdict weight to decision 86.
+
+![Selection-method survey](assets/selection-survey.svg)
+
+| method | k=64 | k=32 | k=16 | k=8 | k=4 | selection wall (s) |
+|---|---|---|---|---|---|---|
+| corr | 9.934 | 10.021 | 10.450 | 11.449 | 13.297 | 0.0 |
+| mutual_info | 9.874 | 10.134 | 11.004 | 11.794 | 13.921 | 2.0 |
+| gain | 9.880 | 9.965 | 10.157 | 10.749 | 12.773 | 4.8 |
+| split | 9.970 | 10.427 | 10.864 | 11.386 | 12.553 | 4.8 |
+| shap_train | 9.856 | 10.083 | 10.183 | 10.697 | 13.709 | 12.6 |
+| shap_val | 9.856 | 9.996 | 10.183 | 10.697 | 13.709 | 6.8 |
+| perm_val | 9.944 | 9.988 | 10.267 | 10.994 | 12.878 | 21.8 |
+| rfe_gain | 9.880 | 9.954 | 10.255 | 10.743 | 12.671 | 33.0 |
+| forward | - | - | 10.131 | 10.428 | 11.416 | 238.8 |
+
+The wide-short footnote, QSAR-TID-11 (1024 features, baseline rmse 0.88287); forward selection is omitted at this width (its candidate-fit count scales with the feature count):
+
+| method | k=512 | k=256 | k=128 | k=64 | k=32 | selection wall (s) |
+|---|---|---|---|---|---|---|
+| corr | 0.892 | 0.927 | 0.965 | 0.996 | 1.122 | 0.0 |
+| mutual_info | 0.889 | 0.896 | 0.941 | 1.011 | 1.149 | 7.5 |
+| gain | 0.895 | 0.890 | 0.918 | 0.973 | 1.081 | 3.4 |
+| split | 0.890 | 0.912 | 0.968 | 1.023 | 1.197 | 3.4 |
+| shap_train | 0.886 | 0.892 | 0.907 | 0.947 | 1.056 | 4.7 |
+| shap_val | 0.887 | 0.889 | 0.904 | 0.944 | 1.063 | 3.7 |
+| perm_val | 0.889 | 0.890 | 0.918 | 0.966 | 1.043 | 164.3 |
+| rfe_gain | 0.895 | 0.895 | 0.922 | 0.954 | 1.049 | 14.6 |
+
+*Source: [`selection-survey-2026-07.jsonl`](../../benchmarks/results/selection-survey-2026-07.jsonl). Survey: [scripts/probe_selection_survey.py](../../scripts/probe_selection_survey.py); evidence [benchmarks/selection-survey-2026-07.md](../../benchmarks/selection-survey-2026-07.md).*
+
 ## Perf division
 
 ### The re-baseline: fit seconds at scale
