@@ -35,6 +35,7 @@
 build/
 build-cuda/
 build-asan/
+build-tabarena/
 out/
 cmake-build-*/
 
