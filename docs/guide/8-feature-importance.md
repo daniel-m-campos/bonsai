@@ -111,10 +111,9 @@ modes to keep in mind:
   training data*, regularization and all. It says nothing about
   generalization; a feature can carry high gain while overfitting noise.
 - When the stakes are real, corroborate with **SHAP** (exact TreeSHAP
-  shipped as `pred_contribs`, per-prediction attribution with a
-  consistency guarantee) or **permutation importance** (shuffle a feature
-  at predict time, watch the metric drop; a five-line loop over
-  `predict`).
+  shipped as `pred_contribs`; [chapter 15](15-explaining-predictions.md)
+  is its chapter) or **permutation importance** (shuffle a feature at
+  predict time, watch the metric drop; a five-line loop over `predict`).
 - If the ranking is tempting you to *drop* features, that is a different
   decision with its own measured answer:
   [chapter 14](14-feature-selection.md).

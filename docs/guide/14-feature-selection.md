@@ -46,7 +46,7 @@ Every method here produces a feature ranking, best first. The families, in incre
 
 **Filters** score each feature against the target before any model exists. `corr` (absolute Pearson) and `mutual_info` are the classic pair: free and near-free, but they see each feature *alone*, so they cannot see interactions, and a strong redundant cluster floods their top ranks with copies of the same signal.
 
-**Embedded rankings** read the trained model's own bookkeeping: `gain` and `split` from chapter 8, and mean absolute TreeSHAP attribution (`pred_contribs`) computed on the training rows (`shap_train`) or on held-out validation rows (`shap_val`). The validation variant exists because of the inflation math: attribution measured on rows the fit did not memorize discounts lottery winners.
+**Embedded rankings** read the trained model's own bookkeeping: `gain` and `split` from chapter 8, and mean absolute TreeSHAP attribution (`pred_contribs`, [chapter 15](15-explaining-predictions.md)) computed on the training rows (`shap_train`) or on held-out validation rows (`shap_val`). The validation variant exists because of the inflation math: attribution measured on rows the fit did not memorize discounts lottery winners.
 
 **Validation scoring**: `perm_val`, permutation importance, shuffles one feature at a time on the validation set and charges the feature the resulting error increase. No refits, only predicts, but one pass per feature per repeat.
 

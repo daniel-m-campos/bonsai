@@ -179,7 +179,7 @@
       "link": "https://arxiv.org/abs/1802.03888",
       "adopters": ["xgboost", "lightgbm", "catboost", "bonsai"],
       "bonsai_status": "adopted",
-      "bonsai_link": "../guide/8-feature-importance.md"
+      "bonsai_link": "../guide/15-explaining-predictions.md"
     },
     {
       "year": 2019,
