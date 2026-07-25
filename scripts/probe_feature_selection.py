@@ -25,6 +25,12 @@ boosting_rung0.py, imported read-only for its loader and splits):
                  target association while keeping the marginal, so the injected
                  columns are known-noise ground truth for a precision/recall table.
 
+The bonsai arms run once per grower (depthwise, leafwise, oblivious), every other
+knob identical; leafwise carries the campaign max_leaves convention from
+bonsai.bench.params (max_leaves is read by the leafwise grower only). One jsonl
+row per (dataset, grower); the grower-independent reference arms (cat_all,
+cat_select, xgb) are fit once and recorded on the depthwise row only.
+
 Six arms per dataset (k is the count arm 4 keeps, so the truncation arms 3/5/6
 run at arm 4's budget and 3-vs-4 isolates the shadow mechanism from truncation):
 
@@ -55,6 +61,7 @@ gauge venv, CatBoost 1.2.10 / xgboost / scikit-learn 1.7.2):
   TABARENA_DIR   tabarena checkout (importable packages + curated metadata).
   --out          raw output jsonl (default benchmarks/results/feature-selection-...jsonl).
   PROBE_DATASETS optional comma-separated dataset override (smoke runs).
+  PROBE_GROWERS  optional comma-separated grower override (batching / smoke runs).
 """
 
 from __future__ import annotations
@@ -99,6 +106,10 @@ SHADOW_AGREE = 3  # keep a feature selected in at least this many seeds
 # CatBoost select_features knobs (recorded so the wall-time comparison is honest).
 CAT_SELECT_STEPS = 5
 CAT_SELECT_ALGO = "RecursiveByLossFunctionChange"
+
+# The bonsai grower axis; the reference arms are grower-independent and are
+# recorded on the depthwise row only.
+GROWERS = ("depthwise", "leafwise", "oblivious")
 
 REAL_WIDE = ["QSAR-TID-11", "superconductivity", "spambase"]
 NOISE_INJECTED = [
@@ -149,19 +160,23 @@ def shadow_augment(X, seed):
 
 
 # ------------------------------------------------------------------ bonsai
-def new_bonsai(ptype):
+def new_bonsai(ptype, grower):
     import bonsai
+    from bonsai.bench.params import num_leaves_campaign
 
     cls = bonsai.BonsaiRegressor if ptype == "regression" else bonsai.BonsaiClassifier
+    kwargs = {}
+    if grower == "leafwise":
+        kwargs["max_leaves"] = num_leaves_campaign(DEPTH)
     return cls(
-        n_iters=ITERS, learning_rate=LR, max_depth=DEPTH, grower="depthwise",
+        n_iters=ITERS, learning_rate=LR, max_depth=DEPTH, grower=grower,
         early_stopping_rounds=ES_ROUNDS, n_threads=THREADS, random_seed=SEED,
-        params=dict(BONSAI_MATCHED_PARAMS),
+        params=dict(BONSAI_MATCHED_PARAMS), **kwargs,
     )
 
 
-def fit_bonsai(ptype, Xtr, ytr, Xval, yval, Xte):
-    est = new_bonsai(ptype)
+def fit_bonsai(ptype, grower, Xtr, ytr, Xval, yval, Xte):
+    est = new_bonsai(ptype, grower)
     est.fit(Xtr, ytr, eval_set=(Xval, yval))
     pred = est.predict(Xte) if ptype == "regression" else est.predict_proba(Xte)[:, 1]
     return pred, est
@@ -246,7 +261,7 @@ def topk_indices(importance, k):
 
 
 # ------------------------------------------------------------------ shadow arm
-def shadow_select(ptype, Xtr, ytr, Xval, yval):
+def shadow_select(ptype, grower, Xtr, ytr, Xval, yval):
     """The prototype. Returns (kept_indices, per_seed_masks, votes, wall_s). Only
     training and validation data are touched; the holdout is untouched by selection."""
     p = Xtr.shape[1]
@@ -256,7 +271,7 @@ def shadow_select(ptype, Xtr, ytr, Xval, yval):
     for s in SHADOW_SEEDS:
         Xtr_s = shadow_augment(Xtr, s)
         Xval_s = shadow_augment(Xval, s)
-        est = new_bonsai(ptype)
+        est = new_bonsai(ptype, grower)
         est.fit(Xtr_s, ytr, eval_set=(Xval_s, yval))
         imp = est.importance("gain")
         shadow_imp = imp[p:]
@@ -270,7 +285,30 @@ def shadow_select(ptype, Xtr, ytr, Xval, yval):
 
 
 # ------------------------------------------------------------------ driver
-def run_dataset(name):
+def noise_recovery(selected, orig_feats, total_feats):
+    """Precision/recall on the injected columns; positive detection = dropping
+    a noise column. None when there is no selection to grade."""
+    if selected is None:
+        return None
+    noise_ids = set(range(orig_feats, total_feats))
+    real_ids = set(range(orig_feats))
+    kept_set = set(selected)
+    dropped = (real_ids | noise_ids) - kept_set
+    noise_dropped = len(noise_ids & dropped)
+    n_dropped = len(dropped)
+    return {
+        "kept_total": len(kept_set),
+        "noise_kept": len(kept_set & noise_ids), "noise_dropped": noise_dropped,
+        "real_kept": len(kept_set & real_ids),
+        "real_dropped": len(real_ids & dropped),
+        "noise_detection_recall": noise_dropped / len(noise_ids) if noise_ids else None,
+        "noise_detection_precision": noise_dropped / n_dropped if n_dropped else None,
+    }
+
+
+def run_dataset(name, grower, include_refs):
+    """One row per (dataset, grower). The grower-independent reference arms
+    (cat_all, cat_select, xgb) run only when include_refs is set."""
     ptype = PTYPE[name]
     regime = "real_wide" if name in REAL_WIDE else "noise_injected"
     Xtr, ytr, Xval, yval, Xte, yte = rung0.load_dataset(name)
@@ -297,22 +335,19 @@ def run_dataset(name):
 
     # Arm 1: bonsai all features (baseline + gain ranking source).
     bonsai_all_pred, bonsai_all_est = timed(
-        "bonsai_all", lambda: fit_bonsai(ptype, Xtr, ytr, Xval, yval, Xte))
+        "bonsai_all", lambda: fit_bonsai(ptype, grower, Xtr, ytr, Xval, yval, Xte))
     bonsai_all_err = metric_error(ptype, yte, bonsai_all_pred)
     bonsai_gain = bonsai_all_est.importance("gain")
 
-    # Arm 2: CatBoost all features.
-    cat_all_err = metric_error(ptype, yte, timed(
-        "cat_all", lambda: fit_catboost_all(ptype, Xtr, ytr, Xval, yval, Xte)))
-
     # Arm 4: the shadow prototype (fixes k for the truncation arms).
-    kept, per_seed, votes, shadow_wall = shadow_select(ptype, Xtr, ytr, Xval, yval)
+    kept, per_seed, votes, shadow_wall = shadow_select(
+        ptype, grower, Xtr, ytr, Xval, yval)
     timings["bonsai_shadow_select"] = shadow_wall
     k = len(kept)
     k_refit = max(k, 1)
     if k >= 1:
         shadow_pred, _ = timed("bonsai_shadow_refit", lambda: fit_bonsai(
-            ptype, Xtr[:, kept], ytr, Xval[:, kept], yval, Xte[:, kept]))
+            ptype, grower, Xtr[:, kept], ytr, Xval[:, kept], yval, Xte[:, kept]))
         bonsai_shadow_err = metric_error(ptype, yte, shadow_pred)
     else:
         bonsai_shadow_err = float("nan")
@@ -322,112 +357,95 @@ def run_dataset(name):
     # Arm 3: bonsai top-k by its own gain, k = arm-4 kept count.
     topk_bonsai = topk_indices(bonsai_gain, k_refit)
     topk_pred, _ = timed("bonsai_topk_gain", lambda: fit_bonsai(
-        ptype, Xtr[:, topk_bonsai], ytr, Xval[:, topk_bonsai], yval, Xte[:, topk_bonsai]))
+        ptype, grower, Xtr[:, topk_bonsai], ytr, Xval[:, topk_bonsai], yval,
+        Xte[:, topk_bonsai]))
     bonsai_topk_err = metric_error(ptype, yte, topk_pred)
-
-    # Arm 5: CatBoost select_features down to k.
-    cat_select_err = float("nan")
-    cat_selected = None
-    cat_select_wall = None
-    cat_select_error_msg = None
-    try:
-        cs_pred, cat_selected, cat_select_wall = cat_select(
-            ptype, Xtr, ytr, Xval, yval, Xte, k_refit)
-        cat_select_err = metric_error(ptype, yte, cs_pred)
-    except Exception as exc:  # record the failure honestly and continue
-        cat_select_error_msg = f"{type(exc).__name__}: {exc}"
-        print(f"  cat_select FAILED: {cat_select_error_msg}", flush=True)
-
-    # Arm 6: xgboost all features + top-k by its own gain.
-    xgb_all_pred, xgb_gain = timed(
-        "xgb_all", lambda: fit_xgb(ptype, Xtr, ytr, Xval, yval, Xte))
-    xgb_all_err = metric_error(ptype, yte, xgb_all_pred)
-    topk_xgb = topk_indices(xgb_gain, k_refit)
-    xgb_topk_pred, _ = timed("xgb_topk_gain", lambda: fit_xgb(
-        ptype, Xtr[:, topk_xgb], ytr, Xval[:, topk_xgb], yval, Xte[:, topk_xgb]))
-    xgb_topk_err = metric_error(ptype, yte, xgb_topk_pred)
 
     b = band(ptype, bonsai_all_err)
 
     row = {
-        "dataset": name, "regime": regime, "problem_type": ptype,
+        "dataset": name, "grower": grower, "regime": regime, "problem_type": ptype,
         "metric": "rmse" if ptype == "regression" else "one_minus_auc",
         "n_train": len(ytr), "n_val": len(yval), "n_test": len(yte),
         "orig_features": orig_feats, "total_features": total_feats,
         "n_injected_noise": n_injected, "noise_seed": NOISE_SEED,
         "shadow_seeds": SHADOW_SEEDS, "shadow_percentile": SHADOW_PERCENTILE,
         "shadow_agree": SHADOW_AGREE,
-        "cat_select_algo": CAT_SELECT_ALGO, "cat_select_steps": CAT_SELECT_STEPS,
         "band": b,
-        # accuracy per arm
+        # accuracy per bonsai arm
         "bonsai_all": bonsai_all_err,
-        "cat_all": cat_all_err,
         "bonsai_topk_gain": bonsai_topk_err,
         "bonsai_shadow": bonsai_shadow_err,
-        "cat_select": cat_select_err,
-        "xgb_all": xgb_all_err,
-        "xgb_topk_gain": xgb_topk_err,
         # selection outputs
         "k": k, "k_refit": k_refit,
         "shadow_kept": kept,
         "shadow_votes": votes,
         "shadow_per_seed_counts": [len(s) for s in per_seed],
         "bonsai_topk_selected": topk_bonsai,
-        "cat_selected": cat_selected,
-        "xgb_topk_selected": topk_xgb,
-        "cat_select_error": cat_select_error_msg,
         # decompositions (lower-better; positive share = selection lowers error)
         "shadow_vs_all": bonsai_all_err - bonsai_shadow_err,
         "topk_vs_all": bonsai_all_err - bonsai_topk_err,
         "shadow_vs_topk": bonsai_topk_err - bonsai_shadow_err,
-        "shadow_vs_catselect": cat_select_err - bonsai_shadow_err,
         # wall time
         "shadow_select_wall_s": shadow_wall,
         "shadow_total_wall_s": shadow_wall_total,
-        "cat_select_wall_s": cat_select_wall,
-        "timings_s": timings,
     }
-
-    # Noise-recovery precision/recall for the injected regime (arms 4 and 5).
     if regime == "noise_injected":
-        noise_ids = set(range(orig_feats, total_feats))
-        real_ids = set(range(orig_feats))
+        row["recovery_shadow"] = noise_recovery(kept, orig_feats, total_feats)
 
-        def recovery(selected):
-            if selected is None:
-                return None
-            kept_set = set(selected)
-            dropped = (real_ids | noise_ids) - kept_set
-            noise_kept = len(kept_set & noise_ids)
-            noise_dropped = len(noise_ids & dropped)
-            real_kept = len(kept_set & real_ids)
-            real_dropped = len(real_ids & dropped)
-            n_dropped = len(dropped)
-            # noise detection = dropping a noise column (positive class = noise).
-            noise_recall = noise_dropped / len(noise_ids) if noise_ids else None
-            noise_precision = noise_dropped / n_dropped if n_dropped else None
-            return {
-                "kept_total": len(kept_set),
-                "noise_kept": noise_kept, "noise_dropped": noise_dropped,
-                "real_kept": real_kept, "real_dropped": real_dropped,
-                "noise_detection_recall": noise_recall,
-                "noise_detection_precision": noise_precision,
-            }
+    if include_refs:
+        # Arm 2: CatBoost all features.
+        cat_all_err = metric_error(ptype, yte, timed(
+            "cat_all", lambda: fit_catboost_all(ptype, Xtr, ytr, Xval, yval, Xte)))
 
-        row["recovery_shadow"] = recovery(kept)
-        row["recovery_catselect"] = recovery(cat_selected)
+        # Arm 5: CatBoost select_features down to k.
+        cat_select_err = float("nan")
+        cat_selected = None
+        cat_select_wall = None
+        cat_select_error_msg = None
+        try:
+            cs_pred, cat_selected, cat_select_wall = cat_select(
+                ptype, Xtr, ytr, Xval, yval, Xte, k_refit)
+            cat_select_err = metric_error(ptype, yte, cs_pred)
+        except Exception as exc:  # record the failure honestly and continue
+            cat_select_error_msg = f"{type(exc).__name__}: {exc}"
+            print(f"  cat_select FAILED: {cat_select_error_msg}", flush=True)
 
-    print(f"  bonsai_all={bonsai_all_err:.5f} cat_all={cat_all_err:.5f} "
-          f"topk={bonsai_topk_err:.5f} shadow={bonsai_shadow_err:.5f} "
-          f"cat_select={cat_select_err:.5f} xgb_all={xgb_all_err:.5f} "
-          f"xgb_topk={xgb_topk_err:.5f}", flush=True)
-    cs_wall_s = cat_select_wall if cat_select_wall is None else round(cat_select_wall, 1)
-    print(f"  k={k}/{total_feats} shadow_wall={shadow_wall_total:.1f}s "
-          f"cat_select_wall={cs_wall_s}s "
-          f"shadow_vs_all={row['shadow_vs_all']:+.5f} band={b:.5f}", flush=True)
+        # Arm 6: xgboost all features + top-k by its own gain.
+        xgb_all_pred, xgb_gain = timed(
+            "xgb_all", lambda: fit_xgb(ptype, Xtr, ytr, Xval, yval, Xte))
+        xgb_all_err = metric_error(ptype, yte, xgb_all_pred)
+        topk_xgb = topk_indices(xgb_gain, k_refit)
+        xgb_topk_pred, _ = timed("xgb_topk_gain", lambda: fit_xgb(
+            ptype, Xtr[:, topk_xgb], ytr, Xval[:, topk_xgb], yval, Xte[:, topk_xgb]))
+        xgb_topk_err = metric_error(ptype, yte, xgb_topk_pred)
+
+        row.update({
+            "cat_select_algo": CAT_SELECT_ALGO, "cat_select_steps": CAT_SELECT_STEPS,
+            "cat_all": cat_all_err,
+            "cat_select": cat_select_err,
+            "xgb_all": xgb_all_err,
+            "xgb_topk_gain": xgb_topk_err,
+            "cat_selected": cat_selected,
+            "xgb_topk_selected": topk_xgb,
+            "cat_select_error": cat_select_error_msg,
+            "shadow_vs_catselect": cat_select_err - bonsai_shadow_err,
+            "cat_select_wall_s": cat_select_wall,
+        })
+        if regime == "noise_injected":
+            row["recovery_catselect"] = noise_recovery(
+                cat_selected, orig_feats, total_feats)
+
+    row["timings_s"] = timings
+
+    print(f"  [{grower}] bonsai_all={bonsai_all_err:.5f} "
+          f"topk={bonsai_topk_err:.5f} shadow={bonsai_shadow_err:.5f}", flush=True)
+    print(f"  [{grower}] k={k}/{total_feats} shadow_wall={shadow_wall_total:.1f}s "
+          f"shadow_vs_all={row['shadow_vs_all']:+.5f} "
+          f"shadow_vs_topk={row['shadow_vs_topk']:+.5f} band={b:.5f}", flush=True)
     if regime == "noise_injected" and row.get("recovery_shadow"):
         rs = row["recovery_shadow"]
-        print(f"  shadow recovery: noise_kept={rs['noise_kept']}/{n_injected} "
+        print(f"  [{grower}] shadow recovery: noise_kept={rs['noise_kept']}/{n_injected} "
               f"real_dropped={rs['real_dropped']}/{orig_feats}", flush=True)
     return row
 
@@ -447,12 +465,16 @@ def main():
         names = [d.strip() for d in override.split(",") if d.strip()]
     else:
         names = REAL_WIDE + NOISE_INJECTED
+    g_override = os.environ.get("PROBE_GROWERS", "").strip()
+    growers = ([g.strip() for g in g_override.split(",") if g.strip()]
+               if g_override else list(GROWERS))
 
     rows = []
     for name in names:
         regime = "real_wide" if name in REAL_WIDE else "noise_injected"
-        print(f"\n=== {name} ({PTYPE[name]}, {regime}) ===", flush=True)
-        rows.append(run_dataset(name))
+        for grower in growers:
+            print(f"\n=== {name} ({PTYPE[name]}, {regime}, {grower}) ===", flush=True)
+            rows.append(run_dataset(name, grower, include_refs=grower == "depthwise"))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
@@ -466,9 +488,9 @@ def main():
             continue
         print(f"\n=== {regime} (n={len(g)}) ===")
         for r in g:
-            print(f"  {r['dataset']:32s} all={r['bonsai_all']:.5f} "
+            print(f"  {r['dataset']:32s} {r['grower']:9s} all={r['bonsai_all']:.5f} "
                   f"shadow={r['bonsai_shadow']:.5f} topk={r['bonsai_topk_gain']:.5f} "
-                  f"cat_sel={r['cat_select']:.5f} vs_all={r['shadow_vs_all']:+.5f} "
+                  f"vs_all={r['shadow_vs_all']:+.5f} vs_topk={r['shadow_vs_topk']:+.5f} "
                   f"band={r['band']:.5f} k={r['k']}/{r['total_features']}")
 
     print(f"\nwrote {out_path}  ({len(rows)} rows)  wall {time.time() - t_start:.1f}s")
