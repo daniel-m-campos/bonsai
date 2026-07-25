@@ -19,6 +19,7 @@ timeline
         2001 : Gradient boosting machines
         2002 : Stochastic gradient boosting
     section 2010s
+        2010 : Boruta (shadow features)
         2015 : DART
         2016 : Regularized objective : Weighted quantile sketch : Sparsity-aware split finding
         2017 : Histogram binning : GOSS : EFB : Leaf-wise growth : GPU histogram training
@@ -36,6 +37,7 @@ timeline
 | 1997 | **[AdaBoost](https://doi.org/10.1006/jcss.1997.1504)**: Combine many weak learners by reweighting the examples each one gets wrong. *(Freund and Schapire, JCSS 1997)* | none | [adapted](../guide/1-gradient-boosting.md) |
 | 2001 | **[Gradient boosting machines](https://doi.org/10.1214/aos/1013203451)**: Fit each new tree to the gradient of the loss, so boosting becomes gradient descent in function space. *(Friedman, Annals of Statistics 2001)* | XGBoost, LightGBM, CatBoost, bonsai | [adopted](../guide/1-gradient-boosting.md) |
 | 2002 | **[Stochastic gradient boosting](https://doi.org/10.1016/S0167-9473(01)00065-2)**: Subsample the rows before each tree, trading a little bias for lower variance and faster fits. *(Friedman, CSDA 2002)* | XGBoost, LightGBM, CatBoost, bonsai | [adopted](../guide/5-sampling.md) |
+| 2010 | **[Boruta (shadow features)](https://www.jstatsoft.org/article/view/v036i11)**: Select features by competing each against a permuted copy of itself, so the model calibrates its own importance noise floor. *(Kursa and Rudnicki, JSS 2010)* | none | [declined](../decisions.md#86-honest-shadow-feature-selection-declined-as-an-accuracy-lever-on-all-three-growers-the-gain-ranking-already-has-it-adopted) |
 | 2015 | **[DART](https://arxiv.org/abs/1505.01866)**: Drop a random subset of existing trees before each round, borrowing dropout from neural networks. *(Rashmi and Gilad-Bachrach, AISTATS 2015)* | XGBoost, LightGBM, bonsai | [adopted](../guide/7-early-stopping-and-dart.md) |
 | 2016 | **[Regularized objective](https://arxiv.org/abs/1603.02754)**: Score splits with a regularized second-order (Newton) objective and read leaf values from the same gradient and hessian sums. *(Chen and Guestrin, KDD 2016)* | XGBoost, LightGBM, CatBoost, bonsai | [adopted](../guide/3-finding-splits.md) |
 | 2016 | **[Weighted quantile sketch](https://arxiv.org/abs/1603.02754)**: Propose split points from hessian-weighted quantiles, keeping approximate split finding accurate at scale. *(Chen and Guestrin, KDD 2016)* | XGBoost, bonsai | [adapted](../decisions.md#64-one-shared-row-sample-for-binning-not-one-reservoir-pass-per-feature-adopted) |

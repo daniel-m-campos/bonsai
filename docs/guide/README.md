@@ -30,6 +30,7 @@ the whole implementation.
 | 11 | [Performance engineering](11-performance-engineering.md) | The compute-DAG method: price moves before playing them |
 | 12 | [Multiclass](12-multiclass.md) | Softmax boosting: K trees per round and one diagonal approximation |
 | 13 | [Categorical features](13-categorical-features.md) | Ordered target statistics: the encoding that doesn't leak, and why the core stays numeric |
+| 14 | [Feature selection](14-feature-selection.md) | Nine selection methods raced on real data: who wins at which budget, and what it costs |
 
 ## The template
 
