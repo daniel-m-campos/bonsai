@@ -429,6 +429,17 @@ def probes_section() -> str:
           "yes" if r.get("interaction_in_band") else "no"]
          for r in sorted(bi, key=lambda r: r["dataset"])])
 
+    fs = load_jsonl("feature-selection-probe-2026-07.jsonl")
+    fs_table = md_table(
+        ["dataset", "regime", "metric", "k / total", "bonsai all", "bonsai shadow",
+         "bonsai top-k", "cat select", "shadow vs top-k", "shadow beats all"],
+        [[r["dataset"], r["regime"], r["metric"],
+          f"{r['k']} / {r['total_features']}", fmt(r.get("bonsai_all"), 5),
+          fmt(r.get("bonsai_shadow"), 5), fmt(r.get("bonsai_topk_gain"), 5),
+          fmt(r.get("cat_select"), 5), fmt(r.get("shadow_vs_topk"), 5),
+          "yes" if r.get("shadow_vs_all", 0) > r.get("band", 0) else "no"]
+         for r in fs])
+
     return f"""### Probe: per-feature bin budgets (declined, decision 67)
 
 Test r² under per-feature bin-budget policies at a 255-bin default; no policy moved standings outside the chance band.
@@ -492,6 +503,14 @@ Decision 81's last reopener: is CatBoost's small-data lead a bagged-protocol int
 {bi_table}
 
 {provenance(["bagging-interaction-probe-2026-07.jsonl"], "Probe: [scripts/probe_bagging_interaction.py](../../scripts/probe_bagging_interaction.py); evidence [benchmarks/bagging-interaction-probe-2026-07.md](../../benchmarks/bagging-interaction-probe-2026-07.md).")}
+
+### Probe: honest shadow-feature selection (declined, decision 86)
+
+Does a refit-based shadow-feature selector (append a permuted copy of every column, keep only real features that beat the shadow importances) buy accuracy over plain top-k-by-gain, and how does it price against CatBoost select_features? Priced at zero core cost on two regimes (REAL-WIDE up to 1024 features, NOISE-INJECTED with shuffled-copy noise equal to each set's feature count), the shadow arm's `shadow vs top-k` delta is inside the chance band on all 9 datasets, so every beyond-band win it scores is a win plain truncation also scores at the same k, and it loses beyond the band on two low-dimensional real sets. Selection is not an accuracy lever on this pool; where it recovers accuracy it removes injected junk a one-line top-k already removes. Lower is better in every metric column; positive `shadow vs top-k` means the shadow machinery beats truncation.
+
+{fs_table}
+
+{provenance(["feature-selection-probe-2026-07.jsonl"], "Probe: [scripts/probe_feature_selection.py](../../scripts/probe_feature_selection.py); evidence [benchmarks/feature-selection-probe-2026-07.md](../../benchmarks/feature-selection-probe-2026-07.md).")}
 """
 
 
