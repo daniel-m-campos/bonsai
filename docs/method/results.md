@@ -279,6 +279,24 @@ Decision 81's last reopener: is CatBoost's small-data lead a bagged-protocol int
 
 *Source: [`bagging-interaction-probe-2026-07.jsonl`](../../benchmarks/results/bagging-interaction-probe-2026-07.jsonl). Probe: [scripts/probe_bagging_interaction.py](../../scripts/probe_bagging_interaction.py); evidence [benchmarks/bagging-interaction-probe-2026-07.md](../../benchmarks/bagging-interaction-probe-2026-07.md).*
 
+### Probe: honest shadow-feature selection (declined, decision 86)
+
+Does a refit-based shadow-feature selector (append a permuted copy of every column, keep only real features that beat the shadow importances) buy accuracy over plain top-k-by-gain, and how does it price against CatBoost select_features? Priced at zero core cost on two regimes (REAL-WIDE up to 1024 features, NOISE-INJECTED with shuffled-copy noise equal to each set's feature count), the shadow arm's `shadow vs top-k` delta is inside the chance band on all 9 datasets, so every beyond-band win it scores is a win plain truncation also scores at the same k, and it loses beyond the band on two low-dimensional real sets. Selection is not an accuracy lever on this pool; where it recovers accuracy it removes injected junk a one-line top-k already removes. Lower is better in every metric column; positive `shadow vs top-k` means the shadow machinery beats truncation.
+
+| dataset | regime | metric | k / total | bonsai all | bonsai shadow | bonsai top-k | cat select | shadow vs top-k | shadow beats all |
+|---|---|---|---|---|---|---|---|---|---|
+| QSAR-TID-11 | real_wide | rmse | 306 / 1024 | 0.88287 | 0.89051 | 0.89300 | 0.89338 | 0.00248 | no |
+| superconductivity | real_wide | rmse | 67 / 81 | 9.85628 | 9.92407 | 9.91435 | 10.14472 | -0.00972 | no |
+| spambase | real_wide | one_minus_auc | 24 / 57 | 0.01050 | 0.01169 | 0.01197 | 0.01289 | 0.00027 | no |
+| houses | noise_injected | rmse | 11 / 16 | 0.23289 | 0.23149 | 0.23149 | 0.22809 | 0.00000 | no |
+| concrete_compressive_strength | noise_injected | rmse | 8 / 16 | 5.32359 | 4.58744 | 4.58744 | 4.65285 | 0.00000 | yes |
+| wind | noise_injected | rmse | 14 / 28 | 3.07949 | 3.02061 | 3.02729 | 2.99762 | 0.00668 | no |
+| breast_cancer | noise_injected | one_minus_auc | 17 / 60 | 0.00818 | 0.00692 | 0.00650 | 0.00797 | -0.00042 | yes |
+| pima_diabetes | noise_injected | one_minus_auc | 6 / 16 | 0.19104 | 0.20203 | 0.20203 | 0.19116 | 0.00000 | no |
+| MagicTelescope | noise_injected | one_minus_auc | 11 / 20 | 0.06516 | 0.06344 | 0.06344 | 0.05787 | 0.00000 | yes |
+
+*Source: [`feature-selection-probe-2026-07.jsonl`](../../benchmarks/results/feature-selection-probe-2026-07.jsonl). Probe: [scripts/probe_feature_selection.py](../../scripts/probe_feature_selection.py); evidence [benchmarks/feature-selection-probe-2026-07.md](../../benchmarks/feature-selection-probe-2026-07.md).*
+
 ## Perf division
 
 ### The re-baseline: fit seconds at scale
