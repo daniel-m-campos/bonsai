@@ -10,7 +10,7 @@ superconductivity (11,340 train rows, 81 features, regression) is the worked exa
 
 ## Protocol
 
-Matched knobs throughout: depthwise, depth 6, learning_rate 0.05, iterations cap 1000, early_stopping_rounds 50, min_data_in_leaf 20, lambda_l2 1.0, max_bin 255. Chance band per decision 55: 2% relative rmse (superconductivity 0.197, QSAR 0.0177). Harness continuity: both all-features baselines reproduce the committed feature-selection-probe numbers exactly (9.85628 and 0.88287).
+Matched knobs throughout: depthwise, depth 6, learning_rate 0.05, iterations cap 1000, early_stopping_rounds 50, min_data_in_leaf 20, lambda_l2 1.0, max_bin 255. Ties are declared by a noise floor, the decision-55 chance band: refit-to-refit luck at these sizes is about 2% relative rmse (superconductivity 0.197, QSAR 0.0177), so differences smaller than that are reported as ties and only larger gaps as real. Harness continuity: both all-features baselines reproduce the committed feature-selection-probe numbers exactly (9.85628 and 0.88287).
 
 Methods (each yields a full ranking, best first):
 
@@ -28,7 +28,7 @@ Methods (each yields a full ranking, best first):
 
 forward is omitted on QSAR-TID-11: its candidate count scales with the feature count (about 24,000 fits at p=1024), and the point it makes is already made at p=81.
 
-## superconductivity: the curves (holdout rmse, baseline 9.85628, band 0.197, in-band cutoff 10.053)
+## superconductivity: the curves (holdout rmse, baseline 9.85628; noise floor 0.197, so cells at or under 10.053 tie the baseline)
 
 | method | wall (s) | k=64 | k=48 | k=32 | k=24 | k=16 | k=12 | k=8 | k=4 |
 |--|--:|--:|--:|--:|--:|--:|--:|--:|--:|
@@ -45,10 +45,10 @@ forward is omitted on QSAR-TID-11: its candidate count scales with the feature c
 Readings, loose budgets first:
 
 1. **No method beats the all-features baseline anywhere.** Every cell is above 9.856; selection on this real, non-contaminated dataset is a size lever, not an error lever. This restates decision 86's verdict from a nine-method angle without touching it.
-2. **At loose budgets (k >= 32) the model-based rankings are interchangeable and even filters are close.** gain, shap, perm, rfe all sit in band down to k=32 (a free 2.5x reduction); corr is in band at 64 and 32 for literally zero selection cost. Paying more than one fit buys nothing here.
-3. **At tight budgets the ranking family separates from the filters.** At k=16: gain 10.157 vs mutual_info 11.004 (4.3x the band). split-count is reliably the worst embedded ranking (its cardinality bias, chapter 8), landing nearer the filters than its gain sibling.
+2. **At loose budgets (k >= 32) the model-based rankings are interchangeable and even filters are close.** gain, shap, perm, rfe all tie the baseline down to k=32 (a free 2.5x reduction); corr ties it at 64 and 32 for literally zero selection cost. Paying more than one fit buys nothing here.
+3. **At tight budgets the ranking family separates from the filters.** At k=16: gain 10.157 vs mutual_info 11.004, a gap of 4.3 times the noise floor. split-count is reliably the worst embedded ranking (its cardinality bias, chapter 8), landing nearer the filters than its gain sibling.
 4. **shap_train and shap_val are the same ranking here** (identical cells except one rung): with 11k clean rows, held-out attribution does not change the order. Suspiciously equal, so it was checked: the two importance vectors are genuinely different (different input matrices, max element gap 0.13, both contribution matrices pass the sum-to-prediction identity) and their rankings first diverge at position 21, but the top-k SETS coincide at every rung except k=32 (symmetric difference 2), and an identical set refits deterministically to the identical rmse. The one differing cell is the k=32 pair. rfe matches gain (recursion has nothing to repair at these k). perm matches gain at 4.5x the wall.
-5. **forward selection is beyond-band better than every ranking at k <= 12** (10.168 vs 10.404 at k=12, delta 0.24 > band; 10.428 vs 10.697 at k=8; 11.416 vs 12.553 at k=4, a 1.14 gap). It is the only method that evaluates SETS rather than individual features, so it is the only one that picks complements instead of redundant twins. It pays 239 s, roughly 50x the gain ranking, for that power.
+5. **forward selection beats every ranking at k <= 12 by more than the noise floor** (10.168 vs 10.404 at k=12, a 0.24 gap against the 0.197 floor; 10.428 vs 10.697 at k=8; 11.416 vs 12.553 at k=4, a 1.14 gap, nearly six floors). It is the only method that evaluates SETS rather than individual features, so it is the only one that picks complements instead of redundant twins. It pays 239 s, roughly 50x the gain ranking, for that power.
 
 ## The redundancy diagnostic
 
@@ -64,7 +64,7 @@ Feature-set overlap with gain's top-16 (Jaccard) and the top-5 features by metho
 
 The two numbers that matter: corr's 0.19 (filters score features one at a time, so a strong cluster floods their top ranks with copies) and forward's 0.28 (it disagrees with gain MORE than the filters agree with each other, yet wins tight budgets, because its picks are complements). Bootstrap stability of the gain ranking (10 resamples): mean top-16 selection frequency 0.90, with a core of 8 features at 1.0, so the gain ranking itself is stable here and forward's advantage is genuinely about set composition, not ranking noise.
 
-## QSAR-TID-11: the wide-short footnote (baseline 0.88287, band 0.0177, in-band cutoff 0.90053)
+## QSAR-TID-11: the wide-short footnote (baseline 0.88287; noise floor 0.0177, so cells at or under 0.90053 tie the baseline)
 
 | method | wall (s) | k=512 | k=256 | k=128 | k=64 | k=32 |
 |--|--:|--:|--:|--:|--:|--:|
@@ -77,11 +77,11 @@ The two numbers that matter: corr's 0.19 (filters score features one at a time, 
 | perm_val | 164.4 | 0.889 | 0.890 | 0.918 | 0.966 | 1.043 |
 | rfe_gain | 13.2 | 0.895 | 0.895 | 0.922 | 0.954 | 1.049 |
 
-At 1,024 features the rankings finally separate where they were interchangeable at 81: **shap_val is the best ranking at k=256 (in band, a free 4x reduction), k=128 and k=64**, ahead of raw gain by 1.4 to 2.9 band-widths at the tight end; perm_val takes the k=32 cell but pays 164 s (5,120 shuffled predict passes) against shap_val's 3.7 s. The mechanism: on wide-short data the gain lottery (many features, few rows) inflates weak features' training gain, and attribution measured on rows the fit did not memorize discounts them. rfe's first rung reproduces gain's k=512 cell exactly (structural identity, the ranking-reconstruction check) and its recursion starts paying below k=128.
+At 1,024 features the rankings finally separate where they were interchangeable at 81: **shap_val is the best ranking at k=256 (a tie with the baseline, so a free 4x reduction), k=128 and k=64**, ahead of raw gain by 1.4 to 2.9 times the noise floor at the tight end; perm_val takes the k=32 cell but pays 164 s (5,120 shuffled predict passes) against shap_val's 3.7 s. The mechanism: on wide-short data the gain lottery (many features, few rows) inflates weak features' training gain, and attribution measured on rows the fit did not memorize discounts them. rfe's first rung reproduces gain's k=512 cell exactly (structural identity, the ranking-reconstruction check) and its recursion starts paying below k=128.
 
 ## What the survey recommends (the guide chapter's summary)
 
-- Budget loose (keep >= 40% of features): any model-based ranking, or even corr, all in band; use the free one.
+- Budget loose (keep >= 40% of features): any model-based ranking, or even corr, all tie the baseline; use the free one.
 - Budget tight, p moderate: forward selection if its wall is affordable, else gain top-k and accept the measured gap.
 - Budget tight, p large (wide-short): shap_val top-k, the best accuracy-per-second in the survey; perm_val only if its wall is nothing to you.
 - Never split-count, never mutual_info for tight budgets on redundant data; both are dominated everywhere it matters.
