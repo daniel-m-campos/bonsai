@@ -431,9 +431,10 @@ def probes_section() -> str:
 
     fs = load_jsonl("feature-selection-probe-2026-07.jsonl")
     fs_table = md_table(
-        ["dataset", "regime", "metric", "k / total", "bonsai all", "bonsai shadow",
-         "bonsai top-k", "cat select", "shadow vs top-k", "shadow beats all"],
-        [[r["dataset"], r["regime"], r["metric"],
+        ["dataset", "grower", "regime", "metric", "k / total", "bonsai all",
+         "bonsai shadow", "bonsai top-k", "cat select", "shadow vs top-k",
+         "shadow beats all"],
+        [[r["dataset"], r["grower"], r["regime"], r["metric"],
           f"{r['k']} / {r['total_features']}", fmt(r.get("bonsai_all"), 5),
           fmt(r.get("bonsai_shadow"), 5), fmt(r.get("bonsai_topk_gain"), 5),
           fmt(r.get("cat_select"), 5), fmt(r.get("shadow_vs_topk"), 5),
@@ -506,7 +507,7 @@ Decision 81's last reopener: is CatBoost's small-data lead a bagged-protocol int
 
 ### Probe: honest shadow-feature selection (declined, decision 86)
 
-Does a refit-based shadow-feature selector (append a permuted copy of every column, keep only real features that beat the shadow importances) buy accuracy over plain top-k-by-gain, and how does it price against CatBoost select_features? Priced at zero core cost on two regimes (REAL-WIDE up to 1024 features, NOISE-INJECTED with shuffled-copy noise equal to each set's feature count), the shadow arm's `shadow vs top-k` delta is inside the chance band on all 9 datasets, so every beyond-band win it scores is a win plain truncation also scores at the same k, and it loses beyond the band on two low-dimensional real sets. Selection is not an accuracy lever on this pool; where it recovers accuracy it removes injected junk a one-line top-k already removes. Lower is better in every metric column; positive `shadow vs top-k` means the shadow machinery beats truncation.
+Does a refit-based shadow-feature selector (append a permuted copy of every column, keep only real features that beat the shadow importances) buy accuracy over plain top-k-by-gain, and how does it price against CatBoost select_features? Priced at zero core cost on two regimes (REAL-WIDE up to 1024 features, NOISE-INJECTED with shuffled-copy noise equal to each set's feature count), with the bonsai arms run under all three growers. The shadow arm's `shadow vs top-k` delta is inside the chance band on 26 of 27 grower-dataset cells and favors truncation in the 27th, so every beyond-band win it scores is a win plain truncation also scores at the same k, and it loses beyond the band on the same two low-dimensional real sets under every grower (leafwise is bit-identical to depthwise, the 63-leaf budget never binds at depth 6). Selection is not an accuracy lever on this pool; where it recovers accuracy it removes injected junk a one-line top-k already removes. The grower-independent reference arms (cat select, xgboost) live on the depthwise rows. Lower is better in every metric column; positive `shadow vs top-k` means the shadow machinery beats truncation.
 
 {fs_table}
 
