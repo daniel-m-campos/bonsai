@@ -4,12 +4,13 @@ on:
   pull_request:
     # Prose-only changes skip the build. Include-with-negation instead of
     # paths-ignore so NEW docs subdirectories are excluded automatically;
-    # docs/use/** is re-included because the python job executes its code
-    # snippets (README.md stays in via '**').
+    # docs/use/** and docs/guide/** are re-included because the python job
+    # executes their .run code blocks (README.md stays in via '**').
     paths:
       - "**"
       - "!docs/**"
       - "docs/use/**"
+      - "docs/guide/**"
       - "!mkdocs.yml"
       - "!CHANGELOG.md"
       - "!.github/workflows/docs-site.yml"
@@ -17,12 +18,13 @@ on:
     branches: [main]
     # Prose-only changes skip the build. Include-with-negation instead of
     # paths-ignore so NEW docs subdirectories are excluded automatically;
-    # docs/use/** is re-included because the python job executes its code
-    # snippets (README.md stays in via '**').
+    # docs/use/** and docs/guide/** are re-included because the python job
+    # executes their .run code blocks (README.md stays in via '**').
     paths:
       - "**"
       - "!docs/**"
       - "docs/use/**"
+      - "docs/guide/**"
       - "!mkdocs.yml"
       - "!CHANGELOG.md"
       - "!.github/workflows/docs-site.yml"
