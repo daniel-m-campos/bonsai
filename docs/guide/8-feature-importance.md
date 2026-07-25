@@ -110,10 +110,14 @@ modes to keep in mind:
 - **It's a training-set quantity.** Gain measures loss reduction *on the
   training data*, regularization and all. It says nothing about
   generalization; a feature can carry high gain while overfitting noise.
-- When the stakes are real, corroborate with **permutation importance**
-  (shuffle a feature at predict time, watch the metric drop) or **SHAP**
-  (per-prediction attribution with a consistency guarantee), both on the
-  backlog ([feature_gap.md](https://github.com/daniel-m-campos/bonsai/blob/main/docs/feature_gap.md) row 15).
+- When the stakes are real, corroborate with **SHAP** (exact TreeSHAP
+  shipped as `pred_contribs`, per-prediction attribution with a
+  consistency guarantee) or **permutation importance** (shuffle a feature
+  at predict time, watch the metric drop; a five-line loop over
+  `predict`).
+- If the ranking is tempting you to *drop* features, that is a different
+  decision with its own measured answer:
+  [chapter 14](14-feature-selection.md).
 
 ## Gotchas & war stories
 

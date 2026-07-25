@@ -110,6 +110,7 @@ nav:
           - 11. Performance engineering: guide/11-performance-engineering.md
           - 12. Multiclass: guide/12-multiclass.md
           - 13. Categorical features: guide/13-categorical-features.md
+          - 14. Feature selection: guide/14-feature-selection.md
       - The engine:
           - The engine track: learn/engine/README.md
           - E1. The marginal round: learn/engine/1-the-marginal-round.md

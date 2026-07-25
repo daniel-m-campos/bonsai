@@ -42,6 +42,16 @@
       "bonsai_link": "../guide/5-sampling.md"
     },
     {
+      "year": 2010,
+      "title": "Boruta (shadow features)",
+      "idea": "Select features by competing each against a permuted copy of itself, so the model calibrates its own importance noise floor.",
+      "attribution": "Kursa and Rudnicki, JSS 2010",
+      "link": "https://www.jstatsoft.org/article/view/v036i11",
+      "adopters": [],
+      "bonsai_status": "declined",
+      "bonsai_link": "../decisions.md#86-honest-shadow-feature-selection-declined-as-an-accuracy-lever-on-all-three-growers-the-gain-ranking-already-has-it-adopted"
+    },
+    {
       "year": 2015,
       "title": "DART",
       "idea": "Drop a random subset of existing trees before each round, borrowing dropout from neural networks.",
