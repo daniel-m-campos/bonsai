@@ -13,10 +13,12 @@ Modes:
                          yte, feature_names) per dataset as npz via the rung-0
                          loader (gauge venv required).
   --splits DIR --out F   run the survey from exported npz (bonsai + sklearn
-                         only). PROBE_DATASETS narrows the pool for smoke.
+                         only). PROBE_DATASETS narrows the pool for smoke;
+                         PROBE_METHODS narrows the arms for targeted runs.
 
 Methods (each yields a full feature ranking, best first): corr, mutual_info,
-gain, split, shap_train, shap_val, perm_val, rfe_gain, forward (small-p only).
+gain, split, shap_train, shap_val, perm_val, rfe_gain, forward and rfe_val
+(the last two small-p only).
 Every ranking is evaluated by refitting at matched knobs on its top-k for each
 ladder rung; error is measured on the untouched holdout.
 """
@@ -59,9 +61,9 @@ DIAG_K = 16
 
 DATASETS = {
     "superconductivity": {"ladder": [64, 48, 32, 24, 16, 12, 8, 4],
-                          "forward": True, "diagnostics": True},
+                          "forward": True, "rfe_val": True, "diagnostics": True},
     "QSAR-TID-11": {"ladder": [512, 256, 128, 64, 32],
-                    "forward": False, "diagnostics": False},
+                    "forward": False, "rfe_val": False, "diagnostics": False},
 }
 
 
@@ -201,6 +203,39 @@ def rank_forward(D, workers):
     return np.array(selected + rest, dtype=int), time.perf_counter() - t0
 
 
+def _loco_score(args):
+    cand, cols = args
+    cols = list(cols)
+    est = new_bonsai(n_iters=FORWARD_ITERS, es=FORWARD_ES,
+                     n_threads=_FWD["threads"])
+    est.fit(_FWD["Xtr"][:, cols], _FWD["ytr"],
+            eval_set=(_FWD["Xval"][:, cols], _FWD["yval"]))
+    return cand, rmse(_FWD["yval"], np.asarray(est.predict(_FWD["Xval"][:, cols])))
+
+
+def rank_rfe_val(D, workers):
+    """Sequential backward elimination scored by validation error: each step
+    evaluates every candidate removal in the context of the current set and
+    drops the one whose removal costs the least val error. Reversed drop
+    order = ranking. Search fits use the cheap forward budget; the reported
+    ladder numbers come from matched-knob refits like every other method."""
+    t0 = time.perf_counter()
+    p = D["Xtr"].shape[1]
+    current = list(range(p))
+    dropped = []
+    with ProcessPoolExecutor(
+            max_workers=workers, initializer=_forward_init,
+            initargs=(D["Xtr"], D["ytr"], D["Xval"], D["yval"], workers)) as ex:
+        while len(current) > 1:
+            tasks = [(c, tuple(f for f in current if f != c)) for c in current]
+            scores = list(ex.map(_loco_score, tasks, chunksize=4))
+            drop, _ = min(scores, key=lambda s: s[1])
+            dropped.append(drop)
+            current.remove(drop)
+    return (np.array(current + dropped[::-1], dtype=int),
+            time.perf_counter() - t0)
+
+
 # ------------------------------------------------------------------ diagnostics
 def bootstrap_stability(D):
     rng = np.random.default_rng(SEED)
@@ -238,6 +273,12 @@ def run_survey(splits_dir, out_path, forward_workers):
     rows = []
     pool = [d.strip() for d in os.environ.get("PROBE_DATASETS", "").split(",")
             if d.strip()] or list(DATASETS)
+    want = [m.strip() for m in
+            os.environ.get("PROBE_METHODS", "").split(",") if m.strip()]
+
+    def wanted(method):
+        return not want or method in want
+
     for name in pool:
         spec = DATASETS[name]
         z = np.load(Path(splits_dir) / f"{name}.npz", allow_pickle=False)
@@ -253,11 +294,21 @@ def run_survey(splits_dir, out_path, forward_workers):
                      "error": round(base_err, 5)})
         print(f"baseline all {p}: rmse {base_err:.5f}", flush=True)
 
-        rankings = {"corr": rank_corr(D), "mutual_info": rank_mutual_info(D)}
-        rankings.update(rank_from_base_fit(D, base_est, base_wall))
-        rankings["rfe_gain"] = rank_rfe_gain(D, spec["ladder"])
-        if spec["forward"] and p <= FORWARD_MAX_P:
+        rankings = {}
+        if wanted("corr"):
+            rankings["corr"] = rank_corr(D)
+        if wanted("mutual_info"):
+            rankings["mutual_info"] = rank_mutual_info(D)
+        base_family = ("gain", "split", "shap_train", "shap_val", "perm_val")
+        if any(wanted(m) for m in base_family):
+            fam = rank_from_base_fit(D, base_est, base_wall)
+            rankings.update({m: v for m, v in fam.items() if wanted(m)})
+        if wanted("rfe_gain"):
+            rankings["rfe_gain"] = rank_rfe_gain(D, spec["ladder"])
+        if spec["forward"] and p <= FORWARD_MAX_P and wanted("forward"):
             rankings["forward"] = rank_forward(D, forward_workers)
+        if spec["rfe_val"] and p <= FORWARD_MAX_P and wanted("rfe_val"):
+            rankings["rfe_val"] = rank_rfe_val(D, forward_workers)
 
         for method, (order, wall) in rankings.items():
             rows.append({"row_type": "selection_meta", "dataset": name,
@@ -276,7 +327,7 @@ def run_survey(splits_dir, out_path, forward_workers):
                      and r["dataset"] == name and r["method"] == method]
             print(f"{method}: wall {wall:.1f}s, curve {curve}", flush=True)
 
-        if spec["diagnostics"]:
+        if spec["diagnostics"] and "gain" in rankings:
             gain_top = set(int(i) for i in rankings["gain"][0][:DIAG_K])
             for method, (order, _) in rankings.items():
                 s = set(int(i) for i in order[:DIAG_K])

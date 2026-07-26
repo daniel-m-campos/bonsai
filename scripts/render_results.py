@@ -442,6 +442,7 @@ def probes_section() -> str:
         "corr": "#9e9e9e", "mutual_info": "#607d8b", "gain": "#2e7d32",
         "split": "#8bc34a", "shap_train": "#1f77b4", "shap_val": "#01579b",
         "perm_val": "#8e6bbf", "rfe_gain": "#e08f1a", "forward": "#c62828",
+        "rfe_val": "#7b3f00",
     }
     sc = "superconductivity"
     series = []

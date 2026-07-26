@@ -6,7 +6,7 @@ Chapter 8 ended with a warning: importance ranks features, but the ranking has n
 
 **Wide but short.** When features rival or outnumber rows (a 1,024-feature assay with 3,000 samples, a feature store dumped wholesale into training), every node's split search runs a lottery over thousands of candidates, and the math below says the lottery always pays *something*. Wide-short data is where junk features stop being ignored and start being split on, and where an inflated importance ranking is at its most convincing and least trustworthy.
 
-**Inference budgets.** A deployed model pays per feature (computed, fetched, monitored, versioned) and per tree (walked at predict time). When serving cost matters, "should I drop features?" was never the question; the question is "the best model at $k$ features", a budget, not a hypothesis test. Under a budget the real decision becomes *which method* picks your $k$ features, and that is an empirical question. The heart of this chapter is a survey: nine selection methods, one meaningful regression dataset, one shared judge.
+**Inference budgets.** A deployed model pays per feature (computed, fetched, monitored, versioned) and per tree (walked at predict time). When serving cost matters, "should I drop features?" was never the question; the question is "the best model at $k$ features", a budget, not a hypothesis test. Under a budget the real decision becomes *which method* picks your $k$ features, and that is an empirical question. The heart of this chapter is a survey: ten selection methods, one meaningful regression dataset, one shared judge.
 
 ## The math: a useless feature never measures zero
 
@@ -40,7 +40,7 @@ Chapter 8 warned that correlated features split their importance credit arbitrar
 
 Hold that thought through the survey: it predicts which methods should fail at tight budgets (anything that scores features one at a time) and which should win (anything that evaluates *sets*). The measurement below tests exactly that prediction.
 
-## The survey: nine ways to pick k features
+## The survey: ten ways to pick k features
 
 Every method here produces a feature ranking, best first. The families, in increasing order of what they get to see:
 
@@ -50,7 +50,7 @@ Every method here produces a feature ranking, best first. The families, in incre
 
 **Validation scoring**: `perm_val`, permutation importance, shuffles one feature at a time on the validation set and charges the feature the resulting error increase. No refits, only predicts, but one pass per feature per repeat.
 
-**Wrappers** put refits in the loop. `rfe_gain` is backward recursive elimination: fit, drop the lowest-gain block, refit, re-rank, repeat down the ladder, so credit that shifts when a feature leaves is re-observed. `forward` is greedy forward selection: start empty, try every remaining feature as the next addition, keep the one that helps validation most, repeat. Forward is the only method in the survey that evaluates feature *sets* rather than individual features, and the only one whose cost scales with $p^2$.
+**Wrappers** put refits in the loop. `rfe_gain` is backward recursive elimination: fit, drop the lowest-gain block, refit, re-rank, repeat down the ladder, so credit that shifts when a feature leaves is re-observed. `forward` is greedy forward selection: start empty, try every remaining feature as the next addition, keep the one that helps validation most, repeat. `rfe_val` is its mirror: start full, and at each step drop the feature whose removal, judged by a cheap refit on the remaining set, costs the least validation error. These two are the only methods that evaluate feature *sets* rather than individual features, and the only ones whose cost scales with $p^2$.
 
 **Calibration methods** (the shadow/Boruta family) attack the no-absolute-threshold problem by appending permuted copies of the features and keeping whatever beats its own copy. They choose a *cutoff*, not a better ranking; we measured the approach against plain truncation in the [selection probe](../../benchmarks/feature-selection-probe-2026-07.md) and it adds nothing on top of the rankings above, so it stays prose here.
 
@@ -74,6 +74,7 @@ The judge is the same for every method: take the method's ranking, refit at matc
 | perm_val | 21.8 | 9.944 | 9.988 | 10.267 | 10.409 | 10.994 | 12.878 |
 | rfe_gain | 33.0 | 9.880 | 9.954 | 10.255 | 10.500 | 10.743 | 12.671 |
 | forward | 238.8 | - | - | 10.131 | 10.168 | 10.428 | 11.416 |
+| rfe_val | 1090.1 | 9.943 | 10.099 | 10.217 | 10.283 | 10.480 | 11.625 |
 
 (Baseline all 81 features: 9.856. `shap_train` is omitted from the table because it is the same ranking as `shap_val` here to within one rung; both are in the report.)
 
@@ -83,7 +84,7 @@ Five readings, and each one teaches a section of this chapter back:
 2. **Loose budgets are free and method-indifferent.** Down to $k{=}32$ (a 2.5x reduction) every model-based ranking ties the baseline (the gap is smaller than the noise floor), and even zero-cost `corr` does. Paying 33s for recursive elimination to reach a place a free filter reaches buys nothing.
 3. **Tight budgets separate the families.** At $k{=}16$ the embedded rankings hold ~10.2 while `mutual_info` is at 11.0, worse by four times the noise floor: filters flood their top ranks with copies of one strong cluster (their top-5 here contains three variants of the same ThermalConductivity family). `split` is the worst embedded ranking at every tight rung, chapter 8's cardinality bias made visible.
 4. **The one-shot model rankings are interchangeable, and so are their refinements.** `gain`, `shap_val`, `perm_val`, `rfe_gain` stay within a noise floor of each other all the way down; recursion and validation-scoring have nothing to repair here because (per the bootstrap diagnostic) the gain ranking is already stable, with a core of 8 features chosen in 10 of 10 resamples.
-5. **Forward selection wins every rung at $k \le 12$, by more than the noise floor.** 10.168 vs 10.404 at $k{=}12$ (a 0.24 gap against the 0.197 floor); 11.416 vs 12.553-13.921 at $k{=}4$, where its lead over the best ranking is 1.14 rmse, nearly six times the floor. This confirms the correlation section's prediction: forward evaluates *sets*, so it picks complements where every ranking picks redundant twins. The overlap diagnostic makes it concrete: forward's top-16 shares only Jaccard 0.28 with gain's, and its first five picks span five *different* property families where `corr`'s span one. It paid 239s, about 50x the gain ranking, and at tight budgets that cost bought real accuracy.
+5. **The set-evaluating wrappers win every rung at $k \le 12$, by more than the noise floor.** Forward leads and `rfe_val`, its backward mirror, lands between forward and the rankings at 4.6x forward's cost: evaluating candidates *in the context of the current set* is the active ingredient, and validation-error scoring alone (which `perm_val` already had) buys none of it. 10.168 vs 10.404 at $k{=}12$ (a 0.24 gap against the 0.197 floor); 11.416 vs 12.553-13.921 at $k{=}4$, where its lead over the best ranking is 1.14 rmse, nearly six times the floor. This confirms the correlation section's prediction: forward evaluates *sets*, so it picks complements where every ranking picks redundant twins. The overlap diagnostic makes it concrete: forward's top-16 shares only Jaccard 0.28 with gain's, and its first five picks span five *different* property families where `corr`'s span one. It paid 239s, about 50x the gain ranking, and at tight budgets that cost bought real accuracy.
 
 **The wide-short footnote (QSAR-TID-11, 1,024 features).** At 81 features the rankings were interchangeable; at 1,024 they finally separate, in the direction the inflation math predicts. `shap_val` becomes the best ranking: it ties the baseline at $k{=}256$ (a free 4x reduction) and leads raw `gain` by 1.4 to 2.9 times the noise floor at $k \le 128$. The mechanism: attribution on rows the fit never memorized discounts the lottery winners that wide-short data mass-produces. `perm_val` matches it only at the tightest rung and pays 164s against `shap_val`'s 3.7s. Forward is absent by honest arithmetic: at $p{=}1024$ its candidate count is ~24,000 fits.
 

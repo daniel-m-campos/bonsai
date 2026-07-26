@@ -1,4 +1,4 @@
-# Feature-selection method survey: nine methods, one budget ladder, one honest judge (2026-07)
+# Feature-selection method survey: ten methods, one budget ladder, one honest judge (2026-07)
 
 This is a survey measurement for guide chapter 14, not an admission probe: it does not open or close any feature decision (decision 86 already settled that selection ships as a recipe, not an API). The question here is comparative: given that a feature budget binds, WHICH selection method earns its cost? Every method produces a feature ranking; every ranking is evaluated the same way, by refitting bonsai at matched knobs on the ranking's top-k for each rung of a budget ladder and reading error on an untouched holdout. Curve differences are therefore ranking-quality differences, and each method also carries its measured selection cost.
 
@@ -25,6 +25,7 @@ Methods (each yields a full ranking, best first):
 | validation | perm_val | permutation importance on validation, 5 repeats | p x 5 predicts |
 | wrapper | rfe_gain | backward recursive elimination down the ladder rungs, gain recomputed each rung; drop order = ranking | one fit per rung |
 | wrapper | forward | greedy forward selection to k=24, candidate fits at 200 iterations in 4 parallel workers, chosen prefixes refit at matched knobs | ~1,660 cheap fits |
+| wrapper | rfe_val | sequential backward elimination scored by validation error: drop the feature whose removal (in the context of the current set) costs the least val error; added as a follow-up arm, see its section | ~3,320 cheap fits |
 
 forward is omitted on QSAR-TID-11: its candidate count scales with the feature count (about 24,000 fits at p=1024), and the point it makes is already made at p=81.
 
@@ -41,6 +42,7 @@ forward is omitted on QSAR-TID-11: its candidate count scales with the feature c
 | perm_val | 21.8 | 9.944 | 10.012 | 9.988 | 10.053 | 10.267 | 10.409 | 10.994 | 12.878 |
 | rfe_gain | 33.0 | 9.880 | 9.946 | 9.954 | 10.084 | 10.255 | 10.500 | 10.743 | 12.671 |
 | forward | 238.8 | - | - | - | 10.076 | 10.131 | 10.168 | 10.428 | 11.416 |
+| rfe_val | 1090.1 | 9.943 | 10.056 | 10.099 | 10.265 | 10.217 | 10.283 | 10.480 | 11.625 |
 
 Readings, loose budgets first:
 
@@ -79,10 +81,18 @@ The two numbers that matter: corr's 0.19 (filters score features one at a time, 
 
 At 1,024 features the rankings finally separate where they were interchangeable at 81: **shap_val is the best ranking at k=256 (a tie with the baseline, so a free 4x reduction), k=128 and k=64**, ahead of raw gain by 1.4 to 2.9 times the noise floor at the tight end; perm_val takes the k=32 cell but pays 164 s (5,120 shuffled predict passes) against shap_val's 3.7 s. The mechanism: on wide-short data the gain lottery (many features, few rows) inflates weak features' training gain, and attribution measured on rows the fit did not memorize discounts them. rfe's first rung reproduces gain's k=512 cell exactly (structural identity, the ranking-reconstruction check) and its recursion starts paying below k=128.
 
+## The rfe_val follow-up: error in the loop, priced
+
+Added after the first release of this survey, to answer a direct question: SHAP rankings never see the validation target, so does a selector that scores candidate drops by validation error beat them? The arm is sequential backward elimination (drop the feature whose removal, evaluated in the context of the current set by a cheap refit, costs the least val error; reversed drop order = ranking; matched-knob ladder refits judge it like every arm). Pre-registered prediction, on record before the run: it lands between rfe_gain and forward, closer to forward at tight k.
+
+The prediction held. At k <= 12 rfe_val (10.283, 10.480, 11.625) sits between rfe_gain (10.500, 10.743, 12.671) and forward (10.168, 10.428, 11.416), within one noise floor of forward at k=8 and k=12, and decisively ahead of every one-shot ranking at k=4 (11.625 against 12.55 and worse). Its top-16 overlap with gain (Jaccard 0.455) sits halfway between the rankings (0.78 and up) and forward (0.28), which is the set-composition story told again: evaluating removals in the context of the current set buys roughly half of forward's complement-picking behavior. Two costs came with it. The wall is 1090 s, 4.6x forward, because backward candidate fits carry nearly all features early where forward's carry few. And at loose budgets rfe_val is slightly WORSE than the one-fit rankings (out of band against the baseline at k=32 where gain is in band), which reads as the val-overfitting caveat made visible: 3,320 val queries let greedy drops chase validation noise that the one-fit rankings never touch.
+
+The synthesis across perm_val, rfe_val and forward: error-awareness per feature (perm_val) bought nothing; error-awareness per removal-in-context (rfe_val) bought half of forward's tight-budget advantage; full set construction (forward) remains the best and the cheapest of the wrapper pair. Set-awareness is the active ingredient; the validation target is the fuel it runs on, not a substitute for it.
+
 ## What the survey recommends (the guide chapter's summary)
 
 - Budget loose (keep >= 40% of features): any model-based ranking, or even corr, all tie the baseline; use the free one.
-- Budget tight, p moderate: forward selection if its wall is affordable, else gain top-k and accept the measured gap.
+- Budget tight, p moderate: forward selection if its wall is affordable (it beat backward-by-val-error at 4.6x less cost), else gain top-k and accept the measured gap.
 - Budget tight, p large (wide-short): shap_val top-k, the best accuracy-per-second in the survey; perm_val only if its wall is nothing to you.
 - Never split-count, never mutual_info for tight budgets on redundant data; both are dominated everywhere it matters.
 - Nothing here beats all features on either dataset; the budget, not accuracy hope, is the reason to select. This is consistent with decision 86 and adds the between-methods hierarchy that decision deliberately did not rank.
