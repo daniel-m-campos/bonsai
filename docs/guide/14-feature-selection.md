@@ -56,9 +56,20 @@ Every method here produces a feature ranking, best first. The families, in incre
 
 ## The experiment
 
-One meaningful regression dataset carries the survey: **superconductivity**, 11,340 training rows and 81 real, physically meaningful features (min/max/mean/weighted-variant families of element properties: exactly the redundancy-cluster structure the correlation section worries about), predicting a material's critical temperature. The wide-short regime gets a footnote below on QSAR-TID-11 (1,024 fingerprint features, 3,062 rows).
+**The dataset.** One meaningful regression problem carries the survey: **superconductivity**. 11,340 training rows, 81 real features, target = a material's critical temperature. The features are statistical variants (min, max, mean, weighted mean, range, entropy) of a handful of element properties, so they come in built-in redundancy clusters: exactly the structure the correlation section warns about. A second dataset, QSAR-TID-11 (1,024 fingerprint features, 3,062 rows), covers the wide-short regime in a closing contrast.
 
-The judge is the same for every method: take the method's ranking, refit at matched knobs on its top-$k$ at each budget on a ladder ($k$ = 64 down to 4), and read rmse on an untouched holdout. Selection cost is wall-clock for producing the ranking. Ties are declared by a noise floor: refitting the same configuration with a different seed moves rmse by about 2% at these sizes (0.197 here, the benchmark protocol's measured chance band), so two cells closer than that are treated as equal, and only larger gaps count as real differences. Full protocol, tables and raw rows: [`benchmarks/selection-survey-2026-07.md`](../../benchmarks/selection-survey-2026-07.md) and [`scripts/probe_selection_survey.py`](../../scripts/probe_selection_survey.py).
+**The data split, and who may touch what.** Three parts with one job each. Training rows fit every model. Validation rows are the only data a selection method may read, and they drive early stopping in every fit, so every method works from the identical information budget. The holdout is touched by nothing until judgment: no method, no early stopping, no tuning ever sees it.
+
+**The procedure.** Every method, whatever its machinery, must output one thing: a ranking of the 81 features, best first. The judging loop is then identical for all ten methods. For each budget $k$ on a ladder (64, 48, 32, 24, 16, 12, 8, 4): keep the method's top-$k$ features, refit at the same matched knobs, and read rmse on the holdout. A method's curve is holdout rmse versus $k$, and curve differences are ranking-quality differences, because everything else is held fixed. Each method also carries its selection cost: the wall-clock spent producing the ranking.
+
+**The tie rule.** Refitting the same configuration with a different seed moves rmse by about 2% at these sizes (0.197 here, the benchmark protocol's measured chance band). Two numbers closer than that are ties; only larger gaps count as real.
+
+**Two diagnostics**, measured alongside the curves, that the results below lean on:
+
+- **Set overlap.** At a fixed budget ($k{=}16$), how similar are two methods' chosen feature sets? Measured as shared features divided by total distinct features (the Jaccard similarity): 1.0 means the identical 16 features, 0 means none in common. This separates "similar accuracy because they chose the same features" from "different features arriving at similar accuracy."
+- **Ranking stability.** Refit the gain ranking on 10 bootstrap resamples of the training rows and count how often each feature stays in the top-16. If the ranking itself is noisy, method differences could be luck; if it is stable, they are real.
+
+Full protocol, tables and raw rows: [`benchmarks/selection-survey-2026-07.md`](../../benchmarks/selection-survey-2026-07.md) and [`scripts/probe_selection_survey.py`](../../scripts/probe_selection_survey.py).
 
 ## Reading the curves
 
@@ -78,17 +89,33 @@ The judge is the same for every method: take the method's ranking, refit at matc
 
 (Baseline all 81 features: 9.856. `shap_train` is omitted from the table because it is the same ranking as `shap_val` here at every budget except one; both are in the report.)
 
-Five readings, and each one teaches a section of this chapter back:
+**Start with the one fact that frames everything: no cell beats the baseline.** Every method, at every budget, sits above 9.856. On real, uncontaminated data, selection is a size lever, not an error lever. The reason to walk down this table is a budget, not accuracy hope. So read the curves as answers to one question: *as the budget tightens, whose ranking degrades slowest, and at what cost?*
 
-1. **Nothing beats the baseline.** Every cell sits above 9.856. On real, uncontaminated data, selection is a size lever, not an error lever; the reason to walk down this table is a budget, not accuracy hope.
-2. **Loose budgets are free and method-indifferent.** Down to $k{=}32$ (a 2.5x reduction) every model-based ranking ties the baseline (the gap is smaller than the noise floor), and even zero-cost `corr` does. Paying 33s for recursive elimination to reach a place a free filter reaches buys nothing.
-3. **Tight budgets separate the families.** At $k{=}16$ the embedded rankings hold ~10.2 while `mutual_info` is at 11.0, worse by four times the noise floor: filters flood their top ranks with copies of one strong cluster (their top-5 here contains three variants of the same ThermalConductivity family). `split` is the worst embedded ranking at every tight budget, chapter 8's cardinality bias made visible.
-4. **The one-shot model rankings are interchangeable, and so are their refinements.** `gain`, `shap_val`, `perm_val`, `rfe_gain` stay within a noise floor of each other all the way down; recursion and validation-scoring have nothing to repair here because (per the bootstrap diagnostic) the gain ranking is already stable, with a core of 8 features chosen in 10 of 10 resamples.
-5. **Below $k{=}16$, the two wrappers beat every ranking, and the gaps are real.** The numbers first. At $k{=}12$, forward reads 10.168 against gain's 10.404: a 0.24 gap, larger than the 0.197 noise floor. At $k{=}4$, forward reads 11.416 and the best ranking reads 12.553, a gap of nearly six noise floors. `rfe_val`, the backward wrapper, lands between forward and the rankings at every tight budget. The reason they win is the correlation section's prediction coming true. A wrapper evaluates each candidate *together with the features already kept*, so it picks complements. A ranking scores each feature alone, so redundant twins arrive together. The overlap diagnostic shows the same mechanism structurally: forward's top-16 shares only Jaccard 0.28 with gain's, and its first five picks come from five different property families, where `corr`'s first five come from one. Validation-error scoring is not the winning ingredient: `perm_val` had it and gained nothing, and `rfe_val` pays 4.6x forward's wall clock for a slightly weaker result. The price of the win is compute: forward costs 239s, about 50x the gain ranking. At tight budgets, that cost buys real accuracy.
+### Loose budgets: everyone ties, so the free method wins
 
-**The wide-short footnote (QSAR-TID-11, 1,024 features).** At 81 features the rankings were interchangeable; at 1,024 they finally separate, in the direction the inflation math predicts. `shap_val` becomes the best ranking: it ties the baseline at $k{=}256$ (a free 4x reduction) and leads raw `gain` by 1.4 to 2.9 times the noise floor at $k \le 128$. The mechanism: attribution on rows the fit never memorized discounts the lottery winners that wide-short data mass-produces. `perm_val` matches it only at the tightest budget and pays 164s against `shap_val`'s 3.7s. Forward is absent by honest arithmetic: at $p{=}1024$ its candidate count is ~24,000 fits.
+Down to $k{=}32$, a 2.5x reduction, every model-based ranking ties the baseline, and so does zero-cost `corr`. The methods are indistinguishable here. Paying 33s for recursive elimination to reach a place a free filter also reaches buys nothing. If your budget is loose, the survey's advice is one line: sort by anything reasonable and keep the top slice.
 
-**What to use, then.** Budget loose: anything, so use what's free. Budget tight at moderate width: forward selection if you can afford its wall, else gain top-$k$ knowingly. Budget tight and wide-short: `shap_val` top-$k$, the best accuracy-per-second in the survey. Never split-count or mutual information for tight budgets on redundant data. And if no budget binds: keep everything, because that row of the table is unbeaten.
+### Tight budgets: the families separate, in order
+
+Below $k{=}16$ the table splits into three tiers, and each gap has a mechanism.
+
+**The filters fall first, and fall hardest.** At $k{=}16$, `mutual_info` reads 11.004 against the model-based pack's ~10.2: four noise floors behind. The mechanism is the correlation section's first prediction. A filter scores each feature alone, so one strong cluster floods its top ranks with copies of the same signal; `corr`'s top five contains three variants of the same ThermalConductivity family. Sixteen slots spent on near-duplicates leave no room for complementary signal. `split` fails similarly despite being model-based, because chapter 8's cardinality bias makes split-count a bad ranking to truncate: worst embedded method at every tight budget.
+
+**The model-based rankings move as one pack.** `gain`, `shap_val`, `perm_val`, and `rfe_gain` stay within a noise floor of each other all the way down, despite very different machinery: one reads training bookkeeping, one reads held-out attribution, one measures validation-error impact, one re-ranks after every drop. The stability diagnostic explains the sameness. Gain's top-16 is already stable across bootstrap resamples (a core of 8 features chosen 10 times out of 10), so there is no ranking noise for validation scoring or recursion to repair. They are all reading the same stable signal, and they inherit its one limit: each scores features *individually*.
+
+**The wrappers break from the pack, because they score sets.** The numbers first. At $k{=}12$, forward reads 10.168 against the pack's best 10.283-10.404; at $k{=}4$, forward reads 11.416 against the pack's best 12.671, nearly six noise floors ahead. `rfe_val`, the backward wrapper, lands between forward and the pack at every tight budget. The mechanism is the correlation section's second prediction. A wrapper evaluates each candidate *together with the features already kept*, so it picks complements; a ranking cannot see that a candidate duplicates what is already in the set. The set-overlap diagnostic makes the difference visible in the chosen features themselves: against gain's top-16, the pack's members overlap at 0.78 or higher, `rfe_val` at 0.455, forward at just 0.28, and forward's first five picks come from five different property families where `corr`'s come from one. Two clarifications keep the credit honest. Validation-error scoring is not the winning ingredient: `perm_val` had it and stayed in the pack, and `rfe_val` pays 4.6x forward's wall clock for a slightly weaker result plus a small loose-budget penalty (its 3,320 validation queries let greedy drops chase noise). And the win is bought with compute: forward costs 239s, roughly 50x the gain ranking. At tight budgets, that cost buys real accuracy; at loose budgets, it buys nothing.
+
+### The wide-short contrast: where the pack finally separates
+
+On QSAR-TID-11 (1,024 features, 3,062 rows) the pack stops being a pack, in the direction the inflation math predicts. `shap_val` becomes the best ranking: it ties the baseline at $k{=}256$ (a free 4x reduction) and leads raw `gain` by 1.4 to 2.9 noise floors at $k \le 128$. The mechanism: with many features and few rows, the gain lottery inflates weak features, and attribution measured on rows the fit never memorized discounts them. `perm_val` matches `shap_val` only at the tightest budget and pays 164s against 3.7s. The wrappers are absent by honest arithmetic: at $p{=}1024$, forward's candidate count is roughly 24,000 fits.
+
+### What to use
+
+- Budget loose: anything reasonable; use what is free.
+- Budget tight, moderate width: forward selection if you can afford its wall clock, else gain top-$k$, knowingly accepting the measured gap.
+- Budget tight, wide-short: `shap_val` top-$k$, the best accuracy per second in the survey.
+- Never split-count or mutual information for tight budgets on redundant data.
+- No binding budget: keep everything; that row of the table is unbeaten.
 
 ## In bonsai
 
