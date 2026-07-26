@@ -380,23 +380,39 @@ TEST_CASE("TreeSHAP: the ice-cream example is tree-shape invariant", "[shap][gui
                            {},
                            {100.0F, 50.0F, 50.0F, 25.0F, 25.0F}};
 
-    std::array<float, 2> const sunny_weekend{1.0F, 1.0F};
-    features_view const        X{sunny_weekend.data(), 1, 2};
+    // All four day types, one per row: the chapter's per-day table, its
+    // dataset-level mean-absolute importance (sunny 25, weekend 20), and
+    // the zero signed mean over the training distribution.
+    std::array<float, 8> const days{0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 1.0F, 1.0F};
+    features_view const        X{days.data(), 4, 2};
+    std::array<std::array<double, 3>, 4> const expected{{{-15.0, -10.0, 25.0},
+                                                         {15.0, -30.0, 25.0},
+                                                         {-35.0, 10.0, 25.0},
+                                                         {35.0, 30.0, 25.0}}};
 
-    std::vector<double> phi_w(3, 0.0);
-    std::vector<double> phi_s(3, 0.0);
-    tree_shap(tree_w, X, 0, phi_w);
-    tree_shap(tree_s, X, 0, phi_s);
-
-    for (size_t i = 0; i < 3; ++i)
+    std::array<double, 2> mean_abs{};
+    std::array<double, 2> mean_signed{};
+    for (row_id_t row = 0; row < 4; ++row)
     {
-        CHECK(phi_w[i] == Catch::Approx(phi_s[i]).margin(1e-9));
+        std::vector<double> phi_w(3, 0.0);
+        std::vector<double> phi_s(3, 0.0);
+        tree_shap(tree_w, X, row, phi_w);
+        tree_shap(tree_s, X, row, phi_s);
+        auto const exact = brute_force_shapley(tree_w, X, row, 2);
+        for (size_t i = 0; i < 3; ++i)
+        {
+            CHECK(phi_w[i] == Catch::Approx(phi_s[i]).margin(1e-9));
+            CHECK(phi_w[i] == Catch::Approx(expected[row][i]).margin(1e-9));
+        }
+        for (size_t f = 0; f < 2; ++f)
+        {
+            CHECK(phi_w[f] == Catch::Approx(exact[f]).margin(1e-9));
+            mean_abs[f] += std::abs(phi_w[f]) / 4.0;
+            mean_signed[f] += phi_w[f] / 4.0;
+        }
     }
-    CHECK(phi_w[0] == Catch::Approx(35.0).margin(1e-9));
-    CHECK(phi_w[1] == Catch::Approx(30.0).margin(1e-9));
-    CHECK(phi_w[2] == Catch::Approx(25.0).margin(1e-9));
-
-    auto const exact = brute_force_shapley(tree_w, X, 0, 2);
-    CHECK(phi_w[0] == Catch::Approx(exact[0]).margin(1e-9));
-    CHECK(phi_w[1] == Catch::Approx(exact[1]).margin(1e-9));
+    CHECK(mean_abs[0] == Catch::Approx(25.0).margin(1e-9));
+    CHECK(mean_abs[1] == Catch::Approx(20.0).margin(1e-9));
+    CHECK(mean_signed[0] == Catch::Approx(0.0).margin(1e-9));
+    CHECK(mean_signed[1] == Catch::Approx(0.0).margin(1e-9));
 }

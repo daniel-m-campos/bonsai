@@ -2,7 +2,9 @@
 
 ## The idea
 
-Chapter 8 answers a global question: which features mattered to the model overall. This chapter answers the local one: which features moved *this* prediction, and by how much. The question arrives the moment a model faces a person. Why was this loan declined; why is this reading flagged; why did the forecast jump.
+Chapter 8 ranked features by summarizing what *training* used: gain adds up loss reductions, split count tallies appearances. This chapter rebuilds attribution from the opposite end: one prediction at a time. Which features moved *this* prediction, and by how much? The question arrives the moment a model faces a person. Why was this loan declined; why is this reading flagged; why did the forecast jump.
+
+Building from single predictions is the construction, not the scope. Per-prediction attributions add and average cleanly, so the same machinery also produces a dataset-level importance at the end of this chapter, one that repairs failures chapter 8 could only warn about.
 
 The obvious answers turn out to be broken in a specific, demonstrable way, and the fix has a name: SHAP. The paper behind it ([Lundberg et al., 2018](https://arxiv.org/abs/1802.03888)) is a famously hard read, so this chapter takes the long way: one tiny example, carried from the broken attributions to the exact algorithm, with every number small enough to check by hand. The example is also a unit test (`[guide15]` in [`tests/unit/test_shap.cpp`](../../tests/unit/test_shap.cpp)), so the tables below cannot silently drift from what the code computes.
 
@@ -144,6 +146,22 @@ The same 35 and 30 as the subset table, from two paying leaves instead of four s
 
 Ensembles simply add: the Shapley value of a sum of trees is the sum of the per-tree values, so the booster loops and accumulates.
 
+## From one day to the whole dataset
+
+The opener promised that the local machinery yields a global importance. The recipe is one line: a feature's dataset-level importance is the **mean of its absolute per-day attributions**. Run the subset table for all four day types of model B (each 25 of the 100 days) and the whole picture fits in one table:
+
+| day | prediction | $\phi_{\text{sunny}}$ | $\phi_{\text{weekend}}$ | check: 25 + both |
+|--|--:|--:|--:|--:|
+| cloudy weekday | 0 | −15 | −10 | 0 |
+| sunny weekday | 10 | +15 | −30 | 10 |
+| cloudy weekend | 0 | −35 | +10 | 0 |
+| sunny weekend | 90 | +35 | +30 | 90 |
+| **mean absolute** | | **25** | **20** | |
+
+Read the global row against everything this chapter established. **It is in dollars**: sunshine moves a typical day's revenue by 25, the weekend by 20, a statement gain (in loss units) cannot make. **Shape-invariance survives the averaging**: both trees give this exact table, where gain's global shares flipped between 72/28 and 44/56. **Consistency survives too**: model A's table gives sunny 20, weekend 20 (by its symmetry), and model B, which depends more on sunshine, raises sunny to 25 while weekend stays 20. The comparison between two models that gain could not support is now safe. All twelve $\phi$ values and both means are pinned by the same `[guide15]` test.
+
+Two practical notes. The **signed** mean is the complementary read: net direction rather than magnitude. Over the training distribution it is exactly zero for every feature, here and always, because the bias column already carries the average. Signed means become informative on new data or on subgroups (sunny days only, one customer segment). And on real data the recipe is `np.abs(phi[:, :-1]).mean(axis=0)` over a few hundred rows; chapter 14 measured the row choice and found validation rows give the better ranking on wide data, precisely because attribution on rows the fit never memorized discounts lottery winners.
+
 ## In bonsai
 
 The implementation is one small pair, and the trace above used its variable names on purpose: [`include/bonsai/shap.hpp`](../../include/bonsai/shap.hpp) (29 lines, the contract) and [`src/shap.cpp`](../../src/shap.cpp) (251 lines, Algorithm 2 of the paper).
@@ -155,7 +173,7 @@ The implementation is one small pair, and the trace above used its variable name
 - Covers are the load-bearing data: every `zero_fraction` in the trace was a cover ratio. A model without per-node covers cannot answer $v(S)$, and `tree_shap` throws rather than guess. Same lesson as gain in chapter 8: stamp it at training time or it is gone.
 - The surfaces: `pred_contribs(X)` returns `(n, p + 1)`, features plus bias, rows summing to raw predictions; multiclass returns per-class slices `(n, K, p + 1)` (chapter 12); oblivious models answer through their dense expansion.
 
-The test story is the part worth copying into your own projects. [`tests/unit/test_shap.cpp`](../../tests/unit/test_shap.cpp) keeps the naive algorithm alive as `brute_force_shapley` and reconciles the fast path against it at 1e-9. The `[guide15]` case pins this chapter's example: both tree shapes, asserted equal, asserted to give 35, 30, and bias 25. Booster-level tests assert the efficiency identity, and multiclass slices must vote like `predict`. The algorithm is not trusted; it is reconciled against the definition it claims to compute.
+The test story is the part worth copying into your own projects. [`tests/unit/test_shap.cpp`](../../tests/unit/test_shap.cpp) keeps the naive algorithm alive as `brute_force_shapley` and reconciles the fast path against it at 1e-9. The `[guide15]` case pins this chapter's example: all four day types on both tree shapes, asserted equal, asserted to give every per-day value in the tables above, including the global means. Booster-level tests assert the efficiency identity, and multiclass slices must vote like `predict`. The algorithm is not trusted; it is reconciled against the definition it claims to compute.
 
 ## Try it
 
@@ -180,7 +198,7 @@ r = 0
 print("row 0: x =", X[r].round(2))
 print("row 0: phi =", phi[r, :-1].round(3), " bias =", round(float(phi[r, -1]), 3),
       " prediction =", round(float(pred[r]), 3))
-global_shap = np.abs(phi[:, :-1]).mean(axis=0)
+global_shap = np.abs(phi[:, :-1]).mean(axis=0)  # the dataset-level recipe
 print("mean-abs-SHAP ranking:", np.argsort(global_shap)[::-1])
 print("gain ranking         :", np.argsort(np.asarray(m.importance('gain')))[::-1])
 print("corr(phi_1, x1*sign(x2)):",
@@ -193,5 +211,5 @@ The identity holds to float precision (about 3e-06): every row's contributions p
 
 - **SHAP explains the model, not the world.** $\phi_f$ is the model's bookkeeping, not a causal effect. A feature standing in for a confounder gets the credit the confounder earned.
 - **The background matters.** bonsai attributes the cover-weighted conditional expectation, the paper's path-dependent variant: unknown features average over where *training days actually went*. The `shap` package's default interventional variant answers against an explicit background dataset instead. Under correlated features the two disagree, and neither is wrong; they answer different counterfactuals.
-- **Global SHAP is a sum of locals, priced accordingly.** Cost is $O(\text{rows} \times \text{trees} \times L D^2)$. For a global ranking a few hundred rows is usually plenty; chapter 14's `shap_val` used the validation slice, which is also the better-measured choice on wide data.
+- **Global SHAP is priced per row.** The dataset-level recipe costs $O(\text{rows} \times \text{trees} \times L D^2)$, so subsample: for a ranking a few hundred rows is usually plenty, drawn from validation per chapter 14's measurement.
 - **The efficiency identity is a free integrity check.** If `sum(phi)` drifts from the raw prediction by more than float noise, something upstream is wrong (a mismatched model file, a wrong objective transform). Assert it in pipelines; it costs one line.
