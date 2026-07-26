@@ -332,6 +332,7 @@ Nine selection methods, one shared judge: each method produces a feature ranking
 | perm_val | 9.944 | 9.988 | 10.267 | 10.994 | 12.878 | 21.8 |
 | rfe_gain | 9.880 | 9.954 | 10.255 | 10.743 | 12.671 | 33.0 |
 | forward | - | - | 10.131 | 10.428 | 11.416 | 238.8 |
+| rfe_val | 9.943 | 10.099 | 10.217 | 10.480 | 11.625 | 1090.0 |
 
 The wide-short footnote, QSAR-TID-11 (1024 features, baseline rmse 0.88287); forward selection is omitted at this width (its candidate-fit count scales with the feature count):
 

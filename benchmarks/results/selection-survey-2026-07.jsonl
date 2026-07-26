@@ -136,3 +136,13 @@
 {"row_type": "curve", "dataset": "QSAR-TID-11", "method": "rfe_gain", "k": 128, "error": 0.92151}
 {"row_type": "curve", "dataset": "QSAR-TID-11", "method": "rfe_gain", "k": 64, "error": 0.95389}
 {"row_type": "curve", "dataset": "QSAR-TID-11", "method": "rfe_gain", "k": 32, "error": 1.04914}
+{"row_type": "selection_meta", "dataset": "superconductivity", "method": "rfe_val", "wall_s": 1090.05, "top16": ["wtd_mean_Valence", "std_atomic_mass", "wtd_std_ThermalConductivity", "wtd_gmean_ThermalConductivity", "range_atomic_radius", "gmean_Density", "wtd_range_atomic_mass", "wtd_entropy_ThermalConductivity", "mean_FusionHeat", "wtd_entropy_Density", "wtd_gmean_Density", "std_ElectronAffinity", "wtd_std_ElectronAffinity", "range_ThermalConductivity", "mean_ThermalConductivity", "wtd_std_atomic_mass"]}
+{"row_type": "curve", "dataset": "superconductivity", "method": "rfe_val", "k": 64, "error": 9.94313}
+{"row_type": "curve", "dataset": "superconductivity", "method": "rfe_val", "k": 48, "error": 10.0561}
+{"row_type": "curve", "dataset": "superconductivity", "method": "rfe_val", "k": 32, "error": 10.09916}
+{"row_type": "curve", "dataset": "superconductivity", "method": "rfe_val", "k": 24, "error": 10.26517}
+{"row_type": "curve", "dataset": "superconductivity", "method": "rfe_val", "k": 16, "error": 10.21661}
+{"row_type": "curve", "dataset": "superconductivity", "method": "rfe_val", "k": 12, "error": 10.28259}
+{"row_type": "curve", "dataset": "superconductivity", "method": "rfe_val", "k": 8, "error": 10.48007}
+{"row_type": "curve", "dataset": "superconductivity", "method": "rfe_val", "k": 4, "error": 11.6246}
+{"row_type": "overlap", "dataset": "superconductivity", "method": "rfe_val", "k": 16, "jaccard_vs_gain": 0.455}
