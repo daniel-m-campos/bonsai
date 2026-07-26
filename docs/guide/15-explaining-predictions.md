@@ -38,9 +38,29 @@ graph TD
 
 Same function, same training days, two shapes. A trustworthy attribution must give the same answer for both, because the *model* is the same. Now watch two popular attributions fail exactly that test, on the day we care about: sunny and weekend, prediction 90.
 
+### Reading an expectation off a tree
+
+One piece of bookkeeping powers everything in this chapter. Every node remembers how many training days reached it during training; that count is its **cover**, and the diagrams above print it in parentheses (100 at the root, 50 at each side, 25 at each leaf). Like gain in chapter 8, cover is stamped at training time or it is gone.
+
+Covers turn any node into an expected revenue. The rule: average the leaves below the node, each weighted by its share of the node's days. At the root of either tree, all four leaves are below:
+
+```math
+\frac{25 \times 0 + 25 \times 10 + 25 \times 0 + 25 \times 90}{100} = 25
+```
+
+Standing at the weekend-side node instead, only two leaves remain below, out of that node's 50 days:
+
+```math
+\frac{25 \times 0 + 25 \times 90}{50} = 45
+```
+
+So "the model's expectation, knowing it is a weekend" is 45 dollars, read straight off the tree. These two numbers are the first steps of the table below.
+
+One honesty note about this example: the quadrants are deliberately equal (25 days each), so every weighted average above collapses to a plain mean and the arithmetic stays friendly. In a real tree the covers are uneven and the weights carry the information. If 40 of the 50 sunny days had been weekdays, the sunny-side expectation would be $(40 \times 10 + 10 \times 90) / 50 = 26$, not 50: same leaves, different weights, different expectation.
+
 ## Two attributions that fail
 
-**Saabas attribution** (the pre-SHAP heuristic, named for its author) is the natural first idea: walk the day's path and credit each split with how much it moved the expected revenue. Expectations here are cover-weighted averages, so the root starts at the all-days mean, 25.
+**Saabas attribution** (the pre-SHAP heuristic, named for its author) is the natural first idea: walk the day's path and credit each split with how much it moved the expected revenue. The root starts at the whole-data expectation, 25, computed above.
 
 | tree shape | step 1 | step 2 | verdict |
 |--|--|--|--|
@@ -62,7 +82,13 @@ Both attributions depend on an accident of tree growth. The property they lack h
 
 The failure came from privileging one order of learning the features. The fix is to privilege none: ask what the model expects at *every state of knowledge about the day*, and average each feature's contribution over all of them.
 
-A state of knowledge is a subset $S$ of features whose values we know. The model's expectation given $S$, written $v(S)$, comes straight off the tree: follow the day's value where the feature is in $S$, and average both children weighted by cover where it is not. For our sunny weekend day, all four subsets:
+A state of knowledge is a subset $S$ of features whose values we know. The model's expectation given $S$, written $v(S)$, is the expectation-reading rule from above, applied mid-walk. Descend from the root; at a split on a feature in $S$, follow the day's own value; at a split on a feature not in $S$, take both children, weighted by their covers:
+
+```math
+v_{\text{node}} = \frac{\text{cover}_{\text{left}}}{\text{cover}} \, v_{\text{left}} \;+\; \frac{\text{cover}_{\text{right}}}{\text{cover}} \, v_{\text{right}}
+```
+
+Knowing nothing gives the root computation from before (25); knowing only "weekend" walks one step then averages (45). For our sunny weekend day, all four subsets:
 
 | known | how the walk goes | $v(S)$ |
 |--|--|--:|
