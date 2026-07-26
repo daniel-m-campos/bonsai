@@ -20,7 +20,7 @@ Methods (each yields a full feature ranking, best first): corr, mutual_info,
 gain, split, shap_train, shap_val, perm_val, rfe_gain, forward and rfe_val
 (the last two small-p only).
 Every ranking is evaluated by refitting at matched knobs on its top-k for each
-ladder rung; error is measured on the untouched holdout.
+budget on the ladder; error is measured on the untouched holdout.
 """
 import argparse
 import json
@@ -139,13 +139,13 @@ def rank_from_base_fit(D, base_est, base_wall):
 
 
 def rank_rfe_gain(D, ladder):
-    """Backward elimination; gain recomputed each rung; drop order = ranking."""
+    """Backward elimination; gain recomputed at each step; drop order = ranking."""
     t0 = time.perf_counter()
     p = D["Xtr"].shape[1]
-    rungs = [r for r in ladder if r < p]
+    targets = [r for r in ladder if r < p]
     alive = np.arange(p)
     ranking_tail = []  # worst first, appended batch by batch
-    for target in rungs:
+    for target in targets:
         est = new_bonsai()
         est.fit(D["Xtr"][:, alive], D["ytr"],
                 eval_set=(D["Xval"][:, alive], D["yval"]))
@@ -160,7 +160,7 @@ def rank_rfe_gain(D, ladder):
             eval_set=(D["Xval"][:, alive], D["yval"]))
     head = alive[np.argsort(np.asarray(est.importance("gain")))[::-1]]
     # Later-dropped batches rank above earlier-dropped ones; within a batch,
-    # higher rung gain ranks first.
+    # the gain at the dropping step orders the features.
     tail = (np.concatenate([b[::-1] for b in reversed(ranking_tail)])
             if ranking_tail else np.array([], dtype=int))
     return np.concatenate([head, tail]).astype(int), time.perf_counter() - t0
