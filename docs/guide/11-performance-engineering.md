@@ -136,7 +136,7 @@ The three kills cost a combined price under one millisecond to refute, because t
 
 Each landed lever passed the same gates: `[cuda]` suite on device, r² identical to four decimals at the 16M cell, and the CPU `model_hash` byte-identical (a GPU-only change must not move the host plane; the suite caught two real bugs on the way, both recorded in PR #148). Same-pod: round 181→125ms, fit 19.43→13.88s.
 
-Then the frontier re-run measured the campaign from the outside (decision 72): marginal round 155→104ms in the ladder decomposition, the bonsai-CatBoost crossover pushed from ~100 rounds to ~320, past both libraries' accuracy plateaus, and every shared r² point reproduced to four decimals across pods. The remaining round is ~72ms of histogram kernel plus ~32ms of partition and bus, and the campaign's last recorded act was *not spending* the kernel rung: the 80ms gate was not met and the frontier no longer needed it.
+Then the frontier re-run measured the campaign from the outside (decision 72): marginal round 155→104ms in the ladder decomposition, the bonsai-CatBoost crossover pushed from ~100 rounds to ~320, past both libraries' accuracy plateaus, and every shared r² point reproduced to four decimals across pods. The remaining round is ~72ms of histogram kernel plus ~32ms of partition and bus, and the campaign's last recorded act was *not spending* the kernel stage: the 80ms gate was not met and the frontier no longer needed it.
 
 ### The checklist that generalizes
 

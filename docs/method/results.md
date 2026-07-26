@@ -197,7 +197,7 @@ On the cat-heavy TabArena subset, CatBoost native vs the same model with categor
 
 ### Probe: ordered boosting priced by CatBoost's own toggle (declined, decision 81)
 
-On 12 small pure-numeric datasets at matched knobs, Ordered beats Plain beyond the chance band on 0 of 12 and is distinctly worse where the toggle moves most, at 3.9x the train time. The mechanism is not the small-data edge; the campaign died at rung 0 as pre-registered. Lower is better in both metric columns.
+On 12 small pure-numeric datasets at matched knobs, Ordered beats Plain beyond the chance band on 0 of 12 and is distinctly worse where the toggle moves most, at 3.9x the train time. The mechanism is not the small-data edge; the campaign died at its pre-registered first stage. Lower is better in both metric columns.
 
 | dataset | metric | CatBoost Ordered (matched) | CatBoost Plain (matched) |
 |---|---|---|---|
