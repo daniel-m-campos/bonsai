@@ -66,48 +66,86 @@ Every method here produces a feature ranking, best first. The families, in incre
 
 **Two diagnostics**, measured alongside the curves, that the results below lean on:
 
-- **Set overlap.** At a fixed budget ($k{=}16$), how similar are two methods' chosen feature sets? Measured as shared features divided by total distinct features (the Jaccard similarity): 1.0 means the identical 16 features, 0 means none in common. This separates "similar accuracy because they chose the same features" from "different features arriving at similar accuracy."
+- **Set overlap.** At a fixed budget ($k{=}16$), how similar are two methods' chosen feature sets? Measured as shared features divided by total distinct features (the Jaccard similarity): 1.0 means the identical 16 features, 0 means none in common. This separates "similar accuracy because they chose the same features" from "different features arriving at similar accuracy." The results show it as a full method-by-method matrix.
 - **Ranking stability.** Refit the gain ranking on 10 bootstrap resamples of the training rows and count how often each feature stays in the top-16. If the ranking itself is noisy, method differences could be luck; if it is stable, they are real.
 
-Full protocol, tables and raw rows: [`benchmarks/selection-survey-2026-07.md`](../../benchmarks/selection-survey-2026-07.md) and [`scripts/probe_selection_survey.py`](../../scripts/probe_selection_survey.py).
+**Fine print**, three details for the record. The wrapper searches (forward's and rfe_val's candidate fits) run at cheap knobs, 200 iterations with early stopping 30, to stay affordable; every number reported below comes from a fresh refit at the full matched knobs. Every method reads the same validation slice that drives early stopping, so no method sees extra data, and the holdout stays untouched by all of them. And `shap_train` is left out of the superconductivity results table because its top-$k$ sets coincide with `shap_val`'s there at every budget except one; it remains in the raw rows and in the overlap matrix, where their 1.00 cell records the coincidence.
+
+Full protocol and raw rows: [`scripts/probe_selection_survey.py`](../../scripts/probe_selection_survey.py) and [`benchmarks/results/selection-survey-2026-07.jsonl`](../../benchmarks/results/selection-survey-2026-07.jsonl).
 
 ## Reading the curves
 
 ![Selection-method survey: holdout rmse vs features kept](../method/assets/selection-survey.svg)
 
-| method | wall (s) | k=64 | k=32 | k=16 | k=12 | k=8 | k=4 |
-|--|--:|--:|--:|--:|--:|--:|--:|
-| corr | 0.0 | 9.934 | 10.021 | 10.451 | 10.698 | 11.449 | 13.297 |
-| mutual_info | 2.0 | 9.874 | 10.134 | 11.004 | 11.727 | 11.794 | 13.921 |
-| gain | 4.9 | 9.880 | 9.965 | 10.157 | 10.404 | 10.749 | 12.773 |
-| split | 4.9 | 9.970 | 10.427 | 10.864 | 11.073 | 11.386 | 12.553 |
-| shap_val | 6.9 | 9.856 | 9.996 | 10.183 | 10.420 | 10.697 | 13.709 |
-| perm_val | 21.8 | 9.944 | 9.988 | 10.267 | 10.409 | 10.994 | 12.878 |
-| rfe_gain | 33.0 | 9.880 | 9.954 | 10.255 | 10.500 | 10.743 | 12.671 |
-| forward | 238.8 | - | - | 10.131 | 10.168 | 10.428 | 11.416 |
-| rfe_val | 1090.1 | 9.943 | 10.099 | 10.217 | 10.283 | 10.480 | 11.625 |
+| family | method | wall (s) | k=64 | k=32 | k=16 | k=12 | k=8 | k=4 |
+|--|--|--:|--:|--:|--:|--:|--:|--:|
+| filter | corr | 0.0 | 9.934 | 10.021 | 10.451 | 10.698 | 11.449 | 13.297 |
+| | mutual_info | 2.0 | 9.874 | 10.134 | 11.004 | 11.727 | 11.794 | 13.921 |
+| embedded | gain | 4.9 | 9.880 | 9.965 | 10.157 | 10.404 | 10.749 | 12.773 |
+| | split | 4.9 | 9.970 | 10.427 | 10.864 | 11.073 | 11.386 | 12.553 |
+| | shap_val | 6.9 | **9.856** | 9.996 | 10.183 | 10.420 | 10.697 | 13.709 |
+| validation | perm_val | 21.8 | 9.944 | 9.988 | 10.267 | 10.409 | 10.994 | 12.878 |
+| wrapper | rfe_gain | 33.0 | 9.880 | **9.954** | 10.255 | 10.500 | 10.743 | 12.671 |
+| | forward | 238.8 | - | - | **10.131** | **10.168** | **10.428** | **11.416** |
+| | rfe_val | 1090.1 | 9.943 | 10.099 | 10.217 | 10.283 | 10.480 | 11.625 |
 
-(Baseline all 81 features: 9.856. `shap_train` is omitted from the table because it is the same ranking as `shap_val` here at every budget except one; both are in the report.)
+(Baseline with all 81 features: 9.856; differences under the 0.197 noise floor are ties. Bold marks the best method at each budget.)
 
 **Start with the one fact that frames everything: no cell beats the baseline.** Every method, at every budget, sits above 9.856. On real, uncontaminated data, selection is a size lever, not an error lever. The reason to walk down this table is a budget, not accuracy hope. So read the curves as answers to one question: *as the budget tightens, whose ranking degrades slowest, and at what cost?*
 
-### Loose budgets: everyone ties, so the free method wins
+**Then scan the bold cells.** At $k{=}64$ and $k{=}32$ the best cell wanders (shap_val, then rfe_gain) and almost every method sits within one noise floor of the baseline, so at loose budgets the methods are indistinguishable and the free one wins. From $k{=}16$ down, the bold locks onto forward and never moves again. The family column tells you who follows it down: the set-scoring wrappers stay closest, the individual-scoring rankings trail, and the filters fall away. The rest of this section takes the families in table order.
 
-Down to $k{=}32$, a 2.5x reduction, every model-based ranking ties the baseline, and so does zero-cost `corr`. The methods are indistinguishable here. Paying 33s for recursive elimination to reach a place a free filter also reaches buys nothing. If your budget is loose, the survey's advice is one line: sort by anything reasonable and keep the top slice.
+**Filters: first to fall, and hardest.** At $k{=}16$, `mutual_info` reads 11.004 while the embedded rankings hold near 10.2, four noise floors behind, and neither filter is ever bold. The mechanism is the correlation section's first prediction: a filter scores each feature alone, so one strong cluster floods its top ranks with copies of the same signal. `corr`'s top five contains three variants of the same ThermalConductivity family, and sixteen slots spent on near-duplicates leave no room for complementary signal.
 
-### Tight budgets: the families separate, in order
+**Embedded rankings: interchangeable, except split.** `gain` and `shap_val` stay within a noise floor of each other at every budget, despite one reading training bookkeeping and the other held-out attribution. The stability diagnostic explains the sameness: gain's top-16 is already stable across bootstrap resamples (a core of 8 features chosen 10 times out of 10), so there is no ranking noise for a fancier signal to repair. `split` is the family's outlier and the worst embedded row at every tight budget, because chapter 8's cardinality bias makes split-count a bad ranking to truncate.
 
-Below $k{=}16$ the table splits into three tiers, and each gap has a mechanism.
+**Validation scoring: error-awareness alone buys nothing.** `perm_val` measures each feature's validation-error impact directly, and its row still tracks `gain` within the noise floor at every budget, at 4.5x the wall clock. Knowing the error is not the missing ingredient; `perm_val` still scores features one at a time.
 
-**The filters fall first, and fall hardest.** At $k{=}16$, `mutual_info` reads 11.004 while the model-based rankings hold ~10.2: four noise floors behind. The mechanism is the correlation section's first prediction. A filter scores each feature alone, so one strong cluster floods its top ranks with copies of the same signal; `corr`'s top five contains three variants of the same ThermalConductivity family. Sixteen slots spent on near-duplicates leave no room for complementary signal. `split` fails similarly despite being model-based, because chapter 8's cardinality bias makes split-count a bad ranking to truncate: worst embedded method at every tight budget.
+**Wrappers: refits in the loop, and only the set-scoring pair profits.** `rfe_gain` refits down the ladder but still ranks features individually at each step, and its row tracks `gain` everywhere: with a stable ranking, recursion has nothing to repair. `forward` and `rfe_val` are different: they evaluate each candidate *together with the features already kept*, so they pick complements, which is the correlation section's second prediction. Forward holds every bold cell from $k{=}16$ down, and at $k{=}4$ its 11.416 beats the best ranking's 12.671 by nearly six noise floors. `rfe_val` lands between forward and the rankings at every tight budget, pays 4.6x forward's wall clock, and adds a small loose-budget penalty (its 3,320 validation queries let greedy drops chase noise). The win is bought with compute: forward's 239s is roughly 50x the gain ranking, worth it only where the table shows bold.
 
-**The four model-based rankings are interchangeable.** `gain`, `shap_val`, `perm_val`, and `rfe_gain` stay within a noise floor of each other all the way down, despite very different machinery: one reads training bookkeeping, one reads held-out attribution, one measures validation-error impact, one re-ranks after every drop. The stability diagnostic explains the sameness. Gain's top-16 is already stable across bootstrap resamples (a core of 8 features chosen 10 times out of 10), so there is no ranking noise for validation scoring or recursion to repair. They are all reading the same stable signal, and they inherit its one limit: each scores features *individually*.
+### Where the wrapper advantage comes from: the overlap matrix
 
-**The wrappers pull ahead of every ranking, because they score sets.** The numbers first. At $k{=}12$, forward reads 10.168 against the rankings' best 10.283-10.404; at $k{=}4$, forward reads 11.416 against the rankings' best 12.671, nearly six noise floors ahead. `rfe_val`, the backward wrapper, lands between forward and the rankings at every tight budget. The mechanism is the correlation section's second prediction. A wrapper evaluates each candidate *together with the features already kept*, so it picks complements; a ranking cannot see that a candidate duplicates what is already in the set. The set-overlap diagnostic makes the difference visible in the chosen features themselves: against gain's top-16, the other model-based rankings overlap at 0.78 or higher, `rfe_val` at 0.455, forward at just 0.28, and forward's first five picks come from five different property families where `corr`'s come from one. Two clarifications keep the credit honest. Validation-error scoring is not the winning ingredient: `perm_val` had it and stayed level with the other rankings, and `rfe_val` pays 4.6x forward's wall clock for a slightly weaker result plus a small loose-budget penalty (its 3,320 validation queries let greedy drops chase noise). And the win is bought with compute: forward costs 239s, roughly 50x the gain ranking. At tight budgets, that cost buys real accuracy; at loose budgets, it buys nothing.
+Accuracy alone cannot say whether two methods succeed for the same reason. The set-overlap diagnostic can: here is the Jaccard similarity between every pair of top-16 sets, rows and columns in the results table's order with `shap_train` restored beside `shap_val`.
+
+| top-16 overlap | corr | mutual_info | gain | split | shap_train | shap_val | perm_val | rfe_gain | forward | rfe_val |
+|--|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| corr | 1.00 | 0.19 | 0.19 | 0.23 | 0.19 | 0.19 | 0.19 | 0.19 | 0.14 | 0.14 |
+| mutual_info | 0.19 | 1.00 | 0.14 | 0.00 | 0.14 | 0.14 | 0.14 | 0.14 | 0.19 | 0.19 |
+| gain | 0.19 | 0.14 | 1.00 | 0.19 | 0.88 | 0.88 | 0.78 | 0.78 | 0.28 | 0.45 |
+| split | 0.23 | 0.00 | 0.19 | 1.00 | 0.19 | 0.19 | 0.19 | 0.19 | 0.10 | 0.14 |
+| shap_train | 0.19 | 0.14 | 0.88 | 0.19 | 1.00 | 1.00 | 0.88 | 0.68 | 0.28 | 0.45 |
+| shap_val | 0.19 | 0.14 | 0.88 | 0.19 | 1.00 | 1.00 | 0.88 | 0.68 | 0.28 | 0.45 |
+| perm_val | 0.19 | 0.14 | 0.78 | 0.19 | 0.88 | 0.88 | 1.00 | 0.68 | 0.28 | 0.45 |
+| rfe_gain | 0.19 | 0.14 | 0.78 | 0.19 | 0.68 | 0.68 | 0.68 | 1.00 | 0.33 | 0.39 |
+| forward | 0.14 | 0.19 | 0.28 | 0.10 | 0.28 | 0.28 | 0.28 | 0.33 | 1.00 | 0.33 |
+| rfe_val | 0.14 | 0.19 | 0.45 | 0.14 | 0.45 | 0.45 | 0.45 | 0.39 | 0.33 | 1.00 |
+
+Three structures carry the story.
+
+**The dense square in the middle explains the interchangeable tier.** `gain`, `shap_train`, `shap_val`, `perm_val`, and `rfe_gain` overlap at 0.68 to 1.00: five different machineries converging on nearly the same 16 features, which is exactly why their accuracy rows are indistinguishable. Note that this square ignores the family taxonomy: `perm_val` scores validation error and `rfe_gain` refits down the ladder, yet both land on gain's features. Machinery differs; the chosen set does not.
+
+**The winners sit outside the square, and disagree even with each other.** `forward` overlaps the square at just 0.28 and `rfe_val` at 0.45, yet these are the two best tight-budget rows in the results table. They win *by* choosing different features: complements picked in the context of the current set, not the highest individual scorers. Their 0.33 overlap with each other adds a lesson: a good complementary set is not unique, and two wrappers can find two different ones. Forward's first five picks come from five different property families where `corr`'s come from one.
+
+**Low overlap alone is not the win.** The filters and `split` also sit far from the square, near 0.19 (`split` and `mutual_info` share literally nothing), and they are the worst rows in the table. Disagreeing with gain is worthless when the different features are redundant copies of one cluster; it pays only when they are complements. The matrix locates who disagrees, and the results table says which disagreements were worth having.
 
 ### The wide-short contrast: where the rankings finally separate
 
-On QSAR-TID-11 (1,024 features, 3,062 rows) the model-based rankings stop being interchangeable, in the direction the inflation math predicts. `shap_val` becomes the best ranking: it ties the baseline at $k{=}256$ (a free 4x reduction) and leads raw `gain` by 1.4 to 2.9 noise floors at $k \le 128$. The mechanism: with many features and few rows, the gain lottery inflates weak features, and attribution measured on rows the fit never memorized discounts them. `perm_val` matches `shap_val` only at the tightest budget and pays 164s against 3.7s. The wrappers are absent by honest arithmetic: at $p{=}1024$, forward's candidate count is roughly 24,000 fits.
+On QSAR-TID-11 (1,024 features, 3,062 rows) the picture changes in the direction the inflation math predicts.
+
+| family | method | wall (s) | k=512 | k=256 | k=128 | k=64 | k=32 |
+|--|--|--:|--:|--:|--:|--:|--:|
+| filter | corr | 0.0 | 0.892 | 0.927 | 0.965 | 0.996 | 1.122 |
+| | mutual_info | 7.5 | 0.889 | 0.896 | 0.941 | 1.011 | 1.149 |
+| embedded | gain | 3.4 | 0.895 | 0.890 | 0.918 | 0.973 | 1.081 |
+| | split | 3.4 | 0.890 | 0.912 | 0.968 | 1.023 | 1.197 |
+| | shap_train | 4.7 | **0.886** | 0.892 | 0.907 | 0.947 | 1.056 |
+| | shap_val | 3.7 | 0.887 | **0.889** | **0.904** | **0.944** | 1.063 |
+| validation | perm_val | 164.4 | 0.889 | 0.890 | 0.918 | 0.966 | **1.043** |
+| wrapper | rfe_gain | 14.6 | 0.895 | 0.895 | 0.922 | 0.954 | 1.049 |
+
+(Baseline with all 1,024 features: 0.883; differences under the 0.0177 noise floor are ties. Bold marks the best method at each budget. The set-scoring wrappers are absent by honest arithmetic: at $p{=}1024$, forward's candidate count is roughly 24,000 fits.)
+
+The embedded rankings stop being interchangeable here, and the bold cells have a new owner. The two SHAP variants take four of the five budgets, with `shap_val` the best ranking through the middle of the ladder: it ties the baseline at $k{=}256$ (a free 4x reduction) and its lead over raw `gain` grows to 1.7 noise floors at $k{=}64$. The mechanism: with many features and few rows, the gain lottery inflates weak features, and attribution measured on rows the fit never memorized discounts them. At the tightest budget the bold moves to `perm_val`, but its lead over the SHAP variants is inside the noise floor, and it pays 164s against shap_val's 3.7s: read down the wall column and `shap_val` is the best accuracy per second on the table by a wide margin.
 
 ### What to use
 
