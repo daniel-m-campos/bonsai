@@ -342,3 +342,61 @@ TEST_CASE("Oblivious dense expansion: dead slots route identically and SHAP "
     REQUIRE(std::isfinite(phi[1]));
     REQUIRE(phi[0] + phi[1] + phi[2] == Catch::Approx(0.0).margin(1e-9));
 }
+
+TEST_CASE("TreeSHAP: the ice-cream example is tree-shape invariant", "[shap][guide15]")
+{
+    // The worked example of guide chapter 15. Model B: revenue 90 on a sunny
+    // weekend, 10 on a sunny weekday, else 0; 100 training days, 25 per
+    // (sunny, weekend) quadrant. Feature 0 is sunny, feature 1 is weekend.
+    // Two tree shapes realize the same function; the chapter's tables pin
+    // phi = {sunny 35, weekend 30, bias 25} for the sunny-weekend day, and
+    // the values must not depend on which feature the root splits on.
+    DenseTree::Nodes shape_w;
+    shape_w.emplace_back(
+        DenseTree::internal(1, 0.5F, node_id_t{1}, node_id_t{2}, false));
+    shape_w.emplace_back(
+        DenseTree::internal(0, 0.5F, node_id_t{3}, node_id_t{4}, false));
+    shape_w.emplace_back(
+        DenseTree::internal(0, 0.5F, node_id_t{5}, node_id_t{6}, false));
+    shape_w.emplace_back(DenseTree::leaf(0.0F));
+    shape_w.emplace_back(DenseTree::leaf(10.0F));
+    shape_w.emplace_back(DenseTree::leaf(0.0F));
+    shape_w.emplace_back(DenseTree::leaf(90.0F));
+    DenseTree const tree_w{std::move(shape_w),
+                           DenseTree::Params{.depth = 2, .n_leaves = 4},
+                           {},
+                           {100.0F, 50.0F, 50.0F, 25.0F, 25.0F, 25.0F, 25.0F}};
+
+    DenseTree::Nodes shape_s;
+    shape_s.emplace_back(
+        DenseTree::internal(0, 0.5F, node_id_t{1}, node_id_t{2}, false));
+    shape_s.emplace_back(DenseTree::leaf(0.0F));
+    shape_s.emplace_back(
+        DenseTree::internal(1, 0.5F, node_id_t{3}, node_id_t{4}, false));
+    shape_s.emplace_back(DenseTree::leaf(10.0F));
+    shape_s.emplace_back(DenseTree::leaf(90.0F));
+    DenseTree const tree_s{std::move(shape_s),
+                           DenseTree::Params{.depth = 2, .n_leaves = 3},
+                           {},
+                           {100.0F, 50.0F, 50.0F, 25.0F, 25.0F}};
+
+    std::array<float, 2> const sunny_weekend{1.0F, 1.0F};
+    features_view const        X{sunny_weekend.data(), 1, 2};
+
+    std::vector<double> phi_w(3, 0.0);
+    std::vector<double> phi_s(3, 0.0);
+    tree_shap(tree_w, X, 0, phi_w);
+    tree_shap(tree_s, X, 0, phi_s);
+
+    for (size_t i = 0; i < 3; ++i)
+    {
+        CHECK(phi_w[i] == Catch::Approx(phi_s[i]).margin(1e-9));
+    }
+    CHECK(phi_w[0] == Catch::Approx(35.0).margin(1e-9));
+    CHECK(phi_w[1] == Catch::Approx(30.0).margin(1e-9));
+    CHECK(phi_w[2] == Catch::Approx(25.0).margin(1e-9));
+
+    auto const exact = brute_force_shapley(tree_w, X, 0, 2);
+    CHECK(phi_w[0] == Catch::Approx(exact[0]).margin(1e-9));
+    CHECK(phi_w[1] == Catch::Approx(exact[1]).margin(1e-9));
+}
