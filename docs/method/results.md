@@ -323,6 +323,12 @@ Ten selection methods, one shared judge: each method produces a feature ranking,
 
 *Source: [`selection-survey-2026-07.jsonl`](../../benchmarks/results/selection-survey-2026-07.jsonl). Survey: [scripts/probe_selection_survey.py](../../scripts/probe_selection_survey.py); readings: [guide chapter 14](../guide/14-feature-selection.md).*
 
+#### Research record: when can selection be trusted?
+
+A four-study research line on selection-instrument trust (739 raw rows): the row-count crossover, the rank-on-a-slice memory recipe at 3.2M x 2,048, a trust map on market-shaped data (label overlap, weak signal, drifting relationships), and a staged-pipeline race with ablations. Kept out of the guide by design; the full write-up with every table is [`benchmarks/selection-research-2026-07.md`](../../benchmarks/selection-research-2026-07.md).
+
+*Source: [`np-crossover-2026-07.jsonl`](../../benchmarks/results/np-crossover-2026-07.jsonl), [`hft-selection-trust-2026-07.jsonl`](../../benchmarks/results/hft-selection-trust-2026-07.jsonl), [`hft-selection-trust-ext-2026-07.jsonl`](../../benchmarks/results/hft-selection-trust-ext-2026-07.jsonl), [`pipeline-race-2026-07.jsonl`](../../benchmarks/results/pipeline-race-2026-07.jsonl). Probe: [scripts/probe_np_crossover.py](../../scripts/probe_np_crossover.py); report generator: [scripts/render_np_report.py](../../scripts/render_np_report.py).*
+
 ## Perf division
 
 ### The re-baseline: fit seconds at scale

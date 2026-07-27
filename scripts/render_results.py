@@ -459,6 +459,12 @@ def probes_section() -> str:
         log_x=True, log_y=False,
         y_ticks=[(v, f"{v:.1f}") for v in (10.0, 11.0, 12.0, 13.0)])
 
+    sr_files = ["np-crossover-2026-07.jsonl",
+                "hft-selection-trust-2026-07.jsonl",
+                "hft-selection-trust-ext-2026-07.jsonl",
+                "pipeline-race-2026-07.jsonl"]
+    sr_rows = sum(len(load_jsonl(f)) for f in sr_files)
+
     fs = load_jsonl("feature-selection-probe-2026-07.jsonl")
     fs_table = md_table(
         ["dataset", "grower", "regime", "metric", "k / total", "bonsai all",
@@ -550,6 +556,12 @@ Ten selection methods, one shared judge: each method produces a feature ranking,
 ![Selection-method survey](assets/selection-survey.svg)
 
 {provenance(["selection-survey-2026-07.jsonl"], "Survey: [scripts/probe_selection_survey.py](../../scripts/probe_selection_survey.py); readings: [guide chapter 14](../guide/14-feature-selection.md).")}
+
+#### Research record: when can selection be trusted?
+
+A four-study research line on selection-instrument trust ({sr_rows} raw rows): the row-count crossover, the rank-on-a-slice memory recipe at 3.2M x 2,048, a trust map on market-shaped data (label overlap, weak signal, drifting relationships), and a staged-pipeline race with ablations. Kept out of the guide by design; the full write-up with every table is [`benchmarks/selection-research-2026-07.md`](../../benchmarks/selection-research-2026-07.md).
+
+{provenance(sr_files, "Probe: [scripts/probe_np_crossover.py](../../scripts/probe_np_crossover.py); report generator: [scripts/render_np_report.py](../../scripts/render_np_report.py).")}
 """
 
 
