@@ -36,7 +36,7 @@ This is the one row where a bonsai gap is measured as load-bearing, and the reop
 
 This one splits by how you measure. At matched knobs on the Grinsztajn suite, bonsai has the best mean rank, 1.44 across 55 tasks, and leads both numeric subsuites.
 
-On bagged aggregate leaderboards, CatBoost still leads small mixed and numeric data, and its pure-numeric control lead persists on 5 of 6 datasets with categoricals ablated. The mechanism is not ordered boosting: its own toggle prices that at zero or below on this regime ([the rung-0 probe](https://github.com/daniel-m-campos/bonsai/blob/main/benchmarks/ordered-boosting-probe-2026-07.md)); the lead points at the bagged-ensemble protocol and its defaults. So the honest answer is bonsai at matched knobs single-model, and CatBoost where bagged ensembles with its defaults are in play.
+On bagged aggregate leaderboards, CatBoost still leads small mixed and numeric data, and its pure-numeric control lead persists on 5 of 6 datasets with categoricals ablated. The mechanism is not ordered boosting: its own toggle prices that at zero or below on this regime ([the ordered-boosting probe](https://github.com/daniel-m-campos/bonsai/blob/main/benchmarks/ordered-boosting-probe-2026-07.md)); the lead points at the bagged-ensemble protocol and its defaults. So the honest answer is bonsai at matched knobs single-model, and CatBoost where bagged ensembles with its defaults are in play.
 
 On the tuned TabArena-Lite gauge, CatBoost's Elo is 1340 against bonsai_ts's 1204. No categorical work closes that pure-numeric gap; it belongs to a future ordered-boosting campaign.
 

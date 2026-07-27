@@ -6,7 +6,7 @@ Probe script: `scripts/probe_feature_selection.py`. Raw rows: `benchmarks/result
 
 ## Two regimes, one pool
 
-The datasets are drawn from the rung-0 12-dataset pool (`scripts/probe_ordered_boosting_rung0.py`, imported read-only for its loader and its splits: gauge fold-0 for gauge sets, stratified 75/25 seed 42 for the extensions, a 20% stratified validation slice seed 42 for early stopping). Two regimes probe the two ways selection can matter.
+The datasets are drawn from the ordered-boosting probe's 12-dataset pool (`scripts/probe_ordered_boosting_rung0.py`, imported read-only for its loader and its splits: gauge fold-0 for gauge sets, stratified 75/25 seed 42 for the extensions, a 20% stratified validation slice seed 42 for early stopping). Two regimes probe the two ways selection can matter.
 
 REAL-WIDE, where the feature count is the point and selection is measured on real redundancy: QSAR-TID-11 (1024 features, the flagship), superconductivity (81), spambase (57).
 
@@ -168,8 +168,8 @@ Fresh compute, 9 datasets, 3 growers, local CPU, run in foreground batches (thre
 
 ## Deviations, flagged
 
-1. xgboost 3.3.0 was installed into the gauge venv for this probe (the rung-0 and bagging probes recorded xgboost as absent). It provides only the arm-6 ecosystem reference columns; it touches no bonsai/CatBoost arm and no verdict criterion. LightGBM remains absent and is out of scope.
-2. The probe runs from a worktree with no local bonsai build; `BONSAI_PYTHON` points at the main checkout's `build-tabarena/python`, and `TABARENA_DIR` at the tabarena checkout, exactly as the sibling probes are invoked. bonsai_all reproduces the rung-0 bonsai baseline on the shared datasets (for example superconductivity 9.85628 against rung-0's 9.8563 and spambase 0.01050 against rung-0's 0.01050), which confirms the same rows and metric.
+1. xgboost 3.3.0 was installed into the gauge venv for this probe (the ordered-boosting and bagging probes recorded xgboost as absent). It provides only the arm-6 ecosystem reference columns; it touches no bonsai/CatBoost arm and no verdict criterion. LightGBM remains absent and is out of scope.
+2. The probe runs from a worktree with no local bonsai build; `BONSAI_PYTHON` points at the main checkout's `build-tabarena/python`, and `TABARENA_DIR` at the tabarena checkout, exactly as the sibling probes are invoked. bonsai_all reproduces the ordered-boosting probe's bonsai baseline on the shared datasets (for example superconductivity 9.85628 against its 9.8563 and spambase 0.01050 against its 0.01050), which confirms the same rows and metric.
 3. cat_select uses RecursiveByLossFunctionChange with 5 elimination steps and `train_final_model=True` (the final model refits on the chosen set, which is arm 5's "refit on its chosen set"); the algorithm and step count are recorded in the jsonl. No dataset triggered a select_features failure, so the honest-failure branch was not exercised.
 4. The noise injection permutes each real column independently with a fixed seed-42 rng and appends the result, so the injected count equals the original feature count and the injected indices are the upper half of the matrix; both are recorded in the jsonl for the recovery grade. The shadow arm's own per-seed shadow copies use seeds 42..46 and are separate from the injected-noise seed.
 5. Wall-time pool totals in the per-dataset table are the sum of the one-decimal cells (97.7 and 126.9); the per-grower summary uses the unrounded jsonl sums (97.8, 93.7, 152.3), within 0.1 of the cell sums, and no ratio changes at either rounding.

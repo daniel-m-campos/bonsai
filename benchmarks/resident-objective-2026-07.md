@@ -4,7 +4,7 @@ Campaign issue #171, decision 77. Hypothesis: every tree, the objective round-tr
 
 Protocol: campaign spec throughout (cols=100, bins=255, depth=8, lr=0.1, informative=20, n_test=500k, seed=42, threads=16), synthetic regression via `scripts/bench_scaling.py --worker`, all profile layers on. Same-pod comparisons only; cross-pod absolutes are not comparable (~25% fleet spread).
 
-## Rung 0: the price list (L40S US-NC-1, EPYC 9354 host, pod bonsai-rung0-171)
+## Stage 0: the price list (L40S US-NC-1, EPYC 9354 host, pod bonsai-rung0-171)
 
 Pool = objective + score + gh upload + finalize D2H, read from existing `FitProfiler` and CUDA counters on main at d9ede3f. 16M at 100 iters (oblivious twice, 1.4% fit spread, r2 identical), 64M at 60 iters.
 
@@ -15,9 +15,9 @@ Pool = objective + score + gh upload + finalize D2H, read from existing `FitProf
 | obl 64M | 39.29 | 24.3 | 11.5 | 46.3 | 46.0 | 128.2 | 19.6% |
 | dw 64M | 42.55 | 24.8 | 11.2 | 43.8 | 45.2 | 125.0 | 17.6% |
 
-Pre-registered kill (pool < 12ms/round at 16M and < 10% at 64M): not triggered, cleared roughly threefold. Bonus pool outside the pre-registered set: `sample` = 4.4ms/round at 16M (AllRowsSampler refilling an identity vector the engine ignores for full-data fits), harvested in rung 1 as the iota-once refill.
+Pre-registered kill (pool < 12ms/round at 16M and < 10% at 64M): not triggered, cleared roughly threefold. Bonus pool outside the pre-registered set: `sample` = 4.4ms/round at 16M (AllRowsSampler refilling an identity vector the engine ignores for full-data fits), harvested in stage 1 as the iota-once refill.
 
-## Rung 1: the same-pod interleaved A/B (L40S US-MO-1, pod bonsai-rung1-ab-171)
+## Stage 1: the same-pod interleaved A/B (L40S US-MO-1, pod bonsai-rung1-ab-171)
 
 Branch `perf/resident-objective` at 90e5a4a. Arms interleaved host/resident to cancel drift; host = `BONSAI_HOST_OBJECTIVE=1`, resident = default eligibility. 16M oblivious ran twice per arm.
 

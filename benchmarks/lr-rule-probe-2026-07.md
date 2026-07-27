@@ -6,7 +6,7 @@ Probe script: `scripts/probe_lr_rule.py`. Raw rows: `benchmarks/results/lr-rule-
 
 ## Pool, protocol, and the fidelity gate
 
-The pool and protocol are the ordered-boosting rung-0 probe's, imported from its script so split identity holds by construction: the same 12 pure-numeric small datasets (6 regression on rmse, 6 binary on 1 minus roc_auc), the same single split (gauge fold-0 where available, else the fixed stratified 75/25 holdout, seed 42), the same 20% validation slice driving early stopping (rounds 50), depth 6, 1000-iteration cap, single-model fits. Chance band per decision 55: about 2% relative of the metric for rmse, 0.001 absolute for 1 minus roc_auc. `catboost_lead` is the committed `bonsai - cat_ordered_def`, positive when CatBoost's default arm beats bonsai's.
+The pool and protocol are the ordered-boosting probe's, imported from its script so split identity holds by construction: the same 12 pure-numeric small datasets (6 regression on rmse, 6 binary on 1 minus roc_auc), the same single split (gauge fold-0 where available, else the fixed stratified 75/25 holdout, seed 42), the same 20% validation slice driving early stopping (rounds 50), depth 6, 1000-iteration cap, single-model fits. Chance band per decision 55: about 2% relative of the metric for rmse, 0.001 absolute for 1 minus roc_auc. `catboost_lead` is the committed `bonsai - cat_ordered_def`, positive when CatBoost's default arm beats bonsai's.
 
 Reproduction gate: the fresh `bonsai_default` arm reproduces the committed `bonsai` column EXACTLY on all 12 datasets (delta +0.000e+00 everywhere, bit-for-bit; fresh arm wall 15.3 s vs the cached 15.8 s). The gate ran before any new arm on each dataset.
 
