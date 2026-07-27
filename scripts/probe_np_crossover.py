@@ -247,7 +247,7 @@ def write_jsonl(out_path, results):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=("crossover", "scale"), required=True)
+    ap.add_argument("--mode", choices=("crossover", "scale", "hft"), required=True)
     ap.add_argument("--splits")
     ap.add_argument("--out", required=True)
     ap.add_argument("--rows", type=int, default=4_000_000)
@@ -258,8 +258,142 @@ def main():
     a = ap.parse_args()
     if a.mode == "crossover":
         run_crossover(a.splits, a.out)
+    elif a.mode == "hft":
+        run_hft(a.out)
     else:
         run_scale(a.out, a.rows, a.cols, a.informative, a.grower, a.slice_rows)
+
+
+
+
+# ---------------------------------------------------------------- hft mode
+# Question (Daniel's regime, 2026-07-27): where does a selection ranking stop
+# being trustworthy on market-microstructure-shaped data, as a function of
+# signal-to-noise ratio and effective sample size? The data violates the iid
+# assumptions of the crossover mode three ways, each tunable:
+#   - features are persistent AR(1) processes (rho 0.97), noise ones included;
+#   - the target is signal + a FORWARD moving-average of width H, the overlap
+#     structure of an H-row markout: adjacent rows share noise, so effective
+#     n for the noise component is roughly n / H;
+#   - signal weights can drift era to era (lam < 1), modeling alpha decay.
+# Splits are temporal with an H-row embargo purge: train, then a future
+# validation block (early stopping + any future-scoring arm), then a future
+# holdout. k = the true signal count, so noise_kept is read against ground
+# truth.
+#
+# Pre-registered predictions, on record before the first run:
+#   h1. R2=0.05, H=1, no drift: rankings near-perfect (noise_kept ~ 0),
+#       r2_share near 1.
+#   h2. noise_kept rises with H at fixed R2 and with falling R2 at fixed H;
+#       at the worst cell (R2=0.002, H=100) it exceeds 30% of top-32.
+#   h3. Under drift (lam=0.7) the era-stability and future-scored rankings
+#       beat raw gain on r2_share beyond the draw spread; without drift the
+#       three tie (the survey's iid conclusion transfers).
+#   h4. Selection never beats the all-features baseline on holdout r2 except
+#       possibly at the lowest-SNR cells, where the baseline itself decays
+#       toward zero r2 and the oracle keeps a small positive edge the
+#       rankings mostly fail to capture.
+
+HFT_GRID = {"r2": (0.05, 0.01, 0.002), "H": (1, 20, 100), "lam": (1.0, 0.7)}
+HFT_N, HFT_P, HFT_SIG, HFT_ERAS, HFT_DRAWS = 200_000, 128, 32, 8, 2
+HFT_RHO = 0.97
+
+
+def make_hft(n, r2, H, lam, seed):
+    rng = np.random.default_rng(seed)
+    p, n_sig, eras = HFT_P, HFT_SIG, HFT_ERAS
+    eps = rng.standard_normal((n, p)).astype(np.float32)
+    X = np.empty((n, p), dtype=np.float32)
+    X[0] = eps[0]
+    c = np.float32(np.sqrt(1 - HFT_RHO * HFT_RHO))
+    for t in range(1, n):
+        X[t] = HFT_RHO * X[t - 1] + c * eps[t]
+    base_w = (rng.choice((-1.0, 1.0), n_sig) / np.sqrt(1 + np.arange(n_sig)))
+    W = [base_w]
+    for _ in range(eras - 1):
+        fresh = rng.choice((-1.0, 1.0), n_sig) / np.sqrt(1 + np.arange(n_sig))
+        W.append(lam * W[-1] + np.sqrt(1 - lam * lam) * fresh)
+    era_of = np.minimum(np.arange(n) * eras // n, eras - 1)
+    G = np.empty((n, n_sig), dtype=np.float32)
+    for j in range(n_sig):
+        f = X[:, j]
+        G[:, j] = f if j % 3 == 0 else np.tanh(f) if j % 3 == 1 else f * f - 1
+    Wt = np.stack(W)[era_of]
+    s = (G * Wt).sum(axis=1)
+    eta = rng.standard_normal(n + H).astype(np.float32)
+    u = np.convolve(eta, np.ones(H, dtype=np.float32), "valid")[:n] / np.sqrt(H)
+    scale = np.sqrt(r2 / (1 - r2) * u.var() / s.var())
+    y = (scale * s + u).astype(np.float32)
+    return X, y
+
+
+def rank_era_stability(Xtr, ytr, eras):
+    """Per-era cheap fits; features ranked by mean gain-rank across eras."""
+    n = len(ytr)
+    ranks = np.zeros(Xtr.shape[1])
+    for e in range(eras):
+        lo, hi = n * e // eras, n * (e + 1) // eras
+        est = new_bonsai(n_iters=200, es=30)
+        cut = lo + int((hi - lo) * 0.85)
+        est.fit(Xtr[lo:cut], ytr[lo:cut], eval_set=(Xtr[cut:hi], ytr[cut:hi]))
+        gain = np.asarray(est.importance("gain"))
+        order = np.argsort(np.argsort(gain)[::-1])
+        ranks += order
+    return np.argsort(ranks)
+
+
+def r2_score(y, pred):
+    y = np.asarray(y, dtype=np.float64)
+    pred = np.asarray(pred, dtype=np.float64)
+    return float(1 - ((y - pred) ** 2).mean() / y.var())
+
+
+def run_hft(out_path):
+    results = []
+    k, p = HFT_SIG, HFT_P
+    for r2t in HFT_GRID["r2"]:
+        for H in HFT_GRID["H"]:
+            for lam in HFT_GRID["lam"]:
+                for draw in range(HFT_DRAWS):
+                    seed = SEED + 7919 * draw
+                    X, y = make_hft(HFT_N, r2t, H, lam, seed)
+                    n = len(y)
+                    a, b = int(n * 0.7), int(n * 0.8)
+                    Xtr, ytr = X[:a - H], y[:a - H]
+                    Xval, yval = X[a:b - H], y[a:b - H]
+                    Xte, yte = X[b:], y[b:]
+                    rng = np.random.default_rng(seed)
+                    cell = {"dataset": "hft", "r2_target": r2t, "H": H,
+                            "lam": lam, "draw": draw}
+                    all_cols = np.arange(p)
+
+                    def run_arm(arm, cols):
+                        est_, err, wall, cols_ = fit_eval(
+                            Xtr, ytr, Xval, yval, Xte, yte, cols)
+                        pred = est_.predict(Xte if len(cols_) == p
+                                            else Xte[:, np.sort(cols_)])
+                        r2h = r2_score(yte, pred)
+                        nk = int((np.asarray(cols_) >= HFT_SIG).sum())
+                        terc = [int(((np.asarray(cols_) >= t * k // 3)
+                                     & (np.asarray(cols_) < (t + 1) * k // 3)).sum())
+                                for t in range(3)]
+                        results.append({**cell, "arm": arm, "r2_hold": round(r2h, 5),
+                                        "noise_kept": nk if len(cols_) < p else -1,
+                                        "sig_strong": terc[0], "sig_mid": terc[1],
+                                        "sig_weak": terc[2],
+                                        "fit_wall_s": round(wall, 1)})
+                        return est_, r2h
+
+                    base, _ = run_arm("baseline", all_cols)
+                    run_arm("oracle", np.arange(k))
+                    run_arm("gain_topk", gain_ranking(base, all_cols)[:k])
+                    run_arm("shap_future_topk",
+                            shap_ranking(base, Xval, all_cols, rng)[:k])
+                    run_arm("era_stability_topk",
+                            rank_era_stability(Xtr, ytr, HFT_ERAS)[:k])
+                    print(f"hft r2={r2t} H={H} lam={lam} draw={draw} done",
+                          flush=True)
+    write_jsonl(out_path, results)
 
 
 if __name__ == "__main__":
