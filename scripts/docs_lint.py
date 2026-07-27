@@ -26,6 +26,10 @@ HARD (exit 1, one message per offending line):
      fast", "clean code", "simple API", "easy to use", "world-class") and
      the comparatives "significantly/much faster|slower" when no digit
      shares their sentence (STYLE: never a comparative without a number).
+  d. Banned bare words: coined metaphors review has retired from prose.
+     Currently "rung"/"rungs" (write budget, step, or stage). Identifier
+     tokens like rung0 never match (no word boundary), and code spans and
+     link targets are masked, so cited filenames stay legal.
 
 SOFT (reported, exit 0): sentences over 25 words. Table rows, headings, and
 link-dense lines are skipped. The top offenders print with file:line so a
@@ -50,6 +54,10 @@ LIB_CORRECT = {"xgboost": "XGBoost", "lightgbm": "LightGBM", "catboost": "CatBoo
 BANNED_SUBSTRINGS = (
     "blazingly", "blazing fast", "clean code",
     "simple api", "easy to use", "world-class",
+)
+BANNED_WORD_RES = (
+    (re.compile(r"\brungs?\b"),
+     'bare "rung"; name the thing: "budget", "step", or "stage"'),
 )
 COMPARATIVE_RE = re.compile(r"\b(significantly|much)\s+(faster|slower)\b", re.I)
 
@@ -202,6 +210,9 @@ def lint_file(path: pathlib.Path, hard: list[tuple], soft: list[tuple]) -> None:
             if phrase in masked_lower:
                 hard.append((rel, lineno, "banned-phrase",
                              f'banned phrase "{phrase}"'))
+        for word_re, msg in BANNED_WORD_RES:
+            if word_re.search(masked_lower):
+                hard.append((rel, lineno, "banned-word", msg))
 
         # (b) lowercase library names in prose (not tables).
         if not is_table_row(text):

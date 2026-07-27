@@ -18,7 +18,7 @@ The reachable pool is the objective, the score update, the gradient upload, and 
 
 The pre-registered kill bar was 12 ms/round at 16M and 10% at 64M. The pool cleared it roughly threefold, so the campaign was licensed before a kernel was written.
 
-The price list also flagged a bonus outside the pre-registered set. A full-data fit was refilling an identity vector that the engine ignores, at 4.4 ms/round. Rung 1 harvested it as an iota-once refill.
+The price list also flagged a bonus outside the pre-registered set. A full-data fit was refilling an identity vector that the engine ignores, at 4.4 ms/round. Stage 1 harvested it as an iota-once refill.
 
 ## The seam
 
@@ -59,7 +59,7 @@ The floor moved, but the discipline did not. The remaining round is histogram bu
 
 ## The bonus the A/B exposed
 
-Rung 2 widened eligibility to LogLoss, Poisson, and per-row sample weights (decision 79). The weighted A/B surfaced a bug two hops from the seam it was testing.
+Stage 2 widened eligibility to LogLoss, Poisson, and per-row sample weights (decision 79). The weighted A/B surfaced a bug two hops from the seam it was testing.
 
 The weighted host path was paying a serial 16M-element weight multiply every tree, roughly 80 ms/round of single-threaded work. The loop is elementwise with no reduction, so it is now parallel and bitwise-identical. The weighted MSE cut read 22.2s to 10.4s, 53%, but a caveat travels with it. The 53% is against the pre-fix path, so the honest post-fix figure is nearer the unweighted cuts.
 

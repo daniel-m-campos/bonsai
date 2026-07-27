@@ -19,13 +19,13 @@ One RunPod A100-SXM4-80GB ran one process. A 500M by 100 float32 Friedman-1 matr
 | 450M | 465.1s | 63.0 GiB | 58.0M rows/s | 0.8340 |
 | **500M** | **512.6s** | **69.9 GiB** | **58.5M rows/s** | 0.8329 |
 
-Every rung passed and the ladder never hit the card. Device memory grows at about 13.9 GiB per 100M rows. At 500M that is 69.9 GiB of the 80, roughly 8 GiB to spare.
+Every step passed and the ladder never hit the card. Device memory grows at about 13.9 GiB per 100M rows. At 500M that is 69.9 GiB of the 80, roughly 8 GiB to spare.
 
 ## Reading it
 
 The 500M fit runs 8.5 minutes end to end on one card. The wall time is the whole `train()` call: chunked host-to-device ingest, device binning, mapper fit, and all 60 boosting rounds.
 
-Throughput rises with scale, from 54.8 to 58.5M row-iterations per second, because the fixed costs amortize across more rows. There is no cliff anywhere on the ladder. A rising curve with no cliff is the shape you want, and here it holds to the last measured rung.
+Throughput rises with scale, from 54.8 to 58.5M row-iterations per second, because the fixed costs amortize across more rows. There is no cliff anywhere on the ladder. A rising curve with no cliff is the shape you want, and here it holds to the last measured step.
 
 What keeps the loop bus-free at this scale is the device-resident objective of case E4. Per tree, gradients derive on the card from resident scores and labels, and nothing per-row crosses the PCIe bus.
 
@@ -37,9 +37,9 @@ XGBoost's GPU histogram method wants roughly 8 bytes per cell before its externa
 
 ## Honest caveats
 
-The data is synthetic, one pod, one run per rung, so the walls carry the usual 25% fleet spread. The r2 column is a 1M-row train-sample proxy, not a held-out test score.
+The data is synthetic, one pod, one run per step, so the walls carry the usual 25% fleet spread. The r2 column is a 1M-row train-sample proxy, not a held-out test score.
 
-The 570M extrapolated ceiling is arithmetic beyond the last measured rung, not a measurement, so it is labeled as arithmetic. Ingest dominates the wall at this scale, and the 60-round boosting portion is the minority. A workload reusing one `bonsai.Dataset` across fits pays the ingest once.
+The 570M extrapolated ceiling is arithmetic beyond the last measured step, not a measurement, so it is labeled as arithmetic. Ingest dominates the wall at this scale, and the 60-round boosting portion is the minority. A workload reusing one `bonsai.Dataset` across fits pays the ingest once.
 
 ## What it teaches
 

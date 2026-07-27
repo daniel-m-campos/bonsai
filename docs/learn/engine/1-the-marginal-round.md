@@ -6,7 +6,7 @@ This round was one lap in a longer campaign. Earlier rounds had already taken th
 
 ## The setting
 
-The cell is the largest in bonsai's suite: 16M rows by 100 features, depth 8, learning rate 0.1, 255 bins. Timing a single fixed iteration count hides the question users actually ask, which is how long to reach a given accuracy. So the frontier sweeps each library's iteration count and records (fit seconds, test r²) at every rung.
+The cell is the largest in bonsai's suite: 16M rows by 100 features, depth 8, learning rate 0.1, 255 bins. Timing a single fixed iteration count hides the question users actually ask, which is how long to reach a given accuracy. So the frontier sweeps each library's iteration count and records (fit seconds, test r²) at each iteration count.
 
 This lens is also honest about losses. A fixed-iteration table can hide a per-round deficit behind faster convergence, or hide slow convergence behind a cheap round. The frontier shows both, so you cannot dress up one axis by quoting the other.
 
@@ -44,7 +44,7 @@ So the question reframed. The find kernel was never the cost. The 155 ms round w
 
 ## The price list
 
-The campaign then attacked the 155 ms round the same way. Rung 0 built a price list before touching a single lever.
+The campaign then attacked the 155 ms round the same way. Stage 0 built a price list before touching a single lever.
 
 A price is arithmetic, not a guess. Each candidate change moves or deletes an edge in the training DAG. An edge that crosses the host/device boundary costs its bytes over the measured bandwidth. State that price from same-pod constants first; play the lever only if it wins across the plausible range.
 
@@ -68,7 +68,7 @@ Same pod, the profiled round fell from 181 to 125 ms and the 16M fit from 19.43 
 
 Measured from the outside, the frontier's least-squares marginal round fell from 155 to 104 ms. That moved the bonsai-CatBoost crossover from about round 100 to about round 320, which sits inside both libraries' accuracy plateaus. bonsai became first to every measured accuracy up to r² ~0.895: 0.8749 in 13.9s against CatBoost's 19.7s, 0.8948 in 24.5s against 27.9s. The 300-iteration points were a statistical tie, 0.8974 in 35.3s against CatBoost's 0.8973 in 35.1s. The ceiling stayed bonsai's by a rounding digit, 0.8981 against 0.8980.
 
-The frontier crossing had moved past the plateau, which is the whole point: the number that beat you no longer occurs inside the useful range. The remaining 104 ms round is about 72 ms of histogram kernel plus 32 ms of partition and bus. That is a kernel-engineering boundary, not a placement one. The campaign's last recorded act was not spending the kernel rung. The ship bar of 110 ms was met; the crown bar of 77 ms was not; and the frontier no longer needed it.
+The frontier crossing had moved past the plateau, which is the whole point: the number that beat you no longer occurs inside the useful range. The remaining 104 ms round is about 72 ms of histogram kernel plus 32 ms of partition and bus. That is a kernel-engineering boundary, not a placement one. The campaign's last recorded act was not spending the kernel-engineering stage. The ship bar of 110 ms was met; the crown bar of 77 ms was not; and the frontier no longer needed it.
 
 One caveat travels with these numbers. Two identical L40S pods measured 25% apart, so every delta above is same-pod. The cross-pod number that transfers is the decomposition shape, not the absolute milliseconds.
 

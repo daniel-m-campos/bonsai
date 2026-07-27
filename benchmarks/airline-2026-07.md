@@ -1,4 +1,4 @@
-# The airline speed rung: benchm-ml at 0.1M / 1M / 10M (2026-07)
+# The airline speed benchmark: benchm-ml at 0.1M / 1M / 10M (2026-07)
 
 The real-data speed benchmark (Szilard Pafka's benchm-ml airline on-time ladder, issue #154): mixed categorical/numeric columns, real class balance, the industry-standard GBM comparison shape. Complements the synthetic scaling suite (smooth features, no encoder story) and the Grinsztajn standings (10k-row cap).
 
