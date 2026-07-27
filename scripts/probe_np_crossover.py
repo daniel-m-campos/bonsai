@@ -247,7 +247,7 @@ def write_jsonl(out_path, results):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=("crossover", "scale", "hft"), required=True)
+    ap.add_argument("--mode", choices=("crossover", "scale", "hft", "pipeline"), required=True)
     ap.add_argument("--splits")
     ap.add_argument("--out", required=True)
     ap.add_argument("--rows", type=int, default=4_000_000)
@@ -260,6 +260,8 @@ def main():
         run_crossover(a.splits, a.out)
     elif a.mode == "hft":
         run_hft(a.out)
+    elif a.mode == "pipeline":
+        run_pipeline_mode(a.out)
     else:
         run_scale(a.out, a.rows, a.cols, a.informative, a.grower, a.slice_rows)
 
@@ -397,6 +399,221 @@ def run_hft(out_path):
                     run_arm("era_stability_topk",
                             rank_era_stability(Xtr, ytr, HFT_ERAS)[:k])
                     print(f"hft r2={r2t} H={H} lam={lam} draw={draw} done",
+                          flush=True)
+    write_jsonl(out_path, results)
+
+
+
+
+# ------------------------------------------------------------ pipeline mode
+# Race: the staged selection pipeline (drift screen -> correlation clusters ->
+# era-stability ranks -> one representative per cluster -> cut) against naive
+# selectors, with ablations, on ground-truth data with the three real failure
+# modes: redundancy, drift-broken features, pure noise.
+#
+# Feature layout (p=200, all AR(1) rho .97): cols 0-23 independent signals
+# (decaying weights, mixed links); 24-95 redundant variants (3 per signal,
+# corr ~0.9 with the parent); 96-111 broken (0.8 x parent + noise until
+# t_break=0.65n, then fresh noise with the mean shifted +1.5: the relationship
+# dies AND the distribution moves, late enough that only the last training era
+# sees it); 112-199 pure noise. Target reads the 24 signals only. k=24
+# everywhere, so a perfect selector covers all 24 clusters with zero waste.
+#
+# Pre-registered predictions, before the first run:
+#   q1. corr_filter covers at most ~12 of 24 clusters (redundant flooding).
+#   q2. naive gain/shap cover ~17-20 clusters, wasting 4+ slots on duplicate
+#       cluster members; the full pipeline covers >= 22.
+#   q3. naive selectors keep 3+ broken features (they look strong in-sample);
+#       the drift screen cuts that to ~0; the no-drift ablation lands between.
+#   q4. Arms that keep broken features pay on holdout r2 (holdout is entirely
+#       post-break); pipe_full beats naive_gain on r2 beyond the draw spread
+#       wherever naive keeps 3+ broken.
+#   q5. Ablation order under drift: pipe_full >= pipe_no_drift > pipe_no_era
+#       >= era_only > naive_gain on cluster coverage.
+
+PIPE_GRID = {"r2": (0.25, 0.10, 0.05), "H": (1, 20), "lam": (1.0, 0.7)}
+PIPE_DRAWS = 2
+P_SIG, P_RED_PER, P_BROKEN, P_NOISE = 24, 3, 16, 88
+P_TOTAL = P_SIG + P_SIG * P_RED_PER + P_BROKEN + P_NOISE
+PIPE_K = P_SIG
+CLUSTER_RHO = 0.85
+ADV_SHARE = 3.0  # drop features with adversarial gain share > ADV_SHARE / p
+
+
+def _ar1(rng, n, cols):
+    eps = rng.standard_normal((n, cols)).astype(np.float32)
+    out = np.empty((n, cols), dtype=np.float32)
+    out[0] = eps[0]
+    c = np.float32(np.sqrt(1 - HFT_RHO * HFT_RHO))
+    for t in range(1, n):
+        out[t] = HFT_RHO * out[t - 1] + c * eps[t]
+    return out
+
+
+def make_pipeline_data(n, r2, H, lam, seed):
+    rng = np.random.default_rng(seed)
+    sig = _ar1(rng, n, P_SIG)
+    red = np.empty((n, P_SIG * P_RED_PER), dtype=np.float32)
+    a = np.float32(0.9)
+    b = np.float32(np.sqrt(1 - 0.81))
+    for j in range(P_SIG):
+        indep = _ar1(rng, n, P_RED_PER)
+        red[:, 3 * j:3 * j + 3] = a * sig[:, [j]] + b * indep
+    t_break = int(n * 0.65)
+    broken = np.empty((n, P_BROKEN), dtype=np.float32)
+    for m in range(P_BROKEN):
+        pre = 0.8 * sig[:, m % P_SIG] + 0.6 * _ar1(rng, n, 1)[:, 0]
+        post = _ar1(rng, n, 1)[:, 0] + 1.5
+        broken[:, m] = np.where(np.arange(n) < t_break, pre, post)
+    noise = _ar1(rng, n, P_NOISE)
+    X = np.concatenate([sig, red, broken, noise], axis=1)
+    base_w = (rng.choice((-1.0, 1.0), P_SIG) / np.sqrt(1 + np.arange(P_SIG)))
+    W = [base_w]
+    for _ in range(HFT_ERAS - 1):
+        fresh = rng.choice((-1.0, 1.0), P_SIG) / np.sqrt(1 + np.arange(P_SIG))
+        W.append(lam * W[-1] + np.sqrt(1 - lam * lam) * fresh)
+    era_of = np.minimum(np.arange(n) * HFT_ERAS // n, HFT_ERAS - 1)
+    G = np.empty((n, P_SIG), dtype=np.float32)
+    for j in range(P_SIG):
+        f = sig[:, j]
+        G[:, j] = f if j % 3 == 0 else np.tanh(f) if j % 3 == 1 else f * f - 1
+    s = (G * np.stack(W)[era_of]).sum(axis=1)
+    eta = rng.standard_normal(n + H).astype(np.float32)
+    u = np.convolve(eta, np.ones(H, dtype=np.float32), "valid")[:n] / np.sqrt(H)
+    scale = np.sqrt(r2 / (1 - r2) * u.var() / s.var())
+    y = (scale * s + u).astype(np.float32)
+    return X, y
+
+
+def grade(cols):
+    cols = set(int(c) for c in cols)
+    covered = 0
+    members = 0
+    for j in range(P_SIG):
+        cluster = {j} | {P_SIG + 3 * j + v for v in range(P_RED_PER)}
+        hit = len(cols & cluster)
+        covered += 1 if hit else 0
+        members += hit
+    lo_b = P_SIG + P_SIG * P_RED_PER
+    return {"clusters_covered": covered,
+            "dup_slots": members - covered,
+            "broken_kept": sum(1 for c in cols if lo_b <= c < lo_b + P_BROKEN),
+            "noise_kept": sum(1 for c in cols if c >= lo_b + P_BROKEN)}
+
+
+def spearman_abs(Xs):
+    ranks = np.argsort(np.argsort(Xs, axis=0), axis=0).astype(np.float32)
+    return np.abs(np.corrcoef(ranks, rowvar=False))
+
+
+def cluster_components(corr, cols, thresh):
+    parent = {c: c for c in cols}
+
+    def find(c):
+        while parent[c] != c:
+            parent[c] = parent[parent[c]]
+            c = parent[c]
+        return c
+
+    for i, ci in enumerate(cols):
+        for cj in cols[i + 1:]:
+            if corr[ci, cj] >= thresh:
+                parent[find(ci)] = find(cj)
+    groups = {}
+    for c in cols:
+        groups.setdefault(find(c), []).append(c)
+    return list(groups.values())
+
+
+def run_pipeline_mode(out_path):
+    results = []
+    for r2t in PIPE_GRID["r2"]:
+        for H in PIPE_GRID["H"]:
+            for lam in PIPE_GRID["lam"]:
+                for draw in range(PIPE_DRAWS):
+                    seed = SEED + 104729 * draw
+                    X, y = make_pipeline_data(HFT_N, r2t, H, lam, seed)
+                    n = len(y)
+                    a, b = int(n * 0.7), int(n * 0.8)
+                    Xtr, ytr = X[:a - H], y[:a - H]
+                    Xval, yval = X[a:b - H], y[a:b - H]
+                    Xte, yte = X[b:], y[b:]
+                    rng = np.random.default_rng(seed)
+                    ntr = len(ytr)
+                    cell = {"dataset": "pipeline", "r2_target": r2t, "H": H,
+                            "lam": lam, "draw": draw}
+                    all_cols = np.arange(P_TOTAL)
+
+                    base, _, _, _ = fit_eval(Xtr, ytr, Xval, yval, Xte, yte,
+                                             all_cols)
+                    gain_rank = gain_ranking(base, all_cols)
+                    shap_rank = shap_ranking(base, Xval, all_cols, rng)
+                    sample = rng.choice(ntr, min(30_000, ntr), replace=False)
+                    yr = np.argsort(np.argsort(ytr[sample])).astype(np.float32)
+                    Xr = np.argsort(np.argsort(X[sample], axis=0), axis=0
+                                    ).astype(np.float32)
+                    cy = np.array([abs(np.corrcoef(Xr[:, j], yr)[0, 1])
+                                   for j in range(P_TOTAL)])
+                    corr_rank = np.argsort(cy)[::-1]
+                    era_ranks = np.zeros(P_TOTAL)
+                    for e in range(HFT_ERAS):
+                        lo, hi = ntr * e // HFT_ERAS, ntr * (e + 1) // HFT_ERAS
+                        cut = lo + int((hi - lo) * 0.85)
+                        est = new_bonsai(n_iters=200, es=30)
+                        est.fit(Xtr[lo:cut], ytr[lo:cut],
+                                eval_set=(Xtr[cut:hi], ytr[cut:hi]))
+                        g = np.asarray(est.importance("gain"))
+                        era_ranks += np.argsort(np.argsort(g)[::-1])
+                    era_order = np.argsort(era_ranks)
+                    z = (np.arange(ntr) >= int(ntr * 0.8)).astype(np.float32)
+                    adv = new_bonsai(n_iters=200, es=30)
+                    cut = int(ntr * 0.95)
+                    perm = rng.permutation(ntr)
+                    adv.fit(Xtr[perm[:cut]], z[perm[:cut]],
+                            eval_set=(Xtr[perm[cut:]], z[perm[cut:]]))
+                    ag = np.asarray(adv.importance("gain"))
+                    ag = ag / max(ag.sum(), 1e-12)
+                    drifted = set(np.where(ag > ADV_SHARE / P_TOTAL)[0].tolist())
+                    corr_m = spearman_abs(X[sample])
+
+                    def reps_by(order, cols_ok):
+                        cols_l = [c for c in order if c in cols_ok]
+                        clusters = cluster_components(corr_m, sorted(cols_ok),
+                                                      CLUSTER_RHO)
+                        pos = {c: i for i, c in enumerate(cols_l)}
+                        chosen = []
+                        for cl in clusters:
+                            chosen.append(min(cl, key=lambda c: pos.get(c, 1e9)))
+                        chosen.sort(key=lambda c: pos.get(c, 1e9))
+                        return np.array(chosen[:PIPE_K])
+
+                    ok_all = set(range(P_TOTAL))
+                    ok_drift = ok_all - drifted
+                    arms = {
+                        "baseline": all_cols,
+                        "oracle": np.arange(P_SIG),
+                        "corr_filter": corr_rank[:PIPE_K],
+                        "naive_gain": gain_rank[:PIPE_K],
+                        "naive_shap": shap_rank[:PIPE_K],
+                        "era_only": era_order[:PIPE_K],
+                        "pipe_full": reps_by(era_order, ok_drift),
+                        "pipe_no_drift": reps_by(era_order, ok_all),
+                        "pipe_no_era": reps_by(gain_rank, ok_drift),
+                    }
+                    for arm, cols in arms.items():
+                        est_, err, wall, cols_ = fit_eval(
+                            Xtr, ytr, Xval, yval, Xte, yte, cols)
+                        pred = est_.predict(
+                            Xte if len(cols_) == P_TOTAL
+                            else Xte[:, np.sort(cols_)])
+                        g = (grade(cols_) if len(cols_) < P_TOTAL
+                             else {"clusters_covered": P_SIG, "dup_slots": -1,
+                                   "broken_kept": -1, "noise_kept": -1})
+                        results.append({**cell, "arm": arm,
+                                        "r2_hold": round(r2_score(yte, pred), 5),
+                                        "n_drifted_dropped": len(drifted),
+                                        **g, "fit_wall_s": round(wall, 1)})
+                    print(f"pipeline r2={r2t} H={H} lam={lam} draw={draw} done",
                           flush=True)
     write_jsonl(out_path, results)
 
