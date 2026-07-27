@@ -155,6 +155,50 @@ The embedded rankings stop being interchangeable here, and the bold cells have a
 - Never split-count or mutual information for tight budgets on redundant data.
 - No binding budget: keep everything; that row of the table is unbeaten.
 
+## How row count changes the answer
+
+The survey held the row count fixed and varied the budget. This section varies the rows, because two practical situations depend on that axis: hoping selection will rescue a small dataset, and needing selection because a huge n x p matrix will not fit in memory. Probe: [`scripts/probe_np_crossover.py`](../../scripts/probe_np_crossover.py); raw rows in [`benchmarks/results/np-crossover-2026-07.jsonl`](../../benchmarks/results/np-crossover-2026-07.jsonl).
+
+### Scarce rows: selection cannot save you
+
+The setup makes noise explicit. Superconductivity's 81 real features are joined by 81 shuffled copies, so half the columns are ground-truth noise and an **oracle** arm (refit on the real 81 only) measures exactly what noise costs. Training and validation rows then shrink together; the holdout never shrinks. Five row draws per size give the spread. The rankings cut at $k{=}81$, the oracle's own size, so every arm keeps the same feature count.
+
+![Noise-removal headroom vs what the rankings recover](../method/assets/np-crossover.svg)
+
+| n (train) | baseline (all 162) | oracle | gain top-81 | noise kept | shap_val top-81 | noise kept |
+|--:|--:|--:|--:|--:|--:|--:|
+| 11,340 | 11.15 | **-1.30** | -0.70 | 8 / 81 | -0.70 | 9 / 81 |
+| 3,968 | 12.59 | **-0.95** | -0.31 | 17 / 81 | -0.25 | 18 / 81 |
+| 1,474 | 14.01 | **-0.64** | -0.06 | 22 / 81 | -0.04 | 22 / 81 |
+| 498 | 16.11 | **-0.76** | -0.01 | 32 / 81 | -0.00 | 31 / 81 |
+
+(Cells left of the noise-kept columns are holdout rmse deltas against the baseline; negative means the arm beats keeping everything. Draw-to-draw spread is roughly 0.05 to 0.24, largest at the smallest n.)
+
+Read the oracle column first: removing the noise pays at every size, 1.30 rmse at full n and still 0.76 at n=498. Then read what the rankings deliver: about half the oracle's headroom at full n, and nothing at all at n=498, where a third of their chosen features are shuffled copies. The pre-registered prediction for this table said the opposite on both counts (noise free at full n, rankings tracking the oracle everywhere), and the data refused it. The mechanism is the chapter's inflation math applied to itself: the same row scarcity that makes noise expensive also inflates noise features' measured importance, so the ranking degrades exactly as fast as the problem grows. Selection helps most where it works best, which is where you need it least. QSAR, with no injected noise, says the same thing from the other side: shrinking its rows turns the free k=256 tie into a small loss (gain +0.021 at n=765), never into a win.
+
+### Abundant rows: rank on a slice, fit on the columns that matter
+
+At the other end of the axis, the constraint is memory, not signal. A synthetic check at production shape (3.2M training rows, 2,048 features of which 64 carry all the signal, single L40S, `cuda_depthwise`) prices what selection buys when n/p is comfortable:
+
+| arm | holdout rmse | fit wall | matrix it needs |
+|--|--:|--:|--|
+| baseline, all 2,048 | 1.5890 | 197.5s | 26 GB floats, 6.6 GB binned on device |
+| oracle, the 64 real | 1.5876 | 13.6s | 0.8 GB floats |
+| gain top-64, ranked on all rows | 1.5876 | 13.1s | needs the 197.5s full fit first |
+| shap_val top-64, ranked on all rows | 1.5908 | 13.9s | needs the full fit first |
+| gain top-64, ranked on a 250k-row slice | 1.5879 | 44.9s total | 2.0 GB slice, then 0.8 GB |
+| shap_val top-64, ranked on a 250k-row slice | 1.5876 | 44.0s total | 2.0 GB slice, then 0.8 GB |
+
+Three facts, in order of importance. Accuracy is a six-way tie: with this many rows, 1,984 pure-noise columns cost 0.001 rmse, the survey's keep-everything verdict at industrial scale. Every ranking recovers the informative set exactly, zero noise features kept, including the rankings fitted on a 250k-row slice, 6% of the data. And that slice is the answer to the memory question: rank on a slice that fits, refit on all rows times only the selected columns, and the full n x p matrix never exists on any device. Here that recipe lands within the seed floor of the oracle at 4.4x less wall than one full-width fit, with a peak footprint 13x smaller.
+
+The slice recipe is the survey's conclusions compounded: at large n the rankings are stable (the bootstrap diagnostic), so a row-slice is ranking-grade even though it is nowhere near fitting-grade, and the expensive full-width fit was only ever buying a ranking. Spend rows where they matter: all of them on the k columns you keep.
+
+### What the row axis adds to "what to use"
+
+- Small n is a reason to distrust selection, not to reach for it: the headroom is real but no ranking can cash it. If features are cheap to keep, keep them.
+- Large n with a memory-bound n x p: rank on the largest row slice that fits, keep top-k, refit wide-open on the selected columns. gain and shap_val are interchangeable here; use gain, it is free with the fit.
+- The oracle column is the argument for domain knowledge: knowing which features are junk beats every algorithm in this chapter, at every size.
+
 ## In bonsai
 
 Everything the survey used ships already: `importance("gain"/"split")` (chapter 8), exact TreeSHAP via `pred_contribs` (on any rows you choose, which is all `shap_val` is), fast refits for the ladder and the wrappers (chapter 11), and `feature_fraction` (chapter 5) when the goal is regularization rather than removal. The gain-top-$k$ recipe is three lines:

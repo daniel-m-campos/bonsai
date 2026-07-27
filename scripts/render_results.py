@@ -459,6 +459,30 @@ def probes_section() -> str:
         log_x=True, log_y=False,
         y_ticks=[(v, f"{v:.1f}") for v in (10.0, 11.0, 12.0, 13.0)])
 
+    npx = load_jsonl("np-crossover-2026-07.jsonl")
+    np_cells: dict = defaultdict(dict)
+    for r in npx:
+        if r["dataset"] == "superconductivity":
+            np_cells[(r["n_train"], r["draw"])][r["arm"]] = r["error"]
+    np_series = []
+    for arm, color in (("oracle", "#2e7d32"), ("gain_topk", "#e08f1a"),
+                       ("shap_val_topk", "#01579b")):
+        pts = []
+        for n in sorted({k[0] for k in np_cells}):
+            deltas = [v[arm] - v["baseline"] for k, v in np_cells.items()
+                      if k[0] == n]
+            pts.append((float(n), sum(deltas) / len(deltas)))
+        np_series.append((arm, color, False, pts))
+    line_chart(
+        "np-crossover.svg",
+        "Noise-removal headroom vs recovered (superconductivity + 81 shuffled "
+        "copies, delta vs keep-everything)",
+        "holdout rmse delta",
+        np_series,
+        x_ticks=[(498, "498"), (1474, "1.5k"), (3968, "4k"), (11340, "11k")],
+        log_x=True, log_y=False,
+        y_ticks=[(v, f"{v:+.1f}") for v in (-1.2, -0.8, -0.4, 0.0)])
+
     fs = load_jsonl("feature-selection-probe-2026-07.jsonl")
     fs_table = md_table(
         ["dataset", "grower", "regime", "metric", "k / total", "bonsai all",
@@ -550,6 +574,14 @@ Ten selection methods, one shared judge: each method produces a feature ranking,
 ![Selection-method survey](assets/selection-survey.svg)
 
 {provenance(["selection-survey-2026-07.jsonl"], "Survey: [scripts/probe_selection_survey.py](../../scripts/probe_selection_survey.py); readings: [guide chapter 14](../guide/14-feature-selection.md).")}
+
+#### The row-count axis (guide 14, "How row count changes the answer")
+
+Two follow-up measurements on the same protocol: a noise-injected row-subsample study (does selection become a generalization lever when rows are scarce? No: the rankings degrade exactly as fast as the noise cost grows) and a 3.2M x 2,048 GPU check of the rank-on-a-slice recipe (a 250k-row slice ranks perfectly; the full matrix never needs to exist). Tables and readings live in the guide chapter.
+
+![Noise-removal headroom vs recovered](assets/np-crossover.svg)
+
+{provenance(["np-crossover-2026-07.jsonl"], "Probe: [scripts/probe_np_crossover.py](../../scripts/probe_np_crossover.py); readings: [guide chapter 14](../guide/14-feature-selection.md).")}
 """
 
 

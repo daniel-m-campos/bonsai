@@ -323,6 +323,14 @@ Ten selection methods, one shared judge: each method produces a feature ranking,
 
 *Source: [`selection-survey-2026-07.jsonl`](../../benchmarks/results/selection-survey-2026-07.jsonl). Survey: [scripts/probe_selection_survey.py](../../scripts/probe_selection_survey.py); readings: [guide chapter 14](../guide/14-feature-selection.md).*
 
+#### The row-count axis (guide 14, "How row count changes the answer")
+
+Two follow-up measurements on the same protocol: a noise-injected row-subsample study (does selection become a generalization lever when rows are scarce? No: the rankings degrade exactly as fast as the noise cost grows) and a 3.2M x 2,048 GPU check of the rank-on-a-slice recipe (a 250k-row slice ranks perfectly; the full matrix never needs to exist). Tables and readings live in the guide chapter.
+
+![Noise-removal headroom vs recovered](assets/np-crossover.svg)
+
+*Source: [`np-crossover-2026-07.jsonl`](../../benchmarks/results/np-crossover-2026-07.jsonl). Probe: [scripts/probe_np_crossover.py](../../scripts/probe_np_crossover.py); readings: [guide chapter 14](../guide/14-feature-selection.md).*
+
 ## Perf division
 
 ### The re-baseline: fit seconds at scale
