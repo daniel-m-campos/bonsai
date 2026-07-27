@@ -294,7 +294,12 @@ def main():
 #       toward zero r2 and the oracle keeps a small positive edge the
 #       rankings mostly fail to capture.
 
-HFT_GRID = {"r2": (0.05, 0.01, 0.002), "H": (1, 20, 100), "lam": (1.0, 0.7)}
+HFT_GRID = {"r2": (0.25, 0.20, 0.15, 0.10, 0.05, 0.01, 0.002),
+            "H": (1, 20, 100), "lam": (1.0, 0.7)}
+# Extension prediction (2026-07-27, before the 0.10-0.25 cells ran): the
+# n_eff x R2 budget rule says H=100 stays half-junk even at R2=0.25
+# (1.4k x 0.25 = 350), H=20 becomes mostly clean around R2 0.15-0.25,
+# H=1 is clean from R2=0.10 up.
 HFT_N, HFT_P, HFT_SIG, HFT_ERAS, HFT_DRAWS = 200_000, 128, 32, 8, 2
 HFT_RHO = 0.97
 
