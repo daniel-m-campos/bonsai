@@ -374,8 +374,10 @@ def run_hft(out_path):
                             "lam": lam, "draw": draw}
                     all_cols = np.arange(p)
 
-                    def run_arm(arm, cols):
-                        est_, err, wall, cols_ = fit_eval(
+                    def run_arm(arm, cols, Xtr=Xtr, ytr=ytr, Xval=Xval,
+                                yval=yval, Xte=Xte, yte=yte, cell=cell,
+                                rng=rng):
+                        est_, _err, wall, cols_ = fit_eval(
                             Xtr, ytr, Xval, yval, Xte, yte, cols)
                         pred = est_.predict(Xte if len(cols_) == p
                                             else Xte[:, np.sort(cols_)])
@@ -576,7 +578,7 @@ def run_pipeline_mode(out_path):
                     drifted = set(np.where(ag > ADV_SHARE / P_TOTAL)[0].tolist())
                     corr_m = spearman_abs(X[sample])
 
-                    def reps_by(order, cols_ok):
+                    def reps_by(order, cols_ok, corr_m=corr_m):
                         cols_l = [c for c in order if c in cols_ok]
                         clusters = cluster_components(corr_m, sorted(cols_ok),
                                                       CLUSTER_RHO)
@@ -601,7 +603,7 @@ def run_pipeline_mode(out_path):
                         "pipe_no_era": reps_by(gain_rank, ok_drift),
                     }
                     for arm, cols in arms.items():
-                        est_, err, wall, cols_ = fit_eval(
+                        est_, _err, wall, cols_ = fit_eval(
                             Xtr, ytr, Xval, yval, Xte, yte, cols)
                         pred = est_.predict(
                             Xte if len(cols_) == P_TOTAL
