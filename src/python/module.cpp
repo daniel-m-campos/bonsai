@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -450,7 +451,7 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
 
     std::vector<float> history;
     auto               booster = bonsai::cli::train_with_progress(
-        cfg, loaded, {}, init ? std::move(init->booster) : nullptr, &history);
+        cfg, loaded, {}, init ? std::move(init->booster) : nullptr, std::ref(history));
     return Model{std::move(booster), std::move(loaded.mappers), cfg,
                  std::move(history)};
 }
@@ -508,7 +509,7 @@ Model train_dataset(std::vector<std::pair<std::string, std::string>> const &para
     std::vector<float> history;
     auto               booster = bonsai::cli::train_with_progress(
         cfg, dataset.loaded().train, valid ? &*valid : nullptr, {},
-        init ? std::move(init->booster) : nullptr, &history);
+        init ? std::move(init->booster) : nullptr, std::ref(history));
     return Model{std::move(booster), dataset.loaded().mappers, cfg, std::move(history)};
 }
 
