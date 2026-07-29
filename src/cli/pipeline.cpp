@@ -167,7 +167,7 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
                                               LoadedTrainValid const   &loaded,
                                               FitTickFn const          &on_tick,
                                               std::unique_ptr<IBooster> initial,
-                                              std::vector<float>       *eval_history)
+                                              EvalHistoryRef            eval_history)
 {
     return train_with_progress(cfg, loaded.train,
                                loaded.valid ? &*loaded.valid : nullptr, on_tick,
@@ -177,7 +177,7 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
 std::unique_ptr<IBooster>
 train_with_progress(Config const &cfg, LabeledData const &train,
                     LabeledData const *valid, FitTickFn const &on_tick,
-                    std::unique_ptr<IBooster> initial, std::vector<float> *eval_history)
+                    std::unique_ptr<IBooster> initial, EvalHistoryRef eval_history)
 {
     select_device_for(cfg);
     auto       booster = initial ? std::move(initial) : make_booster(cfg);
@@ -231,7 +231,7 @@ train_with_progress(Config const &cfg, LabeledData const &train,
     bool const es_enabled = es_rounds > 0 && valid != nullptr;
     // History shares the incremental accumulation below; DART's per-round
     // rescaling invalidates it, so no history there (es already throws).
-    bool const track_eval = eval_history != nullptr && valid != nullptr &&
+    bool const track_eval = eval_history.has_value() && valid != nullptr &&
                             valid->features.n_rows > 0 &&
                             cfg.booster_config.dart_drop_rate == 0.0F;
     if (es_enabled && valid->features.n_rows == 0)
@@ -280,7 +280,7 @@ train_with_progress(Config const &cfg, LabeledData const &train,
             float const loss = booster->valid_loss(es_scores, valid->labels);
             if (track_eval)
             {
-                eval_history->push_back(loss);
+                eval_history->get().push_back(loss);
             }
             if (!es_enabled)
             {
