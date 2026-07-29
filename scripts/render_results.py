@@ -653,7 +653,55 @@ Scaling features (1M rows):
 {cols_table}
 
 {provenance(["rebaseline-2026-07.jsonl"], "Runner: [scripts/bench_scaling.py](../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file.")}
+
+{xgb33_recheck_table()}
 """
+
+
+def xgb33_recheck_table() -> str:
+    rc = load_jsonl("xgb33-recheck-2026-07.jsonl")
+    best: dict = {}
+    for r in rc:
+        if r["status"] != "ok":
+            continue
+        ver = r["xgboost"] if r["variant"].startswith("xgb") else None
+        key = (r["variant"], ver, r["cell"]["rows"], r["cell"]["cols"])
+        cur = best.get(key)
+        best[key] = {
+            "fit_s": min(r["fit_s"], cur["fit_s"]) if cur else r["fit_s"],
+            "rss": max(r["peak_rss_gb"], cur["rss"]) if cur else r["peak_rss_gb"],
+        }
+
+    def human(n):
+        return f"{n // 1_000_000}M" if n >= 1_000_000 else f"{n // 1000}k"
+
+    CELLS = [("gpu", 1_000_000, 100), ("gpu", 4_000_000, 100),
+             ("gpu", 16_000_000, 100), ("gpu", 1_000_000, 256),
+             ("gpu", 1_000_000, 1024), ("cpu", 16_000_000, 100),
+             ("cpu", 1_000_000, 1024), ("cpu", 1_000_000, 4096)]
+    ARMS = {"gpu": ("bonsai_cuda_depthwise", "xgb_cuda"),
+            "cpu": ("bonsai_depthwise", "xgb_hist")}
+    body = []
+    for dev, nr, nc in CELLS:
+        bv, xv = ARMS[dev]
+        b = best[(bv, None, nr, nc)]
+        x2 = best[(xv, "3.2.0", nr, nc)]
+        x3 = best[(xv, "3.3.0", nr, nc)]
+        body.append([dev, human(nr), str(nc), f"{b['fit_s']:.1f}s",
+                     f"{x2['fit_s']:.1f}s", f"{x3['fit_s']:.1f}s",
+                     f"{x3['fit_s'] / x2['fit_s']:.2f}x",
+                     f"{b['rss']:.1f}GB", f"{x3['rss']:.1f}GB"])
+    table = md_table(
+        ["device", "rows", "cols", "bonsai fit", "xgb 3.2 fit", "xgb 3.3 fit",
+         "3.3 vs 3.2", "bonsai RSS", "xgb 3.3 RSS"], body)
+
+    return f"""### The XGBoost 3.3 recheck (decision 87)
+
+XGBoost 3.3 (2026-07-21) claimed lower GPU quantile-sketching memory and wide-data CPU histogram tiling, both aimed at cells bonsai competes in, so the claims above were rechecked on one pod (L40S) with three same-pod arms: bonsai at main, XGBoost 3.2.0, XGBoost 3.3.0. Every published standing survives. On GPU, 3.3 matches 3.2 within noise at every cell and host RSS does not move (22.1GB at 16M against bonsai's 6.9GB, the README's 3x memory claim reproduced on a second host). On CPU at 16M bonsai sits 6% behind `xgboost-hist`, inside the published "within ~8%, host-dependent" band. The one real improvement: 3.3 halves wide-CPU hist time at 1M x 4096 (nothing at 1024), narrowing bonsai's lead at that cell from 2.4x to 1.19x. No published cell flips; the wide standings above are GPU, where 3.3 changes nothing. Fit is best of repeats; RSS is the worst repeat; this pod's absolutes do not compare to the re-baseline table per the fleet-spread caveat.
+
+{table}
+
+{provenance(["xgb33-recheck-2026-07.jsonl"], "Driver: `python -m bonsai.bench.scaling --worker` per cell, three arms on one pod; verdict recorded as decision 87.")}"""
 
 
 # ---- Perf: the remaining tracks ---------------------------------------------
