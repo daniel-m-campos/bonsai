@@ -315,6 +315,21 @@ Does a refit-based shadow-feature selector (append a permuted copy of every colu
 
 *Source: [`feature-selection-probe-2026-07.jsonl`](../../benchmarks/results/feature-selection-probe-2026-07.jsonl). Probe: [scripts/probe_feature_selection.py](../../scripts/probe_feature_selection.py); evidence [benchmarks/feature-selection-probe-2026-07.md](../../benchmarks/feature-selection-probe-2026-07.md).*
 
+### Probe: an expectile objective (declined, decision 87)
+
+xgboost 3.3 shipped reg:expectileerror, the smooth asymmetric-cost sibling of the pinball loss. The workload is real: the true expectile fit beats MSE plus a validation-tuned constant shift by 9-57% holdout expectile loss on heteroscedastic synthetic and 2-4% on california housing, growing with alpha. But bonsai already reaches it at zero core lines: a plain MSE fit followed by two sample_weight refits (weights alpha or 1-alpha by the previous fit's residual sign) ties the native objective on every cell, at three fits of wall clock. Lower is better; bold is the best arm per row; single seed, so differences under ~2% are noise.
+
+| dataset | alpha | xgb expectile | xgb custom-obj | xgb mse+shift | bonsai mse+shift | bonsai quantile+shift | bonsai IRLS x2 |
+|---|---|---|---|---|---|---|---|
+| california | 0.75 | 0.1088 | **0.1069** | 0.1114 | 0.1105 | 0.1193 | 0.1088 |
+| california | 0.90 | 0.0830 | **0.0822** | 0.0857 | 0.0849 | 0.0967 | 0.0830 |
+| california | 0.95 | **0.0624** | 0.0645 | 0.0652 | 0.0645 | 0.0752 | 0.0638 |
+| synthetic_hetero | 0.75 | 1.5848 | 1.5868 | 1.7249 | 1.7268 | **1.5609** | 1.5884 |
+| synthetic_hetero | 0.90 | **1.0126** | 1.0211 | 1.3569 | 1.3538 | 1.0204 | 1.0186 |
+| synthetic_hetero | 0.95 | 0.6940 | 0.7074 | 1.0882 | 1.0837 | **0.6867** | 0.6895 |
+
+*Source: [`expectile-probe-2026-07.jsonl`](../../benchmarks/results/expectile-probe-2026-07.jsonl). Probe: [scripts/probe_expectile.py](../../scripts/probe_expectile.py); evidence [benchmarks/expectile-tradeoff-2026-07.md](../../benchmarks/expectile-tradeoff-2026-07.md).*
+
 #### The selection-method survey (guide 14 worked example)
 
 Ten selection methods, one shared judge: each method produces a feature ranking, every ranking is refit at matched knobs on its top-k down a budget ladder, and error is read on an untouched holdout (superconductivity, 81 real features, baseline rmse 9.85628; wide-short contrast on QSAR-TID-11, baseline rmse 0.88287). The tables, the pairwise top-16 overlap matrix and the readings live in [guide chapter 14](../guide/14-feature-selection.md); they add no verdict weight to decision 86.

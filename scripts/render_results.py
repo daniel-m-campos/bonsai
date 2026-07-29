@@ -471,6 +471,20 @@ def probes_section() -> str:
           "yes" if r.get("shadow_vs_all", 0) > r.get("band", 0) else "no"]
          for r in fs])
 
+    ep = load_jsonl("expectile-probe-2026-07.jsonl")
+    ep_cells: dict = defaultdict(dict)
+    for r in ep:
+        ep_cells[(r["dataset"], r["alpha"])][r["arm"]] = r["expectile_loss"]
+    EP_ARMS = ("xgb_native", "xgb_custom", "xgb_mse_shift",
+               "bonsai_mse_shift", "bonsai_quant_shift", "bonsai_irls2")
+    ep_table = md_table(
+        ["dataset", "alpha", "xgb expectile", "xgb custom-obj", "xgb mse+shift",
+         "bonsai mse+shift", "bonsai quantile+shift", "bonsai IRLS x2"],
+        [[ds, f"{a:.2f}"] +
+         [(f"**{cell[arm]:.4f}**" if cell[arm] == min(cell.values())
+           else f"{cell[arm]:.4f}") for arm in EP_ARMS]
+         for (ds, a), cell in sorted(ep_cells.items())])
+
     return f"""### Probe: per-feature bin budgets (declined, decision 67)
 
 Test r² under per-feature bin-budget policies at a 255-bin default; no policy moved standings outside the chance band.
@@ -542,6 +556,14 @@ Does a refit-based shadow-feature selector (append a permuted copy of every colu
 {fs_table}
 
 {provenance(["feature-selection-probe-2026-07.jsonl"], "Probe: [scripts/probe_feature_selection.py](../../scripts/probe_feature_selection.py); evidence [benchmarks/feature-selection-probe-2026-07.md](../../benchmarks/feature-selection-probe-2026-07.md).")}
+
+### Probe: an expectile objective (declined, decision 87)
+
+xgboost 3.3 shipped reg:expectileerror, the smooth asymmetric-cost sibling of the pinball loss. The workload is real: the true expectile fit beats MSE plus a validation-tuned constant shift by 9-57% holdout expectile loss on heteroscedastic synthetic and 2-4% on california housing, growing with alpha. But bonsai already reaches it at zero core lines: a plain MSE fit followed by two sample_weight refits (weights alpha or 1-alpha by the previous fit's residual sign) ties the native objective on every cell, at three fits of wall clock. Lower is better; bold is the best arm per row; single seed, so differences under ~2% are noise.
+
+{ep_table}
+
+{provenance(["expectile-probe-2026-07.jsonl"], "Probe: [scripts/probe_expectile.py](../../scripts/probe_expectile.py); evidence [benchmarks/expectile-tradeoff-2026-07.md](../../benchmarks/expectile-tradeoff-2026-07.md).")}
 
 #### The selection-method survey (guide 14 worked example)
 
