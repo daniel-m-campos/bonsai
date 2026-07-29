@@ -4,6 +4,17 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-07-29
+
+On PyPI as `bonsai-gbt`, and the XGBoost drop-in surface.
+
+### Added
+- **PyPI via trusted publishing**: `pip install bonsai-gbt` with no `--find-links`. Releases upload through OIDC (no stored tokens); the CUDA-enabled linux x86_64 wheel reaches the index only after the rented-GPU release gate passes, and a TestPyPI rehearsal path (workflow dispatch) proved the flow end to end before the first real upload.
+- **The XGBoost drop-in surface**: the canonical `XGBRegressor`/`XGBClassifier` script runs with only the class name swapped. New aliases `min_child_weight` (`tree.min_child_hess`, the same minimum hessian mass per child), `gamma`, `subsample` (switches on the bernoulli sampler), and `device="cuda"` (picks the matching CUDA grower); XGBoost objective strings on both estimators (`reg:squarederror`, `reg:quantileerror` with `quantile_alpha`, `binary:logistic`, `multi:softprob`, ...); `eval_set` in the list-of-tuples form; `evals_result()`, `best_iteration`, and `best_score` backed by a per-round eval history (in-memory only, the model format is untouched; squared error is presented as rmse, the exact root); `save_model`/`load_model`/`apply`/`iteration_range`; `n_features_in_`. The full swap table and the deliberate differences: [Switching from XGBoost](docs/use/from-xgboost.md).
+
+### Measured
+- **XGBoost 3.3 recheck** (decision 87): every published standing survives against the 2026-07-21 release on a same-pod three-arm ladder; the one real competitor gain (wide-CPU histogram tiling, 2x at 1M x 4096) flips no published cell. The 16M host-memory ratio (22.1 vs 6.9GB) reproduced on a second host.
+
 ## [1.4.0] - 2026-07-19
 
 GPU fits 15 to 25% faster through the device-resident objective, and the documentation rebuilt around results.
