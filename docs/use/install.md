@@ -1,14 +1,16 @@
 # Install
 
-The wheel ships the `bonsai` Python package and its compiled extension, nothing else: the `bonsai` command-line binary is a source-build artifact ([Building from source](building.md)). There is no PyPI listing yet; wheels attach to every [GitHub release](https://github.com/daniel-m-campos/bonsai/releases).
+The wheel ships the `bonsai` Python package and its compiled extension, nothing else: the `bonsai` command-line binary is a source-build artifact ([Building from source](building.md)).
 
 ## The one command
 
 ```bash
-pip install bonsai-gbt --find-links https://github.com/daniel-m-campos/bonsai/releases/expanded_assets/v1.4.0
+pip install bonsai-gbt
 ```
 
-`--find-links` points pip at a plain HTML listing of the release's assets; pip scans it and picks the wheel matching your Python and platform, exactly as it would on a package index. The URL pins a release tag, so bump it when a new version ships (the [releases page](https://github.com/daniel-m-campos/bonsai/releases) always has the latest).
+That is the whole install story: CPU and CUDA, Linux (x86_64 with GPU support, aarch64) and macOS (arm64), CPython 3.9 through 3.13, from [PyPI](https://pypi.org/project/bonsai-gbt/). The package installs as `bonsai-gbt` and imports as `bonsai`. GPU training needs nothing extra beyond an NVIDIA driver; there is no separate GPU package, no CUDA toolkit install, and no 300MB download (the whole wheel is ~2.3MB).
+
+To pin a specific release instead of the index's latest, `pip install bonsai-gbt==1.5.0`, or point pip straight at a release's attached assets: `pip install bonsai-gbt --find-links https://github.com/daniel-m-campos/bonsai/releases/expanded_assets/v1.5.0` (the [releases page](https://github.com/daniel-m-campos/bonsai/releases) lists every tag; wheels attach there too).
 
 ## What ships
 
@@ -41,12 +43,12 @@ print("r2:", round(model.score(X_train, y_train), 3))
 print("GPU available:", bonsai.cuda_available())
 ```
 
-If `cuda_available()` is `True`, pass `grower="cuda_depthwise"` (or `"cuda_oblivious"`) to train on the GPU; the [API tour](api-tour.md) covers the rest.
+If `cuda_available()` is `True`, pass `device="cuda"` (the XGBoost spelling) or pick a CUDA grower directly with `grower="cuda_depthwise"` / `"cuda_oblivious"`; the [API tour](api-tour.md) covers the rest.
 
 ## The bench extra
 
 ```bash
-pip install "bonsai-gbt[bench]" --find-links https://github.com/daniel-m-campos/bonsai/releases/expanded_assets/v1.4.0
+pip install "bonsai-gbt[bench]"
 ```
 
 The extra pulls XGBoost, LightGBM, CatBoost, scikit-learn, pandas, and openml: everything `bonsai.bench` needs to reproduce the published benchmark tables. `python -m bonsai.bench.grinsztajn out.jsonl --report` re-runs the external standings suite under the [benchmark protocol](../method/benchmark-protocol.md).

@@ -8,10 +8,10 @@ bonsai's entire API follows from three facts. Everything else is detail.
 
 ## Install
 
-One command against the latest release's assets; [Install](install.md) has the full story (wheel matrix, GPU support, docker, extras) and [Building from source](building.md) covers everything past a wheel:
+One command from PyPI; [Install](install.md) has the full story (wheel matrix, GPU support, docker, extras) and [Building from source](building.md) covers everything past a wheel:
 
 ```
-pip install bonsai-gbt --find-links https://github.com/daniel-m-campos/bonsai/releases/expanded_assets/v1.3.0
+pip install bonsai-gbt
 ```
 
 ## The estimator layer
