@@ -13,7 +13,8 @@
 # static on macOS but vendored DYNAMIC on Linux: apt.llvm.org ships no
 # libomp.a, so BONSAI_OPENMP_STATIC falls back and auditwheel's name-mangled
 # copy provides the private runtime instead (issue #134). Wheels attach to
-# the GitHub Release on publish; PyPI is a follow-up (trusted publishing).
+# the GitHub Release on publish; PyPI uploads ride the same run via OIDC
+# trusted publishing (publish-testpypi / publish-pypi below).
 name: wheels
 
 on:
@@ -25,6 +26,13 @@ on:
           flaked publish run. Leave empty for a plain build-only dispatch.
         type: string
         default: ""
+      publish_to:
+        description: >-
+          Rehearsal target: "testpypi" uploads the CPU wheel set + sdist to
+          TestPyPI via trusted publishing. "none" builds only.
+        type: choice
+        options: ["none", "testpypi"]
+        default: "none"
   pull_request:
     paths:
       - ".github/workflows/wheels.yml"
@@ -499,3 +507,56 @@ jobs:
           docker tag "$IMG:candidate-$TAG" "$IMG:cuda"
           docker push "$IMG:$TAG-cuda"
           docker push "$IMG:cuda"
+
+  # ---- PyPI (OIDC trusted publishing, no stored token) -----------------------
+  # TestPyPI is the rehearsal: a workflow_dispatch with publish_to=testpypi
+  # uploads the CPU wheel set + sdist, mirroring `publish`'s CUDA withholding
+  # so no unvalidated CUDA artifact ever reaches an index. The real index gets
+  # the FULL set — CUDA wheel included — only on a release and only after the
+  # GPU pod gate (`promote`) passed. Each job authenticates as a registered
+  # trusted publisher: index-side registration must name this repo, workflow
+  # wheels.yml, and the matching environment (testpypi / pypi).
+  publish-testpypi:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_to == 'testpypi'
+    needs: [build, sdist, sdist-install-test, hash-compare]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Withhold the CUDA wheel and non-package files
+        run: |
+          rm -f dist/model-hash.txt
+          rm -f dist/*manylinux*_x86_64*.whl
+          ls dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    if: github.event_name == 'release'
+    needs: [publish, promote]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Drop non-package files
+        run: |
+          rm -f dist/model-hash.txt
+          ls dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
