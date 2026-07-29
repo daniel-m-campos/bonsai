@@ -73,6 +73,47 @@ def _to_config_str(v) -> str:
     return str(v)
 
 
+def _grower_for_device(grower: str, device: str) -> str:
+    """xgboost's device= mapped onto bonsai's grower dispatch. CUDA has
+    depthwise and oblivious growers; leafwise (the CPU default) runs as
+    cuda_depthwise, the nearest CUDA grower."""
+    dev = device.lower()
+    if dev in ("cuda", "gpu") or dev.startswith("cuda:"):
+        if grower.startswith("cuda_"):
+            return grower
+        return "cuda_oblivious" if grower == "oblivious" else "cuda_depthwise"
+    if dev == "cpu":
+        return grower.removeprefix("cuda_") if grower.startswith("cuda_") else grower
+    raise ValueError(f"device must be 'cpu' or 'cuda', got {device!r}")
+
+
+def _normalize_eval_set(eval_set):
+    """Accept both the xgboost form (a list of (X, y) tuples; the LAST one
+    drives the eval history and early stopping, xgboost's own convention)
+    and the bare (X, y) tuple."""
+    if eval_set is None:
+        return None
+    if isinstance(eval_set, (list,)):
+        if not eval_set:
+            return None
+        eval_set = eval_set[-1]
+    return eval_set
+
+
+# evals_result()/best_score presentation per objective: xgboost metric name
+# and the exact transform from bonsai's eval value (mse is presented as its
+# root; monotone, so best_iteration and early stopping are unaffected).
+_EVAL_METRIC: dict[str, tuple[str, object]] = {
+    "mse": ("rmse", lambda v: float(v) ** 0.5),
+    "mae": ("mae", float),
+    "huber": ("huber", float),
+    "quantile": ("quantile", float),
+    "poisson": ("poisson", float),
+    "logloss": ("logloss", float),
+    "softmax": ("mlogloss", float),
+}
+
+
 class _BonsaiEstimator:
     """Shared sklearn-contract machinery for ``BonsaiRegressor`` and
     ``BonsaiClassifier``.
@@ -113,6 +154,10 @@ class _BonsaiEstimator:
         max_bin: int | None = None,
         min_child_samples: int | None = None,
         colsample_bytree: float | None = None,
+        min_child_weight: float | None = None,
+        gamma: float | None = None,
+        subsample: float | None = None,
+        device: str | None = None,
         params: dict | None = None,
         config: str | None = None,
     ):
@@ -134,6 +179,10 @@ class _BonsaiEstimator:
         self.max_bin = max_bin
         self.min_child_samples = min_child_samples
         self.colsample_bytree = colsample_bytree
+        self.min_child_weight = min_child_weight
+        self.gamma = gamma
+        self.subsample = subsample
+        self.device = device
         self.params = params
         self.config = config
         self._model: Model | None = None
@@ -145,11 +194,10 @@ class _BonsaiEstimator:
         raise NotImplementedError
 
     # xgboost/lightgbm-style constructor aliases -> bonsai dotted config key.
-    # Deliberately excludes `subsample` (bonsai's row-subsampling needs a
-    # `sampler` choice, not a 1:1 key — `sampler.subsample` is a no-op under
-    # the default `all_rows` sampler) and `min_child_weight` (bonsai's
-    # `min_child_hess` is close but not identical semantics). Both, and any
-    # other knob, go through `params=`.
+    # `min_child_weight` maps to `min_child_hess` (both are the minimum
+    # hessian mass a child may hold, same 1.0 default; for MSE that is a row
+    # count). `subsample` and `device` need more than a key rename and are
+    # handled in `_build_pairs`.
     _ALIAS_TO_KEY: ClassVar[dict[str, str]] = {
         "n_estimators": "booster.n_iters",
         "num_leaves": "tree.max_leaves",
@@ -160,6 +208,8 @@ class _BonsaiEstimator:
         "max_bin": "bin_mapper.max_bin",
         "min_child_samples": "tree.min_data_in_leaf",
         "colsample_bytree": "tree.feature_fraction",
+        "min_child_weight": "tree.min_child_hess",
+        "gamma": "tree.min_gain_to_split",
     }
 
     def _build_pairs(self) -> list[tuple[str, str]]:
@@ -188,6 +238,17 @@ class _BonsaiEstimator:
             value = getattr(self, alias)
             if value is not None:
                 merged[key] = value
+        if self.subsample is not None:
+            # xgboost's subsample implies row sampling; bonsai makes the
+            # sampler explicit, so the alias turns it on when it is still at
+            # the default (an explicit sampler= choice keeps its machinery).
+            merged["sampler.subsample"] = self.subsample
+            if self.sampler == "all_rows":
+                merged["dispatch.sampler_name"] = "bernoulli"
+        if self.device is not None:
+            merged["dispatch.grower_name"] = _grower_for_device(
+                str(merged["dispatch.grower_name"]), self.device
+            )
         merged.update(self.params or {})
         return [(k, _to_config_str(v)) for k, v in merged.items()]
 
@@ -255,9 +316,19 @@ class _BonsaiEstimator:
         else:
             self._model = None
 
-    def predict(self, X, num_iteration: int = 0) -> np.ndarray:
+    def predict(self, X, num_iteration: int = 0,
+                iteration_range: tuple[int, int] | None = None) -> np.ndarray:
+        """``iteration_range`` is xgboost's spelling of the same thing:
+        ``(0, n)`` means predict with the first ``n`` trees. Ranges must
+        start at 0 (a boosted sum has no meaning without its head)."""
         if self._model is None:
             raise RuntimeError("fit() or load first")
+        if iteration_range is not None:
+            if iteration_range[0] != 0:
+                raise ValueError(
+                    f"iteration_range must start at 0, got {iteration_range!r}"
+                )
+            num_iteration = iteration_range[1]
         return np.asarray(self._model.predict(_as_2d_f32(X), num_iteration))
 
     def staged_predict(self, X) -> np.ndarray:
@@ -299,10 +370,28 @@ class _BonsaiEstimator:
         total = raw.sum()
         return raw / total if total > 0 else raw
 
+    def apply(self, X) -> np.ndarray:
+        """xgboost's name for per-tree leaf indices; same as
+        ``predict_leaf``."""
+        return self.predict_leaf(X)
+
     def save(self, path: str) -> None:
         if self._model is None:
             raise RuntimeError("fit() before save()")
         self._model.save(path)
+
+    def save_model(self, path: str) -> None:
+        """xgboost's name for ``save``."""
+        self.save(path)
+
+    def load_model(self, path: str):
+        """xgboost's in-place loader: replaces this estimator's fitted state
+        with the saved model and returns ``self``. Same caveat as
+        ``from_file``: the native format stores only the booster, so a
+        classifier comes back with encoded ``0..K-1`` class ids."""
+        loaded = type(self).from_file(path)
+        self.__dict__.update(loaded.__dict__)
+        return self
 
     @classmethod
     def from_file(cls, path: str):
@@ -316,6 +405,55 @@ class _BonsaiEstimator:
             raise RuntimeError("fit() first")
         return self._model.n_iters
 
+    def _eval_presentation(self) -> tuple[str, list[float]]:
+        """(xgboost metric name, transformed per-round eval history)."""
+        name, transform = _EVAL_METRIC.get(
+            self._model.objective_name, (self._model.objective_name, float)
+        )
+        return name, [transform(v) for v in self._model.eval_history]
+
+    def evals_result(self) -> dict:
+        """Per-round eval-set metric history, xgboost's shape:
+        ``{"validation_0": {metric_name: [...]}}``. Requires a fit with an
+        ``eval_set``; empty after loading from a file (as in xgboost). The
+        mse objective is presented as rmse (the exact root; monotone, so
+        early stopping saw the same ordering)."""
+        if self._model is None:
+            raise RuntimeError("fit() first")
+        name, hist = self._eval_presentation()
+        if not hist:
+            return {}
+        return {"validation_0": {name: hist}}
+
+    @property
+    def best_iteration(self) -> int:
+        """0-based round with the best eval-set loss, defined (as in
+        xgboost) only when fit ran with early stopping and an eval_set."""
+        if self._model is None:
+            raise RuntimeError("fit() first")
+        hist = self._model.eval_history
+        if not self.early_stopping_rounds or not len(hist):
+            raise AttributeError(
+                "best_iteration needs fit(eval_set=...) with "
+                "early_stopping_rounds set"
+            )
+        return int(np.argmin(hist))
+
+    @property
+    def best_score(self) -> float:
+        """Eval-set metric at ``best_iteration`` (same presentation as
+        ``evals_result``)."""
+        if self._model is None:
+            raise RuntimeError("fit() first")
+        hist = self._model.eval_history
+        if not self.early_stopping_rounds or not len(hist):
+            raise AttributeError(
+                "best_score needs fit(eval_set=...) with "
+                "early_stopping_rounds set"
+            )
+        _, presented = self._eval_presentation()
+        return float(min(presented))
+
 
 class BonsaiRegressor(_BonsaiEstimator):
     """sklearn-style wrapper around the native booster.
@@ -327,13 +465,18 @@ class BonsaiRegressor(_BonsaiEstimator):
 
     xgboost/lightgbm-style aliases (``n_estimators``, ``num_leaves``,
     ``random_state``, ``n_jobs``, ``reg_lambda``, ``reg_alpha``, ``max_bin``,
-    ``min_child_samples``, ``colsample_bytree``) are accepted so calls copied
-    from those libraries work unchanged; they default to ``None`` and, when
-    set, override the matching canonical kwarg (e.g. ``n_estimators`` wins
-    over ``n_iters``). ``subsample`` and ``min_child_weight`` are deliberately
-    **not** aliased — bonsai's row-subsampling needs a ``sampler`` choice
-    rather than a 1:1 key, and ``min_child_hess`` isn't identical semantics
-    to ``min_child_weight``; set those (or anything else) through ``params``.
+    ``min_child_samples``, ``colsample_bytree``, ``min_child_weight``,
+    ``gamma``, ``subsample``, ``device``) are accepted so calls copied from
+    those libraries work unchanged; they default to ``None`` and, when set,
+    override the matching canonical kwarg (e.g. ``n_estimators`` wins over
+    ``n_iters``). ``subsample`` switches the sampler to ``bernoulli`` when
+    ``sampler`` is at its default; ``device="cuda"`` picks the CUDA grower
+    matching the chosen grower. xgboost objective strings
+    (``reg:squarederror``, ``reg:absoluteerror``, ``reg:quantileerror`` with
+    ``quantile_alpha``, ``reg:pseudohubererror``, ``count:poisson``) are
+    accepted as spellings of the bonsai objectives; note bonsai's ``huber``
+    is the exact Huber loss, not xgboost's pseudo-Huber. Anything else goes
+    through ``params``.
 
     ``config`` names a TOML file used as the base config (the CLI's ``-c``).
     Keyword arguments and ``params`` always win over the file — including the
@@ -365,6 +508,11 @@ class BonsaiRegressor(_BonsaiEstimator):
         max_bin: int | None = None,
         min_child_samples: int | None = None,
         colsample_bytree: float | None = None,
+        min_child_weight: float | None = None,
+        gamma: float | None = None,
+        subsample: float | None = None,
+        device: str | None = None,
+        quantile_alpha: float | None = None,
         params: dict | None = None,
         config: str | None = None,
     ):
@@ -387,13 +535,34 @@ class BonsaiRegressor(_BonsaiEstimator):
             max_bin=max_bin,
             min_child_samples=min_child_samples,
             colsample_bytree=colsample_bytree,
+            min_child_weight=min_child_weight,
+            gamma=gamma,
+            subsample=subsample,
+            device=device,
             params=params,
             config=config,
         )
         self.objective = objective
+        self.quantile_alpha = quantile_alpha
+
+    # xgboost objective strings accepted as spellings of bonsai objectives.
+    _XGB_OBJECTIVES: ClassVar[dict[str, str]] = {
+        "reg:squarederror": "mse",
+        "reg:absoluteerror": "mae",
+        "reg:quantileerror": "quantile",
+        "reg:pseudohubererror": "huber",
+        "count:poisson": "poisson",
+    }
 
     def _objective_pairs(self) -> dict[str, str]:
-        return {"dispatch.objective_name": self.objective}
+        pairs = {
+            "dispatch.objective_name": self._XGB_OBJECTIVES.get(
+                self.objective, self.objective
+            )
+        }
+        if self.quantile_alpha is not None:
+            pairs["objective.quantile_alpha"] = self.quantile_alpha
+        return pairs
 
     def score(self, X, y, sample_weight=None) -> float:
         """R² (coefficient of determination), matching sklearn's
@@ -425,20 +594,30 @@ class BonsaiRegressor(_BonsaiEstimator):
             input_tags=InputTags(),
         )
 
-    def fit(self, X, y, sample_weight=None, eval_set: tuple | None = None,
-            init_model: str | None = None) -> BonsaiRegressor:
+    def fit(self, X, y, sample_weight=None,
+            eval_set: tuple | list | None = None,
+            init_model: str | None = None, verbose=None) -> BonsaiRegressor:
         """`sample_weight` scales each row's gradient and hessian (sklearn's
-        convention). init_model continues training from a saved .msgpack (warm
-        start); binning reuses the loaded model's cut points."""
+        convention). `eval_set` takes the xgboost list-of-tuples form or a
+        bare (X, y) tuple; with a list, the last entry drives the eval
+        history and early stopping (xgboost's own convention). init_model
+        continues training from a saved .msgpack (warm start); binning
+        reuses the loaded model's cut points. `verbose` is accepted for
+        xgboost call compatibility and ignored (bonsai prints one line on
+        early stop, nothing per round)."""
+        del verbose
         pairs = self._build_pairs()
+        eval_set = _normalize_eval_set(eval_set)
         ev = None
         if eval_set is not None:
             ev = (_as_2d_f32(eval_set[0]), _as_1d_f32(eval_set[1]))
         sw = None if sample_weight is None else _as_1d_f32(sample_weight)
+        Xa = _as_2d_f32(X)
         self._model = train(
-            pairs, _as_2d_f32(X), _as_1d_f32(y), ev, init_model, self.config,
+            pairs, Xa, _as_1d_f32(y), ev, init_model, self.config,
             sample_weight=sw,
         )
+        self.n_features_in_ = Xa.shape[1]
         return self
 
 
@@ -453,11 +632,14 @@ class BonsaiClassifier(_BonsaiEstimator):
     strings, ...); they're encoded to ``0..K-1`` internally and decoded back
     to the original ``classes_`` values by ``predict``.
 
-    Same xgboost/lightgbm-style aliases as ``BonsaiRegressor`` (``n_estimators``,
-    ``num_leaves``, ``random_state``, ``n_jobs``, ``reg_lambda``, ``reg_alpha``,
-    ``max_bin``, ``min_child_samples``, ``colsample_bytree``); ``subsample`` and
-    ``min_child_weight`` are not aliased for the same reason — see
-    ``BonsaiRegressor``'s docstring — use ``params`` for those.
+    Same xgboost/lightgbm-style aliases as ``BonsaiRegressor``
+    (``n_estimators``, ``num_leaves``, ``random_state``, ``n_jobs``,
+    ``reg_lambda``, ``reg_alpha``, ``max_bin``, ``min_child_samples``,
+    ``colsample_bytree``, ``min_child_weight``, ``gamma``, ``subsample``,
+    ``device``), and an ``objective`` accepted for xgboost call
+    compatibility (``binary:logistic`` / ``multi:softprob`` /
+    ``multi:softmax``) — the real objective is derived from the number of
+    classes at fit time.
 
     ``predict_proba`` covers both cases: binary from the native ``logloss``
     P(class 1), multiclass from the ``softmax`` booster's per-class
@@ -465,6 +647,65 @@ class BonsaiClassifier(_BonsaiEstimator):
     """
 
     _estimator_type = "classifier"
+
+    def __init__(
+        self,
+        n_iters: int = 100,
+        learning_rate: float = 0.05,
+        max_depth: int = 6,
+        max_leaves: int = 31,
+        grower: str = "leafwise",
+        sampler: str = "all_rows",
+        objective: str | None = None,
+        early_stopping_rounds: int = 0,
+        n_threads: int = 0,
+        random_seed: int = 42,
+        n_estimators: int | None = None,
+        num_leaves: int | None = None,
+        random_state: int | None = None,
+        n_jobs: int | None = None,
+        reg_lambda: float | None = None,
+        reg_alpha: float | None = None,
+        max_bin: int | None = None,
+        min_child_samples: int | None = None,
+        colsample_bytree: float | None = None,
+        min_child_weight: float | None = None,
+        gamma: float | None = None,
+        subsample: float | None = None,
+        device: str | None = None,
+        params: dict | None = None,
+        config: str | None = None,
+    ):
+        """``objective`` is accepted purely for xgboost call compatibility
+        (``binary:logistic`` / ``multi:softprob`` / ``multi:softmax``); the
+        real objective is derived from the number of classes at fit time."""
+        super().__init__(
+            n_iters=n_iters,
+            learning_rate=learning_rate,
+            max_depth=max_depth,
+            max_leaves=max_leaves,
+            grower=grower,
+            sampler=sampler,
+            early_stopping_rounds=early_stopping_rounds,
+            n_threads=n_threads,
+            random_seed=random_seed,
+            n_estimators=n_estimators,
+            num_leaves=num_leaves,
+            random_state=random_state,
+            n_jobs=n_jobs,
+            reg_lambda=reg_lambda,
+            reg_alpha=reg_alpha,
+            max_bin=max_bin,
+            min_child_samples=min_child_samples,
+            colsample_bytree=colsample_bytree,
+            min_child_weight=min_child_weight,
+            gamma=gamma,
+            subsample=subsample,
+            device=device,
+            params=params,
+            config=config,
+        )
+        self.objective = objective
 
     def _objective_pairs(self) -> dict[str, str]:
         if self.n_classes_ == 2:
@@ -498,11 +739,27 @@ class BonsaiClassifier(_BonsaiEstimator):
             input_tags=InputTags(),
         )
 
-    def fit(self, X, y, sample_weight=None, eval_set: tuple | None = None,
-            init_model: str | None = None) -> BonsaiClassifier:
+    def fit(self, X, y, sample_weight=None,
+            eval_set: tuple | list | None = None,
+            init_model: str | None = None, verbose=None) -> BonsaiClassifier:
         """`sample_weight` scales each row's gradient and hessian (sklearn's
-        convention). init_model continues training from a saved .msgpack (warm
-        start); binning reuses the loaded model's cut points."""
+        convention). `eval_set` takes the xgboost list-of-tuples form or a
+        bare (X, y) tuple; with a list, the last entry drives the eval
+        history and early stopping. init_model continues training from a
+        saved .msgpack (warm start); binning reuses the loaded model's cut
+        points. `verbose` is accepted for xgboost call compatibility and
+        ignored."""
+        del verbose
+        if self.objective is not None and self.objective not in (
+            "binary:logistic", "binary:logitraw",
+            "multi:softprob", "multi:softmax",
+        ):
+            raise ValueError(
+                f"BonsaiClassifier objective {self.objective!r} is not a "
+                "recognized xgboost classification objective; the objective "
+                "is otherwise derived from the number of classes"
+            )
+        eval_set = _normalize_eval_set(eval_set)
         y_arr = np.asarray(y)
         if y_arr.dtype.kind == "f" and np.isnan(y_arr).any():
             raise ValueError("Input y contains NaN.")
@@ -533,10 +790,12 @@ class BonsaiClassifier(_BonsaiEstimator):
                 )
             ev = (_as_2d_f32(eval_set[0]), _as_1d_f32(ev_y))
         sw = None if sample_weight is None else _as_1d_f32(sample_weight)
+        Xa = _as_2d_f32(X)
         self._model = train(
-            pairs, _as_2d_f32(X), y_enc, ev, init_model, self.config,
+            pairs, Xa, y_enc, ev, init_model, self.config,
             sample_weight=sw,
         )
+        self.n_features_in_ = Xa.shape[1]
         return self
 
     def predict(self, X, num_iteration: int = 0) -> np.ndarray:

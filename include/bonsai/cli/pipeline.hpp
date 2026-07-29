@@ -90,20 +90,23 @@ using FitTickFn = std::function<void(FitTick const &)>;
 // `initial` continues training an existing booster (warm start) instead of
 // constructing a fresh one from cfg; cfg still drives n_iters / ticks /
 // early stopping for the continuation.
-std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
-                                              LoadedTrainValid const   &loaded,
-                                              FitTickFn const          &on_tick = {},
-                                              std::unique_ptr<IBooster> initial = {});
+std::unique_ptr<IBooster> train_with_progress(
+    Config const &cfg, LoadedTrainValid const &loaded, FitTickFn const &on_tick = {},
+    std::unique_ptr<IBooster> initial = {}, std::vector<float> *eval_history = nullptr);
 
 // Same, but train and valid arrive separately (valid may be null). Lets a
 // caller pair a long-lived pre-binned train set with a per-call validation
 // set without copying the train LabeledData (the copy would also change the
 // Dataset address that keys the GPU upload-skip cache, decision 54).
-std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
-                                              LabeledData const        &train,
-                                              LabeledData const        *valid,
-                                              FitTickFn const          &on_tick = {},
-                                              std::unique_ptr<IBooster> initial = {});
+// `eval_history`, when non-null and a valid set exists, receives the valid
+// loss after every boosting round (the objective's own eval metric), whether
+// or not early stopping is on; DART skips it (per-round rescaling invalidates
+// the incremental accumulation the history shares with early stopping).
+std::unique_ptr<IBooster>
+train_with_progress(Config const &cfg, LabeledData const &train,
+                    LabeledData const *valid, FitTickFn const &on_tick = {},
+                    std::unique_ptr<IBooster> initial      = {},
+                    std::vector<float>       *eval_history = nullptr);
 
 struct ScoredBatch
 {
