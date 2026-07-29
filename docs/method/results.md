@@ -353,6 +353,23 @@ Scaling features (1M rows):
 
 *Source: [`rebaseline-2026-07.jsonl`](../../benchmarks/results/rebaseline-2026-07.jsonl). Runner: [scripts/bench_scaling.py](../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file.*
 
+### The XGBoost 3.3 recheck (decision 87)
+
+XGBoost 3.3 (2026-07-21) claimed lower GPU quantile-sketching memory and wide-data CPU histogram tiling, both aimed at cells bonsai competes in, so the claims above were rechecked on one pod (L40S) with three same-pod arms: bonsai at main, XGBoost 3.2.0, XGBoost 3.3.0. Every published standing survives. On GPU, 3.3 matches 3.2 within noise at every cell and host RSS does not move (22.1GB at 16M against bonsai's 6.9GB, the README's 3x memory claim reproduced on a second host). On CPU at 16M bonsai sits 6% behind `xgboost-hist`, inside the published "within ~8%, host-dependent" band. The one real improvement: 3.3 halves wide-CPU hist time at 1M x 4096 (nothing at 1024), narrowing bonsai's lead at that cell from 2.4x to 1.19x. No published cell flips; the wide standings above are GPU, where 3.3 changes nothing. Fit is best of repeats; RSS is the worst repeat; this pod's absolutes do not compare to the re-baseline table per the fleet-spread caveat.
+
+| device | rows | cols | bonsai fit | xgb 3.2 fit | xgb 3.3 fit | 3.3 vs 3.2 | bonsai RSS | xgb 3.3 RSS |
+|---|---|---|---|---|---|---|---|---|
+| gpu | 1M | 100 | 0.8s | 2.7s | 2.7s | 1.01x | 0.7GB | 1.9GB |
+| gpu | 4M | 100 | 3.1s | 9.4s | 9.6s | 1.02x | 2.0GB | 6.1GB |
+| gpu | 16M | 100 | 12.1s | 37.1s | 37.5s | 1.01x | 6.9GB | 22.1GB |
+| gpu | 1M | 256 | 2.3s | 6.4s | 6.3s | 0.98x | 1.4GB | 4.1GB |
+| gpu | 1M | 1024 | 9.1s | 24.4s | 22.8s | 0.93x | 4.8GB | 15.1GB |
+| cpu | 16M | 100 | 116.7s | 109.2s | 109.8s | 1.01x | 10.4GB | 10.5GB |
+| cpu | 1M | 1024 | 86.2s | 94.5s | 97.3s | 1.03x | 7.3GB | 8.6GB |
+| cpu | 1M | 4096 | 323.9s | 783.7s | 387.1s | 0.49x | 29.0GB | 33.9GB |
+
+*Source: [`xgb33-recheck-2026-07.jsonl`](../../benchmarks/results/xgb33-recheck-2026-07.jsonl). Driver: `python -m bonsai.bench.scaling --worker` per cell, three arms on one pod; verdict recorded as decision 87.*
+
 ### The scaling study
 
 964 runs across 7 hosts and the axes base, bins, cols, rows; regenerate exponents and the committed log-log plots under [`benchmarks/results/scaling/`](../../benchmarks/results/scaling) with [scripts/analyze_scaling.py](../../scripts/analyze_scaling.py).
