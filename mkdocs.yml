@@ -121,6 +121,7 @@ nav:
   - Use:
       - Install: use/install.md
       - The API in one read: use/api-tour.md
+      - Switching from XGBoost: use/from-xgboost.md
       - Parameters: use/parameters.md
       - Building from source: use/building.md
       - Make targets: use/make-map.md

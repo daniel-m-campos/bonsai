@@ -178,10 +178,18 @@ class Model
 {
   public:
     Model(std::unique_ptr<bonsai::IBooster> booster, bonsai::BinMappers mappers,
-          bonsai::Config cfg)
+          bonsai::Config cfg, std::vector<float> eval_history = {})
         : booster_(std::move(booster)), mappers_(std::move(mappers)),
-          cfg_(std::move(cfg))
+          cfg_(std::move(cfg)), eval_history_(std::move(eval_history))
     {
+    }
+
+    // Per-round valid loss from fit (objective's own eval metric); empty when
+    // no eval set was given or the model was loaded from a file. In-memory
+    // only: the model format does not carry it.
+    std::vector<float> const &eval_history() const
+    {
+        return eval_history_;
     }
 
     nb::ndarray<nb::numpy, float> predict(array_2d const &X,
@@ -376,6 +384,7 @@ class Model
     std::unique_ptr<bonsai::IBooster> booster_;
     bonsai::BinMappers                mappers_;
     bonsai::Config                    cfg_;
+    std::vector<float>                eval_history_;
 };
 
 // Precedence: TOML file (when given) provides the base, params override it —
@@ -439,9 +448,11 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
         loaded.valid = make_valid_labeled(eval_set->first, eval_set->second);
     }
 
-    auto booster = bonsai::cli::train_with_progress(
-        cfg, loaded, {}, init ? std::move(init->booster) : nullptr);
-    return Model{std::move(booster), std::move(loaded.mappers), cfg};
+    std::vector<float> history;
+    auto               booster = bonsai::cli::train_with_progress(
+        cfg, loaded, {}, init ? std::move(init->booster) : nullptr, &history);
+    return Model{std::move(booster), std::move(loaded.mappers), cfg,
+                 std::move(history)};
 }
 
 // Train on a prebuilt Dataset: reuses its binning (skips BinMappers::fit +
@@ -494,10 +505,11 @@ Model train_dataset(std::vector<std::pair<std::string, std::string>> const &para
     {
         valid = make_valid_labeled(eval_set->first, eval_set->second);
     }
-    auto booster = bonsai::cli::train_with_progress(
+    std::vector<float> history;
+    auto               booster = bonsai::cli::train_with_progress(
         cfg, dataset.loaded().train, valid ? &*valid : nullptr, {},
-        init ? std::move(init->booster) : nullptr);
-    return Model{std::move(booster), dataset.loaded().mappers, cfg};
+        init ? std::move(init->booster) : nullptr, &history);
+    return Model{std::move(booster), dataset.loaded().mappers, cfg, std::move(history)};
 }
 
 Model load(std::string const &path)
@@ -523,6 +535,9 @@ NB_MODULE(_bonsai, m)
         .def("feature_importance", &Model::feature_importance, nb::arg("type") = "gain")
         .def("save", &Model::save, nb::arg("path"))
         .def_prop_ro("n_iters", &Model::n_iters)
+        .def_prop_ro("eval_history", &Model::eval_history,
+                     "Per-round valid loss from fit (objective's own eval "
+                     "metric); empty without an eval set or after load().")
         .def_prop_ro("config_toml", &Model::config_toml)
         .def_prop_ro("objective_name", &Model::objective_name,
                      "The objective this model was trained with (e.g. mse, "
