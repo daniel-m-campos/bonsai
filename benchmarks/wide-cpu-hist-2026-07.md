@@ -30,3 +30,17 @@ Identical r² per cell in every run. Peak RSS at the 16k cell: bonsai 18.8GB vs 
 - The shipped-build 1M x 4096 confirmation read 366.7s against main's own 320-348 spread on the same pod hours apart; the path is code-identical at that width, and the pod's session drift covers the difference. Rows tagged `after-per-node` and the contaminated double-launch batch (two concurrent workers) are excluded from the tables; the A/B is the controlled comparison.
 - The row-major mirror (2.1GB at 131k x 16384) is still built even when every level routes feature-parallel; skipping it for always-wide fits is a possible memory follow-up.
 - The CUDA planes have their own wide wall (~5x behind xgb_cuda at the 16k cell) that this change does not touch.
+
+## Superseded by the tiled mirror (decision 89, same week)
+
+The strategy pair above lasted one day. The follow-up recorded on the issue (XGBoost 3.3's column-tiling lever) was probed immediately: the u8 mirror moved to a column-block-tiled layout (2048-feature blocks, each row-major on its own) and the fill runs tiles outer, rows inner, so the live scatter target is one block's histograms at any width while reads stay sequential inside each block. Per-feature accumulation order is unchanged, so models are bit-identical to the untiled row path at every width (verified: identical model sha256 from both builds at a multi-block width), which retires the 24MB threshold, the feature-parallel route for u8 data, and the cache-size question all at once.
+
+Interleaved same-pod A/B (main HEAD vs tiled, two reps each, single worker, `run=tiled-ab` rows):
+
+| cell | main (per-width strategy) | tiled | verdict |
+|--|--:|--:|--|
+| 16M x 100 | 119.3 / 111.6s | 113.6 / 116.4s | wash: no narrow cost |
+| 1M x 4096 | 369.2 / 376.8s (row path) | 326.2 / 321.2s | ~13% faster than the A/B winner above |
+| 131k x 16384 | 513.9 / 531.6s (feature-parallel) | 442.4 / 448.1s | ~15% faster than the decision-88 route |
+
+Identical r2 in every pair. M2 leg: 44.8s at 131k x 4096 (matches the feature-parallel 44.9 against the row path's 101.7, so the mid-width win the fixed threshold left on the table is now taken on small-cache hosts too), 95.3s at 8192 (linear, no cliff), single-block widths unchanged. Peak RSS at the 16k cell is 21.0GB against the strategy pair's 18.8 (compacted per-slice partial stripes), still well under LightGBM's 50.1.
