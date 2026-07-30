@@ -34,16 +34,17 @@ import json
 import os
 import pathlib
 import re
-import resource
 import subprocess
 import sys
-import time
-
-import numpy as np
 
 from . import params as rp
 from . import runlog
+from . import variants as vr
+from .runners import RUNNERS, worker
 from .synth import gen_data
+
+__all__ = ["AXES", "BASE", "GPU_MAX_COLS", "RESULTS", "RUNNERS", "VARIANTS",
+           "gen_data", "main", "worker"]
 
 # In-repo runs default next to the other results; wheel installs default to
 # the working directory.
@@ -64,166 +65,18 @@ AXES = {
     "threads": [1, 4, 16, 64],
 }
 
-# variant -> (library, device). lgbm_cuda is declared but unsupported in v1:
-# the pip wheel has no CUDA backend and a source build is deferred.
-VARIANTS = {
-    "bonsai_depthwise": ("bonsai", "cpu"),
-    "bonsai_leafwise": ("bonsai", "cpu"),
-    "bonsai_oblivious": ("bonsai", "cpu"),
-    "bonsai_cuda_depthwise": ("bonsai", "cuda"),
-    "bonsai_cuda_oblivious": ("bonsai", "cuda"),
-    "xgb_hist": ("xgb", "cpu"),
-    "xgb_cuda": ("xgb", "cuda"),
-    "lgbm_cpu": ("lgbm", "cpu"),
-    "lgbm_cuda": ("lgbm", "cuda"),
-    "catboost_cpu": ("catboost", "cpu"),
-    "catboost_gpu": ("catboost", "cuda"),
-}
+# variant -> (library, device), a view of the registry in
+# bonsai.bench.variants. lgbm_cuda is declared but unsupported in v1: the pip
+# wheel has no CUDA backend and a source build is deferred.
+VARIANTS = {n: (vr.resolve(n).lib, vr.resolve(n).device) for n in vr.SCALING}
 
 # GPU variants skip the widest cells: 16k+ cols exhausts consumer VRAM and
 # kernel grids; the per-host VRAM estimator handles the rest.
 GPU_MAX_COLS = 16_384
 
 
-def r2(pred: np.ndarray, y: np.ndarray) -> float:
-    ss_res = float(np.sum((y - pred) ** 2))
-    ss_tot = float(np.sum((y - y.mean()) ** 2))
-    return 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
-
-
-# ---- per-library runners (worker side) ----------------------------------------
-# Param mappings mirror scripts/bench_gpu.py and scripts/compare.py — keep in
-# sync. Shared tree config: depth-d full trees (lgbm num_leaves = 1 << depth,
-# bonsai max_leaves likewise), min_data_in_leaf 20, lambda_l2 1.0.
-
-
-def run_bonsai(spec, X, y, Xte, yte) -> dict:
-    import bonsai
-    grower = spec["variant"].removeprefix("bonsai_")
-    if grower.startswith("cuda") and not bonsai.cuda_available():
-        raise RuntimeError("unsupported: cuda grower without a CUDA device/build")
-    c = spec["cell"]
-    pairs = [("dispatch.grower_name", grower),
-             ("dispatch.objective_name", "mse"),
-             ("booster.n_iters", str(c["iters"])),
-             ("booster.learning_rate", str(c["lr"])),
-             ("booster.random_seed", str(c["seed"])),
-             ("tree.max_depth", str(c["depth"])),
-             ("tree.max_leaves", str(1 << c["depth"])),
-             ("tree.min_data_in_leaf", "20"),
-             ("tree.lambda_l2", "1.0"),
-             ("bin_mapper.max_bin", str(c["bins"])),
-             ("parallel.n_threads", str(spec["threads"]))]
-    t0 = time.perf_counter()
-    model = bonsai.train(pairs, X, y)
-    fit_s = time.perf_counter() - t0
-    t0 = time.perf_counter()
-    pred_te = np.asarray(model.predict(Xte))
-    predict_s = time.perf_counter() - t0
-    pred_tr = np.asarray(model.predict(X))
-    return {"fit_s": fit_s, "predict_s": predict_s,
-            "r2_train": r2(pred_tr, y), "r2_test": r2(pred_te, yte)}
-
-
-def run_xgb(spec, X, y, Xte, yte) -> dict:
-    import xgboost as xgb
-    c = spec["cell"]
-    device = VARIANTS[spec["variant"]][1]
-    params = {**rp.xgb_core(learning_rate=c["lr"], max_depth=c["depth"],
-                            min_data_in_leaf=20, lambda_l2=1.0,
-                            max_bin=c["bins_effective"], seed=c["seed"]),
-              "objective": "reg:squarederror", "device": device,
-              "nthread": spec["threads"]}
-    t0 = time.perf_counter()
-    dtrain = xgb.QuantileDMatrix(X, label=y, max_bin=c["bins_effective"])
-    booster = xgb.train(params, dtrain, num_boost_round=c["iters"])
-    fit_s = time.perf_counter() - t0
-    t0 = time.perf_counter()
-    pred_te = booster.inplace_predict(Xte)
-    predict_s = time.perf_counter() - t0
-    pred_tr = booster.inplace_predict(X)
-    return {"fit_s": fit_s, "predict_s": predict_s,
-            "r2_train": r2(pred_tr, y), "r2_test": r2(pred_te, yte)}
-
-
-def run_lgbm(spec, X, y, Xte, yte) -> dict:
-    import lightgbm as lgb
-    c = spec["cell"]
-    device = VARIANTS[spec["variant"]][1]
-    if device == "cuda":
-        raise RuntimeError("unsupported: pip lightgbm lacks CUDA; source build "
-                           "deferred to a later round")
-    params = {**rp.lgbm_core(learning_rate=c["lr"], max_depth=c["depth"],
-                             num_leaves=1 << c["depth"], min_data_in_leaf=20,
-                             lambda_l2=1.0, max_bin=c["bins_effective"],
-                             seed=c["seed"]),
-              "objective": "regression",
-              "device_type": device, "num_threads": spec["threads"]}
-    t0 = time.perf_counter()
-    dtrain = lgb.Dataset(X, label=y)
-    model = lgb.train(params, dtrain, num_boost_round=c["iters"])
-    fit_s = time.perf_counter() - t0
-    t0 = time.perf_counter()
-    pred_te = model.predict(Xte)
-    predict_s = time.perf_counter() - t0
-    pred_tr = model.predict(X)
-    return {"fit_s": fit_s, "predict_s": predict_s,
-            "r2_train": r2(pred_tr, y), "r2_test": r2(pred_te, yte)}
-
-
-def run_catboost(spec, X, y, Xte, yte) -> dict:
-    from catboost import CatBoostRegressor, Pool
-    c = spec["cell"]
-    device = VARIANTS[spec["variant"]][1]
-    model = CatBoostRegressor(
-        **rp.catboost_core(learning_rate=c["lr"], max_depth=c["depth"],
-                           lambda_l2=1.0, max_bin=c["bins_effective"],
-                           seed=c["seed"], device=device),
-        iterations=c["iters"], loss_function="RMSE",
-        task_type=("GPU" if device == "cuda" else "CPU"), devices="0",
-        thread_count=spec["threads"], verbose=False)
-    t0 = time.perf_counter()
-    pool = Pool(X, label=y)
-    model.fit(pool)
-    fit_s = time.perf_counter() - t0
-    t0 = time.perf_counter()
-    pred_te = model.predict(Xte)
-    predict_s = time.perf_counter() - t0
-    pred_tr = model.predict(X)
-    return {"fit_s": fit_s, "predict_s": predict_s,
-            "r2_train": r2(pred_tr, y), "r2_test": r2(pred_te, yte)}
-
-
-RUNNERS = {"bonsai": run_bonsai, "xgb": run_xgb, "lgbm": run_lgbm,
-           "catboost": run_catboost}
-
-
-def worker(spec: dict) -> dict:
-    c = spec["cell"]
-    X, y, Xte, yte = gen_data(c["rows"], c["cols"], c["seed"], c["n_test"],
-                              c["informative"])
-    lib, device = VARIANTS[spec["variant"]]
-    run = RUNNERS[lib]
-    if device == "cuda":
-        # Untimed micro-fit absorbs CUDA context creation (and, once per
-        # session, the PTX JIT — disk-cached afterwards).
-        micro = dict(spec, cell=dict(c, rows=8192, n_test=1024, iters=5))
-        run(micro, X[:8192], y[:8192], Xte[:1024], yte[:1024])
-    out = run(spec, X, y, Xte, yte)
-    ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    # ru_maxrss: bytes on macOS, KiB on Linux.
-    out["peak_rss_gb"] = round(ru / (2**30 if sys.platform == "darwin" else 2**20), 2)
-    out["fit_rows_per_s"] = round(c["rows"] / out["fit_s"]) if out["fit_s"] else None
-    out["predict_rows_per_s"] = (round(c["n_test"] / out["predict_s"])
-                                 if out["predict_s"] else None)
-    for k in ("fit_s", "predict_s"):
-        out[k] = round(out[k], 3)
-    for k in ("r2_train", "r2_test"):
-        out[k] = round(out[k], 4)
-    return out
-
-
 # ---- parent orchestration ------------------------------------------------------
+# The per-library runners and the worker live in bonsai.bench.runners.
 
 PROFILE_RE = re.compile(r"(\w+)=([\d.]+)s")
 
@@ -374,6 +227,11 @@ def main() -> int:
     knobs = dict(rp.SCALING, num_leaves_convention="full")
 
     def emit(cell, variant, threads, repeat, payload):
+        payload = dict(payload)
+        # The worker reports the versions it imported; fold into host.libs.
+        libs = payload.pop("libs", None)
+        row_host = (dict(host, libs={**host.get("libs", {}), **libs})
+                    if libs else host)
         line = {"schema": runlog.SCHEMA_VERSION,
                 "ts": datetime.datetime.now(datetime.timezone.utc)
                 .isoformat(timespec="seconds"),
@@ -381,7 +239,7 @@ def main() -> int:
                 "timing_mode": "in_memory", "knobs": knobs,
                 "knobs_hash": runlog.knobs_hash(knobs),
                 "dataset": "synthetic-friedman1", "task": "reg",
-                "host": host, "cell": cell,
+                "host": row_host, "cell": cell,
                 "variant": variant, "threads": threads, "repeat": repeat,
                 **payload}
         line.setdefault("profile", None)

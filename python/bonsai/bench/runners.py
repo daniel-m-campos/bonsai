@@ -1,0 +1,152 @@
+"""Per-library runners and the scaling worker (child-process side).
+
+Param mappings come from bonsai.bench.params only (a hand-derived knob has
+produced a false conclusion twice; see params.py). The worker records the
+reference-library versions it actually imported, so rows carry them.
+"""
+
+from __future__ import annotations
+
+import resource
+import sys
+import time
+
+import numpy as np
+
+from . import params as rp
+from . import runlog
+from .synth import gen_data
+from .variants import resolve
+
+
+def r2(pred: np.ndarray, y: np.ndarray) -> float:
+    ss_res = float(np.sum((y - pred) ** 2))
+    ss_tot = float(np.sum((y - y.mean()) ** 2))
+    return 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+
+
+def run_bonsai(spec, X, y, Xte, yte) -> dict:
+    import bonsai
+    grower = spec["variant"].removeprefix("bonsai_")
+    if grower.startswith("cuda") and not bonsai.cuda_available():
+        raise RuntimeError("unsupported: cuda grower without a CUDA device/build")
+    c = spec["cell"]
+    pairs = rp.bonsai_core(
+        learning_rate=c["lr"], max_depth=c["depth"],
+        num_leaves=rp.num_leaves_full(c["depth"]),
+        min_data_in_leaf=rp.SCALING["min_data_in_leaf"],
+        lambda_l2=rp.SCALING["lambda_l2"], max_bin=c["bins"], seed=c["seed"],
+        n_iters=c["iters"], n_threads=spec["threads"], grower=grower)
+    t0 = time.perf_counter()
+    model = bonsai.train(pairs, X, y)
+    fit_s = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    pred_te = np.asarray(model.predict(Xte))
+    predict_s = time.perf_counter() - t0
+    pred_tr = np.asarray(model.predict(X))
+    return {"fit_s": fit_s, "predict_s": predict_s,
+            "r2_train": r2(pred_tr, y), "r2_test": r2(pred_te, yte)}
+
+
+def run_xgb(spec, X, y, Xte, yte) -> dict:
+    import xgboost as xgb
+    c = spec["cell"]
+    device = resolve(spec["variant"]).device
+    params = {**rp.xgb_core(learning_rate=c["lr"], max_depth=c["depth"],
+                            min_data_in_leaf=rp.SCALING["min_data_in_leaf"],
+                            lambda_l2=rp.SCALING["lambda_l2"],
+                            max_bin=c["bins_effective"], seed=c["seed"]),
+              "objective": "reg:squarederror", "device": device,
+              "nthread": spec["threads"]}
+    t0 = time.perf_counter()
+    dtrain = xgb.QuantileDMatrix(X, label=y, max_bin=c["bins_effective"])
+    booster = xgb.train(params, dtrain, num_boost_round=c["iters"])
+    fit_s = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    pred_te = booster.inplace_predict(Xte)
+    predict_s = time.perf_counter() - t0
+    pred_tr = booster.inplace_predict(X)
+    return {"fit_s": fit_s, "predict_s": predict_s,
+            "r2_train": r2(pred_tr, y), "r2_test": r2(pred_te, yte)}
+
+
+def run_lgbm(spec, X, y, Xte, yte) -> dict:
+    import lightgbm as lgb
+    c = spec["cell"]
+    device = resolve(spec["variant"]).device
+    if device == "cuda":
+        raise RuntimeError("unsupported: pip lightgbm lacks CUDA; source build "
+                           "deferred to a later round")
+    params = {**rp.lgbm_core(learning_rate=c["lr"], max_depth=c["depth"],
+                             num_leaves=rp.num_leaves_full(c["depth"]),
+                             min_data_in_leaf=rp.SCALING["min_data_in_leaf"],
+                             lambda_l2=rp.SCALING["lambda_l2"],
+                             max_bin=c["bins_effective"], seed=c["seed"]),
+              "objective": "regression",
+              "device_type": device, "num_threads": spec["threads"]}
+    t0 = time.perf_counter()
+    dtrain = lgb.Dataset(X, label=y)
+    model = lgb.train(params, dtrain, num_boost_round=c["iters"])
+    fit_s = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    pred_te = model.predict(Xte)
+    predict_s = time.perf_counter() - t0
+    pred_tr = model.predict(X)
+    return {"fit_s": fit_s, "predict_s": predict_s,
+            "r2_train": r2(pred_tr, y), "r2_test": r2(pred_te, yte)}
+
+
+def run_catboost(spec, X, y, Xte, yte) -> dict:
+    from catboost import CatBoostRegressor, Pool
+    c = spec["cell"]
+    device = resolve(spec["variant"]).device
+    model = CatBoostRegressor(
+        **rp.catboost_core(learning_rate=c["lr"], max_depth=c["depth"],
+                           lambda_l2=rp.SCALING["lambda_l2"],
+                           max_bin=c["bins_effective"], seed=c["seed"],
+                           device=device),
+        iterations=c["iters"], loss_function="RMSE",
+        task_type=("GPU" if device == "cuda" else "CPU"), devices="0",
+        thread_count=spec["threads"], verbose=False)
+    t0 = time.perf_counter()
+    pool = Pool(X, label=y)
+    model.fit(pool)
+    fit_s = time.perf_counter() - t0
+    t0 = time.perf_counter()
+    pred_te = model.predict(Xte)
+    predict_s = time.perf_counter() - t0
+    pred_tr = model.predict(X)
+    return {"fit_s": fit_s, "predict_s": predict_s,
+            "r2_train": r2(pred_tr, y), "r2_test": r2(pred_te, yte)}
+
+
+RUNNERS = {"bonsai": run_bonsai, "xgb": run_xgb, "lgbm": run_lgbm,
+           "catboost": run_catboost}
+
+
+def worker(spec: dict) -> dict:
+    c = spec["cell"]
+    X, y, Xte, yte = gen_data(c["rows"], c["cols"], c["seed"], c["n_test"],
+                              c["informative"])
+    v = resolve(spec["variant"])
+    run = RUNNERS[v.lib]
+    if v.device == "cuda":
+        # Untimed micro-fit absorbs CUDA context creation (and, once per
+        # session, the PTX JIT — disk-cached afterwards).
+        micro = dict(spec, cell=dict(c, rows=8192, n_test=1024, iters=5))
+        run(micro, X[:8192], y[:8192], Xte[:1024], yte[:1024])
+    out = run(spec, X, y, Xte, yte)
+    ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # ru_maxrss: bytes on macOS, KiB on Linux.
+    out["peak_rss_gb"] = round(ru / (2**30 if sys.platform == "darwin" else 2**20), 2)
+    out["fit_rows_per_s"] = round(c["rows"] / out["fit_s"]) if out["fit_s"] else None
+    out["predict_rows_per_s"] = (round(c["n_test"] / out["predict_s"])
+                                 if out["predict_s"] else None)
+    for k in ("fit_s", "predict_s"):
+        out[k] = round(out[k], 3)
+    for k in ("r2_train", "r2_test"):
+        out[k] = round(out[k], 4)
+    # The child is where the reference library was imported, so only the
+    # child can report its version; the parent folds this into host.libs.
+    out["libs"] = runlog.lib_versions()
+    return out

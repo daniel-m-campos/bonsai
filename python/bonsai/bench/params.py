@@ -36,6 +36,26 @@ def num_leaves_full(depth: int) -> int:
     return 1 << depth
 
 
+def bonsai_core(*, learning_rate, max_depth, num_leaves, min_data_in_leaf,
+                lambda_l2, max_bin, seed, n_iters, n_threads, grower,
+                objective="mse") -> list[tuple[str, str]]:
+    """Dotted-key pairs for bonsai.train, mirroring the reference mappings
+    below so harnesses stop hand-building (and drifting) the pair list."""
+    return [
+        ("dispatch.grower_name", grower),
+        ("dispatch.objective_name", objective),
+        ("booster.n_iters", str(n_iters)),
+        ("booster.learning_rate", str(learning_rate)),
+        ("booster.random_seed", str(seed)),
+        ("tree.max_depth", str(max_depth)),
+        ("tree.max_leaves", str(num_leaves)),
+        ("tree.min_data_in_leaf", str(min_data_in_leaf)),
+        ("tree.lambda_l2", str(lambda_l2)),
+        ("bin_mapper.max_bin", str(max_bin)),
+        ("parallel.n_threads", str(n_threads)),
+    ]
+
+
 def xgb_core(*, learning_rate, max_depth, min_data_in_leaf, lambda_l2, max_bin,
              seed) -> dict:
     return {
