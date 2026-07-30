@@ -748,11 +748,73 @@ def cuda_wide_recheck_table() -> str:
 
     return f"""### The CUDA wide recheck: the wall was already gone (decision 90)
 
-A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: the gap no longer exists. The recorded numbers dated to 2026-07-08 code, before the device-resident line landed; on current main, one pod, bonsai's CUDA growers lead every wide cell against both references at 3-4x less host memory. The stale reading ("CatBoost keeps the wide lead") is corrected wherever it appeared; a full six-variant cols-axis re-baseline is the recorded follow-up before the wide standings get a chart.
+A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: the gap no longer exists. The recorded numbers dated to 2026-07-08 code, before the device-resident line landed; on current main, one pod, bonsai's CUDA growers lead every wide cell against both references at 3-4x less host memory. The stale reading ("CatBoost keeps the wide lead") is corrected wherever it appeared; the six-variant cols re-baseline below completes the recorded follow-up.
 
 {table}
 
-{provenance(["cuda-wide-recheck-2026-07.jsonl"], "Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs; verdict recorded as decision 90.")}"""
+{provenance(["cuda-wide-recheck-2026-07.jsonl"], "Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs; verdict recorded as decision 90.")}
+
+{cols_rebaseline_table()}"""
+
+
+def cols_rebaseline_table() -> str:
+    cr = load_jsonl("cols-rebaseline-2026-07.jsonl")
+    best: dict[tuple, dict] = {}
+    for r in cr:
+        key = (r["rows"], r["cols"], r["variant"])
+        if key not in best or r["fit_s"] < best[key]["fit_s"]:
+            best[key] = r
+    cells = sorted({(r["rows"], r["cols"]) for r in cr}, key=lambda rc: rc[1])
+
+    def label(rows, cols):
+        r = f"{rows // 1_000_000}M" if rows >= 1_000_000 else f"{rows // 1000}k"
+        return f"{r} x {cols}"
+
+    def cell_fmt(rows, cols, variant):
+        r = best.get((rows, cols, variant))
+        if r is None:
+            return "-"
+        return f"{r['fit_s']:.1f}s ({fmt(r.get('r2_test'), 3).lstrip('0')})"
+
+    fit_table = md_table(
+        ["cell", *[lbl for _, lbl in REBASE_VARIANTS]],
+        [[label(nr, nc), *[cell_fmt(nr, nc, v) for v, _ in REBASE_VARIANTS]]
+         for nr, nc in cells])
+    rss_table = md_table(
+        ["cell", *[lbl for _, lbl in REBASE_VARIANTS]],
+        [[label(nr, nc),
+          *[f"{best[(nr, nc, v)]['peak_rss_gb']:.1f}GB"
+            if (nr, nc, v) in best else "-" for v, _ in REBASE_VARIANTS]]
+         for nr, nc in cells])
+
+    series = []
+    for variant, (lbl, color, cpu) in VARIANT_STYLE.items():
+        pts = [(nc, best[(nr, nc, variant)]["fit_s"])
+               for nr, nc in cells if (nr, nc, variant) in best]
+        if pts:
+            series.append((lbl, color, cpu, pts))
+    line_chart(
+        "cols-rebaseline.svg",
+        "Fit seconds vs features (1M rows; 16384-col cell 131k rows; log-log)",
+        "fit seconds",
+        series,
+        x_ticks=[(nc, f"{nc}" if nc < 16_384 else "16384*") for _, nc in cells])
+
+    return f"""### The cols re-baseline: wide standings on current main (decision 90 follow-up)
+
+The six-variant cols-axis re-baseline promised by decision 90, on one pod at main `07a5b9a` (the tiled CPU fill and the radix mapper sort both landed). bonsai's CUDA growers hold the fastest slot at every measured width: 1.5x over CatBoost-GPU at 1M x 4096 (33.2 vs 50.0s) and 1.4x at 131k x 16384 (50.5 vs 71.3s, with XGBoost-GPU at 77.3s). Peak host memory tells the sharper story: 16.4GB against CatBoost's 50.6GB and XGBoost's 60.4GB at 1M x 4096. The widest cell drops to 131k rows to hold total cells at 2^31, so its column is not comparable to the 1M-row columns (starred in the chart). The CPU reference arms bound the GPU advantage: at the widest cell the tiled fill holds bonsai CPU at LightGBM parity (404 vs 402s) while the GPU growers are 8x faster than either.
+
+![Fit seconds vs features, re-baseline](assets/cols-rebaseline.svg)
+
+Fit seconds (test r²), best of reps:
+
+{fit_table}
+
+Peak host RSS, worst rep:
+
+{rss_table}
+
+{provenance(["cols-rebaseline-2026-07.jsonl"], "Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells.")}"""
 
 
 # ---- Perf: the remaining tracks ---------------------------------------------
