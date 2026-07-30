@@ -190,6 +190,11 @@ help:  ## List the common make targets.
 	@echo "  make skills             Install project-local Claude Code skills (currently: caveman)."
 	@echo "  make skills-clean       Remove installed project-local skills."
 
+install-hooks:  ## Point core.hooksPath at the versioned hooks (commit-msg format gate).
+	@chmod +x scripts/git-hooks/*
+	@git config core.hooksPath scripts/git-hooks
+	@echo "hooks installed: core.hooksPath = scripts/git-hooks"
+
 skills: $(SKILLS_DIR)/caveman/SKILL.md  ## Install project-local Claude Code skills (currently caveman).
 
 $(SKILLS_DIR)/caveman/SKILL.md:
@@ -201,4 +206,4 @@ $(SKILLS_DIR)/caveman/SKILL.md:
 skills-clean:  ## Remove installed project-local skills.
 	rm -rf $(SKILLS_DIR)
 
-.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint lint-python all run params-json test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu bench-scaling python python-cuda python-test skills skills-clean help
+.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint lint-python all run params-json test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu bench-scaling python python-cuda python-test install-hooks skills skills-clean help
