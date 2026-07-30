@@ -87,19 +87,17 @@ void fill_feature_parallel(Dataset const &ds, floats_view grad, floats_view hess
 
 constexpr size_t direct_fill = static_cast<size_t>(-1);
 
-// Row-wise fill scatter-footprint ceiling: above this, u8 nodes become
-// candidates for the feature-parallel fill (issue #217). Measured crossover
-// on M2/8t at 131k rows: row wins at 2048 cols (4.2MB, by 18%),
-// feature-parallel wins at 4096 (8.4MB, by 2.3x); 6MB splits the points.
-constexpr size_t k_wide_scatter_bytes = 6U << 20U;
-
-// Even past the scatter ceiling, big nodes stay on the row path: the
-// feature-parallel scan re-reads grad/hess once per feature, free while the
-// node's 8 bytes/row stay cache-resident and ruinous once they stream
-// (same-pod L40S-host ladder: 131k x 16384 fell 1019s to 379s while
-// 1M x 4096 would regress 348s to 523s without this bound). Per-node, so a
-// wide fit's large root row-fills and its deeper levels flip.
-constexpr size_t k_fp_max_rows = 262'144;
+// Row-wise fill scatter-footprint ceiling: above this, u8 levels route
+// through the feature-parallel fill (issue #217). The row path dies when
+// its per-block scatter target outruns the last-level cache (33.6MB at 16k
+// features x 255 bins: 1019s -> 379s depthwise, 2591s -> 445s leafwise at
+// 131k x 16384 on the same pod), but a big L3 absorbs mid-width targets
+// (8.4MB at 4096 cols: the row path WON the interleaved A/B 320s vs 547s
+// at 1M rows on an EPYC host). 24MB flips only the ultra-wide shapes that
+// lost on every measured host; a cache-size-aware threshold that also
+// captures the mid-width win on small-cache hosts (M2: 101.7s -> 44.9s at
+// 131k x 4096) is the recorded follow-up on the issue.
+constexpr size_t k_wide_scatter_bytes = 24U << 20U;
 
 // One row block of one node: fills either the node's own histogram cells
 // (single-block nodes) or a private partial slab merged afterwards.
@@ -352,31 +350,18 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         return;
     }
     // Wide selections break the row-wise fill: its per-row scatter targets
-    // total_cells x 8B of histogram (33MB at 16k features x 255 bins), so
-    // every add misses cache and the partial slabs cost a zero+merge pass
-    // per block. Small-enough nodes then take the feature-parallel fill;
-    // big nodes keep the row path (k_fp_max_rows). Measured crossovers in
+    // total_cells x 8B of histogram cells, so past the cache-calibrated
+    // footprint ceiling every add misses and the partial slabs add a
+    // zero+merge pass per block; the whole level then takes the
+    // feature-parallel fill instead. Measured crossovers in
     // benchmarks/wide-cpu-hist-2026-07.md (issue #217).
-    static thread_local std::vector<std::reference_wrapper<SplitInput>> row_nodes;
-    row_nodes.clear();
     if (offsets.total_cells * sizeof(HistCell) > k_wide_scatter_bytes)
     {
         for (SplitInput &node : nodes)
         {
-            if (node.rows.size() <= k_fp_max_rows)
-            {
-                fill_feature_parallel(ds, grad, hess, node, selected);
-            }
-            else
-            {
-                row_nodes.push_back(std::ref(node));
-            }
+            fill_feature_parallel(ds, grad, hess, node, selected);
         }
-        if (row_nodes.empty())
-        {
-            return;
-        }
-        nodes = row_nodes;
+        return;
     }
     grower_detail::GrowProfiler::Lap row_lap;
     FillPlan const &plan = plan_fill(nodes, selected.size(), offsets.total_cells);
