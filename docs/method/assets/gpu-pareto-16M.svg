@@ -15,6 +15,7 @@
 <line x1='771.2' y1='42' x2='771.2' y2='376' stroke='#808080' stroke-opacity='0.12'/>
 <text x='771.2' y='394' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>60s</text>
 <text x='20' y='30' font-size='10' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>test r2</text>
+<text x='327.0' y='410' font-size='10' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>fit seconds</text>
 <polyline points='73.2,321.6 99.5,216.5 125.6,162.5 163.4,121.5 247.9,91.9 354.0,83.9' fill='none' stroke='#1b5e20' stroke-width='2.5'/>
 <circle cx='73.2' cy='321.6' r='3.2' fill='#1b5e20'/>
 <circle cx='99.5' cy='216.5' r='3.2' fill='#1b5e20'/>

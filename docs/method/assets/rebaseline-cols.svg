@@ -15,6 +15,7 @@
 <line x1='590.0' y1='42' x2='590.0' y2='356' stroke='#808080' stroke-opacity='0.12'/>
 <text x='590.0' y='374' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>4096</text>
 <text x='20' y='30' font-size='10' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>fit seconds</text>
+<text x='327.0' y='390' font-size='10' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>features</text>
 <polyline points='64.0,339.2 197.2,289.6 393.6,219.4 590.0,149.3' fill='none' stroke='#1b5e20' stroke-width='2.5'/>
 <circle cx='64.0' cy='339.2' r='3.2' fill='#1b5e20'/>
 <circle cx='197.2' cy='289.6' r='3.2' fill='#1b5e20'/>
