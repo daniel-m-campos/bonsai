@@ -1,0 +1,55 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='760' height='400' viewBox='0 0 760 400'>
+<text x='64' y='22' font-size='13' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='bold'>Measured peak device memory vs cols at 2^31 cells (log-log)</text>
+<line x1='64' y1='244.2' x2='590' y2='244.2' stroke='#808080' stroke-opacity='0.22'/>
+<text x='56' y='248.2' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>10</text>
+<line x1='64' y1='51.2' x2='590' y2='51.2' stroke='#808080' stroke-opacity='0.22'/>
+<text x='56' y='55.2' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>100</text>
+<line x1='64.0' y1='42' x2='64.0' y2='356' stroke='#808080' stroke-opacity='0.12'/>
+<text x='64.0' y='374' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>128</text>
+<line x1='180.9' y1='42' x2='180.9' y2='356' stroke='#808080' stroke-opacity='0.12'/>
+<text x='180.9' y='374' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>512</text>
+<line x1='297.8' y1='42' x2='297.8' y2='356' stroke='#808080' stroke-opacity='0.12'/>
+<text x='297.8' y='374' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>2048</text>
+<line x1='414.7' y1='42' x2='414.7' y2='356' stroke='#808080' stroke-opacity='0.12'/>
+<text x='414.7' y='374' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>8192</text>
+<line x1='531.6' y1='42' x2='531.6' y2='356' stroke='#808080' stroke-opacity='0.12'/>
+<text x='531.6' y='374' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>32768</text>
+<line x1='590.0' y1='42' x2='590.0' y2='356' stroke='#808080' stroke-opacity='0.12'/>
+<text x='590.0' y='374' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>65536</text>
+<text x='20' y='30' font-size='10' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>peak GB</text>
+<polyline points='64.0,333.7 180.9,339.2 297.8,312.9 414.7,246.9 531.6,150.2 590.0,96.2' fill='none' stroke='#1b5e20' stroke-width='2.5'/>
+<circle cx='64.0' cy='333.7' r='3.2' fill='#1b5e20'/>
+<circle cx='180.9' cy='339.2' r='3.2' fill='#1b5e20'/>
+<circle cx='297.8' cy='312.9' r='3.2' fill='#1b5e20'/>
+<circle cx='414.7' cy='246.9' r='3.2' fill='#1b5e20'/>
+<circle cx='531.6' cy='150.2' r='3.2' fill='#1b5e20'/>
+<circle cx='590.0' cy='96.2' r='3.2' fill='#1b5e20'/>
+<polyline points='64.0,333.7 180.9,339.2 297.8,312.9 414.7,247.1 531.6,150.3 590.0,96.1' fill='none' stroke='#4caf50' stroke-width='2.5'/>
+<circle cx='64.0' cy='333.7' r='3.2' fill='#4caf50'/>
+<circle cx='180.9' cy='339.2' r='3.2' fill='#4caf50'/>
+<circle cx='297.8' cy='312.9' r='3.2' fill='#4caf50'/>
+<circle cx='414.7' cy='247.1' r='3.2' fill='#4caf50'/>
+<circle cx='531.6' cy='150.3' r='3.2' fill='#4caf50'/>
+<circle cx='590.0' cy='96.1' r='3.2' fill='#4caf50'/>
+<polyline points='64.0,190.9 180.9,191.7 297.8,191.9 414.7,191.4 531.6,112.2' fill='none' stroke='#1f77b4' stroke-width='2.5'/>
+<circle cx='64.0' cy='190.9' r='3.2' fill='#1f77b4'/>
+<circle cx='180.9' cy='191.7' r='3.2' fill='#1f77b4'/>
+<circle cx='297.8' cy='191.9' r='3.2' fill='#1f77b4'/>
+<circle cx='414.7' cy='191.4' r='3.2' fill='#1f77b4'/>
+<circle cx='531.6' cy='112.2' r='3.2' fill='#1f77b4'/>
+<polyline points='64.0,59.8 180.9,59.8 297.8,59.8 414.7,59.8 531.6,59.8 590.0,59.8' fill='none' stroke='#e08f1a' stroke-width='2.5'/>
+<circle cx='64.0' cy='59.8' r='3.2' fill='#e08f1a'/>
+<circle cx='180.9' cy='59.8' r='3.2' fill='#e08f1a'/>
+<circle cx='297.8' cy='59.8' r='3.2' fill='#e08f1a'/>
+<circle cx='414.7' cy='59.8' r='3.2' fill='#e08f1a'/>
+<circle cx='531.6' cy='59.8' r='3.2' fill='#e08f1a'/>
+<circle cx='590.0' cy='59.8' r='3.2' fill='#e08f1a'/>
+<line x1='608' y1='50' x2='630' y2='50' stroke='#1b5e20' stroke-width='2.5'/>
+<text x='636' y='54' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>bonsai cuda dw</text>
+<line x1='608' y1='67' x2='630' y2='67' stroke='#4caf50' stroke-width='2.5'/>
+<text x='636' y='71' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>bonsai cuda obl</text>
+<line x1='608' y1='84' x2='630' y2='84' stroke='#1f77b4' stroke-width='2.5'/>
+<text x='636' y='88' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>xgb cuda</text>
+<line x1='608' y1='101' x2='630' y2='101' stroke='#e08f1a' stroke-width='2.5'/>
+<text x='636' y='105' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>catboost gpu</text>
+</svg>
