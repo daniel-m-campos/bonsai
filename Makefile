@@ -157,6 +157,17 @@ bench-scaling:  ## Run the synthetic rows/cols/bins/threads scaling sweep.
 	@PYTHONPATH=$(if $(wildcard build-cuda/python),build-cuda/python,build/python) \
 	    uv run scripts/bench_scaling.py $(ARGS)
 
+# Replicates the iso-volume campaign's bonsai arms on this host (the pod
+# campaign runs all six arms via scripts/pod_bench_driver.sh). Rows land in
+# the shared results file, distinguished by host name and run label.
+bench-iso: python-cuda  ## Run the iso-volume bonsai arms on this host's GPU.
+	@PYTHONPATH=build-cuda/python $(PYTHON) -m bonsai.bench run \
+	    --spec benchmarks/specs/iso-volume-2026-08.json \
+	    --variants bonsai_cuda_depthwise,bonsai_cuda_oblivious \
+	    --out benchmarks/results/iso-volume-2026-08.jsonl \
+	    --run-label iso-volume-2026-08-workrig \
+	    --host-name workrig-rtx-pro-6000 $(ARGS)
+
 $(TOY_SENTINEL):
 	@uv run scripts/fetch_toy.py
 	@touch $@
@@ -206,4 +217,4 @@ $(SKILLS_DIR)/caveman/SKILL.md:
 skills-clean:  ## Remove installed project-local skills.
 	rm -rf $(SKILLS_DIR)
 
-.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint lint-python all run params-json test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu bench-scaling python python-cuda python-test install-hooks skills skills-clean help
+.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint lint-python all run params-json test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu bench-scaling bench-iso python python-cuda python-test install-hooks skills skills-clean help

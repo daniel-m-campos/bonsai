@@ -29,6 +29,18 @@ PYTHONPATH=build/python python -m bonsai.bench.grinsztajn out.jsonl
 | `airline` | perf | `python -m bonsai.bench.airline out.jsonl --sizes 0.1m` | The benchm-ml airline ladder at 0.1m/1m/10m rows; downloads the CSVs on first run. `--variants all` adds the reference libraries. |
 | `datasets` | (fetcher) | `python -m bonsai.bench.datasets --list` | Lists the pinned datasets and their cache state; `python -m bonsai.bench.datasets <name>` fetches one ahead of time. |
 
+## Custom ladders: the spec-driven CLI
+
+Cells that are not on a suite's built-in grid run through the unified CLI: a JSON spec names the cells (or a generator), the variants, threads, and repeats, and the driver handles child processes, resume, and row emission.
+
+```bash
+python -m bonsai.bench plan --spec benchmarks/specs/iso-volume-2026-08.json
+python -m bonsai.bench run --spec benchmarks/specs/iso-volume-2026-08.json --out iso.jsonl
+python -m bonsai.bench variants
+```
+
+`plan` prints the expansion (every cell, variant, timeout, repeat count) without fitting anything. `run` resumes by default when the output file already exists: finished rows are skipped, failures re-attempt, so an interrupted sweep continues by re-running the same command. Campaign specs are committed under `benchmarks/specs/`; the `iso_volume` generator holds rows x cols constant while sweeping the aspect ratio, and GPU rows record measured peak device memory (`dev_mem`) sampled while the child runs. Pod campaigns wrap this in `scripts/pod_bench_driver.sh` (see `benchmarks/README.md`).
+
 ## Reading what comes out
 
 Suites append one JSON row per measurement to the output file, self-describing enough to reproduce: the command, the knob set (hashed for grouping), the git sha, and the host down to library versions (`bonsai.bench.runlog`). The published tables in [the results ledger](../method/results.md) are rendered from committed rows of exactly this shape.
