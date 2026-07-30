@@ -8,12 +8,13 @@ Two divisions, kept apart. Quality rows make accuracy claims, where the metric i
 
 The only citable standings table is the Grinsztajn suite: 55 tasks selected by third parties. That removes the selection-bias objection a self-picked suite cannot answer.
 
-## Three headline numbers
+## Four headline numbers
 
-All three are GPU, same-pod, at 16M rows.
+All measured same-pod; the first two at 16M rows.
 
 - **Speed.** On the 16M GPU frontier bonsai reaches every measured accuracy first, at every horizon: the marginal boosting round costs 64ms against CatBoost's 78 on the same pod, and the fixed cost is 3.8s against CatBoost's 11.7 ([the frontier](results.md#gpu-accuracy-vs-time-frontier-at-16m)).
 - **Memory.** Peak host RSS at 16M is 7.0GB against XGBoost's 22.2GB and CatBoost's 19.4GB, roughly 3x less. Predict is about 3x faster ([the ledger](results.md#perf-division)).
+- **Shape.** At constant data volume (rows x cols held at 2^31) bonsai is fastest at every aspect ratio, its fit time nearly flat across the tall half (6.8-9.3s where both references vary 1.5-2x), and its device memory sizes to the problem: 3.4GB at 16M x 128 against XGBoost's 18.9GB and CatBoost's 90.2GB ([the shape frontier](results.md#the-iso-volume-shape-frontier-decision-91)).
 - **Determinism.** Models are bit-identical across CPU architectures and thread counts, enforced per commit in CI. No reference library offers this ([the contract](../design/determinism.md)).
 
 Losses are recorded with the wins, and so are their reversals: the wide-data GPU lead CatBoost held in the July 8 study flipped to bonsai by the July 30 recheck (decision 90). XGBoost holds the last 0.001 r² of cut quality on some tasks. Both are in [the ledger](results.md).

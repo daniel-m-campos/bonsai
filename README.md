@@ -96,7 +96,22 @@ From the same-pod 2026-07 re-baseline (dual-EPYC-9554 host with an L40S; `fit()`
 | 4M | 4.5s (.878) | **4.4s** (.875) | 5.3s (.878) | 5.0s (.877) | 19.9s (.879) | 20.2s (.875) |
 | 16M | 20.5s (.879) | **18.4s** (.876) | 19.9s (.880) | 18.5s (.876) | 111.3s (.879) | 73.3s (.876) |
 
-Honest caveats, because benchmarks without them are advertising: identical-model GPUs across the rental fleet measure up to ~25% apart, so only same-pod columns compare. bonsai owns the fastest slot at every row scale, edging CatBoost at 16M (18.4 vs 18.5s, both .876) and beating XGBoost-GPU (19.9s); the wide-data lead belongs to bonsai in the full 2026-07-30 six-variant re-baseline: fastest at every width from 100 to 16,384 features on one pod (50.5s vs CatBoost-GPU 71.3s and XGBoost-GPU 77.3s at 131k x 16384; 33.2 vs 50.0 and 102.2s at 1M x 4096) at 3-4x less host memory (16.4GB vs 50.6 and 60.4GB), retiring the earlier CatBoost-leads reading, which was measured on 2026-07-08 code (decision 90; table and chart in [the ledger](https://daniel-m-campos.github.io/bonsai/method/results/)). Off the fixed-iteration axis, the 16M accuracy-vs-time frontier now belongs to bonsai: fastest to every measured accuracy up to ~.895 r², a statistical tie with CatBoost through the .897-.898 plateau, and the measured ceiling (.8981); CatBoost's remaining edge is a cheaper marginal round that pays off only past ~450 rounds at this scale (decision 72, chart in the ledger). Peak host RSS at 16M is 7.0GB vs XGBoost's 22.2GB and CatBoost's 19.4GB, and predict is ~3x faster. Two earlier apparent gaps against CatBoost were bonsai bugs, since fixed (decisions 63/64); the path from 3x behind to this table is [guide chapter 11](https://daniel-m-campos.github.io/bonsai/guide/11-performance-engineering/).
+**Rows.** bonsai holds the fastest slot at every row scale in the table above, edging CatBoost-GPU at 16M (18.4 vs 18.5s, both .876) with XGBoost-GPU at 19.9s.
+
+**Features and shape.** Two same-pod studies from 2026-07-30 own this axis. The six-variant cols re-baseline: fastest at every width from 100 to 16,384 features (50.5s vs CatBoost-GPU 71.3s and XGBoost-GPU 77.3s at 131k x 16384) at 3-4x less host memory (decision 90). The iso-volume shape frontier on an RTX PRO 6000 Blackwell (96GB) holds rows x cols constant at 2^31 and sweeps aspect; bonsai is fastest at every cell of both constant-volume ladders, and its fit time is nearly flat across the tall half (6.8-9.3s) where both references vary 1.5-2x (decision 91). Measured peak device memory is in parentheses:
+
+| cols (rows x cols = 2^31) | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu |
+|---|--:|--:|--:|--:|
+| 128 | 7.2s (3.4GB) | **6.9s** (3.4GB) | 28.1s (18.9GB) | 26.0s (90.2GB) |
+| 2048 | 9.3s (4.4GB) | **8.6s** (4.4GB) | 27.3s (18.7GB) | 16.6s (90.2GB) |
+| 32768 | **57.8s** (30.7GB) | 68.5s (30.7GB) | 62.1s (48.3GB) | 96.3s (90.2GB) |
+| 65536 | **105.5s** (58.5GB) | 130.4s (58.5GB) | failed (33.4GB) | 172.4s (90.2GB) |
+
+**Memory.** Host: peak RSS at 16M is 7.0GB vs XGBoost's 22.2GB and CatBoost's 19.4GB, and predict is ~3x faster. Device: bonsai's footprint sizes to the problem (3.4GB tall, 58.5GB at the widest aspect) where XGBoost holds a flat ~19GB until it fails mid-allocation at 33.4GB of a 96GB card, and CatBoost reserves 90.2GB at every shape including 1M x 100 (decision 91).
+
+**The accuracy-time frontier.** Off the fixed-iteration axis, the 16M frontier belongs to bonsai: fastest to every measured accuracy up to ~.895 r², a statistical tie with CatBoost through the .897-.898 plateau, and the measured ceiling (.8981); CatBoost's remaining edge is a cheaper marginal round that pays off only past ~450 rounds at this scale (decision 72).
+
+Honest caveats, because benchmarks without them are advertising: identical-model GPUs across the rental fleet measure up to ~25% apart, so only same-pod columns compare and no number above crosses a pod. Two earlier apparent gaps against CatBoost were bonsai bugs, since fixed (decisions 63/64); the path from 3x behind to these tables is [guide chapter 11](https://daniel-m-campos.github.io/bonsai/guide/11-performance-engineering/), and every table and chart lives in [the ledger](https://daniel-m-campos.github.io/bonsai/method/results/).
 
 ## Claims and proofs
 
