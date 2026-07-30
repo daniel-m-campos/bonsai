@@ -4,6 +4,16 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-07-30
+
+Wide data on CPU gets 2.6-5.8x faster, from the first production field report.
+
+### Changed
+- **Ultra-wide CPU fits route through the feature-parallel fill** (decision 88, issue #217): u8 levels whose selected-histogram footprint exceeds 24MB (more than ~12k features at 255 bins) stop using the row-wise fill, whose per-row scatter breaks every cache at that width. Same-pod at 131k x 16384, t=16: depthwise 1019s to 379s (LightGBM-CPU parity), leafwise 2591s to 445s (a 7x deficit collapses to 1.2x), at 2.7x less peak memory than LightGBM (18.8 vs 50.1GB). Narrow and mid-width fits are code-identical (fixed-input models byte-identical); above the threshold, models change bytes at identical accuracy and become bit-identical at any thread count. The threshold was set by an interleaved same-pod A/B; the cache-size-aware refinement is recorded on issue #217. Evidence: `benchmarks/wide-cpu-hist-2026-07.md`.
+
+### Docs
+- **Engine track chapter E6, the wide-data wall**: the two fills as one arithmetic with the scatter on opposite sides, the footprint table behind the cache cliff, and the two refuted theories on the way to the shipped constant.
+
 ## [1.5.1] - 2026-07-30
 
 Package hygiene and benchmark fairness, driven by the first field reports from production use.
