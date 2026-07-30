@@ -370,6 +370,17 @@ XGBoost 3.3 (2026-07-21) claimed lower GPU quantile-sketching memory and wide-da
 
 *Source: [`xgb33-recheck-2026-07.jsonl`](../../benchmarks/results/xgb33-recheck-2026-07.jsonl). Driver: `python -m bonsai.bench.scaling --worker` per cell, three arms on one pod; verdict recorded as decision 87.*
 
+### The wide-CPU fill routing (decision 88)
+
+Ultra-wide selections broke the row-wise u8 fill: its per-row scatter targets the whole selected histogram footprint (33.6MB at 16k features x 255 bins), so every add missed cache and the partial slabs added a zero+merge pass per block. Levels past a 24MB footprint now take the feature-parallel fill (one thread per feature, no partials, bit-identical at any thread count). Same-pod at 131k x 16384, t=16: depthwise reaches LightGBM parity and leafwise's 7x deficit collapses to 1.2x, at 2.7x less peak RSS (18.8 vs 50.1GB); an interleaved A/B pinned the threshold so mid-width shapes stay on the row path, which a big L3 still wins (320s vs 547s at 1M x 4096). Narrow-path models are byte-identical to before; the origin is a production field report (issue #217).
+
+| grower | row-wise fill (before) | feature-parallel (after) | lgbm_cpu |
+|---|---|---|---|
+| depthwise | 1019s | 379s | 367s |
+| leafwise | 2591s | 445s | 367s |
+
+*Source: [`wide-cpu-hist-2026-07.jsonl`](../../benchmarks/results/wide-cpu-hist-2026-07.jsonl). Evidence: [benchmarks/wide-cpu-hist-2026-07.md](../../benchmarks/wide-cpu-hist-2026-07.md); verdict recorded as decision 88.*
+
 ### The scaling study
 
 964 runs across 7 hosts and the axes base, bins, cols, rows; regenerate exponents and the committed log-log plots under [`benchmarks/results/scaling/`](../../benchmarks/results/scaling) with [scripts/analyze_scaling.py](../../scripts/analyze_scaling.py).
