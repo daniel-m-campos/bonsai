@@ -133,8 +133,8 @@ void sort_floats(std::vector<float> &v)
     scratch.resize(n);
     for (size_t i = 0; i < n; ++i)
     {
-        uint32_t b = std::bit_cast<uint32_t>(v[i]);
-        keys[i]    = b ^ ((b >> 31U) != 0U ? 0xFFFFFFFFU : 0x80000000U);
+        auto b  = std::bit_cast<uint32_t>(v[i]);
+        keys[i] = b ^ ((b >> 31U) != 0U ? 0xFFFFFFFFU : 0x80000000U);
     }
     uint32_t *src = keys.data();
     uint32_t *dst = scratch.data();
