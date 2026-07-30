@@ -146,12 +146,26 @@ class Dataset
         return plane_;
     }
 
-    // Row-major mirror of the u8 columns (n_rows x n_features), built on
-    // first use by the row-wise histogram fill; empty when bins are u16
-    // (that fill stays feature-parallel). Lazy so CUDA and predict-only
-    // workflows never pay the +n_rows*n_features bytes. Safe unguarded:
-    // boosters grow one tree at a time, so first use is single-threaded.
+    // Row-major mirror of the u8 columns, built on first use by the
+    // row-wise histogram fill; empty when bins are u16 (that fill stays
+    // feature-parallel). Lazy so CUDA and predict-only workflows never pay
+    // the +n_rows*n_features bytes. Safe unguarded: boosters grow one tree
+    // at a time, so first use is single-threaded.
+    //
+    // Layout is column-block-tiled (issue #217): features are grouped into
+    // blocks of mirror_tile_width() and each block is row-major on its own
+    // (block b starts at n_rows * b * width; a row's strip inside it is
+    // width_b bytes). At n_features <= the tile width there is exactly one
+    // block and the layout is the classic n_rows x n_features mirror.
     std::span<uint8_t const> row_major_bins() const;
+
+    // Features per mirror block: sized so one block's full histogram
+    // footprint (width x 256 bins x 8B cells) stays cache-resident during
+    // a tiled row-wise fill.
+    static constexpr size_t mirror_tile_width()
+    {
+        return 2048;
+    }
 
   private:
     // Lazily materialized host columns of a plane-backed dataset. The first

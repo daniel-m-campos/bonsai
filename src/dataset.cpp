@@ -203,12 +203,15 @@ std::span<uint8_t const> Dataset::row_major_bins() const
     auto const &cols = plane_ ? host_bins().u8 : features_u8_;
     if (!row_major_)
     {
-        size_t const f   = cols.size();
-        auto         rm  = std::make_shared<std::vector<uint8_t>>(n_rows_ * f);
-        uint8_t     *out = rm->data();
-        // Tiled column-to-row transpose: each worker owns a row block, so
-        // writes never overlap and the mirror is byte-identical at any
-        // thread count.
+        size_t const f     = cols.size();
+        size_t const width = mirror_tile_width();
+        auto         rm    = std::make_shared<std::vector<uint8_t>>(n_rows_ * f);
+        uint8_t     *out   = rm->data();
+        // Tiled column-to-row transpose into the block layout: each worker
+        // owns a row block, so writes never overlap and the mirror is
+        // byte-identical at any thread count. Feature c lands in mirror
+        // block c/width at strip position c%width; one block reproduces
+        // the classic layout exactly.
         constexpr size_t tile = 64;
         parallel::for_each_index((n_rows_ + tile - 1) / tile,
                                  [&](size_t block)
@@ -220,10 +223,16 @@ std::span<uint8_t const> Dataset::row_major_bins() const
                                          size_t const c1 = std::min(c0 + tile, f);
                                          for (size_t c = c0; c < c1; ++c)
                                          {
-                                             uint8_t const *col = cols[c].data();
+                                             size_t const mb = c / width;
+                                             size_t const width_b =
+                                                 std::min(width, f - (mb * width));
+                                             size_t const   base = n_rows_ * mb * width;
+                                             size_t const   in_b = c - (mb * width);
+                                             uint8_t       *dst  = out + base + in_b;
+                                             uint8_t const *col  = cols[c].data();
                                              for (size_t r = r0; r < r1; ++r)
                                              {
-                                                 out[(r * f) + c] = col[r];
+                                                 dst[r * width_b] = col[r];
                                              }
                                          }
                                      }
