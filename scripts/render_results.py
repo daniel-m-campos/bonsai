@@ -817,6 +817,140 @@ Peak host RSS, worst rep:
 {provenance(["cols-rebaseline-2026-07.jsonl"], "Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells.")}"""
 
 
+# ---- Perf: iso-volume -------------------------------------------------------
+
+ISO_VARIANTS = [
+    ("bonsai_cuda_depthwise", "bonsai cuda dw"),
+    ("bonsai_cuda_oblivious", "bonsai cuda obl"),
+    ("xgb_cuda", "xgb cuda"),
+    ("catboost_gpu", "catboost gpu"),
+    ("bonsai_depthwise", "bonsai cpu dw"),
+    ("xgb_hist", "xgb hist"),
+]
+
+ISO_STYLE = {
+    "bonsai_cuda_depthwise": ("bonsai cuda dw", "#1b5e20", False),
+    "bonsai_cuda_oblivious": ("bonsai cuda obl", "#4caf50", False),
+    "xgb_cuda": ("xgb cuda", LIB_COLOR["xgboost"], False),
+    "catboost_gpu": ("catboost gpu", LIB_COLOR["catboost"], False),
+    "bonsai_depthwise": ("bonsai cpu dw", "#1b5e20", True),
+    "xgb_hist": ("xgb hist", LIB_COLOR["xgboost"], True),
+}
+
+ISO_HOST = "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition"
+
+
+def iso_volume_section() -> str:
+    rows = load_jsonl("iso-volume-2026-08.jsonl")
+    pod = [r for r in rows if r["host"]["name"] == ISO_HOST]
+    best: dict[tuple, dict] = {}
+    errors = []
+    for r in pod:
+        c = r["cell"]
+        if r["status"] != "ok":
+            errors.append(r)
+            continue
+        k = (r["run"], c["rows"], c["cols"], r["variant"])
+        if k not in best or r["fit_s"] < best[k]["fit_s"]:
+            best[k] = r
+
+    def cells_for(run):
+        return sorted({(k[1], k[2]) for k in best if k[0] == run},
+                      key=lambda rc: rc[1])
+
+    def label(nr, nc):
+        r = f"{nr // 1_000_000}M" if nr >= 1_000_000 else f"{nr // 1000}k"
+        return f"{r} x {nc}"
+
+    def fit_cell(run, nr, nc, v):
+        r = best.get((run, nr, nc, v))
+        if r is None:
+            return "-"
+        return f"{r['fit_s']:.1f}s ({fmt(r.get('r2_test'), 3).lstrip('0')})"
+
+    def vram_cell(run, nr, nc, v):
+        r = best.get((run, nr, nc, v))
+        dm = (r or {}).get("dev_mem") or {}
+        gb = dm.get("peak_gb_pid")
+        return f"{gb:.1f}GB" if gb is not None else "-"
+
+    def tables(run, variants):
+        cs = cells_for(run)
+        fit = md_table(["cell", *[lbl for _, lbl in variants]],
+                       [[label(nr, nc),
+                         *[fit_cell(run, nr, nc, v) for v, _ in variants]]
+                        for nr, nc in cs])
+        vram = md_table(["cell", *[lbl for v, lbl in variants
+                                   if not ISO_STYLE[v][2]]],
+                        [[label(nr, nc),
+                          *[vram_cell(run, nr, nc, v) for v, _ in variants
+                            if not ISO_STYLE[v][2]]]
+                         for nr, nc in cs])
+        return fit, vram
+
+    run31, run33 = "iso-volume-2026-08-pod", "iso-volume-33-2026-08-pod"
+    fit31, vram31 = tables(run31, ISO_VARIANTS)
+    fit33, vram33 = tables(run33, ISO_VARIANTS[:4])
+
+    iso_cells = [(nr, nc) for nr, nc in cells_for(run31) if nr * nc == 1 << 31]
+    series_fit, series_vram = [], []
+    for v, (lbl, color, cpu) in ISO_STYLE.items():
+        pts = [(nc, best[(run31, nr, nc, v)]["fit_s"])
+               for nr, nc in iso_cells if (run31, nr, nc, v) in best]
+        if pts:
+            series_fit.append((lbl, color, cpu, pts))
+        if not cpu:
+            mpts = [(nc, (best[(run31, nr, nc, v)].get("dev_mem") or {})
+                     .get("peak_gb_pid"))
+                    for nr, nc in iso_cells if (run31, nr, nc, v) in best]
+            mpts = [(x, y) for x, y in mpts if y is not None]
+            if mpts:
+                series_vram.append((lbl, color, cpu, mpts))
+    ticks = [(nc, str(nc)) for _, nc in iso_cells]
+    line_chart("iso-volume-fit.svg",
+               "Fit seconds vs cols at constant rows x cols = 2^31 (log-log)",
+               "fit seconds", series_fit, x_ticks=ticks)
+    line_chart("iso-volume-vram.svg",
+               "Measured peak device memory vs cols at 2^31 cells (log-log)",
+               "peak GB", series_vram, x_ticks=ticks)
+
+    err_note = ""
+    if errors:
+        e = errors[0]
+        gb = (e.get("dev_mem") or {}).get("peak_gb_pid")
+        c = e["cell"]
+        err_note = (f" The one failure is data: xgb_cuda died at "
+                    f"{label(c['rows'], c['cols'])} on both attempts, the "
+                    f"sampler recording {gb:.1f}GB of device memory at death.")
+
+    return f"""### The iso-volume shape frontier (decision 91)
+
+Constant data volume, swept aspect ratio: every cell of the primary ladder holds rows x cols at 2^31 (an 8GiB float32 matrix) while cols runs 128 to 65536, so costs that scale with total cells stay flat and whatever rises is paying for width. Measured peak device memory (`dev_mem`, NVML-sampled while the child runs, gates off) is an output, not an estimate. One pod: RTX PRO 6000 Blackwell Workstation Edition (96GB, 64 vCPU, 1.1TB RAM, sync probe 4.5us/op), threads 16.
+
+bonsai's CUDA growers are fastest at every cell of both ladders and their fit time is nearly flat across the tall half of the iso-line (7.2s at 16M x 128 to 9.3s at 1M x 2048) where both references vary 1.5-2x; every arm rises together past 8192 cols as histogram cost (cols x bins) takes over. Device memory separates harder than time: bonsai peaks at 3.4GB where XGBoost holds 18.9GB, and CatBoost allocates 90.2GB (the whole card) at every cell including 1M x 100, so it never fails but never shares the device.{err_note} At the widest aspect (32k x 65536, where p is 2x n) the oblivious grower keeps test r2 at .873 while depthwise falls to .815, the symmetric tree's regularization showing at extreme width. On the 2^33 stretch (a 32GiB matrix, GPU arms only) bonsai leads 4.1x over XGBoost at 67M x 128 (27.9 vs 113.8s) at 6.3x less device memory (11.7 vs 73.6GB).
+
+![Fit seconds vs cols, iso-volume](assets/iso-volume-fit.svg)
+
+![Peak device memory vs cols, iso-volume](assets/iso-volume-vram.svg)
+
+Fit seconds (test r2), best of reps, 2^31 cells:
+
+{fit31}
+
+Measured peak device memory (per-process, worst rep is within sampling noise of best), 2^31 cells:
+
+{vram31}
+
+The 2^33 stretch, GPU arms:
+
+{fit33}
+
+{vram33}
+
+{provenance(["iso-volume-2026-08.jsonl"], "Specs: [benchmarks/specs/](../../benchmarks/specs/); driver: [scripts/pod_bench_driver.sh](../../scripts/pod_bench_driver.sh); evidence: [benchmarks/iso-volume-2026-08.md](../../benchmarks/iso-volume-2026-08.md); verdict recorded as decision 91.")}
+"""
+
+
 # ---- Perf: the remaining tracks ---------------------------------------------
 
 
@@ -1066,6 +1200,7 @@ def render() -> str:
         campaign_section(),
         probes_section(),
         rebaseline_section(),
+        iso_volume_section(),
         perf_tracks_section(),
         airline_section(),
         ceiling_section(),

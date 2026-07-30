@@ -423,6 +423,56 @@ Peak host RSS, worst rep:
 
 *Source: [`cols-rebaseline-2026-07.jsonl`](../../benchmarks/results/cols-rebaseline-2026-07.jsonl). Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells.*
 
+### The iso-volume shape frontier (decision 91)
+
+Constant data volume, swept aspect ratio: every cell of the primary ladder holds rows x cols at 2^31 (an 8GiB float32 matrix) while cols runs 128 to 65536, so costs that scale with total cells stay flat and whatever rises is paying for width. Measured peak device memory (`dev_mem`, NVML-sampled while the child runs, gates off) is an output, not an estimate. One pod: RTX PRO 6000 Blackwell Workstation Edition (96GB, 64 vCPU, 1.1TB RAM, sync probe 4.5us/op), threads 16.
+
+bonsai's CUDA growers are fastest at every cell of both ladders and their fit time is nearly flat across the tall half of the iso-line (7.2s at 16M x 128 to 9.3s at 1M x 2048) where both references vary 1.5-2x; every arm rises together past 8192 cols as histogram cost (cols x bins) takes over. Device memory separates harder than time: bonsai peaks at 3.4GB where XGBoost holds 18.9GB, and CatBoost allocates 90.2GB (the whole card) at every cell including 1M x 100, so it never fails but never shares the device. The one failure is data: xgb_cuda died at 32k x 65536 on both attempts, the sampler recording 33.4GB of device memory at death. At the widest aspect (32k x 65536, where p is 2x n) the oblivious grower keeps test r2 at .873 while depthwise falls to .815, the symmetric tree's regularization showing at extreme width. On the 2^33 stretch (a 32GiB matrix, GPU arms only) bonsai leads 4.1x over XGBoost at 67M x 128 (27.9 vs 113.8s) at 6.3x less device memory (11.7 vs 73.6GB).
+
+![Fit seconds vs cols, iso-volume](assets/iso-volume-fit.svg)
+
+![Peak device memory vs cols, iso-volume](assets/iso-volume-vram.svg)
+
+Fit seconds (test r2), best of reps, 2^31 cells:
+
+| cell | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu | bonsai cpu dw | xgb hist |
+|---|---|---|---|---|---|---|
+| 1M x 100 | 0.5s (.877) | 1.1s (.877) | 1.6s (.876) | 1.8s (.876) | 5.2s (.877) | 3.5s (.876) |
+| 16M x 128 | 7.2s (.879) | 6.9s (.876) | 28.1s (.879) | 26.0s (.875) | 70.8s (.879) | 65.1s (.879) |
+| 4M x 512 | 6.8s (.878) | 6.2s (.876) | 24.7s (.878) | 14.8s (.877) | 62.4s (.878) | 60.2s (.878) |
+| 1M x 2048 | 9.3s (.876) | 8.6s (.876) | 27.3s (.877) | 16.6s (.876) | 72.1s (.876) | 84.8s (.877) |
+| 262k x 8192 | 20.5s (.868) | 21.4s (.874) | 34.5s (.867) | 35.5s (.874) | 125.5s (.868) | 127.1s (.867) |
+| 65k x 32768 | 57.8s (.841) | 68.5s (.870) | 62.1s (.840) | 96.3s (.866) | 310.0s (.843) | 276.3s (.841) |
+| 32k x 65536 | 105.5s (.816) | 130.4s (.874) | - | 172.4s (.869) | 491.1s (.816) | 444.0s (.817) |
+
+Measured peak device memory (per-process, worst rep is within sampling noise of best), 2^31 cells:
+
+| cell | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu |
+|---|---|---|---|---|
+| 1M x 100 | 0.8GB | 0.8GB | 0.9GB | 90.2GB |
+| 16M x 128 | 3.4GB | 3.4GB | 18.9GB | 90.2GB |
+| 4M x 512 | 3.2GB | 3.2GB | 18.7GB | 90.2GB |
+| 1M x 2048 | 4.4GB | 4.4GB | 18.7GB | 90.2GB |
+| 262k x 8192 | 9.7GB | 9.7GB | 18.8GB | 90.2GB |
+| 65k x 32768 | 30.7GB | 30.7GB | 48.3GB | 90.2GB |
+| 32k x 65536 | 58.5GB | 58.5GB | - | 90.2GB |
+
+The 2^33 stretch, GPU arms:
+
+| cell | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu |
+|---|---|---|---|---|
+| 67M x 128 | 27.9s (.880) | 23.9s (.871) | 113.8s (.880) | 103.8s (.877) |
+| 4M x 2048 | 25.8s (.878) | 22.6s (.876) | 101.6s (.878) | 47.7s (.876) |
+| 262k x 32768 | 85.3s (.870) | 88.3s (.877) | 160.7s (.868) | 154.7s (.876) |
+
+| cell | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu |
+|---|---|---|---|---|
+| 67M x 128 | 11.7GB | 11.7GB | 73.6GB | 90.2GB |
+| 4M x 2048 | 10.5GB | 10.5GB | 72.7GB | 90.2GB |
+| 262k x 32768 | 36.7GB | 36.7GB | 73.2GB | 90.2GB |
+
+*Source: [`iso-volume-2026-08.jsonl`](../../benchmarks/results/iso-volume-2026-08.jsonl). Specs: [benchmarks/specs/](../../benchmarks/specs/); driver: [scripts/pod_bench_driver.sh](../../scripts/pod_bench_driver.sh); evidence: [benchmarks/iso-volume-2026-08.md](../../benchmarks/iso-volume-2026-08.md); verdict recorded as decision 91.*
+
 ### The scaling study
 
 964 runs across 7 hosts and the axes base, bins, cols, rows; regenerate exponents and the committed log-log plots under [`benchmarks/results/scaling/`](../../benchmarks/results/scaling) with [scripts/analyze_scaling.py](../../scripts/analyze_scaling.py).
