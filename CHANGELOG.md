@@ -4,6 +4,17 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-07-30
+
+Package hygiene and benchmark fairness, driven by the first field reports from production use.
+
+### Changed
+- **The Python package is properly moduled**: `__init__.py` (849 lines of implementation) is now a ~50-line public surface over `estimators.py`, `_compat.py` (the XGBoost translation tables), and `_coerce.py`. Public API unchanged (same nine names); pickles from earlier versions load bit-identically. The lite design review behind it: `docs/reviews/2026-07-30-design-review-python.md`.
+- **Benchmark harness fairness fixes** (adversarial review, `docs/reviews/2026-07-30-review-benchmark-fairness.md`): the CatBoost borders-vs-bins fencepost now lives in one place (`catboost_core`, guard-tested) after call-site translations drifted three ways; XGBoost and LightGBM no longer run one bin short of bonsai in the airline and gpu-pareto suites; grinsztajn pins bonsai to the references' thread count. A rented-GPU re-check of both airline knob shapes confirmed no published cell depended on the drift (deltas within ±0.0022 of zero, all cited leads stand). The protocol page now states the classification leaf-floor caveats.
+
+### Docs
+- **Running the benchmarks** (`docs/use/benchmarks.md`): the installed-wheel and source-tree paths side by side, all four suites documented (the airline ladder for the first time), and where result rows land.
+
 ## [1.5.0] - 2026-07-29
 
 On PyPI as `bonsai-gbt`, and the XGBoost drop-in surface.
