@@ -7,6 +7,8 @@ reference-library versions it actually imported, so rows carry them.
 
 from __future__ import annotations
 
+import os
+import pathlib
 import resource
 import sys
 import time
@@ -124,10 +126,37 @@ RUNNERS = {"bonsai": run_bonsai, "xgb": run_xgb, "lgbm": run_lgbm,
            "catboost": run_catboost}
 
 
+def cached_gen_data(cell: dict, cache_dir: str):
+    """gen_data memoized to .npy files, loaded back as read-only memmaps.
+
+    gen_data is byte-stable in its arguments (guard-tested), so the key is
+    the argument tuple; at 2^31-cell campaigns every regeneration is 8GiB of
+    avoidable work per (variant, rep). Writes go through os.replace so a
+    half-written file never satisfies a later cache hit.
+    """
+    key = (f"{cell['rows']}x{cell['cols']}-s{cell['seed']}"
+           f"-i{cell['informative']}-t{cell['n_test']}")
+    root = pathlib.Path(cache_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    paths = [root / f"{key}-{n}.npy" for n in ("X", "y", "Xte", "yte")]
+    if not all(p.exists() for p in paths):
+        arrays = gen_data(cell["rows"], cell["cols"], cell["seed"],
+                          cell["n_test"], cell["informative"])
+        for p, a in zip(paths, arrays):
+            tmp = p.with_name(p.name + ".tmp.npy")
+            np.save(tmp, a)
+            os.replace(tmp, p)
+    return tuple(np.load(p, mmap_mode="r") for p in paths)
+
+
 def worker(spec: dict) -> dict:
     c = spec["cell"]
-    X, y, Xte, yte = gen_data(c["rows"], c["cols"], c["seed"], c["n_test"],
-                              c["informative"])
+    cache_dir = os.environ.get("BONSAI_BENCH_DATA_CACHE")
+    if cache_dir:
+        X, y, Xte, yte = cached_gen_data(c, cache_dir)
+    else:
+        X, y, Xte, yte = gen_data(c["rows"], c["cols"], c["seed"], c["n_test"],
+                                  c["informative"])
     v = resolve(spec["variant"])
     run = RUNNERS[v.lib]
     if v.device == "cuda":
