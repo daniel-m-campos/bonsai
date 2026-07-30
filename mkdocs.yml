@@ -129,7 +129,18 @@ nav:
       - Make targets: use/make-map.md
   - Results:
       - Overview: method/README.md
-      - The results: method/results.md
+      - The results ledger: method/results.md
+      - Perf division:
+          - Fit at scale: method/results/perf-scale.md
+          - Width and shape: method/results/perf-shape.md
+          - The accuracy-time frontier: method/results/perf-frontier.md
+          - Airline delays: method/results/perf-airline.md
+          - The single-card ceiling: method/results/perf-ceiling.md
+      - Quality division:
+          - Grinsztajn standings: method/results/quality-grinsztajn.md
+          - Campaign smoke: method/results/quality-campaign.md
+          - Probes: method/results/quality-probes.md
+      - The code division: method/results/code-metrics.md
       - The benchmark protocol: method/benchmark-protocol.md
       - How we decide: method/how-we-decide.md
       - What to use when: method/what-to-use-when.md

@@ -8,9 +8,9 @@ Read the table top to bottom as a decision on your data's shape. Row scale and h
 
 | your data | reach for | evidence |
 |---|---|---|
-| 1M+ rows, GPU training | bonsai | [frontier](results.md#gpu-accuracy-vs-time-frontier-at-16m), [airline AUC](../../benchmarks/airline-2026-07.md) |
+| 1M+ rows, GPU training | bonsai | [frontier](results/perf-frontier.md#gpu-accuracy-vs-time-frontier-at-16m), [airline AUC](../../benchmarks/airline-2026-07.md) |
 | small tabular, heavy categoricals | CatBoost | [cat probe](../../benchmarks/tabarena-cat-probe-2026-07.md) |
-| small pure-numeric tabular | split (see below) | [Grinsztajn](results.md#external-standings-the-grinsztajn-suite), [cat probe control](../../benchmarks/tabarena-cat-probe-2026-07.md) |
+| small pure-numeric tabular | split (see below) | [Grinsztajn](results/quality-grinsztajn.md#external-standings-the-grinsztajn-suite), [cat probe control](../../benchmarks/tabarena-cat-probe-2026-07.md) |
 | memory-constrained hosts | bonsai | [perf ledger](results.md#perf-division) |
 | sparse or high-dimensional-sparse | XGBoost | [sparse probe](../../benchmarks/sparse-tradeoff-2026-07.md) |
 | learning-to-rank | XGBoost or LightGBM | [ranking probe](../../benchmarks/ranking-tradeoff-2026-07.md) |
