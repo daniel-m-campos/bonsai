@@ -30,5 +30,6 @@ Every make target you run day to day, generated from the `##` comments in the [M
 | `make bench-gpu` | Run the MSD GPU ladder vs xgboost-GPU with profile breakdowns. |
 | `make bench-scaling` | Run the synthetic rows/cols/bins/threads scaling sweep. |
 | `make help` | List the common make targets. |
+| `make install-hooks` | Point core.hooksPath at the versioned hooks (commit-msg format gate). |
 | `make skills` | Install project-local Claude Code skills (currently caveman). |
 | `make skills-clean` | Remove installed project-local skills. |
