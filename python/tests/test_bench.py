@@ -129,6 +129,108 @@ def test_variant_registry():
         raise AssertionError("unknown variant must be rejected")
 
 
+def test_spec_expansion():
+    from bonsai.bench import spec as spec_mod
+
+    s = {"name": "iso-test", "suite": "iso-volume",
+         "defaults": {"depth": 8, "iters": 100, "lr": 0.1, "bins": 255,
+                      "informative": 20, "seed": 42},
+         "cells": [{"gen": "iso_volume", "log2_cells": 31,
+                    "cols": [128, 2048, 65536]},
+                   {"rows": 1_000_000, "cols": 100}],
+         "variants": ["bonsai_cuda_depthwise", "xgb_cuda", "bonsai_depthwise"],
+         "threads": [16],
+         "repeats": {"default": 2, "cpu": 1}}
+    cells = spec_mod.cells_of(s)
+    assert [(c["rows"], c["cols"]) for c in cells[:3]] == [
+        (16_777_216, 128), (1_048_576, 2048), (32_768, 65_536)]
+    assert all(c["rows"] * c["cols"] == 1 << 31 for c in cells[:3])
+    assert cells[0]["axis"] == "iso_volume" and cells[0]["aspect"] == 131072.0
+    assert cells[3]["axis"] == "cell" and cells[3]["n_test"] == 200_000
+    jobs = spec_mod.expand(s)
+    assert len(jobs) == 4 * 3
+    by = {(j["variant"], j["cell"]["cols"]): j for j in jobs}
+    assert by[("bonsai_cuda_depthwise", 128)]["repeats"] == 2
+    assert by[("bonsai_depthwise", 128)]["repeats"] == 1  # cpu policy
+    # variant_iters cross-products the listed variant only.
+    s2 = dict(s, variant_iters={"xgb_cuda": [50, 100]},
+              cells=[{"rows": 1000, "cols": 10}], repeats=1)
+    assert [(j["variant"], j["cell"]["iters"]) for j in spec_mod.expand(s2)] == [
+        ("bonsai_cuda_depthwise", 100), ("xgb_cuda", 50), ("xgb_cuda", 100),
+        ("bonsai_depthwise", 100)]
+    try:
+        spec_mod.cells_of({"cells": [{"gen": "iso_volume", "log2_cells": 31,
+                                      "cols": [1000]}]})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("non-dividing cols must be rejected")
+
+
+def test_driver_resume_and_emit():
+    import pathlib
+
+    from bonsai.bench import driver
+
+    legacy_row = {"status": "ok", "variant": "bonsai_depthwise", "threads": 16,
+                  "repeat": 0, "cell": {"rows": 1_000_000, "cols": 100,
+                                        "bins": 255, "depth": 8, "iters": 100,
+                                        "seed": 42}}
+    err_row = dict(legacy_row, status="error", repeat=1)
+    with tempfile.TemporaryDirectory() as td:
+        prior = pathlib.Path(td) / "prior.jsonl"
+        prior.write_text(json.dumps(legacy_row) + "\n"
+                         + json.dumps(err_row) + "\n")
+        done = driver.resume_keys(prior)
+        assert ("bonsai_depthwise", 16, 0, 1_000_000, 100, 255, 8, 100, 42) in done
+        assert len(done) == 1  # the error row re-attempts
+
+        host = {"name": "t", "gpu": None, "gpu_vram_gb": None, "cpu_model": "t",
+                "n_vcpu": 8, "ram_gb": 64.0, "os": "t", "python": "3",
+                "libs": {"numpy": "0"}}
+        cell = {"axis": "cell", "rows": 1000, "cols": 10, "bins": 255,
+                "bins_effective": 255, "depth": 8, "iters": 100, "lr": 0.1,
+                "informative": 20, "n_test": 200, "seed": 42}
+        out = pathlib.Path(td) / "out.jsonl"
+        # Stub the child: the emit path is what is under test.
+        real_run_one = driver.run_one
+        driver.run_one = lambda spec, timeout: {
+            "status": "ok", "message": None, "fit_s": 1.0, "predict_s": 0.1,
+            "r2_train": 0.9, "r2_test": 0.9, "peak_rss_gb": 0.1,
+            "libs": {"xgboost": "9.9.9"}, "profile": None}
+        try:
+            driver.run_jobs(
+                [{"cell": cell, "variant": "xgb_hist", "threads": 4, "repeats": 1},
+                 {"cell": cell, "variant": "xgb_cuda", "threads": 4, "repeats": 1}],
+                out=str(out), suite="test", knobs={"a": 1}, host=host,
+                run_label="unit")
+        finally:
+            driver.run_one = real_run_one
+        rows = [json.loads(ln) for ln in out.read_text().splitlines()]
+        ok, skip = rows
+        assert ok["schema"] == 1 and ok["suite"] == "test"
+        assert ok["run"] == "unit" and ok["repeat"] == 0
+        assert ok["host"]["libs"] == {"numpy": "0", "xgboost": "9.9.9"}
+        assert "libs" not in ok  # folded into host, never a stray column
+        assert ok["knobs_hash"] == runlog.knobs_hash({"a": 1})
+        assert skip["variant"] == "xgb_cuda" and skip["status"] == "skipped"
+        assert skip["repeat"] == 0  # no CUDA on this host
+
+
+def test_cli_plan_is_lazy():
+    from bonsai.bench import cli
+
+    with tempfile.TemporaryDirectory() as td:
+        import pathlib
+        p = pathlib.Path(td) / "s.json"
+        p.write_text(json.dumps(
+            {"name": "t", "cells": [{"rows": 1000, "cols": 10}],
+             "variants": ["bonsai_depthwise", "xgb_hist"]}))
+        assert cli.main(["plan", "--spec", str(p)]) == 0
+    for heavy in ("xgboost", "lightgbm", "catboost"):
+        assert heavy not in sys.modules, f"{heavy} imported by plan"
+
+
 def test_metrics_against_sklearn():
     rng = np.random.default_rng(0)
     y = rng.random(500)
@@ -187,6 +289,9 @@ if __name__ == "__main__":
     test_reference_param_mappings()
     test_bonsai_core_pairs()
     test_variant_registry()
+    test_spec_expansion()
+    test_driver_resume_and_emit()
+    test_cli_plan_is_lazy()
     test_metrics_against_sklearn()
     test_runlog_roundtrip()
     print("all bench tests passed")
