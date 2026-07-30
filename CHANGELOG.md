@@ -4,6 +4,21 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+## [1.5.3] - 2026-07-30
+
+The wide-data wall falls on both processors, and the standings prove it.
+
+### Changed
+- **One tiled fill replaces the row-wise/feature-parallel pair** (decision 89): the binned mirror moved to a column-block-tiled layout (2048-feature blocks) and the histogram fill runs tiles outer, rows inner, so the live scatter target is one block's histograms at any width. In an interleaved same-pod A/B the tiled fill beat the row path at its best cell (326 vs 369s at 1M x 4096), beat feature-parallel at its best cell (442 vs 514s at 131k x 16384), and tied at 16M x 100. Models are bit-identical to 1.5.2 at every width, so the 24MB routing threshold and its cache-size follow-up are retired outright. Evidence: `benchmarks/wide-cpu-hist-2026-07.md`.
+- **The bin mapper radix-sorts its cut subsample**: an LSD byte-radix on the order-preserving key transform replaces `std::sort` above 2k samples, cutting mapper fit from 2.85 to 2.12s at 131k x 4096 on an M2 (the mapper cost 11.5s of a 54.9s GPU fit at 16k features, decision 90's price list). Cuts and models are byte-identical; small columns keep `std::sort`.
+
+### Measured
+- **The CUDA wide wall was stale data** (decision 90): the recorded ~5x wide-GPU deficit dated to 2026-07-08 code, before the device-resident objective landed. On current main, same pod, bonsai's CUDA growers lead every wide cell against both CatBoost-GPU and XGBoost-GPU at 3-4x less host memory.
+- **Six-variant cols re-baseline** (decision 90 follow-up): one pod, four cells from 1M x 100 to 131k x 16384; bonsai CUDA fastest at every width (50.5s vs 71.3/77.3s at the widest) and the wide standings now carry their chart in the ledger.
+
+### Docs
+- **Engine chapter E6 epilogue**: how the tiled mirror dissolves the wall the chapter builds, with the A/B that proved it.
+
 ## [1.5.2] - 2026-07-30
 
 Wide data on CPU gets 2.6-5.8x faster, from the first production field report.
