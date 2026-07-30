@@ -725,9 +725,9 @@ def wide_cpu_hist_table() -> str:
         ["grower", "row-wise fill (before)", "feature-parallel (after)",
          "lgbm_cpu"], body)
 
-    return f"""### The wide-CPU fill routing (decision 88)
+    return f"""### The wide-CPU fill: from a 2-6x wall to one tiled pass (decisions 88, 89)
 
-Ultra-wide selections broke the row-wise u8 fill: its per-row scatter targets the whole selected histogram footprint (33.6MB at 16k features x 255 bins), so every add missed cache and the partial slabs added a zero+merge pass per block. Levels past a 24MB footprint now take the feature-parallel fill (one thread per feature, no partials, bit-identical at any thread count). Same-pod at 131k x 16384, t=16: depthwise reaches LightGBM parity and leafwise's 7x deficit collapses to 1.2x, at 2.7x less peak RSS (18.8 vs 50.1GB); an interleaved A/B pinned the threshold so mid-width shapes stay on the row path, which a big L3 still wins (320s vs 547s at 1M x 4096). Narrow-path models are byte-identical to before; the origin is a production field report (issue #217).
+Ultra-wide selections broke the row-wise u8 fill: its per-row scatter targets the whole selected histogram footprint (33.6MB at 16k features x 255 bins), so every add missed cache (decision 88 routed those levels feature-parallel; same-pod at 131k x 16384 the 7x leafwise deficit against LightGBM collapsed to 1.2x). Decision 89 then retired the strategy pair: the mirror moved to a column-block-tiled layout and the fill runs tiles outer, rows inner, so the live scatter target is one block's histograms at any width. The tiled fill beat both prior strategies at their own best cells in an interleaved same-pod A/B (326 vs 369s at 1M x 4096 against the row path; 442 vs 514s at 131k x 16384 against feature-parallel; a wash at 16M x 100) and produces bit-identical models at every width. The origin is a production field report (issue #217).
 
 {table}
 

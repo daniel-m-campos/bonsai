@@ -21,3 +21,15 @@
 {"run": "m2-crossover", "tag": "row", "variant": "bonsai_depthwise", "rows": 131072, "cols": 4096, "fit_s": 101.669, "host": "m2-8t-iters20"}
 {"run": "m2-crossover", "tag": "feature-parallel", "variant": "bonsai_depthwise", "rows": 131072, "cols": 4096, "fit_s": 44.86, "host": "m2-8t-iters20"}
 {"run": "m2-crossover", "tag": "lgbm_cpu", "variant": "lgbm_cpu", "rows": 131072, "cols": 4096, "fit_s": 53.715, "host": "m2-8t-iters20"}
+{"run": "tiled-ab", "tag": "main", "variant": "bonsai_depthwise", "rows": 16000000, "cols": 100, "fit_s": 119.335, "r2_test": 0.8793, "peak_rss_gb": 10.25}
+{"run": "tiled-ab", "tag": "main", "variant": "bonsai_depthwise", "rows": 1048576, "cols": 4096, "fit_s": 369.25, "r2_test": 0.8742, "peak_rss_gb": 27.23}
+{"run": "tiled-ab", "tag": "main", "variant": "bonsai_depthwise", "rows": 131072, "cols": 16384, "fit_s": 513.926, "r2_test": 0.8585, "peak_rss_gb": 18.84}
+{"run": "tiled-ab", "tag": "tiled", "variant": "bonsai_depthwise", "rows": 16000000, "cols": 100, "fit_s": 113.56, "r2_test": 0.8793, "peak_rss_gb": 10.25}
+{"run": "tiled-ab", "tag": "tiled", "variant": "bonsai_depthwise", "rows": 1048576, "cols": 4096, "fit_s": 326.174, "r2_test": 0.8742, "peak_rss_gb": 26.75}
+{"run": "tiled-ab", "tag": "tiled", "variant": "bonsai_depthwise", "rows": 131072, "cols": 16384, "fit_s": 442.409, "r2_test": 0.8585, "peak_rss_gb": 20.97}
+{"run": "tiled-ab", "tag": "main", "variant": "bonsai_depthwise", "rows": 16000000, "cols": 100, "fit_s": 111.574, "r2_test": 0.8793, "peak_rss_gb": 10.25}
+{"run": "tiled-ab", "tag": "main", "variant": "bonsai_depthwise", "rows": 1048576, "cols": 4096, "fit_s": 376.795, "r2_test": 0.8742, "peak_rss_gb": 27.23}
+{"run": "tiled-ab", "tag": "main", "variant": "bonsai_depthwise", "rows": 131072, "cols": 16384, "fit_s": 531.63, "r2_test": 0.8585, "peak_rss_gb": 18.84}
+{"run": "tiled-ab", "tag": "tiled", "variant": "bonsai_depthwise", "rows": 16000000, "cols": 100, "fit_s": 116.408, "r2_test": 0.8793, "peak_rss_gb": 10.25}
+{"run": "tiled-ab", "tag": "tiled", "variant": "bonsai_depthwise", "rows": 1048576, "cols": 4096, "fit_s": 321.166, "r2_test": 0.8742, "peak_rss_gb": 26.76}
+{"run": "tiled-ab", "tag": "tiled", "variant": "bonsai_depthwise", "rows": 131072, "cols": 16384, "fit_s": 448.051, "r2_test": 0.8585, "peak_rss_gb": 20.96}
