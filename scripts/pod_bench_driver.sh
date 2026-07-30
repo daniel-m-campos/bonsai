@@ -33,7 +33,7 @@ cd /root/bonsai
 # scripts/setup_gpu_node.sh) and point the configure at it. A pre-existing
 # build-cuda/build.ninja satisfies the python-cuda prerequisite, so the extra
 # -DCUDAToolkit_ROOT survives the make call below.
-CC_MAJOR=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | cut -d. -f1)
+CC_MAJOR=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | cut -d. -f1 || echo 0)
 if [ "${CC_MAJOR:-0}" -ge 10 ]; then
     if [ ! -x /usr/local/cuda-12.8/bin/nvcc ]; then
         wget -qO /tmp/cuda-keyring.deb "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu$(. /etc/os-release && echo "${VERSION_ID/./}")/x86_64/cuda-keyring_1.1-1_all.deb"
