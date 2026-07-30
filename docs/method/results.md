@@ -383,7 +383,7 @@ Ultra-wide selections broke the row-wise u8 fill: its per-row scatter targets th
 
 ### The CUDA wide recheck: the wall was already gone (decision 90)
 
-A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: the gap no longer exists. The recorded numbers dated to 2026-07-08 code, before the device-resident line landed; on current main, one pod, bonsai's CUDA growers lead every wide cell against both references at 3-4x less host memory. The stale reading ("CatBoost keeps the wide lead") is corrected wherever it appeared; a full six-variant cols-axis re-baseline is the recorded follow-up before the wide standings get a chart.
+A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: the gap no longer exists. The recorded numbers dated to 2026-07-08 code, before the device-resident line landed; on current main, one pod, bonsai's CUDA growers lead every wide cell against both references at 3-4x less host memory. The stale reading ("CatBoost keeps the wide lead") is corrected wherever it appeared; the six-variant cols re-baseline below completes the recorded follow-up.
 
 | variant | rows | cols | fit | test r² | peak RSS |
 |---|---|---|---|---|---|
@@ -396,6 +396,32 @@ A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: 
 | xgb_cuda | 1M | 4096 | 103.7s | 0.8761 | 60.4GB |
 
 *Source: [`cuda-wide-recheck-2026-07.jsonl`](../../benchmarks/results/cuda-wide-recheck-2026-07.jsonl). Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs; verdict recorded as decision 90.*
+
+### The cols re-baseline: wide standings on current main (decision 90 follow-up)
+
+The six-variant cols-axis re-baseline promised by decision 90, on one pod at main `07a5b9a` (the tiled CPU fill and the radix mapper sort both landed). bonsai's CUDA growers hold the fastest slot at every measured width: 1.5x over CatBoost-GPU at 1M x 4096 (33.2 vs 50.0s) and 1.4x at 131k x 16384 (50.5 vs 71.3s, with XGBoost-GPU at 77.3s). Peak host memory tells the sharper story: 16.4GB against CatBoost's 50.6GB and XGBoost's 60.4GB at 1M x 4096. The widest cell drops to 131k rows to hold total cells at 2^31, so its column is not comparable to the 1M-row columns (starred in the chart). The CPU reference arms bound the GPU advantage: at the widest cell the tiled fill holds bonsai CPU at LightGBM parity (404 vs 402s) while the GPU growers are 8x faster than either.
+
+![Fit seconds vs features, re-baseline](assets/cols-rebaseline.svg)
+
+Fit seconds (test r²), best of reps:
+
+| cell | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu | lgbm cpu | bonsai cpu obl |
+|---|---|---|---|---|---|---|
+| 1M x 100 | 0.8s (.874) | 1.2s (.874) | 2.8s (.875) | 2.8s (.874) | 9.6s (.875) | 13.8s (.874) |
+| 1M x 1024 | 9.0s (.877) | 8.5s (.875) | 24.8s (.875) | 13.2s (.876) | 110.5s (.876) | 84.4s (.875) |
+| 1M x 4096 | 35.9s (.874) | 33.2s (.875) | 102.2s (.876) | 50.0s (.875) | 416.5s (.877) | 283.1s (.875) |
+| 131k x 16384 | 50.5s (.859) | 56.0s (.871) | 77.3s (.858) | 71.3s (.871) | 402.2s (.857) | 404.2s (.871) |
+
+Peak host RSS, worst rep:
+
+| cell | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu | lgbm cpu | bonsai cpu obl |
+|---|---|---|---|---|---|---|
+| 1M x 100 | 0.7GB | 0.7GB | 1.9GB | 1.5GB | 1.0GB | 0.8GB |
+| 1M x 1024 | 4.3GB | 4.3GB | 15.6GB | 12.8GB | 8.8GB | 7.1GB |
+| 1M x 4096 | 16.4GB | 16.4GB | 60.4GB | 50.6GB | 35.0GB | 26.8GB |
+| 131k x 16384 | 8.8GB | 8.8GB | 39.3GB | 25.2GB | 50.1GB | 21.0GB |
+
+*Source: [`cols-rebaseline-2026-07.jsonl`](../../benchmarks/results/cols-rebaseline-2026-07.jsonl). Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells.*
 
 ### The scaling study
 
