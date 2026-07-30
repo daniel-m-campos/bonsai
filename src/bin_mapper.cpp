@@ -1,7 +1,10 @@
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <iterator>
 #include <limits>
 #include <numeric>
@@ -106,6 +109,60 @@ std::vector<float> greedy_weighted_cuts(std::vector<float> const  &vals,
     return cuts;
 }
 
+// LSD byte-radix sort for the NaN-free subsample: the standard order-
+// preserving key transform (flip all bits of negatives, flip the sign bit
+// of non-negatives) makes unsigned byte passes order floats like operator<.
+// The output SEQUENCE equals std::sort's (ties can reorder only equal-value
+// bit patterns, i.e. -0.0 vs +0.0, and the run-length encode below
+// collapses those), so cuts and therefore models are byte-identical. Small
+// inputs keep std::sort: four counting passes only pay past ~2k elements.
+// Motivation: the mapper fit is sort-bound at wide shapes (11.5s of a
+// 54.9s GPU fit at 131k x 16384, decision 90's price list).
+void sort_floats(std::vector<float> &v)
+{
+    constexpr size_t k_radix_min = 2048;
+    if (v.size() < k_radix_min)
+    {
+        std::sort(v.begin(), v.end());
+        return;
+    }
+    size_t const                              n = v.size();
+    static thread_local std::vector<uint32_t> keys;
+    static thread_local std::vector<uint32_t> scratch;
+    keys.resize(n);
+    scratch.resize(n);
+    for (size_t i = 0; i < n; ++i)
+    {
+        uint32_t b = std::bit_cast<uint32_t>(v[i]);
+        keys[i]    = b ^ ((b >> 31U) != 0U ? 0xFFFFFFFFU : 0x80000000U);
+    }
+    uint32_t *src = keys.data();
+    uint32_t *dst = scratch.data();
+    for (unsigned shift = 0; shift < 32; shift += 8)
+    {
+        std::array<size_t, 257> count{};
+        for (size_t i = 0; i < n; ++i)
+        {
+            ++count[((src[i] >> shift) & 0xFFU) + 1];
+        }
+        for (size_t b = 1; b < 257; ++b)
+        {
+            count[b] += count[b - 1];
+        }
+        for (size_t i = 0; i < n; ++i)
+        {
+            dst[count[(src[i] >> shift) & 0xFFU]++] = src[i];
+        }
+        std::swap(src, dst);
+    }
+    // Four passes: src points back at keys.data().
+    for (size_t i = 0; i < n; ++i)
+    {
+        uint32_t const k = src[i];
+        v[i] = std::bit_cast<float>((k >> 31U) != 0U ? k ^ 0x80000000U : ~k);
+    }
+}
+
 // Sort once, run-length encode into (distinct value, count) pairs, then
 // place at most `cut_budget` cuts by the lightest rule that is exact for
 // the column's shape. Distinct values within the budget: one right-inclusive
@@ -119,7 +176,7 @@ std::vector<float> greedy_weighted_cuts(std::vector<float> const  &vals,
 // previously only the distinct path within the sample guaranteed it).
 std::vector<float> create_cuts(std::vector<float> &subsample, size_t cut_budget)
 {
-    std::sort(subsample.begin(), subsample.end());
+    sort_floats(subsample);
     std::vector<float>  vals;
     std::vector<size_t> counts;
     for (float const v : subsample)
