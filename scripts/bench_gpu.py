@@ -138,7 +138,7 @@ def run_lgbm(device: str, threads: int, test, y_test) -> dict:
 
 
 # CatBoost full pipeline (CSV read + Pool binning + train). task_type="GPU"
-# for GPU. CatBoost caps GPU border_count at 254.
+# for GPU. The borders-vs-bins fencepost lives inside catboost_core.
 def run_catboost(device: str, threads: int, test, y_test) -> dict:
     from catboost import CatBoostRegressor, Pool
     cfg = tomllib.loads(CONFIG.read_text())

@@ -37,12 +37,17 @@ def test_reference_param_mappings():
                            min_data_in_leaf=20, lambda_l2=1.0, max_bin=255,
                            seed=42)
     assert lgb["num_leaves"] == 256 and lgb["verbose"] == -1
-    # the GPU border cap that has been hand-duplicated 5x before benchlib
+    # max_bin arrives in BIN semantics; catboost_core owns the borders
+    # fencepost (bins - 1) and the GPU 254-border cap (fairness review
+    # 2026-07-30: call-site translations had drifted three ways).
     cb_gpu = params.catboost_core(learning_rate=0.1, max_depth=8, lambda_l2=1.0,
                                   max_bin=1023, seed=42, device="cuda")
     cb_cpu = params.catboost_core(learning_rate=0.1, max_depth=8, lambda_l2=1.0,
                                   max_bin=1023, seed=42, device="cpu")
-    assert cb_gpu["border_count"] == 254 and cb_cpu["border_count"] == 1023
+    assert cb_gpu["border_count"] == 254 and cb_cpu["border_count"] == 1022
+    cb_255 = params.catboost_core(learning_rate=0.1, max_depth=8, lambda_l2=1.0,
+                                  max_bin=255, seed=42, device="cpu")
+    assert cb_255["border_count"] == 254  # 255 bins, matching the others
     assert params.num_leaves_campaign(6) == 63
     assert params.num_leaves_full(6) == 64
     # the shim keeps the documented import path alive

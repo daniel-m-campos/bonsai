@@ -160,11 +160,11 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
     params = {**rp.xgb_core(learning_rate=k["lr"], max_depth=k["depth"],
                             min_data_in_leaf=k["min_data_in_leaf"],
                             lambda_l2=k["lambda_l2"],
-                            max_bin=min(k["bins"], 254), seed=k["seed"]),
+                            max_bin=k["bins"], seed=k["seed"]),
               "objective": "binary:logistic", "device": device,
               "nthread": spec["threads"]}
     t0 = time.perf_counter()
-    dtrain = xgb.QuantileDMatrix(X, label=y, max_bin=min(k["bins"], 254))
+    dtrain = xgb.QuantileDMatrix(X, label=y, max_bin=k["bins"])
     booster = xgb.train(params, dtrain, num_boost_round=k["iters"])
     fit_s = time.perf_counter() - t0
     t0 = time.perf_counter()
@@ -180,7 +180,7 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
                              num_leaves=1 << k["depth"],
                              min_data_in_leaf=k["min_data_in_leaf"],
                              lambda_l2=k["lambda_l2"],
-                             max_bin=min(k["bins"], 254), seed=k["seed"]),
+                             max_bin=k["bins"], seed=k["seed"]),
               "objective": "binary", "device_type": "cpu",
               "num_threads": spec["threads"]}
     t0 = time.perf_counter()
@@ -200,7 +200,7 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
     model = CatBoostClassifier(
         **rp.catboost_core(learning_rate=k["lr"], max_depth=k["depth"],
                            lambda_l2=k["lambda_l2"],
-                           max_bin=min(k["bins"], 254), seed=k["seed"],
+                           max_bin=k["bins"], seed=k["seed"],
                            device=device),
         iterations=k["iters"], loss_function="Logloss",
         task_type=("GPU" if device == "cuda" else "CPU"), devices="0",

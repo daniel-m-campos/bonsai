@@ -49,7 +49,7 @@ def fit_predict(variant, Xtr, ytr, Xte, kind):
             objective=obj, grower=grower, n_iters=C["iters"],
             learning_rate=C["lr"], max_depth=C["depth"],
             max_leaves=params.num_leaves_campaign(C["depth"]),
-            random_seed=C["seed"],
+            random_seed=C["seed"], n_threads=8,
             params=params.BONSAI_CAMPAIGN_PARAMS).fit(Xtr, ytr)
         return np.asarray(m.predict(Xte))
     if variant == "xgb":
@@ -79,7 +79,7 @@ def fit_predict(variant, Xtr, ytr, Xte, kind):
         cls = cb.CatBoostClassifier if kind == "auc" else cb.CatBoostRegressor
         m = cls(**params.catboost_core(
                     learning_rate=C["lr"], max_depth=C["depth"],
-                    lambda_l2=C["lambda_l2"], max_bin=C["bins"] - 1,
+                    lambda_l2=C["lambda_l2"], max_bin=C["bins"],
                     seed=C["seed"], device="cpu"),
                 iterations=C["iters"], verbose=False, thread_count=8,
                 allow_writing_files=False).fit(Xtr, ytr)
