@@ -2,6 +2,15 @@
 
 > The normative protocol (divisions, suites, primary metrics, timing modes, the result-row schema) is [docs/method/benchmark-protocol.md](../docs/method/benchmark-protocol.md); this file is the operational how-to-run companion.
 
+The packaged suites run as modules, from an installed wheel (`pip install "bonsai-gbt[bench]"`) or a source tree (`PYTHONPATH=build/python` after `make python`); the reader-facing walkthrough is [Running the benchmarks](../docs/use/benchmarks.md):
+
+```bash
+python -m bonsai.bench.grinsztajn out.jsonl --report   # quality standings
+python -m bonsai.bench.scaling --smoke                 # perf grid, laptop mode
+python -m bonsai.bench.airline out.jsonl --sizes 0.1m  # airline ladder
+python -m bonsai.bench.datasets --list                 # dataset cache state
+```
+
 ## Reference-library comparison
 
 bonsai vs xgboost, lightgbm, catboost on a CSV regression dataset. All four libraries see the same hyperparameters by reading them out of the bonsai TOML config.

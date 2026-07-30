@@ -11,6 +11,7 @@ import tempfile
 
 import bonsai
 import numpy as np
+from bonsai._compat import _grower_for_device
 
 RNG = np.random.default_rng(7)
 
@@ -126,12 +127,12 @@ def test_eval_history_without_early_stopping():
 
 
 def test_device_and_grower_mapping():
-    assert bonsai._grower_for_device("leafwise", "cuda") == "cuda_depthwise"
-    assert bonsai._grower_for_device("oblivious", "cuda") == "cuda_oblivious"
-    assert bonsai._grower_for_device("cuda_oblivious", "cpu") == "oblivious"
-    assert bonsai._grower_for_device("depthwise", "cpu") == "depthwise"
+    assert _grower_for_device("leafwise", "cuda") == "cuda_depthwise"
+    assert _grower_for_device("oblivious", "cuda") == "cuda_oblivious"
+    assert _grower_for_device("cuda_oblivious", "cpu") == "oblivious"
+    assert _grower_for_device("depthwise", "cpu") == "depthwise"
     with np.testing.assert_raises(ValueError):
-        bonsai._grower_for_device("leafwise", "tpu")
+        _grower_for_device("leafwise", "tpu")
     if not bonsai.cuda_available():
         with np.testing.assert_raises(Exception):
             Xtr, ytr, _, _ = _reg_data(n=100)

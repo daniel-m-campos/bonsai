@@ -24,6 +24,7 @@ The current evidence, rendered whole from every committed results file, is [the 
 | campaign | quality | internal ten (quality-smoke) | per-task | `results/quality-campaign-2026-07.jsonl` | `scripts/compare.py` per config | 56 |
 | probes | quality | per-study | per-study | `results/<probe>-<date>.*` | `scripts/probe_*.py` | 57, 58, 67, ... |
 | scaling | perf | friedman1 (perf-synthetic) | fit_s, predict_s, RSS | `results/scaling.jsonl` | `python -m bonsai.bench.scaling` | 46 |
+| airline | perf | benchm-ml airline 0.1m/1m/10m (perf-external) | fit_s, AUC | `results/airline-2026-07.jsonl` | `python -m bonsai.bench.airline` | issue #154 |
 | gpu_msd | perf | year_msd (perf-scale) | fit_s | `results/gpu_msd.jsonl` | `scripts/bench_gpu.py` | 41 |
 | rebaseline | perf | friedman1 | fit_s, r² guard | `results/rebaseline-2026-07.jsonl` | scaling runner, rows axis | 62 to 64 |
 
