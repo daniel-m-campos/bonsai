@@ -32,7 +32,7 @@ One property none of the reference libraries offer: models are bit-identical acr
 
 **[Use](use/install.md)**: [install in one command](use/install.md), then [the whole API in one read](use/api-tour.md): sklearn-shaped estimators and an explicit `train(params, ...)` layer over the same engine, dotted config keys that are exactly the CLI's `--set` keys, one `.msgpack` model that round-trips everywhere. [Building from source](use/building.md) when a wheel is not enough.
 
-**[Results](method/README.md)**: every speed and accuracy claim as a committed run on named hardware. The three headline numbers first, then [the benchmark protocol](method/benchmark-protocol.md), [how we decide](method/how-we-decide.md), and the full [results ledger](method/results.md).
+**[Results](method/README.md)**: every speed and accuracy claim as a committed run on named hardware. [The results ledger](method/results.md) opens with the perf and quality summaries and links one generated page per study; the rules are [the benchmark protocol](method/benchmark-protocol.md) and [how we decide](method/how-we-decide.md).
 
 **[Design](design/system-map.md)**: how the engine is built and the contracts it keeps: [the system map](design/system-map.md) of layers and data flow, [concepts to types](design/api-tour-concepts.md) for the surface you extend, [the HPC tension](design/the-hpc-tension.md) where the seams meet the GPU, and [determinism](design/determinism.md), bit-identical models as a testable property. The historical record sits in the archive: the [architecture notes](architecture/README.md), the [decisions log](decisions.md), and the [lineage](lineage/xgboost.md) of XGBoost, LightGBM, and CatBoost.
 
