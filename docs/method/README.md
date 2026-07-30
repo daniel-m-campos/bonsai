@@ -1,6 +1,6 @@
 # Results
 
-Every performance and accuracy claim on this site comes from a committed benchmark run, on named hardware, at matched settings. This page states what we measure and gives the headline numbers. [The results ledger](results.md) holds the full evidence, generated from every committed results file.
+Every performance and accuracy claim on this site comes from a committed benchmark run, on named hardware, at matched settings. This page states what we measure and lists the claims with their proofs. [The results ledger](results.md) opens with the division summaries and links one generated page per study.
 
 ## What we measure
 
@@ -8,13 +8,23 @@ Two divisions, kept apart. Quality rows make accuracy claims, where the metric i
 
 The only citable standings table is the Grinsztajn suite: 55 tasks selected by third parties. That removes the selection-bias objection a self-picked suite cannot answer.
 
-## Three headline numbers
+## Claims and proofs
 
-All three are GPU, same-pod, at 16M rows.
+Every claim links a reproducible run and the decision that records it; the point of a small, measured library is that you can check it.
 
-- **Speed.** On the 16M GPU frontier bonsai reaches every measured accuracy first, at every horizon: the marginal boosting round costs 64ms against CatBoost's 78 on the same pod, and the fixed cost is 3.8s against CatBoost's 11.7 ([the frontier](results/perf-frontier.md#gpu-accuracy-vs-time-frontier-at-16m)).
-- **Memory.** Peak host RSS at 16M is 7.0GB against XGBoost's 22.2GB and CatBoost's 19.4GB, roughly 3x less. Predict is about 3x faster ([the ledger](results.md#perf-division)).
-- **Determinism.** Models are bit-identical across CPU architectures and thread counts, enforced per commit in CI. No reference library offers this ([the contract](../design/determinism.md)).
+| Claim | Evidence |
+|---|---|
+| **Bit-identical models across CPU architectures** (arm64 == x86-64) at a fixed thread count; no reference library offers this | decisions [59/60](../decisions.md); asserted per-commit by [`cross-arch.yml`](../../.github/workflows/cross-arch.yml) via [`scripts/model_hash.py`](../../scripts/model_hash.py); [the contract](../design/determinism.md) |
+| **Best mean rank on the 55-task Grinsztajn benchmark under either min_child_weight convention** (36 outright wins; second-or-better on 50/55, never last) | [the standings page](results/quality-grinsztajn.md), [grinsztajn-2026-07](../../benchmarks/grinsztajn-2026-07.md), decision 68 |
+| **Fastest GPU slot at every row scale**; at 16M `oblivious` edges CatBoost and beats XGBoost-GPU at matched accuracy | [fit at scale](results/perf-scale.md), [scale-edge](../../benchmarks/catboost-scale-edge-2026-07.md), decisions 62 to 64 |
+| **Fastest at every measured width and aspect ratio**, with measured device memory that sizes to the problem | [width and shape](results/perf-shape.md), decisions 90 and 91 |
+| **The only GBT whose GPU path ships in a 2.3MB pip install, validated on live GPU hardware per release** | decision 70; [`wheels.yml`](../../.github/workflows/wheels.yml) |
+| **Within ~8% of XGBoost-hist at 16M rows on CPU, host-dependent**: a dead tie on one pod, XGBoost ahead on another | decision 61; [fit at scale](results/perf-scale.md) |
+| **Best library on 9 of 10 datasets of the internal quality campaign** | [campaign smoke](results/quality-campaign.md), decisions 56 to 57 |
+| **Categorical parity with CatBoost within the chance band**, via preprocessing not an engine feature | decision 58; [categorical-tradeoff](../../benchmarks/categorical-tradeoff-2026-07.md); [`encoding.py`](../../python/bonsai/encoding.py) |
+| **~3x less host memory than XGBoost at 16M** (7.0 vs 22.2GB) and ~3x faster predict | [fit at scale](results/perf-scale.md) |
+| **Ranking is a measured, scoped gap**: ~+0.015 NDCG@10 to a listwise loss, not pairwise LambdaRank | [ranking-tradeoff](../../benchmarks/ranking-tradeoff-2026-07.md); [`probe_ranking.py`](../../scripts/probe_ranking.py) |
+| **Every feature earns its place by measurement**; refutations are recorded too | [how we decide](how-we-decide.md); the declined probes on [the probes page](results/quality-probes.md) |
 
 Losses are recorded with the wins, and so are their reversals: the wide-data GPU lead CatBoost held in the July 8 study flipped to bonsai by the July 30 recheck (decision 90). XGBoost holds the last 0.001 r² of cut quality on some tasks. Both are in [the ledger](results.md).
 
