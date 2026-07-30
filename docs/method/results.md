@@ -381,6 +381,22 @@ Ultra-wide selections broke the row-wise u8 fill: its per-row scatter targets th
 
 *Source: [`wide-cpu-hist-2026-07.jsonl`](../../benchmarks/results/wide-cpu-hist-2026-07.jsonl). Evidence: [benchmarks/wide-cpu-hist-2026-07.md](../../benchmarks/wide-cpu-hist-2026-07.md); verdict recorded as decision 88.*
 
+### The CUDA wide recheck: the wall was already gone (decision 90)
+
+A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: the gap no longer exists. The recorded numbers dated to 2026-07-08 code, before the device-resident line landed; on current main, one pod, bonsai's CUDA growers lead every wide cell against both references at 3-4x less host memory. The stale reading ("CatBoost keeps the wide lead") is corrected wherever it appeared; a full six-variant cols-axis re-baseline is the recorded follow-up before the wide standings get a chart.
+
+| variant | rows | cols | fit | test r² | peak RSS |
+|---|---|---|---|---|---|
+| bonsai_cuda_depthwise | 131k | 16384 | 54.9s | 0.8585 | 8.8GB |
+| bonsai_cuda_oblivious | 131k | 16384 | 61.2s | 0.8714 | 8.8GB |
+| catboost_gpu | 131k | 16384 | 71.2s | 0.8709 | 25.3GB |
+| xgb_cuda | 131k | 16384 | 76.7s | 0.8581 | 39.3GB |
+| bonsai_cuda_depthwise | 1M | 4096 | 37.7s | 0.8742 | 16.4GB |
+| catboost_gpu | 1M | 4096 | 50.2s | 0.8751 | 50.6GB |
+| xgb_cuda | 1M | 4096 | 103.7s | 0.8761 | 60.4GB |
+
+*Source: [`cuda-wide-recheck-2026-07.jsonl`](../../benchmarks/results/cuda-wide-recheck-2026-07.jsonl). Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs; verdict recorded as decision 90.*
+
 ### The scaling study
 
 964 runs across 7 hosts and the axes base, bins, cols, rows; regenerate exponents and the committed log-log plots under [`benchmarks/results/scaling/`](../../benchmarks/results/scaling) with [scripts/analyze_scaling.py](../../scripts/analyze_scaling.py).
