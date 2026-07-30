@@ -8,12 +8,14 @@ optional run label, so ad-hoc campaigns stop inventing schemas.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import pathlib
 import re
 import subprocess
 import sys
+import threading
 
 from . import runlog
 from .variants import resolve
@@ -62,30 +64,144 @@ def classify_error(message: str) -> str:
     return "error"
 
 
-def run_one(spec: dict, timeout: int) -> dict:
+def _nvml_query():
+    import pynvml
+    pynvml.nvmlInit()
+    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+
+    def query(pid: int):
+        pid_mb = None
+        with contextlib.suppress(pynvml.NVMLError):
+            for p in pynvml.nvmlDeviceGetComputeRunningProcesses(handle):
+                if p.pid == pid and p.usedGpuMemory is not None:
+                    pid_mb = p.usedGpuMemory / 2**20
+        total_mb = pynvml.nvmlDeviceGetMemoryInfo(handle).used / 2**20
+        return pid_mb, total_mb
+
+    return query
+
+
+def _smi_query(pid: int):
+    try:
+        apps = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=pid,used_memory",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5)
+        total = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if apps.returncode != 0 or total.returncode != 0:
+        return None
+    pid_mb = None
+    for line in apps.stdout.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) == 2 and parts[0] == str(pid) and parts[1].isdigit():
+            pid_mb = (pid_mb or 0) + int(parts[1])
+    head = total.stdout.splitlines()[0].strip() if total.stdout.strip() else ""
+    return pid_mb, (int(head) if head.isdigit() else None)
+
+
+class DeviceMemSampler:
+    """Samples device memory while the worker child runs; max over samples.
+
+    Records BOTH the child's per-process usage and the whole-device number
+    (allocator slack and context overhead lag the per-pid counter), plus the
+    sampling interval, so the row never claims more precision than sampled.
+    """
+
+    def __init__(self, pid: int, interval_s: float = 0.25, query=None):
+        self.pid, self.interval_s = pid, interval_s
+        if query is not None:
+            self._query, self.source = query, "injected"
+        else:
+            try:
+                self._query, self.source = _nvml_query(), "nvml"
+            except Exception:
+                self._query, self.source = _smi_query, "nvidia-smi"
+        self._stop = threading.Event()
+        self._peak_pid: float | None = None
+        self._peak_total: float | None = None
+        self._samples = 0
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+
+    def _loop(self):
+        while not self._stop.is_set():
+            got = self._query(self.pid)
+            if got is not None:
+                pid_mb, total_mb = got
+                if pid_mb is not None:
+                    self._peak_pid = max(self._peak_pid or 0.0, pid_mb)
+                if total_mb is not None:
+                    self._peak_total = max(self._peak_total or 0.0, total_mb)
+                self._samples += 1
+            self._stop.wait(self.interval_s)
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        self._thread.join(timeout=5)
+
+    def result(self) -> dict | None:
+        if not self._samples:
+            return None
+        gb = 1024.0
+        return {"peak_gb_pid": (round(self._peak_pid / gb, 2)
+                                if self._peak_pid is not None else None),
+                "peak_gb_total": (round(self._peak_total / gb, 2)
+                                  if self._peak_total is not None else None),
+                "samples": self._samples, "interval_s": self.interval_s,
+                "source": self.source}
+
+
+def run_one(spec: dict, timeout: int, sampler: bool = False,
+            data_cache: str | None = None) -> dict:
     env = dict(os.environ)
     if spec["variant"].startswith("bonsai"):
         env.update(BONSAI_GROW_PROFILE="1", BONSAI_INGEST_PROFILE="1",
                    BONSAI_CUDA_PROFILE="1", BONSAI_FIT_PROFILE="1")
+    if data_cache:
+        env["BONSAI_BENCH_DATA_CACHE"] = data_cache
+    proc = subprocess.Popen([sys.executable, "-m", "bonsai.bench", "worker"],
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, env=env)
+    sm = DeviceMemSampler(proc.pid) if sampler else None
     try:
-        proc = subprocess.run([sys.executable, "-m", "bonsai.bench", "worker"],
-                              input=json.dumps(spec), capture_output=True,
-                              text=True, timeout=timeout, env=env)
+        with sm or contextlib.nullcontext():
+            stdout, stderr = proc.communicate(input=json.dumps(spec),
+                                              timeout=timeout)
     except subprocess.TimeoutExpired:
-        return {"status": "timeout", "message": f"exceeded {timeout}s"}
-    result_line = next((ln for ln in proc.stdout.splitlines()
+        proc.kill()
+        proc.communicate()
+        out = {"status": "timeout", "message": f"exceeded {timeout}s"}
+        if sm:
+            out["dev_mem"] = sm.result()
+        return out
+    dev_mem = sm.result() if sm else None
+    result_line = next((ln for ln in stdout.splitlines()
                         if ln.startswith("RESULT ")), None)
     if proc.returncode != 0 or result_line is None:
         if proc.returncode < 0:
-            return {"status": "oom",
-                    "message": f"killed by signal {-proc.returncode}"}
-        tail = (proc.stderr.strip().splitlines() or ["no output"])[-1][:300]
-        return {"status": classify_error(tail), "message": tail}
+            out = {"status": "oom",
+                   "message": f"killed by signal {-proc.returncode}"}
+        else:
+            tail = (stderr.strip().splitlines() or ["no output"])[-1][:300]
+            out = {"status": classify_error(tail), "message": tail}
+        if sm:
+            out["dev_mem"] = dev_mem
+        return out
     out = json.loads(result_line.removeprefix("RESULT "))
     out["status"] = "ok"
     out["message"] = None
-    prof = parse_profiles(proc.stderr)
+    prof = parse_profiles(stderr)
     out["profile"] = prof or None
+    if sm:
+        out["dev_mem"] = dev_mem
     return out
 
 
@@ -142,7 +258,8 @@ def skip_reason(job: dict, host: dict, gates: dict) -> tuple[str, str] | None:
 def run_jobs(jobs: list[dict], *, out: str, suite: str, knobs: dict,
              host: dict, run_label: str | None = None, dry_run: bool = False,
              resume_path: str | None = None, timeout_cap: int = 3600,
-             gates: dict | None = None) -> int:
+             gates: dict | None = None, mem_sampler: bool = True,
+             data_cache: str | None = None) -> int:
     gates = gates or {}
     out_path = pathlib.Path(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -194,13 +311,16 @@ def run_jobs(jobs: list[dict], *, out: str, suite: str, knobs: dict,
                          "informative": cell["informative"], "n_test": 1024,
                          "seed": cell["seed"]}
             run_one({"cell": warm_cell, "variant": variant, "threads": 4},
-                    timeout=600)
+                    timeout=600, data_cache=data_cache)
             warmed.add(v.lib)
+        sample = (mem_sampler and v.device == "cuda"
+                  and host.get("gpu") is not None)
         for rep in range(job["repeats"]):
             if _job_key(job, rep) in done:
                 print(f"  {variant:>24} t={threads:<3} {cell['rows']}x"
                       f"{cell['cols']}x{cell['bins']} rep={rep} -> resume-skip")
                 continue
             child = {"cell": cell, "variant": variant, "threads": threads}
-            emit(cell, variant, threads, rep, run_one(child, timeout))
+            emit(cell, variant, threads, rep,
+                 run_one(child, timeout, sampler=sample, data_cache=data_cache))
     return 0

@@ -194,7 +194,7 @@ def test_driver_resume_and_emit():
         out = pathlib.Path(td) / "out.jsonl"
         # Stub the child: the emit path is what is under test.
         real_run_one = driver.run_one
-        driver.run_one = lambda spec, timeout: {
+        driver.run_one = lambda spec, timeout, **kw: {
             "status": "ok", "message": None, "fit_s": 1.0, "predict_s": 0.1,
             "r2_train": 0.9, "r2_test": 0.9, "peak_rss_gb": 0.1,
             "libs": {"xgboost": "9.9.9"}, "profile": None}
@@ -215,6 +215,67 @@ def test_driver_resume_and_emit():
         assert ok["knobs_hash"] == runlog.knobs_hash({"a": 1})
         assert skip["variant"] == "xgb_cuda" and skip["status"] == "skipped"
         assert skip["repeat"] == 0  # no CUDA on this host
+
+
+def test_mem_sampler():
+    import time as _time
+
+    from bonsai.bench import driver
+
+    seen = iter([(100.0, 2048.0), (1536.0, 4096.0), (512.0, 3072.0)])
+
+    def fake_query(pid):
+        assert pid == 1234
+        return next(seen, None) or (None, None)
+
+    with driver.DeviceMemSampler(1234, interval_s=0.01, query=fake_query) as sm:
+        _time.sleep(0.1)
+    got = sm.result()
+    assert got["peak_gb_pid"] == 1.5 and got["peak_gb_total"] == 4.0
+    assert got["samples"] >= 3 and got["interval_s"] == 0.01
+    assert got["source"] == "injected"
+    # A query that never answers yields no result, not zeros.
+    with driver.DeviceMemSampler(1, interval_s=0.01, query=lambda p: None) as sm2:
+        _time.sleep(0.03)
+    assert sm2.result() is None
+    # nvidia-smi CSV parsing: our pid, a foreign pid, and the device total.
+    real = driver.subprocess.run
+
+    class FakeProc:
+        def __init__(self, stdout):
+            self.stdout, self.returncode = stdout, 0
+
+    def fake_run(cmd, **kw):
+        if "--query-compute-apps=pid,used_memory" in cmd:
+            return FakeProc("999, 512\n4321, 1024\n999, 256\n")
+        return FakeProc("7168\n")
+
+    driver.subprocess.run = fake_run
+    try:
+        pid_mb, total_mb = driver._smi_query(999)
+    finally:
+        driver.subprocess.run = real
+    assert pid_mb == 768 and total_mb == 7168
+
+
+def test_data_cache():
+    import pathlib
+
+    from bonsai.bench import runners, synth
+
+    cell = {"rows": 3000, "cols": 12, "seed": 7, "n_test": 500,
+            "informative": 5}
+    direct = synth.gen_data(cell["rows"], cell["cols"], cell["seed"],
+                            cell["n_test"], cell["informative"])
+    with tempfile.TemporaryDirectory() as td:
+        first = runners.cached_gen_data(cell, td)
+        files = sorted(p.name for p in pathlib.Path(td).iterdir())
+        assert len(files) == 4 and not any(".tmp" in f for f in files)
+        second = runners.cached_gen_data(cell, td)
+        for d, a, b in zip(direct, first, second):
+            assert np.array_equal(d, a) and np.array_equal(d, b)
+        assert isinstance(second[0], np.memmap)
+        assert second[0].dtype == np.float32
 
 
 def test_cli_plan_is_lazy():
@@ -291,6 +352,8 @@ if __name__ == "__main__":
     test_variant_registry()
     test_spec_expansion()
     test_driver_resume_and_emit()
+    test_mem_sampler()
+    test_data_cache()
     test_cli_plan_is_lazy()
     test_metrics_against_sklearn()
     test_runlog_roundtrip()

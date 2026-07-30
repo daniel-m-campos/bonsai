@@ -62,7 +62,8 @@ def _run(args) -> int:
                         suite="scaling", knobs=knobs, host=host,
                         run_label=args.run_label, dry_run=args.dry_run,
                         resume_path=args.resume, timeout_cap=args.timeout_cap,
-                        gates={})
+                        gates={}, mem_sampler=not args.no_mem_sampler,
+                        data_cache=args.data_cache)
 
     spec = spec_mod.load_spec(args.spec)
     jobs = spec_mod.expand(spec, variants=variants, repeats=args.repeats)
@@ -77,7 +78,9 @@ def _run(args) -> int:
                     run_label=args.run_label or spec["name"],
                     dry_run=args.dry_run, resume_path=resume,
                     timeout_cap=args.timeout_cap or spec.get("timeout_cap", 3600),
-                    gates=spec.get("gates", {}))
+                    gates=spec.get("gates", {}),
+                    mem_sampler=not args.no_mem_sampler,
+                    data_cache=args.data_cache)
 
 
 def _variants(args) -> int:
@@ -112,6 +115,10 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
                    help="jsonl of prior results (defaults to --out in spec mode)")
     p.add_argument("--no-resume", action="store_true")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--no-mem-sampler", action="store_true",
+                   help="disable the device-memory sampler")
+    p.add_argument("--data-cache", default=None,
+                   help="directory for memoized gen_data arrays (pods: /dev/shm)")
 
 
 def main(argv: list[str] | None = None) -> int:
