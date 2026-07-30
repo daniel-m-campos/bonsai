@@ -131,6 +131,7 @@ python-test: python $(TOY_SENTINEL) $(AMAZON_SENTINEL)  ## Build the extension a
 	@PYTHONPATH=build/python $(PYTHON) python/tests/test_encoding.py
 	@PYTHONPATH=build/python $(PYTHON) python/tests/test_doc_snippets.py
 	@PYTHONPATH=build/python $(PYTHON) python/tests/test_bench.py
+	@PYTHONPATH=build/python $(PYTHON) python/tests/test_xgb_compat.py
 
 # CUDA-enabled extension in the CUDA tree; cuda_* growers can train.
 python-cuda: build-cuda/build.ninja  ## Build the CUDA-enabled Python extension into build-cuda/python/.

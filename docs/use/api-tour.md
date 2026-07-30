@@ -98,7 +98,7 @@ On linux x86_64 the release wheel trains on GPU out of the box: any NVIDIA drive
 
 ## Reproducing the benchmarks
 
-The harness behind every published table ships in the package. `pip install bonsai-gbt[bench]` adds the reference libraries, then `python -m bonsai.bench.grinsztajn out.jsonl --report` re-runs the external standings suite. The building blocks are importable directly:
+The harness behind every published table ships in the package. `pip install bonsai-gbt[bench]` adds the reference libraries, then `python -m bonsai.bench.grinsztajn out.jsonl --report` re-runs the external standings suite; [Running the benchmarks](benchmarks.md) walks every suite. The building blocks are importable directly:
 
 ```{.python .run}
 import bonsai

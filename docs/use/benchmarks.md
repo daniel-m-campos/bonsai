@@ -1,0 +1,45 @@
+# Running the benchmarks
+
+Every published table comes from a harness that ships inside the package: `bonsai.bench`. There are two ways to stand it up, and they differ only in where the package comes from.
+
+**From the installed wheel** (the normal path):
+
+```bash
+pip install "bonsai-gbt[bench]"
+python -m bonsai.bench.grinsztajn out.jsonl
+```
+
+The `[bench]` extra pulls the reference libraries the suites compare against (XGBoost, LightGBM, CatBoost, scikit-learn, pandas, openml). Plain `import bonsai.bench` needs none of them; heavy libraries load lazily per suite.
+
+**From a source tree** (when you are hacking on bonsai itself):
+
+```bash
+make python
+PYTHONPATH=build/python python -m bonsai.bench.grinsztajn out.jsonl
+```
+
+`make python` builds the extension into `build/python/bonsai`; `PYTHONPATH=build/python` makes that tree the package. Everything below works identically under either setup.
+
+## The suites
+
+| suite | division | command | notes |
+| --- | --- | --- | --- |
+| `grinsztajn` | quality | `python -m bonsai.bench.grinsztajn out.jsonl` then `--report` | The external standings suite (68 dataset-metric cells). Datasets fetch from OpenML on first run; rows already in `out.jsonl` are skipped, so an interrupted run resumes by re-running the same command. `--report` renders the standings from the jsonl. |
+| `scaling` | perf | `python -m bonsai.bench.scaling --smoke` | Fit seconds vs rows/cols/bins/threads against the reference libraries. `--smoke` is the laptop mode (small cells, minutes); the full grid (`--axis all`) takes hours and wants a CUDA build (`make python-cuda`) for the GPU variants. `--dry-run` prints the grid without running it. |
+| `airline` | perf | `python -m bonsai.bench.airline out.jsonl --sizes 0.1m` | The benchm-ml airline ladder at 0.1m/1m/10m rows; downloads the CSVs on first run. `--variants all` adds the reference libraries. |
+| `datasets` | (fetcher) | `python -m bonsai.bench.datasets --list` | Lists the pinned datasets and their cache state; `python -m bonsai.bench.datasets <name>` fetches one ahead of time. |
+
+## Reading what comes out
+
+Suites append one JSON row per measurement to the output file, self-describing enough to reproduce: the command, the knob set (hashed for grouping), the git sha, and the host down to library versions (`bonsai.bench.runlog`). The published tables in [the results ledger](../method/results.md) are rendered from committed rows of exactly this shape.
+
+One honest caveat before comparing numbers across machines: identical-model GPUs across rental fleets measure up to ~25% apart, so only same-host comparisons mean anything; [the benchmark protocol](../method/benchmark-protocol.md) is the full set of rules the published numbers follow.
+
+The building blocks are importable directly when you want a custom harness:
+
+```{.python .run}
+from bonsai.bench import metrics, synth
+
+X, y, X_test, y_test = synth.gen_data(rows=1000, cols=8, seed=0, n_test=200, informative=4)
+print("train shape:", X.shape, "| r2 of predicting zero:", round(metrics.r2(y_test, y_test * 0), 3))
+```
