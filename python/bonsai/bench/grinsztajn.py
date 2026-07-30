@@ -31,19 +31,20 @@ import time
 import numpy as np
 
 from . import metrics, params, runlog
+from . import variants as vr
 
 SUITES = {297: "num_reg", 298: "num_clf", 299: "cat_reg", 304: "cat_clf"}
 SEEDS = (0, 1, 2)
 TRAIN_CAP, TEST_CAP = 10_000, 50_000
-VARIANTS = ("bonsai_dw", "bonsai_lw", "bonsai_obl", "xgb", "lgbm", "catboost")
+# This suite's historical short names, registered as aliases in the registry.
+VARIANTS = vr.GRINSZTAJN
 C = params.CAMPAIGN
 
 
 def fit_predict(variant, Xtr, ytr, Xte, kind):
     if variant.startswith("bonsai"):
         import bonsai
-        grower = {"bonsai_dw": "depthwise", "bonsai_lw": "leafwise",
-                  "bonsai_obl": "oblivious"}[variant]
+        grower = vr.resolve(variant).name.removeprefix("bonsai_")
         obj = "logloss" if kind == "auc" else "mse"
         m = bonsai.BonsaiRegressor(
             objective=obj, grower=grower, n_iters=C["iters"],

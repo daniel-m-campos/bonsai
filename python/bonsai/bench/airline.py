@@ -47,6 +47,7 @@ import numpy as np
 
 from . import params as rp
 from . import runlog
+from . import variants as vr
 from .datasets import data_root
 from .metrics import auc
 
@@ -62,21 +63,8 @@ TARGET = "dep_delayed_15min"
 KNOBS = {"depth": 8, "iters": 100, "lr": 0.1, "bins": 255, "seed": 42,
          "min_data_in_leaf": 20, "lambda_l2": 1.0}
 
-VARIANTS = {
-    "bonsai_depthwise": ("bonsai", "cpu"),
-    "bonsai_oblivious": ("bonsai", "cpu"),
-    "bonsai_cuda_depthwise": ("bonsai", "cuda"),
-    "bonsai_cuda_oblivious": ("bonsai", "cuda"),
-    "bonsai_ts_depthwise": ("bonsai", "cpu"),
-    "bonsai_ts_oblivious": ("bonsai", "cpu"),
-    "bonsai_ts_cuda_depthwise": ("bonsai", "cuda"),
-    "bonsai_ts_cuda_oblivious": ("bonsai", "cuda"),
-    "xgb_hist": ("xgb", "cpu"),
-    "xgb_cuda": ("xgb", "cuda"),
-    "lgbm_cpu": ("lgbm", "cpu"),
-    "catboost_cpu": ("catboost", "cpu"),
-    "catboost_gpu": ("catboost", "cuda"),
-}
+# variant -> (library, device), a view of the registry in bonsai.bench.variants.
+VARIANTS = {n: (vr.resolve(n).lib, vr.resolve(n).device) for n in vr.AIRLINE}
 
 
 def fetch(size: str) -> tuple[pathlib.Path, pathlib.Path]:
@@ -133,17 +121,12 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
     if grower.startswith("cuda") and not bonsai.cuda_available():
         raise RuntimeError("unsupported: cuda grower without a CUDA device/build")
     k = spec["knobs"]
-    pairs = [("dispatch.grower_name", grower),
-             ("dispatch.objective_name", "logloss"),
-             ("booster.n_iters", str(k["iters"])),
-             ("booster.learning_rate", str(k["lr"])),
-             ("booster.random_seed", str(k["seed"])),
-             ("tree.max_depth", str(k["depth"])),
-             ("tree.max_leaves", str(1 << k["depth"])),
-             ("tree.min_data_in_leaf", str(k["min_data_in_leaf"])),
-             ("tree.lambda_l2", str(k["lambda_l2"])),
-             ("bin_mapper.max_bin", str(k["bins"])),
-             ("parallel.n_threads", str(spec["threads"]))]
+    pairs = rp.bonsai_core(
+        learning_rate=k["lr"], max_depth=k["depth"],
+        num_leaves=rp.num_leaves_full(k["depth"]),
+        min_data_in_leaf=k["min_data_in_leaf"], lambda_l2=k["lambda_l2"],
+        max_bin=k["bins"], seed=k["seed"], n_iters=k["iters"],
+        n_threads=spec["threads"], grower=grower, objective="logloss")
     t0 = time.perf_counter()
     model = bonsai.train(pairs, X, y)
     fit_s = time.perf_counter() - t0
@@ -248,6 +231,9 @@ def worker(spec: dict) -> dict:
         out["encode_s"] = round(encode_s, 3)
     out["predict_s"] = round(out["predict_s"], 3)
     out["auc_test"] = round(out["auc_test"], 4)
+    # The child is where the reference library was imported, so only the
+    # child can report its version; the parent folds this into host.libs.
+    out["libs"] = runlog.lib_versions()
     return out
 
 
@@ -294,8 +280,11 @@ def main() -> int:
                 print(f"{size} {variant}: {status}", flush=True)
                 continue
             out = json.loads(line.removeprefix("RESULT "))
+            libs = out.pop("libs", None)
+            row_host = (dict(host, libs={**host.get("libs", {}), **libs})
+                        if libs else host)
             runlog.emit_row(args.out, division="perf", suite="airline",
-                            knobs=knobs, host=host, timing_mode="in_memory",
+                            knobs=knobs, host=row_host, timing_mode="in_memory",
                             size=size, variant=variant, encoding=encoding,
                             status="ok", **out)
             print(f"{size} {variant}: fit {out['fit_s']}s "
