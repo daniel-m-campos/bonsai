@@ -87,6 +87,12 @@ void fill_feature_parallel(Dataset const &ds, floats_view grad, floats_view hess
 
 constexpr size_t direct_fill = static_cast<size_t>(-1);
 
+// Row-wise fill scatter-footprint ceiling: above this, populate_many routes
+// u8 data through the feature-parallel fill instead (issue #217). Measured
+// crossover on M2/8t at 131k rows: row wins at 2048 cols (4.2MB, by 18%),
+// feature-parallel wins at 4096 (8.4MB, by 2.3x); 6MB splits the points.
+constexpr size_t k_wide_scatter_bytes = 6U << 20U;
+
 // One row block of one node: fills either the node's own histogram cells
 // (single-block nodes) or a private partial slab merged afterwards.
 struct FillUnit
@@ -328,7 +334,16 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         prof.populate_adds += static_cast<double>(node.rows.size()) *
                               static_cast<double>(selected.size());
     }
-    if (!ds.bins_are_u8())
+    SelectedOffsets const offsets = selected_offsets(ds, selected);
+    // Wide selections break the row-wise fill: its per-row scatter targets
+    // total_cells x 8B of histogram (33MB at 16k features x 255 bins), so
+    // every add misses cache and the partial slabs cost a zero+merge pass
+    // per block. Past the footprint threshold the feature-parallel fill
+    // wins (one thread per feature, no partials); measured crossover in
+    // benchmarks/wide-cpu-hist-2026-07.md (issue #217).
+    bool const wide_scatter =
+        offsets.total_cells * sizeof(HistCell) > k_wide_scatter_bytes;
+    if (!ds.bins_are_u8() || wide_scatter)
     {
         for (SplitInput &node : nodes)
         {
@@ -337,7 +352,6 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         return;
     }
     grower_detail::GrowProfiler::Lap row_lap;
-    SelectedOffsets const            offsets = selected_offsets(ds, selected);
     FillPlan const &plan = plan_fill(nodes, selected.size(), offsets.total_cells);
     std::span<HistCell> const partials = partials_slab(plan.partial_cells);
     run_fill(plan, ds, grad, hess, selected, offsets, partials);
