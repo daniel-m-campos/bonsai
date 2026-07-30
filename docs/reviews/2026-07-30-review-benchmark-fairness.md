@@ -16,9 +16,9 @@ Timed spans are symmetric: each library's own ingest sits inside `fit_s` (bonsai
 
 **4. Latent thread asymmetry in grinsztajn's recorded (unpublished) timings.** References were pinned to 8 threads; bonsai's estimator defaulted to auto (up to 16). Published standings are quality-only, so no published number was affected, but every row carries a `fit_s` measured under asymmetric threading. Fixed: bonsai is pinned to 8 in `fit_predict` like the others. Same family, noted without action: `compare.py` uses plain `DMatrix` where scaling uses `QuantileDMatrix`; harmless while campaign timings stay unpublished (the protocol already forbids citing them).
 
-## The airline re-check
+## The airline re-check (measured)
 
-The fix changes only the XGBoost and LightGBM airline arms (254 to 255 bins); the bonsai and CatBoost rows are bit-unaffected. The reference arms were re-run at matched bins (same suite code, one rented L40S) and compared against the committed `airline-2026-07.jsonl` AUC values; the verdict lives in the PR that shipped this review and is summarized in the ledger only if a cited cell moved.
+The fix changes only the XGBoost and LightGBM airline arms (254 to 255 bins); the bonsai and CatBoost rows are bit-unaffected. Both knob shapes were re-run at matched bins on one rented L40S (18 reference rows, campaign depth 8 and Pafka depth 10, all sizes) and compared against the committed `airline-2026-07.jsonl`. Verdict: no reference gains from the restored bin. AUC deltas scatter within +-0.0022 of zero with no systematic direction (10 of 18 moved DOWN), and every cited cell stands: bonsai keeps the best AUC in all 1M and 10M cells under both shapes, with margins +0.0020 to +0.0044 against the re-run references. The committed table is not superseded (different host; the committed rows remain the same-pod set), and this note plus the raw re-check rows in the PR record the validation. One incidental observation in bonsai's favor was ignored as small-sample host noise: the 0.1m Pafka cell, where the committed xgb_hist lead over bonsai shrank at 255 bins on this host; 0.1m was never a claimed cell.
 
 ## Standing rule
 
