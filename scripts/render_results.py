@@ -140,7 +140,7 @@ def line_chart(fname: str, title: str, y_label: str,
                series: list[tuple[str, str, bool, list[tuple[float, float]]]],
                x_ticks: list[tuple[float, str]], log_x=True, log_y=True,
                width=760, height=400, y_ticks=None,
-               point_labels=None) -> None:
+               point_labels=None, x_label: str = "") -> None:
     """series = (label, color, is_cpu, [(x, y)]). Log-log by default."""
     left, right, top, bottom = 64, 170, 42, 44
     pw, ph = width - left - right, height - top - bottom
@@ -180,6 +180,9 @@ def line_chart(fname: str, title: str, y_label: str,
                     f"stroke='{GRID}' stroke-opacity='0.12'/>")
         body.append(_text(xx, top + ph + 18, label, anchor="middle"))
     body.append(_text(left - 44, top - 12, y_label, size=10))
+    if x_label:
+        body.append(_text(left + pw / 2, top + ph + 34, x_label, size=10,
+                          anchor="middle"))
     for _label, color, cpu, pts in series:
         path = " ".join(f"{px(x)},{py(y)}" for x, y in pts)
         body.append(f"<polyline points='{path}' fill='none' stroke='{color}' "
@@ -456,6 +459,7 @@ def probes_section() -> str:
         "holdout rmse",
         series,
         x_ticks=[(4, "4"), (8, "8"), (16, "16"), (32, "32"), (64, "64")],
+        x_label="features kept",
         log_x=True, log_y=False,
         y_ticks=[(v, f"{v:.1f}") for v in (10.0, 11.0, 12.0, 13.0)])
 
@@ -626,13 +630,13 @@ def rebaseline_section() -> str:
         "Fit seconds vs rows (100 features, log-log; lower is better)",
         "fit seconds",
         series_for([(n, (n, 100)) for n in row_axis]),
-        x_ticks=[(n, human(n)) for n in row_axis])
+        x_ticks=[(n, human(n)) for n in row_axis], x_label="rows")
     line_chart(
         "rebaseline-cols.svg",
         "Fit seconds vs features (1M rows, log-log; lower is better)",
         "fit seconds",
         series_for([(c, (1_000_000, c)) for c in col_axis]),
-        x_ticks=[(c, str(c)) for c in col_axis])
+        x_ticks=[(c, str(c)) for c in col_axis], x_label="features")
 
     return f"""## Perf division
 
@@ -798,7 +802,8 @@ def cols_rebaseline_table() -> str:
         "Fit seconds vs features (1M rows; 16384-col cell 131k rows; log-log)",
         "fit seconds",
         series,
-        x_ticks=[(nc, f"{nc}" if nc < 16_384 else "16384*") for _, nc in cells])
+        x_ticks=[(nc, f"{nc}" if nc < 16_384 else "16384*") for _, nc in cells],
+        x_label="features")
 
     return f"""### The cols re-baseline: wide standings on current main (decision 90 follow-up)
 
@@ -909,10 +914,12 @@ def iso_volume_section() -> str:
     ticks = [(nc, str(nc)) for _, nc in iso_cells]
     line_chart("iso-volume-fit.svg",
                "Fit seconds vs cols at constant rows x cols = 2^31 (log-log)",
-               "fit seconds", series_fit, x_ticks=ticks)
+               "fit seconds", series_fit, x_ticks=ticks,
+               x_label="features (rows x cols = 2^31)")
     line_chart("iso-volume-vram.svg",
                "Measured peak device memory vs cols at 2^31 cells (log-log)",
-               "peak GB", series_vram, x_ticks=ticks)
+               "peak GB", series_vram, x_ticks=ticks,
+               x_label="features (rows x cols = 2^31)")
 
     err_note = ""
     if errors:
@@ -1008,6 +1015,7 @@ def perf_tracks_section() -> str:
         "test r2",
         par_series,
         x_ticks=[(s, f"{s}s") for s in (15, 30, 45, 60)],
+        x_label="fit seconds",
         log_x=False, log_y=False, height=420,
         y_ticks=[(v, f"{v:.2f}") for v in (0.84, 0.86, 0.88)],
         point_labels=par_labels)
