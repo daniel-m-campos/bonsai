@@ -1,0 +1,38 @@
+#!/bin/sh
+# commit-msg: Conventional Commits v1 + the 50/72 title rule.
+# Install: make install-hooks  (sets core.hooksPath to scripts/git-hooks)
+#
+# Enforced (hard): type(scope): description shape on the title; title <=72
+# chars; blank second line when a body follows; no session-trailer lines.
+# Warned (soft): title over 50 chars. Merge/revert/fixup commits are exempt.
+
+msg_file="$1"
+title=$(sed -n '1p' "$msg_file")
+
+case "$title" in
+    Merge\ *|Revert\ *|fixup!*|squash!*) exit 0 ;;
+esac
+
+fail() {
+    echo "commit-msg: $1" >&2
+    echo "  title: $title" >&2
+    exit 1
+}
+
+echo "$title" | grep -Eq '^[a-z]+(\([a-z0-9._/-]+\))?!?: .+' \
+    || fail "title must be Conventional Commits v1: type(scope): description"
+
+len=$(printf %s "$title" | wc -c | tr -d ' ')
+[ "$len" -le 72 ] || fail "title is ${len} chars; the hard cap is 72"
+[ "$len" -le 50 ] || echo "commit-msg: note, title is ${len} chars (target <=50)" >&2
+
+second=$(sed -n '2p' "$msg_file")
+lines=$(grep -vc '^#' "$msg_file" | tr -d ' ')
+if [ "$lines" -gt 1 ] && [ -n "$second" ]; then
+    fail "second line must be blank between title and body"
+fi
+
+grep -v '^#' "$msg_file" | grep -q 'Claude-Session\|claude\.ai/code' \
+    && fail "no session trailers in commit messages"
+
+exit 0
