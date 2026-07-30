@@ -1,0 +1,15 @@
+{
+  "name": "iso-volume-33-2026-08",
+  "suite": "iso-volume",
+  "defaults": {"depth": 8, "iters": 100, "lr": 0.1, "bins": 255,
+               "informative": 20, "seed": 42},
+  "cells": [
+    {"gen": "iso_volume", "log2_cells": 33, "cols": [128, 2048, 32768]}
+  ],
+  "variants": ["bonsai_cuda_depthwise", "bonsai_cuda_oblivious",
+               "xgb_cuda", "catboost_gpu"],
+  "threads": [16],
+  "repeats": {"default": 2},
+  "gates": {"mem_gate": "off", "gpu_max_cols": null},
+  "timeout_cap": 10800
+}
