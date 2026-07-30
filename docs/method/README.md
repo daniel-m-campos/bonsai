@@ -16,7 +16,7 @@ All three are GPU, same-pod, at 16M rows.
 - **Memory.** Peak host RSS at 16M is 7.0GB against XGBoost's 22.2GB and CatBoost's 19.4GB, roughly 3x less. Predict is about 3x faster ([the ledger](results.md#perf-division)).
 - **Determinism.** Models are bit-identical across CPU architectures and thread counts, enforced per commit in CI. No reference library offers this ([the contract](../design/determinism.md)).
 
-Losses are recorded with the wins. On wide data CatBoost keeps the lead, with bonsai second. XGBoost holds the last 0.001 r² of cut quality on some tasks. Both are in [the ledger](results.md).
+Losses are recorded with the wins, and so are their reversals: the wide-data GPU lead CatBoost held in the July 8 study flipped to bonsai by the July 30 recheck (decision 90). XGBoost holds the last 0.001 r² of cut quality on some tasks. Both are in [the ledger](results.md).
 
 ## How we decide
 

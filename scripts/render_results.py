@@ -731,7 +731,28 @@ Ultra-wide selections broke the row-wise u8 fill: its per-row scatter targets th
 
 {table}
 
-{provenance(["wide-cpu-hist-2026-07.jsonl"], "Evidence: [benchmarks/wide-cpu-hist-2026-07.md](../../benchmarks/wide-cpu-hist-2026-07.md); verdict recorded as decision 88.")}"""
+{provenance(["wide-cpu-hist-2026-07.jsonl"], "Evidence: [benchmarks/wide-cpu-hist-2026-07.md](../../benchmarks/wide-cpu-hist-2026-07.md); verdict recorded as decision 88.")}
+
+{cuda_wide_recheck_table()}"""
+
+
+def cuda_wide_recheck_table() -> str:
+    cw = load_jsonl("cuda-wide-recheck-2026-07.jsonl")
+    body = []
+    for r in sorted(cw, key=lambda r: (-r["cols"], r["variant"])):
+        body.append([r["variant"], f'{r["rows"] // 1000}k' if r["rows"] < 1_000_000
+                     else f'{r["rows"] // 1_000_000}M', str(r["cols"]),
+                     f'{r["fit_s"]:.1f}s', fmt(r["r2_test"]),
+                     f'{r["peak_rss_gb"]:.1f}GB'])
+    table = md_table(["variant", "rows", "cols", "fit", "test r²", "peak RSS"], body)
+
+    return f"""### The CUDA wide recheck: the wall was already gone (decision 90)
+
+A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: the gap no longer exists. The recorded numbers dated to 2026-07-08 code, before the device-resident line landed; on current main, one pod, bonsai's CUDA growers lead every wide cell against both references at 3-4x less host memory. The stale reading ("CatBoost keeps the wide lead") is corrected wherever it appeared; a full six-variant cols-axis re-baseline is the recorded follow-up before the wide standings get a chart.
+
+{table}
+
+{provenance(["cuda-wide-recheck-2026-07.jsonl"], "Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs; verdict recorded as decision 90.")}"""
 
 
 # ---- Perf: the remaining tracks ---------------------------------------------
