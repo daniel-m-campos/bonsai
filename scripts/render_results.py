@@ -281,9 +281,7 @@ def grinsztajn_section() -> str:
     sens_rows = [[lib, fmt(mean, 2), str(w)] for lib, mean, w in stable]
     sensitivity = md_table(["library", "mean rank", "outright wins"], sens_rows)
 
-    return f"""## Quality division
-
-### External standings: the Grinsztajn suite
+    return f"""### External standings: the Grinsztajn suite
 
 The [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) at the paper-medium protocol: {n} OpenML tasks, three seeds, campaign knobs for every library (decision 68). Best variant per library, average rank across tasks, lower is better.
 
@@ -638,9 +636,7 @@ def rebaseline_section() -> str:
         series_for([(c, (1_000_000, c)) for c in col_axis]),
         x_ticks=[(c, str(c)) for c in col_axis], x_label="features")
 
-    return f"""## Perf division
-
-### The re-baseline: fit seconds at scale
+    return f"""### The re-baseline: fit seconds at scale
 
 Same-pod sweep ({host['cpu_model']}, {host['gpu']}), synthetic regression, `fit()` timed end to end including each library's own ingest, best of repeats, test r² in parentheses.
 
@@ -657,8 +653,6 @@ Scaling features (1M rows):
 {cols_table}
 
 {provenance(["rebaseline-2026-07.jsonl"], "Runner: [scripts/bench_scaling.py](../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file.")}
-
-{xgb33_recheck_table()}
 """
 
 
@@ -706,8 +700,7 @@ XGBoost 3.3 (2026-07-21) claimed lower GPU quantile-sketching memory and wide-da
 {table}
 
 {provenance(["xgb33-recheck-2026-07.jsonl"], "Driver: `python -m bonsai.bench.scaling --worker` per cell, three arms on one pod; verdict recorded as decision 87.")}
-
-{wide_cpu_hist_table()}"""
+"""
 
 
 def wide_cpu_hist_table() -> str:
@@ -736,8 +729,7 @@ Ultra-wide selections broke the row-wise u8 fill: its per-row scatter targets th
 {table}
 
 {provenance(["wide-cpu-hist-2026-07.jsonl"], "Evidence: [benchmarks/wide-cpu-hist-2026-07.md](../../benchmarks/wide-cpu-hist-2026-07.md); verdict recorded as decision 88.")}
-
-{cuda_wide_recheck_table()}"""
+"""
 
 
 def cuda_wide_recheck_table() -> str:
@@ -757,8 +749,7 @@ A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: 
 {table}
 
 {provenance(["cuda-wide-recheck-2026-07.jsonl"], "Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs; verdict recorded as decision 90.")}
-
-{cols_rebaseline_table()}"""
+"""
 
 
 def cols_rebaseline_table() -> str:
@@ -819,7 +810,8 @@ Peak host RSS, worst rep:
 
 {rss_table}
 
-{provenance(["cols-rebaseline-2026-07.jsonl"], "Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells.")}"""
+{provenance(["cols-rebaseline-2026-07.jsonl"], "Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells.")}
+"""
 
 
 # ---- Perf: iso-volume -------------------------------------------------------
@@ -961,7 +953,7 @@ The 2^33 stretch, GPU arms:
 # ---- Perf: the remaining tracks ---------------------------------------------
 
 
-def perf_tracks_section() -> str:
+def scaling_tracks_section() -> str:
     scaling = load_jsonl("scaling.jsonl")
     hosts = sorted({r["host"]["name"] for r in scaling})
     axes = sorted({r["cell"]["axis"] for r in scaling})
@@ -991,6 +983,29 @@ def perf_tracks_section() -> str:
         [[f"{n:,}", *[_fmt_cell(pre_best, n, 100, v) for v in pre_variants]]
          for n in pre_rows])
 
+    return f"""### The scaling study
+
+{scaling_note}
+
+{provenance(["scaling.jsonl"], "The full-history perf ledger behind [benchmarks/README.md](../../benchmarks/README.md); decision 46.")}
+
+### GPU year-MSD track
+
+Latest run per device on the YearPredictionMSD pipeline benchmark (full history in the file):
+
+{msd_table}
+
+{provenance(["gpu_msd.jsonl"], "Runner: [scripts/bench_gpu.py](../../scripts/bench_gpu.py); pipeline timing mode.")}
+
+### CPU 16M round (the prefetch tie)
+
+{pre_table}
+
+{provenance(["cpu-prefetch-round-2026-07.jsonl"], "Decision 61: software prefetch closed the 16M CPU gap to XGBoost-hist on this pod.")}
+"""
+
+
+def frontier_section() -> str:
     pareto = load_jsonl("gpu-pareto-16M-2026-07.jsonl")
     par_variants = []
     for r in pareto:
@@ -1034,27 +1049,7 @@ def perf_tracks_section() -> str:
         [[r["door"], f"{r['rows']:,}", r["learner"], detail(r),
           fmt(r["fit_s"], 2), fmt(r["r2_test"], 4)] for r in edge])
 
-    return f"""### The scaling study
-
-{scaling_note}
-
-{provenance(["scaling.jsonl"], "The full-history perf ledger behind [benchmarks/README.md](../../benchmarks/README.md); decision 46.")}
-
-### GPU year-MSD track
-
-Latest run per device on the YearPredictionMSD pipeline benchmark (full history in the file):
-
-{msd_table}
-
-{provenance(["gpu_msd.jsonl"], "Runner: [scripts/bench_gpu.py](../../scripts/bench_gpu.py); pipeline timing mode.")}
-
-### CPU 16M round (the prefetch tie)
-
-{pre_table}
-
-{provenance(["cpu-prefetch-round-2026-07.jsonl"], "Decision 61: software prefetch closed the 16M CPU gap to XGBoost-hist on this pod.")}
-
-### GPU accuracy-vs-time frontier at 16M
+    return f"""### GPU accuracy-vs-time frontier at 16M
 
 ![Accuracy vs fit time at 16M rows](assets/gpu-pareto-16M.svg)
 
@@ -1204,12 +1199,19 @@ The five highest-CCN functions across `core_headers` + `engine_impl`, published 
 def render() -> str:
     parts = [
         HEADER,
+        "## Quality division\n",
         grinsztajn_section(),
         campaign_section(),
         probes_section(),
+        "## Perf division\n",
         rebaseline_section(),
+        xgb33_recheck_table(),
+        wide_cpu_hist_table(),
+        cuda_wide_recheck_table(),
+        cols_rebaseline_table(),
         iso_volume_section(),
-        perf_tracks_section(),
+        scaling_tracks_section(),
+        frontier_section(),
         airline_section(),
         ceiling_section(),
         code_metrics_section(),
