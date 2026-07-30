@@ -399,9 +399,9 @@ def main() -> int:
     for cell, threads in grid:
         for variant in variants:
             lib, device = VARIANTS[variant]
+            # bins_effective == bins for every library since the fencepost
+            # (CatBoost borders vs bins) moved inside catboost_core.
             cell_v = dict(cell)
-            if variant == "catboost_gpu":
-                cell_v["bins_effective"] = min(cell["bins"], 254)
             repeats = max(args.repeats, 3) if (cell["axis"] == "base"
                                                and not args.smoke) else args.repeats
             skip = None

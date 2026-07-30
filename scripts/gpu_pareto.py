@@ -52,12 +52,14 @@ def main() -> int:
                                  args.informative)
 
     def cell(iters: int) -> dict:
-        # run_bonsai reads c["bins"]; the reference runners read bins_effective
-        # (their GPU 254-bin cap), exactly as bench_scaling's parent sets it.
+        # bins_effective == bins for every library; the CatBoost borders-vs-
+        # bins fencepost (and its GPU cap) lives inside catboost_core. The
+        # old min(bins, 254) here also short-changed xgboost by one bin
+        # (2026-07-30 fairness review).
         return {"rows": args.rows, "cols": args.cols, "seed": args.seed,
                 "n_test": args.n_test, "informative": args.informative,
                 "iters": iters, "lr": args.lr, "depth": args.depth,
-                "bins": args.bins, "bins_effective": min(args.bins, 254)}
+                "bins": args.bins, "bins_effective": args.bins}
 
     results = []
     for variant in args.variants.split(","):

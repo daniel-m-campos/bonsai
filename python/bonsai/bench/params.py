@@ -65,12 +65,16 @@ def lgbm_core(*, learning_rate, max_depth, num_leaves, min_data_in_leaf,
 
 def catboost_core(*, learning_rate, max_depth, lambda_l2, max_bin, seed,
                   device) -> dict:
-    # CatBoost caps GPU border_count at 254 (it clamps/rejects above);
-    # making the cap explicit keeps CPU/GPU comparisons honest.
+    # max_bin arrives in BIN semantics (what bonsai/xgboost/lightgbm count);
+    # CatBoost's border_count counts SPLITS, so bins - 1. The fencepost lives
+    # here, once, because per-call-site translation drifted three ways across
+    # harnesses (2026-07-30 fairness review). GPU caps border_count at 254
+    # (= 255 bins, matching the campaign/scale default exactly).
+    borders = max_bin - 1
     return {
         "learning_rate": learning_rate,
         "depth": max_depth,
         "l2_leaf_reg": lambda_l2,
-        "border_count": min(max_bin, 254) if device == "cuda" else max_bin,
+        "border_count": min(borders, 254) if device == "cuda" else borders,
         "random_seed": seed,
     }
