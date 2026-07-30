@@ -26,4 +26,4 @@ Four rules recur across every case.
 - **E3. [The parity verdict](3-the-parity-verdict.md).** A data-parallel multi-GPU engine, built and measured to parity, then parked as an experiment.
 - **E4. [The resident objective](4-the-resident-objective.md).** Deleting the per-tree host round-trip, and the round falls again from 104 to 64 ms.
 - **E5. [The ceiling](5-the-ceiling.md).** 500M rows by 100 features trained end to end on one 80GB card.
-- **E6. [The wide-data wall](6-the-wide-data-wall.md).** A production field report at 16k features, the cache arithmetic behind a 2-6x cliff, and two wrong theories killed by an interleaved A/B.
+- **E6. [The wide-data wall](6-the-wide-data-wall.md).** A production field report at 16k features, the cache arithmetic behind a 2-6x cliff, two wrong theories killed by an interleaved A/B, and the tiled layout that dissolves the trade-off.
