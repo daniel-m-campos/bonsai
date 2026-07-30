@@ -117,7 +117,21 @@ $SSH 'tail -5 /root/run.log'
 
 When killing a detached run, kill explicit PIDs and verify `pgrep` returns nothing before relaunching — an orphaned worker (PPID 1) still fitting 16M rows makes every subsequent measurement ~2× slow (the contention signature: everything inflates uniformly, including phases you didn't touch).
 
-## 6. Tear down and sweep
+## 6. Campaign driver
+
+For multi-hour campaigns (spec ladders, Pareto frontiers), raw heredoc drivers are retired: `scripts/pod_bench_driver.sh` is the committed template. Copy it to the pod and launch it under `setsid` so an SSH drop cannot kill the run, then poll the log:
+
+```bash
+scp -i ~/.ssh/id_ed25519 -P $PORT scripts/pod_bench_driver.sh root@$IP:/root/
+$SSH 'setsid env HOST_TAG=<gpu-tag> BRANCH=main SPEC=benchmarks/specs/gpu-pareto-16M.json \
+  OUT=/root/gpu-pareto-16M.jsonl RUN_LABEL=<label> \
+  bash /root/pod_bench_driver.sh > /root/campaign.log 2>&1 < /dev/null & echo launched'
+$SSH 'tail -5 /root/campaign.log'
+```
+
+The script clones or fetches the branch, builds `python-cuda` (side-installing CUDA 12.8 on Blackwell hosts), and runs the spec through `python -m bonsai.bench run`. Re-invoking it after a spot reap or crash resumes: rows already in `$OUT` are kept and only failed or missing jobs re-attempt. One-off probes can still use the worker-mode call in section 5.
+
+## 7. Tear down and sweep
 
 ```bash
 curl -s -X DELETE https://rest.runpod.io/v1/pods/$POD -H "Authorization: Bearer $RUNPOD_KEY"
@@ -126,7 +140,7 @@ curl -s https://rest.runpod.io/v1/pods -H "Authorization: Bearer $RUNPOD_KEY" | 
 
 The sweep is not optional: **an error-returning create can still have created a billing pod.** After any failed create, list and delete strays. Zero pods listed = zero billing.
 
-## 7. Failure decoder ring
+## 8. Failure decoder ring
 
 | Symptom | Cause | Fix |
 |---|---|---|
@@ -140,8 +154,8 @@ The sweep is not optional: **an error-returning create can still have created a 
 | Everything ~2× slower than the last run, uniformly | Orphaned worker from a killed run still computing | `pgrep -af python`, kill PIDs, verify empty, re-run |
 | One pod much slower than another, same GPU model | Fleet variance (~25% measured) or the defective-host class (GPU sync ~300µs vs ~4µs healthy) | Same-pod comparisons only; for latency-sensitive work run a 30s sync probe first and reject hosts >50µs |
 | "No resources" / capacity errors | DC out of that GPU | Retry, switch GPU type (L40S↔A100), or switch cloudType |
-| Create succeeded per billing but API returned an error | Known API quirk | Always list-and-sweep after failures (section 6) |
+| Create succeeded per billing but API returned an error | Known API quirk | Always list-and-sweep after failures (section 7) |
 
-## 8. Cost notes
+## 9. Cost notes
 
 L40S SECURE ≈ $0.99/hr, billed per-minute while the pod exists (not just while computing). A typical validation session — boot, build, `[cuda]` suite, two 16M profiled fits, teardown — is 25–40 minutes ≈ **$0.40–0.70**. The entire 2026-07 optimization campaign's pod spend was dominated by a handful of full-fleet sweeps, not validation sessions; there is no reason to hesitate about spinning a pod to check a GPU change, and no excuse for leaving one running overnight.
