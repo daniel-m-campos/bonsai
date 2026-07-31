@@ -11,15 +11,18 @@ from __future__ import annotations
 import json
 import pathlib
 
+from . import params
 from .variants import resolve
 
 _SPEC_KEYS = {"name", "suite", "defaults", "cells", "variants", "threads",
               "repeats", "gates", "timeout_cap", "variant_iters"}
 
-# Cell knob defaults when a spec omits them; the scaling regime (params.SCALING
-# carries the same values, asserted by the guard test).
-_CELL_DEFAULTS = {"bins": 255, "depth": 8, "iters": 100, "lr": 0.1,
-                  "informative": 20, "seed": 42}
+# Cell knob defaults when a spec omits them: the scaling regime, single-
+# sourced from params so the two cannot drift.
+_CELL_DEFAULTS = {**{k: params.SCALING[k]
+                     for k in ("bins", "depth", "iters", "lr", "seed",
+                               "min_data_in_leaf", "lambda_l2")},
+                  "informative": 20}
 
 
 def _spec_text(name_or_path: str | pathlib.Path) -> str:
@@ -110,9 +113,9 @@ def expand(spec: dict, *, variants: list[str] | None = None,
     """Flat job list: [{cell, variant, threads, repeats}], cells outer so a
     sweep finishes one shape across all arms before moving on (same-shape
     rows stay adjacent in the output)."""
-    chosen = variants or spec["variants"]
-    for v in chosen:
-        resolve(v)
+    # Canonicalize: aliases (bonsai_dw, xgb, ...) validate AND normalize, so
+    # emitted rows and resume keys carry one spelling per arm.
+    chosen = [resolve(v).name for v in (variants or spec["variants"])]
     policy = repeats if repeats is not None else spec.get("repeats", 1)
     threads = spec.get("threads", [16])
     variant_iters = spec.get("variant_iters", {})
