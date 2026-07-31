@@ -166,6 +166,21 @@ class _BonsaiEstimator:
         merged.update(self.params or {})
         return [(k, _to_config_str(v)) for k, v in merged.items()]
 
+    @staticmethod
+    def _reject_dart_eval_set(pairs: list[tuple[str, str]]) -> None:
+        """Eval history shares early stopping's incremental valid-loss
+        accumulation, which DART's per-round tree rescaling invalidates;
+        the native layer would silently record nothing (and
+        ``evals_result()`` would come back empty), so fail loudly at fit
+        time, mirroring the native early-stopping + DART rejection."""
+        for key, value in pairs:
+            if key == "booster.dart_drop_rate" and float(value) > 0.0:
+                raise ValueError(
+                    "eval_set is unsupported with dart_drop_rate > 0: eval "
+                    "history relies on incremental valid-loss bookkeeping "
+                    "that DART's per-round tree rescaling invalidates"
+                )
+
     def get_params(self, deep: bool = True) -> dict:
         """sklearn contract: one entry per ``__init__`` parameter, unchanged
         since construction (``deep`` is accepted for API compatibility;
@@ -320,7 +335,10 @@ class _BonsaiEstimator:
         return self._model.n_iters
 
     def _eval_presentation(self) -> tuple[str, list[float]]:
-        """(xgboost metric name, transformed per-round eval history)."""
+        """(xgboost metric name, transformed per-round eval history). The
+        history is indexed by absolute model round: after an ``init_model``
+        warm start the pre-existing rounds are NaN placeholders (the
+        transforms map NaN to NaN)."""
         name, transform = _EVAL_METRIC.get(
             self._model.objective_name, (self._model.objective_name, float)
         )
@@ -331,18 +349,28 @@ class _BonsaiEstimator:
         ``{"validation_0": {metric_name: [...]}}``. Requires a fit with an
         ``eval_set``; empty after loading from a file (as in xgboost). The
         mse objective is presented as rmse (the exact root; monotone, so
-        early stopping saw the same ordering)."""
+        early stopping saw the same ordering). After an ``init_model`` warm
+        start only the continuation's measured rounds are reported (the
+        warm-start rounds were never evaluated; ``best_iteration`` still
+        counts absolute rounds)."""
         if self._model is None:
             raise RuntimeError("fit() first")
         name, hist = self._eval_presentation()
+        start = next(
+            (i for i, v in enumerate(hist) if not np.isnan(v)), len(hist)
+        )
+        hist = hist[start:]
         if not hist:
             return {}
         return {"validation_0": {name: hist}}
 
     @property
     def best_iteration(self) -> int:
-        """0-based round with the best eval-set loss, defined (as in
-        xgboost) only when fit ran with early stopping and an eval_set."""
+        """0-based absolute model round with the best eval-set loss, defined
+        (as in xgboost) only when fit ran with early stopping and an
+        eval_set. After an ``init_model`` warm start the index counts the
+        warm-start rounds too, so it lines up with ``n_iters_`` and
+        ``predict(num_iteration=best_iteration + 1)``."""
         if self._model is None:
             raise RuntimeError("fit() first")
         hist = self._model.eval_history
@@ -351,7 +379,8 @@ class _BonsaiEstimator:
                 "best_iteration needs fit(eval_set=...) with "
                 "early_stopping_rounds set"
             )
-        return int(np.argmin(hist))
+        # nanargmin: warm-start rounds are unmeasured NaN placeholders.
+        return int(np.nanargmin(hist))
 
     @property
     def best_score(self) -> float:
@@ -366,7 +395,7 @@ class _BonsaiEstimator:
                 "early_stopping_rounds set"
             )
         _, presented = self._eval_presentation()
-        return float(min(presented))
+        return float(np.nanmin(presented))
 
 
 class BonsaiRegressor(_BonsaiEstimator):
@@ -515,6 +544,7 @@ class BonsaiRegressor(_BonsaiEstimator):
         eval_set = _normalize_eval_set(eval_set)
         ev = None
         if eval_set is not None:
+            self._reject_dart_eval_set(pairs)
             ev = (_as_2d_f32(eval_set[0]), _as_1d_f32(eval_set[1]))
         sw = None if sample_weight is None else _as_1d_f32(sample_weight)
         Xa = _as_2d_f32(X)
@@ -680,6 +710,7 @@ class BonsaiClassifier(_BonsaiEstimator):
         pairs = self._build_pairs()
         ev = None
         if eval_set is not None:
+            self._reject_dart_eval_set(pairs)
             # A label the training fold never saw cannot be encoded; letting
             # searchsorted guess silently corrupts the eval metric and early
             # stopping, so reject it.

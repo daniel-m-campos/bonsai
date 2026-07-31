@@ -538,7 +538,10 @@ NB_MODULE(_bonsai, m)
         .def_prop_ro("n_iters", &Model::n_iters)
         .def_prop_ro("eval_history", &Model::eval_history,
                      "Per-round valid loss from fit (objective's own eval "
-                     "metric); empty without an eval set or after load().")
+                     "metric); empty without an eval set or after load(). "
+                     "Indexed by absolute model round: after an init_model "
+                     "warm start the pre-existing rounds appear as NaN "
+                     "placeholders.")
         .def_prop_ro("config_toml", &Model::config_toml)
         .def_prop_ro("objective_name", &Model::objective_name,
                      "The objective this model was trained with (e.g. mse, "

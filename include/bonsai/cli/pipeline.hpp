@@ -108,6 +108,9 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
 // loss after every boosting round (the objective's own eval metric), whether
 // or not early stopping is on; DART skips it (per-round rescaling invalidates
 // the incremental accumulation the history shares with early stopping).
+// Indices are absolute model rounds: a warm start (`initial`) prefixes one
+// quiet-NaN entry per pre-existing round, so argmin over the vector lines up
+// with n_iters()/truncate()/predict-at-round counting.
 std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
                                               LabeledData const        &train,
                                               LabeledData const        *valid,

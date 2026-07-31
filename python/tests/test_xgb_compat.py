@@ -126,6 +126,55 @@ def test_eval_history_without_early_stopping():
         _ = est.best_iteration
 
 
+def test_warm_start_best_iteration_is_absolute():
+    """xgboost defines best_iteration as an absolute index into the model;
+    after an init_model continuation it must count the warm-start rounds,
+    so predict(num_iteration=best_iteration + 1) uses the whole best
+    model, not a continuation-relative prefix."""
+    Xtr, ytr, Xva, yva = _reg_data()
+    rounds_a = 30
+    first = bonsai.BonsaiRegressor(n_estimators=rounds_a).fit(Xtr, ytr)
+    with tempfile.NamedTemporaryFile(suffix=".msgpack") as f:
+        first.save_model(f.name)
+        est = bonsai.BonsaiRegressor(n_estimators=40, early_stopping_rounds=5)
+        est.fit(Xtr, ytr, eval_set=[(Xva, yva)], init_model=f.name)
+
+    assert est.best_iteration >= rounds_a
+    assert est.best_iteration < est.n_iters_
+    if est.n_iters_ < rounds_a + 40:  # early stopping fired and truncated
+        assert est.n_iters_ == est.best_iteration + 1
+    # evals_result reports only the measured continuation rounds; the best
+    # absolute round is the warm-start offset plus its argmin
+    cont = est.evals_result()["validation_0"]["rmse"]
+    assert len(cont) <= 40
+    assert est.best_iteration == rounds_a + int(np.argmin(cont))
+    assert abs(est.best_score - min(cont)) < 1e-12
+    # the best-round prefix predicts differently than a tiny prefix would:
+    # the absolute index addresses real trees, not 0..3 of the continuation
+    best = est.predict(Xva, num_iteration=est.best_iteration + 1)
+    head = est.predict(Xva, num_iteration=4)
+    assert not np.allclose(best, head)
+
+
+def test_dart_with_eval_set_raises():
+    """Eval history is unsupported under DART (its per-round rescaling
+    invalidates the incremental valid-loss bookkeeping); passing eval_set
+    must fail loudly at fit time instead of silently recording nothing."""
+    Xtr, ytr, Xva, yva = _reg_data()
+    est = bonsai.BonsaiRegressor(
+        n_estimators=10, params={"booster.dart_drop_rate": 0.1}
+    )
+    try:
+        est.fit(Xtr, ytr, eval_set=(Xva, yva))
+        raise AssertionError("expected ValueError for DART + eval_set")
+    except ValueError as e:
+        assert "dart_drop_rate" in str(e)
+        assert "eval_set" in str(e)
+    # without an eval_set DART still fits normally
+    est.fit(Xtr, ytr)
+    assert est.n_iters_ == 10
+
+
 def test_device_and_grower_mapping():
     assert _grower_for_device("leafwise", "cuda") == "cuda_depthwise"
     assert _grower_for_device("oblivious", "cuda") == "cuda_oblivious"

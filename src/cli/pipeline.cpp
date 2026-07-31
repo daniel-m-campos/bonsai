@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <print>
@@ -275,6 +276,14 @@ train_with_progress(Config const &cfg, LabeledData const &train,
                 es_base = booster->n_iters() - 1;
                 es_scores.resize(valid->features.n_rows * booster->score_width());
                 booster->seed_valid_scores(valid->features.view(), es_scores, es_base);
+                if (track_eval && es_base > 0)
+                {
+                    // NaN placeholders for the warm-start rounds keep history
+                    // indices equal to absolute model rounds.
+                    eval_history->get().insert(
+                        eval_history->get().end(), es_base,
+                        std::numeric_limits<float>::quiet_NaN());
+                }
             }
             booster->accumulate_last_round(valid->features.view(), es_scores);
             float const loss = booster->valid_loss(es_scores, valid->labels);
