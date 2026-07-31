@@ -88,6 +88,16 @@ jobs:
             "root@${{ steps.pod.outputs.ip }}:/root/standings/*.jsonl" /tmp/standings/ || true
           ls -la /tmp/standings/
 
+      # ~90 pod-minutes of measurement must survive a failure in any later
+      # step (the first run lost its data to a render crash).
+      - name: Preserve measurements as an artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: standings-${{ github.run_id }}
+          path: /tmp/standings/
+          if-no-files-found: ignore
+
       - name: Tear down the pod
         if: always() && steps.pod.outputs.pod_id != ''
         run: |

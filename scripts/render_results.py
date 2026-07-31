@@ -178,6 +178,8 @@ def line_chart(fname: str, title: str, y_label: str,
     xs = [tx(x) for _, _, _, pts in series for x, _ in pts]
     ys = [ty(y) for _, _, _, pts in series for _, y in pts]
     x0, x1 = min(xs), max(xs)
+    if x0 == x1:
+        raise ValueError(f"{fname}: a line chart needs two distinct x values")
     y0, y1 = min(ys), max(ys)
     y0 -= (y1 - y0) * 0.06 or 0.05
     y1 += (y1 - y0) * 0.06 or 0.05
@@ -643,16 +645,11 @@ def rebaseline_section() -> str:
     best = _cell_best(rows)
     host = rows[0]["host"]
     row_axis = sorted({r["cell"]["rows"] for r in rows if r["cell"]["cols"] == 100})
-    col_axis = sorted({r["cell"]["cols"] for r in rows if r["cell"]["rows"] == 1_000_000})
 
     rows_table = md_table(
         ["rows", *[lbl for _, lbl in REBASE_VARIANTS]],
         [[human(n), *[_fmt_cell(best, n, 100, v) for v, _ in REBASE_VARIANTS]]
          for n in row_axis])
-    cols_table = md_table(
-        ["cols", *[lbl for _, lbl in REBASE_VARIANTS]],
-        [[str(c), *[_fmt_cell(best, 1_000_000, c, v) for v, _ in REBASE_VARIANTS]]
-         for c in col_axis])
 
     def series_for(cells: list[tuple[int, int]]):
         out = []
@@ -669,12 +666,6 @@ def rebaseline_section() -> str:
         "fit seconds",
         series_for([(n, (n, 100)) for n in row_axis]),
         x_ticks=[(n, human(n)) for n in row_axis], x_label="rows")
-    line_chart(
-        "rebaseline-cols.svg",
-        "Fit seconds vs features (1M rows, log-log; lower is better)",
-        "fit seconds",
-        series_for([(c, (1_000_000, c)) for c in col_axis]),
-        x_ticks=[(c, str(c)) for c in col_axis], x_label="features")
 
     return f"""### The re-baseline: fit seconds at scale
 
@@ -686,13 +677,7 @@ Scaling rows (100 features):
 
 {rows_table}
 
-![Fit seconds vs features](assets/rebaseline-cols.svg)
-
-Scaling features (1M rows):
-
-{cols_table}
-
-The wide cells of this table predate the 2026-07-30 wide re-baseline; the current width standings are on [Width and shape](perf-shape.md).
+Width scaling has its own standings axis on [Width and shape](perf-shape.md).
 
 {provenance([standings_file("rows")], "Runner: [scripts/bench_scaling.py](../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file." + measured_stamp(rows))}
 """
@@ -1313,7 +1298,7 @@ def readme_standings_block() -> str:
     92): division summaries plus the two tables, fastest per row in bold."""
     perf, _quality = _division_summaries()
 
-    rb = load_jsonl("rebaseline-2026-07.jsonl")
+    rb = load_jsonl(standings_file("rows"))
     best = _cell_best(rb)
     scales = sorted({r["cell"]["rows"] for r in rb if r["cell"]["cols"] == 100})
     lines = ["| rows | " + " | ".join(lbl for _, lbl in REBASE_VARIANTS) + " |",
@@ -1330,7 +1315,7 @@ def readme_standings_block() -> str:
         lines.append(f"| {human(n)} | " + " | ".join(cells) + " |")
     rows_table = "\n".join(lines)
 
-    table, _, n_tasks = _standings(load_jsonl("grinsztajn-2026-07.jsonl"))
+    table, _, n_tasks = _standings(load_jsonl(standings_file("quality-grinsztajn")))
     qlines = ["| library | mean rank | outright wins |", "|---|--:|--:|"]
     for i, (lib, mean, wins) in enumerate(table):
         row = [_LIB_NAMES.get(lib, lib), f"{mean:.2f}", str(wins)]
