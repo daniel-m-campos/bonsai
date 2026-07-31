@@ -17,18 +17,7 @@ Scaling rows (100 features):
 | 4M | 4.5s (.878) | 4.4s (.875) | 5.3s (.878) | 5.0s (.877) | 19.9s (.879) | 20.2s (.875) |
 | 16M | 20.5s (.879) | 18.4s (.876) | 19.9s (.880) | 18.5s (.876) | 111.3s (.879) | 73.3s (.876) |
 
-![Fit seconds vs features](../assets/rebaseline-cols.svg)
-
-Scaling features (1M rows):
-
-| cols | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu | lgbm cpu | bonsai cpu obl |
-|---|---|---|---|---|---|---|
-| 100 | 1.1s (.876) | 1.4s (.876) | 1.7s (.876) | 2.3s (.876) | 5.0s (.877) | 7.3s (.876) |
-| 256 | 2.8s (.876) | 2.9s (.876) | 3.6s (.876) | 3.5s (.876) | 11.5s (.876) | 15.0s (.876) |
-| 1024 | 11.2s (.876) | 10.6s (.876) | 12.5s (.876) | 9.7s (.875) | 59.2s (.876) | 49.3s (.876) |
-| 4096 | 44.2s (.875) | 41.9s (.875) | 50.6s (.876) | 35.8s (.874) | 256.2s (.875) | 188.1s (.875) |
-
-The wide cells of this table predate the 2026-07-30 wide re-baseline; the current width standings are on [Width and shape](perf-shape.md).
+Width scaling has its own standings axis on [Width and shape](perf-shape.md).
 
 *Source: [`rebaseline-2026-07.jsonl`](../../../benchmarks/results/rebaseline-2026-07.jsonl). Runner: [scripts/bench_scaling.py](../../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file. Measured at `434a382` (2026-07-13, dual-epyc-9554-l40s).*
 
