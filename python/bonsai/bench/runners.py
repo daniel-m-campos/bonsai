@@ -15,7 +15,7 @@ import numpy as np
 
 from . import params as rp
 from . import runlog
-from .metrics import r2
+from .metrics import auc, r2
 from .synth import gen_data
 from .variants import resolve
 
@@ -26,19 +26,24 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
     if grower.startswith("cuda") and not bonsai.cuda_available():
         raise RuntimeError("unsupported: cuda grower without a CUDA device/build")
     c = spec["cell"]
+    task = c.get("task", "reg")
     pairs = rp.bonsai_core(
         learning_rate=c["lr"], max_depth=c["depth"],
         num_leaves=rp.num_leaves_full(c["depth"]),
         min_data_in_leaf=c.get("min_data_in_leaf", rp.SCALING["min_data_in_leaf"]),
         lambda_l2=c.get("lambda_l2", rp.SCALING["lambda_l2"]),
         max_bin=c["bins"], seed=c["seed"],
-        n_iters=c["iters"], n_threads=spec["threads"], grower=grower)
+        n_iters=c["iters"], n_threads=spec["threads"], grower=grower,
+        objective="logloss" if task == "binary" else "mse")
     t0 = time.perf_counter()
     model = bonsai.train(pairs, X, y)
     fit_s = time.perf_counter() - t0
     t0 = time.perf_counter()
     pred_te = np.asarray(model.predict(Xte))
     predict_s = time.perf_counter() - t0
+    if task == "binary":
+        return {"fit_s": fit_s, "predict_s": predict_s,
+                "auc_test": auc(yte, pred_te)}
     pred_tr = np.asarray(model.predict(X))
     return {"fit_s": fit_s, "predict_s": predict_s,
             "r2_train": r2(y, pred_tr), "r2_test": r2(yte, pred_te)}
@@ -47,6 +52,7 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
 def run_xgb(spec, X, y, Xte, yte) -> dict:
     import xgboost as xgb
     c = spec["cell"]
+    task = c.get("task", "reg")
     device = resolve(spec["variant"]).device
     params = {**rp.xgb_core(learning_rate=c["lr"], max_depth=c["depth"],
                             min_data_in_leaf=c.get(
@@ -55,8 +61,9 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
                             lambda_l2=c.get("lambda_l2",
                                             rp.SCALING["lambda_l2"]),
                             max_bin=c["bins_effective"], seed=c["seed"]),
-              "objective": "reg:squarederror", "device": device,
-              "nthread": spec["threads"]}
+              "objective": ("binary:logistic" if task == "binary"
+                            else "reg:squarederror"),
+              "device": device, "nthread": spec["threads"]}
     t0 = time.perf_counter()
     dtrain = xgb.QuantileDMatrix(X, label=y, max_bin=c["bins_effective"])
     booster = xgb.train(params, dtrain, num_boost_round=c["iters"])
@@ -64,6 +71,9 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
     t0 = time.perf_counter()
     pred_te = booster.inplace_predict(Xte)
     predict_s = time.perf_counter() - t0
+    if task == "binary":
+        return {"fit_s": fit_s, "predict_s": predict_s,
+                "auc_test": auc(yte, pred_te)}
     pred_tr = booster.inplace_predict(X)
     return {"fit_s": fit_s, "predict_s": predict_s,
             "r2_train": r2(y, pred_tr), "r2_test": r2(yte, pred_te)}
@@ -72,6 +82,7 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
 def run_lgbm(spec, X, y, Xte, yte) -> dict:
     import lightgbm as lgb
     c = spec["cell"]
+    task = c.get("task", "reg")
     device = resolve(spec["variant"]).device
     if device == "cuda":
         raise RuntimeError("unsupported: pip lightgbm lacks CUDA; source build "
@@ -84,7 +95,7 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
                              lambda_l2=c.get("lambda_l2",
                                              rp.SCALING["lambda_l2"]),
                              max_bin=c["bins_effective"], seed=c["seed"]),
-              "objective": "regression",
+              "objective": "binary" if task == "binary" else "regression",
               "device_type": device, "num_threads": spec["threads"]}
     t0 = time.perf_counter()
     dtrain = lgb.Dataset(X, label=y)
@@ -93,22 +104,28 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
     t0 = time.perf_counter()
     pred_te = model.predict(Xte)
     predict_s = time.perf_counter() - t0
+    if task == "binary":
+        return {"fit_s": fit_s, "predict_s": predict_s,
+                "auc_test": auc(yte, pred_te)}
     pred_tr = model.predict(X)
     return {"fit_s": fit_s, "predict_s": predict_s,
             "r2_train": r2(y, pred_tr), "r2_test": r2(yte, pred_te)}
 
 
 def run_catboost(spec, X, y, Xte, yte) -> dict:
-    from catboost import CatBoostRegressor, Pool
+    from catboost import CatBoostClassifier, CatBoostRegressor, Pool
     c = spec["cell"]
+    task = c.get("task", "reg")
     device = resolve(spec["variant"]).device
-    model = CatBoostRegressor(
+    cls = CatBoostClassifier if task == "binary" else CatBoostRegressor
+    model = cls(
         **rp.catboost_core(learning_rate=c["lr"], max_depth=c["depth"],
                            lambda_l2=c.get("lambda_l2",
                                            rp.SCALING["lambda_l2"]),
                            max_bin=c["bins_effective"], seed=c["seed"],
                            device=device),
-        iterations=c["iters"], loss_function="RMSE",
+        iterations=c["iters"],
+        loss_function="Logloss" if task == "binary" else "RMSE",
         task_type=("GPU" if device == "cuda" else "CPU"), devices="0",
         thread_count=spec["threads"], verbose=False)
     t0 = time.perf_counter()
@@ -116,8 +133,12 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
     model.fit(pool)
     fit_s = time.perf_counter() - t0
     t0 = time.perf_counter()
-    pred_te = model.predict(Xte)
+    pred_te = (model.predict_proba(Xte)[:, 1] if task == "binary"
+               else model.predict(Xte))
     predict_s = time.perf_counter() - t0
+    if task == "binary":
+        return {"fit_s": fit_s, "predict_s": predict_s,
+                "auc_test": auc(yte, pred_te)}
     pred_tr = model.predict(X)
     return {"fit_s": fit_s, "predict_s": predict_s,
             "r2_train": r2(y, pred_tr), "r2_test": r2(yte, pred_te)}
