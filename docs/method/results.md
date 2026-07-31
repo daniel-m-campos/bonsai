@@ -2,11 +2,11 @@
 
 # The results ledger
 
-Every committed data file under [`benchmarks/results/`](../../benchmarks/results) is rendered across the pages below, generated straight from the data: `python3 scripts/render_results.py` rewrites them and CI fails on drift. Rows are as-run records under the [benchmark protocol](benchmark-protocol.md): quality division numbers never cite timing, perf division numbers name their timing mode, and superseded files are deleted rather than kept beside their replacements, so what is here is the current evidence, whole.
+Every results file behind a published claim is rendered across the pages below, generated straight from the data in [`benchmarks/results/`](../../benchmarks/results): `python3 scripts/render_results.py` rewrites them and CI fails on drift. Rows are as-run records under the [benchmark protocol](benchmark-protocol.md): quality division numbers never cite timing, perf division numbers name their timing mode, and superseded files are deleted rather than kept beside their replacements, so what is here is the current evidence, whole.
 
 ## Perf division
 
-bonsai's CUDA growers hold the fastest slot at every measured row scale (18.4s at 16M rows against XGBoost-GPU's 19.9s) at 7.0GB peak host memory against XGBoost's 22.2GB and CatBoost's 19.4GB. The 2026-07-30 studies hold every width and aspect ratio, with measured device memory that sizes to the problem: 3.4GB at 16M x 128 at constant 2^31-cell volume against XGBoost's 18.9GB and CatBoost's 90.2GB. Every number is same-pod; identical-model GPUs across the rental fleet measure up to ~25% apart.
+bonsai's CUDA growers hold the fastest slot at every measured row scale (18.4s at 16M rows against XGBoost-GPU's 19.9s) at 7.0GB peak host memory against XGBoost's 22.2GB and CatBoost's 19.4GB. XGBoost-GPU owns raw speed on the narrow airline shape at 10M rows. The 2026-07-30 studies hold every width and aspect ratio, with measured device memory that sizes to the problem: 3.4GB at 16M x 128 at constant 2^31-cell volume against XGBoost's 18.9GB and CatBoost's 90.2GB. Every number is same-pod; identical-model GPUs across the rental fleet measure up to ~25% apart.
 
 | page | what it holds |
 |---|---|

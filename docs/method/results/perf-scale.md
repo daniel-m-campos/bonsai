@@ -28,6 +28,8 @@ Scaling features (1M rows):
 | 1024 | 11.2s (.876) | 10.6s (.876) | 12.5s (.876) | 9.7s (.875) | 59.2s (.876) | 49.3s (.876) |
 | 4096 | 44.2s (.875) | 41.9s (.875) | 50.6s (.876) | 35.8s (.874) | 256.2s (.875) | 188.1s (.875) |
 
+The wide cells of this table predate the 2026-07-30 wide re-baseline; the current width standings are on [Width and shape](perf-shape.md).
+
 *Source: [`rebaseline-2026-07.jsonl`](../../../benchmarks/results/rebaseline-2026-07.jsonl). Runner: [scripts/bench_scaling.py](../../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file.*
 
 ### The XGBoost 3.3 recheck (decision 87)

@@ -33,6 +33,6 @@ Sensitivity: XGBoost's campaign mapping sets `min_child_weight=20` (hessian-weig
 | lgbm | 2.69 | 6 |
 | catboost | 3.35 | 8 |
 
-Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl --report`.
+Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite (hours; datasets fetch from OpenML), then `--report` on the same file to render the standings from the jsonl.
 
 *Source: [`grinsztajn-2026-07.jsonl`](../../../benchmarks/results/grinsztajn-2026-07.jsonl), [`grinsztajn-2026-07-xgb-mcw1.jsonl`](../../../benchmarks/results/grinsztajn-2026-07-xgb-mcw1.jsonl). As-run; evidence narrative in [benchmarks/grinsztajn-2026-07.md](../../../benchmarks/grinsztajn-2026-07.md), ruling in decision 68.*

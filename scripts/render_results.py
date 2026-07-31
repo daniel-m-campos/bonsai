@@ -297,7 +297,7 @@ Sensitivity: XGBoost's campaign mapping sets `min_child_weight=20` (hessian-weig
 
 {sensitivity}
 
-Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl --report`.
+Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite (hours; datasets fetch from OpenML), then `--report` on the same file to render the standings from the jsonl.
 
 {provenance(["grinsztajn-2026-07.jsonl", "grinsztajn-2026-07-xgb-mcw1.jsonl"], "As-run; evidence narrative in [benchmarks/grinsztajn-2026-07.md](../../benchmarks/grinsztajn-2026-07.md), ruling in decision 68.")}
 """
@@ -652,6 +652,8 @@ Scaling features (1M rows):
 
 {cols_table}
 
+The wide cells of this table predate the 2026-07-30 wide re-baseline; the current width standings are on [Width and shape](perf-shape.md).
+
 {provenance(["rebaseline-2026-07.jsonl"], "Runner: [scripts/bench_scaling.py](../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file.")}
 """
 
@@ -719,8 +721,8 @@ def wide_cpu_hist_table() -> str:
         lg = cell("ref", "lgbm_cpu", 131072, 16384)
         body.append([variant.removeprefix("bonsai_"), b, a, lg])
     table = md_table(
-        ["grower", "row-wise fill (before)", "feature-parallel (after)",
-         "lgbm_cpu"], body)
+        ["grower", "row-wise fill (before)",
+         "feature-parallel (decision 88, retired by 89)", "lgbm_cpu"], body)
 
     return f"""### The wide-CPU fill: from a 2-6x wall to one tiled pass (decisions 88, 89)
 
@@ -932,11 +934,11 @@ bonsai's CUDA growers are fastest at every cell of both ladders and their fit ti
 
 ![Peak device memory vs cols, iso-volume](assets/iso-volume-vram.svg)
 
-Fit seconds (test r2), best of reps, 2^31 cells:
+Fit seconds (test r2), best of reps, 2^31 cells plus the 1M x 100 anchor:
 
 {fit31}
 
-Measured peak device memory (per-process, worst rep is within sampling noise of best), 2^31 cells:
+Measured peak device memory (per-process, worst rep is within sampling noise of best), 2^31 cells plus the 1M x 100 anchor:
 
 {vram31}
 
@@ -1076,7 +1078,7 @@ HEADER = GEN_NOTE + """
 
 # The results ledger
 
-Every committed data file under [`benchmarks/results/`](../../benchmarks/results) is rendered across the pages below, generated straight from the data: `python3 scripts/render_results.py` rewrites them and CI fails on drift. Rows are as-run records under the [benchmark protocol](benchmark-protocol.md): quality division numbers never cite timing, perf division numbers name their timing mode, and superseded files are deleted rather than kept beside their replacements, so what is here is the current evidence, whole.
+Every results file behind a published claim is rendered across the pages below, generated straight from the data in [`benchmarks/results/`](../../benchmarks/results): `python3 scripts/render_results.py` rewrites them and CI fails on drift. Rows are as-run records under the [benchmark protocol](benchmark-protocol.md): quality division numbers never cite timing, perf division numbers name their timing mode, and superseded files are deleted rather than kept beside their replacements, so what is here is the current evidence, whole.
 """
 
 
@@ -1274,7 +1276,8 @@ def _division_summaries() -> tuple[str, str]:
         f"scale ({b_fit:.1f}s at 16M rows against XGBoost-GPU's "
         f"{fit['xgb_cuda']:.1f}s) at {b_rss:.1f}GB peak host memory against "
         f"XGBoost's {rss['xgb_cuda']:.1f}GB and CatBoost's "
-        f"{rss['catboost_gpu']:.1f}GB. The 2026-07-30 studies hold every "
+        f"{rss['catboost_gpu']:.1f}GB. XGBoost-GPU owns raw speed on the "
+        f"narrow airline shape at 10M rows. The 2026-07-30 studies hold every "
         f"width and aspect ratio, with measured device memory that sizes to "
         f"the problem: {dev['bonsai_cuda_depthwise']:.1f}GB at 16M x 128 at "
         f"constant 2^31-cell volume against XGBoost's "
