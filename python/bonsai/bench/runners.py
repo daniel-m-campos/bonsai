@@ -84,9 +84,6 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
     c = spec["cell"]
     task = c.get("task", "reg")
     device = resolve(spec["variant"]).device
-    if device == "cuda":
-        raise RuntimeError("unsupported: pip lightgbm lacks CUDA; source build "
-                           "deferred to a later round")
     params = {**rp.lgbm_core(learning_rate=c["lr"], max_depth=c["depth"],
                              num_leaves=rp.num_leaves_full(c["depth"]),
                              min_data_in_leaf=c.get(

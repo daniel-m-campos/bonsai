@@ -32,6 +32,7 @@
     "bonsai_cuda_oblivious",
     "xgb_cuda",
     "catboost_gpu",
+    "lgbm_cuda",
     "lgbm_cpu",
     "bonsai_oblivious"
   ],

@@ -269,8 +269,6 @@ def skip_reason(job: dict, host: dict, gates: dict) -> tuple[str, str] | None:
     v = resolve(variant)
     gpu_max_cols = gates.get("gpu_max_cols", GPU_MAX_COLS)
     mem_gate = gates.get("mem_gate", "on") != "off"
-    if variant == "lgbm_cuda":
-        return ("unsupported", "pip lightgbm lacks CUDA (deferred)")
     if v.device == "cuda" and host["gpu"] is None:
         return ("skipped", "no CUDA device on host")
     if v.device == "cuda" and gpu_max_cols and cell["cols"] > gpu_max_cols:

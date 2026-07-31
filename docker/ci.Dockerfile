@@ -26,8 +26,16 @@ ENV PATH="/root/.local/bin:${PATH}"
 RUN uv venv --python 3.12 /opt/venv \
     && uv pip install --python /opt/venv/bin/python \
         cmake ninja numpy nanobind scikit-learn pandas tabulate matplotlib \
-        lightgbm xgboost catboost
+        xgboost catboost
 ENV PATH="/opt/venv/bin:${PATH}"
+
+# lightgbm from source with the CUDA backend: the PyPI wheel is CPU-only,
+# and the lgbm_cuda reference arm needs device_type=cuda on pods. The same
+# install serves lgbm_cpu (device_type=cpu works in a CUDA build). Compiling
+# needs no GPU; sm_89/sm_80 pods run it via the build's own arch list.
+RUN CUDACXX=/usr/local/cuda/bin/nvcc \
+    uv pip install --python /opt/venv/bin/python --no-binary lightgbm \
+        --config-setting cmake.define.USE_CUDA=ON lightgbm
 
 # FetchContent sources, pre-cloned: pods point CMake at these via
 # FETCHCONTENT_SOURCE_DIR_* instead of hitting GitHub per configure.
