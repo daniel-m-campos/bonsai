@@ -27,7 +27,7 @@ BENCH=(env PYTHONPATH=/root/bonsai/build-cuda/python /opt/venv/bin/python -m bon
 # interleaved per rep so pod thermal/state drift cannot masquerade as a
 # code delta. This is the perf-change detector.
 if [ -n "$PREV_VERSION" ]; then
-    /opt/venv/bin/pip install -q "bonsai-gbt==$PREV_VERSION"
+    uv pip install -q --python /opt/venv/bin/python "bonsai-gbt==$PREV_VERSION"
     : > /root/standings/ab.jsonl
     for rep in 1 2; do
         for grower in cuda_depthwise cuda_oblivious; do
