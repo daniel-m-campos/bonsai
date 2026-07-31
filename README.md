@@ -76,16 +76,16 @@ Two divisions, per the [benchmark charter](https://daniel-m-campos.github.io/bon
 
 ### Perf
 
-bonsai's CUDA growers hold the fastest slot at every measured row scale (18.4s at 16M rows against XGBoost-GPU's 19.9s) at 7.0GB peak host memory against XGBoost's 22.2GB and CatBoost's 19.4GB. XGBoost-GPU owns raw speed on the narrow airline shape at 10M rows. The 2026-07-30 studies hold every width and aspect ratio, with measured device memory that sizes to the problem: 3.4GB at 16M x 128 at constant 2^31-cell volume against XGBoost's 18.9GB and CatBoost's 90.2GB. Every number is same-pod; identical-model GPUs across the rental fleet measure up to ~25% apart.
+bonsai's CUDA growers hold the fastest slot at every measured row scale (10.3s at 16M rows against XGBoost-GPU's 19.6s) at 6.9GB peak host memory against XGBoost's 22.2GB and CatBoost's 19.4GB. On the narrow airline shape bonsai holds both best AUC and fastest fit from 1M rows up. The 2026-07-30 studies hold every width and aspect ratio, with measured device memory that sizes to the problem: 3.4GB at 16M x 128 at constant 2^31-cell volume against XGBoost's 18.9GB and CatBoost's 90.2GB. Every number is same-pod; identical-model GPUs across the rental fleet measure up to ~25% apart.
 
-Same-pod re-baseline ladder, best of repeats, test r² in parentheses, fastest per row in bold. Measured at `434a382` (2026-07-13, dual-epyc-9554-l40s).
+Same-pod re-baseline ladder, best of repeats, test r² in parentheses, fastest per row in bold. Measured at `d3ffcd0` (2026-07-31, pod-NVIDIA-L40S).
 
 | rows | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu | lgbm cpu | bonsai cpu obl |
 |---|--:|--:|--:|--:|--:|--:|
-| 250k | **0.5s** (.871) | 1.0s (.875) | 0.8s (.872) | 1.6s (.875) | 2.5s (.872) | 5.2s (.875) |
-| 1M | **1.1s** (.876) | 1.4s (.876) | 1.7s (.876) | 2.3s (.876) | 5.0s (.877) | 7.3s (.876) |
-| 4M | 4.5s (.878) | **4.4s** (.875) | 5.3s (.878) | 5.0s (.877) | 19.9s (.879) | 20.2s (.875) |
-| 16M | 20.5s (.879) | **18.4s** (.876) | 19.9s (.880) | 18.5s (.876) | 111.3s (.879) | 73.3s (.876) |
+| 250k | **0.4s** (.872) | 0.8s (.877) | 0.7s (.872) | 1.7s (.875) | 2.4s (.872) | 4.7s (.877) |
+| 1M | **0.7s** (.877) | 1.1s (.877) | 1.7s (.876) | 2.3s (.876) | 5.1s (.877) | 7.3s (.877) |
+| 4M | **3.0s** (.878) | 3.0s (.876) | 5.2s (.878) | 5.0s (.877) | 19.4s (.879) | 21.0s (.876) |
+| 16M | 11.9s (.879) | **10.3s** (.877) | 19.6s (.880) | 18.4s (.876) | 99.6s (.879) | 68.7s (.877) |
 
 The width, shape, and accuracy-time frontier tables live in [the ledger](https://daniel-m-campos.github.io/bonsai/method/results/).
 
