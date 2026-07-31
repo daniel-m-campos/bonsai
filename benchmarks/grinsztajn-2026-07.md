@@ -4,7 +4,7 @@
 
 The internal quality campaign's ten datasets were chosen by this project, which caps the credibility of "best on 9 of 10" no matter how honestly it was run. This run adopts the benchmark of Grinsztajn, Oyallon, and Varoquaux (2022), "Why do tree-based models still outperform deep learning on tabular data?": four OpenML suites (297/298 numerical regression/classification, 299/304 categorical regression/classification), 55 tasks, selected by someone else.
 
-Protocol (`scripts/run_tabular_suite.py`): the paper's medium setting (train capped at 10k rows, test at 50k), campaign knobs for every library (200 iters, lr 0.05, depth 6, 255 bins, matched regularization), categorical features as ordinal codes for every library, 3 seeds per task, metrics averaged. Deviations from the paper, stated: fixed random splits instead of its resampling protocol, and no per-model tuning (matched knobs is the point). Raw rows: `results/grinsztajn-2026-07.jsonl` (990 fits, zero failures).
+Protocol (run then as `scripts/run_tabular_suite.py`, since packaged as `python -m bonsai.bench.grinsztajn`): the paper's medium setting (train capped at 10k rows, test at 50k), campaign knobs for every library (200 iters, lr 0.05, depth 6, 255 bins, matched regularization), categorical features as ordinal codes for every library, 3 seeds per task, metrics averaged. Deviations from the paper, stated: fixed random splits instead of its resampling protocol, and no per-model tuning (matched knobs is the point). Raw rows: `results/grinsztajn-2026-07.jsonl` (990 fits, zero failures).
 
 Library standings (each library at its best grower/configuration per dataset; xgboost at the campaign mapping `min_child_weight = min_data_in_leaf = 20`):
 
