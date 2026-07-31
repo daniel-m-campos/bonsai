@@ -296,6 +296,29 @@ def test_data_cache():
         assert second[0].dtype == np.float32
 
 
+def test_binary_task_runners():
+    """The shared runners serve airline's binary suite: task="binary" in the
+    cell selects the logloss objective and AUC scoring, and the airline knob
+    set carries every field the runners read (the row-shape contract)."""
+    from bonsai.bench import airline, runners
+
+    need = {"depth", "iters", "lr", "bins", "seed", "min_data_in_leaf",
+            "lambda_l2"}
+    assert need <= set(airline.KNOBS)
+
+    rng = np.random.default_rng(0)
+    X = rng.random((600, 6), dtype=np.float32)
+    yb = (X[:, 0] + 0.2 * rng.random(600) > 0.6).astype(np.float32)
+    cell = dict(airline.KNOBS, iters=10, bins_effective=airline.KNOBS["bins"],
+                task="binary")
+    for variant in ("bonsai_depthwise", "lgbm_cpu"):
+        run = runners.RUNNERS[runners.resolve(variant).lib]
+        out = run({"cell": cell, "variant": variant, "threads": 2},
+                  X[:500], yb[:500], X[500:], yb[500:])
+        assert set(out) == {"fit_s", "predict_s", "auc_test"}, (variant, out)
+        assert 0.5 < out["auc_test"] <= 1.0, (variant, out["auc_test"])
+
+
 def test_error_classification():
     from bonsai.bench import driver
 
@@ -517,6 +540,7 @@ if __name__ == "__main__":
     test_mem_sampler()
     test_data_cache()
     test_cli_plan_is_lazy()
+    test_binary_task_runners()  # imports lightgbm: after the lazy guard
     test_metrics_against_sklearn()
     test_runlog_roundtrip()
     print("all bench tests passed")

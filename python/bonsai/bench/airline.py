@@ -45,11 +45,10 @@ import urllib.request
 
 import numpy as np
 
-from . import params as rp
 from . import runlog
 from . import variants as vr
 from .datasets import data_root
-from .metrics import auc
+from .runners import RUNNERS
 
 S3 = "https://s3.amazonaws.com/benchm-ml--main"
 SIZES = {"0.1m": "train-0.1m.csv", "1m": "train-1m.csv", "10m": "train-10m.csv"}
@@ -115,98 +114,13 @@ def _encode(size: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
 # or probability output scores it identically.
 
 
-def run_bonsai(spec, X, y, Xte, yte) -> dict:
-    import bonsai
-    grower = spec["variant"].removeprefix("bonsai_")
-    if grower.startswith("cuda") and not bonsai.cuda_available():
-        raise RuntimeError("unsupported: cuda grower without a CUDA device/build")
-    k = spec["knobs"]
-    pairs = rp.bonsai_core(
-        learning_rate=k["lr"], max_depth=k["depth"],
-        num_leaves=rp.num_leaves_full(k["depth"]),
-        min_data_in_leaf=k["min_data_in_leaf"], lambda_l2=k["lambda_l2"],
-        max_bin=k["bins"], seed=k["seed"], n_iters=k["iters"],
-        n_threads=spec["threads"], grower=grower, objective="logloss")
-    t0 = time.perf_counter()
-    model = bonsai.train(pairs, X, y)
-    fit_s = time.perf_counter() - t0
-    t0 = time.perf_counter()
-    pred = np.asarray(model.predict(Xte))
-    predict_s = time.perf_counter() - t0
-    return {"fit_s": fit_s, "predict_s": predict_s, "auc_test": auc(yte, pred)}
-
-
-def run_xgb(spec, X, y, Xte, yte) -> dict:
-    import xgboost as xgb
-    k = spec["knobs"]
-    device = VARIANTS[spec["variant"]][1]
-    params = {**rp.xgb_core(learning_rate=k["lr"], max_depth=k["depth"],
-                            min_data_in_leaf=k["min_data_in_leaf"],
-                            lambda_l2=k["lambda_l2"],
-                            max_bin=k["bins"], seed=k["seed"]),
-              "objective": "binary:logistic", "device": device,
-              "nthread": spec["threads"]}
-    t0 = time.perf_counter()
-    dtrain = xgb.QuantileDMatrix(X, label=y, max_bin=k["bins"])
-    booster = xgb.train(params, dtrain, num_boost_round=k["iters"])
-    fit_s = time.perf_counter() - t0
-    t0 = time.perf_counter()
-    pred = booster.inplace_predict(Xte)
-    predict_s = time.perf_counter() - t0
-    return {"fit_s": fit_s, "predict_s": predict_s, "auc_test": auc(yte, pred)}
-
-
-def run_lgbm(spec, X, y, Xte, yte) -> dict:
-    import lightgbm as lgb
-    k = spec["knobs"]
-    params = {**rp.lgbm_core(learning_rate=k["lr"], max_depth=k["depth"],
-                             num_leaves=1 << k["depth"],
-                             min_data_in_leaf=k["min_data_in_leaf"],
-                             lambda_l2=k["lambda_l2"],
-                             max_bin=k["bins"], seed=k["seed"]),
-              "objective": "binary", "device_type": "cpu",
-              "num_threads": spec["threads"]}
-    t0 = time.perf_counter()
-    dtrain = lgb.Dataset(X, label=y)
-    model = lgb.train(params, dtrain, num_boost_round=k["iters"])
-    fit_s = time.perf_counter() - t0
-    t0 = time.perf_counter()
-    pred = model.predict(Xte)
-    predict_s = time.perf_counter() - t0
-    return {"fit_s": fit_s, "predict_s": predict_s, "auc_test": auc(yte, pred)}
-
-
-def run_catboost(spec, X, y, Xte, yte) -> dict:
-    from catboost import CatBoostClassifier, Pool
-    k = spec["knobs"]
-    device = VARIANTS[spec["variant"]][1]
-    model = CatBoostClassifier(
-        **rp.catboost_core(learning_rate=k["lr"], max_depth=k["depth"],
-                           lambda_l2=k["lambda_l2"],
-                           max_bin=k["bins"], seed=k["seed"],
-                           device=device),
-        iterations=k["iters"], loss_function="Logloss",
-        task_type=("GPU" if device == "cuda" else "CPU"), devices="0",
-        thread_count=spec["threads"], verbose=False)
-    t0 = time.perf_counter()
-    pool = Pool(X, label=y)
-    model.fit(pool)
-    fit_s = time.perf_counter() - t0
-    t0 = time.perf_counter()
-    pred = model.predict_proba(Xte)[:, 1]
-    predict_s = time.perf_counter() - t0
-    return {"fit_s": fit_s, "predict_s": predict_s, "auc_test": auc(yte, pred)}
-
-
-RUNNERS = {"bonsai": run_bonsai, "xgb": run_xgb, "lgbm": run_lgbm,
-           "catboost": run_catboost}
-
-
 def worker(spec: dict) -> dict:
     X, y, Xte, yte = _encode(spec["size"])
     lib, device = VARIANTS[spec["variant"]]
     run = RUNNERS[lib]
     encode_s = 0.0
+    # The shared runners read scaling-shaped cells; the knobs map on directly
+    # and task="binary" selects the logloss objective and AUC scoring.
     if spec["variant"].startswith("bonsai_ts_"):
         from ..encoding import OrderedTargetEncoder
         t0 = time.perf_counter()
@@ -218,10 +132,13 @@ def worker(spec: dict) -> dict:
         # run_bonsai reads the grower name off the variant; hand it the
         # plain spelling. The parent's emitted row keeps the ts_ name.
         spec = dict(spec, variant=spec["variant"].replace("_ts_", "_", 1))
+    k = spec["knobs"]
+    child = {"cell": dict(k, bins_effective=k["bins"], task="binary"),
+             "variant": spec["variant"], "threads": spec["threads"]}
     if device == "cuda":
-        micro = dict(spec, knobs=dict(spec["knobs"], iters=5))
+        micro = dict(child, cell=dict(child["cell"], iters=5))
         run(micro, X[:8192], y[:8192], Xte[:1024], yte[:1024])
-    out = run(spec, X, y, Xte, yte)
+    out = run(child, X, y, Xte, yte)
     ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     out["peak_rss_gb"] = round(ru / (2**30 if sys.platform == "darwin" else 2**20), 2)
     # A pipeline's wall clock includes its preprocessing: encode_s folds into
