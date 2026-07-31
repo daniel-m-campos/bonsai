@@ -124,7 +124,7 @@ def bar_chart(fname: str, title: str, rows: list[tuple[str, float, str]],
         if color is None:  # variant names: color by library prefix
             for lib in ("bonsai", "xgb", "lgbm", "catboost"):
                 if label.startswith(lib):
-                    color = LIB_COLOR[lib if lib != "catboost" else "catboost"]
+                    color = LIB_COLOR[lib]
                     break
             color = color or TEXT
         body.append(_text(left - 8, y + 14, label, anchor="end"))
@@ -318,7 +318,6 @@ def campaign_section() -> str:
     out_rows = []
     for run in sorted(latest):
         res = latest[run]
-        sample = next(iter(res.values()))
         aucs = [v.get("auc") for v in res.values()]
         use_auc = any(isinstance(a, float) and a == a for a in aucs)
         metric = "auc" if use_auc else ("acc" if any(
@@ -340,7 +339,6 @@ def campaign_section() -> str:
             run, metric,
             *[fmt(best.get(lib)) for lib in ("bonsai", "xgboost", "lightgbm", "catboost")],
             winner])
-        del sample
     table = md_table(
         ["dataset", "metric", "bonsai", "xgboost", "lightgbm", "catboost", "best"],
         out_rows)
@@ -557,25 +555,46 @@ Ten selection methods, one shared judge: each method produces a feature ranking,
 
 # ---- Perf: re-baseline -------------------------------------------------------
 
-REBASE_VARIANTS = [
-    ("bonsai_cuda_depthwise", "bonsai cuda dw"),
-    ("bonsai_cuda_oblivious", "bonsai cuda obl"),
-    ("xgb_cuda", "xgb cuda"),
-    ("catboost_gpu", "catboost gpu"),
-    ("lgbm_cpu", "lgbm cpu"),
-    ("bonsai_oblivious", "bonsai cpu obl"),
-]
-
 # Chart styling: (display label, color, is_cpu). bonsai's two CUDA growers get
-# two greens; CPU variants are dashed everywhere.
-VARIANT_STYLE = {
+# two greens; CPU variants are dashed everywhere. The four GPU arms are shared
+# between the re-baseline and iso-volume style maps; the (variant, label)
+# column lists derive from the maps, one order per table.
+_GPU_STYLE = {
     "bonsai_cuda_depthwise": ("bonsai cuda dw", "#1b5e20", False),
     "bonsai_cuda_oblivious": ("bonsai cuda obl", "#4caf50", False),
     "xgb_cuda": ("xgb cuda", LIB_COLOR["xgboost"], False),
     "catboost_gpu": ("catboost gpu", LIB_COLOR["catboost"], False),
+}
+
+VARIANT_STYLE = {
+    **_GPU_STYLE,
     "lgbm_cpu": ("lgbm cpu", LIB_COLOR["lightgbm"], True),
     "bonsai_oblivious": ("bonsai cpu obl", "#4caf50", True),
 }
+
+REBASE_VARIANTS = [(k, v[0]) for k, v in VARIANT_STYLE.items()]
+
+
+def human(n: int) -> str:
+    return f"{n // 1_000_000}M" if n >= 1_000_000 else f"{n // 1000}k"
+
+
+def cell_label(rows: int, cols: int) -> str:
+    return f"{human(rows)} x {cols}"
+
+
+def fit_r2_str(r: dict) -> str:
+    return f"{r['fit_s']:.1f}s ({fmt(r.get('r2_test'), 3).lstrip('0')})"
+
+
+def best_fit_by(rows: list[dict], key_fn) -> dict[tuple, dict]:
+    """Min-fit_s row per key (best of repeats), for flat-schema rows."""
+    best: dict[tuple, dict] = {}
+    for r in rows:
+        k = key_fn(r)
+        if k not in best or r["fit_s"] < best[k]["fit_s"]:
+            best[k] = r
+    return best
 
 
 def _cell_best(rows: list[dict]) -> dict[tuple, dict]:
@@ -592,7 +611,7 @@ def _fmt_cell(best, rows, cols, variant) -> str:
     r = best.get((rows, cols, variant))
     if r is None:
         return "-"
-    return f"{r['fit_s']:.1f}s ({fmt(r.get('r2_test'), 3).lstrip('0')})"
+    return fit_r2_str(r)
 
 
 def rebaseline_section() -> str:
@@ -601,9 +620,6 @@ def rebaseline_section() -> str:
     host = rows[0]["host"]
     row_axis = sorted({r["cell"]["rows"] for r in rows if r["cell"]["cols"] == 100})
     col_axis = sorted({r["cell"]["cols"] for r in rows if r["cell"]["rows"] == 1_000_000})
-
-    def human(n):
-        return f"{n // 1_000_000}M" if n >= 1_000_000 else f"{n // 1000}k"
 
     rows_table = md_table(
         ["rows", *[lbl for _, lbl in REBASE_VARIANTS]],
@@ -672,9 +688,6 @@ def xgb33_recheck_table() -> str:
             "rss": max(r["peak_rss_gb"], cur["rss"]) if cur else r["peak_rss_gb"],
         }
 
-    def human(n):
-        return f"{n // 1_000_000}M" if n >= 1_000_000 else f"{n // 1000}k"
-
     CELLS = [("gpu", 1_000_000, 100), ("gpu", 4_000_000, 100),
              ("gpu", 16_000_000, 100), ("gpu", 1_000_000, 256),
              ("gpu", 1_000_000, 1024), ("cpu", 16_000_000, 100),
@@ -738,8 +751,7 @@ def cuda_wide_recheck_table() -> str:
     cw = load_jsonl("cuda-wide-recheck-2026-07.jsonl")
     body = []
     for r in sorted(cw, key=lambda r: (-r["cols"], r["variant"])):
-        body.append([r["variant"], f'{r["rows"] // 1000}k' if r["rows"] < 1_000_000
-                     else f'{r["rows"] // 1_000_000}M', str(r["cols"]),
+        body.append([r["variant"], human(r["rows"]), str(r["cols"]),
                      f'{r["fit_s"]:.1f}s', fmt(r["r2_test"]),
                      f'{r["peak_rss_gb"]:.1f}GB'])
     table = md_table(["variant", "rows", "cols", "fit", "test r²", "peak RSS"], body)
@@ -756,22 +768,13 @@ A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: 
 
 def cols_rebaseline_table() -> str:
     cr = load_jsonl("cols-rebaseline-2026-07.jsonl")
-    best: dict[tuple, dict] = {}
-    for r in cr:
-        key = (r["rows"], r["cols"], r["variant"])
-        if key not in best or r["fit_s"] < best[key]["fit_s"]:
-            best[key] = r
+    best = best_fit_by(cr, lambda r: (r["rows"], r["cols"], r["variant"]))
     cells = sorted({(r["rows"], r["cols"]) for r in cr}, key=lambda rc: rc[1])
-
-    def label(rows, cols):
-        r = f"{rows // 1_000_000}M" if rows >= 1_000_000 else f"{rows // 1000}k"
-        return f"{r} x {cols}"
+    label = cell_label
 
     def cell_fmt(rows, cols, variant):
         r = best.get((rows, cols, variant))
-        if r is None:
-            return "-"
-        return f"{r['fit_s']:.1f}s ({fmt(r.get('r2_test'), 3).lstrip('0')})"
+        return "-" if r is None else fit_r2_str(r)
 
     fit_table = md_table(
         ["cell", *[lbl for _, lbl in REBASE_VARIANTS]],
@@ -818,23 +821,13 @@ Peak host RSS, worst rep:
 
 # ---- Perf: iso-volume -------------------------------------------------------
 
-ISO_VARIANTS = [
-    ("bonsai_cuda_depthwise", "bonsai cuda dw"),
-    ("bonsai_cuda_oblivious", "bonsai cuda obl"),
-    ("xgb_cuda", "xgb cuda"),
-    ("catboost_gpu", "catboost gpu"),
-    ("bonsai_depthwise", "bonsai cpu dw"),
-    ("xgb_hist", "xgb hist"),
-]
-
 ISO_STYLE = {
-    "bonsai_cuda_depthwise": ("bonsai cuda dw", "#1b5e20", False),
-    "bonsai_cuda_oblivious": ("bonsai cuda obl", "#4caf50", False),
-    "xgb_cuda": ("xgb cuda", LIB_COLOR["xgboost"], False),
-    "catboost_gpu": ("catboost gpu", LIB_COLOR["catboost"], False),
+    **_GPU_STYLE,
     "bonsai_depthwise": ("bonsai cpu dw", "#1b5e20", True),
     "xgb_hist": ("xgb hist", LIB_COLOR["xgboost"], True),
 }
+
+ISO_VARIANTS = [(k, v[0]) for k, v in ISO_STYLE.items()]
 
 ISO_HOST = "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition"
 
@@ -842,30 +835,21 @@ ISO_HOST = "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition"
 def iso_volume_section() -> str:
     rows = load_jsonl("iso-volume-2026-08.jsonl")
     pod = [r for r in rows if r["host"]["name"] == ISO_HOST]
-    best: dict[tuple, dict] = {}
-    errors = []
-    for r in pod:
-        c = r["cell"]
-        if r["status"] != "ok":
-            errors.append(r)
-            continue
-        k = (r["run"], c["rows"], c["cols"], r["variant"])
-        if k not in best or r["fit_s"] < best[k]["fit_s"]:
-            best[k] = r
+    errors = [r for r in pod if r["status"] != "ok"]
+    best = best_fit_by(
+        [r for r in pod if r["status"] == "ok"],
+        lambda r: (r["run"], r["cell"]["rows"], r["cell"]["cols"],
+                   r["variant"]))
 
     def cells_for(run):
         return sorted({(k[1], k[2]) for k in best if k[0] == run},
                       key=lambda rc: rc[1])
 
-    def label(nr, nc):
-        r = f"{nr // 1_000_000}M" if nr >= 1_000_000 else f"{nr // 1000}k"
-        return f"{r} x {nc}"
+    label = cell_label
 
     def fit_cell(run, nr, nc, v):
         r = best.get((run, nr, nc, v))
-        if r is None:
-            return "-"
-        return f"{r['fit_s']:.1f}s ({fmt(r.get('r2_test'), 3).lstrip('0')})"
+        return "-" if r is None else fit_r2_str(r)
 
     def vram_cell(run, nr, nc, v):
         r = best.get((run, nr, nc, v))
