@@ -6,7 +6,7 @@
 
 Ultra-wide selections broke the row-wise u8 fill: its per-row scatter targets the whole selected histogram footprint (33.6MB at 16k features x 255 bins), so every add missed cache (decision 88 routed those levels feature-parallel; same-pod at 131k x 16384 the 7x leafwise deficit against LightGBM collapsed to 1.2x). Decision 89 then retired the strategy pair: the mirror moved to a column-block-tiled layout and the fill runs tiles outer, rows inner, so the live scatter target is one block's histograms at any width. The tiled fill beat both prior strategies at their own best cells in an interleaved same-pod A/B (326 vs 369s at 1M x 4096 against the row path; 442 vs 514s at 131k x 16384 against feature-parallel; a wash at 16M x 100) and produces bit-identical models at every width. The origin is a production field report (issue #217).
 
-| grower | row-wise fill (before) | feature-parallel (after) | lgbm_cpu |
+| grower | row-wise fill (before) | feature-parallel (decision 88, retired by 89) | lgbm_cpu |
 |---|---|---|---|
 | depthwise | 1019s | 379s | 367s |
 | leafwise | 2591s | 445s | 367s |
@@ -65,7 +65,7 @@ bonsai's CUDA growers are fastest at every cell of both ladders and their fit ti
 
 ![Peak device memory vs cols, iso-volume](../assets/iso-volume-vram.svg)
 
-Fit seconds (test r2), best of reps, 2^31 cells:
+Fit seconds (test r2), best of reps, 2^31 cells plus the 1M x 100 anchor:
 
 | cell | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu | bonsai cpu dw | xgb hist |
 |---|---|---|---|---|---|---|
@@ -77,7 +77,7 @@ Fit seconds (test r2), best of reps, 2^31 cells:
 | 65k x 32768 | 57.8s (.841) | 68.5s (.870) | 62.1s (.840) | 96.3s (.866) | 310.0s (.843) | 276.3s (.841) |
 | 32k x 65536 | 105.5s (.816) | 130.4s (.874) | - | 172.4s (.869) | 491.1s (.816) | 444.0s (.817) |
 
-Measured peak device memory (per-process, worst rep is within sampling noise of best), 2^31 cells:
+Measured peak device memory (per-process, worst rep is within sampling noise of best), 2^31 cells plus the 1M x 100 anchor:
 
 | cell | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu |
 |---|---|---|---|---|
