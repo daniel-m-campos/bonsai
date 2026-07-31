@@ -1345,7 +1345,7 @@ def committed_data_files() -> set[str]:
     for line in out.splitlines():
         name = pathlib.PurePosixPath(line).name
         if line.endswith(".png"):
-            continue  # plot outputs of analyze_scaling.py, linked in-page
+            continue  # analyze_scaling.py plots, linked by benchmarks/scaling-report.md
         files.add(name)
     return files
 

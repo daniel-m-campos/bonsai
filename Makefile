@@ -183,6 +183,9 @@ help:  ## List the common make targets.
 	    | sed 's/:.*  ## /\t/' \
 	    | awk -F'\t' '{printf "  make %-18s %s\n", $$1, $$2}'
 
+scaling-report:  ## Regenerate benchmarks/scaling-report.md from scaling.jsonl.
+	@uv run scripts/analyze_scaling.py $(ARGS)
+
 docs-check:  ## Verify generated docs and lint prose (the five CI doc gates).
 	@python3 scripts/render_results.py --check
 	@python3 scripts/render_params.py --check
@@ -206,4 +209,4 @@ $(SKILLS_DIR)/caveman/SKILL.md:
 skills-clean:  ## Remove installed project-local skills.
 	rm -rf $(SKILLS_DIR)/caveman
 
-.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint lint-python all run params-json test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu bench-scaling bench-iso python python-cuda python-test docs-check install-hooks skills skills-clean help
+.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint lint-python all run params-json test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu bench-scaling bench-iso scaling-report python python-cuda python-test docs-check install-hooks skills skills-clean help
