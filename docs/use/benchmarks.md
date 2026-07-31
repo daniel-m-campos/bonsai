@@ -34,12 +34,13 @@ PYTHONPATH=build/python python -m bonsai.bench.grinsztajn out.jsonl
 Cells that are not on a suite's built-in grid run through the unified CLI: a JSON spec names the cells (or a generator), the variants, threads, and repeats, and the driver handles child processes, resume, and row emission.
 
 ```bash
-python -m bonsai.bench plan --spec benchmarks/specs/iso-volume-2026-08.json
-python -m bonsai.bench run --spec benchmarks/specs/iso-volume-2026-08.json --out iso.jsonl
+python -m bonsai.bench specs
+python -m bonsai.bench plan --spec iso-volume-2026-08
+python -m bonsai.bench run --spec iso-volume-2026-08 --out iso.jsonl
 python -m bonsai.bench variants
 ```
 
-`plan` prints the expansion (every cell, variant, timeout, repeat count) without fitting anything. `run` resumes by default when the output file already exists: finished rows are skipped, failures re-attempt, so an interrupted sweep continues by re-running the same command. Campaign specs are committed under `benchmarks/specs/`; the `iso_volume` generator holds rows x cols constant while sweeping the aspect ratio, and GPU rows record measured peak device memory (`dev_mem`) sampled while the child runs. Pod campaigns wrap this in `scripts/pod_bench_driver.sh` (see `benchmarks/README.md`).
+`plan` prints the expansion (every cell, variant, timeout, repeat count) without fitting anything. `run` resumes by default when the output file already exists: finished rows are skipped, failures re-attempt, so an interrupted sweep continues by re-running the same command. Campaign specs ship inside the package (`bench/specs/`), so a bare name works from any install and `--spec` also takes a path to your own JSON; the `iso_volume` generator holds rows x cols constant while sweeping the aspect ratio, and GPU rows record measured peak device memory (`dev_mem`) sampled while the child runs. Pod campaigns wrap this in `scripts/pod_bench_driver.sh` (see `benchmarks/README.md`).
 
 ## Reading what comes out
 

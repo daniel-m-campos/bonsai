@@ -123,7 +123,7 @@ For multi-hour campaigns (spec ladders, Pareto frontiers), raw heredoc drivers a
 
 ```bash
 scp -i ~/.ssh/id_ed25519 -P $PORT scripts/pod_bench_driver.sh root@$IP:/root/
-$SSH 'setsid env HOST_TAG=<gpu-tag> BRANCH=main SPEC=benchmarks/specs/gpu-pareto-16M.json \
+$SSH 'setsid env HOST_TAG=<gpu-tag> BRANCH=main SPEC=gpu-pareto-16M \
   OUT=/root/gpu-pareto-16M.jsonl RUN_LABEL=<label> \
   bash /root/pod_bench_driver.sh > /root/campaign.log 2>&1 < /dev/null & echo launched'
 $SSH 'tail -5 /root/campaign.log'

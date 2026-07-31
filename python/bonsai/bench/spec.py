@@ -1,6 +1,6 @@
 """Declarative benchmark specs: cell lists, ladder generators, job expansion.
 
-A spec is a JSON file (committed under benchmarks/specs/ for campaigns) that
+A spec is a JSON file (bundled under bench/specs/ for committed campaigns) that
 names its cells, variants, threads, and repeats; expand() turns it into the
 flat job list the driver executes. Generators cover the recurring ladder
 shapes so campaigns stop hand-writing driver scripts.
@@ -22,8 +22,32 @@ _CELL_DEFAULTS = {"bins": 255, "depth": 8, "iters": 100, "lr": 0.1,
                   "informative": 20, "seed": 42}
 
 
+def _spec_text(name_or_path: str | pathlib.Path) -> str:
+    """A filesystem path wins; a bare name resolves to a bundled spec
+    (bench/specs/<name>.json), so wheel installs run the committed
+    campaigns without a repo checkout."""
+    p = pathlib.Path(name_or_path)
+    if p.exists():
+        return p.read_text()
+    from importlib import resources
+    stem = str(name_or_path).removesuffix(".json")
+    res = resources.files(__package__) / "specs" / f"{stem}.json"
+    if res.is_file():
+        return res.read_text()
+    raise FileNotFoundError(
+        f"no spec file or bundled spec named {str(name_or_path)!r}; "
+        "bundled names: " + ", ".join(bundled_specs()))
+
+
+def bundled_specs() -> list[str]:
+    from importlib import resources
+    d = resources.files(__package__) / "specs"
+    return sorted(f.name.removesuffix(".json") for f in d.iterdir()
+                  if f.name.endswith(".json"))
+
+
 def load_spec(path: str | pathlib.Path) -> dict:
-    spec = json.loads(pathlib.Path(path).read_text())
+    spec = json.loads(_spec_text(path))
     unknown = set(spec) - _SPEC_KEYS
     if unknown:
         raise ValueError(f"unknown spec keys: {sorted(unknown)}")

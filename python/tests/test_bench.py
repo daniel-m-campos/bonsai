@@ -167,6 +167,23 @@ def test_spec_expansion():
         raise AssertionError("non-dividing cols must be rejected")
 
 
+def test_bundled_specs():
+    from bonsai.bench import spec as spec_mod
+
+    names = spec_mod.bundled_specs()
+    assert "iso-volume-2026-08" in names and "gpu-pareto-16M" in names
+    s = spec_mod.load_spec("iso-volume-2026-08")  # bare name, no repo path
+    assert s["suite"] == "iso-volume" and len(spec_mod.expand(s)) > 0
+    pareto = spec_mod.load_spec("gpu-pareto-16M.json")  # suffix tolerated
+    assert len(spec_mod.expand(pareto)) == 22  # the four iteration ladders
+    try:
+        spec_mod.load_spec("no-such-spec")
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError("unknown spec name must be rejected")
+
+
 def test_driver_resume_and_emit():
     import pathlib
 
@@ -351,6 +368,7 @@ if __name__ == "__main__":
     test_bonsai_core_pairs()
     test_variant_registry()
     test_spec_expansion()
+    test_bundled_specs()
     test_driver_resume_and_emit()
     test_mem_sampler()
     test_data_cache()

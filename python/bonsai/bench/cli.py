@@ -1,6 +1,6 @@
 """The unified bench CLI: python -m bonsai.bench <subcommand>.
 
-    python -m bonsai.bench run --spec benchmarks/specs/<name>.json
+    python -m bonsai.bench run --spec <bundled-name-or-path>
     python -m bonsai.bench run --axis rows,cols     # legacy scaling sugar
     python -m bonsai.bench plan --spec ...          # expansion only, no fits
     python -m bonsai.bench variants                 # the registry
@@ -83,6 +83,14 @@ def _run(args) -> int:
                     data_cache=args.data_cache)
 
 
+def _specs() -> int:
+    for name in spec_mod.bundled_specs():
+        s = spec_mod.load_spec(name)
+        print(f"{name:28} suite={s.get('suite', s['name'])} "
+              f"variants={len(s['variants'])}")
+    return 0
+
+
 def _variants(args) -> int:
     for v in vr.REGISTRY.values():
         if args.device and v.device != args.device:
@@ -100,7 +108,8 @@ def _worker() -> int:
 
 
 def _add_run_flags(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--spec", default=None, help="JSON spec file")
+    p.add_argument("--spec", default=None,
+                   help="JSON spec file, or a bundled name (see `specs`)")
     p.add_argument("--axis", default=None,
                    help="legacy scaling grid: rows|cols|bins|threads|all")
     p.add_argument("--smoke", action="store_true",
@@ -128,6 +137,7 @@ def main(argv: list[str] | None = None) -> int:
     _add_run_flags(sub.add_parser("plan", help="print the expansion, run nothing"))
     pv = sub.add_parser("variants", help="print the variant registry")
     pv.add_argument("--device", choices=("cpu", "cuda"), default=None)
+    sub.add_parser("specs", help="list the bundled campaign specs")
     sub.add_parser("worker", help="internal: job JSON on stdin, RESULT on stdout")
     args = ap.parse_args(argv)
 
@@ -135,6 +145,8 @@ def main(argv: list[str] | None = None) -> int:
         return _worker()
     if args.command == "variants":
         return _variants(args)
+    if args.command == "specs":
+        return _specs()
     if args.command == "plan":
         args.dry_run = True
     if args.timeout_cap is None and args.spec is None:

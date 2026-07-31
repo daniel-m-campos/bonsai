@@ -162,7 +162,7 @@ bench-scaling:  ## Run the synthetic rows/cols/bins/threads scaling sweep.
 # the shared results file, distinguished by host name and run label.
 bench-iso: python-cuda  ## Run the iso-volume bonsai arms on this host's GPU.
 	@PYTHONPATH=build-cuda/python $(PYTHON) -m bonsai.bench run \
-	    --spec benchmarks/specs/iso-volume-2026-08.json \
+	    --spec iso-volume-2026-08 \
 	    --variants bonsai_cuda_depthwise,bonsai_cuda_oblivious \
 	    --out benchmarks/results/iso-volume-2026-08.jsonl \
 	    --run-label iso-volume-2026-08-workrig \

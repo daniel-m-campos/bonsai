@@ -946,7 +946,7 @@ The 2^33 stretch, GPU arms:
 
 {vram33}
 
-{provenance(["iso-volume-2026-08.jsonl"], "Specs: [benchmarks/specs/](../../benchmarks/specs/); driver: [scripts/pod_bench_driver.sh](../../scripts/pod_bench_driver.sh); evidence: [benchmarks/iso-volume-2026-08.md](../../benchmarks/iso-volume-2026-08.md); verdict recorded as decision 91.")}
+{provenance(["iso-volume-2026-08.jsonl"], "Specs: bundled in [bench/specs/](../../python/bonsai/bench/specs/); driver: [scripts/pod_bench_driver.sh](../../scripts/pod_bench_driver.sh); evidence: [benchmarks/iso-volume-2026-08.md](../../benchmarks/iso-volume-2026-08.md); verdict recorded as decision 91.")}
 """
 
 

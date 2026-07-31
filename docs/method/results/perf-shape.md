@@ -103,4 +103,4 @@ The 2^33 stretch, GPU arms:
 | 4M x 2048 | 10.5GB | 10.5GB | 72.7GB | 90.2GB |
 | 262k x 32768 | 36.7GB | 36.7GB | 73.2GB | 90.2GB |
 
-*Source: [`iso-volume-2026-08.jsonl`](../../../benchmarks/results/iso-volume-2026-08.jsonl). Specs: [benchmarks/specs/](../../../benchmarks/specs/); driver: [scripts/pod_bench_driver.sh](../../../scripts/pod_bench_driver.sh); evidence: [benchmarks/iso-volume-2026-08.md](../../../benchmarks/iso-volume-2026-08.md); verdict recorded as decision 91.*
+*Source: [`iso-volume-2026-08.jsonl`](../../../benchmarks/results/iso-volume-2026-08.jsonl). Specs: bundled in [bench/specs/](../../../python/bonsai/bench/specs/); driver: [scripts/pod_bench_driver.sh](../../../scripts/pod_bench_driver.sh); evidence: [benchmarks/iso-volume-2026-08.md](../../../benchmarks/iso-volume-2026-08.md); verdict recorded as decision 91.*

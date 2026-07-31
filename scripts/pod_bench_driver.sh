@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # On-pod campaign driver: clone or fetch, build, run a committed bench spec.
 # Usage (on the pod, after scp'ing this script):
-#   HOST_TAG=<tag> BRANCH=main SPEC=benchmarks/specs/<name>.json \
+#   HOST_TAG=<tag> BRANCH=main SPEC=<bundled-name-or-path> \
 #     OUT=/root/<name>.jsonl RUN_LABEL=<label> bash scripts/pod_bench_driver.sh
 # Optional: DATA_CACHE=/dev/shm/bonsai-bench
 # Idempotent: re-running after a spot reap resumes (the CLI resumes by
 # default in spec mode; ok/unsupported rows are final, failures re-attempt).
 set -euo pipefail
 
-USAGE="HOST_TAG=<tag> BRANCH=main SPEC=benchmarks/specs/<name>.json OUT=/root/<name>.jsonl RUN_LABEL=<label> bash scripts/pod_bench_driver.sh"
+USAGE="HOST_TAG=<tag> BRANCH=main SPEC=<bundled-name-or-path> OUT=/root/<name>.jsonl RUN_LABEL=<label> bash scripts/pod_bench_driver.sh"
 for var in HOST_TAG SPEC OUT RUN_LABEL; do
     [ -n "${!var:-}" ] || { echo "error: $var is unset" >&2; echo "usage: $USAGE" >&2; exit 2; }
 done
