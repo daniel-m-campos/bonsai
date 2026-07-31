@@ -297,6 +297,7 @@ if(BONSAI_PYTHON)
     # at configure time — a NEW .py file needs one reconfigure.
     file(GLOB BONSAI_PY_SOURCES ${CMAKE_SOURCE_DIR}/python/bonsai/*.py)
     file(GLOB BONSAI_BENCH_SOURCES ${CMAKE_SOURCE_DIR}/python/bonsai/bench/*.py)
+    file(GLOB BONSAI_BENCH_SPECS ${CMAKE_SOURCE_DIR}/python/bonsai/bench/specs/*.json)
     add_custom_target(bonsai_py_package
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${BONSAI_PY_SOURCES}
@@ -305,7 +306,12 @@ if(BONSAI_PYTHON)
             ${CMAKE_BINARY_DIR}/python/bonsai/bench
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${BONSAI_BENCH_SOURCES}
-            ${CMAKE_BINARY_DIR}/python/bonsai/bench/)
+            ${CMAKE_BINARY_DIR}/python/bonsai/bench/
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            ${CMAKE_BINARY_DIR}/python/bonsai/bench/specs
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${BONSAI_BENCH_SPECS}
+            ${CMAKE_BINARY_DIR}/python/bonsai/bench/specs/)
     add_dependencies(_bonsai bonsai_py_package)
     install(TARGETS _bonsai LIBRARY DESTINATION bonsai)
 endif()
