@@ -9,22 +9,15 @@ from __future__ import annotations
 
 import os
 import pathlib
-import resource
-import sys
 import time
 
 import numpy as np
 
 from . import params as rp
 from . import runlog
+from .metrics import r2
 from .synth import gen_data
 from .variants import resolve
-
-
-def r2(pred: np.ndarray, y: np.ndarray) -> float:
-    ss_res = float(np.sum((y - pred) ** 2))
-    ss_tot = float(np.sum((y - y.mean()) ** 2))
-    return 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
 
 
 def run_bonsai(spec, X, y, Xte, yte) -> dict:
@@ -36,8 +29,9 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
     pairs = rp.bonsai_core(
         learning_rate=c["lr"], max_depth=c["depth"],
         num_leaves=rp.num_leaves_full(c["depth"]),
-        min_data_in_leaf=rp.SCALING["min_data_in_leaf"],
-        lambda_l2=rp.SCALING["lambda_l2"], max_bin=c["bins"], seed=c["seed"],
+        min_data_in_leaf=c.get("min_data_in_leaf", rp.SCALING["min_data_in_leaf"]),
+        lambda_l2=c.get("lambda_l2", rp.SCALING["lambda_l2"]),
+        max_bin=c["bins"], seed=c["seed"],
         n_iters=c["iters"], n_threads=spec["threads"], grower=grower)
     t0 = time.perf_counter()
     model = bonsai.train(pairs, X, y)
@@ -47,7 +41,7 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
     predict_s = time.perf_counter() - t0
     pred_tr = np.asarray(model.predict(X))
     return {"fit_s": fit_s, "predict_s": predict_s,
-            "r2_train": r2(pred_tr, y), "r2_test": r2(pred_te, yte)}
+            "r2_train": r2(y, pred_tr), "r2_test": r2(yte, pred_te)}
 
 
 def run_xgb(spec, X, y, Xte, yte) -> dict:
@@ -55,8 +49,11 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
     c = spec["cell"]
     device = resolve(spec["variant"]).device
     params = {**rp.xgb_core(learning_rate=c["lr"], max_depth=c["depth"],
-                            min_data_in_leaf=rp.SCALING["min_data_in_leaf"],
-                            lambda_l2=rp.SCALING["lambda_l2"],
+                            min_data_in_leaf=c.get(
+                                "min_data_in_leaf",
+                                rp.SCALING["min_data_in_leaf"]),
+                            lambda_l2=c.get("lambda_l2",
+                                            rp.SCALING["lambda_l2"]),
                             max_bin=c["bins_effective"], seed=c["seed"]),
               "objective": "reg:squarederror", "device": device,
               "nthread": spec["threads"]}
@@ -69,7 +66,7 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
     predict_s = time.perf_counter() - t0
     pred_tr = booster.inplace_predict(X)
     return {"fit_s": fit_s, "predict_s": predict_s,
-            "r2_train": r2(pred_tr, y), "r2_test": r2(pred_te, yte)}
+            "r2_train": r2(y, pred_tr), "r2_test": r2(yte, pred_te)}
 
 
 def run_lgbm(spec, X, y, Xte, yte) -> dict:
@@ -81,8 +78,11 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
                            "deferred to a later round")
     params = {**rp.lgbm_core(learning_rate=c["lr"], max_depth=c["depth"],
                              num_leaves=rp.num_leaves_full(c["depth"]),
-                             min_data_in_leaf=rp.SCALING["min_data_in_leaf"],
-                             lambda_l2=rp.SCALING["lambda_l2"],
+                             min_data_in_leaf=c.get(
+                                 "min_data_in_leaf",
+                                 rp.SCALING["min_data_in_leaf"]),
+                             lambda_l2=c.get("lambda_l2",
+                                             rp.SCALING["lambda_l2"]),
                              max_bin=c["bins_effective"], seed=c["seed"]),
               "objective": "regression",
               "device_type": device, "num_threads": spec["threads"]}
@@ -95,7 +95,7 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
     predict_s = time.perf_counter() - t0
     pred_tr = model.predict(X)
     return {"fit_s": fit_s, "predict_s": predict_s,
-            "r2_train": r2(pred_tr, y), "r2_test": r2(pred_te, yte)}
+            "r2_train": r2(y, pred_tr), "r2_test": r2(yte, pred_te)}
 
 
 def run_catboost(spec, X, y, Xte, yte) -> dict:
@@ -104,7 +104,8 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
     device = resolve(spec["variant"]).device
     model = CatBoostRegressor(
         **rp.catboost_core(learning_rate=c["lr"], max_depth=c["depth"],
-                           lambda_l2=rp.SCALING["lambda_l2"],
+                           lambda_l2=c.get("lambda_l2",
+                                           rp.SCALING["lambda_l2"]),
                            max_bin=c["bins_effective"], seed=c["seed"],
                            device=device),
         iterations=c["iters"], loss_function="RMSE",
@@ -119,7 +120,7 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
     predict_s = time.perf_counter() - t0
     pred_tr = model.predict(X)
     return {"fit_s": fit_s, "predict_s": predict_s,
-            "r2_train": r2(pred_tr, y), "r2_test": r2(pred_te, yte)}
+            "r2_train": r2(y, pred_tr), "r2_test": r2(yte, pred_te)}
 
 
 RUNNERS = {"bonsai": run_bonsai, "xgb": run_xgb, "lgbm": run_lgbm,
@@ -158,6 +159,9 @@ def worker(spec: dict) -> dict:
         X, y, Xte, yte = gen_data(c["rows"], c["cols"], c["seed"], c["n_test"],
                                   c["informative"])
     v = resolve(spec["variant"])
+    if v.name.startswith("bonsai_ts_"):
+        raise RuntimeError("unsupported: ordered-TS arms run in the airline "
+                           "suite only (the encoder lives there)")
     run = RUNNERS[v.lib]
     if v.device == "cuda":
         # Untimed micro-fit absorbs CUDA context creation (and, once per
@@ -165,9 +169,7 @@ def worker(spec: dict) -> dict:
         micro = dict(spec, cell=dict(c, rows=8192, n_test=1024, iters=5))
         run(micro, X[:8192], y[:8192], Xte[:1024], yte[:1024])
     out = run(spec, X, y, Xte, yte)
-    ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    # ru_maxrss: bytes on macOS, KiB on Linux.
-    out["peak_rss_gb"] = round(ru / (2**30 if sys.platform == "darwin" else 2**20), 2)
+    out["peak_rss_gb"] = runlog.peak_rss_gb()
     out["fit_rows_per_s"] = round(c["rows"] / out["fit_s"]) if out["fit_s"] else None
     out["predict_rows_per_s"] = (round(c["n_test"] / out["predict_s"])
                                  if out["predict_s"] else None)

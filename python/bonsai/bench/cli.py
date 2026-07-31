@@ -25,9 +25,9 @@ from .driver import run_jobs
 
 
 def _default_out(spec: dict) -> str:
-    repo = pathlib.Path(__file__).resolve().parents[3]
+    repo = runlog.repo_root()
     name = f"{spec['name']}.jsonl"
-    if (repo / "benchmarks").is_dir():
+    if repo is not None:
         return str(repo / "benchmarks" / "results" / name)
     return name
 
@@ -44,12 +44,16 @@ def _run(args) -> int:
         # python -m bonsai.bench.scaling; resume stays opt-in there.
         from . import scaling
         axes = (["rows", "cols", "bins", "threads"]
-                if args.axis in (None, "all") else args.axis.split(","))
+                if args.axis in (None, "all")
+                else [a.strip() for a in args.axis.split(",")])
+        unknown_axes = set(axes) - {"rows", "cols", "bins", "threads"}
+        if unknown_axes:
+            raise SystemExit(f"unknown axes: {sorted(unknown_axes)}")
         for v in variants or []:
             if v not in scaling.VARIANTS:
                 raise SystemExit(f"unknown scaling variant {v}")
         grid = scaling.build_grid(axes, args.smoke)
-        repeats = args.repeats or 1
+        repeats = args.repeats if args.repeats is not None else 1
         jobs = [{"cell": dict(cell), "variant": v, "threads": t,
                  "repeats": (max(repeats, 3)
                              if cell["axis"] == "base" and not args.smoke
@@ -77,7 +81,9 @@ def _run(args) -> int:
                     knobs=knobs, host=host,
                     run_label=args.run_label or spec["name"],
                     dry_run=args.dry_run, resume_path=resume,
-                    timeout_cap=args.timeout_cap or spec.get("timeout_cap", 3600),
+                    timeout_cap=(args.timeout_cap
+                                 if args.timeout_cap is not None
+                                 else spec.get("timeout_cap", 3600)),
                     gates=spec.get("gates", {}),
                     mem_sampler=not args.no_mem_sampler,
                     data_cache=args.data_cache)

@@ -31,10 +31,10 @@ scripts/analyze_scaling.py. Grid corners the host cannot fit are recorded as
 status="skipped" with the memory estimate — the feasibility frontier is data.
 """
 import argparse
-import json
 import pathlib
 import sys
 
+from . import runlog
 from . import variants as vr
 from .driver import GPU_MAX_COLS
 from .runners import RUNNERS, worker
@@ -45,10 +45,9 @@ __all__ = ["AXES", "BASE", "GPU_MAX_COLS", "RESULTS", "RUNNERS", "VARIANTS",
 
 # In-repo runs default next to the other results; wheel installs default to
 # the working directory.
-_repo = pathlib.Path(__file__).resolve().parents[3]
+_repo = runlog.repo_root()
 RESULTS = (_repo / "benchmarks" / "results" / "scaling.jsonl"
-           if (_repo / "benchmarks").is_dir()
-           else pathlib.Path("scaling.jsonl"))
+           if _repo is not None else pathlib.Path("scaling.jsonl"))
 
 BASE = {"rows": 1_000_000, "cols": 100, "bins": 255, "depth": 8, "iters": 100,
         "lr": 0.1, "informative": 20, "seed": 42}
@@ -117,9 +116,8 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.worker:
-        spec = json.loads(sys.stdin.read())
-        print("RESULT " + json.dumps(worker(spec)))
-        return 0
+        from .cli import _worker
+        return _worker()
 
     from .cli import main as cli_main
     argv = ["run", "--axis", args.axis, "--variants", args.variants,

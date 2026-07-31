@@ -104,3 +104,24 @@ def emit_row(path: str | pathlib.Path, *, division: str, suite: str,
     with p.open("a") as f:
         f.write(json.dumps(row) + "\n")
     return row
+
+
+def peak_rss_gb() -> float:
+    """This process's peak RSS. ru_maxrss: bytes on macOS, KiB on Linux."""
+    import resource
+    ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return round(ru / (2**30 if sys.platform == "darwin" else 2**20), 2)
+
+
+def repo_root() -> pathlib.Path | None:
+    """The enclosing source checkout, if this package is imported from one.
+
+    Walks up from the package rather than assuming a fixed depth: under
+    PYTHONPATH=build/python a fixed parents[3] lands in the build tree,
+    whose benchmarks/ directory make clean deletes (campaign rows died
+    that way once).
+    """
+    for p in pathlib.Path(__file__).resolve().parents:
+        if (p / "pyproject.toml").is_file() and (p / "benchmarks").is_dir():
+            return p
+    return None

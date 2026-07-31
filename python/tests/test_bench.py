@@ -199,7 +199,8 @@ def test_driver_resume_and_emit():
         prior.write_text(json.dumps(legacy_row) + "\n"
                          + json.dumps(err_row) + "\n")
         done = driver.resume_keys(prior)
-        assert ("bonsai_depthwise", 16, 0, 1_000_000, 100, 255, 8, 100, 42) in done
+        assert ("bonsai_depthwise", 16, 0, 1_000_000, 100, 255, 8, 100, 42,
+                None, None) in done
         assert len(done) == 1  # the error row re-attempts
 
         host = {"name": "t", "gpu": None, "gpu_vram_gb": None, "cpu_model": "t",
@@ -295,6 +296,144 @@ def test_data_cache():
         assert second[0].dtype == np.float32
 
 
+def test_error_classification():
+    from bonsai.bench import driver
+
+    oom_stderr = ("Traceback (most recent call last):\n"
+                  "xgboost.core.XGBoostError: cudaErrorMemoryAllocation: "
+                  "out of memory\n"
+                  "  [bt] (7) /lib/libxgboost.so(+0x1) [0x1]\n"
+                  "  [bt] (8) /lib/libxgboost.so(+0x2) [0x2]\n"
+                  "fit-profile: total=1.2s\n")
+    assert driver.classify_error(oom_stderr) == "oom"
+    msg = driver.error_message(oom_stderr)
+    assert "out of memory" in msg and "[bt]" not in msg
+    assert driver.error_message("  [bt] (8) only frames\n") == "no output"
+
+
+def test_variant_canonicalization_and_ts_guard():
+    from bonsai.bench import runners
+    from bonsai.bench import spec as spec_mod
+
+    s = {"name": "t", "cells": [{"rows": 1000, "cols": 8}],
+         "variants": ["bonsai_dw", "xgb"]}
+    jobs = spec_mod.expand(s)
+    assert [j["variant"] for j in jobs] == ["bonsai_depthwise", "xgb_hist"]
+    cell = spec_mod.make_cell({}, rows=512, cols=4)
+    try:
+        runners.worker({"cell": cell, "variant": "bonsai_ts_depthwise",
+                        "threads": 1})
+    except RuntimeError as e:
+        assert "airline" in str(e)
+    else:
+        raise AssertionError("ts arm must be rejected outside airline")
+
+
+def test_driver_gates_and_effective_bins():
+    import pathlib
+
+    from bonsai.bench import driver
+
+    host = {"name": "h", "gpu": "FakeGPU", "gpu_vram_gb": 999.0,
+            "cpu_model": "t", "n_vcpu": 8, "ram_gb": 999.0, "os": "t",
+            "python": "3", "libs": {}}
+    cell = {"axis": "cell", "rows": 1000, "cols": 10, "bins": 1023,
+            "bins_effective": 1023, "depth": 8, "iters": 100, "lr": 0.1,
+            "informative": 5, "n_test": 200, "seed": 42,
+            "min_data_in_leaf": 20, "lambda_l2": 1.0}
+    seen = []
+    real = driver.run_one
+    driver.run_one = lambda spec, timeout, **kw: (
+        seen.append(spec) or {
+            "status": "ok", "message": None, "fit_s": 1.0, "predict_s": 0.1,
+            "r2_train": 0.9, "r2_test": 0.9, "peak_rss_gb": 0.1,
+            "profile": None})
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            out = pathlib.Path(td) / "o.jsonl"
+            driver.run_jobs(
+                [{"cell": dict(cell), "variant": "catboost_gpu", "threads": 4,
+                  "repeats": 1}],
+                out=str(out), suite="test", knobs={}, host=host,
+                run_label="u", mem_sampler=False)
+            fit_specs = [s for s in seen if s["cell"]["iters"] == 100]
+            assert fit_specs[0]["cell"]["bins_effective"] == 255  # 254+1 cap
+            row = [json.loads(ln) for ln in out.read_text().splitlines()][-1]
+            assert row["cell"]["bins_effective"] == 255
+            assert row["cell"]["bins"] == 1023
+            try:
+                driver.run_jobs([], out=str(out), suite="t", knobs={},
+                                host=host, gates={"gpu_max_col": None})
+            except ValueError as e:
+                assert "unknown gate keys" in str(e)
+            else:
+                raise AssertionError("gate typos must be rejected")
+    finally:
+        driver.run_one = real
+
+
+def test_resume_is_host_scoped():
+    import pathlib
+
+    from bonsai.bench import driver
+
+    host_a = {"name": "pod-a", "gpu": None, "gpu_vram_gb": None,
+              "cpu_model": "t", "n_vcpu": 8, "ram_gb": 64.0, "os": "t",
+              "python": "3", "libs": {}}
+    host_b = dict(host_a, name="workrig")
+    cell = {"axis": "cell", "rows": 1000, "cols": 10, "bins": 255,
+            "bins_effective": 255, "depth": 8, "iters": 100, "lr": 0.1,
+            "informative": 5, "n_test": 200, "seed": 42}
+    job = {"cell": cell, "variant": "xgb_hist", "threads": 4, "repeats": 1}
+    real = driver.run_one
+    driver.run_one = lambda spec, timeout, **kw: {
+        "status": "ok", "message": None, "fit_s": 1.0, "predict_s": 0.1,
+        "r2_train": 0.9, "r2_test": 0.9, "peak_rss_gb": 0.1, "profile": None}
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            out = pathlib.Path(td) / "o.jsonl"
+            driver.run_jobs([dict(job)], out=str(out), suite="t", knobs={},
+                            host=host_a, run_label="r", mem_sampler=False)
+            # Same host + label resume-skips; another host appends.
+            driver.run_jobs([dict(job)], out=str(out), suite="t", knobs={},
+                            host=host_a, run_label="r", mem_sampler=False,
+                            resume_path=str(out))
+            assert len(out.read_text().splitlines()) == 1
+            driver.run_jobs([dict(job)], out=str(out), suite="t", knobs={},
+                            host=host_b, run_label="r", mem_sampler=False,
+                            resume_path=str(out))
+            assert len(out.read_text().splitlines()) == 2
+    finally:
+        driver.run_one = real
+
+
+def test_timeout_and_sampler_resilience():
+    import time as _time
+
+    from bonsai.bench import driver
+
+    assert driver.timeout_for({"rows": 1000, "cols": 8, "iters": 100}) == 900
+    base = {"rows": 16_777_216, "cols": 128, "iters": 100}  # 2^31 cells
+    assert (driver.timeout_for(dict(base, iters=300))
+            > driver.timeout_for(dict(base)))
+    # Same cell count, wider aspect: the histogram term must raise it.
+    assert (driver.timeout_for({"rows": 32_768, "cols": 65_536, "iters": 100})
+            > driver.timeout_for(dict(base)))
+
+    calls = {"n": 0}
+
+    def flaky(pid):
+        calls["n"] += 1
+        if calls["n"] > 2:
+            raise RuntimeError("driver reset")
+        return (100.0, 200.0)
+
+    with driver.DeviceMemSampler(1, interval_s=0.01, query=flaky) as sm:
+        _time.sleep(0.1)
+    got = sm.result()
+    assert got["samples"] == 2 and got.get("stopped_early") is True
+
+
 def test_cli_plan_is_lazy():
     from bonsai.bench import cli
 
@@ -370,6 +509,11 @@ if __name__ == "__main__":
     test_spec_expansion()
     test_bundled_specs()
     test_driver_resume_and_emit()
+    test_error_classification()
+    test_variant_canonicalization_and_ts_guard()
+    test_driver_gates_and_effective_bins()
+    test_resume_is_host_scoped()
+    test_timeout_and_sampler_resilience()
     test_mem_sampler()
     test_data_cache()
     test_cli_plan_is_lazy()
