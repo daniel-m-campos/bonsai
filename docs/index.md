@@ -22,7 +22,7 @@ GPU support was the biggest swing, taken when a promotional window with Anthropi
 
 The ambition grew with the milestones: assimilate the defining ideas of XGBoost, LightGBM, and CatBoost into one library, match or beat their performance, and keep the code readable enough that reading it is still the point.
 
-Where that landed, measured on shared hardware at matched settings: on GPU, bonsai holds the fastest slot at every row scale tested, edging CatBoost and beating XGBoost at 16M rows at matched accuracy, on ~3x less host memory. Where it still loses (CatBoost on wide data, XGBoost's last 0.001 r² of cut quality), the runs are linked with the same prominence as the wins.
+Where that landed, measured on shared hardware at matched settings: on GPU, bonsai holds the fastest slot at every row scale tested, edging CatBoost and beating XGBoost at 16M rows at matched accuracy, on ~3x less host memory. Where it still loses (XGBoost's last 0.001 r² of cut quality on some tasks, learning-to-rank as a measured and scoped gap), the runs are linked with the same prominence as the wins.
 
 One property none of the reference libraries offer: models are bit-identical across CPU architectures and thread counts, enforced per-commit in CI.
 
@@ -58,4 +58,4 @@ One property none of the reference libraries offer: models are bit-identical acr
 
 ## Built with Claude
 
-bonsai is built by a human maintainer working with Claude. What makes that trustworthy is verification, not trust. Models are bit-identical per commit in CI, performance claims come from committed same-pod runs, and every feature passes an admission gate with pre-registered kill criteria. Refuted hypotheses are recorded next to the adopted ones in the [decisions log](decisions.md). Every commit carries a session trailer linking the session that produced it.
+bonsai is built by a human maintainer working with Claude. What makes that trustworthy is verification, not trust. Models are bit-identical per commit in CI, performance claims come from committed same-pod runs, and every feature passes an admission gate with pre-registered kill criteria. Refuted hypotheses are recorded next to the adopted ones in the [decisions log](decisions.md). Commits before 2026-07-29 carry a session trailer linking the session that produced them.

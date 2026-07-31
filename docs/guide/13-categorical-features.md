@@ -75,7 +75,7 @@ Every library's categorical machinery, toggled on/off at matched knobs, on three
 | catboost, ordinal → native ordered TS | 0.7791 → 0.8894 | 0.9269 → 0.9283 | 0.7740 → 0.7777 |
 | xgboost, ordinal → native | 0.8052 → 0.7878 | 0.9276 → 0.9283 | 0.7827 → 0.7791 |
 
-Native set splits (the feature that would have grown the 1,400-line core by a third) measure **+0.029 / +0.000 / −0.018** by LightGBM's own toggle: a coin flip that costs split-scan complexity even when it loses. The encoder beats it where it wins and is a per-dataset *choice* where it doesn't. CatBoost's remaining amazon edge comes from per-tree permutations and crossed-category statistics, which set splits wouldn't have bought either.
+Native set splits (the feature that would have grown the then 1,400-line split/tree core by a third) measure **+0.029 / +0.000 / −0.018** by LightGBM's own toggle: a coin flip that costs split-scan complexity even when it loses. The encoder beats it where it wins and is a per-dataset *choice* where it doesn't. CatBoost's remaining amazon edge comes from per-tree permutations and crossed-category statistics, which set splits wouldn't have bought either.
 
 ## Crossing categories: the last of the gap
 

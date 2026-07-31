@@ -12,6 +12,7 @@ Read the table top to bottom as a decision on your data's shape. Row scale and h
 | small tabular, heavy categoricals | CatBoost | [cat probe](../../benchmarks/tabarena-cat-probe-2026-07.md) |
 | small pure-numeric tabular | split (see below) | [Grinsztajn](results/quality-grinsztajn.md#external-standings-the-grinsztajn-suite), [cat probe control](../../benchmarks/tabarena-cat-probe-2026-07.md) |
 | memory-constrained hosts | bonsai | [perf ledger](results.md#perf-division) |
+| wide or extreme-aspect data (thousands of features) | bonsai | [width and shape](results/perf-shape.md), decisions 90 and 91 |
 | sparse or high-dimensional-sparse | XGBoost | [sparse probe](../../benchmarks/sparse-tradeoff-2026-07.md) |
 | learning-to-rank | XGBoost or LightGBM | [ranking probe](../../benchmarks/ranking-tradeoff-2026-07.md) |
 | bit-reproducible artifacts across CPUs | bonsai only | [the contract](../design/determinism.md) |
@@ -42,9 +43,13 @@ On the tuned TabArena-Lite gauge, CatBoost's Elo is 1340 against bonsai_ts's 120
 
 ## Memory-constrained hosts: bonsai
 
-bonsai bins each feature to one byte per cell, which holds its memory down. Peak host RSS at 16M rows is 7.0 GB, against XGBoost's 22.2 GB and CatBoost's 19.4 GB, roughly 3x less ([the perf overview](README.md), from [the re-baseline data](../../benchmarks/results/rebaseline-2026-07.jsonl)). Predict is about 3x faster on the same runs. That same u8 storage is what puts a 500M-row fit on one 80GB card in [case E5](../learn/engine/5-the-ceiling.md).
+bonsai bins each feature to one byte per cell, which holds its memory down. Peak host RSS at 16M rows is 7.0 GB, against XGBoost's 22.2 GB and CatBoost's 19.4 GB, roughly 3x less ([the perf division](results.md#perf-division), from [the re-baseline data](../../benchmarks/results/rebaseline-2026-07.jsonl)). Predict is about 3x faster on the same runs. That same u8 storage is what puts a 500M-row fit on one 80GB card in [case E5](../learn/engine/5-the-ceiling.md).
 
 The footprint also compounds under fit-parallelism: more concurrent fits fit on one card. And a shared `bonsai.Dataset` bins once for a whole sweep.
+
+## Wide or extreme-aspect data: bonsai
+
+The 2026-07-30 studies measured the width axis end to end: fastest at every width from 100 to 16,384 features on the cols re-baseline, and fastest at every aspect ratio at constant 2^31-cell volume on the iso-volume frontier, out to 65,536 features on 96GB silicon ([width and shape](results/perf-shape.md), decisions 90 and 91). Device memory sizes to the problem where CatBoost reserves the whole card, and at p near 2x n the oblivious grower holds test r2 where depthwise-family growers drop.
 
 ## Sparse or high-dimensional-sparse data: XGBoost
 
@@ -68,4 +73,4 @@ The contract also caught real bugs: an FMA contraction that diverged bytes acros
 
 ## Statuses change when decisions change
 
-Every row here is a snapshot of the current record, not a permanent verdict. A declined feature reopens when a workload makes its gap load-bearing, exactly as native categoricals did in [decision 80](../decisions.md). When a decision moves, this page moves with it. The dated trail of what changed and why is [the project timeline](../learn/timeline.md).
+Every row here is a snapshot of the current record, not a permanent verdict. A declined feature reopens when a workload makes its gap load-bearing, exactly as native categoricals did in [decision 80](../decisions.md). When a decision moves, this page moves with it. The dated trail of what changed and why is [the decisions log](../decisions.md).

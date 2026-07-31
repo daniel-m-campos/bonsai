@@ -51,7 +51,7 @@ If `cuda_available()` is `True`, pass `device="cuda"` (the XGBoost spelling) or 
 pip install "bonsai-gbt[bench]"
 ```
 
-The extra pulls XGBoost, LightGBM, CatBoost, scikit-learn, pandas, and openml: everything `bonsai.bench` needs to reproduce the published benchmark tables. `python -m bonsai.bench.grinsztajn out.jsonl --report` re-runs the external standings suite under the [benchmark protocol](../method/benchmark-protocol.md); [Running the benchmarks](benchmarks.md) walks every suite.
+The extra pulls XGBoost, LightGBM, CatBoost, scikit-learn, pandas, and openml: everything `bonsai.bench` needs to reproduce the published benchmark tables. `python -m bonsai.bench.grinsztajn out.jsonl` runs the external standings suite under the [benchmark protocol](../method/benchmark-protocol.md), and `--report` renders the standings from the finished jsonl; [Running the benchmarks](benchmarks.md) walks every suite.
 
 ## Docker
 

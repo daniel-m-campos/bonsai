@@ -7,7 +7,7 @@
 > growers, and the speed gap were true then and are preserved as the
 > point-in-time record — every performance number below is historical.
 > For what changed since, see the addenda at the bottom; for current
-> numbers, the [README performance section](../README.md#performance) and
+> numbers, the [README results section](../README.md#results) and
 > the committed runs in [`benchmarks/results/`](../benchmarks/results/)
 > are the living source of truth.
 
@@ -82,7 +82,7 @@ Effect of [`b7fb149`](../include/bonsai/tree.hpp): replacing `std::variant<Inter
 | bonsai (oblivious, all_rows)  |         0.326 s |      0.313 s | (noise) |
 | bonsai (oblivious, bernoulli) |         0.314 s |      0.316 s | (noise) |
 
-End-to-end gain (4–6%) is smaller than the microbench (10–17%) because CSV parse, model load, and CSV write dominate the wall-clock predict step on a 51k-row dataset. The oblivious rows confirm the run-to-run noise floor (~4%) since `ObliviousTree`'s code path is unchanged. Full reproduction recipe in [`benchmarks/results/year_prediction_msd_predict_perf.md`](../benchmarks/results/year_prediction_msd_predict_perf.md).
+End-to-end gain (4–6%) is smaller than the microbench (10–17%) because CSV parse, model load, and CSV write dominate the wall-clock predict step on a 51k-row dataset. The oblivious rows confirm the run-to-run noise floor (~4%) since `ObliviousTree`'s code path is unchanged. Full reproduction recipe in [`scripts/bench_gpu.py`](../scripts/bench_gpu.py).
 
 The assembly difference: node stride 24 → 20 bytes (line `mul *, #0x14` vs `#0x18`) and the variant tag load (`ldr w15, [x14, #0x14]; cbz w15`) is gone, one fewer load on the critical path per node visited.
 

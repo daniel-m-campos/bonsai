@@ -1,5 +1,7 @@
 # LightGBM
 
+> Superseded: [the project timeline](../learn/timeline.md) is the current lineage record; standings statements on this page are historical.
+
 LightGBM made histogram training the field's default idiom and contributed the ideas that squeeze the most out of it: leaf-wise growth under a leaf budget instead of level-by-level, the histogram subtraction trick, gradient-based one-side sampling (GOSS), and exclusive feature bundling (EFB) for sparse data.
 
 bonsai adopted most of that list outright; lightgbm is the library bonsai resembles most in training structure.
@@ -32,6 +34,6 @@ The benchmark suite to date is dense, so the honest status is untested rather th
 
 At 16M rows on CPU, bonsai's growers fit in 73–76s against lightgbm's 111.3s, and the gap widens on wide data (4096 columns: lightgbm 256.2s, bonsai's GPU growers 42–44s; the re-baseline runs lightgbm on its CPU path, which remains its strongest).
 
-Accuracy is lightgbm's consolation: at 16M it reaches 0.879 r², tying bonsai's depthwise and edging its oblivious (0.876), recorded in the [performance table](https://github.com/daniel-m-campos/bonsai/blob/main/README.md#performance) with everything else.
+Accuracy is lightgbm's consolation: at 16M it reaches 0.879 r², tying bonsai's depthwise and edging its oblivious (0.876), recorded on [the fit-at-scale ledger](../method/results/perf-scale.md) with everything else.
 
 bonsai's default training configuration (leafwise growth over histograms with subtraction, GOSS available behind a flag) is essentially lightgbm's recipe, reimplemented small enough to read and measured until it kept up.
