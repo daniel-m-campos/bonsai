@@ -200,7 +200,21 @@ struct MirrorSlice
     size_t s0, s1;
     size_t rm_base, rm_width;
     size_t cell0, cells;
+    size_t fid0; // first feature id of the slice's mirror block
+
+    size_t n_sel() const
+    {
+        return s1 - s0;
+    }
 };
+
+// Stripe start of a unit's partials compacted to this slice: plan offsets
+// are exact multiples of the FULL selection footprint, so the division is
+// lossless.
+size_t stripe_of(size_t partial_off, size_t total_cells, MirrorSlice const &sl)
+{
+    return partial_off / total_cells * sl.cells;
+}
 
 std::span<MirrorSlice const> mirror_slices(Dataset const                &ds,
                                            std::span<feature_id_t const> selected,
@@ -227,7 +241,8 @@ std::span<MirrorSlice const> mirror_slices(Dataset const                &ds,
                           .rm_base  = ds.n_rows() * mb * width,
                           .rm_width = width_b,
                           .cell0    = offsets.cells[s],
-                          .cells    = cell_end - offsets.cells[s]});
+                          .cells    = cell_end - offsets.cells[s],
+                          .fid0     = mb * width});
         s = e;
     }
     return slices;
@@ -244,31 +259,27 @@ void run_fill(FillPlan const &plan, Dataset const &ds, floats_view grad,
     HistCell *const parts = partials.data();
     // Capture raw pointers: naming a thread_local inside the parallel region
     // would resolve to each worker's own (empty) container.
-    size_t const             *off_ptr = offsets.cells.data();
-    feature_id_t const *const sel_ptr = selected.data();
-    uint8_t const *const      rm_ptr  = ds.row_major_bins().data() + sl.rm_base;
-    size_t const              width   = sl.rm_width;
-    size_t const              fid0 =
-        selected[sl.s0] / Dataset::mirror_tile_width() * Dataset::mirror_tile_width();
-    size_t const          total     = offsets.total_cells;
-    FillUnit const *const units_ptr = plan.units.data();
+    size_t const             *off_ptr   = offsets.cells.data();
+    feature_id_t const *const sel_ptr   = selected.data();
+    uint8_t const *const      rm_ptr    = ds.row_major_bins().data() + sl.rm_base;
+    size_t const              width     = sl.rm_width;
+    size_t const              fid0      = sl.fid0;
+    size_t const              total     = offsets.total_cells;
+    FillUnit const *const     units_ptr = plan.units.data();
     parallel::for_each_index(
         plan.units.size(),
         [&, parts, off_ptr, sel_ptr, rm_ptr, units_ptr](size_t u)
         {
-            FillUnit const &unit = units_ptr[u];
-            // Partial offsets in the plan are multiples of the FULL
-            // selection footprint; per slice the slab is compacted to
-            // slice-sized stripes so the pass's working set stays small.
-            size_t const stripe = unit.partial_off == direct_fill
-                                      ? 0
-                                      : unit.partial_off / total * sl.cells;
+            FillUnit const &unit   = units_ptr[u];
+            size_t const    stripe = unit.partial_off == direct_fill
+                                         ? 0
+                                         : stripe_of(unit.partial_off, total, sl);
             if (unit.partial_off != direct_fill)
             {
                 std::fill_n(parts + stripe, sl.cells, HistCell{});
             }
             static thread_local std::vector<HistCell *> bases;
-            bases.resize(sl.s1 - sl.s0);
+            bases.resize(sl.n_sel());
             for (size_t s = sl.s0; s < sl.s1; ++s)
             {
                 bases[s - sl.s0] =
@@ -286,7 +297,7 @@ void run_fill(FillPlan const &plan, Dataset const &ds, floats_view grad,
             // 100 u8 features) and the grad/hess pair a fixed distance
             // ahead; reads only, so results are bit-identical.
             constexpr size_t k_ahead = 16;
-            size_t const     n_sel_b = sl.s1 - sl.s0;
+            size_t const     n_sel_b = sl.n_sel();
             for (size_t k = unit.k0; k < unit.k1; ++k)
             {
                 if (k + k_ahead < unit.k1)
@@ -318,7 +329,7 @@ void merge_partials(FillPlan const &plan, std::span<feature_id_t const> selected
                     MirrorSlice const &sl)
 {
     HistCell const *const     parts     = partials.data();
-    size_t const              n_sel_b   = sl.s1 - sl.s0;
+    size_t const              n_sel_b   = sl.n_sel();
     size_t const              total     = offsets.total_cells;
     size_t const             *off_ptr   = offsets.cells.data();
     feature_id_t const *const sel_ptr   = selected.data();
@@ -329,7 +340,7 @@ void merge_partials(FillPlan const &plan, std::span<feature_id_t const> selected
         {
             MergeJob const &m      = merge_ptr[ms / n_sel_b];
             size_t const    s      = sl.s0 + (ms % n_sel_b);
-            size_t const    stripe = m.partial_off / total * sl.cells;
+            size_t const    stripe = stripe_of(m.partial_off, total, sl);
             Histogram      &h      = m.node.get().hists[sel_ptr[s]];
             for (size_t b = 0; b < m.n_blocks; ++b)
             {
@@ -386,7 +397,6 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         prof.populate_adds += static_cast<double>(node.rows.size()) *
                               static_cast<double>(selected.size());
     }
-    SelectedOffsets const offsets = selected_offsets(ds, selected);
     if (!ds.bins_are_u8())
     {
         for (SplitInput &node : nodes)
@@ -395,6 +405,7 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         }
         return;
     }
+    SelectedOffsets const offsets = selected_offsets(ds, selected);
     // Tiles outer, rows inner: one fill pass per mirror block keeps the
     // live scatter target at one block's histograms (cache-resident by
     // construction) at any selection width, while reads stay sequential
@@ -403,8 +414,7 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     // pair it replaced in benchmarks/wide-cpu-hist-2026-07.md (issue #217).
     grower_detail::GrowProfiler::Lap row_lap;
     FillPlan const &plan = plan_fill(nodes, selected.size(), offsets.total_cells);
-    size_t const    n_partial_groups =
-        offsets.total_cells == 0 ? 0 : plan.partial_cells / offsets.total_cells;
+    size_t const    n_partial_groups = plan.partial_cells / offsets.total_cells;
     for (MirrorSlice const &sl : mirror_slices(ds, selected, offsets))
     {
         std::span<HistCell> const partials = partials_slab(n_partial_groups * sl.cells);
