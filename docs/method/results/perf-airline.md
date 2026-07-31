@@ -42,4 +42,4 @@ The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC),
 | catboost_cpu | 2.0s / 0.7177 | 6.3s / 0.7284 | 49.4s / 0.7295 |
 | catboost_gpu | 0.7s / 0.7163 | 1.1s / 0.7287 | 6.3s / 0.7304 |
 
-*Source: [`airline-2026-07.jsonl`](../../../benchmarks/results/airline-2026-07.jsonl). One L40S (SECURE US-NC-1, driver 570.124.06), 2026-07-15, post-decision-74 code. A bonsai variant has the best AUC in every cell from 1M up under both protocols; XGBoost-GPU owns raw speed on this narrow shape. Evidence: [benchmarks/airline-2026-07.md](../../../benchmarks/airline-2026-07.md).*
+*Source: [`airline-2026-07.jsonl`](../../../benchmarks/results/airline-2026-07.jsonl). One L40S (SECURE US-NC-1, driver 570.124.06), 2026-07-15, post-decision-74 code. A bonsai variant has the best AUC in every cell from 1M up under both protocols; XGBoost-GPU owns raw speed on this narrow shape. Evidence: [benchmarks/airline-2026-07.md](../../../benchmarks/airline-2026-07.md). Measured at `3c1b6ff` (2026-07-15, d322b2863095).*
