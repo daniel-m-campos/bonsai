@@ -1,0 +1,162 @@
+# The standings refresh (decision 92): rent one pod, run a same-pod A/B of
+# the previous release wheel against HEAD (the perf-change detector), then
+# re-measure the requested axes and open the supersession PR. Manual and
+# pre-release trigger only; the release gate in wheels.yml enforces the
+# ritual.
+name: standings-refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      axes:
+        description: "Comma list of axes to refresh (shape ~3h; run it alone)"
+        default: "rows,width,frontier,airline"
+      prev_version:
+        description: "Wheel for the A/B old arm (empty skips the A/B)"
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 340
+    env:
+      RUNPOD_KEY: ${{ secrets.RUNPOD_API_KEY }}
+      POD_NAME: bonsai-standings-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ephemeral SSH keypair
+        run: ssh-keygen -t ed25519 -N "" -f /tmp/podkey
+
+      - name: Rent an L40S
+        id: pod
+        run: |
+          set -euo pipefail
+          PUB="$(cat /tmp/podkey.pub)"
+          create() {
+            curl -sf https://rest.runpod.io/v1/pods \
+              -H "Authorization: Bearer $RUNPOD_KEY" -H 'content-type: application/json' \
+              -d "{\"name\": \"$POD_NAME\", \"imageName\": \"ghcr.io/daniel-m-campos/bonsai-ci:cuda12.4\",
+                   \"gpuTypeIds\": [\"NVIDIA L40S\"], \"gpuCount\": 1,
+                   \"cloudType\": \"SECURE\", \"containerDiskInGb\": 80,
+                   \"ports\": [\"22/tcp\"], \"env\": {\"PUBLIC_KEY\": \"$PUB\"}}" \
+              | jq -r .id
+          }
+          for attempt in 1 2; do
+            POD="$(create || true)"
+            if [ -z "${POD}" ] || [ "${POD}" = "null" ]; then
+              echo "attempt ${attempt}: pod create call failed"; sleep 15; continue
+            fi
+            echo "attempt ${attempt}: pod ${POD}"
+            echo "pod_id=${POD}" >> "$GITHUB_OUTPUT"
+            for i in $(seq 1 36); do
+              sleep 10
+              OUT=$(curl -s https://api.runpod.io/graphql \
+                -H "Authorization: Bearer $RUNPOD_KEY" -H 'content-type: application/json' \
+                -d "{\"query\": \"query { pod(input: {podId: \\\"$POD\\\"}) { runtime { uptimeInSeconds ports { ip isIpPublic privatePort publicPort } } } }\"}")
+              IP=$(echo "$OUT" | jq -r '.data.pod.runtime.ports[]? | select(.isIpPublic and .privatePort == 22) | .ip' | head -1)
+              PORT=$(echo "$OUT" | jq -r '.data.pod.runtime.ports[]? | select(.isIpPublic and .privatePort == 22) | .publicPort' | head -1)
+              if [ -n "$IP" ] && [ "$IP" != "null" ]; then
+                echo "ip=$IP" >> "$GITHUB_OUTPUT"
+                echo "port=$PORT" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            done
+            echo "attempt ${attempt}: pod ${POD} never exposed ssh; deleting"
+            curl -s -X DELETE "https://rest.runpod.io/v1/pods/$POD" \
+              -H "Authorization: Bearer $RUNPOD_KEY" || true
+          done
+          echo "::error::no usable pod after 2 attempts"; exit 1
+
+      - name: Run the refresh on the pod
+        run: |
+          set -euo pipefail
+          SSH="ssh -i /tmp/podkey -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o ServerAliveInterval=60 -p ${{ steps.pod.outputs.port }} root@${{ steps.pod.outputs.ip }}"
+          for i in $(seq 1 12); do $SSH true && break || sleep 10; done
+          scp -i /tmp/podkey -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P ${{ steps.pod.outputs.port }} \
+            scripts/standings_refresh_pod.sh root@${{ steps.pod.outputs.ip }}:/root/
+          $SSH "AXES='${{ inputs.axes }}' GIT_SHA='${{ github.sha }}' PREV_VERSION='${{ inputs.prev_version }}' bash /root/standings_refresh_pod.sh"
+
+      - name: Pull results
+        run: |
+          mkdir -p /tmp/standings
+          scp -i /tmp/podkey -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P ${{ steps.pod.outputs.port }} \
+            "root@${{ steps.pod.outputs.ip }}:/root/standings/*.jsonl" /tmp/standings/ || true
+          ls -la /tmp/standings/
+
+      - name: Tear down the pod
+        if: always() && steps.pod.outputs.pod_id != ''
+        run: |
+          curl -s -X DELETE "https://rest.runpod.io/v1/pods/${{ steps.pod.outputs.pod_id }}" \
+            -H "Authorization: Bearer $RUNPOD_KEY" || true
+
+      - name: Sweep for surviving standings pods
+        if: always()
+        run: |
+          set -euo pipefail
+          LIST=$(curl -s https://rest.runpod.io/v1/pods -H "Authorization: Bearer $RUNPOD_KEY")
+          IDS=$(echo "$LIST" | jq -r 'if type == "array" then . else (.items // []) end | .[] | select(.name | startswith("bonsai-standings")) | .id')
+          for id in $IDS; do
+            curl -s -X DELETE "https://rest.runpod.io/v1/pods/$id" -H "Authorization: Bearer $RUNPOD_KEY" || true
+          done
+          LEFT=$(curl -s https://rest.runpod.io/v1/pods -H "Authorization: Bearer $RUNPOD_KEY" \
+            | jq -r 'if type == "array" then . else (.items // []) end | .[] | select(.name | startswith("bonsai-standings")) | .id')
+          if [ -n "$LEFT" ]; then echo "::error::standings pods survived: $LEFT"; exit 1; fi
+
+      - name: Open the supersession PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          YM=$(date -u +%Y-%m)
+          cp /tmp/standings/*-"$YM".jsonl benchmarks/results/
+          declare -A AXIS_FILE=( [rows]="rebaseline-$YM.jsonl" [width]="cols-rebaseline-$YM.jsonl" \
+            [shape]="iso-volume-$YM.jsonl" [frontier]="gpu-pareto-16M-$YM.jsonl" [airline]="airline-$YM.jsonl" )
+          IFS=',' read -ra AXES <<< "${{ inputs.axes }}"
+          for axis in "${AXES[@]}"; do
+            axis="$(echo "$axis" | tr -d ' ')"
+            python3 scripts/update_standings.py --axis "$axis" --file "${AXIS_FILE[$axis]}"
+          done
+          python3 scripts/render_results.py
+          VERDICT=""
+          if [ -f /tmp/standings/ab.jsonl ]; then
+            VERDICT=$(python3 - <<'PY'
+          import json, statistics
+          rows = [json.loads(l) for l in open("/tmp/standings/ab.jsonl")]
+          med = {}
+          for r in rows:
+              med.setdefault((r["rows"], r["cols"], r["grower"], r["arm"]), []).append(r["fit_s"])
+          print("| cell | grower | old | new | delta |")
+          print("|---|---|--:|--:|--:|")
+          for (rw, c, g) in sorted({(r["rows"], r["cols"], r["grower"]) for r in rows}):
+              o = statistics.median(med[(rw, c, g, "old")])
+              n = statistics.median(med[(rw, c, g, "new")])
+              d = 100 * (n - o) / o
+              flag = " **moved**" if abs(d) > 5 else ""
+              print(f"| {rw}x{c} | {g} | {o:.2f}s | {n:.2f}s | {d:+.1f}%{flag} |")
+          PY
+          )
+          fi
+          BRANCH="standings-refresh-${{ github.run_id }}"
+          git config user.name "standings-refresh"
+          git config user.email "actions@github.com"
+          git checkout -b "$BRANCH"
+          git add -A benchmarks/ docs/method/ README.md
+          git commit -m "bench(standings): refresh ${{ inputs.axes }}
+
+          Same-pod refresh at ${GITHUB_SHA::7} via the standings-refresh
+          workflow (decision 92); superseded files deleted, registry
+          updated, ledger and README regenerated."
+          git push -u origin "$BRANCH"
+          gh pr create --base main --title "bench(standings): refresh ${{ inputs.axes }}" \
+            --body "Automated standings refresh at \`${GITHUB_SHA::7}\` (decision 92).
+
+          A/B verdict (previous release wheel vs HEAD, same pod, interleaved, ±5% band):
+
+          ${VERDICT:-A/B skipped (no prev_version input).}
+
+          A **moved** verdict requires a \`Standings:\`-tagged decision entry before merge; the docs-check gate enforces it."

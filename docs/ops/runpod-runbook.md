@@ -159,3 +159,11 @@ The sweep is not optional: **an error-returning create can still have created a 
 ## 9. Cost notes
 
 L40S SECURE ≈ $0.99/hr, billed per-minute while the pod exists (not just while computing). A typical validation session — boot, build, `[cuda]` suite, two 16M profiled fits, teardown — is 25–40 minutes ≈ **$0.40–0.70**. The entire 2026-07 optimization campaign's pod spend was dominated by a handful of full-fleet sweeps, not validation sessions; there is no reason to hesitate about spinning a pod to check a GPU change, and no excuse for leaving one running overnight.
+
+## 10. Standings refresh (decision 92)
+
+The standings-refresh workflow (Actions tab, `standings-refresh`) is the ritual: it rents one L40S, runs the same-pod A/B of the previous release wheel against HEAD (the perf-change detector, ±5% band), re-measures the requested axes with the bundled standings specs, and opens the supersession PR with the verdict table. Inputs: `axes` (default `rows,width,frontier,airline`; `shape` runs ~3h, dispatch it alone) and `prev_version` (the wheel for the old arm).
+
+Release ordering: dispatch the refresh with `prev_version` = the last release, merge its PR (a **moved** verdict needs a `Standings:`-tagged decision first; docs-check enforces), then the version-bump PR, then tag. The publish job hard-fails unless every axis was refreshed for the version being tagged.
+
+Manual fallback: rent a pod per section 1, then `AXES=rows,width GIT_SHA=<sha> PREV_VERSION=<last> bash scripts/standings_refresh_pod.sh` on the pod, pull `/root/standings/*.jsonl`, and run `scripts/update_standings.py --axis <axis> --file <new file>` per axis before regenerating the ledger.

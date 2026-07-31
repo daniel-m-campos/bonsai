@@ -281,6 +281,13 @@ jobs:
           fi
           echo "tag $tag matches packaged version $sdist_version"
 
+      # Decision 92: a release ships only with standings refreshed for this
+      # exact version (the standings-refresh workflow is the ritual).
+      - name: Standings freshness gate
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          python3 scripts/check_standings.py --release "${tag#v}"
+
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |

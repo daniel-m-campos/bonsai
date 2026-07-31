@@ -61,6 +61,16 @@ def fmt(v, nd=4) -> str:
     return str(v)
 
 
+_STANDINGS_REG = json.loads(
+    (REPO / "benchmarks" / "standings.json").read_text())
+
+
+def standings_file(axis: str) -> str:
+    """Standings sections load by registry entry, not literal name, so a
+    refresh can supersede the file (new dated name) without generator edits."""
+    return _STANDINGS_REG[axis]["file"]
+
+
 def measured_stamp(rows: list[dict]) -> str:
     """One-sha standings stamp computed from the rows themselves, so the
     reader always sees the vintage (results-lifecycle policy, decision 92)."""
@@ -270,7 +280,7 @@ def _standings(rows: list[dict]):
 
 
 def grinsztajn_section() -> str:
-    main = load_jsonl("grinsztajn-2026-07.jsonl")
+    main = load_jsonl(standings_file("quality-grinsztajn"))
     mcw1 = load_jsonl("grinsztajn-2026-07-xgb-mcw1.jsonl")
     table, suite_ranks, n = _standings(main)
     rows = [[lib, fmt(mean, 2), str(w)] for lib, mean, w in table]
@@ -313,7 +323,7 @@ Sensitivity: XGBoost's campaign mapping sets `min_child_weight=20` (hessian-weig
 
 Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite (hours; datasets fetch from OpenML), then `--report` on the same file to render the standings from the jsonl.
 
-{provenance(["grinsztajn-2026-07.jsonl", "grinsztajn-2026-07-xgb-mcw1.jsonl"], "As-run; evidence narrative in [benchmarks/grinsztajn-2026-07.md](../../benchmarks/grinsztajn-2026-07.md), ruling in decision 68.")}
+{provenance([standings_file("quality-grinsztajn"), "grinsztajn-2026-07-xgb-mcw1.jsonl"], "As-run; evidence narrative in [benchmarks/grinsztajn-2026-07.md](../../benchmarks/grinsztajn-2026-07.md), ruling in decision 68.")}
 """
 
 
@@ -629,7 +639,7 @@ def _fmt_cell(best, rows, cols, variant) -> str:
 
 
 def rebaseline_section() -> str:
-    rows = load_jsonl("rebaseline-2026-07.jsonl")
+    rows = load_jsonl(standings_file("rows"))
     best = _cell_best(rows)
     host = rows[0]["host"]
     row_axis = sorted({r["cell"]["rows"] for r in rows if r["cell"]["cols"] == 100})
@@ -684,7 +694,7 @@ Scaling features (1M rows):
 
 The wide cells of this table predate the 2026-07-30 wide re-baseline; the current width standings are on [Width and shape](perf-shape.md).
 
-{provenance(["rebaseline-2026-07.jsonl"], "Runner: [scripts/bench_scaling.py](../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file." + measured_stamp(rows))}
+{provenance([standings_file("rows")], "Runner: [scripts/bench_scaling.py](../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file." + measured_stamp(rows))}
 """
 
 
@@ -781,7 +791,7 @@ A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: 
 
 
 def cols_rebaseline_table() -> str:
-    cr = load_jsonl("cols-rebaseline-2026-07.jsonl")
+    cr = load_jsonl(standings_file("width"))
     best = best_fit_by(cr, lambda r: (r["rows"], r["cols"], r["variant"]))
     cells = sorted({(r["rows"], r["cols"]) for r in cr}, key=lambda rc: rc[1])
     label = cell_label
@@ -829,7 +839,7 @@ Peak host RSS, worst rep:
 
 {rss_table}
 
-{provenance(["cols-rebaseline-2026-07.jsonl"], "Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells." + measured_stamp(cr))}
+{provenance([standings_file("width")], "Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells." + measured_stamp(cr))}
 """
 
 
@@ -843,11 +853,11 @@ ISO_STYLE = {
 
 ISO_VARIANTS = [(k, v[0]) for k, v in ISO_STYLE.items()]
 
-ISO_HOST = "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition"
+ISO_HOST = _STANDINGS_REG["shape"]["host"]
 
 
 def iso_volume_section() -> str:
-    rows = load_jsonl("iso-volume-2026-08.jsonl")
+    rows = load_jsonl(standings_file("shape"))
     pod = [r for r in rows if r["host"]["name"] == ISO_HOST]
     errors = [r for r in pod if r["status"] != "ok"]
     best = best_fit_by(
@@ -946,7 +956,7 @@ The 2^33 stretch, GPU arms:
 
 {vram33}
 
-{provenance(["iso-volume-2026-08.jsonl"], "Specs: bundled in [bench/specs/](../../python/bonsai/bench/specs/); driver: [scripts/pod_bench_driver.sh](../../scripts/pod_bench_driver.sh); evidence: [benchmarks/iso-volume-2026-08.md](../../benchmarks/iso-volume-2026-08.md); verdict recorded as decision 91." + measured_stamp(pod))}
+{provenance([standings_file("shape")], "Specs: bundled in [bench/specs/](../../python/bonsai/bench/specs/); driver: [scripts/pod_bench_driver.sh](../../scripts/pod_bench_driver.sh); evidence: [benchmarks/iso-volume-2026-08.md](../../benchmarks/iso-volume-2026-08.md); verdict recorded as decision 91." + measured_stamp(pod))}
 """
 
 
@@ -972,7 +982,7 @@ def prefetch_section() -> str:
 
 
 def frontier_section() -> str:
-    pareto = load_jsonl("gpu-pareto-16M-2026-07.jsonl")
+    pareto = load_jsonl(standings_file("frontier"))
     par_variants = []
     for r in pareto:
         if r["variant"] not in par_variants:
@@ -1021,7 +1031,7 @@ def frontier_section() -> str:
 
 {par_table}
 
-{provenance(["gpu-pareto-16M-2026-07.jsonl"], "Post-resident-objective re-run (2026-07-18, decision 78): bonsai is first to every measured accuracy at every horizon; the marginal round fell 104 to 64 ms, below CatBoost's 78 on the same pod, and the last crossover is gone. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md).")}
+{provenance([standings_file("frontier")], "Post-resident-objective re-run (2026-07-18, decision 78): bonsai is first to every measured accuracy at every horizon; the marginal round fell 104 to 64 ms, below CatBoost's 78 on the same pod, and the last crossover is gone. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md).")}
 
 ### Ordered boosting at scale (CatBoost door)
 
@@ -1048,7 +1058,7 @@ Every results file behind a published claim is rendered across the pages below, 
 
 
 def airline_section() -> str:
-    rows = [r for r in load_jsonl("airline-2026-07.jsonl") if r["status"] == "ok"]
+    rows = [r for r in load_jsonl(standings_file("airline")) if r["status"] == "ok"]
 
     def cell(variant, size, depth):
         m = [r for r in rows if r["variant"] == variant and r["size"] == size
@@ -1092,7 +1102,7 @@ The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC),
 
 {tables[1]}
 
-{provenance(["airline-2026-07.jsonl"], "One L40S (SECURE US-NC-1, driver 570.124.06), 2026-07-15, post-decision-74 code. A bonsai variant has the best AUC in every cell from 1M up under both protocols; XGBoost-GPU owns raw speed on this narrow shape. Evidence: [benchmarks/airline-2026-07.md](../../benchmarks/airline-2026-07.md)." + measured_stamp(rows))}
+{provenance([standings_file("airline")], "One L40S (SECURE US-NC-1, driver 570.124.06), 2026-07-15, post-decision-74 code. A bonsai variant has the best AUC in every cell from 1M up under both protocols; XGBoost-GPU owns raw speed on this narrow shape. Evidence: [benchmarks/airline-2026-07.md](../../benchmarks/airline-2026-07.md)." + measured_stamp(rows))}
 """
 
 
@@ -1118,7 +1128,7 @@ def ceiling_section() -> str:
     return "## The single-card ceiling\n\n" + table + "\n\n" + prov + "\n"
 
 def code_metrics_section() -> str:
-    rows = load_jsonl("code-metrics-2026-07.jsonl")
+    rows = load_jsonl(standings_file("code"))
     meta = next(r for r in rows if r["kind"] == "meta")
     planes = [r for r in rows if r["kind"] == "plane"]
     offenders = [r for r in rows if r["kind"] == "offender"]
@@ -1161,7 +1171,7 @@ The five highest-CCN functions across `core_headers` + `engine_impl`, published 
 
 {surface_line}
 
-{provenance(["code-metrics-2026-07.jsonl"], f"lizard {meta['tool_version']} (`{meta['tool_pin']}`) at `{meta['git_sha'][:12]}`, {meta['date']}; regenerate with [scripts/measure_complexity.py](../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).")}
+{provenance([standings_file("code")], f"lizard {meta['tool_version']} (`{meta['tool_pin']}`) at `{meta['git_sha'][:12]}`, {meta['date']}; regenerate with [scripts/measure_complexity.py](../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).")}
 """
 
 
@@ -1214,7 +1224,7 @@ def _reroot(body: str) -> str:
 
 
 def _division_summaries() -> tuple[str, str]:
-    rb = load_jsonl("rebaseline-2026-07.jsonl")
+    rb = load_jsonl(standings_file("rows"))
     fit = {}
     rss = {}
     for r in rb:
@@ -1226,7 +1236,7 @@ def _division_summaries() -> tuple[str, str]:
         rss[v] = max(rss.get(v, 0.0), r["peak_rss_gb"])
     b_fit = min(fit[v] for v in fit if v.startswith("bonsai_cuda"))
     b_rss = min(rss[v] for v in rss if v.startswith("bonsai_cuda"))
-    iso = load_jsonl("iso-volume-2026-08.jsonl")
+    iso = load_jsonl(standings_file("shape"))
     dev = {}
     for r in iso:
         c = r["cell"]
@@ -1249,7 +1259,7 @@ def _division_summaries() -> tuple[str, str]:
         f"{dev['catboost_gpu']:.1f}GB. Every number is same-pod; "
         f"identical-model GPUs across the rental fleet measure up to "
         f"~25% apart.")
-    table, _, n = _standings(load_jsonl("grinsztajn-2026-07.jsonl"))
+    table, _, n = _standings(load_jsonl(standings_file("quality-grinsztajn")))
     lead_lib, lead_mean, lead_wins = table[0]
     quality = (
         f"{lead_lib} leads the {n}-task Grinsztajn standings at mean rank "
