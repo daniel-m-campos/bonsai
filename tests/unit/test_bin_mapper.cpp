@@ -248,6 +248,93 @@ TEST_CASE("BinMapper: the missing bin is NaN-only on every fitting path (issue #
     }
 }
 
+TEST_CASE("BinMapper: radix-sized column produces well-formed cuts",
+          "[bin_mapper][fit][radix]")
+{
+    // 5000 elements: the working set crosses the ~2k radix-sort threshold,
+    // which no other fixture reaches.
+    std::mt19937                          rng(0x5000);
+    std::uniform_real_distribution<float> dist(-1000.0F, 1000.0F);
+    std::vector<float>                    column(5000);
+    std::ranges::generate(column, [&] { return dist(rng); });
+
+    BinMapperConfig cfg{.n_samples = column.size()};
+    auto            mapper = BinMapper::fit(std::span(column), cfg);
+
+    auto const cuts = mapper.cuts();
+    REQUIRE(cuts.size() >= 2);
+    CHECK(std::ranges::is_sorted(cuts));
+    CHECK(std::ranges::adjacent_find(cuts) == cuts.end()); // strictly increasing
+    CHECK(std::all_of(cuts.begin(), cuts.end() - 1,
+                      [](float c) { return std::isfinite(c); }));
+    CHECK(cuts[cuts.size() - 2] == std::numeric_limits<float>::max());
+    CHECK(cuts.back() == f_inf);
+
+    // transform round-trips the value order for sampled values.
+    std::vector<float> sorted = column;
+    std::ranges::sort(sorted);
+    auto last = mapper.transform(sorted.front());
+    for (size_t i = 0; i < sorted.size(); i += 37)
+    {
+        auto const bin = mapper.transform(sorted[i]);
+        CHECK(bin >= last);
+        last = bin;
+    }
+}
+
+TEST_CASE("BinMapper: signed zeros in a radix-sized column bin identically",
+          "[bin_mapper][fit][radix]")
+{
+    std::mt19937                          rng(0x00F0);
+    std::uniform_real_distribution<float> dist(-10.0F, 10.0F);
+    std::vector<float>                    column(4096);
+    for (size_t i = 0; i < column.size(); ++i)
+    {
+        column[i] = i % 3 == 0 ? -0.0F : (i % 3 == 1 ? 0.0F : dist(rng));
+    }
+
+    BinMapperConfig cfg{.n_samples = column.size()};
+    auto            mapper = BinMapper::fit(std::span(column), cfg);
+
+    CHECK(std::ranges::is_sorted(mapper.cuts()));
+    CHECK(std::ranges::adjacent_find(mapper.cuts()) == mapper.cuts().end());
+    CHECK(mapper.cuts().back() == f_inf);
+    CHECK(mapper.transform(-0.0F) == mapper.transform(0.0F));
+}
+
+TEST_CASE("BinMapper: radix and std::sort paths agree under bin equivalence",
+          "[bin_mapper][fit][radix]")
+{
+    // 31 distinct values (both signed zeros collapse to one) fit the budget,
+    // so both paths cut at exactly the distinct values. 2048 elements take
+    // the radix branch, 2047 std::sort; a mixed-zero run's representative
+    // may differ in sign between the two, so compare transform results per
+    // value, NOT cut bytes.
+    std::vector<float> values = {-0.0F, 0.0F};
+    for (int i = 0; i < 30; ++i)
+    {
+        values.push_back((static_cast<float>(i) * 0.5F) + 0.25F);
+    }
+    std::vector<float> big;
+    for (size_t i = 0; i < 2048; ++i)
+    {
+        big.push_back(values[i % values.size()]);
+    }
+    std::vector<float> small(big.begin(), big.end() - 1);
+    REQUIRE(small.size() == 2047);
+
+    BinMapperConfig cfg{.n_samples = big.size()};
+    auto            m_radix = BinMapper::fit(std::span(big), cfg);
+    auto            m_sort  = BinMapper::fit(std::span(small), cfg);
+
+    REQUIRE(m_radix.n_bins() == m_sort.n_bins());
+    for (float const v : values)
+    {
+        CHECK(m_radix.transform(v) == m_sort.transform(v));
+    }
+    CHECK(m_radix.transform(-0.0F) == m_radix.transform(0.0F));
+}
+
 TEST_CASE("BinMapper: transform routes values to half-open right-inclusive bins",
           "[bin_mapper][transform]")
 {

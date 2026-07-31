@@ -1,6 +1,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <random>
@@ -93,6 +94,26 @@ SplitInput populate_node(Fixture const &fx, std::vector<row_id_t> rows)
     return node;
 }
 
+// Block-aware mirror lookup: feature f lives in block f / width at strip
+// position f % width; one block reproduces the classic row-major layout.
+void check_mirror_layout(Fixture const &fx)
+{
+    auto const   rm    = fx.ds.row_major_bins();
+    size_t const width = Dataset::mirror_tile_width();
+    REQUIRE(rm.size() == fx.ds.n_rows() * fx.ds.n_features());
+    for (size_t r = 0; r < fx.ds.n_rows(); ++r)
+    {
+        for (size_t f = 0; f < fx.ds.n_features(); ++f)
+        {
+            size_t const mb      = f / width;
+            size_t const width_b = std::min(width, fx.ds.n_features() - (mb * width));
+            size_t const idx =
+                (fx.ds.n_rows() * mb * width) + (r * width_b) + (f - (mb * width));
+            REQUIRE(rm[idx] == fx.ds.bin_at(f, r));
+        }
+    }
+}
+
 } // namespace
 
 TEST_CASE("row-wise multi-block fill matches serial sums within tolerance",
@@ -180,13 +201,74 @@ TEST_CASE("row-major mirror matches the binned columns", "[dataset]")
 {
     auto const fx = make_fixture(4096, 5);
     REQUIRE(fx.ds.bins_are_u8());
-    auto const rm = fx.ds.row_major_bins();
-    REQUIRE(rm.size() == fx.ds.n_rows() * fx.ds.n_features());
-    for (size_t r = 0; r < fx.ds.n_rows(); ++r)
+    check_mirror_layout(fx);
+}
+
+TEST_CASE("row-major mirror matches the binned columns across mirror blocks",
+          "[dataset]")
+{
+    // 2048 + 64 features: two mirror blocks, the second one partial.
+    auto const fx = make_fixture(256, 2112);
+    REQUIRE(fx.ds.bins_are_u8());
+    REQUIRE(fx.ds.n_features() > Dataset::mirror_tile_width());
+    check_mirror_layout(fx);
+}
+
+TEST_CASE("wide multi-slice fill matches serial sums within tolerance", "[populate]")
+{
+    parallel::set_n_threads(4);
+    // 2048 + 64 features span two mirror slices; max_bin = 16 keeps the
+    // per-node fill multi-block (partials + merge) at this row count.
+    auto const fx = make_fixture(4096, 2112, BinMapperConfig{.max_bin = 16});
+    REQUIRE(fx.ds.bins_are_u8());
+    REQUIRE(fx.ds.n_features() > Dataset::mirror_tile_width());
+
+    auto const node = populate_node(fx, test::iota_rows(fx.ds.n_rows()));
+    auto const ref  = reference_hists(fx, test::iota_rows(fx.ds.n_rows()));
+    // Probe features from both blocks, straddling the boundary.
+    for (size_t const s : {0UL, 1024UL, 2046UL, 2047UL, 2048UL, 2049UL, 2111UL})
     {
-        for (size_t f = 0; f < fx.ds.n_features(); ++f)
+        auto const cells = node.hists[fx.selected[s]].all_cells();
+        REQUIRE(cells.size() == ref[s].size());
+        for (size_t b = 0; b < cells.size(); ++b)
         {
-            REQUIRE(rm[(r * fx.ds.n_features()) + f] == fx.ds.bin_at(f, r));
+            CHECK(cells[b].sum_grad == Catch::Approx(ref[s][b].sum_grad).margin(1e-2));
+            CHECK(cells[b].sum_hess == Catch::Approx(ref[s][b].sum_hess).margin(1e-2));
         }
     }
+    parallel::set_n_threads(0);
+}
+
+TEST_CASE("wide single-block fill with a selection spanning the block boundary "
+          "is bit-identical to the serial order",
+          "[populate]")
+{
+    parallel::set_n_threads(4);
+    auto fx = make_fixture(4096, 2112);
+    REQUIRE(fx.ds.bins_are_u8());
+
+    // colsample-style sparse selection straddling the mirror block boundary.
+    fx.selected.clear();
+    for (feature_id_t f = 5; f < fx.ds.n_features(); f += 89)
+    {
+        fx.selected.push_back(f);
+    }
+    REQUIRE(fx.selected.front() < Dataset::mirror_tile_width());
+    REQUIRE(fx.selected.back() >= Dataset::mirror_tile_width());
+
+    // A sparse row subset small enough for one block per slice.
+    std::vector<row_id_t> rows;
+    for (row_id_t r = 1; r < fx.ds.n_rows(); r += 17)
+    {
+        rows.push_back(r);
+    }
+    auto const node = populate_node(fx, rows);
+    auto const ref  = reference_hists(fx, rows);
+    for (size_t s = 0; s < fx.selected.size(); ++s)
+    {
+        auto const cells = node.hists[fx.selected[s]].all_cells();
+        REQUIRE(std::memcmp(cells.data(), ref[s].data(),
+                            cells.size() * sizeof(HistCell)) == 0);
+    }
+    parallel::set_n_threads(0);
 }

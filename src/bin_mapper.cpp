@@ -112,10 +112,13 @@ std::vector<float> greedy_weighted_cuts(std::vector<float> const  &vals,
 // LSD byte-radix sort for the NaN-free subsample: the standard order-
 // preserving key transform (flip all bits of negatives, flip the sign bit
 // of non-negatives) makes unsigned byte passes order floats like operator<.
-// The output SEQUENCE equals std::sort's (ties can reorder only equal-value
-// bit patterns, i.e. -0.0 vs +0.0, and the run-length encode below
-// collapses those), so cuts and therefore models are byte-identical. Small
-// inputs keep std::sort: four counting passes only pay past ~2k elements.
+// The output equals std::sort's up to reordering within equal-comparing
+// values (only -0.0 vs +0.0: the key transform puts -0.0 first, unstable
+// std::sort may not), so a mixed-zero run's RLE representative below can
+// differ in SIGN across the two paths. Binning and predictions are
+// unaffected: lower_bound under operator< treats the zeros as equal, and
+// std::midpoint agrees on either. Small inputs keep std::sort: four
+// counting passes only pay past ~2k elements.
 // Motivation: the mapper fit is sort-bound at wide shapes (11.5s of a
 // 54.9s GPU fit at 131k x 16384, decision 90's price list).
 void sort_floats(std::vector<float> &v)
@@ -239,6 +242,9 @@ BinMapper BinMapper::fit(floats_view column, BinMapperConfig const &cfg)
 BinMapper BinMapper::from_sample(std::vector<float> sample, BinMapperConfig const &cfg)
 {
     assert(cfg.max_bin > 2);
+    // A NaN poisons the sort/RLE (every comparison is false): the whole
+    // column collapses to one group and the cuts degenerate to {NaN, +inf}.
+    assert(std::ranges::none_of(sample, [](float x) { return std::isnan(x); }));
     // The two reserved slots are the FLT_MAX closer and the +inf missing
     // sentinel that create_cuts appends (decision 74).
     size_t const cut_budget = cfg.max_bin - 2;
