@@ -62,8 +62,8 @@ AXES = {
 }
 
 # variant -> (library, device), a view of the registry in
-# bonsai.bench.variants. lgbm_cuda is declared but unsupported in v1: the pip
-# wheel has no CUDA backend and a source build is deferred.
+# bonsai.bench.variants. lgbm_cuda needs the CUDA source build baked into the
+# bonsai-ci image (the PyPI wheel is CPU-only).
 VARIANTS = {n: (vr.resolve(n).lib, vr.resolve(n).device) for n in vr.SCALING}
 
 
