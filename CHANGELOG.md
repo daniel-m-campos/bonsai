@@ -4,6 +4,22 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-07-30
+
+The benchmark harness becomes a tool, and its first campaign ships in the ledger.
+
+### Added
+- **The unified bench CLI**: `python -m bonsai.bench run --spec <file>.json` executes declarative cell specs (explicit cells or generators, variants, threads, per-device repeats, gates, timeout caps) over the existing worker protocol; `plan` prints the expansion without fitting, `variants` prints the registry, and spec-mode runs resume by default (finished rows skip, failures re-attempt). The `iso_volume` generator holds rows x cols constant and sweeps aspect ratio. Custom cell ladders no longer require source edits.
+- **Measured peak device memory**: a sampler thread (NVML, `nvidia-smi` fallback) records per-process and whole-device VRAM peaks into a `dev_mem` field on every GPU row, on error and OOM rows too, with the sampling interval recorded so rows never claim more precision than sampled. `--data-cache DIR` memoizes the synthetic generator as memmapped `.npy` files (bit-identical fits, verified).
+- **One variant registry** (`bonsai.bench.variants`): canonical names, per-suite membership, and the historical alias spellings in one table; `params.bonsai_core` closes the last hand-built config path. Worker children report the reference-library versions they imported, so rows finally carry them.
+- **A committed pod campaign driver** (`scripts/pod_bench_driver.sh`): clone-or-fetch, Blackwell-aware CUDA 12.8 side-install, build, run a committed spec, resume-safe.
+
+### Measured
+- **The iso-volume shape frontier** (decision 91, RTX PRO 6000 Blackwell 96GB): bonsai's CUDA growers fastest at every cell of the 2^31 and 2^33 constant-volume ladders, near-flat across the tall half where the references vary 1.5-2x. The instrument's first catches: XGBoost-GPU dies at 32k x 65536 having allocated 33.4GB of a 96GB card, and CatBoost-GPU reserves 90.2GB at every shape. At p ~ 2x n the oblivious grower holds test r2 .873 where depthwise-family growers fall to .815.
+
+### Docs
+- **The results ledger is per-suite pages**: the old URL is now a landing with perf-first division summaries linking one generated page per study; the README states each division in one table; navigation gains section landings and door cards.
+
 ## [1.5.3] - 2026-07-30
 
 The wide-data wall falls on both processors, and the standings prove it.
