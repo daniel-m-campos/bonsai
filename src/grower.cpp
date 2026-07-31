@@ -202,7 +202,7 @@ struct MirrorSlice
     size_t cell0, cells;
     size_t fid0; // first feature id of the slice's mirror block
 
-    size_t n_sel() const
+    size_t n_selected() const
     {
         return s1 - s0;
     }
@@ -279,7 +279,7 @@ void run_fill(FillPlan const &plan, Dataset const &ds, floats_view grad,
                 std::fill_n(parts + stripe, sl.cells, HistCell{});
             }
             static thread_local std::vector<HistCell *> bases;
-            bases.resize(sl.n_sel());
+            bases.resize(sl.n_selected());
             for (size_t s = sl.s0; s < sl.s1; ++s)
             {
                 bases[s - sl.s0] =
@@ -297,7 +297,7 @@ void run_fill(FillPlan const &plan, Dataset const &ds, floats_view grad,
             // 100 u8 features) and the grad/hess pair a fixed distance
             // ahead; reads only, so results are bit-identical.
             constexpr size_t k_ahead = 16;
-            size_t const     n_sel_b = sl.n_sel();
+            size_t const     n_sel_b = sl.n_selected();
             for (size_t k = unit.k0; k < unit.k1; ++k)
             {
                 if (k + k_ahead < unit.k1)
@@ -329,7 +329,7 @@ void merge_partials(FillPlan const &plan, std::span<feature_id_t const> selected
                     MirrorSlice const &sl)
 {
     HistCell const *const     parts     = partials.data();
-    size_t const              n_sel_b   = sl.n_sel();
+    size_t const              n_sel_b   = sl.n_selected();
     size_t const              total     = offsets.total_cells;
     size_t const             *off_ptr   = offsets.cells.data();
     feature_id_t const *const sel_ptr   = selected.data();
