@@ -163,23 +163,10 @@ jobs:
       - run: uv venv --python ${{ matrix.python }} .venv && uv pip install --python .venv/bin/python nanobind numpy lightgbm scikit-learn
       # ruff first: a lint finding shouldn't cost a build to discover.
       - run: make lint-python
-      # The results ledger is generated from benchmarks/results/; a stale
-      # page or an unwired committed data file fails here (stdlib only).
-      - run: python3 scripts/render_results.py --check
-      # The parameters reference is rendered from docs/use/parameters.src.json
-      # (extracted from the CLI by `make params-json`); a stale page or a knob
-      # with no effect line fails here (stdlib only, no C++ build).
-      - run: python3 scripts/render_params.py --check
-      # The make-target map is generated from the Makefile's ## comments; a
-      # stale page fails here (stdlib only).
-      - run: python3 scripts/render_make_map.py --check
-      # The GBT history timeline is generated from docs/learn/timeline.json; a
-      # stale page, an invalid entry, or a broken bonsai_link fails here
-      # (stdlib only).
-      - run: python3 scripts/render_timeline.py --check
-      # Mechanical STYLE.md checks (em-dash, library casing, banned phrases)
-      # over the published, non-archive pages plus README.md (stdlib only).
-      - run: python3 scripts/docs_lint.py
+      # The five doc gates (stdlib only): generated pages in sync (results
+      # ledger, parameters reference, make map, timeline) and the mechanical
+      # STYLE.md prose checks. Same command locally: make docs-check.
+      - run: make docs-check
       # test_bindings.py checks module-vs-CLI parity, so it needs the binary too.
       - run: make build
       - run: make python-test

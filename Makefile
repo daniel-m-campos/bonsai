@@ -179,27 +179,16 @@ $(AMAZON_SENTINEL):
 
 help:  ## List the common make targets.
 	@echo "Targets:"
-	@echo "  make build              Configure + compile."
-	@echo "  make rebuild            Clean + build."
-	@echo "  make test               Build + run ctest."
-	@echo "  make build-cuda         Configure + compile with the CUDA backend (build-cuda/)."
-	@echo "  make test-cuda          Build CUDA variant + run ctest against it."
-	@echo "  make test-asan          Build ASan+UBSan variant (build-asan/) + run ctest."
-	@echo "  make run ARGS=...       Build + run ./build/src/bonsai with ARGS."
-	@echo "  make perf-benchmark     Build + run Catch2 perf microbenchmarks (ARGS forwarded)."
-	@echo "  make fit-benchmark      Build + compare bonsai vs lightgbm/catboost on cal housing."
-	@echo "  make bench-gpu          MSD ladder vs xgboost-GPU with profile breakdowns (GPU perf loop)."
-	@echo "  make bench-scaling      Synthetic rows/cols/bins/threads scaling sweep vs reference libraries."
-	@echo "  make python             Build the Python extension (PYTHON=... to pick the interpreter)."
-	@echo "  make python-cuda        Build the CUDA-enabled extension into build-cuda/python."
-	@echo "  make python-test        Build + run python/tests/test_bindings.py."
-	@echo "  make format             clang-format src/ + include/ + tests/ + benchmarks/ in place."
-	@echo "  make format-check       clang-format --dry-run --Werror (CI gate)."
-	@echo "  make lint               clang-tidy on src/ (header-filtered to bonsai)."
-	@echo "  make lint-python        ruff on python/ + scripts/ (pinned via uvx)."
-	@echo "  make params-json        Re-extract the parameters reference from the built CLI."
-	@echo "  make skills             Install project-local Claude Code skills (currently: caveman)."
-	@echo "  make skills-clean       Remove installed project-local skills."
+	@grep -hE '^[a-zA-Z0-9_-]+:.*  ## ' $(MAKEFILE_LIST) \
+	    | sed 's/:.*  ## /\t/' \
+	    | awk -F'\t' '{printf "  make %-18s %s\n", $$1, $$2}'
+
+docs-check:  ## Verify generated docs and lint prose (the five CI doc gates).
+	@python3 scripts/render_results.py --check
+	@python3 scripts/render_params.py --check
+	@python3 scripts/render_make_map.py --check
+	@python3 scripts/render_timeline.py --check
+	@python3 scripts/docs_lint.py
 
 install-hooks:  ## Point core.hooksPath at the versioned hooks (commit-msg format gate).
 	@chmod +x scripts/git-hooks/*
@@ -215,6 +204,6 @@ $(SKILLS_DIR)/caveman/SKILL.md:
 	@echo "Done. Restart Claude Code (or trigger a skill rediscovery) to pick it up."
 
 skills-clean:  ## Remove installed project-local skills.
-	rm -rf $(SKILLS_DIR)
+	rm -rf $(SKILLS_DIR)/caveman
 
-.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint lint-python all run params-json test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu bench-scaling bench-iso python python-cuda python-test install-hooks skills skills-clean help
+.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint lint-python all run params-json test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu bench-scaling bench-iso python python-cuda python-test docs-check install-hooks skills skills-clean help

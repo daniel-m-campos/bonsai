@@ -31,6 +31,7 @@ Every make target you run day to day, generated from the `##` comments in the [M
 | `make bench-scaling` | Run the synthetic rows/cols/bins/threads scaling sweep. |
 | `make bench-iso` | Run the iso-volume bonsai arms on this host's GPU. |
 | `make help` | List the common make targets. |
+| `make docs-check` | Verify generated docs and lint prose (the five CI doc gates). |
 | `make install-hooks` | Point core.hooksPath at the versioned hooks (commit-msg format gate). |
 | `make skills` | Install project-local Claude Code skills (currently caveman). |
 | `make skills-clean` | Remove installed project-local skills. |
