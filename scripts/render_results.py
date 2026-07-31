@@ -776,9 +776,11 @@ A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: 
 
 
 def cols_rebaseline_table() -> str:
-    cr = load_jsonl(standings_file("width"))
-    best = best_fit_by(cr, lambda r: (r["rows"], r["cols"], r["variant"]))
-    cells = sorted({(r["rows"], r["cols"]) for r in cr}, key=lambda rc: rc[1])
+    cr = [r for r in load_jsonl(standings_file("width")) if r["status"] == "ok"]
+    best = best_fit_by(
+        cr, lambda r: (r["cell"]["rows"], r["cell"]["cols"], r["variant"]))
+    cells = sorted({(r["cell"]["rows"], r["cell"]["cols"]) for r in cr},
+                   key=lambda rc: rc[1])
     label = cell_label
 
     def cell_fmt(rows, cols, variant):
@@ -812,7 +814,7 @@ def cols_rebaseline_table() -> str:
 
     return f"""### The cols re-baseline: wide standings on current main (decision 90 follow-up)
 
-The six-variant cols-axis re-baseline promised by decision 90, on one pod at main `07a5b9a` (the tiled CPU fill and the radix mapper sort both landed). bonsai's CUDA growers hold the fastest slot at every measured width: 1.5x over CatBoost-GPU at 1M x 4096 (33.2 vs 50.0s) and 1.4x at 131k x 16384 (50.5 vs 71.3s, with XGBoost-GPU at 77.3s). Peak host memory tells the sharper story: 16.4GB against CatBoost's 50.6GB and XGBoost's 60.4GB at 1M x 4096. The widest cell drops to 131k rows to hold total cells at 2^31, so its column is not comparable to the 1M-row columns (starred in the chart). The CPU reference arms bound the GPU advantage: at the widest cell the tiled fill holds bonsai CPU at LightGBM parity (404 vs 402s) while the GPU growers are 8x faster than either.
+The six-variant cols-axis re-baseline promised by decision 90. bonsai's CUDA growers hold the fastest slot at every measured width, at a fraction of the reference libraries' peak host memory; the tables below carry the current numbers. The widest cell drops to 131k rows to hold total cells at 2^31, so its column is not comparable to the 1M-row columns (starred in the chart). The CPU reference arms bound the GPU advantage: bonsai CPU and LightGBM trade the widest-cell lead within a rep's noise while the GPU growers are several times faster than either.
 
 ![Fit seconds vs features, re-baseline](assets/cols-rebaseline.svg)
 
@@ -824,7 +826,7 @@ Peak host RSS, worst rep:
 
 {rss_table}
 
-{provenance([standings_file("width")], "Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells." + measured_stamp(cr))}
+{provenance([standings_file("width")], "One pod, SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells." + measured_stamp(cr))}
 """
 
 
@@ -967,15 +969,16 @@ def prefetch_section() -> str:
 
 
 def frontier_section() -> str:
-    pareto = load_jsonl(standings_file("frontier"))
+    pareto = [r for r in load_jsonl(standings_file("frontier"))
+              if r["status"] == "ok"]
     par_variants = []
     for r in pareto:
         if r["variant"] not in par_variants:
             par_variants.append(r["variant"])
     par_table = md_table(
         ["variant", "iters", "fit_s", "test r2"],
-        [[r["variant"], str(r["iters"]), fmt(r["fit_s"], 2), fmt(r["r2_test"], 4)]
-         for r in pareto])
+        [[r["variant"], str(r["cell"]["iters"]), fmt(r["fit_s"], 2),
+          fmt(r["r2_test"], 4)] for r in pareto])
     par_series = []
     par_labels = []
     for v in par_variants:
@@ -984,16 +987,25 @@ def frontier_section() -> str:
         par_series.append((label, color, cpu, pts))
         for r in pareto:
             if r["variant"] == v:
-                par_labels.append((r["fit_s"], r["r2_test"], str(r["iters"])))
+                par_labels.append((r["fit_s"], r["r2_test"],
+                                   str(r["cell"]["iters"])))
+    # Ticks derive from the data so a refresh with faster fits or higher
+    # accuracy cannot strand them outside the plotted range.
+    fmin, fmax = (min(r["fit_s"] for r in pareto), max(r["fit_s"] for r in pareto))
+    x_step = 10 if fmax - fmin > 25 else 5
+    r2min, r2max = (min(r["r2_test"] for r in pareto),
+                    max(r["r2_test"] for r in pareto))
     line_chart(
         "gpu-pareto-16M.svg",
         "16M rows: accuracy vs fit time by iteration count (up-left is better)",
         "test r2",
         par_series,
-        x_ticks=[(s, f"{s}s") for s in (15, 30, 45, 60)],
+        x_ticks=[(s, f"{s}s") for s in range(0, int(fmax) + 1, x_step)
+                 if fmin <= s <= fmax],
         x_label="fit seconds",
         log_x=False, log_y=False, height=420,
-        y_ticks=[(v, f"{v:.2f}") for v in (0.84, 0.86, 0.88)],
+        y_ticks=[(v / 100, f"{v / 100:.2f}")
+                 for v in range(math.ceil(r2min * 100), int(r2max * 100) + 1, 2)],
         point_labels=par_labels)
 
     edge = load_jsonl("catboost-scale-edge-2026-07.jsonl")
@@ -1016,7 +1028,7 @@ def frontier_section() -> str:
 
 {par_table}
 
-{provenance([standings_file("frontier")], "Post-resident-objective re-run (2026-07-18, decision 78): bonsai is first to every measured accuracy at every horizon; the marginal round fell 104 to 64 ms, below CatBoost's 78 on the same pod, and the last crossover is gone. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md).")}
+{provenance([standings_file("frontier")], "bonsai is first to every measured accuracy across the grid (terminal accuracies tie within the noise band) and its marginal round cost stays below CatBoost's on the same pod. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md)." + measured_stamp(pareto))}
 
 ### Ordered boosting at scale (CatBoost door)
 
@@ -1087,7 +1099,7 @@ The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC),
 
 {tables[1]}
 
-{provenance([standings_file("airline")], "One L40S (SECURE US-NC-1, driver 570.124.06), 2026-07-15, post-decision-74 code. A bonsai variant has the best AUC in every cell from 1M up under both protocols; XGBoost-GPU owns raw speed on this narrow shape. Evidence: [benchmarks/airline-2026-07.md](../../benchmarks/airline-2026-07.md)." + measured_stamp(rows))}
+{provenance([standings_file("airline")], "A bonsai variant has the best AUC in every cell under both protocols, and bonsai CUDA depthwise is also the fastest fit from 1M rows up under ordinal encoding; XGBoost-GPU keeps only the smallest cell. Evidence: [benchmarks/airline-2026-07.md](../../benchmarks/airline-2026-07.md)." + measured_stamp(rows))}
 """
 
 
@@ -1235,8 +1247,9 @@ def _division_summaries() -> tuple[str, str]:
         f"scale ({b_fit:.1f}s at 16M rows against XGBoost-GPU's "
         f"{fit['xgb_cuda']:.1f}s) at {b_rss:.1f}GB peak host memory against "
         f"XGBoost's {rss['xgb_cuda']:.1f}GB and CatBoost's "
-        f"{rss['catboost_gpu']:.1f}GB. XGBoost-GPU owns raw speed on the "
-        f"narrow airline shape at 10M rows. The 2026-07-30 studies hold every "
+        f"{rss['catboost_gpu']:.1f}GB. On the narrow airline shape bonsai "
+        f"holds both best AUC and fastest fit from 1M rows up. "
+        f"The 2026-07-30 studies hold every "
         f"width and aspect ratio, with measured device memory that sizes to "
         f"the problem: {dev['bonsai_cuda_depthwise']:.1f}GB at 16M x 128 at "
         f"constant 2^31-cell volume against XGBoost's "

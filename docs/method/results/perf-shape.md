@@ -31,7 +31,7 @@ A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: 
 
 ### The cols re-baseline: wide standings on current main (decision 90 follow-up)
 
-The six-variant cols-axis re-baseline promised by decision 90, on one pod at main `07a5b9a` (the tiled CPU fill and the radix mapper sort both landed). bonsai's CUDA growers hold the fastest slot at every measured width: 1.5x over CatBoost-GPU at 1M x 4096 (33.2 vs 50.0s) and 1.4x at 131k x 16384 (50.5 vs 71.3s, with XGBoost-GPU at 77.3s). Peak host memory tells the sharper story: 16.4GB against CatBoost's 50.6GB and XGBoost's 60.4GB at 1M x 4096. The widest cell drops to 131k rows to hold total cells at 2^31, so its column is not comparable to the 1M-row columns (starred in the chart). The CPU reference arms bound the GPU advantage: at the widest cell the tiled fill holds bonsai CPU at LightGBM parity (404 vs 402s) while the GPU growers are 8x faster than either.
+The six-variant cols-axis re-baseline promised by decision 90. bonsai's CUDA growers hold the fastest slot at every measured width, at a fraction of the reference libraries' peak host memory; the tables below carry the current numbers. The widest cell drops to 131k rows to hold total cells at 2^31, so its column is not comparable to the 1M-row columns (starred in the chart). The CPU reference arms bound the GPU advantage: bonsai CPU and LightGBM trade the widest-cell lead within a rep's noise while the GPU growers are several times faster than either.
 
 ![Fit seconds vs features, re-baseline](../assets/cols-rebaseline.svg)
 
@@ -39,21 +39,21 @@ Fit seconds (test r²), best of reps:
 
 | cell | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu | lgbm cpu | bonsai cpu obl |
 |---|---|---|---|---|---|---|
-| 1M x 100 | 0.8s (.874) | 1.2s (.874) | 2.8s (.875) | 2.8s (.874) | 9.6s (.875) | 13.8s (.874) |
-| 1M x 1024 | 9.0s (.877) | 8.5s (.875) | 24.8s (.875) | 13.2s (.876) | 110.5s (.876) | 84.4s (.875) |
-| 1M x 4096 | 35.9s (.874) | 33.2s (.875) | 102.2s (.876) | 50.0s (.875) | 416.5s (.877) | 283.1s (.875) |
-| 131k x 16384 | 50.5s (.859) | 56.0s (.871) | 77.3s (.858) | 71.3s (.871) | 402.2s (.857) | 404.2s (.871) |
+| 1M x 100 | 0.7s (.877) | 1.1s (.877) | 1.7s (.876) | 2.3s (.876) | 5.2s (.877) | 7.1s (.877) |
+| 1M x 1024 | 8.4s (.876) | 7.9s (.876) | 12.2s (.876) | 9.6s (.875) | 57.7s (.876) | 49.1s (.876) |
+| 1M x 4096 | 33.5s (.876) | 31.5s (.875) | 50.5s (.876) | 35.4s (.874) | 267.0s (.875) | 172.3s (.875) |
+| 131k x 16384 | 48.7s (.860) | 53.7s (.876) | 54.3s (.861) | 57.8s (.874) | 241.4s (.862) | 259.7s (.876) |
 
 Peak host RSS, worst rep:
 
 | cell | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu | lgbm cpu | bonsai cpu obl |
 |---|---|---|---|---|---|---|
-| 1M x 100 | 0.7GB | 0.7GB | 1.9GB | 1.5GB | 1.0GB | 0.8GB |
-| 1M x 1024 | 4.3GB | 4.3GB | 15.6GB | 12.8GB | 8.8GB | 7.1GB |
-| 1M x 4096 | 16.4GB | 16.4GB | 60.4GB | 50.6GB | 35.0GB | 26.8GB |
-| 131k x 16384 | 8.8GB | 8.8GB | 39.3GB | 25.2GB | 50.1GB | 21.0GB |
+| 1M x 100 | 0.7GB | 0.7GB | 1.8GB | 1.5GB | 1.1GB | 0.9GB |
+| 1M x 1024 | 4.8GB | 4.8GB | 15.6GB | 13.1GB | 9.3GB | 7.3GB |
+| 1M x 4096 | 18.6GB | 18.6GB | 59.7GB | 51.4GB | 36.9GB | 29.0GB |
+| 131k x 16384 | 9.8GB | 9.8GB | 36.0GB | 26.2GB | 51.1GB | 22.0GB |
 
-*Source: [`cols-rebaseline-2026-07.jsonl`](../../../benchmarks/results/cols-rebaseline-2026-07.jsonl). Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells. Measured at `07a5b9a` (2026-07-30, pod-l40s-us-nc-1).*
+*Source: [`cols-rebaseline-2026-07.jsonl`](../../../benchmarks/results/cols-rebaseline-2026-07.jsonl). One pod, SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells. Measured at `d3ffcd0` (2026-07-31, pod-NVIDIA-L40S).*
 
 ### The iso-volume shape frontier (decision 91)
 

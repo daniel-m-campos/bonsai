@@ -12,14 +12,14 @@ Scaling rows (100 features):
 
 | rows | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu | lgbm cpu | bonsai cpu obl |
 |---|---|---|---|---|---|---|
-| 250k | 0.5s (.871) | 1.0s (.875) | 0.8s (.872) | 1.6s (.875) | 2.5s (.872) | 5.2s (.875) |
-| 1M | 1.1s (.876) | 1.4s (.876) | 1.7s (.876) | 2.3s (.876) | 5.0s (.877) | 7.3s (.876) |
-| 4M | 4.5s (.878) | 4.4s (.875) | 5.3s (.878) | 5.0s (.877) | 19.9s (.879) | 20.2s (.875) |
-| 16M | 20.5s (.879) | 18.4s (.876) | 19.9s (.880) | 18.5s (.876) | 111.3s (.879) | 73.3s (.876) |
+| 250k | 0.4s (.872) | 0.8s (.877) | 0.7s (.872) | 1.7s (.875) | 2.4s (.872) | 4.7s (.877) |
+| 1M | 0.7s (.877) | 1.1s (.877) | 1.7s (.876) | 2.3s (.876) | 5.1s (.877) | 7.3s (.877) |
+| 4M | 3.0s (.878) | 3.0s (.876) | 5.2s (.878) | 5.0s (.877) | 19.4s (.879) | 21.0s (.876) |
+| 16M | 11.9s (.879) | 10.3s (.877) | 19.6s (.880) | 18.4s (.876) | 99.6s (.879) | 68.7s (.877) |
 
 Width scaling has its own standings axis on [Width and shape](perf-shape.md).
 
-*Source: [`rebaseline-2026-07.jsonl`](../../../benchmarks/results/rebaseline-2026-07.jsonl). Runner: [scripts/bench_scaling.py](../../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file. Measured at `434a382` (2026-07-13, dual-epyc-9554-l40s).*
+*Source: [`rebaseline-2026-07.jsonl`](../../../benchmarks/results/rebaseline-2026-07.jsonl). Runner: [scripts/bench_scaling.py](../../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file. Measured at `d3ffcd0` (2026-07-31, pod-NVIDIA-L40S).*
 
 ### The XGBoost 3.3 recheck (decision 87)
 
