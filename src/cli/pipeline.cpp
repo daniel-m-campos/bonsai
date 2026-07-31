@@ -280,9 +280,8 @@ train_with_progress(Config const &cfg, LabeledData const &train,
                 {
                     // NaN placeholders for the warm-start rounds keep history
                     // indices equal to absolute model rounds.
-                    eval_history->get().insert(
-                        eval_history->get().end(), es_base,
-                        std::numeric_limits<float>::quiet_NaN());
+                    eval_history->get().insert(eval_history->get().end(), es_base,
+                                               std::numeric_limits<float>::quiet_NaN());
                 }
             }
             booster->accumulate_last_round(valid->features.view(), es_scores);
