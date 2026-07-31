@@ -1,6 +1,34 @@
 # Results
 
-Every performance and accuracy claim on this site comes from a committed benchmark run, on named hardware, at matched settings. This page states what we measure and lists the claims with their proofs. [The results ledger](results.md) opens with the division summaries and links one generated page per study.
+Every performance and accuracy claim on this site comes from a committed benchmark run, on named hardware, at matched settings. This page states what we measure and lists the claims with their proofs.
+
+<div class="grid cards" markdown>
+
+-   **[The results ledger](results.md)**
+
+    ---
+
+    Division summaries first, then one generated page per study.
+
+-   **[The benchmark protocol](benchmark-protocol.md)**
+
+    ---
+
+    The normative charter: divisions, suites, metrics, timing modes.
+
+-   **[How we decide](how-we-decide.md)**
+
+    ---
+
+    Price before building; admit features only by measurement.
+
+-   **[What to use when](what-to-use-when.md)**
+
+    ---
+
+    The honest decision table, competitors named where they win.
+
+</div>
 
 ## What we measure
 
