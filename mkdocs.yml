@@ -27,6 +27,7 @@ theme:
   features:
     - navigation.tabs
     - navigation.sections
+    - navigation.indexes
     - navigation.top
     - navigation.footer
     - toc.follow
@@ -92,8 +93,8 @@ extra_css:
 nav:
   - Home: index.md
   - Learn:
-      - The guide: guide/README.md
       - The algorithm:
+          - guide/README.md
           - 0. A tree by hand: guide/0-a-tree-by-hand.md
           - 1. Gradient boosting: guide/1-gradient-boosting.md
           - 2. Binning and histograms: guide/2-binning-and-histograms.md
@@ -111,7 +112,7 @@ nav:
           - 14. Feature selection: guide/14-feature-selection.md
           - 15. Explaining predictions: guide/15-explaining-predictions.md
       - The engine:
-          - The engine track: learn/engine/README.md
+          - learn/engine/README.md
           - E1. The marginal round: learn/engine/1-the-marginal-round.md
           - E2. The missing bin: learn/engine/2-the-missing-bin.md
           - E3. The parity verdict: learn/engine/3-the-parity-verdict.md
@@ -122,13 +123,13 @@ nav:
   - Use:
       - Install: use/install.md
       - The API in one read: use/api-tour.md
+      - Parameters: use/parameters.md
       - Switching from XGBoost: use/from-xgboost.md
       - Running the benchmarks: use/benchmarks.md
-      - Parameters: use/parameters.md
       - Building from source: use/building.md
       - Make targets: use/make-map.md
   - Results:
-      - Overview: method/README.md
+      - method/README.md
       - The results ledger: method/results.md
       - Perf division:
           - Fit at scale: method/results/perf-scale.md
@@ -150,7 +151,7 @@ nav:
       - The HPC tension: design/the-hpc-tension.md
       - Determinism as a contract: design/determinism.md
       - Archive:
-          - Architecture notes: architecture/README.md
+          - architecture/README.md
           - Decisions log: decisions.md
           - "Lineage: XGBoost": lineage/xgboost.md
           - "Lineage: LightGBM": lineage/lightgbm.md
