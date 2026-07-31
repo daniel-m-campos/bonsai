@@ -23,9 +23,8 @@ The current evidence, rendered whole from every committed results file, is [the 
 | grinsztajn | quality | 55 external tasks (quality-external) | r² / AUC | `results/grinsztajn-2026-07.jsonl` | `python -m bonsai.bench.grinsztajn` | 68 |
 | campaign | quality | internal ten (quality-smoke) | per-task | `results/quality-campaign-2026-07.jsonl` | `scripts/compare.py` per config | 56 |
 | probes | quality | per-study | per-study | `results/<probe>-<date>.*` | `scripts/probe_*.py` | 57, 58, 67, ... |
-| scaling | perf | friedman1 (perf-synthetic) | fit_s, predict_s, RSS | `results/scaling.jsonl` | `python -m bonsai.bench.scaling` | 46 |
+| scaling | perf | friedman1 (perf-synthetic) | fit_s, predict_s, RSS | per-run `--out` | `python -m bonsai.bench.scaling` | 46 |
 | airline | perf | benchm-ml airline 0.1m/1m/10m (perf-external) | fit_s, AUC | `results/airline-2026-07.jsonl` | `python -m bonsai.bench.airline` | issue #154 |
-| gpu_msd | perf | year_msd (perf-scale) | fit_s | `results/gpu_msd.jsonl` | `scripts/bench_gpu.py` | 41 |
 | rebaseline | perf | friedman1 | fit_s, r² guard | `results/rebaseline-2026-07.jsonl` | scaling runner, rows axis | 62 to 64 |
 | iso-volume | perf | friedman1 (perf-synthetic) | fit_s, dev_mem, r² guard | `results/iso-volume-2026-08.jsonl` | `python -m bonsai.bench run --spec iso-volume-2026-08` | 91 |
 
@@ -45,7 +44,7 @@ One implementation, `bonsai.bench.metrics`. Primary metric per task, the only on
 
 ## Timing
 
-Two modes, declared per row. `in_memory`: fit timed from in-memory arrays, including each library's own ingest (bonsai binning, XGBoost QuantileDMatrix, lgb.Dataset, CatBoost Pool); the scaling and rebaseline convention. `pipeline`: fit timed end to end including CSV read; the gpu_msd and CLI-compare convention. Numbers from different modes are never compared against each other. predict_s always times prediction from a raw test matrix.
+Two modes, declared per row. `in_memory`: fit timed from in-memory arrays, including each library's own ingest (bonsai binning, XGBoost QuantileDMatrix, lgb.Dataset, CatBoost Pool); the scaling and rebaseline convention. `pipeline`: fit timed end to end including CSV read; the CLI-compare convention. Numbers from different modes are never compared against each other. predict_s always times prediction from a raw test matrix.
 
 ## Knobs
 

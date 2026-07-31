@@ -246,7 +246,6 @@ add_subdirectory(src)
 if(BONSAI_TESTS)
     enable_testing()
     add_subdirectory(tests)
-    add_subdirectory(benchmarks)
 endif()
 
 # ---- Python bindings --------------------------------------------------------

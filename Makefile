@@ -113,9 +113,6 @@ params-json: build  ## Re-extract docs/use/parameters.src.json from the built CL
 test: build $(TOY_SENTINEL)  ## Build, fetch the pinned test datasets, run ctest.
 	@ctest --test-dir build
 
-perf-benchmark: build  ## Build and run the Catch2 perf microbenchmarks (ARGS forwarded).
-	@./build/benchmarks/bonsai_bench $(ARGS)
-
 # Python extension. Needs a python with nanobind + numpy installed
 # (override with PYTHON=/path/to/python).
 python: build/build.ninja  ## Build the _bonsai Python extension into build/python/.
@@ -143,12 +140,6 @@ python-cuda: build-cuda/build.ninja  ## Build the CUDA-enabled Python extension 
 
 fit-benchmark: build $(TOY_SENTINEL)  ## Compare bonsai against reference libraries on California housing.
 	@uv run scripts/compare.py --config configs/california_housing.toml $(ARGS)
-
-# GPU perf loop (benchmarks/README.md): MSD ladder vs xgboost-GPU,
-# appends benchmarks/results/gpu_msd.jsonl. Needs the MSD dataset
-# (scripts/fetch_year_msd.py) and a CUDA-capable host.
-bench-gpu: build-cuda  ## Run the MSD GPU ladder vs xgboost-GPU with profile breakdowns.
-	@BONSAI_CUDA_PROFILE=1 BONSAI_GROW_PROFILE=1 uv run scripts/bench_gpu.py $(ARGS)
 
 # Scaling suite (benchmarks/README.md): synthetic rows/cols/bins/threads
 # sweep vs xgboost/lightgbm/catboost, appends benchmarks/results/scaling.jsonl.
@@ -206,4 +197,4 @@ $(SKILLS_DIR)/caveman/SKILL.md:
 skills-clean:  ## Remove installed project-local skills.
 	rm -rf $(SKILLS_DIR)/caveman
 
-.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint lint-python all run params-json test test-cuda test-asan perf-benchmark fit-benchmark bench-gpu bench-scaling bench-iso python python-cuda python-test docs-check install-hooks skills skills-clean help
+.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint lint-python all run params-json test test-cuda test-asan fit-benchmark bench-scaling bench-iso python python-cuda python-test docs-check install-hooks skills skills-clean help

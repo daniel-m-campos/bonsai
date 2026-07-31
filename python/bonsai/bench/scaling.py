@@ -26,8 +26,8 @@ to the child's stderr where the parent captures them.
     uv run scripts/bench_scaling.py --smoke            # tiny grid (Mac)
     uv run scripts/bench_scaling.py --dry-run --axis all
 
-Results append to benchmarks/results/scaling.jsonl; analyze with
-scripts/analyze_scaling.py. Grid corners the host cannot fit are recorded as
+Results append to the --out file (see the standings policy in
+docs/method/benchmark-protocol.md). Grid corners the host cannot fit are recorded as
 status="skipped" with the memory estimate — the feasibility frontier is data.
 """
 import argparse
