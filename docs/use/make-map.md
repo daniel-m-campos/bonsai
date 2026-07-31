@@ -22,12 +22,10 @@ Every make target you run day to day, generated from the `##` comments in the [M
 | `make run` | Build, then run ./build/src/bonsai with ARGS. |
 | `make params-json` | Re-extract docs/use/parameters.src.json from the built CLI and rerender the page. |
 | `make test` | Build, fetch the pinned test datasets, run ctest. |
-| `make perf-benchmark` | Build and run the Catch2 perf microbenchmarks (ARGS forwarded). |
 | `make python` | Build the _bonsai Python extension into build/python/. |
 | `make python-test` | Build the extension and run the Python test suites. |
 | `make python-cuda` | Build the CUDA-enabled Python extension into build-cuda/python/. |
 | `make fit-benchmark` | Compare bonsai against reference libraries on California housing. |
-| `make bench-gpu` | Run the MSD GPU ladder vs xgboost-GPU with profile breakdowns. |
 | `make bench-scaling` | Run the synthetic rows/cols/bins/threads scaling sweep. |
 | `make bench-iso` | Run the iso-volume bonsai arms on this host's GPU. |
 | `make help` | List the common make targets. |

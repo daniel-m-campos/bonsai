@@ -939,27 +939,7 @@ The 2^33 stretch, GPU arms:
 # ---- Perf: the remaining tracks ---------------------------------------------
 
 
-def scaling_tracks_section() -> str:
-    scaling = load_jsonl("scaling.jsonl")
-    hosts = sorted({r["host"]["name"] for r in scaling})
-    axes = sorted({r["cell"]["axis"] for r in scaling})
-    scaling_note = (
-        f"{len(scaling)} runs across {len(hosts)} hosts and the axes "
-        f"{', '.join(axes)}; regenerate exponents and the committed log-log plots under "
-        f"[`benchmarks/results/scaling/`](../../benchmarks/results/scaling) with "
-        f"[scripts/analyze_scaling.py](../../scripts/analyze_scaling.py).")
-
-    msd = load_jsonl("gpu_msd.jsonl")
-    latest: dict[str, dict] = {}
-    for r in msd:
-        if r["gpu"] not in latest or r["ts"] > latest[r["gpu"]]["ts"]:
-            latest[r["gpu"]] = r
-    msd_table = md_table(
-        ["GPU", "as of", "fit_s", "predict_s", "rmse"],
-        [[g, latest[g]["ts"][:10], fmt(latest[g]["fit_s"], 2),
-          fmt(latest[g].get("predict_s"), 2), fmt(latest[g].get("rmse"), 4)]
-         for g in sorted(latest)])
-
+def prefetch_section() -> str:
     pre = load_jsonl("cpu-prefetch-round-2026-07.jsonl")
     pre_best = _cell_best(pre)
     pre_rows = sorted({k[0] for k in pre_best})
@@ -969,21 +949,7 @@ def scaling_tracks_section() -> str:
         [[f"{n:,}", *[_fmt_cell(pre_best, n, 100, v) for v in pre_variants]]
          for n in pre_rows])
 
-    return f"""### The scaling study
-
-{scaling_note}
-
-{provenance(["scaling.jsonl"], "The full-history perf ledger behind [benchmarks/README.md](../../benchmarks/README.md); decision 46.")}
-
-### GPU year-MSD track
-
-Latest run per device on the YearPredictionMSD pipeline benchmark (full history in the file):
-
-{msd_table}
-
-{provenance(["gpu_msd.jsonl"], "Runner: [scripts/bench_gpu.py](../../scripts/bench_gpu.py); pipeline timing mode.")}
-
-### CPU 16M round (the prefetch tie)
+    return f"""### CPU 16M round (the prefetch tie)
 
 {pre_table}
 
@@ -1189,9 +1155,9 @@ The five highest-CCN functions across `core_headers` + `engine_impl`, published 
 # keep their historical section headings verbatim so anchor slugs survive.
 PAGES: list[tuple[str, str, str, list]] = [
     ("perf-scale.md", "Fit at scale",
-     "Row-scale standings: the re-baseline, the XGBoost 3.3 recheck, the "
-     "scaling study, year-MSD, and the CPU prefetch round.",
-     [rebaseline_section, xgb33_recheck_table, scaling_tracks_section]),
+     "Row-scale standings: the re-baseline, the XGBoost 3.3 recheck, and "
+     "the CPU prefetch round.",
+     [rebaseline_section, xgb33_recheck_table, prefetch_section]),
     ("perf-shape.md", "Width and shape",
      "The wide-data arc: the CPU fill, the CUDA recheck, the cols "
      "re-baseline, and the iso-volume shape frontier with measured VRAM.",
@@ -1328,8 +1294,6 @@ def committed_data_files() -> set[str]:
     files = set()
     for line in out.splitlines():
         name = pathlib.PurePosixPath(line).name
-        if line.endswith(".png"):
-            continue  # plot outputs of analyze_scaling.py, linked in-page
         files.add(name)
     return files
 

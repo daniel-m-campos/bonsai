@@ -19,7 +19,7 @@ class Variant:
 
 
 # Aliases are the spellings older suites committed: grinsztajn's short names
-# and scripts/bench_gpu.py's *_gpu/*_cpu scheme.
+# and the retired gpu_msd track's *_gpu/*_cpu scheme.
 _TABLE = (
     Variant("bonsai_depthwise", "bonsai", "cpu", ("bonsai_dw", "bonsai_cpu")),
     Variant("bonsai_leafwise", "bonsai", "cpu", ("bonsai_lw", "bonsai_leaf_cpu")),

@@ -49,24 +49,6 @@ XGBoost 3.3 (2026-07-21) claimed lower GPU quantile-sketching memory and wide-da
 
 *Source: [`xgb33-recheck-2026-07.jsonl`](../../../benchmarks/results/xgb33-recheck-2026-07.jsonl). Driver: `python -m bonsai.bench.scaling --worker` per cell, three arms on one pod; verdict recorded as decision 87.*
 
-### The scaling study
-
-964 runs across 7 hosts and the axes base, bins, cols, rows; regenerate exponents and the committed log-log plots under [`benchmarks/results/scaling/`](../../../benchmarks/results/scaling) with [scripts/analyze_scaling.py](../../../scripts/analyze_scaling.py).
-
-*Source: [`scaling.jsonl`](../../../benchmarks/results/scaling.jsonl). The full-history perf ledger behind [benchmarks/README.md](../../../benchmarks/README.md); decision 46.*
-
-### GPU year-MSD track
-
-Latest run per device on the YearPredictionMSD pipeline benchmark (full history in the file):
-
-| GPU | as of | fit_s | predict_s | rmse |
-|---|---|---|---|---|
-| NVIDIA A100-SXM4-80GB | 2026-07-04 | 5.01 | 2.08 | 8.9911 |
-| NVIDIA GeForce RTX 5090 | 2026-07-07 | 2.91 | 2.92 | 8.9911 |
-| Orin (nvgpu) | 2026-07-04 | 52.21 | 0.89 | 8.9911 |
-
-*Source: [`gpu_msd.jsonl`](../../../benchmarks/results/gpu_msd.jsonl). Runner: [scripts/bench_gpu.py](../../../scripts/bench_gpu.py); pipeline timing mode.*
-
 ### CPU 16M round (the prefetch tie)
 
 | rows | bonsai_depthwise | xgb_hist |
