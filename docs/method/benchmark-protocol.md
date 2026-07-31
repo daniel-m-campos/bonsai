@@ -61,7 +61,7 @@ Same-machine control is also what makes a competitor gap debuggable. Two apparen
 
 ## The row schema
 
-Schema v1 (`bonsai.bench.runlog`): every row carries `schema, ts, git_sha, division, suite, script, cmd, dataset, task, variant, seed, knobs, knobs_hash, metric, value, timing_mode, host` (with library versions), and `status`. Rows are append-only; files may mix schema generations; readers tolerate extra keys. Every published table must name its results file and the command that regenerates it.
+Schema v1 (`bonsai.bench.runlog`): every row carries `schema, ts, git_sha, division, suite, script, cmd, timing_mode, host` (with library versions), plus `knobs`/`knobs_hash` when a knob set applies; suite-specific fields (`cell`, `dataset`, `task`, `variant`, `seed`, `metric`, `value`, `status`, ...) ride alongside. Rows are append-only; files may mix schema generations; readers tolerate extra keys. Every published table must name its results file and the command that regenerates it.
 
 ## Amendments
 
@@ -71,7 +71,7 @@ History is append-only: committed rows are never edited or regenerated. Correcti
 
 The code division measures bonsai itself, self-only: no comparative claim against any other library is made or implied. It exists so the readable-core statement is falsifiable; a claim about code you can read must come with counts you can check.
 
-The tool is [lizard](https://github.com/terryyin/lizard), pinned as `uvx lizard@1.23.0` and run by `scripts/measure_complexity.py`. Per plane it records file count, LOC (`wc -l`), lizard NLOC, function count, and mean and max cyclomatic complexity (CCN). Results land in `results/code-metrics-2026-07.jsonl` and render into [the results ledger](results.md); the meta row carries the tool version and the measured git SHA.
+The tool is [lizard](https://github.com/terryyin/lizard), pinned as `uvx lizard@1.23.0` and run by `scripts/measure_complexity.py`. Per plane it records file count, LOC (`wc -l`), lizard NLOC, function count, and mean and max cyclomatic complexity (CCN). Results land in `results/code-metrics-2026-07.jsonl` and render into [the code division page](results/code-metrics.md); the meta row carries the tool version and the measured git SHA.
 
 | plane | contents |
 |---|---|

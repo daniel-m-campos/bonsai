@@ -1,5 +1,7 @@
 # XGBoost
 
+> Superseded: [the project timeline](../learn/timeline.md) is the current lineage record; standings statements on this page are historical.
+
 XGBoost turned gradient boosting from a technique into an industrial tool, and two of its contributions are load-bearing in every library that followed.
 
 The first is the regularized second-order objective: score a split by $G^2/(H+\lambda)$ over the gradient and hessian sums, derive leaf values from the same quantities, and boosting becomes Newton optimization with regularization built into the gain itself.

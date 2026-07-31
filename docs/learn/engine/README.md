@@ -1,6 +1,6 @@
 # The engine track
 
-This track is how a ~1,800-line engine became the fastest route to every measured accuracy at 16M rows on one GPU. It teaches that through the episodes that did it.
+This track is how an engine whose planes are measured in [code metrics](../../method/results/code-metrics.md) became the fastest route to every measured accuracy at 16M rows on one GPU. It teaches that through the episodes that did it.
 
 ## What this is
 

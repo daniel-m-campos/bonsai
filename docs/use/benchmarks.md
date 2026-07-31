@@ -24,9 +24,9 @@ PYTHONPATH=build/python python -m bonsai.bench.grinsztajn out.jsonl
 
 | suite | division | command | notes |
 | --- | --- | --- | --- |
-| `grinsztajn` | quality | `python -m bonsai.bench.grinsztajn out.jsonl` then `--report` | The external standings suite (68 dataset-metric cells). Datasets fetch from OpenML on first run; rows already in `out.jsonl` are skipped, so an interrupted run resumes by re-running the same command. `--report` renders the standings from the jsonl. |
+| `grinsztajn` | quality | `python -m bonsai.bench.grinsztajn out.jsonl` then `--report` | The external standings suite (55 third-party tasks). Datasets fetch from OpenML on first run; rows already in `out.jsonl` are skipped, so an interrupted run resumes by re-running the same command. `--report` renders the standings from the jsonl. |
 | `scaling` | perf | `python -m bonsai.bench.scaling --smoke` | Fit seconds vs rows/cols/bins/threads against the reference libraries. `--smoke` is the laptop mode (small cells, minutes); the full grid (`--axis all`) takes hours and wants a CUDA build (`make python-cuda`) for the GPU variants. `--dry-run` prints the grid without running it. |
-| `airline` | perf | `python -m bonsai.bench.airline out.jsonl --sizes 0.1m` | The benchm-ml airline ladder at 0.1m/1m/10m rows; downloads the CSVs on first run. `--variants all` adds the reference libraries. |
+| `airline` | perf | `python -m bonsai.bench.airline out.jsonl --sizes 0.1m` | The benchm-ml airline ladder at 0.1m/1m/10m rows; downloads the CSVs on first run. The default runs every variant, reference libraries included; `--variants` narrows the set. |
 | `datasets` | (fetcher) | `python -m bonsai.bench.datasets --list` | Lists the pinned datasets and their cache state; `python -m bonsai.bench.datasets <name>` fetches one ahead of time. |
 
 ## Custom ladders: the spec-driven CLI

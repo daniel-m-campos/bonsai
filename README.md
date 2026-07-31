@@ -74,7 +74,7 @@ Two divisions, per the [benchmark charter](https://daniel-m-campos.github.io/bon
 
 ### Perf
 
-bonsai's CUDA growers hold the fastest slot at every measured row scale and, in the 2026-07-30 studies, at every width and aspect ratio from 100 to 65,536 features. Peak host memory at 16M rows is 7.0GB against XGBoost's 22.2GB and CatBoost's 19.4GB, and measured device memory sizes to the problem (3.4GB at 16M x 128) where CatBoost reserves 90.2GB of the card at every shape. Same-pod re-baseline, test r² in parentheses:
+bonsai's CUDA growers hold the fastest slot at every measured row scale on the synthetic re-baseline ladder and, in the 2026-07-30 studies, at every width and aspect ratio from 100 to 65,536 features. Peak host memory at 16M rows is 7.0GB against XGBoost's 22.2GB and CatBoost's 19.4GB, and measured device memory sizes to the problem (3.4GB at 16M x 128) where CatBoost reserves 90.2GB of the card at every shape. Same-pod re-baseline, test r² in parentheses:
 
 | rows | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu | lgbm cpu | bonsai cpu obl |
 |---|--:|--:|--:|--:|--:|--:|
@@ -96,7 +96,7 @@ On the [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) (
 | xgboost | 2.84 | 6 |
 | catboost | 3.22 | 8 |
 
-The one knob that translates ambiguously between libraries is bracketed in both directions on [the standings page](https://daniel-m-campos.github.io/bonsai/method/results/quality-grinsztajn/); reproduce with `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl --report`.
+The one knob that translates ambiguously between libraries is bracketed in both directions on [the standings page](https://daniel-m-campos.github.io/bonsai/method/results/quality-grinsztajn/); reproduce with `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite and `python -m bonsai.bench.grinsztajn out.jsonl --report` to render the standings.
 
 Every headline claim links a reproducible run and the decision that records it: [claims and proofs](https://daniel-m-campos.github.io/bonsai/method/).
 

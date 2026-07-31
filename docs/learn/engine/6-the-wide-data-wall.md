@@ -49,13 +49,13 @@ One constant: levels whose selected-histogram footprint exceeds 24MB take the fe
 
 | cell (t=16, same pod) | grower | before | after | LightGBM CPU |
 |--|--|--:|--:|--:|
-| 131k x 16384 | depthwise | 1019s | 379s | 367s |
-| 131k x 16384 | leafwise | 2591s | 445s | 367s |
 | 1M x 4096 | depthwise | 348s | unchanged | 382s |
+
+The 131k x 16384 rows of the same ladder, where the routing collapsed a 7x deficit to parity, are on [the width and shape ledger](../../method/results/perf-shape.md).
 
 Peak memory at the wide cell: 18.8GB against LightGBM's 50.1GB.
 
-What the constant deliberately leaves on the table is recorded on issue #217: the M2's mid-width win goes untaken because a fixed threshold cannot know the host's cache (a cache-size-aware threshold is the follow-up, and it is the same lever XGBoost 3.3 shipped that year as aarch64 cache detection); the row-major mirror is still built even when no level row-fills; and the CUDA planes have their own wide wall this case never touched.
+What the constant deliberately leaves on the table is recorded on issue #217: the M2's mid-width win goes untaken because a fixed threshold cannot know the host's cache (a cache-size-aware threshold is the follow-up, and it is the same lever XGBoost 3.3 shipped that year as aarch64 cache detection); the row-major mirror is still built even when no level row-fills; and the CUDA planes' recorded wide deficit, which this case never touched, still rested on 2026-07-08 numbers (the epilogue returns to it).
 
 ## The lessons
 
@@ -67,4 +67,6 @@ The threshold lived one day. Its recorded residual, XGBoost 3.3's column-tiling 
 
 The probe's interleaved A/B beat both strategies at their own best cells: 326s against the row path's 369 at 1M x 4096, 442s against feature-parallel's 514 at 131k x 16384, a wash at 16M x 100. And because tiling never changes a feature's accumulation order, the tiled fill produces bit-identical models to the classic row path at every width, so the determinism contract came out stronger than either strategy could make it. The chapter's closing lesson gains its final form: when a trade-off is real, ship the honest threshold and record what it leaves on the table, and then look for the restructuring that makes the trade-off imaginary. It existed here, one layout change away, published in a competitor's release notes all along.
 
-Evidence: [benchmarks/wide-cpu-hist-2026-07.md](https://github.com/daniel-m-campos/bonsai/blob/main/benchmarks/wide-cpu-hist-2026-07.md); decisions 88 and 89; the ratifying field report is issue #217.
+The CUDA wide wall this case left as a residual got the same treatment on 2026-07-30, and it had already fallen: the recorded deficit dated to 2026-07-08 code, and on current main the CUDA growers lead every wide cell (refutation-by-progress, decision 90). The iso-volume frontier (decision 91) then measured the shape axis wholesale, holding rows x cols constant while width swept 128 to 65536 columns; both are on [the width and shape ledger](../../method/results/perf-shape.md).
+
+Evidence: [benchmarks/wide-cpu-hist-2026-07.md](https://github.com/daniel-m-campos/bonsai/blob/main/benchmarks/wide-cpu-hist-2026-07.md); decisions 88 to 91; the ratifying field report is issue #217.
