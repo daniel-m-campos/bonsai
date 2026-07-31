@@ -53,7 +53,7 @@ Peak host RSS, worst rep:
 | 1M x 4096 | 16.4GB | 16.4GB | 60.4GB | 50.6GB | 35.0GB | 26.8GB |
 | 131k x 16384 | 8.8GB | 8.8GB | 39.3GB | 25.2GB | 50.1GB | 21.0GB |
 
-*Source: [`cols-rebaseline-2026-07.jsonl`](../../../benchmarks/results/cols-rebaseline-2026-07.jsonl). Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells.*
+*Source: [`cols-rebaseline-2026-07.jsonl`](../../../benchmarks/results/cols-rebaseline-2026-07.jsonl). Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells. Measured at `07a5b9a` (2026-07-30, pod-l40s-us-nc-1).*
 
 ### The iso-volume shape frontier (decision 91)
 
@@ -103,4 +103,4 @@ The 2^33 stretch, GPU arms:
 | 4M x 2048 | 10.5GB | 10.5GB | 72.7GB | 90.2GB |
 | 262k x 32768 | 36.7GB | 36.7GB | 73.2GB | 90.2GB |
 
-*Source: [`iso-volume-2026-08.jsonl`](../../../benchmarks/results/iso-volume-2026-08.jsonl). Specs: bundled in [bench/specs/](../../../python/bonsai/bench/specs/); driver: [scripts/pod_bench_driver.sh](../../../scripts/pod_bench_driver.sh); evidence: [benchmarks/iso-volume-2026-08.md](../../../benchmarks/iso-volume-2026-08.md); verdict recorded as decision 91.*
+*Source: [`iso-volume-2026-08.jsonl`](../../../benchmarks/results/iso-volume-2026-08.jsonl). Specs: bundled in [bench/specs/](../../../python/bonsai/bench/specs/); driver: [scripts/pod_bench_driver.sh](../../../scripts/pod_bench_driver.sh); evidence: [benchmarks/iso-volume-2026-08.md](../../../benchmarks/iso-volume-2026-08.md); verdict recorded as decision 91. Measured at `a907895` (2026-07-30, pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition).*

@@ -62,9 +62,23 @@ Same-machine control is also what makes a competitor gap debuggable. Two apparen
 
 Schema v1 (`bonsai.bench.runlog`): every row carries `schema, ts, git_sha, division, suite, script, cmd, timing_mode, host` (with library versions), plus `knobs`/`knobs_hash` when a knob set applies; suite-specific fields (`cell`, `dataset`, `task`, `variant`, `seed`, `metric`, `value`, `status`, ...) ride alongside. Rows are append-only; files may mix schema generations; readers tolerate extra keys. Every published table must name its results file and the command that regenerates it.
 
+## Standings and evidence (decision 92)
+
+Every results file is one of two classes, and the class sets its lifecycle.
+
+Evidence: the dated record behind a decision. Frozen forever; its claim carries its date and sha, so it cannot go stale. The probe files, the recheck files, and the campaign smoke are evidence.
+
+Standings: the current claim on one published axis. The registry [`benchmarks/standings.json`](../../benchmarks/standings.json) lists one file per axis (rows, width, shape, frontier, airline, quality-grinsztajn, code) with the single sha its rows were measured at. Standings supersede in place by re-measurement, generalizing the code division's rule (decision 69): the tree has exactly one current state per axis. The ledger stamps every standings caption with the measured sha computed from the rows, so the reader always sees the vintage.
+
+Two gates hard-fail, enforced by `scripts/check_standings.py`. Claim time: a decisions-log entry that claims a perf change on an axis carries a `Standings: <axis>` line, and `make docs-check` fails while any tagged entry is newer than the axis's registered state. Release time: the wheels publish job fails unless every axis was refreshed for exactly the version being released, bounding staleness at one release even for untagged changes.
+
+Reader-facing prose never restates standings digits; only generated tables carry them, so every digit surface is behind a `--check`.
+
+The refresh is one rented pod session (the standings-refresh workflow; manual fallback in the RunPod runbook): a same-pod A/B of the previous release wheel against HEAD on anchor cells detects whether perf moved, then the standings specs re-measure the axes and the supersession lands as one reviewed PR.
+
 ## Amendments
 
-History is append-only: committed rows are never edited or regenerated. Corrections are banner annotations on the evidence document plus a decisions-log entry (the pattern of decisions 48, 63, and 68). Superseded artifacts are deleted from the tree; git history is the archive.
+Evidence files are append-only: committed rows are never edited or regenerated, and corrections are banner annotations plus a decisions-log entry (the pattern of decisions 48, 63, and 68). Standings files supersede in place instead (the standings section above). Superseded artifacts of either class are deleted from the tree; git history is the archive.
 
 ## The code division
 
@@ -85,4 +99,4 @@ Non-claims, stated once: LOC alone is not quality, and a small number is not an 
 
 The five highest-CCN functions across the core planes are published by name. Naming our own worst functions is deliberate; an offender list its author curates away is marketing, not measurement.
 
-Re-measurement supersedes the results file in place (decision 69): a new run at a new SHA replaces it, and git history is the archive. The append-only rule of the other divisions does not apply; the tree has exactly one current state, so there is nothing to append.
+Re-measurement supersedes the results file in place (decision 69, generalized to all standings by decision 92): a new run at a new SHA replaces it, and git history is the archive. The append-only rule of the other divisions does not apply; the tree has exactly one current state, so there is nothing to append.

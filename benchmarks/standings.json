@@ -1,0 +1,66 @@
+{
+  "_": "The standings registry (results-lifecycle policy, decision 92). One entry per published perf/quality axis: the current-standings file, the single sha its rows were measured at (null = refresh required), and the release it was refreshed for. Gates: scripts/check_standings.py; supersession is in place, git history is the archive.",
+  "rows": {
+    "file": "rebaseline-2026-07.jsonl",
+    "sha": "434a382",
+    "host": "dual-epyc-9554-l40s",
+    "date": "2026-07-13",
+    "refreshed_for": null,
+    "as_of_decision": 92,
+    "note": "Predates the tiled fill and radix mapper; first refresh will supersede."
+  },
+  "width": {
+    "file": "cols-rebaseline-2026-07.jsonl",
+    "sha": "07a5b9a",
+    "host": "pod-l40s-us-nc-1",
+    "date": "2026-07-30",
+    "refreshed_for": "1.5.4",
+    "as_of_decision": 92
+  },
+  "shape": {
+    "file": "iso-volume-2026-08.jsonl",
+    "sha": "a907895",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition",
+    "date": "2026-07-30",
+    "refreshed_for": "1.5.4",
+    "as_of_decision": 92,
+    "note": "make bench-iso appends work-rig rows host-keyed; the pod host anchors the standings."
+  },
+  "frontier": {
+    "file": "gpu-pareto-16M-2026-07.jsonl",
+    "sha": null,
+    "host": null,
+    "date": "2026-07-18",
+    "refreshed_for": null,
+    "as_of_decision": 92,
+    "note": "Pre-provenance rows (decision 78 re-run); refresh mints the first sha-stamped frontier."
+  },
+  "airline": {
+    "file": "airline-2026-07.jsonl",
+    "sha": "3c1b6ff",
+    "host": "d322b2863095",
+    "date": "2026-07-15",
+    "refreshed_for": null,
+    "as_of_decision": 92
+  },
+  "quality-grinsztajn": {
+    "file": "grinsztajn-2026-07.jsonl",
+    "sha": "b3267d5",
+    "host": "MacBook-Air-M2.local",
+    "date": "2026-07-15",
+    "refreshed_for": "1.5.4",
+    "as_of_decision": 92,
+    "sha_partial": true,
+    "note": "Library split: bonsai rows carry schema v1, reference rows predate provenance; the mcw1 bracket file rides along. Slow clock: refresh on engine quality changes or reference-library majors regenerates all arms."
+  },
+  "code": {
+    "file": "code-metrics-2026-07.jsonl",
+    "sha": "ee318c873905",
+    "host": null,
+    "date": "2026-07-31",
+    "refreshed_for": "1.5.4",
+    "as_of_decision": 92,
+    "sha_partial": true,
+    "note": "Self-measurement; the meta row carries the sha. Refreshed locally by scripts/measure_complexity.py (decision 69)."
+  }
+}

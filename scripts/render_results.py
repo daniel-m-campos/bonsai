@@ -61,6 +61,20 @@ def fmt(v, nd=4) -> str:
     return str(v)
 
 
+def measured_stamp(rows: list[dict]) -> str:
+    """One-sha standings stamp computed from the rows themselves, so the
+    reader always sees the vintage (results-lifecycle policy, decision 92)."""
+    shas = sorted({r["git_sha"] for r in rows if r.get("git_sha")})
+    if len(shas) != 1:
+        return ""
+    dates = sorted({r["ts"][:10] for r in rows if r.get("ts")})
+    hosts = sorted({(r["host"].get("name") if isinstance(r.get("host"), dict)
+                     else r.get("host")) for r in rows if r.get("host")})
+    when = f" ({dates[-1]}" if dates else " ("
+    where = f", {hosts[0]})" if len(hosts) == 1 else ")"
+    return f" Measured at `{shas[0]}`{when}{where}."
+
+
 def provenance(files: list[str], note: str) -> str:
     links = ", ".join(
         f"[`{f}`](../../benchmarks/results/{f})" for f in files)
@@ -670,7 +684,7 @@ Scaling features (1M rows):
 
 The wide cells of this table predate the 2026-07-30 wide re-baseline; the current width standings are on [Width and shape](perf-shape.md).
 
-{provenance(["rebaseline-2026-07.jsonl"], "Runner: [scripts/bench_scaling.py](../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file.")}
+{provenance(["rebaseline-2026-07.jsonl"], "Runner: [scripts/bench_scaling.py](../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file." + measured_stamp(rows))}
 """
 
 
@@ -815,7 +829,7 @@ Peak host RSS, worst rep:
 
 {rss_table}
 
-{provenance(["cols-rebaseline-2026-07.jsonl"], "Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells.")}
+{provenance(["cols-rebaseline-2026-07.jsonl"], "Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells." + measured_stamp(cr))}
 """
 
 
@@ -932,7 +946,7 @@ The 2^33 stretch, GPU arms:
 
 {vram33}
 
-{provenance(["iso-volume-2026-08.jsonl"], "Specs: bundled in [bench/specs/](../../python/bonsai/bench/specs/); driver: [scripts/pod_bench_driver.sh](../../scripts/pod_bench_driver.sh); evidence: [benchmarks/iso-volume-2026-08.md](../../benchmarks/iso-volume-2026-08.md); verdict recorded as decision 91.")}
+{provenance(["iso-volume-2026-08.jsonl"], "Specs: bundled in [bench/specs/](../../python/bonsai/bench/specs/); driver: [scripts/pod_bench_driver.sh](../../scripts/pod_bench_driver.sh); evidence: [benchmarks/iso-volume-2026-08.md](../../benchmarks/iso-volume-2026-08.md); verdict recorded as decision 91." + measured_stamp(pod))}
 """
 
 
@@ -1078,7 +1092,7 @@ The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC),
 
 {tables[1]}
 
-{provenance(["airline-2026-07.jsonl"], "One L40S (SECURE US-NC-1, driver 570.124.06), 2026-07-15, post-decision-74 code. A bonsai variant has the best AUC in every cell from 1M up under both protocols; XGBoost-GPU owns raw speed on this narrow shape. Evidence: [benchmarks/airline-2026-07.md](../../benchmarks/airline-2026-07.md).")}
+{provenance(["airline-2026-07.jsonl"], "One L40S (SECURE US-NC-1, driver 570.124.06), 2026-07-15, post-decision-74 code. A bonsai variant has the best AUC in every cell from 1M up under both protocols; XGBoost-GPU owns raw speed on this narrow shape. Evidence: [benchmarks/airline-2026-07.md](../../benchmarks/airline-2026-07.md)." + measured_stamp(rows))}
 """
 
 
@@ -1287,6 +1301,36 @@ def render_pages() -> dict[pathlib.Path, str]:
     return out
 
 
+def check_registry(consumed_files: set[str]) -> list[str]:
+    """Standings registry invariants (decision 92): each registered file
+    exists, is rendered, and its rows carry exactly the registered sha
+    (sha_partial entries tolerate provenance-less rows, never a WRONG sha)."""
+    reg = json.loads((REPO / "benchmarks" / "standings.json").read_text())
+    reg.pop("_", None)
+    errors = []
+    for axis, e in reg.items():
+        path = RESULTS / e["file"]
+        if not path.exists():
+            errors.append(f"standings {axis}: {e['file']} does not exist")
+            continue
+        if e["file"] not in consumed_files:
+            errors.append(f"standings {axis}: {e['file']} is not rendered")
+        if not e.get("sha"):
+            continue
+        rows = [json.loads(ln) for ln in path.read_text().splitlines()
+                if ln.strip()]
+        shas = {r.get("git_sha") for r in rows}
+        wrong = {s for s in shas if s and not s.startswith(e["sha"])
+                 and not e["sha"].startswith(s)}
+        if wrong:
+            errors.append(f"standings {axis}: rows carry {sorted(wrong)}, "
+                          f"registry says {e['sha']}")
+        if None in shas and not e.get("sha_partial"):
+            errors.append(f"standings {axis}: rows without git_sha in a "
+                          "full-provenance standings file")
+    return errors
+
+
 def committed_data_files() -> set[str]:
     out = subprocess.run(
         ["git", "ls-files", "benchmarks/results"],
@@ -1306,6 +1350,11 @@ def main() -> int:
         print(f"ERROR: committed results files not rendered: {sorted(missed)}\n"
               "Wire them into scripts/render_results.py or remove them "
               "(use it or remove it).", file=sys.stderr)
+        return 1
+    registry_errors = check_registry(consumed)
+    if registry_errors:
+        for e in registry_errors:
+            print(f"ERROR: {e}", file=sys.stderr)
         return 1
     for fname, svg in charts.items():
         outputs[ASSETS / fname] = svg

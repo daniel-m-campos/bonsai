@@ -30,7 +30,7 @@ Scaling features (1M rows):
 
 The wide cells of this table predate the 2026-07-30 wide re-baseline; the current width standings are on [Width and shape](perf-shape.md).
 
-*Source: [`rebaseline-2026-07.jsonl`](../../../benchmarks/results/rebaseline-2026-07.jsonl). Runner: [scripts/bench_scaling.py](../../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file.*
+*Source: [`rebaseline-2026-07.jsonl`](../../../benchmarks/results/rebaseline-2026-07.jsonl). Runner: [scripts/bench_scaling.py](../../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file. Measured at `434a382` (2026-07-13, dual-epyc-9554-l40s).*
 
 ### The XGBoost 3.3 recheck (decision 87)
 
