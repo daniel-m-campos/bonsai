@@ -49,9 +49,6 @@ if [ "${CC_MAJOR:-0}" -ge 10 ]; then
 fi
 make python-cuda PYTHON=/opt/venv/bin/python
 
-# VRAM sampler prefers pynvml; without it the sampler falls back to nvidia-smi.
-uv pip install --python /opt/venv/bin/python pynvml || true
-
 BENCH=(env PYTHONPATH=/root/bonsai/build-cuda/python /opt/venv/bin/python -m bonsai.bench)
 # --data-cache lands in a sibling PR; pass it only when the CLI knows it.
 EXTRA=()

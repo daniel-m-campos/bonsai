@@ -92,23 +92,6 @@ def _device_index() -> int:
     return int(first) if first.isdigit() else 0
 
 
-def _nvml_query():
-    import pynvml
-    pynvml.nvmlInit()
-    handle = pynvml.nvmlDeviceGetHandleByIndex(_device_index())
-
-    def query(pid: int):
-        pid_mb = None
-        with contextlib.suppress(pynvml.NVMLError):
-            for p in pynvml.nvmlDeviceGetComputeRunningProcesses(handle):
-                if p.pid == pid and p.usedGpuMemory is not None:
-                    pid_mb = p.usedGpuMemory / 2**20
-        total_mb = pynvml.nvmlDeviceGetMemoryInfo(handle).used / 2**20
-        return pid_mb, total_mb
-
-    return query
-
-
 def _smi_query(pid: int):
     dev = ["-i", str(_device_index())]
     try:
@@ -143,13 +126,12 @@ class DeviceMemSampler:
 
     def __init__(self, pid: int, interval_s: float = 0.25, query=None):
         self.pid, self.interval_s = pid, interval_s
+        # nvidia-smi ships with the driver on every GPU host (detect_host
+        # already shells it), so sampling needs no python package.
         if query is not None:
             self._query, self.source = query, "injected"
         else:
-            try:
-                self._query, self.source = _nvml_query(), "nvml"
-            except Exception:
-                self._query, self.source = _smi_query, "nvidia-smi"
+            self._query, self.source = _smi_query, "nvidia-smi"
         self._stop = threading.Event()
         self._peak_pid: float | None = None
         self._peak_total: float | None = None
