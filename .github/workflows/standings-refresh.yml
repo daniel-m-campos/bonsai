@@ -131,6 +131,10 @@ jobs:
             axis="$(echo "$axis" | tr -d ' ')"
             python3 scripts/update_standings.py --axis "$axis" --file "${AXIS_FILE[$axis]}"
           done
+          # Stage supersessions BEFORE rendering: the committed-files gate
+          # reads git ls-files, and a month-rollover refresh DELETES the
+          # old dated files (the 2026-08-01 run failed exactly here).
+          git add -A benchmarks/
           python3 scripts/render_results.py
           VERDICT=""
           if [ -f /tmp/standings/ab.jsonl ]; then
