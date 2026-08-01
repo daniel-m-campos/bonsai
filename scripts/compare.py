@@ -35,6 +35,8 @@ import pandas as pd
 import reference_params
 import tomllib
 
+LABEL_COL = "label"  # every prepared dataset carries its target under this name
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 BONSAI_GROWERS = ("depthwise", "oblivious", "leafwise")
@@ -233,7 +235,7 @@ def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str,
     if test_df is None:
         cfg = load_toml(config_path)
         test_df = pd.read_csv(REPO_ROOT / cfg["data"]["test"])
-    y_test = test_df["label"].to_numpy()
+    y_test = test_df[LABEL_COL].to_numpy()
 
     pred_df = pd.read_csv(preds)
     pred = pred_df["prediction"].to_numpy()
@@ -277,9 +279,9 @@ def import_native_bonsai():
 def run_bonsai_native(native, cfg: dict, train_df, test_df, hp: HP, grower: str,
                       sampler: str, hp_overrides: list[str],
                       valid_df=None) -> Result:
-    feature_cols = [c for c in train_df.columns if c != "label"]
+    feature_cols = [c for c in train_df.columns if c != LABEL_COL]
     Xtr = np.ascontiguousarray(train_df[feature_cols], dtype=np.float32)
-    ytr = np.ascontiguousarray(train_df["label"], dtype=np.float32)
+    ytr = np.ascontiguousarray(train_df[LABEL_COL], dtype=np.float32)
     Xte = np.ascontiguousarray(test_df[feature_cols], dtype=np.float32)
 
     pairs = _flatten_cfg_overrides(cfg)
@@ -295,7 +297,7 @@ def run_bonsai_native(native, cfg: dict, train_df, test_df, hp: HP, grower: str,
     ev = None
     if valid_df is not None and hp.early_stopping_rounds > 0:
         ev = (np.ascontiguousarray(valid_df[feature_cols], dtype=np.float32),
-              np.ascontiguousarray(valid_df["label"], dtype=np.float32))
+              np.ascontiguousarray(valid_df[LABEL_COL], dtype=np.float32))
 
     t0 = time.perf_counter()
     model = native.train(pairs, Xtr, ytr, ev)
@@ -305,7 +307,7 @@ def run_bonsai_native(native, cfg: dict, train_df, test_df, hp: HP, grower: str,
     pred = np.asarray(model.predict(Xte))
     pred_s = time.perf_counter() - t1
 
-    y = test_df["label"].to_numpy()
+    y = test_df[LABEL_COL].to_numpy()
     mc = hp.objective == "softmax"
     return Result(rmse=rmse(pred, y), mae=mae(pred, y), r2=r2(pred, y),
                   auc=maybe_auc(pred, y),
@@ -316,9 +318,9 @@ def run_bonsai_native(native, cfg: dict, train_df, test_df, hp: HP, grower: str,
 def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     import xgboost as xgb
 
-    feature_cols = [c for c in train_df.columns if c != "label"]
-    dtrain = xgb.DMatrix(train_df[feature_cols], label=train_df["label"])
-    dtest = xgb.DMatrix(test_df[feature_cols], label=test_df["label"])
+    feature_cols = [c for c in train_df.columns if c != LABEL_COL]
+    dtrain = xgb.DMatrix(train_df[feature_cols], label=train_df[LABEL_COL])
+    dtest = xgb.DMatrix(test_df[feature_cols], label=test_df[LABEL_COL])
 
     params = {
         "objective": XGB_OBJECTIVE[hp.objective],
@@ -343,7 +345,7 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     }
     fit_kwargs = {}
     if valid_df is not None and hp.early_stopping_rounds > 0:
-        dvalid = xgb.DMatrix(valid_df[feature_cols], label=valid_df["label"])
+        dvalid = xgb.DMatrix(valid_df[feature_cols], label=valid_df[LABEL_COL])
         fit_kwargs = {
             "evals": [(dvalid, "valid")],
             "early_stopping_rounds": hp.early_stopping_rounds,
@@ -356,7 +358,7 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     t1 = time.perf_counter()
     pred = booster.predict(dtest)  # uses best_iteration when early-stopped
     pred_s = time.perf_counter() - t1
-    y = test_df["label"].to_numpy()
+    y = test_df[LABEL_COL].to_numpy()
     mc = hp.objective == "softmax"
     return Result(rmse=rmse(pred, y), mae=mae(pred, y), r2=r2(pred, y),
                   auc=maybe_auc(pred, y),
@@ -368,8 +370,8 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
                  valid_df=None) -> Result:
     import lightgbm as lgb
 
-    feature_cols = [c for c in train_df.columns if c != "label"]
-    dtrain = lgb.Dataset(train_df[feature_cols], label=train_df["label"])
+    feature_cols = [c for c in train_df.columns if c != LABEL_COL]
+    dtrain = lgb.Dataset(train_df[feature_cols], label=train_df[LABEL_COL])
     params = {
         "objective": LGBM_OBJECTIVE[hp.objective],
         **({"num_class": hp.n_classes} if hp.objective == "softmax" else {}),
@@ -397,7 +399,7 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
     }
     fit_kwargs = {}
     if valid_df is not None and hp.early_stopping_rounds > 0:
-        dvalid = lgb.Dataset(valid_df[feature_cols], label=valid_df["label"],
+        dvalid = lgb.Dataset(valid_df[feature_cols], label=valid_df[LABEL_COL],
                              reference=dtrain)
         fit_kwargs = {
             "valid_sets": [dvalid],
@@ -413,7 +415,7 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
     if hp.objective == "softmax":
         pred = np.argmax(pred, axis=1).astype(float)
     pred_s = time.perf_counter() - t1
-    y = test_df["label"].to_numpy()
+    y = test_df[LABEL_COL].to_numpy()
     mc = hp.objective == "softmax"
     return Result(rmse=rmse(pred, y), mae=mae(pred, y), r2=r2(pred, y),
                   auc=maybe_auc(pred, y),
@@ -424,7 +426,7 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
 def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     from catboost import CatBoostClassifier, CatBoostRegressor
 
-    feature_cols = [c for c in train_df.columns if c != "label"]
+    feature_cols = [c for c in train_df.columns if c != LABEL_COL]
     use_es = valid_df is not None and hp.early_stopping_rounds > 0
     cls = (CatBoostClassifier if hp.objective in ("logloss", "softmax")
            else CatBoostRegressor)
@@ -445,9 +447,9 @@ def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     )
     fit_kwargs = {}
     if use_es:
-        fit_kwargs = {"eval_set": (valid_df[feature_cols], valid_df["label"])}
+        fit_kwargs = {"eval_set": (valid_df[feature_cols], valid_df[LABEL_COL])}
     t0 = time.perf_counter()
-    model.fit(train_df[feature_cols], train_df["label"], **fit_kwargs)
+    model.fit(train_df[feature_cols], train_df[LABEL_COL], **fit_kwargs)
     fit_s = time.perf_counter() - t0
 
     t1 = time.perf_counter()
@@ -461,7 +463,7 @@ def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
         pred = (np.asarray(model.predict(test_df[feature_cols]))
                 .reshape(-1).astype(float))
     pred_s = time.perf_counter() - t1
-    y = test_df["label"].to_numpy()
+    y = test_df[LABEL_COL].to_numpy()
     mc = hp.objective == "softmax"
     return Result(rmse=rmse(pred, y), mae=mae(pred, y), r2=r2(pred, y),
                   auc=maybe_auc(pred, y),
@@ -532,9 +534,9 @@ def main() -> int:
         Xte, yte = load_svmlight_file(str(test_path), n_features=nf)
         cols = [f"f{i}" for i in range(Xtr.shape[1])]
         train_df = pd.DataFrame(Xtr.toarray(), columns=cols)
-        train_df.insert(0, "label", ytr)
+        train_df.insert(0, LABEL_COL, ytr)
         test_df = pd.DataFrame(Xte.toarray(), columns=cols)
-        test_df.insert(0, "label", yte)
+        test_df.insert(0, LABEL_COL, yte)
     else:
         train_df = pd.read_csv(train_path)
         test_df = pd.read_csv(test_path)

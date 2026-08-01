@@ -26,6 +26,8 @@ import pathlib
 import re
 import sys
 
+from _render_common import md_table
+
 REPO = pathlib.Path(__file__).resolve().parents[1]
 MAKEFILE = REPO / "Makefile"
 OUT = REPO / "docs" / "use" / "make-map.md"
@@ -55,13 +57,6 @@ def targets() -> list[tuple[str, str]]:
             continue
         out.append((name, desc))
     return out
-
-
-def md_table(headers: list[str], rows: list[list[str]]) -> str:
-    head = "| " + " | ".join(headers) + " |"
-    sep = "|" + "|".join("---" for _ in headers) + "|"
-    body = ["| " + " | ".join(r) + " |" for r in rows]
-    return "\n".join([head, sep, *body])
 
 
 def render() -> str:

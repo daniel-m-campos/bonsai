@@ -8,34 +8,51 @@ spellings live here in one table; the guard test pins every string.
 from __future__ import annotations
 
 import dataclasses
+from typing import Final
+
+
+class Lib:
+    """Library identifiers; values are carried by committed result rows."""
+
+    BONSAI: Final = "bonsai"
+    XGB: Final = "xgb"
+    LGBM: Final = "lgbm"
+    CATBOOST: Final = "catboost"
+
+
+class Device:
+    """Execution devices; values are carried by committed result rows."""
+
+    CPU: Final = "cpu"
+    CUDA: Final = "cuda"
 
 
 @dataclasses.dataclass(frozen=True)
 class Variant:
     name: str
-    lib: str  # bonsai | xgb | lgbm | catboost
-    device: str  # cpu | cuda
+    lib: str  # Lib values
+    device: str  # Device values
     aliases: tuple[str, ...] = ()
 
 
 # Aliases are the spellings older suites committed: grinsztajn's short names
 # and the retired gpu_msd track's *_gpu/*_cpu scheme.
 _TABLE = (
-    Variant("bonsai_depthwise", "bonsai", "cpu", ("bonsai_dw", "bonsai_cpu")),
-    Variant("bonsai_leafwise", "bonsai", "cpu", ("bonsai_lw", "bonsai_leaf_cpu")),
-    Variant("bonsai_oblivious", "bonsai", "cpu", ("bonsai_obl",)),
-    Variant("bonsai_cuda_depthwise", "bonsai", "cuda", ("bonsai_gpu",)),
-    Variant("bonsai_cuda_oblivious", "bonsai", "cuda", ("bonsai_obl_gpu",)),
-    Variant("bonsai_ts_depthwise", "bonsai", "cpu"),
-    Variant("bonsai_ts_oblivious", "bonsai", "cpu"),
-    Variant("bonsai_ts_cuda_depthwise", "bonsai", "cuda"),
-    Variant("bonsai_ts_cuda_oblivious", "bonsai", "cuda"),
-    Variant("xgb_hist", "xgb", "cpu", ("xgb", "xgb_cpu")),
-    Variant("xgb_cuda", "xgb", "cuda", ("xgb_gpu",)),
-    Variant("lgbm_cpu", "lgbm", "cpu", ("lgbm",)),
-    Variant("lgbm_cuda", "lgbm", "cuda"),
-    Variant("catboost_cpu", "catboost", "cpu", ("catboost",)),
-    Variant("catboost_gpu", "catboost", "cuda"),
+    Variant("bonsai_depthwise", Lib.BONSAI, Device.CPU, ("bonsai_dw", "bonsai_cpu")),
+    Variant("bonsai_leafwise", Lib.BONSAI, Device.CPU, ("bonsai_lw", "bonsai_leaf_cpu")),
+    Variant("bonsai_oblivious", Lib.BONSAI, Device.CPU, ("bonsai_obl",)),
+    Variant("bonsai_cuda_depthwise", Lib.BONSAI, Device.CUDA, ("bonsai_gpu",)),
+    Variant("bonsai_cuda_oblivious", Lib.BONSAI, Device.CUDA, ("bonsai_obl_gpu",)),
+    Variant("bonsai_ts_depthwise", Lib.BONSAI, Device.CPU),
+    Variant("bonsai_ts_oblivious", Lib.BONSAI, Device.CPU),
+    Variant("bonsai_ts_cuda_depthwise", Lib.BONSAI, Device.CUDA),
+    Variant("bonsai_ts_cuda_oblivious", Lib.BONSAI, Device.CUDA),
+    Variant("xgb_hist", Lib.XGB, Device.CPU, ("xgb", "xgb_cpu")),
+    Variant("xgb_cuda", Lib.XGB, Device.CUDA, ("xgb_gpu",)),
+    Variant("lgbm_cpu", Lib.LGBM, Device.CPU, ("lgbm",)),
+    Variant("lgbm_cuda", Lib.LGBM, Device.CUDA),
+    Variant("catboost_cpu", Lib.CATBOOST, Device.CPU, ("catboost",)),
+    Variant("catboost_gpu", Lib.CATBOOST, Device.CUDA),
 )
 
 REGISTRY = {v.name: v for v in _TABLE}

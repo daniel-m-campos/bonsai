@@ -35,6 +35,7 @@ import json
 import pathlib
 import subprocess
 import sys
+from typing import Final
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 OUT = REPO / "benchmarks" / "results" / "code-metrics-2026-07.jsonl"
@@ -43,43 +44,54 @@ LIZARD_PIN = "lizard@1.23.0"
 CODE_EXTS = (".hpp", ".cpp", ".cu", ".cuh", ".py")
 SCOPES = ["include", "src", "python", "tests", "scripts", "benchmarks"]
 
+class Planes:
+    """Plane identifiers; a typo here would silently misclassify files."""
+
+    CORE_HEADERS: Final = "core_headers"
+    ENGINE_IMPL: Final = "engine_impl"
+    CUDA_PLANE: Final = "cuda_plane"
+    BINDINGS_CLI: Final = "bindings_cli"
+    BENCH_TOOLING: Final = "bench_tooling"
+    TESTS: Final = "tests"
+
+
 # Adjustments to the prescribed map, forced by the tree (flagged in review):
 # include/bonsai/{detail,io}/ and src/{config,io,registry}/ exist and belong
 # to the core planes; include/bonsai/cli/ pairs with src/cli/; python/tests/
 # holds the binding tests; benchmarks/*.cpp are Catch2 micro-benchmarks.
 PLANE_MAP = {
-    "core_headers": ["include/bonsai/*.hpp", "include/bonsai/config/**",
+    Planes.CORE_HEADERS: ["include/bonsai/*.hpp", "include/bonsai/config/**",
                      "include/bonsai/registry/**", "include/bonsai/detail/**",
                      "include/bonsai/io/**"],
-    "engine_impl": ["src/*.hpp", "src/*.cpp", "src/config/**", "src/io/**",
+    Planes.ENGINE_IMPL: ["src/*.hpp", "src/*.cpp", "src/config/**", "src/io/**",
                     "src/registry/**"],
-    "cuda_plane": ["src/cuda/**", "include/bonsai/cuda/**"],
-    "bindings_cli": ["src/python/**", "src/cli/**", "include/bonsai/cli/**",
+    Planes.CUDA_PLANE: ["src/cuda/**", "include/bonsai/cuda/**"],
+    Planes.BINDINGS_CLI: ["src/python/**", "src/cli/**", "include/bonsai/cli/**",
                      "python/bonsai/** except bench/"],
-    "bench_tooling": ["python/bonsai/bench/**", "scripts/*.py",
+    Planes.BENCH_TOOLING: ["python/bonsai/bench/**", "scripts/*.py",
                       "benchmarks/*.cpp"],
-    "tests": ["tests/**", "python/tests/**"],
+    Planes.TESTS: ["tests/**", "python/tests/**"],
 }
 
 
 def plane_of(path: str) -> str | None:
     """First matching rule wins; order mirrors PLANE_MAP's exceptions."""
     if path.startswith(("src/cuda/", "include/bonsai/cuda/")):
-        return "cuda_plane"
+        return Planes.CUDA_PLANE
     if path.startswith(("src/python/", "src/cli/", "include/bonsai/cli/")):
-        return "bindings_cli"
+        return Planes.BINDINGS_CLI
     if path.startswith("python/bonsai/bench/"):
-        return "bench_tooling"
+        return Planes.BENCH_TOOLING
     if path.startswith("python/bonsai/"):
-        return "bindings_cli"
+        return Planes.BINDINGS_CLI
     if path.startswith(("tests/", "python/tests/")):
-        return "tests"
+        return Planes.TESTS
     if path.startswith("include/bonsai/"):
-        return "core_headers"
+        return Planes.CORE_HEADERS
     if path.startswith("src/"):
-        return "engine_impl"
+        return Planes.ENGINE_IMPL
     if path.startswith(("scripts/", "benchmarks/")) and path.count("/") == 1:
-        return "bench_tooling"
+        return Planes.BENCH_TOOLING
     return None
 
 
@@ -269,7 +281,7 @@ def main() -> int:
             "ccn_max": max(f["ccn"] for f in fns),
         })
 
-    core = {f for n in ("core_headers", "engine_impl") for f in planes[n]}
+    core = {f for n in (Planes.CORE_HEADERS, Planes.ENGINE_IMPL) for f in planes[n]}
     offenders = sorted((f for f in functions if f["file"] in core),
                        key=lambda f: (-f["ccn"], f["file"], f["start"]))
     for rank, f in enumerate(offenders[:5], 1):

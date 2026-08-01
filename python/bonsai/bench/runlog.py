@@ -16,10 +16,31 @@ import pathlib
 import platform
 import subprocess
 import sys
+from typing import Final
 
 SCHEMA_VERSION = 1
 DIVISIONS = ("quality", "perf")
 TIMING_MODES = ("in_memory", "pipeline")
+
+class Row:
+    """Field names shared by the result rows every suite emits."""
+
+    CELL: Final = "cell"
+    VARIANT: Final = "variant"
+    THREADS: Final = "threads"
+    REPEAT: Final = "repeat"
+    RUN: Final = "run"
+    STATUS: Final = "status"
+    MESSAGE: Final = "message"
+    FIT_S: Final = "fit_s"
+    PREDICT_S: Final = "predict_s"
+    R2_TRAIN: Final = "r2_train"
+    R2_TEST: Final = "r2_test"
+    AUC_TEST: Final = "auc_test"
+    PEAK_RSS_GB: Final = "peak_rss_gb"
+    PROFILE: Final = "profile"
+    DEV_MEM: Final = "dev_mem"
+
 
 
 def git_sha() -> str:

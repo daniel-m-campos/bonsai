@@ -30,6 +30,8 @@ import re
 import sys
 import unicodedata
 
+from _render_common import md_table
+
 REPO = pathlib.Path(__file__).resolve().parents[1]
 DOCS = REPO / "docs"
 SRC = DOCS / "learn" / "timeline.json"
@@ -178,13 +180,6 @@ def carried_by(adopters: list[str]) -> str:
 def idea_cell(e: dict) -> str:
     title = f"[{e['title']}]({e['link']})" if e["link"] else e["title"]
     return f"**{title}**: {e['idea']} *({e['attribution']})*"
-
-
-def md_table(headers: list[str], rows: list[list[str]]) -> str:
-    head = "| " + " | ".join(headers) + " |"
-    sep = "|" + "|".join("---" for _ in headers) + "|"
-    body = ["| " + " | ".join(r) + " |" for r in rows]
-    return "\n".join([head, sep, *body])
 
 
 def render() -> str:

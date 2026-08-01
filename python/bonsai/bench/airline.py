@@ -118,12 +118,12 @@ def _encode(size: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
 
 def worker(spec: dict) -> dict:
     X, y, Xte, yte = _encode(spec["size"])
-    lib, device = VARIANTS[spec["variant"]]
+    lib, device = VARIANTS[spec[runlog.Row.VARIANT]]
     run = RUNNERS[lib]
     encode_s = 0.0
     # The shared runners read scaling-shaped cells; the knobs map on directly
     # and task="binary" selects the logloss objective and AUC scoring.
-    if spec["variant"].startswith("bonsai_ts_"):
+    if spec[runlog.Row.VARIANT].startswith("bonsai_ts_"):
         from bonsai.encoding import OrderedTargetEncoder
         t0 = time.perf_counter()
         enc = OrderedTargetEncoder(columns=range(len(CATEGORICAL)),
@@ -133,23 +133,24 @@ def worker(spec: dict) -> dict:
         encode_s = time.perf_counter() - t0
         # run_bonsai reads the grower name off the variant; hand it the
         # plain spelling. The parent's emitted row keeps the ts_ name.
-        spec = dict(spec, variant=spec["variant"].replace("_ts_", "_", 1))
+        spec = dict(spec, variant=spec[runlog.Row.VARIANT].replace("_ts_", "_", 1))
     k = spec["knobs"]
-    child = {"cell": dict(k, bins_effective=k["bins"], task="binary"),
-             "variant": spec["variant"], "threads": spec["threads"]}
-    if device == "cuda":
-        micro = dict(child, cell=dict(child["cell"], iters=5))
+    child = {runlog.Row.CELL: dict(k, bins_effective=k["bins"], task="binary"),
+             runlog.Row.VARIANT: spec[runlog.Row.VARIANT],
+             runlog.Row.THREADS: spec[runlog.Row.THREADS]}
+    if device == vr.Device.CUDA:
+        micro = dict(child, cell=dict(child[runlog.Row.CELL], iters=5))
         run(micro, X[:8192], y[:8192], Xte[:1024], yte[:1024])
     out = run(child, X, y, Xte, yte)
     ru = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    out["peak_rss_gb"] = round(ru / (2**30 if sys.platform == "darwin" else 2**20), 2)
+    out[runlog.Row.PEAK_RSS_GB] = round(ru / (2**30 if sys.platform == "darwin" else 2**20), 2)
     # A pipeline's wall clock includes its preprocessing: encode_s folds into
     # fit_s and is also recorded on its own so the split stays visible.
-    out["fit_s"] = round(out["fit_s"] + encode_s, 3)
+    out[runlog.Row.FIT_S] = round(out[runlog.Row.FIT_S] + encode_s, 3)
     if encode_s:
         out["encode_s"] = round(encode_s, 3)
-    out["predict_s"] = round(out["predict_s"], 3)
-    out["auc_test"] = round(out["auc_test"], 4)
+    out[runlog.Row.PREDICT_S] = round(out[runlog.Row.PREDICT_S], 3)
+    out[runlog.Row.AUC_TEST] = round(out[runlog.Row.AUC_TEST], 4)
     # The child is where the reference library was imported, so only the
     # child can report its version; the parent folds this into host.libs.
     out["libs"] = runlog.lib_versions()
@@ -182,7 +183,7 @@ def main() -> int:
             knobs = dict(KNOBS, depth=args.depth, iters=args.iters)
             encoding = ("ordered_ts" if variant.startswith("bonsai_ts_")
                         else "ordinal")
-            spec = {"size": size, "variant": variant, "threads": args.threads,
+            spec = {"size": size, runlog.Row.VARIANT: variant, runlog.Row.THREADS: args.threads,
                     "knobs": knobs}
             proc = subprocess.run(
                 [sys.executable, "-m", "bonsai.bench.airline", "--worker"],
@@ -206,7 +207,7 @@ def main() -> int:
                             knobs=knobs, host=row_host, timing_mode="in_memory",
                             size=size, variant=variant, encoding=encoding,
                             status="ok", **out)
-            print(f"{size} {variant}: fit {out['fit_s']}s "
+            print(f"{size} {variant}: fit {out[runlog.Row.FIT_S]}s "
                   f"auc {out['auc_test']}", flush=True)
     return 0
 
