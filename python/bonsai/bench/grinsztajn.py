@@ -90,6 +90,12 @@ def fit_predict(variant, Xtr, ytr, Xte, kind):
 
 
 def load_task(task):
+    """(X, y, kind, name) for an OpenML task, floats only.
+
+    Non-numeric columns become category codes. For classification the
+    POSITIVE class is the first pandas category (a fixed convention: AUC is
+    symmetric under label flip only up to 1-x, so every arm must agree).
+    """
     import pandas as pd
     ds = task.get_dataset()
     X, y, _, _ = ds.get_data(target=task.target_name, dataset_format="dataframe")
@@ -104,16 +110,8 @@ def load_task(task):
     return Xn, yn, kind, ds.name
 
 
-def _value(row) -> float | None:
-    """Metric value across schema generations: v1 rows carry `value`, the
-    pre-schema rows carried the number in `metric`."""
-    v = row.get("value")
-    if v is None and not isinstance(row.get("metric"), str):
-        v = row.get("metric")
-    return v
-
-
 def run(out_path):
+    """Sweep every (suite, task, seed, variant); resume by completed keys."""
     import openml
     out = pathlib.Path(out_path)
     done = set()
@@ -161,6 +159,7 @@ def run(out_path):
 
 
 def report(out_path):
+    """Library standings from a results file: mean rank, wins, per suite."""
     import pandas as pd
     rows = [json.loads(x)
             for x in pathlib.Path(out_path).read_text().splitlines()]
@@ -190,7 +189,18 @@ def report(out_path):
           + rk.groupby(["suite"])["dataset"].nunique().to_string())
 
 
+
+
+def _value(row) -> float | None:
+    """Metric value across schema generations: v1 rows carry `value`, the
+    pre-schema rows carried the number in `metric`."""
+    v = row.get("value")
+    if v is None and not isinstance(row.get("metric"), str):
+        v = row.get("metric")
+    return v
+
 def main():
+    """`grinsztajn out.jsonl` runs; `... --report` prints the standings."""
     if "--report" in sys.argv:
         report(sys.argv[1])
     else:

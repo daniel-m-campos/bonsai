@@ -25,24 +25,8 @@ _CELL_DEFAULTS = {**{k: params.SCALING[k]
                   "informative": 20}
 
 
-def _spec_text(name_or_path: str | pathlib.Path) -> str:
-    """A filesystem path wins; a bare name resolves to a bundled spec
-    (bench/specs/<name>.json), so wheel installs run the committed
-    campaigns without a repo checkout."""
-    p = pathlib.Path(name_or_path)
-    if p.exists():
-        return p.read_text()
-    from importlib import resources
-    stem = str(name_or_path).removesuffix(".json")
-    res = resources.files(__package__) / "specs" / f"{stem}.json"
-    if res.is_file():
-        return res.read_text()
-    raise FileNotFoundError(
-        f"no spec file or bundled spec named {str(name_or_path)!r}; "
-        "bundled names: " + ", ".join(bundled_specs()))
-
-
 def bundled_specs() -> list[str]:
+    """Names of the specs shipped inside the wheel (bench/specs/*.json)."""
     from importlib import resources
     d = resources.files(__package__) / "specs"
     return sorted(f.name.removesuffix(".json") for f in d.iterdir()
@@ -50,6 +34,16 @@ def bundled_specs() -> list[str]:
 
 
 def load_spec(path: str | pathlib.Path) -> dict:
+    """Load and validate a spec from a path or bundled name.
+
+    Raises
+    ------
+    ValueError
+        On unknown top-level keys, a missing name/cells/variants, or an
+        unknown variant spelling.
+    FileNotFoundError
+        When neither a file nor a bundled spec matches.
+    """
     spec = json.loads(_spec_text(path))
     unknown = set(spec) - _SPEC_KEYS
     if unknown:
@@ -63,6 +57,7 @@ def load_spec(path: str | pathlib.Path) -> dict:
 
 
 def make_cell(defaults: dict, **over) -> dict:
+    """One fully-defaulted cell dict; raises ValueError without rows/cols."""
     c = {**_CELL_DEFAULTS, **defaults, **over}
     if "rows" not in c or "cols" not in c:
         raise ValueError(f"cell needs rows and cols: {c}")
@@ -91,6 +86,7 @@ _GENERATORS = {"iso_volume": gen_iso_volume}
 
 
 def cells_of(spec: dict) -> list[dict]:
+    """The spec's concrete cells, generator entries expanded in place."""
     defaults = spec.get("defaults", {})
     out = []
     for entry in spec["cells"]:
@@ -99,13 +95,6 @@ def cells_of(spec: dict) -> list[dict]:
         else:
             out.append(make_cell(defaults, **entry))
     return out
-
-
-def _repeats_for(variant: str, policy: dict | int) -> int:
-    if isinstance(policy, int):
-        return policy
-    device = resolve(variant).device
-    return int(policy.get(device, policy.get("default", 1)))
 
 
 def expand(spec: dict, *, variants: list[str] | None = None,
@@ -129,3 +118,28 @@ def expand(spec: dict, *, variants: list[str] | None = None,
                     jobs.append({"cell": c, "variant": variant, "threads": t,
                                  "repeats": _repeats_for(variant, policy)})
     return jobs
+
+
+def _spec_text(name_or_path: str | pathlib.Path) -> str:
+    """A filesystem path wins; a bare name resolves to a bundled spec
+    (bench/specs/<name>.json), so wheel installs run the committed
+    campaigns without a repo checkout."""
+    p = pathlib.Path(name_or_path)
+    if p.exists():
+        return p.read_text()
+    from importlib import resources
+    stem = str(name_or_path).removesuffix(".json")
+    res = resources.files(__package__) / "specs" / f"{stem}.json"
+    if res.is_file():
+        return res.read_text()
+    raise FileNotFoundError(
+        f"no spec file or bundled spec named {str(name_or_path)!r}; "
+        "bundled names: " + ", ".join(bundled_specs()))
+
+
+def _repeats_for(variant: str, policy: dict | int) -> int:
+    """Per-variant repeat count from an int or {device/default: n} policy."""
+    if isinstance(policy, int):
+        return policy
+    device = resolve(variant).device
+    return int(policy.get(device, policy.get("default", 1)))

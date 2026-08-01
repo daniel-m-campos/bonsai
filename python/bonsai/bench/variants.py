@@ -29,6 +29,8 @@ class Device:
 
 @dataclasses.dataclass(frozen=True)
 class Variant:
+    """One benchmark arm: canonical name, library, device, old spellings."""
+
     name: str
     lib: str  # Lib values
     device: str  # Device values
@@ -78,4 +80,5 @@ def resolve(name: str) -> Variant:
 
 
 def names(device: str | None = None) -> list[str]:
+    """Canonical variant names, optionally filtered by device."""
     return [v.name for v in _TABLE if device in (None, v.device)]

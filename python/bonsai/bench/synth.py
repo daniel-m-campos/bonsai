@@ -25,9 +25,20 @@ import numpy as np
 
 
 def gen_data(rows: int, cols: int, seed: int, n_test: int, informative: int):
-    """Generalized Friedman-1: k informative features in blocks of 5, decaying
-    block weights, noise sized for a best-achievable R^2 of ~0.9. Deterministic
-    in (rows, cols, seed) only, so bins/threads sweeps reuse identical data."""
+    """Generalized Friedman-1 regression data, byte-stable by contract.
+
+    k informative features in blocks of 5, decaying block weights, noise
+    sized for a best-achievable R^2 of ~0.9. Deterministic in (rows, cols,
+    seed) only, so bins/threads sweeps reuse identical data. The exact
+    operation order is pinned by golden hashes in test_bench.py: any change
+    here severs comparability with every committed perf row.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+        (X_train, y_train, X_test, y_test); X float32 row-major in [0, 1),
+        train is the first `rows` rows, test the next `n_test`.
+    """
     rng = np.random.default_rng(np.random.SeedSequence([seed, rows, cols]))
     n = rows + n_test
     X = rng.random((n, cols), dtype=np.float32)

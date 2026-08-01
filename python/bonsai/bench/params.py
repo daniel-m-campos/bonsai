@@ -60,6 +60,11 @@ def bonsai_core(*, learning_rate, max_depth, num_leaves, min_data_in_leaf,
 
 def xgb_core(*, learning_rate, max_depth, min_data_in_leaf, lambda_l2, max_bin,
              seed) -> dict:
+    """xgboost params matched to the shared knob names.
+
+    min_data_in_leaf maps to min_child_weight (the decision-68 correction:
+    leaving it at xgboost's default 1 produced a false conclusion once).
+    """
     return {
         "learning_rate": learning_rate,
         "max_depth": max_depth,
@@ -73,6 +78,7 @@ def xgb_core(*, learning_rate, max_depth, min_data_in_leaf, lambda_l2, max_bin,
 
 def lgbm_core(*, learning_rate, max_depth, num_leaves, min_data_in_leaf,
               lambda_l2, max_bin, seed) -> dict:
+    """lightgbm params matched to the shared knob names, silenced logs."""
     return {
         "learning_rate": learning_rate,
         "max_depth": max_depth,
@@ -87,11 +93,14 @@ def lgbm_core(*, learning_rate, max_depth, num_leaves, min_data_in_leaf,
 
 def catboost_core(*, learning_rate, max_depth, lambda_l2, max_bin, seed,
                   device) -> dict:
-    # max_bin arrives in BIN semantics (what bonsai/xgboost/lightgbm count);
-    # CatBoost's border_count counts SPLITS, so bins - 1. The fencepost lives
-    # here, once, because per-call-site translation drifted three ways across
-    # harnesses (2026-07-30 fairness review). GPU caps border_count at 254
-    # (= 255 bins, matching the campaign/scale default exactly).
+    """catboost params matched to the shared knob names.
+
+    max_bin arrives in BIN semantics (what bonsai/xgboost/lightgbm count);
+    CatBoost's border_count counts SPLITS, so bins - 1. The fencepost lives
+    here, once, because per-call-site translation drifted three ways across
+    harnesses (2026-07-30 fairness review). GPU caps border_count at 254
+    (= 255 bins, matching the campaign/scale default exactly).
+    """
     borders = max_bin - 1
     return {
         "learning_rate": learning_rate,

@@ -9,6 +9,7 @@ optional run label, so ad-hoc campaigns stop inventing schemas.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import os
 import pathlib
@@ -27,8 +28,19 @@ GPU_MAX_COLS = 16_384
 
 PROFILE_RE = re.compile(r"(\w+)=([\d.]+)s")
 
+# Backtrace frames and the exit-time profiler lines print AFTER the actual
+# exception, so the last stderr line is usually noise; the campaign's first
+# OOM was classified "error" with a bare "[bt] (8) ..." message because of it.
+_NOISE_RE = re.compile(r"^\s*(\[bt\]|Stack trace|cuda-profile:|grow-profile:|"
+                       r"ingest-profile:|fit-profile:|cuda-upload-decomp:)")
+
+_GATE_KEYS = {"mem_gate", "gpu_max_cols"}
+
+
+# Public Functions =================================================================================
 
 def parse_profiles(stderr: str) -> dict:
+    """The exit-time profiler lines as one flat {bucket_key: seconds} dict."""
     prof = {}
     for line in stderr.splitlines():
         if line.startswith(("cuda-profile:", "grow-profile:", "ingest-profile:",
@@ -40,11 +52,13 @@ def parse_profiles(stderr: str) -> dict:
 
 
 def est_host_gb(rows: int, cols: int, n_test: int, lib: str) -> float:
+    """Rough peak host memory for a cell (float32 data x library factor)."""
     factor = 4.0 if lib == Lib.CATBOOST else 3.0
     return (rows + n_test) * cols * 6 * factor / 2**30
 
 
 def est_dev_gb(rows: int, cols: int) -> float:
+    """Rough peak device memory: binned matrix + row state + context."""
     return (rows * cols * 2 + rows * 8 + 512 * 2**20) / 2**30
 
 
@@ -60,6 +74,7 @@ def timeout_for(cell: dict) -> int:
 
 
 def classify_error(message: str) -> str:
+    """oom / unsupported / error, from keywords anywhere in the text."""
     low = message.lower()
     if any(s in low for s in ("out of memory", "memoryerror", "bad_alloc",
                               "cannot allocate", "oom",
@@ -71,49 +86,11 @@ def classify_error(message: str) -> str:
     return "error"
 
 
-# Backtrace frames and the exit-time profiler lines print AFTER the actual
-# exception, so the last stderr line is usually noise; the campaign's first
-# OOM was classified "error" with a bare "[bt] (8) ..." message because of it.
-_NOISE_RE = re.compile(r"^\s*(\[bt\]|Stack trace|cuda-profile:|grow-profile:|"
-                       r"ingest-profile:|fit-profile:|cuda-upload-decomp:)")
-
-
 def error_message(stderr: str) -> str:
+    """The last non-noise stderr line, truncated for the row."""
     lines = [ln for ln in stderr.strip().splitlines()
              if ln.strip() and not _NOISE_RE.match(ln)]
     return (lines[-1] if lines else "no output")[:300]
-
-
-def _device_index() -> int:
-    """The first entry of CUDA_VISIBLE_DEVICES is the device the worker child
-    will use; defaulting to 0 on a multi-GPU host would attribute another
-    tenant's memory to this run."""
-    first = os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0].strip()
-    return int(first) if first.isdigit() else 0
-
-
-def _smi_query(pid: int):
-    dev = ["-i", str(_device_index())]
-    try:
-        apps = subprocess.run(
-            ["nvidia-smi", *dev, "--query-compute-apps=pid,used_memory",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5)
-        total = subprocess.run(
-            ["nvidia-smi", *dev, "--query-gpu=memory.used",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if apps.returncode != 0 or total.returncode != 0:
-        return None
-    pid_mb = None
-    for line in apps.stdout.splitlines():
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) == 2 and parts[0] == str(pid) and parts[1].isdigit():
-            pid_mb = (pid_mb or 0) + int(parts[1])
-    head = total.stdout.splitlines()[0].strip() if total.stdout.strip() else ""
-    return pid_mb, (int(head) if head.isdigit() else None)
 
 
 class DeviceMemSampler:
@@ -139,6 +116,33 @@ class DeviceMemSampler:
         self._failed = False
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
+    def __repr__(self) -> str:
+        return (f"DeviceMemSampler(pid={self.pid}, source={self.source!r}, "
+                f"samples={self._samples})")
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        self._thread.join(timeout=5)
+
+    def result(self) -> dict | None:
+        """The dev_mem row block, or None when nothing was sampled."""
+        if not self._samples:
+            return None
+        gb = 1024.0
+        out = {"peak_gb_pid": (round(self._peak_pid / gb, 2)
+                               if self._peak_pid is not None else None),
+               "peak_gb_total": (round(self._peak_total / gb, 2)
+                                 if self._peak_total is not None else None),
+               "samples": self._samples, "interval_s": self.interval_s,
+               "source": self.source}
+        if self._failed:
+            out["stopped_early"] = True
+        return out
+
     def _loop(self):
         while not self._stop.is_set():
             # A query failure (driver reset, MIG event) must not kill the
@@ -157,31 +161,14 @@ class DeviceMemSampler:
                 self._samples += 1
             self._stop.wait(self.interval_s)
 
-    def __enter__(self):
-        self._thread.start()
-        return self
-
-    def __exit__(self, *exc):
-        self._stop.set()
-        self._thread.join(timeout=5)
-
-    def result(self) -> dict | None:
-        if not self._samples:
-            return None
-        gb = 1024.0
-        out = {"peak_gb_pid": (round(self._peak_pid / gb, 2)
-                               if self._peak_pid is not None else None),
-               "peak_gb_total": (round(self._peak_total / gb, 2)
-                                 if self._peak_total is not None else None),
-               "samples": self._samples, "interval_s": self.interval_s,
-               "source": self.source}
-        if self._failed:
-            out["stopped_early"] = True
-        return out
-
 
 def run_one(spec: dict, timeout: int, sampler: bool = False,
             data_cache: str | None = None) -> dict:
+    """One worker child, one cell: the payload dict for the row.
+
+    Timeouts, signals, and nonzero exits come back as status rows
+    (timeout/oom/unsupported/error) instead of exceptions.
+    """
     env = dict(os.environ)
     if resolve(spec[runlog.Row.VARIANT]).lib == Lib.BONSAI:
         env.update(BONSAI_GROW_PROFILE="1", BONSAI_INGEST_PROFILE="1",
@@ -253,18 +240,8 @@ def resume_keys(path: str | pathlib.Path) -> set[tuple]:
     return done
 
 
-def _job_key(job: dict, repeat: int, host_name: str | None,
-             run_label: str | None) -> tuple:
-    c = job[runlog.Row.CELL]
-    return (job[runlog.Row.VARIANT], job[runlog.Row.THREADS], repeat, c["rows"], c["cols"],
-            c["bins"], c.get("depth"), c.get("iters"), c.get("seed"),
-            host_name, run_label)
-
-
-_GATE_KEYS = {"mem_gate", "gpu_max_cols"}
-
-
 def skip_reason(job: dict, host: dict, gates: dict) -> tuple[str, str] | None:
+    """(status, message) when a job must not run on this host, else None."""
     cell, variant, threads = job[runlog.Row.CELL], job[runlog.Row.VARIANT], job[runlog.Row.THREADS]
     v = resolve(variant)
     gpu_max_cols = gates.get("gpu_max_cols", GPU_MAX_COLS)
@@ -285,7 +262,7 @@ def skip_reason(job: dict, host: dict, gates: dict) -> tuple[str, str] | None:
         if est > 0.8 * host["ram_gb"]:
             return ("skipped", f"est {est:.1f}"
                                f"GB > 0.8x{host['ram_gb']}GB RAM")
-    if cell.get("axis") == runlog.Row.THREADS and threads > (host["n_vcpu"] or 1):
+    if cell.get("axis") == "threads" and threads > (host["n_vcpu"] or 1):
         return ("skipped", f"threads {threads} > {host['n_vcpu']} vcpus")
     return None
 
@@ -295,6 +272,7 @@ def run_jobs(jobs: list[dict], *, out: str, suite: str, knobs: dict,
              resume_path: str | None = None, timeout_cap: int = 3600,
              gates: dict | None = None, mem_sampler: bool = True,
              data_cache: str | None = None) -> int:
+    """Run (or dry-plan) a job list, one row per attempt, resume-aware."""
     gates = gates or {}
     unknown_gates = set(gates) - _GATE_KEYS
     if unknown_gates:
@@ -303,29 +281,9 @@ def run_jobs(jobs: list[dict], *, out: str, suite: str, knobs: dict,
     out_path = pathlib.Path(out)
     if not dry_run:
         out_path.parent.mkdir(parents=True, exist_ok=True)
-    host_name = host.get("name")
-
-    def emit(cell, variant, threads, repeat, payload):
-        payload = dict(payload)
-        # The worker reports the versions it imported; fold into host.libs.
-        libs = payload.pop("libs", None)
-        row_host = (dict(host, libs={**host.get("libs", {}), **libs})
-                    if libs else host)
-        payload.setdefault(runlog.Row.PROFILE, None)
-        extra = {runlog.Row.RUN: run_label} if run_label else {}
-        runlog.emit_row(out_path, division="perf", suite=suite, knobs=knobs,
-                        host=row_host, timing_mode="in_memory",
-                        dataset="synthetic-friedman1", task="reg", cell=cell,
-                        variant=variant, threads=threads, repeat=repeat,
-                        **extra, **payload)
-        print(f"  {variant:>24} t={threads:<3} rows={cell['rows']:>8} "
-              f"cols={cell['cols']:>5} bins={cell['bins']:>5} "
-              f"-> {payload[runlog.Row.STATUS]}"
-              + (f" fit={payload[runlog.Row.FIT_S]}s r2={payload[runlog.Row.R2_TEST]}"
-                 if payload[runlog.Row.STATUS] == "ok" else f" ({payload[runlog.Row.MESSAGE]})"))
-
+    sink = _Sink(out_path=out_path, suite=suite, knobs=knobs, host=host,
+                 run_label=run_label)
     done = resume_keys(resume_path) if resume_path else set()
-
     warmed: set[str] = set()
     for job in jobs:
         cell, variant, threads = (job[runlog.Row.CELL], job[runlog.Row.VARIANT],
@@ -337,42 +295,143 @@ def run_jobs(jobs: list[dict], *, out: str, suite: str, knobs: dict,
             cell = dict(cell, bins_effective=255)
         skip = skip_reason(job, host, gates)
         if skip:
-            if not dry_run and _job_key(job, 0, host_name, run_label) not in done:
-                emit(cell, variant, threads, 0,
-                     {runlog.Row.STATUS: skip[0], runlog.Row.MESSAGE: skip[1]})
-            else:
-                print(f"  {variant:>24} {cell['rows']}x{cell['cols']}x"
-                      f"{cell['bins']} -> {skip[0]}: {skip[1]}")
+            _handle_skip(sink, job, cell, skip, dry_run=dry_run, done=done)
             continue
         cell_timeout = cell.get("timeout_s")
         timeout = min(cell_timeout if cell_timeout is not None
                       else timeout_for(cell), timeout_cap)
         if dry_run:
-            already = sum(1 for rep in range(job["repeats"])
-                          if _job_key(job, rep, host_name, run_label) in done)
-            print(f"  {variant:>24} t={threads:<3} {cell['rows']}x"
-                  f"{cell['cols']}x{cell['bins']} timeout={timeout}s "
-                  f"repeats={job['repeats']}"
-                  + (f" resume-skip={already}/{job['repeats']}"
-                     if already else ""))
+            _print_dry_plan(sink, job, cell, timeout, done)
             continue
         if v.device == Device.CUDA and v.lib not in warmed:
-            warm_cell = {"axis": "warmup", "rows": 32_768, "cols": 16,
-                         "bins": 63, "bins_effective": 63,
-                         "depth": cell["depth"], "iters": 5, "lr": cell["lr"],
-                         "informative": cell["informative"], "n_test": 1024,
-                         "seed": cell["seed"]}
-            run_one({runlog.Row.CELL: warm_cell, runlog.Row.VARIANT: variant,
-                     runlog.Row.THREADS: 4}, timeout=600, data_cache=data_cache)
+            _warm_gpu(cell, variant, data_cache)
             warmed.add(v.lib)
         sample = mem_sampler and v.device == Device.CUDA
         for rep in range(job["repeats"]):
-            if _job_key(job, rep, host_name, run_label) in done:
+            if _job_key(job, rep, sink.host_name, run_label) in done:
                 print(f"  {variant:>24} t={threads:<3} {cell['rows']}x"
                       f"{cell['cols']}x{cell['bins']} rep={rep} -> resume-skip")
                 continue
             child = {runlog.Row.CELL: cell, runlog.Row.VARIANT: variant,
                      runlog.Row.THREADS: threads}
-            emit(cell, variant, threads, rep,
-                 run_one(child, timeout, sampler=sample, data_cache=data_cache))
+            sink.emit(cell, variant, threads, rep,
+                      run_one(child, timeout, sampler=sample,
+                              data_cache=data_cache))
     return 0
+
+
+# Private Helpers ==================================================================================
+
+def _device_index() -> int:
+    """The first entry of CUDA_VISIBLE_DEVICES is the device the worker child
+    will use; defaulting to 0 on a multi-GPU host would attribute another
+    tenant's memory to this run."""
+    first = os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0].strip()
+    return int(first) if first.isdigit() else 0
+
+
+def _smi_query(pid: int):
+    """(pid_mb, total_mb) from nvidia-smi, or None when the query fails."""
+    dev = ["-i", str(_device_index())]
+    try:
+        apps = subprocess.run(
+            ["nvidia-smi", *dev, "--query-compute-apps=pid,used_memory",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5)
+        total = subprocess.run(
+            ["nvidia-smi", *dev, "--query-gpu=memory.used",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if apps.returncode != 0 or total.returncode != 0:
+        return None
+    pid_mb = None
+    for line in apps.stdout.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) == 2 and parts[0] == str(pid) and parts[1].isdigit():
+            pid_mb = (pid_mb or 0) + int(parts[1])
+    head = total.stdout.splitlines()[0].strip() if total.stdout.strip() else ""
+    return pid_mb, (int(head) if head.isdigit() else None)
+
+
+def _job_key(job: dict, repeat: int, host_name: str | None,
+             run_label: str | None) -> tuple:
+    """The resume identity of one attempt; must mirror resume_keys()."""
+    c = job[runlog.Row.CELL]
+    return (job[runlog.Row.VARIANT], job[runlog.Row.THREADS], repeat, c["rows"], c["cols"],
+            c["bins"], c.get("depth"), c.get("iters"), c.get("seed"),
+            host_name, run_label)
+
+
+@dataclasses.dataclass(frozen=True)
+class _Sink:
+    """Where run_jobs writes rows and how it labels them."""
+
+    out_path: pathlib.Path
+    suite: str
+    knobs: dict
+    host: dict
+    run_label: str | None
+
+    @property
+    def host_name(self) -> str | None:
+        return self.host.get("name")
+
+    def emit(self, cell: dict, variant: str, threads: int, repeat: int,
+             payload: dict):
+        """One row to the jsonl plus the one-line progress print."""
+        payload = dict(payload)
+        # The worker reports the versions it imported; fold into host.libs.
+        libs = payload.pop("libs", None)
+        row_host = (dict(self.host, libs={**self.host.get("libs", {}), **libs})
+                    if libs else self.host)
+        payload.setdefault(runlog.Row.PROFILE, None)
+        extra = {runlog.Row.RUN: self.run_label} if self.run_label else {}
+        runlog.emit_row(self.out_path, division="perf", suite=self.suite,
+                        knobs=self.knobs, host=row_host,
+                        timing_mode="in_memory",
+                        dataset="synthetic-friedman1", task="reg", cell=cell,
+                        variant=variant, threads=threads, repeat=repeat,
+                        **extra, **payload)
+        print(f"  {variant:>24} t={threads:<3} rows={cell['rows']:>8} "
+              f"cols={cell['cols']:>5} bins={cell['bins']:>5} "
+              f"-> {payload[runlog.Row.STATUS]}"
+              + (f" fit={payload[runlog.Row.FIT_S]}s r2={payload[runlog.Row.R2_TEST]}"
+                 if payload[runlog.Row.STATUS] == "ok" else f" ({payload[runlog.Row.MESSAGE]})"))
+
+
+def _handle_skip(sink: _Sink, job: dict, cell: dict, skip: tuple[str, str], *,
+                 dry_run: bool, done: set[tuple]):
+    """Record a gated job: a status row normally, a print when dry/duplicate."""
+    variant, threads = job[runlog.Row.VARIANT], job[runlog.Row.THREADS]
+    key = _job_key(job, 0, sink.host_name, sink.run_label)
+    if not dry_run and key not in done:
+        sink.emit(cell, variant, threads, 0,
+                  {runlog.Row.STATUS: skip[0], runlog.Row.MESSAGE: skip[1]})
+        return
+    print(f"  {variant:>24} {cell['rows']}x{cell['cols']}x"
+          f"{cell['bins']} -> {skip[0]}: {skip[1]}")
+
+
+def _print_dry_plan(sink: _Sink, job: dict, cell: dict, timeout: int,
+                    done: set[tuple]):
+    """The dry-run line for one job, with its resume-skip count."""
+    variant, threads = job[runlog.Row.VARIANT], job[runlog.Row.THREADS]
+    already = sum(1 for rep in range(job["repeats"])
+                  if _job_key(job, rep, sink.host_name, sink.run_label) in done)
+    print(f"  {variant:>24} t={threads:<3} {cell['rows']}x"
+          f"{cell['cols']}x{cell['bins']} timeout={timeout}s "
+          f"repeats={job['repeats']}"
+          + (f" resume-skip={already}/{job['repeats']}" if already else ""))
+
+
+def _warm_gpu(cell: dict, variant: str, data_cache: str | None):
+    """One tiny unrecorded fit so CUDA context/JIT cost stays out of rep 0."""
+    warm_cell = {"axis": "warmup", "rows": 32_768, "cols": 16,
+                 "bins": 63, "bins_effective": 63,
+                 "depth": cell["depth"], "iters": 5, "lr": cell["lr"],
+                 "informative": cell["informative"], "n_test": 1024,
+                 "seed": cell["seed"]}
+    run_one({runlog.Row.CELL: warm_cell, runlog.Row.VARIANT: variant,
+             runlog.Row.THREADS: 4}, timeout=600, data_cache=data_cache)

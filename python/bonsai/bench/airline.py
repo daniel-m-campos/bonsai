@@ -69,6 +69,7 @@ VARIANTS = {n: (vr.resolve(n).lib, vr.resolve(n).device) for n in vr.AIRLINE}
 
 
 def fetch(size: str) -> tuple[pathlib.Path, pathlib.Path]:
+    """(train_csv, test_csv) for a size, downloading from S3 once."""
     root = data_root()
     root.mkdir(parents=True, exist_ok=True)
     out = []
@@ -117,6 +118,12 @@ def _encode(size: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
 
 
 def worker(spec: dict) -> dict:
+    """Child-process entry: encode, dispatch the shared runner, add AUC.
+
+    bonsai_ts_* arms apply the ordered target encoder first; its cost folds
+    into fit_s (a pipeline's wall clock includes its preprocessing) and is
+    also recorded as encode_s so the split stays visible.
+    """
     X, y, Xte, yte = _encode(spec["size"])
     lib, device = VARIANTS[spec[runlog.Row.VARIANT]]
     run = RUNNERS[lib]
@@ -158,6 +165,7 @@ def worker(spec: dict) -> dict:
 
 
 def main() -> int:
+    """Parent loop: one worker child per (size, variant), rows to jsonl."""
     ap = argparse.ArgumentParser()
     ap.add_argument("out", nargs="?", default="airline.jsonl")
     ap.add_argument("--sizes", default="0.1m")
@@ -181,35 +189,41 @@ def main() -> int:
         _encode(size)  # fetch + parse once in the parent; workers hit the cache
         for variant in variants:
             knobs = dict(KNOBS, depth=args.depth, iters=args.iters)
-            encoding = ("ordered_ts" if variant.startswith("bonsai_ts_")
-                        else "ordinal")
-            spec = {"size": size, runlog.Row.VARIANT: variant, runlog.Row.THREADS: args.threads,
-                    "knobs": knobs}
-            proc = subprocess.run(
-                [sys.executable, "-m", "bonsai.bench.airline", "--worker"],
-                input=json.dumps(spec), capture_output=True, text=True,
-                timeout=3600)
-            line = next((ln for ln in proc.stdout.splitlines()
-                         if ln.startswith("RESULT ")), None)
-            if line is None:
-                status = "unsupported" if "unsupported" in proc.stderr else "error"
-                runlog.emit_row(args.out, division="perf", suite="airline",
-                                knobs=knobs, host=host, timing_mode="in_memory",
-                                size=size, variant=variant, encoding=encoding,
-                                status=status, error=proc.stderr.strip()[-400:])
-                print(f"{size} {variant}: {status}", flush=True)
-                continue
-            out = json.loads(line.removeprefix("RESULT "))
-            libs = out.pop("libs", None)
-            row_host = (dict(host, libs={**host.get("libs", {}), **libs})
-                        if libs else host)
-            runlog.emit_row(args.out, division="perf", suite="airline",
-                            knobs=knobs, host=row_host, timing_mode="in_memory",
-                            size=size, variant=variant, encoding=encoding,
-                            status="ok", **out)
-            print(f"{size} {variant}: fit {out[runlog.Row.FIT_S]}s "
-                  f"auc {out['auc_test']}", flush=True)
+            _run_variant(args.out, host, size, variant, knobs, args.threads)
     return 0
+
+
+def _run_variant(out_path: str, host: dict, size: str, variant: str,
+                 knobs: dict, threads: int):
+    """One worker child for one (size, variant); emit its row, ok or not."""
+    encoding = ("ordered_ts" if variant.startswith("bonsai_ts_")
+                else "ordinal")
+    spec = {"size": size, runlog.Row.VARIANT: variant,
+            runlog.Row.THREADS: threads, "knobs": knobs}
+    proc = subprocess.run(
+        [sys.executable, "-m", "bonsai.bench.airline", "--worker"],
+        input=json.dumps(spec), capture_output=True, text=True,
+        timeout=3600)
+    line = next((ln for ln in proc.stdout.splitlines()
+                 if ln.startswith("RESULT ")), None)
+    if line is None:
+        status = "unsupported" if "unsupported" in proc.stderr else "error"
+        runlog.emit_row(out_path, division="perf", suite="airline",
+                        knobs=knobs, host=host, timing_mode="in_memory",
+                        size=size, variant=variant, encoding=encoding,
+                        status=status, error=proc.stderr.strip()[-400:])
+        print(f"{size} {variant}: {status}", flush=True)
+        return
+    out = json.loads(line.removeprefix("RESULT "))
+    libs = out.pop("libs", None)
+    row_host = (dict(host, libs={**host.get("libs", {}), **libs})
+                if libs else host)
+    runlog.emit_row(out_path, division="perf", suite="airline",
+                    knobs=knobs, host=row_host, timing_mode="in_memory",
+                    size=size, variant=variant, encoding=encoding,
+                    status="ok", **out)
+    print(f"{size} {variant}: fit {out[runlog.Row.FIT_S]}s "
+          f"auc {out[runlog.Row.AUC_TEST]}", flush=True)
 
 
 if __name__ == "__main__":

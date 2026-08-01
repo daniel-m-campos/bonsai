@@ -24,51 +24,76 @@ from bonsai.bench import variants as vr
 from bonsai.bench.driver import run_jobs
 
 
-def _default_out(spec: dict) -> str:
-    repo = runlog.repo_root()
-    name = f"{spec['name']}.jsonl"
-    if repo is not None:
-        return str(repo / "benchmarks" / "results" / name)
-    return name
+def main(argv: list[str] | None = None) -> int:
+    """Parse the subcommand and dispatch; `plan` is `run` with dry_run."""
+    ap = argparse.ArgumentParser(prog="bonsai.bench")
+    sub = ap.add_subparsers(dest="command", required=True)
+    _add_run_flags(sub.add_parser("run", help="execute a spec or legacy grid"))
+    _add_run_flags(sub.add_parser("plan", help="print the expansion, run nothing"))
+    pv = sub.add_parser("variants", help="print the variant registry")
+    pv.add_argument("--device", choices=(vr.Device.CPU, vr.Device.CUDA), default=None)
+    sub.add_parser("specs", help="list the bundled campaign specs")
+    sub.add_parser("worker", help="internal: job JSON on stdin, RESULT on stdout")
+    args = ap.parse_args(argv)
+
+    if args.command == "worker":
+        return _worker()
+    if args.command == "variants":
+        return _variants(args)
+    if args.command == "specs":
+        return _specs()
+    if args.command == "plan":
+        args.dry_run = True
+    if args.timeout_cap is None and args.spec is None:
+        args.timeout_cap = 3600
+    return _run(args)
 
 
 def _run(args) -> int:
+    """Validate the run/plan flags and dispatch to spec or legacy mode."""
     if args.spec is None and args.axis is None and not args.smoke:
         raise SystemExit("run needs --spec, --axis, or --smoke")
     if args.spec is not None and (args.axis is not None or args.smoke):
         raise SystemExit("--spec and --axis/--smoke are mutually exclusive")
     variants = args.variants.split(",") if args.variants else None
-
     if args.spec is None:
-        # Legacy scaling sugar: same grid, knobs, and output file as
-        # python -m bonsai.bench.scaling; resume stays opt-in there.
-        from bonsai.bench import scaling
-        axes = (list(scaling.AXES)
-                if args.axis in (None, "all")
-                else [a.strip() for a in args.axis.split(",")])
-        unknown_axes = set(axes) - set(scaling.AXES)
-        if unknown_axes:
-            raise SystemExit(f"unknown axes: {sorted(unknown_axes)}")
-        for v in variants or []:
-            if v not in scaling.VARIANTS:
-                raise SystemExit(f"unknown scaling variant {v}")
-        grid = scaling.build_grid(axes, args.smoke)
-        repeats = args.repeats if args.repeats is not None else 1
-        jobs = [{"cell": dict(cell), "variant": v, "threads": t,
-                 "repeats": (max(repeats, 3)
-                             if cell["axis"] == "base" and not args.smoke
-                             else repeats)}
-                for cell, t in grid
-                for v in (variants or list(scaling.VARIANTS))]
-        host = runlog.detect_host(args.host_name)
-        knobs = dict(rp.SCALING, num_leaves_convention="full")
-        return run_jobs(jobs, out=args.out or str(scaling.RESULTS),
-                        suite="scaling", knobs=knobs, host=host,
-                        run_label=args.run_label, dry_run=args.dry_run,
-                        resume_path=args.resume, timeout_cap=args.timeout_cap,
-                        gates={}, mem_sampler=not args.no_mem_sampler,
-                        data_cache=args.data_cache)
+        return _run_legacy_scaling(args, variants)
+    return _run_spec(args, variants)
 
+
+def _run_legacy_scaling(args, variants: list[str] | None) -> int:
+    """Legacy scaling sugar: same grid, knobs, and output file as
+    python -m bonsai.bench.scaling; resume stays opt-in there."""
+    from bonsai.bench import scaling
+    axes = (list(scaling.AXES)
+            if args.axis in (None, "all")
+            else [a.strip() for a in args.axis.split(",")])
+    unknown_axes = set(axes) - set(scaling.AXES)
+    if unknown_axes:
+        raise SystemExit(f"unknown axes: {sorted(unknown_axes)}")
+    for v in variants or []:
+        if v not in scaling.VARIANTS:
+            raise SystemExit(f"unknown scaling variant {v}")
+    grid = scaling.build_grid(axes, args.smoke)
+    repeats = args.repeats if args.repeats is not None else 1
+    jobs = [{"cell": dict(cell), "variant": v, "threads": t,
+             "repeats": (max(repeats, 3)
+                         if cell["axis"] == "base" and not args.smoke
+                         else repeats)}
+            for cell, t in grid
+            for v in (variants or list(scaling.VARIANTS))]
+    host = runlog.detect_host(args.host_name)
+    knobs = dict(rp.SCALING, num_leaves_convention="full")
+    return run_jobs(jobs, out=args.out or str(scaling.RESULTS),
+                    suite="scaling", knobs=knobs, host=host,
+                    run_label=args.run_label, dry_run=args.dry_run,
+                    resume_path=args.resume, timeout_cap=args.timeout_cap,
+                    gates={}, mem_sampler=not args.no_mem_sampler,
+                    data_cache=args.data_cache)
+
+
+def _run_spec(args, variants: list[str] | None) -> int:
+    """Spec mode: expand, resume against the output file by default, run."""
     spec = spec_mod.load_spec(args.spec)
     jobs = spec_mod.expand(spec, variants=variants, repeats=args.repeats)
     out = args.out or _default_out(spec)
@@ -87,6 +112,15 @@ def _run(args) -> int:
                     gates=spec.get("gates", {}),
                     mem_sampler=not args.no_mem_sampler,
                     data_cache=args.data_cache)
+
+
+def _default_out(spec: dict) -> str:
+    """benchmarks/results/<name>.jsonl in a checkout, else the bare name."""
+    repo = runlog.repo_root()
+    name = f"{spec['name']}.jsonl"
+    if repo is not None:
+        return str(repo / "benchmarks" / "results" / name)
+    return name
 
 
 def _specs() -> int:
@@ -113,7 +147,7 @@ def _worker() -> int:
     return 0
 
 
-def _add_run_flags(p: argparse.ArgumentParser) -> None:
+def _add_run_flags(p: argparse.ArgumentParser):
     p.add_argument("--spec", default=None,
                    help="JSON spec file, or a bundled name (see `specs`)")
     p.add_argument("--axis", default=None,
@@ -134,30 +168,6 @@ def _add_run_flags(p: argparse.ArgumentParser) -> None:
                    help="disable the device-memory sampler")
     p.add_argument("--data-cache", default=None,
                    help="directory for memoized gen_data arrays (pods: /dev/shm)")
-
-
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="bonsai.bench")
-    sub = ap.add_subparsers(dest="command", required=True)
-    _add_run_flags(sub.add_parser("run", help="execute a spec or legacy grid"))
-    _add_run_flags(sub.add_parser("plan", help="print the expansion, run nothing"))
-    pv = sub.add_parser("variants", help="print the variant registry")
-    pv.add_argument("--device", choices=(vr.Device.CPU, vr.Device.CUDA), default=None)
-    sub.add_parser("specs", help="list the bundled campaign specs")
-    sub.add_parser("worker", help="internal: job JSON on stdin, RESULT on stdout")
-    args = ap.parse_args(argv)
-
-    if args.command == "worker":
-        return _worker()
-    if args.command == "variants":
-        return _variants(args)
-    if args.command == "specs":
-        return _specs()
-    if args.command == "plan":
-        args.dry_run = True
-    if args.timeout_cap is None and args.spec is None:
-        args.timeout_cap = 3600
-    return _run(args)
 
 
 if __name__ == "__main__":
