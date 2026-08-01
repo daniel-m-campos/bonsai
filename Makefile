@@ -124,11 +124,7 @@ python: build/build.ninja  ## Build the _bonsai Python extension into build/pyth
 	@echo "module at build/python/bonsai — use PYTHONPATH=build/python"
 
 python-test: python $(TOY_SENTINEL) $(AMAZON_SENTINEL)  ## Build the extension and run the Python test suites.
-	@PYTHONPATH=build/python $(PYTHON) python/tests/test_bindings.py
-	@PYTHONPATH=build/python $(PYTHON) python/tests/test_encoding.py
-	@PYTHONPATH=build/python $(PYTHON) python/tests/test_doc_snippets.py
-	@PYTHONPATH=build/python $(PYTHON) python/tests/test_bench.py
-	@PYTHONPATH=build/python $(PYTHON) python/tests/test_xgb_compat.py
+	@PYTHONPATH=build/python $(PYTHON) -m pytest python/tests -q
 
 # CUDA-enabled extension in the CUDA tree; cuda_* growers can train.
 python-cuda: build-cuda/build.ninja  ## Build the CUDA-enabled Python extension into build-cuda/python/.

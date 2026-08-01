@@ -16,7 +16,7 @@ import tempfile
 
 import numpy as np
 
-REPO = pathlib.Path(__file__).resolve().parents[2]
+REPO = pathlib.Path(__file__).resolve().parents[3]
 DOCS = [REPO / "README.md", *sorted((REPO / "docs" / "use").glob("*.md"))]
 FENCE = re.compile(r"```python\n(.*?)```", re.DOTALL)
 
@@ -70,7 +70,3 @@ def test_doc_python_snippets():
             total += 1
     print(f"doc snippets: {total} python fences executed across {len(DOCS)} files")
 
-
-if __name__ == "__main__":
-    test_doc_python_snippets()
-    print("all doc snippet tests passed")
