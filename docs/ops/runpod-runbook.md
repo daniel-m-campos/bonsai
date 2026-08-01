@@ -160,10 +160,32 @@ The sweep is not optional: **an error-returning create can still have created a 
 
 L40S SECURE ≈ $0.99/hr, billed per-minute while the pod exists (not just while computing). A typical validation session — boot, build, `[cuda]` suite, two 16M profiled fits, teardown — is 25–40 minutes ≈ **$0.40–0.70**. The entire 2026-07 optimization campaign's pod spend was dominated by a handful of full-fleet sweeps, not validation sessions; there is no reason to hesitate about spinning a pod to check a GPU change, and no excuse for leaving one running overnight.
 
-## 10. Standings refresh (decision 92)
+## 10. Standings refresh (decisions 92, 96)
 
-The standings-refresh workflow (Actions tab, `standings-refresh`) is the ritual: it rents one L40S, runs the same-pod A/B of the previous release wheel against HEAD (the perf-change detector, ±5% band), re-measures the requested axes with the bundled standings specs, and opens the supersession PR with the verdict table. Inputs: `axes` (default `rows,width,frontier,airline`; `shape` runs ~3h, dispatch it alone) and `prev_version` (the wheel for the old arm).
+The refresh runs from a developer machine via `scripts/standings_refresh.py`, not CI: the standings-refresh workflow retired under decision 96 after failing its tail on all four dispatches, each a bug only discoverable by paying for the ~3h pod run that reaches it. The measurement half was always reliable; only the untestable-without-a-pod tail broke.
 
-Release ordering: merge the version-bump PR FIRST, then dispatch the refresh with `prev_version` = the last release, merge its PR (a **moved** verdict needs a `Standings:`-tagged decision first; docs-check enforces), then tag. The order matters because `update_standings.py` stamps `refreshed_for` from pyproject at the refresh's checkout sha: a refresh dispatched before the bump stamps the old version and the publish gate then fails at tag time.
+**Prerequisites.** `RUNPOD_API_KEY` exported in the shell (never printed, never committed; rotate if it ever touches disk) and the SSH key from section 0 (`PUBLIC_KEY` env at pod create time; the account-level key does not work against this image).
 
-Manual fallback: rent a pod per section 1, then `AXES=rows,width GIT_SHA=<sha> PREV_VERSION=<last> bash scripts/standings_refresh_pod.sh` on the pod, pull `/root/standings/*.jsonl`, and run `scripts/update_standings.py --axis <axis> --file <new file>` per axis before regenerating the ledger.
+```bash
+export RUNPOD_API_KEY="rpa_..."
+```
+
+**Phase 1: measure.** Rents one L40S, runs `scripts/standings_refresh_pod.sh` detached on the pod, polls the run log, and pulls the axis jsonl files (plus `ab.jsonl` when `--prev-version` is set) incrementally, every poll rather than only at the end, so a pod that dies late still leaves finished axes on this machine.
+
+```bash
+python3 scripts/standings_refresh.py measure --axes rows,width,frontier,airline \
+  --prev-version <last-release-version>
+```
+
+A `finally` block deletes the pod and sweeps any stray `bonsai-standings-*` pods regardless of how the run ends. Verify the fleet is empty afterward (same check as section 7): zero pods listed means zero billing. `--keep-pod` skips teardown for debugging; delete it yourself if you use it. Results land in a dated directory printed at the end (`--out-dir` to choose one).
+
+**Phase 2: supersede.** Works from any local results directory, independent of the pod, so a failed or interrupted supersede reruns without paying for measurement again: copies the axis files into `benchmarks/results/`, updates the registry per axis, stages `git add -A benchmarks/` **before** rendering (the committed-files gate reads `git ls-files`, and a month-rollover refresh deletes the old dated files), renders, prints the A/B verdict from `ab.jsonl`, then branches, commits, and opens the PR.
+
+```bash
+python3 scripts/standings_refresh.py supersede --results-dir standings-<date> \
+  --axes rows,width,frontier,airline
+```
+
+`--no-pr` stops after the local commit so you can inspect the diff before pushing and opening the PR by hand.
+
+Release ordering is unchanged from decision 92: merge the version-bump PR FIRST, then run the refresh with `--prev-version` = the last release, merge the refresh PR (a **moved** verdict needs a `Standings:`-tagged decision first; docs-check enforces), then tag. The order matters because `update_standings.py` stamps `refreshed_for` from pyproject at the refresh's checkout sha: a refresh run before the bump stamps the old version and the publish gate then fails at tag time.

@@ -282,7 +282,7 @@ jobs:
           echo "tag $tag matches packaged version $sdist_version"
 
       # Decision 92: a release ships only with standings refreshed for this
-      # exact version (the standings-refresh workflow is the ritual).
+      # exact version (scripts/standings_refresh.py is the ritual, decision 96).
       - name: Standings freshness gate
         run: |
           tag="${{ steps.tag.outputs.tag }}"
