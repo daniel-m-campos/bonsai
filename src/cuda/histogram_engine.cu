@@ -174,6 +174,39 @@ void CudaHistogramEngine::find_level_split(Dataset const &ds, TreeConfig const &
     impl_->ctx.find_level_split(ds, config, level, out, child_sums);
 }
 
+bool CudaHistogramEngine::leaf_begin_root(Dataset const &ds, TreeConfig const &config,
+                                          floats_view grad, floats_view hess,
+                                          SplitInput                   &root,
+                                          std::span<feature_id_t const> selected)
+{
+    return impl_->ctx.leaf_begin_root(ds, config, grad, hess, root, selected);
+}
+
+CudaHistogramEngine::LeafRound CudaHistogramEngine::leaf_split(Dataset const    &ds,
+                                                               LeafPartOp const &op)
+{
+    return impl_->ctx.leaf_split(ds, op);
+}
+
+void CudaHistogramEngine::leaf_build(Dataset const &ds, LeafRound const &round)
+{
+    impl_->ctx.leaf_build(ds, round);
+}
+
+void CudaHistogramEngine::leaf_find(Dataset const &ds, TreeConfig const &config,
+                                    std::span<SplitInput const> nodes,
+                                    std::span<uint32_t const>   slots,
+                                    std::span<SplitOutput>      out,
+                                    std::span<HistCell>         child_sums)
+{
+    impl_->ctx.leaf_find(ds, config, nodes, slots, out, child_sums);
+}
+
+void CudaHistogramEngine::leaf_stamp(std::span<LeafStamp const> stamps)
+{
+    impl_->ctx.leaf_stamp(stamps);
+}
+
 bool CudaHistogramEngine::resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
                                          std::span<float const> initial_scores,
                                          float                  learning_rate)

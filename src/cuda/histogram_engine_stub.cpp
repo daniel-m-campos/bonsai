@@ -132,6 +132,42 @@ void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
     throw_unavailable();
 }
 
+bool CudaHistogramEngine::leaf_begin_root(Dataset const & /*ds*/,
+                                          TreeConfig const & /*config*/,
+                                          floats_view /*grad*/, floats_view /*hess*/,
+                                          SplitInput & /*root*/,
+                                          std::span<feature_id_t const> /*selected*/)
+{
+    throw_unavailable();
+}
+
+CudaHistogramEngine::LeafRound
+CudaHistogramEngine::leaf_split(Dataset const & /*ds*/, LeafPartOp const & /*op*/)
+{
+    throw_unavailable();
+}
+
+void CudaHistogramEngine::leaf_build(Dataset const & /*ds*/,
+                                     LeafRound const & /*round*/)
+{
+    throw_unavailable();
+}
+
+void CudaHistogramEngine::leaf_find(Dataset const & /*ds*/,
+                                    TreeConfig const & /*config*/,
+                                    std::span<SplitInput const> /*nodes*/,
+                                    std::span<uint32_t const> /*slots*/,
+                                    std::span<SplitOutput> /*out*/,
+                                    std::span<HistCell> /*child_sums*/)
+{
+    throw_unavailable();
+}
+
+void CudaHistogramEngine::leaf_stamp(std::span<LeafStamp const> /*stamps*/)
+{
+    throw_unavailable();
+}
+
 bool CudaHistogramEngine::resident_begin(Dataset const & /*ds*/,
                                          DeviceObjectiveKind /*kind*/,
                                          std::span<float const> /*initial_scores*/,

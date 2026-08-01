@@ -320,6 +320,21 @@ __global__ void stamp_kernel(uint32_t const *rows, PartOpDev const *segs,
     }
 }
 
+// Leaf plane: parent and children share one pool buffer, so the larger child
+// derives in place in the parent's slot, which it then inherits.
+__global__ void subtract_inplace_kernel(double *pool, uint32_t large_slot,
+                                        uint32_t small_slot, uint32_t slot_doubles)
+{
+    double        *large = pool + (static_cast<size_t>(large_slot) * slot_doubles);
+    double const  *small = pool + (static_cast<size_t>(small_slot) * slot_doubles);
+    uint32_t const span  = gridDim.x * blockDim.x;
+    for (uint32_t i = (blockIdx.x * blockDim.x) + threadIdx.x; i < slot_doubles;
+         i += span)
+    {
+        large[i] -= small[i];
+    }
+}
+
 // Larger children derive on-device: child[large] = parent - child[small].
 // Slot triples are (parent, small, large); slot_doubles is one slot's span.
 __global__ void subtract_kernel(double const *parents, double *children,
@@ -398,13 +413,15 @@ inline __device__ bool feat_better(double ga, int ba, int da, int va, double gb,
 // every lane scores its own bins, and a warp reduce picks the winner with the
 // same (max gain, then lowest bin, then default_left) tie-break as the serial
 // CPU scan. The tiled summation order differs, so results are tolerance-equal
-// (docs/architecture/11-gpu-resident.md), not bit-equal.
+// (docs/architecture/11-gpu-resident.md), not bit-equal. hist_slot names each
+// node's histogram slot, mirroring hist_kernel's out_slot: the level plane
+// leaves it null (slot == node), the leaf plane's pool needs the indirection.
 __global__ void find_kernel(double const *hists, uint32_t const *features,
                             uint32_t const *n_bins, double const *node_sums,
                             double const *node_bounds, char const *allowed,
                             int const *monotone, uint32_t n_sel, uint32_t stride,
                             double l1, double l2, double min_child_hess,
-                            double min_gain, FeatBest *out)
+                            double min_gain, FeatBest *out, uint32_t const *hist_slot)
 {
     uint32_t const node = blockIdx.y;
     uint32_t const sel  = blockIdx.x;
@@ -428,7 +445,10 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
     {
         return; // no cut cells (degenerate feature)
     }
-    double const  *cells      = hists + (oidx * stride);
+    size_t const hidx =
+        ((static_cast<size_t>(hist_slot != nullptr ? hist_slot[node] : node) * n_sel) +
+         sel);
+    double const  *cells      = hists + (hidx * stride);
     double const   g_total    = node_sums[pair_off(node)];
     double const   h_total    = node_sums[pair_off(node) + 1];
     double const   miss_g     = cells[pair_off(nb - 1)];
