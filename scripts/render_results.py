@@ -691,6 +691,7 @@ _GPU_STYLE = {
 
 VARIANT_STYLE = {
     **_GPU_STYLE,
+    "lgbm_cuda": ("lgbm cuda", LIB_COLOR["lightgbm"], False),
     "lgbm_cpu": ("lgbm cpu", LIB_COLOR["lightgbm"], True),
     "bonsai_oblivious": ("bonsai cpu obl", "#4caf50", True),
 }

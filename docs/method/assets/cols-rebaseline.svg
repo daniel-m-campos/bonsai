@@ -1,11 +1,11 @@
 <svg xmlns='http://www.w3.org/2000/svg' width='760' height='400' viewBox='0 0 760 400'>
 <text x='64' y='22' font-size='13' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='bold'>Fit seconds vs features (1M rows; 16384-col cell 131k rows; log-log)</text>
-<line x1='64' y1='324.8' x2='590' y2='324.8' stroke='#808080' stroke-opacity='0.22'/>
-<text x='56' y='328.8' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>1</text>
-<line x1='64' y1='215.6' x2='590' y2='215.6' stroke='#808080' stroke-opacity='0.22'/>
-<text x='56' y='219.6' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>10</text>
-<line x1='64' y1='106.4' x2='590' y2='106.4' stroke='#808080' stroke-opacity='0.22'/>
-<text x='56' y='110.4' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>100</text>
+<line x1='64' y1='331.8' x2='590' y2='331.8' stroke='#808080' stroke-opacity='0.22'/>
+<text x='56' y='335.8' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>1</text>
+<line x1='64' y1='232.9' x2='590' y2='232.9' stroke='#808080' stroke-opacity='0.22'/>
+<text x='56' y='236.9' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>10</text>
+<line x1='64' y1='134.0' x2='590' y2='134.0' stroke='#808080' stroke-opacity='0.22'/>
+<text x='56' y='138.0' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>100</text>
 <line x1='64.0' y1='42' x2='64.0' y2='356' stroke='#808080' stroke-opacity='0.12'/>
 <text x='64.0' y='374' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>100</text>
 <line x1='304.0' y1='42' x2='304.0' y2='356' stroke='#808080' stroke-opacity='0.12'/>
@@ -16,36 +16,41 @@
 <text x='590.0' y='374' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>16384*</text>
 <text x='20' y='30' font-size='10' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>fit seconds</text>
 <text x='327.0' y='390' font-size='10' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>features</text>
-<polyline points='64.0,339.2 304.0,224.1 447.0,158.3 590.0,140.5' fill='none' stroke='#1b5e20' stroke-width='2.5'/>
+<polyline points='64.0,339.2 304.0,238.6 447.0,179.1 590.0,163.6' fill='none' stroke='#1b5e20' stroke-width='2.5'/>
 <circle cx='64.0' cy='339.2' r='3.2' fill='#1b5e20'/>
-<circle cx='304.0' cy='224.1' r='3.2' fill='#1b5e20'/>
-<circle cx='447.0' cy='158.3' r='3.2' fill='#1b5e20'/>
-<circle cx='590.0' cy='140.5' r='3.2' fill='#1b5e20'/>
-<polyline points='64.0,318.6 304.0,226.9 447.0,161.2 590.0,135.9' fill='none' stroke='#4caf50' stroke-width='2.5'/>
-<circle cx='64.0' cy='318.6' r='3.2' fill='#4caf50'/>
-<circle cx='304.0' cy='226.9' r='3.2' fill='#4caf50'/>
-<circle cx='447.0' cy='161.2' r='3.2' fill='#4caf50'/>
-<circle cx='590.0' cy='135.9' r='3.2' fill='#4caf50'/>
-<polyline points='64.0,301.0 304.0,206.0 447.0,138.7 590.0,135.3' fill='none' stroke='#1f77b4' stroke-width='2.5'/>
-<circle cx='64.0' cy='301.0' r='3.2' fill='#1f77b4'/>
-<circle cx='304.0' cy='206.0' r='3.2' fill='#1f77b4'/>
-<circle cx='447.0' cy='138.7' r='3.2' fill='#1f77b4'/>
-<circle cx='590.0' cy='135.3' r='3.2' fill='#1f77b4'/>
-<polyline points='64.0,285.7 304.0,217.4 447.0,155.6 590.0,132.4' fill='none' stroke='#e08f1a' stroke-width='2.5'/>
-<circle cx='64.0' cy='285.7' r='3.2' fill='#e08f1a'/>
-<circle cx='304.0' cy='217.4' r='3.2' fill='#e08f1a'/>
-<circle cx='447.0' cy='155.6' r='3.2' fill='#e08f1a'/>
-<circle cx='590.0' cy='132.4' r='3.2' fill='#e08f1a'/>
-<polyline points='64.0,246.9 304.0,132.4 447.0,59.8 590.0,64.5' fill='none' stroke='#8e6bbf' stroke-width='2.5' stroke-dasharray='6 4'/>
-<circle cx='64.0' cy='246.9' r='3.2' fill='#8e6bbf'/>
-<circle cx='304.0' cy='132.4' r='3.2' fill='#8e6bbf'/>
-<circle cx='447.0' cy='59.8' r='3.2' fill='#8e6bbf'/>
-<circle cx='590.0' cy='64.5' r='3.2' fill='#8e6bbf'/>
-<polyline points='64.0,231.6 304.0,140.1 447.0,80.6 590.0,61.1' fill='none' stroke='#4caf50' stroke-width='2.5' stroke-dasharray='6 4'/>
-<circle cx='64.0' cy='231.6' r='3.2' fill='#4caf50'/>
-<circle cx='304.0' cy='140.1' r='3.2' fill='#4caf50'/>
-<circle cx='447.0' cy='80.6' r='3.2' fill='#4caf50'/>
-<circle cx='590.0' cy='61.1' r='3.2' fill='#4caf50'/>
+<circle cx='304.0' cy='238.6' r='3.2' fill='#1b5e20'/>
+<circle cx='447.0' cy='179.1' r='3.2' fill='#1b5e20'/>
+<circle cx='590.0' cy='163.6' r='3.2' fill='#1b5e20'/>
+<polyline points='64.0,323.6 304.0,240.4 447.0,182.3 590.0,158.8' fill='none' stroke='#4caf50' stroke-width='2.5'/>
+<circle cx='64.0' cy='323.6' r='3.2' fill='#4caf50'/>
+<circle cx='304.0' cy='240.4' r='3.2' fill='#4caf50'/>
+<circle cx='447.0' cy='182.3' r='3.2' fill='#4caf50'/>
+<circle cx='590.0' cy='158.8' r='3.2' fill='#4caf50'/>
+<polyline points='64.0,287.4 304.0,196.8 447.0,136.3 590.0,144.8' fill='none' stroke='#1f77b4' stroke-width='2.5'/>
+<circle cx='64.0' cy='287.4' r='3.2' fill='#1f77b4'/>
+<circle cx='304.0' cy='196.8' r='3.2' fill='#1f77b4'/>
+<circle cx='447.0' cy='136.3' r='3.2' fill='#1f77b4'/>
+<circle cx='590.0' cy='144.8' r='3.2' fill='#1f77b4'/>
+<polyline points='64.0,288.9 304.0,222.2 447.0,164.3 590.0,148.8' fill='none' stroke='#e08f1a' stroke-width='2.5'/>
+<circle cx='64.0' cy='288.9' r='3.2' fill='#e08f1a'/>
+<circle cx='304.0' cy='222.2' r='3.2' fill='#e08f1a'/>
+<circle cx='447.0' cy='164.3' r='3.2' fill='#e08f1a'/>
+<circle cx='590.0' cy='148.8' r='3.2' fill='#e08f1a'/>
+<polyline points='64.0,246.3 304.0,165.5 447.0,103.9 590.0,59.8' fill='none' stroke='#8e6bbf' stroke-width='2.5'/>
+<circle cx='64.0' cy='246.3' r='3.2' fill='#8e6bbf'/>
+<circle cx='304.0' cy='165.5' r='3.2' fill='#8e6bbf'/>
+<circle cx='447.0' cy='103.9' r='3.2' fill='#8e6bbf'/>
+<circle cx='590.0' cy='59.8' r='3.2' fill='#8e6bbf'/>
+<polyline points='64.0,232.8 304.0,135.6 447.0,69.4 590.0,70.7' fill='none' stroke='#8e6bbf' stroke-width='2.5' stroke-dasharray='6 4'/>
+<circle cx='64.0' cy='232.8' r='3.2' fill='#8e6bbf'/>
+<circle cx='304.0' cy='135.6' r='3.2' fill='#8e6bbf'/>
+<circle cx='447.0' cy='69.4' r='3.2' fill='#8e6bbf'/>
+<circle cx='590.0' cy='70.7' r='3.2' fill='#8e6bbf'/>
+<polyline points='64.0,219.6 304.0,145.1 447.0,86.4 590.0,67.5' fill='none' stroke='#4caf50' stroke-width='2.5' stroke-dasharray='6 4'/>
+<circle cx='64.0' cy='219.6' r='3.2' fill='#4caf50'/>
+<circle cx='304.0' cy='145.1' r='3.2' fill='#4caf50'/>
+<circle cx='447.0' cy='86.4' r='3.2' fill='#4caf50'/>
+<circle cx='590.0' cy='67.5' r='3.2' fill='#4caf50'/>
 <line x1='608' y1='50' x2='630' y2='50' stroke='#1b5e20' stroke-width='2.5'/>
 <text x='636' y='54' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>bonsai cuda dw</text>
 <line x1='608' y1='67' x2='630' y2='67' stroke='#4caf50' stroke-width='2.5'/>
@@ -54,8 +59,10 @@
 <text x='636' y='88' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>xgb cuda</text>
 <line x1='608' y1='101' x2='630' y2='101' stroke='#e08f1a' stroke-width='2.5'/>
 <text x='636' y='105' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>catboost gpu</text>
-<line x1='608' y1='118' x2='630' y2='118' stroke='#8e6bbf' stroke-width='2.5' stroke-dasharray='6 4'/>
-<text x='636' y='122' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>lgbm cpu</text>
-<line x1='608' y1='135' x2='630' y2='135' stroke='#4caf50' stroke-width='2.5' stroke-dasharray='6 4'/>
-<text x='636' y='139' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>bonsai cpu obl</text>
+<line x1='608' y1='118' x2='630' y2='118' stroke='#8e6bbf' stroke-width='2.5'/>
+<text x='636' y='122' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>lgbm cuda</text>
+<line x1='608' y1='135' x2='630' y2='135' stroke='#8e6bbf' stroke-width='2.5' stroke-dasharray='6 4'/>
+<text x='636' y='139' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>lgbm cpu</text>
+<line x1='608' y1='152' x2='630' y2='152' stroke='#4caf50' stroke-width='2.5' stroke-dasharray='6 4'/>
+<text x='636' y='156' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>bonsai cpu obl</text>
 </svg>

@@ -6,7 +6,7 @@ Every results file behind a published claim is rendered across the pages below, 
 
 ## Perf division
 
-bonsai's CUDA growers hold the fastest slot at every measured row scale (10.3s at 16M rows against XGBoost-GPU's 19.6s) at 6.9GB peak host memory against XGBoost's 22.2GB and CatBoost's 19.4GB. On the narrow airline shape bonsai holds both best AUC and fastest fit from 1M rows up. The 2026-07-30 studies hold every width and aspect ratio, with measured device memory that sizes to the problem: 3.4GB at 16M x 128 at constant 2^31-cell volume against XGBoost's 18.9GB and CatBoost's 90.2GB. Every number is same-pod; identical-model GPUs across the rental fleet measure up to ~25% apart.
+bonsai's CUDA growers hold the fastest slot at every measured row scale (10.5s at 16M rows against XGBoost-GPU's 36.9s) at 6.9GB peak host memory against XGBoost's 22.1GB and CatBoost's 19.2GB. On the narrow airline shape bonsai holds both best AUC and fastest fit from 1M rows up. The 2026-07-30 studies hold every width and aspect ratio, with measured device memory that sizes to the problem: 3.4GB at 16M x 128 at constant 2^31-cell volume against XGBoost's 18.9GB and CatBoost's 90.2GB. Every number is same-pod; identical-model GPUs across the rental fleet measure up to ~25% apart.
 
 | page | what it holds |
 |---|---|

@@ -10,19 +10,19 @@ The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC),
 
 | variant | 0.1m | 1m | 10m |
 |---|---|---|---|
-| bonsai_depthwise | 1.2s / 0.7260 | 3.8s / 0.7447 | 22.4s / 0.7468 |
-| bonsai_oblivious | 0.8s / 0.7218 | 3.3s / 0.7256 | 21.9s / 0.7264 |
-| bonsai_cuda_depthwise | 0.2s / 0.7265 | 0.4s / 0.7446 | 1.9s / 0.7468 |
-| bonsai_cuda_oblivious | 0.7s / 0.7218 | 0.9s / 0.7253 | 2.3s / 0.7264 |
-| bonsai_ts_depthwise | 1.4s / 0.7238 | 5.9s / 0.7462 | 48.9s / 0.7498 |
-| bonsai_ts_oblivious | 1.5s / 0.7247 | 5.1s / 0.7326 | 48.3s / 0.7339 |
-| bonsai_ts_cuda_depthwise | 0.4s / 0.7239 | 2.0s / 0.7458 | 27.0s / 0.7499 |
-| bonsai_ts_cuda_oblivious | 0.9s / 0.7247 | 2.6s / 0.7326 | 27.5s / 0.7339 |
-| xgb_hist | 0.5s / 0.7263 | 2.1s / 0.7430 | 17.7s / 0.7455 |
-| xgb_cuda | 0.2s / 0.7250 | 0.5s / 0.7426 | 2.6s / 0.7466 |
-| lgbm_cpu | 0.9s / 0.7263 | 2.3s / 0.7431 | 10.8s / 0.7463 |
-| catboost_cpu | 0.7s / 0.7167 | 3.1s / 0.7234 | 17.5s / 0.7245 |
-| catboost_gpu | 0.7s / 0.7167 | 0.8s / 0.7229 | 4.7s / 0.7254 |
+| bonsai_depthwise | 2.8s / 0.7260 | 7.3s / 0.7447 | 31.1s / 0.7468 |
+| bonsai_oblivious | 2.0s / 0.7218 | 5.4s / 0.7256 | 36.3s / 0.7264 |
+| bonsai_cuda_depthwise | 0.2s / 0.7265 | 0.4s / 0.7447 | 2.1s / 0.7469 |
+| bonsai_cuda_oblivious | 0.7s / 0.7218 | 1.0s / 0.7253 | 2.5s / 0.7264 |
+| bonsai_ts_depthwise | 3.2s / 0.7238 | 10.8s / 0.7462 | 241.2s / 0.7498 |
+| bonsai_ts_oblivious | 2.6s / 0.7247 | 10.2s / 0.7326 | 132.1s / 0.7339 |
+| bonsai_ts_cuda_depthwise | 0.5s / 0.7239 | 2.9s / 0.7459 | 89.7s / 0.7498 |
+| bonsai_ts_cuda_oblivious | 1.0s / 0.7247 | 3.4s / 0.7326 | 40.5s / 0.7339 |
+| xgb_hist | 0.9s / 0.7263 | 3.8s / 0.7430 | 33.8s / 0.7455 |
+| xgb_cuda | 0.2s / 0.7250 | 0.6s / 0.7426 | 3.2s / 0.7466 |
+| lgbm_cpu | 1.8s / 0.7263 | 5.0s / 0.7431 | 19.6s / 0.7463 |
+| catboost_cpu | 1.2s / 0.7167 | 6.0s / 0.7234 | 32.6s / 0.7245 |
+| catboost_gpu | 0.4s / 0.7167 | 0.8s / 0.7229 | 5.4s / 0.7254 |
 
 **Pafka protocol (depth 10)**, fit seconds / test AUC:
 
@@ -42,4 +42,4 @@ The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC),
 | catboost_cpu | - | - | - |
 | catboost_gpu | - | - | - |
 
-*Source: [`airline-2026-07.jsonl`](../../../benchmarks/results/airline-2026-07.jsonl). A bonsai variant has the best AUC in every cell under both protocols, and bonsai CUDA depthwise is also the fastest fit from 1M rows up under ordinal encoding; XGBoost-GPU keeps only the smallest cell. Evidence: [benchmarks/airline-2026-07.md](../../../benchmarks/airline-2026-07.md). Measured at `d3ffcd0` (2026-07-31, pod-NVIDIA-L40S).*
+*Source: [`airline-2026-08.jsonl`](../../../benchmarks/results/airline-2026-08.jsonl). A bonsai variant has the best AUC in every cell under both protocols, and bonsai CUDA depthwise is also the fastest fit from 1M rows up under ordinal encoding; XGBoost-GPU keeps only the smallest cell. Evidence: [benchmarks/airline-2026-07.md](../../../benchmarks/airline-2026-07.md). Measured at `0b077ad` (2026-08-01, pod-NVIDIA-L40S).*
