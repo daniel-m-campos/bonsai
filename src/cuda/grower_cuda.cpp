@@ -1,5 +1,6 @@
-// Explicit instantiation of the CUDA-backed depthwise grower
-// (the CudaDepthwiseGrower alias). Lives in its own TU so grower.cpp never
+// Explicit instantiation of the CUDA-backed growers (the CudaDepthwiseGrower,
+// CudaObliviousGrower, and CudaLeafwiseGrower aliases). Lives in its own TU so
+// grower.cpp never
 // depends on the CUDA backend; only compiled when BONSAI_CUDA is enabled.
 // The class-template form is spelled out here because explicit instantiation
 // cannot name a type alias.
@@ -14,5 +15,6 @@ namespace bonsai
 
 template class DepthwiseGrower<CudaHistogramEngine, HistogramNodeSplitFinder>;
 template class ObliviousGrower<CudaHistogramEngine, HistogramLevelSplitFinder>;
+template class LeafwiseGrower<CudaHistogramEngine, HistogramNodeSplitFinder>;
 
 } // namespace bonsai
