@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# On-pod half of the standings refresh (decision 92). Invoked by the
-# standings-refresh workflow; manual use:
+# On-pod half of the standings refresh (decision 92). Invoked by
+# scripts/standings_refresh.py's measure phase (decision 96); manual use:
 #   AXES=rows,width GIT_SHA=<sha> PREV_VERSION=1.5.4 bash scripts/standings_refresh_pod.sh
 # Writes dated standings jsonl + the A/B rows to /root/standings/.
 set -euo pipefail
