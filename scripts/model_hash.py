@@ -1,11 +1,15 @@
-# The byte-identity gate: trains a fixed 500k x 100 depthwise model and
-# prints a short sha256 of the saved msgpack. Any refactor that claims to
-# preserve CPU behavior must leave this hash unchanged; capture the baseline
-# BEFORE touching anything (see .claude/skills/quality-gates). Fixed seed,
-# fixed threads — the determinism contract (decision 49) makes the hash
-# stable across runs on one machine.
-#
-#   make python && PYTHONPATH=build/python python3 scripts/model_hash.py
+"""The byte-identity gate: trains a fixed 500k x 100 depthwise model and
+prints a short sha256 of the saved msgpack. Any refactor that claims to
+preserve CPU behavior must leave this hash unchanged; capture the baseline
+BEFORE touching anything (see .claude/skills/quality-gates). Fixed seed,
+fixed threads: the determinism contract (decision 49) makes the hash
+stable across runs on one machine.
+
+    make python && PYTHONPATH=build/python python3 scripts/model_hash.py
+"""
+
+from __future__ import annotations
+
 import hashlib
 import sys
 import tempfile
@@ -15,42 +19,52 @@ import numpy as np
 sys.path.insert(0, "build/python")
 import bonsai
 
-rng = np.random.default_rng(np.random.SeedSequence([42, 500_000, 100]))
-X = rng.random((500_000, 100), dtype=np.float32)
-y = (X[:, :20].reshape(-1, 4, 5) * (0.6 ** np.arange(4))[None, :, None]) \
-    .sum(axis=(1, 2)).astype(np.float32)
-y += rng.normal(0, y.std() * 0.33, len(y)).astype(np.float32)
+PAIRS = [("dispatch.grower_name", "depthwise"), ("booster.n_iters", "20"),
+         ("booster.learning_rate", "0.1"), ("tree.max_depth", "8"),
+         ("bin_mapper.max_bin", "255"), ("parallel.n_threads", "8")]
+
 
 def _sha(a: np.ndarray) -> str:
     return hashlib.sha256(a.tobytes()).hexdigest()[:16]
 
 
-# Printed so a cross-platform hash mismatch can be attributed: if the DATA
-# digests differ, numpy built different inputs (SIMD-width-dependent
-# reduction trees); only if they match is the divergence bonsai's.
-print("data:", _sha(X), _sha(y))
+def _gen_data() -> tuple[np.ndarray, np.ndarray]:
+    """The fixed 500k x 100 input; the seed sequence is part of the gate."""
+    rng = np.random.default_rng(np.random.SeedSequence([42, 500_000, 100]))
+    X = rng.random((500_000, 100), dtype=np.float32)
+    y = (X[:, :20].reshape(-1, 4, 5) * (0.6 ** np.arange(4))[None, :, None]) \
+        .sum(axis=(1, 2)).astype(np.float32)
+    y += rng.normal(0, y.std() * 0.33, len(y)).astype(np.float32)
+    return X, y
 
-pairs = [("dispatch.grower_name", "depthwise"), ("booster.n_iters", "20"),
-         ("booster.learning_rate", "0.1"), ("tree.max_depth", "8"),
-         ("bin_mapper.max_bin", "255"), ("parallel.n_threads", "8")]
 
-
-def _model_sha(extra=()) -> str:
-    m = bonsai.train([*pairs, *extra], X, y)
+def _model_sha(X: np.ndarray, y: np.ndarray, extra=()) -> str:
+    m = bonsai.train([*PAIRS, *extra], X, y)
     with tempfile.NamedTemporaryFile(suffix=".msgpack") as f:
         m.save(f.name)
         return hashlib.sha256(open(f.name, "rb").read()).hexdigest()[:16]
 
 
-# Attribution tiers for a cross-platform mismatch: full-sample kills the
-# mapper's sampling RNG; serial kills every parallel site; one iteration
-# kills accumulation drift. Whichever tier first diverges names the layer.
-# Two hashes, one contract at two thread counts: model bits depend only on
-# the input, the config, and the CONFIGURED thread count (the fill plan
-# scales block counts with it — docs/architecture/7-parallel.md), never on
-# the architecture (decisions 59/60). Both lines are asserted equal across
-# arm64/x86-64 by the cross-arch CI gate.
-print("serial_sha256:",
-      _model_sha([("bin_mapper.n_samples", "500000"),
-                  ("parallel.n_threads", "1")]))
-print("sha256:", _model_sha())
+def main() -> int:
+    X, y = _gen_data()
+    # Printed so a cross-platform hash mismatch can be attributed: if the DATA
+    # digests differ, numpy built different inputs (SIMD-width-dependent
+    # reduction trees); only if they match is the divergence bonsai's.
+    print("data:", _sha(X), _sha(y))
+    # Attribution tiers for a cross-platform mismatch: full-sample kills the
+    # mapper's sampling RNG; serial kills every parallel site; one iteration
+    # kills accumulation drift. Whichever tier first diverges names the layer.
+    # Two hashes, one contract at two thread counts: model bits depend only on
+    # the input, the config, and the CONFIGURED thread count (the fill plan
+    # scales block counts with it — docs/architecture/7-parallel.md), never on
+    # the architecture (decisions 59/60). Both lines are asserted equal across
+    # arm64/x86-64 by the cross-arch CI gate.
+    print("serial_sha256:",
+          _model_sha(X, y, [("bin_mapper.n_samples", "500000"),
+                            ("parallel.n_threads", "1")]))
+    print("sha256:", _model_sha(X, y))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

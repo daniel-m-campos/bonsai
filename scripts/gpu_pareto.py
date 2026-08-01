@@ -15,6 +15,8 @@ only same-pod points compare (identical GPUs measure up to 25% apart).
 The 2026-07 campaign rows are benchmarks/results/gpu-pareto-16M-2026-07.jsonl;
 the analysis lives in benchmarks/gpu-pareto-16M-2026-07.md.
 """
+from __future__ import annotations
+
 import argparse
 import datetime
 import sys

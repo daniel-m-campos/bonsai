@@ -14,3 +14,5 @@ protocol lives in docs/method/benchmark-protocol.md on the documentation site.
 Importing this package pulls numpy only; xgboost/lightgbm/catboost/openml/
 sklearn are imported lazily by the variants and suites that need them.
 """
+
+from __future__ import annotations

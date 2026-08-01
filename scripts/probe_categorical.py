@@ -1,15 +1,18 @@
-# PROVENANCE NOTE (decision 69): this probe is a completed experiment whose
-# committed evidence was produced by this exact code; it stays as-run rather
-# than being refactored onto bonsai.bench. NEW probes must import their knobs
-# and reference-library mappings from bonsai.bench.params and their metrics
-# from bonsai.bench.metrics.
-# Categorical trade-off probe (decision 58): measure the BENEFIT side of the
-# native-categoricals complexity trade with zero bonsai C++ changes.
-#   1. Benefit ceiling: each reference library with its categorical machinery
-#      ON vs OFF (ordinal codes) at campaign-matched knobs.
-#   2. Zero-core-cost alternative: ordered target statistics as preprocessing
-#      feeding today's bonsai (single perm, multi-perm average, TS+code).
-# Output: one JSON of AUCs per dataset x variant.
+"""PROVENANCE NOTE (decision 69): this probe is a completed experiment whose
+committed evidence was produced by this exact code; it stays as-run rather
+than being refactored onto bonsai.bench. NEW probes must import their knobs
+and reference-library mappings from bonsai.bench.params and their metrics
+from bonsai.bench.metrics.
+Categorical trade-off probe (decision 58): measure the BENEFIT side of the
+native-categoricals complexity trade with zero bonsai C++ changes.
+  1. Benefit ceiling: each reference library with its categorical machinery
+     ON vs OFF (ordinal codes) at campaign-matched knobs.
+  2. Zero-core-cost alternative: ordered target statistics as preprocessing
+     feeding today's bonsai (single perm, multi-perm average, TS+code).
+Output: one JSON of AUCs per dataset x variant.
+"""
+from __future__ import annotations
+
 import json
 import pathlib
 import sys

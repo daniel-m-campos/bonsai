@@ -11,6 +11,8 @@ target ACTION. Split 80/20 stratified, label first.
 Run: uv run scripts/fetch_amazon.py
 """
 
+from __future__ import annotations
+
 import pathlib
 
 import pandas as pd

@@ -23,6 +23,8 @@ Run (needs the native module):
     PYTHONPATH=build/python .venv/bin/python scripts/bench_categorical.py
 """
 
+from __future__ import annotations
+
 import pathlib
 import sys
 import time

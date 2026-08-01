@@ -136,7 +136,7 @@ def _dash(cpu: bool) -> str:
 
 
 def bar_chart(fname: str, title: str, rows: list[tuple[str, float, str]],
-              x_max: float, note: str) -> None:
+              x_max: float, note: str):
     """Horizontal bars: rows = (label, value, annotation); lower is better."""
     w, h, left, top = 720, 60 + 34 * len(rows) + 30, 110, 42
     plot_w = w - left - 150
@@ -164,7 +164,7 @@ def line_chart(fname: str, title: str, y_label: str,
                series: list[tuple[str, str, bool, list[tuple[float, float]]]],
                x_ticks: list[tuple[float, str]], log_x=True, log_y=True,
                width=760, height=400, y_ticks=None,
-               point_labels=None, x_label: str = "") -> None:
+               point_labels=None, x_label: str = ""):
     """series = (label, color, is_cpu, [(x, y)]). Log-log by default."""
     left, right, top, bottom = 64, 170, 42, 44
     pw, ph = width - left - right, height - top - bottom

@@ -11,8 +11,8 @@ from __future__ import annotations
 import json
 import pathlib
 
-from . import params
-from .variants import resolve
+from bonsai.bench import params
+from bonsai.bench.variants import resolve
 
 _SPEC_KEYS = {"name", "suite", "defaults", "cells", "variants", "threads",
               "repeats", "gates", "timeout_cap", "variant_iters"}

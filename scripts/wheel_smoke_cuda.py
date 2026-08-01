@@ -9,6 +9,8 @@ to 1e-4 (tests/unit/test_cuda_grower.cpp), so 30 shrunk trees get 1e-3 on
 predictions and half a point of r2.
 """
 
+from __future__ import annotations
+
 import os
 import tempfile
 

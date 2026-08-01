@@ -19,6 +19,8 @@ read once per process. Verdict bar: decision-55 chance band (~+-0.001 AUC,
 
     PYTHONPATH=build/python python scripts/probe_missing_bin.py
 """
+from __future__ import annotations
+
 import json
 import os
 import pathlib

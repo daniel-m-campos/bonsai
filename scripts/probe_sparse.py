@@ -1,16 +1,19 @@
-# PROVENANCE NOTE (decision 69): this probe is a completed experiment whose
-# committed evidence was produced by this exact code; it stays as-run rather
-# than being refactored onto bonsai.bench. NEW probes must import their knobs
-# and reference-library mappings from bonsai.bench.params and their metrics
-# from bonsai.bench.metrics.
-# Sparse/EFB probe (crown week, feature-admission step 1-2): is sparse
-# input the remaining forcing function, and does preprocessing rescue it?
-#   Q1 width ladder on real text (rcv1): bonsai-dense vs lgbm/xgb sparse —
-#      quality + fit time as columns grow.
-#   Q2 lgbm sparse vs lgbm densified — how much sparsity handling itself buys.
-#   Q3 EFB-as-preprocessing: how many conflict-free bundles exist in text
-#      (tf-idf) vs one-hot data; the one-hot control shows bundling
-#      collapsing to "use codes, not one-hot" — which bonsai already does.
+"""PROVENANCE NOTE (decision 69): this probe is a completed experiment whose
+committed evidence was produced by this exact code; it stays as-run rather
+than being refactored onto bonsai.bench. NEW probes must import their knobs
+and reference-library mappings from bonsai.bench.params and their metrics
+from bonsai.bench.metrics.
+Sparse/EFB probe (crown week, feature-admission step 1-2): is sparse
+input the remaining forcing function, and does preprocessing rescue it?
+  Q1 width ladder on real text (rcv1): bonsai-dense vs lgbm/xgb sparse —
+     quality + fit time as columns grow.
+  Q2 lgbm sparse vs lgbm densified — how much sparsity handling itself buys.
+  Q3 EFB-as-preprocessing: how many conflict-free bundles exist in text
+     (tf-idf) vs one-hot data; the one-hot control shows bundling
+     collapsing to "use codes, not one-hot" — which bonsai already does.
+"""
+from __future__ import annotations
+
 import sys
 import time
 
