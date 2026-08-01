@@ -19,4 +19,10 @@ using CudaDepthwiseGrower = DepthwiseGrower<CudaHistogramEngine>;
 using CudaObliviousGrower =
     ObliviousGrower<CudaHistogramEngine, HistogramLevelSplitFinder>;
 
+// The "cuda_leafwise" grower: best-first growth with the GPU engine's leaf
+// plane (docs/architecture/20-cuda-leafwise.md). Histograms live in a per-tree
+// slot pool, partition and split finding run on the device one node at a time,
+// and the gain heap stays on the host.
+using CudaLeafwiseGrower = LeafwiseGrower<CudaHistogramEngine>;
+
 } // namespace bonsai
