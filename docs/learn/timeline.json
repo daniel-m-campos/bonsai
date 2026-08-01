@@ -168,8 +168,8 @@
       "attribution": "Prokhorenkova et al., NeurIPS 2018",
       "link": "https://arxiv.org/abs/1706.09516",
       "adopters": ["catboost"],
-      "bonsai_status": "tbd",
-      "bonsai_link": "../decisions.md#80-the-categorical-reopener-predicate-is-established-the-build-decision-waits-for-launch-strategy-adopted"
+      "bonsai_status": "declined",
+      "bonsai_link": "../decisions.md#81-ordered-boosting-declined-at-stage-0-the-mechanism-is-not-the-small-data-edge-adopted"
     },
     {
       "year": 2018,
