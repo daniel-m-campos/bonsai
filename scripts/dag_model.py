@@ -95,6 +95,7 @@ MEASURED_FIT_S = 15.70
 
 
 def edge_cost(e: Edge) -> float:
+    """Seconds to move an edge's bytes over its placement's link."""
     return e.bytes_per_fit / BW[e.bw] * (1.0 - e.overlapped)
 
 
@@ -128,6 +129,7 @@ PLACEMENTS = {
 
 
 def main() -> None:
+    """Price every placement and print the ranking."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--floor", action="store_true")
     args = ap.parse_args()

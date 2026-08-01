@@ -126,22 +126,8 @@ OPTIONAL_KNOBS = {
 }
 
 
-def _clean_float(x: float) -> float:
-    """Shortest decimal that round-trips to the same float32 the struct holds.
-
-    `dump_toml` widens float32 fields to double, so a 0.05F default prints as
-    0.05000000074505806. Recover the intended short value by finding the
-    fewest significant digits that pack back to the identical float32.
-    """
-    target = struct.pack("<f", x)
-    for prec in range(1, 10):
-        s = f"{x:.{prec}g}"
-        if struct.pack("<f", float(s)) == target:
-            return float(s)
-    return x
-
-
 def extract() -> int:
+    """Every knob row parsed out of config.hpp."""
     import tomllib  # 3.11+; only the extract path (make params-json) needs it
 
     data = tomllib.loads(sys.stdin.read())
@@ -159,6 +145,7 @@ def extract() -> int:
 
 
 def type_label(value) -> str:
+    """The human type column for one knob."""
     if isinstance(value, bool):
         return "boolean"
     if isinstance(value, int):
@@ -173,6 +160,7 @@ def type_label(value) -> str:
 
 
 def fmt_default(value) -> str:
+    """The default-value column for one knob."""
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, str):
@@ -216,6 +204,7 @@ The table below is generated from `docs/use/parameters.src.json`, extracted from
 
 
 def render() -> str:
+    """The full parameters-reference page body."""
     sections, _ = sections_from_src()
     ordered = [s for s in SECTION_ORDER if s in sections]
     ordered += sorted(s for s in sections if s not in SECTION_ORDER)
@@ -234,6 +223,7 @@ def render() -> str:
 
 
 def coverage_error() -> str | None:
+    """Non-empty when a config section is missing from SECTION_ORDER."""
     _, dotted = sections_from_src()
     known = set(dotted)
     missing = sorted(d for d in dotted if d not in EFFECTS)
@@ -251,6 +241,7 @@ def coverage_error() -> str | None:
 
 
 def main() -> int:
+    """Write (or --check) the parameters reference."""
     if "--extract" in sys.argv:
         return extract()
     err = coverage_error()
@@ -269,6 +260,21 @@ def main() -> int:
     OUT.write_text(text)
     print(f"wrote {OUT.relative_to(REPO)} ({n} knobs)")
     return 0
+
+
+def _clean_float(x: float) -> float:
+    """Shortest decimal that round-trips to the same float32 the struct holds.
+
+    `dump_toml` widens float32 fields to double, so a 0.05F default prints as
+    0.05000000074505806. Recover the intended short value by finding the
+    fewest significant digits that pack back to the identical float32.
+    """
+    target = struct.pack("<f", x)
+    for prec in range(1, 10):
+        s = f"{x:.{prec}g}"
+        if struct.pack("<f", float(s)) == target:
+            return float(s)
+    return x
 
 
 if __name__ == "__main__":

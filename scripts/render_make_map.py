@@ -47,6 +47,7 @@ Every make target you run day to day, generated from the `##` comments in the [M
 
 
 def targets() -> list[tuple[str, str]]:
+    """Every documented make target from the Makefile."""
     out: list[tuple[str, str]] = []
     for line in MAKEFILE.read_text().splitlines():
         m = TARGET_RE.match(line)
@@ -60,11 +61,13 @@ def targets() -> list[tuple[str, str]]:
 
 
 def render() -> str:
+    """The make-target map page body."""
     rows = [[f"`make {name}`", desc] for name, desc in targets()]
     return HEADER + "\n" + md_table(["target", "what it does"], rows) + "\n"
 
 
 def main() -> int:
+    """Write (or --check) the make-target map."""
     rows = targets()
     if not rows:
         print("ERROR: no `## ` target comments found in the Makefile; "

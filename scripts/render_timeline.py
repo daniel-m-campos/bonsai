@@ -81,6 +81,7 @@ The diagram and the table are generated from `docs/learn/timeline.json` by `scri
 # ---- slugify (mirrors python-markdown's toc, which MkDocs uses) --------------
 
 def slugify(text: str) -> str:
+    """A heading to its mkdocs anchor slug."""
     value = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
     value = re.sub(r"`", "", value)  # heading code spans render as plain text
     value = re.sub(r"[^\w\s-]", "", value).strip().lower()
@@ -88,6 +89,7 @@ def slugify(text: str) -> str:
 
 
 def heading_slugs(md_path: pathlib.Path) -> set[str]:
+    """Every anchor slug of a markdown file."""
     slugs: set[str] = set()
     in_code = False
     for line in md_path.read_text().splitlines():
@@ -105,6 +107,7 @@ def heading_slugs(md_path: pathlib.Path) -> set[str]:
 # ---- validation --------------------------------------------------------------
 
 def schema_errors(entries: list[dict]) -> list[str]:
+    """Schema violations in the timeline data."""
     problems: list[str] = []
     for i, e in enumerate(entries):
         where = f"entry {i} ({e.get('title', '?')})"
@@ -124,6 +127,7 @@ def schema_errors(entries: list[dict]) -> list[str]:
 
 
 def link_errors(entries: list[dict]) -> list[str]:
+    """Timeline links whose targets do not exist."""
     problems: list[str] = []
     for e in entries:
         link = e.get("bonsai_link", "")
@@ -143,16 +147,19 @@ def link_errors(entries: list[dict]) -> list[str]:
 # ---- rendering ---------------------------------------------------------------
 
 def load() -> tuple[str, list[dict]]:
+    """The timeline entries from the data file."""
     data = json.loads(SRC.read_text())
     entries = sorted(data["milestones"], key=lambda e: (e["year"], data["milestones"].index(e)))
     return data.get("title", "The lineage"), entries
 
 
 def decade(year: int) -> str:
+    """The decade bucket label for a year."""
     return f"{year // 10 * 10}s"
 
 
 def mermaid(title: str, entries: list[dict]) -> str:
+    """The mermaid timeline block."""
     lines = ["```mermaid", "timeline", f"    title {title}"]
     current_decade = None
     current_year = None
@@ -172,17 +179,20 @@ def mermaid(title: str, entries: list[dict]) -> str:
 
 
 def carried_by(adopters: list[str]) -> str:
+    """The carried-by cell for one idea."""
     if not adopters:
         return "none"
     return ", ".join(DISPLAY[a] for a in adopters)
 
 
 def idea_cell(e: dict) -> str:
+    """The linked idea cell."""
     title = f"[{e['title']}]({e['link']})" if e["link"] else e["title"]
     return f"**{title}**: {e['idea']} *({e['attribution']})*"
 
 
 def render() -> str:
+    """The full timeline page body."""
     title, entries = load()
     rows = [
         [str(e["year"]), idea_cell(e), carried_by(e["adopters"]),
@@ -204,6 +214,7 @@ def render() -> str:
 
 
 def main() -> int:
+    """Write (or --check) the timeline page."""
     _, entries = load()
     problems = schema_errors(entries)
     problems += link_errors(entries) if not problems else []

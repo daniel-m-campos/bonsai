@@ -48,6 +48,7 @@ _INVOKED_FROM = os.getcwd()
 
 
 def _child_env() -> dict:
+    """The subprocess env with the built module on PYTHONPATH."""
     env = os.environ.copy()
     pp = env.get("PYTHONPATH")
     if pp:
@@ -60,6 +61,7 @@ OPEN_RE = re.compile(r"^(\s*)(`{3,}|~{3,})\{([^}]*)\}\s*$")
 
 
 def published_files() -> list[pathlib.Path]:
+    """The published pages whose examples run."""
     pats = excluded_patterns((REPO / "mkdocs.yml").read_text())
     files = [REPO / "README.md"]
     for path in sorted(DOCS.rglob("*.md")):
@@ -97,6 +99,7 @@ def extract(text: str) -> list[tuple[str, int, str]]:
 
 
 def run_block(code: str) -> tuple[bool, str, float]:
+    """Execute one code block; (ok, output)."""
     with tempfile.TemporaryDirectory() as td:
         script = pathlib.Path(td) / "example.py"
         script.write_text(code + "\n")
@@ -110,6 +113,7 @@ def run_block(code: str) -> tuple[bool, str, float]:
 
 
 def main() -> int:
+    """Run every published example block; exit 1 on failures."""
     want_gpu = "--gpu" in sys.argv
     failures = 0
     ran = 0

@@ -25,8 +25,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import pathlib
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 
@@ -45,6 +47,7 @@ BERNOULLI_P = 0.8
 
 
 def load_toml(path: pathlib.Path) -> dict:
+    """The campaign config as a dict."""
     return tomllib.loads(path.read_text())
 
 
@@ -73,6 +76,7 @@ class HP:
 
 
 def hp_from(cfg: dict) -> HP:
+    """The shared hyperparameters from a config dict."""
     tree = cfg.get("tree", {})
     booster = cfg.get("booster", {})
     bin_mapper = cfg.get("bin_mapper", {})
@@ -141,15 +145,18 @@ def padded_constraints(hp: HP, n_features: int) -> list:
 
 
 def rmse(pred: np.ndarray, y: np.ndarray) -> float:
+    """Root mean squared error."""
     return float(np.sqrt(np.mean((pred - y) ** 2)))
 
 
 def r2(pred: np.ndarray, y: np.ndarray) -> float:
+    """Coefficient of determination (bonsai.bench.metrics)."""
     from bonsai.bench import metrics
     return metrics.r2(y, pred)
 
 
 def mae(pred: np.ndarray, y: np.ndarray) -> float:
+    """Mean absolute error."""
     return float(np.mean(np.abs(pred - y)))
 
 
@@ -267,7 +274,7 @@ def _flatten_cfg_overrides(cfg: dict) -> list[tuple[str, str]]:
 
 
 def import_native_bonsai():
-    import sys
+    """The built native module, or None without a build."""
     sys.path.insert(0, str(REPO_ROOT / "build" / "python"))
     try:
         import bonsai as native
@@ -279,6 +286,7 @@ def import_native_bonsai():
 def run_bonsai_native(native, cfg: dict, train_df, test_df, hp: HP, grower: str,
                       sampler: str, hp_overrides: list[str],
                       valid_df=None) -> Result:
+    """One bonsai native-module arm at the shared knobs."""
     feature_cols = [c for c in train_df.columns if c != LABEL_COL]
     Xtr = np.ascontiguousarray(train_df[feature_cols], dtype=np.float32)
     ytr = np.ascontiguousarray(train_df[LABEL_COL], dtype=np.float32)
@@ -316,6 +324,7 @@ def run_bonsai_native(native, cfg: dict, train_df, test_df, hp: HP, grower: str,
 
 
 def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
+    """The xgboost reference arm at mapped knobs."""
     import xgboost as xgb
 
     feature_cols = [c for c in train_df.columns if c != LABEL_COL]
@@ -368,6 +377,7 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
 
 def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
                  valid_df=None) -> Result:
+    """The lightgbm reference arm at mapped knobs (optionally GOSS)."""
     import lightgbm as lgb
 
     feature_cols = [c for c in train_df.columns if c != LABEL_COL]
@@ -424,6 +434,7 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
 
 
 def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
+    """The catboost reference arm at mapped knobs."""
     from catboost import CatBoostClassifier, CatBoostRegressor
 
     feature_cols = [c for c in train_df.columns if c != LABEL_COL]
@@ -479,7 +490,6 @@ def write_markdown(path: pathlib.Path, dataset: str, results: dict[str, Result])
         f"|{'-' * (width + 2)}|--------|--------|--------|--------"
         "|--------|-------------|-----------------|",
     ]
-    import math
     for name, r in results.items():
         auc_s = "  -   " if math.isnan(r.auc) else f"{r.auc:6.4f}"
         acc_s = "  -   " if math.isnan(r.acc) else f"{r.acc:6.4f}"
@@ -511,6 +521,19 @@ def main() -> int:
                     help="comma-separated bonsai samplers to run")
     args = ap.parse_args()
 
+    cfg = _config_with_overrides(args)
+    hp = hp_from(cfg)
+    train_df, test_df = _load_frames(cfg)
+    train_df, valid_df, bonsai_hp_overrides = _early_stopping_split(
+        train_df, hp, args)
+    results = _run_all(args, cfg, hp, train_df, test_df, valid_df,
+                       bonsai_hp_overrides)
+    _write_outputs(args, results)
+    return 0
+
+
+def _config_with_overrides(args) -> dict:
+    """The TOML config with --hp SEC.KEY=VAL overrides folded in."""
     cfg = load_toml(args.config)
     for ov in args.hp:
         key, _, raw = ov.partition("=")
@@ -523,27 +546,34 @@ def main() -> int:
             except ValueError:
                 val = raw
         cfg.setdefault(sec, {})[name] = val
-    hp = hp_from(cfg)
+    return cfg
 
+
+def _load_frames(cfg: dict):
+    """(train, test) dataframes; libsvm sources gain fN column names."""
     train_path = REPO_ROOT / cfg["data"]["train"]
     test_path = REPO_ROOT / cfg["data"]["test"]
-    if cfg.get("data", {}).get("format") == "libsvm":
-        from sklearn.datasets import load_svmlight_file
-        nf = int(cfg["data"].get("libsvm_n_features", 0)) or None
-        Xtr, ytr = load_svmlight_file(str(train_path), n_features=nf)
-        Xte, yte = load_svmlight_file(str(test_path), n_features=nf)
-        cols = [f"f{i}" for i in range(Xtr.shape[1])]
-        train_df = pd.DataFrame(Xtr.toarray(), columns=cols)
-        train_df.insert(0, LABEL_COL, ytr)
-        test_df = pd.DataFrame(Xte.toarray(), columns=cols)
-        test_df.insert(0, LABEL_COL, yte)
-    else:
-        train_df = pd.read_csv(train_path)
-        test_df = pd.read_csv(test_path)
+    if cfg.get("data", {}).get("format") != "libsvm":
+        return pd.read_csv(train_path), pd.read_csv(test_path)
+    from sklearn.datasets import load_svmlight_file
+    nf = int(cfg["data"].get("libsvm_n_features", 0)) or None
+    Xtr, ytr = load_svmlight_file(str(train_path), n_features=nf)
+    Xte, yte = load_svmlight_file(str(test_path), n_features=nf)
+    cols = [f"f{i}" for i in range(Xtr.shape[1])]
+    train_df = pd.DataFrame(Xtr.toarray(), columns=cols)
+    train_df.insert(0, LABEL_COL, ytr)
+    test_df = pd.DataFrame(Xte.toarray(), columns=cols)
+    test_df.insert(0, LABEL_COL, yte)
+    return train_df, test_df
 
-    # Early stopping needs a valid set every library sees identically:
-    # carve the last 10% of train off for validation and give the same
-    # split to bonsai (via CSVs + --set) and the reference libraries.
+
+def _early_stopping_split(train_df, hp: HP, args):
+    """Carve the shared validation fold when early stopping is on.
+
+    Early stopping needs a valid set every library sees identically: the
+    last 10% of train goes to validation, and bonsai gets the same split
+    via CSVs + --set.
+    """
     valid_df = None
     bonsai_hp_overrides = list(args.hp)
     if hp.early_stopping_rounds > 0:
@@ -558,14 +588,17 @@ def main() -> int:
             f"data.train={es_train}",
             f"data.valid={es_valid}",
         ]
+    return train_df, valid_df, bonsai_hp_overrides
 
+
+def _run_all(args, cfg, hp: HP, train_df, test_df, valid_df,
+             bonsai_hp_overrides) -> dict[str, Result]:
+    """Every bonsai (grower, sampler) arm plus the reference libraries."""
     results: dict[str, Result] = {}
-
     native = import_native_bonsai()
     if native is None:
         print("native module not importable (build with -DBONSAI_PYTHON=ON); "
               "CLI subprocess rows only", flush=True)
-
     for grower in args.growers.split(","):
         for sampler in args.samplers.split(","):
             label = f"bonsai ({grower}, {sampler})"
@@ -578,35 +611,32 @@ def main() -> int:
                 results[nlabel] = run_bonsai_native(
                     native, cfg, train_df, test_df, hp, grower, sampler,
                     args.hp, valid_df=valid_df)
-
     print("xgboost", flush=True)
     results["xgboost"] = run_xgboost(train_df, test_df, hp, valid_df=valid_df)
-
     print("lightgbm", flush=True)
     results["lightgbm"] = run_lightgbm(train_df, test_df, hp, valid_df=valid_df)
-
     if "goss" in args.samplers.split(","):
         print("lightgbm (goss)", flush=True)
         results["lightgbm (goss)"] = run_lightgbm(train_df, test_df, hp, goss=True,
                                                   valid_df=valid_df)
-
     print("catboost", flush=True)
     results["catboost"] = run_catboost(train_df, test_df, hp, valid_df=valid_df)
+    return results
 
+
+def _write_outputs(args, results: dict[str, Result]):
+    """The stem.json + stem.md report pair under benchmarks/results/."""
     out_dir = REPO_ROOT / "benchmarks" / "results"
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = args.name or args.config.stem
     json_path = out_dir / f"{stem}.json"
     md_path = out_dir / f"{stem}.md"
-
     json_path.write_text(
         json.dumps({k: vars(v) for k, v in results.items()}, indent=2)
     )
     write_markdown(md_path, stem, results)
-
     print(md_path.read_text())
     print(f"wrote {json_path}\nwrote {md_path}")
-    return 0
 
 
 if __name__ == "__main__":
