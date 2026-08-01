@@ -73,6 +73,7 @@ class Evidence:
     TABARENA_CAT: Final = "tabarena-cat-probe-2026-07.jsonl"
     WIDE_CPU_HIST: Final = "wide-cpu-hist-2026-07.jsonl"
     XGB33_RECHECK: Final = "xgb33-recheck-2026-07.jsonl"
+    LEAFWISE_RECHECK: Final = "leafwise-recheck-2026-08.jsonl"
 
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -1116,6 +1117,31 @@ def _pareto_chart(pareto: list[dict], par_variants: list[str]):
         point_labels=par_labels)
 
 
+def leafwise_recheck_section() -> str:
+    """The decision-42 recheck: CPU leafwise vs LightGBM CUDA at scale."""
+    rows = [r for r in load_jsonl(Evidence.LEAFWISE_RECHECK)
+            if r[K.STATUS] == "ok"]
+    best = _cell_best(rows)
+    order = ["bonsai_leafwise", "lgbm_cuda", "lgbm_cpu",
+             "bonsai_cuda_depthwise"]
+    labels = {"bonsai_leafwise": "bonsai leafwise (cpu)",
+              "lgbm_cuda": "lgbm cuda", "lgbm_cpu": "lgbm cpu",
+              "bonsai_cuda_depthwise": "bonsai cuda dw (anchor)"}
+    scales = sorted({k[0] for k in best})
+    table = md_table(
+        ["rows", *[labels[v] for v in order]],
+        [[human(n), *[_fmt_cell(best, n, 100, v) for v in order]]
+         for n in scales])
+    return f"""### The leafwise recheck: decision 42's claim at scale (decision 95)
+
+The decision-42-era reading ("bonsai CPU leafwise beats LightGBM's CUDA leaf-wise") was measured at 464k rows; on one pod at ladder scales it inverts, monotonically, to 5.3x in LightGBM's favor at 16M. The engineering conclusion stands the other way up: leaf-wise on the GPU is viable at scale (LightGBM ships it), and bonsai's leafwise grower is now the only grower without device support (issue #268). The anchor arm ties this pod to the ladders; LightGBM-CUDA's higher r2 column is the depth-cap artifact recorded in decision 95.
+
+{table}
+
+{provenance([Evidence.LEAFWISE_RECHECK], "One pod (L40S, US-MO-1, 2026-08-01), SCALING knobs at 100 iters, best of 2 reps; evidence for decision 95.")}
+"""
+
+
 def frontier_section() -> str:
     """The accuracy-vs-time frontier page body."""
     pareto = [r for r in load_jsonl(standings_file(Axis.FRONTIER))
@@ -1303,7 +1329,8 @@ PAGES: list[tuple[str, str, str, list]] = [
     ("perf-scale.md", "Fit at scale",
      "Row-scale standings: the re-baseline, the XGBoost 3.3 recheck, and "
      "the CPU prefetch round.",
-     [rebaseline_section, xgb33_recheck_table, prefetch_section]),
+     [rebaseline_section, xgb33_recheck_table, prefetch_section,
+      leafwise_recheck_section]),
     ("perf-shape.md", "Width and shape",
      "The wide-data arc: the CPU fill, the CUDA recheck, the cols "
      "re-baseline, and the iso-volume shape frontier with measured VRAM.",
