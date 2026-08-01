@@ -324,15 +324,6 @@ inline void commit_children(Dataset const &ds, TreeConfig const &config,
     next.clear();
 }
 
-// A leaf awaiting expansion: its histograms/rows, its best split (heap key),
-// and its depth (to enforce the max_depth cap on children).
-struct Candidate
-{
-    SplitInput  node;
-    SplitOutput split;
-    uint8_t     depth = 0;
-};
-
 // Rows not in `sampled` (sorted) never reach a leaf during growth, so
 // finalize_as_leaf can't stamp their train values — yet the booster's score
 // accumulator covers every row. Route them through the finished tree in bin
@@ -671,7 +662,10 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     };
 
     std::vector<gd::Candidate> heap;
-    std::vector<SplitInput>    pending;
+    // Leaves awaiting the tree epilogue: nodes whose split is invalid or
+    // depth-capped. Candidates rather than bare nodes because a device-plane
+    // leaf is stamped by the pool slot it carries.
+    std::vector<gd::Candidate> pending;
     std::vector<bin_id_t>      split_bins(1, 0);
     std::vector<float>         split_gains(1, 0.0F);
     std::vector<float>         covers(1, static_cast<float>(row_indices.size()));
@@ -682,11 +676,12 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
         gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
 
     // Leafwise shares the data plane's primitives but not its level batching:
-    // the gain heap expands one node at a time (split_node), so there is no
-    // level to batch — the LevelStep opens the tree and builds the root.
-    gd::LevelStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
+    // the gain heap expands one node at a time, so there is no level to batch
+    // — the LeafStep opens the tree, splits one node per round, and (on the
+    // device plane) keeps that node's histograms in the tree's slot pool.
+    gd::LeafStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
     slap(gd::GrowProfiler::instance().setup_s);
-    SplitInput root = step.make_root(row_indices);
+    gd::Candidate root = step.open_root(row_indices);
     nodes.emplace_back(DenseTree::leaf(0.0F));
 
     size_t  n_leaves    = 0;
@@ -696,10 +691,9 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     auto has_budget = [&]
     { return config_.max_leaves == 0 || live_leaves < config_.max_leaves; };
 
-    SplitOutput const root_split = SplitterT::find(root, config_);
-    if (root_split.valid && config_.max_depth > 0)
+    if (root.split.valid && config_.max_depth > 0)
     {
-        heap.push_back({std::move(root), root_split, 0});
+        heap.push_back(std::move(root));
     }
     else
     {
@@ -715,26 +709,28 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
         auto const [left_id, right_id] = gd::commit_split_node(
             nodes, split_bins, split_gains, covers, ds, c.node.id, c.split);
 
-        double const parent_lo   = c.node.lo;
-        double const parent_hi   = c.node.hi;
-        auto const   parent_path = std::move(c.node.path);
-        auto [left, right] = gd::split_node(ds, grad, hess, std::move(c.node), c.split,
-                                            left_id, right_id, selected, engine_);
+        double const  parent_lo   = c.node.lo;
+        double const  parent_hi   = c.node.hi;
+        auto const    parent_path = std::move(c.node.path);
+        gd::ChildPair pair        = step.split_children(c, left_id, right_id);
+        SplitInput   &left        = pair.nodes[0];
+        SplitInput   &right       = pair.nodes[1];
         // A partition that leaves one child empty demotes the split back to
         // a leaf — same ground-truth guard as the depthwise plan (decision
         // 50); the pre-allocated children stay as unreachable placeholders.
-        if (left.rows.empty() || right.rows.empty())
+        if (gd::is_empty_child(left) || gd::is_empty_child(right))
         {
-            SplitInput &survivor = left.rows.empty() ? right : left;
-            survivor.id          = c.node.id;
-            survivor.lo          = parent_lo;
-            survivor.hi          = parent_hi;
-            gd::finalize_as_leaf(nodes, survivor, config_, n_leaves, values, leaf_ids);
+            SplitInput const demoted = step.demoted_leaf(c, pair, parent_lo, parent_hi);
+            step.leaf(demoted.id, c.slot);
+            gd::finalize_as_leaf(nodes, demoted, config_, n_leaves, values, leaf_ids);
             split_gains[c.node.id] = 0.0F;
             continue;
         }
-        covers[left_id]  = static_cast<float>(left.rows.size());
-        covers[right_id] = static_cast<float>(right.rows.size());
+        // Host children carry rows; device-resident children carry row_count.
+        covers[left_id] =
+            static_cast<float>(left.rows.empty() ? left.row_count : left.rows.size());
+        covers[right_id] = static_cast<float>(right.rows.empty() ? right.row_count
+                                                                 : right.rows.size());
         gd::propagate_monotone_bounds(parent_lo, parent_hi, c.split, config_, left,
                                       right);
         gd::propagate_interaction_state(interaction_groups_, parent_path,
@@ -742,33 +738,42 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
                                         right);
         ++live_leaves;
 
-        uint8_t const child_depth = c.depth + 1;
+        uint8_t const child_depth = pair.depth;
         depth                     = std::max(depth, child_depth);
-        for (SplitInput *child : {&left, &right})
+        step.find_children(pair, child_depth < config_.max_depth);
+        for (size_t i = 0; i < pair.nodes.size(); ++i)
         {
-            SplitOutput const split = (child_depth < config_.max_depth)
-                                          ? SplitterT::find(*child, config_)
-                                          : SplitOutput{};
-            if (split.valid)
+            gd::Candidate child{.node       = std::move(pair.nodes[i]),
+                                .split      = pair.splits[i],
+                                .depth      = child_depth,
+                                .slot       = pair.slots[i],
+                                .left_sums  = pair.child_sums[2 * i],
+                                .right_sums = pair.child_sums[(2 * i) + 1]};
+            if (child.split.valid)
             {
-                heap.push_back({std::move(*child), split, child_depth});
+                heap.push_back(std::move(child));
                 std::push_heap(heap.begin(), heap.end(), gain_less);
             }
             else
             {
-                pending.push_back(std::move(*child));
+                pending.push_back(std::move(child));
             }
         }
     }
 
     for (auto const &c : heap)
     {
+        step.leaf(c.node.id, c.slot);
         gd::finalize_as_leaf(nodes, c.node, config_, n_leaves, values, leaf_ids);
     }
-    for (auto const &leaf : pending)
+    for (auto const &c : pending)
     {
-        gd::finalize_as_leaf(nodes, leaf, config_, n_leaves, values, leaf_ids);
+        step.leaf(c.node.id, c.slot);
+        gd::finalize_as_leaf(nodes, c.node, config_, n_leaves, values, leaf_ids);
     }
+    // Device plane: every leaf's segment is stamped and the per-row values
+    // download here, so the out-of-bag routing below still has the last word.
+    step.end_tree(nodes, values, leaf_ids);
     gd::route_unsampled(ds, nodes, split_bins, row_indices, values, leaf_ids);
     split_gains.resize(nodes.size(), 0.0F);
     covers.resize(nodes.size(), 0.0F);
