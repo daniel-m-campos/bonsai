@@ -92,7 +92,7 @@ different questions.
 On California Housing the same split appears, gain ranking median income
 first and split count ranking Longitude and Latitude. LightGBM reproduces
 it, pinned by `test_feature_importance_agreement`
-([python/tests/test_bindings.py](../../python/tests/test_bindings.py)).
+([python/tests/test_estimators.py](../../python/tests/test_estimators.py)).
 
 ## What to distrust
 

@@ -11,6 +11,7 @@ import tempfile
 
 import bonsai
 import numpy as np
+import pytest
 from bonsai._compat import _grower_for_device
 
 RNG = np.random.default_rng(7)
@@ -164,12 +165,10 @@ def test_dart_with_eval_set_raises():
     est = bonsai.BonsaiRegressor(
         n_estimators=10, params={"booster.dart_drop_rate": 0.1}
     )
-    try:
+    with pytest.raises(ValueError) as e:
         est.fit(Xtr, ytr, eval_set=(Xva, yva))
-        raise AssertionError("expected ValueError for DART + eval_set")
-    except ValueError as e:
-        assert "dart_drop_rate" in str(e)
-        assert "eval_set" in str(e)
+    assert "dart_drop_rate" in str(e.value)
+    assert "eval_set" in str(e.value)
     # without an eval_set DART still fits normally
     est.fit(Xtr, ytr)
     assert est.n_iters_ == 10
@@ -199,9 +198,3 @@ def test_sklearn_clone_roundtrips_new_aliases():
     reg = bonsai.BonsaiRegressor(gamma=0.5, quantile_alpha=0.9)
     assert clone(reg).get_params() == reg.get_params()
 
-
-if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_"):
-            fn()
-            print(f"{name} ok")

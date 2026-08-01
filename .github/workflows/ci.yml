@@ -159,15 +159,15 @@ jobs:
         with:
           path: tests/data
           key: toy-data-${{ hashFiles('scripts/fetch_toy.py', 'scripts/fetch_amazon.py') }}
-      # lightgbm: test_bindings.py cross-checks feature importances against it.
-      - run: uv venv --python ${{ matrix.python }} .venv && uv pip install --python .venv/bin/python nanobind numpy lightgbm scikit-learn
+      # lightgbm: test_estimators.py cross-checks feature importances against it.
+      - run: uv venv --python ${{ matrix.python }} .venv && uv pip install --python .venv/bin/python nanobind numpy lightgbm scikit-learn pytest
       # ruff first: a lint finding shouldn't cost a build to discover.
       - run: make lint-python
       # The five doc gates (stdlib only): generated pages in sync (results
       # ledger, parameters reference, make map, timeline) and the mechanical
       # STYLE.md prose checks. Same command locally: make docs-check.
       - run: make docs-check
-      # test_bindings.py checks module-vs-CLI parity, so it needs the binary too.
+      # integration/test_cli_parity.py needs the built binary.
       - run: make build
       - run: make python-test
       # Every ```{.python .run} example in the published docs, executed against

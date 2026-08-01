@@ -232,7 +232,7 @@ bonsai and lightgbm agree on **both** types — including their
 disagreement with each other. Gain crowns `MedInc`; split-count crowns
 geography (`Longitude`/`Latitude` take ~2x more splits at lower gain
 each), the textbook case for preferring gain. Asserted in
-`python/tests/test_bindings.py::test_feature_importance_agreement`.
+`python/tests/test_estimators.py::test_feature_importance_agreement`.
 
 | feature | bonsai gain | bonsai split | lgbm split |
 |---|---|---|---|

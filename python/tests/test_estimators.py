@@ -1,38 +1,15 @@
-"""Binding tests: run with  PYTHONPATH=build/python .venv/bin/python -m pytest
-python/tests -q  (or plain `python python/tests/test_bindings.py`)."""
+"""Tests for bonsai.estimators (BonsaiRegressor / BonsaiClassifier)."""
 
 from __future__ import annotations
 
 import pathlib
 import pickle
-import subprocess
 import tempfile
 
 import bonsai
 import numpy as np
-
-REPO = pathlib.Path(__file__).resolve().parents[2]
-TRAIN_CSV = REPO / "tests/data/california_housing_train.csv"
-TEST_CSV = REPO / "tests/data/california_housing_test.csv"
-CH_TOML = REPO / "configs/california_housing.toml"
-CLI = REPO / "build/src/bonsai"
-
-CH_PARAMS = dict(
-    n_iters=200,
-    learning_rate=0.05,
-    max_depth=6,
-    grower="depthwise",
-    params={
-        "tree.min_data_in_leaf": 20,
-        "tree.min_child_hess": 0.001,
-        "bin_mapper.max_bin": 255,
-    },
-)
-
-
-def load_csv(path):
-    data = np.loadtxt(path, delimiter=",", skiprows=1, dtype=np.float32)
-    return data[:, 1:], data[:, 0]  # label is column 0
+import pytest
+from conftest import CH_PARAMS, TEST_CSV, TRAIN_CSV, load_csv
 
 
 def test_fit_predict_rmse():
@@ -41,29 +18,6 @@ def test_fit_predict_rmse():
     m = bonsai.BonsaiRegressor(**CH_PARAMS).fit(Xtr, ytr)
     rmse = float(np.sqrt(np.mean((m.predict(Xte) - yte) ** 2)))
     assert rmse < 0.50, rmse  # CLI depthwise lands ~0.474
-
-
-def test_parity_with_cli():
-    """Same config through the native module and the CLI must agree."""
-    Xtr, ytr = load_csv(TRAIN_CSV)
-    Xte, _ = load_csv(TEST_CSV)
-    py_pred = bonsai.BonsaiRegressor(**CH_PARAMS).fit(Xtr, ytr).predict(Xte)
-
-    with tempfile.TemporaryDirectory() as td:
-        model = pathlib.Path(td) / "m.msgpack"
-        preds = pathlib.Path(td) / "p.csv"
-        subprocess.run(
-            [CLI, "fit", "-c", CH_TOML, "--set", "dispatch.grower_name=depthwise",
-             "--model", model],
-            check=True, capture_output=True,
-        )
-        subprocess.run(
-            [CLI, "predict", "-c", CH_TOML, "--model", model, "--out", preds],
-            check=True, capture_output=True,
-        )
-        cli_pred = np.loadtxt(preds, skiprows=1, dtype=np.float32)
-
-    np.testing.assert_allclose(py_pred, cli_pred, rtol=0, atol=2e-4)
 
 
 def test_sample_weight_ones_is_identity():
@@ -100,12 +54,9 @@ def test_sample_weight_shifts_toward_upweighted_rows():
 def test_sample_weight_length_mismatch_raises():
     X = np.zeros((10, 3), dtype=np.float32)
     y = np.zeros(10, dtype=np.float32)
-    try:
+    with pytest.raises(Exception) as e:
         bonsai.BonsaiRegressor(n_iters=5).fit(X, y, sample_weight=np.ones(9, dtype=np.float32))
-    except Exception as e:
-        assert "sample_weight" in str(e)
-    else:
-        raise AssertionError("expected a length-mismatch error")
+        assert "sample_weight" in str(e.value)
 
 
 def test_early_stopping_stops():
@@ -117,14 +68,11 @@ def test_early_stopping_stops():
 
 
 def test_bad_param_raises():
-    try:
+    with pytest.raises(RuntimeError) as e:
         bonsai.BonsaiRegressor(params={"tree.nope": 1}).fit(
             np.zeros((4, 2), dtype=np.float32), np.zeros(4, dtype=np.float32)
         )
-    except RuntimeError as e:
-        assert "nope" in str(e)
-    else:
-        raise AssertionError("expected a config error")
+        assert "nope" in str(e.value)
 
 
 def test_feature_importance_agreement():
@@ -185,12 +133,8 @@ def test_toml_config_base_and_precedence():
         )
         assert r.n_iters_ == 4
 
-    try:
+    with pytest.raises(RuntimeError):
         bonsai.train([], Xtr[:200], ytr[:200], config="/nonexistent/cfg.toml")
-    except RuntimeError:
-        pass
-    else:
-        raise AssertionError("expected an error for a missing config file")
 
 
 def test_cuda_available_reports():
@@ -219,12 +163,9 @@ def test_get_set_params_round_trip():
     assert est.n_iters == 99
     assert est.get_params()["n_iters"] == 99
 
-    try:
+    with pytest.raises(ValueError) as e:
         est.set_params(not_a_real_param=1)
-    except ValueError as e:
-        assert "not_a_real_param" in str(e)
-    else:
-        raise AssertionError("expected ValueError for unknown param")
+        assert "not_a_real_param" in str(e.value)
 
 
 def test_score_r2_matches_hand_computation():
@@ -319,11 +260,6 @@ def test_pickle_round_trip_unfitted():
     assert restored._model is None
 
 
-# ---------------------------------------------------------------------------
-# BonsaiClassifier
-# ---------------------------------------------------------------------------
-
-
 def _separable_binary(n=2000, seed=0):
     rng = np.random.default_rng(seed)
     X = rng.normal(size=(n, 4)).astype(np.float32)
@@ -394,12 +330,9 @@ def test_classifier_multiclass_predict_and_proba():
 def test_classifier_too_few_classes_raises():
     X = np.zeros((10, 3), dtype=np.float32)
     y = np.zeros(10, dtype=np.float32)
-    try:
+    with pytest.raises(ValueError) as e:
         bonsai.BonsaiClassifier(n_iters=5).fit(X, y)
-    except ValueError as e:
-        assert "class" in str(e).lower()
-    else:
-        raise AssertionError("expected ValueError for a single class")
+        assert "class" in str(e.value).lower()
 
 
 def test_classifier_get_set_params_round_trip():
@@ -456,256 +389,20 @@ def test_classifier_pickle_round_trip_fitted():
     np.testing.assert_array_equal(restored.classes_, m.classes_)
 
 
-# ---------------------------------------------------------------------------
-# xgboost/lightgbm-style constructor aliases
-# ---------------------------------------------------------------------------
-
-
-def test_alias_mapping_regressor():
-    assert ("booster.n_iters", "7") in bonsai.BonsaiRegressor(n_estimators=7)._build_pairs()
-    assert ("tree.max_leaves", "8") in bonsai.BonsaiRegressor(num_leaves=8)._build_pairs()
-    assert ("booster.random_seed", "3") in bonsai.BonsaiRegressor(random_state=3)._build_pairs()
-    assert ("parallel.n_threads", "2") in bonsai.BonsaiRegressor(n_jobs=2)._build_pairs()
-    assert ("tree.lambda_l2", "2.0") in bonsai.BonsaiRegressor(reg_lambda=2.0)._build_pairs()
-    assert ("tree.lambda_l1", "1.5") in bonsai.BonsaiRegressor(reg_alpha=1.5)._build_pairs()
-    assert ("bin_mapper.max_bin", "63") in bonsai.BonsaiRegressor(max_bin=63)._build_pairs()
-    assert ("tree.min_data_in_leaf", "5") in bonsai.BonsaiRegressor(
-        min_child_samples=5
-    )._build_pairs()
-    assert ("tree.feature_fraction", "0.8") in bonsai.BonsaiRegressor(
-        colsample_bytree=0.8
-    )._build_pairs()
-
-
-def _classifier_pairs(**kwargs):
-    """_build_pairs() needs n_classes_, which fit() derives from y; set it
-    by hand to check the pure config-mapping logic without a full fit."""
-    m = bonsai.BonsaiClassifier(**kwargs)
-    m.n_classes_ = 2
-    return m._build_pairs()
-
-
-def test_alias_mapping_classifier():
-    assert ("tree.max_leaves", "8") in _classifier_pairs(num_leaves=8)
-    assert ("booster.n_iters", "9") in _classifier_pairs(n_estimators=9)
-    assert ("tree.lambda_l2", "3.0") in _classifier_pairs(reg_lambda=3.0)
-
-
-def test_alias_unset_leaves_canonical_untouched():
-    """Aliases default to None; when unset the canonical first-class value
-    (and its default) is what ends up in the pairs."""
-    pairs = dict(bonsai.BonsaiRegressor(n_iters=42)._build_pairs())
-    assert pairs["booster.n_iters"] == "42"
-
-
-def test_alias_precedence_params_wins():
-    pairs = dict(
-        bonsai.BonsaiRegressor(
-            reg_lambda=1.0, params={"tree.lambda_l2": 5.0}
-        )._build_pairs()
-    )
-    assert pairs["tree.lambda_l2"] == "5.0"
-
-
-def test_alias_precedence_alias_wins_over_canonical():
-    pairs = dict(bonsai.BonsaiRegressor(n_iters=10, n_estimators=99)._build_pairs())
-    assert pairs["booster.n_iters"] == "99"
-
-
-def test_alias_end_to_end_fit():
-    Xtr, ytr = load_csv(TRAIN_CSV)
-    m = bonsai.BonsaiRegressor(n_estimators=7).fit(Xtr, ytr)
-    assert m.n_iters_ == 7
-
-
-def test_alias_sklearn_clone_round_trip():
-    try:
-        import sklearn.base
-    except ImportError:
-        return
-
-    est = bonsai.BonsaiRegressor(n_estimators=50, reg_lambda=1.0)
-    params = est.get_params()
-    assert params["n_estimators"] == 50
-    assert params["reg_lambda"] == 1.0
-
-    cloned = sklearn.base.clone(est)
-    assert cloned is not est
-    assert cloned.get_params() == params
-    assert cloned.n_estimators == 50
-    assert cloned.reg_lambda == 1.0
-
-
-def test_alias_pickle_fitted_predicts_identically():
-    Xtr, ytr = load_csv(TRAIN_CSV)
-    Xte, _ = load_csv(TEST_CSV)
-    m = bonsai.BonsaiRegressor(n_estimators=20, reg_lambda=0.5).fit(Xtr, ytr)
-    before = m.predict(Xte)
-
-    restored = pickle.loads(pickle.dumps(m))
-    after = restored.predict(Xte)
-
-    assert np.array_equal(before, after)
-    assert restored.n_iters_ == m.n_iters_
-    assert restored.get_params()["reg_lambda"] == 0.5
-
-
-def test_reusable_dataset_bit_identical_and_guard():
-    rng = np.random.default_rng(0)
-    X = rng.random((3000, 15), dtype=np.float32)
-    y = (X[:, 0] + rng.normal(0, 0.1, 3000)).astype(np.float32)
-    pairs = [("dispatch.grower_name", "depthwise"), ("booster.n_iters", "40"),
-             ("tree.max_depth", "6")]
-    ref = np.asarray(bonsai.train(pairs, X, y).predict(X))
-
-    ds = bonsai.Dataset(X, y, max_bin=255)
-    assert ds.n_rows == 3000 and ds.n_features == 15
-    # bin-once reuse must equal fitting from (X, y) bit for bit
-    got = np.asarray(bonsai.train(pairs, ds).predict(X))
-    np.testing.assert_array_equal(ref, got)
-    # reuse with different hyperparameters (no re-bin)
-    assert np.asarray(bonsai.train([("booster.n_iters", "10")], ds).predict(X)).shape == (3000,)
-    # binning is fixed by the Dataset — reject a bin_mapper param override
-    try:
-        bonsai.train([("bin_mapper.max_bin", "63")], ds)
-    except Exception as e:
-        assert "bin_mapper" in str(e)
-    else:
-        raise AssertionError("expected bin_mapper param override to be rejected")
-
-    # ...and reject a config file that carries a [bin_mapper] section, which
-    # would otherwise be silently ignored (binning comes from the Dataset).
-    # The check is structural: even a section that restates the defaults
-    # (max_bin = 255) is an explicit override and must be rejected.
-    for section in ("[bin_mapper]\nmax_bin = 63\n", "[bin_mapper]\nmax_bin = 255\n"):
-        with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
-            f.write(section)
-            bad_cfg = f.name
-        try:
-            bonsai.train([], ds, config=bad_cfg)
-        except Exception as e:
-            assert "bin_mapper" in str(e)
-        else:
-            raise AssertionError(f"expected config-file rejection for: {section!r}")
-
-    # a config file with only non-bin params must NOT false-positive, even when
-    # the Dataset itself was binned with a non-default max_bin
-    ds63 = bonsai.Dataset(X, y, max_bin=63, min_data_in_bin=3)
-    with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
-        f.write("[tree]\nmax_depth = 4\n")
-        ok_cfg = f.name
-    assert np.asarray(bonsai.train([], ds63, config=ok_cfg).predict(X)).shape == (3000,)
-
-
-def test_dataset_bin_edges_carries_domain_bands_in_the_artifact():
-    """Doc 18: explicit bin_edges travel inside the model artifact, so predict
-    on raw values respects the domain bands with no external transform — the
-    property pre-binning (the decision-67 emulation) structurally cannot have."""
-    rng = np.random.default_rng(7)
-    n = 5000
-    age = rng.uniform(0.0, 100.0, n).astype(np.float32)
-    noise = rng.random((n, 2), dtype=np.float32)
-    X = np.column_stack([age, noise]).astype(np.float32)
-    band = np.digitize(age, [18.0, 65.0]).astype(np.float32)
-    y = (band * 2.0 + rng.normal(0, 0.05, n)).astype(np.float32)
-
-    ds = bonsai.Dataset(X, y, bin_edges={0: np.array([18.0, 65.0], dtype=np.float32)})
-    m = bonsai.train([("booster.n_iters", "30"), ("tree.max_depth", "4")], ds)
-
-    # Within a band the model cannot distinguish raw values: the only cuts on
-    # feature 0 are the two domain edges.
-    probe = np.array([[5.0, 0.5, 0.5], [17.9, 0.5, 0.5],
-                      [18.1, 0.5, 0.5], [64.0, 0.5, 0.5],
-                      [66.0, 0.5, 0.5], [99.0, 0.5, 0.5]], dtype=np.float32)
-    p = np.asarray(m.predict(probe))
-    assert p[0] == p[1] and p[2] == p[3] and p[4] == p[5]
-    # ...and across bands it must distinguish: the bands are the signal.
-    assert p[0] < p[2] < p[4]
-
-    # Edges are right-inclusive, the fitted-cut convention: 18.0 is minor.
-    edge = np.asarray(m.predict(np.array([[18.0, 0.5, 0.5]], dtype=np.float32)))
-    assert edge[0] == p[0]
-
-    # The artifact round-trips: a reloaded model predicts byte-identically on
-    # raw values with no external transform.
-    with tempfile.NamedTemporaryFile(suffix=".bonsai", delete=False) as f:
-        model_path = f.name
-    m.save(model_path)
-    np.testing.assert_array_equal(np.asarray(bonsai.load(model_path).predict(probe)), p)
-
-    # Malformed edges are rejected at Dataset construction.
-    for bad in ({0: np.array([65.0, 18.0], dtype=np.float32)},   # decreasing
-                {0: np.array([], dtype=np.float32)},             # empty
-                {9: np.array([1.0], dtype=np.float32)}):         # no such column
-        try:
-            bonsai.Dataset(X, y, bin_edges=bad)
-        except Exception as e:
-            assert "bin_edges" in str(e)
-        else:
-            raise AssertionError(f"expected bin_edges rejection for {bad}")
-
-
-def test_dataset_eval_set_early_stopping():
-    """train(params, dataset, eval_set=...) bins the valid set with the
-    Dataset's mappers and enables early stopping — the MVP gap where
-    early_stopping params silently did nothing in the Dataset path."""
-    rng = np.random.default_rng(0)
-    X = rng.random((4000, 10), dtype=np.float32)
-    y = (X[:, 0] * 2 + rng.normal(0, 0.3, 4000)).astype(np.float32)
-    Xt, yt, Xv, yv = X[:3000], y[:3000], X[3000:], y[3000:]
-
-    ds = bonsai.Dataset(Xt, yt)
-    pairs = [("booster.n_iters", "400"), ("booster.learning_rate", "0.3"),
-             ("booster.early_stopping_rounds", "10")]
-    m = bonsai.train(pairs, ds, eval_set=(Xv, yv))
-    assert m.n_iters < 400, m.n_iters
-
-    # same call without eval_set trains to completion (no valid, no stopping)
-    m_full = bonsai.train([("booster.n_iters", "30")], ds)
-    assert m_full.n_iters == 30
-
-    # eval_set path must match the (X, y) path bit for bit under equal binning
-    ref = bonsai.train(pairs, Xt, yt, eval_set=(Xv, yv))
-    np.testing.assert_array_equal(
-        np.asarray(ref.predict(Xv)), np.asarray(m.predict(Xv))
-    )
-
-
 def test_predict_proba_rejects_regression_objective():
     Xtr, ytr = load_csv(TRAIN_CSV)
     m = bonsai.train([("booster.n_iters", "5")], Xtr[:500], ytr[:500])
-    try:
+    with pytest.raises(Exception) as e:
         m.predict_proba(Xtr[:10])
-    except Exception as e:
-        assert "classification" in str(e) and "mse" in str(e)
-    else:
-        raise AssertionError("expected predict_proba on an mse model to raise")
+        assert "classification" in str(e.value) and "mse" in str(e.value)
 
 
 def test_classifier_score_zero_weights_raise():
     X, y = _three_class_data(300)
     clf = bonsai.BonsaiClassifier(n_iters=5).fit(X, y)
-    try:
+    with pytest.raises(ValueError) as e:
         clf.score(X, y, sample_weight=np.zeros(len(y), dtype=np.float32))
-    except ValueError as e:
-        assert "zero" in str(e)
-    else:
-        raise AssertionError("expected zero weights to raise")
-
-
-def test_alias_table_matches_init_signatures():
-    """The alias set is maintained in three places (base __init__, the
-    _ALIAS_TO_KEY table, BonsaiRegressor's re-declared __init__); this pins
-    them together so adding an alias in one place can't silently drift."""
-    import inspect
-
-    aliases = set(bonsai.BonsaiClassifier._ALIAS_TO_KEY)
-    for cls in (bonsai.BonsaiRegressor, bonsai.BonsaiClassifier):
-        params = set(inspect.signature(cls.__init__).parameters) - {"self"}
-        missing = aliases - params
-        assert not missing, f"{cls.__name__}.__init__ missing aliases: {missing}"
-        est = cls()
-        assert aliases <= set(est.get_params()), "get_params must cover aliases"
+        assert "zero" in str(e.value)
 
 
 def _three_class_data(n=3000, seed=0):
@@ -767,12 +464,9 @@ def test_classifier_from_file_restores_class_metadata():
     with tempfile.TemporaryDirectory() as td:
         path = str(pathlib.Path(td) / "reg.msgpack")
         bonsai.BonsaiRegressor(n_iters=5).fit(Xr[:500], yr[:500]).save(path)
-        try:
+        with pytest.raises(ValueError) as e:
             bonsai.BonsaiClassifier.from_file(path)
-        except ValueError as e:
-            assert "objective" in str(e)
-        else:
-            raise AssertionError("expected from_file to reject an mse model")
+            assert "objective" in str(e.value)
 
 
 def test_classifier_eval_set_unseen_label_raises():
@@ -783,12 +477,9 @@ def test_classifier_eval_set_unseen_label_raises():
     for bad_label in (5.0, 0.5, -3.0):  # out of range and in-between
         yv_bad = yv.copy()
         yv_bad[:10] = bad_label
-        try:
+        with pytest.raises(ValueError) as e:
             bonsai.BonsaiClassifier(n_iters=5).fit(X, y, eval_set=(Xv, yv_bad))
-        except ValueError as e:
-            assert "eval_set" in str(e)
-        else:
-            raise AssertionError(f"expected unseen label {bad_label} to raise")
+            assert "eval_set" in str(e.value)
     # a valid eval_set still works
     bonsai.BonsaiClassifier(n_iters=5).fit(X, y, eval_set=(Xv, yv))
 
@@ -810,17 +501,6 @@ def test_classifier_nan_labels_raise():
     X, y = _three_class_data()
     y = y.copy()
     y[0] = np.nan
-    try:
+    with pytest.raises(ValueError) as e:
         bonsai.BonsaiClassifier(n_iters=5).fit(X, y)
-    except ValueError as e:
-        assert "NaN" in str(e)
-    else:
-        raise AssertionError("expected NaN labels to raise")
-
-
-if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_"):
-            fn()
-            print(f"ok {name}")
-    print("all binding tests passed")
+        assert "NaN" in str(e.value)

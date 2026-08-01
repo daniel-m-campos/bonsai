@@ -11,6 +11,20 @@ import numpy as np
 REPO = pathlib.Path(__file__).resolve().parents[2]
 
 
+def _load_amazon(p):
+    d = np.loadtxt(p, delimiter=",", skiprows=1, dtype=np.float32)
+    return d[:, 1:], d[:, 0]
+
+
+def _auc(y, s):
+    order = np.argsort(s)
+    r = np.empty(len(s))
+    r[order] = np.arange(1, len(s) + 1)
+    pos = y > 0.5
+    n_pos, n_neg = pos.sum(), (~pos).sum()
+    return (r[pos].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg)
+
+
 def _toy():
     rng = np.random.default_rng(3)
     codes = rng.integers(0, 20, 2000).astype(np.float32)
@@ -109,20 +123,8 @@ def test_cross_pairs_shape_and_unseen():
 def test_cross_pairs_amazon_quality():
     # The decision-58 follow-up pin: pair-TS closes catboost's crossed-CTR
     # edge (probe: 0.8604 singles -> 0.8877 vs catboost-native 0.8897).
-    def load(p):
-        d = np.loadtxt(p, delimiter=",", skiprows=1, dtype=np.float32)
-        return d[:, 1:], d[:, 0]
-
-    Xtr, ytr = load(REPO / "tests/data/amazon_train.csv")
-    Xte, yte = load(REPO / "tests/data/amazon_test.csv")
-
-    def auc(y, s):
-        order = np.argsort(s)
-        r = np.empty(len(s))
-        r[order] = np.arange(1, len(s) + 1)
-        pos = y > 0.5
-        n_pos, n_neg = pos.sum(), (~pos).sum()
-        return (r[pos].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg)
+    Xtr, ytr = _load_amazon(REPO / "tests/data/amazon_train.csv")
+    Xte, yte = _load_amazon(REPO / "tests/data/amazon_test.csv")
 
     enc = bonsai.OrderedTargetEncoder(columns=range(Xtr.shape[1]), cross=2)
     m = bonsai.BonsaiRegressor(
@@ -131,7 +133,7 @@ def test_cross_pairs_amazon_quality():
         params={"tree.min_data_in_leaf": 20, "tree.lambda_l2": 1.0,
                 "bin_mapper.max_bin": 255})
     m.fit(enc.fit_transform(Xtr, ytr), ytr)
-    crossed = auc(yte, m.predict(enc.transform(Xte)))
+    crossed = _auc(yte, m.predict(enc.transform(Xte)))
     assert crossed > 0.88, crossed
 
 
@@ -139,20 +141,8 @@ def test_amazon_quality_pin():
     # The measured reason this module exists (decision 58): +0.03 AUC or
     # better over ordinal codes on the amazon access data, which clears the
     # lightgbm-native-set-splits line from feature_gap.md §18.
-    def load(p):
-        d = np.loadtxt(p, delimiter=",", skiprows=1, dtype=np.float32)
-        return d[:, 1:], d[:, 0]
-
-    Xtr, ytr = load(REPO / "tests/data/amazon_train.csv")
-    Xte, yte = load(REPO / "tests/data/amazon_test.csv")
-
-    def auc(y, s):
-        order = np.argsort(s)
-        r = np.empty(len(s))
-        r[order] = np.arange(1, len(s) + 1)
-        pos = y > 0.5
-        n_pos, n_neg = pos.sum(), (~pos).sum()
-        return (r[pos].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg)
+    Xtr, ytr = _load_amazon(REPO / "tests/data/amazon_train.csv")
+    Xte, yte = _load_amazon(REPO / "tests/data/amazon_test.csv")
 
     def fit_auc(Xa, Xb):
         m = bonsai.BonsaiRegressor(
@@ -161,7 +151,7 @@ def test_amazon_quality_pin():
             params={"tree.min_data_in_leaf": 20, "tree.lambda_l2": 1.0,
                     "bin_mapper.max_bin": 255})
         m.fit(Xa, ytr)
-        return auc(yte, m.predict(Xb))
+        return _auc(yte, m.predict(Xb))
 
     ordinal = fit_auc(Xtr, Xte)
     enc = bonsai.OrderedTargetEncoder(columns=range(Xtr.shape[1]))
@@ -169,10 +159,3 @@ def test_amazon_quality_pin():
     assert encoded - ordinal > 0.03, (ordinal, encoded)
     assert encoded > 0.85, encoded
 
-
-if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_"):
-            fn()
-            print(f"ok {name}")
-    print("all encoding tests passed")
