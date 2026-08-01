@@ -48,3 +48,16 @@ XGBoost 3.3 (2026-07-21) claimed lower GPU quantile-sketching memory and wide-da
 | 16,000,000 | 75.8s (.879) | 75.7s (.880) |
 
 *Source: [`cpu-prefetch-round-2026-07.jsonl`](../../../benchmarks/results/cpu-prefetch-round-2026-07.jsonl). Decision 61: software prefetch closed the 16M CPU gap to XGBoost-hist on this pod.*
+
+### The leafwise recheck: decision 42's claim at scale (decision 95)
+
+The decision-42-era reading ("bonsai CPU leafwise beats LightGBM's CUDA leaf-wise") was measured at 464k rows; on one pod at ladder scales it inverts, monotonically, to 5.3x in LightGBM's favor at 16M. The engineering conclusion stands the other way up: leaf-wise on the GPU is viable at scale (LightGBM ships it), and bonsai's leafwise grower is now the only grower without device support (issue #268). The anchor arm ties this pod to the ladders; LightGBM-CUDA's higher r2 column is the depth-cap artifact recorded in decision 95.
+
+| rows | bonsai leafwise (cpu) | lgbm cuda | lgbm cpu | bonsai cuda dw (anchor) |
+|---|---|---|---|---|
+| 250k | 7.1s (.872) | 5.7s (.879) | 2.4s (.872) | 0.5s (.872) |
+| 1M | 15.1s (.877) | 6.3s (.884) | 5.1s (.877) | 1.1s (.877) |
+| 4M | 39.6s (.878) | 9.7s (.885) | 20.0s (.879) | 4.4s (.878) |
+| 16M | 128.4s (.879) | 24.4s (.886) | 104.7s (.879) | 17.2s (.879) |
+
+*Source: [`leafwise-recheck-2026-08.jsonl`](../../../benchmarks/results/leafwise-recheck-2026-08.jsonl). One pod (L40S, US-MO-1, 2026-08-01), SCALING knobs at 100 iters, best of 2 reps; evidence for decision 95.*
