@@ -245,6 +245,24 @@ struct CudaDeviceContext
         void stage_level_sums(std::span<SplitInput const> level);
     };
 
+    // Per-tree leaf pipeline (docs/architecture/20-cuda-leafwise.md): best-first
+    // growth expands one leaf at a time, so histograms live in a slot pool
+    // zeroed once per tree instead of the level plane's ping-pong. The root
+    // takes slot 0, every split builds the smaller child into the next free
+    // slot and derives the larger in place in the parent's, which it inherits.
+    // Rows, gradients, flags, the leaf assignment array, and the per-tree knobs
+    // (features, n_selected, stride) are the level pipeline's, reused as they
+    // are; the pool and its segment map are all this plane adds.
+    struct LeafPipeline
+    {
+        DeviceBuffer<double>  pool;         // max_slots * n_selected * stride
+        std::vector<uint32_t> slot_offsets; // per slot: segment start in rows
+        std::vector<uint32_t> slot_counts;
+        Staged<uint32_t>      find_slots; // find's slot indirection table
+        uint32_t              next_slot = 0;
+        uint32_t              max_slots = 0;
+    };
+
     // Device-resident objective plane: labels and the per-row score vector live
     // here for the whole fit. begin_tree derives gh from them by the kind's
     // gradient kernel; the resident finalize walks the finished tree (SoA node
@@ -273,6 +291,7 @@ struct CudaDeviceContext
     DeviceData      data;
     GradientPlane   grads;
     LevelPipeline   lvl;
+    LeafPipeline    leaf;
     ResidentPlane   resident;
     ProfileCounters prof_counters;
 
@@ -294,20 +313,34 @@ struct CudaDeviceContext
         return 4 * max_bins * sizeof(float) <= shared_limit;
     }
 
+    // The leaf plane's second gate, applied beside hist_budget_ok in
+    // leaf_begin_root: the histogram pool is that plane's only new allocation
+    // and an oversized leaf budget must decline to the host plane rather than
+    // fail the fit. Half the device's free memory is the bound. Only the leaf
+    // plane reaches it: resident_begin arms nothing for leafwise growth
+    // (LeafwiseGrower::resident_begin is a static false), so no tree can
+    // decline into a host-gradient path behind the resident mode's back.
+    bool leaf_pool_ok(size_t bytes) const;
+
     void init_shared_limit();
     void ensure_dataset(Dataset const &dataset);
-    void begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
-    bool begin_root(Dataset const &ds, floats_view grad, floats_view hess,
-                    SplitInput &root, std::span<feature_id_t const> selected);
-    void stamp_leaves(std::span<CudaHistogramEngine::LeafStamp const> stamps);
-    void partition_level(Dataset const                                    &ds,
-                         std::span<CudaHistogramEngine::PartitionOp const> ops,
-                         std::span<uint32_t> child_counts);
-    void finalize_rows(std::span<node_id_t> leaf_by_row);
-    void finalize_tree(std::span<float const> node_values, std::span<float> values,
-                       std::span<node_id_t> leaf_ids);
-    void advance_level(Dataset const                                &ds,
-                       std::span<CudaHistogramEngine::LevelOp const> ops);
+    // Fills lvl.rows with the tree's root row segment and returns its length: a
+    // full-data fit restores the cached identity permutation device-to-device
+    // (built once by iota_kernel), any other row list uploads. Shared by the
+    // level and leaf planes' root opens.
+    uint32_t stage_root_rows(SplitInput const &root, bool identity);
+    void     begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
+    bool     begin_root(Dataset const &ds, floats_view grad, floats_view hess,
+                        SplitInput &root, std::span<feature_id_t const> selected);
+    void     stamp_leaves(std::span<CudaHistogramEngine::LeafStamp const> stamps);
+    void     partition_level(Dataset const                                    &ds,
+                             std::span<CudaHistogramEngine::PartitionOp const> ops,
+                             std::span<uint32_t> child_counts);
+    void     finalize_rows(std::span<node_id_t> leaf_by_row);
+    void     finalize_tree(std::span<float const> node_values, std::span<float> values,
+                           std::span<node_id_t> leaf_ids);
+    void     advance_level(Dataset const                                &ds,
+                           std::span<CudaHistogramEngine::LevelOp const> ops);
     // Final-level advance: the children of the last level are leaves, so their
     // histograms are never read by any find; only the layout flip survives so
     // stamping sees the final segments.
@@ -318,6 +351,30 @@ struct CudaDeviceContext
     void find_level_split(Dataset const &ds, TreeConfig const &config,
                           std::span<SplitInput const> level, std::span<SplitOutput> out,
                           std::span<HistCell> child_sums);
+
+    // --- Leaf plane (docs/architecture/20-cuda-leafwise.md) -------------------
+    // Opens the tree's slot pool, seeds the root segment, and builds slot 0.
+    // Returns false — leaving root untouched — when the histogram budget or
+    // the pool budget declines, and the caller trains on the host plane.
+    bool leaf_begin_root(Dataset const &ds, TreeConfig const &config, floats_view grad,
+                         floats_view hess, SplitInput &root,
+                         std::span<feature_id_t const> selected);
+    // Routes one leaf's row segment into two adjacent subranges in place and
+    // assigns the smaller child the next free slot (the larger inherits the
+    // parent's). A partition that empties one side takes no slot: the caller
+    // demotes the split back to a leaf.
+    CudaHistogramEngine::LeafRound
+    leaf_split(Dataset const &ds, CudaHistogramEngine::LeafPartOp const &op);
+    // Builds the smaller child into its fresh slot and derives the larger by
+    // in-place subtraction in the slot it inherited.
+    void leaf_build(Dataset const &ds, CudaHistogramEngine::LeafRound const &round);
+    // Best split per named pool slot; child_sums receives the winning cut's
+    // (left, right) totals, 2 cells per node, as find_splits_many does.
+    void leaf_find(Dataset const &ds, TreeConfig const &config,
+                   std::span<SplitInput const> nodes, std::span<uint32_t const> slots,
+                   std::span<SplitOutput> out, std::span<HistCell> child_sums);
+    // Records final leaf assignment for the named slots' segments.
+    void leaf_stamp(std::span<CudaHistogramEngine::LeafStamp const> stamps);
 
     bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
                         std::span<float const> initial_scores, float learning_rate);

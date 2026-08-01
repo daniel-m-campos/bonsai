@@ -23,6 +23,7 @@
 #include <driver_types.h>
 #include <memory>
 #include <span>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 #include <vector_types.h>
@@ -424,6 +425,40 @@ void CudaDeviceContext::begin_tree(Dataset const &ds, floats_view grad,
     lap(prof_counters.gh_upload_s);
 }
 
+uint32_t CudaDeviceContext::stage_root_rows(SplitInput const &root, bool identity)
+{
+    auto const n = static_cast<uint32_t>(identity ? root.row_count : root.rows.size());
+    lvl.rows.reserve(n);
+    if (static_cast<size_t>(n) == data.key.n_rows &&
+        lvl.root_rows_cached_n == data.key.n_rows)
+    {
+        check(cudaMemcpy(lvl.rows.data(), lvl.root_rows.data(),
+                         static_cast<size_t>(n) * sizeof(uint32_t),
+                         cudaMemcpyDeviceToDevice),
+              "root rows restore");
+        return n;
+    }
+    if (identity)
+    {
+        iota_kernel<<<dim3((n + 255) / 256), dim3(256)>>>(lvl.rows.data(), n);
+        check(cudaGetLastError(), "iota launch");
+    }
+    else
+    {
+        lvl.rows.upload(root.rows.data(), root.rows.size());
+    }
+    if (static_cast<size_t>(n) == data.key.n_rows)
+    {
+        lvl.root_rows.reserve(n);
+        check(cudaMemcpy(lvl.root_rows.data(), lvl.rows.data(),
+                         static_cast<size_t>(n) * sizeof(uint32_t),
+                         cudaMemcpyDeviceToDevice),
+              "root rows cache");
+        lvl.root_rows_cached_n = data.key.n_rows;
+    }
+    return n;
+}
+
 bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
                                    floats_view hess, SplitInput &root,
                                    std::span<feature_id_t const> selected)
@@ -454,36 +489,7 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     lvl.cur().reserve(lvl.slot_doubles());
     check(cudaMemset(lvl.cur().data(), 0, lvl.slot_doubles() * sizeof(double)),
           "zero root slot");
-    lvl.rows.reserve(n);
-    if (static_cast<size_t>(n) == data.key.n_rows &&
-        lvl.root_rows_cached_n == data.key.n_rows)
-    {
-        check(cudaMemcpy(lvl.rows.data(), lvl.root_rows.data(),
-                         static_cast<size_t>(n) * sizeof(uint32_t),
-                         cudaMemcpyDeviceToDevice),
-              "root rows restore");
-    }
-    else
-    {
-        if (identity)
-        {
-            iota_kernel<<<dim3((n + 255) / 256), dim3(256)>>>(lvl.rows.data(), n);
-            check(cudaGetLastError(), "iota launch");
-        }
-        else
-        {
-            lvl.rows.upload(root.rows.data(), root.rows.size());
-        }
-        if (static_cast<size_t>(n) == data.key.n_rows)
-        {
-            lvl.root_rows.reserve(n);
-            check(cudaMemcpy(lvl.root_rows.data(), lvl.rows.data(),
-                             static_cast<size_t>(n) * sizeof(uint32_t),
-                             cudaMemcpyDeviceToDevice),
-                  "root rows cache");
-            lvl.root_rows_cached_n = data.key.n_rows;
-        }
-    }
+    stage_root_rows(root, identity);
     lvl.row_offsets.host.assign(1, 0);
     lvl.row_offsets.sync();
     lvl.row_counts.host.assign(1, n);
@@ -830,7 +836,8 @@ void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &co
         lvl.node_sums.device(), lvl.node_bounds.device(),
         any_mask ? lvl.allowed.device() : nullptr, lvl.monotone.device(),
         lvl.n_selected, lvl.stride, config.lambda_l1, config.lambda_l2,
-        config.min_child_hess, config.min_gain_to_split, lvl.feat_best.data());
+        config.min_child_hess, config.min_gain_to_split, lvl.feat_best.data(),
+        /*hist_slot=*/nullptr);
     check(cudaGetLastError(), "find launch");
     reduce_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(32)>>>(
         lvl.feat_best.data(), lvl.n_selected, lvl.node_best.device());
@@ -931,6 +938,334 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
             .sum_hess = static_cast<float>(lvl.level_child.host[(4 * i) + 3])};
     }
     lap(prof.unpack_s);
+}
+
+// --- Leaf plane (docs/architecture/20-cuda-leafwise.md) ----------------------
+
+bool CudaDeviceContext::leaf_pool_ok(size_t bytes) const
+{
+    size_t free_bytes = 0;
+    size_t total      = 0;
+    if (cudaMemGetInfo(&free_bytes, &total) != cudaSuccess)
+    {
+        return false;
+    }
+    return bytes <= free_bytes / 2;
+}
+
+namespace
+{
+
+// Slots one tree can demand: the root plus one per split, which is exactly the
+// leaf budget. An unbounded budget falls back to the depth cap's 2^depth; a cap
+// too deep to bound names a pool no device accepts, so the plane declines.
+size_t leaf_max_slots(TreeConfig const &config)
+{
+    if (config.max_leaves != 0)
+    {
+        return config.max_leaves;
+    }
+    return config.max_depth < 31 ? (size_t{1} << config.max_depth)
+                                 : static_cast<size_t>(-1);
+}
+
+} // namespace
+
+bool CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &config,
+                                        floats_view /*grad*/, floats_view /*hess*/,
+                                        SplitInput                   &root,
+                                        std::span<feature_id_t const> selected)
+{
+    size_t max_sel_bins = 0;
+    for (feature_id_t const fid : selected)
+    {
+        max_sel_bins = std::max(max_sel_bins, ds.n_bins(fid));
+    }
+    init_shared_limit();
+    size_t const max_slots = leaf_max_slots(config);
+    size_t const slot_doubles =
+        selected.size() * 2 * max_sel_bins; // stride = 2 * max_sel_bins
+    if (selected.empty() || !hist_budget_ok(max_sel_bins) ||
+        max_slots > static_cast<size_t>(-1) / std::max<size_t>(1, slot_doubles) ||
+        !leaf_pool_ok(max_slots * slot_doubles * sizeof(double)))
+    {
+        return false; // the LeafStep falls back to the host plane for this tree
+    }
+    lvl.n_selected = static_cast<uint32_t>(selected.size());
+    lvl.stride     = static_cast<uint32_t>(2 * max_sel_bins);
+    lvl.features.host.assign(selected.begin(), selected.end());
+    lvl.features.sync();
+
+    auto root_lap = prof_counters.lap();
+    // The leaf plane never flips the row buffers: rows_b is scratch the
+    // partition scatters into and copies back from, one segment at a time.
+    lvl.cur_is_a   = true;
+    leaf.max_slots = static_cast<uint32_t>(max_slots);
+    leaf.next_slot = 1; // the root holds slot 0
+    leaf.slot_offsets.assign(max_slots, 0);
+    leaf.slot_counts.assign(max_slots, 0);
+    leaf.pool.reserve(max_slots * lvl.slot_doubles());
+    check(cudaMemset(leaf.pool.data(), 0,
+                     max_slots * lvl.slot_doubles() * sizeof(double)),
+          "zero leaf pool");
+
+    bool const     identity = root.rows.empty() && root.row_count == data.key.n_rows;
+    uint32_t const n        = stage_root_rows(root, identity);
+    leaf.slot_counts[0]     = n;
+    lvl.row_offsets.host.assign(1, 0);
+    lvl.row_offsets.sync();
+    lvl.row_counts.host.assign(1, n);
+    lvl.row_counts.sync();
+    lvl.slots.host.assign(1, 0);
+    lvl.slots.sync();
+    root_lap(prof_counters.root_stage_s);
+
+    lvl.gh_ordered.reserve(n);
+    gather(grads.gh.data(), lvl.rows.data(), n, lvl.gh_ordered.data());
+    // Deterministic two-pass device reduce over the gathered segment, queued
+    // ahead of the histogram build so the 16B fetch below drains only these
+    // two small kernels.
+    lvl.sum_partial.reserve(k_sum_blocks);
+    lvl.sum_out.reserve(1);
+    sum_gh_pass1_kernel<<<dim3(k_sum_blocks), dim3(256)>>>(lvl.gh_ordered.data(), n,
+                                                           lvl.sum_partial.data());
+    check(cudaGetLastError(), "leaf root sum pass1 launch");
+    sum_gh_pass2_kernel<<<dim3(1), dim3(32)>>>(lvl.sum_partial.data(), k_sum_blocks,
+                                               lvl.sum_out.data());
+    check(cudaGetLastError(), "leaf root sum pass2 launch");
+
+    auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
+    dim3 const grid(lvl.n_selected, 1, n_chunks);
+    data.dispatch_bins(
+        [&](auto const *bins)
+        {
+            hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
+                bins, lvl.gh_ordered.data(), lvl.rows.data(), lvl.row_offsets.device(),
+                lvl.row_counts.device(), lvl.features.device(), data.n_bins_ptr(),
+                static_cast<uint32_t>(ds.n_rows()), lvl.n_selected, leaf.pool.data(),
+                lvl.stride, lvl.slots.device());
+        });
+    check(cudaGetLastError(), "leaf root hist launch");
+    lvl.leaf_by_row.reserve(ds.n_rows());
+
+    auto    sums_lap = prof_counters.lap();
+    double2 sums{};
+    check(
+        cudaMemcpy(&sums, lvl.sum_out.data(), sizeof(double2), cudaMemcpyDeviceToHost),
+        "leaf root sums fetch");
+    root.sums      = {.sum_grad = static_cast<float>(sums.x),
+                      .sum_hess = static_cast<float>(sums.y)};
+    root.row_count = n;
+    sums_lap(prof_counters.root_sums_s);
+    if (prof_counters.enabled)
+    {
+        ++prof_counters.launches;
+        ++prof_counters.gpu_nodes;
+    }
+    return true;
+}
+
+CudaHistogramEngine::LeafRound
+CudaDeviceContext::leaf_split(Dataset const & /*ds*/,
+                              CudaHistogramEngine::LeafPartOp const &op)
+{
+    auto &prof = prof_counters;
+    auto  lap  = prof.lap();
+
+    uint32_t const offset = leaf.slot_offsets[op.parent_slot];
+    uint32_t const count  = leaf.slot_counts[op.parent_slot];
+    lvl.part_ops.clear();
+    lvl.part_ops.host.push_back(
+        {offset, count, op.feature_id, op.bin_id, op.default_left ? 1U : 0U});
+    lvl.part_ops.sync();
+    uint32_t const max_chunks = std::max(1U, (count + k_part_chunk - 1) / k_part_chunk);
+    lvl.flags.reserve(data.key.n_rows);
+    lvl.block_counts.reserve(max_chunks);
+    lvl.nl_dev.reserve(1);
+    lap(prof.part_stage_s);
+
+    dim3 const grid(max_chunks, 1);
+    data.dispatch_bins(
+        [&](auto const *bins)
+        {
+            route_count_kernel<<<grid, dim3(k_part_block)>>>(
+                bins, data.n_bins_ptr(), lvl.rows.data(), lvl.part_ops.device(),
+                static_cast<uint32_t>(data.key.n_rows), max_chunks, lvl.flags.data(),
+                lvl.block_counts.data());
+        });
+    check(cudaGetLastError(), "leaf route launch");
+    seg_scan_kernel<<<dim3(1), dim3(32)>>>(lvl.block_counts.data(), max_chunks,
+                                           lvl.nl_dev.device());
+    check(cudaGetLastError(), "leaf seg scan launch");
+    lvl.rows_b.reserve(data.key.n_rows);
+    lvl.gh_b.reserve(data.key.n_rows);
+    scatter_kernel<<<grid, dim3(k_part_block)>>>(
+        lvl.rows.data(), lvl.gh_ordered.data(), lvl.flags.data(), lvl.part_ops.device(),
+        lvl.block_counts.data(), lvl.nl_dev.device(), max_chunks, lvl.rows_b.data(),
+        lvl.gh_b.data());
+    check(cudaGetLastError(), "leaf scatter launch");
+    // Non-swapping advance: only this segment's range travels back into the
+    // primary buffers, so every other leaf's rows stay exactly where they are.
+    check(cudaMemcpyAsync(lvl.rows.data() + offset, lvl.rows_b.data() + offset,
+                          static_cast<size_t>(count) * sizeof(uint32_t),
+                          cudaMemcpyDeviceToDevice),
+          "leaf rows copy-back");
+    check(cudaMemcpyAsync(lvl.gh_ordered.data() + offset, lvl.gh_b.data() + offset,
+                          static_cast<size_t>(count) * sizeof(float2),
+                          cudaMemcpyDeviceToDevice),
+          "leaf gh copy-back");
+    lvl.nl_dev.fetch(1); // DtoH, implicit sync
+    if (prof.enabled)
+    {
+        ++prof.launches;
+    }
+    lap(prof.gpu_s);
+
+    uint32_t const                 nl = lvl.nl_dev.host[0];
+    CudaHistogramEngine::LeafRound round{};
+    round.left_count  = nl;
+    round.right_count = count - nl;
+    if (nl == 0 || nl == count)
+    {
+        return round; // one side empty: the caller demotes, no slot is taken
+    }
+    if (leaf.next_slot >= leaf.max_slots)
+    {
+        throw std::runtime_error("cuda: leaf histogram pool exhausted");
+    }
+    bool const     left_small = round.left_count <= round.right_count;
+    uint32_t const fresh      = leaf.next_slot++;
+    round.left_slot           = left_small ? fresh : op.parent_slot;
+    round.right_slot          = left_small ? op.parent_slot : fresh;
+    round.small_slot          = fresh;
+    round.large_slot          = op.parent_slot;
+    round.small_offset        = left_small ? offset : offset + nl;
+    round.small_count         = left_small ? round.left_count : round.right_count;
+    // The segment map is persistent and per slot: one split rewrites exactly
+    // one range into two adjacent subranges.
+    leaf.slot_offsets[round.left_slot]  = offset;
+    leaf.slot_counts[round.left_slot]   = round.left_count;
+    leaf.slot_offsets[round.right_slot] = offset + nl;
+    leaf.slot_counts[round.right_slot]  = round.right_count;
+    return round;
+}
+
+void CudaDeviceContext::leaf_build(Dataset const                        &ds,
+                                   CudaHistogramEngine::LeafRound const &round)
+{
+    auto &prof = prof_counters;
+    auto  lap  = prof.lap();
+
+    lvl.row_offsets.host.assign(1, round.small_offset);
+    lvl.row_offsets.sync();
+    lvl.row_counts.host.assign(1, round.small_count);
+    lvl.row_counts.sync();
+    lvl.slots.host.assign(1, round.small_slot);
+    lvl.slots.sync();
+    lap(prof.adv_stage_s);
+
+    // Same <512-row policy as the level plane: below the cutoff the shared
+    // stage's fixed per-(node, feature) cost dominates the row visits.
+    data.dispatch_bins(
+        [&](auto const *bins)
+        {
+            if (round.small_count >= k_min_gpu_rows)
+            {
+                auto const n_chunks =
+                    std::clamp<uint32_t>((round.small_count + 32767) / 32768, 1, 64);
+                dim3 const grid(lvl.n_selected, 1, n_chunks);
+                hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
+                    bins, lvl.gh_ordered.data(), lvl.rows.data(),
+                    lvl.row_offsets.device(), lvl.row_counts.device(),
+                    lvl.features.device(), data.n_bins_ptr(),
+                    static_cast<uint32_t>(ds.n_rows()), lvl.n_selected,
+                    leaf.pool.data(), lvl.stride, lvl.slots.device());
+            }
+            else
+            {
+                hist_small_kernel<<<dim3(1), dim3(128)>>>(
+                    bins, lvl.gh_ordered.data(), lvl.rows.data(),
+                    lvl.row_offsets.device(), lvl.row_counts.device(),
+                    lvl.features.device(), static_cast<uint32_t>(ds.n_rows()),
+                    lvl.n_selected, leaf.pool.data(), lvl.stride, lvl.slots.device());
+            }
+        });
+    check(cudaGetLastError(), "leaf hist launch");
+    auto const sd = static_cast<uint32_t>(lvl.slot_doubles());
+    subtract_inplace_kernel<<<dim3(std::clamp<uint32_t>((sd + 255) / 256, 1, 256)),
+                              dim3(256)>>>(leaf.pool.data(), round.large_slot,
+                                           round.small_slot, sd);
+    check(cudaGetLastError(), "leaf subtract launch");
+    if (prof.enabled)
+    {
+        ++prof.launches;
+        prof.gpu_nodes += 2;
+    }
+    lap(prof.gpu_s);
+}
+
+void CudaDeviceContext::leaf_find(Dataset const &ds, TreeConfig const &config,
+                                  std::span<SplitInput const> nodes,
+                                  std::span<uint32_t const>   slots,
+                                  std::span<SplitOutput>      out,
+                                  std::span<HistCell>         child_sums)
+{
+    auto const n    = static_cast<uint32_t>(nodes.size());
+    auto      &prof = prof_counters;
+    auto       lap  = prof.lap();
+
+    bool const any_mask = lvl.stage_find_inputs(nodes, config, ds);
+    leaf.find_slots.host.assign(slots.begin(), slots.end());
+    leaf.find_slots.sync();
+    lap(prof.find_stage_s);
+
+    lvl.feat_best.reserve(static_cast<size_t>(n) * lvl.n_selected);
+    lvl.node_best.reserve(n);
+    find_kernel<<<dim3(lvl.n_selected, n), dim3(32)>>>(
+        leaf.pool.data(), lvl.features.device(), data.n_bins_ptr(),
+        lvl.node_sums.device(), lvl.node_bounds.device(),
+        any_mask ? lvl.allowed.device() : nullptr, lvl.monotone.device(),
+        lvl.n_selected, lvl.stride, config.lambda_l1, config.lambda_l2,
+        config.min_child_hess, config.min_gain_to_split, lvl.feat_best.data(),
+        leaf.find_slots.device());
+    check(cudaGetLastError(), "leaf find launch");
+    reduce_kernel<<<dim3(n), dim3(32)>>>(lvl.feat_best.data(), lvl.n_selected,
+                                         lvl.node_best.device());
+    check(cudaGetLastError(), "leaf reduce launch");
+    lvl.node_best.fetch(n); // DtoH, implicit sync
+    if (prof.enabled)
+    {
+        ++prof.launches;
+    }
+    lap(prof.gpu_s);
+
+    lvl.unpack_splits(nodes, config, out, child_sums);
+    lap(prof.unpack_s);
+}
+
+void CudaDeviceContext::leaf_stamp(
+    std::span<CudaHistogramEngine::LeafStamp const> stamps)
+{
+    if (stamps.empty())
+    {
+        return;
+    }
+    auto stamp_lap = prof_counters.lap();
+    lvl.part_ops.clear();
+    lvl.stamp_ids.clear();
+    for (CudaHistogramEngine::LeafStamp const &st : stamps)
+    {
+        lvl.part_ops.host.push_back(
+            {leaf.slot_offsets[st.slot], leaf.slot_counts[st.slot], 0, 0, 0});
+        lvl.stamp_ids.host.push_back(st.node_id);
+    }
+    lvl.part_ops.sync();
+    lvl.stamp_ids.sync();
+    stamp_kernel<<<dim3(static_cast<uint32_t>(stamps.size())), dim3(256)>>>(
+        lvl.rows.data(), lvl.part_ops.device(), lvl.stamp_ids.device(),
+        lvl.leaf_by_row.data());
+    check(cudaGetLastError(), "leaf stamp launch");
+    stamp_lap(prof_counters.fin_stamp_s);
 }
 
 bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind kind,

@@ -154,6 +154,63 @@ class CudaHistogramEngine
                           std::span<SplitInput const> level, std::span<SplitOutput> out,
                           std::span<HistCell> child_sums);
 
+    // --- GPULeafEngine (docs/architecture/20-cuda-leafwise.md). Best-first
+    // growth expands one leaf at a time, so this plane keeps a per-tree
+    // histogram slot pool instead of the level plane's ping-pong: the root
+    // takes slot 0, every split builds the smaller child into the next free
+    // slot and derives the larger in place in the parent's, which it inherits.
+    // The host keeps the gain heap and every decision; per split only a
+    // partition op goes up and two child counts, two splits, and their child
+    // sums come down.
+
+    // One heap pop's routing: partition the popped leaf's row segment in
+    // place, so no sibling's rows move and no buffer flips.
+    struct LeafPartOp
+    {
+        uint32_t     parent_slot;
+        feature_id_t feature_id;
+        bin_id_t     bin_id;
+        bool         default_left;
+    };
+
+    // What one partition produced. Both counts nonzero means the split stands
+    // and the children own the named slots; a zero count means the partition
+    // emptied one side and no slot was taken (the caller demotes the split
+    // back to a leaf, and the parent keeps its slot and segment).
+    struct LeafRound
+    {
+        uint32_t left_slot    = 0;
+        uint32_t right_slot   = 0;
+        uint32_t left_count   = 0;
+        uint32_t right_count  = 0;
+        uint32_t small_slot   = 0; // the fresh slot the smaller child took
+        uint32_t small_offset = 0; // its segment, the histogram build's input
+        uint32_t small_count  = 0;
+        uint32_t large_slot   = 0; // the parent's slot, subtracted in place
+    };
+
+    // Opens the tree's slot pool and builds the root into slot 0, filling
+    // root.sums/row_count. Returns false (leaving root untouched) when the
+    // histogram or pool budget declines, and the caller trains this tree on
+    // the host plane.
+    bool leaf_begin_root(Dataset const &ds, TreeConfig const &config, floats_view grad,
+                         floats_view hess, SplitInput &root,
+                         std::span<feature_id_t const> selected);
+    // Routes one leaf's rows into two adjacent subranges of its own segment.
+    LeafRound leaf_split(Dataset const &ds, LeafPartOp const &op);
+    // Builds the smaller child's histogram and derives the larger by in-place
+    // subtraction; call only for a round both counts survived.
+    void leaf_build(Dataset const &ds, LeafRound const &round);
+    // Best split per named pool slot (slots[i] holds nodes[i]'s histogram);
+    // child_sums receives the winning cut's (left, right) totals, 2 per node.
+    void leaf_find(Dataset const &ds, TreeConfig const &config,
+                   std::span<SplitInput const> nodes, std::span<uint32_t const> slots,
+                   std::span<SplitOutput> out, std::span<HistCell> child_sums);
+    // Records final leaf assignment for every row in the given slots'
+    // segments; a leaf's segment never moves again, so the tree epilogue can
+    // stamp them all at once.
+    void leaf_stamp(std::span<LeafStamp const> stamps);
+
     // --- Device-resident objective (docs/architecture/10-cuda.md). Labels and
     // the per-row score vector live on the device for the whole fit. Per tree
     // the engine derives grad/hess from them on device (no host objective, no
@@ -178,5 +235,6 @@ class CudaHistogramEngine
 
 static_assert(HistogramEngine<CudaHistogramEngine>);
 static_assert(GPULevelEngine<CudaHistogramEngine>);
+static_assert(GPULeafEngine<CudaHistogramEngine>);
 
 } // namespace bonsai

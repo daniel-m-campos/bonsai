@@ -122,6 +122,36 @@ concept GPULevelEngine =
         b.resident_end(scores_out);
     };
 
+// The GPU leaf plane: best-first growth expands one leaf at a time, so the
+// histograms live in a per-tree slot pool instead of the level plane's
+// ping-pong (docs/architecture/20-cuda-leafwise.md). A second concept beside
+// GPULevelEngine, not a change to it: the depthwise and oblivious paths are
+// untouched. Same one-fork rule — leaf_begin_root's bool is the per-tree mode,
+// captured once by the LeafStep, and a declined tree trains on the host plane.
+template <typename T>
+concept GPULeafEngine =
+    HistogramEngine<T> &&
+    requires(T b, Dataset const &ds, TreeConfig const &config, floats_view grad,
+             floats_view hess, SplitInput &root, std::span<feature_id_t const> selected,
+             std::span<typename T::LeafStamp const> stamps,
+             typename T::LeafPartOp const &part_op, typename T::LeafRound const &round,
+             std::span<SplitInput const> nodes, std::span<uint32_t const> slots,
+             std::span<SplitOutput> out, std::span<HistCell> child_sums,
+             std::span<float const> node_values, std::span<float> values,
+             std::span<node_id_t> leaf_ids) {
+        typename T::LeafPartOp;
+        typename T::LeafRound;
+        typename T::LeafStamp;
+        {
+            b.leaf_begin_root(ds, config, grad, hess, root, selected)
+        } -> std::convertible_to<bool>;
+        { b.leaf_split(ds, part_op) } -> std::convertible_to<typename T::LeafRound>;
+        b.leaf_build(ds, round);
+        b.leaf_find(ds, config, nodes, slots, out, child_sums);
+        b.leaf_stamp(stamps);
+        b.finalize_tree(node_values, values, leaf_ids);
+    };
+
 struct CpuHistogramEngine
 {
     void begin_tree(Dataset const & /*ds*/, floats_view /*grad*/, floats_view /*hess*/)
