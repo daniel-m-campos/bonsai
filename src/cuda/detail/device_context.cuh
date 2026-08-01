@@ -316,7 +316,8 @@ struct CudaDeviceContext
     // The leaf plane's second gate, applied beside hist_budget_ok in
     // leaf_begin_root: the histogram pool is that plane's only new allocation
     // and an oversized leaf budget must decline to the host plane rather than
-    // fail the fit. Half the device's free memory is the bound. Only the leaf
+    // fail the fit. A quarter of the device's free memory is the bound; the
+    // buffer is grow-only and doubles on reallocation. Only the leaf
     // plane reaches it: resident_begin arms nothing for leafwise growth
     // (LeafwiseGrower::resident_begin is a static false), so no tree can
     // decline into a host-gradient path behind the resident mode's back.

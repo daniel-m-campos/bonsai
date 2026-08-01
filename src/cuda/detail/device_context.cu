@@ -950,7 +950,10 @@ bool CudaDeviceContext::leaf_pool_ok(size_t bytes) const
     {
         return false;
     }
-    return bytes <= free_bytes / 2;
+    // A quarter, not a half: the pool buffer is grow-only and doubles on
+    // reallocation, and the level plane's row and gradient buffers still need
+    // room beside it.
+    return bytes <= free_bytes / 4;
 }
 
 namespace
