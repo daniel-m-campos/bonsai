@@ -104,8 +104,10 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
               "device_type": device, "num_threads": spec[runlog.Row.THREADS]}
     fit_t0 = t0 = time.perf_counter()
     # lgb.Dataset is lazy; construct() forces the binning pass now so its
-    # cost lands in ingest_s rather than leaking into the train() call.
-    dtrain = lgb.Dataset(X, label=y).construct()
+    # cost lands in ingest_s rather than leaking into the train() call. The
+    # params must be present AT construction: binning knobs (max_bin) are
+    # frozen then, and a later train() cannot change them.
+    dtrain = lgb.Dataset(X, label=y, params=params).construct()
     ingest_s = time.perf_counter() - t0
     t0 = time.perf_counter()
     model = lgb.train(params, dtrain, num_boost_round=c["iters"])
