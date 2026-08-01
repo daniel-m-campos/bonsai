@@ -21,6 +21,7 @@ from bonsai.bench.variants import Device, Lib, resolve
 
 
 def run_bonsai(spec, X, y, Xte, yte) -> dict:
+    """Fit/predict one cell with bonsai.train at the shared knobs."""
     import bonsai
     grower = spec[runlog.Row.VARIANT].removeprefix("bonsai_")
     if grower.startswith("cuda") and not bonsai.cuda_available():
@@ -41,15 +42,12 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
     t0 = time.perf_counter()
     pred_te = np.asarray(model.predict(Xte))
     predict_s = time.perf_counter() - t0
-    if task == "binary":
-        return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
-                runlog.Row.AUC_TEST: auc(yte, pred_te)}
-    pred_tr = np.asarray(model.predict(X))
-    return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
-            runlog.Row.R2_TRAIN: r2(y, pred_tr), runlog.Row.R2_TEST: r2(yte, pred_te)}
+    return _score(task, fit_s, predict_s, y, yte, pred_te,
+                  lambda: np.asarray(model.predict(X)))
 
 
 def run_xgb(spec, X, y, Xte, yte) -> dict:
+    """Fit/predict one cell with xgboost (QuantileDMatrix + train)."""
     import xgboost as xgb
     c = spec[runlog.Row.CELL]
     task = c.get("task", "reg")
@@ -71,15 +69,12 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
     t0 = time.perf_counter()
     pred_te = booster.inplace_predict(Xte)
     predict_s = time.perf_counter() - t0
-    if task == "binary":
-        return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
-                runlog.Row.AUC_TEST: auc(yte, pred_te)}
-    pred_tr = booster.inplace_predict(X)
-    return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
-            runlog.Row.R2_TRAIN: r2(y, pred_tr), runlog.Row.R2_TEST: r2(yte, pred_te)}
+    return _score(task, fit_s, predict_s, y, yte, pred_te,
+                  lambda: booster.inplace_predict(X))
 
 
 def run_lgbm(spec, X, y, Xte, yte) -> dict:
+    """Fit/predict one cell with lightgbm at the shared knobs."""
     import lightgbm as lgb
     c = spec[runlog.Row.CELL]
     task = c.get("task", "reg")
@@ -101,15 +96,12 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
     t0 = time.perf_counter()
     pred_te = model.predict(Xte)
     predict_s = time.perf_counter() - t0
-    if task == "binary":
-        return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
-                runlog.Row.AUC_TEST: auc(yte, pred_te)}
-    pred_tr = model.predict(X)
-    return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
-            runlog.Row.R2_TRAIN: r2(y, pred_tr), runlog.Row.R2_TEST: r2(yte, pred_te)}
+    return _score(task, fit_s, predict_s, y, yte, pred_te,
+                  lambda: model.predict(X))
 
 
 def run_catboost(spec, X, y, Xte, yte) -> dict:
+    """Fit/predict one cell with catboost at the shared knobs."""
     from catboost import CatBoostClassifier, CatBoostRegressor, Pool
     c = spec[runlog.Row.CELL]
     task = c.get("task", "reg")
@@ -133,12 +125,8 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
     pred_te = (model.predict_proba(Xte)[:, 1] if task == "binary"
                else model.predict(Xte))
     predict_s = time.perf_counter() - t0
-    if task == "binary":
-        return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
-                runlog.Row.AUC_TEST: auc(yte, pred_te)}
-    pred_tr = model.predict(X)
-    return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
-            runlog.Row.R2_TRAIN: r2(y, pred_tr), runlog.Row.R2_TEST: r2(yte, pred_te)}
+    return _score(task, fit_s, predict_s, y, yte, pred_te,
+                  lambda: model.predict(X))
 
 
 RUNNERS = {Lib.BONSAI: run_bonsai, Lib.XGB: run_xgb, Lib.LGBM: run_lgbm,
@@ -169,6 +157,11 @@ def cached_gen_data(cell: dict, cache_dir: str):
 
 
 def worker(spec: dict) -> dict:
+    """Child-process entry: generate data, dispatch the runner, add rates.
+
+    Returns the payload dict the parent folds into the row; GPU arms pay
+    an untimed micro-fit first so context/JIT cost stays out of fit_s.
+    """
     c = spec[runlog.Row.CELL]
     cache_dir = os.environ.get("BONSAI_BENCH_DATA_CACHE")
     if cache_dir:
@@ -200,3 +193,16 @@ def worker(spec: dict) -> dict:
     # child can report its version; the parent folds this into host.libs.
     out["libs"] = runlog.lib_versions()
     return out
+
+
+def _score(task: str, fit_s: float, predict_s: float, y, yte, pred_te,
+           predict_train) -> dict:
+    """The runner result dict; predict_train runs only for regression, so
+    binary tasks never pay a full train-side predict."""
+    if task == "binary":
+        return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
+                runlog.Row.AUC_TEST: auc(yte, pred_te)}
+    pred_tr = predict_train()
+    return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
+            runlog.Row.R2_TRAIN: r2(y, pred_tr),
+            runlog.Row.R2_TEST: r2(yte, pred_te)}

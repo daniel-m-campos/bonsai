@@ -511,7 +511,7 @@ def test_runlog_roundtrip():
         assert runlog.knobs_hash({"a": 1, "b": 2}) == back["knobs_hash"]
     try:
         runlog.emit_row("/tmp/x.jsonl", division="nope", suite="s")
-    except AssertionError:
+    except ValueError:
         pass
     else:
         raise AssertionError("bad division must be rejected")

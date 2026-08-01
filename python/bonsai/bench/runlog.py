@@ -42,8 +42,8 @@ class Row:
     DEV_MEM: Final = "dev_mem"
 
 
-
 def git_sha() -> str:
+    """The short HEAD sha, or "unknown" outside a git checkout."""
     try:
         out = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
                              capture_output=True, text=True, timeout=10)
@@ -53,11 +53,18 @@ def git_sha() -> str:
 
 
 def knobs_hash(knobs: dict) -> str:
+    """Canonical 8-hex-char digest of a knobs dict.
+
+    Key order must not matter (sort_keys) and the encoding must never
+    change: committed rows carry these values and resume matching
+    compares them.
+    """
     canon = json.dumps(knobs, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canon.encode()).hexdigest()[:8]
 
 
 def lib_versions() -> dict:
+    """Versions of the already-imported reference libraries only."""
     libs = {}
     for name in ("bonsai", "xgboost", "lightgbm", "catboost", "numpy"):
         mod = sys.modules.get(name)
@@ -67,6 +74,14 @@ def lib_versions() -> dict:
 
 
 def detect_host(name: str | None = None) -> dict:
+    """The host block every row embeds.
+
+    Returns
+    -------
+    dict
+        name, gpu, gpu_vram_gb, cpu_model, n_vcpu, ram_gb, os, python,
+        and libs (the imported reference-library versions).
+    """
     gpu, vram = None, None
     try:
         out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total",
@@ -102,9 +117,11 @@ def emit_row(path: str | pathlib.Path, *, division: str, suite: str,
              timing_mode: str | None = None, **fields) -> dict:
     """Append one schema-v1 row; returns the row. Extra keyword fields pass
     through verbatim so suite-specific columns (cell, kind, ...) survive."""
-    assert division in DIVISIONS, division
-    if timing_mode is not None:
-        assert timing_mode in TIMING_MODES, timing_mode
+    if division not in DIVISIONS:
+        raise ValueError(f"unknown division {division!r} (known: {DIVISIONS})")
+    if timing_mode is not None and timing_mode not in TIMING_MODES:
+        raise ValueError(
+            f"unknown timing_mode {timing_mode!r} (known: {TIMING_MODES})")
     row = {
         "schema": SCHEMA_VERSION,
         "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),

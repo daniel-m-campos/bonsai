@@ -52,6 +52,8 @@ class Tier:
 
 @dataclasses.dataclass(frozen=True)
 class Dataset:
+    """One registry entry: provenance, license, split, and local files."""
+
     name: str
     tier: str
     task: str
@@ -123,20 +125,43 @@ REGISTRY = {
 
 
 def paths(name: str) -> list[pathlib.Path]:
+    """Local paths a dataset's files land at once fetched."""
     return [data_root() / f for f in REGISTRY[name].files]
 
 
 def is_fetched(name: str) -> bool:
+    """Whether every file of a dataset is already on disk."""
     ps = paths(name)
     return bool(ps) and all(p.exists() for p in ps)
 
+
+def fetch(name: str, force: bool = False) -> list[pathlib.Path]:
+    """Fetch a registry dataset into data_root(); idempotent.
+
+    Raises
+    ------
+    ValueError
+        For datasets not fetched here: test-pin datasets are owned by the
+        standalone CI scripts, grinsztajn/campaign10 fetch at suite runtime
+        via OpenML, and friedman1 is generated, not fetched.
+    """
+    ds = REGISTRY[name]
+    if name not in _FETCHERS:
+        raise ValueError(
+            f"{name} ({ds.tier}) is not fetched here: {ds.split}")
+    root = data_root()
+    root.mkdir(parents=True, exist_ok=True)
+    if not force and is_fetched(name):
+        return paths(name)
+    _FETCHERS[name](root)
+    return paths(name)
 
 # ---- fetchers (stdlib streaming; pandas only where the source demands it) --
 
 _UA = {"User-Agent": "bonsai"}
 
 
-def _fetch_a9a(root: pathlib.Path) -> None:
+def _fetch_a9a(root: pathlib.Path):
     base = "https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/binary/"
     for src, dst in (("a9a", "a9a_train.libsvm"), ("a9a.t", "a9a_test.libsvm")):
         req = urllib.request.Request(base + src, headers=_UA)
@@ -151,7 +176,7 @@ def _fetch_a9a(root: pathlib.Path) -> None:
         (root / dst).write_text("\n".join(lines) + "\n")
 
 
-def _fetch_covtype(root: pathlib.Path) -> None:
+def _fetch_covtype(root: pathlib.Path):
     url = ("https://archive.ics.uci.edu/ml/machine-learning-databases/"
            "covtype/covtype.data.gz")
     n_train, n_feat = 500_000, 54
@@ -169,7 +194,7 @@ def _fetch_covtype(root: pathlib.Path) -> None:
             (tr if i < n_train else te).write(row)
 
 
-def _fetch_higgs(root: pathlib.Path) -> None:
+def _fetch_higgs(root: pathlib.Path):
     url = ("https://archive.ics.uci.edu/ml/machine-learning-databases/"
            "00280/HIGGS.csv.gz")
     n_train, n_test, n_feat = 500_000, 50_000, 28
@@ -186,7 +211,7 @@ def _fetch_higgs(root: pathlib.Path) -> None:
             (tr if i < n_train else te).write(line)
 
 
-def _fetch_year_msd(root: pathlib.Path) -> None:
+def _fetch_year_msd(root: pathlib.Path):
     import io
     import zipfile
     url = "https://archive.ics.uci.edu/static/public/203/yearpredictionmsd.zip"
@@ -208,22 +233,6 @@ def _fetch_year_msd(root: pathlib.Path) -> None:
 
 _FETCHERS = {"a9a": _fetch_a9a, "covtype": _fetch_covtype,
              "higgs": _fetch_higgs, "year_msd": _fetch_year_msd}
-
-
-def fetch(name: str, force: bool = False) -> list[pathlib.Path]:
-    """Fetch a registry dataset into data_root(); idempotent. test-pin
-    datasets are owned by the standalone CI scripts; grinsztajn/campaign10
-    fetch at suite runtime via OpenML; friedman1 is generated, not fetched."""
-    ds = REGISTRY[name]
-    if name not in _FETCHERS:
-        raise ValueError(
-            f"{name} ({ds.tier}) is not fetched here: {ds.split}")
-    root = data_root()
-    root.mkdir(parents=True, exist_ok=True)
-    if not force and is_fetched(name):
-        return paths(name)
-    _FETCHERS[name](root)
-    return paths(name)
 
 
 if __name__ == "__main__":
