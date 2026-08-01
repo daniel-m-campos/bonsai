@@ -30,17 +30,17 @@ def _grower_for_device(grower: str, device: str) -> str:
     raise ValueError(f"device must be 'cpu' or 'cuda', got {device!r}")
 
 
-def _normalize_eval_set(eval_set):
+def _normalize_eval_set(eval_set: tuple | list | None) -> tuple | None:
     """Accept both the xgboost form (a list of (X, y) tuples; the LAST one
     drives the eval history and early stopping, xgboost's own convention)
     and the bare (X, y) tuple."""
     if eval_set is None:
         return None
-    if isinstance(eval_set, (list,)):
-        if not eval_set:
-            return None
-        eval_set = eval_set[-1]
-    return eval_set
+    if not isinstance(eval_set, list):
+        return eval_set
+    if not eval_set:
+        return None
+    return eval_set[-1]
 
 
 # evals_result()/best_score presentation per objective: xgboost metric name

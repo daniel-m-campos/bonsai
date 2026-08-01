@@ -23,6 +23,7 @@ _KEY_BASE = np.int64(1) << np.int64(32)
 
 
 def _bucket_missing(col: np.ndarray) -> np.ndarray:
+    """NaNs become one shared category (their own bucket)."""
     # NaN != NaN would make every missing row its own category; +inf is a
     # single shared bucket that still sorts (and searchsorts) last.
     return np.where(np.isnan(col), np.float32(np.inf), col)
@@ -48,6 +49,7 @@ class OrderedTargetEncoder:
     def __init__(self, columns, prior_weight: float = 10.0,
                  n_permutations: int = 1, keep_codes: bool = True,
                  seed: int = 0, cross: int = 1):
+        """columns: indices to encode; cross=2 adds all pair-TS columns."""
         self.columns = list(columns)
         self.prior_weight = float(prior_weight)
         self.n_permutations = int(n_permutations)
@@ -61,7 +63,21 @@ class OrderedTargetEncoder:
                                tuple[np.ndarray, np.ndarray]] = {}
         self._prior: float = 0.0
 
+    def __repr__(self) -> str:
+        return (f"OrderedTargetEncoder(columns={self.columns!r}, "
+                f"prior_weight={self.prior_weight}, "
+                f"n_permutations={self.n_permutations}, "
+                f"keep_codes={self.keep_codes}, seed={self.seed}, "
+                f"cross={self.cross})")
+
     def fit_transform(self, X, y) -> np.ndarray:
+        """Causally encode the train fold and learn full-fold statistics.
+
+        Each row's encoding uses only rows before it in a seeded permutation
+        (the CatBoost ordered-TS trick), so the train encoding leaks no
+        row's own label; the statistics stored for ``transform`` use the
+        whole fold.
+        """
         X = np.asarray(X, dtype=np.float32)
         y = np.asarray(y, dtype=np.float64).ravel()
         out = np.array(X, copy=True)
@@ -82,6 +98,10 @@ class OrderedTargetEncoder:
         return np.column_stack([out, *appended]) if appended else out
 
     def transform(self, X) -> np.ndarray:
+        """Encode new rows with the full-fold statistics learned in fit.
+
+        Raises RuntimeError before ``fit_transform`` has run.
+        """
         if self._stats is None:
             raise RuntimeError("fit_transform must run before transform")
         X = np.asarray(X, dtype=np.float32)
@@ -97,22 +117,30 @@ class OrderedTargetEncoder:
         return np.column_stack([out, *appended]) if appended else out
 
     def _pairs(self):
+        """The (i, j) column pairs to cross-encode (empty unless cross=2)."""
         if self.cross < 2:
             return []
         return itertools.combinations(self.columns, 2)
 
     def _causal_encoding(self, col, y) -> np.ndarray:
+        """Mean of the per-permutation causal means (variance reduction)."""
         enc = np.zeros(len(y), dtype=np.float64)
         for p in range(self.n_permutations):
             enc += self._causal_means(col, y, self.seed + p)
         return (enc / self.n_permutations).astype(np.float32)
 
     def _causal_means(self, col, y, seed) -> np.ndarray:
+        """Ordered target means under one seeded permutation.
+
+        For each row: (sum of earlier same-category labels + prior mass) /
+        (count of earlier same-category rows + prior weight), where
+        "earlier" means earlier in the permutation. Computed vectorized: a
+        group-major, visit-order-minor lexsort turns the per-category
+        running sums into one segmented shifted cumsum.
+        """
         n = len(y)
         pos = np.empty(n, dtype=np.int64)
         pos[np.random.default_rng(seed).permutation(n)] = np.arange(n)
-        # Group-major, visit-order-minor sort turns "label sum of earlier
-        # rows in my category" into a segmented shifted cumsum.
         order = np.lexsort((pos, col))
         y_s, col_s = y[order], col[order]
         cum = np.cumsum(y_s) - y_s
@@ -127,6 +155,7 @@ class OrderedTargetEncoder:
         return enc
 
     def _full_stats(self, col, y) -> tuple[np.ndarray, np.ndarray]:
+        """Whole-fold (categories, smoothed means) for transform()."""
         vals, inverse, counts = np.unique(col, return_inverse=True,
                                           return_counts=True)
         sums = np.bincount(inverse, weights=y)
@@ -135,6 +164,7 @@ class OrderedTargetEncoder:
         return vals, means.astype(np.float32)
 
     def _lookup(self, vals, means, col) -> np.ndarray:
+        """Map categories to their means; unseen categories get the prior."""
         idx = np.clip(np.searchsorted(vals, col), 0, len(vals) - 1)
         seen = vals[idx] == col
         # Unseen categories (and pairs) have zero evidence: the smoothed
@@ -143,6 +173,7 @@ class OrderedTargetEncoder:
 
 
 def _pair_keys(X, i, j) -> np.ndarray:
+    """One integer key per row for the (i, j) column pair."""
     # -1 is the missing bucket; real codes are non-negative, so keys stay
     # unique. Integer-exact in int64 for codes below 2^31.
     a = np.where(np.isnan(X[:, i]), -1, X[:, i]).astype(np.int64)
