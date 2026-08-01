@@ -74,3 +74,25 @@ Before building the device leafwise plane, its per-round fixed cost was priced b
 | floor | 0.757 | 29.7 |
 
 *Source: [`leafwise-cadence-2026-08.json`](../../../benchmarks/results/leafwise-cadence-2026-08.json). One pod (L40S, US-MO-1, 2026-08-01); probe [experiments/leafwise_cadence/cadence.cu](../../../experiments/leafwise_cadence/cadence.cu); evidence [benchmarks/leafwise-cadence-2026-08.md](../../../benchmarks/leafwise-cadence-2026-08.md) for issue #268.*
+
+### The device-leafwise ladder: admission by measurement (stage 2)
+
+Same pod, four arms, best of two reps, interleaved. The kill criterion pre-registered in issue #268 was one number: beat LightGBM's CUDA leaf-wise at 16M x 100 on the same pod, or the grower does not register. It is met with 5% to spare at 16M, and `cuda_leafwise` beats its own CPU arm at every cell, 4.6x to 7.1x. The anchor row prices what is left: the depthwise plane moves the same histogram volume in less time, because serializing the frontier to one node per round costs launches that the level plane batches away.
+
+| rows | bonsai cuda leafwise | lgbm cuda | bonsai leafwise (cpu) | bonsai cuda dw (anchor) |
+|---|---|---|---|---|
+| 250k | 2.9s (.872) | 6.7s (.879) | 13.5s (.872) | 0.7s (.872) |
+| 1M | 4.4s (.877) | 7.7s (.884) | 29.3s (.877) | 1.6s (.877) |
+| 4M | 10.2s (.878) | 12.2s (.885) | 66.9s (.878) | 6.0s (.878) |
+| 16M | 30.8s (.879) | 32.4s (.886) | 219.8s (.879) | 22.6s (.879) |
+
+The capped ladder above hides the strategy's point: at a 256-leaf budget and a depth-8 cap the leaf budget and the full tree are the same tree, so every arm returns the depthwise accuracy. Lifting the cap is where leaf-wise differs, and it is also the only comparison against LightGBM that is honest, since its CUDA learner ignores `max_depth` outright (decision 95, confirmed in its source: `CUDASingleGPUTreeLearner::Train` never calls the one site that enforces depth). Uncapped, bonsai's leaf-wise growers reach LightGBM's accuracy to four decimals, which is the reading the capped rows' r2 column was never measuring. LightGBM is faster here: uncapped best-first must find a split for every leaf it creates, doubling bonsai's per-round count from 25,500 to 51,100, and that is the optimization target the admission leaves open rather than a quality difference.
+
+| 16M x 100, no depth cap | fit_s | test r2 |
+|---|---|---|
+| bonsai cuda leafwise | 38.6s | 0.8859 |
+| lgbm cuda | 31.6s | 0.8858 |
+| bonsai leafwise (cpu) | 271.0s | 0.8859 |
+
+
+*Source: [`leafwise-ladder-2026-08.jsonl`](../../../benchmarks/results/leafwise-ladder-2026-08.jsonl). One pod (L40S, US-NC-1, 2026-08-01), SCALING knobs at 100 iters and 256 leaves, best of 2 reps; the ladder that admitted `cuda_leafwise` under [docs/architecture/20-cuda-leafwise.md](../../../docs/architecture/20-cuda-leafwise.md). Absolute times run above the 2026-08-01 recheck, which used a different pod with a wider CPU; only same-pod comparisons are meaningful.*

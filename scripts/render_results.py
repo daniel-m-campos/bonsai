@@ -75,6 +75,7 @@ class Evidence:
     XGB33_RECHECK: Final = "xgb33-recheck-2026-07.jsonl"
     LEAFWISE_RECHECK: Final = "leafwise-recheck-2026-08.jsonl"
     LEAFWISE_CADENCE: Final = "leafwise-cadence-2026-08.json"
+    LEAFWISE_LADDER: Final = "leafwise-ladder-2026-08.jsonl"
 
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -1162,6 +1163,64 @@ Before building the device leafwise plane, its per-round fixed cost was priced b
 """
 
 
+_LADDER_LABELS = {"bonsai_cuda_leafwise": "bonsai cuda leafwise",
+                  "lgbm_cuda": "lgbm cuda",
+                  "bonsai_leafwise": "bonsai leafwise (cpu)",
+                  "bonsai_cuda_depthwise": "bonsai cuda dw (anchor)"}
+
+# The uncapped-depth arm records max_depth at the uint8 ceiling, which a
+# 256-leaf budget can never reach; the row key separates it from the capped
+# cell of the same shape.
+UNCAPPED_DEPTH = 255
+
+
+def leafwise_ladder_section() -> str:
+    """The device-leafwise admission ladder, stage 2 of doc 20 (issue #268)."""
+    rows = [r for r in load_jsonl(Evidence.LEAFWISE_LADDER)
+            if r[K.STATUS] == "ok"]
+    order = list(_LADDER_LABELS)
+    capped = _cell_best([r for r in rows
+                         if r["cell"]["depth"] != UNCAPPED_DEPTH])
+    scales = sorted({k[0] for k in capped})
+
+    def fit_of(n: int, variant: str) -> float:
+        return capped[(n, 100, variant)][K.FIT_S]
+
+    top = scales[-1]
+    margin = 1 - fit_of(top, "bonsai_cuda_leafwise") / fit_of(top, "lgbm_cuda")
+    over_cpu = [fit_of(n, "bonsai_leafwise") / fit_of(n, "bonsai_cuda_leafwise")
+                for n in scales]
+    table = md_table(
+        ["rows", *[_LADDER_LABELS[v] for v in order]],
+        [[human(n), *[_fmt_cell(capped, n, 100, v) for v in order]]
+         for n in scales])
+    return f"""### The device-leafwise ladder: admission by measurement (stage 2)
+
+Same pod, four arms, best of two reps, interleaved. The kill criterion pre-registered in issue #268 was one number: beat LightGBM's CUDA leaf-wise at 16M x 100 on the same pod, or the grower does not register. It is met with {margin:.0%} to spare at 16M, and `cuda_leafwise` beats its own CPU arm at every cell, {min(over_cpu):.1f}x to {max(over_cpu):.1f}x. The anchor row prices what is left: the depthwise plane moves the same histogram volume in less time, because serializing the frontier to one node per round costs launches that the level plane batches away.
+
+{table}
+
+{_uncapped_table(rows)}
+
+{provenance([Evidence.LEAFWISE_LADDER], "One pod (L40S, US-NC-1, 2026-08-01), SCALING knobs at 100 iters and 256 leaves, best of 2 reps; the ladder that admitted `cuda_leafwise` under [docs/architecture/20-cuda-leafwise.md](../../docs/architecture/20-cuda-leafwise.md). Absolute times run above the 2026-08-01 recheck, which used a different pod with a wider CPU; only same-pod comparisons are meaningful.")}
+"""
+
+
+def _uncapped_table(rows: list[dict]) -> str:
+    """The uncapped-depth arm, where leaf-wise structurally differs."""
+    best = _cell_best([r for r in rows
+                       if r["cell"]["depth"] == UNCAPPED_DEPTH])
+    order = ["bonsai_cuda_leafwise", "lgbm_cuda", "bonsai_leafwise"]
+    table = md_table(
+        ["16M x 100, no depth cap", K.FIT_S, "test r2"],
+        [[_LADDER_LABELS[v], f"{best[(16_000_000, 100, v)][K.FIT_S]:.1f}s",
+          fmt(best[(16_000_000, 100, v)][K.R2_TEST], 4)] for v in order])
+    return f"""The capped ladder above hides the strategy's point: at a 256-leaf budget and a depth-8 cap the leaf budget and the full tree are the same tree, so every arm returns the depthwise accuracy. Lifting the cap is where leaf-wise differs, and it is also the only comparison against LightGBM that is honest, since its CUDA learner ignores `max_depth` outright (decision 95, confirmed in its source: `CUDASingleGPUTreeLearner::Train` never calls the one site that enforces depth). Uncapped, bonsai's leaf-wise growers reach LightGBM's accuracy to four decimals, which is the reading the capped rows' r2 column was never measuring. LightGBM is faster here: uncapped best-first must find a split for every leaf it creates, doubling bonsai's per-round count from 25,500 to 51,100, and that is the optimization target the admission leaves open rather than a quality difference.
+
+{table}
+"""
+
+
 def frontier_section() -> str:
     """The accuracy-vs-time frontier page body."""
     pareto = [r for r in load_jsonl(standings_file(Axis.FRONTIER))
@@ -1350,7 +1409,8 @@ PAGES: list[tuple[str, str, str, list]] = [
      "Row-scale standings: the re-baseline, the XGBoost 3.3 recheck, and "
      "the CPU prefetch round.",
      [rebaseline_section, xgb33_recheck_table, prefetch_section,
-      leafwise_recheck_section, leafwise_cadence_section]),
+      leafwise_recheck_section, leafwise_cadence_section,
+      leafwise_ladder_section]),
     ("perf-shape.md", "Width and shape",
      "The wide-data arc: the CPU fill, the CUDA recheck, the cols "
      "re-baseline, and the iso-volume shape frontier with measured VRAM.",
