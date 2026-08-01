@@ -38,6 +38,13 @@ def num_leaves_full(depth: int) -> int:
     return 1 << depth
 
 
+def num_leaves_of(cell: dict) -> int:
+    """A cell's leaf budget: an explicit num_leaves, else the full-depth
+    convention. Uncapped-depth cells must name it, because 1 << depth is
+    not a budget once the depth cap is lifted."""
+    return cell.get("num_leaves") or num_leaves_full(cell["depth"])
+
+
 def bonsai_core(*, learning_rate, max_depth, num_leaves, min_data_in_leaf,
                 lambda_l2, max_bin, seed, n_iters, n_threads, grower,
                 objective="mse") -> list[tuple[str, str]]:

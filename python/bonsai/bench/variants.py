@@ -44,6 +44,7 @@ _TABLE = (
     Variant("bonsai_leafwise", Lib.BONSAI, Device.CPU, ("bonsai_lw", "bonsai_leaf_cpu")),
     Variant("bonsai_oblivious", Lib.BONSAI, Device.CPU, ("bonsai_obl",)),
     Variant("bonsai_cuda_depthwise", Lib.BONSAI, Device.CUDA, ("bonsai_gpu",)),
+    Variant("bonsai_cuda_leafwise", Lib.BONSAI, Device.CUDA),
     Variant("bonsai_cuda_oblivious", Lib.BONSAI, Device.CUDA, ("bonsai_obl_gpu",)),
     Variant("bonsai_ts_depthwise", Lib.BONSAI, Device.CPU),
     Variant("bonsai_ts_oblivious", Lib.BONSAI, Device.CPU),

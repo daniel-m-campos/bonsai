@@ -35,7 +35,7 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
     task = c.get("task", "reg")
     pairs = [(k, v) for k, v in rp.bonsai_core(
         learning_rate=c["lr"], max_depth=c["depth"],
-        num_leaves=rp.num_leaves_full(c["depth"]),
+        num_leaves=rp.num_leaves_of(c),
         min_data_in_leaf=c.get("min_data_in_leaf", rp.SCALING["min_data_in_leaf"]),
         lambda_l2=c.get("lambda_l2", rp.SCALING["lambda_l2"]),
         max_bin=c["bins"], seed=c["seed"],
@@ -93,7 +93,7 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
     task = c.get("task", "reg")
     device = resolve(spec[runlog.Row.VARIANT]).device
     params = {**rp.lgbm_core(learning_rate=c["lr"], max_depth=c["depth"],
-                             num_leaves=rp.num_leaves_full(c["depth"]),
+                             num_leaves=rp.num_leaves_of(c),
                              min_data_in_leaf=c.get(
                                  "min_data_in_leaf",
                                  rp.SCALING["min_data_in_leaf"]),

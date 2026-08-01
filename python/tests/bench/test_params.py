@@ -28,6 +28,9 @@ def test_reference_param_mappings():
     assert cb_255["border_count"] == 254  # 255 bins, matching the others
     assert params.num_leaves_campaign(6) == 63
     assert params.num_leaves_full(6) == 64
+    # An uncapped-depth cell names its own budget; 1 << 255 is not one.
+    assert params.num_leaves_of({"depth": 6}) == 64
+    assert params.num_leaves_of({"depth": 255, "num_leaves": 256}) == 256
     # the shim keeps the documented import path alive
     sys.path.insert(0, "scripts")
     import reference_params as rp
