@@ -34,6 +34,8 @@ host compare (docs/method/benchmark-protocol.md).
 Every (size, variant) runs in a child process (this file with --worker), the
 scaling suite's OOM/segfault isolation pattern.
 """
+from __future__ import annotations
+
 import argparse
 import json
 import pathlib
@@ -45,10 +47,10 @@ import urllib.request
 
 import numpy as np
 
-from . import runlog
-from . import variants as vr
-from .datasets import data_root
-from .runners import RUNNERS
+from bonsai.bench import runlog
+from bonsai.bench import variants as vr
+from bonsai.bench.datasets import data_root
+from bonsai.bench.runners import RUNNERS
 
 S3 = "https://s3.amazonaws.com/benchm-ml--main"
 SIZES = {"0.1m": "train-0.1m.csv", "1m": "train-1m.csv", "10m": "train-10m.csv"}
@@ -122,7 +124,7 @@ def worker(spec: dict) -> dict:
     # The shared runners read scaling-shaped cells; the knobs map on directly
     # and task="binary" selects the logloss objective and AUC scoring.
     if spec["variant"].startswith("bonsai_ts_"):
-        from ..encoding import OrderedTargetEncoder
+        from bonsai.encoding import OrderedTargetEncoder
         t0 = time.perf_counter()
         enc = OrderedTargetEncoder(columns=range(len(CATEGORICAL)),
                                    seed=spec["knobs"]["seed"])

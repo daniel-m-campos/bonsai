@@ -30,15 +30,17 @@ Results append to the --out file (see the standings policy in
 docs/method/benchmark-protocol.md). Grid corners the host cannot fit are recorded as
 status="skipped" with the memory estimate — the feasibility frontier is data.
 """
+from __future__ import annotations
+
 import argparse
 import pathlib
 import sys
 
-from . import runlog
-from . import variants as vr
-from .driver import GPU_MAX_COLS
-from .runners import RUNNERS, worker
-from .synth import gen_data
+from bonsai.bench import runlog
+from bonsai.bench import variants as vr
+from bonsai.bench.driver import GPU_MAX_COLS
+from bonsai.bench.runners import RUNNERS, worker
+from bonsai.bench.synth import gen_data
 
 __all__ = ["AXES", "BASE", "GPU_MAX_COLS", "RESULTS", "RUNNERS", "VARIANTS",
            "gen_data", "main", "worker"]
@@ -116,10 +118,10 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.worker:
-        from .cli import _worker
+        from bonsai.bench.cli import _worker
         return _worker()
 
-    from .cli import main as cli_main
+    from bonsai.bench.cli import main as cli_main
     argv = ["run", "--axis", args.axis, "--variants", args.variants,
             "--repeats", str(args.repeats), "--timeout-cap",
             str(args.timeout_cap), "--out", args.out]

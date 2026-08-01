@@ -17,11 +17,11 @@ import json
 import pathlib
 import sys
 
-from . import params as rp
-from . import runlog
-from . import spec as spec_mod
-from . import variants as vr
-from .driver import run_jobs
+from bonsai.bench import params as rp
+from bonsai.bench import runlog
+from bonsai.bench import spec as spec_mod
+from bonsai.bench import variants as vr
+from bonsai.bench.driver import run_jobs
 
 
 def _default_out(spec: dict) -> str:
@@ -42,7 +42,7 @@ def _run(args) -> int:
     if args.spec is None:
         # Legacy scaling sugar: same grid, knobs, and output file as
         # python -m bonsai.bench.scaling; resume stays opt-in there.
-        from . import scaling
+        from bonsai.bench import scaling
         axes = (["rows", "cols", "bins", "threads"]
                 if args.axis in (None, "all")
                 else [a.strip() for a in args.axis.split(",")])
@@ -107,7 +107,7 @@ def _variants(args) -> int:
 
 
 def _worker() -> int:
-    from .runners import worker
+    from bonsai.bench.runners import worker
     child = json.loads(sys.stdin.read())
     print("RESULT " + json.dumps(worker(child)), flush=True)
     return 0

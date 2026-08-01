@@ -16,6 +16,8 @@ Run via uv:
     uv run scripts/fetch_toy.py
 """
 
+from __future__ import annotations
+
 import csv
 import pathlib
 

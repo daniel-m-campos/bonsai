@@ -7,6 +7,8 @@ predict_proba, Dataset reuse, and the save/from_file round-trip (a
 tomllib-on-3.10 break shipped once because no smoke exercised it).
 """
 
+from __future__ import annotations
+
 import os
 import tempfile
 

@@ -27,7 +27,7 @@ categorical encoder), and ``bench`` (the benchmark harness).
 
 from __future__ import annotations
 
-from ._bonsai import (
+from bonsai._bonsai import (
     Dataset,
     Model,
     cuda_available,
@@ -35,8 +35,8 @@ from ._bonsai import (
     load,
     train,
 )
-from .encoding import OrderedTargetEncoder
-from .estimators import BonsaiClassifier, BonsaiRegressor
+from bonsai.encoding import OrderedTargetEncoder
+from bonsai.estimators import BonsaiClassifier, BonsaiRegressor
 
 __all__ = [
     "BonsaiClassifier",

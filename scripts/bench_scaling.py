@@ -8,6 +8,8 @@ Run with the built module on the path, exactly as before:
     PYTHONPATH=build/python uv run scripts/bench_scaling.py --smoke
 or, equivalently: python -m bonsai.bench.scaling --smoke
 """
+from __future__ import annotations
+
 import sys
 
 from bonsai.bench.scaling import (  # noqa: F401  (re-exports for importers)

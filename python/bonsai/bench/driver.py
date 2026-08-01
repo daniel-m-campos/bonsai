@@ -17,8 +17,8 @@ import subprocess
 import sys
 import threading
 
-from . import runlog
-from .variants import resolve
+from bonsai.bench import runlog
+from bonsai.bench.variants import resolve
 
 # GPU variants skip the widest cells by default: 16k+ cols exhausts consumer
 # VRAM and kernel grids; the per-host VRAM estimator handles the rest. Both

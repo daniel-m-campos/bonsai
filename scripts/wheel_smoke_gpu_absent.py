@@ -6,6 +6,8 @@ the registry design makes: availability reports false, the cuda growers are
 registered but decline to train loudly, and nothing crashes on the way.
 """
 
+from __future__ import annotations
+
 import bonsai
 import numpy as np
 

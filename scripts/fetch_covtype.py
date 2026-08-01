@@ -2,6 +2,8 @@
 """Shim: fetch logic lives in the dataset registry (decision 69).
 Loads bonsai/bench/datasets.py by file path so it works before the native
 module is built. Run: python3 scripts/fetch_covtype.py"""
+from __future__ import annotations
+
 import importlib.util
 import pathlib
 import sys

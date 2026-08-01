@@ -30,6 +30,8 @@ LightGBM/examples/lambdarank):
 
 Verdict and numbers in benchmarks/ranking-tradeoff-2026-07.md.
 """
+from __future__ import annotations
+
 import argparse
 import json
 import sys

@@ -21,6 +21,8 @@ Run via uv (after `make build` and `uv run scripts/fetch_toy.py`):
     uv run scripts/compare.py --config configs/california_housing.toml
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import pathlib

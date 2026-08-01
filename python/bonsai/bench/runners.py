@@ -13,11 +13,11 @@ import time
 
 import numpy as np
 
-from . import params as rp
-from . import runlog
-from .metrics import auc, r2
-from .synth import gen_data
-from .variants import resolve
+from bonsai.bench import params as rp
+from bonsai.bench import runlog
+from bonsai.bench.metrics import auc, r2
+from bonsai.bench.synth import gen_data
+from bonsai.bench.variants import resolve
 
 
 def run_bonsai(spec, X, y, Xte, yte) -> dict:

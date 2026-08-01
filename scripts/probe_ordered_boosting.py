@@ -17,6 +17,8 @@ build-cuda/python; see the study note. All matched: depth 8, lr 0.1, 100 iters.
 
     python scripts/probe_ordered_boosting.py --door ordered --out results/ord.jsonl
 """
+from __future__ import annotations
+
 import argparse
 import json
 import sys

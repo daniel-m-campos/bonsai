@@ -16,9 +16,9 @@ from typing import ClassVar
 
 import numpy as np
 
-from ._bonsai import Model, load, train
-from ._coerce import _as_1d_f32, _as_2d_f32, _to_config_str
-from ._compat import (
+from bonsai._bonsai import Model, load, train
+from bonsai._coerce import _as_1d_f32, _as_2d_f32, _to_config_str
+from bonsai._compat import (
     _EVAL_METRIC,
     _XGB_OBJECTIVES,
     _grower_for_device,
@@ -167,7 +167,7 @@ class _BonsaiEstimator:
         return [(k, _to_config_str(v)) for k, v in merged.items()]
 
     @staticmethod
-    def _reject_dart_eval_set(pairs: list[tuple[str, str]]) -> None:
+    def _reject_dart_eval_set(pairs: list[tuple[str, str]]):
         """Eval history shares early stopping's incremental valid-loss
         accumulation, which DART's per-round tree rescaling invalidates;
         the native layer would silently record nothing (and
@@ -234,7 +234,7 @@ class _BonsaiEstimator:
                 state["_model_bytes"] = path.read_bytes()
         return state
 
-    def __setstate__(self, state: dict) -> None:
+    def __setstate__(self, state: dict):
         model_bytes = state.pop("_model_bytes", None)
         self.__dict__.update(state)
         if model_bytes is not None:
@@ -304,12 +304,12 @@ class _BonsaiEstimator:
         ``predict_leaf``."""
         return self.predict_leaf(X)
 
-    def save(self, path: str) -> None:
+    def save(self, path: str):
         if self._model is None:
             raise RuntimeError("fit() before save()")
         self._model.save(path)
 
-    def save_model(self, path: str) -> None:
+    def save_model(self, path: str):
         """xgboost's name for ``save``."""
         self.save(path)
 

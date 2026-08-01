@@ -1,20 +1,23 @@
-# PROVENANCE NOTE (decision 69): this probe is a completed experiment whose
-# committed evidence was produced by this exact code; it stays as-run rather
-# than being refactored onto bonsai.bench. NEW probes must import their knobs
-# and reference-library mappings from bonsai.bench.params and their metrics
-# from bonsai.bench.metrics.
-# Per-feature bin budget probe (issue #63 residual; decision 55 hypothesis):
-# measure the BENEFIT side of per-feature binning with zero bonsai C++ changes.
-#   1. Reference toggle: lightgbm's own max_bin_by_feature ON vs OFF at
-#      campaign-matched knobs prices the feature in the library that ships it.
-#   2. Zero-core-cost emulation: pre-discretize each feature to its budgeted
-#      bin count and feed stock bonsai; the distinct-value cut rule (issue
-#      #61) reproduces the budgets exactly. bin_mapper.n_samples is set to
-#      n_rows so sampling cannot miss a rare bin (deviation from the campaign
-#      default, applied to every bonsai variant for apples-to-apples).
-# Budget policies share the SAME total budget as uniform-255 unless named
-# "headroom" (which raises the cap on important features instead).
-# Output: JSON of metric per dataset x variant.
+"""PROVENANCE NOTE (decision 69): this probe is a completed experiment whose
+committed evidence was produced by this exact code; it stays as-run rather
+than being refactored onto bonsai.bench. NEW probes must import their knobs
+and reference-library mappings from bonsai.bench.params and their metrics
+from bonsai.bench.metrics.
+Per-feature bin budget probe (issue #63 residual; decision 55 hypothesis):
+measure the BENEFIT side of per-feature binning with zero bonsai C++ changes.
+  1. Reference toggle: lightgbm's own max_bin_by_feature ON vs OFF at
+     campaign-matched knobs prices the feature in the library that ships it.
+  2. Zero-core-cost emulation: pre-discretize each feature to its budgeted
+     bin count and feed stock bonsai; the distinct-value cut rule (issue
+     #61) reproduces the budgets exactly. bin_mapper.n_samples is set to
+     n_rows so sampling cannot miss a rare bin (deviation from the campaign
+     default, applied to every bonsai variant for apples-to-apples).
+Budget policies share the SAME total budget as uniform-255 unless named
+"headroom" (which raises the cap on important features instead).
+Output: JSON of metric per dataset x variant.
+"""
+from __future__ import annotations
+
 import json
 import pathlib
 import sys

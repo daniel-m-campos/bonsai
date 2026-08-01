@@ -24,6 +24,8 @@ the point.
     uv run scripts/dag_model.py            # evaluate the canned placements
     uv run scripts/dag_model.py --floor    # show the all-device floor math
 """
+from __future__ import annotations
+
 import argparse
 from dataclasses import dataclass
 

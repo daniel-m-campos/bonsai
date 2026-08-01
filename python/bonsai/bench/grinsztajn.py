@@ -30,8 +30,8 @@ import time
 
 import numpy as np
 
-from . import metrics, params, runlog
-from . import variants as vr
+from bonsai.bench import metrics, params, runlog
+from bonsai.bench import variants as vr
 
 SUITES = {297: "num_reg", 298: "num_clf", 299: "cat_reg", 304: "cat_clf"}
 SEEDS = (0, 1, 2)
