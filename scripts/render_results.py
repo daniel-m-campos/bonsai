@@ -74,6 +74,7 @@ class Evidence:
     WIDE_CPU_HIST: Final = "wide-cpu-hist-2026-07.jsonl"
     XGB33_RECHECK: Final = "xgb33-recheck-2026-07.jsonl"
     LEAFWISE_RECHECK: Final = "leafwise-recheck-2026-08.jsonl"
+    LEAFWISE_CADENCE: Final = "leafwise-cadence-2026-08.json"
 
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -1142,6 +1143,25 @@ The decision-42-era reading ("bonsai CPU leafwise beats LightGBM's CUDA leaf-wis
 """
 
 
+def leafwise_cadence_section() -> str:
+    """The device-leafwise stage 0 overhead probe (issue #268)."""
+    cad = load_json(Evidence.LEAFWISE_CADENCE)
+    configs = cad["configs"]
+    table = md_table(
+        ["config", "seconds", "us/round"],
+        [[name, f"{c['seconds']:.3f}", f"{c['us_per_round']:.1f}"]
+         for name, c in configs.items()])
+    b = cad["buckets_us"]
+    return f"""### The device-leafwise cadence probe (stage 0 of doc 20's admission)
+
+Before building the device leafwise plane, its per-round fixed cost was priced by replaying the round skeleton ({cad["rounds"]:,} rounds: launches, two pinned syncs, staging, host heap ops) with trivial kernels on an L40S. The fixed cost F is the no-copyback config: **{cad["fixed_cost_us"]:.1f} us/round** against a {cad["budget_us"]:.0f} us budget and a {cad["kill_us"]:.0f} us kill line, so the one-node-per-round design proceeds. Buckets: launch and staging floor {b["launch_floor"]:.1f}, syncs {b["syncs"]:.1f}, grid width {b["grid_width"]:.1f} (the fixed cost does not track node size), and the data-proportional range copy-back {b["copyback"]:.1f} us/round excluded from F.
+
+{table}
+
+{provenance([Evidence.LEAFWISE_CADENCE], "One pod (L40S, US-MO-1, 2026-08-01); probe [experiments/leafwise_cadence/cadence.cu](../../experiments/leafwise_cadence/cadence.cu); evidence [benchmarks/leafwise-cadence-2026-08.md](../../benchmarks/leafwise-cadence-2026-08.md) for issue #268.")}
+"""
+
+
 def frontier_section() -> str:
     """The accuracy-vs-time frontier page body."""
     pareto = [r for r in load_jsonl(standings_file(Axis.FRONTIER))
@@ -1330,7 +1350,7 @@ PAGES: list[tuple[str, str, str, list]] = [
      "Row-scale standings: the re-baseline, the XGBoost 3.3 recheck, and "
      "the CPU prefetch round.",
      [rebaseline_section, xgb33_recheck_table, prefetch_section,
-      leafwise_recheck_section]),
+      leafwise_recheck_section, leafwise_cadence_section]),
     ("perf-shape.md", "Width and shape",
      "The wide-data arc: the CPU fill, the CUDA recheck, the cols "
      "re-baseline, and the iso-volume shape frontier with measured VRAM.",

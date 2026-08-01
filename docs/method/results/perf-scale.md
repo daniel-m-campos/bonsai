@@ -61,3 +61,16 @@ The decision-42-era reading ("bonsai CPU leafwise beats LightGBM's CUDA leaf-wis
 | 16M | 128.4s (.879) | 24.4s (.886) | 104.7s (.879) | 17.2s (.879) |
 
 *Source: [`leafwise-recheck-2026-08.jsonl`](../../../benchmarks/results/leafwise-recheck-2026-08.jsonl). One pod (L40S, US-MO-1, 2026-08-01), SCALING knobs at 100 iters, best of 2 reps; evidence for decision 95.*
+
+### The device-leafwise cadence probe (stage 0 of doc 20's admission)
+
+Before building the device leafwise plane, its per-round fixed cost was priced by replaying the round skeleton (25,500 rounds: launches, two pinned syncs, staging, host heap ops) with trivial kernels on an L40S. The fixed cost F is the no-copyback config: **30.3 us/round** against a 100 us budget and a 300 us kill line, so the one-node-per-round design proceeds. Buckets: launch and staging floor 24.5, syncs 5.2, grid width 0.6 (the fixed cost does not track node size), and the data-proportional range copy-back 15.8 us/round excluded from F.
+
+| config | seconds | us/round |
+|---|---|---|
+| full | 1.175 | 46.1 |
+| no_copyback | 0.773 | 30.3 |
+| no_syncs | 0.640 | 25.1 |
+| floor | 0.757 | 29.7 |
+
+*Source: [`leafwise-cadence-2026-08.json`](../../../benchmarks/results/leafwise-cadence-2026-08.json). One pod (L40S, US-MO-1, 2026-08-01); probe [experiments/leafwise_cadence/cadence.cu](../../../experiments/leafwise_cadence/cadence.cu); evidence [benchmarks/leafwise-cadence-2026-08.md](../../../benchmarks/leafwise-cadence-2026-08.md) for issue #268.*
