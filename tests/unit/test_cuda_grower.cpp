@@ -269,6 +269,223 @@ TEST_CASE("CudaObliviousGrower matches CPU when deep nodes go infeasible (issue 
     }
 }
 
+// ---- The leaf plane (docs/architecture/20-cuda-leafwise.md) ------------------
+
+// Every leafwise parity case asserts the same contract as the level plane's:
+// tolerance-equal predictions, never tree equality.
+void require_values_match(std::vector<float> const &cpu, std::vector<float> const &gpu)
+{
+    REQUIRE(cpu.size() == gpu.size());
+    for (size_t r = 0; r < cpu.size(); ++r)
+    {
+        REQUIRE_THAT(gpu[r], Catch::Matchers::WithinAbs(cpu[r], 1e-4));
+    }
+}
+
+TEST_CASE("CudaLeafwiseGrower predictions match LeafwiseGrower", "[cuda][grower][fit]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
+
+    TreeConfig cfg;
+    cfg.max_depth        = 5;
+    cfg.max_leaves       = 31;
+    cfg.min_data_in_leaf = 4;
+
+    LeafwiseGrower<CpuHistogramEngine> cpu_grower(cfg);
+    CudaLeafwiseGrower                 gpu_grower(cfg);
+
+    auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    require_values_match(cpu.values, gpu.values);
+
+    // Row subset: the root segment uploads instead of restoring the cached
+    // identity, and route_unsampled fills the rows growth never reached.
+    std::vector<row_id_t> half;
+    for (row_id_t r = 0; r < scenario.rows.size(); r += 2)
+    {
+        half.push_back(r);
+    }
+    auto cpu_sub = cpu_grower.grow(ds, scenario.grad, scenario.hess, half);
+    auto gpu_sub = gpu_grower.grow(ds, scenario.grad, scenario.hess, half);
+    require_values_match(cpu_sub.values, gpu_sub.values);
+}
+
+TEST_CASE("CudaLeafwiseGrower matches CPU under a leaf budget with no depth cap",
+          "[cuda][grower][fit]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    // The shape where leaf-wise growth structurally differs from depth-wise:
+    // the budget, not the depth, is what stops it, so the tree grows ragged
+    // and the slot pool is sized off max_leaves.
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
+
+    TreeConfig cfg;
+    cfg.max_depth        = 255;
+    cfg.max_leaves       = 40;
+    cfg.min_data_in_leaf = 4;
+
+    LeafwiseGrower<CpuHistogramEngine> cpu_grower(cfg);
+    CudaLeafwiseGrower                 gpu_grower(cfg);
+
+    auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    REQUIRE(gpu.tree.params().n_leaves == cpu.tree.params().n_leaves);
+    require_values_match(cpu.values, gpu.values);
+}
+
+TEST_CASE("CudaLeafwiseGrower honors the depth cap", "[cuda][grower][fit]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    // The cap is the host grower's, not the plane's: with the leaf budget off,
+    // depth alone must stop growth (LightGBM's CUDA learner ignores it; ours
+    // cannot, or the two leafwise growers would disagree by construction).
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
+
+    TreeConfig cfg;
+    cfg.max_depth        = 3;
+    cfg.max_leaves       = 0;
+    cfg.min_data_in_leaf = 4;
+
+    LeafwiseGrower<CpuHistogramEngine> cpu_grower(cfg);
+    CudaLeafwiseGrower                 gpu_grower(cfg);
+
+    auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    REQUIRE(gpu.tree.params().depth <= 3);
+    REQUIRE(gpu.tree.params().n_leaves <= 8);
+    require_values_match(cpu.values, gpu.values);
+}
+
+TEST_CASE("CudaLeafwiseGrower matches CPU with constraints on the leaf plane",
+          "[cuda][grower][fit]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    // Both constraint families ride the same staging the level find uses, but
+    // here a find covers two nodes, not a level: the per-node bounds box and
+    // the interaction mask must be indexed by node, the histogram by slot.
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
+
+    TreeConfig cfg;
+    cfg.max_depth               = 5;
+    cfg.max_leaves              = 24;
+    cfg.min_data_in_leaf        = 4;
+    cfg.monotone_constraints    = {+1, 0, -1, 0};
+    cfg.interaction_constraints = {"0,1", "2,3"};
+
+    LeafwiseGrower<CpuHistogramEngine> cpu_grower(cfg);
+    CudaLeafwiseGrower                 gpu_grower(cfg);
+
+    auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    require_values_match(cpu.values, gpu.values);
+}
+
+TEST_CASE("CudaLeafwiseGrower handles consecutive trees and datasets",
+          "[cuda][grower][fit]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    // The slot pool is per tree: it zeroes once and its slot counter restarts
+    // at the root, so a second grow that reuses the same buffer must not read
+    // the first tree's cells.
+    auto scenario_a = random_scenario();
+    auto scenario_b = test::separable_4row();
+
+    TreeConfig cfg;
+    cfg.max_depth        = 4;
+    cfg.max_leaves       = 12;
+    cfg.min_data_in_leaf = 4;
+
+    CudaLeafwiseGrower                 grower(cfg);
+    LeafwiseGrower<CpuHistogramEngine> cpu_grower(cfg);
+    auto const first  = grower.grow(scenario_a.built.ds, scenario_a.grad,
+                                    scenario_a.hess, scenario_a.rows);
+    auto const second = grower.grow(scenario_a.built.ds, scenario_a.grad,
+                                    scenario_a.hess, scenario_a.rows);
+    require_values_match(first.values, second.values);
+    auto const cpu = cpu_grower.grow(scenario_a.built.ds, scenario_a.grad,
+                                     scenario_a.hess, scenario_a.rows);
+    require_values_match(cpu.values, second.values);
+
+    // A second dataset re-uploads the binned matrix and resizes the pool.
+    auto const other = grower.grow(scenario_b.built.ds, scenario_b.grad,
+                                   scenario_b.hess, scenario_b.rows);
+    REQUIRE(other.values.size() == scenario_b.built.ds.n_rows());
+}
+
+TEST_CASE("CudaLeafwiseGrower matches CPU on a deep unconstrained tree",
+          "[cuda][grower][fit]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    // Deep, small-node growth: the shape where a split's partition can empty
+    // one child (subtraction noise scores a degenerate cut, decision 50) and
+    // the round must demote back to a leaf without spending a pool slot. It
+    // also drives every small child below the 512-row kernel cutoff.
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
+
+    TreeConfig cfg;
+    cfg.max_depth         = 8;
+    cfg.max_leaves        = 64;
+    cfg.min_data_in_leaf  = 4;
+    cfg.min_gain_to_split = 0.0F;
+
+    LeafwiseGrower<CpuHistogramEngine> cpu_grower(cfg);
+    CudaLeafwiseGrower                 gpu_grower(cfg);
+
+    auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    require_values_match(cpu.values, gpu.values);
+}
+
+TEST_CASE("CudaLeafwiseGrower declines an oversized leaf budget to the host plane",
+          "[cuda][grower][fit]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    // A leaf budget whose slot pool no device can hold: leaf_begin_root must
+    // decline wholesale and the tree trains on the host plane, silently and
+    // correctly (the depth cap is what actually bounds this tree).
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
+
+    TreeConfig cfg;
+    cfg.max_depth        = 4;
+    cfg.max_leaves       = 1U << 30U;
+    cfg.min_data_in_leaf = 4;
+
+    LeafwiseGrower<CpuHistogramEngine> cpu_grower(cfg);
+    CudaLeafwiseGrower                 gpu_grower(cfg);
+
+    auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    require_values_match(cpu.values, gpu.values);
+}
+
 TEST_CASE("CudaDepthwiseGrower handles consecutive trees and datasets",
           "[cuda][grower]")
 {
