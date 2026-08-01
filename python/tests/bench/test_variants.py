@@ -34,6 +34,9 @@ def test_variant_registry():
                          "xgb_cpu": "xgb_hist",
                          "xgb_gpu": "xgb_cuda"}.items():
         assert variants.resolve(alias).name == canon
+    # Registered outside the scaling suite: the device leafwise arm runs
+    # from specs only (issue #268), so the suite tuple above stays fixed.
+    assert variants.resolve("bonsai_cuda_leafwise").device == variants.Device.CUDA
     # No alias shadows a canonical name.
     aliases = {a for v in variants.REGISTRY.values() for a in v.aliases}
     assert not aliases & set(variants.REGISTRY)
