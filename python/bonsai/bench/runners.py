@@ -21,14 +21,19 @@ from bonsai.bench.variants import Device, Lib, resolve
 
 
 def run_bonsai(spec, X, y, Xte, yte) -> dict:
-    """Fit/predict one cell with bonsai.train at the shared knobs."""
+    """Fit/predict one cell with bonsai's two-step Dataset + train form.
+
+    bin_mapper.* pairs are rejected by train(pairs, dataset) (decision 65):
+    max_bin moves to the Dataset constructor instead, and the rest of the
+    pairs go to train() unchanged.
+    """
     import bonsai
     grower = spec[runlog.Row.VARIANT].removeprefix("bonsai_")
     if grower.startswith("cuda") and not bonsai.cuda_available():
         raise RuntimeError("unsupported: cuda grower without a CUDA device/build")
     c = spec[runlog.Row.CELL]
     task = c.get("task", "reg")
-    pairs = rp.bonsai_core(
+    pairs = [(k, v) for k, v in rp.bonsai_core(
         learning_rate=c["lr"], max_depth=c["depth"],
         num_leaves=rp.num_leaves_full(c["depth"]),
         min_data_in_leaf=c.get("min_data_in_leaf", rp.SCALING["min_data_in_leaf"]),
@@ -36,14 +41,19 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
         max_bin=c["bins"], seed=c["seed"],
         n_iters=c["iters"], n_threads=spec[runlog.Row.THREADS], grower=grower,
         objective="logloss" if task == "binary" else "mse")
+              if not k.startswith("bin_mapper.")]
+    fit_t0 = t0 = time.perf_counter()
+    ds = bonsai.Dataset(X, y, max_bin=c["bins"])
+    ingest_s = time.perf_counter() - t0
     t0 = time.perf_counter()
-    model = bonsai.train(pairs, X, y)
-    fit_s = time.perf_counter() - t0
+    model = bonsai.train(pairs, ds)
+    train_s = time.perf_counter() - t0
+    fit_s = time.perf_counter() - fit_t0
     t0 = time.perf_counter()
     pred_te = np.asarray(model.predict(Xte))
     predict_s = time.perf_counter() - t0
     return _score(task, fit_s, predict_s, y, yte, pred_te,
-                  lambda: np.asarray(model.predict(X)))
+                  lambda: np.asarray(model.predict(X)), ingest_s, train_s)
 
 
 def run_xgb(spec, X, y, Xte, yte) -> dict:
@@ -62,15 +72,18 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
               "objective": ("binary:logistic" if task == "binary"
                             else "reg:squarederror"),
               "device": device, "nthread": spec[runlog.Row.THREADS]}
-    t0 = time.perf_counter()
+    fit_t0 = t0 = time.perf_counter()
     dtrain = xgb.QuantileDMatrix(X, label=y, max_bin=c["bins_effective"])
+    ingest_s = time.perf_counter() - t0
+    t0 = time.perf_counter()
     booster = xgb.train(params, dtrain, num_boost_round=c["iters"])
-    fit_s = time.perf_counter() - t0
+    train_s = time.perf_counter() - t0
+    fit_s = time.perf_counter() - fit_t0
     t0 = time.perf_counter()
     pred_te = booster.inplace_predict(Xte)
     predict_s = time.perf_counter() - t0
     return _score(task, fit_s, predict_s, y, yte, pred_te,
-                  lambda: booster.inplace_predict(X))
+                  lambda: booster.inplace_predict(X), ingest_s, train_s)
 
 
 def run_lgbm(spec, X, y, Xte, yte) -> dict:
@@ -89,15 +102,20 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
                              max_bin=c["bins_effective"], seed=c["seed"]),
               "objective": "binary" if task == "binary" else "regression",
               "device_type": device, "num_threads": spec[runlog.Row.THREADS]}
+    fit_t0 = t0 = time.perf_counter()
+    # lgb.Dataset is lazy; construct() forces the binning pass now so its
+    # cost lands in ingest_s rather than leaking into the train() call.
+    dtrain = lgb.Dataset(X, label=y).construct()
+    ingest_s = time.perf_counter() - t0
     t0 = time.perf_counter()
-    dtrain = lgb.Dataset(X, label=y)
     model = lgb.train(params, dtrain, num_boost_round=c["iters"])
-    fit_s = time.perf_counter() - t0
+    train_s = time.perf_counter() - t0
+    fit_s = time.perf_counter() - fit_t0
     t0 = time.perf_counter()
     pred_te = model.predict(Xte)
     predict_s = time.perf_counter() - t0
     return _score(task, fit_s, predict_s, y, yte, pred_te,
-                  lambda: model.predict(X))
+                  lambda: model.predict(X), ingest_s, train_s)
 
 
 def run_catboost(spec, X, y, Xte, yte) -> dict:
@@ -117,16 +135,22 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
         loss_function="Logloss" if task == "binary" else "RMSE",
         task_type=("GPU" if device == Device.CUDA else "CPU"), devices="0",
         thread_count=spec[runlog.Row.THREADS], verbose=False)
-    t0 = time.perf_counter()
+    fit_t0 = t0 = time.perf_counter()
+    # Pool() only wraps the raw arrays; CatBoost quantizes at fit() time, so
+    # this ingest_s underestimates relative to the other libraries' eager
+    # construction. That asymmetry is a finding, not a bug (issue #253).
     pool = Pool(X, label=y)
+    ingest_s = time.perf_counter() - t0
+    t0 = time.perf_counter()
     model.fit(pool)
-    fit_s = time.perf_counter() - t0
+    train_s = time.perf_counter() - t0
+    fit_s = time.perf_counter() - fit_t0
     t0 = time.perf_counter()
     pred_te = (model.predict_proba(Xte)[:, 1] if task == "binary"
                else model.predict(Xte))
     predict_s = time.perf_counter() - t0
     return _score(task, fit_s, predict_s, y, yte, pred_te,
-                  lambda: model.predict(X))
+                  lambda: model.predict(X), ingest_s, train_s)
 
 
 RUNNERS = {Lib.BONSAI: run_bonsai, Lib.XGB: run_xgb, Lib.LGBM: run_lgbm,
@@ -185,7 +209,8 @@ def worker(spec: dict) -> dict:
                              if out[runlog.Row.FIT_S] else None)
     out["predict_rows_per_s"] = (round(c["n_test"] / out[runlog.Row.PREDICT_S])
                                  if out[runlog.Row.PREDICT_S] else None)
-    for k in (runlog.Row.FIT_S, runlog.Row.PREDICT_S):
+    for k in (runlog.Row.FIT_S, runlog.Row.INGEST_S, runlog.Row.TRAIN_S,
+              runlog.Row.PREDICT_S):
         out[k] = round(out[k], 3)
     for k in (runlog.Row.R2_TRAIN, runlog.Row.R2_TEST):
         out[k] = round(out[k], 4)
@@ -196,13 +221,17 @@ def worker(spec: dict) -> dict:
 
 
 def _score(task: str, fit_s: float, predict_s: float, y, yte, pred_te,
-           predict_train) -> dict:
+           predict_train, ingest_s: float, train_s: float) -> dict:
     """The runner result dict; predict_train runs only for regression, so
-    binary tasks never pay a full train-side predict."""
+    binary tasks never pay a full train-side predict.
+
+    fit_s is the outer wall clock (raw-floats-to-model, unchanged protocol);
+    ingest_s/train_s are the inner breakdown and are not summed back into it.
+    """
+    base = {runlog.Row.FIT_S: fit_s, runlog.Row.INGEST_S: ingest_s,
+            runlog.Row.TRAIN_S: train_s, runlog.Row.PREDICT_S: predict_s}
     if task == "binary":
-        return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
-                runlog.Row.AUC_TEST: auc(yte, pred_te)}
+        return {**base, runlog.Row.AUC_TEST: auc(yte, pred_te)}
     pred_tr = predict_train()
-    return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
-            runlog.Row.R2_TRAIN: r2(y, pred_tr),
+    return {**base, runlog.Row.R2_TRAIN: r2(y, pred_tr),
             runlog.Row.R2_TEST: r2(yte, pred_te)}

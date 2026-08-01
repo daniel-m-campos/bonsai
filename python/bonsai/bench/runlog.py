@@ -33,6 +33,8 @@ class Row:
     STATUS: Final = "status"
     MESSAGE: Final = "message"
     FIT_S: Final = "fit_s"
+    INGEST_S: Final = "ingest_s"
+    TRAIN_S: Final = "train_s"
     PREDICT_S: Final = "predict_s"
     R2_TRAIN: Final = "r2_train"
     R2_TEST: Final = "r2_test"
