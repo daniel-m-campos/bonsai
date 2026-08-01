@@ -848,8 +848,8 @@ class LevelStep<EngineT, SplitterT>
 
 // ---------------------------------------------------------------------------
 // Host data plane for best-first growth: the gain heap expands one node at a
-// time, so there is no level to batch and no LevelPlan (decision 41) — the
-// same partition/populate/subtract primitives compose one node deep.
+// time, so there is no level to batch and no LevelPlan — the same
+// partition/populate/subtract primitives compose one node deep.
 // Branch-free: no GPU concept appears below.
 template <HistogramEngine EngineT, typename SplitterT> class LeafStep
 {
