@@ -79,6 +79,7 @@ def is_archive(rel: str) -> bool:
 
 
 def corpus_files() -> list[pathlib.Path]:
+    """The published prose files the lint covers."""
     pats = excluded_patterns((REPO / "mkdocs.yml").read_text())
     files = [REPO / "README.md"]
     for path in sorted(DOCS.rglob("*.md")):
@@ -116,10 +117,12 @@ def mask_code_and_links(text: str) -> str:
 
 
 def is_table_row(text: str) -> bool:
+    """Whether a line is a markdown table row."""
     return text.lstrip().startswith("|")
 
 
 def is_heading(text: str) -> bool:
+    """Whether a line is a markdown heading."""
     return text.lstrip().startswith("#")
 
 
@@ -154,17 +157,20 @@ def to_plain(text: str) -> str:
 
 
 def split_sentences(text: str) -> list[str]:
+    """Rough sentence split for the length rule."""
     parts = re.split(r"(?<=[.!?])\s+", text.strip())
     return [p for p in parts if p]
 
 
 def word_count(sentence: str) -> int:
+    """Words in a sentence, markup masked."""
     return sum(1 for w in sentence.split() if any(c.isalnum() for c in w))
 
 
 # ---- rules -------------------------------------------------------------------
 
 def lint_file(path: pathlib.Path, hard: list[tuple], soft: list[tuple]) -> None:
+    """Every finding for one file."""
     rel = path.relative_to(REPO).as_posix()
     lines = path.read_text().splitlines()
     classified = classify(lines)
@@ -221,6 +227,7 @@ def lint_file(path: pathlib.Path, hard: list[tuple], soft: list[tuple]) -> None:
 
 
 def main() -> int:
+    """Lint the corpus; exit 1 on findings."""
     hard: list[tuple] = []
     soft: list[tuple] = []
     files = corpus_files()

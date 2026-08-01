@@ -85,17 +85,19 @@ charts: dict[str, str] = {}  # filename -> svg, written to docs/method/assets/
 
 
 def load_jsonl(name: str) -> list[dict]:
+    """Rows of a results jsonl by bare filename."""
     consumed.add(name)
     path = RESULTS / name
     return [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
 
 
 def load_json(name: str) -> dict:
+    """One results json by bare filename."""
     consumed.add(name)
     return json.loads((RESULTS / name).read_text())
 
 
-def fmt(v, nd=4) -> str:
+def fmt(v: object, nd: int = 4) -> str:
     if v is None:
         return "-"
     if isinstance(v, float):
@@ -130,12 +132,13 @@ def measured_stamp(rows: list[dict]) -> str:
 
 
 def provenance(files: list[str], note: str) -> str:
+    """The source-attribution line every section ends with."""
     links = ", ".join(
         f"[`{f}`](../../benchmarks/results/{f})" for f in files)
     return f"*Source: {links}. {note}*"
 
 
-# ---- SVG charts ---------------------------------------------------------------
+# SVG charts =======================================================================================
 # Hand-rolled SVG (stdlib only) so the images are byte-stable and the CI drift
 # check covers them exactly like the tables. One color per library everywhere;
 # solid strokes are GPU variants, dashed are CPU. Text and grid in mid-grays so
@@ -155,17 +158,20 @@ FONT = "font-family='system-ui,sans-serif'"
 
 
 def _svg(width: int, height: int, body: list[str]) -> str:
+    """Wrap body fragments in an svg element."""
     return (f"<svg xmlns='http://www.w3.org/2000/svg' width='{width}' "
             f"height='{height}' viewBox='0 0 {width} {height}'>\n"
             + "\n".join(body) + "\n</svg>\n")
 
 
-def _text(x, y, s, size=11, anchor="start", color=TEXT, weight="normal") -> str:
+def _text(x: float, y: float, s: str, size: int = 11, anchor: str = "start",
+          color: str = TEXT, weight: str = "normal") -> str:
     return (f"<text x='{x}' y='{y}' font-size='{size}' fill='{color}' "
             f"{FONT} text-anchor='{anchor}' font-weight='{weight}'>{s}</text>")
 
 
 def _legend(items: list[tuple[str, str, str]], x: int, y: int) -> list[str]:
+    """Legend fragments for a chart."""
     out = []
     for i, (label, color, dash) in enumerate(items):
         yy = y + i * 17
@@ -176,6 +182,7 @@ def _legend(items: list[tuple[str, str, str]], x: int, y: int) -> list[str]:
 
 
 def _dash(cpu: bool) -> str:
+    """CPU arms draw dashed; GPU solid."""
     return " stroke-dasharray='6 4'" if cpu else ""
 
 
@@ -268,10 +275,11 @@ def line_chart(fname: str, title: str, y_label: str,
     charts[fname] = _svg(width, height, body)
 
 
-# ---- Quality: Grinsztajn standings ------------------------------------------
+# Quality: Grinsztajn standings ====================================================================
 
 
 def _value(r: dict):
+    """Metric value across schema generations (v1 `value`, pre-schema `metric`)."""
     v = r.get("value")
     if isinstance(v, (int, float)):
         return v
@@ -326,6 +334,7 @@ def _standings(rows: list[dict]):
 
 
 def grinsztajn_section() -> str:
+    """The Grinsztajn standings section of the quality landing."""
     main = load_jsonl(standings_file(Axis.GRINSZTAJN))
     mcw1 = load_jsonl(Evidence.GRINSZTAJN_MCW1)
     table, suite_ranks, n = _standings(main)
@@ -373,10 +382,11 @@ Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinszt
 """
 
 
-# ---- Quality: campaign smoke -------------------------------------------------
+# Quality: campaign smoke ==========================================================================
 
 
 def campaign_section() -> str:
+    """The ten-dataset campaign smoke section."""
     raw = load_jsonl(Evidence.QUALITY_CAMPAIGN)
     latest: dict[str, dict] = {}
     for row in raw:
@@ -422,10 +432,11 @@ The internal quality campaign (`scripts/compare.py`, campaign knobs, best varian
 """
 
 
-# ---- Quality: probes ---------------------------------------------------------
+# Quality: probes ==================================================================================
 
 
-def probes_section() -> str:
+def _probe_binning_table() -> str:
+    """Per-feature bin-budget probe table (decision 67)."""
     binning = load_json(Evidence.BINNING_PROBE)
     bin_rows = []
     keys = ["bonsai_uniform255", "bonsai_importance", "bonsai_inverse",
@@ -434,15 +445,21 @@ def probes_section() -> str:
     for ds in sorted(binning):
         d = binning[ds]
         bin_rows.append([ds, *[fmt(d.get(k)) for k in keys]])
-    bin_table = md_table([K.DATASET, *keys], bin_rows)
+    return md_table([K.DATASET, *keys], bin_rows)
 
+
+def _probe_cat_table() -> str:
+    """Categorical-machinery probe table (decision 58)."""
     cats = load_json(Evidence.CAT_TRADEOFF)
     setups = sorted({k for d in cats.values() for k in d if not k.startswith("_")})
     datasets = sorted(cats)
-    cat_table = md_table(
+    return md_table(
         ["setup", *datasets],
         [[s, *[fmt(cats[ds].get(s)) for ds in datasets]] for s in setups])
 
+
+def _probe_rank_table() -> str:
+    """Ranking-objectives probe table (issue #58)."""
     rank = load_jsonl(Evidence.RANKING_TRADEOFF)
     # Two row shapes: synthetic regimes carry "regime", the MQ2008 gate "data".
     for r in rank:
@@ -453,43 +470,58 @@ def probes_section() -> str:
         if r["learner"] not in learners:
             learners.append(r["learner"])
     cell = {(r["learner"], r["regime"]): r["ndcg_at_10"] for r in rank}
-    rank_table = md_table(
+    return md_table(
         ["learner", *[f"{g} (NDCG@10)" for g in regimes]],
         [[ln, *[fmt(cell.get((ln, g))) for g in regimes]] for ln in learners])
 
+
+def _probe_tabarena_table() -> str:
+    """CatBoost categorical-toggle probe table (decision 80)."""
     tap = load_jsonl(Evidence.TABARENA_CAT)
     tap_ch = [r for r in tap if r["subset"] == "cat_heavy"]
-    tap_table = md_table(
+    return md_table(
         [K.DATASET, "cat native", "cat ablated", "bonsai_ts", "categorical share",
          "remaining gap"],
         [[r[K.DATASET], fmt(r["cat_native"]), fmt(r["cat_ablated"]),
           fmt(r["bonsai_ts"]), fmt(r["categorical_share"]), fmt(r["remaining_gap"])]
          for r in sorted(tap_ch, key=lambda r: r["categorical_share"])])
 
+
+def _probe_ordered_boosting_table() -> str:
+    """Ordered-vs-Plain probe table (decision 81)."""
     ob = load_jsonl(Evidence.ORDERED_BOOSTING)
-    ob_table = md_table(
+    return md_table(
         [K.DATASET, "metric", "CatBoost Ordered (matched)", "CatBoost Plain (matched)"],
         [[r[K.DATASET], r["metric"], fmt(r.get("cat_ordered_matched")),
           fmt(r.get("cat_plain_matched"))]
          for r in sorted(ob, key=lambda r: r[K.DATASET])])
 
+
+def _probe_static_k_table() -> str:
+    """Static K-permutation target-statistics probe table (decision 82)."""
     sk = load_jsonl(Evidence.STATIC_K_ENCODER)
-    sk_table = md_table(
+    return md_table(
         [K.DATASET, "bonsai_ts (K=1)", "K=4", "K=8", "CatBoost native"],
         [[r[K.DATASET], fmt(r.get("ts_k1")), fmt(r.get("ts_k4")), fmt(r.get("ts_k8")),
           fmt(r.get("cat_native"))]
          for r in sorted(sk, key=lambda r: r[K.DATASET])])
 
+
+def _probe_lr_rule_table() -> str:
+    """Per-dataset learning-rate rule probe table (decision 83)."""
     lr = load_jsonl(Evidence.LR_RULE)
-    lr_table = md_table(
+    return md_table(
         [K.DATASET, "default (0.05)", "oracle", "oracle lr", "CatBoost auto-lr"],
         [[r[K.DATASET], fmt(r["bonsai_default"]["test"]),
           fmt(r["bonsai_oracle"]["test"]), fmt(r["bonsai_oracle"]["chosen_lr"], 2),
           fmt(r["bonsai_cat_rule"]["transplanted_lr"], 3)]
          for r in sorted(lr, key=lambda r: r[K.DATASET])])
 
+
+def _probe_bagging_table() -> str:
+    """Bagged-protocol randomization-interaction probe table (decision 85)."""
     bi = load_jsonl(Evidence.BAGGING_INTERACTION)
-    bi_table = md_table(
+    return md_table(
         [K.DATASET, "metric", "bag gain bonsai", "bag gain cat", "interaction",
          "randomization share", "in band"],
         [[r[K.DATASET], r["metric"], fmt(r.get("bagging_gain_bonsai")),
@@ -498,6 +530,9 @@ def probes_section() -> str:
           "yes" if r.get("interaction_in_band") else "no"]
          for r in sorted(bi, key=lambda r: r[K.DATASET])])
 
+
+def _probe_selection_survey() -> dict:
+    """Draw the selection-survey chart; per-dataset baseline errors back."""
     sv = load_jsonl(Evidence.SELECTION_SURVEY)
     sv_base = {r[K.DATASET]: r["error"] for r in sv
                if r["row_type"] == "baseline"}
@@ -528,9 +563,13 @@ def probes_section() -> str:
         x_label="features kept",
         log_x=True, log_y=False,
         y_ticks=[(v, f"{v:.1f}") for v in (10.0, 11.0, 12.0, 13.0)])
+    return sv_base
 
+
+def _probe_feature_selection_table() -> str:
+    """Shadow-feature selection probe table (decision 86)."""
     fs = load_jsonl(Evidence.FEATURE_SELECTION)
-    fs_table = md_table(
+    return md_table(
         [K.DATASET, "grower", "regime", "metric", "k / total", "bonsai all",
          "bonsai shadow", "bonsai top-k", "cat select", "shadow vs top-k",
          "shadow beats all"],
@@ -540,6 +579,20 @@ def probes_section() -> str:
           fmt(r.get("cat_select"), 5), fmt(r.get("shadow_vs_topk"), 5),
           "yes" if r.get("shadow_vs_all", 0) > r.get("band", 0) else "no"]
          for r in fs])
+
+
+def probes_section() -> str:
+    """The probe evidence tables and readings, one subsection per probe."""
+    bin_table = _probe_binning_table()
+    cat_table = _probe_cat_table()
+    rank_table = _probe_rank_table()
+    tap_table = _probe_tabarena_table()
+    ob_table = _probe_ordered_boosting_table()
+    sk_table = _probe_static_k_table()
+    lr_table = _probe_lr_rule_table()
+    bi_table = _probe_bagging_table()
+    sv_base = _probe_selection_survey()
+    fs_table = _probe_feature_selection_table()
 
     return f"""### Probe: per-feature bin budgets (declined, decision 67)
 
@@ -623,7 +676,7 @@ Ten selection methods, one shared judge: each method produces a feature ranking,
 """
 
 
-# ---- Perf: re-baseline -------------------------------------------------------
+# Perf: re-baseline ================================================================================
 
 # Chart styling: (display label, color, is_cpu). bonsai's two CUDA growers get
 # two greens; CPU variants are dashed everywhere. The four GPU arms are shared
@@ -646,14 +699,17 @@ REBASE_VARIANTS = [(k, v[0]) for k, v in VARIANT_STYLE.items()]
 
 
 def human(n: int) -> str:
+    """250000 -> 250k, 16000000 -> 16M."""
     return f"{n // 1_000_000}M" if n >= 1_000_000 else f"{n // 1000}k"
 
 
 def cell_label(rows: int, cols: int) -> str:
+    """A rows x cols cell label with human row counts."""
     return f"{human(rows)} x {cols}"
 
 
 def fit_r2_str(r: dict) -> str:
+    """The `12.3s (.876)` cell text for one row."""
     return f"{r['fit_s']:.1f}s ({fmt(r.get('r2_test'), 3).lstrip('0')})"
 
 
@@ -668,6 +724,7 @@ def best_fit_by(rows: list[dict], key_fn) -> dict[tuple, dict]:
 
 
 def _cell_best(rows: list[dict]) -> dict[tuple, dict]:
+    """Best-fit row per (rows, cols, variant)."""
     best: dict[tuple, dict] = {}
     for r in rows:
         c = r["cell"]
@@ -677,7 +734,7 @@ def _cell_best(rows: list[dict]) -> dict[tuple, dict]:
     return best
 
 
-def _fmt_cell(best, rows, cols, variant) -> str:
+def _fmt_cell(best: dict, rows: int, cols: int, variant: str) -> str:
     r = best.get((rows, cols, variant))
     if r is None:
         return "-"
@@ -685,6 +742,7 @@ def _fmt_cell(best, rows, cols, variant) -> str:
 
 
 def rebaseline_section() -> str:
+    """The rows-scaling section of the scale page."""
     rows = load_jsonl(standings_file(Axis.ROWS))
     best = _cell_best(rows)
     host = rows[0]["host"]
@@ -728,6 +786,7 @@ Width scaling has its own standings axis on [Width and shape](perf-shape.md).
 
 
 def xgb33_recheck_table() -> str:
+    """The xgboost-3.3 recheck section (decision 87)."""
     rc = load_jsonl(Evidence.XGB33_RECHECK)
     best: dict = {}
     for r in rc:
@@ -772,6 +831,7 @@ XGBoost 3.3 (2026-07-21) claimed lower GPU quantile-sketching memory and wide-da
 
 
 def wide_cpu_hist_table() -> str:
+    """The wide-CPU histogram study section (decisions 88/89)."""
     wc = load_jsonl(Evidence.WIDE_CPU_HIST)
     ladder = {(r["tag"], r[K.VARIANT], r["rows"], r["cols"]): r for r in wc
               if r["run"] == "pod-ladder"}
@@ -801,6 +861,7 @@ Ultra-wide selections broke the row-wise u8 fill: its per-row scatter targets th
 
 
 def cuda_wide_recheck_table() -> str:
+    """The stale-wide-reading correction section (decision 90)."""
     cw = load_jsonl(Evidence.CUDA_WIDE_RECHECK)
     body = []
     for r in sorted(cw, key=lambda r: (-r["cols"], r[K.VARIANT])):
@@ -820,6 +881,7 @@ A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: 
 
 
 def cols_rebaseline_table() -> str:
+    """The width-standings section of the shape page."""
     cr = [r for r in load_jsonl(standings_file(Axis.WIDTH)) if r[K.STATUS] == "ok"]
     best = best_fit_by(
         cr, lambda r: (r["cell"]["rows"], r["cell"]["cols"], r[K.VARIANT]))
@@ -874,7 +936,7 @@ Peak host RSS, worst rep:
 """
 
 
-# ---- Perf: iso-volume -------------------------------------------------------
+# Perf: iso-volume =================================================================================
 
 ISO_STYLE = {
     **_GPU_STYLE,
@@ -887,50 +949,42 @@ ISO_VARIANTS = [(k, v[0]) for k, v in ISO_STYLE.items()]
 ISO_HOST = _STANDINGS_REG["shape"]["host"]
 
 
-def iso_volume_section() -> str:
-    rows = load_jsonl(standings_file(Axis.SHAPE))
-    pod = [r for r in rows if r["host"]["name"] == ISO_HOST]
-    errors = [r for r in pod if r[K.STATUS] != "ok"]
-    best = best_fit_by(
-        [r for r in pod if r[K.STATUS] == "ok"],
-        lambda r: (r["run"], r["cell"]["rows"], r["cell"]["cols"],
-                   r[K.VARIANT]))
+def _iso_cells_for(best: dict, run: str) -> list[tuple[int, int]]:
+    """The (rows, cols) cells measured in one run, narrowest first."""
+    return sorted({(k[1], k[2]) for k in best if k[0] == run},
+                  key=lambda rc: rc[1])
 
-    def cells_for(run):
-        return sorted({(k[1], k[2]) for k in best if k[0] == run},
-                      key=lambda rc: rc[1])
 
-    label = cell_label
-
-    def fit_cell(run, nr, nc, v):
+def _iso_tables(best: dict, run: str, variants: list) -> tuple[str, str]:
+    """(fit table, device-memory table) for one iso-volume run."""
+    def fit_cell(nr, nc, v):
         r = best.get((run, nr, nc, v))
         return "-" if r is None else fit_r2_str(r)
 
-    def vram_cell(run, nr, nc, v):
+    def vram_cell(nr, nc, v):
         r = best.get((run, nr, nc, v))
         dm = (r or {}).get("dev_mem") or {}
         gb = dm.get("peak_gb_pid")
         return f"{gb:.1f}GB" if gb is not None else "-"
 
-    def tables(run, variants):
-        cs = cells_for(run)
-        fit = md_table(["cell", *[lbl for _, lbl in variants]],
-                       [[label(nr, nc),
-                         *[fit_cell(run, nr, nc, v) for v, _ in variants]]
-                        for nr, nc in cs])
-        vram = md_table(["cell", *[lbl for v, lbl in variants
-                                   if not ISO_STYLE[v][2]]],
-                        [[label(nr, nc),
-                          *[vram_cell(run, nr, nc, v) for v, _ in variants
-                            if not ISO_STYLE[v][2]]]
-                         for nr, nc in cs])
-        return fit, vram
+    cs = _iso_cells_for(best, run)
+    fit = md_table(["cell", *[lbl for _, lbl in variants]],
+                   [[cell_label(nr, nc),
+                     *[fit_cell(nr, nc, v) for v, _ in variants]]
+                    for nr, nc in cs])
+    vram = md_table(["cell", *[lbl for v, lbl in variants
+                               if not ISO_STYLE[v][2]]],
+                    [[cell_label(nr, nc),
+                      *[vram_cell(nr, nc, v) for v, _ in variants
+                        if not ISO_STYLE[v][2]]]
+                     for nr, nc in cs])
+    return fit, vram
 
-    run31, run33 = "iso-volume-2026-08-pod", "iso-volume-33-2026-08-pod"
-    fit31, vram31 = tables(run31, ISO_VARIANTS)
-    fit33, vram33 = tables(run33, ISO_VARIANTS[:4])
 
-    iso_cells = [(nr, nc) for nr, nc in cells_for(run31) if nr * nc == 1 << 31]
+def _iso_charts(best: dict, run31: str):
+    """The two iso-volume charts over the 2^31 iso-line of one run."""
+    iso_cells = [(nr, nc) for nr, nc in _iso_cells_for(best, run31)
+                 if nr * nc == 1 << 31]
     series_fit, series_vram = [], []
     for v, (lbl, color, cpu) in ISO_STYLE.items():
         pts = [(nc, best[(run31, nr, nc, v)][K.FIT_S])
@@ -953,6 +1007,22 @@ def iso_volume_section() -> str:
                "Measured peak device memory vs cols at 2^31 cells (log-log)",
                "peak GB", series_vram, x_ticks=ticks,
                x_label="features (rows x cols = 2^31)")
+
+
+def iso_volume_section() -> str:
+    """The decision-91 shape-frontier section of the width/shape page."""
+    rows = load_jsonl(standings_file(Axis.SHAPE))
+    pod = [r for r in rows if r["host"]["name"] == ISO_HOST]
+    errors = [r for r in pod if r[K.STATUS] != "ok"]
+    best = best_fit_by(
+        [r for r in pod if r[K.STATUS] == "ok"],
+        lambda r: (r["run"], r["cell"]["rows"], r["cell"]["cols"],
+                   r[K.VARIANT]))
+    label = cell_label
+    run31, run33 = "iso-volume-2026-08-pod", "iso-volume-33-2026-08-pod"
+    fit31, vram31 = _iso_tables(best, run31, ISO_VARIANTS)
+    fit33, vram33 = _iso_tables(best, run33, ISO_VARIANTS[:4])
+    _iso_charts(best, run31)
 
     err_note = ""
     if errors:
@@ -991,10 +1061,11 @@ The 2^33 stretch, GPU arms:
 """
 
 
-# ---- Perf: the remaining tracks ---------------------------------------------
+# Perf: the remaining tracks =======================================================================
 
 
 def prefetch_section() -> str:
+    """The CPU prefetch-tie section (decision 61)."""
     pre = load_jsonl(Evidence.CPU_PREFETCH)
     pre_best = _cell_best(pre)
     pre_rows = sorted({k[0] for k in pre_best})
@@ -1012,17 +1083,10 @@ def prefetch_section() -> str:
 """
 
 
-def frontier_section() -> str:
-    pareto = [r for r in load_jsonl(standings_file(Axis.FRONTIER))
-              if r[K.STATUS] == "ok"]
-    par_variants = []
-    for r in pareto:
-        if r[K.VARIANT] not in par_variants:
-            par_variants.append(r[K.VARIANT])
-    par_table = md_table(
-        [K.VARIANT, "iters", K.FIT_S, "test r2"],
-        [[r[K.VARIANT], str(r["cell"]["iters"]), fmt(r[K.FIT_S], 2),
-          fmt(r[K.R2_TEST], 4)] for r in pareto])
+def _pareto_chart(pareto: list[dict], par_variants: list[str]):
+    """The accuracy-vs-time chart; ticks derive from the data so a refresh
+    with faster fits or higher accuracy cannot strand them outside the
+    plotted range."""
     par_series = []
     par_labels = []
     for v in par_variants:
@@ -1033,8 +1097,6 @@ def frontier_section() -> str:
             if r[K.VARIANT] == v:
                 par_labels.append((r[K.FIT_S], r[K.R2_TEST],
                                    str(r["cell"]["iters"])))
-    # Ticks derive from the data so a refresh with faster fits or higher
-    # accuracy cannot strand them outside the plotted range.
     fmin, fmax = (min(r[K.FIT_S] for r in pareto), max(r[K.FIT_S] for r in pareto))
     x_step = 10 if fmax - fmin > 25 else 5
     r2min, r2max = (min(r[K.R2_TEST] for r in pareto),
@@ -1051,6 +1113,21 @@ def frontier_section() -> str:
         y_ticks=[(v / 100, f"{v / 100:.2f}")
                  for v in range(math.ceil(r2min * 100), int(r2max * 100) + 1, 2)],
         point_labels=par_labels)
+
+
+def frontier_section() -> str:
+    """The accuracy-vs-time frontier page body."""
+    pareto = [r for r in load_jsonl(standings_file(Axis.FRONTIER))
+              if r[K.STATUS] == "ok"]
+    par_variants = []
+    for r in pareto:
+        if r[K.VARIANT] not in par_variants:
+            par_variants.append(r[K.VARIANT])
+    par_table = md_table(
+        [K.VARIANT, "iters", K.FIT_S, "test r2"],
+        [[r[K.VARIANT], str(r["cell"]["iters"]), fmt(r[K.FIT_S], 2),
+          fmt(r[K.R2_TEST], 4)] for r in pareto])
+    _pareto_chart(pareto, par_variants)
 
     edge = load_jsonl(Evidence.CATBOOST_SCALE_EDGE)
 
@@ -1084,7 +1161,7 @@ The probe behind decisions 62 to 64: CatBoost's Ordered vs Plain modes against b
 """
 
 
-# ---- assembly ----------------------------------------------------------------
+# assembly =========================================================================================
 
 GEN_NOTE = ("<!-- GENERATED by scripts/render_results.py. "
             "Edit the generator, not this page. -->")
@@ -1099,6 +1176,7 @@ Every results file behind a published claim is rendered across the pages below, 
 
 
 def airline_section() -> str:
+    """The airline (real-data, binary) page body."""
     rows = [r for r in load_jsonl(standings_file(Axis.AIRLINE)) if r[K.STATUS] == "ok"]
 
     def cell(variant, size, depth):
@@ -1149,6 +1227,7 @@ The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC),
 
 
 def ceiling_section() -> str:
+    """The single-card ceiling section."""
     raw = load_jsonl(Evidence.SINGLE_CARD_CEILING)
     meta = raw[0]["meta"]
     rows = raw[1:]
@@ -1169,6 +1248,7 @@ def ceiling_section() -> str:
     return "## The single-card ceiling\n\n" + table + "\n\n" + prov + "\n"
 
 def code_metrics_section() -> str:
+    """The code-division standings page body."""
     rows = load_jsonl(standings_file(Axis.CODE))
     meta = next(r for r in rows if r["kind"] == "meta")
     planes = [r for r in rows if r["kind"] == "plane"]
@@ -1259,12 +1339,14 @@ _REROOT = [("](../../", "](../../../"), ("](../guide/", "](../../guide/"),
 
 
 def _reroot(body: str) -> str:
+    """Repo-relative links rewritten for the per-suite page depth."""
     for old, new in _REROOT:
         body = body.replace(old, new)
     return body
 
 
 def _division_summaries() -> tuple[str, str]:
+    """(perf, quality) headline paragraphs, digits computed from standings."""
     rb = load_jsonl(standings_file(Axis.ROWS))
     fit = {}
     rss = {}
@@ -1314,12 +1396,14 @@ def _division_summaries() -> tuple[str, str]:
 
 
 def _page_table(entries: list[tuple[str, str, str, list]]) -> str:
+    """The landing page's navigation table."""
     return md_table(
         ["page", "what it holds"],
         [[f"[{title}](results/{rel})", desc] for rel, title, desc, _ in entries])
 
 
 def landing_page() -> str:
+    """The results landing: division summaries plus navigation."""
     perf, quality = _division_summaries()
     perf_pages = [p for p in PAGES if p[0].startswith("perf-")]
     quality_pages = [p for p in PAGES if p[0].startswith("quality-")]
@@ -1400,6 +1484,7 @@ On the [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) (
 
 
 def spliced_readme() -> str:
+    """README with the generated standings block spliced between markers."""
     text = README_PATH.read_text()
     if MARK_BEGIN not in text or MARK_END not in text:
         raise SystemExit("README.md is missing the standings markers")
@@ -1409,6 +1494,7 @@ def spliced_readme() -> str:
 
 
 def render_pages() -> dict[pathlib.Path, str]:
+    """Every generated page body keyed by output path."""
     out: dict[pathlib.Path, str] = {}
     for rel, title, _desc, fns in PAGES:
         body = _reroot("\n".join(fn() for fn in fns))
@@ -1450,6 +1536,7 @@ def check_registry(consumed_files: set[str]) -> list[str]:
 
 
 def committed_data_files() -> set[str]:
+    """Data files under benchmarks/results/ that pages must consume."""
     out = subprocess.run(
         ["git", "ls-files", "benchmarks/results"],
         cwd=REPO, capture_output=True, text=True, check=True).stdout
@@ -1461,6 +1548,7 @@ def committed_data_files() -> set[str]:
 
 
 def main() -> int:
+    """Write (or --check) every generated page, chart, and the README block."""
     outputs = render_pages()
     manifest = committed_data_files()
     missed = manifest - consumed

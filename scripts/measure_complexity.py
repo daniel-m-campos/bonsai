@@ -153,12 +153,6 @@ def lizard_file_nloc(files: list[str]) -> dict[str, int]:
 # ---- surface facts -----------------------------------------------------------
 
 
-def count_leaves(node) -> int:
-    if isinstance(node, dict):
-        return sum(count_leaves(v) for v in node.values())
-    return 1
-
-
 def parameter_count() -> int:
     """The count the parameters reference publishes, via its own merge logic.
 
