@@ -68,16 +68,16 @@ Each box, one sentence, and where it lives:
 ## The dispatch product
 
 The core is one class template, `Booster<Objective, TreeGrower, Sampler>`, and the config boundary must turn runtime strings into one instantiation.
-bonsai enumerates the whole space at compile time: 7 objectives times 5 growers times 3 samplers is 105 cells in one factory table.
+bonsai enumerates the whole space at compile time: 7 objectives times 6 growers times 3 samplers is 126 cells in one factory table.
 That table is `Configurations`, a `cartesian_product_t` ([`include/bonsai/registry/configurations.hpp`](../../include/bonsai/registry/configurations.hpp)), and `make_booster` does the one string-to-type lookup ([`src/registry/make_booster.cpp`](../../src/registry/make_booster.cpp)).
 Softmax is the one objective whose K-output shape does not fit `Booster`, so it routes to `MulticlassBooster` (decision 26, [dispatch](../architecture/6-dispatch.md)).
 
 ```mermaid
 flowchart LR
     O["7 objectives\nobjective.hpp"] --> CP(("cartesian product"))
-    G["5 growers\ngrower.hpp + cuda/grower.hpp"] --> CP
+    G["6 growers\ngrower.hpp + cuda/grower.hpp"] --> CP
     SA["3 samplers\nsampler.hpp"] --> CP
-    CP --> TBL["Configurations table\n105 monomorphized Booster cells"]
+    CP --> TBL["Configurations table\n126 monomorphized Booster cells"]
     TBL --> MB["make_booster(config)\none string, one type"]
     MB --> IB["one IBooster handle\nthe single runtime boundary"]
 ```

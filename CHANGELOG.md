@@ -4,6 +4,9 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### Added
+- **`cuda_leafwise`, stage 1** (issue #268, [`docs/architecture/20-cuda-leafwise.md`](docs/architecture/20-cuda-leafwise.md)): best-first growth with histograms, partition, and split finding on the device. A per-tree histogram slot pool replaces the level plane's ping-pong, so a frontier of one is served without wasted memset: the root takes slot 0, each split builds the smaller child into the next free slot and derives the larger by in-place subtraction in the parent's, and the partition rewrites one segment in place. The grow loop keeps the gain heap, the depth cap, and every other decision, reaching the plane through a new `LeafStep` seam. Tolerance-equal to CPU `leafwise`; the dispatch grid goes from 105 to 126 cells. The ladder that decides whether the registration stays is stage 2.
+
 ## [1.5.4] - 2026-07-30
 
 The benchmark harness becomes a tool, and its first campaign ships in the ledger.
