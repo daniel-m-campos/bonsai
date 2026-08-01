@@ -23,6 +23,57 @@ import pathlib
 import subprocess
 import sys
 from collections import defaultdict
+from typing import Final
+
+from _render_common import md_table
+
+
+class Axis:
+    """Standings axes: registry keys in benchmarks/standings.json."""
+
+    ROWS: Final = "rows"
+    WIDTH: Final = "width"
+    SHAPE: Final = "shape"
+    FRONTIER: Final = "frontier"
+    AIRLINE: Final = "airline"
+    GRINSZTAJN: Final = "quality-grinsztajn"
+    CODE: Final = "code"
+
+
+class K:
+    """Row keys read from the results jsonl (values are the runlog schema)."""
+
+    FIT_S: Final = "fit_s"
+    R2_TEST: Final = "r2_test"
+    VARIANT: Final = "variant"
+    STATUS: Final = "status"
+    DATASET: Final = "dataset"
+    PEAK_RSS_GB: Final = "peak_rss_gb"
+    GIT_SHA: Final = "git_sha"
+
+
+class Evidence:
+    """Frozen evidence files (dated, decision-linked; never superseded)."""
+
+    BINNING_PROBE: Final = "binning-probe-2026-07.json"
+    CAT_TRADEOFF: Final = "cat-tradeoff-2026-07.json"
+    BAGGING_INTERACTION: Final = "bagging-interaction-probe-2026-07.jsonl"
+    CATBOOST_SCALE_EDGE: Final = "catboost-scale-edge-2026-07.jsonl"
+    CPU_PREFETCH: Final = "cpu-prefetch-round-2026-07.jsonl"
+    CUDA_WIDE_RECHECK: Final = "cuda-wide-recheck-2026-07.jsonl"
+    FEATURE_SELECTION: Final = "feature-selection-probe-2026-07.jsonl"
+    GRINSZTAJN_MCW1: Final = "grinsztajn-2026-07-xgb-mcw1.jsonl"
+    LR_RULE: Final = "lr-rule-probe-2026-07.jsonl"
+    ORDERED_BOOSTING: Final = "ordered-boosting-probe-2026-07.jsonl"
+    QUALITY_CAMPAIGN: Final = "quality-campaign-2026-07.jsonl"
+    RANKING_TRADEOFF: Final = "ranking-tradeoff-2026-07.jsonl"
+    SELECTION_SURVEY: Final = "selection-survey-2026-07.jsonl"
+    SINGLE_CARD_CEILING: Final = "single-card-ceiling-2026-07.jsonl"
+    STATIC_K_ENCODER: Final = "static-k-encoder-probe-2026-07.jsonl"
+    TABARENA_CAT: Final = "tabarena-cat-probe-2026-07.jsonl"
+    WIDE_CPU_HIST: Final = "wide-cpu-hist-2026-07.jsonl"
+    XGB33_RECHECK: Final = "xgb33-recheck-2026-07.jsonl"
+
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 RESULTS = REPO / "benchmarks" / "results"
@@ -42,13 +93,6 @@ def load_jsonl(name: str) -> list[dict]:
 def load_json(name: str) -> dict:
     consumed.add(name)
     return json.loads((RESULTS / name).read_text())
-
-
-def md_table(headers: list[str], rows: list[list[str]]) -> str:
-    head = "| " + " | ".join(headers) + " |"
-    sep = "|" + "|".join("---" for _ in headers) + "|"
-    body = ["| " + " | ".join(r) + " |" for r in rows]
-    return "\n".join([head, sep, *body])
 
 
 def fmt(v, nd=4) -> str:
@@ -74,7 +118,7 @@ def standings_file(axis: str) -> str:
 def measured_stamp(rows: list[dict]) -> str:
     """One-sha standings stamp computed from the rows themselves, so the
     reader always sees the vintage (results-lifecycle policy, decision 92)."""
-    shas = sorted({r["git_sha"] for r in rows if r.get("git_sha")})
+    shas = sorted({r[K.GIT_SHA] for r in rows if r.get(K.GIT_SHA)})
     if len(shas) != 1:
         return ""
     dates = sorted({r["ts"][:10] for r in rows if r.get("ts")})
@@ -241,12 +285,12 @@ def _standings(rows: list[dict]):
     a win is rank exactly 1.0."""
     acc: dict[tuple, list[float]] = defaultdict(list)
     for r in rows:
-        if r.get("status") != "ok":
+        if r.get(K.STATUS) != "ok":
             continue
         v = _value(r)
         if v is None:
             continue
-        acc[(r["suite"], r["dataset"], r["variant"])].append(v)
+        acc[(r["suite"], r[K.DATASET], r[K.VARIANT])].append(v)
     lib_best: dict[tuple, float] = {}
     for (suite, ds, variant), vals in acc.items():
         lib = "bonsai" if variant.startswith("bonsai") else variant
@@ -282,8 +326,8 @@ def _standings(rows: list[dict]):
 
 
 def grinsztajn_section() -> str:
-    main = load_jsonl(standings_file("quality-grinsztajn"))
-    mcw1 = load_jsonl("grinsztajn-2026-07-xgb-mcw1.jsonl")
+    main = load_jsonl(standings_file(Axis.GRINSZTAJN))
+    mcw1 = load_jsonl(Evidence.GRINSZTAJN_MCW1)
     table, suite_ranks, n = _standings(main)
     rows = [[lib, fmt(mean, 2), str(w)] for lib, mean, w in table]
     campaign = md_table(["library", "mean rank", "outright wins"], rows)
@@ -301,7 +345,7 @@ def grinsztajn_section() -> str:
         [[lib, *[fmt(sum(v) / len(v), 2) if (v := suite_ranks.get((s, lib))) else "-"
                  for s in suites]] for lib in libs])
 
-    sens = [r for r in main if not str(r.get("variant", "")).startswith("xgb")]
+    sens = [r for r in main if not str(r.get(K.VARIANT, "")).startswith("xgb")]
     sens += mcw1
     stable, _, _ = _standings(sens)
     sens_rows = [[lib, fmt(mean, 2), str(w)] for lib, mean, w in stable]
@@ -325,7 +369,7 @@ Sensitivity: XGBoost's campaign mapping sets `min_child_weight=20` (hessian-weig
 
 Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite (hours; datasets fetch from OpenML), then `--report` on the same file to render the standings from the jsonl.
 
-{provenance([standings_file("quality-grinsztajn"), "grinsztajn-2026-07-xgb-mcw1.jsonl"], "As-run; evidence narrative in [benchmarks/grinsztajn-2026-07.md](../../benchmarks/grinsztajn-2026-07.md), ruling in decision 68.")}
+{provenance([standings_file(Axis.GRINSZTAJN), Evidence.GRINSZTAJN_MCW1], "As-run; evidence narrative in [benchmarks/grinsztajn-2026-07.md](../../benchmarks/grinsztajn-2026-07.md), ruling in decision 68.")}
 """
 
 
@@ -333,7 +377,7 @@ Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinszt
 
 
 def campaign_section() -> str:
-    raw = load_jsonl("quality-campaign-2026-07.jsonl")
+    raw = load_jsonl(Evidence.QUALITY_CAMPAIGN)
     latest: dict[str, dict] = {}
     for row in raw:
         latest[row["run"]] = row["results"]  # file is chronological; last wins
@@ -366,7 +410,7 @@ def campaign_section() -> str:
             *[fmt(best.get(lib)) for lib in ("bonsai", "xgboost", "lightgbm", "catboost")],
             winner])
     table = md_table(
-        ["dataset", "metric", "bonsai", "xgboost", "lightgbm", "catboost", "best"],
+        [K.DATASET, "metric", "bonsai", "xgboost", "lightgbm", "catboost", "best"],
         out_rows)
     return f"""### Campaign smoke: ten datasets at matched knobs
 
@@ -374,7 +418,7 @@ The internal quality campaign (`scripts/compare.py`, campaign knobs, best varian
 
 {table}
 
-{provenance(["quality-campaign-2026-07.jsonl"], "Aggregate record; narrative in [benchmarks/quality-campaign-2026-07.md](../../benchmarks/quality-campaign-2026-07.md), decisions 56 and 57.")}
+{provenance([Evidence.QUALITY_CAMPAIGN], "Aggregate record; narrative in [benchmarks/quality-campaign-2026-07.md](../../benchmarks/quality-campaign-2026-07.md), decisions 56 and 57.")}
 """
 
 
@@ -382,7 +426,7 @@ The internal quality campaign (`scripts/compare.py`, campaign knobs, best varian
 
 
 def probes_section() -> str:
-    binning = load_json("binning-probe-2026-07.json")
+    binning = load_json(Evidence.BINNING_PROBE)
     bin_rows = []
     keys = ["bonsai_uniform255", "bonsai_importance", "bonsai_inverse",
             "bonsai_headroom", "lgbm_uniform255", "lgbm_importance",
@@ -390,16 +434,16 @@ def probes_section() -> str:
     for ds in sorted(binning):
         d = binning[ds]
         bin_rows.append([ds, *[fmt(d.get(k)) for k in keys]])
-    bin_table = md_table(["dataset", *keys], bin_rows)
+    bin_table = md_table([K.DATASET, *keys], bin_rows)
 
-    cats = load_json("cat-tradeoff-2026-07.json")
+    cats = load_json(Evidence.CAT_TRADEOFF)
     setups = sorted({k for d in cats.values() for k in d if not k.startswith("_")})
     datasets = sorted(cats)
     cat_table = md_table(
         ["setup", *datasets],
         [[s, *[fmt(cats[ds].get(s)) for ds in datasets]] for s in setups])
 
-    rank = load_jsonl("ranking-tradeoff-2026-07.jsonl")
+    rank = load_jsonl(Evidence.RANKING_TRADEOFF)
     # Two row shapes: synthetic regimes carry "regime", the MQ2008 gate "data".
     for r in rank:
         r["regime"] = r.get("regime") or r["data"]
@@ -413,54 +457,54 @@ def probes_section() -> str:
         ["learner", *[f"{g} (NDCG@10)" for g in regimes]],
         [[ln, *[fmt(cell.get((ln, g))) for g in regimes]] for ln in learners])
 
-    tap = load_jsonl("tabarena-cat-probe-2026-07.jsonl")
+    tap = load_jsonl(Evidence.TABARENA_CAT)
     tap_ch = [r for r in tap if r["subset"] == "cat_heavy"]
     tap_table = md_table(
-        ["dataset", "cat native", "cat ablated", "bonsai_ts", "categorical share",
+        [K.DATASET, "cat native", "cat ablated", "bonsai_ts", "categorical share",
          "remaining gap"],
-        [[r["dataset"], fmt(r["cat_native"]), fmt(r["cat_ablated"]),
+        [[r[K.DATASET], fmt(r["cat_native"]), fmt(r["cat_ablated"]),
           fmt(r["bonsai_ts"]), fmt(r["categorical_share"]), fmt(r["remaining_gap"])]
          for r in sorted(tap_ch, key=lambda r: r["categorical_share"])])
 
-    ob = load_jsonl("ordered-boosting-probe-2026-07.jsonl")
+    ob = load_jsonl(Evidence.ORDERED_BOOSTING)
     ob_table = md_table(
-        ["dataset", "metric", "CatBoost Ordered (matched)", "CatBoost Plain (matched)"],
-        [[r["dataset"], r["metric"], fmt(r.get("cat_ordered_matched")),
+        [K.DATASET, "metric", "CatBoost Ordered (matched)", "CatBoost Plain (matched)"],
+        [[r[K.DATASET], r["metric"], fmt(r.get("cat_ordered_matched")),
           fmt(r.get("cat_plain_matched"))]
-         for r in sorted(ob, key=lambda r: r["dataset"])])
+         for r in sorted(ob, key=lambda r: r[K.DATASET])])
 
-    sk = load_jsonl("static-k-encoder-probe-2026-07.jsonl")
+    sk = load_jsonl(Evidence.STATIC_K_ENCODER)
     sk_table = md_table(
-        ["dataset", "bonsai_ts (K=1)", "K=4", "K=8", "CatBoost native"],
-        [[r["dataset"], fmt(r.get("ts_k1")), fmt(r.get("ts_k4")), fmt(r.get("ts_k8")),
+        [K.DATASET, "bonsai_ts (K=1)", "K=4", "K=8", "CatBoost native"],
+        [[r[K.DATASET], fmt(r.get("ts_k1")), fmt(r.get("ts_k4")), fmt(r.get("ts_k8")),
           fmt(r.get("cat_native"))]
-         for r in sorted(sk, key=lambda r: r["dataset"])])
+         for r in sorted(sk, key=lambda r: r[K.DATASET])])
 
-    lr = load_jsonl("lr-rule-probe-2026-07.jsonl")
+    lr = load_jsonl(Evidence.LR_RULE)
     lr_table = md_table(
-        ["dataset", "default (0.05)", "oracle", "oracle lr", "CatBoost auto-lr"],
-        [[r["dataset"], fmt(r["bonsai_default"]["test"]),
+        [K.DATASET, "default (0.05)", "oracle", "oracle lr", "CatBoost auto-lr"],
+        [[r[K.DATASET], fmt(r["bonsai_default"]["test"]),
           fmt(r["bonsai_oracle"]["test"]), fmt(r["bonsai_oracle"]["chosen_lr"], 2),
           fmt(r["bonsai_cat_rule"]["transplanted_lr"], 3)]
-         for r in sorted(lr, key=lambda r: r["dataset"])])
+         for r in sorted(lr, key=lambda r: r[K.DATASET])])
 
-    bi = load_jsonl("bagging-interaction-probe-2026-07.jsonl")
+    bi = load_jsonl(Evidence.BAGGING_INTERACTION)
     bi_table = md_table(
-        ["dataset", "metric", "bag gain bonsai", "bag gain cat", "interaction",
+        [K.DATASET, "metric", "bag gain bonsai", "bag gain cat", "interaction",
          "randomization share", "in band"],
-        [[r["dataset"], r["metric"], fmt(r.get("bagging_gain_bonsai")),
+        [[r[K.DATASET], r["metric"], fmt(r.get("bagging_gain_bonsai")),
           fmt(r.get("bagging_gain_cat")), fmt(r.get("interaction")),
           fmt(r.get("randomization_share")),
           "yes" if r.get("interaction_in_band") else "no"]
-         for r in sorted(bi, key=lambda r: r["dataset"])])
+         for r in sorted(bi, key=lambda r: r[K.DATASET])])
 
-    sv = load_jsonl("selection-survey-2026-07.jsonl")
-    sv_base = {r["dataset"]: r["error"] for r in sv
+    sv = load_jsonl(Evidence.SELECTION_SURVEY)
+    sv_base = {r[K.DATASET]: r["error"] for r in sv
                if r["row_type"] == "baseline"}
     sv_curve: dict = defaultdict(dict)
     for r in sv:
         if r["row_type"] == "curve":
-            sv_curve[(r["dataset"], r["method"])][r["k"]] = r["error"]
+            sv_curve[(r[K.DATASET], r["method"])][r["k"]] = r["error"]
     SV_COLORS = {
         "corr": "#9e9e9e", "mutual_info": "#607d8b", "gain": "#2e7d32",
         "split": "#8bc34a", "shap_train": "#1f77b4", "shap_val": "#01579b",
@@ -485,12 +529,12 @@ def probes_section() -> str:
         log_x=True, log_y=False,
         y_ticks=[(v, f"{v:.1f}") for v in (10.0, 11.0, 12.0, 13.0)])
 
-    fs = load_jsonl("feature-selection-probe-2026-07.jsonl")
+    fs = load_jsonl(Evidence.FEATURE_SELECTION)
     fs_table = md_table(
-        ["dataset", "grower", "regime", "metric", "k / total", "bonsai all",
+        [K.DATASET, "grower", "regime", "metric", "k / total", "bonsai all",
          "bonsai shadow", "bonsai top-k", "cat select", "shadow vs top-k",
          "shadow beats all"],
-        [[r["dataset"], r["grower"], r["regime"], r["metric"],
+        [[r[K.DATASET], r["grower"], r["regime"], r["metric"],
           f"{r['k']} / {r['total_features']}", fmt(r.get("bonsai_all"), 5),
           fmt(r.get("bonsai_shadow"), 5), fmt(r.get("bonsai_topk_gain"), 5),
           fmt(r.get("cat_select"), 5), fmt(r.get("shadow_vs_topk"), 5),
@@ -503,7 +547,7 @@ Test r² under per-feature bin-budget policies at a 255-bin default; no policy m
 
 {bin_table}
 
-{provenance(["binning-probe-2026-07.json"], "Probe: [scripts/probe_binning.py](../../scripts/probe_binning.py); evidence [benchmarks/binning-tradeoff-2026-07.md](../../benchmarks/binning-tradeoff-2026-07.md).")}
+{provenance([Evidence.BINNING_PROBE], "Probe: [scripts/probe_binning.py](../../scripts/probe_binning.py); evidence [benchmarks/binning-tradeoff-2026-07.md](../../benchmarks/binning-tradeoff-2026-07.md).")}
 
 ### Probe: categorical machinery (resolved as an encoder, decision 58)
 
@@ -511,7 +555,7 @@ AUC by setup: each reference library's own categorical toggle against ordinal co
 
 {cat_table}
 
-{provenance(["cat-tradeoff-2026-07.json"], "Probe: [scripts/probe_categorical.py](../../scripts/probe_categorical.py); evidence [benchmarks/categorical-tradeoff-2026-07.md](../../benchmarks/categorical-tradeoff-2026-07.md).")}
+{provenance([Evidence.CAT_TRADEOFF], "Probe: [scripts/probe_categorical.py](../../scripts/probe_categorical.py); evidence [benchmarks/categorical-tradeoff-2026-07.md](../../benchmarks/categorical-tradeoff-2026-07.md).")}
 
 ### Probe: ranking objectives (gated, issue #58)
 
@@ -519,7 +563,7 @@ NDCG@10 by regime; the stable gap is to listwise losses only, so issue #58 is sc
 
 {rank_table}
 
-{provenance(["ranking-tradeoff-2026-07.jsonl"], "Probe: [scripts/probe_ranking.py](../../scripts/probe_ranking.py); evidence [benchmarks/ranking-tradeoff-2026-07.md](../../benchmarks/ranking-tradeoff-2026-07.md).")}
+{provenance([Evidence.RANKING_TRADEOFF], "Probe: [scripts/probe_ranking.py](../../scripts/probe_ranking.py); evidence [benchmarks/ranking-tradeoff-2026-07.md](../../benchmarks/ranking-tradeoff-2026-07.md).")}
 
 ### Probe: CatBoost's categorical machinery priced by its own toggle (reopener predicate, decision 80)
 
@@ -527,7 +571,7 @@ On the cat-heavy TabArena subset, CatBoost native vs the same model with categor
 
 {tap_table}
 
-{provenance(["tabarena-cat-probe-2026-07.jsonl"], "Probe: [scripts/probe_tabarena_cat.py](../../scripts/probe_tabarena_cat.py); evidence [benchmarks/tabarena-cat-probe-2026-07.md](../../benchmarks/tabarena-cat-probe-2026-07.md). Lower is better for every metric column (error/log-loss form).")}
+{provenance([Evidence.TABARENA_CAT], "Probe: [scripts/probe_tabarena_cat.py](../../scripts/probe_tabarena_cat.py); evidence [benchmarks/tabarena-cat-probe-2026-07.md](../../benchmarks/tabarena-cat-probe-2026-07.md). Lower is better for every metric column (error/log-loss form).")}
 
 ### Probe: ordered boosting priced by CatBoost's own toggle (declined, decision 81)
 
@@ -535,7 +579,7 @@ On 12 small pure-numeric datasets at matched knobs, Ordered beats Plain beyond t
 
 {ob_table}
 
-{provenance(["ordered-boosting-probe-2026-07.jsonl"], "Probe: [scripts/probe_ordered_boosting_rung0.py](../../scripts/probe_ordered_boosting_rung0.py); evidence [benchmarks/ordered-boosting-probe-2026-07.md](../../benchmarks/ordered-boosting-probe-2026-07.md).")}
+{provenance([Evidence.ORDERED_BOOSTING], "Probe: [scripts/probe_ordered_boosting_rung0.py](../../scripts/probe_ordered_boosting_rung0.py); evidence [benchmarks/ordered-boosting-probe-2026-07.md](../../benchmarks/ordered-boosting-probe-2026-07.md).")}
 
 ### Probe: static K-permutation target statistics (declined, decision 82)
 
@@ -543,7 +587,7 @@ K-averaged ordered target statistics as plain preprocessing recover a negative s
 
 {sk_table}
 
-{provenance(["static-k-encoder-probe-2026-07.jsonl"], "Probe: [scripts/probe_static_k_encoder.py](../../scripts/probe_static_k_encoder.py); evidence [benchmarks/static-k-encoder-probe-2026-07.md](../../benchmarks/static-k-encoder-probe-2026-07.md).")}
+{provenance([Evidence.STATIC_K_ENCODER], "Probe: [scripts/probe_static_k_encoder.py](../../scripts/probe_static_k_encoder.py); evidence [benchmarks/static-k-encoder-probe-2026-07.md](../../benchmarks/static-k-encoder-probe-2026-07.md).")}
 
 ### Probe: a per-dataset learning-rate rule (declined, decision 83)
 
@@ -551,7 +595,7 @@ Even a validation-selected oracle over eight rates gains nothing on the pool (it
 
 {lr_table}
 
-{provenance(["lr-rule-probe-2026-07.jsonl"], "Probe: [scripts/probe_lr_rule.py](../../scripts/probe_lr_rule.py); evidence [benchmarks/lr-rule-probe-2026-07.md](../../benchmarks/lr-rule-probe-2026-07.md).")}
+{provenance([Evidence.LR_RULE], "Probe: [scripts/probe_lr_rule.py](../../scripts/probe_lr_rule.py); evidence [benchmarks/lr-rule-probe-2026-07.md](../../benchmarks/lr-rule-probe-2026-07.md).")}
 
 ### Probe: the bagged-protocol randomization interaction (declined, decision 85)
 
@@ -559,7 +603,7 @@ Decision 81's last reopener: is CatBoost's small-data lead a bagged-protocol int
 
 {bi_table}
 
-{provenance(["bagging-interaction-probe-2026-07.jsonl"], "Probe: [scripts/probe_bagging_interaction.py](../../scripts/probe_bagging_interaction.py); evidence [benchmarks/bagging-interaction-probe-2026-07.md](../../benchmarks/bagging-interaction-probe-2026-07.md).")}
+{provenance([Evidence.BAGGING_INTERACTION], "Probe: [scripts/probe_bagging_interaction.py](../../scripts/probe_bagging_interaction.py); evidence [benchmarks/bagging-interaction-probe-2026-07.md](../../benchmarks/bagging-interaction-probe-2026-07.md).")}
 
 ### Probe: honest shadow-feature selection (declined, decision 86)
 
@@ -567,7 +611,7 @@ Does a refit-based shadow-feature selector (append a permuted copy of every colu
 
 {fs_table}
 
-{provenance(["feature-selection-probe-2026-07.jsonl"], "Probe: [scripts/probe_feature_selection.py](../../scripts/probe_feature_selection.py); evidence [benchmarks/feature-selection-probe-2026-07.md](../../benchmarks/feature-selection-probe-2026-07.md).")}
+{provenance([Evidence.FEATURE_SELECTION], "Probe: [scripts/probe_feature_selection.py](../../scripts/probe_feature_selection.py); evidence [benchmarks/feature-selection-probe-2026-07.md](../../benchmarks/feature-selection-probe-2026-07.md).")}
 
 #### The selection-method survey (guide 14 worked example)
 
@@ -575,7 +619,7 @@ Ten selection methods, one shared judge: each method produces a feature ranking,
 
 ![Selection-method survey](assets/selection-survey.svg)
 
-{provenance(["selection-survey-2026-07.jsonl"], "Survey: [scripts/probe_selection_survey.py](../../scripts/probe_selection_survey.py); readings: [guide chapter 14](../guide/14-feature-selection.md).")}
+{provenance([Evidence.SELECTION_SURVEY], "Survey: [scripts/probe_selection_survey.py](../../scripts/probe_selection_survey.py); readings: [guide chapter 14](../guide/14-feature-selection.md).")}
 """
 
 
@@ -618,7 +662,7 @@ def best_fit_by(rows: list[dict], key_fn) -> dict[tuple, dict]:
     best: dict[tuple, dict] = {}
     for r in rows:
         k = key_fn(r)
-        if k not in best or r["fit_s"] < best[k]["fit_s"]:
+        if k not in best or r[K.FIT_S] < best[k][K.FIT_S]:
             best[k] = r
     return best
 
@@ -627,8 +671,8 @@ def _cell_best(rows: list[dict]) -> dict[tuple, dict]:
     best: dict[tuple, dict] = {}
     for r in rows:
         c = r["cell"]
-        key = (c["rows"], c["cols"], r["variant"])
-        if key not in best or r["fit_s"] < best[key]["fit_s"]:
+        key = (c["rows"], c["cols"], r[K.VARIANT])
+        if key not in best or r[K.FIT_S] < best[key][K.FIT_S]:
             best[key] = r
     return best
 
@@ -641,7 +685,7 @@ def _fmt_cell(best, rows, cols, variant) -> str:
 
 
 def rebaseline_section() -> str:
-    rows = load_jsonl(standings_file("rows"))
+    rows = load_jsonl(standings_file(Axis.ROWS))
     best = _cell_best(rows)
     host = rows[0]["host"]
     row_axis = sorted({r["cell"]["rows"] for r in rows if r["cell"]["cols"] == 100})
@@ -654,7 +698,7 @@ def rebaseline_section() -> str:
     def series_for(cells: list[tuple[int, int]]):
         out = []
         for variant, (label, color, cpu) in VARIANT_STYLE.items():
-            pts = [(x, best[(r, c, variant)]["fit_s"])
+            pts = [(x, best[(r, c, variant)][K.FIT_S])
                    for x, (r, c) in cells if (r, c, variant) in best]
             if pts:
                 out.append((label, color, cpu, pts))
@@ -679,22 +723,22 @@ Scaling rows (100 features):
 
 Width scaling has its own standings axis on [Width and shape](perf-shape.md).
 
-{provenance([standings_file("rows")], "Runner: [scripts/bench_scaling.py](../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file." + measured_stamp(rows))}
+{provenance([standings_file(Axis.ROWS)], "Runner: [scripts/bench_scaling.py](../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file." + measured_stamp(rows))}
 """
 
 
 def xgb33_recheck_table() -> str:
-    rc = load_jsonl("xgb33-recheck-2026-07.jsonl")
+    rc = load_jsonl(Evidence.XGB33_RECHECK)
     best: dict = {}
     for r in rc:
-        if r["status"] != "ok":
+        if r[K.STATUS] != "ok":
             continue
-        ver = r["xgboost"] if r["variant"].startswith("xgb") else None
-        key = (r["variant"], ver, r["cell"]["rows"], r["cell"]["cols"])
+        ver = r["xgboost"] if r[K.VARIANT].startswith("xgb") else None
+        key = (r[K.VARIANT], ver, r["cell"]["rows"], r["cell"]["cols"])
         cur = best.get(key)
         best[key] = {
-            "fit_s": min(r["fit_s"], cur["fit_s"]) if cur else r["fit_s"],
-            "rss": max(r["peak_rss_gb"], cur["rss"]) if cur else r["peak_rss_gb"],
+            K.FIT_S: min(r[K.FIT_S], cur[K.FIT_S]) if cur else r[K.FIT_S],
+            "rss": max(r[K.PEAK_RSS_GB], cur["rss"]) if cur else r[K.PEAK_RSS_GB],
         }
 
     CELLS = [("gpu", 1_000_000, 100), ("gpu", 4_000_000, 100),
@@ -723,16 +767,16 @@ XGBoost 3.3 (2026-07-21) claimed lower GPU quantile-sketching memory and wide-da
 
 {table}
 
-{provenance(["xgb33-recheck-2026-07.jsonl"], "Driver: `python -m bonsai.bench.scaling --worker` per cell, three arms on one pod; verdict recorded as decision 87.")}
+{provenance([Evidence.XGB33_RECHECK], "Driver: `python -m bonsai.bench.scaling --worker` per cell, three arms on one pod; verdict recorded as decision 87.")}
 """
 
 
 def wide_cpu_hist_table() -> str:
-    wc = load_jsonl("wide-cpu-hist-2026-07.jsonl")
-    ladder = {(r["tag"], r["variant"], r["rows"], r["cols"]): r for r in wc
+    wc = load_jsonl(Evidence.WIDE_CPU_HIST)
+    ladder = {(r["tag"], r[K.VARIANT], r["rows"], r["cols"]): r for r in wc
               if r["run"] == "pod-ladder"}
 
-    def cell(tag, variant, rows, cols, key="fit_s"):
+    def cell(tag, variant, rows, cols, key=K.FIT_S):
         r = ladder.get((tag, variant, rows, cols))
         return f"{r[key]:.0f}s" if r and key in r else "-"
 
@@ -752,18 +796,18 @@ Ultra-wide selections broke the row-wise u8 fill: its per-row scatter targets th
 
 {table}
 
-{provenance(["wide-cpu-hist-2026-07.jsonl"], "Evidence: [benchmarks/wide-cpu-hist-2026-07.md](../../benchmarks/wide-cpu-hist-2026-07.md); verdict recorded as decision 88.")}
+{provenance([Evidence.WIDE_CPU_HIST], "Evidence: [benchmarks/wide-cpu-hist-2026-07.md](../../benchmarks/wide-cpu-hist-2026-07.md); verdict recorded as decision 88.")}
 """
 
 
 def cuda_wide_recheck_table() -> str:
-    cw = load_jsonl("cuda-wide-recheck-2026-07.jsonl")
+    cw = load_jsonl(Evidence.CUDA_WIDE_RECHECK)
     body = []
-    for r in sorted(cw, key=lambda r: (-r["cols"], r["variant"])):
-        body.append([r["variant"], human(r["rows"]), str(r["cols"]),
-                     f'{r["fit_s"]:.1f}s', fmt(r["r2_test"]),
-                     f'{r["peak_rss_gb"]:.1f}GB'])
-    table = md_table(["variant", "rows", "cols", "fit", "test r²", "peak RSS"], body)
+    for r in sorted(cw, key=lambda r: (-r["cols"], r[K.VARIANT])):
+        body.append([r[K.VARIANT], human(r["rows"]), str(r["cols"]),
+                     f'{r[K.FIT_S]:.1f}s', fmt(r[K.R2_TEST]),
+                     f'{r[K.PEAK_RSS_GB]:.1f}GB'])
+    table = md_table([K.VARIANT, "rows", "cols", "fit", "test r²", "peak RSS"], body)
 
     return f"""### The CUDA wide recheck: the wall was already gone (decision 90)
 
@@ -771,14 +815,14 @@ A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: 
 
 {table}
 
-{provenance(["cuda-wide-recheck-2026-07.jsonl"], "Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs; verdict recorded as decision 90.")}
+{provenance([Evidence.CUDA_WIDE_RECHECK], "Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs; verdict recorded as decision 90.")}
 """
 
 
 def cols_rebaseline_table() -> str:
-    cr = [r for r in load_jsonl(standings_file("width")) if r["status"] == "ok"]
+    cr = [r for r in load_jsonl(standings_file(Axis.WIDTH)) if r[K.STATUS] == "ok"]
     best = best_fit_by(
-        cr, lambda r: (r["cell"]["rows"], r["cell"]["cols"], r["variant"]))
+        cr, lambda r: (r["cell"]["rows"], r["cell"]["cols"], r[K.VARIANT]))
     cells = sorted({(r["cell"]["rows"], r["cell"]["cols"]) for r in cr},
                    key=lambda rc: rc[1])
     label = cell_label
@@ -800,7 +844,7 @@ def cols_rebaseline_table() -> str:
 
     series = []
     for variant, (lbl, color, cpu) in VARIANT_STYLE.items():
-        pts = [(nc, best[(nr, nc, variant)]["fit_s"])
+        pts = [(nc, best[(nr, nc, variant)][K.FIT_S])
                for nr, nc in cells if (nr, nc, variant) in best]
         if pts:
             series.append((lbl, color, cpu, pts))
@@ -826,7 +870,7 @@ Peak host RSS, worst rep:
 
 {rss_table}
 
-{provenance([standings_file("width")], "One pod, SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells." + measured_stamp(cr))}
+{provenance([standings_file(Axis.WIDTH)], "One pod, SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells." + measured_stamp(cr))}
 """
 
 
@@ -844,13 +888,13 @@ ISO_HOST = _STANDINGS_REG["shape"]["host"]
 
 
 def iso_volume_section() -> str:
-    rows = load_jsonl(standings_file("shape"))
+    rows = load_jsonl(standings_file(Axis.SHAPE))
     pod = [r for r in rows if r["host"]["name"] == ISO_HOST]
-    errors = [r for r in pod if r["status"] != "ok"]
+    errors = [r for r in pod if r[K.STATUS] != "ok"]
     best = best_fit_by(
-        [r for r in pod if r["status"] == "ok"],
+        [r for r in pod if r[K.STATUS] == "ok"],
         lambda r: (r["run"], r["cell"]["rows"], r["cell"]["cols"],
-                   r["variant"]))
+                   r[K.VARIANT]))
 
     def cells_for(run):
         return sorted({(k[1], k[2]) for k in best if k[0] == run},
@@ -889,7 +933,7 @@ def iso_volume_section() -> str:
     iso_cells = [(nr, nc) for nr, nc in cells_for(run31) if nr * nc == 1 << 31]
     series_fit, series_vram = [], []
     for v, (lbl, color, cpu) in ISO_STYLE.items():
-        pts = [(nc, best[(run31, nr, nc, v)]["fit_s"])
+        pts = [(nc, best[(run31, nr, nc, v)][K.FIT_S])
                for nr, nc in iso_cells if (run31, nr, nc, v) in best]
         if pts:
             series_fit.append((lbl, color, cpu, pts))
@@ -943,7 +987,7 @@ The 2^33 stretch, GPU arms:
 
 {vram33}
 
-{provenance([standings_file("shape")], "Specs: bundled in [bench/specs/](../../python/bonsai/bench/specs/); driver: [scripts/pod_bench_driver.sh](../../scripts/pod_bench_driver.sh); evidence: [benchmarks/iso-volume-2026-08.md](../../benchmarks/iso-volume-2026-08.md); verdict recorded as decision 91." + measured_stamp(pod))}
+{provenance([standings_file(Axis.SHAPE)], "Specs: bundled in [bench/specs/](../../python/bonsai/bench/specs/); driver: [scripts/pod_bench_driver.sh](../../scripts/pod_bench_driver.sh); evidence: [benchmarks/iso-volume-2026-08.md](../../benchmarks/iso-volume-2026-08.md); verdict recorded as decision 91." + measured_stamp(pod))}
 """
 
 
@@ -951,7 +995,7 @@ The 2^33 stretch, GPU arms:
 
 
 def prefetch_section() -> str:
-    pre = load_jsonl("cpu-prefetch-round-2026-07.jsonl")
+    pre = load_jsonl(Evidence.CPU_PREFETCH)
     pre_best = _cell_best(pre)
     pre_rows = sorted({k[0] for k in pre_best})
     pre_variants = sorted({k[2] for k in pre_best})
@@ -964,37 +1008,37 @@ def prefetch_section() -> str:
 
 {pre_table}
 
-{provenance(["cpu-prefetch-round-2026-07.jsonl"], "Decision 61: software prefetch closed the 16M CPU gap to XGBoost-hist on this pod.")}
+{provenance([Evidence.CPU_PREFETCH], "Decision 61: software prefetch closed the 16M CPU gap to XGBoost-hist on this pod.")}
 """
 
 
 def frontier_section() -> str:
-    pareto = [r for r in load_jsonl(standings_file("frontier"))
-              if r["status"] == "ok"]
+    pareto = [r for r in load_jsonl(standings_file(Axis.FRONTIER))
+              if r[K.STATUS] == "ok"]
     par_variants = []
     for r in pareto:
-        if r["variant"] not in par_variants:
-            par_variants.append(r["variant"])
+        if r[K.VARIANT] not in par_variants:
+            par_variants.append(r[K.VARIANT])
     par_table = md_table(
-        ["variant", "iters", "fit_s", "test r2"],
-        [[r["variant"], str(r["cell"]["iters"]), fmt(r["fit_s"], 2),
-          fmt(r["r2_test"], 4)] for r in pareto])
+        [K.VARIANT, "iters", K.FIT_S, "test r2"],
+        [[r[K.VARIANT], str(r["cell"]["iters"]), fmt(r[K.FIT_S], 2),
+          fmt(r[K.R2_TEST], 4)] for r in pareto])
     par_series = []
     par_labels = []
     for v in par_variants:
         label, color, cpu = VARIANT_STYLE.get(v, (v, TEXT, False))
-        pts = sorted((r["fit_s"], r["r2_test"]) for r in pareto if r["variant"] == v)
+        pts = sorted((r[K.FIT_S], r[K.R2_TEST]) for r in pareto if r[K.VARIANT] == v)
         par_series.append((label, color, cpu, pts))
         for r in pareto:
-            if r["variant"] == v:
-                par_labels.append((r["fit_s"], r["r2_test"],
+            if r[K.VARIANT] == v:
+                par_labels.append((r[K.FIT_S], r[K.R2_TEST],
                                    str(r["cell"]["iters"])))
     # Ticks derive from the data so a refresh with faster fits or higher
     # accuracy cannot strand them outside the plotted range.
-    fmin, fmax = (min(r["fit_s"] for r in pareto), max(r["fit_s"] for r in pareto))
+    fmin, fmax = (min(r[K.FIT_S] for r in pareto), max(r[K.FIT_S] for r in pareto))
     x_step = 10 if fmax - fmin > 25 else 5
-    r2min, r2max = (min(r["r2_test"] for r in pareto),
-                    max(r["r2_test"] for r in pareto))
+    r2min, r2max = (min(r[K.R2_TEST] for r in pareto),
+                    max(r[K.R2_TEST] for r in pareto))
     line_chart(
         "gpu-pareto-16M.svg",
         "16M rows: accuracy vs fit time by iteration count (up-left is better)",
@@ -1008,7 +1052,7 @@ def frontier_section() -> str:
                  for v in range(math.ceil(r2min * 100), int(r2max * 100) + 1, 2)],
         point_labels=par_labels)
 
-    edge = load_jsonl("catboost-scale-edge-2026-07.jsonl")
+    edge = load_jsonl(Evidence.CATBOOST_SCALE_EDGE)
 
     def detail(r):
         if "iters" in r:
@@ -1018,9 +1062,9 @@ def frontier_section() -> str:
         return "-"
 
     edge_table = md_table(
-        ["door", "rows", "learner", "knob", "fit_s", "test r2"],
+        ["door", "rows", "learner", "knob", K.FIT_S, "test r2"],
         [[r["door"], f"{r['rows']:,}", r["learner"], detail(r),
-          fmt(r["fit_s"], 2), fmt(r["r2_test"], 4)] for r in edge])
+          fmt(r[K.FIT_S], 2), fmt(r[K.R2_TEST], 4)] for r in edge])
 
     return f"""### GPU accuracy-vs-time frontier at 16M
 
@@ -1028,7 +1072,7 @@ def frontier_section() -> str:
 
 {par_table}
 
-{provenance([standings_file("frontier")], "bonsai is first to every measured accuracy across the grid (terminal accuracies tie within the noise band) and its marginal round cost stays below CatBoost's on the same pod. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md)." + measured_stamp(pareto))}
+{provenance([standings_file(Axis.FRONTIER)], "bonsai is first to every measured accuracy across the grid (terminal accuracies tie within the noise band) and its marginal round cost stays below CatBoost's on the same pod. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md)." + measured_stamp(pareto))}
 
 ### Ordered boosting at scale (CatBoost door)
 
@@ -1036,7 +1080,7 @@ The probe behind decisions 62 to 64: CatBoost's Ordered vs Plain modes against b
 
 {edge_table}
 
-{provenance(["catboost-scale-edge-2026-07.jsonl"], "Evidence: [benchmarks/catboost-scale-edge-2026-07.md](../../benchmarks/catboost-scale-edge-2026-07.md).")}
+{provenance([Evidence.CATBOOST_SCALE_EDGE], "Evidence: [benchmarks/catboost-scale-edge-2026-07.md](../../benchmarks/catboost-scale-edge-2026-07.md).")}
 """
 
 
@@ -1055,23 +1099,23 @@ Every results file behind a published claim is rendered across the pages below, 
 
 
 def airline_section() -> str:
-    rows = [r for r in load_jsonl(standings_file("airline")) if r["status"] == "ok"]
+    rows = [r for r in load_jsonl(standings_file(Axis.AIRLINE)) if r[K.STATUS] == "ok"]
 
     def cell(variant, size, depth):
-        m = [r for r in rows if r["variant"] == variant and r["size"] == size
+        m = [r for r in rows if r[K.VARIANT] == variant and r["size"] == size
              and r["knobs"]["depth"] == depth]
         return f"{m[0]['fit_s']:.1f}s / {m[0]['auc_test']:.4f}" if m else "-"
 
     variants = []
     for r in rows:
-        if r["variant"] not in variants:
-            variants.append(r["variant"])
+        if r[K.VARIANT] not in variants:
+            variants.append(r[K.VARIANT])
 
     tables = []
     for depth, label in ((8, "campaign knobs (depth 8)"),
                          (10, "Pafka protocol (depth 10)")):
         tables.append(f"**{label}**, fit seconds / test AUC:\n\n" + md_table(
-            ["variant", "0.1m", "1m", "10m"],
+            [K.VARIANT, "0.1m", "1m", "10m"],
             [[v, cell(v, "0.1m", depth), cell(v, "1m", depth),
               cell(v, "10m", depth)] for v in variants]))
 
@@ -1080,7 +1124,7 @@ def airline_section() -> str:
                 else "xgb" if v.startswith("xgb")
                 else "lgbm" if v.startswith("lgbm") else "catboost")
 
-    bars = sorted(((r["variant"], r["fit_s"], f"AUC {r['auc_test']:.4f}")
+    bars = sorted(((r[K.VARIANT], r[K.FIT_S], f"AUC {r['auc_test']:.4f}")
                    for r in rows
                    if r["size"] == "10m" and r["knobs"]["depth"] == 8),
                   key=lambda t: t[1])
@@ -1099,13 +1143,13 @@ The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC),
 
 {tables[1]}
 
-{provenance([standings_file("airline")], "A bonsai variant has the best AUC in every cell under both protocols, and bonsai CUDA depthwise is also the fastest fit from 1M rows up under ordinal encoding; XGBoost-GPU keeps only the smallest cell. Evidence: [benchmarks/airline-2026-07.md](../../benchmarks/airline-2026-07.md)." + measured_stamp(rows))}
+{provenance([standings_file(Axis.AIRLINE)], "A bonsai variant has the best AUC in every cell under both protocols, and bonsai CUDA depthwise is also the fastest fit from 1M rows up under ordinal encoding; XGBoost-GPU keeps only the smallest cell. Evidence: [benchmarks/airline-2026-07.md](../../benchmarks/airline-2026-07.md)." + measured_stamp(rows))}
 """
 
 
 
 def ceiling_section() -> str:
-    raw = load_jsonl("single-card-ceiling-2026-07.jsonl")
+    raw = load_jsonl(Evidence.SINGLE_CARD_CEILING)
     meta = raw[0]["meta"]
     rows = raw[1:]
     table = md_table(
@@ -1115,7 +1159,7 @@ def ceiling_section() -> str:
           f"{r['rows_per_s'] / 1e6:.1f}M rows/s", fmt(r["r2_train_1m"], 4)]
          for r in rows])
     prov = provenance(
-        ["single-card-ceiling-2026-07.jsonl"],
+        [Evidence.SINGLE_CARD_CEILING],
         "Single-pod ladder (2026-07-18, " + meta["gpu"] + "): a 500M x 100 "
         "float32 matrix trains end to end on one 80GB card at 69.9 GiB peak, "
         "60 rounds in 8.5 minutes, with the device-resident objective keeping "
@@ -1125,7 +1169,7 @@ def ceiling_section() -> str:
     return "## The single-card ceiling\n\n" + table + "\n\n" + prov + "\n"
 
 def code_metrics_section() -> str:
-    rows = load_jsonl(standings_file("code"))
+    rows = load_jsonl(standings_file(Axis.CODE))
     meta = next(r for r in rows if r["kind"] == "meta")
     planes = [r for r in rows if r["kind"] == "plane"]
     offenders = [r for r in rows if r["kind"] == "offender"]
@@ -1168,7 +1212,7 @@ The five highest-CCN functions across `core_headers` + `engine_impl`, published 
 
 {surface_line}
 
-{provenance([standings_file("code")], f"lizard {meta['tool_version']} (`{meta['tool_pin']}`) at `{meta['git_sha'][:12]}`, {meta['date']}; regenerate with [scripts/measure_complexity.py](../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).")}
+{provenance([standings_file(Axis.CODE)], f"lizard {meta['tool_version']} (`{meta['tool_pin']}`) at `{meta['git_sha'][:12]}`, {meta['date']}; regenerate with [scripts/measure_complexity.py](../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).")}
 """
 
 
@@ -1221,27 +1265,27 @@ def _reroot(body: str) -> str:
 
 
 def _division_summaries() -> tuple[str, str]:
-    rb = load_jsonl(standings_file("rows"))
+    rb = load_jsonl(standings_file(Axis.ROWS))
     fit = {}
     rss = {}
     for r in rb:
         c = r["cell"]
-        if c["rows"] != 16_000_000 or r.get("fit_s") is None:
+        if c["rows"] != 16_000_000 or r.get(K.FIT_S) is None:
             continue
-        v = r["variant"]
-        fit[v] = min(fit.get(v, r["fit_s"]), r["fit_s"])
-        rss[v] = max(rss.get(v, 0.0), r["peak_rss_gb"])
+        v = r[K.VARIANT]
+        fit[v] = min(fit.get(v, r[K.FIT_S]), r[K.FIT_S])
+        rss[v] = max(rss.get(v, 0.0), r[K.PEAK_RSS_GB])
     b_fit = min(fit[v] for v in fit if v.startswith("bonsai_cuda"))
     b_rss = min(rss[v] for v in rss if v.startswith("bonsai_cuda"))
-    iso = load_jsonl(standings_file("shape"))
+    iso = load_jsonl(standings_file(Axis.SHAPE))
     dev = {}
     for r in iso:
         c = r["cell"]
-        if (c["rows"], c["cols"]) != (16_777_216, 128) or r["status"] != "ok":
+        if (c["rows"], c["cols"]) != (16_777_216, 128) or r[K.STATUS] != "ok":
             continue
         gb = (r.get("dev_mem") or {}).get("peak_gb_pid")
         if gb is not None:
-            dev[r["variant"]] = max(dev.get(r["variant"], 0.0), gb)
+            dev[r[K.VARIANT]] = max(dev.get(r[K.VARIANT], 0.0), gb)
     perf = (
         f"bonsai's CUDA growers hold the fastest slot at every measured row "
         f"scale ({b_fit:.1f}s at 16M rows against XGBoost-GPU's "
@@ -1257,7 +1301,7 @@ def _division_summaries() -> tuple[str, str]:
         f"{dev['catboost_gpu']:.1f}GB. Every number is same-pod; "
         f"identical-model GPUs across the rental fleet measure up to "
         f"~25% apart.")
-    table, _, n = _standings(load_jsonl(standings_file("quality-grinsztajn")))
+    table, _, n = _standings(load_jsonl(standings_file(Axis.GRINSZTAJN)))
     lead_lib, lead_mean, lead_wins = table[0]
     quality = (
         f"{lead_lib} leads the {n}-task Grinsztajn standings at mean rank "
@@ -1311,7 +1355,7 @@ def readme_standings_block() -> str:
     92): division summaries plus the two tables, fastest per row in bold."""
     perf, _quality = _division_summaries()
 
-    rb = load_jsonl(standings_file("rows"))
+    rb = load_jsonl(standings_file(Axis.ROWS))
     best = _cell_best(rb)
     scales = sorted({r["cell"]["rows"] for r in rb if r["cell"]["cols"] == 100})
     lines = ["| rows | " + " | ".join(lbl for _, lbl in REBASE_VARIANTS) + " |",
@@ -1320,7 +1364,7 @@ def readme_standings_block() -> str:
         cells, fits = [], []
         for v, _lbl in REBASE_VARIANTS:
             r = best.get((n, 100, v))
-            fits.append(r["fit_s"] if r else float("inf"))
+            fits.append(r[K.FIT_S] if r else float("inf"))
             cells.append(_fmt_cell(best, n, 100, v))
         k = fits.index(min(fits))
         secs, rest = cells[k].split("s (", 1)
@@ -1328,7 +1372,7 @@ def readme_standings_block() -> str:
         lines.append(f"| {human(n)} | " + " | ".join(cells) + " |")
     rows_table = "\n".join(lines)
 
-    table, _, n_tasks = _standings(load_jsonl(standings_file("quality-grinsztajn")))
+    table, _, n_tasks = _standings(load_jsonl(standings_file(Axis.GRINSZTAJN)))
     qlines = ["| library | mean rank | outright wins |", "|---|--:|--:|"]
     for i, (lib, mean, wins) in enumerate(table):
         row = [_LIB_NAMES.get(lib, lib), f"{mean:.2f}", str(wins)]
@@ -1393,7 +1437,7 @@ def check_registry(consumed_files: set[str]) -> list[str]:
             continue
         rows = [json.loads(ln) for ln in path.read_text().splitlines()
                 if ln.strip()]
-        shas = {r.get("git_sha") for r in rows}
+        shas = {r.get(K.GIT_SHA) for r in rows}
         wrong = {s for s in shas if s and not s.startswith(e["sha"])
                  and not e["sha"].startswith(s)}
         if wrong:

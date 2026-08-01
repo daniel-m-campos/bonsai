@@ -36,6 +36,8 @@ import sys
 import tempfile
 import time
 
+from _docs_corpus import excluded_patterns, is_excluded
+
 REPO = pathlib.Path(__file__).resolve().parents[1]
 DOCS = REPO / "docs"
 
@@ -55,33 +57,6 @@ def _child_env() -> dict:
     return env
 
 OPEN_RE = re.compile(r"^(\s*)(`{3,}|~{3,})\{([^}]*)\}\s*$")
-
-
-def excluded_patterns(mkdocs_text: str) -> list[str]:
-    lines = mkdocs_text.splitlines()
-    pats: list[str] = []
-    for idx, line in enumerate(lines):
-        if not re.match(r"^exclude_docs:\s*\|", line):
-            continue
-        for follow in lines[idx + 1:]:
-            if follow.strip() == "":
-                continue
-            if not follow.startswith((" ", "\t")):
-                break
-            pats.append(follow.strip())
-        break
-    return pats
-
-
-def is_excluded(rel: str, pats: list[str]) -> bool:
-    name = rel.rsplit("/", 1)[-1]
-    for p in pats:
-        if p.endswith("/"):
-            if rel == p.rstrip("/") or rel.startswith(p):
-                return True
-        elif rel == p or name == p:
-            return True
-    return False
 
 
 def published_files() -> list[pathlib.Path]:

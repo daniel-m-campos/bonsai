@@ -43,10 +43,10 @@ def _run(args) -> int:
         # Legacy scaling sugar: same grid, knobs, and output file as
         # python -m bonsai.bench.scaling; resume stays opt-in there.
         from bonsai.bench import scaling
-        axes = (["rows", "cols", "bins", "threads"]
+        axes = (list(scaling.AXES)
                 if args.axis in (None, "all")
                 else [a.strip() for a in args.axis.split(",")])
-        unknown_axes = set(axes) - {"rows", "cols", "bins", "threads"}
+        unknown_axes = set(axes) - set(scaling.AXES)
         if unknown_axes:
             raise SystemExit(f"unknown axes: {sorted(unknown_axes)}")
         for v in variants or []:
@@ -142,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
     _add_run_flags(sub.add_parser("run", help="execute a spec or legacy grid"))
     _add_run_flags(sub.add_parser("plan", help="print the expansion, run nothing"))
     pv = sub.add_parser("variants", help="print the variant registry")
-    pv.add_argument("--device", choices=("cpu", "cuda"), default=None)
+    pv.add_argument("--device", choices=(vr.Device.CPU, vr.Device.CUDA), default=None)
     sub.add_parser("specs", help="list the bundled campaign specs")
     sub.add_parser("worker", help="internal: job JSON on stdin, RESULT on stdout")
     args = ap.parse_args(argv)

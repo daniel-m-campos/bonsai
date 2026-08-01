@@ -42,7 +42,7 @@ C = params.CAMPAIGN
 
 
 def fit_predict(variant, Xtr, ytr, Xte, kind):
-    if variant.startswith("bonsai"):
+    if variant.startswith(vr.Lib.BONSAI):
         import bonsai
         grower = vr.resolve(variant).name.removeprefix("bonsai_")
         obj = "logloss" if kind == "auc" else "mse"
@@ -53,7 +53,7 @@ def fit_predict(variant, Xtr, ytr, Xte, kind):
             random_seed=C["seed"], n_threads=8,
             params=params.BONSAI_CAMPAIGN_PARAMS).fit(Xtr, ytr)
         return np.asarray(m.predict(Xte))
-    if variant == "xgb":
+    if variant == vr.Lib.XGB:
         import xgboost as xgb
         cls = xgb.XGBClassifier if kind == "auc" else xgb.XGBRegressor
         core = params.xgb_core(
@@ -63,7 +63,7 @@ def fit_predict(variant, Xtr, ytr, Xte, kind):
         core["random_state"] = core.pop("seed")
         m = cls(n_estimators=C["iters"], n_jobs=8, **core).fit(Xtr, ytr)
         return m.predict_proba(Xte)[:, 1] if kind == "auc" else m.predict(Xte)
-    if variant == "lgbm":
+    if variant == vr.Lib.LGBM:
         import lightgbm as lgb
         obj = "binary" if kind == "auc" else "regression"
         p = {**params.lgbm_core(
@@ -75,13 +75,13 @@ def fit_predict(variant, Xtr, ytr, Xte, kind):
              "deterministic": True, "num_threads": 8}
         m = lgb.train(p, lgb.Dataset(Xtr, label=ytr))
         return m.predict(Xte)
-    if variant == "catboost":
+    if variant == vr.Lib.CATBOOST:
         import catboost as cb
         cls = cb.CatBoostClassifier if kind == "auc" else cb.CatBoostRegressor
         m = cls(**params.catboost_core(
                     learning_rate=C["lr"], max_depth=C["depth"],
                     lambda_l2=C["lambda_l2"], max_bin=C["bins"],
-                    seed=C["seed"], device="cpu"),
+                    seed=C["seed"], device=vr.Device.CPU),
                 iterations=C["iters"], verbose=False, thread_count=8,
                 allow_writing_files=False).fit(Xtr, ytr)
         return (m.predict_proba(Xte)[:, 1] if kind == "auc"
@@ -169,7 +169,7 @@ def report(out_path):
     mean = (df.groupby(["suite", "dataset", "variant"])["value"].mean()
             .reset_index())
     mean["lib"] = mean["variant"].map(
-        lambda v: "bonsai" if v.startswith("bonsai") else v)
+        lambda v: vr.Lib.BONSAI if v.startswith(vr.Lib.BONSAI) else v)
     lib = (mean.groupby(["suite", "dataset", "lib"])["value"].max()
            .reset_index())
     ranks = []

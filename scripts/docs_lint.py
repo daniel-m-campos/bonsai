@@ -44,6 +44,8 @@ import pathlib
 import re
 import sys
 
+from _docs_corpus import excluded_patterns, is_excluded
+
 REPO = pathlib.Path(__file__).resolve().parents[1]
 DOCS = REPO / "docs"
 
@@ -68,34 +70,6 @@ LIB_RE = re.compile(r"(?<![A-Za-z0-9_/.])(" + "|".join(LIBS) + r")")
 
 
 # ---- corpus selection --------------------------------------------------------
-
-def excluded_patterns(mkdocs_text: str) -> list[str]:
-    """The `exclude_docs:` block-scalar patterns, docs-relative."""
-    lines = mkdocs_text.splitlines()
-    pats: list[str] = []
-    for idx, line in enumerate(lines):
-        if not re.match(r"^exclude_docs:\s*\|", line):
-            continue
-        for follow in lines[idx + 1:]:
-            if follow.strip() == "":
-                continue
-            if not follow.startswith((" ", "\t")):
-                break  # dedent: next top-level key
-            pats.append(follow.strip())
-        break
-    return pats
-
-
-def is_excluded(rel: str, pats: list[str]) -> bool:
-    name = rel.rsplit("/", 1)[-1]
-    for p in pats:
-        if p.endswith("/"):
-            if rel == p.rstrip("/") or rel.startswith(p):
-                return True
-        elif rel == p or name == p:  # bare name matches at any depth
-            return True
-    return False
-
 
 def is_archive(rel: str) -> bool:
     """The frozen historical record, exempt by policy (see the module docstring)."""

@@ -17,15 +17,15 @@ from bonsai.bench import params as rp
 from bonsai.bench import runlog
 from bonsai.bench.metrics import auc, r2
 from bonsai.bench.synth import gen_data
-from bonsai.bench.variants import resolve
+from bonsai.bench.variants import Device, Lib, resolve
 
 
 def run_bonsai(spec, X, y, Xte, yte) -> dict:
     import bonsai
-    grower = spec["variant"].removeprefix("bonsai_")
+    grower = spec[runlog.Row.VARIANT].removeprefix("bonsai_")
     if grower.startswith("cuda") and not bonsai.cuda_available():
         raise RuntimeError("unsupported: cuda grower without a CUDA device/build")
-    c = spec["cell"]
+    c = spec[runlog.Row.CELL]
     task = c.get("task", "reg")
     pairs = rp.bonsai_core(
         learning_rate=c["lr"], max_depth=c["depth"],
@@ -33,7 +33,7 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
         min_data_in_leaf=c.get("min_data_in_leaf", rp.SCALING["min_data_in_leaf"]),
         lambda_l2=c.get("lambda_l2", rp.SCALING["lambda_l2"]),
         max_bin=c["bins"], seed=c["seed"],
-        n_iters=c["iters"], n_threads=spec["threads"], grower=grower,
+        n_iters=c["iters"], n_threads=spec[runlog.Row.THREADS], grower=grower,
         objective="logloss" if task == "binary" else "mse")
     t0 = time.perf_counter()
     model = bonsai.train(pairs, X, y)
@@ -42,18 +42,18 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
     pred_te = np.asarray(model.predict(Xte))
     predict_s = time.perf_counter() - t0
     if task == "binary":
-        return {"fit_s": fit_s, "predict_s": predict_s,
-                "auc_test": auc(yte, pred_te)}
+        return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
+                runlog.Row.AUC_TEST: auc(yte, pred_te)}
     pred_tr = np.asarray(model.predict(X))
-    return {"fit_s": fit_s, "predict_s": predict_s,
-            "r2_train": r2(y, pred_tr), "r2_test": r2(yte, pred_te)}
+    return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
+            runlog.Row.R2_TRAIN: r2(y, pred_tr), runlog.Row.R2_TEST: r2(yte, pred_te)}
 
 
 def run_xgb(spec, X, y, Xte, yte) -> dict:
     import xgboost as xgb
-    c = spec["cell"]
+    c = spec[runlog.Row.CELL]
     task = c.get("task", "reg")
-    device = resolve(spec["variant"]).device
+    device = resolve(spec[runlog.Row.VARIANT]).device
     params = {**rp.xgb_core(learning_rate=c["lr"], max_depth=c["depth"],
                             min_data_in_leaf=c.get(
                                 "min_data_in_leaf",
@@ -63,7 +63,7 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
                             max_bin=c["bins_effective"], seed=c["seed"]),
               "objective": ("binary:logistic" if task == "binary"
                             else "reg:squarederror"),
-              "device": device, "nthread": spec["threads"]}
+              "device": device, "nthread": spec[runlog.Row.THREADS]}
     t0 = time.perf_counter()
     dtrain = xgb.QuantileDMatrix(X, label=y, max_bin=c["bins_effective"])
     booster = xgb.train(params, dtrain, num_boost_round=c["iters"])
@@ -72,18 +72,18 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
     pred_te = booster.inplace_predict(Xte)
     predict_s = time.perf_counter() - t0
     if task == "binary":
-        return {"fit_s": fit_s, "predict_s": predict_s,
-                "auc_test": auc(yte, pred_te)}
+        return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
+                runlog.Row.AUC_TEST: auc(yte, pred_te)}
     pred_tr = booster.inplace_predict(X)
-    return {"fit_s": fit_s, "predict_s": predict_s,
-            "r2_train": r2(y, pred_tr), "r2_test": r2(yte, pred_te)}
+    return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
+            runlog.Row.R2_TRAIN: r2(y, pred_tr), runlog.Row.R2_TEST: r2(yte, pred_te)}
 
 
 def run_lgbm(spec, X, y, Xte, yte) -> dict:
     import lightgbm as lgb
-    c = spec["cell"]
+    c = spec[runlog.Row.CELL]
     task = c.get("task", "reg")
-    device = resolve(spec["variant"]).device
+    device = resolve(spec[runlog.Row.VARIANT]).device
     params = {**rp.lgbm_core(learning_rate=c["lr"], max_depth=c["depth"],
                              num_leaves=rp.num_leaves_full(c["depth"]),
                              min_data_in_leaf=c.get(
@@ -93,7 +93,7 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
                                              rp.SCALING["lambda_l2"]),
                              max_bin=c["bins_effective"], seed=c["seed"]),
               "objective": "binary" if task == "binary" else "regression",
-              "device_type": device, "num_threads": spec["threads"]}
+              "device_type": device, "num_threads": spec[runlog.Row.THREADS]}
     t0 = time.perf_counter()
     dtrain = lgb.Dataset(X, label=y)
     model = lgb.train(params, dtrain, num_boost_round=c["iters"])
@@ -102,18 +102,18 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
     pred_te = model.predict(Xte)
     predict_s = time.perf_counter() - t0
     if task == "binary":
-        return {"fit_s": fit_s, "predict_s": predict_s,
-                "auc_test": auc(yte, pred_te)}
+        return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
+                runlog.Row.AUC_TEST: auc(yte, pred_te)}
     pred_tr = model.predict(X)
-    return {"fit_s": fit_s, "predict_s": predict_s,
-            "r2_train": r2(y, pred_tr), "r2_test": r2(yte, pred_te)}
+    return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
+            runlog.Row.R2_TRAIN: r2(y, pred_tr), runlog.Row.R2_TEST: r2(yte, pred_te)}
 
 
 def run_catboost(spec, X, y, Xte, yte) -> dict:
     from catboost import CatBoostClassifier, CatBoostRegressor, Pool
-    c = spec["cell"]
+    c = spec[runlog.Row.CELL]
     task = c.get("task", "reg")
-    device = resolve(spec["variant"]).device
+    device = resolve(spec[runlog.Row.VARIANT]).device
     cls = CatBoostClassifier if task == "binary" else CatBoostRegressor
     model = cls(
         **rp.catboost_core(learning_rate=c["lr"], max_depth=c["depth"],
@@ -123,8 +123,8 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
                            device=device),
         iterations=c["iters"],
         loss_function="Logloss" if task == "binary" else "RMSE",
-        task_type=("GPU" if device == "cuda" else "CPU"), devices="0",
-        thread_count=spec["threads"], verbose=False)
+        task_type=("GPU" if device == Device.CUDA else "CPU"), devices="0",
+        thread_count=spec[runlog.Row.THREADS], verbose=False)
     t0 = time.perf_counter()
     pool = Pool(X, label=y)
     model.fit(pool)
@@ -134,15 +134,15 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
                else model.predict(Xte))
     predict_s = time.perf_counter() - t0
     if task == "binary":
-        return {"fit_s": fit_s, "predict_s": predict_s,
-                "auc_test": auc(yte, pred_te)}
+        return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
+                runlog.Row.AUC_TEST: auc(yte, pred_te)}
     pred_tr = model.predict(X)
-    return {"fit_s": fit_s, "predict_s": predict_s,
-            "r2_train": r2(y, pred_tr), "r2_test": r2(yte, pred_te)}
+    return {runlog.Row.FIT_S: fit_s, runlog.Row.PREDICT_S: predict_s,
+            runlog.Row.R2_TRAIN: r2(y, pred_tr), runlog.Row.R2_TEST: r2(yte, pred_te)}
 
 
-RUNNERS = {"bonsai": run_bonsai, "xgb": run_xgb, "lgbm": run_lgbm,
-           "catboost": run_catboost}
+RUNNERS = {Lib.BONSAI: run_bonsai, Lib.XGB: run_xgb, Lib.LGBM: run_lgbm,
+           Lib.CATBOOST: run_catboost}
 
 
 def cached_gen_data(cell: dict, cache_dir: str):
@@ -169,31 +169,32 @@ def cached_gen_data(cell: dict, cache_dir: str):
 
 
 def worker(spec: dict) -> dict:
-    c = spec["cell"]
+    c = spec[runlog.Row.CELL]
     cache_dir = os.environ.get("BONSAI_BENCH_DATA_CACHE")
     if cache_dir:
         X, y, Xte, yte = cached_gen_data(c, cache_dir)
     else:
         X, y, Xte, yte = gen_data(c["rows"], c["cols"], c["seed"], c["n_test"],
                                   c["informative"])
-    v = resolve(spec["variant"])
+    v = resolve(spec[runlog.Row.VARIANT])
     if v.name.startswith("bonsai_ts_"):
         raise RuntimeError("unsupported: ordered-TS arms run in the airline "
                            "suite only (the encoder lives there)")
     run = RUNNERS[v.lib]
-    if v.device == "cuda":
+    if v.device == Device.CUDA:
         # Untimed micro-fit absorbs CUDA context creation (and, once per
         # session, the PTX JIT — disk-cached afterwards).
         micro = dict(spec, cell=dict(c, rows=8192, n_test=1024, iters=5))
         run(micro, X[:8192], y[:8192], Xte[:1024], yte[:1024])
     out = run(spec, X, y, Xte, yte)
-    out["peak_rss_gb"] = runlog.peak_rss_gb()
-    out["fit_rows_per_s"] = round(c["rows"] / out["fit_s"]) if out["fit_s"] else None
-    out["predict_rows_per_s"] = (round(c["n_test"] / out["predict_s"])
-                                 if out["predict_s"] else None)
-    for k in ("fit_s", "predict_s"):
+    out[runlog.Row.PEAK_RSS_GB] = runlog.peak_rss_gb()
+    out["fit_rows_per_s"] = (round(c["rows"] / out[runlog.Row.FIT_S])
+                             if out[runlog.Row.FIT_S] else None)
+    out["predict_rows_per_s"] = (round(c["n_test"] / out[runlog.Row.PREDICT_S])
+                                 if out[runlog.Row.PREDICT_S] else None)
+    for k in (runlog.Row.FIT_S, runlog.Row.PREDICT_S):
         out[k] = round(out[k], 3)
-    for k in ("r2_train", "r2_test"):
+    for k in (runlog.Row.R2_TRAIN, runlog.Row.R2_TEST):
         out[k] = round(out[k], 4)
     # The child is where the reference library was imported, so only the
     # child can report its version; the parent folds this into host.libs.

@@ -8,6 +8,8 @@ of re-deriving them.
 
 from __future__ import annotations
 
+from bonsai.bench.variants import Device
+
 # The campaign regime: quality-division suites (Grinsztajn standings, the
 # internal smoke campaign, admission-gate probes). Decisions 56 and 68.
 CAMPAIGN = dict(iters=200, lr=0.05, depth=6, bins=255, min_data_in_leaf=20,
@@ -95,6 +97,6 @@ def catboost_core(*, learning_rate, max_depth, lambda_l2, max_bin, seed,
         "learning_rate": learning_rate,
         "depth": max_depth,
         "l2_leaf_reg": lambda_l2,
-        "border_count": min(borders, 254) if device == "cuda" else borders,
+        "border_count": min(borders, 254) if device == Device.CUDA else borders,
         "random_seed": seed,
     }

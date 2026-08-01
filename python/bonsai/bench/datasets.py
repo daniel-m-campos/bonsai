@@ -23,6 +23,7 @@ import gzip
 import os
 import pathlib
 import urllib.request
+from typing import Final
 
 
 def data_root() -> pathlib.Path:
@@ -39,6 +40,16 @@ def data_root() -> pathlib.Path:
     return pathlib.Path.home() / ".cache" / "bonsai-bench"
 
 
+class Tier:
+    """Dataset tiers; values appear in the registry table and CLI listing."""
+
+    TEST_PIN: Final = "test-pin"
+    QUALITY_EXTERNAL: Final = "quality-external"
+    QUALITY_SMOKE: Final = "quality-smoke"
+    PERF_SCALE: Final = "perf-scale"
+    PERF_SYNTHETIC: Final = "perf-synthetic"
+
+
 @dataclasses.dataclass(frozen=True)
 class Dataset:
     name: str
@@ -52,59 +63,59 @@ class Dataset:
 
 REGISTRY = {
     "tiny": Dataset(
-        "tiny", "test-pin", "reg", "committed in-repo (tests/data/tiny.csv)",
+        "tiny", Tier.TEST_PIN, "reg", "committed in-repo (tests/data/tiny.csv)",
         "project-generated", "single file", ("tiny.csv",)),
     "california": Dataset(
-        "california", "test-pin", "reg",
+        "california", Tier.TEST_PIN, "reg",
         "sklearn fetch_california_housing (StatLib)", "public domain",
         "80/20 train_test_split(random_state=42) by scripts/fetch_toy.py",
         ("california_housing_train.csv", "california_housing_test.csv")),
     "amazon": Dataset(
-        "amazon", "test-pin", "binary", "OpenML data id 4135",
+        "amazon", Tier.TEST_PIN, "binary", "OpenML data id 4135",
         "Kaggle competition data, research use",
         "80/20 stratified random_state=42 by scripts/fetch_amazon.py",
         ("amazon_train.csv", "amazon_test.csv")),
     "grinsztajn": Dataset(
-        "grinsztajn", "quality-external", "mixed",
+        "grinsztajn", Tier.QUALITY_EXTERNAL, "mixed",
         "OpenML suites 297/298/299/304 (Grinsztajn et al. 2022)",
         "per-dataset OpenML licenses",
         "10k-row train cap, 3 seeded splits (bonsai.bench.grinsztajn)",
         ()),
     "campaign10": Dataset(
-        "campaign10", "quality-smoke", "mixed",
+        "campaign10", Tier.QUALITY_SMOKE, "mixed",
         "ten OpenML datasets (decisions 56-57; benchmarks/quality-campaign-2026-07.md)",
         "per-dataset OpenML licenses",
         "fetched at runtime via OpenML by the campaign tooling", ()),
     "a9a": Dataset(
-        "a9a", "quality-external", "binary",
+        "a9a", Tier.QUALITY_EXTERNAL, "binary",
         "LIBSVM binary collection (Adult, 123 binary features)",
         "UCI Adult derivative", "upstream fixed train/test split",
         ("a9a_train.libsvm", "a9a_test.libsvm")),
     "covtype": Dataset(
-        "covtype", "quality-external", "multiclass",
+        "covtype", Tier.QUALITY_EXTERNAL, "multiclass",
         "UCI Covertype", "UCI, research use",
         "first 500k rows train, remainder test",
         ("covtype_train.csv", "covtype_test.csv")),
     "airline": Dataset(
-        "airline", "perf-scale", "binary",
+        "airline", Tier.PERF_SCALE, "binary",
         "benchm-ml airline on-time (Szilard Pafka, github.com/szilard/benchm-ml; "
         "s3://benchm-ml--main)", "US DOT public data, benchmark redistribution",
         "upstream fixed splits: train-{0.1m,1m,10m}.csv + shared 100k test.csv; "
         "ordinal codes fit on train (bonsai.bench.airline)",
         ("train-0.1m.csv", "train-1m.csv", "train-10m.csv", "airline_test.csv")),
     "higgs": Dataset(
-        "higgs", "perf-scale", "binary",
+        "higgs", Tier.PERF_SCALE, "binary",
         "UCI HIGGS (first 550k of 11M rows)", "UCI, CC BY 4.0",
         "first 500k train, next 50k test",
         ("higgs_train.csv", "higgs_test.csv")),
     "year_msd": Dataset(
-        "year_msd", "perf-scale", "reg",
+        "year_msd", Tier.PERF_SCALE, "reg",
         "UCI YearPredictionMSD", "UCI, research use",
         "UCI-recommended split: first 463,715 train, last 51,630 test "
         "(avoids the producer effect)",
         ("year_prediction_msd_train.csv", "year_prediction_msd_test.csv")),
     "friedman1": Dataset(
-        "friedman1", "perf-synthetic", "reg",
+        "friedman1", Tier.PERF_SYNTHETIC, "reg",
         "bonsai.bench.synth.gen_data (generalized Friedman 1991)",
         "project-generated",
         "deterministic in (seed, rows, cols); see synth.py provenance", ()),
