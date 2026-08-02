@@ -47,6 +47,45 @@ constexpr uint32_t k_sum_blocks = 64;
 // in this API, matching the gradient-boosting literature's convention.
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)
 
+// Histogram row-chunk sizing. A chunk is the row budget one block takes on;
+// gridDim.z chunks cover a node. The level plane launches whole levels at once
+// and always uses the wide chunk. The leaf plane launches one node at a time,
+// so its grid is n_selected * chunks blocks: below the wide chunk a node leaves
+// most of the device idle. leaf_chunks shrinks the chunk toward the floor to
+// widen that grid. The floor bounds the cross-chunk global merge, which is the
+// price of the extra blocks, and every chunk it produces still carries rows:
+// there is no fixed grid floor paying that price at node sizes that fill the
+// device on their own.
+constexpr uint32_t k_hist_chunk       = 32768;
+constexpr uint32_t k_hist_chunk_floor = 4096;
+constexpr uint32_t k_hist_max_chunks  = 64;
+constexpr uint32_t k_occupancy_blocks = 2; // target blocks per SM
+
+namespace
+{
+
+uint32_t level_chunks(uint32_t count)
+{
+    return std::clamp<uint32_t>((count + k_hist_chunk - 1) / k_hist_chunk, 1,
+                                k_hist_max_chunks);
+}
+
+uint32_t leaf_chunks(uint32_t count, uint32_t n_selected, int sm_count)
+{
+    uint32_t const wide = level_chunks(count);
+    if (n_selected == 0 || sm_count <= 0)
+    {
+        return wide;
+    }
+    uint32_t const blocks   = k_occupancy_blocks * static_cast<uint32_t>(sm_count);
+    uint32_t const wanted   = (blocks + n_selected - 1) / n_selected;
+    uint32_t const at_floor = (count + k_hist_chunk_floor - 1) / k_hist_chunk_floor;
+    return std::clamp<uint32_t>(std::max(wide, std::min(wanted, at_floor)), 1,
+                                k_hist_max_chunks);
+}
+
+} // namespace
+
 void CudaIngestPlane::materialize(std::vector<std::vector<uint8_t>>  &u8,
                                   std::vector<std::vector<uint16_t>> &u16) const
 {
@@ -283,6 +322,11 @@ void CudaDeviceContext::init_shared_limit()
     {
         return;
     }
+    if (cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, dev) !=
+        cudaSuccess)
+    {
+        sm_count = 0; // leaf_chunks falls back to the wide chunk
+    }
     int optin = 0;
     if (cudaDeviceGetAttribute(&optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, dev) !=
             cudaSuccess ||
@@ -513,7 +557,7 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     }
     lvl.gh_ordered.reserve(n);
     gather(grads.gh.data(), lvl.rows.data(), n, lvl.gh_ordered.data());
-    auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
+    auto const n_chunks = level_chunks(n);
     dim3 const grid(lvl.n_selected, 1, n_chunks);
     if (prof_counters.enabled)
     {
@@ -751,8 +795,7 @@ void CudaDeviceContext::advance_level(Dataset const                             
         {
             if (!lvl.row_offsets.empty())
             {
-                auto const n_chunks = std::clamp<uint32_t>(
-                    (static_cast<uint32_t>(max_rows) + 32767) / 32768, 1, 64);
+                auto const n_chunks = level_chunks(static_cast<uint32_t>(max_rows));
                 dim3 const grid(lvl.n_selected,
                                 static_cast<uint32_t>(lvl.row_offsets.size()),
                                 n_chunks);
@@ -1071,7 +1114,7 @@ bool CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
                                                lvl.sum_out.data());
     check(cudaGetLastError(), "leaf root sum pass2 launch");
 
-    auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
+    auto const n_chunks = leaf_chunks(n, lvl.n_selected, sm_count);
     dim3 const grid(lvl.n_selected, 1, n_chunks);
     data.dispatch_bins(
         [&](auto const *bins)
@@ -1211,7 +1254,7 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
             if (small_count >= k_min_gpu_rows)
             {
                 auto const n_chunks =
-                    std::clamp<uint32_t>((small_count + 32767) / 32768, 1, 64);
+                    leaf_chunks(small_count, lvl.n_selected, sm_count);
                 dim3 const grid(lvl.n_selected, 1, n_chunks);
                 hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
                     bins, lvl.gh_ordered.data(), lvl.rows.data(),

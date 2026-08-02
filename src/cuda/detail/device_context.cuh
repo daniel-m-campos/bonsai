@@ -314,6 +314,11 @@ struct CudaDeviceContext
     size_t shared_limit  = k_max_shared_bytes;
     bool   shared_probed = false;
 
+    // Streaming multiprocessor count, probed beside the shared limit: the leaf
+    // plane sizes its histogram row-chunks so a one-node grid still covers the
+    // device. Zero when the probe fails, which keeps the wide chunk.
+    int sm_count = 0;
+
     // The one histogram-capacity predicate: a node's per-feature scratch is
     // 4 * bins floats in shared memory. begin_root declines a tree with it,
     // and resident_begin must apply the SAME test (once per fit, on the
