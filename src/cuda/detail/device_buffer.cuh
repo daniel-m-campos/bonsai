@@ -199,6 +199,62 @@ template <typename T> class PinnedBuffer
     T *ptr_ = nullptr;
 };
 
+// Page-locked staging paired with its device mirror: the host-to-device half of
+// Staged, with the two properties a per-round staging path needs. The host side
+// is pinned and the upload is asynchronous, so it never stream-syncs the way a
+// pageable copy does (that sync drains every kernel already queued, which on a
+// plane that stages a handful of scalars per round is the round's whole idle).
+// The host side stays live until the copy lands, so a caller may only rewrite
+// it after a later blocking copy on the same stream has fenced the previous
+// upload. Pageable Staged remains the default everywhere that stages per level
+// or per tree, where the sync is amortized and the aliasing rule is a hazard.
+template <typename T> class PinnedStaged
+{
+  public:
+    PinnedStaged() = default;
+    ~PinnedStaged()
+    {
+        cudaFreeHost(host_);
+    }
+    PinnedStaged(PinnedStaged const &)            = delete;
+    PinnedStaged &operator=(PinnedStaged const &) = delete;
+
+    T *host() const
+    {
+        return host_;
+    }
+    T *device() const
+    {
+        return dev_.data();
+    }
+
+    void reserve(size_t n)
+    {
+        dev_.reserve(n);
+        if (n <= capacity_)
+        {
+            return;
+        }
+        cudaFreeHost(host_);
+        host_     = nullptr;
+        capacity_ = 0;
+        check(cudaHostAlloc(&host_, n * sizeof(T), cudaHostAllocDefault), "hostAlloc");
+        capacity_ = n;
+    }
+
+    // Host -> device, asynchronous on the null stream. reserve(n) first.
+    void sync(size_t n) const
+    {
+        check(cudaMemcpyAsync(dev_.data(), host_, n * sizeof(T), cudaMemcpyHostToDevice),
+              "pinned upload");
+    }
+
+  private:
+    T              *host_     = nullptr;
+    size_t          capacity_ = 0;
+    DeviceBuffer<T> dev_;
+};
+
 // A host staging vector paired with its device mirror — the shape that recurs
 // throughout the engine's Impl. `host` is filled (or received) on the CPU;
 // sync() pushes it to the device, fetch() pulls a device result back. Mirrors
