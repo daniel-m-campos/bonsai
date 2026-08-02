@@ -95,7 +95,7 @@ The capped ladder above hides the strategy's point: at a 256-leaf budget and a d
 | bonsai leafwise (cpu) | 271.0s | 0.8859 |
 
 
-*Source: [`leafwise-ladder-2026-08.jsonl`](../../../benchmarks/results/leafwise-ladder-2026-08.jsonl). One pod (L40S, US-NC-1, 2026-08-01), SCALING knobs at 100 iters and 256 leaves, best of 2 reps; the ladder that admitted `cuda_leafwise` under [docs/architecture/20-cuda-leafwise.md](../../../docs/architecture/20-cuda-leafwise.md). Absolute times run above the 2026-08-01 recheck, which used a different pod with a wider CPU; only same-pod comparisons are meaningful.*
+*Source: [`leafwise-ladder-2026-08.jsonl`](../../../benchmarks/results/leafwise-ladder-2026-08.jsonl). One pod (L40S, US-NC-1, 2026-08-01), SCALING knobs at 100 iters and 256 leaves, best of 2 reps; the ladder that admitted `cuda_leafwise` under [docs/architecture/20-cuda-leafwise.md](../../architecture/20-cuda-leafwise.md). Absolute times run above the 2026-08-01 recheck, which used a different pod with a wider CPU; only same-pod comparisons are meaningful.*
 
 ### The closing ladder: what stage 3's levers moved (decision 98)
 
