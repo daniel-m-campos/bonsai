@@ -1203,7 +1203,7 @@ Same pod, four arms, best of two reps, interleaved. The kill criterion pre-regis
 
 {_uncapped_table(rows)}
 
-{provenance([Evidence.LEAFWISE_LADDER], "One pod (L40S, US-NC-1, 2026-08-01), SCALING knobs at 100 iters and 256 leaves, best of 2 reps; the ladder that admitted `cuda_leafwise` under [docs/architecture/20-cuda-leafwise.md](../../docs/architecture/20-cuda-leafwise.md). Absolute times run above the 2026-08-01 recheck, which used a different pod with a wider CPU; only same-pod comparisons are meaningful.")}
+{provenance([Evidence.LEAFWISE_LADDER], "One pod (L40S, US-NC-1, 2026-08-01), SCALING knobs at 100 iters and 256 leaves, best of 2 reps; the ladder that admitted `cuda_leafwise` under [docs/architecture/20-cuda-leafwise.md](../architecture/20-cuda-leafwise.md). Absolute times run above the 2026-08-01 recheck, which used a different pod with a wider CPU; only same-pod comparisons are meaningful.")}
 """
 
 
@@ -1519,6 +1519,7 @@ PAGES: list[tuple[str, str, str, list]] = [
 # gain one step. Replacement order matters: the two-step rule cannot touch
 # ../guide/ and runs first.
 _REROOT = [("](../../", "](../../../"), ("](../guide/", "](../../guide/"),
+           ("](../architecture/", "](../../architecture/"),
            ("](assets/", "](../assets/"), ("](benchmark-protocol.md", "](../benchmark-protocol.md")]
 
 
