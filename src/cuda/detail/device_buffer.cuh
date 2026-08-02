@@ -245,8 +245,9 @@ template <typename T> class PinnedStaged
     // Host -> device, asynchronous on the null stream. reserve(n) first.
     void sync(size_t n) const
     {
-        check(cudaMemcpyAsync(dev_.data(), host_, n * sizeof(T), cudaMemcpyHostToDevice),
-              "pinned upload");
+        check(
+            cudaMemcpyAsync(dev_.data(), host_, n * sizeof(T), cudaMemcpyHostToDevice),
+            "pinned upload");
     }
 
   private:
