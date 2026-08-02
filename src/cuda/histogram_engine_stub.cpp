@@ -176,6 +176,15 @@ bool CudaHistogramEngine::resident_begin(Dataset const & /*ds*/,
     return false;
 }
 
+bool CudaHistogramEngine::resident_begin_leaf(Dataset const & /*ds*/,
+                                              TreeConfig const & /*config*/,
+                                              DeviceObjectiveKind /*kind*/,
+                                              std::span<float const> /*initial_scores*/,
+                                              float /*learning_rate*/)
+{
+    return false;
+}
+
 bool CudaHistogramEngine::resident_armed() const
 {
     return false;

@@ -314,14 +314,22 @@ struct CudaDeviceContext
     }
 
     // The leaf plane's second gate, applied beside hist_budget_ok in
-    // leaf_begin_root: the histogram pool is that plane's only new allocation
+    // leaf_budget_ok: the histogram pool is that plane's only new allocation
     // and an oversized leaf budget must decline to the host plane rather than
     // fail the fit. A quarter of the device's free memory is the bound; the
-    // buffer is grow-only and doubles on reallocation. Only the leaf
-    // plane reaches it: resident_begin arms nothing for leafwise growth
-    // (LeafwiseGrower::resident_begin is a static false), so no tree can
-    // decline into a host-gradient path behind the resident mode's back.
+    // buffer is grow-only and doubles on reallocation.
     bool leaf_pool_ok(size_t bytes) const;
+
+    // The leaf plane's whole decline predicate, both gates in one place:
+    // leaf_begin_root applies it per tree over the selected features, and
+    // resident_begin_leaf once per fit over every feature and the full leaf
+    // budget. A tree's selection is a subset of every feature, so passing the
+    // conservative form guarantees the per-tree form; the pool's free-memory
+    // bound additionally cannot be retested per tree once armed, since the
+    // pool the first tree allocates shrinks the free memory the later trees
+    // would measure. Any new leaf-plane decline condition lands here.
+    bool leaf_budget_ok(TreeConfig const &config, size_t n_selected,
+                        size_t max_bins) const;
 
     void init_shared_limit();
     void ensure_dataset(Dataset const &dataset);
@@ -380,6 +388,12 @@ struct CudaDeviceContext
 
     bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
                         std::span<float const> initial_scores, float learning_rate);
+    // Arms for best-first growth: the leaf plane's conservative capacity test
+    // first, then the level plane's arming unchanged.
+    bool resident_begin_leaf(Dataset const &ds, TreeConfig const &config,
+                             DeviceObjectiveKind    kind,
+                             std::span<float const> initial_scores,
+                             float                  learning_rate);
     bool resident_armed() const
     {
         return resident.armed;

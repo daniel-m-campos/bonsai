@@ -542,6 +542,34 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
     feature_view      selected_;
 };
 
+// The finished dense tree flattened for the device-resident epilogue, which
+// walks it in bin space: split_bin reconstructs exactly from the threshold
+// (the grower set threshold = cuts[bin]). Shared by both device planes, whose
+// trees are the same shape.
+template <typename ResidentNodeT>
+std::vector<ResidentNodeT> resident_node_table(DenseTree::Nodes const &nodes,
+                                               Dataset const          &ds)
+{
+    std::vector<ResidentNodeT> table(nodes.size());
+    for (size_t i = 0; i < nodes.size(); ++i)
+    {
+        DenseTree::Node const &nd = nodes[i];
+        ResidentNodeT         &rn = table[i];
+        if (DenseTree::is_leaf(nd))
+        {
+            rn.is_leaf = true;
+            rn.value   = nd.threshold_or_value;
+            continue;
+        }
+        rn.feature_id   = nd.feature_id;
+        rn.left         = nd.left;
+        rn.right        = nd.right;
+        rn.default_left = nd.default_left;
+        rn.split_bin    = ds.bin_of_threshold(nd.feature_id, nd.threshold_or_value);
+    }
+    return table;
+}
+
 // ---------------------------------------------------------------------------
 // GPU data plane: histograms live in device slot buffers and rows in device
 // segments; only decisions, child sums, and counts cross the bus. Holds the
@@ -743,27 +771,9 @@ class LevelStep<EngineT, SplitterT>
         if (resident)
         {
             // The finished dense tree routes every row on device; no stamp, no
-            // values/leaf_ids D2H. split_bin reconstructs exactly from the
-            // threshold (the grower set threshold = cuts[bin]).
-            std::vector<typename EngineT::ResidentNode> table(nodes.size());
-            for (size_t i = 0; i < nodes.size(); ++i)
-            {
-                DenseTree::Node const          &nd = nodes[i];
-                typename EngineT::ResidentNode &rn = table[i];
-                if (DenseTree::is_leaf(nd))
-                {
-                    rn.is_leaf = true;
-                    rn.value   = nd.threshold_or_value;
-                    continue;
-                }
-                rn.feature_id   = nd.feature_id;
-                rn.left         = nd.left;
-                rn.right        = nd.right;
-                rn.default_left = nd.default_left;
-                rn.split_bin =
-                    ds_.bin_of_threshold(nd.feature_id, nd.threshold_or_value);
-            }
-            engine_.resident_finalize(table);
+            // values/leaf_ids D2H.
+            engine_.resident_finalize(
+                resident_node_table<typename EngineT::ResidentNode>(nodes, ds_));
             return;
         }
         if (on_device_)
@@ -1117,10 +1127,12 @@ template <GPULeafEngine EngineT, typename SplitterT> class LeafStep<EngineT, Spl
     }
 
     // A finalized leaf's segment never moves again, so the stamps accumulate
-    // and the tree epilogue replays them in one launch.
+    // and the tree epilogue replays them in one launch. The resident epilogue
+    // routes every row through the finished tree instead, so it reads no leaf
+    // assignment and nothing is stamped.
     void leaf(node_id_t id, uint32_t slot)
     {
-        if (on_device_)
+        if (on_device_ && !engine_.resident_armed())
         {
             stamps_.push_back({slot, id});
         }
@@ -1128,12 +1140,20 @@ template <GPULeafEngine EngineT, typename SplitterT> class LeafStep<EngineT, Spl
 
     // End of tree: stamp every leaf's segment, then hand the node value table
     // to the engine, which maps every resident row to its leaf value on device
-    // and returns values/leaf_ids in two bulk copies.
+    // and returns values/leaf_ids in two bulk copies. In resident mode neither
+    // copy happens: the same route+add epilogue the level plane uses fuses the
+    // score update on device, so the tree's per-row output never exists.
     void end_tree(DenseTree::Nodes const &nodes, train_leaf_values &values,
                   std::vector<node_id_t> &leaf_ids)
     {
         if (!on_device_)
         {
+            return;
+        }
+        if (engine_.resident_armed())
+        {
+            engine_.resident_finalize(
+                resident_node_table<typename EngineT::ResidentNode>(nodes, ds_));
             return;
         }
         engine_.leaf_stamp(stamps_);

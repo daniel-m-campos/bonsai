@@ -256,6 +256,16 @@ std::vector<float> fit_predict(Config const &cfg, RegData const &data, size_t it
     return pred;
 }
 
+// A leaf-budget config for the leaf plane: best-first growth stopped by the
+// budget rather than the depth cap, which is the shape the slot pool sizes
+// itself from.
+Config leaf_cfg()
+{
+    Config cfg                 = reg_cfg();
+    cfg.tree_config.max_leaves = 24;
+    return cfg;
+}
+
 template <typename G> using MseBooster = Booster<MSEObjective, G, AllRowsSampler>;
 template <typename G>
 using MseBernoulliBooster = Booster<MSEObjective, G, BernoulliSampler>;
@@ -573,6 +583,110 @@ TEST_CASE("Resident weighted LogLoss under Bernoulli sampling matches host",
     REQUIRE(accuracy_of(res, data.y) > 0.85);
     REQUIRE(r2_of(res, data.y) == Catch::Approx(r2_of(host, data.y)).margin(3e-3));
     REQUIRE(max_abs_diff(host, res) < 0.35F);
+}
+
+// ---- The leaf plane (docs/architecture/20-cuda-leafwise.md) ------------------
+
+TEST_CASE("Resident MSE matches host-objective GPU (leafwise)", "[cuda][resident]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident MSE needs a usable CUDA device");
+    }
+    auto const data = make_regression(8192, 6, 61);
+    auto const cfg  = leaf_cfg();
+    auto const host = fit_predict<MseBooster<CudaLeafwiseGrower>>(cfg, data, 40, true);
+    auto const res  = fit_predict<MseBooster<CudaLeafwiseGrower>>(cfg, data, 40, false);
+    report("leafwise", host, res, data.y);
+
+    // Both arms build histograms and root sums on the device (identity fit), so
+    // the only divergence is atomic-add ordering: the four-decimal r2 holds.
+    REQUIRE(r2_of(res, data.y) > 0.9);
+    REQUIRE(r2_of(res, data.y) == Catch::Approx(r2_of(host, data.y)).margin(1e-4));
+    REQUIRE(max_abs_diff(host, res) < 2e-2F);
+}
+
+TEST_CASE("Resident leafwise matches the CPU leafwise grower", "[cuda][resident]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident MSE needs a usable CUDA device");
+    }
+    auto const data = make_regression(8192, 6, 67);
+    auto const cfg  = leaf_cfg();
+    // The contract the leaf plane registered under: tolerance-equal predictions
+    // against CPU leafwise, now with the objective resident too.
+    auto const cpu = fit_predict<MseBooster<LeafwiseGrower<CpuHistogramEngine>>>(
+        cfg, data, 40, false);
+    auto const res = fit_predict<MseBooster<CudaLeafwiseGrower>>(cfg, data, 40, false);
+    report("leaf-cpu", cpu, res, data.y);
+
+    REQUIRE(r2_of(res, data.y) > 0.9);
+    REQUIRE(r2_of(res, data.y) == Catch::Approx(r2_of(cpu, data.y)).margin(1e-3));
+    REQUIRE(max_abs_diff(cpu, res) < 0.1F);
+}
+
+TEST_CASE("Leafwise arming refuses a leaf budget the pool cannot hold",
+          "[cuda][resident]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident MSE needs a usable CUDA device");
+    }
+    auto const         data = make_regression(8192, 6, 71);
+    std::vector<float> scores(data.n_rows, 0.0F);
+
+    // The conservative bound is decided once per fit over every feature and the
+    // full leaf budget. This budget prices a pool no device accepts, so leafwise
+    // must not arm — while depthwise, whose gate is the shared-memory budget
+    // alone, still does on the very same config.
+    Config cfg                 = reg_cfg();
+    cfg.tree_config.max_leaves = 1U << 20U;
+    {
+        CudaLeafwiseGrower leaf{cfg.tree_config};
+        REQUIRE_FALSE(leaf.resident_begin(data.built.ds, DeviceObjectiveKind::mse,
+                                          std::span<float const>{scores}, 0.1F));
+        CudaDepthwiseGrower depth{cfg.tree_config};
+        REQUIRE(depth.resident_begin(data.built.ds, DeviceObjectiveKind::mse,
+                                     std::span<float const>{scores}, 0.1F));
+        depth.resident_end(std::span<float>{scores});
+    }
+    // The positive control: the same seam arms on a budget the pool holds.
+    {
+        CudaLeafwiseGrower leaf{leaf_cfg().tree_config};
+        REQUIRE(leaf.resident_begin(data.built.ds, DeviceObjectiveKind::mse,
+                                    std::span<float const>{scores}, 0.1F));
+        leaf.resident_end(std::span<float>{scores});
+    }
+    // A refused arming is not a failed fit: the whole fit runs non-resident,
+    // exactly as it did before the seam existed.
+    auto const res = fit_predict<MseBooster<CudaLeafwiseGrower>>(cfg, data, 40, false);
+    REQUIRE(r2_of(res, data.y) > 0.9);
+}
+
+TEST_CASE("Resident leafwise matches host-objective GPU under Bernoulli sampling",
+          "[cuda][resident]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident MSE needs a usable CUDA device");
+    }
+    auto const data       = make_regression(8192, 6, 73);
+    Config     cfg        = leaf_cfg();
+    cfg.sampler.subsample = 0.7F; // drop ~30% of rows per tree
+
+    auto const host =
+        fit_predict<MseBernoulliBooster<CudaLeafwiseGrower>>(cfg, data, 40, true);
+    auto const res =
+        fit_predict<MseBernoulliBooster<CudaLeafwiseGrower>>(cfg, data, 40, false);
+    report("leaf-bern", host, res, data.y);
+
+    // Same rule the depthwise Bernoulli case documents: a row subset reduces
+    // serially on the host arm and blocked on the device arm, so the band is
+    // wider. Out-of-bag rows are scored by the device route+add either way.
+    REQUIRE(r2_of(res, data.y) > 0.9);
+    REQUIRE(r2_of(res, data.y) == Catch::Approx(r2_of(host, data.y)).margin(3e-3));
+    REQUIRE(max_abs_diff(host, res) < 0.25F);
 }
 
 TEST_CASE("MAE stays on the host path, the escape hatch is a no-op", "[cuda][resident]")

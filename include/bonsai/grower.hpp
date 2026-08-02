@@ -138,10 +138,14 @@ concept GPULeafEngine =
              uint32_t large_slot, std::span<SplitInput const> nodes,
              std::span<uint32_t const> slots, std::span<SplitOutput> out,
              std::span<HistCell> child_sums, std::span<float const> node_values,
-             std::span<float> values, std::span<node_id_t> leaf_ids) {
+             std::span<float> values, std::span<node_id_t> leaf_ids,
+             std::span<float const>                    init_scores,
+             std::span<typename T::ResidentNode const> res_nodes,
+             std::span<float>                          scores_out) {
         typename T::LeafPartOp;
         typename T::LeafRound;
         typename T::LeafStamp;
+        typename T::ResidentNode;
         {
             b.leaf_begin_root(ds, config, grad, hess, root, selected)
         } -> std::convertible_to<bool>;
@@ -150,6 +154,13 @@ concept GPULeafEngine =
         b.leaf_find(ds, config, nodes, slots, out, child_sums);
         b.leaf_stamp(stamps);
         b.finalize_tree(node_values, values, leaf_ids);
+        {
+            b.resident_begin_leaf(ds, config, DeviceObjectiveKind::mse, init_scores,
+                                  1.0F)
+        } -> std::convertible_to<bool>;
+        { b.resident_armed() } -> std::convertible_to<bool>;
+        b.resident_finalize(res_nodes);
+        b.resident_end(scores_out);
     };
 
 struct CpuHistogramEngine
@@ -179,6 +190,27 @@ bool engine_resident_begin(EngineT &engine, Dataset const &ds, DeviceObjectiveKi
     if constexpr (requires { engine.resident_begin(ds, kind, scores, learning_rate); })
     {
         return engine.resident_begin(ds, kind, scores, learning_rate);
+    }
+    else
+    {
+        return false;
+    }
+}
+
+// The leaf plane's arming call: same seam, one more argument. Best-first
+// growth sizes its histogram pool from the tree config, so the once-per-fit
+// capacity test the resident mode needs cannot be decided without it.
+template <typename EngineT>
+bool engine_resident_begin_leaf(EngineT &engine, Dataset const &ds,
+                                TreeConfig const &config, DeviceObjectiveKind kind,
+                                std::span<float const> scores, float learning_rate)
+{
+    if constexpr (requires {
+                      engine.resident_begin_leaf(ds, config, kind, scores,
+                                                 learning_rate);
+                  })
+    {
+        return engine.resident_begin_leaf(ds, config, kind, scores, learning_rate);
     }
     else
     {
@@ -295,17 +327,25 @@ class LeafwiseGrower
         recycled_.set(std::move(values), std::move(leaf_ids));
     }
 
-    // The leafwise grow loop has no resident finalize path, so it never arms
-    // the seam; these keep the booster's generic call sites well-formed.
-    static bool resident_begin(Dataset const &, DeviceObjectiveKind,
-                               std::span<float const>, float)
+    // Device-resident objective seam (see DepthwiseGrower::resident_begin).
+    // The leaf plane's arming carries the tree config: its histogram pool is
+    // sized from the leaf budget, and that capacity must be decided once per
+    // fit rather than per tree.
+    bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
+                        std::span<float const> scores, float learning_rate)
     {
-        return false;
+        resident_ = engine_resident_begin_leaf(engine_, ds, config_, kind, scores,
+                                               learning_rate);
+        return resident_;
     }
-    static void resident_end(std::span<float>) {}
-    static bool resident()
+    void resident_end(std::span<float> scores)
     {
-        return false;
+        engine_resident_end(engine_, scores);
+        resident_ = false;
+    }
+    bool resident() const
+    {
+        return resident_;
     }
 
   private:
@@ -314,6 +354,7 @@ class LeafwiseGrower
     std::vector<std::vector<feature_id_t>> interaction_groups_;
     EngineT                                engine_;
     RecycledOutputs                        recycled_;
+    bool                                   resident_ = false;
 };
 
 } // namespace bonsai

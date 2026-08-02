@@ -215,6 +215,16 @@ bool CudaHistogramEngine::resident_begin(Dataset const &ds, DeviceObjectiveKind 
     return impl_->ctx.resident_begin(ds, kind, initial_scores, learning_rate);
 }
 
+bool CudaHistogramEngine::resident_begin_leaf(Dataset const         &ds,
+                                              TreeConfig const      &config,
+                                              DeviceObjectiveKind    kind,
+                                              std::span<float const> initial_scores,
+                                              float                  learning_rate)
+{
+    return impl_->ctx.resident_begin_leaf(ds, config, kind, initial_scores,
+                                          learning_rate);
+}
+
 bool CudaHistogramEngine::resident_armed() const
 {
     return impl_->ctx.resident_armed();
