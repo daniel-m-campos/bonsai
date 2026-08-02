@@ -72,6 +72,8 @@ Standings: the current claim on one published axis. The registry [`benchmarks/st
 
 Two gates hard-fail, enforced by `scripts/check_standings.py`. Claim time: a decisions-log entry that claims a perf change on an axis carries a `Standings: <axis>` line, and `make docs-check` fails while any tagged entry is newer than the axis's registered state. Release time: the wheels publish job fails unless every axis was refreshed for exactly the version being released, bounding staleness at one release even for untagged changes.
 
+A related rule for the round that produces a claim, not the standings axis it lands on: an accept gate for a per-round or fixed-cost lever must be specified as absolute time, or evaluated at more than one scale, because a fixed saving shrinks as a fraction of the largest cell and a single-scale percentage gate systematically under-credits it.
+
 Reader-facing prose never restates standings digits; only generated tables carry them, so every digit surface is behind a `--check`.
 
 The refresh is one rented pod session, driven locally by `scripts/standings_refresh.py` (decision 96; section 10 of the RunPod runbook): a same-pod A/B of the previous release wheel against HEAD on anchor cells detects whether perf moved, then the standings specs re-measure the axes and the supersession lands as one reviewed PR.
