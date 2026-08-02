@@ -245,6 +245,15 @@ inline bool is_empty_child(SplitInput const &child)
     return child.rows.empty() && child.row_count == 0;
 }
 
+// A node's row count under either plane's contract: host-plane nodes carry
+// rows and a zero row_count, device-plane nodes carry row_count and empty
+// rows. The sanctioned reader alongside is_empty_child, replacing the
+// repeated ternary at every covers[] site.
+inline uint32_t row_count_of(SplitInput const &node)
+{
+    return static_cast<uint32_t>(node.rows.empty() ? node.row_count : node.rows.size());
+}
+
 // The level-transaction vocabulary (decision 53): the same narrative on
 // both planes, with the backend an implementation detail. Step 1 of the
 // migration introduces the types and speaks them from the grow loops;
