@@ -191,8 +191,8 @@ The dispatch grid is 5 objectives × 3 growers × 3 samplers = 45 combos,
 The month after the first addendum closed the speed gap entirely and then
 some; decisions 42–66 in the [decisions log](decisions.md) narrate it.
 
-- **CUDA backend, device-resident training** (decisions 42–54): two GPU
-  growers (`cuda_depthwise`, `cuda_oblivious`) with histograms, rows, and
+- **CUDA backend, device-resident training** (decisions 42–54): three GPU
+  growers (`cuda_leafwise`, `cuda_depthwise`, `cuda_oblivious`) with histograms, rows, and
   split finding on the device; kernels compiled by the project's own clang
   (`-x cuda`, same C++23, same libc++, no nvcc). Models trained on GPU
   predict everywhere.

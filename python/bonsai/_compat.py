@@ -17,14 +17,12 @@ _XGB_OBJECTIVES: dict[str, str] = {
 
 
 def _grower_for_device(grower: str, device: str) -> str:
-    """xgboost's device= mapped onto bonsai's grower dispatch. CUDA has
-    depthwise and oblivious growers; leafwise (the CPU default) runs as
-    cuda_depthwise, the nearest CUDA grower."""
+    """xgboost's device= mapped onto bonsai's grower dispatch. Every growth
+    strategy has a CUDA grower, so the mapping is a prefix: the user's
+    structural choice is never substituted."""
     dev = device.lower()
     if dev in ("cuda", "gpu") or dev.startswith("cuda:"):
-        if grower.startswith("cuda_"):
-            return grower
-        return "cuda_oblivious" if grower == "oblivious" else "cuda_depthwise"
+        return grower if grower.startswith("cuda_") else f"cuda_{grower}"
     if dev == "cpu":
         return grower.removeprefix("cuda_") if grower.startswith("cuda_") else grower
     raise ValueError(f"device must be 'cpu' or 'cuda', got {device!r}")

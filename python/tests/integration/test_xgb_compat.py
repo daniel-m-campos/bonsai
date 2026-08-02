@@ -175,7 +175,8 @@ def test_dart_with_eval_set_raises():
 
 
 def test_device_and_grower_mapping():
-    assert _grower_for_device("leafwise", "cuda") == "cuda_depthwise"
+    assert _grower_for_device("leafwise", "cuda") == "cuda_leafwise"
+    assert _grower_for_device("depthwise", "cuda") == "cuda_depthwise"
     assert _grower_for_device("oblivious", "cuda") == "cuda_oblivious"
     assert _grower_for_device("cuda_oblivious", "cpu") == "oblivious"
     assert _grower_for_device("depthwise", "cpu") == "depthwise"
