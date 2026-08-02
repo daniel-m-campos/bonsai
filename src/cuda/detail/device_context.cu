@@ -942,6 +942,78 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
 
 // --- Leaf plane (docs/architecture/20-cuda-leafwise.md) ----------------------
 
+// TEMPORARY stage-3 diagnosis helpers (see LeafPipeline::ev).
+void CudaDeviceContext::LeafPipeline::rec(int i)
+{
+    if (!ev_ready)
+    {
+        for (auto &e : ev)
+        {
+            check(cudaEventCreate(&e), "leaf profile event create");
+        }
+        ev_ready = true;
+    }
+    check(cudaEventRecord(ev[i]), "leaf profile event record");
+}
+
+namespace
+{
+double ev_span(cudaEvent_t a, cudaEvent_t b)
+{
+    float ms = 0.0F;
+    check(cudaEventElapsedTime(&ms, a, b), "leaf profile event elapsed");
+    return static_cast<double>(ms) / 1e3;
+}
+} // namespace
+
+void CudaDeviceContext::LeafPipeline::read_part(ProfileCounters &prof)
+{
+    prof.lf_route_s += ev_span(ev[0], ev[1]);
+    prof.lf_scan_s += ev_span(ev[1], ev[2]);
+    prof.lf_scatter_s += ev_span(ev[2], ev[3]);
+    prof.lf_copyback_s += ev_span(ev[3], ev[4]);
+    ++prof.lf_parts;
+    part_done = true;
+}
+
+void CudaDeviceContext::LeafPipeline::read_find(ProfileCounters &prof)
+{
+    if (build_done)
+    {
+        if (part_done)
+        {
+            prof.lf_gap_ph_s += ev_span(ev[4], ev[5]);
+        }
+        prof.lf_hist_s += ev_span(ev[5], ev[6]);
+        prof.lf_sub_s += ev_span(ev[6], ev[7]);
+        prof.lf_gap_hf_s += ev_span(ev[7], ev[8]);
+        ++prof.lf_builds;
+        build_done = false;
+        part_done  = false;
+    }
+    prof.lf_findk_s += ev_span(ev[8], ev[9]);
+    prof.lf_reduce_s += ev_span(ev[9], ev[10]);
+    ++prof.lf_finds;
+}
+
+void CudaDeviceContext::LeafPipeline::read_root(ProfileCounters &prof)
+{
+    prof.lf_root_memset_s += ev_span(ev[11], ev[12]);
+    prof.lf_root_pre_s += ev_span(ev[12], ev[13]);
+    prof.lf_root_hist_s += ev_span(ev[13], ev[14]);
+}
+
+CudaDeviceContext::LeafPipeline::~LeafPipeline()
+{
+    if (ev_ready)
+    {
+        for (auto &e : ev)
+        {
+            cudaEventDestroy(e);
+        }
+    }
+}
+
 bool CudaDeviceContext::leaf_pool_ok(size_t bytes) const
 {
     size_t free_bytes = 0;
@@ -1008,9 +1080,17 @@ bool CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     leaf.slot_offsets.assign(max_slots, 0);
     leaf.slot_counts.assign(max_slots, 0);
     leaf.pool.reserve(max_slots * lvl.slot_doubles());
+    if (prof_counters.enabled)
+    {
+        leaf.rec(11);
+    }
     check(cudaMemset(leaf.pool.data(), 0,
                      max_slots * lvl.slot_doubles() * sizeof(double)),
           "zero leaf pool");
+    if (prof_counters.enabled)
+    {
+        leaf.rec(12);
+    }
 
     bool const     identity = root.rows.empty() && root.row_count == data.key.n_rows;
     uint32_t const n        = stage_root_rows(root, identity);
@@ -1036,6 +1116,10 @@ bool CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     sum_gh_pass2_kernel<<<dim3(1), dim3(32)>>>(lvl.sum_partial.data(), k_sum_blocks,
                                                lvl.sum_out.data());
     check(cudaGetLastError(), "leaf root sum pass2 launch");
+    if (prof_counters.enabled)
+    {
+        leaf.rec(13);
+    }
 
     auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
     dim3 const grid(lvl.n_selected, 1, n_chunks);
@@ -1049,6 +1133,10 @@ bool CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
                 lvl.stride, lvl.slots.device());
         });
     check(cudaGetLastError(), "leaf root hist launch");
+    if (prof_counters.enabled)
+    {
+        leaf.rec(14);
+    }
     lvl.leaf_by_row.reserve(ds.n_rows());
 
     auto    sums_lap = prof_counters.lap();
@@ -1056,6 +1144,10 @@ bool CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     check(
         cudaMemcpy(&sums, lvl.sum_out.data(), sizeof(double2), cudaMemcpyDeviceToHost),
         "leaf root sums fetch");
+    if (prof_counters.enabled)
+    {
+        leaf.read_root(prof_counters);
+    }
     root.sums      = {.sum_grad = static_cast<float>(sums.x),
                       .sum_hess = static_cast<float>(sums.y)};
     root.row_count = n;
@@ -1088,6 +1180,10 @@ CudaDeviceContext::leaf_split(Dataset const & /*ds*/,
     lap(prof.part_stage_s);
 
     dim3 const grid(max_chunks, 1);
+    if (prof.enabled)
+    {
+        leaf.rec(0);
+    }
     data.dispatch_bins(
         [&](auto const *bins)
         {
@@ -1097,9 +1193,17 @@ CudaDeviceContext::leaf_split(Dataset const & /*ds*/,
                 lvl.block_counts.data());
         });
     check(cudaGetLastError(), "leaf route launch");
+    if (prof.enabled)
+    {
+        leaf.rec(1);
+    }
     seg_scan_kernel<<<dim3(1), dim3(32)>>>(lvl.block_counts.data(), max_chunks,
                                            lvl.nl_dev.device());
     check(cudaGetLastError(), "leaf seg scan launch");
+    if (prof.enabled)
+    {
+        leaf.rec(2);
+    }
     lvl.rows_b.reserve(data.key.n_rows);
     lvl.gh_b.reserve(data.key.n_rows);
     scatter_kernel<<<grid, dim3(k_part_block)>>>(
@@ -1107,6 +1211,10 @@ CudaDeviceContext::leaf_split(Dataset const & /*ds*/,
         lvl.block_counts.data(), lvl.nl_dev.device(), max_chunks, lvl.rows_b.data(),
         lvl.gh_b.data());
     check(cudaGetLastError(), "leaf scatter launch");
+    if (prof.enabled)
+    {
+        leaf.rec(3);
+    }
     // Non-swapping advance: only this segment's range travels back into the
     // primary buffers, so every other leaf's rows stay exactly where they are.
     check(cudaMemcpyAsync(lvl.rows.data() + offset, lvl.rows_b.data() + offset,
@@ -1117,10 +1225,15 @@ CudaDeviceContext::leaf_split(Dataset const & /*ds*/,
                           static_cast<size_t>(count) * sizeof(float2),
                           cudaMemcpyDeviceToDevice),
           "leaf gh copy-back");
+    if (prof.enabled)
+    {
+        leaf.rec(4);
+    }
     lvl.nl_dev.fetch(1); // DtoH, implicit sync
     if (prof.enabled)
     {
         ++prof.launches;
+        leaf.read_part(prof);
     }
     lap(prof.gpu_s);
 
@@ -1172,6 +1285,10 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
 
     // Same <512-row policy as the level plane: below the cutoff the shared
     // stage's fixed per-(node, feature) cost dominates the row visits.
+    if (prof.enabled)
+    {
+        leaf.rec(5);
+    }
     data.dispatch_bins(
         [&](auto const *bins)
         {
@@ -1197,6 +1314,10 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
             }
         });
     check(cudaGetLastError(), "leaf hist launch");
+    if (prof.enabled)
+    {
+        leaf.rec(6);
+    }
     auto const sd = static_cast<uint32_t>(lvl.slot_doubles());
     subtract_inplace_kernel<<<dim3(std::clamp<uint32_t>((sd + 255) / 256, 1, 256)),
                               dim3(256)>>>(leaf.pool.data(), large_slot, small_slot,
@@ -1204,6 +1325,8 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
     check(cudaGetLastError(), "leaf subtract launch");
     if (prof.enabled)
     {
+        leaf.rec(7);
+        leaf.build_done = true;
         ++prof.launches;
         prof.gpu_nodes += 2;
     }
@@ -1227,6 +1350,10 @@ void CudaDeviceContext::leaf_find(Dataset const &ds, TreeConfig const &config,
 
     lvl.feat_best.reserve(static_cast<size_t>(n) * lvl.n_selected);
     lvl.node_best.reserve(n);
+    if (prof.enabled)
+    {
+        leaf.rec(8);
+    }
     find_kernel<<<dim3(lvl.n_selected, n), dim3(32)>>>(
         leaf.pool.data(), lvl.features.device(), data.n_bins_ptr(),
         lvl.node_sums.device(), lvl.node_bounds.device(),
@@ -1235,13 +1362,22 @@ void CudaDeviceContext::leaf_find(Dataset const &ds, TreeConfig const &config,
         config.min_child_hess, config.min_gain_to_split, lvl.feat_best.data(),
         leaf.find_slots.device());
     check(cudaGetLastError(), "leaf find launch");
+    if (prof.enabled)
+    {
+        leaf.rec(9);
+    }
     reduce_kernel<<<dim3(n), dim3(32)>>>(lvl.feat_best.data(), lvl.n_selected,
                                          lvl.node_best.device());
     check(cudaGetLastError(), "leaf reduce launch");
+    if (prof.enabled)
+    {
+        leaf.rec(10);
+    }
     lvl.node_best.fetch(n); // DtoH, implicit sync
     if (prof.enabled)
     {
         ++prof.launches;
+        leaf.read_find(prof);
     }
     lap(prof.gpu_s);
 

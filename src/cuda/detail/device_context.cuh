@@ -261,6 +261,21 @@ struct CudaDeviceContext
         Staged<uint32_t>      find_slots; // find's slot indirection table
         uint32_t              next_slot = 0;
         uint32_t              max_slots = 0;
+
+        // TEMPORARY stage-3 diagnosis: one event per kernel boundary of the
+        // leafwise round, recorded at launch and read at the sync that already
+        // drains them (leaf_split's n_left fetch, leaf_find's node_best fetch,
+        // leaf_begin_root's sums fetch), so measuring never serializes.
+        // 0..4 partition chain, 5..7 build, 8..10 find, 11..14 root.
+        cudaEvent_t ev[16]      = {};
+        bool        ev_ready    = false;
+        bool        part_done   = false;
+        bool        build_done  = false;
+        void        rec(int i);
+        void        read_part(ProfileCounters &prof);
+        void        read_find(ProfileCounters &prof);
+        void        read_root(ProfileCounters &prof);
+        ~LeafPipeline();
     };
 
     // Device-resident objective plane: labels and the per-row score vector live

@@ -35,6 +35,14 @@ struct ProfileCounters
     // upload, and the fused route+score-update that replaces the finalize D2H.
     double obj_kernel_s = 0, score_kernel_s = 0;
     size_t launches = 0, gpu_nodes = 0, cpu_calls = 0;
+    // TEMPORARY leaf-plane device decomposition (stage 3 diagnosis, not for
+    // merge): event pairs spanning every kernel of the leafwise round plus the
+    // two device-idle gaps between them.
+    double lf_route_s = 0, lf_scan_s = 0, lf_scatter_s = 0, lf_copyback_s = 0;
+    double lf_gap_ph_s = 0, lf_hist_s = 0, lf_sub_s = 0, lf_gap_hf_s = 0;
+    double lf_findk_s = 0, lf_reduce_s = 0;
+    double lf_root_memset_s = 0, lf_root_pre_s = 0, lf_root_hist_s = 0;
+    size_t lf_parts = 0, lf_builds = 0, lf_finds = 0;
 
     ProfileCounters()                                       = default;
     ProfileCounters(ProfileCounters const &)                = delete;
@@ -98,6 +106,16 @@ struct ProfileCounters
                          "cuda-resident-decomp: obj_kernel={:.2f}s "
                          "score_kernel={:.2f}s",
                          obj_kernel_s, score_kernel_s);
+            std::println(stderr,
+                         "cuda-leaf-dev: route={:.3f}s scan={:.3f}s "
+                         "scatter={:.3f}s copyback={:.3f}s gap_ph={:.3f}s "
+                         "hist={:.3f}s sub={:.3f}s gap_hf={:.3f}s "
+                         "findk={:.3f}s reduce={:.3f}s root_memset={:.3f}s root_pre={:.3f}s "
+                         "root_hist={:.3f}s | parts={} builds={} finds={}",
+                         lf_route_s, lf_scan_s, lf_scatter_s, lf_copyback_s,
+                         lf_gap_ph_s, lf_hist_s, lf_sub_s, lf_gap_hf_s, lf_findk_s,
+                         lf_reduce_s, lf_root_memset_s, lf_root_pre_s, lf_root_hist_s, lf_parts,
+                         lf_builds, lf_finds);
         }
         catch (...)
         {
