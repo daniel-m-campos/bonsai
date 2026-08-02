@@ -11,6 +11,7 @@
 
 #include <cuda.h>
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -215,6 +216,12 @@ template <typename T> class PinnedStaged
     ~PinnedStaged()
     {
         cudaFreeHost(host_);
+#ifndef NDEBUG
+        if (fence_ != nullptr)
+        {
+            cudaEventDestroy(fence_);
+        }
+#endif
     }
     PinnedStaged(PinnedStaged const &)            = delete;
     PinnedStaged &operator=(PinnedStaged const &) = delete;
@@ -230,6 +237,7 @@ template <typename T> class PinnedStaged
 
     void reserve(size_t n)
     {
+        assert_fenced();
         dev_.reserve(n);
         if (n <= capacity_)
         {
@@ -245,15 +253,38 @@ template <typename T> class PinnedStaged
     // Host -> device, asynchronous on the null stream. reserve(n) first.
     void sync(size_t n) const
     {
+        assert_fenced();
         check(
             cudaMemcpyAsync(dev_.data(), host_, n * sizeof(T), cudaMemcpyHostToDevice),
             "pinned upload");
+#ifndef NDEBUG
+        if (fence_ == nullptr)
+        {
+            check(cudaEventCreateWithFlags(&fence_, cudaEventDisableTiming),
+                  "pinned fence event");
+        }
+        check(cudaEventRecord(fence_), "pinned fence record");
+#endif
     }
 
   private:
+    // Debug-only: the aliasing contract above (host_ may only be rewritten
+    // once the prior upload has fenced) is checked, never enforced in
+    // release. assert() discards its argument under NDEBUG, so fence_ (also
+    // debug-only) is never referenced by a release build.
+    void assert_fenced() const
+    {
+        assert((fence_ == nullptr || cudaEventQuery(fence_) == cudaSuccess) &&
+               "PinnedStaged: host buffer rewritten before the prior upload's "
+               "blocking copy fenced it");
+    }
+
     T              *host_     = nullptr;
     size_t          capacity_ = 0;
     DeviceBuffer<T> dev_;
+#ifndef NDEBUG
+    mutable cudaEvent_t fence_ = nullptr;
+#endif
 };
 
 // A host staging vector paired with its device mirror — the shape that recurs
