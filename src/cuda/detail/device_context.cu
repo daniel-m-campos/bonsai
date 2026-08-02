@@ -1025,9 +1025,9 @@ bool CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
 
     lvl.gh_ordered.reserve(n);
     gather(grads.gh.data(), lvl.rows.data(), n, lvl.gh_ordered.data());
-    // Deterministic two-pass device reduce over the gathered segment, queued
-    // ahead of the histogram build so the 16B fetch below drains only these
-    // two small kernels.
+    // Deterministic two-pass device reduce over the gathered segment. The 16B
+    // fetch below waits behind everything queued on the stream, root histogram
+    // included, so its host lap carries the root build's runtime.
     lvl.sum_partial.reserve(k_sum_blocks);
     lvl.sum_out.reserve(1);
     sum_gh_pass1_kernel<<<dim3(k_sum_blocks), dim3(256)>>>(lvl.gh_ordered.data(), n,
