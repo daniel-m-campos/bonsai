@@ -176,17 +176,17 @@ class CudaHistogramEngine
     // What one partition produced. Both counts nonzero means the split stands
     // and the children own the named slots; a zero count means the partition
     // emptied one side and no slot was taken (the caller demotes the split
-    // back to a leaf, and the parent keeps its slot and segment).
+    // back to a leaf, and the parent keeps its slot and segment). The smaller
+    // child, and its segment, are derivable from the counts and slot_offsets/
+    // slot_counts, so leaf_build takes them directly instead of through this
+    // struct (LeafStep::find_children derives them, matching leaf_split's
+    // device-side tie rule: equal counts favor the left child).
     struct LeafRound
     {
-        uint32_t left_slot    = 0;
-        uint32_t right_slot   = 0;
-        uint32_t left_count   = 0;
-        uint32_t right_count  = 0;
-        uint32_t small_slot   = 0; // the fresh slot the smaller child took
-        uint32_t small_offset = 0; // its segment, the histogram build's input
-        uint32_t small_count  = 0;
-        uint32_t large_slot   = 0; // the parent's slot, subtracted in place
+        uint32_t left_slot   = 0;
+        uint32_t right_slot  = 0;
+        uint32_t left_count  = 0;
+        uint32_t right_count = 0;
     };
 
     // Opens the tree's slot pool and builds the root into slot 0, filling
@@ -199,8 +199,10 @@ class CudaHistogramEngine
     // Routes one leaf's rows into two adjacent subranges of its own segment.
     LeafRound leaf_split(Dataset const &ds, LeafPartOp const &op);
     // Builds the smaller child's histogram and derives the larger by in-place
-    // subtraction; call only for a round both counts survived.
-    void leaf_build(Dataset const &ds, LeafRound const &round);
+    // subtraction; call only for a round both counts survived. small_slot's
+    // segment (offset, count) is read from leaf.slot_offsets/slot_counts,
+    // written by leaf_split.
+    void leaf_build(Dataset const &ds, uint32_t small_slot, uint32_t large_slot);
     // Best split per named pool slot (slots[i] holds nodes[i]'s histogram);
     // child_sums receives the winning cut's (left, right) totals, 2 per node.
     void leaf_find(Dataset const &ds, TreeConfig const &config,
