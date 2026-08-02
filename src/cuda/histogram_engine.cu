@@ -188,9 +188,10 @@ CudaHistogramEngine::LeafRound CudaHistogramEngine::leaf_split(Dataset const    
     return impl_->ctx.leaf_split(ds, op);
 }
 
-void CudaHistogramEngine::leaf_build(Dataset const &ds, LeafRound const &round)
+void CudaHistogramEngine::leaf_build(Dataset const &ds, uint32_t small_slot,
+                                     uint32_t large_slot)
 {
-    impl_->ctx.leaf_build(ds, round);
+    impl_->ctx.leaf_build(ds, small_slot, large_slot);
 }
 
 void CudaHistogramEngine::leaf_find(Dataset const &ds, TreeConfig const &config,

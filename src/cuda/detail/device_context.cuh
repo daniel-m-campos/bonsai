@@ -367,8 +367,9 @@ struct CudaDeviceContext
     CudaHistogramEngine::LeafRound
     leaf_split(Dataset const &ds, CudaHistogramEngine::LeafPartOp const &op);
     // Builds the smaller child into its fresh slot and derives the larger by
-    // in-place subtraction in the slot it inherited.
-    void leaf_build(Dataset const &ds, CudaHistogramEngine::LeafRound const &round);
+    // in-place subtraction in the slot it inherited. small_slot's segment
+    // (offset, count) is read from leaf.slot_offsets/slot_counts.
+    void leaf_build(Dataset const &ds, uint32_t small_slot, uint32_t large_slot);
     // Best split per named pool slot; child_sums receives the winning cut's
     // (left, right) totals, 2 cells per node, as find_splits_many does.
     void leaf_find(Dataset const &ds, TreeConfig const &config,

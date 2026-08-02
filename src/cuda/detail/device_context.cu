@@ -1136,14 +1136,12 @@ CudaDeviceContext::leaf_split(Dataset const & /*ds*/,
     {
         throw std::runtime_error("cuda: leaf histogram pool exhausted");
     }
+    // Tie goes to the left child: LeafStep::find_children reproduces this
+    // choice on the host from left_count/right_count alone.
     bool const     left_small = round.left_count <= round.right_count;
     uint32_t const fresh      = leaf.next_slot++;
     round.left_slot           = left_small ? fresh : op.parent_slot;
     round.right_slot          = left_small ? op.parent_slot : fresh;
-    round.small_slot          = fresh;
-    round.large_slot          = op.parent_slot;
-    round.small_offset        = left_small ? offset : offset + nl;
-    round.small_count         = left_small ? round.left_count : round.right_count;
     // The segment map is persistent and per slot: one split rewrites exactly
     // one range into two adjacent subranges.
     leaf.slot_offsets[round.left_slot]  = offset;
@@ -1153,17 +1151,22 @@ CudaDeviceContext::leaf_split(Dataset const & /*ds*/,
     return round;
 }
 
-void CudaDeviceContext::leaf_build(Dataset const                        &ds,
-                                   CudaHistogramEngine::LeafRound const &round)
+void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
+                                   uint32_t large_slot)
 {
     auto &prof = prof_counters;
     auto  lap  = prof.lap();
 
-    lvl.row_offsets.host.assign(1, round.small_offset);
+    // The smaller child's segment: leaf_split wrote it into the persistent
+    // map, keyed by the slot it assigned (round.left_slot or right_slot).
+    uint32_t const small_offset = leaf.slot_offsets[small_slot];
+    uint32_t const small_count  = leaf.slot_counts[small_slot];
+
+    lvl.row_offsets.host.assign(1, small_offset);
     lvl.row_offsets.sync();
-    lvl.row_counts.host.assign(1, round.small_count);
+    lvl.row_counts.host.assign(1, small_count);
     lvl.row_counts.sync();
-    lvl.slots.host.assign(1, round.small_slot);
+    lvl.slots.host.assign(1, small_slot);
     lvl.slots.sync();
     lap(prof.adv_stage_s);
 
@@ -1172,10 +1175,10 @@ void CudaDeviceContext::leaf_build(Dataset const                        &ds,
     data.dispatch_bins(
         [&](auto const *bins)
         {
-            if (round.small_count >= k_min_gpu_rows)
+            if (small_count >= k_min_gpu_rows)
             {
                 auto const n_chunks =
-                    std::clamp<uint32_t>((round.small_count + 32767) / 32768, 1, 64);
+                    std::clamp<uint32_t>((small_count + 32767) / 32768, 1, 64);
                 dim3 const grid(lvl.n_selected, 1, n_chunks);
                 hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
                     bins, lvl.gh_ordered.data(), lvl.rows.data(),
@@ -1196,8 +1199,8 @@ void CudaDeviceContext::leaf_build(Dataset const                        &ds,
     check(cudaGetLastError(), "leaf hist launch");
     auto const sd = static_cast<uint32_t>(lvl.slot_doubles());
     subtract_inplace_kernel<<<dim3(std::clamp<uint32_t>((sd + 255) / 256, 1, 256)),
-                              dim3(256)>>>(leaf.pool.data(), round.large_slot,
-                                           round.small_slot, sd);
+                              dim3(256)>>>(leaf.pool.data(), large_slot, small_slot,
+                                           sd);
     check(cudaGetLastError(), "leaf subtract launch");
     if (prof.enabled)
     {

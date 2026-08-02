@@ -1051,16 +1051,16 @@ template <GPULeafEngine EngineT, typename SplitterT> class LeafStep<EngineT, Spl
         GrowProfiler::Lap                  lap;
         typename EngineT::LeafPartOp const op{c.slot, c.split.feature_id,
                                               c.split.bin_id, c.split.default_left};
-        round_ = engine_.leaf_split(ds_, op);
-        ChildPair pair;
+        auto const                         round = engine_.leaf_split(ds_, op);
+        ChildPair                          pair;
         pair.depth              = static_cast<uint8_t>(c.depth + 1);
         pair.nodes[0].id        = left_id;
-        pair.nodes[0].row_count = round_.left_count;
+        pair.nodes[0].row_count = round.left_count;
         pair.nodes[0].sums      = c.left_sums;
         pair.nodes[1].id        = right_id;
-        pair.nodes[1].row_count = round_.right_count;
+        pair.nodes[1].row_count = round.right_count;
         pair.nodes[1].sums      = c.right_sums;
-        pair.slots              = {round_.left_slot, round_.right_slot};
+        pair.slots              = {round.left_slot, round.right_slot};
         lap(GrowProfiler::instance().partition_s);
         return pair;
     }
@@ -1094,7 +1094,13 @@ template <GPULeafEngine EngineT, typename SplitterT> class LeafStep<EngineT, Spl
             return;
         }
         GrowProfiler::Lap lap;
-        engine_.leaf_build(ds_, round_);
+        // The smaller child built the fresh slot in split_children; tie goes
+        // to the left child, matching leaf_split's device-side choice
+        // (CudaDeviceContext::leaf_split: left_small = left_count <= right_count).
+        bool const     left_small = pair.nodes[0].row_count <= pair.nodes[1].row_count;
+        uint32_t const small_slot = left_small ? pair.slots[0] : pair.slots[1];
+        uint32_t const large_slot = left_small ? pair.slots[1] : pair.slots[0];
+        engine_.leaf_build(ds_, small_slot, large_slot);
         lap(GrowProfiler::instance().populate_s);
         engine_.leaf_find(ds_, config_, pair.nodes, pair.slots, pair.splits,
                           pair.child_sums);
@@ -1142,7 +1148,6 @@ template <GPULeafEngine EngineT, typename SplitterT> class LeafStep<EngineT, Spl
     floats_view                              grad_;
     floats_view                              hess_;
     feature_view                             selected_;
-    typename EngineT::LeafRound              round_{};
     std::vector<typename EngineT::LeafStamp> stamps_;
     bool                                     on_device_ = false;
 };
