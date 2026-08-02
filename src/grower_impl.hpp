@@ -308,10 +308,8 @@ inline void commit_children(Dataset const &ds, TreeConfig const &config,
         SplitInput &left  = d.p.left;
         SplitInput &right = d.p.right;
         // Host children carry rows; device-resident children carry row_count.
-        covers[d.left_id] =
-            static_cast<float>(left.rows.empty() ? left.row_count : left.rows.size());
-        covers[d.right_id] = static_cast<float>(right.rows.empty() ? right.row_count
-                                                                   : right.rows.size());
+        covers[d.left_id]  = static_cast<float>(row_count_of(left));
+        covers[d.right_id] = static_cast<float>(row_count_of(right));
         propagate_monotone_bounds(d.parent_lo, d.parent_hi, d.split, config, left,
                                   right);
         propagate_interaction_state(groups, d.parent_path, d.split.feature_id,
@@ -588,8 +586,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
         float const v = gd::leaf_value(leaf.total_grad(), leaf.total_hess(), config_);
         leaf_table.push_back(v);
         // Device-plane rows are resident (rows empty, row_count set).
-        leaf_covers.push_back(
-            static_cast<float>(leaf.row_count > 0 ? leaf.row_count : leaf.rows.size()));
+        leaf_covers.push_back(static_cast<float>(gd::row_count_of(leaf)));
     }
     // Host plane stamps each leaf's rows; device plane stamps the resident
     // segments and downloads the per-row assignment. Lapped as finalize:
@@ -727,10 +724,8 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
             continue;
         }
         // Host children carry rows; device-resident children carry row_count.
-        covers[left_id] =
-            static_cast<float>(left.rows.empty() ? left.row_count : left.rows.size());
-        covers[right_id] = static_cast<float>(right.rows.empty() ? right.row_count
-                                                                 : right.rows.size());
+        covers[left_id]  = static_cast<float>(gd::row_count_of(left));
+        covers[right_id] = static_cast<float>(gd::row_count_of(right));
         gd::propagate_monotone_bounds(parent_lo, parent_hi, c.split, config_, left,
                                       right);
         gd::propagate_interaction_state(interaction_groups_, parent_path,
