@@ -37,6 +37,18 @@ The host control plane between transactions is [`src/level_step.hpp`](../../src/
 
 What this buys, measured (same-pod L40S re-baseline, 16M rows × 100 features × 100 trees, `fit()` timed end-to-end including binning): **bonsai 18.4s oblivious / 20.5s depthwise vs XGBoost-GPU 19.9s, at a third of the host memory (7.0GB vs 22.2GB)**, rendered at [Fit at scale](../method/results/perf-scale.md). The path from 3× slower to ahead is [chapter 11](11-performance-engineering.md).
 
+## Leaf-wise on the GPU
+
+`cuda_leafwise` grows the `leafwise` grower's best-first strategy fully on device: histograms live in a per-tree slot pool instead of the level plane's ping-pong buffers, and the gain heap that picks which leaf to expand next stays on the host, the same structure the CPU leafwise grower already uses. The deep dive, including the slot-pool layout and the round-by-round kernel sequence, is [architecture/20](../architecture/20-cuda-leafwise.md).
+
+It is what `device="cuda"` runs by default: the Python estimators default to `grower="leafwise"`, and the device mapping is a prefix (`leafwise` becomes `cuda_leafwise`) that preserves the growth strategy rather than substituting one. Pass `grower="depthwise"` (CPU) or `grower="cuda_depthwise"` (GPU) explicitly to select the fastest plane at matched knobs instead.
+
+Leaf-wise and depthwise agree structurally at a capped depth with a full leaf budget: the tree that comes out is the same tree either way. The two strategies only differentiate at uncapped depth or under a small leaf budget, where best-first order decides which nodes get split at all.
+
+Measured standing (decision 98, same-pod L40S, 100 iters, 256 leaves): `cuda_leafwise` fits 250k/1M/4M/16M rows x 100 features in 2.1/3.2/7.6/24.4 s against LightGBM's CUDA leaf-wise at 6.6/7.6/12.3/31.9 s. Uncapped at 16M, where best-first structurally diverges from depthwise, bonsai reads 32.3 s against LightGBM's 31.7 s at matched r2: LightGBM is about 2% faster there, honestly reported, even though bonsai stays ahead everywhere depth is capped.
+
+The device-resident objective (MSE, LogLoss, or Poisson; no DART; all-rows or Bernoulli sampling) arms for `cuda_leafwise` the same way it arms for `cuda_depthwise` and `cuda_oblivious`. There is nothing to configure: an eligible fit keeps labels and scores on the device for the whole fit, and `BONSAI_HOST_OBJECTIVE=1` forces the host path.
+
 ## Try it
 
 No CUDA device on your machine? The [RunPod runbook](https://github.com/daniel-m-campos/bonsai/blob/main/docs/ops/runpod-runbook.md) gets you a validated GPU session for well under a dollar.

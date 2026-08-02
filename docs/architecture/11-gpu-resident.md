@@ -1,6 +1,6 @@
 # 11: GPU-resident growing
 
-> **Status:** landed (decisions 40–42). Training for `cuda_depthwise` and `cuda_oblivious` is fully device-resident: histograms, rows, and split finding live on the GPU, and only split decisions and child counts cross the bus per level. The grower-side seam is the `LevelStep` strategy of [`12-grower-backend.md`](12-grower-backend.md) (decision 41); this doc owns the device plane: buffers, kernels, precision, and measured results. Historical design narrative: [reviews/2026-07-03-design-review-cuda.md](https://github.com/daniel-m-campos/bonsai/blob/main/docs/reviews/2026-07-03-design-review-cuda.md).
+> **Status:** landed (decisions 40–42). Training for `cuda_depthwise` and `cuda_oblivious` is fully device-resident: histograms, rows, and split finding live on the GPU, and only split decisions and child counts cross the bus per level. The grower-side seam is the `LevelStep` strategy of [`12-grower-backend.md`](12-grower-backend.md) (decision 41); this doc owns the device plane: buffers, kernels, precision, and measured results. Historical design narrative: [reviews/2026-07-03-design-review-cuda.md](https://github.com/daniel-m-campos/bonsai/blob/main/docs/reviews/2026-07-03-design-review-cuda.md). The device leafwise this doc's leaf-wise row called for has since landed and won: `cuda_leafwise` is registered, admitted (decision 97), stage 3 closed (decision 98), and it beats LightGBM's CUDA leaf-wise same-pod at every ladder cell; see [`20-cuda-leafwise.md`](20-cuda-leafwise.md).
 
 ## Why device-resident
 
