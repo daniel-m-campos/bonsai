@@ -258,9 +258,21 @@ struct CudaDeviceContext
         DeviceBuffer<double>  pool;         // max_slots * n_selected * stride
         std::vector<uint32_t> slot_offsets; // per slot: segment start in rows
         std::vector<uint32_t> slot_counts;
-        Staged<uint32_t>      find_slots; // find's slot indirection table
-        uint32_t              next_slot = 0;
-        uint32_t              max_slots = 0;
+        // Per-round staging. Pinned and asynchronous because the round's whole
+        // host residue is these uploads: a pageable copy stream-syncs before it
+        // starts, so eight of them per round drain the pipeline eight times.
+        // Each buffer is written once per round, downstream of the blocking
+        // fetch that fenced the previous round's upload of it.
+        PinnedStaged<PartOpDev> part_op;    // the popped leaf's partition op
+        PinnedStaged<uint32_t>  build_seg;  // hist inputs: offset, count, slot
+        PinnedStaged<double>    find_stats; // per node: 2 sums, then 2 bounds
+        PinnedStaged<uint32_t>  find_slots; // find's slot indirection table
+        // Per-feature monotone directions, fit-constant and uploaded once per
+        // tree: the level plane restages them per level, which on a plane that
+        // finds twice per split would be one upload per round.
+        Staged<int> monotone;
+        uint32_t    next_slot = 0;
+        uint32_t    max_slots = 0;
     };
 
     // Device-resident objective plane: labels and the per-row score vector live
@@ -378,6 +390,11 @@ struct CudaDeviceContext
     // in-place subtraction in the slot it inherited. small_slot's segment
     // (offset, count) is read from leaf.slot_offsets/slot_counts.
     void leaf_build(Dataset const &ds, uint32_t small_slot, uint32_t large_slot);
+    // The leaf plane's own find staging: the level plane's stage_find_inputs
+    // in packed pinned form, minus the monotone vector the tree open already
+    // uploaded. Returns whether any node carried an allowed-feature mask.
+    bool leaf_stage_find(std::span<SplitInput const> nodes,
+                         std::span<uint32_t const>   slots);
     // Best split per named pool slot; child_sums receives the winning cut's
     // (left, right) totals, 2 cells per node, as find_splits_many does.
     void leaf_find(Dataset const &ds, TreeConfig const &config,
