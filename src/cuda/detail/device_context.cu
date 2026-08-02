@@ -1220,6 +1220,15 @@ void CudaDeviceContext::leaf_find(Dataset const &ds, TreeConfig const &config,
     auto      &prof = prof_counters;
     auto       lap  = prof.lap();
 
+    if (prof.enabled)
+    {
+        // Same peel as find_splits_many and find_level_split: without it, the
+        // first Staged sync below absorbs leaf_build's in-flight histogram and
+        // subtract kernels into find_stage, misattributing device compute as
+        // staging.
+        check(cudaDeviceSynchronize(), "profile wait");
+        lap(prof.gpu_wait_s);
+    }
     bool const any_mask = lvl.stage_find_inputs(nodes, config, ds);
     leaf.find_slots.host.assign(slots.begin(), slots.end());
     leaf.find_slots.sync();
