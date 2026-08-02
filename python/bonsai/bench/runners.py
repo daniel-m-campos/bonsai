@@ -21,11 +21,15 @@ from bonsai.bench.variants import Device, Lib, resolve
 
 
 def run_bonsai(spec, X, y, Xte, yte) -> dict:
-    """Fit/predict one cell with bonsai's two-step Dataset + train form.
+    """Fit/predict one cell with bonsai's fused train(pairs, X, y) call.
 
-    bin_mapper.* pairs are rejected by train(pairs, dataset) (decision 65):
-    max_bin moves to the Dataset constructor instead, and the rest of the
-    pairs go to train() unchanged.
+    The fused call is the measured path because binning happens inside
+    train(), where the grower name and the thread count are known: cuda
+    growers bin on the device there, and the binning pass honors
+    parallel.n_threads. A prebuilt Dataset knows neither, so timing its
+    construction as ingest would measure a pipeline bonsai never runs on
+    GPU. bonsai therefore reports no ingest/train breakdown: the measured
+    path wins over the breakdown.
     """
     import bonsai
     grower = spec[runlog.Row.VARIANT].removeprefix("bonsai_")
@@ -33,7 +37,7 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
         raise RuntimeError("unsupported: cuda grower without a CUDA device/build")
     c = spec[runlog.Row.CELL]
     task = c.get("task", "reg")
-    pairs = [(k, v) for k, v in rp.bonsai_core(
+    pairs = rp.bonsai_core(
         learning_rate=c["lr"], max_depth=c["depth"],
         num_leaves=rp.num_leaves_of(c),
         min_data_in_leaf=c.get("min_data_in_leaf", rp.SCALING["min_data_in_leaf"]),
@@ -41,19 +45,14 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
         max_bin=c["bins"], seed=c["seed"],
         n_iters=c["iters"], n_threads=spec[runlog.Row.THREADS], grower=grower,
         objective="logloss" if task == "binary" else "mse")
-              if not k.startswith("bin_mapper.")]
-    fit_t0 = t0 = time.perf_counter()
-    ds = bonsai.Dataset(X, y, max_bin=c["bins"])
-    ingest_s = time.perf_counter() - t0
     t0 = time.perf_counter()
-    model = bonsai.train(pairs, ds)
-    train_s = time.perf_counter() - t0
-    fit_s = time.perf_counter() - fit_t0
+    model = bonsai.train(pairs, X, y)
+    fit_s = time.perf_counter() - t0
     t0 = time.perf_counter()
     pred_te = np.asarray(model.predict(Xte))
     predict_s = time.perf_counter() - t0
     return _score(task, fit_s, predict_s, y, yte, pred_te,
-                  lambda: np.asarray(model.predict(X)), ingest_s, train_s)
+                  lambda: np.asarray(model.predict(X)), None, None)
 
 
 def run_xgb(spec, X, y, Xte, yte) -> dict:
@@ -213,7 +212,7 @@ def worker(spec: dict) -> dict:
                                  if out[runlog.Row.PREDICT_S] else None)
     for k in (runlog.Row.FIT_S, runlog.Row.INGEST_S, runlog.Row.TRAIN_S,
               runlog.Row.PREDICT_S):
-        out[k] = round(out[k], 3)
+        out[k] = round(out[k], 3) if out[k] is not None else None
     for k in (runlog.Row.R2_TRAIN, runlog.Row.R2_TEST):
         out[k] = round(out[k], 4)
     # The child is where the reference library was imported, so only the
@@ -223,12 +222,15 @@ def worker(spec: dict) -> dict:
 
 
 def _score(task: str, fit_s: float, predict_s: float, y, yte, pred_te,
-           predict_train, ingest_s: float, train_s: float) -> dict:
+           predict_train, ingest_s: float | None,
+           train_s: float | None) -> dict:
     """The runner result dict; predict_train runs only for regression, so
     binary tasks never pay a full train-side predict.
 
     fit_s is the outer wall clock (raw-floats-to-model, unchanged protocol);
-    ingest_s/train_s are the inner breakdown and are not summed back into it.
+    ingest_s/train_s are the inner breakdown and are not summed back into
+    it. Both are None when a library offers no split that leaves the
+    measured path intact.
     """
     base = {runlog.Row.FIT_S: fit_s, runlog.Row.INGEST_S: ingest_s,
             runlog.Row.TRAIN_S: train_s, runlog.Row.PREDICT_S: predict_s}

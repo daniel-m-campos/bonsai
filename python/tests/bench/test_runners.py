@@ -34,10 +34,11 @@ def test_binary_task_runners():
     cell selects the logloss objective and AUC scoring, and the airline knob
     set carries every field the runners read (the row-shape contract).
 
-    Also covers the ingest/train breakdown (issue #253): every runner now
-    reports ingest_s (data-structure construction) and train_s (the fit call)
+    Also covers the ingest/train breakdown: a reference runner reports
+    ingest_s (data-structure construction) and train_s (the fit call)
     alongside fit_s, which stays the outer wall clock and is not redefined as
-    their sum.
+    their sum. bonsai reports the pair as None, since every split of its
+    fused call moves the measured path.
     """
     from bonsai.bench import airline, runners
 
@@ -58,36 +59,62 @@ def test_binary_task_runners():
         assert set(out) == {"fit_s", "ingest_s", "train_s", "predict_s",
                              "auc_test"}, (variant, out)
         assert 0.5 < out["auc_test"] <= 1.0, (variant, out["auc_test"])
+        if variant.startswith("bonsai_"):
+            assert out["ingest_s"] is None and out["train_s"] is None, out
+            continue
         assert out["ingest_s"] > 0, (variant, out)
         assert out["train_s"] > 0, (variant, out)
         assert out["ingest_s"] + out["train_s"] <= out["fit_s"] + eps, (
             variant, out)
 
 
-def test_bonsai_two_step_matches_monolithic():
-    """The two-step Dataset(max_bin=...) + train(pairs, ds) form must predict
-    identically to the monolithic train(pairs, X, y) form (issue #253): the
-    Dataset constructor's other binning defaults (n_samples, seed,
-    min_data_in_bin) must match what the engine used implicitly before."""
+def test_bonsai_runner_never_prebins(monkeypatch):
+    """The bonsai runner must fit through the fused train(pairs, X, y) call.
+
+    A prebuilt Dataset bins on the host whatever the grower is, so a cuda
+    arm measured that way loses device binning: slower, and the host binned
+    matrix stays resident. The guard is structural (Dataset construction is
+    fatal here) because the cost is only visible on a GPU, which CI has
+    none of.
+    """
     import bonsai
-    from bonsai.bench import params as rp
+    from bonsai.bench import runners
 
+    def refuse(*args, **kwargs):
+        raise AssertionError("the bonsai runner must not prebin a Dataset")
+
+    monkeypatch.setattr(bonsai, "Dataset", refuse)
     rng = np.random.default_rng(0)
-    X = rng.random((20_000, 20), dtype=np.float32)
-    y = (X[:, :5].sum(axis=1) + 0.1 * rng.standard_normal(20_000)).astype(
-        np.float32)
+    X = rng.random((2000, 8), dtype=np.float32)
+    y = (X[:, :3].sum(axis=1)).astype(np.float32)
+    cell = {"lr": 0.1, "depth": 4, "bins": 63, "seed": 42, "iters": 5}
+    out = runners.run_bonsai({"cell": cell, "variant": "bonsai_depthwise",
+                              "threads": 1}, X[:1500], y[:1500], X[1500:],
+                             y[1500:])
+    assert out["fit_s"] > 0 and out["ingest_s"] is None
 
-    full_pairs = rp.bonsai_core(
-        learning_rate=0.1, max_depth=4, num_leaves=rp.num_leaves_full(4),
-        min_data_in_leaf=20, lambda_l2=1.0, max_bin=63, seed=42, n_iters=10,
-        n_threads=1, grower="depthwise", objective="mse")
-    monolithic = bonsai.train(full_pairs, X, y)
 
-    split_pairs = [p for p in full_pairs if not p[0].startswith("bin_mapper.")]
-    ds = bonsai.Dataset(X, y, max_bin=63)
-    two_step = bonsai.train(split_pairs, ds)
+def test_standings_ab_knobs_match_the_standings_spec():
+    """The A/B detector must fit the cell the standings fit.
 
-    np.testing.assert_array_equal(monolithic.predict(X), two_step.predict(X))
+    The detector restates the anchor knobs (the old arm would otherwise load
+    the previous wheel's copy of the spec), so this guard fails the moment
+    the standings spec moves and the detector does not. n_test is excluded:
+    the A/B never predicts on a full test split.
+    """
+    import sys
+
+    from bonsai.bench import spec as spec_mod
+
+    sys.path.insert(0, "scripts")
+    import standings_ab
+
+    spec = spec_mod.load_spec("standings-rows")
+    cell = spec_mod.make_cell(spec["defaults"], rows=16_000_000, cols=100)
+    knobs = {k: v for k, v in standings_ab.ANCHOR_KNOBS.items()
+             if k != "n_test"}
+    assert knobs == {k: cell[k] for k in knobs}
+    assert spec["threads"] == [16]
 
 
 def test_variant_canonicalization_and_ts_guard():
