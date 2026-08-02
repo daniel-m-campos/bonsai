@@ -12,7 +12,9 @@ Two API layers, both over the same native module:
   wrapping the same booster for pipelines and quick experiments.
 
 GPU training: pass ``device="cuda"`` (or pick a grower directly with
-``dispatch.grower_name = "cuda_depthwise"`` / ``"cuda_oblivious"``);
+``dispatch.grower_name = "cuda_leafwise"`` / ``"cuda_depthwise"`` /
+``"cuda_oblivious"``); ``device="cuda"`` maps by prefix, so the default
+``leafwise`` grower runs ``cuda_leafwise``.
 ``cuda_available()`` reports whether this build and machine can honor it.
 Models trained on GPU predict everywhere.
 

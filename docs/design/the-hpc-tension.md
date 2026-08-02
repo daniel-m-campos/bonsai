@@ -26,13 +26,14 @@ So they cannot be mixed with host stages.
 
 ## The planes divide state by lifetime
 
-The device context splits its resident memory into four planes, each with its own lifetime ([`src/cuda/detail/device_context.cuh`](../../src/cuda/detail/device_context.cuh)):
+The device context splits its resident memory into five planes, each with its own lifetime ([`src/cuda/detail/device_context.cuh`](../../src/cuda/detail/device_context.cuh)):
 
 | Plane | Holds | Lifetime |
 |---|---|---|
 | `DeviceData` | the binned matrix | once per fit |
 | `GradientPlane` | per-tree gradients, interleaved to `float2` | once per tree |
 | `LevelPipeline` | rows, histograms, staging buffers | once per level |
+| `LeafPipeline` | the leafwise histogram slot pool and segment map | once per tree |
 | `ResidentPlane` | labels, scores, and resident-objective state | once per fit |
 
 Dividing by lifetime is what keeps an edge honest: an upload done once per fit must never be redone per tree.
