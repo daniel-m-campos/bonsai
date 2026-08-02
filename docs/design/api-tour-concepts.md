@@ -103,6 +103,15 @@ So `begin_root` returns a single `bool` that the grow loop captures once as the 
 What a new device backend must honor: satisfy the floor `HistogramEngine` too, because the decline path falls back to the exact host operations.
 Lives in [`include/bonsai/grower.hpp`](../../include/bonsai/grower.hpp).
 
+## GPULeafEngine: one node per round, the same one-fork rule
+
+`leafwise`'s device plane cannot serve a frontier of one through `GPULevelEngine`'s per-level vocabulary, so it gets its own concept beside it.
+`GPULeafEngine` refines `HistogramEngine` with `leaf_begin_root`, `leaf_split`, `leaf_build`, `leaf_find`, and `leaf_stamp`; `begin_tree` and `finalize_tree` are shared with the level plane.
+Why a second concept and not an extension of the first: the two planes trade different bus traffic per round (one node's partition, histogram, and find, instead of a whole level's), so the vocabulary itself differs, not just the cadence.
+`leaf_begin_root` returns the same single per-tree `bool` `GPULevelEngine::begin_root` does, captured once by the grow loop.
+What a new device backend must honor: the same decline-to-host contract, plus the pool-budget bound (`num_leaves * n_selected * stride`) that `leaf_begin_root` checks before arming.
+Lives in [`include/bonsai/grower.hpp`](../../include/bonsai/grower.hpp); design in [`20-cuda-leafwise.md`](../architecture/20-cuda-leafwise.md).
+
 ## IBooster: the one type-erased boundary
 
 The caller needs one runtime handle; the training loop needs zero runtime dispatch.
