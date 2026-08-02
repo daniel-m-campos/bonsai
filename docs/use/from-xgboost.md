@@ -44,7 +44,7 @@ print("top feature:", int(est.feature_importances_.argmax()))
 | `min_child_weight` | `tree.min_child_hess`: the same minimum hessian mass per child, same default of 1.0 (a row count under squared error) |
 | `subsample` | row sampling; switches the sampler to `bernoulli` when `sampler` is at its default |
 | `colsample_bytree`, `max_bin`, `min_child_samples` | `tree.feature_fraction`, `bin_mapper.max_bin`, `tree.min_data_in_leaf` |
-| `device="cuda"` | the CUDA grower matching your grower choice (`cuda_depthwise` by default, `cuda_oblivious` for `grower="oblivious"`) |
+| `device="cuda"` | the CUDA grower matching your grower choice: `cuda_leafwise` for the default `leafwise`, `cuda_depthwise` for `depthwise`, `cuda_oblivious` for `oblivious`; the device knob moves compute, never the growth strategy |
 | `objective="reg:squarederror"` etc. | `mse`, `reg:absoluteerror` is `mae`, `reg:quantileerror` (+ `quantile_alpha`) is `quantile`, `count:poisson` is `poisson`; classifiers accept `binary:logistic` / `multi:softprob` / `multi:softmax` and derive the real objective from the class count |
 | `eval_set=[(X, y)]` | the list form is native; with several entries the last one drives the eval history and early stopping, XGBoost's own convention |
 | `evals_result()`, `best_iteration`, `best_score` | same shapes; the squared-error eval is presented as rmse (the exact root, so early stopping saw the same ordering) |

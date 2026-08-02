@@ -4,6 +4,9 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### Fixed
+- **`device="cuda"` honors the growth strategy.** The compat mapping substituted `cuda_depthwise` for `leafwise` (once "the nearest CUDA grower"; stale since `cuda_leafwise` landed), so a GPU fit silently trained depth-wise trees where the same config on CPU trained best-first ones, including the estimator default. The mapping is now a pure prefix: `device=` moves compute and never changes the model class. GPU users who want the previous behavior say `grower="depthwise"` explicitly (it is faster at matched knobs: 22.6s vs 30.8s at 16M x 100).
+
 ### Added
 - **`cuda_leafwise`** (issue #268, decision 97, [`docs/architecture/20-cuda-leafwise.md`](docs/architecture/20-cuda-leafwise.md)): best-first growth with histograms, partition, and split finding on the device. A per-tree histogram slot pool replaces the level plane's ping-pong, so a frontier of one is served without wasted memset: the root takes slot 0, each split builds the smaller child into the next free slot and derives the larger by in-place subtraction in the parent's, and the partition rewrites one segment in place. The grow loop keeps the gain heap, the depth cap, and every other decision, reaching the plane through a new `LeafStep` seam. Tolerance-equal to CPU `leafwise`; the dispatch grid goes from 105 to 126 cells. Admitted by same-pod ladder: 30.8s at 16M x 100 against LightGBM-CUDA's 32.4s, and 4.6x to 7.1x over bonsai's own CPU `leafwise` at every scale.
 
