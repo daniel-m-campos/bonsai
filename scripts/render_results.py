@@ -76,6 +76,7 @@ class Evidence:
     LEAFWISE_RECHECK: Final = "leafwise-recheck-2026-08.jsonl"
     LEAFWISE_CADENCE: Final = "leafwise-cadence-2026-08.json"
     LEAFWISE_LADDER: Final = "leafwise-ladder-2026-08.jsonl"
+    LEAFWISE_STAGE3: Final = "leafwise-stage3-2026-08.jsonl"
 
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -1221,6 +1222,81 @@ def _uncapped_table(rows: list[dict]) -> str:
 """
 
 
+_STAGE3_ARMS = ["bonsai_cuda_leafwise", "lgbm_cuda", "bonsai_cuda_depthwise"]
+
+
+def leafwise_stage3_section() -> str:
+    """The closing ladder after stage 3's levers (issue #268, decision 98)."""
+    rows = [r for r in load_jsonl(Evidence.LEAFWISE_STAGE3)
+            if r[K.STATUS] == "ok"]
+    capped = _cell_best([r for r in rows
+                         if r["cell"]["depth"] != UNCAPPED_DEPTH])
+    prior = _cell_best([r for r in load_jsonl(Evidence.LEAFWISE_LADDER)
+                        if r[K.STATUS] == "ok"
+                        and r["cell"]["depth"] != UNCAPPED_DEPTH])
+    scales = sorted({k[0] for k in capped})
+    top = scales[-1]
+
+    def fit(best: dict, n: int, variant: str) -> float:
+        return best[(n, 100, variant)][K.FIT_S]
+
+    def cut(n: int, variant: str) -> float:
+        """Fraction of stage 2's fit time this ladder removes."""
+        return 1 - fit(capped, n, variant) / fit(prior, n, variant)
+
+    # The two ladders ran on different rentals of the same GPU model, so the
+    # reference arms carry the pod comparison the leafwise column needs.
+    drift = max(abs(cut(n, v)) for n in scales
+                for v in ("lgbm_cuda", "bonsai_cuda_depthwise"))
+    cuts = [cut(n, "bonsai_cuda_leafwise") for n in scales]
+    margin = 1 - fit(capped, top, "bonsai_cuda_leafwise") / fit(capped, top,
+                                                               "lgbm_cuda")
+    prior_margin = 1 - fit(prior, top, "bonsai_cuda_leafwise") / fit(
+        prior, top, "lgbm_cuda")
+    anchor_gap = fit(capped, top, "bonsai_cuda_leafwise") - fit(
+        capped, top, "bonsai_cuda_depthwise")
+    table = md_table(
+        ["rows", *[_LADDER_LABELS[v] for v in _STAGE3_ARMS],
+         "stage 2 leafwise"],
+        [[human(n), *[_fmt_cell(capped, n, 100, v) for v in _STAGE3_ARMS],
+          f"{fit(prior, n, 'bonsai_cuda_leafwise'):.1f}s"] for n in scales])
+    return f"""### The closing ladder: what stage 3's levers moved (decision 98)
+
+Same knobs and the same three device arms as the admission ladder above, one pod, best of two reps, interleaved, and unprofiled. Stage 3 landed two levers on the leaf plane, the device-resident objective and the round's pinned and packed staging, and reverted a third (the partition chain) that measured worthless. The reference arms carry the cross-ladder comparison, because these are two rentals of the same GPU model rather than one pod: `lgbm_cuda` and the depthwise anchor reproduce their stage 2 times within {drift:.0%} at every cell, so the leafwise column's move is the levers and not the rental. `cuda_leafwise` fits {fit(capped, top, "bonsai_cuda_leafwise"):.1f}s at 16M x 100 against stage 2's {fit(prior, top, "bonsai_cuda_leafwise"):.1f}s, and the cut runs {min(cuts):.0%} to {max(cuts):.0%} across the ladder, largest at the small cells where the round's fixed cost is the fit. The margin over LightGBM's CUDA leaf-wise at 16M widens from {prior_margin:.0%} to {margin:.0%}; {anchor_gap:.1f}s of fit still separate the leaf plane from the resident depthwise anchor at the same cell, and that is what stage 3 leaves open. `r2_test` is identical to stage 2 in every cell of the table.
+
+{table}
+
+{_stage3_uncapped(rows)}
+
+{provenance([Evidence.LEAFWISE_STAGE3], "One pod (L40S, US-NC-1, 2026-08-02), SCALING knobs at 100 iters and 256 leaves, best of 2 reps, no profiler (the profile peel drains the round's pipeline and prices host residue 7x high, doc 20). CPU `leafwise` is unchanged since the stage 2 ladder above and is cited from it rather than re-measured, which is why this ladder is three arms.")}
+"""
+
+
+def _stage3_uncapped(rows: list[dict]) -> str:
+    """The closing uncapped-depth arm: the cell stage 3 most wanted to move."""
+    best = _cell_best([r for r in rows
+                       if r["cell"]["depth"] == UNCAPPED_DEPTH])
+    prior = _cell_best([r for r in load_jsonl(Evidence.LEAFWISE_LADDER)
+                        if r[K.STATUS] == "ok"
+                        and r["cell"]["depth"] == UNCAPPED_DEPTH])
+    order = ["bonsai_cuda_leafwise", "lgbm_cuda"]
+    table = md_table(
+        ["16M x 100, no depth cap", K.FIT_S, "test r2", "stage 2 fit_s"],
+        [[_LADDER_LABELS[v], f"{best[(16_000_000, 100, v)][K.FIT_S]:.1f}s",
+          fmt(best[(16_000_000, 100, v)][K.R2_TEST], 4),
+          f"{prior[(16_000_000, 100, v)][K.FIT_S]:.1f}s"] for v in order])
+    lw = best[(16_000_000, 100, "bonsai_cuda_leafwise")][K.FIT_S]
+    lg = best[(16_000_000, 100, "lgbm_cuda")][K.FIT_S]
+    prior_lw = prior[(16_000_000, 100, "bonsai_cuda_leafwise")][K.FIT_S]
+    verdict = (f"bonsai now leads the uncapped cell too, by {lg / lw - 1:.0%}"
+               if lw < lg else
+               f"LightGBM still leads it, by {lw / lg - 1:.0%}")
+    return f"""The uncapped arm is the cell stage 3 most wanted to move, and the one the admission recorded against itself. Lifting the depth cap is where best-first differs from level-wise and where the comparison against LightGBM is honest, since its CUDA learner ignores `max_depth` outright (decision 95). It is also where the round count doubles, from 25,500 to 51,100, because every leaf the tree creates must be found rather than skipped at the cap. Stage 2 measured {prior_lw:.1f}s against LightGBM's 31.6s at equal r2; the levers cut that to {lw:.1f}s, and {verdict}.
+
+{table}
+"""
+
+
 def frontier_section() -> str:
     """The accuracy-vs-time frontier page body."""
     pareto = [r for r in load_jsonl(standings_file(Axis.FRONTIER))
@@ -1410,7 +1486,7 @@ PAGES: list[tuple[str, str, str, list]] = [
      "the CPU prefetch round.",
      [rebaseline_section, xgb33_recheck_table, prefetch_section,
       leafwise_recheck_section, leafwise_cadence_section,
-      leafwise_ladder_section]),
+      leafwise_ladder_section, leafwise_stage3_section]),
     ("perf-shape.md", "Width and shape",
      "The wide-data arc: the CPU fill, the CUDA recheck, the cols "
      "re-baseline, and the iso-volume shape frontier with measured VRAM.",
