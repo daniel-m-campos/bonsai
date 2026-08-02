@@ -4,7 +4,7 @@
 
 Everything expensive in histogram GBT is a *data-parallel reduction or scatter over rows*: bin the raw values, sum gradients into cells, scan cells for the best split, route rows to children. A GPU has ~10× the memory bandwidth of a CPU socket, and bandwidth is exactly what these loops are starved for. What a GPU does **not** have is cheap access to the sequential, branchy part: deciding which nodes to split, bookkeeping the tree, enforcing constraints.
 
-So the design question is not "port the algorithm to CUDA" but "draw the boundary": the device owns every per-row loop, the host owns every per-node decision, and the two exchange the smallest possible messages. In bonsai that boundary has a name: the **level transaction** ([architecture/14](../architecture/14-engine-narrative.md)), and for the `depthwise` and `oblivious` growers the CPU and CUDA engines implement the *same* transactions, so a grower cannot tell which backend it is running on. The `leafwise` grower's device plane draws an analogous boundary, one node per round instead of one level, through its own `LeafStep` seam ([architecture/20](../architecture/20-cuda-leafwise.md)); the rest of this chapter focuses on the level transaction. The problems that make the device side interesting, atomics and precision, keeping data resident, and knowing what to move next, apply to both.
+So the design question is not "port the algorithm to CUDA" but "draw the boundary": the device owns every per-row loop, the host owns every per-node decision, and the two exchange the smallest possible messages. bonsai has a CUDA grower for each of its three growth strategies, `cuda_depthwise`, `cuda_leafwise`, and `cuda_oblivious`, and each draws that boundary in its own way. `depthwise` and `oblivious` share a boundary called the **level transaction** ([architecture/14](../architecture/14-engine-narrative.md)): the CPU and CUDA engines implement the *same* transactions, so a grower cannot tell which backend it is running on. `leafwise` draws an analogous boundary, one node per round instead of one level, through its own `LeafStep` seam ([architecture/20](../architecture/20-cuda-leafwise.md)). This chapter walks through the level transaction first, since it covers two of the three CUDA growers, then the leaf step. The problems that make the device side interesting, atomics and precision, keeping data resident, and knowing what to move next, apply to all three.
 
 ## The math
 
@@ -20,7 +20,7 @@ with $u$ the unit roundoff. Two consequences you must design for rather than wis
 
 **The subtraction trick survives intact** ([chapter 2](2-binning-and-histograms.md)): children of a split partition the parent's rows, so the device builds the smaller child's histogram and derives the larger by a cell-wise subtract kernel, in double, on resident buffers, without the host ever seeing a histogram.
 
-## In bonsai
+## In bonsai: the level transaction
 
 The entire backend is one CUDA C++ translation unit, [`src/cuda/histogram_engine.cu`](../../src/cuda/histogram_engine.cu) plus its kernel header [`src/cuda/detail/kernels.cuh`](../../src/cuda/detail/kernels.cuh), compiled by the project's own clang (`-x cuda`), not nvcc, same C++23, same libc++ as the rest of the build. Builds without CUDA link a stub that throws; `bonsai::cuda_available()` is the runtime predicate and the `cuda_*` growers are registered everywhere, so a GPU-trained model predicts fine on a CPU-only binary.
 
@@ -37,7 +37,7 @@ The host control plane between transactions is [`src/level_step.hpp`](../../src/
 
 What this buys, measured (same-pod L40S re-baseline, 16M rows × 100 features × 100 trees, `fit()` timed end-to-end including binning): **bonsai 18.4s oblivious / 20.5s depthwise vs XGBoost-GPU 19.9s, at a third of the host memory (7.0GB vs 22.2GB)**, rendered at [Fit at scale](../method/results/perf-scale.md). The path from 3× slower to ahead is [chapter 11](11-performance-engineering.md).
 
-## Leaf-wise on the GPU
+## In bonsai: the leaf step
 
 `cuda_leafwise` grows the `leafwise` grower's best-first strategy fully on device: histograms live in a per-tree slot pool instead of the level plane's ping-pong buffers, and the gain heap that picks which leaf to expand next stays on the host, the same structure the CPU leafwise grower already uses. The deep dive, including the slot-pool layout and the round-by-round kernel sequence, is [architecture/20](../architecture/20-cuda-leafwise.md).
 
