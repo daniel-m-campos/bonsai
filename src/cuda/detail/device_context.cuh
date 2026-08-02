@@ -273,6 +273,20 @@ struct CudaDeviceContext
         Staged<int> monotone;
         uint32_t    next_slot = 0;
         uint32_t    max_slots = 0;
+
+        // The partition's copy-back stream. The primary row array must hold
+        // every live leaf's segment before the next round reads it, but
+        // nothing later in this round does: the histogram reads the smaller
+        // child out of the scratch side the scatter just wrote. So the copy
+        // runs here, concurrent with the round's histogram, and copy_done
+        // fences every later reader of the primary rows. The stream is
+        // non-blocking so the round's two result fetches, both on the null
+        // stream, do not implicitly wait on it.
+        cudaStream_t copy_stream  = nullptr;
+        cudaEvent_t  scatter_done = nullptr;
+        cudaEvent_t  copy_done    = nullptr;
+        bool         copy_pending = false;
+        ~LeafPipeline();
     };
 
     // Device-resident objective plane: labels and the per-row score vector live
@@ -390,6 +404,12 @@ struct CudaDeviceContext
     // in-place subtraction in the slot it inherited. small_slot's segment
     // (offset, count) is read from leaf.slot_offsets/slot_counts.
     void leaf_build(Dataset const &ds, uint32_t small_slot, uint32_t large_slot);
+    // Issues the partition's range copy-back on the leaf plane's copy stream,
+    // fenced behind the scatter that produced it, and arms copy_done.
+    void leaf_copy_back(uint32_t offset, uint32_t count);
+    // Makes the null stream wait for the last copy-back. Every reader of the
+    // primary rows outside the round that issued the copy calls this first.
+    void leaf_await_copy();
     // The leaf plane's own find staging: the level plane's stage_find_inputs
     // in packed pinned form, minus the monotone vector the tree open already
     // uploaded. Returns whether any node carried an allowed-feature mask.
