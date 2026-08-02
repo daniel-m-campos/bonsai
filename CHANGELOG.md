@@ -4,6 +4,10 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-08-02
+
+Leaf-wise growth moves to the GPU, and the device engine is symmetric at last.
+
 ### Fixed
 - **`device="cuda"` honors the growth strategy.** The compat mapping substituted `cuda_depthwise` for `leafwise` (once "the nearest CUDA grower"; stale since `cuda_leafwise` landed), so a GPU fit silently trained depth-wise trees where the same config on CPU trained best-first ones, including the estimator default. The mapping is now a pure prefix: `device=` moves compute and never changes the model class. GPU users who want the previous behavior say `grower="depthwise"` explicitly (it is faster at matched knobs: 22.6s vs 30.8s at 16M x 100).
 
@@ -14,6 +18,9 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ### Measured
 - **The closing device-leafwise ladder** (decision 98, [`leafwise-stage3-2026-08.jsonl`](benchmarks/results/leafwise-stage3-2026-08.jsonl)): one L40S, three device arms, best of two reps, interleaved, unprofiled. `cuda_leafwise` fits 250k/1M/4M/16M x 100 in 2.1/3.2/7.6/24.4s against LightGBM-CUDA's 6.6/7.6/12.3/31.9s and bonsai's own resident `cuda_depthwise` at 0.7/1.6/5.9/23.0s, which is 6.4x to 9.2x over bonsai's CPU `leafwise` and a 21% to 27% cut on the admission ladder at identical r2. Uncapped at 16M (256 leaves, no depth cap, the regime where best-first differs) it reads 32.3s at r2 .8862 against LightGBM's 31.7s at .8858, down from 38.6s: bonsai is faster at matched knobs and 2% slower at matched accuracy, where the admission recorded 22%.
+
+### Docs
+- **[`docs/architecture/20-cuda-leafwise.md`](docs/architecture/20-cuda-leafwise.md)** is the plane's design and as-built record, from the slot-pool sketch through the stage 3 measurements, including two refuted levers (the partition chain, and small-node occupancy on the preserved `perf/leafwise-occupancy` branch) and the profiler-attribution correction that reordered the whole lever list. The GPU chapter introduces the three CUDA growers together and walks the leaf step beside the level transaction; `device="cuda"` is documented as moving compute, never the growth strategy.
 
 ## [1.5.4] - 2026-07-30
 
