@@ -1254,12 +1254,12 @@ bool CudaDeviceContext::leaf_stage_find(std::span<SplitInput const> nodes,
     bool    any_mask = false;
     for (size_t i = 0; i < n; ++i)
     {
-        stats[2 * i]                       = nodes[i].sums.sum_grad;
-        stats[(2 * i) + 1]                 = nodes[i].sums.sum_hess;
-        stats[(2 * n) + (2 * i)]           = nodes[i].lo;
-        stats[(2 * n) + (2 * i) + 1]       = nodes[i].hi;
-        leaf.find_slots.host()[i]          = slots[i];
-        any_mask = any_mask || !nodes[i].allowed.empty();
+        stats[2 * i]                 = nodes[i].sums.sum_grad;
+        stats[(2 * i) + 1]           = nodes[i].sums.sum_hess;
+        stats[(2 * n) + (2 * i)]     = nodes[i].lo;
+        stats[(2 * n) + (2 * i) + 1] = nodes[i].hi;
+        leaf.find_slots.host()[i]    = slots[i];
+        any_mask                     = any_mask || !nodes[i].allowed.empty();
     }
     leaf.find_stats.sync(4 * n);
     leaf.find_slots.sync(n);
