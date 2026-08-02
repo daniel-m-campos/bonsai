@@ -96,3 +96,24 @@ The capped ladder above hides the strategy's point: at a 256-leaf budget and a d
 
 
 *Source: [`leafwise-ladder-2026-08.jsonl`](../../../benchmarks/results/leafwise-ladder-2026-08.jsonl). One pod (L40S, US-NC-1, 2026-08-01), SCALING knobs at 100 iters and 256 leaves, best of 2 reps; the ladder that admitted `cuda_leafwise` under [docs/architecture/20-cuda-leafwise.md](../../../docs/architecture/20-cuda-leafwise.md). Absolute times run above the 2026-08-01 recheck, which used a different pod with a wider CPU; only same-pod comparisons are meaningful.*
+
+### The closing ladder: what stage 3's levers moved (decision 98)
+
+Same knobs and the same three device arms as the admission ladder above, one pod, best of two reps, interleaved, and unprofiled. Stage 3 landed two levers on the leaf plane, the device-resident objective and the round's pinned and packed staging, and reverted a third (the partition chain) that measured worthless. The reference arms carry the cross-ladder comparison, because these are two rentals of the same GPU model rather than one pod: `lgbm_cuda` and the depthwise anchor reproduce their stage 2 times within 2% at every cell, so the leafwise column's move is the levers and not the rental. `cuda_leafwise` fits 24.4s at 16M x 100 against stage 2's 30.8s, and the cut runs 21% to 27% across the ladder, largest at the small cells where the round's fixed cost is the fit. The margin over LightGBM's CUDA leaf-wise at 16M widens from 5% to 24%; 1.3s of fit still separate the leaf plane from the resident depthwise anchor at the same cell, and that is what stage 3 leaves open. `r2_test` is identical to stage 2 in every cell of the table.
+
+| rows | bonsai cuda leafwise | lgbm cuda | bonsai cuda dw (anchor) | stage 2 leafwise |
+|---|---|---|---|---|
+| 250k | 2.1s (.872) | 6.6s (.879) | 0.7s (.872) | 2.9s |
+| 1M | 3.2s (.877) | 7.6s (.884) | 1.6s (.877) | 4.4s |
+| 4M | 7.6s (.878) | 12.3s (.885) | 5.9s (.878) | 10.2s |
+| 16M | 24.4s (.879) | 31.9s (.886) | 23.0s (.879) | 30.8s |
+
+The uncapped arm is the cell stage 3 most wanted to move, and the one the admission recorded against itself. Lifting the depth cap is where best-first differs from level-wise and where the comparison against LightGBM is honest, since its CUDA learner ignores `max_depth` outright (decision 95). It is also where the round count doubles, from 25,500 to 51,100, because every leaf the tree creates must be found rather than skipped at the cap. Stage 2 measured 38.6s against LightGBM's 31.6s at equal r2; the levers cut that to 32.3s, and LightGBM still leads it, by 2%.
+
+| 16M x 100, no depth cap | fit_s | test r2 | stage 2 fit_s |
+|---|---|---|---|
+| bonsai cuda leafwise | 32.3s | 0.8862 | 38.6s |
+| lgbm cuda | 31.7s | 0.8858 | 31.6s |
+
+
+*Source: [`leafwise-stage3-2026-08.jsonl`](../../../benchmarks/results/leafwise-stage3-2026-08.jsonl). One pod (L40S, US-NC-1, 2026-08-02), SCALING knobs at 100 iters and 256 leaves, best of 2 reps, no profiler (the profile peel drains the round's pipeline and prices host residue 7x high, doc 20). CPU `leafwise` is unchanged since the stage 2 ladder above and is cited from it rather than re-measured, which is why this ladder is three arms.*
