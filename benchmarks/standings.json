@@ -22,7 +22,7 @@
     "sha": "a907895",
     "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition",
     "date": "2026-07-30",
-    "refreshed_for": "1.5.4",
+    "refreshed_for": "1.6.0",
     "as_of_decision": 92,
     "note": "make bench-iso appends work-rig rows host-keyed; the pod host anchors the standings."
   },
@@ -48,17 +48,17 @@
     "sha": "b3267d5",
     "host": "MacBook-Air-M2.local",
     "date": "2026-07-15",
-    "refreshed_for": "1.5.4",
+    "refreshed_for": "1.6.0",
     "as_of_decision": 92,
     "sha_partial": true,
     "note": "Library split: bonsai rows carry schema v1, reference rows predate provenance; the mcw1 bracket file rides along. Slow clock: refresh on engine quality changes or reference-library majors regenerates all arms."
   },
   "code": {
     "file": "code-metrics-2026-07.jsonl",
-    "sha": "ee318c873905",
+    "sha": "ea887daef7e3fee3d9f454de01896ab9b1d99028",
     "host": null,
-    "date": "2026-07-31",
-    "refreshed_for": "1.5.4",
+    "date": null,
+    "refreshed_for": "1.6.0",
     "as_of_decision": 92,
     "sha_partial": true,
     "note": "Self-measurement; the meta row carries the sha. Refreshed locally by scripts/measure_complexity.py (decision 69)."
