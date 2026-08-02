@@ -684,7 +684,10 @@ TEST_CASE("Resident leafwise matches host-objective GPU under Bernoulli sampling
     // Same rule the depthwise Bernoulli case documents: a row subset reduces
     // serially on the host arm and blocked on the device arm, so the band is
     // wider. Out-of-bag rows are scored by the device route+add either way.
-    REQUIRE(r2_of(res, data.y) > 0.9);
+    // The accuracy floor is lower than the identity cases': a leaf budget of
+    // 24 on 70% of the rows is a smaller model, and this gate only asks that
+    // the fit learned, not that it matched the full-data arm.
+    REQUIRE(r2_of(res, data.y) > 0.85);
     REQUIRE(r2_of(res, data.y) == Catch::Approx(r2_of(host, data.y)).margin(3e-3));
     REQUIRE(max_abs_diff(host, res) < 0.25F);
 }
