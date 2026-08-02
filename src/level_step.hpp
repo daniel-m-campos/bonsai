@@ -999,7 +999,7 @@ template <GPULeafEngine EngineT, typename SplitterT> class LeafStep<EngineT, Spl
     LeafStep(EngineT &engine, Dataset const &ds, TreeConfig const &config,
              floats_view grad, floats_view hess, feature_view selected)
         : engine_(engine), ds_(ds), config_(config), grad_(grad), hess_(hess),
-          selected_(selected)
+          selected_(selected), resident_(engine_.resident_armed())
     {
         engine_.begin_tree(ds_, grad_, hess_);
     }
@@ -1132,7 +1132,7 @@ template <GPULeafEngine EngineT, typename SplitterT> class LeafStep<EngineT, Spl
     // assignment and nothing is stamped.
     void leaf(node_id_t id, uint32_t slot)
     {
-        if (on_device_ && !engine_.resident_armed())
+        if (on_device_ && !resident_)
         {
             stamps_.push_back({slot, id});
         }
@@ -1150,7 +1150,7 @@ template <GPULeafEngine EngineT, typename SplitterT> class LeafStep<EngineT, Spl
         {
             return;
         }
-        if (engine_.resident_armed())
+        if (resident_)
         {
             engine_.resident_finalize(
                 resident_node_table<typename EngineT::ResidentNode>(nodes, ds_));
@@ -1179,6 +1179,10 @@ template <GPULeafEngine EngineT, typename SplitterT> class LeafStep<EngineT, Spl
     feature_view                             selected_;
     std::vector<typename EngineT::LeafStamp> stamps_;
     bool                                     on_device_ = false;
+    // Captured once at construction: arming happens per fit before any tree
+    // opens (see LeafwiseGrower::resident_begin), so it cannot change while
+    // this step is alive.
+    bool resident_;
 };
 
 } // namespace bonsai::grower_detail
