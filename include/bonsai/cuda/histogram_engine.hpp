@@ -226,6 +226,15 @@ class CudaHistogramEngine
     // scores so the host copy is authoritative again.
     bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
                         std::span<float const> initial_scores, float learning_rate);
+    // The leaf plane's arming: the level plane's gate plus the leaf plane's
+    // own, applied once per fit over EVERY feature and the full leaf budget.
+    // Feature subsampling can only narrow a tree's demand, so an arming that
+    // passes this bound leaves no tree able to decline into a host-gradient
+    // path; a config that would only fit per tree simply never arms.
+    bool resident_begin_leaf(Dataset const &ds, TreeConfig const &config,
+                             DeviceObjectiveKind    kind,
+                             std::span<float const> initial_scores,
+                             float                  learning_rate);
     bool resident_armed() const;
     void resident_finalize(std::span<ResidentNode const> nodes);
     void resident_end(std::span<float> scores_out);

@@ -972,7 +972,35 @@ size_t leaf_max_slots(TreeConfig const &config)
                                  : static_cast<size_t>(-1);
 }
 
+// The widest single feature, which is what every per-fit capacity test bounds:
+// a tree's selection can only be narrower.
+size_t widest_bins(Dataset const &ds)
+{
+    size_t max_bins = 0;
+    for (size_t f = 0; f < ds.n_features(); ++f)
+    {
+        max_bins = std::max(max_bins, ds.n_bins(f));
+    }
+    return max_bins;
+}
+
 } // namespace
+
+bool CudaDeviceContext::leaf_budget_ok(TreeConfig const &config, size_t n_selected,
+                                       size_t max_bins) const
+{
+    if (n_selected == 0 || !hist_budget_ok(max_bins))
+    {
+        return false;
+    }
+    size_t const max_slots    = leaf_max_slots(config);
+    size_t const slot_doubles = n_selected * 2 * max_bins; // stride = 2 * max_bins
+    if (max_slots > static_cast<size_t>(-1) / std::max<size_t>(1, slot_doubles))
+    {
+        return false;
+    }
+    return leaf_pool_ok(max_slots * slot_doubles * sizeof(double));
+}
 
 bool CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &config,
                                         floats_view /*grad*/, floats_view /*hess*/,
@@ -985,17 +1013,16 @@ bool CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
         max_sel_bins = std::max(max_sel_bins, ds.n_bins(fid));
     }
     init_shared_limit();
-    size_t const max_slots = leaf_max_slots(config);
-    size_t const slot_doubles =
-        selected.size() * 2 * max_sel_bins; // stride = 2 * max_sel_bins
-    if (selected.empty() || !hist_budget_ok(max_sel_bins) ||
-        max_slots > static_cast<size_t>(-1) / std::max<size_t>(1, slot_doubles) ||
-        !leaf_pool_ok(max_slots * slot_doubles * sizeof(double)))
+    // Resident mode decided this once per fit, over every feature and the same
+    // leaf budget: a decline here would leave the tree deriving gradients on a
+    // device the host cannot read.
+    if (!resident.armed && !leaf_budget_ok(config, selected.size(), max_sel_bins))
     {
         return false; // the LeafStep falls back to the host plane for this tree
     }
-    lvl.n_selected = static_cast<uint32_t>(selected.size());
-    lvl.stride     = static_cast<uint32_t>(2 * max_sel_bins);
+    size_t const max_slots = leaf_max_slots(config);
+    lvl.n_selected         = static_cast<uint32_t>(selected.size());
+    lvl.stride             = static_cast<uint32_t>(2 * max_sel_bins);
     lvl.features.host.assign(selected.begin(), selected.end());
     lvl.features.sync();
 
@@ -1300,13 +1327,8 @@ bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind ki
     // selected set, so the worst case is the single widest feature; if that
     // fits the shared budget (hist_budget_ok, the same predicate begin_root
     // applies), no tree can decline.
-    size_t max_bins = 0;
-    for (size_t f = 0; f < ds.n_features(); ++f)
-    {
-        max_bins = std::max(max_bins, ds.n_bins(f));
-    }
     if (ds.n_features() == 0 || initial_scores.size() != ds.n_rows() ||
-        !hist_budget_ok(max_bins))
+        !hist_budget_ok(widest_bins(ds)))
     {
         return false;
     }
@@ -1326,6 +1348,25 @@ bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind ki
     resident.learning_rate = learning_rate;
     resident.armed         = true;
     return true;
+}
+
+bool CudaDeviceContext::resident_begin_leaf(Dataset const &ds, TreeConfig const &config,
+                                            DeviceObjectiveKind    kind,
+                                            std::span<float const> initial_scores,
+                                            float                  learning_rate)
+{
+    ensure_dataset(ds);
+    init_shared_limit();
+    // The conservative bound: every feature selected and the widest one sizing
+    // the stride, so the pool this test prices is the largest any tree can ask
+    // for. Feature subsampling only narrows it. A config that would fit only
+    // some trees never arms, and the fit runs non-resident.
+    if (ds.n_features() == 0 ||
+        !leaf_budget_ok(config, ds.n_features(), widest_bins(ds)))
+    {
+        return false;
+    }
+    return resident_begin(ds, kind, initial_scores, learning_rate);
 }
 
 void CudaDeviceContext::resident_finalize(

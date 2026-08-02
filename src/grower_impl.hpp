@@ -643,10 +643,17 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     -> GrowResult<Tree>
 {
     namespace gd = grower_detail;
+    // Resident mode: the device derives gradients and fuses the score update,
+    // so grow produces no per-row values/leaf_ids and skips the out-of-bag
+    // routing the host score loop would consume.
+    bool const            resident = this->resident();
     gd::GrowProfiler::Lap slap;
     Tree::Nodes           nodes;
     train_leaf_values     values = std::move(recycled_.values);
-    values.resize(ds.n_rows(), 0.0F); // no-op when recycled: write-before-read
+    if (!resident)
+    {
+        values.resize(ds.n_rows(), 0.0F); // no-op when recycled: write-before-read
+    }
 
     // Max-heap on gain; ties broken by lower node id so growth is deterministic.
     auto gain_less = [](gd::Candidate const &a, gd::Candidate const &b)
@@ -667,7 +674,10 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     std::vector<float>         split_gains(1, 0.0F);
     std::vector<float>         covers(1, static_cast<float>(row_indices.size()));
     std::vector<node_id_t>     leaf_ids = std::move(recycled_.leaf_ids);
-    leaf_ids.resize(ds.n_rows(), 0);
+    if (!resident)
+    {
+        leaf_ids.resize(ds.n_rows(), 0);
+    }
 
     auto const selected =
         gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
@@ -768,8 +778,13 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     }
     // Device plane: every leaf's segment is stamped and the per-row values
     // download here, so the out-of-bag routing below still has the last word.
+    // In resident mode the device route+add already scored every row, sampled
+    // or not, and there are no host values to route into.
     step.end_tree(nodes, values, leaf_ids);
-    gd::route_unsampled(ds, nodes, split_bins, row_indices, values, leaf_ids);
+    if (!resident)
+    {
+        gd::route_unsampled(ds, nodes, split_bins, row_indices, values, leaf_ids);
+    }
     split_gains.resize(nodes.size(), 0.0F);
     covers.resize(nodes.size(), 0.0F);
 
