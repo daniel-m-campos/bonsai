@@ -29,6 +29,8 @@ categorical encoder), and ``bench`` (the benchmark harness).
 
 from __future__ import annotations
 
+import importlib.metadata
+
 from bonsai._bonsai import (
     Dataset,
     Model,
@@ -40,12 +42,22 @@ from bonsai._bonsai import (
 from bonsai.encoding import OrderedTargetEncoder
 from bonsai.estimators import BonsaiClassifier, BonsaiRegressor
 
+try:
+    # The installed distribution's version. A source tree imported through
+    # PYTHONPATH has no distribution metadata of its own, and reports the
+    # installed wheel's version if one is also present: prefer __file__ when
+    # the question is which build ran.
+    __version__ = importlib.metadata.version("bonsai-gbt")
+except importlib.metadata.PackageNotFoundError:
+    __version__ = "source"
+
 __all__ = [
     "BonsaiClassifier",
     "BonsaiRegressor",
     "Dataset",
     "Model",
     "OrderedTargetEncoder",
+    "__version__",
     "cuda_available",
     "default_config_toml",
     "load",

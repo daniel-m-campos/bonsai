@@ -70,6 +70,8 @@ for params in grid:
 
 Bin settings are sealed into the `Dataset`; a `bin_mapper.*` override in `params` or a config file raises instead of silently diverging.
 
+The binning pass itself runs on the host. A `Dataset` is built before any grower is named, so a `cuda_*` fit from a prebuilt `Dataset` bins on the CPU and uploads the result, where `train(params, X, y)` bins on the device. For a single GPU fit, pass the arrays.
+
 `Model` carries the full prediction surface: `predict` (with `num_iteration` for truncated ensembles), `predict_proba`, `staged_predict`, `predict_leaf`, `pred_contribs` (exact TreeSHAP), `feature_importance("gain")`/`feature_importance("split")`, `dump`, and `save`.
 
 ## The CLI

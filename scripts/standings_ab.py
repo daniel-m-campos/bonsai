@@ -8,6 +8,13 @@ The refresh workflow interleaves invocations of the previous release's wheel
 same-pod interleaving is the only timing comparison the fleet-spread rule
 allows. Prints one JSON line; the workflow aggregates medians per (cell,
 grower, arm) and calls a move beyond +-5%.
+
+The fit runs through bonsai.bench.runners.worker, the same code the standings
+execute, so the detector cannot measure a path the standings do not: a change
+to the harness call form moves the verdict exactly as a change to the library
+would. Each arm resolves that runner from its own build, so a harness change
+between vintages is visible too. Both fit_s and peak RSS are reported: an RSS
+regression is a perf regression.
 """
 
 from __future__ import annotations
@@ -15,7 +22,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import time
+
+# The standings-rows anchor knobs. Restated rather than loaded from the spec
+# because the old arm would load the wheel's copy of it; a drift guard lives
+# in python/tests/bench/test_runners.py.
+ANCHOR_KNOBS = {"lr": 0.1, "depth": 8, "bins": 255, "seed": 42,
+                "min_data_in_leaf": 20, "lambda_l2": 1.0, "informative": 20,
+                "n_test": 1000}
 
 
 def main() -> int:
@@ -29,27 +42,18 @@ def main() -> int:
     args = ap.parse_args()
 
     import bonsai
-    from bonsai.bench.synth import gen_data
+    from bonsai.bench import runners
 
-    X, y, _, _ = gen_data(args.rows, args.cols, 42, 1000, 20)
-    pairs = [("dispatch.grower_name", args.grower),
-             ("dispatch.objective_name", "mse"),
-             ("booster.n_iters", str(args.iters)),
-             ("booster.learning_rate", "0.1"),
-             ("booster.random_seed", "42"),
-             ("tree.max_depth", "8"), ("tree.max_leaves", "256"),
-             ("tree.min_data_in_leaf", "20"), ("tree.lambda_l2", "1.0"),
-             ("bin_mapper.max_bin", "255"),
-             ("parallel.n_threads", str(args.threads))]
-    # Warm fit absorbs CUDA context + JIT so the timed fit is steady state.
-    bonsai.train([*pairs[:2], ("booster.n_iters", "3"), *pairs[3:]],
-                 X[:8192], y[:8192])
-    t0 = time.perf_counter()
-    bonsai.train(pairs, X, y)
-    fit_s = time.perf_counter() - t0
+    cell = dict(ANCHOR_KNOBS, rows=args.rows, cols=args.cols,
+                iters=args.iters)
+    out = runners.worker({"cell": cell, "variant": f"bonsai_{args.grower}",
+                          "threads": args.threads})
     print(json.dumps({"arm": args.arm, "rows": args.rows, "cols": args.cols,
-                      "grower": args.grower, "fit_s": round(fit_s, 3),
-                      "version": getattr(bonsai, "__version__", "source")}))
+                      "grower": args.grower, "fit_s": out["fit_s"],
+                      "peak_rss_gb": out.get("peak_rss_gb"),
+                      "r2_test": out.get("r2_test"),
+                      "version": getattr(bonsai, "__version__", "source"),
+                      "module": bonsai.__file__}))
     return 0
 
 

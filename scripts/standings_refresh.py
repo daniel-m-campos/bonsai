@@ -315,23 +315,40 @@ def _wait_until(fn, *, timeout_s: int, what: str):
 
 
 def _verdict(ab_path: pathlib.Path) -> str:
-    """The A/B verdict table, or empty when the file is absent."""
+    """The A/B verdict table, or empty when the file is absent.
+
+    Time and peak RSS both get a column and both can move the verdict:
+    memory is a standings claim, and a path change can cost RSS before it
+    costs seconds.
+    """
     if not ab_path.exists():
         return ""
     rows = [json.loads(ln) for ln in ab_path.read_text().splitlines()
             if ln.strip()]
     med: dict[tuple, list[float]] = {}
     for r in rows:
-        med.setdefault((r["rows"], r["cols"], r["grower"], r["arm"]),
-                       []).append(r["fit_s"])
-    lines = ["| cell | grower | old | new | delta |", "|---|---|--:|--:|--:|"]
+        for metric in ("fit_s", "peak_rss_gb"):
+            if r.get(metric) is None:
+                continue
+            med.setdefault((r["rows"], r["cols"], r["grower"], r["arm"],
+                            metric), []).append(r[metric])
+    lines = ["| cell | grower | old | new | delta | old RSS | new RSS | "
+             "RSS delta |", "|---|---|--:|--:|--:|--:|--:|--:|"]
     for (rw, c, g) in sorted({(r["rows"], r["cols"], r["grower"])
                               for r in rows}):
-        o = statistics.median(med[(rw, c, g, "old")])
-        n = statistics.median(med[(rw, c, g, "new")])
-        d = 100 * (n - o) / o
-        flag = " **moved**" if abs(d) > 5 else ""
-        lines.append(f"| {rw}x{c} | {g} | {o:.2f}s | {n:.2f}s | {d:+.1f}%{flag} |")
+        cells, moved = [], False
+        for metric, unit in (("fit_s", "s"), ("peak_rss_gb", "GB")):
+            old = med.get((rw, c, g, "old", metric))
+            new = med.get((rw, c, g, "new", metric))
+            if not old or not new:
+                cells += ["n/a", "n/a", "n/a"]
+                continue
+            o, n = statistics.median(old), statistics.median(new)
+            d = 100 * (n - o) / o
+            moved = moved or abs(d) > 5
+            cells += [f"{o:.2f}{unit}", f"{n:.2f}{unit}", f"{d:+.1f}%"]
+        cells[-1] += " **moved**" if moved else ""
+        lines.append(f"| {rw}x{c} | {g} | " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
 
