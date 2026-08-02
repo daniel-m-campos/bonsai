@@ -30,6 +30,7 @@
   "variants": [
     "bonsai_cuda_depthwise",
     "bonsai_cuda_oblivious",
+    "bonsai_cuda_leafwise",
     "xgb_cuda",
     "catboost_gpu",
     "lgbm_cuda",

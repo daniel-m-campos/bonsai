@@ -46,6 +46,6 @@ def test_bundled_specs():
     s = spec_mod.load_spec("iso-volume-2026-08")  # bare name, no repo path
     assert s["suite"] == "iso-volume" and len(spec_mod.expand(s)) > 0
     pareto = spec_mod.load_spec("gpu-pareto-16M.json")  # suffix tolerated
-    assert len(spec_mod.expand(pareto)) == 26  # the five iteration ladders
+    assert len(spec_mod.expand(pareto)) == 32  # the six iteration ladders
     with pytest.raises(FileNotFoundError):
         spec_mod.load_spec("no-such-spec")

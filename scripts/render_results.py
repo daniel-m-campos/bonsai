@@ -689,6 +689,7 @@ Ten selection methods, one shared judge: each method produces a feature ranking,
 _GPU_STYLE = {
     "bonsai_cuda_depthwise": ("bonsai cuda dw", "#1b5e20", False),
     "bonsai_cuda_oblivious": ("bonsai cuda obl", "#4caf50", False),
+    "bonsai_cuda_leafwise": ("bonsai cuda lw", "#2e7d32", False),
     "xgb_cuda": ("xgb cuda", LIB_COLOR["xgboost"], False),
     "catboost_gpu": ("catboost gpu", LIB_COLOR["catboost"], False),
 }
@@ -701,6 +702,20 @@ VARIANT_STYLE = {
 }
 
 REBASE_VARIANTS = [(k, v[0]) for k, v in VARIANT_STYLE.items()]
+
+
+def present_variants(variants: list[tuple[str, str]], best: dict) -> list[tuple[str, str]]:
+    """`variants` filtered to those with at least one row in `best`.
+
+    A variant absent from a standings file (not yet swept by a spec, or
+    dropped from one) does not get an all-"-" column: new arms appear only
+    once a refresh actually measures them, so adding an arm to a spec is
+    inert until that refresh runs. `best`'s keys are tuples ending in the
+    variant name, the shape every `_cell_best`/`best_fit_by`/`_iso_tables`
+    caller in this module already produces.
+    """
+    have = {k[-1] for k in best}
+    return [(v, lbl) for v, lbl in variants if v in have]
 
 
 def human(n: int) -> str:
@@ -752,10 +767,11 @@ def rebaseline_section() -> str:
     best = _cell_best(rows)
     host = rows[0]["host"]
     row_axis = sorted({r["cell"]["rows"] for r in rows if r["cell"]["cols"] == 100})
+    present = present_variants(REBASE_VARIANTS, best)
 
     rows_table = md_table(
-        ["rows", *[lbl for _, lbl in REBASE_VARIANTS]],
-        [[human(n), *[_fmt_cell(best, n, 100, v) for v, _ in REBASE_VARIANTS]]
+        ["rows", *[lbl for _, lbl in present]],
+        [[human(n), *[_fmt_cell(best, n, 100, v) for v, _ in present]]
          for n in row_axis])
 
     def series_for(cells: list[tuple[int, int]]):
@@ -893,20 +909,21 @@ def cols_rebaseline_table() -> str:
     cells = sorted({(r["cell"]["rows"], r["cell"]["cols"]) for r in cr},
                    key=lambda rc: rc[1])
     label = cell_label
+    present = present_variants(REBASE_VARIANTS, best)
 
     def cell_fmt(rows, cols, variant):
         r = best.get((rows, cols, variant))
         return "-" if r is None else fit_r2_str(r)
 
     fit_table = md_table(
-        ["cell", *[lbl for _, lbl in REBASE_VARIANTS]],
-        [[label(nr, nc), *[cell_fmt(nr, nc, v) for v, _ in REBASE_VARIANTS]]
+        ["cell", *[lbl for _, lbl in present]],
+        [[label(nr, nc), *[cell_fmt(nr, nc, v) for v, _ in present]]
          for nr, nc in cells])
     rss_table = md_table(
-        ["cell", *[lbl for _, lbl in REBASE_VARIANTS]],
+        ["cell", *[lbl for _, lbl in present]],
         [[label(nr, nc),
           *[f"{best[(nr, nc, v)]['peak_rss_gb']:.1f}GB"
-            if (nr, nc, v) in best else "-" for v, _ in REBASE_VARIANTS]]
+            if (nr, nc, v) in best else "-" for v, _ in present]]
          for nr, nc in cells])
 
     series = []
@@ -1025,8 +1042,9 @@ def iso_volume_section() -> str:
                    r[K.VARIANT]))
     label = cell_label
     run31, run33 = "iso-volume-2026-08-pod", "iso-volume-33-2026-08-pod"
-    fit31, vram31 = _iso_tables(best, run31, ISO_VARIANTS)
-    fit33, vram33 = _iso_tables(best, run33, ISO_VARIANTS[:4])
+    gpu_variants = [(v, lbl) for v, lbl in ISO_VARIANTS if not ISO_STYLE[v][2]]
+    fit31, vram31 = _iso_tables(best, run31, present_variants(ISO_VARIANTS, best))
+    fit33, vram33 = _iso_tables(best, run33, present_variants(gpu_variants, best))
     _iso_charts(best, run31)
 
     err_note = ""
@@ -1627,11 +1645,12 @@ def readme_standings_block() -> str:
     rb = load_jsonl(standings_file(Axis.ROWS))
     best = _cell_best(rb)
     scales = sorted({r["cell"]["rows"] for r in rb if r["cell"]["cols"] == 100})
-    lines = ["| rows | " + " | ".join(lbl for _, lbl in REBASE_VARIANTS) + " |",
-             "|---|" + "--:|" * len(REBASE_VARIANTS)]
+    present = present_variants(REBASE_VARIANTS, best)
+    lines = ["| rows | " + " | ".join(lbl for _, lbl in present) + " |",
+             "|---|" + "--:|" * len(present)]
     for n in scales:
         cells, fits = [], []
-        for v, _lbl in REBASE_VARIANTS:
+        for v, _lbl in present:
             r = best.get((n, 100, v))
             fits.append(r[K.FIT_S] if r else float("inf"))
             cells.append(_fmt_cell(best, n, 100, v))
