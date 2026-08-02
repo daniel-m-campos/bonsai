@@ -402,9 +402,6 @@ void CudaDeviceContext::begin_tree(Dataset const &ds, floats_view grad,
                                    floats_view hess)
 {
     ensure_dataset(ds);
-    // A tree boundary: the last round's copy-back must land before anything
-    // rewrites the row buffers, on this plane or the level plane.
-    leaf_await_copy();
     if (resident.armed)
     {
         // Resident mode: grad/hess arrive empty; derive them on device from the
@@ -945,55 +942,6 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
 
 // --- Leaf plane (docs/architecture/20-cuda-leafwise.md) ----------------------
 
-CudaDeviceContext::LeafPipeline::~LeafPipeline()
-{
-    if (copy_stream != nullptr)
-    {
-        // The row buffers the copy reads live in the level pipeline, declared
-        // before this one and so destroyed after it: drain first.
-        cudaStreamSynchronize(copy_stream);
-        cudaEventDestroy(scatter_done);
-        cudaEventDestroy(copy_done);
-        cudaStreamDestroy(copy_stream);
-    }
-}
-
-void CudaDeviceContext::leaf_copy_back(uint32_t offset, uint32_t count)
-{
-    if (leaf.copy_stream == nullptr)
-    {
-        check(cudaStreamCreateWithFlags(&leaf.copy_stream, cudaStreamNonBlocking),
-              "leaf copy stream");
-        check(cudaEventCreateWithFlags(&leaf.scatter_done, cudaEventDisableTiming),
-              "leaf scatter event");
-        check(cudaEventCreateWithFlags(&leaf.copy_done, cudaEventDisableTiming),
-              "leaf copy event");
-    }
-    check(cudaEventRecord(leaf.scatter_done, cudaStreamDefault), "leaf scatter record");
-    check(cudaStreamWaitEvent(leaf.copy_stream, leaf.scatter_done, 0),
-          "leaf copy wait");
-    check(cudaMemcpyAsync(lvl.rows.data() + offset, lvl.rows_b.data() + offset,
-                          static_cast<size_t>(count) * sizeof(uint32_t),
-                          cudaMemcpyDeviceToDevice, leaf.copy_stream),
-          "leaf rows copy-back");
-    check(cudaMemcpyAsync(lvl.gh_ordered.data() + offset, lvl.gh_b.data() + offset,
-                          static_cast<size_t>(count) * sizeof(float2),
-                          cudaMemcpyDeviceToDevice, leaf.copy_stream),
-          "leaf gh copy-back");
-    check(cudaEventRecord(leaf.copy_done, leaf.copy_stream), "leaf copy record");
-    leaf.copy_pending = true;
-}
-
-void CudaDeviceContext::leaf_await_copy()
-{
-    if (!leaf.copy_pending)
-    {
-        return;
-    }
-    check(cudaStreamWaitEvent(cudaStreamDefault, leaf.copy_done, 0), "leaf copy fence");
-    leaf.copy_pending = false;
-}
-
 bool CudaDeviceContext::leaf_pool_ok(size_t bytes) const
 {
     size_t free_bytes = 0;
@@ -1161,9 +1109,6 @@ CudaDeviceContext::leaf_split(Dataset const & /*ds*/,
     auto &prof = prof_counters;
     auto  lap  = prof.lap();
 
-    // The previous round's copy-back refilled part of the primary rows and
-    // read the scratch this round is about to overwrite.
-    leaf_await_copy();
     uint32_t const offset = leaf.slot_offsets[op.parent_slot];
     uint32_t const count  = leaf.slot_counts[op.parent_slot];
     leaf.part_op.reserve(1);
@@ -1186,8 +1131,8 @@ CudaDeviceContext::leaf_split(Dataset const & /*ds*/,
                 lvl.block_counts.data());
         });
     check(cudaGetLastError(), "leaf route launch");
-    seg_scan_kernel<<<dim3(1), dim3(k_part_block)>>>(lvl.block_counts.data(),
-                                                     max_chunks, lvl.nl_dev.device());
+    seg_scan_kernel<<<dim3(1), dim3(32)>>>(lvl.block_counts.data(), max_chunks,
+                                           lvl.nl_dev.device());
     check(cudaGetLastError(), "leaf seg scan launch");
     lvl.rows_b.reserve(data.key.n_rows);
     lvl.gh_b.reserve(data.key.n_rows);
@@ -1198,8 +1143,14 @@ CudaDeviceContext::leaf_split(Dataset const & /*ds*/,
     check(cudaGetLastError(), "leaf scatter launch");
     // Non-swapping advance: only this segment's range travels back into the
     // primary buffers, so every other leaf's rows stay exactly where they are.
-    // It travels on the copy stream, under the round's histogram.
-    leaf_copy_back(offset, count);
+    check(cudaMemcpyAsync(lvl.rows.data() + offset, lvl.rows_b.data() + offset,
+                          static_cast<size_t>(count) * sizeof(uint32_t),
+                          cudaMemcpyDeviceToDevice),
+          "leaf rows copy-back");
+    check(cudaMemcpyAsync(lvl.gh_ordered.data() + offset, lvl.gh_b.data() + offset,
+                          static_cast<size_t>(count) * sizeof(float2),
+                          cudaMemcpyDeviceToDevice),
+          "leaf gh copy-back");
     lvl.nl_dev.fetch(1); // DtoH, implicit sync
     if (prof.enabled)
     {
@@ -1252,10 +1203,6 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
     leaf.build_seg.sync(3);
     lap(prof.adv_stage_s);
 
-    // Rows come from the scratch side, not the primary: the scatter wrote the
-    // whole parent range there and the copy-back that refills the primary is
-    // still in flight beside this build. Same values, same order, so the
-    // histogram is the one the primary would have produced.
     // Same <512-row policy as the level plane: below the cutoff the shared
     // stage's fixed per-(node, feature) cost dominates the row visits.
     data.dispatch_bins(
@@ -1267,19 +1214,20 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
                     std::clamp<uint32_t>((small_count + 32767) / 32768, 1, 64);
                 dim3 const grid(lvl.n_selected, 1, n_chunks);
                 hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
-                    bins, lvl.gh_b.data(), lvl.rows_b.data(), leaf.build_seg.device(),
-                    leaf.build_seg.device() + 1, lvl.features.device(),
-                    data.n_bins_ptr(), static_cast<uint32_t>(ds.n_rows()),
-                    lvl.n_selected, leaf.pool.data(), lvl.stride,
-                    leaf.build_seg.device() + 2);
+                    bins, lvl.gh_ordered.data(), lvl.rows.data(),
+                    leaf.build_seg.device(), leaf.build_seg.device() + 1,
+                    lvl.features.device(), data.n_bins_ptr(),
+                    static_cast<uint32_t>(ds.n_rows()), lvl.n_selected,
+                    leaf.pool.data(), lvl.stride, leaf.build_seg.device() + 2);
             }
             else
             {
                 hist_small_kernel<<<dim3(1), dim3(128)>>>(
-                    bins, lvl.gh_b.data(), lvl.rows_b.data(), leaf.build_seg.device(),
-                    leaf.build_seg.device() + 1, lvl.features.device(),
-                    static_cast<uint32_t>(ds.n_rows()), lvl.n_selected,
-                    leaf.pool.data(), lvl.stride, leaf.build_seg.device() + 2);
+                    bins, lvl.gh_ordered.data(), lvl.rows.data(),
+                    leaf.build_seg.device(), leaf.build_seg.device() + 1,
+                    lvl.features.device(), static_cast<uint32_t>(ds.n_rows()),
+                    lvl.n_selected, leaf.pool.data(), lvl.stride,
+                    leaf.build_seg.device() + 2);
             }
         });
     check(cudaGetLastError(), "leaf hist launch");
@@ -1306,12 +1254,12 @@ bool CudaDeviceContext::leaf_stage_find(std::span<SplitInput const> nodes,
     bool    any_mask = false;
     for (size_t i = 0; i < n; ++i)
     {
-        stats[2 * i]                 = nodes[i].sums.sum_grad;
-        stats[(2 * i) + 1]           = nodes[i].sums.sum_hess;
-        stats[(2 * n) + (2 * i)]     = nodes[i].lo;
-        stats[(2 * n) + (2 * i) + 1] = nodes[i].hi;
-        leaf.find_slots.host()[i]    = slots[i];
-        any_mask                     = any_mask || !nodes[i].allowed.empty();
+        stats[2 * i]                       = nodes[i].sums.sum_grad;
+        stats[(2 * i) + 1]                 = nodes[i].sums.sum_hess;
+        stats[(2 * n) + (2 * i)]           = nodes[i].lo;
+        stats[(2 * n) + (2 * i) + 1]       = nodes[i].hi;
+        leaf.find_slots.host()[i]          = slots[i];
+        any_mask = any_mask || !nodes[i].allowed.empty();
     }
     leaf.find_stats.sync(4 * n);
     leaf.find_slots.sync(n);
@@ -1387,7 +1335,6 @@ void CudaDeviceContext::leaf_stamp(
         return;
     }
     auto stamp_lap = prof_counters.lap();
-    leaf_await_copy(); // the stamp reads the primary rows
     lvl.part_ops.clear();
     lvl.stamp_ids.clear();
     for (CudaHistogramEngine::LeafStamp const &st : stamps)

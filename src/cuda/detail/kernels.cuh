@@ -227,44 +227,22 @@ __global__ void route_count_kernel(BinT const *bins, uint32_t const *n_bins,
 }
 
 // Phase 2: exclusive scan of each op's chunk counts; total -> n_left[op].
-// One block per op, one tile of blockDim.x chunks at a time, carrying the
-// running total across tiles. Integer adds in a fixed order, so the scan is
-// the same value the serial form produced. blockDim.x <= k_part_block.
 __global__ void seg_scan_kernel(uint32_t *block_counts, uint32_t max_chunks,
                                 uint32_t *n_left)
 {
-    __shared__ uint32_t sh[k_part_block];
+    if (threadIdx.x != 0)
+    {
+        return;
+    }
     uint32_t *c   = block_counts + (static_cast<size_t>(blockIdx.x) * max_chunks);
     uint32_t  run = 0;
-    for (uint32_t base = 0; base < max_chunks; base += blockDim.x)
+    for (uint32_t k = 0; k < max_chunks; ++k)
     {
-        uint32_t const i = base + threadIdx.x;
-        uint32_t const v = i < max_chunks ? c[i] : 0U;
-        sh[threadIdx.x]  = v;
-        __syncthreads();
-        // Hillis-Steele inclusive scan, as in the scatter's thread bases.
-        for (uint32_t step = 1; step < blockDim.x; step *= 2)
-        {
-            uint32_t t = 0;
-            if (threadIdx.x >= step)
-            {
-                t = sh[threadIdx.x - step];
-            }
-            __syncthreads();
-            sh[threadIdx.x] += t;
-            __syncthreads();
-        }
-        if (i < max_chunks)
-        {
-            c[i] = run + sh[threadIdx.x] - v; // inclusive -> exclusive
-        }
-        run += sh[blockDim.x - 1];
-        __syncthreads();
+        uint32_t const v = c[k];
+        c[k]             = run;
+        run += v;
     }
-    if (threadIdx.x == 0)
-    {
-        n_left[blockIdx.x] = run;
-    }
+    n_left[blockIdx.x] = run;
 }
 
 // Phase 3: stable scatter into the other rows/gh buffers. Each thread's
