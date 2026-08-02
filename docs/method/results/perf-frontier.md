@@ -8,34 +8,40 @@
 
 | variant | iters | fit_s | test r2 |
 |---|---|---|---|
-| bonsai_cuda_depthwise | 60 | 8.10 | 0.8459 |
-| bonsai_cuda_depthwise | 80 | 10.29 | 0.8669 |
-| bonsai_cuda_depthwise | 100 | 12.15 | 0.8777 |
-| bonsai_cuda_depthwise | 130 | 14.96 | 0.8859 |
-| bonsai_cuda_depthwise | 200 | 21.26 | 0.8918 |
-| bonsai_cuda_depthwise | 300 | 29.36 | 0.8934 |
-| bonsai_cuda_oblivious | 60 | 7.41 | 0.8386 |
-| bonsai_cuda_oblivious | 80 | 9.02 | 0.8613 |
-| bonsai_cuda_oblivious | 100 | 10.61 | 0.8743 |
-| bonsai_cuda_oblivious | 130 | 12.89 | 0.8852 |
-| bonsai_cuda_oblivious | 200 | 17.60 | 0.8946 |
-| bonsai_cuda_oblivious | 300 | 23.92 | 0.8973 |
-| bonsai_cuda_oblivious | 450 | 32.50 | 0.8979 |
-| xgb_cuda | 100 | 36.76 | 0.8779 |
-| xgb_cuda | 150 | 39.68 | 0.8887 |
-| xgb_cuda | 200 | 43.13 | 0.8918 |
-| xgb_cuda | 300 | 48.04 | 0.8933 |
-| catboost_gpu | 100 | 24.55 | 0.8751 |
-| catboost_gpu | 150 | 28.62 | 0.8892 |
-| catboost_gpu | 200 | 32.49 | 0.8944 |
-| catboost_gpu | 300 | 39.91 | 0.8973 |
-| catboost_gpu | 450 | 51.63 | 0.8980 |
-| lgbm_cuda | 100 | 31.16 | 0.8847 |
-| lgbm_cuda | 150 | 37.88 | 0.8910 |
-| lgbm_cuda | 200 | 43.96 | 0.8924 |
-| lgbm_cuda | 300 | 54.30 | 0.8930 |
+| bonsai_cuda_depthwise | 60 | 13.49 | 0.8459 |
+| bonsai_cuda_depthwise | 80 | 15.55 | 0.8669 |
+| bonsai_cuda_depthwise | 100 | 17.49 | 0.8777 |
+| bonsai_cuda_depthwise | 130 | 20.26 | 0.8859 |
+| bonsai_cuda_depthwise | 200 | 26.48 | 0.8918 |
+| bonsai_cuda_depthwise | 300 | 34.65 | 0.8934 |
+| bonsai_cuda_oblivious | 60 | 12.79 | 0.8386 |
+| bonsai_cuda_oblivious | 80 | 14.45 | 0.8613 |
+| bonsai_cuda_oblivious | 100 | 16.01 | 0.8743 |
+| bonsai_cuda_oblivious | 130 | 18.18 | 0.8852 |
+| bonsai_cuda_oblivious | 200 | 22.93 | 0.8946 |
+| bonsai_cuda_oblivious | 300 | 29.20 | 0.8973 |
+| bonsai_cuda_oblivious | 450 | 37.92 | 0.8979 |
+| bonsai_cuda_leafwise | 60 | 14.41 | 0.8459 |
+| bonsai_cuda_leafwise | 80 | 16.81 | 0.8669 |
+| bonsai_cuda_leafwise | 100 | 19.10 | 0.8777 |
+| bonsai_cuda_leafwise | 130 | 22.44 | 0.8859 |
+| bonsai_cuda_leafwise | 200 | 29.96 | 0.8918 |
+| bonsai_cuda_leafwise | 300 | 39.47 | 0.8934 |
+| xgb_cuda | 100 | 26.34 | 0.8779 |
+| xgb_cuda | 150 | 29.84 | 0.8887 |
+| xgb_cuda | 200 | 33.82 | 0.8918 |
+| xgb_cuda | 300 | 38.83 | 0.8933 |
+| catboost_gpu | 100 | 18.94 | 0.8751 |
+| catboost_gpu | 150 | 22.85 | 0.8892 |
+| catboost_gpu | 200 | 26.49 | 0.8944 |
+| catboost_gpu | 300 | 34.14 | 0.8973 |
+| catboost_gpu | 450 | 45.36 | 0.8980 |
+| lgbm_cuda | 100 | 24.10 | 0.8847 |
+| lgbm_cuda | 150 | 30.50 | 0.8910 |
+| lgbm_cuda | 200 | 35.72 | 0.8924 |
+| lgbm_cuda | 300 | 45.05 | 0.8930 |
 
-*Source: [`gpu-pareto-16M-2026-08.jsonl`](../../../benchmarks/results/gpu-pareto-16M-2026-08.jsonl). bonsai is first to every measured accuracy across the grid (terminal accuracies tie within the noise band) and its marginal round cost stays below CatBoost's on the same pod. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../../benchmarks/gpu-pareto-16M-2026-07.md). Measured at `0b077ad` (2026-08-01, pod-NVIDIA-L40S).*
+*Source: [`gpu-pareto-16M-2026-08.jsonl`](../../../benchmarks/results/gpu-pareto-16M-2026-08.jsonl). bonsai is first to every measured accuracy across the grid (terminal accuracies tie within the noise band) and its marginal round cost stays below CatBoost's on the same pod. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../../benchmarks/gpu-pareto-16M-2026-07.md). Measured at `5dff84b` (2026-08-02, pod-NVIDIA-L40S).*
 
 ### Ordered boosting at scale (CatBoost door)
 

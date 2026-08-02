@@ -37,23 +37,23 @@ The six-variant cols-axis re-baseline promised by decision 90. bonsai's CUDA gro
 
 Fit seconds (test r²), best of reps:
 
-| cell | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
-|---|---|---|---|---|---|---|---|
-| 1M x 100 | 0.8s (.877) | 1.2s (.877) | 2.8s (.876) | 2.7s (.876) | 7.3s (.884) | 10.0s (.877) | 13.6s (.877) |
-| 1M x 1024 | 8.8s (.876) | 8.4s (.876) | 23.2s (.876) | 12.8s (.875) | 48.1s (.884) | 96.5s (.876) | 77.3s (.876) |
-| 1M x 4096 | 35.0s (.876) | 32.5s (.875) | 94.8s (.876) | 49.5s (.874) | 201.5s (.883) | 450.1s (.875) | 303.6s (.875) |
-| 131k x 16384 | 50.3s (.860) | 56.2s (.876) | 77.9s (.861) | 70.8s (.874) | 563.7s (.868) | 437.0s (.862) | 470.7s (.876) |
+| cell | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
+|---|---|---|---|---|---|---|---|---|
+| 1M x 100 | 1.1s (.877) | 1.5s (.877) | 2.8s (.877) | 2.1s (.876) | 2.3s (.876) | 6.2s (.884) | 5.9s (.877) | 9.3s (.877) |
+| 1M x 1024 | 12.2s (.876) | 11.7s (.876) | 16.0s (.876) | 16.6s (.876) | 9.9s (.875) | 40.3s (.884) | 62.1s (.876) | 53.8s (.876) |
+| 1M x 4096 | 48.7s (.876) | 46.2s (.875) | 60.3s (.876) | 66.9s (.876) | 37.5s (.874) | 163.3s (.883) | 259.3s (.875) | 183.4s (.875) |
+| 131k x 16384 | 56.6s (.860) | 62.2s (.876) | 800.5s (.860) | 63.6s (.861) | 58.4s (.874) | 512.5s (.868) | 245.7s (.862) | 277.4s (.876) |
 
 Peak host RSS, worst rep:
 
-| cell | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
-|---|---|---|---|---|---|---|---|
-| 1M x 100 | 0.7GB | 0.7GB | 1.8GB | 1.5GB | 1.2GB | 1.0GB | 0.9GB |
-| 1M x 1024 | 4.9GB | 4.9GB | 15.2GB | 13.1GB | 9.7GB | 9.3GB | 7.3GB |
-| 1M x 4096 | 18.6GB | 18.6GB | 60.5GB | 51.4GB | 40.4GB | 36.9GB | 29.0GB |
-| 131k x 16384 | 9.8GB | 9.8GB | 40.4GB | 26.2GB | 57.8GB | 51.0GB | 22.0GB |
+| cell | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
+|---|---|---|---|---|---|---|---|---|
+| 1M x 100 | 0.8GB | 0.8GB | 0.8GB | 1.9GB | 1.6GB | 1.2GB | 1.1GB | 0.9GB |
+| 1M x 1024 | 6.7GB | 6.7GB | 6.7GB | 14.9GB | 13.1GB | 9.7GB | 9.3GB | 7.3GB |
+| 1M x 4096 | 26.1GB | 26.1GB | 26.1GB | 60.7GB | 51.5GB | 40.2GB | 36.8GB | 29.0GB |
+| 131k x 16384 | 13.8GB | 13.8GB | 27.9GB | 40.4GB | 26.3GB | 58.0GB | 51.1GB | 22.0GB |
 
-*Source: [`cols-rebaseline-2026-08.jsonl`](../../../benchmarks/results/cols-rebaseline-2026-08.jsonl). One pod, SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells. Measured at `0b077ad` (2026-08-01, pod-NVIDIA-L40S).*
+*Source: [`cols-rebaseline-2026-08.jsonl`](../../../benchmarks/results/cols-rebaseline-2026-08.jsonl). One pod, SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells. Measured at `5dff84b` (2026-08-02, pod-NVIDIA-L40S).*
 
 ### The iso-volume shape frontier (decision 91)
 
