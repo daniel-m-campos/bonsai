@@ -33,7 +33,6 @@ RESULTS = REPO / "benchmarks" / "results"
 POD_SCRIPT = REPO / "scripts" / "standings_refresh_pod.sh"
 
 REST = "https://rest.runpod.io/v1"
-GRAPHQL = "https://api.runpod.io/graphql"
 IMAGE = "ghcr.io/daniel-m-campos/bonsai-ci:cuda12.4"
 GPU = "NVIDIA L40S"
 
@@ -230,19 +229,29 @@ def _create_pod(key: str, pubkey: str) -> str:
 
 
 def _wait_ssh(key: str, pod_id: str) -> tuple[str, int]:
-    """The public (ip, port) for sshd, from GraphQL runtime liveness."""
-    query = (f'query {{ pod(input: {{podId: "{pod_id}"}}) {{ runtime {{ '
-             "uptimeInSeconds ports { ip isIpPublic privatePort publicPort "
-             "} } } }")
-    def endpoint():
-        out = _api(GRAPHQL, key, {"query": query})
-        rt = (out.get("data") or {}).get("pod", {}).get("runtime")
-        for p in (rt or {}).get("ports") or []:
-            if p["isIpPublic"] and p["privatePort"] == 22:
-                return p["ip"], int(p["publicPort"])
-        return None
-    got = _wait_until(endpoint, timeout_s=360, what="pod runtime")
-    return got
+    """The public (ip, port) for sshd, once sshd actually answers.
+
+    Two waits, because neither signal alone is the truth. REST publishes
+    publicIp and portMappings once the pod is placed, which is necessary
+    but not sufficient: the container may still be starting. So the
+    mapping is polled first, then sshd itself, which is the only signal
+    that means the next step will work.
+    """
+    def mapping():
+        out = _api(f"{REST}/pods/{pod_id}", key, method="GET")
+        port = (out.get("portMappings") or {}).get("22")
+        ip = out.get("publicIp")
+        return (ip, int(port)) if ip and port else None
+
+    ip, port = _wait_until(mapping, timeout_s=360, what="pod port mapping")
+
+    probe = ["ssh", "-i", str(pathlib.Path.home() / ".ssh" / "id_ed25519"),
+             *SSH_OPTS, "-p", str(port), f"root@{ip}", "true"]
+    def sshd():
+        return subprocess.run(probe, capture_output=True).returncode == 0
+
+    _wait_until(sshd, timeout_s=600, what="sshd")
+    return ip, port
 
 
 def _poll_pod_run(ssh: list[str], out_dir: pathlib.Path, ip: str, port: int):

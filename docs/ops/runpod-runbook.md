@@ -43,7 +43,7 @@ Note the returned `id`. GPU choice: L40S (SECURE, ~$1/hr) is the workhorse — c
 
 ## 2. Wait for liveness and get the SSH endpoint
 
-`desiredStatus: RUNNING` from REST means nothing — the container may never have started. The API-side truth is GraphQL `runtime.uptimeInSeconds` (null = not started yet; a number = alive). The same query returns the SSH port mapping.
+`desiredStatus: RUNNING` from REST means nothing: the container may never have started. REST publishes `publicIp` and `portMappings` once the pod is placed, which is necessary but still not proof the container is up, so the only trustworthy readiness signal is sshd answering. `standings_refresh.py` polls the REST mapping and then probes ssh; the legacy GraphQL `runtime.uptimeInSeconds` query this runbook used to recommend now returns 403 for current API keys.
 
 ```bash
 POD=<pod-id>
