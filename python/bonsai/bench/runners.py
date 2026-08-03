@@ -21,16 +21,25 @@ from bonsai.bench.variants import Device, Lib, resolve
 
 
 def run_bonsai(spec, X, y, Xte, yte) -> dict:
-    """Fit/predict one cell with bonsai's fused train(pairs, X, y) call.
+    """Fit/predict one cell with bonsai's two-step Dataset + train form.
 
-    The fused call is the measured path because binning happens inside
-    train(), where the grower name and the thread count are known: cuda
-    growers bin on the device there, and the binning pass honors
-    parallel.n_threads. A prebuilt Dataset reaches the same device path
-    only when it is built with an explicit device hint, so timing an
-    unhinted construction as ingest would measure a pipeline bonsai does
-    not run on GPU. bonsai therefore reports no ingest/train breakdown:
-    the measured path wins over the breakdown.
+    The Dataset carries a device hint, "cuda" for a cuda grower and the
+    host default otherwise, so binning happens exactly where the fused
+    train(pairs, X, y) call would have put it and the ingest/train split
+    describes the measured path rather than moving it. Without the hint a
+    prebuilt Dataset bins on the host whatever grower follows, which is a
+    pipeline no cuda arm runs. bin_mapper.* pairs are stripped because the
+    Dataset fixes binning and train(pairs, dataset) rejects them.
+
+    Every call builds its own Dataset: reusing one across repeats or
+    variants amortizes ingest, and each row is charged its full ingest.
+    fit_s stays the outer wall clock over both steps and is never
+    redefined as their sum.
+
+    A spec carrying fused=True takes the one-call form instead and
+    reports no breakdown; that arm exists for the parity check in
+    scripts/standings_ab.py, which prices the two forms against each
+    other on a GPU host.
     """
     import bonsai
     grower = spec[runlog.Row.VARIANT].removeprefix("bonsai_")
@@ -38,22 +47,34 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
         raise RuntimeError("unsupported: cuda grower without a CUDA device/build")
     c = spec[runlog.Row.CELL]
     task = c.get("task", "reg")
+    threads = spec[runlog.Row.THREADS]
     pairs = rp.bonsai_core(
         learning_rate=c["lr"], max_depth=c["depth"],
         num_leaves=rp.num_leaves_of(c),
         min_data_in_leaf=c.get("min_data_in_leaf", rp.SCALING["min_data_in_leaf"]),
         lambda_l2=c.get("lambda_l2", rp.SCALING["lambda_l2"]),
         max_bin=c["bins"], seed=c["seed"],
-        n_iters=c["iters"], n_threads=spec[runlog.Row.THREADS], grower=grower,
+        n_iters=c["iters"], n_threads=threads, grower=grower,
         objective="logloss" if task == "binary" else "mse")
-    t0 = time.perf_counter()
-    model = bonsai.train(pairs, X, y)
-    fit_s = time.perf_counter() - t0
+    if spec.get("fused"):
+        fit_t0 = time.perf_counter()
+        model = bonsai.train(pairs, X, y)
+        fit_s, ingest_s, train_s = time.perf_counter() - fit_t0, None, None
+    else:
+        fit_t0 = t0 = time.perf_counter()
+        ds = bonsai.Dataset(X, y, max_bin=c["bins"], n_threads=threads,
+                            device="cuda" if grower.startswith("cuda") else "cpu")
+        ingest_s = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        model = bonsai.train([p for p in pairs
+                              if not p[0].startswith("bin_mapper.")], ds)
+        train_s = time.perf_counter() - t0
+        fit_s = time.perf_counter() - fit_t0
     t0 = time.perf_counter()
     pred_te = np.asarray(model.predict(Xte))
     predict_s = time.perf_counter() - t0
     return _score(task, fit_s, predict_s, y, yte, pred_te,
-                  lambda: np.asarray(model.predict(X)), None, None)
+                  lambda: np.asarray(model.predict(X)), ingest_s, train_s)
 
 
 def run_xgb(spec, X, y, Xte, yte) -> dict:
@@ -234,8 +255,8 @@ def _score(task: str, fit_s: float, predict_s: float, y, yte, pred_te,
 
     fit_s is the outer wall clock (raw-floats-to-model, unchanged protocol);
     ingest_s/train_s are the inner breakdown and are not summed back into
-    it. Both are None when a library offers no split that leaves the
-    measured path intact.
+    it. Every arm reports the split; the pair is None only for a fused
+    bonsai arm, which has no seam to report.
     """
     base = {runlog.Row.FIT_S: fit_s, runlog.Row.INGEST_S: ingest_s,
             runlog.Row.TRAIN_S: train_s, runlog.Row.PREDICT_S: predict_s}

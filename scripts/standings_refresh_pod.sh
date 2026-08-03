@@ -45,6 +45,24 @@ if [ -n "$PREV_VERSION" ]; then
     done
 fi
 
+# Ingest/train parity: the same anchor cell through bonsai's fused call and
+# through the two-step Dataset + train form the runner uses. The published
+# split is only honest while these agree, because a two-step Dataset without
+# its device hint bins on the host and posts an ingest number for a pipeline
+# no cuda grower runs. One process per arm keeps peak RSS per-arm, and two
+# interleaved reps keep pod drift out of the comparison.
+: > /root/standings/parity.jsonl
+for rep in 1 2; do
+    for arm in fused two_step; do
+        [ "$arm" = fused ] && FUSED=--fused || FUSED=
+        env PYTHONPATH=/root/bonsai/build-cuda/python \
+            /opt/venv/bin/python scripts/standings_ab.py \
+            --rows 16000000 --cols 100 --grower cuda_depthwise \
+            --arm "$arm" --skip-without-cuda $FUSED \
+            >> /root/standings/parity.jsonl
+    done
+done
+
 run_axis() {
     case "$1" in
         rows)
