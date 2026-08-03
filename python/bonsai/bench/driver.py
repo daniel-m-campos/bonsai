@@ -167,10 +167,14 @@ def run_one(spec: dict, timeout: int, sampler: bool = False,
     """One worker child, one cell: the payload dict for the row.
 
     Timeouts, signals, and nonzero exits come back as status rows
-    (timeout/oom/unsupported/error) instead of exceptions.
+    (timeout/oom/unsupported/error) instead of exceptions. bonsai children run
+    with the profile counters on unless BONSAI_BENCH_NO_PROFILE is set, which
+    a campaign measuring wall clock wants: the counters cost time on planes
+    whose rounds are short enough for a profile sync to be the round.
     """
     env = dict(os.environ)
-    if resolve(spec[runlog.Row.VARIANT]).lib == Lib.BONSAI:
+    if (resolve(spec[runlog.Row.VARIANT]).lib == Lib.BONSAI
+            and not env.get("BONSAI_BENCH_NO_PROFILE")):
         env.update(BONSAI_GROW_PROFILE="1", BONSAI_INGEST_PROFILE="1",
                    BONSAI_CUDA_PROFILE="1", BONSAI_FIT_PROFILE="1")
     if data_cache:
