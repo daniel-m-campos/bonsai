@@ -10,16 +10,16 @@ Same-pod sweep (AMD EPYC 9354 32-Core Processor, NVIDIA L40S), synthetic regress
 
 Scaling rows (100 features):
 
-| rows | bonsai cuda dw | bonsai cuda obl | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
-|---|---|---|---|---|---|---|---|
-| 250k | 0.4s (.872) | 0.9s (.877) | 1.0s (.872) | 1.9s (.875) | 6.1s (.879) | 4.1s (.872) | 7.7s (.877) |
-| 1M | 0.8s (.877) | 1.2s (.877) | 2.7s (.876) | 2.7s (.876) | 7.5s (.884) | 9.7s (.877) | 11.9s (.877) |
-| 4M | 3.1s (.878) | 3.1s (.876) | 9.3s (.878) | 6.4s (.877) | 11.7s (.885) | 32.9s (.879) | 34.0s (.876) |
-| 16M | 12.1s (.879) | 10.5s (.877) | 36.9s (.880) | 24.1s (.876) | 31.7s (.886) | 210.2s (.879) | 109.8s (.877) |
+| rows | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
+|---|---|---|---|---|---|---|---|---|
+| 250k | 0.4s (.872) | 0.9s (.877) | 1.9s (.872) | 1.1s (.872) | 1.9s (.875) | 6.4s (.879) | 4.4s (.872) | 8.1s (.877) |
+| 1M | 0.8s (.877) | 1.2s (.877) | 2.5s (.877) | 2.6s (.876) | 2.7s (.876) | 7.6s (.884) | 8.9s (.877) | 12.7s (.877) |
+| 4M | 3.1s (.878) | 3.1s (.876) | 4.9s (.878) | 9.6s (.878) | 6.4s (.877) | 12.0s (.885) | 35.7s (.879) | 34.5s (.876) |
+| 16M | 12.1s (.879) | 10.5s (.877) | 13.8s (.879) | 35.7s (.880) | 24.3s (.876) | 31.8s (.886) | 211.1s (.879) | 109.2s (.877) |
 
 Width scaling has its own standings axis on [Width and shape](perf-shape.md).
 
-*Source: [`rebaseline-2026-08.jsonl`](../../../benchmarks/results/rebaseline-2026-08.jsonl). Runner: [scripts/bench_scaling.py](../../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file. Measured at `0b077ad` (2026-08-01, pod-NVIDIA-L40S).*
+*Source: [`rebaseline-2026-08.jsonl`](../../../benchmarks/results/rebaseline-2026-08.jsonl). Runner: [scripts/bench_scaling.py](../../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file. Measured at `77633a6` (2026-08-02, pod-NVIDIA-L40S).*
 
 ### The XGBoost 3.3 recheck (decision 87)
 
