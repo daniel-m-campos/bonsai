@@ -237,6 +237,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The standings gate below reads scripts/ and benchmarks/ from the
+      # repo, so this job needs a checkout; it runs before the artifacts
+      # land because checkout cleans the workspace.
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
