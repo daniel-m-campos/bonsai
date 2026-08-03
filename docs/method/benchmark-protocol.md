@@ -46,6 +46,10 @@ One implementation, `bonsai.bench.metrics`. Primary metric per task, the only on
 
 Two modes, declared per row. `in_memory`: fit timed from in-memory arrays, including each library's own ingest (bonsai binning, XGBoost QuantileDMatrix, lgb.Dataset, CatBoost Pool); the scaling and rebaseline convention. `pipeline`: fit timed end to end including CSV read; the CLI-compare convention. Numbers from different modes are never compared against each other. predict_s always times prediction from a raw test matrix.
 
+Every arm receives the same host array and is measured through the ingest API its own documentation recommends for that input: bonsai's fused `train(pairs, X, y)`, XGBoost's `QuantileDMatrix`, LightGBM's `Dataset` built with its params, CatBoost's `Pool`. fit_s spans ingest through the trained model for every arm; where a library exposes the split, ingest_s and train_s are reported underneath it rather than measured on their own, and fit_s is never redefined as their sum.
+
+Where a library sketches or bins, host or device, is a property of that library and is reported, not equalized: routing every arm through the same intermediate structure would erase the difference the perf division exists to measure. Changing any runner's call form is therefore a protocol change, not a refactor, and needs a same-pod A/B before it lands: a runner was once quietly moved off its documented ingest path, and the loss was caught only by a human comparing two refreshes and noticing every other arm got faster.
+
 ## Knobs
 
 Two named sets in `bonsai.bench.params`: CAMPAIGN (200 iters, lr 0.05, depth 6, 255 bins) for quality, SCALING (100 iters, lr 0.1, depth 8) for perf. Two LightGBM leaf conventions exist by declaration, not drift: `num_leaves_campaign(depth)` = (1 << depth) - 1 and `num_leaves_full(depth)` = 1 << depth; each row records which. Reference mappings (including CatBoost's GPU border cap and XGBoost's hessian-weighted min_child_weight, whose two readings bracket XGBoost per decision 68's correction) live only in `params.py`; re-deriving them by hand caused a published correction once and is the one prohibited act.
