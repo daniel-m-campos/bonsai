@@ -47,6 +47,7 @@ class K:
     R2_TEST: Final = "r2_test"
     VARIANT: Final = "variant"
     STATUS: Final = "status"
+    RUN: Final = "run"
     DATASET: Final = "dataset"
     PEAK_RSS_GB: Final = "peak_rss_gb"
     GIT_SHA: Final = "git_sha"
@@ -77,6 +78,7 @@ class Evidence:
     LEAFWISE_CADENCE: Final = "leafwise-cadence-2026-08.json"
     LEAFWISE_LADDER: Final = "leafwise-ladder-2026-08.jsonl"
     LEAFWISE_STAGE3: Final = "leafwise-stage3-2026-08.jsonl"
+    LEAFWISE_CORRECTION: Final = "leafwise-correction-2026-08.jsonl"
 
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -1157,6 +1159,8 @@ def leafwise_recheck_section() -> str:
 
 The decision-42-era reading ("bonsai CPU leafwise beats LightGBM's CUDA leaf-wise") was measured at 464k rows; on one pod at ladder scales it inverts, monotonically, to 5.3x in LightGBM's favor at 16M. The engineering conclusion stands the other way up: leaf-wise on the GPU is viable at scale (LightGBM ships it), and bonsai's leafwise grower is now the only grower without device support (issue #268). The anchor arm ties this pod to the ladders; LightGBM-CUDA's higher r2 column is the depth-cap artifact recorded in decision 95.
 
+The CPU `leafwise` row, which is what this section reads, binned on the host by design and is unaffected by anything below. The `bonsai cuda dw` anchor row is not: it was measured through the harness path decision 100 corrects, so it runs slower here than the library does. The correction section at the foot of this page carries the sizes.
+
 {table}
 
 {provenance([Evidence.LEAFWISE_RECHECK], "One pod (L40S, US-MO-1, 2026-08-01), SCALING knobs at 100 iters, best of 2 reps; evidence for decision 95.")}
@@ -1214,6 +1218,8 @@ def leafwise_ladder_section() -> str:
         [[human(n), *[_fmt_cell(capped, n, 100, v) for v in order]]
          for n in scales])
     return f"""### The device-leafwise ladder: admission by measurement (stage 2)
+
+**Read the correction at the foot of this page first.** Every bonsai CUDA number in this table was measured through a harness that binned on the host, so the two device columns are slower here than the library is. The kill criterion is met either way, by more than this table says; the absolutes are not the library's.
 
 Same pod, four arms, best of two reps, interleaved. The kill criterion pre-registered in issue #268 was one number: beat LightGBM's CUDA leaf-wise at 16M x 100 on the same pod, or the grower does not register. It is met with {margin:.0%} to spare at 16M, and `cuda_leafwise` beats its own CPU arm at every cell, {min(over_cpu):.1f}x to {max(over_cpu):.1f}x. The anchor row prices what is left: the depthwise plane moves the same histogram volume in less time, because serializing the frontier to one node per round costs launches that the level plane batches away.
 
@@ -1280,13 +1286,15 @@ def leafwise_stage3_section() -> str:
           f"{fit(prior, n, 'bonsai_cuda_leafwise'):.1f}s"] for n in scales])
     return f"""### The closing ladder: what stage 3's levers moved (decision 98)
 
-Same knobs and the same three device arms as the admission ladder above, one pod, best of two reps, interleaved, and unprofiled. Stage 3 landed two levers on the leaf plane, the device-resident objective and the round's pinned and packed staging, and reverted a third (the partition chain) that measured worthless. The reference arms carry the cross-ladder comparison, because these are two rentals of the same GPU model rather than one pod: `lgbm_cuda` and the depthwise anchor reproduce their stage 2 times within {drift:.0%} at every cell, so the leafwise column's move is the levers and not the rental. `cuda_leafwise` fits {fit(capped, top, "bonsai_cuda_leafwise"):.1f}s at 16M x 100 against stage 2's {fit(prior, top, "bonsai_cuda_leafwise"):.1f}s, and the cut runs {min(cuts):.0%} to {max(cuts):.0%} across the ladder, largest at the small cells where the round's fixed cost is the fit. The margin over LightGBM's CUDA leaf-wise at 16M widens from {prior_margin:.0%} to {margin:.0%}; {anchor_gap:.1f}s of fit still separate the leaf plane from the resident depthwise anchor at the same cell, and that is what stage 3 leaves open. `r2_test` is identical to stage 2 in every cell of the table.
+**Read the correction at the foot of this page first.** Both bonsai columns here were measured through the same host-binning harness as the admission ladder, so this table's absolutes overstate the plane's fit time; the lever deltas it reports were same-path A/Bs and stand.
+
+Same knobs and the same three device arms as the admission ladder above, one pod, best of two reps, interleaved. Stage 3 landed two levers on the leaf plane, the device-resident objective and the round's pinned and packed staging, and reverted a third (the partition chain) that measured worthless. The reference arms carry the cross-ladder comparison, because these are two rentals of the same GPU model rather than one pod: `lgbm_cuda` and the depthwise anchor reproduce their stage 2 times within {drift:.0%} at every cell, so the leafwise column's move is the levers and not the rental. `cuda_leafwise` fits {fit(capped, top, "bonsai_cuda_leafwise"):.1f}s at 16M x 100 against stage 2's {fit(prior, top, "bonsai_cuda_leafwise"):.1f}s, and the cut runs {min(cuts):.0%} to {max(cuts):.0%} across the ladder, largest at the small cells where the round's fixed cost is the fit. The margin over LightGBM's CUDA leaf-wise at 16M widens from {prior_margin:.0%} to {margin:.0%}; {anchor_gap:.1f}s of fit still separate the leaf plane from the resident depthwise anchor at the same cell, and that is what stage 3 leaves open. `r2_test` is identical to stage 2 in every cell of the table.
 
 {table}
 
 {_stage3_uncapped(rows)}
 
-{provenance([Evidence.LEAFWISE_STAGE3], "One pod (L40S, US-NC-1, 2026-08-02), SCALING knobs at 100 iters and 256 leaves, best of 2 reps, no profiler (the profile peel drains the round's pipeline and prices host residue 7x high, doc 20). CPU `leafwise` is unchanged since the stage 2 ladder above and is cited from it rather than re-measured, which is why this ladder is three arms.")}
+{provenance([Evidence.LEAFWISE_STAGE3], "One pod (L40S, US-NC-1, 2026-08-02), SCALING knobs at 100 iters and 256 leaves, best of 2 reps. Decision 98 describes this ladder as unprofiled; its rows in fact carry profile blocks, because the bench driver sets the counters for every bonsai child and had no opt-out until decision 100, which prices them at 0% to 2% of fit. CPU `leafwise` is unchanged since the stage 2 ladder above and is cited from it rather than re-measured, which is why this ladder is three arms.")}
 """
 
 
@@ -1310,6 +1318,127 @@ def _stage3_uncapped(rows: list[dict]) -> str:
                if lw < lg else
                f"LightGBM still leads it, by {lw / lg - 1:.0%}")
     return f"""The uncapped arm is the cell stage 3 most wanted to move, and the one the admission recorded against itself. Lifting the depth cap is where best-first differs from level-wise and where the comparison against LightGBM is honest, since its CUDA learner ignores `max_depth` outright (decision 95). It is also where the round count doubles, from 25,500 to 51,100, because every leaf the tree creates must be found rather than skipped at the cap. Stage 2 measured {prior_lw:.1f}s against LightGBM's 31.6s at equal r2; the levers cut that to {lw:.1f}s, and {verdict}.
+
+{table}
+"""
+
+
+_CORRECTION_RUN: Final = "leafwise-correction"
+_CORRECTION_PROFILED_RUN: Final = "leafwise-correction-profiled"
+_CORRECTION_NOCACHE_RUN: Final = "leafwise-correction-nocache"
+
+
+def leafwise_correction_section() -> str:
+    """The campaign's ladders re-measured on the fixed harness (decision 100)."""
+    rows = [r for r in load_jsonl(Evidence.LEAFWISE_CORRECTION)
+            if r[K.STATUS] == "ok"]
+    capped = _cell_best([r for r in rows if r[K.RUN] == _CORRECTION_RUN
+                         and r["cell"]["depth"] != UNCAPPED_DEPTH])
+    prior = _cell_best([r for r in load_jsonl(Evidence.LEAFWISE_STAGE3)
+                        if r[K.STATUS] == "ok"
+                        and r["cell"]["depth"] != UNCAPPED_DEPTH])
+    scales = sorted({k[0] for k in capped})
+    top = scales[-1]
+
+    def fit(best: dict, n: int, variant: str) -> float:
+        return best[(n, 100, variant)][K.FIT_S]
+
+    def rental(n: int) -> float:
+        """How far this pod's unaffected reference arm sits above stage 3's."""
+        return fit(capped, n, "lgbm_cuda") / fit(prior, n, "lgbm_cuda") - 1
+
+    over = fit(capped, top, "lgbm_cuda") / fit(capped, top,
+                                               "bonsai_cuda_leafwise")
+    stand = _cell_best([r for r in load_jsonl(standings_file(Axis.ROWS))
+                        if r[K.STATUS] == "ok"])
+    margin = 1 - fit(capped, top, "bonsai_cuda_leafwise") / fit(capped, top,
+                                                               "lgbm_cuda")
+    published = 1 - fit(prior, top, "bonsai_cuda_leafwise") / fit(prior, top,
+                                                                 "lgbm_cuda")
+    gap = fit(capped, top, "bonsai_cuda_leafwise") - fit(capped, top,
+                                                         "bonsai_cuda_depthwise")
+    gap_phrase = (
+        f"{gap:.1f}s of fit separate the leaf plane from the depthwise anchor "
+        f"at 16M, where decision 98 read 1.3s, because a host binning pass "
+        f"that sat on both planes flattered their distance" if gap > 0 else
+        f"the leaf plane now fits {-gap:.1f}s faster than the depthwise "
+        f"anchor at 16M, where decision 98 had it 1.3s behind")
+    table = md_table(
+        ["rows", *[_LADDER_LABELS[v] for v in _STAGE3_ARMS],
+         "decision 98 leafwise"],
+        [[human(n), *[_fmt_cell(capped, n, 100, v) for v in _STAGE3_ARMS],
+          f"{fit(prior, n, 'bonsai_cuda_leafwise'):.1f}s"] for n in scales])
+    return f"""### The correction: the campaign ladders on the fixed harness (decision 100)
+
+Every bonsai CUDA number in the two ladders above was measured through a benchmark harness that built its `Dataset` before it knew which grower would consume it, so the device arms binned on the host and carried a host binned matrix, and 2.5GB of host memory with it, for the whole fit. The library was never at fault and the bias ran one way, against bonsai. This ladder is the same three device arms at the same knobs on the fixed harness, one pod, best of two reps, interleaved, with the profile counters off. At 16M x 100 `cuda_leafwise` fits {fit(capped, top, "bonsai_cuda_leafwise"):.1f}s where decision 98 published {fit(prior, top, "bonsai_cuda_leafwise"):.1f}s, and it beats LightGBM's CUDA leaf-wise by {over:.1f}x rather than the published {1 / (1 - published):.1f}x: the kill criterion pre-registered in issue #268 is met by {margin:.0%} where the record claims {published:.0%}. {gap_phrase[0].upper()}{gap_phrase[1:]}.
+
+{table}
+
+Absolutes do not carry across rentals here, and the reference arm says why. `lgbm_cuda` never touched the affected path, and on this pod it reads {min(rental(n) for n in scales):.0%} to {max(rental(n) for n in scales):.0%} above the times decision 98 published for it, so this is the slowest of the three L40S rentals the campaign has run on. That is also why the 250k and 1M leafwise cells read above their published numbers rather than below: the ingest saving at those cells is a fraction of a second and this pod's host latency is not. The standings measure the same 16M cell on the fixed path, on a rental that reproduces the campaign's reference times, and read `cuda_leafwise` {stand[(16_000_000, 100, "bonsai_cuda_leafwise")][K.FIT_S]:.1f}s against `lgbm_cuda` {stand[(16_000_000, 100, "lgbm_cuda")][K.FIT_S]:.1f}s. Both rentals correct the published margin the same way, and that agreement is the reading that survives the pod. The distance between the two numbers is not left as pod luck either: the controls below take it apart into the profile counters, the benchmark data cache, and what remains of the rental.
+
+{_correction_uncapped(rows)}
+
+{_correction_profiler(rows, prior, scales)}
+
+{provenance([Evidence.LEAFWISE_CORRECTION], "One pod (L40S, US-NC-1, 2026-08-03), SCALING knobs at 100 iters and 256 leaves, best of 2 reps, on the fixed ingest path; evidence for decision 100. CPU `leafwise` binned on the host in every run and is unaffected, so it is cited from the admission ladder rather than re-measured.")}
+"""
+
+
+def _correction_uncapped(rows: list[dict]) -> str:
+    """The uncapped arm, the campaign's one negative finding, re-measured."""
+    best = _cell_best([r for r in rows if r[K.RUN] == _CORRECTION_RUN
+                       and r["cell"]["depth"] == UNCAPPED_DEPTH])
+    prior = _cell_best([r for r in load_jsonl(Evidence.LEAFWISE_STAGE3)
+                        if r[K.STATUS] == "ok"
+                        and r["cell"]["depth"] == UNCAPPED_DEPTH])
+    order = ["bonsai_cuda_leafwise", "lgbm_cuda"]
+    table = md_table(
+        ["16M x 100, no depth cap", K.FIT_S, "test r2", "decision 98 fit_s"],
+        [[_LADDER_LABELS[v], f"{best[(16_000_000, 100, v)][K.FIT_S]:.1f}s",
+          fmt(best[(16_000_000, 100, v)][K.R2_TEST], 4),
+          f"{prior[(16_000_000, 100, v)][K.FIT_S]:.1f}s"] for v in order])
+    lw = best[(16_000_000, 100, "bonsai_cuda_leafwise")][K.FIT_S]
+    lg = best[(16_000_000, 100, "lgbm_cuda")][K.FIT_S]
+    verdict = (f"the finding inverts: bonsai leads the uncapped cell by "
+               f"{lg / lw - 1:.0%} at equal accuracy" if lw < lg else
+               f"the finding holds: LightGBM still leads it by "
+               f"{lw / lg - 1:.0%} at equal accuracy")
+    return f"""The uncapped arm is the one cell where the campaign recorded a loss, and it is the reading most exposed to the harness, since the handicap it carried is the same absolute number whether the tree is capped or not. Lifting the depth cap doubles the round count from 25,500 to 51,100, because every leaf the tree creates must be found rather than skipped at the cap. Decisions 97 and 98 read this cell as bonsai faster at matched knobs and slower at matched accuracy; on the fixed harness {verdict}.
+
+{table}
+"""
+
+
+def _correction_profiler(rows: list[dict], prior: dict,
+                         scales: list[int]) -> str:
+    """The two instrument controls: profile counters, and the data cache."""
+    def best(run: str) -> dict:
+        return _cell_best([r for r in rows if r[K.RUN] == run
+                           and r["cell"]["depth"] != UNCAPPED_DEPTH])
+
+    plain, prof, nocache = (best(_CORRECTION_RUN),
+                            best(_CORRECTION_PROFILED_RUN),
+                            best(_CORRECTION_NOCACHE_RUN))
+    stand = _cell_best([r for r in load_jsonl(standings_file(Axis.ROWS))
+                        if r[K.STATUS] == "ok"])
+    v, dw = "bonsai_cuda_leafwise", "bonsai_cuda_depthwise"
+    n = 16_000_000
+
+    def pair(src: dict) -> list[str]:
+        return [f"{src[(n, 100, v)][K.FIT_S]:.1f}s",
+                f"{src[(n, 100, dw)][K.FIT_S]:.1f}s"]
+
+    table = md_table(
+        ["16M x 100, capped", "cuda leafwise", "cuda dw (anchor)"],
+        [["this ladder (cached, counters off)", *pair(plain)],
+         ["counters on", *pair(prof)],
+         ["counters on, no data cache", *pair(nocache)],
+         ["standings pod (counters on, no data cache)", *pair(stand)]])
+    costs = [prof[(s, 100, v)][K.FIT_S] / plain[(s, 100, v)][K.FIT_S] - 1
+             for s in scales]
+    cache = 1 - nocache[(n, 100, v)][K.FIT_S] / prof[(n, 100, v)][K.FIT_S]
+    pod = nocache[(n, 100, v)][K.FIT_S] / stand[(n, 100, v)][K.FIT_S] - 1
+    return f"""Two things other than the ingest path differ between this ladder and the published ones, and both are priced rather than argued. The rows of both published ladders carry profile blocks, because the bench driver turns the four counters on for every bonsai child and neither ladder could turn them off; this ladder ran with them off, and running it both ways puts the counters at {min(costs):.0%} to {max(costs):.0%} of leafwise fit. The `--data-cache` memmap the campaign ladders and this one all used costs more than that: dropping it at 16M, the protocol the standings run, takes leafwise fit down another {cache:.0%}. What is left is the rental, {pod:.0%} on identical protocol.
 
 {table}
 """
@@ -1504,7 +1633,8 @@ PAGES: list[tuple[str, str, str, list]] = [
      "the CPU prefetch round.",
      [rebaseline_section, xgb33_recheck_table, prefetch_section,
       leafwise_recheck_section, leafwise_cadence_section,
-      leafwise_ladder_section, leafwise_stage3_section]),
+      leafwise_ladder_section, leafwise_stage3_section,
+      leafwise_correction_section]),
     ("perf-shape.md", "Width and shape",
      "The wide-data arc: the CPU fill, the CUDA recheck, the cols "
      "re-baseline, and the iso-volume shape frontier with measured VRAM.",
