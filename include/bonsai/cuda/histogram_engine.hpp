@@ -7,6 +7,7 @@
 #include "bonsai/types.hpp"
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 
 namespace bonsai
@@ -36,6 +37,45 @@ std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const &batch,
                                                BinMappers const          &mappers);
 std::shared_ptr<IngestPlane const> cuda_ingest(features_view     X,
                                                BinMappers const &mappers);
+
+// A caller-owned, device-resident, row-major float32 matrix: the payload of
+// the __cuda_array_interface__ a cupy/torch/cuDF caller hands the Python
+// layer. bonsai reads it during ingest and retains nothing, so the caller's
+// buffer only has to outlive the call that consumes it.
+struct DeviceMatrix
+{
+    float const *data    = nullptr;
+    size_t       n_rows  = 0;
+    size_t       n_feats = 0;
+};
+
+// The device a pointer's allocation lives on; nullopt when it is not device
+// memory. Placement disagreements are refused rather than migrated, so the
+// caller compares this against parallel.device_id before any device work.
+std::optional<uint32_t> cuda_device_of(void const *ptr);
+
+// Waits on a producer's stream so its writes are visible before bonsai reads
+// the buffer. The handle is the one __cuda_array_interface__ carries, where 1
+// is the legacy default stream and 2 the per-thread default.
+void cuda_wait_stream(uintptr_t stream);
+
+// Copies n floats device to host: the labels and weights of a device-resident
+// caller, which bonsai keeps on the host like every other Dataset's.
+void cuda_download(float const *src, size_t n, float *dst);
+
+// Gathers the named rows of a device-resident matrix into a host row-major
+// (rows.size() x n_feats) buffer — the sample BinMappers::fit cuts on. An
+// empty rows span copies every row, matching bin_sample_rows.
+void cuda_gather_rows(DeviceMatrix const &X, std::span<uint32_t const> rows,
+                      std::span<float> out);
+
+// Bins a device-resident matrix in place: the same kernel over the same cuts
+// as cuda_ingest, with no host-to-device copy, so bin ids are bit-identical to
+// both the host fill and cuda_ingest. Unlike cuda_ingest this never declines
+// on bin count: there is no host copy of the matrix to fall back to, and a
+// grower that declines materializes host bins from the plane instead.
+std::shared_ptr<IngestPlane const> cuda_ingest_device(DeviceMatrix const &X,
+                                                      BinMappers const   &mappers);
 
 // HistogramEngine that offloads histogram construction to the GPU
 // (src/cuda/histogram_engine.cu; a throwing stub backs it when built

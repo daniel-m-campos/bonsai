@@ -12,11 +12,13 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "bonsai/bin_mappers.hpp"
@@ -45,20 +47,250 @@ bonsai::features_view as_view(array_2d const &X)
     return bonsai::features_view{X.data(), X.shape(0), X.shape(1)};
 }
 
+// --- device-resident input (__cuda_array_interface__)
+
+// One validated device array: a row-major float32 buffer that already lives on
+// a GPU, plus the producer's stream. Version 2 of the protocol has no stream
+// key and version 3 may set it to None; both mean "no wait needed".
+struct DeviceArray
+{
+    float const *data   = nullptr;
+    size_t       rows   = 0;
+    size_t       cols   = 1;
+    uintptr_t    stream = 0;
+};
+
+// Reads __cuda_array_interface__ off an arbitrary object. nullopt means the
+// object does not speak the protocol at all (a numpy array, a list); an object
+// that speaks it but carries something bonsai cannot bin throws instead of
+// falling back, because the fallback would be the host round trip the caller
+// handed us a device pointer to avoid.
+std::optional<DeviceArray> as_device_array(nb::handle obj, char const *what,
+                                           size_t ndim)
+{
+    if (!nb::hasattr(obj, "__cuda_array_interface__"))
+    {
+        return std::nullopt;
+    }
+    nb::dict const cai =
+        nb::cast<nb::dict>(nb::getattr(obj, "__cuda_array_interface__"));
+    std::string const name  = std::string{what};
+    auto const        shape = nb::cast<std::vector<size_t>>(cai["shape"]); // NOLINT
+    if (shape.size() != ndim)
+    {
+        throw std::invalid_argument(name + " must be " + std::to_string(ndim) +
+                                    "-dimensional, got " +
+                                    std::to_string(shape.size()) + " dimensions");
+    }
+    if (auto const typestr = nb::cast<std::string>(cai["typestr"]);
+        typestr != "<f4" && typestr != "=f4")
+    {
+        throw std::invalid_argument(name + " must be float32 on the device (typestr " +
+                                    typestr + "); cast it before the call");
+    }
+    if (cai.contains("mask") && !cai["mask"].is_none())
+    {
+        throw std::invalid_argument(name + " carries a __cuda_array_interface__ mask; "
+                                           "bonsai reads missing values as NaN");
+    }
+    DeviceArray out;
+    out.rows = shape[0];
+    out.cols = ndim == 2 ? shape[1] : 1;
+    if (cai.contains("strides") && !cai["strides"].is_none())
+    {
+        auto const strides = nb::cast<std::vector<int64_t>>(cai["strides"]);
+        auto const row     = static_cast<int64_t>(out.cols * sizeof(float));
+        bool const c_contig =
+            ndim == 1 ? strides[0] == static_cast<int64_t>(sizeof(float))
+                      : strides[0] == row &&
+                            strides[1] == static_cast<int64_t>(sizeof(float));
+        if (!c_contig)
+        {
+            throw std::invalid_argument(
+                name + " must be C-contiguous on the device; make a contiguous copy "
+                       "(ascontiguousarray) before the call");
+        }
+    }
+    auto const data = nb::cast<nb::tuple>(cai["data"]);
+    // NOLINTNEXTLINE(performance-no-int-to-ptr): the protocol carries an address
+    out.data = reinterpret_cast<float const *>(nb::cast<uintptr_t>(data[0]));
+    if (out.data == nullptr || out.rows == 0)
+    {
+        throw std::invalid_argument(name + " is an empty device array");
+    }
+    if (cai.contains("stream") && !cai["stream"].is_none())
+    {
+        out.stream = nb::cast<uintptr_t>(cai["stream"]);
+    }
+    return out;
+}
+
+// Placement for device-resident input: the buffer decides where the work
+// happens, so a pointer that disagrees with parallel.device_id is refused
+// rather than migrated behind the caller's back, and the producer's stream is
+// waited on before anything reads the bytes.
+void place_device_array(DeviceArray const &arr, uint32_t device_id, char const *what)
+{
+    if (!bonsai::cuda_available())
+    {
+        throw std::invalid_argument(
+            std::string{what} +
+            " is device-resident (__cuda_array_interface__), which needs a CUDA "
+            "build and a visible device; cuda_available() is False");
+    }
+    bonsai::cuda_select_device(device_id);
+    auto const on = bonsai::cuda_device_of(arr.data);
+    if (!on)
+    {
+        throw std::invalid_argument(std::string{what} +
+                                    "'s __cuda_array_interface__ pointer is not CUDA "
+                                    "device memory");
+    }
+    if (*on != device_id)
+    {
+        throw std::invalid_argument(
+            std::string{what} + " is resident on CUDA device " + std::to_string(*on) +
+            "; parallel.device_id=" + std::to_string(device_id) +
+            " would train on another device. Train with device_id=" +
+            std::to_string(*on) + " or move the array to device " +
+            std::to_string(device_id) + ".");
+    }
+    bonsai::cuda_wait_stream(arr.stream);
+}
+
+// The feature matrix as bonsai received it: a host numpy array, or a device
+// buffer bonsai bins where it already lies. The device pointer is borrowed for
+// the duration of the call that consumes it and never retained: ingest mints a
+// plane that owns its own device bins, so nothing outlives this struct.
+struct MatrixArg
+{
+    std::optional<array_2d> host;
+    bonsai::DeviceMatrix    dev;
+    size_t                  n_rows     = 0;
+    size_t                  n_features = 0;
+
+    bool on_device() const
+    {
+        return dev.data != nullptr;
+    }
+    bonsai::features_view view() const
+    {
+        return as_view(*host);
+    }
+};
+
+MatrixArg resolve_matrix(nb::handle X, uint32_t device_id)
+{
+    MatrixArg out;
+    if (auto const arr = as_device_array(X, "X", 2))
+    {
+        place_device_array(*arr, device_id, "X");
+        out.dev        = {.data = arr->data, .n_rows = arr->rows, .n_feats = arr->cols};
+        out.n_rows     = arr->rows;
+        out.n_features = arr->cols;
+        return out;
+    }
+    array_2d host;
+    if (!nb::try_cast(X, host))
+    {
+        throw std::invalid_argument("X must be a row-major float32 array, or expose "
+                                    "__cuda_array_interface__ (cupy, torch, cuDF)");
+    }
+    out.host       = host;
+    out.n_rows     = host.shape(0);
+    out.n_features = host.shape(1);
+    return out;
+}
+
+// Labels and weights stay on the host whichever device the features are on:
+// the objective, the eval loop, and the device-resident uploader all read them
+// from host memory, so a device vector is downloaded once here rather than
+// plumbed through as a second device pointer.
+struct VectorArg
+{
+    std::optional<array_1d> host;
+    std::vector<float>      owned;
+
+    bonsai::floats_view view() const
+    {
+        return host ? bonsai::floats_view{host->data(), host->shape(0)}
+                    : bonsai::floats_view{owned};
+    }
+    size_t size() const
+    {
+        return host ? host->shape(0) : owned.size();
+    }
+};
+
+VectorArg resolve_vector(nb::handle v, uint32_t device_id, char const *what)
+{
+    if (auto const arr = as_device_array(v, what, 1))
+    {
+        place_device_array(*arr, device_id, what);
+        VectorArg out;
+        out.owned.resize(arr->rows);
+        bonsai::cuda_download(arr->data, arr->rows, out.owned.data());
+        return out;
+    }
+    array_1d host;
+    if (!nb::try_cast(v, host))
+    {
+        throw std::invalid_argument(
+            std::string{what} +
+            " must be a float32 array, or expose __cuda_array_interface__");
+    }
+    VectorArg out;
+    out.host = host;
+    return out;
+}
+
+// The bin mappers for X. The device arm gathers exactly the rows the host
+// sampler would have drawn and fits on those, so the cuts, and therefore the
+// bins, are bit-identical to the host path's for the same seed.
+bonsai::BinMappers fit_mappers(MatrixArg const &X, std::vector<std::string> names,
+                               bonsai::Config const   &cfg,
+                               bonsai::BinEdges const &edges = {})
+{
+    if (!X.on_device())
+    {
+        return bonsai::BinMappers::fit(X.view(), std::move(names), cfg.bin_mapper,
+                                       edges);
+    }
+    auto const         rows = bonsai::bin_sample_rows(X.n_rows, cfg.bin_mapper);
+    size_t const       k    = rows.empty() ? X.n_rows : rows.size();
+    std::vector<float> sample(k * X.n_features);
+    bonsai::cuda_gather_rows(X.dev, rows, sample);
+    return bonsai::BinMappers::fit(
+        bonsai::features_view{sample.data(), k, X.n_features}, std::move(names),
+        cfg.bin_mapper, edges);
+}
+
 // Bins straight from the row-major numpy matrix (no column-major float
 // materialization); the FeatureBuffer borrows the same buffer, which is
 // alive for the duration of the train call.
-bonsai::cli::LabeledData make_labeled(array_2d const &X, array_1d const &y,
+bonsai::cli::LabeledData make_labeled(MatrixArg const &X, bonsai::floats_view y,
                                       bonsai::BinMappers const &mappers,
                                       bonsai::Config const &cfg, bool on_device,
                                       bonsai::floats_view weights = {})
 {
-    size_t const n = X.shape(0);
-
     bonsai::cli::FeatureBuffer buf;
-    buf.n_rows     = n;
-    buf.n_features = X.shape(1);
-    buf.borrowed   = std::span{X.data(), n * X.shape(1)};
+    buf.n_rows     = X.n_rows;
+    buf.n_features = X.n_features;
+
+    // Device-resident input: the plane is the only copy of the columns, so
+    // ingest never declines here and the FeatureBuffer stays empty. Nothing
+    // reads it — the raw matrix is a progress-tick predict input, and these
+    // bindings pass no tick callback.
+    if (X.on_device())
+    {
+        return bonsai::cli::LabeledData{
+            .dataset = bonsai::Dataset::bin(
+                X.n_rows, X.n_features, y, mappers, cfg.data,
+                bonsai::cuda_ingest_device(X.dev, mappers), weights),
+            .features = std::move(buf),
+            .labels   = std::vector<float>(y.begin(), y.end())};
+    }
+    buf.borrowed = std::span{X.host->data(), X.n_rows * X.n_features};
 
     // The ingest transaction (decision 54): the device arm bins on the GPU;
     // cuda_ingest declines (nullptr) when the dataset's bins exceed the
@@ -69,12 +301,12 @@ bonsai::cli::LabeledData make_labeled(array_2d const &X, array_1d const &y,
     {
         bonsai::cuda_select_device(cfg.parallel.device_id);
     }
-    auto plane = on_device ? bonsai::cuda_ingest(as_view(X), mappers) : nullptr;
+    auto plane = on_device ? bonsai::cuda_ingest(X.view(), mappers) : nullptr;
     return bonsai::cli::LabeledData{
-        .dataset  = bonsai::Dataset::bin(as_view(X), bonsai::floats_view{y.data(), n},
-                                         mappers, cfg.data, std::move(plane), weights),
+        .dataset  = bonsai::Dataset::bin(X.view(), y, mappers, cfg.data,
+                                         std::move(plane), weights),
         .features = std::move(buf),
-        .labels   = std::vector<float>(y.data(), y.data() + n)};
+        .labels   = std::vector<float>(y.begin(), y.end())};
 }
 
 // Validation-only LabeledData: train_with_progress reads a valid set's
@@ -104,29 +336,40 @@ bonsai::cli::LabeledData make_valid_labeled(array_2d const &X, array_1d const &y
 // Dataset::bin during construction and are not retained.
 // Binning follows the device hint: the host by default, the GPU under
 // device="cuda", where the resident matrix is then adopted by every fit.
+// Device-resident input (__cuda_array_interface__) carries its own answer:
+// the bytes are already there, so it bins there whatever the hint's default.
 class Dataset
 {
   public:
-    Dataset(array_2d const &X, array_1d const &y, std::optional<array_1d> const &weight,
-            int max_bin, size_t n_samples, uint64_t seed, int min_data_in_bin,
+    Dataset(nb::handle X, nb::handle y, nb::handle weight, int max_bin,
+            size_t n_samples, uint64_t seed, int min_data_in_bin,
             std::optional<std::map<size_t, array_1d>> const &bin_edges,
-            std::string const &device, uint32_t device_id, uint32_t n_threads)
-        : x_(X)
+            std::optional<std::string> const &device, uint32_t device_id,
+            uint32_t n_threads)
     {
-        if (y.shape(0) != X.shape(0))
+        auto const               xarg = resolve_matrix(X, device_id);
+        auto const               yarg = resolve_vector(y, device_id, "y");
+        std::optional<VectorArg> warg;
+        if (!weight.is_none())
+        {
+            warg = resolve_vector(weight, device_id, "weight");
+        }
+        if (yarg.size() != xarg.n_rows)
         {
             throw std::invalid_argument("Dataset: len(y) must equal the row count");
         }
-        if (weight && weight->shape(0) != X.shape(0))
+        if (warg && warg->size() != xarg.n_rows)
         {
             throw std::invalid_argument(
                 "Dataset: len(weight) must equal the row count");
         }
         // A device hint is an explicit user request, so an absent backend or
         // device is an error here, unlike the engine's own inference from a
-        // grower name (which degrades to the host silently).
-        bool const on_device = device == "cuda";
-        if (!on_device && device != "cpu")
+        // grower name (which degrades to the host silently). Device-resident
+        // input needs no hint: it defaults to the device it is already on.
+        std::string const hint = device.value_or(xarg.on_device() ? "cuda" : "cpu");
+        bool const        on_device = hint == "cuda";
+        if (!on_device && hint != "cpu")
         {
             throw std::invalid_argument("Dataset: device must be \"cpu\" or \"cuda\"");
         }
@@ -136,6 +379,13 @@ class Dataset
                 "Dataset(device=\"cuda\") needs a CUDA build and a visible device; "
                 "cuda_available() is False");
         }
+        if (xarg.on_device() && !on_device)
+        {
+            throw std::invalid_argument(
+                "Dataset: X is device-resident (__cuda_array_interface__), so "
+                "device=\"cpu\" would copy it back to the host. Drop the device "
+                "argument to bin it where it already lives, or pass a host array.");
+        }
         bonsai::Config cfg;
         cfg.bin_mapper.max_bin         = max_bin;
         cfg.bin_mapper.n_samples       = n_samples;
@@ -144,7 +394,7 @@ class Dataset
         cfg.parallel.n_threads         = n_threads;
         cfg.parallel.device_id         = device_id;
 
-        size_t const             f = X.shape(1);
+        size_t const             f = xarg.n_features;
         std::vector<std::string> names;
         names.reserve(f);
         for (size_t c = 0; c < f; ++c)
@@ -164,14 +414,12 @@ class Dataset
                     col, std::vector<float>(arr.data(), arr.data() + arr.shape(0)));
             }
         }
-        bonsai::floats_view const w =
-            weight ? bonsai::floats_view{weight->data(), weight->shape(0)}
-                   : bonsai::floats_view{};
-        nb::gil_scoped_release release;
+        bonsai::floats_view const w = warg ? warg->view() : bonsai::floats_view{};
+        nb::gil_scoped_release    release;
         bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
-        loaded_.mappers = bonsai::BinMappers::fit(as_view(X), std::move(names),
-                                                  cfg.bin_mapper, edges);
-        loaded_.train   = make_labeled(X, y, loaded_.mappers, cfg, on_device, w);
+        loaded_.mappers = fit_mappers(xarg, std::move(names), cfg, edges);
+        loaded_.train =
+            make_labeled(xarg, yarg.view(), loaded_.mappers, cfg, on_device, w);
         // Device state is recorded only when a plane was actually minted:
         // an ingest decline leaves an ordinary host dataset, which no later
         // fit needs to be placed against.
@@ -179,6 +427,11 @@ class Dataset
         {
             device_id_ = device_id;
         }
+        // The host matrix is kept alive because the FeatureBuffer borrows it;
+        // a device matrix is not kept at all, since its bins were copied into
+        // the plane and nothing else refers to the caller's buffer.
+        x_          = xarg.host;
+        n_features_ = xarg.n_features;
     }
 
     // The device the binned columns live on, "cpu" or "cuda". A device
@@ -203,7 +456,7 @@ class Dataset
     }
     size_t n_features() const
     {
-        return x_.shape(1);
+        return n_features_;
     }
     bonsai::cli::LoadedTrainValid const &loaded() const
     {
@@ -211,7 +464,8 @@ class Dataset
     }
 
   private:
-    array_2d                      x_;
+    std::optional<array_2d>       x_;
+    size_t                        n_features_ = 0;
     bonsai::cli::LoadedTrainValid loaded_;
     std::optional<uint32_t>       device_id_;
 };
@@ -446,16 +700,29 @@ config_from_params(std::vector<std::pair<std::string, std::string>> const &param
 }
 
 Model train(std::vector<std::pair<std::string, std::string>> const &params,
-            array_2d const &X, array_1d const &y,
+            nb::handle X, nb::handle y,
             std::optional<std::pair<array_2d, array_1d>> const &eval_set,
             std::optional<std::string> const                   &init_model,
-            std::optional<std::string> const                   &config,
-            std::optional<array_1d> const                      &sample_weight)
+            std::optional<std::string> const &config, nb::handle sample_weight)
 {
     bonsai::Config const cfg = config_from_params(params, config);
     bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
 
-    if (sample_weight && sample_weight->shape(0) != X.shape(0))
+    // Device-resident input places the fit itself: the matrix is already on a
+    // device, so it bins there whatever grower was named, and a CPU grower
+    // materializes host bins from the plane on first use.
+    auto const               xarg = resolve_matrix(X, cfg.parallel.device_id);
+    auto const               yarg = resolve_vector(y, cfg.parallel.device_id, "y");
+    std::optional<VectorArg> warg;
+    if (!sample_weight.is_none())
+    {
+        warg = resolve_vector(sample_weight, cfg.parallel.device_id, "sample_weight");
+    }
+    if (yarg.size() != xarg.n_rows)
+    {
+        throw std::invalid_argument("len(y) must equal the number of rows");
+    }
+    if (warg && warg->size() != xarg.n_rows)
     {
         throw std::invalid_argument(
             "sample_weight length must equal the number of rows");
@@ -469,7 +736,7 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
 
     nb::gil_scoped_release release;
 
-    size_t const             f = X.shape(1);
+    size_t const             f = xarg.n_features;
     std::vector<std::string> names;
     names.reserve(f);
     for (size_t c = 0; c < f; ++c)
@@ -479,13 +746,9 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
 
     bonsai::cli::LoadedTrainValid loaded;
     loaded.mappers =
-        init ? std::move(init->mappers)
-             : bonsai::BinMappers::fit(as_view(X), std::move(names), cfg.bin_mapper);
-    bonsai::floats_view const wview =
-        sample_weight
-            ? bonsai::floats_view{sample_weight->data(), sample_weight->shape(0)}
-            : bonsai::floats_view{};
-    loaded.train = make_labeled(X, y, loaded.mappers, cfg,
+        init ? std::move(init->mappers) : fit_mappers(xarg, std::move(names), cfg);
+    bonsai::floats_view const wview = warg ? warg->view() : bonsai::floats_view{};
+    loaded.train = make_labeled(xarg, yarg.view(), loaded.mappers, cfg,
                                 cfg.dispatch.grower_name.starts_with("cuda"), wview);
     if (eval_set)
     {
@@ -610,16 +873,15 @@ NB_MODULE(_bonsai, m)
     constexpr bonsai::BinMapperConfig k_bin_defaults{};
     constexpr bonsai::ParallelConfig  k_parallel_defaults{};
     nb::class_<Dataset>(m, "Dataset")
-        .def(nb::init<array_2d const &, array_1d const &,
-                      std::optional<array_1d> const &, int, size_t, uint64_t, int,
+        .def(nb::init<nb::handle, nb::handle, nb::handle, int, size_t, uint64_t, int,
                       std::optional<std::map<size_t, array_1d>> const &,
-                      std::string const &, uint32_t, uint32_t>(),
+                      std::optional<std::string> const &, uint32_t, uint32_t>(),
              nb::arg("X"), nb::arg("y"), nb::arg("weight") = nb::none(),
              nb::arg("max_bin")         = k_bin_defaults.max_bin,
              nb::arg("n_samples")       = k_bin_defaults.n_samples,
              nb::arg("seed")            = k_bin_defaults.seed,
              nb::arg("min_data_in_bin") = k_bin_defaults.min_data_in_bin,
-             nb::arg("bin_edges") = nb::none(), nb::arg("device") = "cpu",
+             nb::arg("bin_edges") = nb::none(), nb::arg("device") = nb::none(),
              nb::arg("device_id") = k_parallel_defaults.device_id,
              nb::arg("n_threads") = k_parallel_defaults.n_threads,
              "A pre-binned dataset. Bins X once at construction and is reused "
@@ -637,6 +899,11 @@ NB_MODULE(_bonsai, m)
              "a later parallel.device_id that disagrees with `device_id` "
              "raises rather than migrating. A device-binned Dataset handed to "
              "a CPU grower materializes host bins once, on first use. "
+             "`device` defaults to where X already is: pass a device-resident "
+             "X (any object exposing __cuda_array_interface__, such as a cupy "
+             "or torch array) and it is binned on the GPU in place, with no "
+             "host round trip; y and weight may be device-resident too and "
+             "are downloaded once, because bonsai keeps labels on the host. "
              "`n_threads` sizes the binning pass (0 = auto), the way "
              "parallel.n_threads sizes a fit.")
         .def("__reduce__",
@@ -654,6 +921,16 @@ NB_MODULE(_bonsai, m)
         .def_prop_ro("n_rows", &Dataset::n_rows)
         .def_prop_ro("n_features", &Dataset::n_features);
 
+    // Dataset overload first: the array overload takes X and y untyped (a numpy
+    // array or any __cuda_array_interface__ producer), so it would otherwise
+    // shadow a Dataset call that also passes an eval set.
+    m.def("train", &train_dataset, nb::arg("params"), nb::arg("dataset"),
+          nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
+          nb::arg("config") = nb::none(),
+          "Train on a prebuilt Dataset, reusing its binning across calls. "
+          "bin_mapper.* overrides are rejected (binning is fixed by the Dataset). "
+          "`eval_set=(Xv, yv)` is binned per call with the Dataset's mappers and "
+          "enables per-iter eval and early stopping.");
     m.def("train", &train, nb::arg("params"), nb::arg("X"), nb::arg("y"),
           nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
           nb::arg("config") = nb::none(), nb::arg("sample_weight") = nb::none(),
@@ -662,14 +939,12 @@ NB_MODULE(_bonsai, m)
           "('tree.max_depth', '8'). `config` is a TOML file path used as the "
           "base config; params override it (the CLI's -c + --set ordering). "
           "`sample_weight` is an optional float32 per-row weight vector "
-          "(scales each row's gradient and hessian).");
-    m.def("train", &train_dataset, nb::arg("params"), nb::arg("dataset"),
-          nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
-          nb::arg("config") = nb::none(),
-          "Train on a prebuilt Dataset, reusing its binning across calls. "
-          "bin_mapper.* overrides are rejected (binning is fixed by the Dataset). "
-          "`eval_set=(Xv, yv)` is binned per call with the Dataset's mappers and "
-          "enables per-iter eval and early stopping.");
+          "(scales each row's gradient and hessian). X, y and sample_weight "
+          "may instead be device-resident arrays exposing "
+          "__cuda_array_interface__ (cupy, torch, cuDF): X is then binned on "
+          "the GPU in place, with no host round trip, and y and the weights "
+          "are downloaded once. `eval_set` stays host-side, because the "
+          "per-iteration eval predicts on the host.");
     m.def("load", &load, nb::arg("path"), "Load a model saved by Model.save.");
 
     m.def("default_config_toml", [] { return bonsai::config::dump_toml({}); });

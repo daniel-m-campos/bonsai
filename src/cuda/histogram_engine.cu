@@ -22,6 +22,7 @@
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <memory>
+#include <optional>
 #include <print>
 #include <span>
 #include <utility>
@@ -425,6 +426,100 @@ std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const &batch,
             }
             check(cudaGetLastError(), "ingest bin launch");
         }
+    }
+    check(cudaDeviceSynchronize(), "ingest sync");
+    lap(detail::IngestProfiler::instance().dbin_s);
+    return plane;
+}
+
+std::optional<uint32_t> cuda_device_of(void const *ptr)
+{
+    cudaPointerAttributes attr{};
+    if (cudaPointerGetAttributes(&attr, ptr) != cudaSuccess ||
+        attr.type != cudaMemoryTypeDevice)
+    {
+        cudaGetLastError(); // a host pointer sets a sticky error on older runtimes
+        return std::nullopt;
+    }
+    return static_cast<uint32_t>(attr.device);
+}
+
+void cuda_wait_stream(uintptr_t stream)
+{
+    if (stream == 0)
+    {
+        return;
+    }
+    // NOLINTNEXTLINE(performance-no-int-to-ptr): the protocol carries the handle
+    check(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(stream)),
+          "producer stream sync");
+}
+
+void cuda_download(float const *src, size_t n, float *dst)
+{
+    check(cudaMemcpy(dst, src, n * sizeof(float), cudaMemcpyDeviceToHost),
+          "device download");
+}
+
+void cuda_gather_rows(DeviceMatrix const &X, std::span<uint32_t const> rows,
+                      std::span<float> out)
+{
+    if (rows.empty())
+    {
+        check(cudaMemcpy(out.data(), X.data, out.size() * sizeof(float),
+                         cudaMemcpyDeviceToHost),
+              "sample download");
+        return;
+    }
+    DeviceBuffer<uint32_t> idx;
+    idx.upload(rows.data(), rows.size());
+    DeviceBuffer<float> gathered;
+    gathered.reserve(out.size());
+    auto const cells = static_cast<uint32_t>(out.size());
+    dim3 const grid((cells + 255) / 256);
+    gather_rows_kernel<<<grid, dim3(256)>>>(
+        X.data, idx.data(), cells, static_cast<uint32_t>(X.n_feats), gathered.data());
+    check(cudaGetLastError(), "sample gather launch");
+    check(cudaMemcpy(out.data(), gathered.data(), out.size() * sizeof(float),
+                     cudaMemcpyDeviceToHost),
+          "sample download");
+}
+
+std::shared_ptr<IngestPlane const> cuda_ingest_device(DeviceMatrix const &X,
+                                                      BinMappers const   &mappers)
+{
+    detail::IngestProfiler::Lap lap;
+    auto const                  n_rows  = X.n_rows;
+    auto const                  n_feats = X.n_feats;
+    auto                        plane   = make_ingest_plane(mappers, n_rows);
+    CutsTable                   table;
+    upload_cuts(mappers, table);
+
+    // Chunked only to keep the launch's cell count inside uint32; no copy
+    // happens, each chunk is a pointer offset into the caller's matrix.
+    size_t const rows_per_chunk =
+        std::max<size_t>(1, k_ingest_chunk_bytes / (n_feats * sizeof(float)));
+    for (size_t row0 = 0; row0 < n_rows; row0 += rows_per_chunk)
+    {
+        auto const rows  = std::min(rows_per_chunk, n_rows - row0);
+        auto const cells = static_cast<uint32_t>(rows * n_feats);
+        auto const chunk = X.data + (row0 * n_feats);
+        dim3 const grid((cells + 255) / 256);
+        if (plane->bins_are_u8)
+        {
+            bin_rows_kernel<<<grid, dim3(256)>>>(
+                chunk, static_cast<uint32_t>(rows), static_cast<uint32_t>(row0),
+                static_cast<uint32_t>(n_feats), static_cast<uint32_t>(n_rows),
+                table.cuts.data(), table.ofs.data(), plane->bins8.data());
+        }
+        else
+        {
+            bin_rows_kernel<<<grid, dim3(256)>>>(
+                chunk, static_cast<uint32_t>(rows), static_cast<uint32_t>(row0),
+                static_cast<uint32_t>(n_feats), static_cast<uint32_t>(n_rows),
+                table.cuts.data(), table.ofs.data(), plane->bins16.data());
+        }
+        check(cudaGetLastError(), "ingest bin launch");
     }
     check(cudaDeviceSynchronize(), "ingest sync");
     lap(detail::IngestProfiler::instance().dbin_s);

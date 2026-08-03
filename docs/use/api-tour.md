@@ -72,6 +72,17 @@ Bin settings are sealed into the `Dataset`; a `bin_mapper.*` override in `params
 
 The binning pass runs on the host by default. For GPU work, say so at construction: `bonsai.Dataset(X, y, device="cuda", device_id=0)` bins on the device and leaves the matrix resident there. A `cuda_*` fit then costs what the fused `train(params, X, y)` call costs, and a sweep uploads the matrix once instead of once per fit. Without the hint the `Dataset` bins on the CPU and every GPU fit uploads the result. `device="cuda"` raises when the build carries no CUDA backend or no device is visible: it is an explicit request, not an engine inference. `ds.device` reports where the bins ended up. Handing a device-binned `Dataset` to a CPU grower is fine: host columns materialize once, on first use, bit-identical to the host fill. A `parallel.device_id` at `train` time that disagrees with the `Dataset`'s raises instead of migrating the matrix. A `Dataset` cannot be pickled either way; rebuild it from `X` and `y` in the target process.
 
+If the data already lives on the GPU, hand it over as it is. Anything exposing `__cuda_array_interface__` (a cupy array, a torch CUDA tensor, a cuDF frame's columns) is accepted wherever `X`, `y`, or `sample_weight` is accepted, by `train` and by `Dataset` alike, and `X` is binned on the device in place: no copy to the host and no copy back. The bins are identical to the ones the same array would produce through numpy, so the model is byte-identical either way. `y` and the weights are downloaded once, because bonsai keeps labels and weights on the host whatever the features do. `device` then defaults to where `X` already is, so the hint is only needed for host arrays; passing `device="cpu"` with a device-resident `X` raises rather than quietly copying it back. The array must be C-contiguous float32 and carry no mask (missing values are NaN, as everywhere else), and its `stream`, if it names one, is waited on before bonsai reads a byte. An array on a device that `parallel.device_id` disagrees with raises instead of migrating. A CPU grower fed device-resident input still works: the bins are built on the device and the host copy materializes once, on first use.
+
+```python
+import cupy as cp
+
+Xd, yd = cp.asarray(X), cp.asarray(y)
+m = bonsai.train([("dispatch.grower_name", "cuda_leafwise")], Xd, yd)
+```
+
+Prediction stays a host call: `predict` takes numpy arrays, whichever way the model was fit.
+
 `n_threads` sizes the binning pass the way `parallel.n_threads` sizes a fit, and defaults to the same auto setting.
 
 `Model` carries the full prediction surface: `predict` (with `num_iteration` for truncated ensembles), `predict_proba`, `staged_predict`, `predict_leaf`, `pred_contribs` (exact TreeSHAP), `feature_importance("gain")`/`feature_importance("split")`, `dump`, and `save`.
