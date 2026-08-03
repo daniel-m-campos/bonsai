@@ -6,7 +6,7 @@
 
 ![Accuracy vs fit time at 16M rows](../assets/gpu-pareto-16M.svg)
 
-`ingest_s` and `train_s` are the split behind `fit_s` (issue #301). bonsai's ingest and train read `-` above: it measures fit through one fused `train(pairs, X, y)` call today, so there is no point inside it to split. Issue #301 tracks the runner change (a two-step `Dataset(..., device=...)` plus `train(pairs, ds)` path) that will populate this table for bonsai on the next standings refresh; until then only the total column in the fit table above is measured for it. CatBoost's `Pool()` step only wraps the raw arrays; it quantizes inside `fit`, so its ingest column reads low and that cost sits in train instead (issue #253). Its total is the only number directly comparable to the other libraries' split.
+`ingest_s` and `train_s` are the split behind `fit_s` (issue #301). bonsai's ingest and train read `-` above: these rows were measured through one fused `train(pairs, X, y)` call, which has no point inside it to split. The runner now fits through `Dataset(..., device=...)` plus `train(pairs, ds)` and reports the split like every other arm, so the next standings refresh fills this column; until then only the total in the fit table above is measured for it. CatBoost's `Pool()` step only wraps the raw arrays; it quantizes inside `fit`, so its ingest column reads low and that cost sits in train instead (issue #253). Its total is the only number directly comparable to the other libraries' split.
 
 | variant | iters | ingest_s | train_s | fit_s | test r2 |
 |---|---|---|---|---|---|

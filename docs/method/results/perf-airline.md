@@ -42,7 +42,7 @@ The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC),
 | catboost_cpu | - | - | - |
 | catboost_gpu | - | - | - |
 
-Ingest / train seconds behind the campaign-knob total above (issue #301). bonsai's ingest and train read `-` above: it measures fit through one fused `train(pairs, X, y)` call today, so there is no point inside it to split. Issue #301 tracks the runner change (a two-step `Dataset(..., device=...)` plus `train(pairs, ds)` path) that will populate this table for bonsai on the next standings refresh; until then only the total column in the fit table above is measured for it. CatBoost's `Pool()` step only wraps the raw arrays; it quantizes inside `fit`, so its ingest column reads low and that cost sits in train instead (issue #253). Its total is the only number directly comparable to the other libraries' split.
+Ingest / train seconds behind the campaign-knob total above (issue #301). bonsai's ingest and train read `-` above: these rows were measured through one fused `train(pairs, X, y)` call, which has no point inside it to split. The runner now fits through `Dataset(..., device=...)` plus `train(pairs, ds)` and reports the split like every other arm, so the next standings refresh fills this column; until then only the total in the fit table above is measured for it. CatBoost's `Pool()` step only wraps the raw arrays; it quantizes inside `fit`, so its ingest column reads low and that cost sits in train instead (issue #253). Its total is the only number directly comparable to the other libraries' split.
 
 | variant | 0.1m | 1m | 10m |
 |---|---|---|---|
