@@ -72,11 +72,11 @@ def test_binary_task_runners():
 def test_bonsai_runner_never_prebins(monkeypatch):
     """The bonsai runner must fit through the fused train(pairs, X, y) call.
 
-    A prebuilt Dataset bins on the host whatever the grower is, so a cuda
-    arm measured that way loses device binning: slower, and the host binned
-    matrix stays resident. The guard is structural (Dataset construction is
-    fatal here) because the cost is only visible on a GPU, which CI has
-    none of.
+    A prebuilt Dataset built without a device hint bins on the host
+    whatever the grower is, so a cuda arm measured that way loses device
+    binning: slower, and the host binned matrix stays resident. The guard
+    is structural (Dataset construction is fatal here) because the cost is
+    only visible on a GPU, which CI has none of.
     """
     import bonsai
     from bonsai.bench import runners

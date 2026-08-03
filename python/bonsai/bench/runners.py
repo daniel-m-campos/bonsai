@@ -26,10 +26,11 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
     The fused call is the measured path because binning happens inside
     train(), where the grower name and the thread count are known: cuda
     growers bin on the device there, and the binning pass honors
-    parallel.n_threads. A prebuilt Dataset knows neither, so timing its
-    construction as ingest would measure a pipeline bonsai never runs on
-    GPU. bonsai therefore reports no ingest/train breakdown: the measured
-    path wins over the breakdown.
+    parallel.n_threads. A prebuilt Dataset reaches the same device path
+    only when it is built with an explicit device hint, so timing an
+    unhinted construction as ingest would measure a pipeline bonsai does
+    not run on GPU. bonsai therefore reports no ingest/train breakdown:
+    the measured path wins over the breakdown.
     """
     import bonsai
     grower = spec[runlog.Row.VARIANT].removeprefix("bonsai_")
