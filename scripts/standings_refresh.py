@@ -13,6 +13,12 @@ into a local directory, and tears the pod down (sweep + verify-empty).
 `supersede` works from any results directory: registry update, staging,
 render, A/B verdict, branch, and `gh pr create`. A failed supersede is
 rerunnable without touching a pod; that separation is the whole point.
+
+It also gates on the pod's fused/two-step parity rows before touching
+anything: the published ingest/train split is only honest while bonsai's
+two-step form still bins where its fused call does, so a parity failure
+stops the supersession instead of shipping a breakdown that describes a
+pipeline no cuda grower runs.
 """
 
 from __future__ import annotations
@@ -35,6 +41,11 @@ POD_SCRIPT = REPO / "scripts" / "standings_refresh_pod.sh"
 REST = "https://rest.runpod.io/v1"
 IMAGE = "ghcr.io/daniel-m-campos/bonsai-ci:cuda12.4"
 GPU = "NVIDIA L40S"
+
+# The band the fused and two-step forms must agree inside. Measured at 2.5%
+# on one L40S at 4M x 512 and inside repeat noise at 16M; 5% matches the A/B
+# band, which is the same pod-noise question.
+PARITY_BAND_PCT = 5
 
 AXIS_FILE = {"rows": "rebaseline", "width": "cols-rebaseline",
              "shape": "iso-volume", "frontier": "gpu-pareto-16M",
@@ -148,6 +159,13 @@ def supersede(args: argparse.Namespace) -> int:
     """
     src = pathlib.Path(args.results_dir)
     axes = [a.strip() for a in args.axes.split(",")]
+    parity, parity_ok = _parity(src / "parity.jsonl")
+    print(parity)
+    if not parity_ok:
+        print("ERROR: fused/two-step parity failed; the ingest/train split "
+              "in these rows is not trustworthy. Fix the runner's device "
+              "hint and re-measure.", file=sys.stderr)
+        return 1
     files = {}
     for axis in axes:
         got = sorted(src.glob(f"{AXIS_FILE[axis]}-*.jsonl"))
@@ -185,7 +203,10 @@ def supersede(args: argparse.Namespace) -> int:
         return 0
     subprocess.run(["git", "push", "-u", "origin", branch], check=True, cwd=REPO)
     body = (f"Standings refresh via `scripts/standings_refresh.py` "
-            f"(decision 96).\n\nA/B verdict (previous release wheel vs HEAD, "
+            f"(decision 96).\n\nIngest/train parity (bonsai's fused call vs "
+            f"the two-step Dataset form, same pod, interleaved, "
+            f"+-{PARITY_BAND_PCT}% band):\n\n{parity}\n\n"
+            f"A/B verdict (previous release wheel vs HEAD, "
             f"same pod, interleaved, +-5% band):\n\n"
             f"{verdict or 'A/B skipped.'}\n\nA **moved** verdict requires a "
             f"`Standings:`-tagged decision entry before merge; the docs-check "
@@ -312,6 +333,64 @@ def _wait_until(fn, *, timeout_s: int, what: str):
             return got
         time.sleep(10)
     raise SystemExit(f"timed out waiting for {what}")
+
+
+def _parity(path: pathlib.Path) -> tuple[str, bool]:
+    """The fused/two-step parity table, and whether it passes.
+
+    The two arms fit the same anchor cell through bonsai's one-call form
+    and through the Dataset + train form the runner reports ingest_s and
+    train_s from. Only their agreement makes that split honest: a
+    two-step Dataset that lost its device hint bins on the host, which
+    costs seconds and host memory, so peak RSS is banded alongside time.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The pod's ``parity.jsonl``. A missing or skipped-only file passes
+        with a stated caveat, so a refresh measured on a pod without the
+        check still supersedes.
+
+    Returns
+    -------
+    tuple[str, bool]
+        The markdown table (or a one-line note) and the pass flag.
+    """
+    if not path.exists():
+        return "Parity check absent (no parity.jsonl in this results dir).", True
+    rows = [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
+    live = [r for r in rows if not r.get("skipped")]
+    if not live:
+        return "Parity check skipped on this host (no visible CUDA device).", True
+    cell = f"{live[0]['rows']}x{live[0]['cols']} {live[0]['grower']}"
+    lines = [f"| metric ({cell}) | fused | two-step | delta |",
+             "|---|--:|--:|--:|"]
+    ok = True
+    for metric, unit in (("fit_s", "s"), ("peak_rss_gb", "GB")):
+        arms = {arm: [r[metric] for r in live
+                      if r["arm"] == arm and r.get(metric) is not None]
+                for arm in ("fused", "two_step")}
+        if not arms["fused"] or not arms["two_step"]:
+            lines.append(f"| {metric} | n/a | n/a | n/a |")
+            continue
+        f = statistics.median(arms["fused"])
+        t = statistics.median(arms["two_step"])
+        d = 100 * (t - f) / f
+        moved = abs(d) > PARITY_BAND_PCT
+        ok = ok and not moved
+        lines.append(f"| {metric} | {f:.2f}{unit} | {t:.2f}{unit} | "
+                     f"{d:+.1f}%{' **FAIL**' if moved else ''} |")
+    split = [(r["ingest_s"], r["train_s"]) for r in live
+             if r["arm"] == "two_step" and r.get("ingest_s") is not None]
+    if split:
+        lines.append("")
+        lines.append(f"Two-step split: ingest "
+                     f"{statistics.median(i for i, _ in split):.2f}s, train "
+                     f"{statistics.median(t for _, t in split):.2f}s.")
+    lines.append("")
+    lines.append(f"Verdict: {'PASS' if ok else 'FAIL'} "
+                 f"(band +-{PARITY_BAND_PCT}%).")
+    return "\n".join(lines), ok
 
 
 def _verdict(ab_path: pathlib.Path) -> str:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import pathlib
 import tempfile
 import time
 
@@ -11,8 +13,6 @@ from bonsai.bench import synth
 
 
 def test_data_cache():
-    import pathlib
-
     from bonsai.bench import runners
 
     cell = {"rows": 3000, "cols": 12, "seed": 7, "n_test": 500,
@@ -35,11 +35,11 @@ def test_binary_task_runners():
     cell selects the logloss objective and AUC scoring, and the airline knob
     set carries every field the runners read (the row-shape contract).
 
-    Also covers the ingest/train breakdown: a reference runner reports
-    ingest_s (data-structure construction) and train_s (the fit call)
-    alongside fit_s, which stays the outer wall clock and is not redefined as
-    their sum. bonsai reports the pair as None, since every split of its
-    fused call moves the measured path.
+    Also covers the ingest/train breakdown: every runner reports ingest_s
+    (data-structure construction) and train_s (the fit call) alongside
+    fit_s, which stays the outer wall clock and is not redefined as their
+    sum. bonsai included: its Dataset carries the device hint that keeps
+    the two-step form on the same binning path the fused call takes.
     """
     from bonsai.bench import airline, runners
 
@@ -60,39 +60,60 @@ def test_binary_task_runners():
         assert set(out) == {"fit_s", "ingest_s", "train_s", "predict_s",
                              "auc_test"}, (variant, out)
         assert 0.5 < out["auc_test"] <= 1.0, (variant, out["auc_test"])
-        if variant.startswith("bonsai_"):
-            assert out["ingest_s"] is None and out["train_s"] is None, out
-            continue
         assert out["ingest_s"] > 0, (variant, out)
         assert out["train_s"] > 0, (variant, out)
         assert out["ingest_s"] + out["train_s"] <= out["fit_s"] + eps, (
             variant, out)
 
 
-def test_bonsai_runner_never_prebins(monkeypatch):
-    """The bonsai runner must fit through the fused train(pairs, X, y) call.
+def test_bonsai_cuda_runner_prebins_with_a_device_hint(monkeypatch):
+    """A cuda arm must ingest through a Dataset built with device="cuda".
 
-    A prebuilt Dataset built without a device hint bins on the host
-    whatever the grower is, so a cuda arm measured that way loses device
-    binning: slower, and the host binned matrix stays resident. The guard
-    is structural (Dataset construction is fatal here) because the cost is
-    only visible on a GPU, which CI has none of.
+    An unhinted Dataset bins on the host whatever grower follows it, so a
+    cuda arm measured that way reports an ingest number for a pipeline it
+    never runs and carries the host binned matrix for the whole fit:
+    slower, and heavier. The hint is what makes the ingest/train split
+    honest, and it is only visible on a GPU, which CI has none of, so the
+    contract is guarded structurally here instead. Both failure modes are
+    covered: fitting with no Dataset at all (the fused form), and building
+    one without the hint.
     """
     import bonsai
     from bonsai.bench import runners
 
-    def refuse(*args, **kwargs):
-        raise AssertionError("the bonsai runner must not prebin a Dataset")
+    class Built(Exception):
+        """Raised in place of binning, once the call has been recorded."""
 
-    monkeypatch.setattr(bonsai, "Dataset", refuse)
+    seen = []
+
+    def spy(X, y, **kwargs):
+        seen.append(kwargs)
+        raise Built
+
+    monkeypatch.setattr(bonsai, "Dataset", spy)
+    monkeypatch.setattr(bonsai, "cuda_available", lambda: True)
     rng = np.random.default_rng(0)
     X = rng.random((2000, 8), dtype=np.float32)
     y = (X[:, :3].sum(axis=1)).astype(np.float32)
     cell = {"lr": 0.1, "depth": 4, "bins": 63, "seed": 42, "iters": 5}
-    out = runners.run_bonsai({"cell": cell, "variant": "bonsai_depthwise",
-                              "threads": 1}, X[:1500], y[:1500], X[1500:],
-                             y[1500:])
-    assert out["fit_s"] > 0 and out["ingest_s"] is None
+    try:
+        # The fit itself is not the subject and cannot run here (no device),
+        # so any failure past the recorded construction is discarded; the
+        # assertions below read what the runner asked for.
+        runners.run_bonsai({"cell": cell, "variant": "bonsai_cuda_depthwise",
+                            "threads": 1}, X[:1500], y[:1500], X[1500:],
+                           y[1500:])
+    except Exception:
+        pass
+    assert seen, (
+        "the bonsai runner fit without building a Dataset: the two-step "
+        "Dataset + train(pairs, dataset) form is what reports ingest_s and "
+        "train_s, and the fused call has no seam to report")
+    assert seen[0].get("device") == "cuda", (
+        "the bonsai runner built a Dataset for a cuda arm without "
+        'device="cuda": that Dataset bins on the host, so ingest_s would '
+        "describe host binning while the grower runs on the device "
+        f"(kwargs seen: {seen[0]})")
 
 
 def test_xgb_runner_never_builds_plain_dmatrix(monkeypatch):
@@ -234,6 +255,40 @@ def test_standings_ab_knobs_match_the_standings_spec():
              if k != "n_test"}
     assert knobs == {k: cell[k] for k in knobs}
     assert spec["threads"] == [16]
+
+
+def test_parity_gate_bands_the_two_step_form():
+    """The refresh's parity gate must fail a two-step form that drifted.
+
+    The gate runs on a GPU pod, so its arithmetic is what CI can check:
+    an in-band pair passes, an out-of-band one fails and blocks the
+    supersession, and an absent or skipped file passes with a caveat so a
+    refresh measured without a device still lands.
+    """
+    import sys
+
+    sys.path.insert(0, "scripts")
+    import standings_refresh
+
+    def rows(fused_s, two_step_s):
+        return "\n".join(json.dumps(
+            {"arm": arm, "rows": 16000000, "cols": 100,
+             "grower": "cuda_depthwise", "fit_s": s, "peak_rss_gb": 6.9,
+             "ingest_s": None if arm == "fused" else 1.1,
+             "train_s": None if arm == "fused" else s - 1.1})
+            for arm, s in (("fused", fused_s), ("two_step", two_step_s)))
+
+    with tempfile.TemporaryDirectory() as td:
+        path = pathlib.Path(td) / "parity.jsonl"
+        assert standings_refresh._parity(path)[1], "an absent file must pass"
+        path.write_text('{"arm": "fused", "skipped": "no CUDA"}\n')
+        assert standings_refresh._parity(path)[1], "a skipped run must pass"
+        path.write_text(rows(12.0, 12.3))
+        table, ok = standings_refresh._parity(path)
+        assert ok and "PASS" in table, table
+        path.write_text(rows(12.0, 15.0))
+        table, ok = standings_refresh._parity(path)
+        assert not ok and "FAIL" in table, table
 
 
 def test_variant_canonicalization_and_ts_guard():
