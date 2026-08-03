@@ -123,9 +123,13 @@ def test_device_input_raises_without_a_device():
 
 
 @requires_cuda
-@pytest.mark.parametrize("grower", ["depthwise", "cuda_depthwise"])
+@pytest.mark.parametrize("grower", ["depthwise", "leafwise"])
 def test_train_on_device_input_is_byte_identical_to_host(to_device, grower):
-    """Same model bits from a device pointer as from the numpy array it holds."""
+    """Same model bits from a device pointer as from the numpy array it holds.
+
+    A CPU grower reads the bins the device wrote, materialized on the host, so
+    equal model bytes are equal bin ids: the parity claim for device binning.
+    """
     X, y, _ = _reg_data()
     pairs = [*PAIRS, ("dispatch.grower_name", grower)]
     host = bonsai.train(pairs, X, y)
@@ -133,6 +137,22 @@ def test_train_on_device_input_is_byte_identical_to_host(to_device, grower):
 
     assert _model_sha(dev) == _model_sha(host)
     np.testing.assert_array_equal(np.asarray(dev.predict(X)), np.asarray(host.predict(X)))
+
+
+@requires_cuda
+def test_cuda_grower_on_device_input_matches_host(to_device):
+    """A GPU fit is equal to tolerance, not bit for bit.
+
+    Device histogram atomics accumulate in arbitrary order, so two GPU fits of
+    the same host array already differ in their last bits; 1e-4 is the bound
+    the CUDA suite holds every GPU-versus-host comparison to.
+    """
+    X, y, _ = _reg_data()
+    pairs = [*PAIRS, ("dispatch.grower_name", "cuda_depthwise")]
+    host = np.asarray(bonsai.train(pairs, X, y).predict(X))
+    dev = np.asarray(bonsai.train(pairs, _cai(to_device(X), X.shape), y).predict(X))
+
+    np.testing.assert_allclose(dev, host, atol=1e-4)
 
 
 @requires_cuda
