@@ -50,8 +50,8 @@ bonsai::features_view as_view(array_2d const &X)
 // alive for the duration of the train call.
 bonsai::cli::LabeledData make_labeled(array_2d const &X, array_1d const &y,
                                       bonsai::BinMappers const &mappers,
-                                      bonsai::Config const     &cfg,
-                                      bonsai::floats_view       weights = {})
+                                      bonsai::Config const &cfg, bool on_device,
+                                      bonsai::floats_view weights = {})
 {
     size_t const n = X.shape(0);
 
@@ -60,17 +60,16 @@ bonsai::cli::LabeledData make_labeled(array_2d const &X, array_1d const &y,
     buf.n_features = X.shape(1);
     buf.borrowed   = std::span{X.data(), n * X.shape(1)};
 
-    // The ingest transaction (decision 54): cuda growers bin on the device;
-    // cuda_ingest declines (nullptr) without a backend/device, keeping the
-    // host fill. Device placement first (issue #158): cudaSetDevice is
-    // thread-local and this thread is about to mint the device plane.
-    if (cfg.dispatch.grower_name.starts_with("cuda"))
+    // The ingest transaction (decision 54): the device arm bins on the GPU;
+    // cuda_ingest declines (nullptr) when the dataset's bins exceed the
+    // resident ceiling, keeping the host fill. Device placement first
+    // (issue #158): cudaSetDevice is thread-local and this thread is about
+    // to mint the device plane.
+    if (on_device)
     {
         bonsai::cuda_select_device(cfg.parallel.device_id);
     }
-    auto plane = cfg.dispatch.grower_name.starts_with("cuda")
-                     ? bonsai::cuda_ingest(as_view(X), mappers)
-                     : nullptr;
+    auto plane = on_device ? bonsai::cuda_ingest(as_view(X), mappers) : nullptr;
     return bonsai::cli::LabeledData{
         .dataset  = bonsai::Dataset::bin(as_view(X), bonsai::floats_view{y.data(), n},
                                          mappers, cfg.data, std::move(plane), weights),
@@ -103,13 +102,15 @@ bonsai::cli::LabeledData make_valid_labeled(array_2d const &X, array_1d const &y
 // address is stable across fits. Holds the numpy X alive because the
 // FeatureBuffer borrows the row-major matrix; y and weight are copied out by
 // Dataset::bin during construction and are not retained.
-// Binning is host-resident; a CUDA fit uploads once on first use and caches.
+// Binning follows the device hint: the host by default, the GPU under
+// device="cuda", where the resident matrix is then adopted by every fit.
 class Dataset
 {
   public:
     Dataset(array_2d const &X, array_1d const &y, std::optional<array_1d> const &weight,
             int max_bin, size_t n_samples, uint64_t seed, int min_data_in_bin,
-            std::optional<std::map<size_t, array_1d>> const &bin_edges)
+            std::optional<std::map<size_t, array_1d>> const &bin_edges,
+            std::string const &device, uint32_t device_id, uint32_t n_threads)
         : x_(X)
     {
         if (y.shape(0) != X.shape(0))
@@ -121,11 +122,27 @@ class Dataset
             throw std::invalid_argument(
                 "Dataset: len(weight) must equal the row count");
         }
+        // A device hint is an explicit user request, so an absent backend or
+        // device is an error here, unlike the engine's own inference from a
+        // grower name (which degrades to the host silently).
+        bool const on_device = device == "cuda";
+        if (!on_device && device != "cpu")
+        {
+            throw std::invalid_argument("Dataset: device must be \"cpu\" or \"cuda\"");
+        }
+        if (on_device && !bonsai::cuda_available())
+        {
+            throw std::invalid_argument(
+                "Dataset(device=\"cuda\") needs a CUDA build and a visible device; "
+                "cuda_available() is False");
+        }
         bonsai::Config cfg;
         cfg.bin_mapper.max_bin         = max_bin;
         cfg.bin_mapper.n_samples       = n_samples;
         cfg.bin_mapper.seed            = seed;
         cfg.bin_mapper.min_data_in_bin = min_data_in_bin;
+        cfg.parallel.n_threads         = n_threads;
+        cfg.parallel.device_id         = device_id;
 
         size_t const             f = X.shape(1);
         std::vector<std::string> names;
@@ -151,9 +168,33 @@ class Dataset
             weight ? bonsai::floats_view{weight->data(), weight->shape(0)}
                    : bonsai::floats_view{};
         nb::gil_scoped_release release;
+        bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
         loaded_.mappers = bonsai::BinMappers::fit(as_view(X), std::move(names),
                                                   cfg.bin_mapper, edges);
-        loaded_.train   = make_labeled(X, y, loaded_.mappers, cfg, w);
+        loaded_.train   = make_labeled(X, y, loaded_.mappers, cfg, on_device, w);
+        // Device state is recorded only when a plane was actually minted:
+        // an ingest decline leaves an ordinary host dataset, which no later
+        // fit needs to be placed against.
+        if (loaded_.train.dataset.ingest_plane())
+        {
+            device_id_ = device_id;
+        }
+    }
+
+    // The device the binned columns live on, "cpu" or "cuda". A device
+    // request that ingest declined reports "cpu": the columns are on the
+    // host and nothing about the fit is constrained.
+    std::string device() const
+    {
+        return device_id_ ? "cuda" : "cpu";
+    }
+
+    // The device a device-binned dataset is resident on; empty for host
+    // datasets. A fit placed on a different device would have to migrate the
+    // matrix, so train() rejects the mismatch instead.
+    std::optional<uint32_t> device_id() const
+    {
+        return device_id_;
     }
 
     size_t n_rows() const
@@ -172,6 +213,7 @@ class Dataset
   private:
     array_2d                      x_;
     bonsai::cli::LoadedTrainValid loaded_;
+    std::optional<uint32_t>       device_id_;
 };
 
 // A trained model: booster + the bin mappers and config it was fit with.
@@ -443,7 +485,8 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
         sample_weight
             ? bonsai::floats_view{sample_weight->data(), sample_weight->shape(0)}
             : bonsai::floats_view{};
-    loaded.train = make_labeled(X, y, loaded.mappers, cfg, wview);
+    loaded.train = make_labeled(X, y, loaded.mappers, cfg,
+                                cfg.dispatch.grower_name.starts_with("cuda"), wview);
     if (eval_set)
     {
         loaded.valid = make_valid_labeled(eval_set->first, eval_set->second);
@@ -490,6 +533,18 @@ Model train_dataset(std::vector<std::pair<std::string, std::string>> const &para
             "Dataset construction instead");
     }
     bonsai::Config const cfg = config_from_params(params, config);
+    // A device-binned Dataset is resident on one device and the fit adopts
+    // that matrix in place; placing the fit elsewhere would mean migrating
+    // it behind the user's back.
+    if (auto const resident = dataset.device_id();
+        resident && *resident != cfg.parallel.device_id)
+    {
+        throw std::invalid_argument(
+            "this Dataset is binned on CUDA device " + std::to_string(*resident) +
+            "; parallel.device_id=" + std::to_string(cfg.parallel.device_id) +
+            " would train on another device. Train with device_id=" +
+            std::to_string(*resident) + " or rebuild the Dataset on that device.");
+    }
     bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
 
     std::optional<bonsai::io::LoadedBooster> init;
@@ -553,26 +608,49 @@ NB_MODULE(_bonsai, m)
     // Defaults come from the binning config struct, not repeated literals, so
     // the Python surface tracks the one source of truth.
     constexpr bonsai::BinMapperConfig k_bin_defaults{};
+    constexpr bonsai::ParallelConfig  k_parallel_defaults{};
     nb::class_<Dataset>(m, "Dataset")
         .def(nb::init<array_2d const &, array_1d const &,
                       std::optional<array_1d> const &, int, size_t, uint64_t, int,
-                      std::optional<std::map<size_t, array_1d>> const &>(),
+                      std::optional<std::map<size_t, array_1d>> const &,
+                      std::string const &, uint32_t, uint32_t>(),
              nb::arg("X"), nb::arg("y"), nb::arg("weight") = nb::none(),
              nb::arg("max_bin")         = k_bin_defaults.max_bin,
              nb::arg("n_samples")       = k_bin_defaults.n_samples,
              nb::arg("seed")            = k_bin_defaults.seed,
              nb::arg("min_data_in_bin") = k_bin_defaults.min_data_in_bin,
-             nb::arg("bin_edges")       = nb::none(),
+             nb::arg("bin_edges") = nb::none(), nb::arg("device") = "cpu",
+             nb::arg("device_id") = k_parallel_defaults.device_id,
+             nb::arg("n_threads") = k_parallel_defaults.n_threads,
              "A pre-binned dataset. Bins X once at construction and is reused "
              "across train(params, dataset) calls (hyperparameter search / CV), "
-             "skipping the per-fit bin pass; on GPU the resident matrix uploads "
-             "once and is cached. All bin_mapper settings "
+             "skipping the per-fit bin pass. All bin_mapper settings "
              "(max_bin/n_samples/seed/min_data_in_bin) are fixed here. "
              "`bin_edges` maps a column index to its explicit interior cut "
              "points (strictly increasing float32 array; k edges give k+1 "
              "bins); listed columns skip quantile fitting and the edges "
              "travel inside the model artifact, so predict/save/load work on "
-             "raw values with no external transform.")
+             "raw values with no external transform. `device=\"cuda\"` bins on "
+             "the GPU and keeps the matrix resident there, so every cuda_* fit "
+             "adopts it with no upload (a sweep uploads once, not once per "
+             "fit); it raises without a CUDA build and a visible device, and "
+             "a later parallel.device_id that disagrees with `device_id` "
+             "raises rather than migrating. A device-binned Dataset handed to "
+             "a CPU grower materializes host bins once, on first use. "
+             "`n_threads` sizes the binning pass (0 = auto), the way "
+             "parallel.n_threads sizes a fit.")
+        .def("__reduce__",
+             [](Dataset const &) -> nb::object
+             {
+                 throw std::runtime_error(
+                     "Dataset is not picklable: it holds binned columns (device "
+                     "memory under device=\"cuda\") that no artifact carries. "
+                     "Rebuild it from X and y in the target process, or pickle "
+                     "the trained Model instead.");
+             })
+        .def_prop_ro("device", &Dataset::device,
+                     "Where the binned columns live: \"cuda\" for a "
+                     "device-binned dataset, \"cpu\" otherwise.")
         .def_prop_ro("n_rows", &Dataset::n_rows)
         .def_prop_ro("n_features", &Dataset::n_features);
 
@@ -598,4 +676,8 @@ NB_MODULE(_bonsai, m)
     m.def("cuda_available", &bonsai::cuda_available,
           "True when the binary carries the CUDA backend and a usable device "
           "is present (cuda_* growers can train).");
+    m.def(
+        "_n_threads", [] { return bonsai::parallel::n_threads(); },
+        "Worker count in effect for the process, as the last train or "
+        "Dataset call left it (diagnostics).");
 }

@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import pickle
 import tempfile
 
 import bonsai
 import numpy as np
 import pytest
+from bonsai import _bonsai
+
+
+def _reg_data(n=4000, f=12, seed=0):
+    """(X, y) float32 arrays with signal in the first two columns."""
+    rng = np.random.default_rng(seed)
+    X = rng.random((n, f), dtype=np.float32)
+    y = (X[:, 0] * 2 + X[:, 1] + rng.normal(0, 0.1, n)).astype(np.float32)
+    return X, y
 
 
 def test_reusable_dataset_bit_identical_and_guard():
@@ -119,3 +129,91 @@ def test_dataset_eval_set_early_stopping():
     np.testing.assert_array_equal(
         np.asarray(ref.predict(Xv)), np.asarray(m.predict(Xv))
     )
+
+
+def test_dataset_device_hint_rejects_unknown_and_absent_devices():
+    """A device hint is an explicit request, so an absent backend or device is
+    an error — unlike the engine's own inference from a grower name, which
+    degrades to the host silently."""
+    X, y = _reg_data(n=500)
+    assert bonsai.Dataset(X, y).device == "cpu"
+    with pytest.raises(Exception, match='"cpu" or "cuda"'):
+        bonsai.Dataset(X, y, device="gpu")
+    if not bonsai.cuda_available():
+        with pytest.raises(Exception, match="cuda_available"):
+            bonsai.Dataset(X, y, device="cuda")
+
+
+def test_dataset_is_not_picklable():
+    """Binned columns (device memory under device="cuda") travel in no
+    artifact; the failure must say so rather than write a broken one."""
+    X, y = _reg_data(n=500)
+    with pytest.raises(Exception, match="not picklable"):
+        pickle.dumps(bonsai.Dataset(X, y))
+
+
+def test_dataset_honors_n_threads():
+    """Construction runs the binning pass under its own n_threads, the way a
+    fit runs under parallel.n_threads."""
+    X, y = _reg_data(n=2000)
+    bonsai.Dataset(X, y, n_threads=3)
+    assert _bonsai._n_threads() == 3
+    bonsai.Dataset(X, y, n_threads=1)
+    assert _bonsai._n_threads() == 1
+
+    # binning is thread-count invariant, so the knob must not move the bits
+    pairs = [("dispatch.grower_name", "depthwise"), ("booster.n_iters", "20")]
+    one = bonsai.train(pairs, bonsai.Dataset(X, y, n_threads=1)).predict(X)
+    many = bonsai.train(pairs, bonsai.Dataset(X, y, n_threads=4)).predict(X)
+    np.testing.assert_array_equal(np.asarray(one), np.asarray(many))
+
+
+def test_device_dataset_matches_the_fused_path():
+    """A device-binned Dataset reaches the same device ingest the fused
+    train(pairs, X, y) call takes; GPU histogram atomics make the comparison
+    tolerance-equal, not bit-equal (docs/architecture/11)."""
+    if not bonsai.cuda_available():
+        pytest.skip("no CUDA build or no visible device")
+    X, y = _reg_data(n=20000)
+    pairs = [("dispatch.grower_name", "cuda_depthwise"), ("booster.n_iters", "30"),
+             ("tree.max_depth", "6")]
+    fused = np.asarray(bonsai.train(pairs, X, y).predict(X))
+
+    ds = bonsai.Dataset(X, y, device="cuda")
+    assert ds.device == "cuda"
+    two_step = np.asarray(bonsai.train(pairs, ds).predict(X))
+    np.testing.assert_allclose(fused, two_step, rtol=0, atol=1e-4)
+
+    with pytest.raises(Exception, match="not picklable"):
+        pickle.dumps(ds)
+
+
+def test_device_dataset_materializes_host_bins_for_a_cpu_grower():
+    """The mismatch policy is lazy materialization: the device plane fills
+    host columns on first host consumer, bit-identical to the host fill, so a
+    CPU fit from a device-binned Dataset equals one from a host Dataset."""
+    if not bonsai.cuda_available():
+        pytest.skip("no CUDA build or no visible device")
+    X, y = _reg_data(n=20000)
+    pairs = [("dispatch.grower_name", "depthwise"), ("booster.n_iters", "30"),
+             ("tree.max_depth", "6")]
+    host = np.asarray(bonsai.train(pairs, bonsai.Dataset(X, y)).predict(X))
+    device = np.asarray(
+        bonsai.train(pairs, bonsai.Dataset(X, y, device="cuda")).predict(X)
+    )
+    np.testing.assert_array_equal(host, device)
+
+
+def test_device_dataset_rejects_a_device_id_mismatch():
+    """The resident matrix cannot follow the fit to another device, so the
+    disagreement is an error rather than a silent migration."""
+    if not bonsai.cuda_available():
+        pytest.skip("no CUDA build or no visible device")
+    X, y = _reg_data(n=2000)
+    ds = bonsai.Dataset(X, y, device="cuda", device_id=0)
+    with pytest.raises(Exception, match="device_id=1"):
+        bonsai.train([("dispatch.grower_name", "cuda_depthwise"),
+                      ("parallel.device_id", "1")], ds)
+    # a host Dataset carries no residency, so any device placement is fine
+    bonsai.train([("booster.n_iters", "2"), ("parallel.device_id", "0")],
+                 bonsai.Dataset(X, y))
