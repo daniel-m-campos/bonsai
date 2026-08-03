@@ -53,6 +53,8 @@ XGBoost 3.3 (2026-07-21) claimed lower GPU quantile-sketching memory and wide-da
 
 The decision-42-era reading ("bonsai CPU leafwise beats LightGBM's CUDA leaf-wise") was measured at 464k rows; on one pod at ladder scales it inverts, monotonically, to 5.3x in LightGBM's favor at 16M. The engineering conclusion stands the other way up: leaf-wise on the GPU is viable at scale (LightGBM ships it), and bonsai's leafwise grower is now the only grower without device support (issue #268). The anchor arm ties this pod to the ladders; LightGBM-CUDA's higher r2 column is the depth-cap artifact recorded in decision 95.
 
+The CPU `leafwise` row, which is what this section reads, binned on the host by design and is unaffected by anything below. The `bonsai cuda dw` anchor row is not: it was measured through the harness path decision 100 corrects, so it runs slower here than the library does. The correction section at the foot of this page carries the sizes.
+
 | rows | bonsai leafwise (cpu) | lgbm cuda | lgbm cpu | bonsai cuda dw (anchor) |
 |---|---|---|---|---|
 | 250k | 7.1s (.872) | 5.7s (.879) | 2.4s (.872) | 0.5s (.872) |
@@ -77,6 +79,8 @@ Before building the device leafwise plane, its per-round fixed cost was priced b
 
 ### The device-leafwise ladder: admission by measurement (stage 2)
 
+**Read the correction at the foot of this page first.** Every bonsai CUDA number in this table was measured through a harness that binned on the host, so the two device columns are slower here than the library is. The kill criterion is met either way, by more than this table says; the absolutes are not the library's.
+
 Same pod, four arms, best of two reps, interleaved. The kill criterion pre-registered in issue #268 was one number: beat LightGBM's CUDA leaf-wise at 16M x 100 on the same pod, or the grower does not register. It is met with 5% to spare at 16M, and `cuda_leafwise` beats its own CPU arm at every cell, 4.6x to 7.1x. The anchor row prices what is left: the depthwise plane moves the same histogram volume in less time, because serializing the frontier to one node per round costs launches that the level plane batches away.
 
 | rows | bonsai cuda leafwise | lgbm cuda | bonsai leafwise (cpu) | bonsai cuda dw (anchor) |
@@ -99,7 +103,9 @@ The capped ladder above hides the strategy's point: at a 256-leaf budget and a d
 
 ### The closing ladder: what stage 3's levers moved (decision 98)
 
-Same knobs and the same three device arms as the admission ladder above, one pod, best of two reps, interleaved, and unprofiled. Stage 3 landed two levers on the leaf plane, the device-resident objective and the round's pinned and packed staging, and reverted a third (the partition chain) that measured worthless. The reference arms carry the cross-ladder comparison, because these are two rentals of the same GPU model rather than one pod: `lgbm_cuda` and the depthwise anchor reproduce their stage 2 times within 2% at every cell, so the leafwise column's move is the levers and not the rental. `cuda_leafwise` fits 24.4s at 16M x 100 against stage 2's 30.8s, and the cut runs 21% to 27% across the ladder, largest at the small cells where the round's fixed cost is the fit. The margin over LightGBM's CUDA leaf-wise at 16M widens from 5% to 24%; 1.3s of fit still separate the leaf plane from the resident depthwise anchor at the same cell, and that is what stage 3 leaves open. `r2_test` is identical to stage 2 in every cell of the table.
+**Read the correction at the foot of this page first.** Both bonsai columns here were measured through the same host-binning harness as the admission ladder, so this table's absolutes overstate the plane's fit time; the lever deltas it reports were same-path A/Bs and stand.
+
+Same knobs and the same three device arms as the admission ladder above, one pod, best of two reps, interleaved. Stage 3 landed two levers on the leaf plane, the device-resident objective and the round's pinned and packed staging, and reverted a third (the partition chain) that measured worthless. The reference arms carry the cross-ladder comparison, because these are two rentals of the same GPU model rather than one pod: `lgbm_cuda` and the depthwise anchor reproduce their stage 2 times within 2% at every cell, so the leafwise column's move is the levers and not the rental. `cuda_leafwise` fits 24.4s at 16M x 100 against stage 2's 30.8s, and the cut runs 21% to 27% across the ladder, largest at the small cells where the round's fixed cost is the fit. The margin over LightGBM's CUDA leaf-wise at 16M widens from 5% to 24%; 1.3s of fit still separate the leaf plane from the resident depthwise anchor at the same cell, and that is what stage 3 leaves open. `r2_test` is identical to stage 2 in every cell of the table.
 
 | rows | bonsai cuda leafwise | lgbm cuda | bonsai cuda dw (anchor) | stage 2 leafwise |
 |---|---|---|---|---|
@@ -116,4 +122,37 @@ The uncapped arm is the cell stage 3 most wanted to move, and the one the admiss
 | lgbm cuda | 31.7s | 0.8858 | 31.6s |
 
 
-*Source: [`leafwise-stage3-2026-08.jsonl`](../../../benchmarks/results/leafwise-stage3-2026-08.jsonl). One pod (L40S, US-NC-1, 2026-08-02), SCALING knobs at 100 iters and 256 leaves, best of 2 reps, no profiler (the profile peel drains the round's pipeline and prices host residue 7x high, doc 20). CPU `leafwise` is unchanged since the stage 2 ladder above and is cited from it rather than re-measured, which is why this ladder is three arms.*
+*Source: [`leafwise-stage3-2026-08.jsonl`](../../../benchmarks/results/leafwise-stage3-2026-08.jsonl). One pod (L40S, US-NC-1, 2026-08-02), SCALING knobs at 100 iters and 256 leaves, best of 2 reps. Decision 98 describes this ladder as unprofiled; its rows in fact carry profile blocks, because the bench driver sets the counters for every bonsai child and had no opt-out until decision 100, which prices them at 0% to 2% of fit. CPU `leafwise` is unchanged since the stage 2 ladder above and is cited from it rather than re-measured, which is why this ladder is three arms.*
+
+### The correction: the campaign ladders on the fixed harness (decision 100)
+
+Every bonsai CUDA number in the two ladders above was measured through a benchmark harness that built its `Dataset` before it knew which grower would consume it, so the device arms binned on the host and carried a host binned matrix, and 2.5GB of host memory with it, for the whole fit. The library was never at fault and the bias ran one way, against bonsai. This ladder is the same three device arms at the same knobs on the fixed harness, one pod, best of two reps, interleaved, with the profile counters off. At 16M x 100 `cuda_leafwise` fits 18.7s where decision 98 published 24.4s, and it beats LightGBM's CUDA leaf-wise by 2.0x rather than the published 1.3x: the kill criterion pre-registered in issue #268 is met by 49% where the record claims 24%. 2.9s of fit separate the leaf plane from the depthwise anchor at 16M, where decision 98 read 1.3s, because a host binning pass that sat on both planes flattered their distance.
+
+| rows | bonsai cuda leafwise | lgbm cuda | bonsai cuda dw (anchor) | decision 98 leafwise |
+|---|---|---|---|---|
+| 250k | 3.3s (.872) | 8.6s (.879) | 0.8s (.872) | 2.1s |
+| 1M | 4.2s (.877) | 9.7s (.884) | 1.5s (.877) | 3.2s |
+| 4M | 7.2s (.878) | 14.8s (.885) | 4.4s (.878) | 7.6s |
+| 16M | 18.7s (.879) | 37.0s (.886) | 15.8s (.879) | 24.4s |
+
+Absolutes do not carry across rentals here, and the reference arm says why. `lgbm_cuda` never touched the affected path, and on this pod it reads 16% to 29% above the times decision 98 published for it, so this is the slowest of the three L40S rentals the campaign has run on. That is also why the 250k and 1M leafwise cells read above their published numbers rather than below: the ingest saving at those cells is a fraction of a second and this pod's host latency is not. The standings measure the same 16M cell on the fixed path, on a rental that reproduces the campaign's reference times, and read `cuda_leafwise` 13.8s against `lgbm_cuda` 31.8s. Both rentals correct the published margin the same way, and that agreement is the reading that survives the pod. The distance between the two numbers is not left as pod luck either: the controls below take it apart into the profile counters, the benchmark data cache, and what remains of the rental.
+
+The uncapped arm is the one cell where the campaign recorded a loss, and it is the reading most exposed to the harness, since the handicap it carried is the same absolute number whether the tree is capped or not. Lifting the depth cap doubles the round count from 25,500 to 51,100, because every leaf the tree creates must be found rather than skipped at the cap. Decisions 97 and 98 read this cell as bonsai faster at matched knobs and slower at matched accuracy; on the fixed harness the finding inverts: bonsai leads the uncapped cell by 34% at equal accuracy.
+
+| 16M x 100, no depth cap | fit_s | test r2 | decision 98 fit_s |
+|---|---|---|---|
+| bonsai cuda leafwise | 27.5s | 0.8862 | 32.3s |
+| lgbm cuda | 36.8s | 0.8858 | 31.7s |
+
+
+Two things other than the ingest path differ between this ladder and the published ones, and both are priced rather than argued. The rows of both published ladders carry profile blocks, because the bench driver turns the four counters on for every bonsai child and neither ladder could turn them off; this ladder ran with them off, and running it both ways puts the counters at 0% to 2% of leafwise fit. The `--data-cache` memmap the campaign ladders and this one all used costs more than that: dropping it at 16M, the protocol the standings run, takes leafwise fit down another 12%. What is left is the rental, 19% on identical protocol.
+
+| 16M x 100, capped | cuda leafwise | cuda dw (anchor) |
+|---|---|---|
+| this ladder (cached, counters off) | 18.7s | 15.8s |
+| counters on | 18.8s | 16.0s |
+| counters on, no data cache | 16.5s | 13.7s |
+| standings pod (counters on, no data cache) | 13.8s | 12.1s |
+
+
+*Source: [`leafwise-correction-2026-08.jsonl`](../../../benchmarks/results/leafwise-correction-2026-08.jsonl). One pod (L40S, US-NC-1, 2026-08-03), SCALING knobs at 100 iters and 256 leaves, best of 2 reps, on the fixed ingest path; evidence for decision 100. CPU `leafwise` binned on the host in every run and is unaffected, so it is cited from the admission ladder rather than re-measured.*
