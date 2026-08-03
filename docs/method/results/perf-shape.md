@@ -44,6 +44,15 @@ Fit seconds (test r²), best of reps:
 | 1M x 4096 | 35.1s (.876) | 32.9s (.875) | 46.1s (.876) | 96.5s (.876) | 48.5s (.874) | 197.6s (.883) | 454.7s (.875) | 277.3s (.875) |
 | 131k x 16384 | 51.0s (.860) | 56.1s (.876) | 1203.4s (.860) | 76.1s (.861) | 70.5s (.874) | 561.2s (.868) | 403.3s (.862) | 427.3s (.876) |
 
+Ingest / train seconds, the split behind that total (issue #301). bonsai's ingest and train read `-` above: it measures fit through one fused `train(pairs, X, y)` call today, so there is no point inside it to split. Issue #301 tracks the runner change (a two-step `Dataset(..., device=...)` plus `train(pairs, ds)` path) that will populate this table for bonsai on the next standings refresh; until then only the total column in the fit table above is measured for it. CatBoost's `Pool()` step only wraps the raw arrays; it quantizes inside `fit`, so its ingest column reads low and that cost sits in train instead (issue #253). Its total is the only number directly comparable to the other libraries' split.
+
+| cell | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
+|---|---|---|---|---|---|---|---|---|
+| 1M x 100 | - | - | - | 1.8s / 0.9s | 0.3s / 2.4s | 1.6s / 5.6s | 1.6s / 8.1s | - |
+| 1M x 1024 | - | - | - | 17.9s / 5.1s | 1.3s / 11.8s | 18.1s / 29.8s | 18.0s / 79.1s | - |
+| 1M x 4096 | - | - | - | 77.7s / 18.8s | 4.5s / 43.9s | 83.8s / 113.7s | 77.9s / 376.7s | - |
+| 131k x 16384 | - | - | - | 42.5s / 33.7s | 2.2s / 68.3s | 134.8s / 426.4s | 135.4s / 267.9s | - |
+
 Peak host RSS, worst rep; the parenthetical is headroom above the input array `bonsai.bench.synth.gen_data` holds resident for that cell (rows plus the held-out test rows, which are numpy views into the same buffer and so stay resident too, times columns, times 4 bytes float32). Depthwise and oblivious hold that headroom under 1GB at every measured width because they bin on the device; that cost shows up instead in `dev_mem` (16.6GB at the widest cell against 9.8GB of host RSS). Leafwise is the counter-example sitting in the same table: at the widest cell it still bins on the host (no CUDA histogram support yet, issue #268), so its device memory drops to 3.1GB while its headroom balloons to 18.4GB, the mirror image of the mechanism. The comparison is host-input only: given device-resident input, XGBoost sketches in place and this gap collapses (issue #289).
 
 | cell | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |

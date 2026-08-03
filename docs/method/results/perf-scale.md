@@ -17,6 +17,15 @@ Scaling rows (100 features):
 | 4M | 3.1s (.878) | 3.1s (.876) | 4.9s (.878) | 9.6s (.878) | 6.4s (.877) | 12.0s (.885) | 35.7s (.879) | 34.5s (.876) |
 | 16M | 12.1s (.879) | 10.5s (.877) | 13.8s (.879) | 35.7s (.880) | 24.3s (.876) | 31.8s (.886) | 211.1s (.879) | 109.2s (.877) |
 
+Ingest / train seconds, the split behind that total (issue #301): the two halves scale differently, so a total-only column hides which one moves. bonsai's ingest and train read `-` above: it measures fit through one fused `train(pairs, X, y)` call today, so there is no point inside it to split. Issue #301 tracks the runner change (a two-step `Dataset(..., device=...)` plus `train(pairs, ds)` path) that will populate this table for bonsai on the next standings refresh; until then only the total column in the fit table above is measured for it. CatBoost's `Pool()` step only wraps the raw arrays; it quantizes inside `fit`, so its ingest column reads low and that cost sits in train instead (issue #253). Its total is the only number directly comparable to the other libraries' split.
+
+| rows | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
+|---|---|---|---|---|---|---|---|---|
+| 250k | - | - | - | 0.5s / 0.6s | 0.1s / 1.8s | 1.0s / 5.4s | 0.8s / 3.5s | - |
+| 1M | - | - | - | 1.7s / 0.9s | 0.3s / 2.4s | 1.7s / 5.9s | 1.6s / 7.3s | - |
+| 4M | - | - | - | 7.6s / 2.1s | 1.0s / 5.4s | 4.4s / 7.7s | 4.6s / 31.1s | - |
+| 16M | - | - | - | 28.6s / 7.0s | 4.3s / 20.0s | 15.3s / 16.5s | 15.1s / 196.0s | - |
+
 Peak host RSS, worst repeat; the parenthetical is headroom above the input array `bonsai.bench.synth.gen_data` holds resident for that cell (16M x 100 float32, rows plus the held-out test rows, which are numpy views into the same buffer and so stay resident too). bonsai's headroom sits near zero at every scale because it bins the data on the device rather than keeping a second host-size copy; that cost lands on the GPU instead (2.8GB device memory at 16M rows, `dev_mem`, same cell). The comparison is host-input only: given device-resident input, XGBoost sketches in place and this headroom gap collapses (issue #289).
 
 | rows | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |

@@ -42,4 +42,22 @@ The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC),
 | catboost_cpu | - | - | - |
 | catboost_gpu | - | - | - |
 
+Ingest / train seconds behind the campaign-knob total above (issue #301). bonsai's ingest and train read `-` above: it measures fit through one fused `train(pairs, X, y)` call today, so there is no point inside it to split. Issue #301 tracks the runner change (a two-step `Dataset(..., device=...)` plus `train(pairs, ds)` path) that will populate this table for bonsai on the next standings refresh; until then only the total column in the fit table above is measured for it. CatBoost's `Pool()` step only wraps the raw arrays; it quantizes inside `fit`, so its ingest column reads low and that cost sits in train instead (issue #253). Its total is the only number directly comparable to the other libraries' split.
+
+| variant | 0.1m | 1m | 10m |
+|---|---|---|---|
+| bonsai_depthwise | - | - | - |
+| bonsai_oblivious | - | - | - |
+| bonsai_cuda_depthwise | - | - | - |
+| bonsai_cuda_oblivious | - | - | - |
+| bonsai_ts_depthwise | - | - | - |
+| bonsai_ts_oblivious | - | - | - |
+| bonsai_ts_cuda_depthwise | - | - | - |
+| bonsai_ts_cuda_oblivious | - | - | - |
+| xgb_hist | 0.3s / 0.6s | 0.4s / 3.4s | 2.1s / 23.4s |
+| xgb_cuda | 0.0s / 0.2s | 0.2s / 0.3s | 1.9s / 1.5s |
+| lgbm_cpu | 0.0s / 1.7s | 0.1s / 4.0s | 0.7s / 16.4s |
+| catboost_cpu | 0.0s / 1.1s | 0.2s / 5.4s | 1.7s / 27.0s |
+| catboost_gpu | 0.0s / 0.4s | 0.2s / 0.6s | 1.7s / 3.7s |
+
 *Source: [`airline-2026-08.jsonl`](../../../benchmarks/results/airline-2026-08.jsonl). A bonsai variant has the best AUC in every cell under both protocols, and bonsai CUDA depthwise is also the fastest fit from 1M rows up under ordinal encoding; XGBoost-GPU keeps only the smallest cell. Evidence: [benchmarks/airline-2026-07.md](../../../benchmarks/airline-2026-07.md). Measured at `77633a6` (2026-08-03, pod-NVIDIA-L40S).*

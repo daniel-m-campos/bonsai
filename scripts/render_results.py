@@ -763,6 +763,57 @@ def _fmt_cell(best: dict, rows: int, cols: int, variant: str) -> str:
     return fit_r2_str(r)
 
 
+# The ingest/train split (issue #301): committed rows carry both for the
+# reference libraries; bonsai's fused `train(pairs, X, y)` call has no point
+# to split at yet, so its rows carry `None` for both until the device-hint
+# runner change lands and a refresh measures the two-step path.
+BONSAI_SPLIT_NOTE = (
+    "bonsai's ingest and train read `-` above: it measures fit through one "
+    "fused `train(pairs, X, y)` call today, so there is no point inside it "
+    "to split. Issue #301 tracks the runner change (a two-step "
+    "`Dataset(..., device=...)` plus `train(pairs, ds)` path) that will "
+    "populate this table for bonsai on the next standings refresh; until "
+    "then only the total column in the fit table above is measured for it.")
+CATBOOST_INGEST_NOTE = (
+    "CatBoost's `Pool()` step only wraps the raw arrays; it quantizes "
+    "inside `fit`, so its ingest column reads low and that cost sits in "
+    "train instead (issue #253). Its total is the only number directly "
+    "comparable to the other libraries' split.")
+
+
+def split_str(r: dict | None) -> str:
+    """`1.1s / 6.9s` ingest/train split for one row; the house absent-value
+    marker (`-`) when either half is unmeasured rather than a zero or blank
+    that would read as one."""
+    if r is None:
+        return "-"
+    ingest, train = r.get("ingest_s"), r.get("train_s")
+    if ingest is None or train is None:
+        return "-"
+    return f"{ingest:.1f}s / {train:.1f}s"
+
+
+def split_table_by_rows(best: dict, row_axis: list[int],
+                        present: list[tuple[str, str]]) -> str:
+    """Ingest/train split table over a rows axis at cols=100, same shape
+    and variant columns as the matching fit table."""
+    return md_table(
+        ["rows", *[lbl for _, lbl in present]],
+        [[human(n), *[split_str(best.get((n, 100, v))) for v, _ in present]]
+         for n in row_axis])
+
+
+def split_table_by_cell(best: dict, cells: list[tuple[int, int]],
+                        present: list[tuple[str, str]]) -> str:
+    """Ingest/train split table over (rows, cols) cells, same shape and
+    variant columns as the matching fit table."""
+    return md_table(
+        ["cell", *[lbl for _, lbl in present]],
+        [[cell_label(nr, nc), *[split_str(best.get((nr, nc, v)))
+                                for v, _ in present]]
+         for nr, nc in cells])
+
+
 def synthetic_input_gib(cell: dict) -> float:
     """The host bytes `bonsai.bench.synth.gen_data` holds resident for one
     synthetic cell, in GiB (matching `peak_rss_gb`'s own unit: Linux
@@ -796,6 +847,7 @@ def rebaseline_section() -> str:
         ["rows", *[lbl for _, lbl in present]],
         [[human(n), *[_fmt_cell(best, n, 100, v) for v, _ in present]]
          for n in row_axis])
+    split_table = split_table_by_rows(best, row_axis, present)
     rss_table = md_table(
         ["rows", *[lbl for _, lbl in present]],
         [[human(n), *[rss_headroom_str(best[(n, 100, v)])
@@ -831,6 +883,10 @@ Same-pod sweep ({host['cpu_model']}, {host['gpu']}), synthetic regression, `fit(
 Scaling rows (100 features):
 
 {rows_table}
+
+Ingest / train seconds, the split behind that total (issue #301): the two halves scale differently, so a total-only column hides which one moves. {BONSAI_SPLIT_NOTE} {CATBOOST_INGEST_NOTE}
+
+{split_table}
 
 Peak host RSS, worst repeat; the parenthetical is headroom above the input array `bonsai.bench.synth.gen_data` holds resident for that cell ({human(top_row)} x 100 float32, rows plus the held-out test rows, which are numpy views into the same buffer and so stay resident too). bonsai's headroom sits near zero at every scale because it bins the data on the device rather than keeping a second host-size copy; that cost lands on the GPU instead ({fmt(dev_gb, 1)}GB device memory at {human(top_row)} rows, `dev_mem`, same cell). The comparison is host-input only: given device-resident input, XGBoost sketches in place and this headroom gap collapses (issue #289).
 
@@ -955,6 +1011,7 @@ def cols_rebaseline_table() -> str:
         ["cell", *[lbl for _, lbl in present]],
         [[label(nr, nc), *[cell_fmt(nr, nc, v) for v, _ in present]]
          for nr, nc in cells])
+    split_table = split_table_by_cell(best, cells, present)
     rss_table = md_table(
         ["cell", *[lbl for _, lbl in present]],
         [[label(nr, nc),
@@ -985,6 +1042,10 @@ The six-variant cols-axis re-baseline promised by decision 90. bonsai's CUDA gro
 Fit seconds (test r²), best of reps:
 
 {fit_table}
+
+Ingest / train seconds, the split behind that total (issue #301). {BONSAI_SPLIT_NOTE} {CATBOOST_INGEST_NOTE}
+
+{split_table}
 
 Peak host RSS, worst rep; the parenthetical is headroom above the input array `bonsai.bench.synth.gen_data` holds resident for that cell (rows plus the held-out test rows, which are numpy views into the same buffer and so stay resident too, times columns, times 4 bytes float32). Depthwise and oblivious hold that headroom under 1GB at every measured width because they bin on the device; that cost shows up instead in `dev_mem` (16.6GB at the widest cell against 9.8GB of host RSS). Leafwise is the counter-example sitting in the same table: at the widest cell it still bins on the host (no CUDA histogram support yet, issue #268), so its device memory drops to 3.1GB while its headroom balloons to 18.4GB, the mirror image of the mechanism. The comparison is host-input only: given device-resident input, XGBoost sketches in place and this gap collapses (issue #289).
 
@@ -1487,9 +1548,10 @@ def frontier_section() -> str:
         if r[K.VARIANT] not in par_variants:
             par_variants.append(r[K.VARIANT])
     par_table = md_table(
-        [K.VARIANT, "iters", K.FIT_S, "test r2"],
-        [[r[K.VARIANT], str(r["cell"]["iters"]), fmt(r[K.FIT_S], 2),
-          fmt(r[K.R2_TEST], 4)] for r in pareto])
+        [K.VARIANT, "iters", "ingest_s", "train_s", K.FIT_S, "test r2"],
+        [[r[K.VARIANT], str(r["cell"]["iters"]), fmt(r.get("ingest_s"), 1),
+          fmt(r.get("train_s"), 1), fmt(r[K.FIT_S], 2), fmt(r[K.R2_TEST], 4)]
+         for r in pareto])
     _pareto_chart(pareto, par_variants)
 
     edge = load_jsonl(Evidence.CATBOOST_SCALE_EDGE)
@@ -1509,6 +1571,8 @@ def frontier_section() -> str:
     return f"""### GPU accuracy-vs-time frontier at 16M
 
 ![Accuracy vs fit time at 16M rows](assets/gpu-pareto-16M.svg)
+
+`ingest_s` and `train_s` are the split behind `fit_s` (issue #301). {BONSAI_SPLIT_NOTE} {CATBOOST_INGEST_NOTE}
 
 {par_table}
 
@@ -1547,6 +1611,11 @@ def airline_section() -> str:
              and r["knobs"]["depth"] == depth]
         return f"{m[0]['fit_s']:.1f}s / {m[0]['auc_test']:.4f}" if m else "-"
 
+    def split_cell(variant, size, depth):
+        m = [r for r in rows if r[K.VARIANT] == variant and r["size"] == size
+             and r["knobs"]["depth"] == depth]
+        return split_str(m[0]) if m else "-"
+
     variants = []
     for r in rows:
         if r[K.VARIANT] not in variants:
@@ -1559,6 +1628,10 @@ def airline_section() -> str:
             [K.VARIANT, "0.1m", "1m", "10m"],
             [[v, cell(v, "0.1m", depth), cell(v, "1m", depth),
               cell(v, "10m", depth)] for v in variants]))
+    split_table = md_table(
+        [K.VARIANT, "0.1m", "1m", "10m"],
+        [[v, split_cell(v, "0.1m", 8), split_cell(v, "1m", 8),
+          split_cell(v, "10m", 8)] for v in variants])
 
     def lib_of(v):
         return ("bonsai" if v.startswith("bonsai")
@@ -1583,6 +1656,10 @@ The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC),
 {tables[0]}
 
 {tables[1]}
+
+Ingest / train seconds behind the campaign-knob total above (issue #301). {BONSAI_SPLIT_NOTE} {CATBOOST_INGEST_NOTE}
+
+{split_table}
 
 {provenance([standings_file(Axis.AIRLINE)], "A bonsai variant has the best AUC in every cell under both protocols, and bonsai CUDA depthwise is also the fastest fit from 1M rows up under ordinal encoding; XGBoost-GPU keeps only the smallest cell. Evidence: [benchmarks/airline-2026-07.md](../../benchmarks/airline-2026-07.md)." + measured_stamp(rows))}
 """
@@ -1726,6 +1803,9 @@ def _division_summaries() -> tuple[str, str]:
         rss[v] = max(rss.get(v, 0.0), r[K.PEAK_RSS_GB])
     b_fit = min(fit[v] for v in fit if v.startswith("bonsai_cuda"))
     b_rss = min(rss[v] for v in rss if v.startswith("bonsai_cuda"))
+    br = _cell_best(rb)
+    xgb_row = br.get((16_000_000, 100, "xgb_cuda"))
+    cat_row = br.get((16_000_000, 100, "catboost_gpu"))
     cell_16m = next(r["cell"] for r in rb if r["cell"]["rows"] == 16_000_000
                     and r["cell"]["cols"] == 100)
     input_16m = synthetic_input_gib(cell_16m)
@@ -1765,7 +1845,17 @@ def _division_summaries() -> tuple[str, str]:
         f"{dev['xgb_cuda']:.1f}GB and CatBoost's "
         f"{dev['catboost_gpu']:.1f}GB. Every number is same-pod; "
         f"identical-model GPUs across the rental fleet measure up to "
-        f"~25% apart.")
+        f"~25% apart. The committed rows also carry an ingest/train split "
+        f"for the reference libraries (issue #301): at 16M rows, "
+        f"XGBoost-GPU's ingest is {xgb_row['ingest_s'] / xgb_row[K.FIT_S]:.0%} "
+        f"of its total ({xgb_row['ingest_s']:.1f}s of "
+        f"{xgb_row[K.FIT_S]:.1f}s) while CatBoost's train is "
+        f"{cat_row['train_s'] / cat_row[K.FIT_S]:.0%} of its total "
+        f"({cat_row['train_s']:.1f}s of {cat_row[K.FIT_S]:.1f}s), since "
+        f"CatBoost's `Pool()` step only wraps the arrays and quantizes "
+        f"inside `fit`. bonsai's own split reads `-` until the device-hint "
+        f"runner change lands and a refresh measures it; only its total "
+        f"is comparable today.")
     table, _, n = _standings(load_jsonl(standings_file(Axis.GRINSZTAJN)))
     lead_lib, lead_mean, lead_wins = table[0]
     quality = (
@@ -1839,6 +1929,7 @@ def readme_standings_block() -> str:
         cells[k] = f"**{secs}s** ({rest}"
         lines.append(f"| {human(n)} | " + " | ".join(cells) + " |")
     rows_table = "\n".join(lines)
+    split_table = split_table_by_rows(best, scales, present)
 
     table, _, n_tasks = _standings(load_jsonl(standings_file(Axis.GRINSZTAJN)))
     qlines = ["| library | mean rank | outright wins |", "|---|--:|--:|"]
@@ -1857,6 +1948,10 @@ def readme_standings_block() -> str:
 Same-pod re-baseline ladder, best of repeats, test r² in parentheses, fastest per row in bold.{measured_stamp(rb)}
 
 {rows_table}
+
+Ingest / train seconds behind that total: `-` is bonsai's fused call, which has no split until a runner refresh measures it (issue #301); CatBoost's ingest reads low because `Pool()` only wraps the arrays and it quantizes inside `fit`.
+
+{split_table}
 
 The width, shape, and accuracy-time frontier tables live in [the ledger]({_SITE}/method/results/).
 

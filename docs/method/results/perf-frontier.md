@@ -6,40 +6,42 @@
 
 ![Accuracy vs fit time at 16M rows](../assets/gpu-pareto-16M.svg)
 
-| variant | iters | fit_s | test r2 |
-|---|---|---|---|
-| bonsai_cuda_depthwise | 60 | 8.13 | 0.8459 |
-| bonsai_cuda_depthwise | 80 | 10.19 | 0.8669 |
-| bonsai_cuda_depthwise | 100 | 12.02 | 0.8777 |
-| bonsai_cuda_depthwise | 130 | 14.90 | 0.8859 |
-| bonsai_cuda_depthwise | 200 | 21.24 | 0.8918 |
-| bonsai_cuda_depthwise | 300 | 29.15 | 0.8934 |
-| bonsai_cuda_oblivious | 60 | 7.47 | 0.8386 |
-| bonsai_cuda_oblivious | 80 | 9.21 | 0.8613 |
-| bonsai_cuda_oblivious | 100 | 10.57 | 0.8743 |
-| bonsai_cuda_oblivious | 130 | 12.96 | 0.8852 |
-| bonsai_cuda_oblivious | 200 | 17.51 | 0.8946 |
-| bonsai_cuda_oblivious | 300 | 23.77 | 0.8973 |
-| bonsai_cuda_oblivious | 450 | 32.25 | 0.8979 |
-| bonsai_cuda_leafwise | 60 | 9.06 | 0.8459 |
-| bonsai_cuda_leafwise | 80 | 11.53 | 0.8669 |
-| bonsai_cuda_leafwise | 100 | 13.67 | 0.8777 |
-| bonsai_cuda_leafwise | 130 | 17.46 | 0.8859 |
-| bonsai_cuda_leafwise | 200 | 24.51 | 0.8918 |
-| bonsai_cuda_leafwise | 300 | 34.73 | 0.8934 |
-| xgb_cuda | 100 | 36.58 | 0.8779 |
-| xgb_cuda | 150 | 40.57 | 0.8887 |
-| xgb_cuda | 200 | 43.62 | 0.8918 |
-| xgb_cuda | 300 | 49.62 | 0.8933 |
-| catboost_gpu | 100 | 24.31 | 0.8751 |
-| catboost_gpu | 150 | 28.56 | 0.8892 |
-| catboost_gpu | 200 | 32.51 | 0.8944 |
-| catboost_gpu | 300 | 40.36 | 0.8973 |
-| catboost_gpu | 450 | 51.59 | 0.8980 |
-| lgbm_cuda | 100 | 30.70 | 0.8847 |
-| lgbm_cuda | 150 | 37.38 | 0.8910 |
-| lgbm_cuda | 200 | 42.57 | 0.8924 |
-| lgbm_cuda | 300 | 52.38 | 0.8930 |
+`ingest_s` and `train_s` are the split behind `fit_s` (issue #301). bonsai's ingest and train read `-` above: it measures fit through one fused `train(pairs, X, y)` call today, so there is no point inside it to split. Issue #301 tracks the runner change (a two-step `Dataset(..., device=...)` plus `train(pairs, ds)` path) that will populate this table for bonsai on the next standings refresh; until then only the total column in the fit table above is measured for it. CatBoost's `Pool()` step only wraps the raw arrays; it quantizes inside `fit`, so its ingest column reads low and that cost sits in train instead (issue #253). Its total is the only number directly comparable to the other libraries' split.
+
+| variant | iters | ingest_s | train_s | fit_s | test r2 |
+|---|---|---|---|---|---|
+| bonsai_cuda_depthwise | 60 | - | - | 8.13 | 0.8459 |
+| bonsai_cuda_depthwise | 80 | - | - | 10.19 | 0.8669 |
+| bonsai_cuda_depthwise | 100 | - | - | 12.02 | 0.8777 |
+| bonsai_cuda_depthwise | 130 | - | - | 14.90 | 0.8859 |
+| bonsai_cuda_depthwise | 200 | - | - | 21.24 | 0.8918 |
+| bonsai_cuda_depthwise | 300 | - | - | 29.15 | 0.8934 |
+| bonsai_cuda_oblivious | 60 | - | - | 7.47 | 0.8386 |
+| bonsai_cuda_oblivious | 80 | - | - | 9.21 | 0.8613 |
+| bonsai_cuda_oblivious | 100 | - | - | 10.57 | 0.8743 |
+| bonsai_cuda_oblivious | 130 | - | - | 12.96 | 0.8852 |
+| bonsai_cuda_oblivious | 200 | - | - | 17.51 | 0.8946 |
+| bonsai_cuda_oblivious | 300 | - | - | 23.77 | 0.8973 |
+| bonsai_cuda_oblivious | 450 | - | - | 32.25 | 0.8979 |
+| bonsai_cuda_leafwise | 60 | - | - | 9.06 | 0.8459 |
+| bonsai_cuda_leafwise | 80 | - | - | 11.53 | 0.8669 |
+| bonsai_cuda_leafwise | 100 | - | - | 13.67 | 0.8777 |
+| bonsai_cuda_leafwise | 130 | - | - | 17.46 | 0.8859 |
+| bonsai_cuda_leafwise | 200 | - | - | 24.51 | 0.8918 |
+| bonsai_cuda_leafwise | 300 | - | - | 34.73 | 0.8934 |
+| xgb_cuda | 100 | 29.5 | 7.0 | 36.58 | 0.8779 |
+| xgb_cuda | 150 | 30.4 | 10.1 | 40.57 | 0.8887 |
+| xgb_cuda | 200 | 30.5 | 13.1 | 43.62 | 0.8918 |
+| xgb_cuda | 300 | 30.8 | 18.9 | 49.62 | 0.8933 |
+| catboost_gpu | 100 | 4.2 | 20.1 | 24.31 | 0.8751 |
+| catboost_gpu | 150 | 4.3 | 24.2 | 28.56 | 0.8892 |
+| catboost_gpu | 200 | 4.4 | 28.1 | 32.51 | 0.8944 |
+| catboost_gpu | 300 | 4.3 | 36.1 | 40.36 | 0.8973 |
+| catboost_gpu | 450 | 4.4 | 47.2 | 51.59 | 0.8980 |
+| lgbm_cuda | 100 | 15.1 | 15.6 | 30.70 | 0.8847 |
+| lgbm_cuda | 150 | 15.2 | 22.1 | 37.38 | 0.8910 |
+| lgbm_cuda | 200 | 14.9 | 27.7 | 42.57 | 0.8924 |
+| lgbm_cuda | 300 | 15.5 | 36.9 | 52.38 | 0.8930 |
 
 *Source: [`gpu-pareto-16M-2026-08.jsonl`](../../../benchmarks/results/gpu-pareto-16M-2026-08.jsonl). bonsai is first to every measured accuracy across the grid (terminal accuracies tie within the noise band) and its marginal round cost stays below CatBoost's on the same pod. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../../benchmarks/gpu-pareto-16M-2026-07.md). Measured at `77633a6` (2026-08-03, pod-NVIDIA-L40S).*
 
