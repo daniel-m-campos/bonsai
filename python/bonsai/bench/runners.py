@@ -78,6 +78,10 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
     booster = xgb.train(params, dtrain, num_boost_round=c["iters"])
     train_s = time.perf_counter() - t0
     fit_s = time.perf_counter() - fit_t0
+    # inplace_predict on a host array against a GPU booster may warn and
+    # route through a slower device path; kept intentionally, since fit_s
+    # and r2 are unaffected and a device-consistent path needs a new
+    # dependency this bench does not otherwise carry.
     t0 = time.perf_counter()
     pred_te = booster.inplace_predict(Xte)
     predict_s = time.perf_counter() - t0
