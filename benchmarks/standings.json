@@ -2,16 +2,16 @@
   "_": "The standings registry (results-lifecycle policy, decision 92). One entry per published perf/quality axis: the current-standings file, the single sha its rows were measured at (null = refresh required), and the release it was refreshed for. Gates: scripts/check_standings.py; supersession is in place, git history is the archive.",
   "rows": {
     "file": "rebaseline-2026-08.jsonl",
-    "sha": "77633a6",
+    "sha": "ce122b8",
     "host": "pod-NVIDIA-L40S",
-    "date": "2026-08-02",
+    "date": "2026-08-03",
     "refreshed_for": "1.6.1",
     "as_of_decision": 94,
     "note": "Predates the tiled fill and radix mapper; first refresh will supersede."
   },
   "width": {
     "file": "cols-rebaseline-2026-08.jsonl",
-    "sha": "77633a6",
+    "sha": "ce122b8",
     "host": "pod-NVIDIA-L40S",
     "date": "2026-08-03",
     "refreshed_for": "1.6.1",
@@ -28,7 +28,7 @@
   },
   "frontier": {
     "file": "gpu-pareto-16M-2026-08.jsonl",
-    "sha": "77633a6",
+    "sha": "ce122b8",
     "host": "pod-NVIDIA-L40S",
     "date": "2026-08-03",
     "refreshed_for": "1.6.1",
@@ -37,7 +37,7 @@
   },
   "airline": {
     "file": "airline-2026-08.jsonl",
-    "sha": "77633a6",
+    "sha": "ce122b8",
     "host": "pod-NVIDIA-L40S",
     "date": "2026-08-03",
     "refreshed_for": "1.6.1",
