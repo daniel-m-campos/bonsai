@@ -5,7 +5,7 @@
     "sha": "77633a6",
     "host": "pod-NVIDIA-L40S",
     "date": "2026-08-02",
-    "refreshed_for": "1.6.0",
+    "refreshed_for": "1.6.1",
     "as_of_decision": 94,
     "note": "Predates the tiled fill and radix mapper; first refresh will supersede."
   },
@@ -14,7 +14,7 @@
     "sha": "77633a6",
     "host": "pod-NVIDIA-L40S",
     "date": "2026-08-03",
-    "refreshed_for": "1.6.0",
+    "refreshed_for": "1.6.1",
     "as_of_decision": 94
   },
   "shape": {
@@ -22,7 +22,7 @@
     "sha": "a907895",
     "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition",
     "date": "2026-07-30",
-    "refreshed_for": "1.6.0",
+    "refreshed_for": "1.6.1",
     "as_of_decision": 92,
     "note": "make bench-iso appends work-rig rows host-keyed; the pod host anchors the standings."
   },
@@ -31,7 +31,7 @@
     "sha": "77633a6",
     "host": "pod-NVIDIA-L40S",
     "date": "2026-08-03",
-    "refreshed_for": "1.6.0",
+    "refreshed_for": "1.6.1",
     "as_of_decision": 94,
     "note": "Pre-provenance rows (decision 78 re-run); refresh mints the first sha-stamped frontier."
   },
@@ -40,7 +40,7 @@
     "sha": "77633a6",
     "host": "pod-NVIDIA-L40S",
     "date": "2026-08-03",
-    "refreshed_for": "1.6.0",
+    "refreshed_for": "1.6.1",
     "as_of_decision": 94
   },
   "quality-grinsztajn": {
@@ -48,7 +48,7 @@
     "sha": "b3267d5",
     "host": "MacBook-Air-M2.local",
     "date": "2026-07-15",
-    "refreshed_for": "1.6.0",
+    "refreshed_for": "1.6.1",
     "as_of_decision": 92,
     "sha_partial": true,
     "note": "Library split: bonsai rows carry schema v1, reference rows predate provenance; the mcw1 bracket file rides along. Slow clock: refresh on engine quality changes or reference-library majors regenerates all arms."
@@ -58,7 +58,7 @@
     "sha": "d2b914b9e8d84f9e35548ce79b00c38bd3447915",
     "host": null,
     "date": null,
-    "refreshed_for": "1.6.0",
+    "refreshed_for": "1.6.1",
     "as_of_decision": 92,
     "sha_partial": true,
     "note": "Self-measurement; the meta row carries the sha. Refreshed locally by scripts/measure_complexity.py (decision 69)."
