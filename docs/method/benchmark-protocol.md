@@ -48,6 +48,8 @@ Two modes, declared per row. `in_memory`: fit timed from in-memory arrays, inclu
 
 Every arm receives the same host array and is measured through the ingest API its own documentation recommends for that input: bonsai's fused `train(pairs, X, y)`, XGBoost's `QuantileDMatrix`, LightGBM's `Dataset` built with its params, CatBoost's `Pool`. fit_s spans ingest through the trained model for every arm; where a library exposes the split, ingest_s and train_s are reported underneath it rather than measured on their own, and fit_s is never redefined as their sum.
 
+Because that shared array dominates every peak-host-RSS figure, the rows and width standings tables also carry headroom above it (rows plus the held-out test rows, both resident since `bonsai.bench.synth.gen_data` returns numpy views into one buffer, times columns, times 4 bytes float32), quoting bonsai's device memory (`dev_mem`) alongside since that headroom is host-input only and paid on the device instead, and collapsing under device-resident input (issue #289); the airline and Grinsztajn suites read real files through each library's own ingest path, so no single input-array size is shared across arms and no headroom column is printed for them.
+
 Where a library sketches or bins, host or device, is a property of that library and is reported, not equalized: routing every arm through the same intermediate structure would erase the difference the perf division exists to measure. Changing any runner's call form is therefore a protocol change, not a refactor, and needs a same-pod A/B before it lands: a runner was once quietly moved off its documented ingest path, and the loss was caught only by a human comparing two refreshes and noticing every other arm got faster.
 
 ## Knobs

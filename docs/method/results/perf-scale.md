@@ -17,6 +17,15 @@ Scaling rows (100 features):
 | 4M | 3.1s (.878) | 3.1s (.876) | 4.9s (.878) | 9.6s (.878) | 6.4s (.877) | 12.0s (.885) | 35.7s (.879) | 34.5s (.876) |
 | 16M | 12.1s (.879) | 10.5s (.877) | 13.8s (.879) | 35.7s (.880) | 24.3s (.876) | 31.8s (.886) | 211.1s (.879) | 109.2s (.877) |
 
+Peak host RSS, worst repeat; the parenthetical is headroom above the input array `bonsai.bench.synth.gen_data` holds resident for that cell (16M x 100 float32, rows plus the held-out test rows, which are numpy views into the same buffer and so stay resident too). bonsai's headroom sits near zero at every scale because it bins the data on the device rather than keeping a second host-size copy; that cost lands on the GPU instead (2.8GB device memory at 16M rows, `dev_mem`, same cell). The comparison is host-input only: given device-resident input, XGBoost sketches in place and this headroom gap collapses (issue #289).
+
+| rows | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
+|---|---|---|---|---|---|---|---|---|
+| 250k | 0.4GB (+0.3) | 0.4GB (+0.3) | 0.4GB (+0.3) | 0.8GB (+0.7) | 0.6GB (+0.5) | 0.8GB (+0.7) | 0.6GB (+0.5) | 0.3GB (+0.2) |
+| 1M | 0.7GB (+0.3) | 0.7GB (+0.3) | 0.7GB (+0.3) | 1.9GB (+1.4) | 1.5GB (+1.1) | 1.2GB (+0.8) | 1.1GB (+0.6) | 0.9GB (+0.4) |
+| 4M | 2.0GB (+0.4) | 2.0GB (+0.4) | 2.0GB (+0.4) | 6.1GB (+4.4) | 5.2GB (+3.5) | 3.5GB (+1.9) | 2.9GB (+1.2) | 2.8GB (+1.2) |
+| 16M | 6.9GB (+0.8) | 6.9GB (+0.8) | 6.9GB (+0.8) | 22.0GB (+15.9) | 19.2GB (+13.0) | 11.5GB (+5.4) | 9.8GB (+3.7) | 10.6GB (+4.4) |
+
 Width scaling has its own standings axis on [Width and shape](perf-shape.md).
 
 *Source: [`rebaseline-2026-08.jsonl`](../../../benchmarks/results/rebaseline-2026-08.jsonl). Runner: [scripts/bench_scaling.py](../../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file. Measured at `77633a6` (2026-08-02, pod-NVIDIA-L40S).*
