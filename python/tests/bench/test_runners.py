@@ -105,7 +105,7 @@ def test_xgb_runner_never_builds_plain_dmatrix(monkeypatch):
     DMatrix construction is fatal here, and the run must still complete
     without touching it.
     """
-    import xgboost as xgb
+    xgb = pytest.importorskip("xgboost")
     from bonsai.bench import runners
 
     def refuse(*args, **kwargs):
@@ -185,7 +185,7 @@ def test_catboost_runner_builds_pool_outside_fit_timer(monkeypatch):
     timed, before the fit() call starts: the guard is structural and
     records call order, failing if fit() is ever invoked before Pool().
     """
-    import catboost
+    catboost = pytest.importorskip("catboost")
     from bonsai.bench import runners
 
     order = []
