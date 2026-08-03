@@ -132,10 +132,15 @@ Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers
 }
 
 Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mappers,
-                     DataConfig const & /*cfg*/,
-                     std::shared_ptr<IngestPlane const> plane, floats_view weights)
+                     DataConfig const &cfg, std::shared_ptr<IngestPlane const> plane,
+                     floats_view weights)
 {
     assert(X.extent(1) == mappers.size());
+    if (plane)
+    {
+        return bin(labels.size(), X.extent(1), labels, mappers, cfg, std::move(plane),
+                   weights);
+    }
     detail::IngestProfiler::Lap lap;
     Dataset                     ds;
     ds.n_rows_     = labels.size();
@@ -144,17 +149,29 @@ Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mapp
     ds.labels_.assign(labels.begin(), labels.end());
     ds.weights_.assign(weights.begin(), weights.end());
     ds.is_categorical_.assign(X.extent(1), false);
-    if (plane)
-    {
-        ds.plane_       = std::move(plane);
-        ds.lazy_        = std::make_shared<HostBins>();
-        ds.bins_are_u8_ = all_fit_u8(mappers);
-    }
-    else
-    {
-        fill_binned(ds.features_u8_, ds.features_u16_, ds.bins_are_u8_, X.extent(1),
-                    ds.n_rows_, mappers, [&](size_t f, size_t r) { return X[r, f]; });
-    }
+    fill_binned(ds.features_u8_, ds.features_u16_, ds.bins_are_u8_, X.extent(1),
+                ds.n_rows_, mappers, [&](size_t f, size_t r) { return X[r, f]; });
+    lap(detail::IngestProfiler::instance().bin_s);
+    return ds;
+}
+
+Dataset Dataset::bin(size_t n_rows, size_t n_features, floats_view labels,
+                     BinMappers const &mappers, DataConfig const & /*cfg*/,
+                     std::shared_ptr<IngestPlane const> plane, floats_view weights)
+{
+    assert(plane != nullptr);
+    assert(n_features == mappers.size());
+    detail::IngestProfiler::Lap lap;
+    Dataset                     ds;
+    ds.n_rows_     = n_rows;
+    ds.n_features_ = n_features;
+    ds.mappers_    = mappers;
+    ds.labels_.assign(labels.begin(), labels.end());
+    ds.weights_.assign(weights.begin(), weights.end());
+    ds.is_categorical_.assign(n_features, false);
+    ds.plane_       = std::move(plane);
+    ds.lazy_        = std::make_shared<HostBins>();
+    ds.bins_are_u8_ = all_fit_u8(mappers);
     lap(detail::IngestProfiler::instance().bin_s);
     return ds;
 }

@@ -23,15 +23,12 @@
 namespace bonsai
 {
 
-namespace
-{
-
 // One shared row sample for the whole matrix (decision 64): every feature's
 // cuts come from the same rows, so the O(n) selection pass runs once instead of
 // once per feature (mapper-fit was ~5-8s of a 16M fit). Empty result means
 // "n_rows <= n_samples, use every row" — the whole-column path, unchanged and
 // bit-identical for datasets that fit the sample.
-std::vector<uint32_t> sample_rows(size_t n_rows, BinMapperConfig const &cfg)
+std::vector<uint32_t> bin_sample_rows(size_t n_rows, BinMapperConfig const &cfg)
 {
     if (n_rows <= cfg.n_samples)
     {
@@ -45,6 +42,9 @@ std::vector<uint32_t> sample_rows(size_t n_rows, BinMapperConfig const &cfg)
                         std::mt19937(cfg.seed));
     return picked;
 }
+
+namespace
+{
 
 // Gather one feature's NaN-free values at the shared sample rows (or the whole
 // column when the sample is empty), the working set BinMapper::from_sample cuts.
@@ -108,7 +108,7 @@ BinMappers BinMappers::fit(detail::ColumnBatch const &batch, BinMapperConfig con
     // One shared row sample, then feature-parallel gather+cut. Optional slots
     // because BinMapper has no default constructor.
     size_t const n_rows = batch.features.empty() ? 0 : batch.features[0].size();
-    auto const   rows   = sample_rows(n_rows, cfg);
+    auto const   rows   = bin_sample_rows(n_rows, cfg);
     std::vector<std::optional<BinMapper>> slots(batch.features.size());
     seed_edge_slots(bin_edges, batch.features.size(), slots);
     parallel::for_each_index(
@@ -147,7 +147,7 @@ BinMappers BinMappers::fit(features_view X, std::vector<std::string> feature_nam
     // from the row-major matrix — no full-column scratch, and the O(n) sample
     // runs once for the matrix instead of once per feature (identical cuts to
     // the ColumnBatch overload for the same sample).
-    auto const                            rows = sample_rows(n, cfg);
+    auto const                            rows = bin_sample_rows(n, cfg);
     std::vector<std::optional<BinMapper>> slots(f);
     seed_edge_slots(bin_edges, f, slots);
     parallel::for_each_index(f,

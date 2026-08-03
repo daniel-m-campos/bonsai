@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <string>
 #include <utility>
@@ -19,6 +20,12 @@ namespace bonsai
 // entirely (BinMapper::from_edges); unlisted columns fit as usual, so the
 // default {} is bit-identical to no overrides.
 using BinEdges = std::vector<std::pair<size_t, std::vector<float>>>;
+
+// The shared row sample every fit overload draws before cutting, exposed so a
+// caller whose matrix is not host-addressable (device-resident input) can
+// gather exactly these rows and fit bit-identical cuts. Empty means "use every
+// row"; the indices are ascending.
+std::vector<uint32_t> bin_sample_rows(size_t n_rows, BinMapperConfig const &cfg);
 
 class BinMappers
 {

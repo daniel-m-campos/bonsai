@@ -64,6 +64,26 @@ Replaced: host `bin` ~4.6s + unlapped 1.6GB upload ~0.5s. New cost: 6.4GB raw ov
 
 The remaining ~3.9s is `create_subsample`'s reservoir scan (`std::ranges::sample` over a filter view: 16M reads + per-element RNG, per feature). Any device or algorithmic change to sampling changes the sampled set → different cuts → **model-changing**; it needs its own decision with quality data, and is deferred until the byte-identical levers are exhausted.
 
+## Device-resident input: the same transaction, one step earlier
+
+Everything above assumes the raw floats start on the host. When they do not, when the caller hands over a cupy array, a torch CUDA tensor, or a cuDF column through `__cuda_array_interface__`, the transaction is the same and one copy disappears: `cuda_ingest_device` launches the same `bin_rows_kernel` over the same host-fitted cuts, with the caller's buffer as the chunk pointer instead of a staging buffer. Bin ids are bit-identical to both the host fill and `cuda_ingest`, because it is the same kernel reading the same bytes.
+
+Four things had to be decided rather than inherited.
+
+**The mapper still fits on the host, on a sample that is drawn on the device.** Cuts come from `BinMapper::from_sample` over a shared row sample (`bin_sample_rows`), and moving that to the device would change the sampled set and therefore the model (the phase-2 note above). So the device arm gathers exactly the rows the host sampler would have used, in the same order, into a compact block and downloads that block: `n_samples x n_features` floats rather than the whole matrix, which at 16M x 100 is 80MB against 6.4GB. The sample is then fed to the ordinary `BinMappers::fit`, which re-samples it and finds it already at sample size, so the cuts are bit-identical by construction.
+
+**The caller's buffer is borrowed for the length of one call and never retained.** Ingest copies the bins it needs into a plane that owns its own device memory, so nothing bonsai holds points into the caller's allocation after the constructor returns. The Python `Dataset` keeps a host numpy array alive because its `FeatureBuffer` borrows it; it deliberately keeps no reference to a device buffer, because there is nothing left to borrow. The caller may free or overwrite the array as soon as the call returns.
+
+**Mismatch is refused, not migrated,** on decision 99's rule. A pointer whose allocation reports a device other than `parallel.device_id` raises before any device work, naming both ids; a device-resident array with no CUDA build or no visible device raises, because it is an explicit placement and not an engine inference. The one asymmetry with a host array is the `device="cpu"` hint, which raises for device-resident input instead of copying the matrix back: the copy is exactly what the caller avoided by handing over a pointer.
+
+**The producer's stream is waited on before the first read.** The protocol's `stream` field carries the stream the producer's writes are ordered on (1 and 2 being the legacy and per-thread default streams), and ingest runs on the default stream, so a `cudaStreamSynchronize` on the named handle is the cheapest correct answer for a caller who is mid-pipeline. `None`, or a version-2 interface with no such key, means no wait is needed.
+
+**Labels and weights are downloaded, not plumbed through.** A device-resident `y` is accepted for symmetry, but `Dataset` stores labels and weights in host vectors, the host objective and eval loops read them there, and the device-resident objective uploads its own copy keyed by dataset identity. There is no consumer that could take a device pointer, so the honest implementation is a single D2H of `n` floats, which is `1/n_features` of the matrix. Eval sets stay host-side entirely, because the per-iteration eval predicts on the host.
+
+**Fallback.** `cuda_ingest` declines when a dataset's total bins exceed the resident path's shared-memory ceiling, on the reasoning that grow would decline into the host plane anyway and the device bins would be wasted. That reasoning inverts for device-resident input: there is no host copy of the raw matrix to fall back to, so declining would mean downloading 4 bytes per cell instead of materializing 1 or 2. The device arm therefore never declines, and a grower that does declines into the plane's lazy host materialization, the path decision 99 already uses for a device-binned `Dataset` handed to a CPU grower.
+
+**The benchmark contract does not move.** The standings hand every arm the same host numpy array, because that is the workflow the ladders measure and the only contract every arm accepts; nothing here changes that, and no ladder switches to device input. Measuring this feature is a separate study with its own spec, in which every arm that supports device-resident input (bonsai here, XGBoost's `QuantileDMatrix`, LightGBM where it applies) is measured on it, and the host-input standings stay the published comparison.
+
 ## Rejected
 
 - **A `DeviceBins` side channel on `Dataset` without the narrative verb** (this design's first draft): identical mechanics, but the API grows by exception instead of by vocabulary: the convolutedness the transaction narrative exists to prevent. Superseded by the ingest transaction.

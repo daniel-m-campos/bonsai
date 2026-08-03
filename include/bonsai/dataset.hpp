@@ -71,6 +71,13 @@ class Dataset
                        DataConfig const                  &cfg,
                        std::shared_ptr<IngestPlane const> plane   = nullptr,
                        floats_view                        weights = {});
+    // Plane-only path: the raw matrix was never host-addressable (device-
+    // resident input), so there is nothing to fall back to and the plane is
+    // required. Host consumers materialize from it like any other plane.
+    static Dataset bin(size_t n_rows, size_t n_features, floats_view labels,
+                       BinMappers const &mappers, DataConfig const &cfg,
+                       std::shared_ptr<IngestPlane const> plane,
+                       floats_view                        weights = {});
 
     size_t n_rows() const;
     size_t n_features() const;

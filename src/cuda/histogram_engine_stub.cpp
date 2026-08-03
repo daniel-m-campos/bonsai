@@ -3,7 +3,9 @@
 
 #include "bonsai/config/errors.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -121,6 +123,36 @@ std::shared_ptr<IngestPlane const> cuda_ingest(features_view /*X*/,
                                                BinMappers const & /*mappers*/)
 {
     return nullptr;
+}
+
+// The device-input arm has no host fallback to degrade into: reaching it in a
+// CUDA-less build means the caller handed us a pointer we cannot read, and the
+// Python layer refuses that before calling. These stubs keep the link.
+std::optional<uint32_t> cuda_device_of(void const * /*ptr*/)
+{
+    return std::nullopt;
+}
+
+void cuda_wait_stream(uintptr_t /*stream*/)
+{
+    throw_unavailable();
+}
+
+void cuda_download(float const * /*src*/, size_t /*n*/, float * /*dst*/)
+{
+    throw_unavailable();
+}
+
+void cuda_gather_rows(DeviceMatrix const & /*X*/, std::span<uint32_t const> /*rows*/,
+                      std::span<float> /*out*/)
+{
+    throw_unavailable();
+}
+
+std::shared_ptr<IngestPlane const> cuda_ingest_device(DeviceMatrix const & /*X*/,
+                                                      BinMappers const & /*mappers*/)
+{
+    throw_unavailable();
 }
 
 void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
