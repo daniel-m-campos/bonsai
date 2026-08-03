@@ -4,6 +4,11 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-08-03
+
+The two-step workflow reaches the device, and the leafwise record is corrected.
+
+
 ### Added
 - **`Dataset` takes a device hint** (issue #288, decision 99): `bonsai.Dataset(X, y, ..., device="cuda")` bins on the device, so the two-step form (build once, train many times) reaches the ingest path the fused call has always used. Previously a prebuilt Dataset always binned on the host whatever grower followed it, costing 46% of fit time and 35% of peak host memory at 4M x 100. Parity with the fused call is measured at 4M and 16M, and a five-fit sweep over one device Dataset bins once instead of five times. The constructor also gained `n_threads`, which its binning never honored before.
 
