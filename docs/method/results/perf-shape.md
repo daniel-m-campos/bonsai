@@ -44,14 +44,14 @@ Fit seconds (test r²), best of reps:
 | 1M x 4096 | 35.1s (.876) | 32.9s (.875) | 46.1s (.876) | 96.5s (.876) | 48.5s (.874) | 197.6s (.883) | 454.7s (.875) | 277.3s (.875) |
 | 131k x 16384 | 51.0s (.860) | 56.1s (.876) | 1203.4s (.860) | 76.1s (.861) | 70.5s (.874) | 561.2s (.868) | 403.3s (.862) | 427.3s (.876) |
 
-Peak host RSS, worst rep:
+Peak host RSS, worst rep; the parenthetical is headroom above the input array `bonsai.bench.synth.gen_data` holds resident for that cell (rows plus the held-out test rows, which are numpy views into the same buffer and so stay resident too, times columns, times 4 bytes float32). Depthwise and oblivious hold that headroom under 1GB at every measured width because they bin on the device; that cost shows up instead in `dev_mem` (16.6GB at the widest cell against 9.8GB of host RSS). Leafwise is the counter-example sitting in the same table: at the widest cell it still bins on the host (no CUDA histogram support yet, issue #268), so its device memory drops to 3.1GB while its headroom balloons to 18.4GB, the mirror image of the mechanism. The comparison is host-input only: given device-resident input, XGBoost sketches in place and this gap collapses (issue #289).
 
 | cell | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
 |---|---|---|---|---|---|---|---|---|
-| 1M x 100 | 0.7GB | 0.7GB | 0.7GB | 1.8GB | 1.5GB | 1.2GB | 1.1GB | 0.9GB |
-| 1M x 1024 | 4.9GB | 4.9GB | 4.9GB | 15.2GB | 13.1GB | 9.7GB | 9.3GB | 7.3GB |
-| 1M x 4096 | 18.6GB | 18.6GB | 18.6GB | 60.5GB | 51.5GB | 40.3GB | 36.9GB | 29.0GB |
-| 131k x 16384 | 9.8GB | 9.8GB | 28.0GB | 40.4GB | 26.2GB | 58.1GB | 51.0GB | 22.0GB |
+| 1M x 100 | 0.7GB (+0.3) | 0.7GB (+0.3) | 0.7GB (+0.3) | 1.8GB (+1.4) | 1.5GB (+1.1) | 1.2GB (+0.8) | 1.1GB (+0.6) | 0.9GB (+0.4) |
+| 1M x 1024 | 4.9GB (+0.3) | 4.9GB (+0.3) | 4.9GB (+0.3) | 15.2GB (+10.6) | 13.1GB (+8.5) | 9.7GB (+5.2) | 9.3GB (+4.7) | 7.3GB (+2.8) |
+| 1M x 4096 | 18.6GB (+0.3) | 18.6GB (+0.3) | 18.6GB (+0.3) | 60.5GB (+42.2) | 51.5GB (+33.1) | 40.3GB (+22.0) | 36.9GB (+18.6) | 29.0GB (+10.7) |
+| 131k x 16384 | 9.8GB (+0.3) | 9.8GB (+0.3) | 28.0GB (+18.4) | 40.4GB (+30.8) | 26.2GB (+16.7) | 58.1GB (+48.5) | 51.0GB (+41.4) | 22.0GB (+12.4) |
 
 *Source: [`cols-rebaseline-2026-08.jsonl`](../../../benchmarks/results/cols-rebaseline-2026-08.jsonl). One pod, SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells. Measured at `77633a6` (2026-08-03, pod-NVIDIA-L40S).*
 

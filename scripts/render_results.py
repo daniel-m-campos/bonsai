@@ -763,6 +763,27 @@ def _fmt_cell(best: dict, rows: int, cols: int, variant: str) -> str:
     return fit_r2_str(r)
 
 
+def synthetic_input_gib(cell: dict) -> float:
+    """The host bytes `bonsai.bench.synth.gen_data` holds resident for one
+    synthetic cell, in GiB (matching `peak_rss_gb`'s own unit: Linux
+    `ru_maxrss` is KiB, divided by 2**20).
+
+    Train and test are numpy views into one `(rows + n_test) x cols` float32
+    buffer (`X[:rows]`, `X[rows:]`), so the held-out rows stay resident
+    through fit whether or not the runner still references them by name;
+    only the size of that one shared buffer determines what can be freed.
+    """
+    return (cell["rows"] + cell["n_test"]) * cell["cols"] * 4 / 2**30
+
+
+def rss_headroom_str(r: dict) -> str:
+    """`6.9GB (+0.8)`: peak host RSS beside its headroom above the shared
+    synthetic input array for that row's cell (see `synthetic_input_gib`)."""
+    rss = r[K.PEAK_RSS_GB]
+    headroom = rss - synthetic_input_gib(r["cell"])
+    return f"{rss:.1f}GB ({headroom:+.1f})"
+
+
 def rebaseline_section() -> str:
     """The rows-scaling section of the scale page."""
     rows = load_jsonl(standings_file(Axis.ROWS))
@@ -775,6 +796,15 @@ def rebaseline_section() -> str:
         ["rows", *[lbl for _, lbl in present]],
         [[human(n), *[_fmt_cell(best, n, 100, v) for v, _ in present]]
          for n in row_axis])
+    rss_table = md_table(
+        ["rows", *[lbl for _, lbl in present]],
+        [[human(n), *[rss_headroom_str(best[(n, 100, v)])
+                      if (n, 100, v) in best else "-" for v, _ in present]]
+         for n in row_axis])
+    top_row = max(row_axis)
+    dev_row = next((r for r in rows if r["cell"]["rows"] == top_row
+                    and r[K.VARIANT].startswith("bonsai_cuda")), None)
+    dev_gb = ((dev_row or {}).get("dev_mem") or {}).get("peak_gb_total")
 
     def series_for(cells: list[tuple[int, int]]):
         out = []
@@ -801,6 +831,10 @@ Same-pod sweep ({host['cpu_model']}, {host['gpu']}), synthetic regression, `fit(
 Scaling rows (100 features):
 
 {rows_table}
+
+Peak host RSS, worst repeat; the parenthetical is headroom above the input array `bonsai.bench.synth.gen_data` holds resident for that cell ({human(top_row)} x 100 float32, rows plus the held-out test rows, which are numpy views into the same buffer and so stay resident too). bonsai's headroom sits near zero at every scale because it bins the data on the device rather than keeping a second host-size copy; that cost lands on the GPU instead ({fmt(dev_gb, 1)}GB device memory at {human(top_row)} rows, `dev_mem`, same cell). The comparison is host-input only: given device-resident input, XGBoost sketches in place and this headroom gap collapses (issue #289).
+
+{rss_table}
 
 Width scaling has its own standings axis on [Width and shape](perf-shape.md).
 
@@ -924,7 +958,7 @@ def cols_rebaseline_table() -> str:
     rss_table = md_table(
         ["cell", *[lbl for _, lbl in present]],
         [[label(nr, nc),
-          *[f"{best[(nr, nc, v)]['peak_rss_gb']:.1f}GB"
+          *[rss_headroom_str(best[(nr, nc, v)])
             if (nr, nc, v) in best else "-" for v, _ in present]]
          for nr, nc in cells])
 
@@ -952,7 +986,7 @@ Fit seconds (test r²), best of reps:
 
 {fit_table}
 
-Peak host RSS, worst rep:
+Peak host RSS, worst rep; the parenthetical is headroom above the input array `bonsai.bench.synth.gen_data` holds resident for that cell (rows plus the held-out test rows, which are numpy views into the same buffer and so stay resident too, times columns, times 4 bytes float32). Depthwise and oblivious hold that headroom under 1GB at every measured width because they bin on the device; that cost shows up instead in `dev_mem` (16.6GB at the widest cell against 9.8GB of host RSS). Leafwise is the counter-example sitting in the same table: at the widest cell it still bins on the host (no CUDA histogram support yet, issue #268), so its device memory drops to 3.1GB while its headroom balloons to 18.4GB, the mirror image of the mechanism. The comparison is host-input only: given device-resident input, XGBoost sketches in place and this gap collapses (issue #289).
 
 {rss_table}
 
@@ -1692,6 +1726,13 @@ def _division_summaries() -> tuple[str, str]:
         rss[v] = max(rss.get(v, 0.0), r[K.PEAK_RSS_GB])
     b_fit = min(fit[v] for v in fit if v.startswith("bonsai_cuda"))
     b_rss = min(rss[v] for v in rss if v.startswith("bonsai_cuda"))
+    cell_16m = next(r["cell"] for r in rb if r["cell"]["rows"] == 16_000_000
+                    and r["cell"]["cols"] == 100)
+    input_16m = synthetic_input_gib(cell_16m)
+    dev_row_16m = next((r for r in rb if r["cell"]["rows"] == 16_000_000
+                        and r["cell"]["cols"] == 100
+                        and r[K.VARIANT].startswith("bonsai_cuda")), None)
+    b_dev_16m = ((dev_row_16m or {}).get("dev_mem") or {}).get("peak_gb_total")
     iso = load_jsonl(standings_file(Axis.SHAPE))
     dev = {}
     for r in iso:
@@ -1706,7 +1747,16 @@ def _division_summaries() -> tuple[str, str]:
         f"scale ({b_fit:.1f}s at 16M rows against XGBoost-GPU's "
         f"{fit['xgb_cuda']:.1f}s) at {b_rss:.1f}GB peak host memory against "
         f"XGBoost's {rss['xgb_cuda']:.1f}GB and CatBoost's "
-        f"{rss['catboost_gpu']:.1f}GB. On the narrow airline shape bonsai "
+        f"{rss['catboost_gpu']:.1f}GB. Most of that is the {input_16m:.1f}GB "
+        f"input array every arm holds identically; bonsai's headroom above "
+        f"it is {b_rss - input_16m:.1f}GB against XGBoost's "
+        f"{rss['xgb_cuda'] - input_16m:.1f}GB and CatBoost's "
+        f"{rss['catboost_gpu'] - input_16m:.1f}GB, because bonsai bins on "
+        f"the device instead of keeping a second host-size copy "
+        f"({fmt(b_dev_16m, 1)}GB device memory here, `dev_mem`). The "
+        f"comparison is host-input only: device-resident input lets "
+        f"XGBoost sketch in place instead, closing this gap (issue #289). "
+        f"On the narrow airline shape bonsai "
         f"holds both best AUC and fastest fit from 1M rows up. "
         f"The 2026-07-30 studies hold every "
         f"width and aspect ratio, with measured device memory that sizes to "
