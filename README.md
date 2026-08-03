@@ -76,7 +76,7 @@ Two divisions, per the [benchmark charter](https://daniel-m-campos.github.io/bon
 
 ### Perf
 
-bonsai's CUDA growers hold the fastest slot at every measured row scale (10.5s at 16M rows against XGBoost-GPU's 35.7s) at 6.9GB peak host memory against XGBoost's 22.1GB and CatBoost's 19.2GB. Most of that is the 6.1GB input array every arm holds identically; bonsai's headroom above it is 0.8GB against XGBoost's 15.9GB and CatBoost's 13.0GB, because bonsai bins on the device instead of keeping a second host-size copy (2.8GB device memory here, `dev_mem`). The comparison is host-input only: device-resident input lets XGBoost sketch in place instead, closing this gap (issue #289). On the narrow airline shape bonsai holds both best AUC and fastest fit from 1M rows up. The 2026-07-30 studies hold every width and aspect ratio, with measured device memory that sizes to the problem: 3.4GB at 16M x 128 at constant 2^31-cell volume against XGBoost's 18.9GB and CatBoost's 90.2GB. Every number is same-pod; identical-model GPUs across the rental fleet measure up to ~25% apart.
+bonsai's CUDA growers hold the fastest slot at every measured row scale (10.5s at 16M rows against XGBoost-GPU's 35.7s) at 6.9GB peak host memory against XGBoost's 22.1GB and CatBoost's 19.2GB. Most of that is the 6.1GB input array every arm holds identically; bonsai's headroom above it is 0.8GB against XGBoost's 15.9GB and CatBoost's 13.0GB, because bonsai bins on the device instead of keeping a second host-size copy (2.8GB device memory here, `dev_mem`). The comparison is host-input only: device-resident input lets XGBoost sketch in place instead, closing this gap (issue #289). On the narrow airline shape bonsai holds both best AUC and fastest fit from 1M rows up. The 2026-07-30 studies hold every width and aspect ratio, with measured device memory that sizes to the problem: 3.4GB at 16M x 128 at constant 2^31-cell volume against XGBoost's 18.9GB and CatBoost's 90.2GB. Every number is same-pod; identical-model GPUs across the rental fleet measure up to ~25% apart. The committed rows also carry an ingest/train split for the reference libraries (issue #301): at 16M rows, XGBoost-GPU's ingest is 80% of its total (28.6s of 35.7s) while CatBoost's train is 82% of its total (20.0s of 24.3s), since CatBoost's `Pool()` step only wraps the arrays and quantizes inside `fit`. bonsai's own split reads `-` until the device-hint runner change lands and a refresh measures it; only its total is comparable today.
 
 Same-pod re-baseline ladder, best of repeats, test r² in parentheses, fastest per row in bold. Measured at `77633a6` (2026-08-02, pod-NVIDIA-L40S).
 
@@ -86,6 +86,15 @@ Same-pod re-baseline ladder, best of repeats, test r² in parentheses, fastest p
 | 1M | **0.8s** (.877) | 1.2s (.877) | 2.5s (.877) | 2.6s (.876) | 2.7s (.876) | 7.6s (.884) | 8.9s (.877) | 12.7s (.877) |
 | 4M | **3.1s** (.878) | 3.1s (.876) | 4.9s (.878) | 9.6s (.878) | 6.4s (.877) | 12.0s (.885) | 35.7s (.879) | 34.5s (.876) |
 | 16M | 12.1s (.879) | **10.5s** (.877) | 13.8s (.879) | 35.7s (.880) | 24.3s (.876) | 31.8s (.886) | 211.1s (.879) | 109.2s (.877) |
+
+Ingest / train seconds behind that total: `-` is bonsai's fused call, which has no split until a runner refresh measures it (issue #301); CatBoost's ingest reads low because `Pool()` only wraps the arrays and it quantizes inside `fit`.
+
+| rows | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
+|---|---|---|---|---|---|---|---|---|
+| 250k | - | - | - | 0.5s / 0.6s | 0.1s / 1.8s | 1.0s / 5.4s | 0.8s / 3.5s | - |
+| 1M | - | - | - | 1.7s / 0.9s | 0.3s / 2.4s | 1.7s / 5.9s | 1.6s / 7.3s | - |
+| 4M | - | - | - | 7.6s / 2.1s | 1.0s / 5.4s | 4.4s / 7.7s | 4.6s / 31.1s | - |
+| 16M | - | - | - | 28.6s / 7.0s | 4.3s / 20.0s | 15.3s / 16.5s | 15.1s / 196.0s | - |
 
 The width, shape, and accuracy-time frontier tables live in [the ledger](https://daniel-m-campos.github.io/bonsai/method/results/).
 
