@@ -70,7 +70,9 @@ for params in grid:
 
 Bin settings are sealed into the `Dataset`; a `bin_mapper.*` override in `params` or a config file raises instead of silently diverging.
 
-The binning pass itself runs on the host. A `Dataset` is built before any grower is named, so a `cuda_*` fit from a prebuilt `Dataset` bins on the CPU and uploads the result, where `train(params, X, y)` bins on the device. For a single GPU fit, pass the arrays.
+The binning pass runs on the host by default. For GPU work, say so at construction: `bonsai.Dataset(X, y, device="cuda", device_id=0)` bins on the device and leaves the matrix resident there. A `cuda_*` fit then costs what the fused `train(params, X, y)` call costs, and a sweep uploads the matrix once instead of once per fit. Without the hint the `Dataset` bins on the CPU and every GPU fit uploads the result. `device="cuda"` raises when the build carries no CUDA backend or no device is visible: it is an explicit request, not an engine inference. `ds.device` reports where the bins ended up. Handing a device-binned `Dataset` to a CPU grower is fine: host columns materialize once, on first use, bit-identical to the host fill. A `parallel.device_id` at `train` time that disagrees with the `Dataset`'s raises instead of migrating the matrix. A `Dataset` cannot be pickled either way; rebuild it from `X` and `y` in the target process.
+
+`n_threads` sizes the binning pass the way `parallel.n_threads` sizes a fit, and defaults to the same auto setting.
 
 `Model` carries the full prediction surface: `predict` (with `num_iteration` for truncated ensembles), `predict_proba`, `staged_predict`, `predict_leaf`, `pred_contribs` (exact TreeSHAP), `feature_importance("gain")`/`feature_importance("split")`, `dump`, and `save`.
 
