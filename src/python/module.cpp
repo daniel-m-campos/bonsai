@@ -41,131 +41,48 @@ namespace
 
 using array_2d = nb::ndarray<float const, nb::ndim<2>, nb::c_contig, nb::device::cpu>;
 using array_1d = nb::ndarray<float const, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
+using cuda_2d  = nb::ndarray<float const, nb::ndim<2>, nb::c_contig, nb::device::cuda>;
+using cuda_1d  = nb::ndarray<float const, nb::ndim<1>, nb::c_contig, nb::device::cuda>;
 
 bonsai::features_view as_view(array_2d const &X)
 {
     return bonsai::features_view{X.data(), X.shape(0), X.shape(1)};
 }
 
-// --- device-resident input (__cuda_array_interface__)
-
-// One validated device array: a row-major float32 buffer that already lives on
-// a GPU, plus the producer's stream. Version 2 of the protocol has no stream
-// key and version 3 may set it to None; both mean "no wait needed".
-struct DeviceArray
-{
-    float const *data   = nullptr;
-    size_t       rows   = 0;
-    size_t       cols   = 1;
-    uintptr_t    stream = 0;
-};
-
-// Reads __cuda_array_interface__ off an arbitrary object. nullopt means the
-// object does not speak the protocol at all (a numpy array, a list); an object
-// that speaks it but carries something bonsai cannot bin throws instead of
-// falling back, because the fallback would be the host round trip the caller
-// handed us a device pointer to avoid.
-std::optional<DeviceArray> as_device_array(nb::handle obj, char const *what,
-                                           size_t ndim)
-{
-    if (!nb::hasattr(obj, "__cuda_array_interface__"))
-    {
-        return std::nullopt;
-    }
-    nb::dict const cai =
-        nb::cast<nb::dict>(nb::getattr(obj, "__cuda_array_interface__"));
-    std::string const name  = std::string{what};
-    auto const        shape = nb::cast<std::vector<size_t>>(cai["shape"]); // NOLINT
-    if (shape.size() != ndim)
-    {
-        throw std::invalid_argument(name + " must be " + std::to_string(ndim) +
-                                    "-dimensional, got " +
-                                    std::to_string(shape.size()) + " dimensions");
-    }
-    if (auto const typestr = nb::cast<std::string>(cai["typestr"]);
-        typestr != "<f4" && typestr != "=f4")
-    {
-        throw std::invalid_argument(name + " must be float32 on the device (typestr " +
-                                    typestr + "); cast it before the call");
-    }
-    if (cai.contains("mask") && !cai["mask"].is_none())
-    {
-        throw std::invalid_argument(name + " carries a __cuda_array_interface__ mask; "
-                                           "bonsai reads missing values as NaN");
-    }
-    DeviceArray out;
-    out.rows = shape[0];
-    out.cols = ndim == 2 ? shape[1] : 1;
-    if (cai.contains("strides") && !cai["strides"].is_none())
-    {
-        auto const strides = nb::cast<std::vector<int64_t>>(cai["strides"]);
-        if (strides.size() != ndim)
-        {
-            throw std::invalid_argument(name +
-                                        " has a malformed __cuda_array_interface__: "
-                                        "strides length " +
-                                        std::to_string(strides.size()) + " != ndim " +
-                                        std::to_string(ndim));
-        }
-        auto const row = static_cast<int64_t>(out.cols * sizeof(float));
-        bool const c_contig =
-            ndim == 1 ? strides[0] == static_cast<int64_t>(sizeof(float))
-                      : strides[0] == row &&
-                            strides[1] == static_cast<int64_t>(sizeof(float));
-        if (!c_contig)
-        {
-            throw std::invalid_argument(
-                name + " must be C-contiguous on the device; make a contiguous copy "
-                       "(ascontiguousarray) before the call");
-        }
-    }
-    auto const data = nb::cast<nb::tuple>(cai["data"]);
-    // NOLINTNEXTLINE(performance-no-int-to-ptr): the protocol carries an address
-    out.data = reinterpret_cast<float const *>(nb::cast<uintptr_t>(data[0]));
-    if (out.data == nullptr || out.rows == 0 || out.cols == 0)
-    {
-        throw std::invalid_argument(name + " is an empty device array");
-    }
-    if (cai.contains("stream") && !cai["stream"].is_none())
-    {
-        out.stream = nb::cast<uintptr_t>(cai["stream"]);
-    }
-    return out;
-}
+// --- device-resident input (DLPack)
 
 // Placement for device-resident input: the buffer decides where the work
-// happens, so a pointer that disagrees with parallel.device_id is refused
-// rather than migrated behind the caller's back, and the producer's stream is
-// waited on before anything reads the bytes.
-void place_device_array(DeviceArray const &arr, uint32_t device_id, char const *what)
+// happens, so an array whose device disagrees with parallel.device_id is
+// refused rather than migrated behind the caller's back. Stream ordering is
+// the producer's job under DLPack, which synchronizes at export; ingest reads
+// on the default stream.
+template <typename Array>
+void place_device_array(Array const &arr, uint32_t device_id, char const *what)
 {
+    // The import validates dtype, rank, and contiguity; a null pointer or a
+    // zero-size axis is all it leaves for bonsai to refuse.
+    if (arr.data() == nullptr || arr.size() == 0)
+    {
+        throw std::invalid_argument(std::string{what} + " is an empty device array");
+    }
     if (!bonsai::cuda_available())
     {
-        throw std::invalid_argument(
-            std::string{what} +
-            " is device-resident (__cuda_array_interface__), which needs a CUDA "
-            "build and a visible device; cuda_available() is False");
+        throw std::invalid_argument(std::string{what} +
+                                    " is device-resident (DLPack), which needs a CUDA "
+                                    "build and a visible device; cuda_available() is "
+                                    "False");
     }
     bonsai::cuda_select_device(device_id);
-    auto const on = bonsai::cuda_device_of(arr.data);
-    if (!on)
+    auto const on = static_cast<uint32_t>(arr.device_id());
+    if (on != device_id)
     {
         throw std::invalid_argument(
-            std::string{what} +
-            "'s __cuda_array_interface__ pointer is not CUDA device memory (host, "
-            "unregistered, or managed memory; bonsai reads unmanaged device "
-            "allocations)");
-    }
-    if (*on != device_id)
-    {
-        throw std::invalid_argument(
-            std::string{what} + " is resident on CUDA device " + std::to_string(*on) +
+            std::string{what} + " is resident on CUDA device " + std::to_string(on) +
             "; parallel.device_id=" + std::to_string(device_id) +
             " would train on another device. Train with device_id=" +
-            std::to_string(*on) + " or move the array to device " +
+            std::to_string(on) + " or move the array to device " +
             std::to_string(device_id) + ".");
     }
-    bonsai::cuda_wait_stream(arr.stream);
 }
 
 // The feature matrix as bonsai received it: a host numpy array, or a device
@@ -175,6 +92,7 @@ void place_device_array(DeviceArray const &arr, uint32_t device_id, char const *
 struct MatrixArg
 {
     std::optional<array_2d> host;
+    std::optional<cuda_2d>  device;
     bonsai::DeviceMatrix    dev;
     size_t                  n_rows     = 0;
     size_t                  n_features = 0;
@@ -192,19 +110,23 @@ struct MatrixArg
 MatrixArg resolve_matrix(nb::handle X, uint32_t device_id)
 {
     MatrixArg out;
-    if (auto const arr = as_device_array(X, "X", 2))
+    if (cuda_2d device; nb::try_cast(X, device))
     {
-        place_device_array(*arr, device_id, "X");
-        out.dev        = {.data = arr->data, .n_rows = arr->rows, .n_feats = arr->cols};
-        out.n_rows     = arr->rows;
-        out.n_features = arr->cols;
+        place_device_array(device, device_id, "X");
+        out.dev        = {.data    = device.data(),
+                          .n_rows  = device.shape(0),
+                          .n_feats = device.shape(1)};
+        out.n_rows     = device.shape(0);
+        out.n_features = device.shape(1);
+        out.device     = std::move(device);
         return out;
     }
     array_2d host;
     if (!nb::try_cast(X, host))
     {
-        throw std::invalid_argument("X must be a row-major float32 array, or expose "
-                                    "__cuda_array_interface__ (cupy, torch, cuDF)");
+        throw std::invalid_argument(
+            "X must be a row-major float32 numpy array, or a CUDA array supporting "
+            "DLPack (cupy, torch, jax)");
     }
     out.host       = host;
     out.n_rows     = host.shape(0);
@@ -234,20 +156,20 @@ struct VectorArg
 
 VectorArg resolve_vector(nb::handle v, uint32_t device_id, char const *what)
 {
-    if (auto const arr = as_device_array(v, what, 1))
+    if (cuda_1d device; nb::try_cast(v, device))
     {
-        place_device_array(*arr, device_id, what);
+        place_device_array(device, device_id, what);
         VectorArg out;
-        out.owned.resize(arr->rows);
-        bonsai::cuda_download(arr->data, arr->rows, out.owned.data());
+        out.owned.resize(device.shape(0));
+        bonsai::cuda_download(device.data(), device.shape(0), out.owned.data());
         return out;
     }
     array_1d host;
     if (!nb::try_cast(v, host))
     {
-        throw std::invalid_argument(
-            std::string{what} +
-            " must be a float32 array, or expose __cuda_array_interface__");
+        throw std::invalid_argument(std::string{what} +
+                                    " must be a float32 numpy array, or a CUDA array "
+                                    "supporting DLPack (cupy, torch, jax)");
     }
     VectorArg out;
     out.host = host;
@@ -346,8 +268,8 @@ bonsai::cli::LabeledData make_valid_labeled(array_2d const &X, array_1d const &y
 // Dataset::bin during construction and are not retained.
 // Binning follows the device hint: the host by default, the GPU under
 // device="cuda", where the resident matrix is then adopted by every fit.
-// Device-resident input (__cuda_array_interface__) carries its own answer:
-// the bytes are already there, so it bins there whatever the hint's default.
+// Device-resident input (DLPack) carries its own answer: the bytes are
+// already there, so it bins there whatever the hint's default.
 class Dataset
 {
   public:
@@ -392,9 +314,9 @@ class Dataset
         if (xarg.on_device() && !on_device)
         {
             throw std::invalid_argument(
-                "Dataset: X is device-resident (__cuda_array_interface__), so "
-                "device=\"cpu\" would copy it back to the host. Drop the device "
-                "argument to bin it where it already lives, or pass a host array.");
+                "Dataset: X is device-resident (DLPack), so device=\"cpu\" would "
+                "copy it back to the host. Drop the device argument to bin it "
+                "where it already lives, or pass a host array.");
         }
         bonsai::Config cfg;
         cfg.bin_mapper.max_bin         = max_bin;
@@ -910,9 +832,9 @@ NB_MODULE(_bonsai, m)
              "raises rather than migrating. A device-binned Dataset handed to "
              "a CPU grower materializes host bins once, on first use. "
              "`device` defaults to where X already is: pass a device-resident "
-             "X (any object exposing __cuda_array_interface__, such as a cupy "
-             "or torch array) and it is binned on the GPU in place, with no "
-             "host round trip; y and weight may be device-resident too and "
+             "X (any CUDA array supporting DLPack, such as a cupy or torch "
+             "array) and it is binned on the GPU in place, with no host round "
+             "trip; y and weight may be device-resident too and "
              "are downloaded once, because bonsai keeps labels on the host. "
              "`n_threads` sizes the binning pass (0 = auto), the way "
              "parallel.n_threads sizes a fit.")
@@ -932,8 +854,8 @@ NB_MODULE(_bonsai, m)
         .def_prop_ro("n_features", &Dataset::n_features);
 
     // Dataset overload first: the array overload takes X and y untyped (a numpy
-    // array or any __cuda_array_interface__ producer), so it would otherwise
-    // shadow a Dataset call that also passes an eval set.
+    // array or any DLPack producer), so it would otherwise shadow a Dataset
+    // call that also passes an eval set.
     m.def("train", &train_dataset, nb::arg("params"), nb::arg("dataset"),
           nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
           nb::arg("config") = nb::none(),
@@ -950,11 +872,10 @@ NB_MODULE(_bonsai, m)
           "base config; params override it (the CLI's -c + --set ordering). "
           "`sample_weight` is an optional float32 per-row weight vector "
           "(scales each row's gradient and hessian). X, y and sample_weight "
-          "may instead be device-resident arrays exposing "
-          "__cuda_array_interface__ (cupy, torch, cuDF): X is then binned on "
-          "the GPU in place, with no host round trip, and y and the weights "
-          "are downloaded once. `eval_set` stays host-side, because the "
-          "per-iteration eval predicts on the host.");
+          "may instead be CUDA arrays supporting DLPack (cupy, torch, jax): "
+          "X is then binned on the GPU in place, with no host round trip, "
+          "and y and the weights are downloaded once. `eval_set` stays "
+          "host-side, because the per-iteration eval predicts on the host.");
     m.def("load", &load, nb::arg("path"), "Load a model saved by Model.save.");
 
     m.def("default_config_toml", [] { return bonsai::config::dump_toml({}); });
