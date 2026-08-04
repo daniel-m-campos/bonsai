@@ -65,7 +65,8 @@ struct CudaDeviceContext
     struct DeviceData
     {
         // One of bins8/bins16 per dataset (uint8 iff every feature fits 256
-        // bins); feature-major, n_features * n_rows.
+        // bins); tile-blocked, n_features * n_rows cells, addressed through
+        // tiled_cell (device_buffer.cuh).
         DeviceBuffer<uint8_t>  bins8;
         DeviceBuffer<uint16_t> bins16;
         bool                   bins_are_u8 = false;
@@ -120,6 +121,9 @@ struct CudaDeviceContext
         Staged<uint32_t>       row_offsets; // per batched node: offset into rows
         Staged<uint32_t>       row_counts;  // per batched node: row count
         Staged<uint32_t>       features;
+        // Inverse of features: sel_slot[f] is f's index in the selection, or
+        // k_not_selected. The tiled build walks tiles, so it needs it.
+        Staged<uint32_t> sel_slot;
 
         // Resident level state: ping-pong per-level histogram buffers,
         // slot-indexed [slot][sel][2 * max_sel_bins] like `out`. cur() holds the
@@ -313,6 +317,7 @@ struct CudaDeviceContext
     // construction never touches the CUDA runtime.
     size_t shared_limit  = k_max_shared_bytes;
     bool   shared_probed = false;
+    bool   plane_noted   = false;
 
     // The one histogram-capacity predicate: a node's per-feature scratch is
     // 4 * bins floats in shared memory. begin_root declines a tree with it,
@@ -345,6 +350,14 @@ struct CudaDeviceContext
 
     void init_shared_limit();
     void ensure_dataset(Dataset const &dataset);
+    // The tree's selected features and the per-feature slot map beside them.
+    void stage_selection(std::span<feature_id_t const> selected, size_t n_feats);
+    void note_plane(bool tiled, size_t shared);
+    // The one shared-memory histogram launch, depthwise and leaf alike.
+    void launch_hist(uint32_t ds_rows, uint32_t ds_feats, uint32_t n_nodes,
+                     uint32_t n_chunks, float2 const *gh, uint32_t const *rows,
+                     uint32_t const *offsets, uint32_t const *counts, double *out,
+                     uint32_t const *slots);
     // Fills lvl.rows with the tree's root row segment and returns its length: a
     // full-data fit restores the cached identity permutation device-to-device
     // (built once by iota_kernel), any other row list uploads. Shared by the

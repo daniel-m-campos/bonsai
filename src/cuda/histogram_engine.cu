@@ -303,6 +303,7 @@ std::shared_ptr<CudaIngestPlane> make_ingest_plane(BinMappers const &mappers,
         u8        = u8 && counts[f] <= 256;
     }
     plane->bins_are_u8 = u8;
+    plane->tile_w      = k_bin_tile_width;
     plane->n_rows      = n_rows;
     plane->n_feats     = mappers.size();
     plane->n_bins.upload(counts.data(), counts.size());
@@ -414,14 +415,18 @@ std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const &batch,
             if (plane->bins_are_u8)
             {
                 bin_col_kernel<<<grid, dim3(256)>>>(
-                    raw.data(), n, static_cast<uint32_t>(row0), table.cuts.data() + c0,
-                    n_cuts, plane->bins8.data() + (f * n_rows));
+                    raw.data(), n, static_cast<uint32_t>(row0),
+                    static_cast<uint32_t>(f), static_cast<uint32_t>(n_rows),
+                    static_cast<uint32_t>(mappers.size()), table.cuts.data() + c0,
+                    n_cuts, plane->bins8.data());
             }
             else
             {
                 bin_col_kernel<<<grid, dim3(256)>>>(
-                    raw.data(), n, static_cast<uint32_t>(row0), table.cuts.data() + c0,
-                    n_cuts, plane->bins16.data() + (f * n_rows));
+                    raw.data(), n, static_cast<uint32_t>(row0),
+                    static_cast<uint32_t>(f), static_cast<uint32_t>(n_rows),
+                    static_cast<uint32_t>(mappers.size()), table.cuts.data() + c0,
+                    n_cuts, plane->bins16.data());
             }
             check(cudaGetLastError(), "ingest bin launch");
         }

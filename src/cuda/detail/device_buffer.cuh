@@ -35,6 +35,45 @@ inline constexpr size_t k_min_gpu_rows = 512;
 // fallback cliff from ~3k to ~6k+ bins per feature.
 inline constexpr size_t k_max_shared_bytes = 48UL * 1024UL;
 
+// --- The device bin plane's layout, in one place ----------------------------
+// Features are grouped into tiles of k_bin_tile_width. Tile t starts at cell
+// n_rows * t * k_bin_tile_width, and one row's strip inside it is
+// tile_strip(t) cells wide, so the tile's bin ids for a row are adjacent and
+// one memory sector serves 32 / strip rows of a node instead of one. Same
+// scheme the host mirror uses (Dataset::row_major_bins), at the width shared
+// memory allows. Every reader and writer of the plane goes through
+// tiled_cell; nothing else may assume an index expression.
+inline constexpr uint32_t k_bin_tile_width = 16;
+static_assert((k_bin_tile_width & (k_bin_tile_width - 1)) == 0,
+              "the tile width must be a power of two: the index arithmetic divides by "
+              "it on every bin read");
+
+// The tail-aware strip width of tile t: the last tile is narrow when the
+// feature count is not a multiple of the width.
+inline __host__ __device__ uint32_t tile_strip(uint32_t t, uint32_t n_feats)
+{
+    uint32_t const tail = n_feats - (t * k_bin_tile_width);
+    return tail < k_bin_tile_width ? tail : k_bin_tile_width;
+}
+
+inline __host__ __device__ uint32_t tile_count(uint32_t n_feats)
+{
+    return (n_feats + k_bin_tile_width - 1) / k_bin_tile_width;
+}
+
+// The cell holding feature f of row r.
+inline __host__ __device__ size_t tiled_cell(uint32_t f, uint32_t r, uint32_t n_rows,
+                                             uint32_t n_feats)
+{
+    uint32_t const t = f / k_bin_tile_width;
+    return (static_cast<size_t>(n_rows) * t * k_bin_tile_width) +
+           (static_cast<size_t>(r) * tile_strip(t, n_feats)) + (f % k_bin_tile_width);
+}
+
+// Marks a feature the current tree did not select, in the per-feature slot
+// map the tiled histogram kernel reads.
+inline constexpr uint32_t k_not_selected = 0xFFFFFFFFU;
+
 // Per-(node, feature) best split. 56-byte POD; dl encodes default_left.
 struct FeatBest
 {
