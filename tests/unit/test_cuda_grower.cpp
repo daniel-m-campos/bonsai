@@ -177,6 +177,68 @@ TEST_CASE("CudaDepthwiseGrower predictions match DepthwiseGrower", "[cuda][growe
     }
 }
 
+// Twelve features: more than one bin tile at the shipping width, so a fit
+// crosses a full tile and a narrow tail one. The narrow tail is the layout's
+// one asymmetric case and the full tile is the only one whose strip loads as
+// a single aligned vector, so both paths need a fit over them.
+test::ScenarioInputs wide_scenario()
+{
+    std::mt19937                          rng(13);
+    std::uniform_real_distribution<float> value(0.0F, 1.0F);
+    std::normal_distribution<float>       gradient(0.0F, 1.0F);
+    size_t const                          n     = 4096;
+    size_t const                          feats = 12;
+
+    detail::ColumnBatch batch;
+    batch.features.resize(feats, std::vector<float>(n));
+    batch.feature_names = {"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"};
+    batch.labels.assign(n, 0.0F);
+    std::vector<float> grad(n);
+    std::vector<float> hess(n);
+    for (size_t r = 0; r < n; ++r)
+    {
+        for (size_t f = 0; f < feats; ++f)
+        {
+            batch.features[f][r] = f == 3 ? std::round(value(rng) * 8.0F) : value(rng);
+        }
+        // A NaN column in the tail tile, so the missing bin is populated there.
+        batch.features[9][r] =
+            (r % 5 == 0) ? std::numeric_limits<float>::quiet_NaN() : value(rng);
+        grad[r] = gradient(rng);
+        hess[r] = 0.5F + value(rng);
+    }
+    return {.built = test::build(std::move(batch)),
+            .grad  = std::move(grad),
+            .hess  = std::move(hess),
+            .rows  = test::iota_rows(n)};
+}
+
+TEST_CASE("CudaDepthwiseGrower matches CPU across bin tiles", "[cuda][grower]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    auto        scenario = wide_scenario();
+    auto const &ds       = scenario.built.ds;
+
+    TreeConfig cfg;
+    cfg.max_depth        = 5;
+    cfg.min_data_in_leaf = 4;
+
+    DepthwiseGrower<CpuHistogramEngine> cpu_grower(cfg);
+    CudaDepthwiseGrower                 gpu_grower(cfg);
+
+    auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+
+    REQUIRE(cpu.values.size() == gpu.values.size());
+    for (size_t r = 0; r < cpu.values.size(); ++r)
+    {
+        REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
+    }
+}
+
 TEST_CASE("CudaDepthwiseGrower matches CPU under feature subsampling", "[cuda][grower]")
 {
     if (!cuda_available())
@@ -186,7 +248,7 @@ TEST_CASE("CudaDepthwiseGrower matches CPU under feature subsampling", "[cuda][g
     // The bin plane groups every feature into tiles, so a tree that selects a
     // subset walks the same tiles and skips lanes through the slot map. Both
     // growers draw the same features from the same seed.
-    auto        scenario = random_scenario();
+    auto        scenario = wide_scenario();
     auto const &ds       = scenario.built.ds;
 
     TreeConfig cfg;
