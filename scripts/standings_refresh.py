@@ -14,6 +14,14 @@ into a local directory, and tears the pod down (sweep + verify-empty).
 render, A/B verdict, branch, and `gh pr create`. A failed supersede is
 rerunnable without touching a pod; that separation is the whole point.
 
+Two width clocks: routine measures the standings-cols spec, which drops
+the 16384-col CPU arms that pin the wall clock with no GPU-side change
+able to move them; `measure --width-full` measures standings-cols-full
+instead, keeping those arms. Run `--width-full` for the release refresh
+(decision 92's ordering) so the published width standings stay complete
+at least once per release; routine refreshes catch perf drift faster
+without it.
+
 It also gates on the pod's fused/two-step parity rows before touching
 anything: the published ingest/train split is only honest while bonsai's
 two-step form still bins where its fused call does, so a parity failure
@@ -77,6 +85,10 @@ def main() -> int:
                    help="where the jsonl files land (default: a dated dir)")
     m.add_argument("--keep-pod", action="store_true",
                    help="skip teardown (debugging; delete it yourself)")
+    m.add_argument("--width-full", action="store_true",
+                   help="width axis measures standings-cols-full (with the "
+                   "16384-col CPU arms) instead of the routine spec; the "
+                   "release-clock refresh sets this, the routine one does not")
     s = sub.add_parser("supersede", help="build the supersession PR from results")
     s.add_argument("--results-dir", required=True)
     s.add_argument("--axes", default="rows,width,frontier,airline")
@@ -131,8 +143,10 @@ def measure(args: argparse.Namespace) -> int:
                         *SSH_OPTS, "-P", str(port), str(POD_SCRIPT),
                         f"root@{ip}:/root/"], check=True)
         # Detached: an ssh drop must not kill a multi-hour sweep.
+        width_full = "1" if args.width_full else ""
         subprocess.run([*ssh, f"nohup env AXES='{args.axes}' GIT_SHA='{sha}' "
                         f"PREV_VERSION='{args.prev_version}' "
+                        f"WIDTH_FULL='{width_full}' "
                         "bash /root/standings_refresh_pod.sh "
                         "> /root/refresh.log 2>&1 & echo launched"], check=True)
         _poll_pod_run(ssh, out_dir, ip, port)

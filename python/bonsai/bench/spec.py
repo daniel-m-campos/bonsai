@@ -110,7 +110,13 @@ def expand(spec: dict, *, variants: list[str] | None = None,
     variant_iters = spec.get("variant_iters", {})
     jobs = []
     for cell in cells_of(spec):
+        # A cell-level exclude_variants drops named arms at that one shape
+        # only; popped before the cell rides into a job so it never lands
+        # in an emitted row.
+        excluded = set(cell.pop("exclude_variants", ()))
         for variant in chosen:
+            if variant in excluded:
+                continue
             for t in threads:
                 iters_ladder = variant_iters.get(variant)
                 for iters in (iters_ladder or [cell["iters"]]):

@@ -1,5 +1,5 @@
 {
-  "name": "standings-cols",
+  "name": "standings-cols-full",
   "suite": "cols-rebaseline",
   "defaults": {
     "depth": 8,
@@ -24,8 +24,7 @@
     },
     {
       "rows": 131072,
-      "cols": 16384,
-      "exclude_variants": ["lgbm_cpu", "bonsai_oblivious"]
+      "cols": 16384
     }
   ],
   "variants": [
