@@ -18,7 +18,11 @@ It also gates on the pod's fused/two-step parity rows before touching
 anything: the published ingest/train split is only honest while bonsai's
 two-step form still bins where its fused call does, so a parity failure
 stops the supersession instead of shipping a breakdown that describes a
-pipeline no cuda grower runs.
+pipeline no cuda grower runs. A missing parity.jsonl fails the same gate:
+absence means the check never ran (a lost scp, a pod that died before the
+parity phase), not that it does not apply. `supersede --no-parity` accepts
+a results dir with no parity evidence for the hosts where the check truly
+cannot run.
 """
 
 from __future__ import annotations
@@ -78,6 +82,8 @@ def main() -> int:
     s.add_argument("--axes", default="rows,width,frontier,airline")
     s.add_argument("--no-pr", action="store_true",
                    help="stop after commit (inspect before pushing)")
+    s.add_argument("--no-parity", action="store_true",
+                   help="accept a results dir with no parity evidence")
     args = ap.parse_args()
     if args.phase == "measure":
         return measure(args)
@@ -150,21 +156,32 @@ def supersede(args: argparse.Namespace) -> int:
     Parameters
     ----------
     args : argparse.Namespace
-        Parsed ``supersede`` arguments: ``results_dir``, ``axes``, ``no_pr``.
+        Parsed ``supersede`` arguments: ``results_dir``, ``axes``, ``no_pr``,
+        ``no_parity``.
 
     Returns
     -------
     int
-        0 on success, 1 if a required axis jsonl file is missing.
+        0 on success, 1 if a required axis jsonl file is missing or the
+        parity gate fails.
     """
     src = pathlib.Path(args.results_dir)
     axes = [a.strip() for a in args.axes.split(",")]
-    parity, parity_ok = _parity(src / "parity.jsonl")
+    parity_path = src / "parity.jsonl"
+    parity, parity_ok = _parity(parity_path, allow_absent=args.no_parity)
     print(parity)
     if not parity_ok:
-        print("ERROR: fused/two-step parity failed; the ingest/train split "
-              "in these rows is not trustworthy. Fix the runner's device "
-              "hint and re-measure.", file=sys.stderr)
+        if not parity_path.exists():
+            print("ERROR: no parity.jsonl in this results dir; absence "
+                  "means the check never ran (a lost scp, a pod that died "
+                  "before the parity phase), which is exactly the failure "
+                  "mode the gate exists to catch. Pass --no-parity to "
+                  "proceed deliberately without parity evidence.",
+                  file=sys.stderr)
+        else:
+            print("ERROR: fused/two-step parity failed; the ingest/train "
+                  "split in these rows is not trustworthy. Fix the "
+                  "runner's device hint and re-measure.", file=sys.stderr)
         return 1
     files = {}
     for axis in axes:
@@ -335,7 +352,7 @@ def _wait_until(fn, *, timeout_s: int, what: str):
     raise SystemExit(f"timed out waiting for {what}")
 
 
-def _parity(path: pathlib.Path) -> tuple[str, bool]:
+def _parity(path: pathlib.Path, *, allow_absent: bool = False) -> tuple[str, bool]:
     """The fused/two-step parity table, and whether it passes.
 
     The two arms fit the same anchor cell through bonsai's one-call form
@@ -347,9 +364,15 @@ def _parity(path: pathlib.Path) -> tuple[str, bool]:
     Parameters
     ----------
     path : pathlib.Path
-        The pod's ``parity.jsonl``. A missing or skipped-only file passes
-        with a stated caveat, so a refresh measured on a pod without the
-        check still supersedes.
+        The pod's ``parity.jsonl``. A skipped-only file (no visible CUDA
+        device on the measuring host) passes with a stated caveat: the
+        check ran and declared itself inapplicable. A missing file is a
+        different case, the check never ran at all, so it fails unless
+        ``allow_absent`` says the operator is accepting the gap on
+        purpose.
+    allow_absent : bool, optional
+        Treat a missing file as a pass with a caveat instead of a
+        failure. False by default; ``supersede --no-parity`` sets it.
 
     Returns
     -------
@@ -357,7 +380,12 @@ def _parity(path: pathlib.Path) -> tuple[str, bool]:
         The markdown table (or a one-line note) and the pass flag.
     """
     if not path.exists():
-        return "Parity check absent (no parity.jsonl in this results dir).", True
+        if allow_absent:
+            return ("Parity check absent (no parity.jsonl in this results "
+                     "dir).", True)
+        return ("Parity check FAILED: no parity.jsonl in this results "
+                 "dir. Absence is not evidence the check does not apply, "
+                 "it means the check never ran.", False)
     rows = [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
     live = [r for r in rows if not r.get("skipped")]
     if not live:
