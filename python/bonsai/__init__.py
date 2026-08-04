@@ -43,13 +43,25 @@ from bonsai.encoding import OrderedTargetEncoder
 from bonsai.estimators import BonsaiClassifier, BonsaiRegressor
 
 try:
-    # The installed distribution's version. A source tree imported through
-    # PYTHONPATH has no distribution metadata of its own, and reports the
-    # installed wheel's version if one is also present: prefer __file__ when
-    # the question is which build ran.
-    __version__ = importlib.metadata.version("bonsai-gbt")
-except importlib.metadata.PackageNotFoundError:
-    __version__ = "source"
+    # CMake stamps this from pyproject.toml into the build tree only
+    # (build/python/bonsai, build-cuda/python/bonsai); it is never
+    # installed, so wheels never carry it. Its presence means this
+    # process imported the source tree, not an installed distribution.
+    from bonsai._version import __version__ as _build_version
+except ImportError:
+    _build_version = None
+
+if _build_version is not None:
+    # A source build imported through PYTHONPATH may sit next to an
+    # unrelated installed wheel (e.g. a pod's baked release next to a
+    # newer source checkout): report what actually built, tagged so it
+    # reads distinctly from a wheel's plain version.
+    __version__ = f"{_build_version}+source"
+else:
+    try:
+        __version__ = importlib.metadata.version("bonsai-gbt")
+    except importlib.metadata.PackageNotFoundError:
+        __version__ = "source"
 
 __all__ = [
     "BonsaiClassifier",

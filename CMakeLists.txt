@@ -313,4 +313,23 @@ if(BONSAI_PYTHON)
             ${CMAKE_BINARY_DIR}/python/bonsai/bench/specs/)
     add_dependencies(_bonsai bonsai_py_package)
     install(TARGETS _bonsai LIBRARY DESTINATION bonsai)
+
+    # Stamp __version__ from pyproject.toml into the build tree only, so a
+    # source build run via PYTHONPATH=build/python (or build-cuda/python)
+    # reports its own version instead of an unrelated installed wheel's
+    # dist-info (e.g. a pod's baked 1.5.4 wheel next to post-1.6.1 source,
+    # issue #309). This file is never installed and wheel.packages copies
+    # python/bonsai from the source tree, not this directory, so wheels
+    # never see it: __init__.py treats its presence as the source-build
+    # signal.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        ${CMAKE_SOURCE_DIR}/pyproject.toml)
+    file(STRINGS ${CMAKE_SOURCE_DIR}/pyproject.toml BONSAI_PYPROJECT_VERSION_LINE
+        REGEX "^version = ")
+    string(REGEX REPLACE "^version = \"([^\"]+)\"$" "\\1"
+        BONSAI_PYPROJECT_VERSION "${BONSAI_PYPROJECT_VERSION_LINE}")
+    configure_file(
+        ${CMAKE_SOURCE_DIR}/python/bonsai/_version.py.in
+        ${CMAKE_BINARY_DIR}/python/bonsai/_version.py
+        @ONLY)
 endif()
