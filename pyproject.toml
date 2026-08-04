@@ -1,5 +1,13 @@
 [build-system]
-requires = ["scikit-build-core>=0.10", "nanobind>=2.0"]
+# numpy and typing_extensions are build-time deps for the stub step alone:
+# nanobind's stubgen imports the built module (whose package imports numpy)
+# and needs typing_extensions to render annotations below Python 3.11.
+requires = [
+    "scikit-build-core>=0.10",
+    "nanobind>=2.0",
+    "numpy>=1.26",
+    "typing_extensions; python_version < '3.11'",
+]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -38,7 +46,10 @@ Changelog = "https://github.com/daniel-m-campos/bonsai/blob/main/CHANGELOG.md"
 minimum-version = "0.10"
 wheel.packages = ["python/bonsai"]
 cmake.version = ">=3.25"
-build.targets = ["_bonsai"]
+# bonsai_stub writes the IDE stub and its py.typed marker beside the module;
+# CMake's install rules put both in the wheel, so every wheel carries the
+# signatures of the extension built in the same run.
+build.targets = ["_bonsai", "bonsai_stub"]
 
 [tool.scikit-build.cmake.define]
 BONSAI_PYTHON = "ON"

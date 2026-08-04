@@ -4,6 +4,9 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### Added
+- **Type stubs for the native module** (issue #314): every wheel now carries `bonsai/_bonsai.pyi` and a `py.typed` marker, so an editor offers completion, signature help, and the existing docstrings for `train`, `Dataset`, `Model`, and `load`, including both `train` overloads and the ndarray dtype and shape annotations. `help()` was the only way to see any of that before, because a compiled module has nothing for IntelliSense to introspect. CMake generates the stub from the extension it just built and installs it beside the module, so the wheel's stub always matches the wheel's bindings; `make python` writes the same pair into `build/python/bonsai` for source trees.
+
 ## [1.6.1] - 2026-08-03
 
 The two-step workflow reaches the device, and the leafwise record is corrected.
