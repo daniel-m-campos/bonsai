@@ -19,6 +19,14 @@ CAMPAIGN = dict(iters=200, lr=0.05, depth=6, bins=255, min_data_in_leaf=20,
 SCALING = dict(iters=100, lr=0.1, depth=8, bins=255, min_data_in_leaf=20,
                lambda_l2=1.0, seed=42)
 
+# The early-stopping regime, layered on SCALING for the time-to-stop arm: a
+# cap high enough that the valid set, not the cap, ends the fit, a patience
+# wide enough that noise does not, and the lower rate those two imply.
+# eval_frac is the held-out slice carved off the TRAIN side (the 90/10 split
+# the early-stopping guide already benchmarks), so the test split stays
+# untouched for the final metric.
+EARLY_STOP = dict(iters=2000, lr=0.05, patience=50, eval_frac=0.1)
+
 # bonsai dotted keys for the campaign regime (the estimator kwargs carry the
 # rest); used by quality suites and probes.
 BONSAI_CAMPAIGN_PARAMS = {
@@ -47,10 +55,20 @@ def num_leaves_of(cell: dict) -> int:
 
 def bonsai_core(*, learning_rate, max_depth, num_leaves, min_data_in_leaf,
                 lambda_l2, max_bin, seed, n_iters, n_threads, grower,
-                objective="mse") -> list[tuple[str, str]]:
+                objective="mse",
+                early_stopping_rounds=0) -> list[tuple[str, str]]:
     """Dotted-key pairs for bonsai.train, mirroring the reference mappings
-    below so harnesses stop hand-building (and drifting) the pair list."""
-    return [
+    below so harnesses stop hand-building (and drifting) the pair list.
+
+    early_stopping_rounds is bonsai's own patience config key (verified
+    against docs/use/parameters.md and the module docstring in
+    src/python/module.cpp: `train(pairs, dataset, eval_set=(Xv, yv))` is what
+    enables per-iter eval, and booster.early_stopping_rounds is what arms the
+    stop). 0 omits the key entirely rather than writing the default, so a
+    fixed-iteration arm's pair list is byte-identical to a run predating
+    early stopping.
+    """
+    pairs = [
         ("dispatch.grower_name", grower),
         ("dispatch.objective_name", objective),
         ("booster.n_iters", str(n_iters)),
@@ -63,6 +81,10 @@ def bonsai_core(*, learning_rate, max_depth, num_leaves, min_data_in_leaf,
         ("bin_mapper.max_bin", str(max_bin)),
         ("parallel.n_threads", str(n_threads)),
     ]
+    if early_stopping_rounds:
+        pairs.append(("booster.early_stopping_rounds",
+                      str(early_stopping_rounds)))
+    return pairs
 
 
 def xgb_core(*, learning_rate, max_depth, min_data_in_leaf, lambda_l2, max_bin,
@@ -116,3 +138,46 @@ def catboost_core(*, learning_rate, max_depth, lambda_l2, max_bin, seed,
         "border_count": min(borders, 254) if device == Device.CUDA else borders,
         "random_seed": seed,
     }
+
+
+def xgb_early_stop(rounds: int) -> dict:
+    """Extra xgb.train kwargs that arm early stopping; {} when rounds is 0.
+
+    xgboost takes patience at the call site, not in the params dict
+    (verified against xgboost 3.3's `xgb.train` signature: `evals` and
+    `early_stopping_rounds` are keyword-only arguments there), so this is a
+    call-site builder rather than a `xgb_core` knob. The runner supplies
+    `evals`, because only it holds the validation DMatrix.
+    """
+    return {"early_stopping_rounds": rounds} if rounds else {}
+
+
+def lgbm_early_stop(rounds: int) -> dict:
+    """Kwargs for lgb.early_stopping(...); {} when rounds is 0.
+
+    lightgbm's documented mechanism is the callback, not a params key
+    (verified against lightgbm 4.6's `lgb.early_stopping(stopping_rounds,
+    first_metric_only, verbose, min_delta)` signature). Returned as kwargs
+    so params.py stays free of a lightgbm import: `bonsai.bench` must import
+    without dragging in the reference libraries.
+    """
+    return {"stopping_rounds": rounds, "verbose": False} if rounds else {}
+
+
+def catboost_early_stop(rounds: int, *, has_eval_set: bool) -> dict:
+    """Extra CatBoost constructor params for an eval-set arm.
+
+    Two translations live here rather than at the call site. Patience is
+    CatBoost's overfitting detector, `od_type="Iter"` plus `od_wait`
+    (verified against catboost 1.2.10). And CatBoost is the only library
+    that shrinks the model to its best iteration merely because an eval set
+    was passed: measured on 1.2.10, 200 requested iterations came back as a
+    140-tree model with no detector armed at all. A fixed-iteration arm must
+    therefore say `use_best_model=False`, or it reports the metric of a
+    model shorter than the one it was timed training.
+    """
+    if not has_eval_set:
+        return {}
+    if not rounds:
+        return {"use_best_model": False}
+    return {"od_type": "Iter", "od_wait": rounds}

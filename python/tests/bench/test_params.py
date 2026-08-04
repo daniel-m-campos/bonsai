@@ -63,3 +63,42 @@ def test_bonsai_core_pairs():
                                  seed=42, n_iters=100, n_threads=16,
                                  grower="oblivious", objective="logloss")
     assert dict(logloss)["dispatch.objective_name"] == "logloss"
+
+
+def test_early_stop_mappings():
+    """Each library's patience must arrive through its documented surface.
+
+    Hand-deriving one of these is the prohibited act (params.py's opening
+    note), so the four translations are pinned by name here: a rename in a
+    reference library must break this test, not a pod session.
+    """
+    pairs = dict(params.bonsai_core(learning_rate=0.05, max_depth=8,
+                                    num_leaves=256, min_data_in_leaf=20,
+                                    lambda_l2=1.0, max_bin=255, seed=42,
+                                    n_iters=2000, n_threads=16,
+                                    grower="depthwise",
+                                    early_stopping_rounds=50))
+    assert pairs["booster.early_stopping_rounds"] == "50"
+    assert params.xgb_early_stop(50) == {"early_stopping_rounds": 50}
+    assert params.lgbm_early_stop(50)["stopping_rounds"] == 50
+    assert params.catboost_early_stop(50, has_eval_set=True) == {
+        "od_type": "Iter", "od_wait": 50}
+    # CatBoost shrinks to its best iteration merely because an eval set was
+    # passed, so the fixed-iteration arm must switch that off or it reports
+    # a shorter model than the one it was timed training.
+    assert params.catboost_early_stop(0, has_eval_set=True) == {
+        "use_best_model": False}
+
+
+def test_early_stop_mappings_are_absent_when_unarmed():
+    """Zero patience omits the mechanism instead of writing a default."""
+    pairs = params.bonsai_core(learning_rate=0.1, max_depth=8, num_leaves=256,
+                               min_data_in_leaf=20, lambda_l2=1.0, max_bin=255,
+                               seed=42, n_iters=100, n_threads=16,
+                               grower="depthwise")
+    assert "booster.early_stopping_rounds" not in dict(pairs)
+    assert params.xgb_early_stop(0) == {}
+    assert params.lgbm_early_stop(0) == {}
+    assert params.catboost_early_stop(0, has_eval_set=False) == {}
+    assert params.EARLY_STOP["patience"] == 50
+    assert params.EARLY_STOP["iters"] == 2000
