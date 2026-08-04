@@ -508,8 +508,12 @@ def test_parity_gate_bands_the_two_step_form():
 
     The gate runs on a GPU pod, so its arithmetic is what CI can check:
     an in-band pair passes, an out-of-band one fails and blocks the
-    supersession, and an absent or skipped file passes with a caveat so a
-    refresh measured without a device still lands.
+    supersession, and a skipped file passes with a caveat so a refresh
+    measured without a device still lands. An absent file is different:
+    it means the check never ran, e.g. a lost scp or a pod that died
+    before the parity phase, so it must fail the gate rather than pass
+    it. The operator can only override that with the explicit
+    ``allow_absent`` escape.
     """
     import sys
 
@@ -526,7 +530,12 @@ def test_parity_gate_bands_the_two_step_form():
 
     with tempfile.TemporaryDirectory() as td:
         path = pathlib.Path(td) / "parity.jsonl"
-        assert standings_refresh._parity(path)[1], "an absent file must pass"
+        note, ok = standings_refresh._parity(path)
+        assert not ok, "an absent file must fail"
+        assert "never ran" in note, note
+        note, ok = standings_refresh._parity(path, allow_absent=True)
+        assert ok, "allow_absent must accept an absent file"
+        assert note == "Parity check absent (no parity.jsonl in this results dir)."
         path.write_text('{"arm": "fused", "skipped": "no CUDA"}\n')
         assert standings_refresh._parity(path)[1], "a skipped run must pass"
         path.write_text(rows(12.0, 12.3))
