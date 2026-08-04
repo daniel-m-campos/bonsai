@@ -2,19 +2,19 @@
   "_": "The standings registry (results-lifecycle policy, decision 92). One entry per published perf/quality axis: the current-standings file, the single sha its rows were measured at (null = refresh required), and the release it was refreshed for. Quality axes (key starts with 'quality') also carry hash_set (the model-hash guard digest at refresh time) and refs (reference-library versions measured against), which let scripts/check_standings.py's release gate skip a refresh when neither has moved. Gates: scripts/check_standings.py; supersession is in place, git history is the archive.",
   "rows": {
     "file": "rebaseline-2026-08.jsonl",
-    "sha": "3599365",
+    "sha": "db383c5",
     "host": "pod-NVIDIA-L40S",
     "date": "2026-08-04",
     "refreshed_for": "1.6.1",
-    "as_of_decision": 94
+    "as_of_decision": 103
   },
   "width": {
     "file": "cols-rebaseline-2026-08.jsonl",
-    "sha": "3599365",
+    "sha": "db383c5",
     "host": "pod-NVIDIA-L40S",
     "date": "2026-08-04",
     "refreshed_for": "1.6.1",
-    "as_of_decision": 94
+    "as_of_decision": 103
   },
   "shape": {
     "file": "iso-volume-2026-08.jsonl",
@@ -27,19 +27,19 @@
   },
   "frontier": {
     "file": "gpu-pareto-16M-2026-08.jsonl",
-    "sha": "3599365",
+    "sha": "db383c5",
     "host": "pod-NVIDIA-L40S",
     "date": "2026-08-04",
     "refreshed_for": "1.6.1",
-    "as_of_decision": 94
+    "as_of_decision": 103
   },
   "airline": {
     "file": "airline-2026-08.jsonl",
-    "sha": "3599365",
+    "sha": "db383c5",
     "host": "pod-NVIDIA-L40S",
     "date": "2026-08-04",
     "refreshed_for": "1.6.1",
-    "as_of_decision": 94
+    "as_of_decision": 103
   },
   "quality-grinsztajn": {
     "file": "grinsztajn-2026-07.jsonl",
