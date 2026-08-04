@@ -39,30 +39,30 @@ Fit seconds (test r²), best of reps:
 
 | cell | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
 |---|---|---|---|---|---|---|---|---|
-| 1M x 100 | 0.8s (.877) | 1.2s (.877) | 2.5s (.877) | 2.7s (.876) | 2.6s (.876) | 7.0s (.884) | 9.6s (.877) | 12.6s (.877) |
-| 1M x 1024 | 8.5s (.876) | 8.0s (.876) | 12.6s (.876) | 22.6s (.876) | 12.5s (.875) | 46.7s (.884) | 93.9s (.876) | 77.3s (.876) |
-| 1M x 4096 | 34.9s (.876) | 32.5s (.875) | 46.4s (.876) | 95.1s (.876) | 47.8s (.874) | 197.6s (.883) | 378.7s (.875) | 279.7s (.875) |
-| 131k x 16384 | 50.9s (.860) | 56.2s (.876) | 1043.2s (.860) | 82.8s (.861) | 70.4s (.874) | 551.1s (.868) | 311.3s (.862) | 378.8s (.876) |
+| 1M x 100 | 0.8s (.877) | 1.2s (.877) | 2.6s (.877) | 2.0s (.876) | 2.5s (.876) | 7.7s (.884) | 6.5s (.877) | 8.9s (.877) |
+| 1M x 1024 | 8.5s (.876) | 8.0s (.876) | 12.6s (.876) | 14.5s (.876) | 10.9s (.875) | 46.6s (.884) | 93.2s (.876) | 67.7s (.876) |
+| 1M x 4096 | 33.9s (.876) | 31.6s (.875) | 45.8s (.876) | 62.6s (.876) | 47.1s (.874) | 203.8s (.883) | 397.8s (.875) | 267.8s (.875) |
+| 131k x 16384 | 53.3s (.860) | 58.7s (.876) | 1003.9s (.860) | 68.1s (.861) | 69.3s (.874) | 616.9s (.868) | 416.3s (.862) | 437.9s (.876) |
 
-Ingest / train seconds, the split behind that total (issue #301). bonsai's ingest and train read `-` above: these rows were measured through one fused `train(pairs, X, y)` call, which has no point inside it to split. The runner now fits through `Dataset(..., device=...)` plus `train(pairs, ds)` and reports the split like every other arm, so the next standings refresh fills this column; until then only the total in the fit table above is measured for it. CatBoost's `Pool()` step only wraps the raw arrays; it quantizes inside `fit`, so its ingest column reads low and that cost sits in train instead (issue #253). Its total is the only number directly comparable to the other libraries' split.
+Ingest / train seconds, the split behind that total (issue #301). bonsai's split comes from the two-step `Dataset(..., device=...)` plus `train(pairs, ds)` form, which for a cuda arm bins on the device exactly where the fused call does; every refresh fits the anchor cell both ways, interleaved on the same pod, and the supersession is gated on their agreement, so the seam these columns report belongs to the same pipeline the total measures. CatBoost's `Pool()` step only wraps the raw arrays; it quantizes inside `fit`, so its ingest column reads low and that cost sits in train instead (issue #253). Its total is the only number directly comparable to the other libraries' split.
 
 | cell | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
 |---|---|---|---|---|---|---|---|---|
-| 1M x 100 | 0.1s / 0.7s | 0.1s / 1.1s | 0.1s / 2.4s | 1.8s / 0.9s | 0.3s / 2.3s | 1.6s / 5.4s | 1.6s / 8.0s | 0.5s / 12.1s |
-| 1M x 1024 | 0.9s / 7.7s | 0.9s / 7.2s | 1.0s / 11.6s | 17.6s / 5.0s | 1.1s / 11.4s | 17.6s / 29.1s | 17.4s / 76.5s | 5.4s / 72.0s |
-| 1M x 4096 | 4.4s / 30.4s | 4.4s / 28.2s | 4.0s / 42.4s | 76.3s / 18.8s | 4.5s / 43.3s | 83.9s / 113.7s | 72.2s / 306.5s | 22.1s / 257.6s |
-| 131k x 16384 | 7.6s / 43.3s | 7.3s / 48.8s | 7.6s / 1035.6s | 48.3s / 34.4s | 2.6s / 67.8s | 127.0s / 424.1s | 117.0s / 194.3s | 17.1s / 361.6s |
+| 1M x 100 | 0.1s / 0.7s | 0.1s / 1.1s | 0.1s / 2.5s | 1.1s / 0.9s | 0.4s / 2.2s | 1.6s / 6.1s | 1.4s / 5.2s | 0.5s / 8.4s |
+| 1M x 1024 | 0.8s / 7.7s | 0.9s / 7.2s | 0.9s / 11.7s | 9.3s / 5.2s | 1.0s / 9.9s | 16.7s / 29.9s | 16.0s / 77.1s | 3.9s / 63.8s |
+| 1M x 4096 | 3.5s / 30.5s | 3.5s / 28.2s | 3.5s / 42.3s | 43.8s / 18.8s | 9.7s / 37.4s | 88.8s / 115.1s | 71.1s / 326.7s | 17.9s / 250.0s |
+| 131k x 16384 | 10.0s / 43.3s | 9.9s / 48.7s | 11.4s / 992.5s | 33.5s / 34.6s | 5.6s / 63.6s | 185.9s / 431.0s | 178.5s / 237.8s | 19.2s / 418.7s |
 
 Peak host RSS, worst rep; the parenthetical is headroom above the input array `bonsai.bench.synth.gen_data` holds resident for that cell (rows plus the held-out test rows, which are numpy views into the same buffer and so stay resident too, times columns, times 4 bytes float32). Depthwise and oblivious hold that headroom under 1GB at every measured width because they bin on the device; that cost shows up instead in `dev_mem` (16.6GB at the widest cell against 9.8GB of host RSS). Leafwise is the counter-example sitting in the same table: at the widest cell it still bins on the host (no CUDA histogram support yet, issue #268), so its device memory drops to 3.1GB while its headroom balloons to 18.4GB, the mirror image of the mechanism. The comparison is host-input only: given device-resident input, XGBoost sketches in place and this gap collapses (issue #289).
 
 | cell | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
 |---|---|---|---|---|---|---|---|---|
-| 1M x 100 | 0.8GB (+0.3) | 0.8GB (+0.3) | 0.8GB (+0.3) | 1.9GB (+1.4) | 1.6GB (+1.1) | 1.3GB (+0.8) | 1.0GB (+0.6) | 0.9GB (+0.4) |
-| 1M x 1024 | 4.9GB (+0.3) | 4.9GB (+0.3) | 4.9GB (+0.3) | 15.2GB (+10.6) | 13.1GB (+8.5) | 9.7GB (+5.1) | 9.3GB (+4.7) | 7.3GB (+2.8) |
-| 1M x 4096 | 18.6GB (+0.3) | 18.6GB (+0.3) | 18.6GB (+0.3) | 60.5GB (+42.2) | 51.5GB (+33.2) | 40.1GB (+21.8) | 36.9GB (+18.6) | 29.0GB (+10.7) |
-| 131k x 16384 | 9.9GB (+0.3) | 9.9GB (+0.3) | 28.0GB (+18.4) | 40.5GB (+31.0) | 26.3GB (+16.7) | 57.8GB (+48.2) | 51.1GB (+41.5) | 22.0GB (+12.4) |
+| 1M x 100 | 0.7GB (+0.3) | 0.7GB (+0.3) | 0.7GB (+0.3) | 1.9GB (+1.4) | 1.6GB (+1.1) | 1.2GB (+0.8) | 1.0GB (+0.6) | 0.9GB (+0.4) |
+| 1M x 1024 | 4.9GB (+0.3) | 4.9GB (+0.3) | 4.9GB (+0.3) | 15.6GB (+11.0) | 13.1GB (+8.5) | 9.7GB (+5.1) | 9.3GB (+4.7) | 7.3GB (+2.8) |
+| 1M x 4096 | 18.6GB (+0.3) | 18.6GB (+0.3) | 18.6GB (+0.3) | 58.1GB (+39.8) | 51.4GB (+33.1) | 40.1GB (+21.8) | 36.9GB (+18.6) | 29.0GB (+10.7) |
+| 131k x 16384 | 9.8GB (+0.3) | 9.8GB (+0.3) | 28.0GB (+18.4) | 37.2GB (+27.6) | 26.2GB (+16.6) | 55.6GB (+46.0) | 51.1GB (+41.5) | 22.0GB (+12.4) |
 
-*Source: [`cols-rebaseline-2026-08.jsonl`](../../../benchmarks/results/cols-rebaseline-2026-08.jsonl). One pod, SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells. Measured at `ce122b8` (2026-08-03, pod-NVIDIA-L40S).*
+*Source: [`cols-rebaseline-2026-08.jsonl`](../../../benchmarks/results/cols-rebaseline-2026-08.jsonl). One pod, SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells. Measured at `3599365` (2026-08-04, pod-NVIDIA-L40S).*
 
 ### The iso-volume shape frontier (decision 91)
 

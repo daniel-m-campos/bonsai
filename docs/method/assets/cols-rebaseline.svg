@@ -1,13 +1,13 @@
 <svg xmlns='http://www.w3.org/2000/svg' width='760' height='400' viewBox='0 0 760 400'>
 <text x='64' y='22' font-size='13' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='bold'>Fit seconds vs features (1M rows; 16384-col cell 131k rows; log-log)</text>
-<line x1='64' y1='331.0' x2='590' y2='331.0' stroke='#808080' stroke-opacity='0.22'/>
-<text x='56' y='335.0' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>1</text>
-<line x1='64' y1='241.1' x2='590' y2='241.1' stroke='#808080' stroke-opacity='0.22'/>
-<text x='56' y='245.1' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>10</text>
-<line x1='64' y1='151.3' x2='590' y2='151.3' stroke='#808080' stroke-opacity='0.22'/>
-<text x='56' y='155.3' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>100</text>
-<line x1='64' y1='61.4' x2='590' y2='61.4' stroke='#808080' stroke-opacity='0.22'/>
-<text x='56' y='65.4' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>1000</text>
+<line x1='64' y1='330.9' x2='590' y2='330.9' stroke='#808080' stroke-opacity='0.22'/>
+<text x='56' y='334.9' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>1</text>
+<line x1='64' y1='240.6' x2='590' y2='240.6' stroke='#808080' stroke-opacity='0.22'/>
+<text x='56' y='244.6' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>10</text>
+<line x1='64' y1='150.2' x2='590' y2='150.2' stroke='#808080' stroke-opacity='0.22'/>
+<text x='56' y='154.2' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>100</text>
+<line x1='64' y1='59.9' x2='590' y2='59.9' stroke='#808080' stroke-opacity='0.22'/>
+<text x='56' y='63.9' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>1000</text>
 <line x1='64.0' y1='42' x2='64.0' y2='356' stroke='#808080' stroke-opacity='0.12'/>
 <text x='64.0' y='374' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>100</text>
 <line x1='304.0' y1='42' x2='304.0' y2='356' stroke='#808080' stroke-opacity='0.12'/>
@@ -18,46 +18,46 @@
 <text x='590.0' y='374' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>16384*</text>
 <text x='20' y='30' font-size='10' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>fit seconds</text>
 <text x='327.0' y='390' font-size='10' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>features</text>
-<polyline points='64.0,339.2 304.0,247.4 447.0,192.4 590.0,177.6' fill='none' stroke='#1b5e20' stroke-width='2.5'/>
+<polyline points='64.0,339.2 304.0,246.8 447.0,192.6 590.0,174.9' fill='none' stroke='#1b5e20' stroke-width='2.5'/>
 <circle cx='64.0' cy='339.2' r='3.2' fill='#1b5e20'/>
-<circle cx='304.0' cy='247.4' r='3.2' fill='#1b5e20'/>
-<circle cx='447.0' cy='192.4' r='3.2' fill='#1b5e20'/>
-<circle cx='590.0' cy='177.6' r='3.2' fill='#1b5e20'/>
-<polyline points='64.0,324.0 304.0,249.6 447.0,195.1 590.0,173.8' fill='none' stroke='#4caf50' stroke-width='2.5'/>
-<circle cx='64.0' cy='324.0' r='3.2' fill='#4caf50'/>
-<circle cx='304.0' cy='249.6' r='3.2' fill='#4caf50'/>
-<circle cx='447.0' cy='195.1' r='3.2' fill='#4caf50'/>
-<circle cx='590.0' cy='173.8' r='3.2' fill='#4caf50'/>
-<polyline points='64.0,295.7 304.0,232.2 447.0,181.3 590.0,59.8' fill='none' stroke='#2e7d32' stroke-width='2.5'/>
-<circle cx='64.0' cy='295.7' r='3.2' fill='#2e7d32'/>
-<circle cx='304.0' cy='232.2' r='3.2' fill='#2e7d32'/>
-<circle cx='447.0' cy='181.3' r='3.2' fill='#2e7d32'/>
+<circle cx='304.0' cy='246.8' r='3.2' fill='#1b5e20'/>
+<circle cx='447.0' cy='192.6' r='3.2' fill='#1b5e20'/>
+<circle cx='590.0' cy='174.9' r='3.2' fill='#1b5e20'/>
+<polyline points='64.0,323.5 304.0,249.2 447.0,195.4 590.0,171.2' fill='none' stroke='#4caf50' stroke-width='2.5'/>
+<circle cx='64.0' cy='323.5' r='3.2' fill='#4caf50'/>
+<circle cx='304.0' cy='249.2' r='3.2' fill='#4caf50'/>
+<circle cx='447.0' cy='195.4' r='3.2' fill='#4caf50'/>
+<circle cx='590.0' cy='171.2' r='3.2' fill='#4caf50'/>
+<polyline points='64.0,293.4 304.0,231.6 447.0,180.9 590.0,59.8' fill='none' stroke='#2e7d32' stroke-width='2.5'/>
+<circle cx='64.0' cy='293.4' r='3.2' fill='#2e7d32'/>
+<circle cx='304.0' cy='231.6' r='3.2' fill='#2e7d32'/>
+<circle cx='447.0' cy='180.9' r='3.2' fill='#2e7d32'/>
 <circle cx='590.0' cy='59.8' r='3.2' fill='#2e7d32'/>
-<polyline points='64.0,292.3 304.0,209.3 447.0,153.2 590.0,158.7' fill='none' stroke='#1f77b4' stroke-width='2.5'/>
-<circle cx='64.0' cy='292.3' r='3.2' fill='#1f77b4'/>
-<circle cx='304.0' cy='209.3' r='3.2' fill='#1f77b4'/>
-<circle cx='447.0' cy='153.2' r='3.2' fill='#1f77b4'/>
-<circle cx='590.0' cy='158.7' r='3.2' fill='#1f77b4'/>
-<polyline points='64.0,293.6 304.0,232.4 447.0,180.1 590.0,165.0' fill='none' stroke='#e08f1a' stroke-width='2.5'/>
-<circle cx='64.0' cy='293.6' r='3.2' fill='#e08f1a'/>
-<circle cx='304.0' cy='232.4' r='3.2' fill='#e08f1a'/>
-<circle cx='447.0' cy='180.1' r='3.2' fill='#e08f1a'/>
-<circle cx='590.0' cy='165.0' r='3.2' fill='#e08f1a'/>
-<polyline points='64.0,254.9 304.0,181.0 447.0,124.7 590.0,84.7' fill='none' stroke='#8e6bbf' stroke-width='2.5'/>
-<circle cx='64.0' cy='254.9' r='3.2' fill='#8e6bbf'/>
-<circle cx='304.0' cy='181.0' r='3.2' fill='#8e6bbf'/>
-<circle cx='447.0' cy='124.7' r='3.2' fill='#8e6bbf'/>
-<circle cx='590.0' cy='84.7' r='3.2' fill='#8e6bbf'/>
-<polyline points='64.0,242.8 304.0,153.7 447.0,99.3 590.0,107.0' fill='none' stroke='#8e6bbf' stroke-width='2.5' stroke-dasharray='6 4'/>
-<circle cx='64.0' cy='242.8' r='3.2' fill='#8e6bbf'/>
-<circle cx='304.0' cy='153.7' r='3.2' fill='#8e6bbf'/>
-<circle cx='447.0' cy='99.3' r='3.2' fill='#8e6bbf'/>
-<circle cx='590.0' cy='107.0' r='3.2' fill='#8e6bbf'/>
-<polyline points='64.0,232.1 304.0,161.3 447.0,111.1 590.0,99.3' fill='none' stroke='#4caf50' stroke-width='2.5' stroke-dasharray='6 4'/>
-<circle cx='64.0' cy='232.1' r='3.2' fill='#4caf50'/>
-<circle cx='304.0' cy='161.3' r='3.2' fill='#4caf50'/>
-<circle cx='447.0' cy='111.1' r='3.2' fill='#4caf50'/>
-<circle cx='590.0' cy='99.3' r='3.2' fill='#4caf50'/>
+<polyline points='64.0,304.0 304.0,226.0 447.0,168.6 590.0,165.3' fill='none' stroke='#1f77b4' stroke-width='2.5'/>
+<circle cx='64.0' cy='304.0' r='3.2' fill='#1f77b4'/>
+<circle cx='304.0' cy='226.0' r='3.2' fill='#1f77b4'/>
+<circle cx='447.0' cy='168.6' r='3.2' fill='#1f77b4'/>
+<circle cx='590.0' cy='165.3' r='3.2' fill='#1f77b4'/>
+<polyline points='64.0,294.4 304.0,237.3 447.0,179.8 590.0,164.7' fill='none' stroke='#e08f1a' stroke-width='2.5'/>
+<circle cx='64.0' cy='294.4' r='3.2' fill='#e08f1a'/>
+<circle cx='304.0' cy='237.3' r='3.2' fill='#e08f1a'/>
+<circle cx='447.0' cy='179.8' r='3.2' fill='#e08f1a'/>
+<circle cx='590.0' cy='164.7' r='3.2' fill='#e08f1a'/>
+<polyline points='64.0,251.0 304.0,180.2 447.0,122.3 590.0,78.9' fill='none' stroke='#8e6bbf' stroke-width='2.5'/>
+<circle cx='64.0' cy='251.0' r='3.2' fill='#8e6bbf'/>
+<circle cx='304.0' cy='180.2' r='3.2' fill='#8e6bbf'/>
+<circle cx='447.0' cy='122.3' r='3.2' fill='#8e6bbf'/>
+<circle cx='590.0' cy='78.9' r='3.2' fill='#8e6bbf'/>
+<polyline points='64.0,257.3 304.0,153.0 447.0,96.1 590.0,94.3' fill='none' stroke='#8e6bbf' stroke-width='2.5' stroke-dasharray='6 4'/>
+<circle cx='64.0' cy='257.3' r='3.2' fill='#8e6bbf'/>
+<circle cx='304.0' cy='153.0' r='3.2' fill='#8e6bbf'/>
+<circle cx='447.0' cy='96.1' r='3.2' fill='#8e6bbf'/>
+<circle cx='590.0' cy='94.3' r='3.2' fill='#8e6bbf'/>
+<polyline points='64.0,245.1 304.0,165.5 447.0,111.6 590.0,92.3' fill='none' stroke='#4caf50' stroke-width='2.5' stroke-dasharray='6 4'/>
+<circle cx='64.0' cy='245.1' r='3.2' fill='#4caf50'/>
+<circle cx='304.0' cy='165.5' r='3.2' fill='#4caf50'/>
+<circle cx='447.0' cy='111.6' r='3.2' fill='#4caf50'/>
+<circle cx='590.0' cy='92.3' r='3.2' fill='#4caf50'/>
 <line x1='608' y1='50' x2='630' y2='50' stroke='#1b5e20' stroke-width='2.5'/>
 <text x='636' y='54' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>bonsai cuda dw</text>
 <line x1='608' y1='67' x2='630' y2='67' stroke='#4caf50' stroke-width='2.5'/>
