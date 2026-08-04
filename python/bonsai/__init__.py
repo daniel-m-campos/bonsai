@@ -9,7 +9,9 @@ Two API layers, both over the same native module:
   ``predict / staged_predict / predict_leaf / pred_contribs (TreeSHAP) /
   feature_importance / dump / save``.
 - ``BonsaiRegressor`` / ``BonsaiClassifier`` — sklearn-style estimators
-  wrapping the same booster for pipelines and quick experiments.
+  wrapping the same booster for pipelines and quick experiments. They speak
+  bonsai's parameter names only; ``bonsai.interop`` translates a parameter
+  dict written for XGBoost, LightGBM, or CatBoost into the pairs above.
 
 GPU training: pass ``device="cuda"`` (or pick a grower directly with
 ``dispatch.grower_name = "cuda_leafwise"`` / ``"cuda_depthwise"`` /
@@ -22,15 +24,16 @@ The zero-to-hero walk-through lives in ``docs/guide/`` (start with
 chapter 0, one boosting round traced by hand on eight rows).
 
 This file is the public surface only; the implementation lives in
-``estimators`` (the sklearn layer), ``_compat`` (the xgboost-compatibility
-translation tables), ``_coerce`` (input coercion), ``encoding`` (the
-categorical encoder), and ``bench`` (the benchmark harness).
+``estimators`` (the sklearn layer), ``interop`` (the cross-library parameter
+mapping), ``_coerce`` (input coercion), ``encoding`` (the categorical
+encoder), and ``bench`` (the benchmark harness).
 """
 
 from __future__ import annotations
 
 import importlib.metadata
 
+from bonsai import interop
 from bonsai._bonsai import (
     Dataset,
     Model,
@@ -72,6 +75,7 @@ __all__ = [
     "__version__",
     "cuda_available",
     "default_config_toml",
+    "interop",
     "load",
     "train",
 ]
