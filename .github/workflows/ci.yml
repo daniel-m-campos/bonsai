@@ -78,10 +78,17 @@ jobs:
         with:
           path: build/_deps
           key: deps-build-${{ hashFiles('CMakeLists.txt') }}
+      # Only what the fetch scripts write: tests/data also holds committed
+      # fixtures (tiny.csv, the v7 models), and caching the directory
+      # restores a stale copy of those over the checkout.
+      # The key is versioned because entries saved under the old one archived
+      # the whole directory; only a new key stops those restoring.
       - uses: actions/cache@v4
         with:
-          path: tests/data
-          key: toy-data-${{ hashFiles('scripts/fetch_toy.py') }}
+          path: |
+            tests/data/.toy-fetched
+            tests/data/california_housing_*.csv
+          key: toy-data-v2-${{ hashFiles('scripts/fetch_toy.py') }}
       - run: make build
       - run: make test
 
@@ -100,10 +107,13 @@ jobs:
         with:
           path: build-asan/_deps
           key: deps-asan-${{ hashFiles('CMakeLists.txt') }}
+      # Fetched files only; see the build-test job's note.
       - uses: actions/cache@v4
         with:
-          path: tests/data
-          key: toy-data-${{ hashFiles('scripts/fetch_toy.py') }}
+          path: |
+            tests/data/.toy-fetched
+            tests/data/california_housing_*.csv
+          key: toy-data-v2-${{ hashFiles('scripts/fetch_toy.py') }}
       # detect_leaks=0: libomp keeps its thread pool alive past exit and
       # LSan flags the runtime's own allocations, not bonsai's.
       - run: make test-asan
@@ -155,10 +165,15 @@ jobs:
         with:
           path: build/_deps
           key: deps-build-${{ hashFiles('CMakeLists.txt') }}
+      # Fetched files only; see the build-test job's note.
       - uses: actions/cache@v4
         with:
-          path: tests/data
-          key: toy-data-${{ hashFiles('scripts/fetch_toy.py', 'scripts/fetch_amazon.py') }}
+          path: |
+            tests/data/.toy-fetched
+            tests/data/.amazon-fetched
+            tests/data/california_housing_*.csv
+            tests/data/amazon_*.csv
+          key: toy-data-v2-${{ hashFiles('scripts/fetch_toy.py', 'scripts/fetch_amazon.py') }}
       # lightgbm: test_estimators.py cross-checks feature importances against it.
       # typing_extensions: the extension build generates the IDE stub, and
       # nanobind's stubgen requires it below Python 3.11.

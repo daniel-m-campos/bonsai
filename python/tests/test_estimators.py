@@ -94,6 +94,38 @@ def test_early_stopping_fit_writes_nothing_to_stdout():
     assert done.stdout == b""
 
 
+@pytest.mark.parametrize(
+    "knob,value", [("data.missing_sentinel", -999.0), ("data.missing_nan", False)]
+)
+def test_retired_missing_knobs_are_unknown_keys(knob, value):
+    """NaN is the missing marker and nothing configures it, so both knobs are
+    gone; a config that still sets one must fail rather than be ignored (the
+    sentinel used to train -999 as an ordinary low value on array input)."""
+    rng = np.random.default_rng(1)
+    X = rng.random((200, 3), dtype=np.float32)
+    y = X[:, 0].copy()
+    with pytest.raises(Exception, match=knob.split(".")[1]):
+        bonsai.BonsaiRegressor(n_iters=5, params={knob: value}).fit(X, y)
+
+
+def test_nan_rows_train_as_missing():
+    """NaN is the array path's only missing marker, unchanged: with the target
+    set to the missingness itself, the learned default branch must separate the
+    NaN rows from the rest."""
+    rng = np.random.default_rng(3)
+    n = 4000
+    X = rng.random((n, 1), dtype=np.float32)
+    missing = rng.random(n) < 0.5
+    X[missing, 0] = np.nan
+    y = missing.astype(np.float32)
+
+    pred = bonsai.BonsaiRegressor(n_iters=60, learning_rate=0.3, max_depth=3).fit(
+        X, y
+    ).predict(X)
+    assert pred[missing].mean() > 0.9
+    assert pred[~missing].mean() < 0.1
+
+
 def test_bad_param_raises():
     with pytest.raises(RuntimeError) as e:
         bonsai.BonsaiRegressor(params={"tree.nope": 1}).fit(

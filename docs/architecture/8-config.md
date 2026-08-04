@@ -42,9 +42,6 @@ struct DataConfig {
     int         weight_column = -1;          // -1 = no weights
     std::vector<int> ignore_columns;
 
-    // Missing-value handling. See semantics below.
-    bool                  missing_nan      = true;
-    std::optional<float>  missing_sentinel = std::nullopt;
 };
 ```
 
@@ -60,8 +57,6 @@ header = true
 label_column = 0
 weight_column = -1
 ignore_columns = []
-missing_nan = true
-# missing_sentinel = -999.0   # optional
 ```
 
 ## `BinMapperConfig`
@@ -88,19 +83,11 @@ seed = 0
 
 ## Missing-value semantics
 
-The proposal sketched `missing = "nan"` and `missing = "value:<float>"`. The struct above splits that into two fields for clarity:
+The proposal sketched `missing = "nan"` and `missing = "value:<float>"`. Neither survives as a knob, because neither was ever a choice the engine could make.
 
-- `missing_nan` (default `true`): NaN inputs route to bin 0 in `BinMapper::transform`, and `BinMapper::fit` skips NaNs in quantile computation.
-- `missing_sentinel` (default `nullopt`): if set, that exact float value is also treated as missing: routes to bin 0, skipped in quantile.
+NaN is the missing marker on every path: `BinMapper::fit` skips it when cutting, `BinMapper::transform` routes it to the missing bin, and every split learns a default branch for it. Nothing configures that. Turning a placeholder value like -999 into NaN is preprocessing the caller does before bonsai sees the data, one line of numpy or one pass over a file.
 
-Both can be active simultaneously. If both are off (`missing_nan = false` and `missing_sentinel = nullopt`), no missing-value handling: NaN inputs are undefined behavior in `transform`, and any NaN in fit poisons the quantile sort. `BinMapper::fit` validates and throws `ConfigError` if this case occurs.
-
-The TOML keys are `missing_nan` and `missing_sentinel`; the proposal's `missing = "value:-999"` form translates to:
-
-```toml
-missing_nan = true
-missing_sentinel = -999.0
-```
+The CSV contract follows from the same rule: a missing value is written as the literal `nan`, and an empty field is a parse error naming its row and column. The reader cannot tell an intended gap from a truncated line, and a config knob choosing between those readings only moves the guess.
 
 ## `TreeConfig`, `BoosterConfig`, `DispatchConfig`, `MetricsConfig`
 

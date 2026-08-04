@@ -53,7 +53,7 @@ SECTION_INTRO = {
     "bin_mapper": "Histogram binning: how feature values become the bins that splits search over.",
     "objective": "Extra parameters read only by the matching objective.",
     "metrics": "Which metrics to report during fit and eval; no effect on the trained model.",
-    "data": "Dataset IO for the CLI; the Python API passes arrays instead of paths.",
+    "data": "Dataset IO for the CLI; the Python API passes arrays instead of paths. Missing values are NaN everywhere: in a CSV write the literal `nan`, since an empty field is a parse error naming its row and column.",
     "parallel": "Compute placement: CPU threads and CUDA device. No effect on the model bits.",
 }
 
@@ -108,8 +108,6 @@ EFFECTS = {
     "data.label_column": "Zero-based index of the label column in CSV inputs. Points the parser at the target.",
     "data.weight_column": "Zero-based index of a per-row weight column. -1 means unweighted; a valid index weights the loss per row.",
     "data.ignore_columns": "Zero-based column indices to drop before training. Excludes ids or leaks without editing the file.",
-    "data.missing_nan": "Treat NaN as missing, routed to each split's learned default branch. Off means NaN is an ordinary value.",
-    "data.missing_sentinel": "Extra numeric value treated as missing, alongside NaN. Unset by default; set it to flag a placeholder like -999.",
     "data.libsvm_n_features": "libsvm only: force the feature count. 0 infers from the max index; set it when a split's max index is lower.",
     # parallel
     "parallel.n_threads": "CPU threads for training. 0 auto-detects hardware threads, capped at 16. More threads speed fit; model bits are unchanged.",
@@ -121,9 +119,7 @@ EFFECTS = {
 # they never appear in the extraction; type and default are read off the
 # struct. A new optional knob added here (or to the struct) is the one drift
 # case CI cannot catch from the JSON alone; see the module docstring.
-OPTIONAL_KNOBS = {
-    "data.missing_sentinel": {"type": "float (optional)", "default": "unset"},
-}
+OPTIONAL_KNOBS: dict[str, dict[str, str]] = {}
 
 
 def extract() -> int:

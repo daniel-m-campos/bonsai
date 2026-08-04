@@ -99,9 +99,9 @@ void fill_binned(std::vector<std::vector<uint8_t>>  &u8,
 
 } // namespace
 
-// DataConfig is reserved for future sentinel-aware binning (cfg.missing_sentinel,
-// cfg.missing_nan). Today ColumnBatch is assumed to carry NaNs for missing, so
-// the reader layer is responsible for any sentinel-to-NaN conversion upstream.
+// DataConfig is unused here: NaN is the missing marker on every path, and the
+// columns already carry it whether they came from a reader or from a caller's
+// matrix.
 Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers,
                      DataConfig const & /*cfg*/,
                      std::shared_ptr<IngestPlane const> plane)

@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <fstream>
 #include <limits>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -57,16 +56,18 @@ bool is_nan_literal(std::string_view s)
            (s[1] == 'a' || s[1] == 'A') && (s[2] == 'n' || s[2] == 'N');
 }
 
-float parse_field(std::string_view raw, bool missing_nan, std::optional<float> sentinel)
+// Missing is written as the literal `nan`. An empty field is not a spelling of
+// it: the reader cannot tell an intended gap from a truncated line, so it says
+// where the hole is instead of guessing. Row and column are 1-based over the
+// data rows, header excluded.
+float parse_field(std::string_view raw, size_t row, size_t col)
 {
     auto const s = trim(raw);
     if (s.empty())
     {
-        if (missing_nan)
-        {
-            return k_nan;
-        }
-        throw std::runtime_error("csv::parse: empty field with missing_nan=false");
+        throw std::runtime_error(
+            "csv::parse: empty field at row " + std::to_string(row + 1) + ", column " +
+            std::to_string(col + 1) + "; write missing values as 'nan'");
     }
     float val{};
     auto const [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), val);
@@ -77,11 +78,8 @@ float parse_field(std::string_view raw, bool missing_nan, std::optional<float> s
             return k_nan;
         }
         throw std::runtime_error("csv::parse: bad numeric field '" + std::string{s} +
-                                 "'");
-    }
-    if (sentinel && val == *sentinel)
-    {
-        return k_nan;
+                                 "' at row " + std::to_string(row + 1) + ", column " +
+                                 std::to_string(col + 1));
     }
     return val;
 }
@@ -269,8 +267,7 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
             {
                 break; // too many fields; reported below
             }
-            float const v = parse_field(line.substr(start, i - start), cfg.missing_nan,
-                                        cfg.missing_sentinel);
+            float const v = parse_field(line.substr(start, i - start), r, c);
             switch (dest[c].kind)
             {
             case ColDest::Kind::feature:
