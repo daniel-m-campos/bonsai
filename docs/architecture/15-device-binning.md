@@ -1,6 +1,6 @@
 # 15: Device binning: ingest joins the transaction narrative
 
-> **Status:** implemented (decision 54; this change set). Since then the Python `Dataset` takes a device hint of its own (`device="cuda"`), so the seam below reads "plain `Dataset` construction takes the host default, and an explicit hint takes the device arm". The last big ingest lever that does not change the model, planned against same-pod ledgers (PR #34/#35 runs) and the pipeline facts below. Framing: doc 16 (ingest is the one compute node still outside the transaction vocabulary); this design moves it inside rather than growing a side channel.
+> **Status:** implemented (decision 54; this change set). The binned matrix both ingest arms write is tile-blocked as of decision 103, so "feature-major" below names the layout this document shipped with, not the one in the tree. Since then the Python `Dataset` takes a device hint of its own (`device="cuda"`), so the seam below reads "plain `Dataset` construction takes the host default, and an explicit hint takes the device arm". The last big ingest lever that does not change the model, planned against same-pod ledgers (PR #34/#35 runs) and the pipeline facts below. Framing: doc 16 (ingest is the one compute node still outside the transaction vocabulary); this design moves it inside rather than growing a side channel.
 
 ## The ledger line
 

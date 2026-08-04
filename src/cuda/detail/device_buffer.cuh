@@ -43,7 +43,10 @@ inline constexpr size_t k_max_shared_bytes = 48UL * 1024UL;
 // scheme the host mirror uses (Dataset::row_major_bins), at the width shared
 // memory allows. Every reader and writer of the plane goes through
 // tiled_cell; nothing else may assume an index expression.
-inline constexpr uint32_t k_bin_tile_width = 16;
+// 8, not the width the depthwise build alone would pick: one plane serves
+// both growers, and at 16 a leafwise round, which histograms one node, runs a
+// grid too narrow to fill the device and loses more than depthwise gains.
+inline constexpr uint32_t k_bin_tile_width = 8;
 static_assert((k_bin_tile_width & (k_bin_tile_width - 1)) == 0,
               "the tile width must be a power of two: the index arithmetic divides by "
               "it on every bin read");
