@@ -1,11 +1,11 @@
-"""Tests for device-resident input: any object exposing
-``__cuda_array_interface__`` may stand in for X, y, or the weights, and X is
-then binned on the GPU where it already lives.
+"""Tests for device-resident input: any CUDA array supporting DLPack may stand
+in for X, y, or the weights, and X is then binned on the GPU where it already
+lives.
 
 The protocol side is exercised with a synthetic producer over raw ``cudaMalloc``
 memory (through ctypes), because the CI image carries no cupy or torch. The
-producer is exactly what the protocol asks for, so a real cupy array reaches the
-same code path.
+producer exports exactly the capsule DLPack specifies, so a real cupy array
+reaches the same code path.
 
     PYTHONPATH=build-cuda/python pytest python/tests/test_device_input.py
 """
@@ -15,18 +15,100 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import tempfile
-import types
 
 import bonsai
 import numpy as np
 import pytest
 
 CUDA_MEMCPY_HOST_TO_DEVICE = 1
+DL_CUDA = 2
+DL_FLOAT = 2
 PAIRS = [("booster.n_iters", "12"), ("tree.max_depth", "5")]
 
 requires_cuda = pytest.mark.skipif(
     not bonsai.cuda_available(), reason="no CUDA build or no visible device"
 )
+
+
+class _DLDevice(ctypes.Structure):
+    _fields_ = [("device_type", ctypes.c_int), ("device_id", ctypes.c_int)]
+
+
+class _DLDataType(ctypes.Structure):
+    _fields_ = [
+        ("code", ctypes.c_uint8),
+        ("bits", ctypes.c_uint8),
+        ("lanes", ctypes.c_uint16),
+    ]
+
+
+class _DLTensor(ctypes.Structure):
+    _fields_ = [
+        ("data", ctypes.c_void_p),
+        ("device", _DLDevice),
+        ("ndim", ctypes.c_int),
+        ("dtype", _DLDataType),
+        ("shape", ctypes.POINTER(ctypes.c_int64)),
+        ("strides", ctypes.POINTER(ctypes.c_int64)),
+        ("byte_offset", ctypes.c_uint64),
+    ]
+
+
+class _DLManagedTensor(ctypes.Structure):
+    _fields_ = [
+        ("dl_tensor", _DLTensor),
+        ("manager_ctx", ctypes.c_void_p),
+        ("deleter", ctypes.CFUNCTYPE(None, ctypes.c_void_p)),
+    ]
+
+
+_DELETER = ctypes.CFUNCTYPE(None, ctypes.c_void_p)
+_capsule_new = ctypes.pythonapi.PyCapsule_New
+_capsule_new.restype = ctypes.py_object
+_capsule_new.argtypes = (ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p)
+
+
+class _DevicePointer:
+    """A minimal DLPack producer over a device pointer: the protocol, nothing else.
+
+    A class rather than a namespace because ``__dlpack__`` is looked up on the
+    type. Every export builds a fresh capsule and keeps its structures alive on
+    the producer, since the consumer reads them after the call returns.
+    """
+
+    def __init__(self, ptr, shape, bits=32, strides=None, device=(DL_CUDA, 0)):
+        self.ptr = ptr
+        self.shape = tuple(shape)
+        self.bits = bits
+        self.strides = strides
+        self.device = device
+        self.exports = 0
+        self._alive = []
+
+    def __dlpack_device__(self):
+        return self.device
+
+    def __dlpack__(self, **_):
+        self.exports += 1
+        shape = (ctypes.c_int64 * len(self.shape))(*self.shape)
+        strides = (
+            (ctypes.c_int64 * len(self.shape))(*self.strides) if self.strides else None
+        )
+        deleter = _DELETER(lambda _: None)
+        managed = _DLManagedTensor()
+        managed.dl_tensor.data = ctypes.c_void_p(self.ptr)
+        managed.dl_tensor.device = _DLDevice(*self.device)
+        managed.dl_tensor.ndim = len(self.shape)
+        managed.dl_tensor.dtype = _DLDataType(DL_FLOAT, self.bits, 1)
+        managed.dl_tensor.shape = ctypes.cast(shape, ctypes.POINTER(ctypes.c_int64))
+        managed.dl_tensor.strides = (
+            ctypes.cast(strides, ctypes.POINTER(ctypes.c_int64)) if strides else None
+        )
+        managed.dl_tensor.byte_offset = 0
+        managed.manager_ctx = None
+        managed.deleter = deleter
+        self._alive.append((managed, shape, strides, deleter))
+        return _capsule_new(ctypes.byref(managed), b"dltensor", None)
 
 
 @pytest.fixture
@@ -64,20 +146,6 @@ def _reg_data(n=20000, f=8, seed=0):
     return X, y, w
 
 
-def _cai(ptr, shape, typestr="<f4", stream=None, strides=None, mask=None):
-    """A minimal __cuda_array_interface__ producer: the protocol, nothing else."""
-    iface = {
-        "shape": tuple(shape),
-        "typestr": typestr,
-        "data": (ptr, True),
-        "version": 3,
-        "strides": strides,
-        "stream": stream,
-        "mask": mask,
-    }
-    return types.SimpleNamespace(__cuda_array_interface__=iface)
-
-
 def _model_sha(model) -> str:
     with tempfile.NamedTemporaryFile(suffix=".msgpack") as f:
         model.save(f.name)
@@ -88,47 +156,50 @@ def _model_sha(model) -> str:
 
 
 def test_device_input_rejects_non_float32():
+    device = _DevicePointer(4096, (10, 3), bits=64)
     with pytest.raises(Exception, match="float32"):
-        bonsai.train(PAIRS, _cai(4096, (10, 3), typestr="<f8"), np.zeros(10, np.float32))
+        bonsai.train(PAIRS, device, np.zeros(10, np.float32))
 
 
 def test_device_input_rejects_wrong_rank():
-    with pytest.raises(Exception, match="2-dimensional"):
-        bonsai.train(PAIRS, _cai(4096, (10,)), np.zeros(10, np.float32))
+    with pytest.raises(Exception, match="DLPack"):
+        bonsai.train(PAIRS, _DevicePointer(4096, (10,)), np.zeros(10, np.float32))
 
 
 def test_device_input_rejects_strided_matrix():
-    strided = _cai(4096, (10, 3), strides=(4, 40))
-    with pytest.raises(Exception, match="C-contiguous"):
+    strided = _DevicePointer(4096, (10, 3), strides=(1, 10))
+    with pytest.raises(Exception, match="DLPack"):
         bonsai.train(PAIRS, strided, np.zeros(10, np.float32))
-
-
-def test_device_input_rejects_mask():
-    with pytest.raises(Exception, match="mask"):
-        bonsai.train(PAIRS, _cai(4096, (10, 3), mask=8192), np.zeros(10, np.float32))
 
 
 def test_device_input_rejects_null_pointer():
     with pytest.raises(Exception, match="empty"):
-        bonsai.train(PAIRS, _cai(0, (10, 3)), np.zeros(10, np.float32))
+        bonsai.train(PAIRS, _DevicePointer(0, (10, 3)), np.zeros(10, np.float32))
 
 
-@requires_cuda
-def test_device_input_rejects_a_host_pointer():
-    """A protocol-valid interface over memory that is not a device allocation.
+def test_device_input_rejects_zero_columns():
+    with pytest.raises(Exception, match="empty"):
+        bonsai.train(PAIRS, _DevicePointer(4096, (10, 0)), np.zeros(10, np.float32))
 
-    The protocol carries an address and nothing that says where it lives, so
-    the placement check is the only thing standing between a host pointer and
-    a kernel reading it.
+
+def test_host_array_stays_on_the_host_path():
+    """A numpy array must not be imported by the device arm.
+
+    Both arms accept DLPack, and only the device tag separates them, so this
+    pins that a host array still bins on the host and trains the same model.
     """
-    with pytest.raises(Exception, match="device memory"):
-        bonsai.train(PAIRS, _cai(4096, (10, 3)), np.zeros(10, np.float32))
+    X, y, _ = _reg_data(n=2000)
+
+    assert bonsai.Dataset(X, y).device == "cpu"
+    assert _model_sha(bonsai.train(PAIRS, X, y)) == _model_sha(
+        bonsai.train(PAIRS, bonsai.Dataset(X, y))
+    )
 
 
 @pytest.mark.skipif(bonsai.cuda_available(), reason="needs a CUDA-less build or host")
 def test_device_input_raises_without_a_device():
     with pytest.raises(Exception, match="cuda_available"):
-        bonsai.train(PAIRS, _cai(4096, (10, 3)), np.zeros(10, np.float32))
+        bonsai.train(PAIRS, _DevicePointer(4096, (10, 3)), np.zeros(10, np.float32))
 
 
 # device-resident fits =============================================================================
@@ -145,7 +216,7 @@ def test_train_on_device_input_is_byte_identical_to_host(to_device, grower):
     X, y, _ = _reg_data()
     pairs = [*PAIRS, ("dispatch.grower_name", grower)]
     host = bonsai.train(pairs, X, y)
-    dev = bonsai.train(pairs, _cai(to_device(X), X.shape), y)
+    dev = bonsai.train(pairs, _DevicePointer(to_device(X), X.shape), y)
 
     assert _model_sha(dev) == _model_sha(host)
     np.testing.assert_array_equal(np.asarray(dev.predict(X)), np.asarray(host.predict(X)))
@@ -162,7 +233,9 @@ def test_cuda_grower_on_device_input_matches_host(to_device):
     X, y, _ = _reg_data()
     pairs = [*PAIRS, ("dispatch.grower_name", "cuda_depthwise")]
     host = np.asarray(bonsai.train(pairs, X, y).predict(X))
-    dev = np.asarray(bonsai.train(pairs, _cai(to_device(X), X.shape), y).predict(X))
+    dev = np.asarray(
+        bonsai.train(pairs, _DevicePointer(to_device(X), X.shape), y).predict(X)
+    )
 
     np.testing.assert_allclose(dev, host, atol=1e-4)
 
@@ -173,26 +246,30 @@ def test_train_accepts_device_labels_and_weights(to_device):
     host = bonsai.train(PAIRS, X, y, sample_weight=w)
     dev = bonsai.train(
         PAIRS,
-        _cai(to_device(X), X.shape),
-        _cai(to_device(y), y.shape),
-        sample_weight=_cai(to_device(w), w.shape),
+        _DevicePointer(to_device(X), X.shape),
+        _DevicePointer(to_device(y), y.shape),
+        sample_weight=_DevicePointer(to_device(w), w.shape),
     )
     assert _model_sha(dev) == _model_sha(host)
 
 
 @requires_cuda
-def test_train_honors_the_producer_stream(to_device):
-    """A legacy-default-stream handle is waited on, not ignored."""
+def test_train_imports_through_the_producer(to_device):
+    """Ordering is the producer's: DLPack synchronizes at export, bonsai reads
+    on the default stream, so the export call is the whole contract."""
     X, y, _ = _reg_data()
+    device = _DevicePointer(to_device(X), X.shape)
     host = bonsai.train(PAIRS, X, y)
-    dev = bonsai.train(PAIRS, _cai(to_device(X), X.shape, stream=1), y)
+    dev = bonsai.train(PAIRS, device, y)
+
+    assert device.exports == 1
     assert _model_sha(dev) == _model_sha(host)
 
 
 @requires_cuda
 def test_dataset_from_device_input_bins_on_the_device(to_device):
     X, y, _ = _reg_data()
-    ds = bonsai.Dataset(_cai(to_device(X), X.shape), y, max_bin=255)
+    ds = bonsai.Dataset(_DevicePointer(to_device(X), X.shape), y, max_bin=255)
 
     assert ds.device == "cuda"
     assert (ds.n_rows, ds.n_features) == X.shape
@@ -210,7 +287,7 @@ def test_dataset_from_device_input_gathers_a_sample(to_device):
     it picked and the order it wrote them in.
     """
     X, y, _ = _reg_data()
-    dev = bonsai.Dataset(_cai(to_device(X), X.shape), y, n_samples=1024)
+    dev = bonsai.Dataset(_DevicePointer(to_device(X), X.shape), y, n_samples=1024)
     host = bonsai.Dataset(X, y, n_samples=1024)
 
     assert _model_sha(bonsai.train(PAIRS, dev)) == _model_sha(bonsai.train(PAIRS, host))
@@ -220,7 +297,7 @@ def test_dataset_from_device_input_gathers_a_sample(to_device):
 def test_dataset_rejects_a_host_hint_for_device_input(to_device):
     X, y, _ = _reg_data()
     with pytest.raises(Exception, match="device-resident"):
-        bonsai.Dataset(_cai(to_device(X), X.shape), y, device="cpu")
+        bonsai.Dataset(_DevicePointer(to_device(X), X.shape), y, device="cpu")
 
 
 @requires_cuda
@@ -233,5 +310,7 @@ def test_device_input_refuses_a_disagreeing_device_id(to_device):
     X, y, _ = _reg_data()
     with pytest.raises(Exception, match="device"):
         bonsai.train(
-            [*PAIRS, ("parallel.device_id", "1")], _cai(to_device(X), X.shape), y
+            [*PAIRS, ("parallel.device_id", "1")],
+            _DevicePointer(to_device(X), X.shape),
+            y,
         )

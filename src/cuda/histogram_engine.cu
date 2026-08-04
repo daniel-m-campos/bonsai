@@ -22,7 +22,6 @@
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <memory>
-#include <optional>
 #include <print>
 #include <span>
 #include <utility>
@@ -430,29 +429,6 @@ std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const &batch,
     check(cudaDeviceSynchronize(), "ingest sync");
     lap(detail::IngestProfiler::instance().dbin_s);
     return plane;
-}
-
-std::optional<uint32_t> cuda_device_of(void const *ptr)
-{
-    cudaPointerAttributes attr{};
-    if (cudaPointerGetAttributes(&attr, ptr) != cudaSuccess ||
-        attr.type != cudaMemoryTypeDevice)
-    {
-        cudaGetLastError(); // a host pointer sets a sticky error on older runtimes
-        return std::nullopt;
-    }
-    return static_cast<uint32_t>(attr.device);
-}
-
-void cuda_wait_stream(uintptr_t stream)
-{
-    if (stream == 0)
-    {
-        return;
-    }
-    // NOLINTNEXTLINE(performance-no-int-to-ptr): the protocol carries the handle
-    check(cudaStreamSynchronize(reinterpret_cast<cudaStream_t>(stream)),
-          "producer stream sync");
 }
 
 void cuda_download(float const *src, size_t n, float *dst)
