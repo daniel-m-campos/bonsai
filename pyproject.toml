@@ -34,7 +34,10 @@ classifiers = [
 [project.optional-dependencies]
 # Everything bonsai.bench needs to reproduce the published benchmark tables:
 #   pip install bonsai-gbt[bench] && python -m bonsai.bench.grinsztajn out.jsonl
-bench = ["xgboost", "lightgbm", "catboost", "scikit-learn", "pandas", "openml"]
+# xgboost is bounded below 3.4 because its 3.4.0 wheel ships a CUDA 13 runtime
+# that silently falls back to CPU on any pre-r580 driver; the bound moves only
+# with a deliberate driver/image bump.
+bench = ["xgboost>=3.2,<3.4", "lightgbm", "catboost", "scikit-learn", "pandas", "openml"]
 test = ["pytest"]
 
 [project.urls]

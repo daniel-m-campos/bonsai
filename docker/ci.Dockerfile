@@ -23,10 +23,12 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
 RUN wget -qO- https://astral.sh/uv/install.sh | sh \
     && ~/.local/bin/uv python install 3.12
 ENV PATH="/root/.local/bin:${PATH}"
+# xgboost bounded below 3.4: its 3.4.0 wheel ships a CUDA 13 runtime that
+# silently falls back to CPU on this image's r550-and-older driver hosts.
 RUN uv venv --python 3.12 /opt/venv \
     && uv pip install --python /opt/venv/bin/python \
         cmake ninja numpy nanobind scikit-learn pandas tabulate matplotlib \
-        xgboost catboost
+        "xgboost>=3.2,<3.4" catboost
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # lightgbm from source with the CUDA backend: the PyPI wheel is CPU-only,
