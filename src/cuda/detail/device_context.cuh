@@ -314,6 +314,11 @@ struct CudaDeviceContext
     size_t shared_limit  = k_max_shared_bytes;
     bool   shared_probed = false;
 
+    // Features per histogram block (research probe): 0 or 1 is the
+    // one-feature kernel, G > 1 the grouped one whenever G histograms fit
+    // shared_limit.
+    uint32_t hist_group = hist_group_env();
+
     // The one histogram-capacity predicate: a node's per-feature scratch is
     // 4 * bins floats in shared memory. begin_root declines a tree with it,
     // and resident_begin must apply the SAME test (once per fit, on the

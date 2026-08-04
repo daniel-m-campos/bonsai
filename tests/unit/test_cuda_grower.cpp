@@ -22,6 +22,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <limits>
 #include <numeric>
 #include <random>
@@ -174,6 +175,46 @@ TEST_CASE("CudaDepthwiseGrower predictions match DepthwiseGrower", "[cuda][growe
     for (size_t r = 0; r < cpu.values.size(); ++r)
     {
         REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
+    }
+}
+
+TEST_CASE("Feature-grouped histograms match the ungrouped build", "[cuda][grower]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
+
+    TreeConfig cfg;
+    cfg.max_depth        = 5;
+    cfg.min_data_in_leaf = 4;
+
+    // BONSAI_HIST_GROUP is read when the grower builds its engine, so each arm
+    // sets it before construction. Grouping only changes the accumulation
+    // order, so the arms are tolerance-equal, not bit-equal. The scenario has
+    // four features: 3 exercises a full group plus a ragged tail, 8 exercises
+    // a group wider than the selection.
+    unsetenv("BONSAI_HIST_GROUP");
+    CudaDepthwiseGrower plain(cfg);
+    auto const base = plain.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+
+    for (char const *group : {"2", "3", "8"})
+    {
+        setenv("BONSAI_HIST_GROUP", group, 1);
+        CudaDepthwiseGrower grouped(cfg);
+        auto const          grown =
+            grouped.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+        unsetenv("BONSAI_HIST_GROUP");
+
+        INFO("BONSAI_HIST_GROUP=" << group);
+        REQUIRE(base.values.size() == grown.values.size());
+        for (size_t r = 0; r < base.values.size(); ++r)
+        {
+            REQUIRE_THAT(grown.values[r],
+                         Catch::Matchers::WithinAbs(base.values[r], 1e-4));
+        }
     }
 }
 

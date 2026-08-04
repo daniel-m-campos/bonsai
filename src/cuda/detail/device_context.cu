@@ -299,6 +299,19 @@ void CudaDeviceContext::init_shared_limit()
     {
         shared_limit = static_cast<size_t>(optin);
     }
+    // The grouped kernel is a separate entity and needs its own opt-in;
+    // without it a group over the static budget could not launch, so the
+    // probe falls back to one feature per block.
+    if (hist_group > 1 &&
+        (cudaFuncSetAttribute(hist_group_kernel<uint8_t>,
+                              cudaFuncAttributeMaxDynamicSharedMemorySize,
+                              optin) != cudaSuccess ||
+         cudaFuncSetAttribute(hist_group_kernel<uint16_t>,
+                              cudaFuncAttributeMaxDynamicSharedMemorySize,
+                              optin) != cudaSuccess))
+    {
+        hist_group = 1;
+    }
     cudaGetLastError(); // clear any sticky attribute error
 }
 
@@ -514,7 +527,6 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     lvl.gh_ordered.reserve(n);
     gather(grads.gh.data(), lvl.rows.data(), n, lvl.gh_ordered.data());
     auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
-    dim3 const grid(lvl.n_selected, 1, n_chunks);
     if (prof_counters.enabled)
     {
         lvl.prof_record_begin(/*root=*/true);
@@ -523,11 +535,11 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     data.dispatch_bins(
         [&](auto const *bins)
         {
-            hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
+            launch_hist(
                 bins, lvl.gh_ordered.data(), lvl.rows.data(), lvl.row_offsets.device(),
                 lvl.row_counts.device(), lvl.features.device(), data.n_bins_ptr(),
                 static_cast<uint32_t>(ds.n_rows()), lvl.n_selected, lvl.cur().data(),
-                lvl.stride, lvl.slots.device());
+                lvl.stride, lvl.slots.device(), 1, n_chunks, hist_group, shared_limit);
         });
     check(cudaGetLastError(), "root hist launch");
     if (prof_counters.enabled)
@@ -753,15 +765,13 @@ void CudaDeviceContext::advance_level(Dataset const                             
             {
                 auto const n_chunks = std::clamp<uint32_t>(
                     (static_cast<uint32_t>(max_rows) + 32767) / 32768, 1, 64);
-                dim3 const grid(lvl.n_selected,
-                                static_cast<uint32_t>(lvl.row_offsets.size()),
-                                n_chunks);
-                hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
-                    bins, lvl.other_gh().data(), lvl.other_rows().data(),
-                    lvl.row_offsets.device(), lvl.row_counts.device(),
-                    lvl.features.device(), data.n_bins_ptr(),
-                    static_cast<uint32_t>(ds.n_rows()), lvl.n_selected,
-                    lvl.other().data(), lvl.stride, lvl.slots.device());
+                launch_hist(bins, lvl.other_gh().data(), lvl.other_rows().data(),
+                            lvl.row_offsets.device(), lvl.row_counts.device(),
+                            lvl.features.device(), data.n_bins_ptr(),
+                            static_cast<uint32_t>(ds.n_rows()), lvl.n_selected,
+                            lvl.other().data(), lvl.stride, lvl.slots.device(),
+                            static_cast<uint32_t>(lvl.row_offsets.size()), n_chunks,
+                            hist_group, shared_limit);
             }
             if (!lvl.small_offsets.empty())
             {
@@ -1072,15 +1082,15 @@ bool CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     check(cudaGetLastError(), "leaf root sum pass2 launch");
 
     auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
-    dim3 const grid(lvl.n_selected, 1, n_chunks);
     data.dispatch_bins(
         [&](auto const *bins)
         {
-            hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
-                bins, lvl.gh_ordered.data(), lvl.rows.data(), leaf.build_seg.device(),
-                leaf.build_seg.device() + 1, lvl.features.device(), data.n_bins_ptr(),
-                static_cast<uint32_t>(ds.n_rows()), lvl.n_selected, leaf.pool.data(),
-                lvl.stride, leaf.build_seg.device() + 2);
+            launch_hist(bins, lvl.gh_ordered.data(), lvl.rows.data(),
+                        leaf.build_seg.device(), leaf.build_seg.device() + 1,
+                        lvl.features.device(), data.n_bins_ptr(),
+                        static_cast<uint32_t>(ds.n_rows()), lvl.n_selected,
+                        leaf.pool.data(), lvl.stride, leaf.build_seg.device() + 2, 1,
+                        n_chunks, hist_group, shared_limit);
         });
     check(cudaGetLastError(), "leaf root hist launch");
     lvl.leaf_by_row.reserve(ds.n_rows());
@@ -1212,13 +1222,12 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
             {
                 auto const n_chunks =
                     std::clamp<uint32_t>((small_count + 32767) / 32768, 1, 64);
-                dim3 const grid(lvl.n_selected, 1, n_chunks);
-                hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
-                    bins, lvl.gh_ordered.data(), lvl.rows.data(),
-                    leaf.build_seg.device(), leaf.build_seg.device() + 1,
-                    lvl.features.device(), data.n_bins_ptr(),
-                    static_cast<uint32_t>(ds.n_rows()), lvl.n_selected,
-                    leaf.pool.data(), lvl.stride, leaf.build_seg.device() + 2);
+                launch_hist(bins, lvl.gh_ordered.data(), lvl.rows.data(),
+                            leaf.build_seg.device(), leaf.build_seg.device() + 1,
+                            lvl.features.device(), data.n_bins_ptr(),
+                            static_cast<uint32_t>(ds.n_rows()), lvl.n_selected,
+                            leaf.pool.data(), lvl.stride, leaf.build_seg.device() + 2,
+                            1, n_chunks, hist_group, shared_limit);
             }
             else
             {

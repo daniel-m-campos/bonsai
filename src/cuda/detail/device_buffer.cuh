@@ -35,6 +35,16 @@ inline constexpr size_t k_min_gpu_rows = 512;
 // fallback cliff from ~3k to ~6k+ bins per feature.
 inline constexpr size_t k_max_shared_bytes = 48UL * 1024UL;
 
+// BONSAI_HIST_GROUP=G asks the histogram build for G features per block
+// (research probe; 0 or absent keeps the one-feature kernel). Read once per
+// device context, not once per launch, so a process can change it between
+// fits without paying for the lookup on the hot path.
+inline uint32_t hist_group_env()
+{
+    char const *set = std::getenv("BONSAI_HIST_GROUP");
+    return set != nullptr ? static_cast<uint32_t>(std::strtoul(set, nullptr, 10)) : 0U;
+}
+
 // Per-(node, feature) best split. 56-byte POD; dl encodes default_left.
 struct FeatBest
 {

@@ -14,7 +14,10 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cuda.h>
+#include <print>
 
 #include <vector_types.h>
 
@@ -133,6 +136,134 @@ __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
             atomicAdd(&o[i], static_cast<double>(v));
         }
     }
+}
+
+// Group sizes above this are not offered: the per-block feature tables below
+// are static shared arrays sized by this constant.
+constexpr uint32_t k_hist_group_max = 32;
+constexpr size_t   k_hist_group_static =
+    k_hist_group_max * (sizeof(void *) + sizeof(uint32_t));
+
+// Feature-grouped histogram build (BONSAI_HIST_GROUP, research probe). One
+// block owns `group` adjacent selected features, so a row id and its gradient
+// pair are read once per row instead of once per feature. The bin reads stay
+// one per feature and stay scattered: the plane is feature-major and this
+// kernel does not restructure it. Shared layout is uniform per feature
+// (2 * stride floats: the same two warp-parity sub-histograms hist_kernel
+// keeps), so the block's dynamic budget is group * 2 * stride floats.
+template <typename BinT>
+__global__ void hist_group_kernel(BinT const *bins, float2 const *gh_ordered,
+                                  uint32_t const *rows, uint32_t const *row_offsets,
+                                  uint32_t const *row_counts, uint32_t const *features,
+                                  uint32_t const *n_bins, uint32_t n_rows,
+                                  uint32_t n_sel, uint32_t group, double *out,
+                                  uint32_t stride, uint32_t const *out_slot)
+{
+    extern __shared__ float sh[];
+    __shared__ BinT const  *fb[k_hist_group_max];
+    __shared__ uint32_t     nbs[k_hist_group_max];
+    uint32_t const          sel0 = blockIdx.x * group;
+    uint32_t const          tail = n_sel - sel0;
+    uint32_t const          g    = tail < group ? tail : group;
+    uint32_t const          node = blockIdx.y;
+    if (threadIdx.x < g)
+    {
+        uint32_t const f = features[sel0 + threadIdx.x];
+        fb[threadIdx.x]  = bins + (static_cast<size_t>(f) * n_rows);
+        nbs[threadIdx.x] = n_bins[f];
+    }
+    for (uint32_t i = threadIdx.x; i < 2 * g * stride; i += blockDim.x)
+    {
+        sh[i] = 0.0F;
+    }
+    __syncthreads();
+    size_t const    parity = static_cast<size_t>((threadIdx.x >> 5) & 1U) * stride;
+    uint32_t const  offset = row_offsets[node];
+    uint32_t const *nrows  = rows + offset;
+    float2 const   *ngh    = gh_ordered + offset;
+    uint32_t const  count  = row_counts[node];
+    uint32_t const  span   = gridDim.z * blockDim.x;
+    for (uint32_t k = (blockIdx.z * blockDim.x) + threadIdx.x; k < count; k += span)
+    {
+        uint32_t const r = nrows[k];
+        float2 const   v = ngh[k];
+        for (uint32_t j = 0; j < g; ++j)
+        {
+            float         *my = sh + (2 * static_cast<size_t>(j) * stride) + parity;
+            uint32_t const b  = fb[j][r];
+            atomicAdd(&my[pair_off(b)], v.x);
+            atomicAdd(&my[pair_off(b) + 1], v.y);
+        }
+    }
+    __syncthreads();
+    uint32_t const oslot = out_slot != nullptr ? out_slot[node] : node;
+    for (uint32_t j = 0; j < g; ++j)
+    {
+        float const *base = sh + (2 * static_cast<size_t>(j) * stride);
+        double *o = out + (((static_cast<size_t>(oslot) * n_sel) + sel0 + j) * stride);
+        for (uint32_t i = threadIdx.x; i < 2 * nbs[j]; i += blockDim.x)
+        {
+            float const v = base[i] + base[stride + i];
+            if (v != 0.0F)
+            {
+                atomicAdd(&o[i], static_cast<double>(v));
+            }
+        }
+    }
+}
+
+// The group the shared budget can hold: `group` when its histograms plus the
+// feature tables fit, else 1, which selects the one-feature kernel. The note
+// is emitted once, and only while the CUDA profile is on.
+inline uint32_t hist_group_fit(uint32_t group, size_t one_bytes, size_t shared_limit)
+{
+    if (group <= 1)
+    {
+        return 1;
+    }
+    uint32_t const g = group < k_hist_group_max ? group : k_hist_group_max;
+    if ((g * one_bytes) + k_hist_group_static <= shared_limit)
+    {
+        return g;
+    }
+    static bool noted = false;
+    if (!noted && std::getenv("BONSAI_CUDA_PROFILE") != nullptr)
+    {
+        noted = true;
+        std::print(stderr,
+                   "bonsai: BONSAI_HIST_GROUP={} needs {} shared bytes over the {} "
+                   "byte limit; building ungrouped\n",
+                   g, (g * one_bytes) + k_hist_group_static, shared_limit);
+    }
+    return 1;
+}
+
+// The one entry point for a shared-memory histogram build: the grouped kernel
+// when the probe asks for a group the budget holds, else the one-feature
+// kernel with the launch it always had. Grid is (feature or group, node,
+// row-chunk).
+template <typename BinT>
+inline void
+launch_hist(BinT const *bins, float2 const *gh_ordered, uint32_t const *rows,
+            uint32_t const *row_offsets, uint32_t const *row_counts,
+            uint32_t const *features, uint32_t const *n_bins, uint32_t n_rows,
+            uint32_t n_sel, double *out, uint32_t stride, uint32_t const *out_slot,
+            uint32_t n_nodes, uint32_t n_chunks, uint32_t group, size_t shared_limit)
+{
+    size_t const   one = 2UL * stride * sizeof(float);
+    uint32_t const g   = hist_group_fit(group, one, shared_limit);
+    if (g > 1)
+    {
+        dim3 const grid((n_sel + g - 1) / g, n_nodes, n_chunks);
+        hist_group_kernel<<<grid, dim3(256), g * one>>>(
+            bins, gh_ordered, rows, row_offsets, row_counts, features, n_bins, n_rows,
+            n_sel, g, out, stride, out_slot);
+        return;
+    }
+    dim3 const grid(n_sel, n_nodes, n_chunks);
+    hist_kernel<<<grid, dim3(256), one>>>(bins, gh_ordered, rows, row_offsets,
+                                          row_counts, features, n_bins, n_rows, n_sel,
+                                          out, stride, out_slot);
 }
 
 // Small nodes skip the shared-memory stage: below ~512 rows the fixed
