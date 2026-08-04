@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <expected>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -320,36 +319,6 @@ template <> struct FieldCodec<std::vector<int>>
             a.push_back(static_cast<int64_t>(x));
         }
         return a;
-    }
-};
-
-// -------------------- std::optional<float> -----------------------------------
-
-template <> struct FieldCodec<std::optional<float>>
-{
-    static ParseResult<std::optional<float>> from_toml(toml::node const &node)
-    {
-        auto opt = node.value<double>();
-        if (!opt)
-        {
-            return std::unexpected("wrong type (expected float)");
-        }
-        return std::optional<float>{static_cast<float>(*opt)};
-    }
-    static ParseResult<std::optional<float>> from_string(std::string_view value)
-    {
-        auto r = read_float_from_string(value);
-        if (!r)
-        {
-            return std::unexpected(r.error());
-        }
-        return std::optional<float>{*r};
-    }
-    // Caller (dump_toml) skips the key when nullopt; precondition: has_value().
-    static toml::value<double> to_toml(std::optional<float> const &v)
-    {
-        return toml::value{
-            static_cast<double>(*v)}; // NOLINT(bugprone-unchecked-optional-access)
     }
 };
 

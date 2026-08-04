@@ -19,10 +19,7 @@ Python, so CI never builds C++ to verify the page. A knob with no effect line
 is a hard error listing the names, so a new knob forces documentation.
 
 Freshness: CI checks page-against-JSON, not JSON-against-structs (that needs
-a C++ build). Re-run `make params-json` after adding or renaming a knob. The
-round-trip-safe TOML dump omits unset `std::optional` fields, so those are
-declared explicitly in OPTIONAL_KNOBS below and will not appear from the dump
-on their own.
+a C++ build). Re-run `make params-json` after adding or renaming a knob.
 """
 
 from __future__ import annotations
@@ -114,13 +111,6 @@ EFFECTS = {
     "parallel.device_id": "CUDA device for cuda_ growers. Placement only: ignored by CPU growers and deliberately not stored in the model.",
 }
 
-# Knobs the round-trip-safe TOML dump cannot represent, declared by hand.
-# `std::optional` fields default to nullopt and are skipped by dump_toml, so
-# they never appear in the extraction; type and default are read off the
-# struct. A new optional knob added here (or to the struct) is the one drift
-# case CI cannot catch from the JSON alone; see the module docstring.
-OPTIONAL_KNOBS: dict[str, dict[str, str]] = {}
-
 
 def extract() -> int:
     """Every knob row parsed out of config.hpp."""
@@ -171,7 +161,7 @@ def fmt_default(value) -> str:
 
 def sections_from_src() -> tuple[dict[str, list[tuple]], list[str]]:
     """Return {section: [(leaf, dotted, type, default), ...]} plus all dotted
-    keys, merging the hand-declared optional knobs into their sections."""
+    keys."""
     data = json.loads(SRC.read_text())
     sections: dict[str, list[tuple]] = {}
     for sec, keys in data.items():
@@ -179,10 +169,6 @@ def sections_from_src() -> tuple[dict[str, list[tuple]], list[str]]:
             (leaf, f"{sec}.{leaf}", type_label(v), fmt_default(v))
             for leaf, v in keys.items()
         ]
-    for dotted, meta in OPTIONAL_KNOBS.items():
-        sec, leaf = dotted.split(".", 1)
-        sections.setdefault(sec, []).append(
-            (leaf, dotted, meta["type"], meta["default"]))
     for sec in sections:
         sections[sec].sort(key=lambda row: row[0])
     dotted = [row[1] for rows in sections.values() for row in rows]
