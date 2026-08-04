@@ -338,9 +338,9 @@ def test_classifier_too_few_classes_raises():
 def test_classifier_get_set_params_round_trip():
     est = bonsai.BonsaiClassifier(n_iters=17, learning_rate=0.2, max_depth=4)
     params = est.get_params()
-    # objective is accepted for xgboost call compatibility; None means
-    # "derive from the number of classes at fit time" as before
-    assert params["objective"] is None
+    # the classifier has no objective knob; it is derived from the number
+    # of classes at fit time
+    assert "objective" not in params
     assert params["n_iters"] == 17
 
     clone_est = type(est)(**est.get_params())
