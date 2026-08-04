@@ -4,7 +4,17 @@ from __future__ import annotations
 
 import sys
 
+from bonsai import interop
 from bonsai.bench import params
+
+# One canonical cell, stated once in bonsai's own keys, for the drift guard.
+CANONICAL_NATIVE = [
+    ("booster.learning_rate", 0.05),
+    ("tree.max_depth", 6),
+    ("tree.lambda_l2", 1.0),
+    ("bin_mapper.max_bin", 255),
+    ("booster.random_seed", 42),
+]
 
 
 def test_reference_param_mappings():
@@ -35,6 +45,31 @@ def test_reference_param_mappings():
     sys.path.insert(0, "scripts")
     import reference_params as rp
     assert rp.xgb_core is params.xgb_core
+
+
+def test_reference_builders_agree_with_interop():
+    """The builders must name every shared knob exactly as interop does.
+
+    params.py may add a benchmark's own defaults on top (tree_method,
+    verbose, the GPU border cap), but it may not rename a knob: one mapping
+    table drives both the estimator layer and the harness, and a second
+    spelling here is the drift that produced a published correction once.
+    """
+    builders = (
+        (params.xgb_core(learning_rate=0.05, max_depth=6, min_data_in_leaf=20,
+                         lambda_l2=1.0, max_bin=255, seed=42),
+         interop.to_xgboost(CANONICAL_NATIVE)),
+        (params.lgbm_core(learning_rate=0.05, max_depth=6, num_leaves=63,
+                          min_data_in_leaf=20, lambda_l2=1.0, max_bin=255,
+                          seed=42),
+         interop.to_lightgbm(CANONICAL_NATIVE)),
+        (params.catboost_core(learning_rate=0.05, max_depth=6, lambda_l2=1.0,
+                              max_bin=255, seed=42, device="cpu"),
+         interop.to_catboost(CANONICAL_NATIVE)),
+    )
+    for built, mapped in builders:
+        assert mapped, "the canonical cell must translate to something"
+        assert {key: built[key] for key in mapped} == mapped
 
 
 def test_bonsai_core_pairs():

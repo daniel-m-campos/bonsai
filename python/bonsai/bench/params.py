@@ -1,13 +1,22 @@
-"""One source of truth for benchmark knobs and reference-library mappings.
+"""One source of truth for benchmark knobs, over one source of truth for
+name translation.
 
 A one-knob drift here has produced a false experimental conclusion twice
 (max_bin 255 vs 256, decision 55's follow-up; min_child_weight 1 vs 20,
 decision 68's correction), so every harness and probe imports these instead
 of re-deriving them.
+
+The knob names themselves come from ``bonsai.interop``: each ``*_core``
+builder states the cell in bonsai's own keys and hands them over to be
+renamed. What stays here is what a translation cannot know, namely the
+campaign's deliberate choices: which bonsai knob rides which reference knob
+when the two are not equivalent, and the per-library settings that only a
+benchmark wants (silenced logs, the GPU border cap, histogram method).
 """
 
 from __future__ import annotations
 
+from bonsai import interop
 from bonsai.bench.variants import Device
 
 # The campaign regime: quality-division suites (Grinsztajn standings, the
@@ -91,33 +100,38 @@ def xgb_core(*, learning_rate, max_depth, min_data_in_leaf, lambda_l2, max_bin,
              seed) -> dict:
     """xgboost params matched to the shared knob names.
 
-    min_data_in_leaf maps to min_child_weight (the decision-68 correction:
-    leaving it at xgboost's default 1 produced a false conclusion once).
+    The campaign's row floor rides xgboost's hessian floor: bonsai's
+    min_data_in_leaf is written to tree.min_child_hess, which interop renames
+    to min_child_weight. That is a benchmark choice, not an equivalence (a
+    hessian floor is a row count only under squared error), and it is the
+    decision-68 correction: leaving it at xgboost's default 1 produced a
+    false conclusion once. tree_method is the histogram method bonsai always
+    uses, and has no bonsai key to be renamed from.
     """
-    return {
-        "learning_rate": learning_rate,
-        "max_depth": max_depth,
-        "min_child_weight": min_data_in_leaf,
-        "reg_lambda": lambda_l2,
-        "max_bin": max_bin,
-        "tree_method": "hist",
-        "seed": seed,
-    }
+    core = interop.to_xgboost([
+        ("booster.learning_rate", learning_rate),
+        ("tree.max_depth", max_depth),
+        ("tree.min_child_hess", min_data_in_leaf),
+        ("tree.lambda_l2", lambda_l2),
+        ("bin_mapper.max_bin", max_bin),
+        ("booster.random_seed", seed),
+    ])
+    return {**core, "tree_method": "hist"}
 
 
 def lgbm_core(*, learning_rate, max_depth, num_leaves, min_data_in_leaf,
               lambda_l2, max_bin, seed) -> dict:
     """lightgbm params matched to the shared knob names, silenced logs."""
-    return {
-        "learning_rate": learning_rate,
-        "max_depth": max_depth,
-        "num_leaves": num_leaves,
-        "min_data_in_leaf": min_data_in_leaf,
-        "lambda_l2": lambda_l2,
-        "max_bin": max_bin,
-        "seed": seed,
-        "verbose": -1,
-    }
+    core = interop.to_lightgbm([
+        ("booster.learning_rate", learning_rate),
+        ("tree.max_depth", max_depth),
+        ("tree.max_leaves", num_leaves),
+        ("tree.min_data_in_leaf", min_data_in_leaf),
+        ("tree.lambda_l2", lambda_l2),
+        ("bin_mapper.max_bin", max_bin),
+        ("booster.random_seed", seed),
+    ])
+    return {**core, "verbose": -1}
 
 
 def catboost_core(*, learning_rate, max_depth, lambda_l2, max_bin, seed,
@@ -125,19 +139,21 @@ def catboost_core(*, learning_rate, max_depth, lambda_l2, max_bin, seed,
     """catboost params matched to the shared knob names.
 
     max_bin arrives in BIN semantics (what bonsai/xgboost/lightgbm count);
-    CatBoost's border_count counts SPLITS, so bins - 1. The fencepost lives
-    here, once, because per-call-site translation drifted three ways across
-    harnesses (2026-07-30 fairness review). GPU caps border_count at 254
-    (= 255 bins, matching the campaign/scale default exactly).
+    interop applies the bins-to-borders fencepost, because CatBoost's
+    border_count counts SPLITS. What is a benchmark rule rather than a
+    translation stays here: GPU caps border_count at 254 (= 255 bins,
+    matching the campaign/scale default exactly).
     """
-    borders = max_bin - 1
-    return {
-        "learning_rate": learning_rate,
-        "depth": max_depth,
-        "l2_leaf_reg": lambda_l2,
-        "border_count": min(borders, 254) if device == Device.CUDA else borders,
-        "random_seed": seed,
-    }
+    core = interop.to_catboost([
+        ("booster.learning_rate", learning_rate),
+        ("tree.max_depth", max_depth),
+        ("tree.lambda_l2", lambda_l2),
+        ("bin_mapper.max_bin", max_bin),
+        ("booster.random_seed", seed),
+    ])
+    if device == Device.CUDA:
+        core["border_count"] = min(core["border_count"], 254)
+    return core
 
 
 def xgb_early_stop(rounds: int) -> dict:
