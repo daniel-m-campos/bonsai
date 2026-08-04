@@ -179,6 +179,8 @@ python3 scripts/standings_refresh.py measure --axes rows,width,frontier,airline 
 
 A `finally` block deletes the pod and sweeps any stray `bonsai-standings-*` pods regardless of how the run ends. Verify the fleet is empty afterward (same check as section 7): zero pods listed means zero billing. `--keep-pod` skips teardown for debugging; delete it yourself if you use it. Results land in a dated directory printed at the end (`--out-dir` to choose one).
 
+The width axis has two clocks. Without a flag it measures `standings-cols`, which drops the 16384-column CPU arms (`lgbm_cpu`, `bonsai_oblivious`): those two cells pin the wall clock with no GPU-side change able to move them, so a routine refresh chasing a code change skips them. `measure --width-full` measures `standings-cols-full` instead, keeping every arm; both write to the same output file, so `supersede --axes ...` always names `width`, never `width-full`.
+
 **Phase 2: supersede.** Works from any local results directory, independent of the pod, so a failed or interrupted supersede reruns without paying for measurement again: copies the axis files into `benchmarks/results/`, updates the registry per axis, stages `git add -A benchmarks/` **before** rendering (the committed-files gate reads `git ls-files`, and a month-rollover refresh deletes the old dated files), renders, prints the A/B verdict from `ab.jsonl`, then branches, commits, and opens the PR.
 
 ```bash
@@ -188,4 +190,4 @@ python3 scripts/standings_refresh.py supersede --results-dir standings-<date> \
 
 `--no-pr` stops after the local commit so you can inspect the diff before pushing and opening the PR by hand.
 
-Release ordering is unchanged from decision 92: merge the version-bump PR FIRST, then run the refresh with `--prev-version` = the last release, merge the refresh PR (a **moved** verdict needs a `Standings:`-tagged decision first; docs-check enforces), then tag. The order matters because `update_standings.py` stamps `refreshed_for` from pyproject at the refresh's checkout sha: a refresh run before the bump stamps the old version and the publish gate then fails at tag time.
+Release ordering is unchanged from decision 92: merge the version-bump PR FIRST, then run the refresh with `--prev-version` = the last release and `measure --width-full` (the release clock, so the published width standings carry the wide-CPU arms for this release), merge the refresh PR (a **moved** verdict needs a `Standings:`-tagged decision first; docs-check enforces), then tag. The order matters because `update_standings.py` stamps `refreshed_for` from pyproject at the refresh's checkout sha: a refresh run before the bump stamps the old version and the publish gate then fails at tag time.

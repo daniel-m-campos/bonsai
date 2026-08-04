@@ -38,6 +38,21 @@ def test_spec_expansion():
                                       "cols": [1000]}]})
 
 
+def test_spec_expansion_exclude_variants():
+    s = {"name": "exclude-test", "cells": [
+            {"rows": 1000, "cols": 10},
+            {"rows": 2000, "cols": 20, "exclude_variants": ["xgb_cuda"]}],
+         "variants": ["bonsai_cuda_depthwise", "xgb_cuda"],
+         "threads": [16], "repeats": 1}
+    jobs = spec_mod.expand(s)
+    assert len(jobs) == 3  # 2 variants at cols=10, 1 at cols=20
+    by_cols = {(j["cell"]["cols"], j["variant"]) for j in jobs}
+    assert (20, "xgb_cuda") not in by_cols
+    assert (20, "bonsai_cuda_depthwise") in by_cols
+    # exclude_variants never rides into the emitted cell dict.
+    assert all("exclude_variants" not in j["cell"] for j in jobs)
+
+
 def test_bundled_specs():
     from bonsai.bench import spec as spec_mod
 
@@ -49,3 +64,21 @@ def test_bundled_specs():
     assert len(spec_mod.expand(pareto)) == 32  # the six iteration ladders
     with pytest.raises(FileNotFoundError):
         spec_mod.load_spec("no-such-spec")
+
+
+def test_standings_cols_routine_drops_wide_cpu_arms():
+    """standings-cols (routine, the change clock) drops the two CPU arms
+    at the 131072x16384 cell that pin the wall clock; standings-cols-full
+    (the release clock) keeps every (cell, variant) pair."""
+    routine = spec_mod.load_spec("standings-cols")
+    full = spec_mod.load_spec("standings-cols-full")
+    assert routine["variants"] == full["variants"]
+    routine_jobs = spec_mod.expand(routine)
+    full_jobs = spec_mod.expand(full)
+    assert len(full_jobs) == 4 * len(full["variants"])  # 4 cells x 8 arms
+    assert len(routine_jobs) == len(full_jobs) - 2
+    wide = {(j["variant"]) for j in routine_jobs
+            if j["cell"]["rows"] == 131072 and j["cell"]["cols"] == 16384}
+    assert wide == {"bonsai_cuda_depthwise", "bonsai_cuda_oblivious",
+                    "bonsai_cuda_leafwise", "xgb_cuda", "catboost_gpu",
+                    "lgbm_cuda"}

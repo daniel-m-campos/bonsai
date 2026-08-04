@@ -12,6 +12,10 @@ features Month, DayofMonth, DayOfWeek, UniqueCarrier, Origin, Dest
 GBM speed benchmark; it complements the synthetic scaling suite with mixed
 categorical/numeric columns and a real class balance (~19% positive).
 
+The 10m train file plus test.csv are baked into the bonsai-ci image at
+BAKED_DIR; fetch() prefers that copy and only reaches S3 when it is absent
+(a repo checkout, a non-CI machine, or the 0.1m/1m sizes).
+
 Encoding convention (decision 68, uniform across libraries): categoricals
 become sorted-unique ordinal codes fit on the train split; test categories
 unseen in train map to -1. This strips catboost's native categorical
@@ -53,6 +57,9 @@ from bonsai.bench.datasets import data_root
 from bonsai.bench.runners import RUNNERS
 
 S3 = "https://s3.amazonaws.com/benchm-ml--main"
+# bonsai-ci bakes the 10m train file plus the shared test file at this path
+# (docker/ci.Dockerfile); a pod refresh on that image skips the download.
+BAKED_DIR = pathlib.Path("/opt/bonsai-data/airline")
 SIZES = {"0.1m": "train-0.1m.csv", "1m": "train-1m.csv", "10m": "train-10m.csv"}
 CATEGORICAL = ("Month", "DayofMonth", "DayOfWeek", "UniqueCarrier", "Origin", "Dest")
 NUMERIC = ("DepTime", "Distance")
@@ -69,11 +76,16 @@ VARIANTS = {n: (vr.resolve(n).lib, vr.resolve(n).device) for n in vr.AIRLINE}
 
 
 def fetch(size: str) -> tuple[pathlib.Path, pathlib.Path]:
-    """(train_csv, test_csv) for a size, downloading from S3 once."""
+    """(train_csv, test_csv) for a size: the baked image copy if present,
+    else downloaded from S3 once and cached under data_root()."""
     root = data_root()
     root.mkdir(parents=True, exist_ok=True)
     out = []
     for fname in (SIZES[size], "test.csv"):
+        baked = BAKED_DIR / fname
+        if baked.exists():
+            out.append(baked)
+            continue
         local = root / f"airline_{fname}" if fname == "test.csv" else root / fname
         if not local.exists():
             print(f"fetching {S3}/{fname} -> {local}", file=sys.stderr, flush=True)

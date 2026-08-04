@@ -3,11 +3,24 @@
 # scripts/standings_refresh.py's measure phase (decision 96); manual use:
 #   AXES=rows,width GIT_SHA=<sha> PREV_VERSION=1.5.4 bash scripts/standings_refresh_pod.sh
 # Writes dated standings jsonl + the A/B rows to /root/standings/.
+#
+# The width axis runs the standings-cols spec, which drops the 16384-col
+# CPU arms (lgbm_cpu, bonsai_oblivious): those two cells pin the wall clock
+# at several minutes each with no GPU-side change able to move them. Set
+# WIDTH_FULL=1 for a release refresh to run standings-cols-full instead,
+# which keeps them; the output file is the same name either way.
+#
+# BONSAI_BENCH_DATA_CACHE is not exported here: its memmap reads happen
+# inside fit(), not just data generation, so it changes measured fit_s
+# rather than only speeding up regeneration (12% slower for bonsai
+# leafwise at 16M, and non-uniformly across libraries since only some of
+# them re-touch the raw arrays after ingest).
 set -euo pipefail
 
 AXES="${AXES:?comma list of axes}"
 GIT_SHA="${GIT_SHA:?commit to measure}"
 PREV_VERSION="${PREV_VERSION:-}"
+WIDTH_FULL="${WIDTH_FULL:-}"
 
 export PATH=/opt/venv/bin:/root/.local/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 mkdir -p /root/standings
@@ -70,7 +83,9 @@ run_axis() {
                 --out "/root/standings/rebaseline-$YM.jsonl" \
                 --run-label "standings-rows-$YM" --host-name "$HOST_TAG" ;;
         width)
-            "${BENCH[@]}" run --spec standings-cols \
+            WIDTH_SPEC="standings-cols"
+            [ -n "$WIDTH_FULL" ] && WIDTH_SPEC="standings-cols-full"
+            "${BENCH[@]}" run --spec "$WIDTH_SPEC" \
                 --out "/root/standings/cols-rebaseline-$YM.jsonl" \
                 --run-label "standings-cols-$YM" --host-name "$HOST_TAG" ;;
         shape)
