@@ -6,88 +6,88 @@
 <text x='56' y='255.1' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>0.86</text>
 <line x1='64' y1='151.0' x2='590' y2='151.0' stroke='#808080' stroke-opacity='0.22'/>
 <text x='56' y='155.0' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='end' font-weight='normal'>0.88</text>
-<line x1='93.0' y1='42' x2='93.0' y2='376' stroke='#808080' stroke-opacity='0.12'/>
-<text x='93.0' y='394' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>10s</text>
-<line x1='203.2' y1='42' x2='203.2' y2='376' stroke='#808080' stroke-opacity='0.12'/>
-<text x='203.2' y='394' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>20s</text>
-<line x1='313.3' y1='42' x2='313.3' y2='376' stroke='#808080' stroke-opacity='0.12'/>
-<text x='313.3' y='394' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>30s</text>
-<line x1='423.5' y1='42' x2='423.5' y2='376' stroke='#808080' stroke-opacity='0.12'/>
-<text x='423.5' y='394' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>40s</text>
-<line x1='533.7' y1='42' x2='533.7' y2='376' stroke='#808080' stroke-opacity='0.12'/>
-<text x='533.7' y='394' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>50s</text>
+<line x1='93.9' y1='42' x2='93.9' y2='376' stroke='#808080' stroke-opacity='0.12'/>
+<text x='93.9' y='394' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>10s</text>
+<line x1='213.8' y1='42' x2='213.8' y2='376' stroke='#808080' stroke-opacity='0.12'/>
+<text x='213.8' y='394' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>20s</text>
+<line x1='333.6' y1='42' x2='333.6' y2='376' stroke='#808080' stroke-opacity='0.12'/>
+<text x='333.6' y='394' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>30s</text>
+<line x1='453.5' y1='42' x2='453.5' y2='376' stroke='#808080' stroke-opacity='0.12'/>
+<text x='453.5' y='394' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>40s</text>
+<line x1='573.4' y1='42' x2='573.4' y2='376' stroke='#808080' stroke-opacity='0.12'/>
+<text x='573.4' y='394' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>50s</text>
 <text x='20' y='30' font-size='10' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>test r2</text>
 <text x='327.0' y='410' font-size='10' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='middle' font-weight='normal'>fit seconds</text>
-<polyline points='74.3,321.6 96.2,216.5 115.4,162.5 146.9,121.5 218.6,91.9 304.4,83.9' fill='none' stroke='#1b5e20' stroke-width='2.5'/>
-<circle cx='74.3' cy='321.6' r='3.2' fill='#1b5e20'/>
-<circle cx='96.2' cy='216.5' r='3.2' fill='#1b5e20'/>
-<circle cx='115.4' cy='162.5' r='3.2' fill='#1b5e20'/>
-<circle cx='146.9' cy='121.5' r='3.2' fill='#1b5e20'/>
-<circle cx='218.6' cy='91.9' r='3.2' fill='#1b5e20'/>
-<circle cx='304.4' cy='83.9' r='3.2' fill='#1b5e20'/>
-<polyline points='64.0,358.2 82.2,244.6 101.5,179.5 123.4,125.0 175.8,77.9 244.3,64.4 339.7,61.4' fill='none' stroke='#4caf50' stroke-width='2.5'/>
+<polyline points='78.9,321.6 96.8,216.5 120.2,162.5 154.1,121.5 229.9,91.9 325.3,83.9' fill='none' stroke='#1b5e20' stroke-width='2.5'/>
+<circle cx='78.9' cy='321.6' r='3.2' fill='#1b5e20'/>
+<circle cx='96.8' cy='216.5' r='3.2' fill='#1b5e20'/>
+<circle cx='120.2' cy='162.5' r='3.2' fill='#1b5e20'/>
+<circle cx='154.1' cy='121.5' r='3.2' fill='#1b5e20'/>
+<circle cx='229.9' cy='91.9' r='3.2' fill='#1b5e20'/>
+<circle cx='325.3' cy='83.9' r='3.2' fill='#1b5e20'/>
+<polyline points='64.0,358.2 83.7,244.6 102.3,179.5 129.5,125.0 185.4,77.9 260.1,64.4 364.0,61.4' fill='none' stroke='#4caf50' stroke-width='2.5'/>
 <circle cx='64.0' cy='358.2' r='3.2' fill='#4caf50'/>
-<circle cx='82.2' cy='244.6' r='3.2' fill='#4caf50'/>
-<circle cx='101.5' cy='179.5' r='3.2' fill='#4caf50'/>
-<circle cx='123.4' cy='125.0' r='3.2' fill='#4caf50'/>
-<circle cx='175.8' cy='77.9' r='3.2' fill='#4caf50'/>
-<circle cx='244.3' cy='64.4' r='3.2' fill='#4caf50'/>
-<circle cx='339.7' cy='61.4' r='3.2' fill='#4caf50'/>
-<polyline points='82.6,321.6 108.6,216.5 133.8,162.5 170.7,121.5 252.9,91.9 360.3,83.9' fill='none' stroke='#2e7d32' stroke-width='2.5'/>
-<circle cx='82.6' cy='321.6' r='3.2' fill='#2e7d32'/>
-<circle cx='108.6' cy='216.5' r='3.2' fill='#2e7d32'/>
-<circle cx='133.8' cy='162.5' r='3.2' fill='#2e7d32'/>
-<circle cx='170.7' cy='121.5' r='3.2' fill='#2e7d32'/>
-<circle cx='252.9' cy='91.9' r='3.2' fill='#2e7d32'/>
-<circle cx='360.3' cy='83.9' r='3.2' fill='#2e7d32'/>
-<polyline points='398.9,161.5 413.3,107.4 461.7,91.9 508.5,84.4' fill='none' stroke='#1f77b4' stroke-width='2.5'/>
-<circle cx='398.9' cy='161.5' r='3.2' fill='#1f77b4'/>
-<circle cx='413.3' cy='107.4' r='3.2' fill='#1f77b4'/>
-<circle cx='461.7' cy='91.9' r='3.2' fill='#1f77b4'/>
-<circle cx='508.5' cy='84.4' r='3.2' fill='#1f77b4'/>
-<polyline points='244.7,175.5 293.3,104.9 332.3,78.9 422.9,64.4 536.8,60.9' fill='none' stroke='#e08f1a' stroke-width='2.5'/>
-<circle cx='244.7' cy='175.5' r='3.2' fill='#e08f1a'/>
-<circle cx='293.3' cy='104.9' r='3.2' fill='#e08f1a'/>
-<circle cx='332.3' cy='78.9' r='3.2' fill='#e08f1a'/>
-<circle cx='422.9' cy='64.4' r='3.2' fill='#e08f1a'/>
-<circle cx='536.8' cy='60.9' r='3.2' fill='#e08f1a'/>
-<polyline points='315.6,127.5 383.4,95.9 450.2,88.9 590.0,85.9' fill='none' stroke='#8e6bbf' stroke-width='2.5'/>
-<circle cx='315.6' cy='127.5' r='3.2' fill='#8e6bbf'/>
-<circle cx='383.4' cy='95.9' r='3.2' fill='#8e6bbf'/>
-<circle cx='450.2' cy='88.9' r='3.2' fill='#8e6bbf'/>
-<circle cx='590.0' cy='85.9' r='3.2' fill='#8e6bbf'/>
-<text x='80.3' y='314.6' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>60</text>
-<text x='102.2' y='209.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>80</text>
-<text x='121.4' y='155.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>100</text>
-<text x='152.9' y='114.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>130</text>
-<text x='224.6' y='84.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>200</text>
-<text x='310.4' y='76.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>300</text>
+<circle cx='83.7' cy='244.6' r='3.2' fill='#4caf50'/>
+<circle cx='102.3' cy='179.5' r='3.2' fill='#4caf50'/>
+<circle cx='129.5' cy='125.0' r='3.2' fill='#4caf50'/>
+<circle cx='185.4' cy='77.9' r='3.2' fill='#4caf50'/>
+<circle cx='260.1' cy='64.4' r='3.2' fill='#4caf50'/>
+<circle cx='364.0' cy='61.4' r='3.2' fill='#4caf50'/>
+<polyline points='86.0,321.6 114.1,216.5 141.3,162.5 181.3,121.5 271.6,91.9 390.5,83.9' fill='none' stroke='#2e7d32' stroke-width='2.5'/>
+<circle cx='86.0' cy='321.6' r='3.2' fill='#2e7d32'/>
+<circle cx='114.1' cy='216.5' r='3.2' fill='#2e7d32'/>
+<circle cx='141.3' cy='162.5' r='3.2' fill='#2e7d32'/>
+<circle cx='181.3' cy='121.5' r='3.2' fill='#2e7d32'/>
+<circle cx='271.6' cy='91.9' r='3.2' fill='#2e7d32'/>
+<circle cx='390.5' cy='83.9' r='3.2' fill='#2e7d32'/>
+<polyline points='266.7,161.5 294.9,107.4 344.1,91.9 408.3,84.4' fill='none' stroke='#1f77b4' stroke-width='2.5'/>
+<circle cx='266.7' cy='161.5' r='3.2' fill='#1f77b4'/>
+<circle cx='294.9' cy='107.4' r='3.2' fill='#1f77b4'/>
+<circle cx='344.1' cy='91.9' r='3.2' fill='#1f77b4'/>
+<circle cx='408.3' cy='84.4' r='3.2' fill='#1f77b4'/>
+<polyline points='249.4,175.5 300.4,104.9 349.5,78.9 449.8,64.4 590.0,60.9' fill='none' stroke='#e08f1a' stroke-width='2.5'/>
+<circle cx='249.4' cy='175.5' r='3.2' fill='#e08f1a'/>
+<circle cx='300.4' cy='104.9' r='3.2' fill='#e08f1a'/>
+<circle cx='349.5' cy='78.9' r='3.2' fill='#e08f1a'/>
+<circle cx='449.8' cy='64.4' r='3.2' fill='#e08f1a'/>
+<circle cx='590.0' cy='60.9' r='3.2' fill='#e08f1a'/>
+<polyline points='316.8,127.5 393.4,95.9 466.9,88.9 588.0,85.9' fill='none' stroke='#8e6bbf' stroke-width='2.5'/>
+<circle cx='316.8' cy='127.5' r='3.2' fill='#8e6bbf'/>
+<circle cx='393.4' cy='95.9' r='3.2' fill='#8e6bbf'/>
+<circle cx='466.9' cy='88.9' r='3.2' fill='#8e6bbf'/>
+<circle cx='588.0' cy='85.9' r='3.2' fill='#8e6bbf'/>
+<text x='84.9' y='314.6' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>60</text>
+<text x='102.8' y='209.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>80</text>
+<text x='126.2' y='155.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>100</text>
+<text x='160.1' y='114.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>130</text>
+<text x='235.9' y='84.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>200</text>
+<text x='331.3' y='76.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>300</text>
 <text x='70.0' y='351.2' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>60</text>
-<text x='88.2' y='237.6' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>80</text>
-<text x='107.5' y='172.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>100</text>
-<text x='129.4' y='118.0' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>130</text>
-<text x='181.8' y='70.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>200</text>
-<text x='250.3' y='57.400000000000006' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>300</text>
-<text x='345.7' y='54.4' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>450</text>
-<text x='88.6' y='314.6' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>60</text>
-<text x='114.6' y='209.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>80</text>
-<text x='139.8' y='155.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>100</text>
-<text x='176.7' y='114.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>130</text>
-<text x='258.9' y='84.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>200</text>
-<text x='366.3' y='76.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>300</text>
-<text x='404.9' y='154.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>100</text>
-<text x='419.3' y='100.4' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>150</text>
-<text x='467.7' y='84.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>200</text>
-<text x='514.5' y='77.4' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>300</text>
-<text x='250.7' y='168.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>100</text>
-<text x='299.3' y='97.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>150</text>
-<text x='338.3' y='71.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>200</text>
-<text x='428.9' y='57.400000000000006' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>300</text>
-<text x='542.8' y='53.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>450</text>
-<text x='321.6' y='120.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>100</text>
-<text x='389.4' y='88.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>150</text>
-<text x='456.2' y='81.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>200</text>
-<text x='596.0' y='78.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>300</text>
+<text x='89.7' y='237.6' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>80</text>
+<text x='108.3' y='172.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>100</text>
+<text x='135.5' y='118.0' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>130</text>
+<text x='191.4' y='70.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>200</text>
+<text x='266.1' y='57.400000000000006' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>300</text>
+<text x='370.0' y='54.4' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>450</text>
+<text x='92.0' y='314.6' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>60</text>
+<text x='120.1' y='209.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>80</text>
+<text x='147.3' y='155.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>100</text>
+<text x='187.3' y='114.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>130</text>
+<text x='277.6' y='84.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>200</text>
+<text x='396.5' y='76.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>300</text>
+<text x='272.7' y='154.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>100</text>
+<text x='300.9' y='100.4' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>150</text>
+<text x='350.1' y='84.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>200</text>
+<text x='414.3' y='77.4' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>300</text>
+<text x='255.4' y='168.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>100</text>
+<text x='306.4' y='97.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>150</text>
+<text x='355.5' y='71.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>200</text>
+<text x='455.8' y='57.400000000000006' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>300</text>
+<text x='596.0' y='53.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>450</text>
+<text x='322.8' y='120.5' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>100</text>
+<text x='399.4' y='88.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>150</text>
+<text x='472.9' y='81.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>200</text>
+<text x='594.0' y='78.9' font-size='9' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>300</text>
 <line x1='608' y1='50' x2='630' y2='50' stroke='#1b5e20' stroke-width='2.5'/>
 <text x='636' y='54' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>bonsai cuda dw</text>
 <line x1='608' y1='67' x2='630' y2='67' stroke='#4caf50' stroke-width='2.5'/>

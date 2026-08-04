@@ -4,7 +4,7 @@
 
 ### The re-baseline: fit seconds at scale
 
-Same-pod sweep (AMD EPYC 9354 32-Core Processor, NVIDIA L40S), synthetic regression, `fit()` timed end to end including each library's own ingest, best of repeats, test r² in parentheses.
+Same-pod sweep (AMD EPYC 7702 64-Core Processor, NVIDIA L40S), synthetic regression, `fit()` timed end to end including each library's own ingest, best of repeats, test r² in parentheses.
 
 ![Fit seconds vs rows](../assets/rebaseline-rows.svg)
 
@@ -12,32 +12,32 @@ Scaling rows (100 features):
 
 | rows | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
 |---|---|---|---|---|---|---|---|---|
-| 250k | 0.4s (.872) | 0.9s (.877) | 1.9s (.872) | 1.0s (.872) | 1.9s (.875) | 6.5s (.879) | 4.1s (.872) | 8.6s (.877) |
-| 1M | 0.8s (.877) | 1.2s (.877) | 2.5s (.877) | 2.7s (.876) | 2.7s (.876) | 7.4s (.884) | 9.3s (.877) | 13.6s (.877) |
-| 4M | 3.1s (.878) | 3.1s (.876) | 4.9s (.878) | 9.1s (.878) | 6.3s (.877) | 11.9s (.885) | 33.8s (.879) | 34.4s (.876) |
-| 16M | 12.3s (.879) | 10.6s (.877) | 14.0s (.879) | 37.0s (.880) | 23.8s (.876) | 30.5s (.886) | 164.8s (.879) | 111.6s (.877) |
+| 250k | 0.5s (.872) | 0.9s (.877) | 2.0s (.872) | 0.9s (.872) | 1.8s (.875) | 6.5s (.879) | 2.9s (.872) | 5.4s (.877) |
+| 1M | 0.8s (.877) | 1.2s (.877) | 2.6s (.877) | 2.0s (.876) | 2.5s (.876) | 7.3s (.884) | 6.8s (.877) | 10.0s (.877) |
+| 4M | 3.1s (.878) | 3.2s (.876) | 4.9s (.878) | 6.3s (.878) | 6.0s (.877) | 11.5s (.885) | 41.9s (.879) | 29.3s (.876) |
+| 16M | 12.2s (.879) | 10.6s (.877) | 14.1s (.879) | 23.9s (.880) | 22.7s (.876) | 28.9s (.886) | 186.0s (.879) | 110.5s (.877) |
 
-Ingest / train seconds, the split behind that total (issue #301): the two halves scale differently, so a total-only column hides which one moves. bonsai's ingest and train read `-` above: these rows were measured through one fused `train(pairs, X, y)` call, which has no point inside it to split. The runner now fits through `Dataset(..., device=...)` plus `train(pairs, ds)` and reports the split like every other arm, so the next standings refresh fills this column; until then only the total in the fit table above is measured for it. CatBoost's `Pool()` step only wraps the raw arrays; it quantizes inside `fit`, so its ingest column reads low and that cost sits in train instead (issue #253). Its total is the only number directly comparable to the other libraries' split.
+Ingest / train seconds, the split behind that total (issue #301): the two halves scale differently, so a total-only column hides which one moves. bonsai's split comes from the two-step `Dataset(..., device=...)` plus `train(pairs, ds)` form, which for a cuda arm bins on the device exactly where the fused call does; every refresh fits the anchor cell both ways, interleaved on the same pod, and the supersession is gated on their agreement, so the seam these columns report belongs to the same pipeline the total measures. CatBoost's `Pool()` step only wraps the raw arrays; it quantizes inside `fit`, so its ingest column reads low and that cost sits in train instead (issue #253). Its total is the only number directly comparable to the other libraries' split.
 
 | rows | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
 |---|---|---|---|---|---|---|---|---|
-| 250k | 0.1s / 0.4s | 0.1s / 0.8s | 0.1s / 1.9s | 0.5s / 0.6s | 0.1s / 1.8s | 0.9s / 5.6s | 0.8s / 3.3s | 0.2s / 8.5s |
-| 1M | 0.1s / 0.7s | 0.1s / 1.1s | 0.1s / 2.4s | 1.8s / 0.9s | 0.3s / 2.4s | 1.5s / 5.9s | 1.5s / 7.7s | 0.5s / 13.1s |
-| 4M | 0.3s / 2.8s | 0.3s / 2.8s | 0.3s / 4.6s | 7.0s / 2.1s | 1.0s / 5.3s | 4.3s / 7.6s | 4.5s / 29.2s | 2.0s / 32.3s |
-| 16M | 1.2s / 11.0s | 1.2s / 9.4s | 1.2s / 12.8s | 30.0s / 7.0s | 4.2s / 19.6s | 15.1s / 15.4s | 16.0s / 148.7s | 7.8s / 103.8s |
+| 250k | 0.1s / 0.4s | 0.1s / 0.8s | 0.1s / 2.0s | 0.3s / 0.6s | 0.1s / 1.7s | 1.0s / 5.5s | 0.8s / 2.1s | 0.2s / 5.2s |
+| 1M | 0.2s / 0.7s | 0.1s / 1.1s | 0.2s / 2.5s | 1.0s / 0.9s | 0.3s / 2.1s | 1.5s / 5.8s | 1.4s / 5.4s | 0.5s / 9.5s |
+| 4M | 0.4s / 2.8s | 0.4s / 2.8s | 0.3s / 4.6s | 4.2s / 2.1s | 1.3s / 4.7s | 4.0s / 7.6s | 3.6s / 38.2s | 1.5s / 27.7s |
+| 16M | 1.2s / 11.0s | 1.2s / 9.4s | 1.3s / 12.7s | 16.8s / 7.1s | 5.0s / 17.7s | 12.5s / 16.4s | 12.3s / 173.7s | 6.1s / 104.4s |
 
 Peak host RSS, worst repeat; the parenthetical is headroom above the input array `bonsai.bench.synth.gen_data` holds resident for that cell (16M x 100 float32, rows plus the held-out test rows, which are numpy views into the same buffer and so stay resident too). bonsai's headroom sits near zero at every scale because it bins the data on the device rather than keeping a second host-size copy; that cost lands on the GPU instead (2.8GB device memory at 16M rows, `dev_mem`, same cell). The comparison is host-input only: given device-resident input, XGBoost sketches in place and this headroom gap collapses (issue #289).
 
 | rows | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
 |---|---|---|---|---|---|---|---|---|
-| 250k | 0.4GB (+0.3) | 0.4GB (+0.3) | 0.4GB (+0.3) | 0.8GB (+0.7) | 0.6GB (+0.5) | 0.8GB (+0.7) | 0.6GB (+0.5) | 0.3GB (+0.2) |
-| 1M | 0.8GB (+0.3) | 0.8GB (+0.3) | 0.8GB (+0.3) | 1.9GB (+1.4) | 1.5GB (+1.1) | 1.3GB (+0.8) | 1.1GB (+0.6) | 0.9GB (+0.4) |
-| 4M | 2.1GB (+0.4) | 2.1GB (+0.4) | 2.1GB (+0.4) | 6.1GB (+4.4) | 5.2GB (+3.5) | 3.5GB (+1.9) | 2.9GB (+1.2) | 2.8GB (+1.2) |
-| 16M | 6.9GB (+0.8) | 6.9GB (+0.8) | 6.9GB (+0.8) | 22.1GB (+15.9) | 19.2GB (+13.0) | 11.5GB (+5.4) | 9.8GB (+3.7) | 10.6GB (+4.4) |
+| 250k | 0.3GB (+0.2) | 0.4GB (+0.2) | 0.4GB (+0.2) | 0.8GB (+0.6) | 0.5GB (+0.4) | 0.8GB (+0.7) | 0.6GB (+0.5) | 0.3GB (+0.2) |
+| 1M | 0.7GB (+0.3) | 0.7GB (+0.3) | 0.7GB (+0.3) | 1.8GB (+1.4) | 1.5GB (+1.1) | 1.2GB (+0.8) | 1.1GB (+0.6) | 0.9GB (+0.4) |
+| 4M | 2.1GB (+0.4) | 2.1GB (+0.4) | 2.1GB (+0.4) | 6.1GB (+4.4) | 5.2GB (+3.5) | 3.5GB (+1.8) | 2.9GB (+1.2) | 2.8GB (+1.2) |
+| 16M | 6.9GB (+0.8) | 6.9GB (+0.8) | 6.9GB (+0.8) | 22.2GB (+16.1) | 19.4GB (+13.3) | 11.5GB (+5.4) | 9.8GB (+3.7) | 10.6GB (+4.4) |
 
 Width scaling has its own standings axis on [Width and shape](perf-shape.md).
 
-*Source: [`rebaseline-2026-08.jsonl`](../../../benchmarks/results/rebaseline-2026-08.jsonl). Runner: [scripts/bench_scaling.py](../../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file. Measured at `ce122b8` (2026-08-03, pod-NVIDIA-L40S).*
+*Source: [`rebaseline-2026-08.jsonl`](../../../benchmarks/results/rebaseline-2026-08.jsonl). Runner: [scripts/bench_scaling.py](../../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file. Measured at `3599365` (2026-08-04, pod-NVIDIA-L40S).*
 
 ### The XGBoost 3.3 recheck (decision 87)
 
@@ -153,7 +153,7 @@ Every bonsai CUDA number in the two ladders above was measured through a benchma
 | 4M | 7.2s (.878) | 14.8s (.885) | 4.4s (.878) | 7.6s |
 | 16M | 18.7s (.879) | 37.0s (.886) | 15.8s (.879) | 24.4s |
 
-Absolutes do not carry across rentals here, and the reference arm says why. `lgbm_cuda` never touched the affected path, and on this pod it reads 16% to 29% above the times decision 98 published for it, so this is the slowest of the three L40S rentals the campaign has run on. That is also why the 250k and 1M leafwise cells read above their published numbers rather than below: the ingest saving at those cells is a fraction of a second and this pod's host latency is not. The standings measure the same 16M cell on the fixed path, on a rental that reproduces the campaign's reference times, and read `cuda_leafwise` 14.0s against `lgbm_cuda` 30.5s. Both rentals correct the published margin the same way, and that agreement is the reading that survives the pod. The distance between the two numbers is not left as pod luck either: the controls below take it apart into the profile counters, the benchmark data cache, and what remains of the rental.
+Absolutes do not carry across rentals here, and the reference arm says why. `lgbm_cuda` never touched the affected path, and on this pod it reads 16% to 29% above the times decision 98 published for it, so this is the slowest of the three L40S rentals the campaign has run on. That is also why the 250k and 1M leafwise cells read above their published numbers rather than below: the ingest saving at those cells is a fraction of a second and this pod's host latency is not. The standings measure the same 16M cell on the fixed path, on a rental that reproduces the campaign's reference times, and read `cuda_leafwise` 14.1s against `lgbm_cuda` 28.9s. Both rentals correct the published margin the same way, and that agreement is the reading that survives the pod. The distance between the two numbers is not left as pod luck either: the controls below take it apart into the profile counters, the benchmark data cache, and what remains of the rental.
 
 The uncapped arm is the one cell where the campaign recorded a loss, and it is the reading most exposed to the harness, since the handicap it carried is the same absolute number whether the tree is capped or not. Lifting the depth cap doubles the round count from 25,500 to 51,100, because every leaf the tree creates must be found rather than skipped at the cap. Decisions 97 and 98 read this cell as bonsai faster at matched knobs and slower at matched accuracy; on the fixed harness the finding inverts: bonsai leads the uncapped cell by 34% at equal accuracy.
 
@@ -163,14 +163,14 @@ The uncapped arm is the one cell where the campaign recorded a loss, and it is t
 | lgbm cuda | 36.8s | 0.8858 | 31.7s |
 
 
-Two things other than the ingest path differ between this ladder and the published ones, and both are priced rather than argued. The rows of both published ladders carry profile blocks, because the bench driver turns the four counters on for every bonsai child and neither ladder could turn them off; this ladder ran with them off, and running it both ways puts the counters at 0% to 2% of leafwise fit. The `--data-cache` memmap the campaign ladders and this one all used costs more than that: dropping it at 16M, the protocol the standings run, takes leafwise fit down another 12%. What is left is the rental, 18% on identical protocol.
+Two things other than the ingest path differ between this ladder and the published ones, and both are priced rather than argued. The rows of both published ladders carry profile blocks, because the bench driver turns the four counters on for every bonsai child and neither ladder could turn them off; this ladder ran with them off, and running it both ways puts the counters at 0% to 2% of leafwise fit. The `--data-cache` memmap the campaign ladders and this one all used costs more than that: dropping it at 16M, the protocol the standings run, takes leafwise fit down another 12%. What is left is the rental, 17% on identical protocol.
 
 | 16M x 100, capped | cuda leafwise | cuda dw (anchor) |
 |---|---|---|
 | this ladder (cached, counters off) | 18.7s | 15.8s |
 | counters on | 18.8s | 16.0s |
 | counters on, no data cache | 16.5s | 13.7s |
-| standings pod (counters on, no data cache) | 14.0s | 12.3s |
+| standings pod (counters on, no data cache) | 14.1s | 12.2s |
 
 
 *Source: [`leafwise-correction-2026-08.jsonl`](../../../benchmarks/results/leafwise-correction-2026-08.jsonl). One pod (L40S, US-NC-1, 2026-08-03), SCALING knobs at 100 iters and 256 leaves, best of 2 reps, on the fixed ingest path; evidence for decision 100. CPU `leafwise` binned on the host in every run and is unaffected, so it is cited from the admission ladder rather than re-measured.*

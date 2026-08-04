@@ -763,17 +763,15 @@ def _fmt_cell(best: dict, rows: int, cols: int, variant: str) -> str:
     return fit_r2_str(r)
 
 
-# The ingest/train split (issue #301): committed rows carry both for the
-# reference libraries. The bonsai runner now measures the two-step path too,
-# but these rows predate that change, so bonsai's stay `None` until the next
-# refresh measures them.
+# The ingest/train split (issue #301): committed rows carry both for every
+# arm, bonsai included since the two-step runner refresh.
 BONSAI_SPLIT_NOTE = (
-    "bonsai's ingest and train read `-` above: these rows were measured "
-    "through one fused `train(pairs, X, y)` call, which has no point inside "
-    "it to split. The runner now fits through `Dataset(..., device=...)` "
-    "plus `train(pairs, ds)` and reports the split like every other arm, so "
-    "the next standings refresh fills this column; until then only the total "
-    "in the fit table above is measured for it.")
+    "bonsai's split comes from the two-step `Dataset(..., device=...)` plus "
+    "`train(pairs, ds)` form, which for a cuda arm bins on the device "
+    "exactly where the fused call does; every refresh fits the anchor cell "
+    "both ways, interleaved on the same pod, and the supersession is gated "
+    "on their agreement, so the seam these columns report belongs to the "
+    "same pipeline the total measures.")
 CATBOOST_INGEST_NOTE = (
     "CatBoost's `Pool()` step only wraps the raw arrays; it quantizes "
     "inside `fit`, so its ingest column reads low and that cost sits in "

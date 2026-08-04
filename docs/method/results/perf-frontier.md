@@ -6,44 +6,44 @@
 
 ![Accuracy vs fit time at 16M rows](../assets/gpu-pareto-16M.svg)
 
-`ingest_s` and `train_s` are the split behind `fit_s` (issue #301). bonsai's ingest and train read `-` above: these rows were measured through one fused `train(pairs, X, y)` call, which has no point inside it to split. The runner now fits through `Dataset(..., device=...)` plus `train(pairs, ds)` and reports the split like every other arm, so the next standings refresh fills this column; until then only the total in the fit table above is measured for it. CatBoost's `Pool()` step only wraps the raw arrays; it quantizes inside `fit`, so its ingest column reads low and that cost sits in train instead (issue #253). Its total is the only number directly comparable to the other libraries' split.
+`ingest_s` and `train_s` are the split behind `fit_s` (issue #301). bonsai's split comes from the two-step `Dataset(..., device=...)` plus `train(pairs, ds)` form, which for a cuda arm bins on the device exactly where the fused call does; every refresh fits the anchor cell both ways, interleaved on the same pod, and the supersession is gated on their agreement, so the seam these columns report belongs to the same pipeline the total measures. CatBoost's `Pool()` step only wraps the raw arrays; it quantizes inside `fit`, so its ingest column reads low and that cost sits in train instead (issue #253). Its total is the only number directly comparable to the other libraries' split.
 
 | variant | iters | ingest_s | train_s | fit_s | test r2 |
 |---|---|---|---|---|---|
-| bonsai_cuda_depthwise | 60 | 1.3 | 7.0 | 8.30 | 0.8459 |
-| bonsai_cuda_depthwise | 80 | 1.3 | 9.0 | 10.29 | 0.8669 |
-| bonsai_cuda_depthwise | 100 | 1.0 | 11.0 | 12.03 | 0.8777 |
-| bonsai_cuda_depthwise | 130 | 1.1 | 13.8 | 14.89 | 0.8859 |
-| bonsai_cuda_depthwise | 200 | 1.2 | 20.2 | 21.40 | 0.8918 |
-| bonsai_cuda_depthwise | 300 | 1.1 | 28.1 | 29.19 | 0.8934 |
-| bonsai_cuda_oblivious | 60 | 1.1 | 6.3 | 7.37 | 0.8386 |
-| bonsai_cuda_oblivious | 80 | 1.1 | 7.9 | 9.02 | 0.8613 |
-| bonsai_cuda_oblivious | 100 | 1.3 | 9.5 | 10.77 | 0.8743 |
-| bonsai_cuda_oblivious | 130 | 1.0 | 11.7 | 12.76 | 0.8852 |
-| bonsai_cuda_oblivious | 200 | 1.1 | 16.4 | 17.51 | 0.8946 |
-| bonsai_cuda_oblivious | 300 | 1.0 | 22.7 | 23.73 | 0.8973 |
-| bonsai_cuda_oblivious | 450 | 1.1 | 31.3 | 32.39 | 0.8979 |
-| bonsai_cuda_leafwise | 60 | 1.1 | 8.0 | 9.06 | 0.8459 |
-| bonsai_cuda_leafwise | 80 | 1.1 | 10.3 | 11.41 | 0.8669 |
-| bonsai_cuda_leafwise | 100 | 1.1 | 12.6 | 13.71 | 0.8777 |
-| bonsai_cuda_leafwise | 130 | 1.1 | 16.0 | 17.05 | 0.8859 |
-| bonsai_cuda_leafwise | 200 | 1.0 | 23.5 | 24.51 | 0.8918 |
-| bonsai_cuda_leafwise | 300 | 1.1 | 33.2 | 34.26 | 0.8934 |
-| xgb_cuda | 100 | 30.8 | 7.0 | 37.76 | 0.8779 |
-| xgb_cuda | 150 | 28.8 | 10.2 | 39.07 | 0.8887 |
-| xgb_cuda | 200 | 30.1 | 13.4 | 43.47 | 0.8918 |
-| xgb_cuda | 300 | 28.9 | 18.8 | 47.71 | 0.8933 |
-| catboost_gpu | 100 | 4.2 | 19.5 | 23.77 | 0.8751 |
-| catboost_gpu | 150 | 4.2 | 24.0 | 28.18 | 0.8892 |
-| catboost_gpu | 200 | 4.2 | 27.5 | 31.72 | 0.8944 |
-| catboost_gpu | 300 | 4.2 | 35.7 | 39.94 | 0.8973 |
-| catboost_gpu | 450 | 4.2 | 46.1 | 50.28 | 0.8980 |
-| lgbm_cuda | 100 | 14.6 | 15.6 | 30.20 | 0.8847 |
-| lgbm_cuda | 150 | 14.7 | 21.7 | 36.36 | 0.8910 |
-| lgbm_cuda | 200 | 15.2 | 27.2 | 42.42 | 0.8924 |
-| lgbm_cuda | 300 | 16.5 | 38.6 | 55.11 | 0.8930 |
+| bonsai_cuda_depthwise | 60 | 1.7 | 7.0 | 8.75 | 0.8459 |
+| bonsai_cuda_depthwise | 80 | 1.2 | 9.0 | 10.24 | 0.8669 |
+| bonsai_cuda_depthwise | 100 | 1.2 | 11.0 | 12.19 | 0.8777 |
+| bonsai_cuda_depthwise | 130 | 1.2 | 13.8 | 15.02 | 0.8859 |
+| bonsai_cuda_depthwise | 200 | 1.2 | 20.1 | 21.34 | 0.8918 |
+| bonsai_cuda_depthwise | 300 | 1.2 | 28.1 | 29.30 | 0.8934 |
+| bonsai_cuda_oblivious | 60 | 1.2 | 6.3 | 7.51 | 0.8386 |
+| bonsai_cuda_oblivious | 80 | 1.2 | 7.9 | 9.15 | 0.8613 |
+| bonsai_cuda_oblivious | 100 | 1.2 | 9.5 | 10.71 | 0.8743 |
+| bonsai_cuda_oblivious | 130 | 1.2 | 11.7 | 12.97 | 0.8852 |
+| bonsai_cuda_oblivious | 200 | 1.2 | 16.5 | 17.64 | 0.8946 |
+| bonsai_cuda_oblivious | 300 | 1.2 | 22.7 | 23.87 | 0.8973 |
+| bonsai_cuda_oblivious | 450 | 1.2 | 31.3 | 32.53 | 0.8979 |
+| bonsai_cuda_leafwise | 60 | 1.3 | 8.1 | 9.34 | 0.8459 |
+| bonsai_cuda_leafwise | 80 | 1.3 | 10.4 | 11.69 | 0.8669 |
+| bonsai_cuda_leafwise | 100 | 1.2 | 12.7 | 13.96 | 0.8777 |
+| bonsai_cuda_leafwise | 130 | 1.2 | 16.1 | 17.30 | 0.8859 |
+| bonsai_cuda_leafwise | 200 | 1.2 | 23.6 | 24.82 | 0.8918 |
+| bonsai_cuda_leafwise | 300 | 1.3 | 33.5 | 34.74 | 0.8934 |
+| xgb_cuda | 100 | 17.4 | 7.0 | 24.42 | 0.8779 |
+| xgb_cuda | 150 | 16.7 | 10.1 | 26.77 | 0.8887 |
+| xgb_cuda | 200 | 17.6 | 13.2 | 30.87 | 0.8918 |
+| xgb_cuda | 300 | 17.4 | 18.9 | 36.22 | 0.8933 |
+| catboost_gpu | 100 | 5.1 | 17.9 | 22.98 | 0.8751 |
+| catboost_gpu | 150 | 5.1 | 22.1 | 27.23 | 0.8892 |
+| catboost_gpu | 200 | 5.1 | 26.3 | 31.32 | 0.8944 |
+| catboost_gpu | 300 | 5.0 | 34.7 | 39.69 | 0.8973 |
+| catboost_gpu | 450 | 5.2 | 46.2 | 51.38 | 0.8980 |
+| lgbm_cuda | 100 | 12.3 | 16.3 | 28.59 | 0.8847 |
+| lgbm_cuda | 150 | 12.5 | 22.5 | 34.99 | 0.8910 |
+| lgbm_cuda | 200 | 12.7 | 28.4 | 41.11 | 0.8924 |
+| lgbm_cuda | 300 | 12.7 | 38.5 | 51.22 | 0.8930 |
 
-*Source: [`gpu-pareto-16M-2026-08.jsonl`](../../../benchmarks/results/gpu-pareto-16M-2026-08.jsonl). bonsai is first to every measured accuracy across the grid (terminal accuracies tie within the noise band) and its marginal round cost stays below CatBoost's on the same pod. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../../benchmarks/gpu-pareto-16M-2026-07.md). Measured at `ce122b8` (2026-08-03, pod-NVIDIA-L40S).*
+*Source: [`gpu-pareto-16M-2026-08.jsonl`](../../../benchmarks/results/gpu-pareto-16M-2026-08.jsonl). bonsai is first to every measured accuracy across the grid (terminal accuracies tie within the noise band) and its marginal round cost stays below CatBoost's on the same pod. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../../benchmarks/gpu-pareto-16M-2026-07.md). Measured at `3599365` (2026-08-04, pod-NVIDIA-L40S).*
 
 ### Ordered boosting at scale (CatBoost door)
 

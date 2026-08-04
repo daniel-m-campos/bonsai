@@ -2,17 +2,17 @@
   "_": "The standings registry (results-lifecycle policy, decision 92). One entry per published perf/quality axis: the current-standings file, the single sha its rows were measured at (null = refresh required), and the release it was refreshed for. Gates: scripts/check_standings.py; supersession is in place, git history is the archive.",
   "rows": {
     "file": "rebaseline-2026-08.jsonl",
-    "sha": "ce122b8",
+    "sha": "3599365",
     "host": "pod-NVIDIA-L40S",
-    "date": "2026-08-03",
+    "date": "2026-08-04",
     "refreshed_for": "1.6.1",
     "as_of_decision": 94
   },
   "width": {
     "file": "cols-rebaseline-2026-08.jsonl",
-    "sha": "ce122b8",
+    "sha": "3599365",
     "host": "pod-NVIDIA-L40S",
-    "date": "2026-08-03",
+    "date": "2026-08-04",
     "refreshed_for": "1.6.1",
     "as_of_decision": 94
   },
@@ -27,17 +27,17 @@
   },
   "frontier": {
     "file": "gpu-pareto-16M-2026-08.jsonl",
-    "sha": "ce122b8",
+    "sha": "3599365",
     "host": "pod-NVIDIA-L40S",
-    "date": "2026-08-03",
+    "date": "2026-08-04",
     "refreshed_for": "1.6.1",
     "as_of_decision": 94
   },
   "airline": {
     "file": "airline-2026-08.jsonl",
-    "sha": "ce122b8",
+    "sha": "3599365",
     "host": "pod-NVIDIA-L40S",
-    "date": "2026-08-03",
+    "date": "2026-08-04",
     "refreshed_for": "1.6.1",
     "as_of_decision": 94
   },
