@@ -78,6 +78,15 @@ struct CudaDeviceContext
 
         DatasetKey key;
 
+        // Tile-blocked duplicate of the same cells (research probe): built
+        // beside the feature-major plane, never instead of it, so every
+        // consumer but the depthwise histogram kernel is untouched.
+        // tiled_w is the width it was built with, 0 when there is none.
+        DeviceBuffer<uint8_t>  tiled8;
+        DeviceBuffer<uint16_t> tiled16;
+        uint32_t               tiled_w = 0;
+        DatasetKey             tiled_key;
+
         uint32_t const *n_bins_ptr() const
         {
             return adopted ? adopted->n_bins.data() : n_bins.data();
@@ -95,6 +104,36 @@ struct CudaDeviceContext
             else
             {
                 std::forward<F>(fn)(adopted ? adopted->bins16.data() : bins16.data());
+            }
+        }
+
+        // Both planes at once with matching cell types, for the one consumer
+        // that reads the feature-major plane and writes the tiled one:
+        // nesting the two dispatchers would instantiate mismatched pairs.
+        template <typename F> void dispatch_both(F &&fn)
+        {
+            if (bins_are_u8)
+            {
+                std::forward<F>(fn)(adopted ? adopted->bins8.data() : bins8.data(),
+                                    tiled8.data());
+            }
+            else
+            {
+                std::forward<F>(fn)(adopted ? adopted->bins16.data() : bins16.data(),
+                                    tiled16.data());
+            }
+        }
+
+        // Same branch over the tiled duplicate; valid only while tiled_w != 0.
+        template <typename F> void dispatch_tiled(F &&fn)
+        {
+            if (bins_are_u8)
+            {
+                std::forward<F>(fn)(tiled8.data());
+            }
+            else
+            {
+                std::forward<F>(fn)(tiled16.data());
             }
         }
     };
@@ -314,6 +353,13 @@ struct CudaDeviceContext
     size_t shared_limit  = k_max_shared_bytes;
     bool   shared_probed = false;
 
+    // The tiled-plane probe: the requested width, whether the current tree's
+    // depthwise build may use it, and whether the decision has been reported.
+    // tile_w goes to 0 for good if the duplicate does not fit the device.
+    uint32_t tile_w      = hist_tile_env();
+    bool     tile_active = false;
+    bool     tile_noted  = false;
+
     // The one histogram-capacity predicate: a node's per-feature scratch is
     // 4 * bins floats in shared memory. begin_root declines a tree with it,
     // and resident_begin must apply the SAME test (once per fit, on the
@@ -345,6 +391,19 @@ struct CudaDeviceContext
 
     void init_shared_limit();
     void ensure_dataset(Dataset const &dataset);
+    // The feature-major plane alone, exactly as it was before the probe;
+    // ensure_dataset adds the tiled duplicate on top of it.
+    void ensure_dataset_plane(Dataset const &dataset);
+    void ensure_tiled_plane();
+    // The tiled probe's whole decline predicate, decided once per tree in
+    // begin_root and read only by the two depthwise histogram launches.
+    bool tile_usable();
+    void note_tile(bool active, char const *why);
+    // The depthwise plane's one histogram-launch site, root and advance both.
+    void launch_level_hist(uint32_t ds_rows, uint32_t n_nodes, uint32_t n_chunks,
+                           float2 const *gh, uint32_t const *rows,
+                           uint32_t const *offsets, uint32_t const *counts, double *out,
+                           uint32_t const *slots);
     // Fills lvl.rows with the tree's root row segment and returns its length: a
     // full-data fit restores the cached identity permutation device-to-device
     // (built once by iota_kernel), any other row list uploads. Shared by the

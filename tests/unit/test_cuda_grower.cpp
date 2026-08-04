@@ -22,10 +22,17 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <numeric>
 #include <random>
 #include <set>
+#include <string>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -174,6 +181,106 @@ TEST_CASE("CudaDepthwiseGrower predictions match DepthwiseGrower", "[cuda][growe
     for (size_t r = 0; r < cpu.values.size(); ++r)
     {
         REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
+    }
+}
+
+// Ten features, so a tile width of 4 or 8 leaves a narrow tail tile: the one
+// asymmetric case in the block layout. Otherwise the shape of
+// random_scenario, NaN column included.
+test::ScenarioInputs tile_scenario()
+{
+    std::mt19937                          rng(13);
+    std::uniform_real_distribution<float> value(0.0F, 1.0F);
+    std::normal_distribution<float>       gradient(0.0F, 1.0F);
+    size_t const                          n     = 4096;
+    size_t const                          feats = 10;
+
+    detail::ColumnBatch batch;
+    batch.features.resize(feats, std::vector<float>(n));
+    batch.feature_names = {"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"};
+    batch.labels.assign(n, 0.0F);
+    std::vector<float> grad(n);
+    std::vector<float> hess(n);
+    for (size_t r = 0; r < n; ++r)
+    {
+        for (size_t f = 0; f < feats; ++f)
+        {
+            batch.features[f][r] = f == 3 ? std::round(value(rng) * 8.0F) : value(rng);
+        }
+        batch.features[7][r] =
+            (r % 5 == 0) ? std::numeric_limits<float>::quiet_NaN() : value(rng);
+        grad[r] = gradient(rng);
+        hess[r] = 0.5F + value(rng);
+    }
+    return {.built = test::build(std::move(batch)),
+            .grad  = std::move(grad),
+            .hess  = std::move(hess),
+            .rows  = test::iota_rows(n)};
+}
+
+// Runs fn with stderr redirected to a file and returns what it wrote. The
+// tiled probe's engagement line is the only proof the toggle did anything:
+// a fit that declined is identical to the baseline, so an equality assertion
+// alone passes whether or not the layout was ever read.
+template <typename F> std::string capture_stderr(F &&fn)
+{
+    auto const path = std::filesystem::temp_directory_path() / "bonsai-tile-probe.log";
+    std::fflush(stderr);
+    int const saved = dup(fileno(stderr));
+    REQUIRE(saved >= 0);
+    REQUIRE(std::freopen(path.string().c_str(), "w", stderr) != nullptr);
+    fn();
+    std::fflush(stderr);
+    dup2(saved, fileno(stderr));
+    close(saved);
+    std::ifstream in(path);
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+TEST_CASE("Tiled bin plane matches the feature-major build", "[cuda][grower]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    auto        scenario = tile_scenario();
+    auto const &ds       = scenario.built.ds;
+
+    TreeConfig cfg;
+    cfg.max_depth        = 5;
+    cfg.min_data_in_leaf = 4;
+
+    // The layout changes the accumulation order and nothing else, so the arms
+    // are tolerance-equal rather than bit-equal. BONSAI_HIST_TILE is read when
+    // the grower builds its engine, so each arm sets it before construction.
+    unsetenv("BONSAI_HIST_TILE");
+    unsetenv("BONSAI_CUDA_PROFILE");
+    CudaDepthwiseGrower plain(cfg);
+    auto const base = plain.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+
+    for (char const *width : {"4", "8"})
+    {
+        setenv("BONSAI_HIST_TILE", width, 1);
+        setenv("BONSAI_CUDA_PROFILE", "1", 1); // the engagement line rides the profile
+        std::vector<float> tiled;
+        auto const         log = capture_stderr(
+            [&]
+            {
+                CudaDepthwiseGrower grower(cfg);
+                tiled =
+                    grower.grow(ds, scenario.grad, scenario.hess, scenario.rows).values;
+            });
+        unsetenv("BONSAI_HIST_TILE");
+        unsetenv("BONSAI_CUDA_PROFILE");
+
+        INFO("BONSAI_HIST_TILE=" << width << ", stderr was:\n" << log);
+        REQUIRE(log.find("BONSAI_HIST_TILE=" + std::string(width) + " active") !=
+                std::string::npos);
+        REQUIRE(base.values.size() == tiled.size());
+        for (size_t r = 0; r < base.values.size(); ++r)
+        {
+            REQUIRE_THAT(tiled[r], Catch::Matchers::WithinAbs(base.values[r], 1e-4));
+        }
     }
 }
 

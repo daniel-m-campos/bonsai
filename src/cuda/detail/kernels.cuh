@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cuda.h>
+#include <type_traits>
 
 #include <vector_types.h>
 
@@ -132,6 +133,191 @@ __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
         {
             atomicAdd(&o[i], static_cast<double>(v));
         }
+    }
+}
+
+// --- The tiled-plane probe (BONSAI_HIST_TILE) -------------------------------
+// Layout, byte for byte the host mirror's block scheme (Dataset::
+// row_major_bins): feature f lives in tile t = f / W at strip position
+// j = f % W, tile t starts at cell n_rows * t * W, and one row's strip
+// inside it is W_t cells wide, where W_t = min(W, n_feats - t * W) is the
+// tail-aware width. A row's W_t bin ids are then adjacent, which is the
+// whole point: one sector serves 32 / W_t rows instead of one.
+
+// Tile widths the launcher instantiates. The kernel takes the width as a
+// template parameter, so the strip loop unrolls and the strip stays in
+// registers; a runtime width would spill it to local memory and price the
+// layout against a spill instead of against the gather.
+constexpr uint32_t k_hist_tile_max = 16;
+
+// The tail-aware strip width of tile t.
+inline __host__ __device__ uint32_t tile_width(uint32_t t, uint32_t w, uint32_t n_feats)
+{
+    uint32_t const tail = n_feats - (t * w);
+    return tail < w ? tail : w;
+}
+
+// Builds the tiled duplicate: one thread per (row, tile) reads W_t cells
+// down the feature-major plane and writes them adjacent. Reads coalesce
+// across the row axis; the strided writes are paid once per dataset.
+template <typename BinT>
+__global__ void tile_bins_kernel(BinT const *bins, uint32_t n_rows, uint32_t n_feats,
+                                 uint32_t w, uint32_t row0, uint32_t rows, BinT *out)
+{
+    uint32_t const span  = gridDim.x * blockDim.x;
+    uint32_t const tiles = (n_feats + w - 1) / w;
+    for (uint32_t i = (blockIdx.x * blockDim.x) + threadIdx.x; i < rows * tiles;
+         i += span)
+    {
+        uint32_t const t  = i / rows;
+        uint32_t const r  = row0 + (i % rows);
+        uint32_t const wt = tile_width(t, w, n_feats);
+        BinT          *dst =
+            out + (static_cast<size_t>(n_rows) * t * w) + (static_cast<size_t>(r) * wt);
+        for (uint32_t j = 0; j < wt; ++j)
+        {
+            dst[j] = bins[(static_cast<size_t>((t * w) + j) * n_rows) + r];
+        }
+    }
+}
+
+// One row's strip of a full tile. At 4, 8, or 16 bytes it is a single
+// aligned vector load: the tile base is a multiple of W cells and a row
+// starts at r * W, so the strip address carries the strip's own alignment.
+template <typename BinT, uint32_t W>
+inline __device__ void load_strip(BinT const *sp, BinT *strip)
+{
+    constexpr size_t bytes = W * sizeof(BinT);
+    if constexpr (bytes == 4)
+    {
+        *reinterpret_cast<uint32_t *>(strip) = *reinterpret_cast<uint32_t const *>(sp);
+    }
+    else if constexpr (bytes == 8)
+    {
+        *reinterpret_cast<uint2 *>(strip) = *reinterpret_cast<uint2 const *>(sp);
+    }
+    else if constexpr (bytes == 16)
+    {
+        *reinterpret_cast<uint4 *>(strip) = *reinterpret_cast<uint4 const *>(sp);
+    }
+    else
+    {
+#pragma unroll
+        for (uint32_t j = 0; j < W; ++j)
+        {
+            strip[j] = sp[j];
+        }
+    }
+}
+
+// The tiled twin of hist_kernel. Grid is (tile, node, row-chunk), and the
+// caller guarantees the selection is the identity, so tile t holds features
+// [t * W, t * W + W_t) and n_bins is indexed by absolute feature id. Shared
+// is W * stride floats, one sub-histogram per tile feature with NO warp
+// parity duplication: at W = 8 and 255 bins that is 16 KiB, which keeps the
+// 6-blocks-per-SM occupancy the one-feature kernel runs at.
+template <typename BinT, uint32_t W>
+__global__ void hist_tile_kernel(BinT const *tiled, float2 const *gh_ordered,
+                                 uint32_t const *rows, uint32_t const *row_offsets,
+                                 uint32_t const *row_counts, uint32_t const *n_bins,
+                                 uint32_t n_rows, uint32_t n_sel, double *out,
+                                 uint32_t stride, uint32_t const *out_slot)
+{
+    extern __shared__ float sh[];
+    uint32_t const          t    = blockIdx.x;
+    uint32_t const          f0   = t * W;
+    uint32_t const          wt   = tile_width(t, W, n_sel);
+    uint32_t const          node = blockIdx.y;
+    for (uint32_t i = threadIdx.x; i < wt * stride; i += blockDim.x)
+    {
+        sh[i] = 0.0F;
+    }
+    __syncthreads();
+    uint32_t const  offset = row_offsets[node];
+    uint32_t const *nrows  = rows + offset;
+    float2 const   *ngh    = gh_ordered + offset;
+    uint32_t const  count  = row_counts[node];
+    uint32_t const  span   = gridDim.z * blockDim.x;
+    BinT const     *tp     = tiled + (static_cast<size_t>(n_rows) * t * W);
+    for (uint32_t k = (blockIdx.z * blockDim.x) + threadIdx.x; k < count; k += span)
+    {
+        float2 const v  = ngh[k];
+        BinT const  *sp = tp + (static_cast<size_t>(nrows[k]) * wt);
+        BinT         strip[W];
+        if (wt == W)
+        {
+            load_strip<BinT, W>(sp, strip);
+        }
+        else
+        {
+#pragma unroll
+            for (uint32_t j = 0; j < W; ++j)
+            {
+                strip[j] = j < wt ? sp[j] : BinT{};
+            }
+        }
+#pragma unroll
+        for (uint32_t j = 0; j < W; ++j)
+        {
+            if (j < wt)
+            {
+                float *my = sh + (static_cast<size_t>(j) * stride);
+                atomicAdd(&my[pair_off(strip[j])], v.x);
+                atomicAdd(&my[pair_off(strip[j]) + 1], v.y);
+            }
+        }
+    }
+    __syncthreads();
+    uint32_t const oslot = out_slot != nullptr ? out_slot[node] : node;
+    for (uint32_t j = 0; j < wt; ++j)
+    {
+        float const *base = sh + (static_cast<size_t>(j) * stride);
+        double *o = out + (((static_cast<size_t>(oslot) * n_sel) + f0 + j) * stride);
+        uint32_t const nb = n_bins[f0 + j];
+        for (uint32_t i = threadIdx.x; i < 2 * nb; i += blockDim.x)
+        {
+            if (base[i] != 0.0F)
+            {
+                atomicAdd(&o[i], static_cast<double>(base[i]));
+            }
+        }
+    }
+}
+
+// The offered widths, in one place: the launcher instantiates these and the
+// decline note names them. False means the width is not one of them.
+template <typename BinT>
+inline bool launch_hist_tiled(uint32_t w, dim3 grid, size_t shared, BinT const *tiled,
+                              float2 const *gh_ordered, uint32_t const *rows,
+                              uint32_t const *row_offsets, uint32_t const *row_counts,
+                              uint32_t const *n_bins, uint32_t n_rows, uint32_t n_sel,
+                              double *out, uint32_t stride, uint32_t const *out_slot)
+{
+    auto launch = [&]<uint32_t W>(std::integral_constant<uint32_t, W>)
+    {
+        hist_tile_kernel<BinT, W><<<grid, dim3(256), shared>>>(
+            tiled, gh_ordered, rows, row_offsets, row_counts, n_bins, n_rows, n_sel,
+            out, stride, out_slot);
+    };
+    switch (w)
+    {
+    case 1:
+        launch(std::integral_constant<uint32_t, 1>{});
+        return true;
+    case 2:
+        launch(std::integral_constant<uint32_t, 2>{});
+        return true;
+    case 4:
+        launch(std::integral_constant<uint32_t, 4>{});
+        return true;
+    case 8:
+        launch(std::integral_constant<uint32_t, 8>{});
+        return true;
+    case k_hist_tile_max:
+        launch(std::integral_constant<uint32_t, k_hist_tile_max>{});
+        return true;
+    default:
+        return false;
     }
 }
 

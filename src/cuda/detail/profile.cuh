@@ -25,6 +25,9 @@ struct ProfileCounters
     double part_stage_s = 0, adv_stage_s = 0, find_stage_s = 0, lfind_stage_s = 0;
     double gh_upload_s = 0, root_stage_s = 0, gpu_wait_s = 0;
     double bins_upload_s = 0, fin_wait_s = 0, fin_d2h_s = 0;
+    // The tiled-plane probe's once-per-dataset transpose, reported on its own
+    // so the probe's kernel metric cannot be read as including it.
+    double tile_build_s = 0;
     double find_kern_s = 0, find_d2h_s = 0;
     // Marginal-round decomposition: device-side spans from event pairs read at
     // the next profile sync, plus the begin_root host reduction, so every
@@ -83,11 +86,12 @@ struct ProfileCounters
                          "cuda-upload-decomp: gh={:.2f}s root_stage={:.2f}s "
                          "part_stage={:.2f}s adv_stage={:.2f}s find_stage={:.2f}s "
                          "lfind_stage={:.2f}s gpu_wait={:.2f}s legacy={:.2f}s "
-                         "bins_upload={:.2f}s fin_wait={:.2f}s fin_d2h={:.2f}s "
-                         "find_kern={:.2f}s find_d2h={:.2f}s",
+                         "bins_upload={:.2f}s tile_build={:.2f}s fin_wait={:.2f}s "
+                         "fin_d2h={:.2f}s find_kern={:.2f}s find_d2h={:.2f}s",
                          gh_upload_s, root_stage_s, part_stage_s, adv_stage_s,
                          find_stage_s, lfind_stage_s, gpu_wait_s, upload_s,
-                         bins_upload_s, fin_wait_s, fin_d2h_s, find_kern_s, find_d2h_s);
+                         bins_upload_s, tile_build_s, fin_wait_s, fin_d2h_s,
+                         find_kern_s, find_d2h_s);
             std::println(stderr,
                          "cuda-round-decomp: root_sums={:.2f}s root_hist={:.2f}s "
                          "adv_memset={:.2f}s adv_hist={:.2f}s adv_sub={:.2f}s "

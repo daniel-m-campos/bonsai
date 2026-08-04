@@ -22,6 +22,7 @@
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <memory>
+#include <print>
 #include <span>
 #include <stdexcept>
 #include <utility>
@@ -302,7 +303,166 @@ void CudaDeviceContext::init_shared_limit()
     cudaGetLastError(); // clear any sticky attribute error
 }
 
+// Says once per context which way the tiled probe went, ACTIVE included: a
+// silent fallback makes every arm of a sweep the baseline and reads as a
+// measurement.
+void CudaDeviceContext::note_tile(bool active, char const *why)
+{
+    if (tile_w == 0 || tile_noted || !prof_counters.enabled)
+    {
+        return;
+    }
+    tile_noted = true;
+    std::println(stderr, "bonsai: BONSAI_HIST_TILE={} {}: {}", tile_w,
+                 active ? "active" : "declined", why);
+}
+
+// The tiled duplicate, built once per dataset when the probe asks for it.
+// The transpose is timed into its own lap: the shipping layout would have no
+// build at all, so folding it into the histogram metric would flatter or
+// damn the probe for a cost the lever does not carry.
+void CudaDeviceContext::ensure_tiled_plane()
+{
+    if (tile_w == 0 || (data.tiled_w == tile_w && data.tiled_key == data.key))
+    {
+        return;
+    }
+    data.tiled_w            = 0;
+    auto const   n_rows     = static_cast<uint32_t>(data.key.n_rows);
+    auto const   n_feats    = static_cast<uint32_t>(data.key.n_feats);
+    size_t const cells      = data.key.n_rows * data.key.n_feats;
+    size_t const width      = data.bins_are_u8 ? sizeof(uint8_t) : sizeof(uint16_t);
+    size_t       free_bytes = 0;
+    size_t       total      = 0;
+    if (n_rows == 0 || n_feats == 0 ||
+        cudaMemGetInfo(&free_bytes, &total) != cudaSuccess ||
+        cells * width > free_bytes / 2)
+    {
+        // The duplicate is the probe's whole memory cost and it has no
+        // shipping form, so a device that cannot hold it declines the probe
+        // rather than failing the fit.
+        note_tile(false, "the tiled duplicate does not fit this device");
+        tile_w = 0;
+        return;
+    }
+    auto lap = prof_counters.lap();
+    if (data.bins_are_u8)
+    {
+        data.tiled8.reserve(cells);
+    }
+    else
+    {
+        data.tiled16.reserve(cells);
+    }
+    // Chunked by rows only to keep each launch's cell count inside uint32.
+    uint32_t const tiles = (n_feats + tile_w - 1) / tile_w;
+    auto const     rows_per_chunk =
+        static_cast<uint32_t>(std::max<size_t>(1, (1UL << 28) / tiles));
+    data.dispatch_both(
+        [&](auto const *bins, auto *tiled)
+        {
+            for (uint32_t row0 = 0; row0 < n_rows; row0 += rows_per_chunk)
+            {
+                uint32_t const rows = std::min(rows_per_chunk, n_rows - row0);
+                dim3 const     grid(
+                    std::clamp<uint32_t>(((rows * tiles) + 255) / 256, 1, 4096));
+                tile_bins_kernel<<<grid, dim3(256)>>>(bins, n_rows, n_feats, tile_w,
+                                                      row0, rows, tiled);
+            }
+        });
+    check(cudaGetLastError(), "tile build launch");
+    if (prof_counters.enabled)
+    {
+        check(cudaDeviceSynchronize(), "tile build wait");
+    }
+    lap(prof_counters.tile_build_s);
+    data.tiled_w   = tile_w;
+    data.tiled_key = data.key;
+}
+
+// Depthwise plane only, identity selection only (a tile holds the features
+// its position names, so a subsampled selection would histogram the wrong
+// columns), an offered width, and W sub-histograms inside the 48 KiB static
+// budget so the launch never needs a shared-memory opt-in.
+bool CudaDeviceContext::tile_usable()
+{
+    if (tile_w == 0)
+    {
+        return false;
+    }
+    if (data.tiled_w != tile_w)
+    {
+        note_tile(false, "no tiled plane for this dataset");
+        return false;
+    }
+    if (tile_w > k_hist_tile_max || (tile_w & (tile_w - 1)) != 0)
+    {
+        note_tile(false, "width is not one of 1, 2, 4, 8, 16");
+        return false;
+    }
+    size_t const shared = static_cast<size_t>(tile_w) * lvl.stride * sizeof(float);
+    if (shared > k_max_shared_bytes)
+    {
+        note_tile(false, "the tile's sub-histograms miss the 48 KiB static budget");
+        return false;
+    }
+    if (lvl.n_selected != data.key.n_feats)
+    {
+        note_tile(false, "feature selection is not the identity");
+        return false;
+    }
+    for (uint32_t f = 0; f < lvl.n_selected; ++f)
+    {
+        if (lvl.features.host[f] != f)
+        {
+            note_tile(false, "feature selection is not the identity");
+            return false;
+        }
+    }
+    note_tile(true, "tiled depthwise histogram build");
+    return true;
+}
+
+// One entry point for a depthwise level's shared-memory histogram build, so
+// the root and the advance can never disagree about which plane they read:
+// the tiled kernel while the probe is active for this tree, else today's
+// one-feature kernel with the launch it always had.
+void CudaDeviceContext::launch_level_hist(uint32_t ds_rows, uint32_t n_nodes,
+                                          uint32_t n_chunks, float2 const *gh,
+                                          uint32_t const *rows, uint32_t const *offsets,
+                                          uint32_t const *counts, double *out,
+                                          uint32_t const *slots)
+{
+    if (tile_active)
+    {
+        dim3 const   grid((lvl.n_selected + tile_w - 1) / tile_w, n_nodes, n_chunks);
+        size_t const shared = static_cast<size_t>(tile_w) * lvl.stride * sizeof(float);
+        data.dispatch_tiled(
+            [&](auto const *tiled)
+            {
+                launch_hist_tiled(tile_w, grid, shared, tiled, gh, rows, offsets,
+                                  counts, data.n_bins_ptr(), ds_rows, lvl.n_selected,
+                                  out, lvl.stride, slots);
+            });
+        return;
+    }
+    dim3 const grid(lvl.n_selected, n_nodes, n_chunks);
+    data.dispatch_bins(
+        [&](auto const *bins)
+        {
+            hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
+                bins, gh, rows, offsets, counts, lvl.features.device(),
+                data.n_bins_ptr(), ds_rows, lvl.n_selected, out, lvl.stride, slots);
+        });
+}
+
 void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
+{
+    ensure_dataset_plane(dataset);
+    ensure_tiled_plane();
+}
+
+void CudaDeviceContext::ensure_dataset_plane(Dataset const &dataset)
 {
     // Device-binned dataset: adopt its plane — the matrix is already
     // resident; nothing crosses the bus. The plane pointer is the
@@ -477,6 +637,7 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     lvl.stride     = static_cast<uint32_t>(2 * max_sel_bins);
     lvl.features.host.assign(selected.begin(), selected.end());
     lvl.features.sync();
+    tile_active = tile_usable();
 
     // Identity contract: a full-data fit passes empty rows + row_count ==
     // n_rows; the identity never touches the host or the bus (built by
@@ -514,21 +675,14 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     lvl.gh_ordered.reserve(n);
     gather(grads.gh.data(), lvl.rows.data(), n, lvl.gh_ordered.data());
     auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
-    dim3 const grid(lvl.n_selected, 1, n_chunks);
     if (prof_counters.enabled)
     {
         lvl.prof_record_begin(/*root=*/true);
         check(cudaEventRecord(lvl.prof_ev[1]), "profile event record");
     }
-    data.dispatch_bins(
-        [&](auto const *bins)
-        {
-            hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
-                bins, lvl.gh_ordered.data(), lvl.rows.data(), lvl.row_offsets.device(),
-                lvl.row_counts.device(), lvl.features.device(), data.n_bins_ptr(),
-                static_cast<uint32_t>(ds.n_rows()), lvl.n_selected, lvl.cur().data(),
-                lvl.stride, lvl.slots.device());
-        });
+    launch_level_hist(static_cast<uint32_t>(ds.n_rows()), 1, n_chunks,
+                      lvl.gh_ordered.data(), lvl.rows.data(), lvl.row_offsets.device(),
+                      lvl.row_counts.device(), lvl.cur().data(), lvl.slots.device());
     check(cudaGetLastError(), "root hist launch");
     if (prof_counters.enabled)
     {
@@ -746,23 +900,19 @@ void CudaDeviceContext::advance_level(Dataset const                             
     {
         check(cudaEventRecord(lvl.prof_ev[1]), "profile event record");
     }
+    if (!lvl.row_offsets.empty())
+    {
+        auto const n_chunks = std::clamp<uint32_t>(
+            (static_cast<uint32_t>(max_rows) + 32767) / 32768, 1, 64);
+        launch_level_hist(static_cast<uint32_t>(ds.n_rows()),
+                          static_cast<uint32_t>(lvl.row_offsets.size()), n_chunks,
+                          lvl.other_gh().data(), lvl.other_rows().data(),
+                          lvl.row_offsets.device(), lvl.row_counts.device(),
+                          lvl.other().data(), lvl.slots.device());
+    }
     data.dispatch_bins(
         [&](auto const *bins)
         {
-            if (!lvl.row_offsets.empty())
-            {
-                auto const n_chunks = std::clamp<uint32_t>(
-                    (static_cast<uint32_t>(max_rows) + 32767) / 32768, 1, 64);
-                dim3 const grid(lvl.n_selected,
-                                static_cast<uint32_t>(lvl.row_offsets.size()),
-                                n_chunks);
-                hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
-                    bins, lvl.other_gh().data(), lvl.other_rows().data(),
-                    lvl.row_offsets.device(), lvl.row_counts.device(),
-                    lvl.features.device(), data.n_bins_ptr(),
-                    static_cast<uint32_t>(ds.n_rows()), lvl.n_selected,
-                    lvl.other().data(), lvl.stride, lvl.slots.device());
-            }
             if (!lvl.small_offsets.empty())
             {
                 hist_small_kernel<<<
@@ -1025,6 +1175,11 @@ bool CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     lvl.stride             = static_cast<uint32_t>(2 * max_sel_bins);
     lvl.features.host.assign(selected.begin(), selected.end());
     lvl.features.sync();
+    // The leaf plane keeps the one-feature kernel: one node per round would
+    // put a tile-narrowed grid into the regime doc 20's occupancy lever
+    // works in, which is a separate measurement.
+    tile_active = false;
+    note_tile(false, "the leaf plane keeps the one-feature kernel");
     leaf.monotone.host.resize(ds.n_features());
     for (feature_id_t f = 0; f < ds.n_features(); ++f)
     {
