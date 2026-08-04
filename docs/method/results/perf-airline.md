@@ -10,19 +10,19 @@ The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC),
 
 | variant | 0.1m | 1m | 10m |
 |---|---|---|---|
-| bonsai_depthwise | 1.7s / 0.7260 | 3.3s / 0.7447 | 26.9s / 0.7468 |
-| bonsai_oblivious | 1.0s / 0.7218 | 2.5s / 0.7256 | 27.1s / 0.7264 |
-| bonsai_cuda_depthwise | 0.2s / 0.7265 | 0.4s / 0.7447 | 2.1s / 0.7469 |
-| bonsai_cuda_oblivious | 0.7s / 0.7218 | 0.9s / 0.7253 | 2.6s / 0.7264 |
-| bonsai_ts_depthwise | 1.8s / 0.7238 | 5.5s / 0.7462 | 65.2s / 0.7498 |
-| bonsai_ts_oblivious | 1.5s / 0.7247 | 4.8s / 0.7326 | 62.1s / 0.7339 |
-| bonsai_ts_cuda_depthwise | 0.4s / 0.7239 | 2.2s / 0.7458 | 34.7s / 0.7499 |
-| bonsai_ts_cuda_oblivious | 1.0s / 0.7247 | 2.7s / 0.7326 | 34.3s / 0.7339 |
-| xgb_hist | 0.6s / 0.7263 | 2.2s / 0.7430 | 22.1s / 0.7455 |
-| xgb_cuda | 0.2s / 0.7250 | 0.6s / 0.7426 | 3.0s / 0.7466 |
-| lgbm_cpu | 0.9s / 0.7263 | 2.5s / 0.7431 | 12.5s / 0.7463 |
-| catboost_cpu | 0.8s / 0.7167 | 3.8s / 0.7234 | 25.7s / 0.7245 |
-| catboost_gpu | 0.5s / 0.7167 | 1.0s / 0.7229 | 6.4s / 0.7254 |
+| bonsai_depthwise | 2.7s / 0.7260 | 7.5s / 0.7447 | 38.2s / 0.7468 |
+| bonsai_oblivious | 2.0s / 0.7218 | 6.4s / 0.7256 | 36.2s / 0.7264 |
+| bonsai_cuda_depthwise | 0.4s / 0.7264 | 0.8s / 0.7446 | 2.7s / 0.7486 |
+| bonsai_cuda_oblivious | 0.9s / 0.7218 | 1.2s / 0.7256 | 3.2s / 0.7264 |
+| bonsai_ts_depthwise | 3.2s / 0.7238 | 10.1s / 0.7462 | 70.7s / 0.7498 |
+| bonsai_ts_oblivious | 2.5s / 0.7247 | 9.7s / 0.7326 | 67.1s / 0.7339 |
+| bonsai_ts_cuda_depthwise | 0.6s / 0.7234 | 2.9s / 0.7452 | 35.2s / 0.7499 |
+| bonsai_ts_cuda_oblivious | 1.1s / 0.7247 | 3.3s / 0.7326 | 37.3s / 0.7339 |
+| xgb_hist | 0.8s / 0.7263 | 3.3s / 0.7430 | 26.3s / 0.7455 |
+| xgb_cuda | 0.2s / 0.7250 | 0.5s / 0.7426 | 3.3s / 0.7466 |
+| lgbm_cpu | 1.5s / 0.7263 | 4.1s / 0.7431 | 17.3s / 0.7463 |
+| catboost_cpu | 1.0s / 0.7167 | 5.8s / 0.7234 | 24.7s / 0.7245 |
+| catboost_gpu | 0.5s / 0.7167 | 0.9s / 0.7229 | 5.3s / 0.7254 |
 
 **Pafka protocol (depth 10)**, fit seconds / test AUC:
 
@@ -46,18 +46,18 @@ Ingest / train seconds behind the campaign-knob total above (issue #301). bonsai
 
 | variant | 0.1m | 1m | 10m |
 |---|---|---|---|
-| bonsai_depthwise | 0.1s / 1.6s | 0.1s / 3.2s | 0.7s / 26.2s |
-| bonsai_oblivious | 0.1s / 0.9s | 0.1s / 2.4s | 0.7s / 26.4s |
-| bonsai_cuda_depthwise | 0.0s / 0.2s | 0.1s / 0.4s | 0.4s / 1.7s |
-| bonsai_cuda_oblivious | 0.0s / 0.7s | 0.1s / 0.9s | 0.4s / 2.1s |
-| bonsai_ts_depthwise | 0.0s / 1.5s | 0.2s / 3.6s | 0.9s / 32.2s |
-| bonsai_ts_oblivious | 0.0s / 1.1s | 0.1s / 2.8s | 0.9s / 28.8s |
-| bonsai_ts_cuda_depthwise | 0.0s / 0.2s | 0.1s / 0.4s | 0.5s / 1.9s |
-| bonsai_ts_cuda_oblivious | 0.0s / 0.7s | 0.1s / 0.9s | 0.5s / 2.3s |
-| xgb_hist | 0.3s / 0.3s | 0.5s / 1.7s | 1.8s / 20.3s |
-| xgb_cuda | 0.0s / 0.2s | 0.2s / 0.4s | 1.6s / 1.5s |
-| lgbm_cpu | 0.0s / 0.9s | 0.2s / 2.4s | 0.6s / 11.9s |
-| catboost_cpu | 0.0s / 0.7s | 0.3s / 3.5s | 2.7s / 22.9s |
-| catboost_gpu | 0.0s / 0.5s | 0.3s / 0.7s | 2.7s / 3.7s |
+| bonsai_depthwise | 0.0s / 2.7s | 0.1s / 7.4s | 0.6s / 37.5s |
+| bonsai_oblivious | 0.0s / 2.0s | 0.1s / 6.3s | 0.6s / 35.5s |
+| bonsai_cuda_depthwise | 0.0s / 0.3s | 0.0s / 0.7s | 0.4s / 2.3s |
+| bonsai_cuda_oblivious | 0.0s / 0.9s | 0.0s / 1.2s | 0.4s / 2.9s |
+| bonsai_ts_depthwise | 0.0s / 3.0s | 0.1s / 7.8s | 0.9s / 37.0s |
+| bonsai_ts_oblivious | 0.0s / 2.2s | 0.1s / 7.4s | 0.9s / 33.9s |
+| bonsai_ts_cuda_depthwise | 0.0s / 0.3s | 0.1s / 0.6s | 0.4s / 2.4s |
+| bonsai_ts_cuda_oblivious | 0.0s / 0.8s | 0.0s / 1.1s | 0.4s / 2.8s |
+| xgb_hist | 0.2s / 0.6s | 0.3s / 3.0s | 1.9s / 24.3s |
+| xgb_cuda | 0.0s / 0.2s | 0.2s / 0.3s | 1.8s / 1.4s |
+| lgbm_cpu | 0.0s / 1.4s | 0.1s / 4.0s | 0.6s / 16.6s |
+| catboost_cpu | 0.0s / 1.0s | 0.2s / 5.7s | 1.7s / 22.9s |
+| catboost_gpu | 0.0s / 0.4s | 0.2s / 0.7s | 1.7s / 3.6s |
 
-*Source: [`airline-2026-08.jsonl`](../../../benchmarks/results/airline-2026-08.jsonl). A bonsai variant has the best AUC in every cell under both protocols, and bonsai CUDA depthwise is also the fastest fit from 1M rows up under ordinal encoding; XGBoost-GPU keeps only the smallest cell. Evidence: [benchmarks/airline-2026-07.md](../../../benchmarks/airline-2026-07.md). Measured at `3599365` (2026-08-04, pod-NVIDIA-L40S).*
+*Source: [`airline-2026-08.jsonl`](../../../benchmarks/results/airline-2026-08.jsonl). A bonsai variant has the best AUC in every cell under both protocols, and bonsai CUDA depthwise is also the fastest fit from 1M rows up under ordinal encoding; XGBoost-GPU keeps only the smallest cell. Evidence: [benchmarks/airline-2026-07.md](../../../benchmarks/airline-2026-07.md). Measured at `db383c5` (2026-08-04, pod-NVIDIA-L40S).*
