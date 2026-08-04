@@ -91,8 +91,11 @@ inline constexpr std::size_t k_num_sections =
 // Descriptor fields deliberately kept out of the persisted model. device_id
 // is runtime placement: a model trained on device 3 must not insist on
 // device 3 at load, and its absence keeps every artifact byte-identical to
-// the pre-descriptor serializer.
-constexpr std::array k_persist_skip{std::string_view{"device_id"}};
+// the pre-descriptor serializer. eval_interval is fit-time eval cadence and
+// never reaches the trees, so persisting it would break that byte-identity
+// (and force a format-version bump) for a knob the model does not carry.
+constexpr std::array k_persist_skip{std::string_view{"device_id"},
+                                    std::string_view{"eval_interval"}};
 
 constexpr bool persist_skip(std::string_view leaf)
 {

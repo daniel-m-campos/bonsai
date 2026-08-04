@@ -70,6 +70,7 @@ EFFECTS = {
     "booster.random_seed": "Seeds the stochastic boosting choices, such as DART drops. Fixing it makes a run reproducible bit for bit.",
     "booster.log_intervals": "Progress-logging frequency during fit. 0 is silent; higher prints more metric ticks. No effect on the trained model.",
     "booster.early_stopping_rounds": "Stop when the first validation objective stalls this many rounds, keeping the best iteration. 0 disables it; needs a valid set.",
+    "booster.eval_interval": "Evaluate the valid set every k-th round plus the last. Cuts per-round eval cost; early stopping then sees only those rounds.",
     "booster.dart_drop_rate": "DART: probability of dropping each existing tree per round. Above 0 enables DART regularization; incompatible with early stopping.",
     # tree
     "tree.min_child_hess": "Minimum summed hessian per leaf. Higher values block splits on thin data, reducing overfitting; the hessian-weighted analog of min_child_weight.",

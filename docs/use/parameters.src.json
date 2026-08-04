@@ -8,6 +8,7 @@
   "booster": {
     "dart_drop_rate": 0.0,
     "early_stopping_rounds": 0,
+    "eval_interval": 1,
     "learning_rate": 0.05,
     "log_intervals": 0,
     "n_iters": 100,

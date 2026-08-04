@@ -1,15 +1,18 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "bonsai/cli/pipeline.hpp"
 #include "bonsai/config/config.hpp"
+#include "bonsai/config/errors.hpp"
 #include "bonsai/io/model.hpp"
 
 using namespace bonsai;      // NOLINT
@@ -27,6 +30,21 @@ Config make_tiny_config()
     cfg.bin_mapper.max_bin     = 8;
     cfg.bin_mapper.n_samples   = 100;
     cfg.booster_config.n_iters = 5;
+    return cfg;
+}
+
+// Train and validate on the same tiny file, splits unrestricted so the valid
+// loss actually moves round to round.
+Config eval_interval_config()
+{
+    Config cfg;
+    cfg.data.train                   = k_tiny_path;
+    cfg.data.valid                   = {k_tiny_path};
+    cfg.bin_mapper.max_bin           = 8;
+    cfg.bin_mapper.n_samples         = 100;
+    cfg.booster_config.learning_rate = 0.5F;
+    cfg.tree_config.min_data_in_leaf = 0;
+    cfg.tree_config.min_child_hess   = 0.0F;
     return cfg;
 }
 
@@ -113,6 +131,89 @@ TEST_CASE("train_with_progress: early stopping truncates to the best iteration",
     auto const loaded2                         = load_train_and_valid_from_csv(no_es);
     auto       full = train_with_progress(no_es, loaded2, {});
     CHECK(full->n_iters() == 200);
+}
+
+TEST_CASE("train_with_progress: eval_interval evaluates every k-th round plus "
+          "the last",
+          "[cli_pipeline][eval_interval]")
+{
+    // History indices stay absolute model rounds; a skipped round is a NaN
+    // hole. The recorded losses must equal the every-round run's losses at
+    // the same rounds: the skipped rounds' trees fold into the valid scores
+    // in one batched pass, in round order, so the arithmetic is unchanged.
+    Config cfg                       = eval_interval_config();
+    cfg.booster_config.n_iters       = 10;
+    cfg.booster_config.eval_interval = 3;
+
+    std::vector<float> hist;
+    auto const         loaded = load_train_and_valid_from_csv(cfg);
+    auto const booster = train_with_progress(cfg, loaded, {}, nullptr, std::ref(hist));
+    REQUIRE(booster->n_iters() == 10);
+    REQUIRE(hist.size() == 10);
+
+    Config every                       = cfg;
+    every.booster_config.eval_interval = 1;
+    std::vector<float> hist1;
+    train_with_progress(every, loaded, {}, nullptr, std::ref(hist1));
+    REQUIRE(hist1.size() == 10);
+
+    for (size_t i = 0; i < hist.size(); ++i)
+    {
+        CAPTURE(i);
+        bool const evaluated = ((i + 1) % 3) == 0 || i + 1 == hist.size();
+        CHECK(std::isnan(hist[i]) != evaluated);
+        CHECK_FALSE(std::isnan(hist1[i]));
+        if (evaluated)
+        {
+            CHECK(hist[i] == hist1[i]);
+        }
+    }
+}
+
+TEST_CASE("train_with_progress: eval_interval stops at an evaluated round",
+          "[cli_pipeline][eval_interval][early_stop]")
+{
+    // Patience counts rounds but is only checked where the loss is measured,
+    // so a stop can overshoot the every-round stop by up to eval_interval - 1
+    // rounds. Truncation still keeps exactly the best evaluated round.
+    Config cfg                               = eval_interval_config();
+    cfg.booster_config.n_iters               = 200;
+    cfg.booster_config.early_stopping_rounds = 3;
+    cfg.booster_config.eval_interval         = 4;
+
+    std::vector<float> hist;
+    auto const         loaded = load_train_and_valid_from_csv(cfg);
+    auto const booster = train_with_progress(cfg, loaded, {}, nullptr, std::ref(hist));
+    REQUIRE(booster->n_iters() < 200);
+
+    size_t best = hist.size();
+    for (size_t i = 0; i < hist.size(); ++i)
+    {
+        CAPTURE(i);
+        // Only the checkpoints and the round the run stopped on are measured.
+        bool const evaluated = ((i + 1) % 4) == 0 || i + 1 == hist.size();
+        CHECK(std::isnan(hist[i]) != evaluated);
+        if (evaluated && (best == hist.size() || hist[i] < hist[best]))
+        {
+            best = i;
+        }
+    }
+    REQUIRE(best < hist.size());
+    CHECK(booster->n_iters() == best + 1);
+
+    Config every                       = cfg;
+    every.booster_config.eval_interval = 1;
+    auto const stop_every              = train_with_progress(every, loaded, {});
+    CHECK(booster->n_iters() >= stop_every->n_iters());
+}
+
+TEST_CASE("train_with_progress: eval_interval 0 is a config error",
+          "[cli_pipeline][eval_interval]")
+{
+    Config cfg                       = eval_interval_config();
+    cfg.booster_config.eval_interval = 0;
+    auto const loaded                = load_train_and_valid_from_csv(cfg);
+    CHECK_THROWS_AS(train_with_progress(cfg, loaded, {}), ConfigError);
 }
 
 TEST_CASE("train_with_progress: warm start continues a saved model",
@@ -220,6 +321,22 @@ TEST_CASE("train_with_progress: multiclass early stopping truncates whole rounds
     auto const loaded2                         = load_train_and_valid_from_csv(no_es);
     auto       full = train_with_progress(no_es, loaded2, {});
     CHECK(full->n_iters() == 60);
+
+    // eval_interval folds a batch of rounds per class in round order, so the
+    // losses it does measure match the every-round run at the same rounds.
+    Config batched                       = no_es;
+    batched.booster_config.eval_interval = 5;
+    std::vector<float> hist1;
+    std::vector<float> hist5;
+    train_with_progress(no_es, loaded2, {}, nullptr, std::ref(hist1));
+    train_with_progress(batched, loaded2, {}, nullptr, std::ref(hist5));
+    REQUIRE(hist1.size() == 60);
+    REQUIRE(hist5.size() == 60);
+    for (size_t i = 4; i < 60; i += 5)
+    {
+        CAPTURE(i);
+        CHECK(hist5[i] == hist1[i]);
+    }
     std::filesystem::remove(train_path);
     std::filesystem::remove(valid_path);
 }

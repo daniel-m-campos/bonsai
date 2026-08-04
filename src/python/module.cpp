@@ -798,7 +798,8 @@ NB_MODULE(_bonsai, m)
                      "metric); empty without an eval set or after load(). "
                      "Indexed by absolute model round: after an init_model "
                      "warm start the pre-existing rounds appear as NaN "
-                     "placeholders.")
+                     "placeholders, as do the rounds booster.eval_interval "
+                     "skipped.")
         .def_prop_ro("config_toml", &Model::config_toml)
         .def_prop_ro("objective_name", &Model::objective_name,
                      "The objective this model was trained with (e.g. mse, "

@@ -106,18 +106,20 @@ class IBooster
     // multiclass composes: the caller maintains a raw-score matrix of
     // n_rows x score_width() (row-major, width 1 except softmax).
     // seed_valid_scores fills it as of n_rounds boosting rounds (0 = base
-    // scores only — the warm-start seam); accumulate_last_round adds the
-    // newest round's tree(s); valid_loss scores it with the booster's own
-    // configured objective.
+    // scores only — the warm-start seam); accumulate_rounds adds the tree(s)
+    // of every round from since_round on, in round order so the sum matches
+    // round-at-a-time accumulation bit for bit; valid_loss scores it with the
+    // booster's own configured objective.
     virtual size_t score_width() const
     {
         return 1;
     }
     virtual void  seed_valid_scores(features_view X, std::span<float> out,
-                                    size_t n_rounds) const                        = 0;
-    virtual void  accumulate_last_round(features_view X, floats_out scores) const = 0;
+                                    size_t n_rounds) const    = 0;
+    virtual void  accumulate_rounds(features_view X, floats_out scores,
+                                    size_t since_round) const = 0;
     virtual float valid_loss(std::span<float const> scores,
-                             floats_view            labels) const                            = 0;
+                             floats_view            labels) const        = 0;
     // Drop trees beyond the first n_trees (keep the best iteration's model).
     virtual void truncate(size_t n_trees) = 0;
 };
@@ -742,14 +744,25 @@ class Booster final : public IBooster
         return objective_.eval(floats_view{scores.data(), scores.size()}, labels);
     }
 
-    void accumulate_last_round(features_view X, floats_out scores) const override
+    void accumulate_rounds(features_view X, floats_out scores,
+                           size_t since_round) const override
     {
-        assert(!trees_.empty());
+        assert(since_round <= trees_.size());
         assert(X.extent(0) == scores.size());
-        std::vector<float> raw(scores.size(), 0.0F);
-        trees_.back().predict(X, raw);
-        parallel::for_each_index(scores.size(), [&](size_t i)
-                                 { scores[i] += config_.learning_rate * raw[i]; });
+        // Row-outer, tree-inner: a row's features are read once for the whole
+        // batch of pending rounds instead of once per round.
+        parallel::for_each_index(
+            scores.size(),
+            [&](size_t i)
+            {
+                float acc = scores[i];
+                for (size_t t = since_round; t < trees_.size(); ++t)
+                {
+                    acc += config_.learning_rate *
+                           trees_[t].walk_row(X, static_cast<row_id_t>(i));
+                }
+                scores[i] = acc;
+            });
     }
 
     void truncate(size_t n_trees) override

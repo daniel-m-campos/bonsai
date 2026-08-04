@@ -221,21 +221,30 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         }
     }
 
-    void accumulate_last_round(features_view X, floats_out scores) const override
+    void accumulate_rounds(features_view X, floats_out scores,
+                           size_t since_round) const override
     {
-        assert(trees_.size() >= n_classes_);
-        size_t const       n     = X.extent(0);
-        size_t const       first = trees_.size() - n_classes_;
-        std::vector<float> raw(n);
-        for (size_t k = 0; k < n_classes_; ++k)
-        {
-            std::ranges::fill(raw, 0.0F);
-            trees_[first + k].predict(X, raw);
-            for (size_t i = 0; i < n; ++i)
-            {
-                scores[(i * n_classes_) + k] += config_.learning_rate * raw[i];
-            }
-        }
+        assert(since_round <= n_iters());
+        size_t const n      = X.extent(0);
+        size_t const rounds = n_iters();
+        // Row-outer, round-inner per class: the per-element add order stays
+        // ascending in rounds, so the sum matches round-at-a-time bit for bit.
+        parallel::for_each_index(n,
+                                 [&](size_t i)
+                                 {
+                                     for (size_t k = 0; k < n_classes_; ++k)
+                                     {
+                                         float acc = scores[(i * n_classes_) + k];
+                                         for (size_t r = since_round; r < rounds; ++r)
+                                         {
+                                             acc +=
+                                                 config_.learning_rate *
+                                                 trees_[(r * n_classes_) + k].walk_row(
+                                                     X, static_cast<row_id_t>(i));
+                                         }
+                                         scores[(i * n_classes_) + k] = acc;
+                                     }
+                                 });
     }
 
     float valid_loss(std::span<float const> scores, floats_view labels) const override

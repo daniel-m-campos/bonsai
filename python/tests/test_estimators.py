@@ -67,6 +67,21 @@ def test_early_stopping_stops():
     assert m.n_iters_ < 400
 
 
+def test_eval_interval_is_a_first_class_param():
+    est = bonsai.BonsaiRegressor(eval_interval=5)
+    assert est.get_params()["eval_interval"] == 5
+    assert ("booster.eval_interval", "5") in est._build_pairs()
+    assert bonsai.BonsaiRegressor().get_params()["eval_interval"] == 1
+
+
+def test_eval_interval_below_one_raises():
+    Xtr, ytr = load_csv(TRAIN_CSV)
+    with pytest.raises(RuntimeError, match="eval_interval"):
+        bonsai.BonsaiRegressor(n_iters=5, eval_interval=0).fit(
+            Xtr[:-500], ytr[:-500], eval_set=(Xtr[-500:], ytr[-500:])
+        )
+
+
 def test_bad_param_raises():
     with pytest.raises(RuntimeError) as e:
         bonsai.BonsaiRegressor(params={"tree.nope": 1}).fit(

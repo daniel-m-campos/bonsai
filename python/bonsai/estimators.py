@@ -57,6 +57,7 @@ class _BonsaiEstimator:
         grower: str = "leafwise",
         sampler: str = "all_rows",
         early_stopping_rounds: int = 0,
+        eval_interval: int = 1,
         n_threads: int = 0,
         random_seed: int = 42,
         max_bin: int | None = None,
@@ -65,7 +66,16 @@ class _BonsaiEstimator:
         params: dict | None = None,
         config: str | None = None,
     ):
-        """Store every argument raw; ``get_params``/``clone`` read them back."""
+        """Store every argument raw; ``get_params``/``clone`` read them back.
+
+        ``eval_interval`` k evaluates the ``eval_set`` every k-th round plus
+        the final one, so the per-round eval cost is paid once per k rounds
+        instead of every round (CatBoost spells it ``metric_period``). It
+        needs an ``eval_set`` and is ignored without one. Early stopping keeps
+        counting in rounds but only looks at the evaluated ones, so a stop can
+        overshoot the every-round stop by up to k - 1 rounds; the model is
+        still truncated to the best evaluated round.
+        """
         self.n_iters = n_iters
         self.learning_rate = learning_rate
         self.max_depth = max_depth
@@ -73,6 +83,7 @@ class _BonsaiEstimator:
         self.grower = grower
         self.sampler = sampler
         self.early_stopping_rounds = early_stopping_rounds
+        self.eval_interval = eval_interval
         self.n_threads = n_threads
         self.random_seed = random_seed
         self.max_bin = max_bin
@@ -209,17 +220,17 @@ class _BonsaiEstimator:
         ``data.valid`` names the file. Requires a fit with an ``eval_set``;
         empty after loading from a file. The metric is the objective's own
         loss under its bonsai name and its own units: the ``mse`` objective
-        reports squared error, not its root. After an ``init_model`` warm
-        start only the continuation's measured rounds are reported (the
-        warm-start rounds were never evaluated; ``best_iteration`` still
-        counts absolute rounds)."""
+        reports squared error, not its root.
+
+        One entry per evaluated round, in round order, so unevaluated rounds
+        leave no hole: after an ``init_model`` warm start only the
+        continuation's rounds are reported, and under ``eval_interval`` k only
+        rounds ``k - 1, 2k - 1, ...`` and the last one, which makes the list
+        shorter than ``n_iters_`` and its index a position rather than a round
+        number. ``best_iteration`` is the one that counts absolute rounds."""
         self._check_fitted()
         name = self._model.objective_name
-        hist = [float(v) for v in self._model.eval_history]
-        start = next(
-            (i for i, v in enumerate(hist) if not np.isnan(v)), len(hist)
-        )
-        hist = hist[start:]
+        hist = [float(v) for v in self._model.eval_history if not np.isnan(v)]
         if not hist:
             return {}
         return {"valid": {name: hist}}
@@ -230,8 +241,9 @@ class _BonsaiEstimator:
         only when fit ran with early stopping and an ``eval_set``: it is the
         round early stopping kept. After an ``init_model`` warm start the
         index counts the warm-start rounds too, so it lines up with
-        ``n_iters_`` and
-        ``predict(num_iteration=best_iteration + 1)``."""
+        ``n_iters_`` and ``predict(num_iteration=best_iteration + 1)``. Under
+        ``eval_interval`` k it is the best evaluated round, which can trail
+        the true best by up to k - 1 rounds."""
         self._check_fitted()
         hist = self._model.eval_history
         if not self.early_stopping_rounds or not len(hist):
@@ -239,7 +251,7 @@ class _BonsaiEstimator:
                 "best_iteration needs fit(eval_set=...) with "
                 "early_stopping_rounds set"
             )
-        # nanargmin: warm-start rounds are unmeasured NaN placeholders.
+        # nanargmin: warm-start and unevaluated rounds are NaN placeholders.
         return int(np.nanargmin(hist))
 
     @property
@@ -298,6 +310,7 @@ class _BonsaiEstimator:
             "booster.n_iters": self.n_iters,
             "booster.learning_rate": self.learning_rate,
             "booster.early_stopping_rounds": self.early_stopping_rounds,
+            "booster.eval_interval": self.eval_interval,
             "booster.random_seed": self.random_seed,
             "tree.max_depth": self.max_depth,
             "tree.max_leaves": self.max_leaves,
@@ -382,6 +395,7 @@ class BonsaiRegressor(_BonsaiEstimator):
         sampler: str = "all_rows",
         objective: str = "mse",
         early_stopping_rounds: int = 0,
+        eval_interval: int = 1,
         n_threads: int = 0,
         random_seed: int = 42,
         max_bin: int | None = None,
@@ -400,6 +414,7 @@ class BonsaiRegressor(_BonsaiEstimator):
             grower=grower,
             sampler=sampler,
             early_stopping_rounds=early_stopping_rounds,
+            eval_interval=eval_interval,
             n_threads=n_threads,
             random_seed=random_seed,
             max_bin=max_bin,
@@ -501,6 +516,7 @@ class BonsaiClassifier(_BonsaiEstimator):
         grower: str = "leafwise",
         sampler: str = "all_rows",
         early_stopping_rounds: int = 0,
+        eval_interval: int = 1,
         n_threads: int = 0,
         random_seed: int = 42,
         max_bin: int | None = None,
@@ -519,6 +535,7 @@ class BonsaiClassifier(_BonsaiEstimator):
             grower=grower,
             sampler=sampler,
             early_stopping_rounds=early_stopping_rounds,
+            eval_interval=eval_interval,
             n_threads=n_threads,
             random_seed=random_seed,
             max_bin=max_bin,

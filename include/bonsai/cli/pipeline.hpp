@@ -110,7 +110,9 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
 // the incremental accumulation the history shares with early stopping).
 // Indices are absolute model rounds: a warm start (`initial`) prefixes one
 // quiet-NaN entry per pre-existing round, so argmin over the vector lines up
-// with n_iters()/truncate()/predict-at-round counting.
+// with n_iters()/truncate()/predict-at-round counting. `booster.eval_interval`
+// evaluates every k-th round plus the last one; the rounds in between are
+// quiet-NaN too, and early stopping sees only the evaluated ones.
 std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
                                               LabeledData const        &train,
                                               LabeledData const        *valid,

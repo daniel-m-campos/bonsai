@@ -12,9 +12,10 @@ namespace bonsai
 {
 
 template <typename T>
-concept Tree = requires(T const t, features_view X, floats_out out) {
+concept Tree = requires(T const t, features_view X, floats_out out, row_id_t i) {
     { t.params() } -> std::same_as<typename T::Params const &>;
     { t.predict(X, out) } -> std::same_as<void>;
+    { t.walk_row(X, i) } -> std::same_as<float>;
 };
 
 // Heterogeneous (depth-wise) tree stored as a flat array of nodes.
@@ -100,6 +101,10 @@ class DenseTree
     // Accumulates into out; caller initializes (e.g. to zero or to a bias).
     void predict(features_view X, floats_out out) const;
 
+    // One row's contribution. The seam for fusing several trees over a row
+    // while its features are hot, in place of a pass per tree.
+    float walk_row(features_view X, row_id_t i) const;
+
     // The leaf node id row i of X lands in (pred_leaf support).
     node_id_t leaf_for(features_view X, row_id_t i) const;
 
@@ -124,8 +129,6 @@ class DenseTree
     }
 
   private:
-    float walk_row(features_view X, row_id_t i) const;
-
     Nodes              nodes_;
     Params             params_;
     std::vector<float> split_gains_;
@@ -178,6 +181,9 @@ class ObliviousTree
     // Accumulates into out; caller initializes (e.g. to zero or to a bias).
     void predict(features_view X, floats_out out) const;
 
+    // One row's contribution (see DenseTree::walk_row).
+    float walk_row(features_view X, row_id_t i) const;
+
     // The leaf-table index row i of X lands in (pred_leaf support).
     node_id_t leaf_for(features_view X, row_id_t i) const;
 
@@ -207,8 +213,6 @@ class ObliviousTree
     }
 
   private:
-    float walk_row(features_view X, row_id_t i) const;
-
     LevelSplits        splits_;
     LeafTable          leaf_table_;
     std::vector<float> leaf_covers_;

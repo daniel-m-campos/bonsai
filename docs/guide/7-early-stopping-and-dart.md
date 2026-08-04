@@ -20,8 +20,8 @@ The loop lives in `train_with_progress`
 part is keeping the per-round valid evaluation $O(\text{rows})$ instead of $O(\text{rows} \times \text{trees})$:
 re-predicting the whole ensemble every round is quadratic in total. bonsai accumulates valid scores *incrementally*:
 `IBooster::score_base()` seeds the buffer with the init score, and
-`accumulate_last_tree` adds just the newest tree's (shrinkage-scaled)
-contribution each round
+`accumulate_rounds` adds the pending rounds' (shrinkage-scaled)
+contributions
 ([`include/bonsai/booster.hpp`](../../include/bonsai/booster.hpp)).
 The loss comes from `eval_objective_by_name`, so any registered objective
 works. On stop, `truncate(best_iter + 1)` drops the trailing trees: the
@@ -29,6 +29,12 @@ saved model *is* the best iteration, like the references.
 
 Config: `booster.early_stopping_rounds` + a `data.valid` CSV (Python:
 `eval_set=(Xv, yv)`).
+
+### Evaluating less often
+
+Watching the valid set is not free: every round predicts the new tree over the valid rows and scores it, and on a GPU fit that host-side work is a visible slice of a fast round. `booster.eval_interval` (Python: `eval_interval`, CatBoost spells it `metric_period`) evaluates every k-th round plus the final one, so the cost is paid once per k rounds; the skipped rounds' trees fold into the running valid scores in one batched pass at the next evaluated round, in round order, so the losses are exactly the ones every-round evaluation would report.
+
+Patience still counts rounds, but only evaluated rounds can trigger a stop, so a run can overshoot the every-round stop by up to k - 1 rounds. `best_iteration` is the best *evaluated* round and the model is truncated to it, the same contract as at interval 1. The eval history keeps its absolute-round indexing with the skipped rounds left unmeasured, so `evals_result()` returns one entry per evaluated round rather than one per round.
 
 ### Try it
 

@@ -24,6 +24,7 @@ The boosting loop: how many trees, how strongly each contributes, when to stop.
 |---|---|---|---|
 | `dart_drop_rate` | float | `0.0` | DART: probability of dropping each existing tree per round. Above 0 enables DART regularization; incompatible with early stopping. |
 | `early_stopping_rounds` | integer | `0` | Stop when the first validation objective stalls this many rounds, keeping the best iteration. 0 disables it; needs a valid set. |
+| `eval_interval` | integer | `1` | Evaluate the valid set every k-th round plus the last. Cuts per-round eval cost; early stopping then sees only those rounds. |
 | `learning_rate` | float | `0.05` | Shrinks each tree's contribution. Lower values need more rounds but generalize better, the classic accuracy-versus-iterations trade. |
 | `log_intervals` | integer | `0` | Progress-logging frequency during fit. 0 is silent; higher prints more metric ticks. No effect on the trained model. |
 | `n_iters` | integer | `100` | Number of boosting rounds. More rounds lower training loss but risk overfitting; pair with a smaller learning_rate. |

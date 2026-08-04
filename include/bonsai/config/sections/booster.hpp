@@ -12,6 +12,6 @@ inline constexpr auto booster_section = make_section(
     field<&BoosterConfig::learning_rate>(), field<&BoosterConfig::random_seed>(),
     field<&BoosterConfig::log_intervals>(),
     field<&BoosterConfig::early_stopping_rounds>(),
-    field<&BoosterConfig::dart_drop_rate>());
+    field<&BoosterConfig::eval_interval>(), field<&BoosterConfig::dart_drop_rate>());
 
 } // namespace bonsai::config::internal

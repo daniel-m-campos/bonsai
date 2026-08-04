@@ -78,6 +78,41 @@ def test_eval_history_reports_the_native_objective_name():
         _ = est.best_iteration
 
 
+def test_eval_interval_reports_only_the_evaluated_rounds():
+    """One history entry per evaluated round: every k-th round plus the last
+    one, whatever the remainder. The values match the every-round run at the
+    same rounds, since the skipped rounds' trees still fold into the valid
+    scores, just in one batch."""
+    Xtr, ytr, Xva, yva = _reg_data()
+    every = bonsai.BonsaiRegressor(n_iters=22).fit(Xtr, ytr, eval_set=(Xva, yva))
+    est = bonsai.BonsaiRegressor(n_iters=22, eval_interval=5).fit(
+        Xtr, ytr, eval_set=(Xva, yva)
+    )
+
+    hist_every = every.evals_result()["valid"]["mse"]
+    hist = est.evals_result()["valid"]["mse"]
+    assert len(hist_every) == 22
+    # rounds 5, 10, 15, 20 and the final 22 (0-based indices below)
+    assert hist == pytest.approx([hist_every[i] for i in (4, 9, 14, 19, 21)])
+    assert est.n_iters_ == 22
+
+
+def test_eval_interval_early_stop_keeps_the_best_evaluated_round():
+    """Patience still counts rounds, but only evaluated rounds can stop the
+    run, so the kept model is the best evaluated round: a multiple of the
+    interval, and still exactly what best_iteration + 1 names."""
+    Xtr, ytr, Xva, yva = _reg_data()
+    est = bonsai.BonsaiRegressor(
+        n_iters=200, learning_rate=0.2, early_stopping_rounds=10, eval_interval=5
+    )
+    est.fit(Xtr, ytr, eval_set=(Xva, yva))
+
+    assert est.n_iters_ < 200
+    assert est.n_iters_ == est.best_iteration + 1
+    assert (est.best_iteration + 1) % 5 == 0
+    assert est.best_score == pytest.approx(min(est.evals_result()["valid"]["mse"]))
+
+
 def test_eval_set_list_is_rejected():
     Xtr, ytr, Xva, yva = _reg_data()
     with pytest.raises(ValueError, match=r"one \(X, y\) tuple"):

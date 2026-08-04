@@ -230,6 +230,11 @@ train_with_progress(Config const &cfg, LabeledData const &train,
     // contributions) keep the per-iteration eval O(rows), not O(rows*trees).
     auto const es_rounds  = cfg.booster_config.early_stopping_rounds;
     bool const es_enabled = es_rounds > 0 && valid != nullptr;
+    auto const eval_iv    = cfg.booster_config.eval_interval;
+    if (eval_iv == 0)
+    {
+        throw ConfigError("booster.eval_interval must be >= 1");
+    }
     // History shares the incremental accumulation below; DART's per-round
     // rescaling invalidates it, so no history there (es already throws).
     bool const track_eval = eval_history.has_value() && valid != nullptr &&
@@ -252,7 +257,9 @@ train_with_progress(Config const &cfg, LabeledData const &train,
     std::vector<float> es_scores;
     float              best_loss = 0.0F;
     uint32_t           best_iter = 0;
+    bool               have_best = false;
     size_t             es_base   = 0; // warm-start rounds present before this loop
+    size_t             folded    = 0; // rounds already added into es_scores
 
     for (uint32_t i = 0; i < n_iters; ++i)
     {
@@ -276,6 +283,7 @@ train_with_progress(Config const &cfg, LabeledData const &train,
                 es_base = booster->n_iters() - 1;
                 es_scores.resize(valid->features.n_rows * booster->score_width());
                 booster->seed_valid_scores(valid->features.view(), es_scores, es_base);
+                folded = es_base;
                 if (track_eval && es_base > 0)
                 {
                     // NaN placeholders for the warm-start rounds keep history
@@ -284,7 +292,21 @@ train_with_progress(Config const &cfg, LabeledData const &train,
                                                std::numeric_limits<float>::quiet_NaN());
                 }
             }
-            booster->accumulate_last_round(valid->features.view(), es_scores);
+            // Evaluate every eval_iv-th round, and always the last one. The
+            // skipped rounds cost nothing here: their trees fold into the
+            // valid scores in one batched pass at the next evaluated round.
+            bool const is_final = (i + 1) == n_iters;
+            if (!is_final && ((i + 1) % eval_iv) != 0)
+            {
+                if (track_eval)
+                {
+                    eval_history->get().push_back(
+                        std::numeric_limits<float>::quiet_NaN());
+                }
+                continue;
+            }
+            booster->accumulate_rounds(valid->features.view(), es_scores, folded);
+            folded           = booster->n_iters();
             float const loss = booster->valid_loss(es_scores, valid->labels);
             if (track_eval)
             {
@@ -294,10 +316,11 @@ train_with_progress(Config const &cfg, LabeledData const &train,
             {
                 continue;
             }
-            if (i == 0 || loss < best_loss)
+            if (!have_best || loss < best_loss)
             {
                 best_loss = loss;
                 best_iter = i;
+                have_best = true;
             }
             else if (i - best_iter >= es_rounds)
             {
