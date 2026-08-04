@@ -312,7 +312,23 @@ if(BONSAI_PYTHON)
             ${BONSAI_BENCH_SPECS}
             ${CMAKE_BINARY_DIR}/python/bonsai/bench/specs/)
     add_dependencies(_bonsai bonsai_py_package)
+
+    # IDE stubs, read out of the BUILT extension: the signatures, overload
+    # sets, and docstrings are the ones the bindings actually carry. Every
+    # wheel regenerates them with its own interpreter, so a stub never drifts
+    # from the module beside it; a dev tree gets the same pair in
+    # build/python/bonsai from `make python`.
+    nanobind_add_stub(bonsai_stub
+        MODULE bonsai._bonsai
+        OUTPUT ${CMAKE_BINARY_DIR}/python/bonsai/_bonsai.pyi
+        MARKER_FILE ${CMAKE_BINARY_DIR}/python/bonsai/py.typed
+        PYTHON_PATH ${CMAKE_BINARY_DIR}/python
+        DEPENDS _bonsai)
+
     install(TARGETS _bonsai LIBRARY DESTINATION bonsai)
+    install(FILES ${CMAKE_BINARY_DIR}/python/bonsai/_bonsai.pyi
+                  ${CMAKE_BINARY_DIR}/python/bonsai/py.typed
+            DESTINATION bonsai)
 
     # Stamp __version__ from pyproject.toml into the build tree only, so a
     # source build run via PYTHONPATH=build/python (or build-cuda/python)

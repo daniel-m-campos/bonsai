@@ -114,13 +114,14 @@ test: build $(TOY_SENTINEL)  ## Build, fetch the pinned test datasets, run ctest
 	@ctest --test-dir build
 
 # Python extension. Needs a python with nanobind + numpy installed
-# (override with PYTHON=/path/to/python).
+# (override with PYTHON=/path/to/python); below 3.11 the stub step also needs
+# typing_extensions.
 python: build/build.ninja  ## Build the _bonsai Python extension into build/python/.
 	@cmake -B build -DBONSAI_PYTHON=ON -DBONSAI_OPENMP_STATIC=ON \
 	    -DBONSAI_OPENMP_DYNAMIC_FALLBACK_OK=ON \
 	    -DPython_EXECUTABLE=$(abspath $(PYTHON)) \
 	    | grep -iE "openmp|error" || true
-	@cmake --build build --target _bonsai -j
+	@cmake --build build --target _bonsai bonsai_stub -j
 	@echo "module at build/python/bonsai — use PYTHONPATH=build/python"
 
 python-test: python $(TOY_SENTINEL) $(AMAZON_SENTINEL)  ## Build the extension and run the Python test suites.
