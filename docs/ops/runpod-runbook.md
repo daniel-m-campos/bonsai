@@ -76,6 +76,13 @@ export PATH=/opt/venv/bin:/root/.local/bin:/usr/local/cuda/bin:/usr/local/sbin:/
 
 - **`pkill -f <script>` inside an SSH remote command matches the SSH session's own command line** (the whole string is the remote bash's argv) and kills your session with exit 255. Split kill and relaunch into separate `ssh` invocations, or bracket the pattern: `pkill -f "pod_validat[e]"`.
 
+Before any benchmark that quotes a reference library, check that the reference wheels can actually reach the device. The PyPI wheels bundle their own CUDA runtime, and a wheel built against a newer CUDA major than the host driver supports cannot see the GPU at all: xgboost logs "No visible GPU is found" and trains on CPU without raising, which is a plausible-looking number rather than a failure. The driver's ceiling is the `CUDA Version` field of `nvidia-smi`, and CUDA 13 wheels need an r580 driver, so they cannot run on the 12.4-driver pool at all.
+
+```bash
+$SSH 'export PATH=/opt/venv/bin:$PATH; nvidia-smi | head -3
+  python -c "import xgboost; print(xgboost.__version__, xgboost.build_info()[\"CUDA_VERSION\"])"'
+```
+
 ## 4. Clone and build
 
 ```bash
@@ -145,6 +152,7 @@ The sweep is not optional: **an error-returning create can still have created a 
 | Symptom | Cause | Fix |
 |---|---|---|
 | `runtime` stays null forever | Image needs a newer driver than the host (e.g. any `cu1281` image on a 12.4-driver machine — most of the SECURE pool) | Use the bonsai-ci image (cu12.4) or check driver via console logs; delete and re-roll |
+| A reference arm trains at CPU speed on a GPU pod, or the bench raises "silently fell back to CPU" | The library's PyPI wheel is built against a newer CUDA major than the host driver supports; xgboost 3.4.0 ships a CUDA 13.3 build, which needs an r580 driver and sees zero devices on the 12.4-driver pool | Compare `xgboost.build_info()["CUDA_VERSION"]` against the `CUDA Version` in `nvidia-smi` (section 3), then pin the last CUDA 12 release (`uv pip install "xgboost<3.4"`) or re-roll onto a newer-driver host |
 | runc mount error in console, crash-loop | Broken host (missing `/dev/dri/cardN`) | Delete immediately, re-roll — waiting never helps |
 | `Permission denied (publickey)` | Pod created without `PUBLIC_KEY` env | Delete + recreate; env cannot be added to a running pod |
 | `ssh.runpod.io`: "container not found" | Image lacks RunPod's proxy agent (bonsai-ci is plain sshd) | Use direct IP + port from the GraphQL port mapping |
