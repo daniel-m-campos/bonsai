@@ -54,6 +54,11 @@ class IBooster
     virtual void   predict(features_view X, floats_out y_hat) const = 0;
     virtual size_t n_iters() const                                  = 0;
 
+    // Trees in the ensemble, which is n_iters() only for width-1 objectives:
+    // multiclass grows one tree per class per round. Per-tree outputs must be
+    // sized from this, never from n_iters().
+    virtual size_t n_trees() const = 0;
+
     // Per-feature importance summed over all trees, sized max feature id + 1
     // (callers pad to the full feature count).
     // --- introspection
@@ -81,7 +86,9 @@ class IBooster
     }
 
     // Per-row, per-tree leaf indices (DenseTree node ids / ObliviousTree
-    // table indices): out is n_rows * n_iters(), row-major by row.
+    // table indices): out is n_rows * n_trees(), row-major by row. Trees are
+    // stored round-major, so multiclass column t holds round t / n_classes,
+    // class t % n_classes.
     virtual void predict_leaf(features_view X, std::span<node_id_t> out) const = 0;
 
     // Human-readable dump of every tree (feature names optional).
@@ -514,6 +521,11 @@ class Booster final : public IBooster
     }
 
     size_t n_iters() const override
+    {
+        return trees_.size();
+    }
+
+    size_t n_trees() const override
     {
         return trees_.size();
     }

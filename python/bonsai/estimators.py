@@ -155,8 +155,11 @@ class _BonsaiEstimator:
         return np.asarray(self._model.staged_predict(_as_2d_f32(X)))
 
     def predict_leaf(self, X) -> np.ndarray:
-        """(n_rows, n_iters): per-tree leaf indices (feature engineering /
-        embedding trick)."""
+        """(n_rows, n_trees): per-tree leaf indices (feature engineering /
+        embedding trick). One column per tree in training order, so a softmax
+        model (one tree per class per round) has ``n_iters * n_classes``
+        columns and column ``t`` is round ``t // n_classes``, class
+        ``t % n_classes``."""
         self._check_fitted()
         return np.asarray(self._model.predict_leaf(_as_2d_f32(X)))
 

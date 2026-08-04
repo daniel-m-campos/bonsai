@@ -510,11 +510,13 @@ class Model
         return {raw->data(), {k, n}, owner};
     }
 
-    // (n_rows, n_iters): the leaf each row lands in, per tree.
+    // (n_rows, n_trees): the leaf each row lands in, per tree. The width is
+    // the tree count, not the round count: multiclass grows one tree per
+    // class per round and the booster fills a column for each.
     nb::ndarray<nb::numpy, uint32_t> predict_leaf(array_2d const &X) const
     {
         size_t const n   = X.shape(0);
-        size_t const k   = booster_->n_iters();
+        size_t const k   = booster_->n_trees();
         auto         out = std::make_unique<std::vector<bonsai::node_id_t>>(n * k, 0);
         {
             nb::gil_scoped_release release;
@@ -780,7 +782,12 @@ NB_MODULE(_bonsai, m)
         .def("predict", &Model::predict, nb::arg("X"), nb::arg("num_iteration") = 0)
         .def("predict_proba", &Model::predict_proba, nb::arg("X"))
         .def("staged_predict", &Model::staged_predict, nb::arg("X"))
-        .def("predict_leaf", &Model::predict_leaf, nb::arg("X"))
+        .def("predict_leaf", &Model::predict_leaf, nb::arg("X"),
+             "(n_rows, n_trees): the leaf each row lands in, one column per "
+             "tree. Width-1 objectives have one tree per round, so the columns "
+             "are the boosting rounds in order. Softmax models grow one tree "
+             "per class per round and the columns stay in that order, so "
+             "column t is round t // n_classes, class t % n_classes.")
         .def("dump", &Model::dump)
         .def("pred_contribs", &Model::pred_contribs, nb::arg("X"))
         .def("feature_importance", &Model::feature_importance, nb::arg("type") = "gain")

@@ -248,6 +248,12 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         return trees_.size() / n_classes_;
     }
 
+    // One tree per class per round.
+    size_t n_trees() const override
+    {
+        return trees_.size();
+    }
+
     std::vector<double> feature_importance(ImportanceType type) const override
     {
         std::vector<double> out;

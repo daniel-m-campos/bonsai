@@ -454,6 +454,7 @@ TEST_CASE("Booster: predict_at, staged, and leaf predictions are consistent",
     }
     size_t const n = raw.n_rows;
     size_t const k = b.n_iters();
+    CHECK(b.n_trees() == k); // one tree per round for a width-1 objective
 
     std::vector<float> full(n);
     std::vector<float> at_all(n);
@@ -488,6 +489,45 @@ TEST_CASE("Booster: predict_at, staged, and leaf predictions are consistent",
     CHECK(text.find("tree 0:") != std::string::npos);
     CHECK(text.find("leaf=") != std::string::npos);
     CHECK(text.find('a') != std::string::npos);
+}
+
+TEST_CASE("MulticlassBooster: predict_leaf fills one column per tree",
+          "[booster][multiclass][predict_extras]")
+{
+    detail::ColumnBatch batch{
+        .features      = {{0.0F, 0.1F, 0.5F, 0.6F, 0.9F, 1.0F}},
+        .labels        = {0.0F, 0.0F, 1.0F, 1.0F, 2.0F, 2.0F},
+        .weights       = {},
+        .feature_names = {"a"},
+    };
+    Dataset const train = make_dataset(batch);
+    auto const    raw   = to_raw(batch);
+
+    Config cfg              = tiny_cfg();
+    cfg.objective.n_classes = 3;
+
+    MulticlassBooster<DepthwiseGrower<>, AllRowsSampler> b{cfg};
+    for (int i = 0; i < 5; ++i)
+    {
+        b.update_one_iter(train);
+    }
+    // One tree per class per round, so the leaf columns are trees, not rounds.
+    REQUIRE(b.n_iters() == 5);
+    REQUIRE(b.n_trees() == 15);
+
+    size_t const           n = raw.n_rows;
+    size_t const           k = b.n_trees();
+    std::vector<node_id_t> leaves(n * k);
+    b.predict_leaf(raw.view(), leaves);
+    for (size_t i = 0; i < n; ++i)
+    {
+        for (size_t t = 0; t < k; ++t)
+        {
+            auto const id = leaves[(i * k) + t];
+            REQUIRE(id < b.trees()[t].nodes().size());
+            CHECK(DenseTree::is_leaf(b.trees()[t].nodes()[id]));
+        }
+    }
 }
 
 TEST_CASE("MulticlassBooster: separable 3-class data reaches perfect accuracy",
