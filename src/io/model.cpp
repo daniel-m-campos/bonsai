@@ -1,5 +1,4 @@
 #include "bonsai/io/model.hpp"
-#include "nlohmann/adl_serializer.hpp"
 
 #include <algorithm>
 #include <array>
@@ -9,7 +8,6 @@
 #include <ios>
 #include <iterator>
 #include <memory>
-#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -20,34 +18,6 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
-
-// nlohmann/json v3.11 doesn't ship std::optional<T> conversion; add a tiny
-// adl_serializer so the serializers below can see optional config fields.
-template <typename T> struct nlohmann::adl_serializer<std::optional<T>>
-{
-    static void to_json(json &j, std::optional<T> const &opt)
-    {
-        if (opt.has_value())
-        {
-            j = *opt;
-        }
-        else
-        {
-            j = nullptr;
-        }
-    }
-    static void from_json(json const &j, std::optional<T> &opt)
-    {
-        if (j.is_null())
-        {
-            opt = std::nullopt;
-        }
-        else
-        {
-            opt = j.get<T>();
-        }
-    }
-};
 
 #include "bonsai/bin_mapper.hpp"
 #include "bonsai/bin_mappers.hpp"

@@ -22,26 +22,11 @@ namespace bonsai::config
 namespace
 {
 
-// Insert one field's value into a per-section toml::table. For std::optional
-// fields the key is skipped when nullopt (TOML can't represent absent), so
-// round-trip through parse_toml restores the constructor default.
+// Insert one field's value into a per-section toml::table.
 template <typename T>
 void insert_field(toml::table &tbl, std::string_view leaf, T const &value)
 {
-    if constexpr (requires { value.has_value(); })
-    {
-        if (!value.has_value())
-        {
-            return;
-        }
-        tbl.insert_or_assign(std::string{leaf},
-                             internal::FieldCodec<T>::to_toml(value));
-    }
-    else
-    {
-        tbl.insert_or_assign(std::string{leaf},
-                             internal::FieldCodec<T>::to_toml(value));
-    }
+    tbl.insert_or_assign(std::string{leaf}, internal::FieldCodec<T>::to_toml(value));
 }
 
 } // namespace
