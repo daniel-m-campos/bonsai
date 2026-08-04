@@ -234,6 +234,252 @@ def test_catboost_runner_builds_pool_outside_fit_timer(monkeypatch):
     assert out["ingest_s"] > 0 and out["train_s"] > 0, out
 
 
+def test_eval_split_carves_the_train_side_only():
+    """The held-out eval rows come off the train side, never the test split.
+
+    Carving from the test side would score the final metric on rows the
+    library tuned its stop against. The "off" arm carves the same rows and
+    hands back no eval pair at all: it is the denominator of the overhead
+    ratio, so it must fit the same row count as the "eval" arm while having
+    nothing an eval set could be built from.
+    """
+    from bonsai.bench import runners
+
+    rng = np.random.default_rng(0)
+    X = rng.random((1000, 4), dtype=np.float32)
+    y = X[:, 0].copy()
+
+    plain = runners.eval_split({}, X, y)
+    assert plain[0].shape[0] == 1000 and plain[2] is None
+
+    off = runners.eval_split({"eval_mode": "off"}, X, y)
+    ev = runners.eval_split({"eval_mode": "eval"}, X, y)
+    assert off[0].shape[0] == ev[0].shape[0] == 900
+    assert off[2] is None and off[3] is None
+    assert ev[2].shape[0] == 100 and ev[3].shape[0] == 100
+    assert np.array_equal(ev[2], X[900:])
+
+    assert runners.patience_of({"eval_mode": "eval"}) == 0
+    assert runners.patience_of({"eval_mode": "stop"}) == 50
+    assert runners.patience_of({"eval_mode": "stop", "patience": 7}) == 7
+    with pytest.raises(ValueError, match="eval_mode"):
+        runners.eval_split({"eval_mode": "sometimes"}, X, y)
+
+
+def test_bonsai_runner_arms_early_stopping_through_the_config_key(monkeypatch):
+    """bonsai's surface is eval_set= on train plus the patience config key.
+
+    Both halves are load-bearing and neither is visible in a timing number:
+    an eval_set with no patience runs the full cap, and a patience with no
+    eval_set has nothing to watch. The "off" arm must reach train with
+    eval_set=None, or the overhead denominator is paying for eval too.
+    """
+    import bonsai
+    from bonsai.bench import runners
+
+    seen = []
+    real_train = bonsai.train
+
+    def spy(pairs, data, *args, **kwargs):
+        seen.append((dict(pairs), kwargs.get("eval_set")))
+        return real_train(pairs, data, *args, **kwargs)
+
+    monkeypatch.setattr(bonsai, "train", spy)
+    rng = np.random.default_rng(0)
+    X = rng.random((2000, 8), dtype=np.float32)
+    y = X[:, :3].sum(axis=1).astype(np.float32)
+    base = {"lr": 0.1, "depth": 4, "bins": 63, "seed": 42, "iters": 20}
+    key = "booster.early_stopping_rounds"
+
+    for mode, armed in (("off", False), ("eval", False), ("stop", True)):
+        seen.clear()
+        cell = dict(base, eval_mode=mode, patience=5)
+        out = runners.run_bonsai(
+            {"cell": cell, "variant": "bonsai_depthwise", "threads": 1},
+            X[:1500], y[:1500], X[1500:], y[1500:])
+        pairs, eval_set = seen[0]
+        assert (eval_set is not None) == (mode != "off"), (mode, eval_set)
+        assert (key in pairs) == armed, (mode, pairs.get(key))
+        assert out["eval_mode"] == mode
+        assert (out["stopped_at"] is not None) == armed, out
+    assert pairs[key] == "5"
+
+
+def test_xgb_runner_arms_early_stopping_through_train_kwargs(monkeypatch):
+    """xgboost takes evals and early_stopping_rounds at the xgb.train call.
+
+    The validation matrix must be a QuantileDMatrix built with ref=dtrain
+    AND the same max_bin: xgboost 3.3 rejects a ref matrix whose max_bin
+    disagrees, and the failure is a fit-time exception on a rented pod.
+    Prediction is checked too, because xgboost is the one library that does
+    not truncate on a stop: its default iteration_range is every tree, so a
+    metric read without an explicit range describes the overshot model.
+    """
+    xgb = pytest.importorskip("xgboost")
+    from bonsai.bench import runners
+
+    calls = []
+    real_train = xgb.train
+
+    def spy(params, dtrain, *args, **kwargs):
+        calls.append(kwargs)
+        return real_train(params, dtrain, *args, **kwargs)
+
+    monkeypatch.setattr(xgb, "train", spy)
+    rng = np.random.default_rng(0)
+    X = rng.random((2000, 8), dtype=np.float32)
+    y = X[:, :3].sum(axis=1).astype(np.float32)
+    base = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42,
+            "iters": 20}
+
+    for mode, armed in (("off", False), ("eval", False), ("stop", True)):
+        calls.clear()
+        cell = dict(base, eval_mode=mode, patience=5)
+        out = runners.run_xgb(
+            {"cell": cell, "variant": "xgb_hist", "threads": 1},
+            X[:1500], y[:1500], X[1500:], y[1500:])
+        kwargs = calls[0]
+        assert ("evals" in kwargs) == (mode != "off"), (mode, kwargs)
+        assert ("early_stopping_rounds" in kwargs) == armed, (mode, kwargs)
+        assert out["eval_mode"] == mode
+        assert (out["stopped_at"] is not None) == armed, out
+    assert kwargs["early_stopping_rounds"] == 5
+    assert isinstance(kwargs["evals"][0][0], xgb.QuantileDMatrix)
+
+
+def test_lgbm_runner_arms_early_stopping_through_the_callback(monkeypatch):
+    """lightgbm's documented mechanism is the lgb.early_stopping callback.
+
+    Setting a params key instead would ride on an alias the library is free
+    to retire, so the callback construction is what this pins, along with
+    valid_sets appearing exactly when the arm has an eval set.
+    """
+    lgb = pytest.importorskip("lightgbm")
+    from bonsai.bench import runners
+
+    rounds, calls = [], []
+    real_es, real_train = lgb.early_stopping, lgb.train
+
+    def spy_es(*args, **kwargs):
+        rounds.append(kwargs.get("stopping_rounds", args[0] if args else None))
+        return real_es(*args, **kwargs)
+
+    def spy_train(params, dtrain, *args, **kwargs):
+        calls.append(kwargs)
+        return real_train(params, dtrain, *args, **kwargs)
+
+    monkeypatch.setattr(lgb, "early_stopping", spy_es)
+    monkeypatch.setattr(lgb, "train", spy_train)
+    rng = np.random.default_rng(0)
+    X = rng.random((2000, 8), dtype=np.float32)
+    y = X[:, :3].sum(axis=1).astype(np.float32)
+    base = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42,
+            "iters": 20}
+
+    for mode, armed in (("off", False), ("eval", False), ("stop", True)):
+        rounds.clear()
+        calls.clear()
+        cell = dict(base, eval_mode=mode, patience=5)
+        out = runners.run_lgbm(
+            {"cell": cell, "variant": "lgbm_cpu", "threads": 1},
+            X[:1500], y[:1500], X[1500:], y[1500:])
+        assert ("valid_sets" in calls[0]) == (mode != "off"), (mode, calls[0])
+        assert bool(rounds) == armed, (mode, rounds)
+        assert out["eval_mode"] == mode
+        assert (out["stopped_at"] is not None) == armed, out
+    assert rounds == [5]
+
+
+def test_catboost_runner_arms_the_overfitting_detector(monkeypatch):
+    """CatBoost's patience is od_type="Iter" plus od_wait on the estimator.
+
+    The fixed-iteration arm is checked for use_best_model=False as well:
+    CatBoost shrinks the model to its best iteration whenever an eval set is
+    present, detector or not, so without it the "eval" arm would report a
+    metric from a model shorter than the one whose fit was timed.
+    """
+    catboost = pytest.importorskip("catboost")
+    from bonsai.bench import runners
+
+    built, fits = [], []
+    real_init = catboost.CatBoostRegressor.__init__
+    real_fit = catboost.CatBoostRegressor.fit
+
+    def spy_init(self, **kwargs):
+        built.append(kwargs)
+        real_init(self, **kwargs)
+
+    def spy_fit(self, pool, *args, **kwargs):
+        fits.append(kwargs)
+        return real_fit(self, pool, *args, **kwargs)
+
+    monkeypatch.setattr(catboost.CatBoostRegressor, "__init__", spy_init)
+    monkeypatch.setattr(catboost.CatBoostRegressor, "fit", spy_fit)
+    rng = np.random.default_rng(0)
+    X = rng.random((2000, 8), dtype=np.float32)
+    y = X[:, :3].sum(axis=1).astype(np.float32)
+    base = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42,
+            "iters": 20}
+
+    for mode, armed in (("off", False), ("eval", False), ("stop", True)):
+        built.clear()
+        fits.clear()
+        cell = dict(base, eval_mode=mode, patience=5)
+        out = runners.run_catboost(
+            {"cell": cell, "variant": "catboost_cpu", "threads": 1},
+            X[:1500], y[:1500], X[1500:], y[1500:])
+        kwargs = built[0]
+        assert (fits[0]["eval_set"] is not None) == (mode != "off"), mode
+        assert ("od_wait" in kwargs) == armed, (mode, kwargs)
+        assert out["eval_mode"] == mode
+        assert (out["stopped_at"] is not None) == armed, out
+    assert kwargs["od_type"] == "Iter" and kwargs["od_wait"] == 5
+
+
+def test_legacy_cells_carry_no_eval_fields():
+    """A cell without eval_mode must produce the pre-early-stopping row.
+
+    Every committed perf row predates these fields, and the standings path
+    still writes rows that must diff cleanly against them.
+    """
+    from bonsai.bench import runners
+
+    rng = np.random.default_rng(0)
+    X = rng.random((2000, 8), dtype=np.float32)
+    y = X[:, :3].sum(axis=1).astype(np.float32)
+    cell = {"lr": 0.1, "depth": 4, "bins": 63, "bins_effective": 63,
+            "seed": 42, "iters": 5}
+    out = runners.run_bonsai(
+        {"cell": cell, "variant": "bonsai_depthwise", "threads": 1},
+        X[:1500], y[:1500], X[1500:], y[1500:])
+    assert set(out) == {"fit_s", "ingest_s", "train_s", "predict_s",
+                        "r2_train", "r2_test"}, out
+
+
+def test_early_stop_spec_expands_both_quantities():
+    """The bundled spec must carry all three arms per library.
+
+    Two of them (off, eval) differ only in whether the library sees the eval
+    set, which is what makes their ratio the eval overhead, so they must
+    also be distinguishable to the resume key or the second arm is skipped
+    as a duplicate of the first.
+    """
+    from bonsai.bench import driver
+    from bonsai.bench import spec as spec_mod
+
+    spec = spec_mod.load_spec("early-stop-4M")
+    cells = spec_mod.cells_of(spec)
+    assert [c["eval_mode"] for c in cells] == ["off", "eval", "stop"]
+    off, ev, stop = cells
+    assert off["iters"] == ev["iters"] and off["lr"] == ev["lr"]
+    assert (stop["iters"], stop["lr"], stop["patience"]) == (2000, 0.05, 50)
+
+    jobs = spec_mod.expand(spec)
+    assert len(jobs) == 3 * len(spec["variants"])
+    keys = {driver._job_key(j, 0, "pod", "early-stop-4M") for j in jobs}
+    assert len(keys) == len(jobs)
+
+
 def test_standings_ab_knobs_match_the_standings_spec():
     """The A/B detector must fit the cell the standings fit.
 

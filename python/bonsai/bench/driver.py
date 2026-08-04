@@ -240,7 +240,8 @@ def resume_keys(path: str | pathlib.Path) -> set[tuple]:
         host_name = host.get("name") if isinstance(host, dict) else host
         done.add((r.get(runlog.Row.VARIANT), r.get(runlog.Row.THREADS), r.get(runlog.Row.REPEAT),
                   c.get("rows"), c.get("cols"), c.get("bins"), c.get("depth"),
-                  c.get("iters"), c.get("seed"), host_name, r.get(runlog.Row.RUN)))
+                  c.get("iters"), c.get("seed"), c.get("eval_mode"),
+                  host_name, r.get(runlog.Row.RUN)))
     return done
 
 
@@ -361,11 +362,17 @@ def _smi_query(pid: int):
 
 def _job_key(job: dict, repeat: int, host_name: str | None,
              run_label: str | None) -> tuple:
-    """The resume identity of one attempt; must mirror resume_keys()."""
+    """The resume identity of one attempt; must mirror resume_keys().
+
+    eval_mode is part of the identity because the early-stopping suite runs
+    the same shape twice at the same iteration count, once with the eval set
+    and once without; without it the second arm resume-skips the first.
+    Legacy cells carry no eval_mode, so committed rows still match on None.
+    """
     c = job[runlog.Row.CELL]
     return (job[runlog.Row.VARIANT], job[runlog.Row.THREADS], repeat, c["rows"], c["cols"],
             c["bins"], c.get("depth"), c.get("iters"), c.get("seed"),
-            host_name, run_label)
+            c.get("eval_mode"), host_name, run_label)
 
 
 @dataclasses.dataclass(frozen=True)

@@ -27,6 +27,7 @@ The current evidence, rendered whole from every committed results file, is [the 
 | airline | perf | benchm-ml airline 0.1m/1m/10m (perf-external) | fit_s, AUC | `results/airline-2026-07.jsonl` | `python -m bonsai.bench.airline` | issue #154 |
 | rebaseline | perf | friedman1 | fit_s, r² guard | `results/rebaseline-2026-07.jsonl` | scaling runner, rows axis | 62 to 64 |
 | iso-volume | perf | friedman1 (perf-synthetic) | fit_s, dev_mem, r² guard | `results/iso-volume-2026-08.jsonl` | `python -m bonsai.bench run --spec iso-volume-2026-08` | 91 |
+| early-stop | perf | friedman1 (perf-synthetic) | fit_s ratio, time to stop | `results/early-stop-4M.jsonl` | `python -m bonsai.bench run --spec early-stop-4M` | issue #306 |
 
 The Grinsztajn suite is the only citable standings table: its 55 tasks were selected by third parties (Grinsztajn, Oyallon, Varoquaux 2022), which removes the selection-bias objection a self-picked suite can never answer. The internal campaign remains the fast local regression check.
 
@@ -59,6 +60,28 @@ Where a library sketches or bins, host or device, is a property of that library 
 Two named sets in `bonsai.bench.params`: CAMPAIGN (200 iters, lr 0.05, depth 6, 255 bins) for quality, SCALING (100 iters, lr 0.1, depth 8) for perf. Two LightGBM leaf conventions exist by declaration, not drift: `num_leaves_campaign(depth)` = (1 << depth) - 1 and `num_leaves_full(depth)` = 1 << depth; each row records which. Reference mappings (including CatBoost's GPU border cap and XGBoost's hessian-weighted min_child_weight, whose two readings bracket XGBoost per decision 68's correction) live only in `params.py`; re-deriving them by hand caused a published correction once and is the one prohibited act.
 
 Two translation caveats the matched-knobs design cannot remove, stated rather than hidden. On classification tasks the leaf-size floor is not equivalent across libraries: XGBoost's `min_child_weight` counts hessian mass (so 20 demands far more than 20 rows under logloss, and 1 demands fewer; the two published runs bracket the equivalent point without hitting it), while CatBoost's symmetric-tree policy supports no per-leaf floor at all and runs without one. And CatBoost's `border_count` counts splits where every other library's `max_bin` counts bins; the bins-1 fencepost is applied inside `catboost_core` (2026-07-30 fairness review, which found call-site translations had drifted three ways, including a one-bin shortfall for XGBoost and LightGBM in the airline suite).
+
+## Early stopping
+
+The early-stop suite measures two separate quantities on one cell, 4M rows by 100 columns at the SCALING knobs, and never mixes them into one number.
+
+The first is per-round eval overhead. The same cell is fit twice at the same fixed iteration count, once with a validation set attached and once without, with no patience armed either time, and the ratio of the two `fit_s` values is what it costs a library to score a validation set every round. Both arms fit the reduced train side, so the ratio prices the eval work and not a row-count difference: the eval rows are carved off the train side (10 percent, the split the early-stopping guide already benchmarks) in the "off" arm too, and then thrown away.
+
+The second is time to stop. Patience 50, an iteration cap of 2000 that the valid set rather than the cap is meant to end, and a learning rate of 0.05. The row carries `fit_s` (wall clock to a stopped model), `stopped_at`, and the test metric of the model that stopping actually produced. This is a latency in its own right: it is how long a production retrain takes when nobody has hand-tuned the round count.
+
+The eval rows always come off the train side, so the test split stays untouched and the reported metric still lands on rows no library saw.
+
+Five translation caveats the matched-knobs design cannot remove, stated rather than hidden.
+
+`stopped_at` is the retained round count, the size of the model the reported metric came from, because the four libraries number their best iteration two different ways (bonsai and LightGBM report a count, XGBoost and CatBoost a zero-based index). The wall clock covers roughly `stopped_at` plus the patience, and those trailing rounds are counted deliberately: they are what the stop costs.
+
+XGBoost is the only one of the four that does not truncate on a stop, and its default prediction range is every tree it grew, so the runner passes `iteration_range` explicitly. Read without it, the metric would describe the overshot model instead of the stopped one.
+
+CatBoost shrinks the model to its best iteration whenever an eval set is present, detector armed or not: 200 requested iterations came back as a 140-tree model with no detector at all (CatBoost 1.2.10). The fixed-iteration arm therefore sets `use_best_model=False`, or it would report the metric of a model shorter than the one whose fit was timed.
+
+Building the validation structure lands in `ingest_s` for the three reference libraries and in `train_s` for bonsai, which bins its eval set inside `train` with the Dataset's own mappers. The overhead ratio is quoted on `fit_s`, the outer wall clock, which has no such seam.
+
+Eval cadence and loss definition stay each library's own. All four score every round at these settings, but each scores with its own objective's eval metric, so the per-round validation numbers are not comparable across libraries; the stopping point and the final test metric are.
 
 ## Hardware rules
 

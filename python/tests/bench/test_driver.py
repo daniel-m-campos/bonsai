@@ -24,8 +24,10 @@ def test_driver_resume_and_emit():
         prior.write_text(json.dumps(legacy_row) + "\n"
                          + json.dumps(err_row) + "\n")
         done = driver.resume_keys(prior)
+        # The eval_mode slot reads None for every row committed before the
+        # early-stopping suite existed, so old files still resume-match.
         assert ("bonsai_depthwise", 16, 0, 1_000_000, 100, 255, 8, 100, 42,
-                None, None) in done
+                None, None, None) in done
         assert len(done) == 1  # the error row re-attempts
 
         host = {"name": "t", "gpu": None, "gpu_vram_gb": None, "cpu_model": "t",
