@@ -213,45 +213,46 @@ __global__ void hist_group_kernel(BinT const *bins, float2 const *gh_ordered,
 }
 
 // The group the shared budget can hold: `group` when its histograms plus the
-// feature tables fit, else 1, which selects the one-feature kernel. The note
-// is emitted once, and only while the CUDA profile is on.
-inline uint32_t hist_group_fit(uint32_t group, size_t one_bytes, size_t shared_limit)
+// feature tables fit, else 1, which selects the one-feature kernel. With the
+// CUDA profile on it says once which way it went, active included: a probe
+// that silently does nothing reads exactly like a probe that does nothing.
+inline uint32_t hist_group_fit(uint32_t group, size_t one_bytes, size_t group_limit)
 {
     if (group <= 1)
     {
         return 1;
     }
-    uint32_t const g = group < k_hist_group_max ? group : k_hist_group_max;
-    if ((g * one_bytes) + k_hist_group_static <= shared_limit)
-    {
-        return g;
-    }
-    static bool noted = false;
+    uint32_t const g     = group < k_hist_group_max ? group : k_hist_group_max;
+    size_t const   bytes = (g * one_bytes) + k_hist_group_static;
+    bool const     fits  = bytes <= group_limit;
+    static bool    noted = false;
     if (!noted && std::getenv("BONSAI_CUDA_PROFILE") != nullptr)
     {
         noted = true;
         std::print(stderr,
-                   "bonsai: BONSAI_HIST_GROUP={} needs {} shared bytes over the {} "
-                   "byte limit; building ungrouped\n",
-                   g, (g * one_bytes) + k_hist_group_static, shared_limit);
+                   "bonsai: BONSAI_HIST_GROUP={} {}: {} shared bytes per block against "
+                   "a {} byte limit\n",
+                   g, fits ? "active" : "declined, building ungrouped", bytes,
+                   group_limit);
     }
-    return 1;
+    return fits ? g : 1;
 }
 
 // The one entry point for a shared-memory histogram build: the grouped kernel
 // when the probe asks for a group the budget holds, else the one-feature
 // kernel with the launch it always had. Grid is (feature or group, node,
-// row-chunk).
+// row-chunk). group_limit is the GROUPED kernel's ceiling, which is its own
+// opt-in and not the one-feature kernel's.
 template <typename BinT>
 inline void
 launch_hist(BinT const *bins, float2 const *gh_ordered, uint32_t const *rows,
             uint32_t const *row_offsets, uint32_t const *row_counts,
             uint32_t const *features, uint32_t const *n_bins, uint32_t n_rows,
             uint32_t n_sel, double *out, uint32_t stride, uint32_t const *out_slot,
-            uint32_t n_nodes, uint32_t n_chunks, uint32_t group, size_t shared_limit)
+            uint32_t n_nodes, uint32_t n_chunks, uint32_t group, size_t group_limit)
 {
     size_t const   one = 2UL * stride * sizeof(float);
-    uint32_t const g   = hist_group_fit(group, one, shared_limit);
+    uint32_t const g   = hist_group_fit(group, one, group_limit);
     if (g > 1)
     {
         dim3 const grid((n_sel + g - 1) / g, n_nodes, n_chunks);

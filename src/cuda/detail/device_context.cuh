@@ -316,8 +316,11 @@ struct CudaDeviceContext
 
     // Features per histogram block (research probe): 0 or 1 is the
     // one-feature kernel, G > 1 the grouped one whenever G histograms fit
-    // shared_limit.
-    uint32_t hist_group = hist_group_env();
+    // hist_group_limit. The grouped kernel carries static shared arrays
+    // beside its dynamic histograms, so it opts in for less than the device
+    // maximum and its ceiling is its own, not shared_limit.
+    uint32_t hist_group       = hist_group_env();
+    size_t   hist_group_limit = k_max_shared_bytes;
 
     // The one histogram-capacity predicate: a node's per-feature scratch is
     // 4 * bins floats in shared memory. begin_root declines a tree with it,

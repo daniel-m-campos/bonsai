@@ -299,18 +299,21 @@ void CudaDeviceContext::init_shared_limit()
     {
         shared_limit = static_cast<size_t>(optin);
     }
-    // The grouped kernel is a separate entity and needs its own opt-in;
-    // without it a group over the static budget could not launch, so the
-    // probe falls back to one feature per block.
+    // The grouped kernel is a separate entity and needs its own opt-in, for
+    // LESS than the device maximum: its static feature tables share the
+    // block's budget with the dynamic histograms, so asking for all of it is
+    // refused and the probe would go quietly inert. A refused opt-in leaves
+    // grouping on the static budget instead of turning it off.
+    int const group_optin = optin - static_cast<int>(k_hist_group_static);
     if (hist_group > 1 &&
-        (cudaFuncSetAttribute(hist_group_kernel<uint8_t>,
-                              cudaFuncAttributeMaxDynamicSharedMemorySize,
-                              optin) != cudaSuccess ||
-         cudaFuncSetAttribute(hist_group_kernel<uint16_t>,
-                              cudaFuncAttributeMaxDynamicSharedMemorySize,
-                              optin) != cudaSuccess))
+        cudaFuncSetAttribute(hist_group_kernel<uint8_t>,
+                             cudaFuncAttributeMaxDynamicSharedMemorySize,
+                             group_optin) == cudaSuccess &&
+        cudaFuncSetAttribute(hist_group_kernel<uint16_t>,
+                             cudaFuncAttributeMaxDynamicSharedMemorySize,
+                             group_optin) == cudaSuccess)
     {
-        hist_group = 1;
+        hist_group_limit = static_cast<size_t>(optin);
     }
     cudaGetLastError(); // clear any sticky attribute error
 }
@@ -535,11 +538,12 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     data.dispatch_bins(
         [&](auto const *bins)
         {
-            launch_hist(
-                bins, lvl.gh_ordered.data(), lvl.rows.data(), lvl.row_offsets.device(),
-                lvl.row_counts.device(), lvl.features.device(), data.n_bins_ptr(),
-                static_cast<uint32_t>(ds.n_rows()), lvl.n_selected, lvl.cur().data(),
-                lvl.stride, lvl.slots.device(), 1, n_chunks, hist_group, shared_limit);
+            launch_hist(bins, lvl.gh_ordered.data(), lvl.rows.data(),
+                        lvl.row_offsets.device(), lvl.row_counts.device(),
+                        lvl.features.device(), data.n_bins_ptr(),
+                        static_cast<uint32_t>(ds.n_rows()), lvl.n_selected,
+                        lvl.cur().data(), lvl.stride, lvl.slots.device(), 1, n_chunks,
+                        hist_group, hist_group_limit);
         });
     check(cudaGetLastError(), "root hist launch");
     if (prof_counters.enabled)
@@ -771,7 +775,7 @@ void CudaDeviceContext::advance_level(Dataset const                             
                             static_cast<uint32_t>(ds.n_rows()), lvl.n_selected,
                             lvl.other().data(), lvl.stride, lvl.slots.device(),
                             static_cast<uint32_t>(lvl.row_offsets.size()), n_chunks,
-                            hist_group, shared_limit);
+                            hist_group, hist_group_limit);
             }
             if (!lvl.small_offsets.empty())
             {
@@ -1090,7 +1094,7 @@ bool CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
                         lvl.features.device(), data.n_bins_ptr(),
                         static_cast<uint32_t>(ds.n_rows()), lvl.n_selected,
                         leaf.pool.data(), lvl.stride, leaf.build_seg.device() + 2, 1,
-                        n_chunks, hist_group, shared_limit);
+                        n_chunks, hist_group, hist_group_limit);
         });
     check(cudaGetLastError(), "leaf root hist launch");
     lvl.leaf_by_row.reserve(ds.n_rows());
@@ -1227,7 +1231,7 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
                             lvl.features.device(), data.n_bins_ptr(),
                             static_cast<uint32_t>(ds.n_rows()), lvl.n_selected,
                             leaf.pool.data(), lvl.stride, leaf.build_seg.device() + 2,
-                            1, n_chunks, hist_group, shared_limit);
+                            1, n_chunks, hist_group, hist_group_limit);
             }
             else
             {
