@@ -28,6 +28,7 @@ Per-component design docs. Numbered roughly in build order. Source of truth for 
 | 18 | [`18-manual-bin-edges.md`](18-manual-bin-edges.md): explicit bin edges in the model artifact | shipped (decision 73) |
 | 19 | [`19-multi-gpu.md`](19-multi-gpu.md): single-node multi-GPU: a data-parallel backend beside the single-GPU one | built and parked at measured parity (decision 76); reopener landed (decision 98) |
 | 20 | [`20-cuda-leafwise.md`](20-cuda-leafwise.md): device leafwise: a slot-pool plane for best-first growth | admitted, stage 3 closed (decisions 97-98) |
+| 21 | [`21-component-standings.md`](21-component-standings.md): component-timing standings: the DAG constants become the ledger | design (issue #323) |
 
 ## Cross-cutting concerns
 
