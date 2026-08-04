@@ -81,8 +81,8 @@ def detect_host(name: str | None = None) -> dict:
     Returns
     -------
     dict
-        name, gpu, gpu_vram_gb, cpu_model, n_vcpu, ram_gb, os, python,
-        and libs (the imported reference-library versions).
+        name, gpu, driver, gpu_vram_gb, cpu_model, n_vcpu, ram_gb, os,
+        python, and libs (the imported reference-library versions).
     """
     gpu, vram = None, None
     try:
@@ -92,6 +92,15 @@ def detect_host(name: str | None = None) -> dict:
         if out.returncode == 0 and out.stdout.strip():
             g, v = out.stdout.strip().splitlines()[0].split(",")
             gpu, vram = g.strip(), round(float(v) / 1024, 1)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    driver = None
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=driver_version",
+                              "--format=csv,noheader"],
+                             capture_output=True, text=True, timeout=10)
+        if out.returncode == 0 and out.stdout.strip():
+            driver = out.stdout.strip().splitlines()[0].strip()
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     if sys.platform == "darwin":
@@ -108,10 +117,10 @@ def detect_host(name: str | None = None) -> dict:
                 break
         ram = round(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
                     / 2**30)
-    return {"name": name or platform.node(), "gpu": gpu, "gpu_vram_gb": vram,
-            "cpu_model": cpu, "n_vcpu": os.cpu_count(), "ram_gb": ram,
-            "os": platform.platform(), "python": platform.python_version(),
-            "libs": lib_versions()}
+    return {"name": name or platform.node(), "gpu": gpu, "driver": driver,
+            "gpu_vram_gb": vram, "cpu_model": cpu, "n_vcpu": os.cpu_count(),
+            "ram_gb": ram, "os": platform.platform(),
+            "python": platform.python_version(), "libs": lib_versions()}
 
 
 def emit_row(path: str | pathlib.Path, *, division: str, suite: str,

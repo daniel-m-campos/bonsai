@@ -25,3 +25,9 @@ def test_runlog_roundtrip():
         assert runlog.knobs_hash({"a": 1, "b": 2}) == back["knobs_hash"]
     with pytest.raises(ValueError):
         runlog.emit_row("/tmp/x.jsonl", division="nope", suite="s")
+
+
+def test_detect_host_driver_key():
+    host = runlog.detect_host()
+    assert "driver" in host
+    assert host["driver"] is None or isinstance(host["driver"], str)
