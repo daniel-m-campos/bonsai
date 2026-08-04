@@ -5,8 +5,10 @@
 
 Reads sha/host/date from the new file's rows, deletes the superseded file
 (git history is the archive), and rewrites the registry entry with
-refreshed_for taken from pyproject.toml (override with --version). Run
-render_results.py afterwards; the generator loads through the registry.
+refreshed_for taken from pyproject.toml (override with --version).
+Supersession also drops the entry's note, since a note describes the
+file being replaced. Run render_results.py afterwards; the generator
+loads through the registry.
 """
 
 from __future__ import annotations
@@ -55,9 +57,11 @@ def main() -> int:
     dates = sorted({r["ts"][:10] for r in rows if r.get("ts")})
 
     old = entry["file"]
-    if old != args.file and (RESULTS / old).exists():
-        (RESULTS / old).unlink()
-        print(f"superseded {old} (git history is the archive)")
+    if old != args.file:
+        if (RESULTS / old).exists():
+            (RESULTS / old).unlink()
+            print(f"superseded {old} (git history is the archive)")
+        entry.pop("note", None)
     entry.update(file=args.file, sha=shas.pop(),
                  host=sorted(hosts)[0] if len(hosts) == 1 else None,
                  date=dates[-1] if dates else None,

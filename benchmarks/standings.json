@@ -6,8 +6,7 @@
     "host": "pod-NVIDIA-L40S",
     "date": "2026-08-03",
     "refreshed_for": "1.6.1",
-    "as_of_decision": 94,
-    "note": "Predates the tiled fill and radix mapper; first refresh will supersede."
+    "as_of_decision": 94
   },
   "width": {
     "file": "cols-rebaseline-2026-08.jsonl",
@@ -32,8 +31,7 @@
     "host": "pod-NVIDIA-L40S",
     "date": "2026-08-03",
     "refreshed_for": "1.6.1",
-    "as_of_decision": 94,
-    "note": "Pre-provenance rows (decision 78 re-run); refresh mints the first sha-stamped frontier."
+    "as_of_decision": 94
   },
   "airline": {
     "file": "airline-2026-08.jsonl",
