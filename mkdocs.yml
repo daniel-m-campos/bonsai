@@ -135,6 +135,7 @@ nav:
           - Fit at scale: method/results/perf-scale.md
           - Width and shape: method/results/perf-shape.md
           - The accuracy-time frontier: method/results/perf-frontier.md
+          - Early stopping: method/results/perf-early-stop.md
           - Airline delays: method/results/perf-airline.md
           - The single-card ceiling: method/results/perf-ceiling.md
       - Quality division:
