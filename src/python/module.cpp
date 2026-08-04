@@ -99,7 +99,15 @@ std::optional<DeviceArray> as_device_array(nb::handle obj, char const *what,
     if (cai.contains("strides") && !cai["strides"].is_none())
     {
         auto const strides = nb::cast<std::vector<int64_t>>(cai["strides"]);
-        auto const row     = static_cast<int64_t>(out.cols * sizeof(float));
+        if (strides.size() != ndim)
+        {
+            throw std::invalid_argument(name +
+                                        " has a malformed __cuda_array_interface__: "
+                                        "strides length " +
+                                        std::to_string(strides.size()) + " != ndim " +
+                                        std::to_string(ndim));
+        }
+        auto const row = static_cast<int64_t>(out.cols * sizeof(float));
         bool const c_contig =
             ndim == 1 ? strides[0] == static_cast<int64_t>(sizeof(float))
                       : strides[0] == row &&
@@ -114,7 +122,7 @@ std::optional<DeviceArray> as_device_array(nb::handle obj, char const *what,
     auto const data = nb::cast<nb::tuple>(cai["data"]);
     // NOLINTNEXTLINE(performance-no-int-to-ptr): the protocol carries an address
     out.data = reinterpret_cast<float const *>(nb::cast<uintptr_t>(data[0]));
-    if (out.data == nullptr || out.rows == 0)
+    if (out.data == nullptr || out.rows == 0 || out.cols == 0)
     {
         throw std::invalid_argument(name + " is an empty device array");
     }
@@ -142,9 +150,11 @@ void place_device_array(DeviceArray const &arr, uint32_t device_id, char const *
     auto const on = bonsai::cuda_device_of(arr.data);
     if (!on)
     {
-        throw std::invalid_argument(std::string{what} +
-                                    "'s __cuda_array_interface__ pointer is not CUDA "
-                                    "device memory");
+        throw std::invalid_argument(
+            std::string{what} +
+            "'s __cuda_array_interface__ pointer is not CUDA device memory (host, "
+            "unregistered, or managed memory; bonsai reads unmanaged device "
+            "allocations)");
     }
     if (*on != device_id)
     {

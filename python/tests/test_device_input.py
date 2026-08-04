@@ -113,6 +113,18 @@ def test_device_input_rejects_null_pointer():
         bonsai.train(PAIRS, _cai(0, (10, 3)), np.zeros(10, np.float32))
 
 
+@requires_cuda
+def test_device_input_rejects_a_host_pointer():
+    """A protocol-valid interface over memory that is not a device allocation.
+
+    The protocol carries an address and nothing that says where it lives, so
+    the placement check is the only thing standing between a host pointer and
+    a kernel reading it.
+    """
+    with pytest.raises(Exception, match="device memory"):
+        bonsai.train(PAIRS, _cai(4096, (10, 3)), np.zeros(10, np.float32))
+
+
 @pytest.mark.skipif(bonsai.cuda_available(), reason="needs a CUDA-less build or host")
 def test_device_input_raises_without_a_device():
     with pytest.raises(Exception, match="cuda_available"):
@@ -186,6 +198,22 @@ def test_dataset_from_device_input_bins_on_the_device(to_device):
     assert (ds.n_rows, ds.n_features) == X.shape
     host = bonsai.train(PAIRS, X, y)
     assert _model_sha(bonsai.train(PAIRS, ds)) == _model_sha(host)
+
+
+@requires_cuda
+def test_dataset_from_device_input_gathers_a_sample(to_device):
+    """The sampled arm: cuts fitted on rows gathered out of the device matrix.
+
+    Every other test here sits below the default n_samples, where the sampler
+    names no rows and the gather is a straight download, so this is the only
+    one that runs the gather kernel. Byte-identical models pin both which rows
+    it picked and the order it wrote them in.
+    """
+    X, y, _ = _reg_data()
+    dev = bonsai.Dataset(_cai(to_device(X), X.shape), y, n_samples=1024)
+    host = bonsai.Dataset(X, y, n_samples=1024)
+
+    assert _model_sha(bonsai.train(PAIRS, dev)) == _model_sha(bonsai.train(PAIRS, host))
 
 
 @requires_cuda
