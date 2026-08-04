@@ -79,11 +79,13 @@ Honest differences rather than familiar spellings over changed behavior.
 - `reg:pseudohubererror` maps to bonsai's `huber`, which is the exact Huber loss rather than the pseudo-Huber approximation; the `huber_delta` knob is `params={"objective.huber_delta": ...}`.
 - XGBoost keeps every tree it grew when early stopping fires and leaves truncation to `iteration_range`. bonsai returns the best-iteration model, so a translated config predicts from a shorter ensemble than XGBoost would.
 - `eval_set` is one `(X, y)` tuple. The list-of-tuples form is rejected rather than quietly reduced to its last entry, because bonsai tracks a single validation set.
-- `evals_result()`, `best_score`, and the early-stop log report the objective under its bonsai name and in its own units. The `mse` objective reports squared error, not rmse.
-- `iteration_range` must start at 0: a boosted sum has no meaning without its head.
+- `evals_result()` returns `{"valid": {objective_name: [...]}}`, not `{"validation_0": {metric: [...]}}`. The outer key names the eval set the way the CLI labels its metric column, and the inner key is the objective under its bonsai name and in its own units, so `best_score` and the curve read `mse` rather than a square-rooted `rmse`.
+- Prediction truncates with `num_iteration=n`, the same argument `Model.predict` takes; there is no `iteration_range`. A prefix always starts at the head, because a boosted sum has no meaning without it.
+- Saving is `save(path)` and loading is `BonsaiRegressor.from_file(path)`. `save_model` and `load_model` are gone, and there is no in-place loader: bind the returned estimator.
+- `apply` stays, because it is scikit-learn's own name for per-tree leaf indices (`GradientBoostingRegressor.apply`) and this layer exists for sklearn speakers. `predict_leaf` is the native spelling of the same call.
 - `early_stopping_rounds` lives in the constructor, matching XGBoost 2.x and later; there is no `fit(early_stopping_rounds=...)`.
 - Categorical features go through [`OrderedTargetEncoder`](../guide/13-categorical-features.md) rather than an `enable_categorical` flag; the measurement behind that choice is decision 58.
 - The native layer (`train`, `Dataset`, `Model`) is bonsai's own explicit API, not a `DMatrix` clone; callbacks, dask, and spark integrations are out of scope.
-- Loading a saved classifier restores encoded `0..K-1` class ids (XGBoost's `load_model` convention); pickle the estimator to preserve original labels.
+- Loading a saved classifier restores encoded `0..K-1` class ids, because the native format stores only the booster; pickle the estimator to preserve original labels.
 
 `from_lightgbm` and `from_catboost` are the same shape for the other two libraries, with their own caveats recorded at their own tables. Every knob that has no mapping at all is still reachable as a dotted config key; [Parameters](parameters.md) lists them all.

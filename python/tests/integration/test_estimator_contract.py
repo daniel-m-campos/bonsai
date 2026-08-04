@@ -50,7 +50,7 @@ def test_full_regressor_script():
     est.fit(Xtr, ytr, eval_set=(Xva, yva))
     assert est.n_features_in_ == Xtr.shape[1]
 
-    hist = est.evals_result()["validation_0"]["mse"]
+    hist = est.evals_result()["valid"]["mse"]
     assert len(hist) >= 1
     assert est.best_iteration == int(np.argmin(hist))
     assert abs(est.best_score - min(hist)) < 1e-12
@@ -58,7 +58,7 @@ def test_full_regressor_script():
 
     pred = est.predict(Xva)
     assert pred.shape == yva.shape
-    head = est.predict(Xva, iteration_range=(0, 5))
+    head = est.predict(Xva, num_iteration=5)
     assert not np.allclose(head, pred)
     leaves = est.apply(Xva)
     assert leaves.shape[0] == Xva.shape[0]
@@ -70,7 +70,7 @@ def test_eval_history_reports_the_native_objective_name():
     squared error, not its root."""
     Xtr, ytr, Xva, yva = _reg_data()
     est = bonsai.BonsaiRegressor(n_iters=15).fit(Xtr, ytr, eval_set=(Xva, yva))
-    result = est.evals_result()["validation_0"]
+    result = est.evals_result()["valid"]
     assert list(result) == ["mse"]
     assert len(result["mse"]) == 15
     # best_iteration is an early-stopping concept, undefined without it
@@ -84,13 +84,12 @@ def test_eval_set_list_is_rejected():
         bonsai.BonsaiRegressor(n_iters=5).fit(Xtr, ytr, eval_set=[(Xva, yva)])
 
 
-def test_save_model_load_model_roundtrip():
+def test_save_from_file_roundtrip():
     Xtr, ytr, Xva, _ = _reg_data()
     est = bonsai.BonsaiRegressor(n_iters=20).fit(Xtr, ytr)
     with tempfile.NamedTemporaryFile(suffix=".msgpack") as f:
-        est.save_model(f.name)
-        out = bonsai.BonsaiRegressor()
-        assert out.load_model(f.name) is out
+        est.save(f.name)
+        out = bonsai.BonsaiRegressor.from_file(f.name)
         np.testing.assert_allclose(out.predict(Xva), est.predict(Xva))
 
 
@@ -101,14 +100,14 @@ def test_classifier_derives_its_objective_from_the_labels():
     proba = est.predict_proba(Xva)
     assert proba.shape == (len(Xva), 2)
     np.testing.assert_allclose(proba.sum(axis=1), 1.0, atol=1e-6)
-    assert list(est.evals_result()["validation_0"]) == ["logloss"]
+    assert list(est.evals_result()["valid"]) == ["logloss"]
 
 
 def test_multiclass_reports_the_softmax_objective():
     Xtr, ytr, Xva, yva = _cls_data(k=3)
     est = bonsai.BonsaiClassifier(n_iters=25)
     est.fit(Xtr, ytr, eval_set=(Xva, yva))
-    assert "softmax" in est.evals_result()["validation_0"]
+    assert "softmax" in est.evals_result()["valid"]
     assert est.predict_proba(Xva).shape == (len(Xva), 3)
 
 
@@ -132,7 +131,7 @@ def test_warm_start_best_iteration_is_absolute():
     rounds_a = 30
     first = bonsai.BonsaiRegressor(n_iters=rounds_a).fit(Xtr, ytr)
     with tempfile.NamedTemporaryFile(suffix=".msgpack") as f:
-        first.save_model(f.name)
+        first.save(f.name)
         est = bonsai.BonsaiRegressor(n_iters=40, early_stopping_rounds=5)
         est.fit(Xtr, ytr, eval_set=(Xva, yva), init_model=f.name)
 
@@ -142,7 +141,7 @@ def test_warm_start_best_iteration_is_absolute():
         assert est.n_iters_ == est.best_iteration + 1
     # evals_result reports only the measured continuation rounds; the best
     # absolute round is the warm-start offset plus its argmin
-    cont = est.evals_result()["validation_0"]["mse"]
+    cont = est.evals_result()["valid"]["mse"]
     assert len(cont) <= 40
     assert est.best_iteration == rounds_a + int(np.argmin(cont))
     assert abs(est.best_score - min(cont)) < 1e-12
