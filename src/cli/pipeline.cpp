@@ -185,9 +185,14 @@ train_with_progress(Config const &cfg, LabeledData const &train,
     auto const n_iters = cfg.booster_config.n_iters;
     auto const log_iv  = cfg.booster_config.log_intervals;
 
+    // A caller without a tick callback gets no fit-time output at all: this
+    // stdout is the C runtime's, which escapes any redirection an embedder
+    // installed, so the library must not write to it unsolicited.
+    bool const has_sink = static_cast<bool>(on_tick);
+
     // Period = max(1, n_iters / log_intervals). log_iv > n_iters -> log every iter.
     // log_iv == 0 disables ticks entirely (on_tick still ignored).
-    bool const ticks_enabled = log_iv > 0 && static_cast<bool>(on_tick);
+    bool const ticks_enabled = log_iv > 0 && has_sink;
     auto const period =
         ticks_enabled ? std::max<uint32_t>(1, n_iters / std::max<uint32_t>(1, log_iv))
                       : n_iters;
@@ -304,10 +309,13 @@ train_with_progress(Config const &cfg, LabeledData const &train,
                 // best_iter counts THIS loop's rounds; keep the warm-start
                 // rounds the best loss was measured on top of.
                 booster->truncate(es_base + best_iter + 1);
-                std::println("fit: early stop at iter {} (best iter {}, valid {} "
-                             "loss {})",
-                             i + 1, best_iter + 1, cfg.dispatch.objective_name,
-                             best_loss);
+                if (has_sink)
+                {
+                    std::println("fit: early stop at iter {} (best iter {}, valid {} "
+                                 "loss {})",
+                                 i + 1, best_iter + 1, cfg.dispatch.objective_name,
+                                 best_loss);
+                }
                 break;
             }
         }

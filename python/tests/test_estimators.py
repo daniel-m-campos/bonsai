@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pathlib
 import pickle
+import subprocess
+import sys
 import tempfile
 
 import bonsai
@@ -65,6 +67,31 @@ def test_early_stopping_stops():
         n_iters=400, learning_rate=0.3, early_stopping_rounds=10
     ).fit(Xtr[:-2000], ytr[:-2000], eval_set=(Xtr[-2000:], ytr[-2000:]))
     assert m.n_iters_ < 400
+
+
+_EARLY_STOPPING_FIT = """
+import numpy as np
+
+import bonsai
+
+rng = np.random.default_rng(0)
+X = rng.random((2000, 4), dtype=np.float32)
+y = rng.random(2000, dtype=np.float32)
+model = bonsai.BonsaiRegressor(
+    n_iters=200, learning_rate=0.5, early_stopping_rounds=2
+).fit(X[:1500], y[:1500], eval_set=(X[1500:], y[1500:]))
+assert model.n_iters_ < 200, model.n_iters_
+"""
+
+
+def test_early_stopping_fit_writes_nothing_to_stdout():
+    """The native fit must not write to the process stdout. A subprocess is the
+    only honest check: the C runtime's stdout is not python's, so it escapes
+    capsys and contextlib.redirect_stdout alike."""
+    done = subprocess.run(
+        [sys.executable, "-c", _EARLY_STOPPING_FIT], capture_output=True, check=True
+    )
+    assert done.stdout == b""
 
 
 def test_bad_param_raises():

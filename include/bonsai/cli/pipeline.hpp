@@ -90,6 +90,8 @@ using FitTickFn = std::function<void(FitTick const &)>;
 // `initial` continues training an existing booster (warm start) instead of
 // constructing a fresh one from cfg; cfg still drives n_iters / ticks /
 // early stopping for the continuation.
+// on_tick doubles as the consent to write to stdout: a call without it prints
+// nothing at all, including the early-stop notice.
 // An optional reference to a caller-owned history vector (no raw pointer,
 // no ownership): std::ref(vec) to opt in, default {} to opt out.
 using EvalHistoryRef = std::optional<std::reference_wrapper<std::vector<float>>>;
