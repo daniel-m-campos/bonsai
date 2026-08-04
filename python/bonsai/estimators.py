@@ -135,18 +135,12 @@ class _BonsaiEstimator:
         suite). Subclasses fill in the estimator-type-specific tag."""
         raise NotImplementedError
 
-    def predict(self, X, num_iteration: int = 0,
-                iteration_range: tuple[int, int] | None = None) -> np.ndarray:
-        """``iteration_range`` is xgboost's spelling of the same thing:
-        ``(0, n)`` means predict with the first ``n`` trees. Ranges must
-        start at 0 (a boosted sum has no meaning without its head)."""
+    def predict(self, X, num_iteration: int = 0) -> np.ndarray:
+        """``num_iteration`` truncates the ensemble to its first ``n``
+        trees, as on ``Model.predict``; 0 uses every tree. A prefix always
+        starts at the head, because a boosted sum has no meaning without
+        it."""
         self._check_fitted("fit() or load first")
-        if iteration_range is not None:
-            if iteration_range[0] != 0:
-                raise ValueError(
-                    f"iteration_range must start at 0, got {iteration_range!r}"
-                )
-            num_iteration = iteration_range[1]
         return np.asarray(self._model.predict(_as_2d_f32(X), num_iteration))
 
     def staged_predict(self, X) -> np.ndarray:
@@ -187,27 +181,14 @@ class _BonsaiEstimator:
         return raw / total if total > 0 else raw
 
     def apply(self, X) -> np.ndarray:
-        """xgboost's name for per-tree leaf indices; same as
-        ``predict_leaf``."""
+        """sklearn's name for per-tree leaf indices (as on
+        ``GradientBoostingRegressor``); same as ``predict_leaf``."""
         return self.predict_leaf(X)
 
     def save(self, path: str):
         """Serialize the fitted model to a ``.msgpack`` file."""
         self._check_fitted("fit() before save()")
         self._model.save(path)
-
-    def save_model(self, path: str):
-        """xgboost's name for ``save``."""
-        self.save(path)
-
-    def load_model(self, path: str) -> _BonsaiEstimator:
-        """xgboost's in-place loader: replaces this estimator's fitted state
-        with the saved model and returns ``self``. Same caveat as
-        ``from_file``: the native format stores only the booster, so a
-        classifier comes back with encoded ``0..K-1`` class ids."""
-        loaded = type(self).from_file(path)
-        self.__dict__.update(loaded.__dict__)
-        return self
 
     @classmethod
     def from_file(cls, path: str) -> _BonsaiEstimator:
@@ -223,13 +204,15 @@ class _BonsaiEstimator:
 
     def evals_result(self) -> dict:
         """Per-round eval-set loss history:
-        ``{"validation_0": {objective_name: [...]}}``. Requires a fit with
-        an ``eval_set``; empty after loading from a file. The metric is the
-        objective's own loss under its bonsai name and its own units: the
-        ``mse`` objective reports squared error, not its root. After an
-        ``init_model`` warm start only the continuation's measured rounds
-        are reported (the warm-start rounds were never evaluated;
-        ``best_iteration`` still counts absolute rounds)."""
+        ``{"valid": {objective_name: [...]}}``. The outer key names the eval
+        set, spelled the way the CLI labels its metric column and
+        ``data.valid`` names the file. Requires a fit with an ``eval_set``;
+        empty after loading from a file. The metric is the objective's own
+        loss under its bonsai name and its own units: the ``mse`` objective
+        reports squared error, not its root. After an ``init_model`` warm
+        start only the continuation's measured rounds are reported (the
+        warm-start rounds were never evaluated; ``best_iteration`` still
+        counts absolute rounds)."""
         self._check_fitted()
         name = self._model.objective_name
         hist = [float(v) for v in self._model.eval_history]
@@ -239,14 +222,15 @@ class _BonsaiEstimator:
         hist = hist[start:]
         if not hist:
             return {}
-        return {"validation_0": {name: hist}}
+        return {"valid": {name: hist}}
 
     @property
     def best_iteration(self) -> int:
         """0-based absolute model round with the best eval-set loss, defined
-        (as in xgboost) only when fit ran with early stopping and an
-        eval_set. After an ``init_model`` warm start the index counts the
-        warm-start rounds too, so it lines up with ``n_iters_`` and
+        only when fit ran with early stopping and an ``eval_set``: it is the
+        round early stopping kept. After an ``init_model`` warm start the
+        index counts the warm-start rounds too, so it lines up with
+        ``n_iters_`` and
         ``predict(num_iteration=best_iteration + 1)``."""
         self._check_fitted()
         hist = self._model.eval_history
@@ -632,9 +616,9 @@ class BonsaiClassifier(_BonsaiEstimator):
         """Load a saved ``.msgpack`` classifier.
 
         The native format stores only the booster, so ``classes_`` comes back
-        as the encoded ids ``0..K-1`` (xgboost's ``load_model`` convention) —
-        ``predict`` then returns those ids, not the label values passed to
-        ``fit``. Pickle the estimator to preserve original labels.
+        as the encoded ids ``0..K-1``, and ``predict`` returns those ids
+        rather than the label values passed to ``fit``. Pickle the estimator
+        to preserve original labels.
         """
         out = super().from_file(path)
         objective = out._model.objective_name
