@@ -327,6 +327,42 @@ def test_classifier_multiclass_predict_and_proba():
     assert np.array_equal(m.classes_[proba.argmax(axis=1)], pred)
 
 
+def _dumped_trees(text: str) -> list[list[int]]:
+    """[round, class, leaf count] for every tree block of a softmax dump."""
+    trees: list[list[int]] = []
+    for line in text.splitlines():
+        if line.startswith("tree "):
+            parts = line.split()
+            trees.append([int(parts[1]), int(parts[3].rstrip(":")), 0])
+        elif "leaf=" in line:
+            trees[-1][2] += 1
+    return trees
+
+
+def test_classifier_multiclass_predict_leaf_one_column_per_tree():
+    """Softmax grows one tree per class per round, so the leaf matrix is
+    n_iters * n_classes wide. Sizing it by n_iters alone overran the output
+    buffer and corrupted the heap."""
+    n_rows, n_classes, n_iters = 400, 5, 8
+    rng = np.random.default_rng(0)
+    y = rng.integers(0, n_classes, size=n_rows)
+    X = (y[:, None] * 3.0 + rng.normal(scale=0.5, size=(n_rows, 3))).astype(np.float32)
+    m = bonsai.BonsaiClassifier(n_iters=n_iters, max_depth=3).fit(X, y)
+
+    leaves = m.predict_leaf(X)
+
+    assert m.n_classes_ == n_classes
+    assert leaves.shape == (n_rows, n_iters * n_classes)
+
+    trees = _dumped_trees(m.dump())
+    assert len(trees) == leaves.shape[1]
+    for t, (round_id, class_id, n_leaves) in enumerate(trees):
+        assert (round_id, class_id) == (t // n_classes, t % n_classes)
+        column = leaves[:, t]
+        assert column.min() >= 0
+        assert len(np.unique(column)) <= n_leaves
+
+
 def test_classifier_too_few_classes_raises():
     X = np.zeros((10, 3), dtype=np.float32)
     y = np.zeros(10, dtype=np.float32)
