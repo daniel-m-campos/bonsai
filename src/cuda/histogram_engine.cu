@@ -475,11 +475,21 @@ void cuda_gather_rows(DeviceMatrix const &X, std::span<uint32_t const> rows,
     idx.upload(rows.data(), rows.size());
     DeviceBuffer<float> gathered;
     gathered.reserve(out.size());
-    auto const cells = static_cast<uint32_t>(out.size());
-    dim3 const grid((cells + 255) / 256);
-    gather_rows_kernel<<<grid, dim3(256)>>>(
-        X.data, idx.data(), cells, static_cast<uint32_t>(X.n_feats), gathered.data());
-    check(cudaGetLastError(), "sample gather launch");
+
+    // Chunked only to keep the launch's cell count inside uint32; each chunk
+    // offsets into the sample's row ids and into the gathered block.
+    size_t const rows_per_chunk =
+        std::max<size_t>(1, k_ingest_chunk_bytes / (X.n_feats * sizeof(float)));
+    for (size_t row0 = 0; row0 < rows.size(); row0 += rows_per_chunk)
+    {
+        auto const n     = std::min(rows_per_chunk, rows.size() - row0);
+        auto const cells = static_cast<uint32_t>(n * X.n_feats);
+        dim3 const grid((cells + 255) / 256);
+        gather_rows_kernel<<<grid, dim3(256)>>>(X.data, idx.data() + row0, cells,
+                                                static_cast<uint32_t>(X.n_feats),
+                                                gathered.data() + (row0 * X.n_feats));
+        check(cudaGetLastError(), "sample gather launch");
+    }
     check(cudaMemcpy(out.data(), gathered.data(), out.size() * sizeof(float),
                      cudaMemcpyDeviceToHost),
           "sample download");
