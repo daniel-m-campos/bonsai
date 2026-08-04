@@ -19,9 +19,11 @@ untouched: no carve, no eval set, no extra row fields.
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import time
+import warnings
 
 import numpy as np
 
@@ -185,6 +187,10 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
     keeps the trailing patience rounds, and inplace_predict defaults to all
     of them. The predict calls therefore pass iteration_range explicitly, or
     the reported metric would be the overshot model's, not the stopped one's.
+
+    A cuda-device request is checked after the fit (_assert_xgb_trained_on_
+    device): xgboost 3.3 can silently drop a cuda request to CPU and keep
+    training rather than raise, which posts a CPU time under a cuda label.
     """
     import xgboost as xgb
     c = spec[runlog.Row.CELL]
@@ -211,10 +217,14 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
         fit_kwargs = {"evals": [(dval, "val")], "verbose_eval": False}
     ingest_s = time.perf_counter() - t0
     t0 = time.perf_counter()
-    booster = xgb.train(params, dtrain, num_boost_round=c["iters"],
-                        **fit_kwargs, **rp.xgb_early_stop(rounds))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        booster = xgb.train(params, dtrain, num_boost_round=c["iters"],
+                            **fit_kwargs, **rp.xgb_early_stop(rounds))
     train_s = time.perf_counter() - t0
     fit_s = time.perf_counter() - fit_t0
+    if device == Device.CUDA:
+        _assert_xgb_trained_on_device(booster, caught)
     # (0, 0) is xgboost's "every tree"; a stop needs the explicit range.
     span = (0, booster.best_iteration + 1) if rounds else (0, 0)
     # inplace_predict on a host array against a GPU booster may warn and
@@ -240,6 +250,14 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
 
     lightgbm truncates on a stop, so best_iteration is the retained round
     count and predict() defaults to it; the predict calls stay unqualified.
+
+    No placement guard runs here: neither the trained model nor params()
+    reports the device a fit actually used, only the device that was
+    requested, so there is no honest post-hoc signal to check. lightgbm 4.6
+    also raises immediately when device_type="cuda" cannot find a device
+    (verified locally) rather than falling back and continuing, so the
+    silent-fallback failure mode this guard exists for has not been
+    observed here.
     """
     import lightgbm as lgb
     c = spec[runlog.Row.CELL]
@@ -292,6 +310,14 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
     params.catboost_early_stop. On a stop the model is shrunk to its best
     iteration, so tree_count_ is the retained round count and predict()
     already uses it.
+
+    No placement guard runs here: get_params()/get_all_params() echo the
+    task_type that was requested, not the one a fit actually used, and the
+    trained model carries no device metadata either, so there is no honest
+    post-hoc signal to check. catboost 1.2 also raises immediately when
+    task_type="GPU" cannot find an environment (verified locally) rather
+    than falling back and continuing, so the silent-fallback failure mode
+    this guard exists for has not been observed here.
     """
     from catboost import CatBoostClassifier, CatBoostRegressor, Pool
     c = spec[runlog.Row.CELL]
@@ -402,6 +428,33 @@ def worker(spec: dict) -> dict:
 
 
 # Private Helpers ==================================================================================
+
+def _assert_xgb_trained_on_device(booster, caught_warnings) -> None:
+    """Raise if a cuda-requested xgboost fit actually ran on CPU.
+
+    booster.save_config()'s learner.generic_param.device reports the
+    device the fit actually used, not the device that was requested:
+    xgboost 3.3 rewrites this field from "cuda" to "cpu" the moment it
+    falls back, and does so without raising (verified locally: a
+    device="cuda" fit on a GPU-less host completes and save_config then
+    reports device="cpu"). That makes it an honest post-fit signal rather
+    than an echo of params, and the check this guard exists for (issue
+    #333: a fallback that posts a plausible CPU time under a cuda label).
+    Captured warnings are folded into the message for context only; xgboost's
+    fallback warning text is not a documented contract, so it never gates
+    the check on its own.
+    """
+    cfg = json.loads(booster.save_config())
+    actual = cfg["learner"]["generic_param"]["device"]
+    if actual.startswith("cuda"):
+        return
+    hint = next((str(w.message) for w in caught_warnings
+                if "gpu" in str(w.message).lower()), None)
+    detail = f" ({hint})" if hint else ""
+    raise RuntimeError(
+        "unsupported: xgboost silently fell back to CPU (requested "
+        f"device=cuda, trained device={actual!r}){detail}")
+
 
 def _score(task: str, fit_s: float, predict_s: float, y, yte, pred_te,
            predict_train, ingest_s: float | None, train_s: float | None, *,

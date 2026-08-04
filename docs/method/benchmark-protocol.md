@@ -87,6 +87,8 @@ Eval cadence and loss definition stay each library's own. All four score every r
 
 Comparative perf numbers come only from the same machine in the same session (rental-fleet variance reaches ~25%). Rented hosts must pass the 30-second sync-latency probe (round-trips over 50µs reject the pod, decision 48). Quality rows are hardware-independent by construction: references run their CPU paths, bonsai models are bit-identical across architectures by contract.
 
+A reference library that requests a cuda device and quietly trains on CPU instead is a measurement failure, not a slow row: on the same pod it poisons the comparison in whichever direction the fallback lands, and nothing about the resulting number looks wrong on its own (a rental once posted 90.6s at a cell that reads 6.9s elsewhere, entirely because XGBoost warned and kept going instead of raising). `run_xgb` asserts placement after the fit by reading `booster.save_config()`, which reports the device XGBoost actually trained on rather than the one requested, and raises instead of returning a row when the two disagree. LightGBM and CatBoost carry no comparable post-fit signal (their params echo the request, not the outcome) and both raise immediately, rather than falling back, when their GPU device is missing, so no equivalent guard exists for them.
+
 Same-machine control is also what makes a competitor gap debuggable. Two apparent CatBoost advantages localized to bonsai bugs precisely because everything else was held equal: an accuracy gap that traced to a GPU kernel veto (decision 63), and a binning-cost gap that was a per-feature sampling pass CatBoost does not pay (decision 64, a 24x mapper speedup after the fix).
 
 ## The row schema
