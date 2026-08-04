@@ -14,6 +14,18 @@ One command from PyPI; [Install](install.md) has the full story (wheel matrix, G
 pip install bonsai-gbt
 ```
 
+## Which API when
+
+Three call shapes over one engine. The question that picks between them is how many fits come out of one ingest.
+
+**Estimators, for scikit-learn interop.** `BonsaiRegressor` and `BonsaiClassifier` are what a `Pipeline`, a `GridSearchCV`, a `cross_val_score`, or a `clone` expects to be handed. Reach for them when something else in your stack holds the model.
+
+**`Dataset` plus `train`, for repeat fits.** `bonsai.Dataset(X, y, device=...)` runs the binning pass once at construction and every later `train(pairs, ds)` skips it, bit-identical to training from the arrays. This is the shape for hyperparameter search, multi-seed ensembling, production refits on a warm dataset, and any serving path where one ingest feeds many fits. On GPU it is also where the matrix uploads once instead of once per fit.
+
+**Fused `train(pairs, X, y)`, for one-shots.** One fit, one array, no object to keep. The binning happens inside the call and goes away with it.
+
+The estimator layer is the sklearn-shaped surface, not the primary one. Everything it does, the explicit layer does with less ceremony; what it adds is the contract other libraries call.
+
 ## The estimator layer
 
 If you know scikit-learn, you know this layer:
@@ -40,13 +52,41 @@ model.save("model.msgpack")
 
 `BonsaiClassifier` handles binary and multiclass the sklearn way: arbitrary label values in, `classes_` out, `predict_proba` returning `(n, K)` probabilities.
 
-Both estimators duck-type the full sklearn contract (`get_params`, `clone`, `Pipeline`, `GridSearchCV`, `cross_val_score`, pickling) without importing sklearn at runtime, and both accept the familiar constructor aliases (`n_estimators`, `num_leaves`, `random_state`, `reg_lambda`, `max_bin`, ...).
+Both estimators duck-type the full sklearn contract (`get_params`, `clone`, `Pipeline`, `GridSearchCV`, `cross_val_score`, pickling) without importing sklearn at runtime. Constructor arguments are bonsai's own names and nothing else, so the signature always tells you which vocabulary you are speaking; a parameter dict written for another library goes through `bonsai.interop` first.
 
 Anything without a first-class kwarg goes through `params`, using the dotted keys:
 
 ```python
 bonsai.BonsaiRegressor(params={"tree.lambda_l1": 0.5, "sampler.subsample": 0.8})
 ```
+
+## Bringing a config from another library
+
+`bonsai.interop` translates a parameter dict written for XGBoost, LightGBM, or CatBoost into the pairs `train` and `params` take. It is the only place in the repo that knows those names, so the benchmark harness, the estimators, and these docs cannot drift apart:
+
+```{.python .run}
+import bonsai
+
+lgbm_config = {
+    "objective": "regression",
+    "num_leaves": 63,
+    "max_depth": -1,
+    "learning_rate": 0.05,
+    "min_data_in_leaf": 20,
+    "lambda_l2": 1.0,
+    "verbose": -1,
+}
+for key, value in sorted(bonsai.interop.from_lightgbm(lgbm_config)):
+    print(f"{key} = {value}")
+```
+
+Two lines of that output are the whole reason the module exists. `max_depth=-1` is LightGBM's uncapped growth and bonsai has no `-1` sentinel, so it arrives as `tree.max_depth = 255`, a depth no histogram tree reaches; the budget that actually binds a leaf-wise fit is `num_leaves`, which becomes `tree.max_leaves`. And `verbose` is logging rather than a knob, so it is dropped instead of translated into something that looks like one.
+
+An unrecognized parameter raises by default, with every one of them named in the message, because a quietly discarded regularizer is a quietly different model. `strict=False` drops them instead, which is what you want while porting a large dict one knob at a time.
+
+`to_xgboost`, `to_lightgbm`, and `to_catboost` run the other direction, turning a bonsai config into a reference library's dict. That is how the benchmark harness builds matched arms.
+
+Translation is not equivalence, and each mapping documents where its two sides part company: XGBoost's `min_child_weight` counts hessian mass rather than rows, and CatBoost's `border_count` counts splits where `max_bin` counts bins. `help(bonsai.interop)` prints the caveats; read them before trusting a translated config to reproduce a number.
 
 ## The explicit layer
 
