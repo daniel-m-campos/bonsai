@@ -90,13 +90,17 @@ inline void gather(float2 const *gh, uint32_t const *rows, uint32_t n,
 
 // Grid is (feature, node, row-chunk). Shared accumulation is float
 // (native atomics; double atomics CAS-loop), cross-chunk merge is double —
-// rounding stays bounded per <= 32k-row chunk.
+// rounding stays bounded per <= 32k-row chunk. One feature per block reads
+// the tiled plane one cell at a time, so it collects none of the layout's
+// sector win; it is the fallback for bin counts whose tile misses the static
+// shared budget, where it costs the same traffic the feature-major plane did.
 template <typename BinT>
 __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
                             uint32_t const *rows, uint32_t const *row_offsets,
                             uint32_t const *row_counts, uint32_t const *features,
-                            uint32_t const *n_bins, uint32_t n_rows, uint32_t n_sel,
-                            double *out, uint32_t stride, uint32_t const *out_slot)
+                            uint32_t const *n_bins, uint32_t n_rows, uint32_t n_feats,
+                            uint32_t n_sel, double *out, uint32_t stride,
+                            uint32_t const *out_slot)
 {
     // Two sub-histograms split by warp parity spread atomic contention.
     extern __shared__ float sh[];
@@ -109,7 +113,6 @@ __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
     }
     __syncthreads();
     float          *my = sh + (static_cast<size_t>((threadIdx.x >> 5) & 1U) * 2 * nb);
-    BinT const     *fb = bins + (static_cast<size_t>(f) * n_rows);
     uint32_t const  offset = row_offsets[node];
     uint32_t const *nrows  = rows + offset;
     float2 const   *ngh    = gh_ordered + offset;
@@ -117,7 +120,7 @@ __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
     uint32_t const  span   = gridDim.z * blockDim.x;
     for (uint32_t k = (blockIdx.z * blockDim.x) + threadIdx.x; k < count; k += span)
     {
-        uint32_t const b = fb[nrows[k]];
+        uint32_t const b = bins[tiled_cell(f, nrows[k], n_rows, n_feats)];
         float2 const   v = ngh[k];
         atomicAdd(&my[pair_off(b)], v.x);
         atomicAdd(&my[pair_off(b) + 1], v.y);
@@ -135,6 +138,130 @@ __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
     }
 }
 
+// One row's strip of a full tile. At 4, 8, or 16 bytes it is a single
+// aligned vector load: a tile base is a multiple of the width in cells and a
+// row starts at r * width, so the strip address carries the strip's own
+// alignment. This load is the layout's whole point in mechanical form.
+template <uint32_t W, typename BinT>
+inline __device__ void load_strip(BinT const *sp, BinT *strip)
+{
+    constexpr size_t bytes = W * sizeof(BinT);
+    if constexpr (bytes == 4)
+    {
+        *reinterpret_cast<uint32_t *>(strip) = *reinterpret_cast<uint32_t const *>(sp);
+    }
+    else if constexpr (bytes == 8)
+    {
+        *reinterpret_cast<uint2 *>(strip) = *reinterpret_cast<uint2 const *>(sp);
+    }
+    else if constexpr (bytes == 16)
+    {
+        *reinterpret_cast<uint4 *>(strip) = *reinterpret_cast<uint4 const *>(sp);
+    }
+    else
+    {
+#pragma unroll
+        for (uint32_t j = 0; j < W; ++j)
+        {
+            strip[j] = sp[j];
+        }
+    }
+}
+
+// The tiled histogram build. Grid is (tile, node, row-chunk): one block owns
+// one tile of the plane, so a row's bin ids for the tile's features arrive in
+// one strip load and the row id and its gradient pair are read once per tile
+// instead of once per feature. One sub-histogram per tile lane and no warp
+// parity duplication, so the block asks W * stride floats; the caller applies
+// the shared budget. sel_slot[f] is the feature's index in this tree's
+// selected list, or k_not_selected, which is how a subsampled selection rides
+// a layout that groups every feature.
+template <uint32_t W, typename BinT>
+__global__ void hist_tile_kernel(BinT const *bins, float2 const *gh_ordered,
+                                 uint32_t const *rows, uint32_t const *row_offsets,
+                                 uint32_t const *row_counts, uint32_t const *sel_slot,
+                                 uint32_t const *n_bins, uint32_t n_rows,
+                                 uint32_t n_feats, uint32_t n_sel, double *out,
+                                 uint32_t stride, uint32_t const *out_slot)
+{
+    extern __shared__ float sh[];
+    uint32_t const          t  = blockIdx.x;
+    uint32_t const          f0 = t * W;
+    uint32_t const          wt = tile_strip(t, n_feats);
+    uint32_t                slot[W];
+    bool                    any = false;
+#pragma unroll
+    for (uint32_t j = 0; j < W; ++j)
+    {
+        slot[j] = j < wt ? sel_slot[f0 + j] : k_not_selected;
+        any     = any || slot[j] != k_not_selected;
+    }
+    if (!any)
+    {
+        return; // this tile holds no selected feature
+    }
+    uint32_t const node = blockIdx.y;
+    for (uint32_t i = threadIdx.x; i < wt * stride; i += blockDim.x)
+    {
+        sh[i] = 0.0F;
+    }
+    __syncthreads();
+    uint32_t const  offset = row_offsets[node];
+    uint32_t const *nrows  = rows + offset;
+    float2 const   *ngh    = gh_ordered + offset;
+    uint32_t const  count  = row_counts[node];
+    uint32_t const  span   = gridDim.z * blockDim.x;
+    BinT const     *tp     = bins + (static_cast<size_t>(n_rows) * t * W);
+    for (uint32_t k = (blockIdx.z * blockDim.x) + threadIdx.x; k < count; k += span)
+    {
+        float2 const v  = ngh[k];
+        BinT const  *sp = tp + (static_cast<size_t>(nrows[k]) * wt);
+        BinT         strip[W];
+        if (wt == W)
+        {
+            load_strip<W>(sp, strip);
+        }
+        else
+        {
+#pragma unroll
+            for (uint32_t j = 0; j < W; ++j)
+            {
+                strip[j] = j < wt ? sp[j] : BinT{};
+            }
+        }
+#pragma unroll
+        for (uint32_t j = 0; j < W; ++j)
+        {
+            if (slot[j] != k_not_selected)
+            {
+                float *my = sh + (static_cast<size_t>(j) * stride);
+                atomicAdd(&my[pair_off(strip[j])], v.x);
+                atomicAdd(&my[pair_off(strip[j]) + 1], v.y);
+            }
+        }
+    }
+    __syncthreads();
+    uint32_t const oslot = out_slot != nullptr ? out_slot[node] : node;
+#pragma unroll
+    for (uint32_t j = 0; j < W; ++j)
+    {
+        if (slot[j] != k_not_selected)
+        {
+            float const *base = sh + (static_cast<size_t>(j) * stride);
+            double      *o =
+                out + (((static_cast<size_t>(oslot) * n_sel) + slot[j]) * stride);
+            uint32_t const nb = n_bins[f0 + j];
+            for (uint32_t i = threadIdx.x; i < 2 * nb; i += blockDim.x)
+            {
+                if (base[i] != 0.0F)
+                {
+                    atomicAdd(&o[i], static_cast<double>(base[i]));
+                }
+            }
+        }
+    }
+}
+
 // Small nodes skip the shared-memory stage: below ~512 rows the fixed
 // per-(node,feature) zero+merge cost dominates, so one block per node
 // accumulates row visits straight into the node's global slot in double.
@@ -142,8 +269,9 @@ template <typename BinT>
 __global__ void hist_small_kernel(BinT const *bins, float2 const *gh_ordered,
                                   uint32_t const *rows, uint32_t const *row_offsets,
                                   uint32_t const *row_counts, uint32_t const *features,
-                                  uint32_t n_rows, uint32_t n_sel, double *out,
-                                  uint32_t stride, uint32_t const *out_slot)
+                                  uint32_t n_rows, uint32_t n_feats, uint32_t n_sel,
+                                  double *out, uint32_t stride,
+                                  uint32_t const *out_slot)
 {
     uint32_t const  node   = blockIdx.x;
     uint32_t const  count  = row_counts[node];
@@ -155,8 +283,8 @@ __global__ void hist_small_kernel(BinT const *bins, float2 const *gh_ordered,
     {
         uint32_t const sel = k / count;
         uint32_t const i   = k % count;
-        uint32_t const b = bins[(static_cast<size_t>(features[sel]) * n_rows) + nr[i]];
-        float2 const   v = ngh[i];
+        uint32_t const b   = bins[tiled_cell(features[sel], nr[i], n_rows, n_feats)];
+        float2 const   v   = ngh[i];
         atomicAdd(&o[(sel * stride) + (2 * b)], static_cast<double>(v.x));
         atomicAdd(&o[(sel * stride) + (2 * b) + 1], static_cast<double>(v.y));
     }
@@ -188,16 +316,15 @@ inline __device__ bool goes_left_dev(uint32_t b, uint32_t last_bin, uint32_t bin
 
 // Phase 1: per-(op, chunk) left-count; flags cached for the scatter pass.
 template <typename BinT>
-__global__ void route_count_kernel(BinT const *bins, uint32_t const *n_bins,
-                                   uint32_t const *rows, PartOpDev const *ops,
-                                   uint32_t n_rows, uint32_t max_chunks, uint8_t *flags,
-                                   uint32_t *block_counts)
+__global__ void
+route_count_kernel(BinT const *bins, uint32_t const *n_bins, uint32_t const *rows,
+                   PartOpDev const *ops, uint32_t n_rows, uint32_t n_feats,
+                   uint32_t max_chunks, uint8_t *flags, uint32_t *block_counts)
 {
     __shared__ uint32_t sh[k_part_block];
     PartOpDev const     op    = ops[blockIdx.y];
     uint32_t const      chunk = blockIdx.x;
     uint32_t const      base  = chunk * k_part_chunk;
-    BinT const         *fb    = bins + (static_cast<size_t>(op.fid) * n_rows);
     uint32_t const      last  = n_bins[op.fid] - 1;
     uint32_t            mine  = 0;
     for (uint32_t j = 0; j < k_part_rows_per_thread; ++j)
@@ -205,7 +332,9 @@ __global__ void route_count_kernel(BinT const *bins, uint32_t const *n_bins,
         uint32_t const i = base + (threadIdx.x * k_part_rows_per_thread) + j;
         if (i < op.count)
         {
-            bool const l = goes_left_dev(fb[rows[op.offset + i]], last, op.bin, op.dl);
+            bool const l = goes_left_dev(
+                bins[tiled_cell(op.fid, rows[op.offset + i], n_rows, n_feats)], last,
+                op.bin, op.dl);
             flags[op.offset + i] = l ? 1 : 0;
             mine += l ? 1U : 0U;
         }
@@ -864,12 +993,12 @@ inline void gh_from_scores(DeviceObjectiveKind kind, bool weighted, float const 
 // arrays are SoA (feature, split_bin, left, right, default_left, is_leaf,
 // value); the walk starts at node 0.
 template <typename BinT>
-__global__ void route_add_kernel(BinT const *bins, uint32_t const *n_bins,
-                                 uint32_t n_rows, uint32_t const *feature,
-                                 uint32_t const *split_bin, uint32_t const *left,
-                                 uint32_t const *right, uint32_t const *default_left,
-                                 uint32_t const *is_leaf, float const *value, float lr,
-                                 float *scores, uint32_t n)
+__global__ void
+route_add_kernel(BinT const *bins, uint32_t const *n_bins, uint32_t n_rows,
+                 uint32_t n_feats, uint32_t const *feature, uint32_t const *split_bin,
+                 uint32_t const *left, uint32_t const *right,
+                 uint32_t const *default_left, uint32_t const *is_leaf,
+                 float const *value, float lr, float *scores, uint32_t n)
 {
     uint32_t const r = (blockIdx.x * blockDim.x) + threadIdx.x;
     if (r >= n)
@@ -881,7 +1010,7 @@ __global__ void route_add_kernel(BinT const *bins, uint32_t const *n_bins,
     {
         uint32_t const f    = feature[idx];
         uint32_t const last = n_bins[f] - 1;
-        uint32_t const b    = bins[(static_cast<size_t>(f) * n_rows) + r];
+        uint32_t const b    = bins[tiled_cell(f, r, n_rows, n_feats)];
         bool const l = (b == last) ? (default_left[idx] != 0) : (b <= split_bin[idx]);
         idx          = l ? left[idx] : right[idx];
     }

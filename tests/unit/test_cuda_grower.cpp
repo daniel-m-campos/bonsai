@@ -177,6 +177,37 @@ TEST_CASE("CudaDepthwiseGrower predictions match DepthwiseGrower", "[cuda][growe
     }
 }
 
+TEST_CASE("CudaDepthwiseGrower matches CPU under feature subsampling", "[cuda][grower]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    // The bin plane groups every feature into tiles, so a tree that selects a
+    // subset walks the same tiles and skips lanes through the slot map. Both
+    // growers draw the same features from the same seed.
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
+
+    TreeConfig cfg;
+    cfg.max_depth        = 5;
+    cfg.min_data_in_leaf = 4;
+    cfg.feature_fraction = 0.5F;
+    cfg.feature_seed     = 11;
+
+    DepthwiseGrower<CpuHistogramEngine> cpu_grower(cfg);
+    CudaDepthwiseGrower                 gpu_grower(cfg);
+
+    auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+
+    REQUIRE(cpu.values.size() == gpu.values.size());
+    for (size_t r = 0; r < cpu.values.size(); ++r)
+    {
+        REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
+    }
+}
+
 TEST_CASE("CudaObliviousGrower predictions match ObliviousGrower", "[cuda][grower]")
 {
     if (!cuda_available())

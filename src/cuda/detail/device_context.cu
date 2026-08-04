@@ -47,29 +47,91 @@ constexpr uint32_t k_sum_blocks = 64;
 // in this API, matching the gradient-boosting literature's convention.
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)
 
+namespace
+{
+
+// Host columns out of the tiled plane: a column is one strip position, so the
+// copy comes home a tile at a time in row chunks and the strips scatter into
+// their columns here. The host store is per-feature columns (Dataset builds
+// its own mirror from those, at its own width), so this direction un-tiles.
+template <typename BinT>
+void materialize_tiled(DeviceBuffer<BinT> const &bins, size_t n_rows, size_t n_feats,
+                       std::vector<std::vector<BinT>> &out)
+{
+    out.resize(n_feats);
+    for (size_t f = 0; f < n_feats; ++f)
+    {
+        out[f].resize(n_rows);
+    }
+    size_t const      chunk = std::max<size_t>(1, (1UL << 22) / k_bin_tile_width);
+    std::vector<BinT> staging(chunk * k_bin_tile_width);
+    auto const        tiles = tile_count(static_cast<uint32_t>(n_feats));
+    for (uint32_t t = 0; t < tiles; ++t)
+    {
+        size_t const wt   = tile_strip(t, static_cast<uint32_t>(n_feats));
+        size_t const base = n_rows * t * k_bin_tile_width;
+        for (size_t r0 = 0; r0 < n_rows; r0 += chunk)
+        {
+            size_t const rows = std::min(chunk, n_rows - r0);
+            check(cudaMemcpy(staging.data(), bins.data() + base + (r0 * wt),
+                             rows * wt * sizeof(BinT), cudaMemcpyDeviceToHost),
+                  "materialize bins");
+            for (size_t j = 0; j < wt; ++j)
+            {
+                auto &col = out[(t * k_bin_tile_width) + j];
+                for (size_t r = 0; r < rows; ++r)
+                {
+                    col[r0 + r] = staging[(r * wt) + j];
+                }
+            }
+        }
+    }
+}
+
+// The staging fill for a host-binned dataset: the pinned block is written in
+// the plane's tiled order, parallel over row blocks so two workers never
+// share a strip. Same transpose the host mirror does, at the device's width.
+template <typename BinT> void stage_tiled(Dataset const &dataset, BinT *staging)
+{
+    size_t const     n_rows  = dataset.n_rows();
+    auto const       n_feats = static_cast<uint32_t>(dataset.n_features());
+    constexpr size_t block   = 8192;
+    parallel::for_each_index(
+        (n_rows + block - 1) / block,
+        [&](size_t b)
+        {
+            size_t const r0 = b * block;
+            size_t const r1 = std::min(r0 + block, n_rows);
+            for (uint32_t f = 0; f < n_feats; ++f)
+            {
+                dataset.visit_bins(f,
+                                   [&](auto src)
+                                   {
+                                       uint32_t const t   = f / k_bin_tile_width;
+                                       size_t const   wt  = tile_strip(t, n_feats);
+                                       BinT          *dst = staging +
+                                                   (n_rows * t * k_bin_tile_width) +
+                                                   (f % k_bin_tile_width);
+                                       for (size_t r = r0; r < r1; ++r)
+                                       {
+                                           dst[r * wt] = static_cast<BinT>(src[r]);
+                                       }
+                                   });
+            }
+        });
+}
+
+} // namespace
+
 void CudaIngestPlane::materialize(std::vector<std::vector<uint8_t>>  &u8,
                                   std::vector<std::vector<uint16_t>> &u16) const
 {
     if (bins_are_u8)
     {
-        u8.resize(n_feats);
-        for (size_t f = 0; f < n_feats; ++f)
-        {
-            u8[f].resize(n_rows);
-            check(cudaMemcpy(u8[f].data(), bins8.data() + (f * n_rows), n_rows,
-                             cudaMemcpyDeviceToHost),
-                  "materialize bins");
-        }
+        materialize_tiled(bins8, n_rows, n_feats, u8);
         return;
     }
-    u16.resize(n_feats);
-    for (size_t f = 0; f < n_feats; ++f)
-    {
-        u16[f].resize(n_rows);
-        check(cudaMemcpy(u16[f].data(), bins16.data() + (f * n_rows),
-                         n_rows * sizeof(uint16_t), cudaMemcpyDeviceToHost),
-              "materialize bins");
-    }
+    materialize_tiled(bins16, n_rows, n_feats, u16);
 }
 
 void CudaDeviceContext::LevelPipeline::prof_record_begin(bool root)
@@ -302,6 +364,75 @@ void CudaDeviceContext::init_shared_limit()
     cudaGetLastError(); // clear any sticky attribute error
 }
 
+void CudaDeviceContext::stage_selection(std::span<feature_id_t const> selected,
+                                        size_t                        n_feats)
+{
+    lvl.features.host.assign(selected.begin(), selected.end());
+    lvl.features.sync();
+    // The tiled build walks tiles, not the selected list, so it needs the
+    // inverse map: where feature f's histogram goes, or that it is unselected.
+    lvl.sel_slot.host.assign(n_feats, k_not_selected);
+    for (uint32_t i = 0; i < selected.size(); ++i)
+    {
+        lvl.sel_slot.host[selected[i]] = i;
+    }
+    lvl.sel_slot.sync();
+}
+
+// Says once per context what layout the plane has and which build reads it,
+// so a profiled session documents its own memory order.
+void CudaDeviceContext::note_plane(bool tiled, size_t shared)
+{
+    if (plane_noted || !prof_counters.enabled)
+    {
+        return;
+    }
+    plane_noted = true;
+    std::println(stderr,
+                 "bonsai: bin plane is tile-blocked, width {}, {} cells; histogram "
+                 "build is {} at {} shared bytes per block",
+                 k_bin_tile_width, data.bins_are_u8 ? "u8" : "u16",
+                 tiled ? "tiled" : "one feature per block", shared);
+}
+
+// Every shared-memory histogram build goes through here, depthwise and leaf
+// alike: the tiled kernel when one tile's sub-histograms fit the static
+// budget, else one feature per block, which reads the same plane a cell at a
+// time. The fallback is what keeps the wide-bin envelope the opt-in opened.
+void CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
+                                    uint32_t n_nodes, uint32_t n_chunks,
+                                    float2 const *gh, uint32_t const *rows,
+                                    uint32_t const *offsets, uint32_t const *counts,
+                                    double *out, uint32_t const *slots)
+{
+    size_t const tiled_shared =
+        static_cast<size_t>(k_bin_tile_width) * lvl.stride * sizeof(float);
+    bool const tiled = tiled_shared <= k_max_shared_bytes;
+    note_plane(tiled, tiled ? tiled_shared : 2UL * lvl.stride * sizeof(float));
+    if (tiled)
+    {
+        dim3 const grid(tile_count(ds_feats), n_nodes, n_chunks);
+        data.dispatch_bins(
+            [&](auto const *bins)
+            {
+                hist_tile_kernel<k_bin_tile_width><<<grid, dim3(256), tiled_shared>>>(
+                    bins, gh, rows, offsets, counts, lvl.sel_slot.device(),
+                    data.n_bins_ptr(), ds_rows, ds_feats, lvl.n_selected, out,
+                    lvl.stride, slots);
+            });
+        return;
+    }
+    dim3 const grid(lvl.n_selected, n_nodes, n_chunks);
+    data.dispatch_bins(
+        [&](auto const *bins)
+        {
+            hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
+                bins, gh, rows, offsets, counts, lvl.features.device(),
+                data.n_bins_ptr(), ds_rows, ds_feats, lvl.n_selected, out, lvl.stride,
+                slots);
+        });
+}
+
 void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
 {
     // Device-binned dataset: adopt its plane — the matrix is already
@@ -354,18 +485,7 @@ void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
     {
         data.bins8.reserve(cells);
         PinnedBuffer<uint8_t> staging(cells);
-        parallel::for_each_index(dataset.n_features(),
-                                 [&](size_t f)
-                                 {
-                                     dataset.visit_bins(
-                                         f,
-                                         [&](auto src)
-                                         {
-                                             std::copy(src.begin(), src.end(),
-                                                       staging.data() +
-                                                           (f * dataset.n_rows()));
-                                         });
-                                 });
+        stage_tiled(dataset, staging.data());
         check(cudaMemcpy(data.bins8.data(), staging.data(), cells,
                          cudaMemcpyHostToDevice),
               "upload bins");
@@ -374,18 +494,7 @@ void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
     {
         data.bins16.reserve(cells);
         PinnedBuffer<uint16_t> staging(cells);
-        parallel::for_each_index(dataset.n_features(),
-                                 [&](size_t f)
-                                 {
-                                     dataset.visit_bins(
-                                         f,
-                                         [&](auto src)
-                                         {
-                                             std::copy(src.begin(), src.end(),
-                                                       staging.data() +
-                                                           (f * dataset.n_rows()));
-                                         });
-                                 });
+        stage_tiled(dataset, staging.data());
         check(cudaMemcpy(data.bins16.data(), staging.data(), cells * sizeof(uint16_t),
                          cudaMemcpyHostToDevice),
               "upload bins");
@@ -475,8 +584,7 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     }
     lvl.n_selected = static_cast<uint32_t>(selected.size());
     lvl.stride     = static_cast<uint32_t>(2 * max_sel_bins);
-    lvl.features.host.assign(selected.begin(), selected.end());
-    lvl.features.sync();
+    stage_selection(selected, ds.n_features());
 
     // Identity contract: a full-data fit passes empty rows + row_count ==
     // n_rows; the identity never touches the host or the bus (built by
@@ -514,21 +622,15 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     lvl.gh_ordered.reserve(n);
     gather(grads.gh.data(), lvl.rows.data(), n, lvl.gh_ordered.data());
     auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
-    dim3 const grid(lvl.n_selected, 1, n_chunks);
     if (prof_counters.enabled)
     {
         lvl.prof_record_begin(/*root=*/true);
         check(cudaEventRecord(lvl.prof_ev[1]), "profile event record");
     }
-    data.dispatch_bins(
-        [&](auto const *bins)
-        {
-            hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
-                bins, lvl.gh_ordered.data(), lvl.rows.data(), lvl.row_offsets.device(),
-                lvl.row_counts.device(), lvl.features.device(), data.n_bins_ptr(),
-                static_cast<uint32_t>(ds.n_rows()), lvl.n_selected, lvl.cur().data(),
-                lvl.stride, lvl.slots.device());
-        });
+    launch_hist(static_cast<uint32_t>(ds.n_rows()),
+                static_cast<uint32_t>(ds.n_features()), 1, n_chunks,
+                lvl.gh_ordered.data(), lvl.rows.data(), lvl.row_offsets.device(),
+                lvl.row_counts.device(), lvl.cur().data(), lvl.slots.device());
     check(cudaGetLastError(), "root hist launch");
     if (prof_counters.enabled)
     {
@@ -658,7 +760,8 @@ void CudaDeviceContext::partition_level(
         {
             route_count_kernel<<<grid, dim3(k_part_block)>>>(
                 bins, data.n_bins_ptr(), lvl.cur_rows().data(), lvl.part_ops.device(),
-                static_cast<uint32_t>(data.key.n_rows), max_chunks, lvl.flags.data(),
+                static_cast<uint32_t>(data.key.n_rows),
+                static_cast<uint32_t>(data.key.n_feats), max_chunks, lvl.flags.data(),
                 lvl.block_counts.data());
         });
     check(cudaGetLastError(), "route launch");
@@ -746,23 +849,19 @@ void CudaDeviceContext::advance_level(Dataset const                             
     {
         check(cudaEventRecord(lvl.prof_ev[1]), "profile event record");
     }
+    if (!lvl.row_offsets.empty())
+    {
+        auto const n_chunks = std::clamp<uint32_t>(
+            (static_cast<uint32_t>(max_rows) + 32767) / 32768, 1, 64);
+        launch_hist(
+            static_cast<uint32_t>(ds.n_rows()), static_cast<uint32_t>(ds.n_features()),
+            static_cast<uint32_t>(lvl.row_offsets.size()), n_chunks,
+            lvl.other_gh().data(), lvl.other_rows().data(), lvl.row_offsets.device(),
+            lvl.row_counts.device(), lvl.other().data(), lvl.slots.device());
+    }
     data.dispatch_bins(
         [&](auto const *bins)
         {
-            if (!lvl.row_offsets.empty())
-            {
-                auto const n_chunks = std::clamp<uint32_t>(
-                    (static_cast<uint32_t>(max_rows) + 32767) / 32768, 1, 64);
-                dim3 const grid(lvl.n_selected,
-                                static_cast<uint32_t>(lvl.row_offsets.size()),
-                                n_chunks);
-                hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
-                    bins, lvl.other_gh().data(), lvl.other_rows().data(),
-                    lvl.row_offsets.device(), lvl.row_counts.device(),
-                    lvl.features.device(), data.n_bins_ptr(),
-                    static_cast<uint32_t>(ds.n_rows()), lvl.n_selected,
-                    lvl.other().data(), lvl.stride, lvl.slots.device());
-            }
             if (!lvl.small_offsets.empty())
             {
                 hist_small_kernel<<<
@@ -770,8 +869,8 @@ void CudaDeviceContext::advance_level(Dataset const                             
                     bins, lvl.other_gh().data(), lvl.other_rows().data(),
                     lvl.small_offsets.device(), lvl.small_counts.device(),
                     lvl.features.device(), static_cast<uint32_t>(ds.n_rows()),
-                    lvl.n_selected, lvl.other().data(), lvl.stride,
-                    lvl.small_slots.device());
+                    static_cast<uint32_t>(ds.n_features()), lvl.n_selected,
+                    lvl.other().data(), lvl.stride, lvl.small_slots.device());
             }
         });
     check(cudaGetLastError(), "level hist launch");
@@ -1023,8 +1122,7 @@ bool CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     size_t const max_slots = leaf_max_slots(config);
     lvl.n_selected         = static_cast<uint32_t>(selected.size());
     lvl.stride             = static_cast<uint32_t>(2 * max_sel_bins);
-    lvl.features.host.assign(selected.begin(), selected.end());
-    lvl.features.sync();
+    stage_selection(selected, ds.n_features());
     leaf.monotone.host.resize(ds.n_features());
     for (feature_id_t f = 0; f < ds.n_features(); ++f)
     {
@@ -1072,16 +1170,10 @@ bool CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     check(cudaGetLastError(), "leaf root sum pass2 launch");
 
     auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
-    dim3 const grid(lvl.n_selected, 1, n_chunks);
-    data.dispatch_bins(
-        [&](auto const *bins)
-        {
-            hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
-                bins, lvl.gh_ordered.data(), lvl.rows.data(), leaf.build_seg.device(),
-                leaf.build_seg.device() + 1, lvl.features.device(), data.n_bins_ptr(),
-                static_cast<uint32_t>(ds.n_rows()), lvl.n_selected, leaf.pool.data(),
-                lvl.stride, leaf.build_seg.device() + 2);
-        });
+    launch_hist(
+        static_cast<uint32_t>(ds.n_rows()), static_cast<uint32_t>(ds.n_features()), 1,
+        n_chunks, lvl.gh_ordered.data(), lvl.rows.data(), leaf.build_seg.device(),
+        leaf.build_seg.device() + 1, leaf.pool.data(), leaf.build_seg.device() + 2);
     check(cudaGetLastError(), "leaf root hist launch");
     lvl.leaf_by_row.reserve(ds.n_rows());
 
@@ -1127,7 +1219,8 @@ CudaDeviceContext::leaf_split(Dataset const & /*ds*/,
         {
             route_count_kernel<<<grid, dim3(k_part_block)>>>(
                 bins, data.n_bins_ptr(), lvl.rows.data(), leaf.part_op.device(),
-                static_cast<uint32_t>(data.key.n_rows), max_chunks, lvl.flags.data(),
+                static_cast<uint32_t>(data.key.n_rows),
+                static_cast<uint32_t>(data.key.n_feats), max_chunks, lvl.flags.data(),
                 lvl.block_counts.data());
         });
     check(cudaGetLastError(), "leaf route launch");
@@ -1205,29 +1298,27 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
 
     // Same <512-row policy as the level plane: below the cutoff the shared
     // stage's fixed per-(node, feature) cost dominates the row visits.
+    if (small_count >= k_min_gpu_rows)
+    {
+        auto const n_chunks =
+            std::clamp<uint32_t>((small_count + 32767) / 32768, 1, 64);
+        launch_hist(static_cast<uint32_t>(ds.n_rows()),
+                    static_cast<uint32_t>(ds.n_features()), 1, n_chunks,
+                    lvl.gh_ordered.data(), lvl.rows.data(), leaf.build_seg.device(),
+                    leaf.build_seg.device() + 1, leaf.pool.data(),
+                    leaf.build_seg.device() + 2);
+    }
     data.dispatch_bins(
         [&](auto const *bins)
         {
-            if (small_count >= k_min_gpu_rows)
-            {
-                auto const n_chunks =
-                    std::clamp<uint32_t>((small_count + 32767) / 32768, 1, 64);
-                dim3 const grid(lvl.n_selected, 1, n_chunks);
-                hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
-                    bins, lvl.gh_ordered.data(), lvl.rows.data(),
-                    leaf.build_seg.device(), leaf.build_seg.device() + 1,
-                    lvl.features.device(), data.n_bins_ptr(),
-                    static_cast<uint32_t>(ds.n_rows()), lvl.n_selected,
-                    leaf.pool.data(), lvl.stride, leaf.build_seg.device() + 2);
-            }
-            else
+            if (small_count < k_min_gpu_rows)
             {
                 hist_small_kernel<<<dim3(1), dim3(128)>>>(
                     bins, lvl.gh_ordered.data(), lvl.rows.data(),
                     leaf.build_seg.device(), leaf.build_seg.device() + 1,
                     lvl.features.device(), static_cast<uint32_t>(ds.n_rows()),
-                    lvl.n_selected, leaf.pool.data(), lvl.stride,
-                    leaf.build_seg.device() + 2);
+                    static_cast<uint32_t>(ds.n_features()), lvl.n_selected,
+                    leaf.pool.data(), lvl.stride, leaf.build_seg.device() + 2);
             }
         });
     check(cudaGetLastError(), "leaf hist launch");
@@ -1449,11 +1540,11 @@ void CudaDeviceContext::resident_finalize(
         {
             route_add_kernel<<<grid, dim3(256)>>>(
                 bins, data.n_bins_ptr(), static_cast<uint32_t>(data.key.n_rows),
-                resident.node_feature.device(), resident.node_split_bin.device(),
-                resident.node_left.device(), resident.node_right.device(),
-                resident.node_default_left.device(), resident.node_is_leaf.device(),
-                resident.node_value.device(), resident.learning_rate,
-                resident.scores.data(), n);
+                static_cast<uint32_t>(data.key.n_feats), resident.node_feature.device(),
+                resident.node_split_bin.device(), resident.node_left.device(),
+                resident.node_right.device(), resident.node_default_left.device(),
+                resident.node_is_leaf.device(), resident.node_value.device(),
+                resident.learning_rate, resident.scores.data(), n);
         });
     check(cudaGetLastError(), "resident route+add launch");
     lap(prof_counters.score_kernel_s);
