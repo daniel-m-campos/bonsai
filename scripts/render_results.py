@@ -79,6 +79,7 @@ class Evidence:
     LEAFWISE_LADDER: Final = "leafwise-ladder-2026-08.jsonl"
     LEAFWISE_STAGE3: Final = "leafwise-stage3-2026-08.jsonl"
     LEAFWISE_CORRECTION: Final = "leafwise-correction-2026-08.jsonl"
+    EARLY_STOP: Final = "early-stop-4M-2026-08.jsonl"
 
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -1586,6 +1587,132 @@ The probe behind decisions 62 to 64: CatBoost's Ordered vs Plain modes against b
 """
 
 
+# Perf: early stopping =============================================================================
+
+# The suite fits one cell three ways and `eval_mode` names the arm: `off` and
+# `eval` are the fixed-iteration pair whose fit_s ratio is the eval cost,
+# `stop` is the patience run.
+EVAL_OFF, EVAL_ON, EVAL_STOP = "off", "eval", "stop"
+
+EARLY_STOP_LABELS = {
+    "bonsai_cuda_depthwise": "bonsai cuda dw",
+    "bonsai_cuda_leafwise": "bonsai cuda lw",
+    "xgb_cuda": "xgb cuda",
+    "lgbm_cuda": "lgbm cuda",
+    "catboost_gpu": "catboost gpu",
+    "bonsai_depthwise": "bonsai cpu dw",
+    "xgb_hist": "xgb hist",
+    "lgbm_cpu": "lgbm cpu",
+    "catboost_cpu": "catboost cpu",
+}
+
+EARLY_STOP_CPU = ("bonsai_depthwise", "xgb_hist", "lgbm_cpu", "catboost_cpu")
+
+
+def _bold(text: str, on: bool) -> str:
+    """One table cell, bolded when it holds the best value in its column."""
+    return f"**{text}**" if on else text
+
+
+def _pct(x: float) -> str:
+    """A signed percentage, the eval-overhead unit."""
+    return f"{x * 100:+.1f}%"
+
+
+def _arm_best(rows: list[dict], mode: str) -> dict[str, dict]:
+    """Best-fit row per variant within one eval-mode arm."""
+    return best_fit_by([r for r in rows if r["eval_mode"] == mode],
+                       lambda r: r[K.VARIANT])
+
+
+def _paired_overhead(rows: list[dict], variant: str) -> list[float]:
+    """Eval-overhead ratios paired by repeat index, smallest first: the
+    spread behind a best-of-repeats ratio, which takes its two halves from
+    repeats that need not be the same one."""
+    by = {mode: {r["repeat"]: r[K.FIT_S] for r in rows
+                 if r[K.VARIANT] == variant and r["eval_mode"] == mode}
+          for mode in (EVAL_OFF, EVAL_ON)}
+    return sorted(by[EVAL_ON][i] / by[EVAL_OFF][i] - 1
+                  for i in by[EVAL_OFF] if i in by[EVAL_ON])
+
+
+def early_stop_section() -> str:
+    """The first early-stopping measurement: per-round eval overhead on one
+    cell, and time to a stopped model on the same one."""
+    rows = [r for r in load_jsonl(Evidence.EARLY_STOP) if r[K.STATUS] == "ok"]
+    off = _arm_best(rows, EVAL_OFF)
+    ev = _arm_best(rows, EVAL_ON)
+    stop = _arm_best(rows, EVAL_STOP)
+    order = [v for v in EARLY_STOP_LABELS if v in off]
+    ovh = {v: ev[v][K.FIT_S] / off[v][K.FIT_S] - 1 for v in order}
+    fixed, stopped_cell = off[order[0]]["cell"], stop[order[0]]["cell"]
+    train_rows = off[order[0]]["fit_rows_per_s"] * off[order[0]][K.FIT_S]
+
+    cheapest = min((v for v in order if v not in EARLY_STOP_CPU),
+                   key=lambda v: ovh[v])
+    ovh_table = md_table(
+        ["arm", "off fit_s", "eval fit_s", "eval overhead"],
+        [[EARLY_STOP_LABELS[v], f"{off[v][K.FIT_S]:.2f}s",
+          f"{ev[v][K.FIT_S]:.2f}s", _bold(_pct(ovh[v]), v == cheapest)]
+         for v in order])
+
+    fastest = min(order, key=lambda v: stop[v][K.FIT_S])
+    sharpest = max(order, key=lambda v: stop[v][K.R2_TEST])
+    stop_table = md_table(
+        ["arm", K.FIT_S, "stopped_at", "test r2"],
+        [[EARLY_STOP_LABELS[v],
+          _bold(f"{stop[v][K.FIT_S]:.1f}s", v == fastest),
+          str(stop[v]["stopped_at"]),
+          _bold(fmt(stop[v][K.R2_TEST], 4), v == sharpest)]
+         for v in order])
+
+    cpu_ovh = sorted(ovh[v] for v in EARLY_STOP_CPU if v in ovh)
+    dw_pair = _paired_overhead(rows, "bonsai_cuda_depthwise")
+    xgb_pair = _paired_overhead(rows, "xgb_cuda")
+    agreed_r2 = stop["bonsai_cuda_depthwise"][K.R2_TEST]
+    agreed = [v for v in order if stop[v][K.R2_TEST] == agreed_r2]
+    agreed_rounds = sorted(stop[v]["stopped_at"] for v in agreed)
+    patience = stopped_cell["patience"]
+    per_round = {v: stop[v]["train_s"] / (stop[v]["stopped_at"] + patience)
+                 for v in order}
+    cpu_stop = sorted(stop[v][K.FIT_S] for v in EARLY_STOP_CPU if v in stop)
+    gpu_stop = sorted(stop[v][K.FIT_S] for v in order
+                      if v not in EARLY_STOP_CPU)
+
+    return f"""### The first early-stopping measurement (issue #306)
+
+One cell, {human(fixed["rows"])} rows by {fixed["cols"]} columns of synthetic regression, {len(order)} arms on one L40S, and the two quantities the [protocol](benchmark-protocol.md#early-stopping) keeps apart: what it costs a library to score a validation set every round, and how long it takes to reach a model that stopped on its own. The eval rows come off the train side, 10 percent of it, so every arm below fits {train_rows / 1e6:.1f}M rows and the held-out test split stays untouched.
+
+#### Per-round eval overhead
+
+Each arm fits those rows twice at {fixed["iters"]} fixed rounds, once with a validation set attached and once without, with no patience armed either time. Nothing but the eval set differs between the two fits, so the ratio of their `fit_s` values is what scoring a validation set every round costs that library.
+
+bonsai's device growers pay the most of anything measured here: {_pct(ovh["bonsai_cuda_depthwise"])} for CUDA depthwise and {_pct(ovh["bonsai_cuda_leafwise"])} for CUDA leafwise, against {_pct(ovh["xgb_cuda"])} for XGBoost-GPU and {_pct(ovh["lgbm_cuda"])} for LightGBM-CUDA, with CatBoost-GPU between them at {_pct(ovh["catboost_gpu"])}. bonsai's own CPU depthwise reads {_pct(ovh["bonsai_depthwise"])}, so the cost belongs to the device plane and not to eval work as such. Issue #326 is the finding's home: the per-round eval predicts on the host, which charges a device-resident fit a host round trip every round, and both fix candidates (a device-side eval predict, or scoring every k rounds) want sizing measurements before any code.
+
+Two of the four CPU arms read below zero, {_pct(cpu_ovh[0])} and {_pct(cpu_ovh[1])}, and an attached eval set cannot make a fit faster; that is what puts the noise floor of this measurement near 2 percent, and all four CPU arms sit inside it. The device readings do not. Pairing the repeats by index instead of taking best of repeats on each side, bonsai's CUDA depthwise spans {_pct(dw_pair[0])} to {_pct(dw_pair[-1])} while XGBoost-GPU never exceeds {_pct(xgb_pair[-1])}, so the ordering survives every pairing even where the digit moves.
+
+Fit seconds without and with the eval set, best of repeats (GPU arms 2, CPU arms 1); the cheapest device arm is bolded, and the CPU arms are left unbolded because a reading inside the noise floor is not a win.
+
+{ovh_table}
+
+#### Time to stop
+
+Patience {patience}, an iteration cap of {stopped_cell["iters"]} that the validation set rather than the cap is meant to end, learning rate {stopped_cell["lr"]}. This is the latency of a retrain nobody has hand-tuned the round count for, so the wall clock includes the patience rounds each library grew and then discarded.
+
+XGBoost-GPU reaches a stopped model fastest, {stop["xgb_cuda"][K.FIT_S]:.1f}s against bonsai CUDA depthwise's {stop["bonsai_cuda_depthwise"][K.FIT_S]:.1f}s, which inverts the fixed-iteration ordering of the same cell above ({off["bonsai_cuda_depthwise"][K.FIT_S]:.1f}s against {off["xgb_cuda"][K.FIT_S]:.1f}s at {fixed["iters"]} rounds). The two readings agree: bonsai's lead at this shape is ingest ({off["bonsai_cuda_depthwise"]["ingest_s"]:.1f}s against {off["xgb_cuda"]["ingest_s"]:.1f}s), a run of roughly a thousand rounds amortizes ingest to nothing, and bonsai's per-round device cost sits above XGBoost's here ({per_round["bonsai_cuda_depthwise"] * 1000:.1f}ms against {per_round["xgb_cuda"] * 1000:.1f}ms, eval overhead included). The overhead reading above is part of that gap rather than separate from it.
+
+{len(agreed)} of the {len(order)} arms stop between {agreed_rounds[0]} and {agreed_rounds[-1]} rounds and return the same test r2 to four decimals, {fmt(agreed_r2, 4)}: six implementations of one stopping rule landing on one model. LightGBM-CUDA stops earliest at {stop["lgbm_cuda"]["stopped_at"]} rounds and gives up a little accuracy for it ({fmt(stop["lgbm_cuda"][K.R2_TEST], 4)}). CatBoost runs longest on both planes ({stop["catboost_gpu"]["stopped_at"]} and {stop["catboost_cpu"]["stopped_at"]} rounds) and returns the best metric ({fmt(stop["catboost_gpu"][K.R2_TEST], 4)}), but it scores with its own objective's eval metric and runs without a leaf-size floor, so its extra rounds are not a like-for-like reading of the same rule. The plane gap is the largest spread on the page: {gpu_stop[0]:.0f}s to {gpu_stop[-1]:.0f}s on the GPU against {cpu_stop[0]:.0f}s to {cpu_stop[-1]:.0f}s on the CPU for the same stopped model.
+
+Fit seconds to a stopped model, retained rounds, and the test metric of the model stopping actually produced; fastest fit and best metric bolded.
+
+{stop_table}
+
+Three protocol caveats this section inherits. `stopped_at` is the retained round count rather than a best-iteration index, because the four libraries number that index two different ways. XGBoost is the only arm that does not truncate on a stop, so the runner passes `iteration_range` explicitly; read without it, the metric would describe the overshot model. CatBoost shrinks its model to the best iteration whenever an eval set is present, detector or no detector, so the fixed-iteration arm pins `use_best_model=False`, or its metric would describe a shorter model than the one whose fit was timed.
+
+{provenance([Evidence.EARLY_STOP], "One pod (L40S, 2026-08-04), SCALING knobs, spec [early-stop-4M.json](../../python/bonsai/bench/specs/early-stop-4M.json) run as `python -m bonsai.bench run --spec early-stop-4M`, measured on the tail of the standings-refresh rental; evidence for issue #306, and the eval-overhead reading is issue #326." + measured_stamp(rows))}
+"""
+
+
 # assembly =========================================================================================
 
 GEN_NOTE = ("<!-- GENERATED by scripts/render_results.py. "
@@ -1752,6 +1879,10 @@ PAGES: list[tuple[str, str, str, list]] = [
     ("perf-frontier.md", "The accuracy-time frontier",
      "Accuracy versus fit time at 16M rows, plus the ordered-boosting door.",
      [frontier_section]),
+    ("perf-early-stop.md", "Early stopping",
+     "What an eval set costs per round, and how long a stop takes at 4M "
+     "rows.",
+     [early_stop_section]),
     ("perf-airline.md", "Airline delays",
      "The benchm-ml real-data speed ladder at 0.1M, 1M, and 10M rows.",
      [airline_section]),

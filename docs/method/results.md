@@ -13,6 +13,7 @@ bonsai's CUDA growers hold the fastest slot at every measured row scale (10.6s a
 | [Fit at scale](results/perf-scale.md) | Row-scale standings: the re-baseline, the XGBoost 3.3 recheck, and the CPU prefetch round. |
 | [Width and shape](results/perf-shape.md) | The wide-data arc: the CPU fill, the CUDA recheck, the cols re-baseline, and the iso-volume shape frontier with measured VRAM. |
 | [The accuracy-time frontier](results/perf-frontier.md) | Accuracy versus fit time at 16M rows, plus the ordered-boosting door. |
+| [Early stopping](results/perf-early-stop.md) | What an eval set costs per round, and how long a stop takes at 4M rows. |
 | [Airline delays](results/perf-airline.md) | The benchm-ml real-data speed ladder at 0.1M, 1M, and 10M rows. |
 | [The single-card ceiling](results/perf-ceiling.md) | A 500M x 100 matrix trained end to end on one 80GB card. |
 

@@ -27,7 +27,7 @@ The current evidence, rendered whole from every committed results file, is [the 
 | airline | perf | benchm-ml airline 0.1m/1m/10m (perf-external) | fit_s, AUC | `results/airline-2026-07.jsonl` | `python -m bonsai.bench.airline` | issue #154 |
 | rebaseline | perf | friedman1 | fit_s, r² guard | `results/rebaseline-2026-07.jsonl` | scaling runner, rows axis | 62 to 64 |
 | iso-volume | perf | friedman1 (perf-synthetic) | fit_s, dev_mem, r² guard | `results/iso-volume-2026-08.jsonl` | `python -m bonsai.bench run --spec iso-volume-2026-08` | 91 |
-| early-stop | perf | friedman1 (perf-synthetic) | fit_s ratio, time to stop | `results/early-stop-4M.jsonl` | `python -m bonsai.bench run --spec early-stop-4M` | issue #306 |
+| early-stop | perf | friedman1 (perf-synthetic) | fit_s ratio, time to stop | `results/early-stop-4M-2026-08.jsonl` | `python -m bonsai.bench run --spec early-stop-4M` | issue #306 |
 
 The Grinsztajn suite is the only citable standings table: its 55 tasks were selected by third parties (Grinsztajn, Oyallon, Varoquaux 2022), which removes the selection-bias objection a self-picked suite can never answer. The internal campaign remains the fast local regression check.
 
