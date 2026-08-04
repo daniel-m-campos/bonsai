@@ -57,6 +57,22 @@ bogus_key = 1
     REQUIRE_THROWS_AS(bonsai::config::parse_toml(kText), bonsai::ConfigError);
 }
 
+TEST_CASE("Toml: the retired missing_sentinel knob is an unknown key", "[toml][edge]")
+{
+    // Sentinel-to-NaN conversion is preprocessing, not a knob. A config that
+    // still sets it must fail loudly rather than be read and ignored.
+    constexpr auto kText = R"(
+[data]
+missing_sentinel = -999.0
+)";
+    REQUIRE_THROWS_AS(bonsai::config::parse_toml(kText), bonsai::ConfigError);
+
+    bonsai::Config                              cfg;
+    std::vector<bonsai::config::Override> const ovs = {
+        {"data.missing_sentinel", "-999.0"}};
+    REQUIRE_THROWS_AS(bonsai::config::apply_overrides(cfg, ovs), bonsai::ConfigError);
+}
+
 TEST_CASE("Toml: wrong type throws ConfigError", "[toml][edge]")
 {
     constexpr auto kText = R"(
@@ -193,7 +209,6 @@ TEST_CASE("dump_toml: round-trip on default Config", "[toml][dump][roundtrip]")
     CHECK(round_trip.data.label_column == original.data.label_column);
     CHECK(round_trip.data.header == original.data.header);
     CHECK(round_trip.data.valid == original.data.valid);
-    CHECK(round_trip.data.missing_sentinel == original.data.missing_sentinel);
 
     CHECK(round_trip.tree_config.max_depth == original.tree_config.max_depth);
     CHECK_THAT(round_trip.tree_config.lambda_l2,
@@ -219,14 +234,13 @@ TEST_CASE("dump_toml: round-trip on non-default Config exercises every codec typ
           "[toml][dump][roundtrip]")
 {
     bonsai::Config original;
-    original.data.train            = "train.csv";
-    original.data.test             = "test.csv";
-    original.data.valid            = {"valid1.csv", "valid2.csv"};
-    original.data.header           = false;
-    original.data.label_column     = 7;
-    original.data.weight_column    = 3;
-    original.data.ignore_columns   = {1, 4, 9};
-    original.data.missing_sentinel = 0.5F;
+    original.data.train          = "train.csv";
+    original.data.test           = "test.csv";
+    original.data.valid          = {"valid1.csv", "valid2.csv"};
+    original.data.header         = false;
+    original.data.label_column   = 7;
+    original.data.weight_column  = 3;
+    original.data.ignore_columns = {1, 4, 9};
 
     original.tree_config.max_depth        = 10;
     original.tree_config.lambda_l2        = 0.25F;
@@ -247,9 +261,6 @@ TEST_CASE("dump_toml: round-trip on non-default Config exercises every codec typ
     CHECK(round_trip.data.label_column == original.data.label_column);
     CHECK(round_trip.data.weight_column == original.data.weight_column);
     CHECK(round_trip.data.ignore_columns == original.data.ignore_columns);
-    REQUIRE(round_trip.data.missing_sentinel.has_value());
-    CHECK_THAT(*round_trip.data.missing_sentinel,
-               Catch::Matchers::WithinAbs(*original.data.missing_sentinel, 1e-7F));
 
     CHECK(round_trip.tree_config.max_depth == original.tree_config.max_depth);
     CHECK_THAT(round_trip.tree_config.lambda_l2,

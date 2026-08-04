@@ -89,7 +89,7 @@ Which metrics to report during fit and eval; no effect on the trained model.
 
 ## data
 
-Dataset IO for the CLI; the Python API passes arrays instead of paths.
+Dataset IO for the CLI; the Python API passes arrays instead of paths. Missing values are NaN everywhere: in a CSV write the literal `nan`, since an empty field is a parse error naming its row and column.
 
 | parameter | type | default | effect |
 |---|---|---|---|
@@ -98,8 +98,6 @@ Dataset IO for the CLI; the Python API passes arrays instead of paths.
 | `ignore_columns` | list | `[]` | Zero-based column indices to drop before training. Excludes ids or leaks without editing the file. |
 | `label_column` | integer | `0` | Zero-based index of the label column in CSV inputs. Points the parser at the target. |
 | `libsvm_n_features` | integer | `0` | libsvm only: force the feature count. 0 infers from the max index; set it when a split's max index is lower. |
-| `missing_nan` | boolean | `true` | Treat NaN as missing, routed to each split's learned default branch. Off means NaN is an ordinary value. |
-| `missing_sentinel` | float (optional) | `unset` | Extra numeric value treated as missing, alongside NaN. Unset by default; set it to flag a placeholder like -999. |
 | `test` | string | `""` | Path to a test dataset scored after fit. CLI-only, like train. |
 | `train` | string | `""` | Path to the training dataset. The CLI reads it; the Python API passes arrays instead. |
 | `valid` | list | `[]` | Paths to validation datasets. The first drives early stopping; all are scored each logging tick. |

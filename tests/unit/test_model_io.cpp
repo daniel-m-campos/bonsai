@@ -245,8 +245,6 @@ TEST_CASE("ModelIo: full Config round-trips via save/load", "[model_io][config]"
     cfg.data.label_column             = 3;
     cfg.data.weight_column            = 7;
     cfg.data.ignore_columns           = {1, 2, 5};
-    cfg.data.missing_nan              = false;
-    cfg.data.missing_sentinel         = -99.5F;
     cfg.bin_mapper.max_bin            = 127;
     cfg.bin_mapper.n_samples          = 50'000;
     cfg.bin_mapper.seed               = 314159;
@@ -267,13 +265,6 @@ TEST_CASE("ModelIo: full Config round-trips via save/load", "[model_io][config]"
     io::save_booster(*booster, tmp.str(), mappers, cfg);
     auto const loaded = io::load_booster(tmp.str());
     REQUIRE(loaded.cfg == cfg);
-
-    // missing_sentinel empty (nullopt) also round-trips (serialized as null).
-    cfg.data.missing_sentinel = std::nullopt;
-    io::save_booster(*booster, tmp.str(), mappers, cfg);
-    auto const loaded2 = io::load_booster(tmp.str());
-    REQUIRE(loaded2.cfg == cfg);
-    REQUIRE_FALSE(loaded2.cfg.data.missing_sentinel.has_value());
 }
 
 TEST_CASE("ModelIo: committed v7 fixtures re-save byte-identically",

@@ -22,8 +22,7 @@
 #include <nlohmann/json.hpp>
 
 // nlohmann/json v3.11 doesn't ship std::optional<T> conversion; add a tiny
-// adl_serializer so the NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE macros below can
-// see optional fields (e.g. DataConfig::missing_sentinel).
+// adl_serializer so the serializers below can see optional config fields.
 template <typename T> struct nlohmann::adl_serializer<std::optional<T>>
 {
     static void to_json(json &j, std::optional<T> const &opt)
@@ -135,6 +134,15 @@ template <typename Sub> void section_to_json(json &j, Sub const &s)
             (emit(f), ...);
         },
         std::get<section_index<Sub>>(cfg_int::all_sections).fields);
+    if constexpr (std::is_same_v<Sub, DataConfig>)
+    {
+        // Retired knobs, retained keys: both belong to the format-v7 key set,
+        // and dropping them would change every model's bytes and break older
+        // readers. Each is written as the value it always carried for callers
+        // who never set it, and the loader ignores both.
+        j["missing_nan"]      = true;
+        j["missing_sentinel"] = nullptr;
+    }
 }
 
 template <typename Sub> void section_from_json(json const &j, Sub &s)

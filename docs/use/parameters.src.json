@@ -19,7 +19,6 @@
     "ignore_columns": [],
     "label_column": 0,
     "libsvm_n_features": 0,
-    "missing_nan": true,
     "test": "",
     "train": "",
     "valid": [],

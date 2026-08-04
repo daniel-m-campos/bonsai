@@ -1,8 +1,11 @@
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "bonsai/bin_mappers.hpp"
 #include "bonsai/config/bin_mapper_config.hpp"
@@ -59,40 +62,45 @@ TEST_CASE("Csv: parse populates ColumnBatch with header names and labels", "[csv
     }
 }
 
-TEST_CASE("Csv: empty fields and nan literals become NaN", "[csv][nan]")
+TEST_CASE("Csv: nan literals become NaN", "[csv][nan]")
 {
     bonsai::DataConfig data_cfg;
     data_cfg.header       = true;
     data_cfg.label_column = 0;
-    data_cfg.missing_nan  = true;
 
     auto const batch = bonsai::detail::csv::parse(tiny_csv(), data_cfg);
 
-    // f2 column, row 1 (0-indexed) had empty field.
+    // f2 column, row 1 (0-indexed) and f1 column, row 2 hold "nan".
     REQUIRE(std::isnan(batch.features[1][1]));
-    // f1 column, row 2 had literal "nan".
     REQUIRE(std::isnan(batch.features[0][2]));
     // Other entries are finite.
     REQUIRE(std::isfinite(batch.features[0][0]));
     REQUIRE(std::isfinite(batch.features[2][3]));
 }
 
-TEST_CASE("Csv: missing_sentinel maps to NaN", "[csv][nan]")
+TEST_CASE("Csv: an empty field is a parse error naming its position",
+          "[csv][nan][edge]")
 {
+    // Missing is spelled `nan`. An empty field could be an intended gap or a
+    // truncated line, so the reader refuses instead of guessing, and says
+    // where to look.
+    // Written to the temp dir, not the fixture dir: tests/data holds
+    // committed inputs and is restored from a CI cache.
+    auto const path =
+        (std::filesystem::temp_directory_path() / "bonsai-empty-field.csv").string();
+    {
+        std::ofstream out(path);
+        out << "label,f1,f2\n1.0,2.0,3.0\n2.0,,4.0\n";
+    }
     bonsai::DataConfig data_cfg;
     data_cfg.header       = true;
     data_cfg.label_column = 0;
-    data_cfg.missing_sentinel =
-        4.0F; // f2 row 3, f1 row 3, f3 row -1 → none of these are 4
 
-    auto const batch = bonsai::detail::csv::parse(tiny_csv(), data_cfg);
-
-    // f1 row 3 = 4.0, should be NaN'd.
-    REQUIRE(std::isnan(batch.features[0][3]));
-    // f2 row 2 = 4.0, should be NaN'd.
-    REQUIRE(std::isnan(batch.features[1][2]));
-    // Non-4 values remain.
-    REQUIRE_THAT(batch.features[2][0], Catch::Matchers::WithinAbs(3.0F, 1e-6F));
+    REQUIRE_THROWS_WITH(bonsai::detail::csv::parse(path, data_cfg),
+                        Catch::Matchers::ContainsSubstring("row 2") &&
+                            Catch::Matchers::ContainsSubstring("column 2") &&
+                            Catch::Matchers::ContainsSubstring("'nan'"));
+    std::filesystem::remove(path);
 }
 
 TEST_CASE("Csv: read_csv pipes through fit_from_csv to a usable Dataset",

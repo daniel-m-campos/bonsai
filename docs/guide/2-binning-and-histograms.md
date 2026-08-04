@@ -63,8 +63,9 @@ most important optimization in histogram GBT.
 - **Fitting cuts**: [`BinMapper::fit`](../../src/bin_mapper.cpp):
   reservoir-sample the column, pull quantiles with `nth_element` at a
   fixed stride, deduplicate, append `+inf` as a sentinel. The **last bin
-  is reserved for missing values** (NaN); a plain sentinel value can also
-  be mapped to missing via `data.missing_sentinel`.
+  is reserved for missing values** (NaN); in a CSV that is the literal
+  `nan`, and a placeholder like -999 means missing only if you convert it
+  to NaN first.
 - **Binning**: [`Dataset::bin`](../../src/dataset.cpp): per feature,
   `transform` is a `lower_bound` over the cuts. Storage is column-major
   (`feature_bins(fid)` is contiguous) because histogram building walks one
