@@ -1,5 +1,5 @@
 {
-  "_": "The standings registry (results-lifecycle policy, decision 92). One entry per published perf/quality axis: the current-standings file, the single sha its rows were measured at (null = refresh required), and the release it was refreshed for. Gates: scripts/check_standings.py; supersession is in place, git history is the archive.",
+  "_": "The standings registry (results-lifecycle policy, decision 92). One entry per published perf/quality axis: the current-standings file, the single sha its rows were measured at (null = refresh required), and the release it was refreshed for. Quality axes (key starts with 'quality') also carry hash_set (the model-hash guard digest at refresh time) and refs (reference-library versions measured against), which let scripts/check_standings.py's release gate skip a refresh when neither has moved. Gates: scripts/check_standings.py; supersession is in place, git history is the archive.",
   "rows": {
     "file": "rebaseline-2026-08.jsonl",
     "sha": "3599365",
@@ -49,7 +49,13 @@
     "refreshed_for": "1.6.1",
     "as_of_decision": 92,
     "sha_partial": true,
-    "note": "Library split: bonsai rows carry schema v1, reference rows predate provenance; the mcw1 bracket file rides along. Slow clock: refresh on engine quality changes or reference-library majors regenerates all arms."
+    "hash_set": "fb1ed27e8e981461",
+    "refs": {
+      "xgboost": "3.2.0",
+      "lightgbm": "4.6.0",
+      "catboost": "1.2.10"
+    },
+    "note": "Library split: bonsai rows carry schema v1, reference rows predate provenance; the mcw1 bracket file rides along. Slow clock: refresh on engine quality changes or reference-library majors regenerates all arms (mechanically gated by scripts/check_standings.py's hash-unchanged skip)."
   },
   "code": {
     "file": "code-metrics-2026-07.jsonl",

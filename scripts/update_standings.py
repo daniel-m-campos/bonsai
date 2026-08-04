@@ -9,6 +9,14 @@ refreshed_for taken from pyproject.toml (override with --version).
 Supersession also drops the entry's note, since a note describes the
 file being replaced. Run render_results.py afterwards; the generator
 loads through the registry.
+
+Superseding a quality axis (registry key starts with "quality") also stamps
+`hash_set` (the model-hash guard digest, `check_standings.hash_set_digest()`)
+and `refs` (the reference libraries' installed versions) so a later release
+can use check_standings.py's hash-unchanged skip instead of a full refresh.
+The refresh is the one moment the installed reference-library versions are
+known for certain (the grinsztajn suite runs against them), so it also
+refreshes benchmarks/reference_versions.json to match.
 """
 
 from __future__ import annotations
@@ -23,11 +31,38 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 REGISTRY = REPO / "benchmarks" / "standings.json"
 RESULTS = REPO / "benchmarks" / "results"
 
+sys.path.insert(0, str(REPO / "scripts"))
+import check_standings  # noqa: E402
+
+REF_LIBRARIES = ("xgboost", "lightgbm", "catboost")
+
 
 def project_version() -> str:
     m = re.search(r'^version = "([^"]+)"',
                   (REPO / "pyproject.toml").read_text(), re.M)
     return m.group(1)
+
+
+def stamp_quality_gate(entry: dict) -> None:
+    """Record the hash-unchanged skip's inputs on a freshly refreshed axis."""
+    entry["hash_set"] = check_standings.hash_set_digest()
+    ref_versions = current_ref_versions()
+    entry["refs"] = ref_versions
+    refresh_ref_ledger(ref_versions)
+
+
+def current_ref_versions() -> dict:
+    """Installed reference-library versions, falling back to the ledger."""
+    recorded = check_standings.recorded_ref_versions()
+    return {name: check_standings.installed_ref_version(name) or recorded.get(name)
+            for name in REF_LIBRARIES}
+
+
+def refresh_ref_ledger(ref_versions: dict) -> None:
+    """Fold newly seen reference-library versions into the recorded ledger."""
+    ledger = json.loads(check_standings.REF_VERSIONS.read_text())
+    ledger.update({name: v for name, v in ref_versions.items() if v})
+    check_standings.REF_VERSIONS.write_text(json.dumps(ledger, indent=2) + "\n")
 
 
 def main() -> int:
@@ -66,6 +101,8 @@ def main() -> int:
                  host=sorted(hosts)[0] if len(hosts) == 1 else None,
                  date=dates[-1] if dates else None,
                  refreshed_for=args.version or project_version())
+    if check_standings.is_quality_axis(args.axis):
+        stamp_quality_gate(entry)
     REGISTRY.write_text(json.dumps(reg, indent=2) + "\n")
     print(f"{args.axis}: {args.file} at {entry['sha']} "
           f"(refreshed for {entry['refreshed_for']})")
