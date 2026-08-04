@@ -146,6 +146,67 @@ def test_xgb_runner_never_builds_plain_dmatrix(monkeypatch):
     assert out["fit_s"] > 0 and out["ingest_s"] > 0, out
 
 
+def test_xgb_runner_fails_a_silent_cpu_fallback(monkeypatch):
+    """A cuda request that xgboost quietly drops to CPU must fail the row.
+
+    xgboost 3.3 can warn "No visible GPU is found" and keep training on
+    CPU instead of raising (issue #333); a row born from that fallback
+    would carry a plausible CPU time under a cuda label. The guard reads
+    booster.save_config() after the fit, which reflects the device the fit
+    actually used, so this forces that field to "cpu" regardless of what
+    the host under test actually has.
+    """
+    xgb = pytest.importorskip("xgboost")
+    from bonsai.bench import runners
+
+    real_train = xgb.train
+
+    def fell_back_to_cpu(params, dtrain, *args, **kwargs):
+        booster = real_train(params, dtrain, *args, **kwargs)
+        cfg = json.loads(booster.save_config())
+        cfg["learner"]["generic_param"]["device"] = "cpu"
+        booster.save_config = lambda: json.dumps(cfg)
+        return booster
+
+    monkeypatch.setattr(xgb, "train", fell_back_to_cpu)
+    rng = np.random.default_rng(0)
+    X = rng.random((1500, 8), dtype=np.float32)
+    y = X[:, :3].sum(axis=1).astype(np.float32)
+    cell = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42, "iters": 5}
+    with pytest.raises(RuntimeError, match="fell back to CPU"):
+        runners.run_xgb({"cell": cell, "variant": "xgb_cuda", "threads": 1},
+                        X[:1000], y[:1000], X[1000:], y[1000:])
+
+
+def test_xgb_runner_accepts_a_genuine_gpu_placement(monkeypatch):
+    """The placement guard must not fire on a booster that reports the GPU.
+
+    Companion to the fallback test above: forces save_config() to report a
+    cuda device instead, so the guard is proven to discriminate rather than
+    always raising for a cuda-labeled arm.
+    """
+    xgb = pytest.importorskip("xgboost")
+    from bonsai.bench import runners
+
+    real_train = xgb.train
+
+    def landed_on_gpu(params, dtrain, *args, **kwargs):
+        booster = real_train(params, dtrain, *args, **kwargs)
+        cfg = json.loads(booster.save_config())
+        cfg["learner"]["generic_param"]["device"] = "cuda:0"
+        booster.save_config = lambda: json.dumps(cfg)
+        return booster
+
+    monkeypatch.setattr(xgb, "train", landed_on_gpu)
+    rng = np.random.default_rng(0)
+    X = rng.random((1500, 8), dtype=np.float32)
+    y = X[:, :3].sum(axis=1).astype(np.float32)
+    cell = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42, "iters": 5}
+    out = runners.run_xgb({"cell": cell, "variant": "xgb_cuda", "threads": 1},
+                          X[:1000], y[:1000], X[1000:], y[1000:])
+    assert out["fit_s"] > 0, out
+
+
 def test_lgbm_runner_freezes_binning_knobs_and_constructs_in_ingest(monkeypatch):
     """LightGBM's binning knobs (max_bin, ...) freeze when Dataset() is
     constructed, not when train() later receives params: passing params
