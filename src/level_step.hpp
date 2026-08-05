@@ -282,6 +282,7 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
 
     SplitInput make_root(row_index_view row_indices)
     {
+        GrowProfiler::instance().fill_depth = 0;
         GrowProfiler::Lap lap;
         SplitInput        root;
         root.id = 0;
@@ -324,13 +325,14 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
     // sibling derives by subtraction.
     void build_children(LevelPlan &plan, bool /*last*/ = false)
     {
-        GrowProfiler::Lap lap;
-        host_build_children(engine_, ds_, grad_, hess_, selected_, plan);
         auto        &prof = GrowProfiler::instance();
-        double const dt   = lap.take();
-        prof.populate_s += dt;
         size_t const slot =
             std::min<size_t>(++fill_depth_, GrowProfiler::k_level_slots - 1);
+        prof.fill_depth = slot;
+        GrowProfiler::Lap lap;
+        host_build_children(engine_, ds_, grad_, hess_, selected_, plan);
+        double const dt = lap.take();
+        prof.populate_s += dt;
         double rows_filled = 0;
         for (auto &d : plan.splits)
         {

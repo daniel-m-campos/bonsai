@@ -133,6 +133,9 @@ struct GrowProfiler : Profiler<GrowProfiler>
     static constexpr size_t           k_level_slots = 32;
     std::array<double, k_level_slots> level_populate_s{};
     std::array<double, k_level_slots> level_populate_adds{};
+    // Depth of the fill currently executing (set by the host LevelStep, read
+    // by the engine's fill-strategy choice); not printed.
+    size_t fill_depth = 0;
 
     static constexpr std::array fields = {
         std::pair{"find", &GrowProfiler::find_s},

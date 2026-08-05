@@ -9,9 +9,12 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <memory>
+#include <print>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace bonsai
@@ -350,6 +353,90 @@ void merge_partials(FillPlan const &plan, std::span<feature_id_t const> selected
         });
 }
 
+// Probe, temporary: deep-level sweep fill (doc 22). Walks rows 0..n-1
+// sequentially per feature tile, routing each row through a slot map that
+// covers only this batch's nodes; every read stream is sequential and each
+// tile's features are owned by one worker, so per-node accumulation is
+// ascending-row and thread-count-independent. Bits can differ from the list
+// fill where that path used multi-block partials (a different, equally
+// valid float-sum grouping).
+constexpr uint16_t k_sweep_skip   = 0xFFFF;
+constexpr size_t   k_sweep_tile_w = 8;
+
+size_t hist_sweep_level()
+{
+    static size_t const v = []
+    {
+        char const *e = std::getenv("BONSAI_HIST_SWEEP");
+        return e != nullptr ? static_cast<size_t>(std::atoi(e)) : size_t{0};
+    }();
+    return v;
+}
+
+void sweep_fill(Dataset const &ds, floats_view grad, floats_view hess,
+                split_input_refs nodes, std::span<feature_id_t const> selected,
+                SelectedOffsets const &offsets)
+{
+    size_t const                              n     = ds.n_rows();
+    size_t const                              n_sel = selected.size();
+    static thread_local std::vector<uint16_t> slot_of;
+    slot_of.assign(n, k_sweep_skip);
+    uint16_t *const slot_ptr = slot_of.data();
+    for (size_t i = 0; i < nodes.size(); ++i)
+    {
+        for (row_id_t const r : nodes[i].get().rows)
+        {
+            slot_ptr[r] = static_cast<uint16_t>(i);
+        }
+    }
+    static thread_local std::vector<HistCell *> bases;
+    bases.resize(nodes.size() * n_sel);
+    for (size_t i = 0; i < nodes.size(); ++i)
+    {
+        for (size_t s = 0; s < n_sel; ++s)
+        {
+            bases[(i * n_sel) + s] = nodes[i].get().hists[selected[s]].cells().data();
+        }
+    }
+    HistCell **const          base_ptr = bases.data();
+    feature_id_t const *const sel_ptr  = selected.data();
+    float const *const        g_ptr    = grad.data();
+    float const *const        h_ptr    = hess.data();
+    for (MirrorSlice const &sl : mirror_slices(ds, selected, offsets))
+    {
+        uint8_t const *const rm_ptr = ds.row_major_bins().data() + sl.rm_base;
+        size_t const         width  = sl.rm_width;
+        size_t const         fid0   = sl.fid0;
+        size_t const n_tiles = (sl.n_selected() + k_sweep_tile_w - 1) / k_sweep_tile_w;
+        parallel::for_each_index(
+            n_tiles,
+            [&, base_ptr, slot_ptr, sel_ptr, rm_ptr, g_ptr, h_ptr](size_t t)
+            {
+                size_t const s0 = sl.s0 + (t * k_sweep_tile_w);
+                size_t const s1 = std::min(sl.s1, s0 + k_sweep_tile_w);
+                for (size_t r = 0; r < n; ++r)
+                {
+                    uint16_t const slot = slot_ptr[r];
+                    if (slot == k_sweep_skip)
+                    {
+                        continue;
+                    }
+                    uint8_t const *const rb = rm_ptr + (r * width);
+                    float const          g  = g_ptr[r];
+                    float const          h  = h_ptr[r];
+                    HistCell **const     nb =
+                        base_ptr + (static_cast<size_t>(slot) * n_sel);
+                    for (size_t s = s0; s < s1; ++s)
+                    {
+                        HistCell &c = nb[s][rb[sel_ptr[s] - fid0]];
+                        c.sum_grad += g;
+                        c.sum_hess += h;
+                    }
+                }
+            });
+    }
+}
+
 void emplace_placeholders(Dataset const &ds, SplitInput &node,
                           std::span<feature_id_t const> selected)
 {
@@ -392,6 +479,19 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         return;
     }
     auto &prof = grower_detail::GrowProfiler::instance();
+    // Provable toggle engagement: an equality A/B cannot detect an inert
+    // toggle, so the session asserts this line per arm.
+    static bool const announced = [&prof]
+    {
+        if (prof.enabled)
+        {
+            std::println(stderr, "hist-fill: sweep={}",
+                         hist_sweep_level() != 0 ? std::to_string(hist_sweep_level())
+                                                 : "off");
+        }
+        return true;
+    }();
+    (void) announced;
     for (SplitInput const &node : nodes)
     {
         prof.populate_adds += static_cast<double>(node.rows.size()) *
@@ -406,6 +506,14 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         return;
     }
     SelectedOffsets const offsets = selected_offsets(ds, selected);
+    if (size_t const lvl = hist_sweep_level();
+        lvl != 0 && nodes.size() > 1 && prof.fill_depth >= lvl)
+    {
+        grower_detail::GrowProfiler::Lap row_lap;
+        sweep_fill(ds, grad, hess, nodes, selected, offsets);
+        row_lap(prof.populate_row_s);
+        return;
+    }
     // Tiles outer, rows inner: one fill pass per mirror block keeps the
     // live scatter target at one block's histograms (cache-resident by
     // construction) at any selection width, while reads stay sequential
