@@ -20,7 +20,7 @@ the whole implementation.
 | 1 | [Gradient boosting](1-gradient-boosting.md) | Why trees fit *gradients*, why second order, where leaf values come from |
 | 2 | [Binning & histograms](2-binning-and-histograms.md) | Why 255 buckets beat exact splits, and the subtraction trick |
 | 3 | [Finding splits](3-finding-splits.md) | The gain formula, one prefix scan, and where missing values go |
-| 4 | [Growing trees](4-growing-trees.md) | Depth-wise vs best-first vs oblivious: three answers to "which leaf next?" |
+| 4 | [Growing trees](4-growing-trees.md) | Depth-wise vs best-first vs level-wise: three answers to "which leaf next?" |
 | 5 | [Sampling](5-sampling.md) | Training on fewer rows: Bernoulli, GOSS, and a bug worth learning from |
 | 6 | [Regularization & constraints](6-regularization-and-constraints.md) | L1/L2, column sampling, monotone and interaction constraints |
 | 7 | [Early stopping & DART](7-early-stopping-and-dart.md) | Knowing when to stop, and dropout for trees |

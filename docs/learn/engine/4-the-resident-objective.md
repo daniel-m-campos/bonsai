@@ -1,6 +1,6 @@
 # E4. The resident objective
 
-Case E3 parked a multi-GPU engine and named its reopener: a device-resident objective. This case pursues that reopener single-GPU first, and the 16M oblivious round falls from 104 to 64 milliseconds.
+Case E3 parked a multi-GPU engine and named its reopener: a device-resident objective. This case pursues that reopener single-GPU first, and the 16M levelwise round falls from 104 to 64 milliseconds.
 
 The move is not to optimize the host round-trip. It is to delete it. Every tree, the objective crossed host RAM for work the device could already do in place, and the fix makes the crossing cease to exist.
 
@@ -34,9 +34,9 @@ The shipped branch was measured by a same-pod interleaved A/B. Interleaving the 
 
 | cell | host ms/round | resident ms/round | cut |
 |---|--:|--:|--:|
-| oblivious 16M | 136.1 | 102.6 | 24.6% |
+| levelwise 16M | 136.1 | 102.6 | 24.6% |
 | depthwise 16M | 148.7 | 118.7 | 20.1% |
-| oblivious 64M | 545.2 | 455.7 | 16.4% |
+| levelwise 64M | 545.2 | 455.7 | 16.4% |
 | depthwise 64M | 606.3 | 515.8 | 14.9% |
 
 The 16M cut is larger than that host's own pool of about 28 ms. The reason is the epilogue: routing each row through the tree in bin space is also cheaper than the stamp-and-copy epilogue it replaced. This host has a fast CPU, so weaker hosts should see larger cuts, not smaller.
@@ -51,7 +51,7 @@ The escape hatch made that parity checkable. `BONSAI_HOST_OBJECTIVE=1` runs the 
 
 ## The frontier consequence
 
-The frontier re-run then priced the whole effect from the outside (decision 78). On one L40S pod the oblivious marginal round fell from 104 to 64 ms, while the same-pod controls moved only with fleet variance.
+The frontier re-run then priced the whole effect from the outside (decision 78). On one L40S pod the levelwise marginal round fell from 104 to 64 ms, while the same-pod controls moved only with fleet variance.
 
 That put bonsai's round below CatBoost's 78 ms on the same pod. The decision-72 crossover no longer exists at any measured horizon. The one honest residue that run had named, CatBoost reaching its plateau sooner, is also gone. bonsai reaches 0.8979 in 31.9s against CatBoost's 0.8980 in 46.4s, a fourth-decimal tie at 45% more wall clock.
 

@@ -25,18 +25,18 @@
     {
       "rows": 131072,
       "cols": 16384,
-      "exclude_variants": ["lgbm_cpu", "bonsai_oblivious"]
+      "exclude_variants": ["lgbm_cpu", "bonsai_levelwise"]
     }
   ],
   "variants": [
     "bonsai_cuda_depthwise",
-    "bonsai_cuda_oblivious",
+    "bonsai_cuda_levelwise",
     "bonsai_cuda_leafwise",
     "xgb_cuda",
     "catboost_gpu",
     "lgbm_cuda",
     "lgbm_cpu",
-    "bonsai_oblivious"
+    "bonsai_levelwise"
   ],
   "threads": [
     16

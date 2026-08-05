@@ -29,7 +29,7 @@
 bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library and command-line tool written in C++23. It pairs a small, concept-checked component API (objectives, growers, split finders, samplers) with compile-time dispatch in the training hot path, and ships the benchmark harness that pits it against XGBoost, LightGBM, and CatBoost on real data. The aim is a readable, thoroughly documented GBT: a reference-grade implementation that competes with the production libraries instead of merely tolerating comparison with them.
 
 - **Compile-time dispatch, concept-checked components.** The runtime TOML config resolves once to a monomorphized `Booster<Objective, Grower, Splitter, Sampler>`; no virtual calls in the hot path, and contract violations fail at compile time. Adding a component is a [short recipe](https://daniel-m-campos.github.io/bonsai/use/building/#extending-bonsai).
-- **Six growers, one engine.** `depthwise` (XGBoost-style), `leafwise` (LightGBM-style), `oblivious` (CatBoost-style), and their CUDA twins `cuda_depthwise` / `cuda_leafwise` / `cuda_oblivious`; with 7 objectives and 3 samplers the dispatch space is 126 statically-typed combinations, selectable per run from config.
+- **Six growers, one engine.** `depthwise` (XGBoost-style), `leafwise` (LightGBM-style), `levelwise` (CatBoost-style), and their CUDA twins `cuda_depthwise` / `cuda_leafwise` / `cuda_levelwise`; with 7 objectives and 3 samplers the dispatch space is 126 statically-typed combinations, selectable per run from config.
 - **Deterministic parallelism.** Models are bit-identical across runs, thread counts, and even CPU architectures (arm64 == x86-64), a property no reference library offers, enforced per-commit in CI ([the contract](https://daniel-m-campos.github.io/bonsai/design/determinism/)).
 - **A guide, not just docs.** [The guide](https://daniel-m-campos.github.io/bonsai/guide/) explains gradient boosting chapter by chapter: concept, math, then the ~50 real lines that implement it here, then an experiment against the reference libraries.
 
@@ -66,7 +66,7 @@ bonsai info                        # list (objective, grower, sampler) combos
 bonsai params                      # dump the default config as TOML
 ```
 
-Any key overrides inline (`bonsai fit -c config.toml --set tree.max_depth=8 --set dispatch.grower_name=oblivious ...`), and `make fit-benchmark` trains and times bonsai against xgboost/lightgbm/catboost on California Housing in one command. The rest of the API is one read: [the API tour](https://daniel-m-campos.github.io/bonsai/use/api-tour/).
+Any key overrides inline (`bonsai fit -c config.toml --set tree.max_depth=8 --set dispatch.grower_name=levelwise ...`), and `make fit-benchmark` trains and times bonsai against xgboost/lightgbm/catboost on California Housing in one command. The rest of the API is one read: [the API tour](https://daniel-m-campos.github.io/bonsai/use/api-tour/).
 
 ## Results
 
@@ -80,7 +80,7 @@ bonsai's CUDA growers hold the fastest slot at every measured row scale (7.9s at
 
 Same-pod re-baseline ladder, best of repeats, test r² in parentheses, fastest per row in bold. Measured at `db383c5` (2026-08-04, pod-NVIDIA-L40S).
 
-| rows | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
+| rows | bonsai cuda dw | bonsai cuda lvl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu lvl |
 |---|--:|--:|--:|--:|--:|--:|--:|--:|
 | 250k | **0.7s** (.872) | 1.1s (.877) | 2.4s (.872) | 1.0s (.872) | 1.8s (.875) | 6.3s (.879) | 4.2s (.872) | 8.6s (.877) |
 | 1M | **1.0s** (.877) | 1.3s (.877) | 3.6s (.877) | 2.6s (.876) | 2.6s (.876) | 7.0s (.884) | 9.1s (.877) | 11.1s (.877) |
@@ -89,7 +89,7 @@ Same-pod re-baseline ladder, best of repeats, test r² in parentheses, fastest p
 
 Ingest / train seconds behind that total: `-` is bonsai's fused call, which has no split until a runner refresh measures it (issue #301); CatBoost's ingest reads low because `Pool()` only wraps the arrays and it quantizes inside `fit`.
 
-| rows | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
+| rows | bonsai cuda dw | bonsai cuda lvl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu lvl |
 |---|---|---|---|---|---|---|---|---|
 | 250k | 0.1s / 0.6s | 0.1s / 1.0s | 0.1s / 2.4s | 0.5s / 0.6s | 0.1s / 1.8s | 0.9s / 5.5s | 0.8s / 3.4s | 0.2s / 8.4s |
 | 1M | 0.1s / 0.8s | 0.1s / 1.2s | 0.1s / 3.4s | 1.8s / 0.9s | 0.3s / 2.4s | 1.5s / 5.5s | 1.6s / 7.5s | 0.6s / 10.5s |

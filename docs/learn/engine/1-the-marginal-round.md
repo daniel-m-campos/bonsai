@@ -10,7 +10,7 @@ The cell is the largest in bonsai's suite: 16M rows by 100 features, depth 8, le
 
 This lens is also honest about losses. A fixed-iteration table can hide a per-round deficit behind faster convergence, or hide slow convergence behind a cheap round. The frontier shows both, so you cannot dress up one axis by quoting the other.
 
-Fit as a straight line, each library becomes a fixed cost plus a marginal cost per round. The fixed cost is ingest and setup, paid once. The marginal cost is one boosting round, paid per tree. On one L40S pod, bonsai's oblivious grower sat at ~4.6 seconds fixed plus 155 ms per round. CatBoost sat at ~11.8 seconds plus 77 ms.
+Fit as a straight line, each library becomes a fixed cost plus a marginal cost per round. The fixed cost is ingest and setup, paid once. The marginal cost is one boosting round, paid per tree. On one L40S pod, bonsai's levelwise grower sat at ~4.6 seconds fixed plus 155 ms per round. CatBoost sat at ~11.8 seconds plus 77 ms.
 
 The marginal round is the right target because it compounds. A fit spends it once per tree, so a third off the round is a third off every deep fit at this cell. That decomposition also tells you who wins where. bonsai owned the fast end outright: under half CatBoost's fixed cost, and first to every accuracy up to roughly r² 0.88. But CatBoost's round was roughly half the price, so any deep-enough workload went to CatBoost. Decision 71 named the target in one line: bonsai's 155 ms round against CatBoost's 77.
 
@@ -24,7 +24,7 @@ The plan was reasonable. The profile was not lying about the wall clock; the lap
 
 We did not write the rewrite. We wrote a measurement first.
 
-Here is one oblivious level, physically. The host queues the next level's memset, histogram, and subtract kernels, then returns. It commits the level's children and demotes empty nodes, host bookkeeping that overlaps the device work. Then it opens the next level and stages a kilobyte of node sums, a synchronous copy. That copy cannot start until the queued histogram build ahead of it finishes, so the host blocks there.
+Here is one levelwise level, physically. The host queues the next level's memset, histogram, and subtract kernels, then returns. It commits the level's children and demotes empty nodes, host bookkeeping that overlaps the device work. Then it opens the next level and stages a kilobyte of node sums, a synchronous copy. That copy cannot start until the queued histogram build ahead of it finishes, so the host blocks there.
 
 The wait belongs to the build, but the label said staging. Async work bills to whoever synchronizes next.
 
@@ -52,7 +52,7 @@ The DAG is small enough to make this exact. It has about ten node types, and at 
 
 Conservation is the rule that found the levers. The buckets must sum to the wall clock at every altitude. When they sum but a line is physically impossible, that line is mislabeled; when they do not sum, the gap is the next target.
 
-The peel replayed the exact decision-62 misattribution on the oblivious plane: 6.1 seconds filed under find-staging was again the previous level's histogram kernels draining. With that wait relocated, two residues fell out that no label explained. One was a 64MB-per-tree host copy of the identity row list, at 33 ms per round. The other was a full histogram build for a final level whose children are all leaves, at 22 ms per round.
+The peel replayed the exact decision-62 misattribution on the levelwise plane: 6.1 seconds filed under find-staging was again the previous level's histogram kernels draining. With that wait relocated, two residues fell out that no label explained. One was a 64MB-per-tree host copy of the identity row list, at 33 ms per round. The other was a full histogram build for a final level whose children are all leaves, at 22 ms per round.
 
 Six levers were priced from that one table, each with a kill criterion written down first. Three cleared the bar and landed.
 
@@ -72,7 +72,7 @@ The frontier crossing had moved past the plateau, which is the whole point: the 
 
 One caveat travels with these numbers. Two identical L40S pods measured 25% apart, so every delta above is same-pod. The cross-pod number that transfers is the decomposition shape, not the absolute milliseconds.
 
-A pointer forward: decision 78 moved this frontier again. When the device-resident objective removed the per-tree host round-trip, the same oblivious round fell from 104 to 64 ms on a July 18 re-run. That is cheaper than CatBoost's round, and the crossover disappeared entirely. That story is case E4.
+A pointer forward: decision 78 moved this frontier again. When the device-resident objective removed the per-tree host round-trip, the same levelwise round fell from 104 to 64 ms on a July 18 re-run. That is cheaper than CatBoost's round, and the crossover disappeared entirely. That story is case E4.
 
 ## Reading it yourself
 

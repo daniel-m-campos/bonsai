@@ -42,14 +42,14 @@ class Variant:
 _TABLE = (
     Variant("bonsai_depthwise", Lib.BONSAI, Device.CPU, ("bonsai_dw", "bonsai_cpu")),
     Variant("bonsai_leafwise", Lib.BONSAI, Device.CPU, ("bonsai_lw", "bonsai_leaf_cpu")),
-    Variant("bonsai_oblivious", Lib.BONSAI, Device.CPU, ("bonsai_obl",)),
+    Variant("bonsai_levelwise", Lib.BONSAI, Device.CPU, ("bonsai_obl",)),
     Variant("bonsai_cuda_depthwise", Lib.BONSAI, Device.CUDA, ("bonsai_gpu",)),
     Variant("bonsai_cuda_leafwise", Lib.BONSAI, Device.CUDA),
-    Variant("bonsai_cuda_oblivious", Lib.BONSAI, Device.CUDA, ("bonsai_obl_gpu",)),
+    Variant("bonsai_cuda_levelwise", Lib.BONSAI, Device.CUDA, ("bonsai_obl_gpu",)),
     Variant("bonsai_ts_depthwise", Lib.BONSAI, Device.CPU),
-    Variant("bonsai_ts_oblivious", Lib.BONSAI, Device.CPU),
+    Variant("bonsai_ts_levelwise", Lib.BONSAI, Device.CPU),
     Variant("bonsai_ts_cuda_depthwise", Lib.BONSAI, Device.CUDA),
-    Variant("bonsai_ts_cuda_oblivious", Lib.BONSAI, Device.CUDA),
+    Variant("bonsai_ts_cuda_levelwise", Lib.BONSAI, Device.CUDA),
     Variant("xgb_hist", Lib.XGB, Device.CPU, ("xgb", "xgb_cpu")),
     Variant("xgb_cuda", Lib.XGB, Device.CUDA, ("xgb_gpu",)),
     Variant("lgbm_cpu", Lib.LGBM, Device.CPU, ("lgbm",)),
@@ -62,12 +62,12 @@ REGISTRY = {v.name: v for v in _TABLE}
 _BY_ALIAS = {a: v for v in _TABLE for a in v.aliases}
 
 # Per-suite membership, in each suite's historical order and spelling.
-SCALING = ("bonsai_depthwise", "bonsai_leafwise", "bonsai_oblivious",
-           "bonsai_cuda_depthwise", "bonsai_cuda_oblivious", "xgb_hist",
+SCALING = ("bonsai_depthwise", "bonsai_leafwise", "bonsai_levelwise",
+           "bonsai_cuda_depthwise", "bonsai_cuda_levelwise", "xgb_hist",
            "xgb_cuda", "lgbm_cpu", "lgbm_cuda", "catboost_cpu", "catboost_gpu")
-AIRLINE = ("bonsai_depthwise", "bonsai_oblivious", "bonsai_cuda_depthwise",
-           "bonsai_cuda_oblivious", "bonsai_ts_depthwise", "bonsai_ts_oblivious",
-           "bonsai_ts_cuda_depthwise", "bonsai_ts_cuda_oblivious", "xgb_hist",
+AIRLINE = ("bonsai_depthwise", "bonsai_levelwise", "bonsai_cuda_depthwise",
+           "bonsai_cuda_levelwise", "bonsai_ts_depthwise", "bonsai_ts_levelwise",
+           "bonsai_ts_cuda_depthwise", "bonsai_ts_cuda_levelwise", "xgb_hist",
            "xgb_cuda", "lgbm_cpu", "catboost_cpu", "catboost_gpu")
 GRINSZTAJN = ("bonsai_dw", "bonsai_lw", "bonsai_obl", "xgb", "lgbm", "catboost")
 

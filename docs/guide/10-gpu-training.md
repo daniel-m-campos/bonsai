@@ -4,7 +4,7 @@
 
 Everything expensive in histogram GBT is a *data-parallel reduction or scatter over rows*: bin the raw values, sum gradients into cells, scan cells for the best split, route rows to children. A GPU has ~10× the memory bandwidth of a CPU socket, and bandwidth is exactly what these loops are starved for. What a GPU does **not** have is cheap access to the sequential, branchy part: deciding which nodes to split, bookkeeping the tree, enforcing constraints.
 
-So the design question is not "port the algorithm to CUDA" but "draw the boundary": the device owns every per-row loop, the host owns every per-node decision, and the two exchange the smallest possible messages. bonsai has a CUDA grower for each of its three growth strategies, `cuda_depthwise`, `cuda_leafwise`, and `cuda_oblivious`, and each draws that boundary in its own way. `depthwise` and `oblivious` share a boundary called the **level transaction** ([architecture/14](../architecture/14-engine-narrative.md)): the CPU and CUDA engines implement the *same* transactions, so a grower cannot tell which backend it is running on. `leafwise` draws an analogous boundary, one node per round instead of one level, through its own `LeafStep` seam ([architecture/20](../architecture/20-cuda-leafwise.md)). This chapter walks through the level transaction first, since it covers two of the three CUDA growers, then the leaf step. The problems that make the device side interesting, atomics and precision, keeping data resident, and knowing what to move next, apply to all three.
+So the design question is not "port the algorithm to CUDA" but "draw the boundary": the device owns every per-row loop, the host owns every per-node decision, and the two exchange the smallest possible messages. bonsai has a CUDA grower for each of its three growth strategies, `cuda_depthwise`, `cuda_leafwise`, and `cuda_levelwise`, and each draws that boundary in its own way. `depthwise` and `levelwise` share a boundary called the **level transaction** ([architecture/14](../architecture/14-engine-narrative.md)): the CPU and CUDA engines implement the *same* transactions, so a grower cannot tell which backend it is running on. `leafwise` draws an analogous boundary, one node per round instead of one level, through its own `LeafStep` seam ([architecture/20](../architecture/20-cuda-leafwise.md)). This chapter walks through the level transaction first, since it covers two of the three CUDA growers, then the leaf step. The problems that make the device side interesting, atomics and precision, keeping data resident, and knowing what to move next, apply to all three.
 
 ## The math
 
@@ -35,7 +35,7 @@ Follow one fit through the transactions:
 
 The host control plane between transactions is [`src/level_step.hpp`](../../src/level_step.hpp) and the growers, the same `plan_level`/`commit_children` logic the CPU path uses, because it *is* the CPU path's logic. When the device declines (a feature's bins exceed the shared-memory budget), the same grower runs the same tree on the host engine mid-fit.
 
-What this buys, measured (same-pod L40S re-baseline, 16M rows × 100 features × 100 trees, `fit()` timed end-to-end including binning): **bonsai 18.4s oblivious / 20.5s depthwise vs XGBoost-GPU 19.9s, at a third of the host memory (7.0GB vs 22.2GB)**, rendered at [Fit at scale](../method/results/perf-scale.md). The path from 3× slower to ahead is [chapter 11](11-performance-engineering.md).
+What this buys, measured (same-pod L40S re-baseline, 16M rows × 100 features × 100 trees, `fit()` timed end-to-end including binning): **bonsai 18.4s levelwise / 20.5s depthwise vs XGBoost-GPU 19.9s, at a third of the host memory (7.0GB vs 22.2GB)**, rendered at [Fit at scale](../method/results/perf-scale.md). The path from 3× slower to ahead is [chapter 11](11-performance-engineering.md).
 
 ## In bonsai: the leaf step
 
@@ -47,7 +47,7 @@ Leaf-wise and depthwise agree structurally at a capped depth with a full leaf bu
 
 Measured standing (decision 98, same-pod L40S, 100 iters, 256 leaves): `cuda_leafwise` fits 250k/1M/4M/16M rows x 100 features in 2.1/3.2/7.6/24.4 s against LightGBM's CUDA leaf-wise at 6.6/7.6/12.3/31.9 s. Uncapped at 16M, where best-first structurally diverges from depthwise, bonsai reads 32.3 s against LightGBM's 31.7 s at matched r2: LightGBM is about 2% faster there, honestly reported, even though bonsai stays ahead everywhere depth is capped.
 
-The device-resident objective (MSE, LogLoss, or Poisson; no DART; all-rows or Bernoulli sampling) arms for `cuda_leafwise` the same way it arms for `cuda_depthwise` and `cuda_oblivious`. There is nothing to configure: an eligible fit keeps labels and scores on the device for the whole fit, and `BONSAI_HOST_OBJECTIVE=1` forces the host path.
+The device-resident objective (MSE, LogLoss, or Poisson; no DART; all-rows or Bernoulli sampling) arms for `cuda_leafwise` the same way it arms for `cuda_depthwise` and `cuda_levelwise`. There is nothing to configure: an eligible fit keeps labels and scores on the device for the whole fit, and `BONSAI_HOST_OBJECTIVE=1` forces the host path.
 
 ## Try it
 

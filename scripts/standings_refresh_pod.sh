@@ -5,7 +5,7 @@
 # Writes dated standings jsonl + the A/B rows to /root/standings/.
 #
 # The width axis runs the standings-cols spec, which drops the 16384-col
-# CPU arms (lgbm_cpu, bonsai_oblivious): those two cells pin the wall clock
+# CPU arms (lgbm_cpu, bonsai_levelwise): those two cells pin the wall clock
 # at several minutes each with no GPU-side change able to move them. Set
 # WIDTH_FULL=1 for a release refresh to run standings-cols-full instead,
 # which keeps them; the output file is the same name either way.
@@ -43,7 +43,7 @@ if [ -n "$PREV_VERSION" ]; then
     uv pip install -q --python /opt/venv/bin/python "bonsai-gbt==$PREV_VERSION"
     : > /root/standings/ab.jsonl
     for rep in 1 2; do
-        for grower in cuda_depthwise cuda_oblivious; do
+        for grower in cuda_depthwise cuda_levelwise; do
             for cell in "1000000 100" "16000000 100"; do
                 set -- $cell
                 /opt/venv/bin/python scripts/standings_ab.py \

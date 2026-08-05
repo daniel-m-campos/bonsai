@@ -113,7 +113,7 @@ Reader-facing prose never restates standings digits; only generated tables carry
 
 The refresh is one rented pod session, driven locally by `scripts/standings_refresh.py` (decision 96; section 10 of the RunPod runbook): a same-pod A/B of the previous release wheel against HEAD on anchor cells detects whether perf moved, then the standings specs re-measure the axes and the supersession lands as one reviewed PR.
 
-The width axis runs on two clocks. The routine refresh measures the `standings-cols` spec, which excludes the 16384-column CPU arms (`lgbm_cpu`, `bonsai_oblivious`): those two cells pin the wall clock at several minutes each with no GPU-side change able to move them, so a refresh chasing a code change does not need to pay for them every time. The release refresh (`measure --width-full`) measures `standings-cols-full` instead, which keeps every arm, so the published width standings stay complete at least once per release.
+The width axis runs on two clocks. The routine refresh measures the `standings-cols` spec, which excludes the 16384-column CPU arms (`lgbm_cpu`, `bonsai_levelwise`): those two cells pin the wall clock at several minutes each with no GPU-side change able to move them, so a refresh chasing a code change does not need to pay for them every time. The release refresh (`measure --width-full`) measures `standings-cols-full` instead, which keeps every arm, so the published width standings stay complete at least once per release.
 
 ## Amendments
 

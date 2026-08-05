@@ -12,7 +12,7 @@ Selects the algorithm: which loss, which tree grower, which row sampler.
 
 | parameter | type | default | effect |
 |---|---|---|---|
-| `grower_name` | string | `"depthwise"` | Tree-growth strategy: depthwise, leafwise, or oblivious (plus cuda_ variants). Leafwise cuts loss faster per node; oblivious builds symmetric trees. |
+| `grower_name` | string | `"depthwise"` | Tree-growth strategy: depthwise, leafwise, or levelwise (plus cuda_ variants). Leafwise cuts loss faster per node; levelwise builds symmetric trees. |
 | `objective_name` | string | `"mse"` | Training loss: mse, mae, huber, quantile, poisson, logloss, or softmax. Sets the gradients, the link, and the default metrics. |
 | `sampler_name` | string | `"all_rows"` | Row-sampling strategy: all_rows, bernoulli (uniform subsample), or goss (keeps large-gradient rows). Trades a little accuracy for training speed. |
 

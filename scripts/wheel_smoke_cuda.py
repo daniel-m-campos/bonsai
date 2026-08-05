@@ -26,7 +26,7 @@ y = (X[:, 0] * 2 + X[:, 1] - X[:, 2] + rng.normal(0, 0.1, len(X))).astype(np.flo
 PRED_TOL = 1e-3
 R2_TOL = 0.005
 
-for gpu, cpu in (("cuda_depthwise", "depthwise"), ("cuda_oblivious", "oblivious")):
+for gpu, cpu in (("cuda_depthwise", "depthwise"), ("cuda_levelwise", "levelwise")):
     mg = bonsai.BonsaiRegressor(n_iters=30, grower=gpu).fit(X, y)
     mc = bonsai.BonsaiRegressor(n_iters=30, grower=cpu).fit(X, y)
     pg = mg.predict(X)

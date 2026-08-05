@@ -12,9 +12,9 @@ bonsai adopted one of these ideas directly, rebuilt one as preprocessing, and de
 
 ## Adopted: oblivious trees
 
-The `oblivious` grower is bonsai's symmetric-tree strategy and its strongest configuration: on GPU at 16M rows it is the fastest and most accurate variant bonsai has.
+The `levelwise` grower is bonsai's symmetric-tree strategy and its strongest configuration: on GPU at 16M rows it is the fastest and most accurate variant bonsai has.
 
-Getting there took a debugging lesson. Through mid-campaign, bonsai's oblivious accuracy trailed catboost's at scale (test r² 0.864 vs 0.876 at 16M), and the gap looked algorithmic: their per-level scoring, perhaps, or their quantization.
+Getting there took a debugging lesson. Through mid-campaign, bonsai's levelwise accuracy trailed catboost's at scale (test r² 0.864 vs 0.876 at 16M), and the gap looked algorithmic: their per-level scoring, perhaps, or their quantization.
 
 It was a bonsai bug: the device level-find kernel let infeasible frontier nodes veto level candidates, a missing port of a fix the CPU grower already had ([decision 63](https://github.com/daniel-m-campos/bonsai/blob/main/docs/decisions.md)). With the kernel fixed, bonsai matched catboost's accuracy exactly. The gap had never been theirs to explain.
 
@@ -38,7 +38,7 @@ Prediction shift, the problem ordered boosting solves, matters on small, noisy, 
 
 ## The score today
 
-Same pod, matched settings, 16M rows: bonsai `cuda_oblivious` 18.4s, catboost-GPU 18.5s, both at 0.876 test r², with bonsai using ~3× less host memory (7.0 vs 19.4 GB).
+Same pod, matched settings, 16M rows: bonsai `cuda_levelwise` 18.4s, catboost-GPU 18.5s, both at 0.876 test r², with bonsai using ~3× less host memory (7.0 vs 19.4 GB).
 
 On wide data CatBoost held the lead through the 2026-07-08 runs (1024 columns: 9.7s vs bonsai's 10.6; 4096: 35.8 vs 41.9); the 2026-07-30 re-measurement reversed it (bonsai 8.5s vs CatBoost's 13.2 at 1M x 1024, 33.2 vs 50.0 at 4096; decision 90), recorded on [the width and shape ledger](../method/results/perf-shape.md).
 

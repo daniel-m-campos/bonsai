@@ -298,7 +298,7 @@ TEST_CASE("Resident MSE matches host-objective GPU (depthwise)", "[cuda][residen
     REQUIRE(max_abs_diff(host, res) < 2e-2F);
 }
 
-TEST_CASE("Resident MSE matches host-objective GPU (oblivious)", "[cuda][resident]")
+TEST_CASE("Resident MSE matches host-objective GPU (levelwise)", "[cuda][resident]")
 {
     if (!cuda_available())
     {
@@ -308,7 +308,7 @@ TEST_CASE("Resident MSE matches host-objective GPU (oblivious)", "[cuda][residen
     auto const cfg  = reg_cfg();
     auto const host = fit_predict<MseBooster<CudaObliviousGrower>>(cfg, data, 40, true);
     auto const res = fit_predict<MseBooster<CudaObliviousGrower>>(cfg, data, 40, false);
-    report("oblivious", host, res, data.y);
+    report("levelwise", host, res, data.y);
 
     REQUIRE(r2_of(res, data.y) > 0.9);
     REQUIRE(r2_of(res, data.y) == Catch::Approx(r2_of(host, data.y)).margin(1e-4));
@@ -462,7 +462,7 @@ TEST_CASE("Resident LogLoss matches host-objective GPU (depthwise)", "[cuda][res
     REQUIRE(max_abs_diff(host, res) < 5e-2F);
 }
 
-TEST_CASE("Resident LogLoss matches host-objective GPU (oblivious)", "[cuda][resident]")
+TEST_CASE("Resident LogLoss matches host-objective GPU (levelwise)", "[cuda][resident]")
 {
     if (!cuda_available())
     {

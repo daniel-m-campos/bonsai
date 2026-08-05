@@ -151,7 +151,7 @@ bench-scaling:  ## Run the synthetic rows/cols/bins/threads scaling sweep.
 bench-iso: python-cuda  ## Run the iso-volume bonsai arms on this host's GPU.
 	@PYTHONPATH=build-cuda/python $(PYTHON) -m bonsai.bench run \
 	    --spec iso-volume-2026-08 \
-	    --variants bonsai_cuda_depthwise,bonsai_cuda_oblivious \
+	    --variants bonsai_cuda_depthwise,bonsai_cuda_levelwise \
 	    --out benchmarks/results/iso-volume-2026-08.jsonl \
 	    --run-label iso-volume-2026-08-workrig \
 	    --host-name workrig-rtx-pro-6000 $(ARGS)

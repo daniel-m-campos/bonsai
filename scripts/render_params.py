@@ -59,7 +59,7 @@ SECTION_INTRO = {
 EFFECTS = {
     # dispatch
     "dispatch.objective_name": "Training loss: mse, mae, huber, quantile, poisson, logloss, or softmax. Sets the gradients, the link, and the default metrics.",
-    "dispatch.grower_name": "Tree-growth strategy: depthwise, leafwise, or oblivious (plus cuda_ variants). Leafwise cuts loss faster per node; oblivious builds symmetric trees.",
+    "dispatch.grower_name": "Tree-growth strategy: depthwise, leafwise, or levelwise (plus cuda_ variants). Leafwise cuts loss faster per node; levelwise builds symmetric trees.",
     "dispatch.sampler_name": "Row-sampling strategy: all_rows, bernoulli (uniform subsample), or goss (keeps large-gradient rows). Trades a little accuracy for training speed.",
     # booster
     "booster.n_iters": "Number of boosting rounds. More rounds lower training loss but risk overfitting; pair with a smaller learning_rate.",

@@ -96,7 +96,7 @@ def test_bonsai_core_pairs():
     logloss = params.bonsai_core(learning_rate=0.1, max_depth=8, num_leaves=256,
                                  min_data_in_leaf=20, lambda_l2=1.0, max_bin=255,
                                  seed=42, n_iters=100, n_threads=16,
-                                 grower="oblivious", objective="logloss")
+                                 grower="levelwise", objective="logloss")
     assert dict(logloss)["dispatch.objective_name"] == "logloss"
 
 

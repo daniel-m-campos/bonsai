@@ -94,7 +94,7 @@ Translation is not equivalence, and each mapping documents where its two sides p
 
 ```python
 model = bonsai.train(
-    [("dispatch.grower_name", "oblivious"), ("booster.n_iters", "200")],
+    [("dispatch.grower_name", "levelwise"), ("booster.n_iters", "200")],
     X, y,
     eval_set=(Xv, yv),
 )
@@ -136,7 +136,7 @@ bonsai params  # the default config as TOML
 
 ## GPU training
 
-Pass `grower="cuda_leafwise"`, `"cuda_depthwise"`, or `"cuda_oblivious"` (or the dotted key `dispatch.grower_name`). `bonsai.cuda_available()` reports whether this build and machine can train on GPU; models trained on GPU predict everywhere, including CPU-only installs.
+Pass `grower="cuda_leafwise"`, `"cuda_depthwise"`, or `"cuda_levelwise"` (or the dotted key `dispatch.grower_name`). `bonsai.cuda_available()` reports whether this build and machine can train on GPU; models trained on GPU predict everywhere, including CPU-only installs.
 
 On linux x86_64 the release wheel trains on GPU out of the box: any NVIDIA driver R525+, no CUDA toolkit needed, 2.3MB total (the wheel carries its own statically linked CUDA runtime). Other platforms need a source build with `BONSAI_CUDA=ON`. Every release's CUDA wheel is validated on real GPU hardware before it ships ([issue #99](https://github.com/daniel-m-campos/bonsai/issues/99)).
 

@@ -43,7 +43,7 @@ print("r2:", round(model.score(X_train, y_train), 3))
 print("GPU available:", bonsai.cuda_available())
 ```
 
-If `cuda_available()` is `True`, pass `device="cuda"` (the XGBoost spelling) or pick a CUDA grower directly with `grower="cuda_leafwise"` / `"cuda_depthwise"` / `"cuda_oblivious"`; the [API tour](api-tour.md) covers the rest.
+If `cuda_available()` is `True`, pass `device="cuda"` (the XGBoost spelling) or pick a CUDA grower directly with `grower="cuda_leafwise"` / `"cuda_depthwise"` / `"cuda_levelwise"`; the [API tour](api-tour.md) covers the rest.
 
 ## The bench extra
 

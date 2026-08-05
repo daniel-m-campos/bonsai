@@ -17,7 +17,7 @@ rng = np.random.default_rng(0)
 X = rng.random((512, 4), dtype=np.float32)
 y = X[:, 0].astype(np.float32)
 
-for grower in ("cuda_depthwise", "cuda_oblivious"):
+for grower in ("cuda_depthwise", "cuda_levelwise"):
     try:
         bonsai.BonsaiRegressor(n_iters=2, grower=grower).fit(X, y)
     except Exception as e:  # any loud failure is the contract; silence is the bug
