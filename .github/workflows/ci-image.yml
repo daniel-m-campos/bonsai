@@ -5,10 +5,7 @@ name: ci-image
 # demand. The package must be public for RunPod pods to pull anonymously:
 # github.com -> package bonsai-ci -> settings -> change visibility (one-time).
 #
-# The pushed tag moved to cuda12.8 with the Dockerfile's base bump;
-# cuda12.4 is deliberately absent from the tag list below so the
-# registry's existing cuda12.4 tag stays frozen for branches still pinned
-# to it, instead of being silently overwritten by a 12.8-based rebuild.
+# cuda12.4 stays off the tags below so it is never overwritten.
 on:
   workflow_dispatch:
   push:
