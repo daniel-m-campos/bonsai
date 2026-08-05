@@ -33,7 +33,8 @@ PROFILE_RE = re.compile(r"(\w+)=([\d.]+)s")
 # exception, so the last stderr line is usually noise; the campaign's first
 # OOM was classified "error" with a bare "[bt] (8) ..." message because of it.
 _NOISE_RE = re.compile(r"^\s*(\[bt\]|Stack trace|cuda-profile:|grow-profile:|"
-                       r"ingest-profile:|fit-profile:|cuda-upload-decomp:)")
+                       r"populate-levels:|ingest-profile:|fit-profile:|"
+                       r"cuda-upload-decomp:)")
 
 _GATE_KEYS = {"mem_gate", "gpu_max_cols"}
 
