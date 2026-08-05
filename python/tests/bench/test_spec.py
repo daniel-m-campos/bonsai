@@ -63,7 +63,7 @@ def test_spec_expansion_exclude_variants():
 STANDINGS_AXES = {
     "gpu-tall": ((16_777_216, 128), _GPU_ARMS, 6),
     "gpu-wide": ((131_072, 16_384), _GPU_ARMS, 6),
-    "gpu-extreme": ((67_108_864, 1024), _GPU_ARMS, 6),
+    "gpu-extreme": ((16_777_216, 1024), _GPU_ARMS, 6),
     "cpu-tall": ((2_097_152, 128), _CPU_ARMS, 6),
     "cpu-wide": ((16_384, 16_384), _CPU_ARMS, 6),
 }
