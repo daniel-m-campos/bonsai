@@ -76,7 +76,7 @@ Two divisions, per the [benchmark charter](https://daniel-m-campos.github.io/bon
 
 ### Perf
 
-The perf standings are being re-measured on the redesigned scenario matrix (decision 103): tall and wide scenarios at constant cell count plus a memory-maxout extreme, on both planes, with early stopping as its own axis. The panels page fills in with the first refresh; the campaigns that led here are in the archive.
+On GPU at the tall scenario, fit totals run depthwise 5.6s vs XGBoost 21.7s; leafwise 9.1s vs LightGBM 28.0s; levelwise 5.9s vs CatBoost 16.9s. On CPU at the tall scenario: depthwise 17.6s vs XGBoost 11.0s; leafwise 42.6s vs LightGBM 14.8s; levelwise 15.7s vs CatBoost 10.8s. The wide and extreme scenarios, the host and device memory columns, and the early-stopping axis are on the panels page.
 
 The panels, and the closed campaigns behind them, are in [the ledger](https://daniel-m-campos.github.io/bonsai/method/results/).
 
