@@ -51,7 +51,7 @@ One constant: levels whose selected-histogram footprint exceeds 24MB take the fe
 |--|--|--:|--:|--:|
 | 1M x 4096 | depthwise | 348s | unchanged | 382s |
 
-The 131k x 16384 rows of the same ladder, where the routing collapsed a 7x deficit to parity, are on [the width and shape ledger](../../method/results/perf-shape.md).
+The 131k x 16384 rows of the same ladder, where the routing collapsed a 7x deficit to parity, are in [the archive](../../method/results/archive.md).
 
 Peak memory at the wide cell: 18.8GB against LightGBM's 50.1GB.
 
@@ -67,6 +67,6 @@ The threshold lived one day. Its recorded residual, XGBoost 3.3's column-tiling 
 
 The probe's interleaved A/B beat both strategies at their own best cells: 326s against the row path's 369 at 1M x 4096, 442s against feature-parallel's 514 at 131k x 16384, a wash at 16M x 100. And because tiling never changes a feature's accumulation order, the tiled fill produces bit-identical models to the classic row path at every width, so the determinism contract came out stronger than either strategy could make it. The chapter's closing lesson gains its final form: when a trade-off is real, ship the honest threshold and record what it leaves on the table, and then look for the restructuring that makes the trade-off imaginary. It existed here, one layout change away, published in a competitor's release notes all along.
 
-The CUDA wide wall this case left as a residual got the same treatment on 2026-07-30, and it had already fallen: the recorded deficit dated to 2026-07-08 code, and on current main the CUDA growers lead every wide cell (refutation-by-progress, decision 90). The iso-volume frontier (decision 91) then measured the shape axis wholesale, holding rows x cols constant while width swept 128 to 65536 columns; both are on [the width and shape ledger](../../method/results/perf-shape.md).
+The CUDA wide wall this case left as a residual got the same treatment on 2026-07-30, and it had already fallen: the recorded deficit dated to 2026-07-08 code, and on current main the CUDA growers lead every wide cell (refutation-by-progress, decision 90). The iso-volume frontier (decision 91) then measured the shape axis wholesale, holding rows x cols constant while width swept 128 to 65536 columns; both are in [the archive](../../method/results/archive.md).
 
 Evidence: [benchmarks/wide-cpu-hist-2026-07.md](https://github.com/daniel-m-campos/bonsai/blob/main/benchmarks/wide-cpu-hist-2026-07.md); decisions 88 to 91; the ratifying field report is issue #217.

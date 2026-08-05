@@ -55,7 +55,7 @@ timeline
 | 2019 | **[scikit-learn HistGradientBoosting](https://scikit-learn.org/stable/modules/ensemble.html#histogram-based-gradient-boosting)**: Ship a histogram gradient-boosting estimator in the standard scikit-learn API. *(scikit-learn 0.21, 2019)* | bonsai | [adopted](../use/api-tour.md) |
 | 2026 | **Cross-architecture reproducibility**: Produce byte-identical models across host architectures at a fixed thread count. *(bonsai, 2026 (decision 59))* | bonsai | [origin](../design/determinism.md) |
 | 2026 | **Device-resident objective**: Derive each tree's gradients on the GPU and fuse leaf values into resident scores, deleting the per-tree host round-trip. *(bonsai, 2026 (decisions 77 to 79))* | bonsai | [origin](../decisions.md#77-the-device-resident-objective-the-per-tree-host-round-trip-deleted-adopted) |
-| 2026 | **The single-card ceiling**: Measure how large a dataset one GPU trains end to end: a 500M by 100 float32 matrix on one 80GB card. *(bonsai, 2026)* | bonsai | [origin](../method/results/perf-ceiling.md#the-single-card-ceiling) |
+| 2026 | **The single-card ceiling**: Measure how large a dataset one GPU trains end to end: a 500M by 100 float32 matrix on one 80GB card. *(bonsai, 2026)* | bonsai | [origin](../method/results/archive.md) |
 
 ## Status legend
 

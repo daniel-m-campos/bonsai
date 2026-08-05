@@ -40,6 +40,6 @@ Prediction shift, the problem ordered boosting solves, matters on small, noisy, 
 
 Same pod, matched settings, 16M rows: bonsai `cuda_levelwise` 18.4s, catboost-GPU 18.5s, both at 0.876 test r², with bonsai using ~3× less host memory (7.0 vs 19.4 GB).
 
-On wide data CatBoost held the lead through the 2026-07-08 runs (1024 columns: 9.7s vs bonsai's 10.6; 4096: 35.8 vs 41.9); the 2026-07-30 re-measurement reversed it (bonsai 8.5s vs CatBoost's 13.2 at 1M x 1024, 33.2 vs 50.0 at 4096; decision 90), recorded on [the width and shape ledger](../method/results/perf-shape.md).
+On wide data CatBoost held the lead through the 2026-07-08 runs (1024 columns: 9.7s vs bonsai's 10.6; 4096: 35.8 vs 41.9); the 2026-07-30 re-measurement reversed it (bonsai 8.5s vs CatBoost's 13.2 at 1M x 1024, 33.2 vs 50.0 at 4096; decision 90), recorded in [the archive](../method/results/archive.md).
 
 bonsai's strongest configuration is built on catboost's tree structure, and the project's most useful debugging lesson came from assuming their advantage was real before checking whether it was our defect.

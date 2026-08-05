@@ -20,7 +20,13 @@ iso-volume pairs on each plane, a VRAM-maxout extreme, and early stopping.
 requested axes a source change can actually have moved, and runs only
 those, so a CUDA-only change never pays for a CPU-plane sweep.
 
-It also gates on the pod's fused/two-step parity rows before touching
+The parity rows do double duty. They gate the supersession, and the ones
+that pass are committed beside the standings as the gpu-tall axis's
+companion file, because the fused fit total the perf page publishes once is
+their median: the anchor is read from a measurement the session already
+takes, never from a new run.
+
+It gates on the pod's fused/two-step parity rows before touching
 anything: the published ingest/train split is only honest while bonsai's
 two-step form still bins where its fused call does, so a parity failure
 stops the supersession instead of shipping a breakdown that describes a
@@ -62,6 +68,9 @@ PARITY_BAND_PCT = 5
 AXES = ("gpu-tall", "gpu-wide", "gpu-extreme", "cpu-tall", "cpu-wide",
         "gpu-early-stop")
 AXIS_FILE = {axis: axis for axis in AXES}
+
+# The axis the parity rows anchor: same cell, same pod, same session.
+PARITY_AXIS = "gpu-tall"
 
 SSH_OPTS = ["-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=15"]
@@ -216,10 +225,13 @@ def supersede(args: argparse.Namespace) -> int:
             return 1
         files[axis] = got[-1].name
         shutil.copy2(got[-1], RESULTS / got[-1].name)
+    companion = _copy_parity(parity_path, files.get(PARITY_AXIS))
     for axis in axes:
-        subprocess.run([sys.executable, "scripts/update_standings.py",
-                        "--axis", axis, "--file", files[axis]],
-                       check=True, cwd=REPO)
+        cmd = [sys.executable, "scripts/update_standings.py",
+               "--axis", axis, "--file", files[axis]]
+        if axis == PARITY_AXIS and companion:
+            cmd += ["--companion", companion]
+        subprocess.run(cmd, check=True, cwd=REPO)
     # Stage supersessions BEFORE rendering: the committed-files gate reads
     # git ls-files, and a month-rollover refresh deletes the old dated files.
     subprocess.run(["git", "add", "-A", "benchmarks/"], check=True, cwd=REPO)
@@ -267,6 +279,36 @@ def stale_axes() -> set[str]:
 
 
 # Private Helpers ==================================================================================
+
+def _copy_parity(path: pathlib.Path, axis_file: str | None) -> str | None:
+    """Commit the session's parity rows as the anchor axis's companion.
+
+    The perf page publishes one fused fit total, and this is where it comes
+    from, so the rows ship with the standings they anchor and supersede with
+    them. The file is dated from the axis file it accompanies, which is the
+    only honest date: the two were measured in the same session.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The pod's ``parity.jsonl``.
+    axis_file : str or None
+        The dated standings file the parity rows anchor, or None when this
+        session did not measure that axis.
+
+    Returns
+    -------
+    str or None
+        The committed file name, or None when there is nothing to commit.
+    """
+    if not axis_file or not path.exists():
+        return None
+    stamp = "-".join(pathlib.Path(axis_file).stem.split("-")[-2:])
+    name = f"parity-{stamp}.jsonl"
+    shutil.copy2(path, RESULTS / name)
+    return name
+
+
 
 def _api(url: str, key: str, payload: dict | None = None,
          method: str = "POST") -> dict:

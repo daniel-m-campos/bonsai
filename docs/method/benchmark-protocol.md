@@ -21,14 +21,12 @@ The current evidence, rendered whole from every committed results file, is [the 
 | suite | division | datasets (tier) | primary metric | results file | runner | decision |
 |---|---|---|---|---|---|---|
 | grinsztajn | quality | 55 external tasks (quality-external) | r² / AUC | `results/grinsztajn-2026-07.jsonl` | `python -m bonsai.bench.grinsztajn` | 68 |
-| campaign | quality | internal ten (quality-smoke) | per-task | `results/quality-campaign-2026-07.jsonl` | `scripts/compare.py` per config | 56 |
-| probes | quality | per-study | per-study | `results/<probe>-<date>.*` | `scripts/probe_*.py` | 57, 58, 67, ... |
 | scaling | perf | friedman1 (perf-synthetic) | fit_s, predict_s, RSS | per-run `--out` | `python -m bonsai.bench.scaling` | 46 |
 | gpu-tall / gpu-wide / gpu-extreme | perf | friedman1 (perf-synthetic) | ingest_s, train_s, RSS, VRAM, r² | `results/<axis>-<date>.jsonl` | `python -m bonsai.bench run --spec <axis>` | 103 |
 | cpu-tall / cpu-wide | perf | friedman1 (perf-synthetic) | ingest_s, train_s, RSS, r² | `results/<axis>-<date>.jsonl` | `python -m bonsai.bench run --spec <axis>` | 103 |
 | gpu-early-stop | perf | friedman1 (perf-synthetic) | fit_s ratio, time to stop | `results/gpu-early-stop-<date>.jsonl` | `python -m bonsai.bench run --spec gpu-early-stop` | 103 |
 
-The Grinsztajn suite is the only citable standings table: its 55 tasks were selected by third parties (Grinsztajn, Oyallon, Varoquaux 2022), which removes the selection-bias objection a self-picked suite can never answer. The internal campaign remains the fast local regression check.
+The Grinsztajn suite is the only citable standings table: its 55 tasks were selected by third parties (Grinsztajn, Oyallon, Varoquaux 2022), which removes the selection-bias objection a self-picked suite can never answer. The internal campaign (`scripts/compare.py`) and the one-off probes (`scripts/probe_*.py`) still run, but they publish nothing standing: their closed rounds are listed in [the archive](results/archive.md).
 
 ## Datasets
 
@@ -44,13 +42,13 @@ One implementation, `bonsai.bench.metrics`. Primary metric per task, the only on
 
 ## Timing
 
-Two modes, declared per row. `in_memory`: fit timed from in-memory arrays, including each library's own ingest (bonsai binning, XGBoost QuantileDMatrix, lgb.Dataset, CatBoost Pool); the scaling and rebaseline convention. `pipeline`: fit timed end to end including CSV read; the CLI-compare convention. Numbers from different modes are never compared against each other. predict_s always times prediction from a raw test matrix.
+Two modes, declared per row. `in_memory`: fit timed from in-memory arrays, including each library's own ingest (bonsai binning, XGBoost QuantileDMatrix, lgb.Dataset, CatBoost Pool); the scaling and standings convention. `pipeline`: fit timed end to end including CSV read; the CLI-compare convention. Numbers from different modes are never compared against each other. predict_s always times prediction from a raw test matrix.
 
 Every arm receives the same host array and is measured through the ingest API its own documentation recommends for that input: bonsai's `Dataset` then `train(pairs, dataset)`, XGBoost's `QuantileDMatrix`, LightGBM's `Dataset` built with its params, CatBoost's `Pool`. fit_s spans ingest through the trained model for every arm; ingest_s and train_s are reported underneath it rather than measured on their own, and fit_s is never redefined as their sum. Every arm reports the split, bonsai included. Each measured row builds its own ingest structure: reusing one across repeats or variants would amortize a cost each row must be charged in full.
 
 bonsai's split is honest only because its `Dataset` takes a device hint (decision 99): built with `device="cuda"` it bins on the GPU, which is where the fused `train(pairs, X, y)` call bins for a cuda grower, so the two forms measure one pipeline and the seam between them is free to report. An unhinted `Dataset` bins on the host whatever grower follows it, and its ingest number then describes a pipeline no GPU arm runs; that is not hypothetical, it reached a published refresh once and was withdrawn. The standing evidence is a parity arm on the refresh pod: the anchor cell fit both ways, interleaved, banded at 5% on fit_s and on peak RSS, with a failure stopping the supersession rather than annotating it.
 
-Because that shared array dominates every peak-host-RSS figure, the rows and width standings tables also carry headroom above it (rows plus the held-out test rows, both resident since `bonsai.bench.synth.gen_data` returns numpy views into one buffer, times columns, times 4 bytes float32), quoting bonsai's device memory (`dev_mem`) alongside since that headroom is host-input only and paid on the device instead, and collapsing under device-resident input (issue #289); the airline and Grinsztajn suites read real files through each library's own ingest path, so no single input-array size is shared across arms and no headroom column is printed for them.
+Because that shared array dominates every peak-host-RSS figure, the perf panels also carry headroom above it (rows plus the held-out test rows, both resident since `bonsai.bench.synth.gen_data` returns numpy views into one buffer, times columns, times 4 bytes float32), quoting bonsai's device memory (`dev_mem`) alongside since that headroom is host-input only and paid on the device instead, and collapsing under device-resident input (issue #289); the Grinsztajn suite reads real files through each library's own ingest path, so no single input-array size is shared across arms and no headroom column is printed for it.
 
 Where a library sketches or bins, host or device, is a property of that library and is reported, not equalized: routing every arm through the same intermediate structure would erase the difference the perf division exists to measure. Changing any runner's call form is therefore a protocol change, not a refactor, and needs a same-pod A/B before it lands: a runner was once quietly moved off its documented ingest path, and the loss was caught only by a human comparing two refreshes and noticing every other arm got faster.
 

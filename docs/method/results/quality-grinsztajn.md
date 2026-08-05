@@ -24,15 +24,8 @@ Per-suite mean rank:
 | xgb | 3.57 | 2.54 | 2.87 | 2.75 |
 | catboost | 2.86 | 3.23 | 3.00 | 3.50 |
 
-Sensitivity: XGBoost's campaign mapping sets `min_child_weight=20` (hessian-weighted, the knob-translation bracket recorded in decision 68); replacing its rows with the `min_child_weight=1` run gives the other end of the bracket:
-
-| library | mean rank | outright wins |
-|---|---|---|
-| bonsai | 1.78 | 18 |
-| xgb | 2.18 | 23 |
-| lgbm | 2.69 | 6 |
-| catboost | 3.35 | 8 |
+XGBoost's campaign mapping sets `min_child_weight=20` (hessian-weighted, the knob-translation bracket recorded in decision 68). The other end of that bracket, the same suite with XGBoost at `min_child_weight=1`, was measured: bonsai keeps the lead at mean rank 1.78 and XGBoost rises to second. Those rows are closed evidence now, listed in the archive.
 
 Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite (hours; datasets fetch from OpenML), then `--report` on the same file to render the standings from the jsonl.
 
-*Source: [`grinsztajn-2026-07.jsonl`](../../../benchmarks/results/grinsztajn-2026-07.jsonl), [`grinsztajn-2026-07-xgb-mcw1.jsonl`](../../../benchmarks/results/grinsztajn-2026-07-xgb-mcw1.jsonl). As-run; evidence narrative in [benchmarks/grinsztajn-2026-07.md](../../../benchmarks/grinsztajn-2026-07.md), ruling in decision 68.*
+*Source: [`grinsztajn-2026-07.jsonl`](../../../benchmarks/results/grinsztajn-2026-07.jsonl). As-run; evidence narrative in [benchmarks/grinsztajn-2026-07.md](../../../benchmarks/grinsztajn-2026-07.md), ruling in decision 68.*

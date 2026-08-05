@@ -71,11 +71,9 @@ Every method here produces a feature ranking, best first. The families, in incre
 
 **Fine print**, three details for the record. The wrapper searches (forward's and rfe_val's candidate fits) run at cheap knobs, 200 iterations with early stopping 30, to stay affordable; every number reported below comes from a fresh refit at the full matched knobs. Every method reads the same validation slice that drives early stopping, so no method sees extra data, and the holdout stays untouched by all of them. And `shap_train` is left out of the superconductivity results table because its top-$k$ sets coincide with `shap_val`'s there at every budget except one; it remains in the raw rows and in the overlap matrix, where their 1.00 cell records the coincidence.
 
-Full protocol and raw rows: [`scripts/probe_selection_survey.py`](../../scripts/probe_selection_survey.py) and [`benchmarks/results/selection-survey-2026-07.jsonl`](../../benchmarks/results/selection-survey-2026-07.jsonl).
+Full protocol: [`scripts/probe_selection_survey.py`](../../scripts/probe_selection_survey.py). The raw rows are closed evidence and live in git history; [the archive](../method/results/archive.md) names the commit that still reads them.
 
 ## Reading the curves
-
-![Selection-method survey: holdout rmse vs features kept](../method/assets/selection-survey.svg)
 
 | family | method | wall (s) | k=64 | k=32 | k=16 | k=12 | k=8 | k=4 |
 |--|--|--:|--:|--:|--:|--:|--:|--:|

@@ -131,15 +131,10 @@ nav:
   - Results:
       - method/README.md
       - The results ledger: method/results.md
-      - Perf division:
-          - Fit at scale: method/results/perf-scale.md
-          - Width and shape: method/results/perf-shape.md
-          - The single-card ceiling: method/results/perf-ceiling.md
-      - Quality division:
-          - Grinsztajn standings: method/results/quality-grinsztajn.md
-          - Campaign smoke: method/results/quality-campaign.md
-          - Probes: method/results/quality-probes.md
+      - The scenario panels: method/results/perf.md
+      - Grinsztajn standings: method/results/quality-grinsztajn.md
       - The code division: method/results/code-metrics.md
+      - The archive: method/results/archive.md
       - The benchmark protocol: method/benchmark-protocol.md
       - How we decide: method/how-we-decide.md
       - What to use when: method/what-to-use-when.md

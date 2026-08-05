@@ -17,9 +17,10 @@ output is byte-stable for a given input set.
 
 from __future__ import annotations
 
+import dataclasses
 import json
-import math
 import pathlib
+import statistics
 import subprocess
 import sys
 from collections import defaultdict
@@ -29,13 +30,14 @@ from _render_common import md_table
 
 
 class Axis:
-    """Standings axes: registry keys in benchmarks/standings.json.
+    """Standings axes: registry keys in benchmarks/standings.json."""
 
-    The six redesigned perf axes (decision 103) are registered but unmeasured,
-    so nothing renders them yet; the panel pages arrive with their first
-    refresh.
-    """
-
+    GPU_TALL: Final = "gpu-tall"
+    GPU_WIDE: Final = "gpu-wide"
+    GPU_EXTREME: Final = "gpu-extreme"
+    CPU_TALL: Final = "cpu-tall"
+    CPU_WIDE: Final = "cpu-wide"
+    GPU_EARLY_STOP: Final = "gpu-early-stop"
     GRINSZTAJN: Final = "quality-grinsztajn"
     CODE: Final = "code"
 
@@ -44,41 +46,16 @@ class K:
     """Row keys read from the results jsonl (values are the runlog schema)."""
 
     FIT_S: Final = "fit_s"
+    INGEST_S: Final = "ingest_s"
+    TRAIN_S: Final = "train_s"
     R2_TEST: Final = "r2_test"
     VARIANT: Final = "variant"
     STATUS: Final = "status"
     RUN: Final = "run"
     DATASET: Final = "dataset"
     PEAK_RSS_GB: Final = "peak_rss_gb"
+    DEV_MEM: Final = "dev_mem"
     GIT_SHA: Final = "git_sha"
-
-
-class Evidence:
-    """Frozen evidence files (dated, decision-linked; never superseded)."""
-
-    BINNING_PROBE: Final = "binning-probe-2026-07.json"
-    CAT_TRADEOFF: Final = "cat-tradeoff-2026-07.json"
-    BAGGING_INTERACTION: Final = "bagging-interaction-probe-2026-07.jsonl"
-    CATBOOST_SCALE_EDGE: Final = "catboost-scale-edge-2026-07.jsonl"
-    CPU_PREFETCH: Final = "cpu-prefetch-round-2026-07.jsonl"
-    CUDA_WIDE_RECHECK: Final = "cuda-wide-recheck-2026-07.jsonl"
-    FEATURE_SELECTION: Final = "feature-selection-probe-2026-07.jsonl"
-    GRINSZTAJN_MCW1: Final = "grinsztajn-2026-07-xgb-mcw1.jsonl"
-    LR_RULE: Final = "lr-rule-probe-2026-07.jsonl"
-    ORDERED_BOOSTING: Final = "ordered-boosting-probe-2026-07.jsonl"
-    QUALITY_CAMPAIGN: Final = "quality-campaign-2026-07.jsonl"
-    RANKING_TRADEOFF: Final = "ranking-tradeoff-2026-07.jsonl"
-    SELECTION_SURVEY: Final = "selection-survey-2026-07.jsonl"
-    SINGLE_CARD_CEILING: Final = "single-card-ceiling-2026-07.jsonl"
-    STATIC_K_ENCODER: Final = "static-k-encoder-probe-2026-07.jsonl"
-    TABARENA_CAT: Final = "tabarena-cat-probe-2026-07.jsonl"
-    WIDE_CPU_HIST: Final = "wide-cpu-hist-2026-07.jsonl"
-    XGB33_RECHECK: Final = "xgb33-recheck-2026-07.jsonl"
-    LEAFWISE_RECHECK: Final = "leafwise-recheck-2026-08.jsonl"
-    LEAFWISE_CADENCE: Final = "leafwise-cadence-2026-08.json"
-    LEAFWISE_LADDER: Final = "leafwise-ladder-2026-08.jsonl"
-    LEAFWISE_STAGE3: Final = "leafwise-stage3-2026-08.jsonl"
-    LEAFWISE_CORRECTION: Final = "leafwise-correction-2026-08.jsonl"
 
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -93,18 +70,8 @@ charts: dict[str, str] = {}  # filename -> svg, written to docs/method/assets/
 def load_jsonl(name: str) -> list[dict]:
     """Rows of a results jsonl by bare filename."""
     consumed.add(name)
-    path = RESULTS / name
-    # Committed rows predate the oblivious -> levelwise grower rename (issue
-    # #305); the standings refresh re-measures them under the new spelling and
-    # retires this line.
-    text = path.read_text().replace("oblivious", "levelwise")
+    text = (RESULTS / name).read_text()
     return [json.loads(x) for x in text.splitlines() if x.strip()]
-
-
-def load_json(name: str) -> dict:
-    """One results json by bare filename."""
-    consumed.add(name)
-    return json.loads((RESULTS / name).read_text())
 
 
 def fmt(v: object, nd: int = 4) -> str:
@@ -150,9 +117,8 @@ def provenance(files: list[str], note: str) -> str:
 
 # SVG charts =======================================================================================
 # Hand-rolled SVG (stdlib only) so the images are byte-stable and the CI drift
-# check covers them exactly like the tables. One color per library everywhere;
-# solid strokes are GPU variants, dashed are CPU. Text and grid in mid-grays so
-# the site's light and dark themes both read.
+# check covers them exactly like the tables. One color per library everywhere.
+# Text and grid in mid-grays so the site's light and dark themes both read.
 
 LIB_COLOR = {
     "bonsai": "#2e7d32",
@@ -163,7 +129,6 @@ LIB_COLOR = {
 LIB_COLOR["xgb"] = LIB_COLOR["xgboost"]
 LIB_COLOR["lgbm"] = LIB_COLOR["lightgbm"]
 TEXT = "#8a8a8a"
-GRID = "#808080"
 FONT = "font-family='system-ui,sans-serif'"
 
 
@@ -178,22 +143,6 @@ def _text(x: float, y: float, s: str, size: int = 11, anchor: str = "start",
           color: str = TEXT, weight: str = "normal") -> str:
     return (f"<text x='{x}' y='{y}' font-size='{size}' fill='{color}' "
             f"{FONT} text-anchor='{anchor}' font-weight='{weight}'>{s}</text>")
-
-
-def _legend(items: list[tuple[str, str, str]], x: int, y: int) -> list[str]:
-    """Legend fragments for a chart."""
-    out = []
-    for i, (label, color, dash) in enumerate(items):
-        yy = y + i * 17
-        out.append(f"<line x1='{x}' y1='{yy - 4}' x2='{x + 22}' y2='{yy - 4}' "
-                   f"stroke='{color}' stroke-width='2.5'{dash}/>")
-        out.append(_text(x + 28, y + i * 17, label))
-    return out
-
-
-def _dash(cpu: bool) -> str:
-    """CPU arms draw dashed; GPU solid."""
-    return " stroke-dasharray='6 4'" if cpu else ""
 
 
 def bar_chart(fname: str, title: str, rows: list[tuple[str, float, str]],
@@ -219,70 +168,6 @@ def bar_chart(fname: str, title: str, rows: list[tuple[str, float, str]],
                           f"{value:.2f}&#160;&#160;{note_txt}"))
     body.append(_text(left, top + len(rows) * 34 + 18, note, size=10))
     charts[fname] = _svg(w, h, body)
-
-
-def line_chart(fname: str, title: str, y_label: str,
-               series: list[tuple[str, str, bool, list[tuple[float, float]]]],
-               x_ticks: list[tuple[float, str]], log_x=True, log_y=True,
-               width=760, height=400, y_ticks=None,
-               point_labels=None, x_label: str = ""):
-    """series = (label, color, is_cpu, [(x, y)]). Log-log by default."""
-    left, right, top, bottom = 64, 170, 42, 44
-    pw, ph = width - left - right, height - top - bottom
-
-    def tx(v):
-        return math.log10(v) if log_x else v
-
-    def ty(v):
-        return math.log10(v) if log_y else v
-
-    xs = [tx(x) for _, _, _, pts in series for x, _ in pts]
-    ys = [ty(y) for _, _, _, pts in series for _, y in pts]
-    x0, x1 = min(xs), max(xs)
-    if x0 == x1:
-        raise ValueError(f"{fname}: a line chart needs two distinct x values")
-    y0, y1 = min(ys), max(ys)
-    y0 -= (y1 - y0) * 0.06 or 0.05
-    y1 += (y1 - y0) * 0.06 or 0.05
-
-    def px(v):
-        return round(left + (tx(v) - x0) / (x1 - x0) * pw, 1)
-
-    def py(v):
-        return round(top + ph - (ty(v) - y0) / (y1 - y0) * ph, 1)
-
-    body = [_text(left, 22, title, size=13, weight="bold")]
-    if y_ticks is None and log_y:
-        lo, hi = math.floor(y0), math.ceil(y1)
-        y_ticks = [(10.0 ** e, f"{10 ** e:g}") for e in range(lo, hi + 1)
-                   if y0 <= e <= y1]
-    for v, label in y_ticks or []:
-        yy = py(v)
-        body.append(f"<line x1='{left}' y1='{yy}' x2='{left + pw}' y2='{yy}' "
-                    f"stroke='{GRID}' stroke-opacity='0.22'/>")
-        body.append(_text(left - 8, yy + 4, label, anchor="end"))
-    for v, label in x_ticks:
-        xx = px(v)
-        body.append(f"<line x1='{xx}' y1='{top}' x2='{xx}' y2='{top + ph}' "
-                    f"stroke='{GRID}' stroke-opacity='0.12'/>")
-        body.append(_text(xx, top + ph + 18, label, anchor="middle"))
-    body.append(_text(left - 44, top - 12, y_label, size=10))
-    if x_label:
-        body.append(_text(left + pw / 2, top + ph + 34, x_label, size=10,
-                          anchor="middle"))
-    for _label, color, cpu, pts in series:
-        path = " ".join(f"{px(x)},{py(y)}" for x, y in pts)
-        body.append(f"<polyline points='{path}' fill='none' stroke='{color}' "
-                    f"stroke-width='2.5'{_dash(cpu)}/>")
-        for x, y in pts:
-            body.append(f"<circle cx='{px(x)}' cy='{py(y)}' r='3.2' "
-                        f"fill='{color}'/>")
-    if point_labels:
-        for x, y, s in point_labels:
-            body.append(_text(px(x) + 6, py(y) - 7, s, size=9))
-    body.extend(_legend([(lbl, c, _dash(cpu)) for lbl, c, cpu, _ in series],
-                        left + pw + 18, top + 12))
-    charts[fname] = _svg(width, height, body)
 
 
 # Quality: Grinsztajn standings ====================================================================
@@ -344,9 +229,8 @@ def _standings(rows: list[dict]):
 
 
 def grinsztajn_section() -> str:
-    """The Grinsztajn standings section of the quality landing."""
+    """The Grinsztajn standings section of the quality page."""
     main = load_jsonl(standings_file(Axis.GRINSZTAJN))
-    mcw1 = load_jsonl(Evidence.GRINSZTAJN_MCW1)
     table, suite_ranks, n = _standings(main)
     rows = [[lib, fmt(mean, 2), str(w)] for lib, mean, w in table]
     campaign = md_table(["library", "mean rank", "outright wins"], rows)
@@ -364,12 +248,6 @@ def grinsztajn_section() -> str:
         [[lib, *[fmt(sum(v) / len(v), 2) if (v := suite_ranks.get((s, lib))) else "-"
                  for s in suites]] for lib in libs])
 
-    sens = [r for r in main if not str(r.get(K.VARIANT, "")).startswith("xgb")]
-    sens += mcw1
-    stable, _, _ = _standings(sens)
-    sens_rows = [[lib, fmt(mean, 2), str(w)] for lib, mean, w in stable]
-    sensitivity = md_table(["library", "mean rank", "outright wins"], sens_rows)
-
     return f"""### External standings: the Grinsztajn suite
 
 The [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) at the paper-medium protocol: {n} OpenML tasks, three seeds, campaign knobs for every library (decision 68). Best variant per library, average rank across tasks, lower is better.
@@ -382,390 +260,76 @@ Per-suite mean rank:
 
 {per_suite}
 
-Sensitivity: XGBoost's campaign mapping sets `min_child_weight=20` (hessian-weighted, the knob-translation bracket recorded in decision 68); replacing its rows with the `min_child_weight=1` run gives the other end of the bracket:
-
-{sensitivity}
+XGBoost's campaign mapping sets `min_child_weight=20` (hessian-weighted, the knob-translation bracket recorded in decision 68). The other end of that bracket, the same suite with XGBoost at `min_child_weight=1`, was measured: bonsai keeps the lead at mean rank 1.78 and XGBoost rises to second. Those rows are closed evidence now, listed in the archive.
 
 Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite (hours; datasets fetch from OpenML), then `--report` on the same file to render the standings from the jsonl.
 
-{provenance([standings_file(Axis.GRINSZTAJN), Evidence.GRINSZTAJN_MCW1], "As-run; evidence narrative in [benchmarks/grinsztajn-2026-07.md](../../benchmarks/grinsztajn-2026-07.md), ruling in decision 68.")}
+{provenance([standings_file(Axis.GRINSZTAJN)], "As-run; evidence narrative in [benchmarks/grinsztajn-2026-07.md](../../benchmarks/grinsztajn-2026-07.md), ruling in decision 68.")}
 """
 
 
-# Quality: campaign smoke ==========================================================================
-
-
-def campaign_section() -> str:
-    """The ten-dataset campaign smoke section."""
-    raw = load_jsonl(Evidence.QUALITY_CAMPAIGN)
-    latest: dict[str, dict] = {}
-    for row in raw:
-        latest[row["run"]] = row["results"]  # file is chronological; last wins
-
-    def lib_of(label: str) -> str:
-        return "bonsai" if label.startswith("bonsai") else label
-
-    out_rows = []
-    for run in sorted(latest):
-        res = latest[run]
-        aucs = [v.get("auc") for v in res.values()]
-        use_auc = any(isinstance(a, float) and a == a for a in aucs)
-        metric = "auc" if use_auc else ("acc" if any(
-            isinstance(v.get("acc"), float) and v["acc"] == v["acc"]
-            for v in res.values()) else "rmse")
-        best: dict[str, float] = {}
-        for label, m in res.items():
-            v = m.get(metric)
-            if not isinstance(v, (int, float)) or v != v:
-                continue
-            lib = lib_of(label)
-            keep = max if metric in ("auc", "acc") else min
-            best[lib] = keep(best.get(lib, v), v)
-        if not best:
-            continue
-        pick = max if metric in ("auc", "acc") else min
-        winner = pick(best, key=best.get)
-        out_rows.append([
-            run, metric,
-            *[fmt(best.get(lib)) for lib in ("bonsai", "xgboost", "lightgbm", "catboost")],
-            winner])
-    table = md_table(
-        [K.DATASET, "metric", "bonsai", "xgboost", "lightgbm", "catboost", "best"],
-        out_rows)
-    return f"""### Campaign smoke: ten datasets at matched knobs
-
-The internal quality campaign (`scripts/compare.py`, campaign knobs, best variant per library, latest run per dataset):
-
-{table}
-
-{provenance([Evidence.QUALITY_CAMPAIGN], "Aggregate record; narrative in [benchmarks/quality-campaign-2026-07.md](../../benchmarks/quality-campaign-2026-07.md), decisions 56 and 57.")}
-"""
-
-
-# Quality: probes ==================================================================================
-
-
-def _probe_binning_table() -> str:
-    """Per-feature bin-budget probe table (decision 67)."""
-    binning = load_json(Evidence.BINNING_PROBE)
-    bin_rows = []
-    keys = ["bonsai_uniform255", "bonsai_importance", "bonsai_inverse",
-            "bonsai_headroom", "lgbm_uniform255", "lgbm_importance",
-            "xgb_uniform255"]
-    for ds in sorted(binning):
-        d = binning[ds]
-        bin_rows.append([ds, *[fmt(d.get(k)) for k in keys]])
-    return md_table([K.DATASET, *keys], bin_rows)
-
-
-def _probe_cat_table() -> str:
-    """Categorical-machinery probe table (decision 58)."""
-    cats = load_json(Evidence.CAT_TRADEOFF)
-    setups = sorted({k for d in cats.values() for k in d if not k.startswith("_")})
-    datasets = sorted(cats)
-    return md_table(
-        ["setup", *datasets],
-        [[s, *[fmt(cats[ds].get(s)) for ds in datasets]] for s in setups])
-
-
-def _probe_rank_table() -> str:
-    """Ranking-objectives probe table (issue #58)."""
-    rank = load_jsonl(Evidence.RANKING_TRADEOFF)
-    # Two row shapes: synthetic regimes carry "regime", the MQ2008 gate "data".
-    for r in rank:
-        r["regime"] = r.get("regime") or r["data"]
-    regimes = sorted({r["regime"] for r in rank})
-    learners = []
-    for r in rank:
-        if r["learner"] not in learners:
-            learners.append(r["learner"])
-    cell = {(r["learner"], r["regime"]): r["ndcg_at_10"] for r in rank}
-    return md_table(
-        ["learner", *[f"{g} (NDCG@10)" for g in regimes]],
-        [[ln, *[fmt(cell.get((ln, g))) for g in regimes]] for ln in learners])
-
-
-def _probe_tabarena_table() -> str:
-    """CatBoost categorical-toggle probe table (decision 80)."""
-    tap = load_jsonl(Evidence.TABARENA_CAT)
-    tap_ch = [r for r in tap if r["subset"] == "cat_heavy"]
-    return md_table(
-        [K.DATASET, "cat native", "cat ablated", "bonsai_ts", "categorical share",
-         "remaining gap"],
-        [[r[K.DATASET], fmt(r["cat_native"]), fmt(r["cat_ablated"]),
-          fmt(r["bonsai_ts"]), fmt(r["categorical_share"]), fmt(r["remaining_gap"])]
-         for r in sorted(tap_ch, key=lambda r: r["categorical_share"])])
-
-
-def _probe_ordered_boosting_table() -> str:
-    """Ordered-vs-Plain probe table (decision 81)."""
-    ob = load_jsonl(Evidence.ORDERED_BOOSTING)
-    return md_table(
-        [K.DATASET, "metric", "CatBoost Ordered (matched)", "CatBoost Plain (matched)"],
-        [[r[K.DATASET], r["metric"], fmt(r.get("cat_ordered_matched")),
-          fmt(r.get("cat_plain_matched"))]
-         for r in sorted(ob, key=lambda r: r[K.DATASET])])
-
-
-def _probe_static_k_table() -> str:
-    """Static K-permutation target-statistics probe table (decision 82)."""
-    sk = load_jsonl(Evidence.STATIC_K_ENCODER)
-    return md_table(
-        [K.DATASET, "bonsai_ts (K=1)", "K=4", "K=8", "CatBoost native"],
-        [[r[K.DATASET], fmt(r.get("ts_k1")), fmt(r.get("ts_k4")), fmt(r.get("ts_k8")),
-          fmt(r.get("cat_native"))]
-         for r in sorted(sk, key=lambda r: r[K.DATASET])])
-
-
-def _probe_lr_rule_table() -> str:
-    """Per-dataset learning-rate rule probe table (decision 83)."""
-    lr = load_jsonl(Evidence.LR_RULE)
-    return md_table(
-        [K.DATASET, "default (0.05)", "oracle", "oracle lr", "CatBoost auto-lr"],
-        [[r[K.DATASET], fmt(r["bonsai_default"]["test"]),
-          fmt(r["bonsai_oracle"]["test"]), fmt(r["bonsai_oracle"]["chosen_lr"], 2),
-          fmt(r["bonsai_cat_rule"]["transplanted_lr"], 3)]
-         for r in sorted(lr, key=lambda r: r[K.DATASET])])
-
-
-def _probe_bagging_table() -> str:
-    """Bagged-protocol randomization-interaction probe table (decision 85)."""
-    bi = load_jsonl(Evidence.BAGGING_INTERACTION)
-    return md_table(
-        [K.DATASET, "metric", "bag gain bonsai", "bag gain cat", "interaction",
-         "randomization share", "in band"],
-        [[r[K.DATASET], r["metric"], fmt(r.get("bagging_gain_bonsai")),
-          fmt(r.get("bagging_gain_cat")), fmt(r.get("interaction")),
-          fmt(r.get("randomization_share")),
-          "yes" if r.get("interaction_in_band") else "no"]
-         for r in sorted(bi, key=lambda r: r[K.DATASET])])
-
-
-def _probe_selection_survey() -> dict:
-    """Draw the selection-survey chart; per-dataset baseline errors back."""
-    sv = load_jsonl(Evidence.SELECTION_SURVEY)
-    sv_base = {r[K.DATASET]: r["error"] for r in sv
-               if r["row_type"] == "baseline"}
-    sv_curve: dict = defaultdict(dict)
-    for r in sv:
-        if r["row_type"] == "curve":
-            sv_curve[(r[K.DATASET], r["method"])][r["k"]] = r["error"]
-    SV_COLORS = {
-        "corr": "#9e9e9e", "mutual_info": "#607d8b", "gain": "#2e7d32",
-        "split": "#8bc34a", "shap_train": "#1f77b4", "shap_val": "#01579b",
-        "perm_val": "#8e6bbf", "rfe_gain": "#e08f1a", "forward": "#c62828",
-        "rfe_val": "#7b3f00",
-    }
-    sc = "superconductivity"
-    series = []
-    for m, color in SV_COLORS.items():
-        pts = sorted(sv_curve[(sc, m)].items())
-        if pts:
-            series.append((m, color, m in ("corr", "mutual_info", "split"),
-                           [(float(k), v) for k, v in pts]))
-    line_chart(
-        "selection-survey.svg",
-        "Selection-method survey: holdout rmse vs features kept "
-        "(superconductivity, 81 features)",
-        "holdout rmse",
-        series,
-        x_ticks=[(4, "4"), (8, "8"), (16, "16"), (32, "32"), (64, "64")],
-        x_label="features kept",
-        log_x=True, log_y=False,
-        y_ticks=[(v, f"{v:.1f}") for v in (10.0, 11.0, 12.0, 13.0)])
-    return sv_base
-
-
-def _probe_feature_selection_table() -> str:
-    """Shadow-feature selection probe table (decision 86)."""
-    fs = load_jsonl(Evidence.FEATURE_SELECTION)
-    return md_table(
-        [K.DATASET, "grower", "regime", "metric", "k / total", "bonsai all",
-         "bonsai shadow", "bonsai top-k", "cat select", "shadow vs top-k",
-         "shadow beats all"],
-        [[r[K.DATASET], r["grower"], r["regime"], r["metric"],
-          f"{r['k']} / {r['total_features']}", fmt(r.get("bonsai_all"), 5),
-          fmt(r.get("bonsai_shadow"), 5), fmt(r.get("bonsai_topk_gain"), 5),
-          fmt(r.get("cat_select"), 5), fmt(r.get("shadow_vs_topk"), 5),
-          "yes" if r.get("shadow_vs_all", 0) > r.get("band", 0) else "no"]
-         for r in fs])
-
-
-def probes_section() -> str:
-    """The probe evidence tables and readings, one subsection per probe."""
-    bin_table = _probe_binning_table()
-    cat_table = _probe_cat_table()
-    rank_table = _probe_rank_table()
-    tap_table = _probe_tabarena_table()
-    ob_table = _probe_ordered_boosting_table()
-    sk_table = _probe_static_k_table()
-    lr_table = _probe_lr_rule_table()
-    bi_table = _probe_bagging_table()
-    sv_base = _probe_selection_survey()
-    fs_table = _probe_feature_selection_table()
-
-    return f"""### Probe: per-feature bin budgets (declined, decision 67)
-
-Test r² under per-feature bin-budget policies at a 255-bin default; no policy moved standings outside the chance band.
-
-{bin_table}
-
-{provenance([Evidence.BINNING_PROBE], "Probe: [scripts/probe_binning.py](../../scripts/probe_binning.py); evidence [benchmarks/binning-tradeoff-2026-07.md](../../benchmarks/binning-tradeoff-2026-07.md).")}
-
-### Probe: categorical machinery (resolved as an encoder, decision 58)
-
-AUC by setup: each reference library's own categorical toggle against ordinal codes, and bonsai's ordered-target-statistics preprocessing.
-
-{cat_table}
-
-{provenance([Evidence.CAT_TRADEOFF], "Probe: [scripts/probe_categorical.py](../../scripts/probe_categorical.py); evidence [benchmarks/categorical-tradeoff-2026-07.md](../../benchmarks/categorical-tradeoff-2026-07.md).")}
-
-### Probe: ranking objectives (gated, issue #58)
-
-NDCG@10 by regime; the stable gap is to listwise losses only, so issue #58 is scoped listwise-first.
-
-{rank_table}
-
-{provenance([Evidence.RANKING_TRADEOFF], "Probe: [scripts/probe_ranking.py](../../scripts/probe_ranking.py); evidence [benchmarks/ranking-tradeoff-2026-07.md](../../benchmarks/ranking-tradeoff-2026-07.md).")}
-
-### Probe: CatBoost's categorical machinery priced by its own toggle (reopener predicate, decision 80)
-
-On the cat-heavy TabArena subset, CatBoost native vs the same model with categoricals ordinal-encoded: the toggle prices the machinery at 68% of CatBoost's remaining lead over bonsai_ts (mean share -0.0099 of -0.0147); the pure-numeric control is bit-identical in both arms. Where the price is largest, ablated CatBoost loses to bonsai_ts outright.
-
-{tap_table}
-
-{provenance([Evidence.TABARENA_CAT], "Probe: [scripts/probe_tabarena_cat.py](../../scripts/probe_tabarena_cat.py); evidence [benchmarks/tabarena-cat-probe-2026-07.md](../../benchmarks/tabarena-cat-probe-2026-07.md). Lower is better for every metric column (error/log-loss form).")}
-
-### Probe: ordered boosting priced by CatBoost's own toggle (declined, decision 81)
-
-On 12 small pure-numeric datasets at matched knobs, Ordered beats Plain beyond the chance band on 0 of 12 and is distinctly worse where the toggle moves most, at 3.9x the train time. The mechanism is not the small-data edge; the campaign died at its pre-registered first stage. Lower is better in both metric columns.
-
-{ob_table}
-
-{provenance([Evidence.ORDERED_BOOSTING], "Probe: [scripts/probe_ordered_boosting_rung0.py](../../scripts/probe_ordered_boosting_rung0.py); evidence [benchmarks/ordered-boosting-probe-2026-07.md](../../benchmarks/ordered-boosting-probe-2026-07.md).")}
-
-### Probe: static K-permutation target statistics (declined, decision 82)
-
-K-averaged ordered target statistics as plain preprocessing recover a negative share of the gap to native CatBoost on the cat-heavy pool (K=8 pool mean -0.026): the average converges toward leave-one-out statistics while the single ordering's noise was implicit regularization. The categorical substance is the per-split machinery. Lower is better in every metric column.
-
-{sk_table}
-
-{provenance([Evidence.STATIC_K_ENCODER], "Probe: [scripts/probe_static_k_encoder.py](../../scripts/probe_static_k_encoder.py); evidence [benchmarks/static-k-encoder-probe-2026-07.md](../../benchmarks/static-k-encoder-probe-2026-07.md).")}
-
-### Probe: a per-dataset learning-rate rule (declined, decision 83)
-
-Even a validation-selected oracle over eight rates gains nothing on the pool (it wins validation 10 of 12 but test only 6 of 12, the overfit signature), and CatBoost's own automatic rate transplants to a no-op in a tight band around the shipped 0.05. Lower is better in the metric columns.
-
-{lr_table}
-
-{provenance([Evidence.LR_RULE], "Probe: [scripts/probe_lr_rule.py](../../scripts/probe_lr_rule.py); evidence [benchmarks/lr-rule-probe-2026-07.md](../../benchmarks/lr-rule-probe-2026-07.md).")}
-
-### Probe: the bagged-protocol randomization interaction (declined, decision 85)
-
-Decision 81's last reopener: is CatBoost's small-data lead a bagged-protocol interaction, its randomization defaults decorrelating ensemble members where bonsai's deterministic ones cannot? Priced at zero core cost on the 12-dataset pure-numeric pool. The headline interaction, (cat single minus cat bag8) minus (bonsai single minus bonsai bag8), is negative in both pool means and inside the chance band on 7 of 12; of the 5 out-of-band cases 4 favor bonsai, and the neutralization arm shows stock CatBoost randomization is null under bagging. 8-fold data-bagging already gives bonsai the decorrelation. Lower is better; positive share means the lever lowers error.
-
-{bi_table}
-
-{provenance([Evidence.BAGGING_INTERACTION], "Probe: [scripts/probe_bagging_interaction.py](../../scripts/probe_bagging_interaction.py); evidence [benchmarks/bagging-interaction-probe-2026-07.md](../../benchmarks/bagging-interaction-probe-2026-07.md).")}
-
-### Probe: honest shadow-feature selection (declined, decision 86)
-
-Does a refit-based shadow-feature selector (append a permuted copy of every column, keep only real features that beat the shadow importances) buy accuracy over plain top-k-by-gain, and how does it price against CatBoost select_features? Priced at zero core cost on two regimes (REAL-WIDE up to 1024 features, NOISE-INJECTED with shuffled-copy noise equal to each set's feature count), with the bonsai arms run under all three growers. The shadow arm's `shadow vs top-k` delta is inside the chance band on 26 of 27 grower-dataset cells and favors truncation in the 27th, so every beyond-band win it scores is a win plain truncation also scores at the same k, and it loses beyond the band on the same two low-dimensional real sets under every grower (leafwise is bit-identical to depthwise, the 63-leaf budget never binds at depth 6). Selection is not an accuracy lever on this pool; where it recovers accuracy it removes injected junk a one-line top-k already removes. The grower-independent reference arms (cat select, XGBoost) live on the depthwise rows. Lower is better in every metric column; positive `shadow vs top-k` means the shadow machinery beats truncation.
-
-{fs_table}
-
-{provenance([Evidence.FEATURE_SELECTION], "Probe: [scripts/probe_feature_selection.py](../../scripts/probe_feature_selection.py); evidence [benchmarks/feature-selection-probe-2026-07.md](../../benchmarks/feature-selection-probe-2026-07.md).")}
-
-#### The selection-method survey (guide 14 worked example)
-
-Ten selection methods, one shared judge: each method produces a feature ranking, every ranking is refit at matched knobs on its top-k down a budget ladder, and error is read on an untouched holdout (superconductivity, 81 real features, baseline rmse {fmt(sv_base.get("superconductivity"), 5)}; wide-short contrast on QSAR-TID-11, baseline rmse {fmt(sv_base.get("QSAR-TID-11"), 5)}). The tables, the pairwise top-16 overlap matrix and the readings live in [guide chapter 14](../guide/14-feature-selection.md); they add no verdict weight to decision 86.
-
-![Selection-method survey](assets/selection-survey.svg)
-
-{provenance([Evidence.SELECTION_SURVEY], "Survey: [scripts/probe_selection_survey.py](../../scripts/probe_selection_survey.py); readings: [guide chapter 14](../guide/14-feature-selection.md).")}
-"""
-
-
-# Perf: re-baseline ================================================================================
-
-# Chart styling: (display label, color, is_cpu). bonsai's two CUDA growers get
-# two greens; CPU variants are dashed everywhere. The four GPU arms are shared
-# between the re-baseline and iso-volume style maps; the (variant, label)
-# column lists derive from the maps, one order per table.
-_GPU_STYLE = {
-    "bonsai_cuda_depthwise": ("bonsai cuda dw", "#1b5e20", False),
-    "bonsai_cuda_levelwise": ("bonsai cuda lvl", "#4caf50", False),
-    "bonsai_cuda_leafwise": ("bonsai cuda lw", "#2e7d32", False),
-    "xgb_cuda": ("xgb cuda", LIB_COLOR["xgboost"], False),
-    "catboost_gpu": ("catboost gpu", LIB_COLOR["catboost"], False),
-}
-
-VARIANT_STYLE = {
-    **_GPU_STYLE,
-    "lgbm_cuda": ("lgbm cuda", LIB_COLOR["lightgbm"], False),
-    "lgbm_cpu": ("lgbm cpu", LIB_COLOR["lightgbm"], True),
-    "bonsai_levelwise": ("bonsai cpu lvl", "#4caf50", True),
-}
-
-REBASE_VARIANTS = [(k, v[0]) for k, v in VARIANT_STYLE.items()]
-
-
-def present_variants(variants: list[tuple[str, str]], best: dict) -> list[tuple[str, str]]:
-    """`variants` filtered to those with at least one row in `best`.
-
-    A variant absent from a standings file (not yet swept by a spec, or
-    dropped from one) does not get an all-"-" column: new arms appear only
-    once a refresh actually measures them, so adding an arm to a spec is
-    inert until that refresh runs. `best`'s keys are tuples ending in the
-    variant name, the shape every `_cell_best`/`best_fit_by`/`_iso_tables`
-    caller in this module already produces.
-    """
-    have = {k[-1] for k in best}
-    return [(v, lbl) for v, lbl in variants if v in have]
-
-
-def human(n: int) -> str:
-    """250000 -> 250k, 16000000 -> 16M."""
-    return f"{n // 1_000_000}M" if n >= 1_000_000 else f"{n // 1000}k"
-
-
-def cell_label(rows: int, cols: int) -> str:
-    """A rows x cols cell label with human row counts."""
-    return f"{human(rows)} x {cols}"
-
-
-def fit_r2_str(r: dict) -> str:
-    """The `12.3s (.876)` cell text for one row."""
-    return f"{r['fit_s']:.1f}s ({fmt(r.get('r2_test'), 3).lstrip('0')})"
-
-
-def best_fit_by(rows: list[dict], key_fn) -> dict[tuple, dict]:
-    """Min-fit_s row per key (best of repeats), for flat-schema rows."""
-    best: dict[tuple, dict] = {}
-    for r in rows:
-        k = key_fn(r)
-        if k not in best or r[K.FIT_S] < best[k][K.FIT_S]:
-            best[k] = r
-    return best
-
-
-def _cell_best(rows: list[dict]) -> dict[tuple, dict]:
-    """Best-fit row per (rows, cols, variant)."""
-    best: dict[tuple, dict] = {}
-    for r in rows:
-        c = r["cell"]
-        key = (c["rows"], c["cols"], r[K.VARIANT])
-        if key not in best or r[K.FIT_S] < best[key][K.FIT_S]:
-            best[key] = r
-    return best
-
-
-def _fmt_cell(best: dict, rows: int, cols: int, variant: str) -> str:
-    r = best.get((rows, cols, variant))
-    if r is None:
-        return "-"
-    return fit_r2_str(r)
-
+# Perf: the scenario panels ========================================================================
+# One page, one panel per grower, identical column sets: the reader compares a
+# grower against its closest rival on one plane, then jumps plane or grower
+# without re-orienting. Every section renders empty-but-valid while its axis is
+# unmeasured, so the page is complete the moment the first refresh lands.
+
+PLANE_GPU: Final = "gpu"
+PLANE_CPU: Final = "cpu"
+
+GPU_AXES: Final = (Axis.GPU_TALL, Axis.GPU_WIDE, Axis.GPU_EXTREME)
+CPU_AXES: Final = (Axis.CPU_TALL, Axis.CPU_WIDE)
+PERF_AXES: Final = (*GPU_AXES, *CPU_AXES, Axis.GPU_EARLY_STOP)
+
+PENDING: Final = ("*Measurement pending the first redesigned refresh "
+                  "(decision 103): the axis files land with it and this "
+                  "section fills in unchanged.*")
+
+
+class Col:
+    """Panel table columns; the same set across every panel and both planes."""
+
+    INGEST: Final = "ingest_s"
+    TRAIN: Final = "train_s"
+    RSS: Final = "peak RSS"
+    VRAM: Final = "peak VRAM"
+    METRIC: Final = "test r2"
+
+
+GPU_COLUMNS: Final = (Col.INGEST, Col.TRAIN, Col.RSS, Col.VRAM, Col.METRIC)
+CPU_COLUMNS: Final = (Col.INGEST, Col.TRAIN, Col.RSS, Col.METRIC)
+HIGHER_IS_BETTER: Final = frozenset({Col.METRIC})
+
+
+@dataclasses.dataclass(frozen=True)
+class Panel:
+    """One grower and the reference library it is measured against."""
+
+    grower: str
+    rival: str
+    gpu_arms: tuple[str, str]
+    cpu_arms: tuple[str, str]
+
+    def arms(self, plane: str) -> tuple[str, str]:
+        """(bonsai variant, rival variant) on one plane."""
+        return self.gpu_arms if plane == PLANE_GPU else self.cpu_arms
+
+    def labels(self) -> tuple[str, str]:
+        """The two arm labels, in the same order as `arms`."""
+        return (f"bonsai {self.grower}", self.rival)
+
+
+PANELS: Final = (
+    Panel("depthwise", "XGBoost",
+          ("bonsai_cuda_depthwise", "xgb_cuda"),
+          ("bonsai_depthwise", "xgb_hist")),
+    Panel("leafwise", "LightGBM",
+          ("bonsai_cuda_leafwise", "lgbm_cuda"),
+          ("bonsai_leafwise", "lgbm_cpu")),
+    Panel("levelwise", "CatBoost",
+          ("bonsai_cuda_levelwise", "catboost_gpu"),
+          ("bonsai_levelwise", "catboost_cpu")),
+)
 
 # The ingest/train split (issue #301): committed rows carry both for every
 # arm, bonsai included since the two-step runner refresh.
@@ -783,37 +347,14 @@ CATBOOST_INGEST_NOTE = (
     "comparable to the other libraries' split.")
 
 
-def split_str(r: dict | None) -> str:
-    """`1.1s / 6.9s` ingest/train split for one row; the house absent-value
-    marker (`-`) when either half is unmeasured rather than a zero or blank
-    that would read as one."""
-    if r is None:
-        return "-"
-    ingest, train = r.get("ingest_s"), r.get("train_s")
-    if ingest is None or train is None:
-        return "-"
-    return f"{ingest:.1f}s / {train:.1f}s"
+def human(n: int) -> str:
+    """250000 -> 250k, 16000000 -> 16M."""
+    return f"{n // 1_000_000}M" if n >= 1_000_000 else f"{n // 1000}k"
 
 
-def split_table_by_rows(best: dict, row_axis: list[int],
-                        present: list[tuple[str, str]]) -> str:
-    """Ingest/train split table over a rows axis at cols=100, same shape
-    and variant columns as the matching fit table."""
-    return md_table(
-        ["rows", *[lbl for _, lbl in present]],
-        [[human(n), *[split_str(best.get((n, 100, v))) for v, _ in present]]
-         for n in row_axis])
-
-
-def split_table_by_cell(best: dict, cells: list[tuple[int, int]],
-                        present: list[tuple[str, str]]) -> str:
-    """Ingest/train split table over (rows, cols) cells, same shape and
-    variant columns as the matching fit table."""
-    return md_table(
-        ["cell", *[lbl for _, lbl in present]],
-        [[cell_label(nr, nc), *[split_str(best.get((nr, nc, v)))
-                                for v, _ in present]]
-         for nr, nc in cells])
+def cell_label(rows: int, cols: int) -> str:
+    """A rows x cols cell label with human row counts."""
+    return f"{human(rows)} x {cols}"
 
 
 def synthetic_input_gib(cell: dict) -> float:
@@ -837,445 +378,234 @@ def rss_headroom_str(r: dict) -> str:
     return f"{rss:.1f}GB ({headroom:+.1f})"
 
 
-def xgb33_recheck_table() -> str:
-    """The xgboost-3.3 recheck section (decision 87)."""
-    rc = load_jsonl(Evidence.XGB33_RECHECK)
-    best: dict = {}
-    for r in rc:
-        if r[K.STATUS] != "ok":
+def axis_rows(axis: str) -> list[dict]:
+    """Rows of a perf axis, or an empty list while the axis is unmeasured.
+
+    Parameters
+    ----------
+    axis : str
+        A registry key from `benchmarks/standings.json`.
+
+    Returns
+    -------
+    list[dict]
+        The measured rows, or `[]` when the registry entry carries no file
+        yet (registry v2's placeholder for a never-measured axis).
+    """
+    name = _STANDINGS_REG[axis].get("file")
+    return load_jsonl(name) if name else []
+
+
+def best_row(rows: list[dict], variant: str) -> dict | None:
+    """The fastest finished row for one arm, else a failed row for it.
+
+    A failed row is a published result, not a gap: the extreme scenario runs
+    every arm precisely so an OOM or an unsupported cell prints as itself.
+    """
+    ok = [r for r in rows if r[K.VARIANT] == variant and r[K.STATUS] == "ok"]
+    if ok:
+        return min(ok, key=lambda r: r[K.FIT_S])
+    failed = [r for r in rows if r[K.VARIANT] == variant]
+    return failed[0] if failed else None
+
+
+def vram_gb(r: dict) -> float | None:
+    """Per-process peak VRAM, or None when the sampler could not attribute it.
+
+    `nvidia-smi` cannot see the child pid from inside a container, so a
+    degraded row carries only a device total. Printing that total as a
+    per-process number would credit bonsai with every other process on the
+    card, so the column prints `-` instead.
+    """
+    dev = r.get(K.DEV_MEM) or {}
+    if dev.get("source") != "nvml":
+        return None
+    return dev.get("peak_gb_pid")
+
+
+def summary_matrix() -> str:
+    """The headline: fit totals at the tall scenario, grower by plane."""
+    body = [[panel.grower,
+             _summary_cell(panel, Axis.GPU_TALL, PLANE_GPU),
+             _summary_cell(panel, Axis.CPU_TALL, PLANE_CPU)]
+            for panel in PANELS]
+    if all(cell == "-" for row in body for cell in row[1:]):
+        return PENDING
+    return md_table(["grower", "GPU (gpu-tall)", "CPU (cpu-tall)"], body)
+
+
+def panel_table(panel: Panel, axes: tuple[str, ...], plane: str) -> str:
+    """One plane's scenarios for one grower, both arms per scenario row.
+
+    Empty while none of the plane's axes is measured, which is what lets the
+    page state the pending case once per panel instead of once per table.
+    """
+    columns = GPU_COLUMNS if plane == PLANE_GPU else CPU_COLUMNS
+    body: list[list[str]] = []
+    for axis in axes:
+        rows = axis_rows(axis)
+        if not rows:
             continue
-        ver = r["xgboost"] if r[K.VARIANT].startswith("xgb") else None
-        key = (r[K.VARIANT], ver, r["cell"]["rows"], r["cell"]["cols"])
-        cur = best.get(key)
-        best[key] = {
-            K.FIT_S: min(r[K.FIT_S], cur[K.FIT_S]) if cur else r[K.FIT_S],
-            "rss": max(r[K.PEAK_RSS_GB], cur["rss"]) if cur else r[K.PEAK_RSS_GB],
-        }
-
-    CELLS = [("gpu", 1_000_000, 100), ("gpu", 4_000_000, 100),
-             ("gpu", 16_000_000, 100), ("gpu", 1_000_000, 256),
-             ("gpu", 1_000_000, 1024), ("cpu", 16_000_000, 100),
-             ("cpu", 1_000_000, 1024), ("cpu", 1_000_000, 4096)]
-    ARMS = {"gpu": ("bonsai_cuda_depthwise", "xgb_cuda"),
-            "cpu": ("bonsai_depthwise", "xgb_hist")}
-    body = []
-    for dev, nr, nc in CELLS:
-        bv, xv = ARMS[dev]
-        b = best[(bv, None, nr, nc)]
-        x2 = best[(xv, "3.2.0", nr, nc)]
-        x3 = best[(xv, "3.3.0", nr, nc)]
-        body.append([dev, human(nr), str(nc), f"{b['fit_s']:.1f}s",
-                     f"{x2['fit_s']:.1f}s", f"{x3['fit_s']:.1f}s",
-                     f"{x3['fit_s'] / x2['fit_s']:.2f}x",
-                     f"{b['rss']:.1f}GB", f"{x3['rss']:.1f}GB"])
-    table = md_table(
-        ["device", "rows", "cols", "bonsai fit", "xgb 3.2 fit", "xgb 3.3 fit",
-         "3.3 vs 3.2", "bonsai RSS", "xgb 3.3 RSS"], body)
-
-    return f"""### The XGBoost 3.3 recheck (decision 87)
-
-XGBoost 3.3 (2026-07-21) claimed lower GPU quantile-sketching memory and wide-data CPU histogram tiling, both aimed at cells bonsai competes in, so the then-published standings were rechecked on one pod (L40S) with three same-pod arms: bonsai at main, XGBoost 3.2.0, XGBoost 3.3.0. Every published standing survives. On GPU, 3.3 matches 3.2 within noise at every cell and host RSS does not move (22.1GB at 16M against bonsai's 6.9GB, the README's 3x memory claim reproduced on a second host). On CPU at 16M bonsai sits 6% behind `xgboost-hist`, inside the published "within ~8%, host-dependent" band. The one real improvement: 3.3 halves wide-CPU hist time at 1M x 4096 (nothing at 1024), narrowing bonsai's lead at that cell from 2.4x to 1.19x. No published cell flips; the wide standings it questioned are GPU, where 3.3 changes nothing. Fit is best of repeats; RSS is the worst repeat; this pod's absolutes do not compare to the re-baseline table per the fleet-spread caveat.
-
-{table}
-
-{provenance([Evidence.XGB33_RECHECK], "Driver: `python -m bonsai.bench.scaling --worker` per cell, three arms on one pod; verdict recorded as decision 87.")}
-"""
+        label = _scenario_label(axis, rows)
+        cells = [_arm_cells(best_row(rows, v), columns)
+                 for v in panel.arms(plane)]
+        for i, arm in enumerate(panel.labels()):
+            other = cells[1 - i]
+            body.append([label, arm,
+                         *[_bold(cells[i][c][0],
+                                 _wins(c, cells[i][c][1], other[c][1]))
+                           for c in columns]])
+    if not body:
+        return ""
+    return md_table(["scenario", "arm", *columns], body)
 
 
-def wide_cpu_hist_table() -> str:
-    """The wide-CPU histogram study section (decisions 88/89)."""
-    wc = load_jsonl(Evidence.WIDE_CPU_HIST)
-    ladder = {(r["tag"], r[K.VARIANT], r["rows"], r["cols"]): r for r in wc
-              if r["run"] == "pod-ladder"}
+def fused_anchor_line() -> str:
+    """The fused fit total at the tall cell, published once, from parity.
 
-    def cell(tag, variant, rows, cols, key=K.FIT_S):
-        r = ladder.get((tag, variant, rows, cols))
-        return f"{r[key]:.0f}s" if r and key in r else "-"
-
-    body = []
-    for variant in ("bonsai_depthwise", "bonsai_leafwise"):
-        b = cell("before", variant, 131072, 16384)
-        a = cell("after", variant, 131072, 16384)
-        lg = cell("ref", "lgbm_cpu", 131072, 16384)
-        body.append([variant.removeprefix("bonsai_"), b, a, lg])
-    table = md_table(
-        ["grower", "row-wise fill (before)",
-         "feature-parallel (decision 88, retired by 89)", "lgbm_cpu"], body)
-
-    return f"""### The wide-CPU fill: from a 2-6x wall to one tiled pass (decisions 88, 89)
-
-Ultra-wide selections broke the row-wise u8 fill: its per-row scatter targets the whole selected histogram footprint (33.6MB at 16k features x 255 bins), so every add missed cache (decision 88 routed those levels feature-parallel; same-pod at 131k x 16384 the 7x leafwise deficit against LightGBM collapsed to 1.2x). Decision 89 then retired the strategy pair: the mirror moved to a column-block-tiled layout and the fill runs tiles outer, rows inner, so the live scatter target is one block's histograms at any width. The tiled fill beat both prior strategies at their own best cells in an interleaved same-pod A/B (326 vs 369s at 1M x 4096 against the row path; 442 vs 514s at 131k x 16384 against feature-parallel; a wash at 16M x 100) and produces bit-identical models at every width. The origin is a production field report (issue #217).
-
-{table}
-
-{provenance([Evidence.WIDE_CPU_HIST], "Evidence: [benchmarks/wide-cpu-hist-2026-07.md](../../benchmarks/wide-cpu-hist-2026-07.md); verdict recorded as decision 88.")}
-"""
+    The refresh already fits the anchor cell through bonsai's one-call form
+    to gate the ingest/train split; this publishes that arm's median rather
+    than measuring anything new. Empty until the companion file lands.
+    """
+    name = _STANDINGS_REG[Axis.GPU_TALL].get("companion")
+    if not name or not (RESULTS / name).exists():
+        return ""
+    rows = [r for r in load_jsonl(name) if not r.get("skipped")]
+    fused = [r[K.FIT_S] for r in rows
+             if r.get("arm") == "fused" and r.get(K.FIT_S) is not None]
+    split = [r[K.INGEST_S] + r[K.TRAIN_S] for r in rows
+             if r.get("arm") == "two_step" and r.get(K.INGEST_S) is not None
+             and r.get(K.TRAIN_S) is not None]
+    if not fused or not split:
+        return ""
+    return (f"\nThe two columns are one call taken apart. bonsai's fused "
+            f"`train(X, y)` form fits the same cell in "
+            f"{statistics.median(fused):.1f}s against the split's "
+            f"{statistics.median(split):.1f}s, medians of the refresh's "
+            f"interleaved parity arm, which is what makes reporting the "
+            f"seam honest.\n")
 
 
-def cuda_wide_recheck_table() -> str:
-    """The stale-wide-reading correction section (decision 90)."""
-    cw = load_jsonl(Evidence.CUDA_WIDE_RECHECK)
-    body = []
-    for r in sorted(cw, key=lambda r: (-r["cols"], r[K.VARIANT])):
-        body.append([r[K.VARIANT], human(r["rows"]), str(r["cols"]),
-                     f'{r[K.FIT_S]:.1f}s', fmt(r[K.R2_TEST]),
-                     f'{r[K.PEAK_RSS_GB]:.1f}GB'])
-    table = md_table([K.VARIANT, "rows", "cols", "fit", "test r²", "peak RSS"], body)
+def early_stop_section() -> str:
+    """Early stopping as its own axis: the eval overhead and the stop arm."""
+    rows = axis_rows(Axis.GPU_EARLY_STOP)
+    body: list[list[str]] = []
+    for panel in PANELS:
+        for variant, arm in zip(panel.arms(PLANE_GPU), panel.labels()):
+            off = _mode_row(rows, variant, "off")
+            evaluated = _mode_row(rows, variant, "eval")
+            stopped = _mode_row(rows, variant, "stop")
+            body.append([panel.grower, arm, _overhead(off, evaluated),
+                         _fit_text(stopped),
+                         fmt(stopped.get("stopped_at") if stopped else None)])
+    table = md_table(["grower", "arm", "eval overhead", "stop-arm fit",
+                      "stopped at"], body) if rows else PENDING
+    return f"""## Early stopping
 
-    return f"""### The CUDA wide recheck: the wall was already gone (decision 90)
-
-A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: the gap no longer exists. The recorded numbers dated to 2026-07-08 code, before the device-resident line landed; on current main, one pod, bonsai's CUDA growers lead every wide cell against both references at 3-4x less host memory. The stale reading ("CatBoost keeps the wide lead") is corrected wherever it appeared.
-
-{table}
-
-{provenance([Evidence.CUDA_WIDE_RECHECK], "Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs; verdict recorded as decision 90.")}
-"""
-
-
-# Perf: the remaining tracks =======================================================================
-
-
-def prefetch_section() -> str:
-    """The CPU prefetch-tie section (decision 61)."""
-    pre = load_jsonl(Evidence.CPU_PREFETCH)
-    pre_best = _cell_best(pre)
-    pre_rows = sorted({k[0] for k in pre_best})
-    pre_variants = sorted({k[2] for k in pre_best})
-    pre_table = md_table(
-        ["rows", *pre_variants],
-        [[f"{n:,}", *[_fmt_cell(pre_best, n, 100, v) for v in pre_variants]]
-         for n in pre_rows])
-
-    return f"""### CPU 16M round (the prefetch tie)
-
-{pre_table}
-
-{provenance([Evidence.CPU_PREFETCH], "Decision 61: software prefetch closed the 16M CPU gap to XGBoost-hist on this pod.")}
-"""
-
-
-def leafwise_recheck_section() -> str:
-    """The decision-42 recheck: CPU leafwise vs LightGBM CUDA at scale."""
-    rows = [r for r in load_jsonl(Evidence.LEAFWISE_RECHECK)
-            if r[K.STATUS] == "ok"]
-    best = _cell_best(rows)
-    order = ["bonsai_leafwise", "lgbm_cuda", "lgbm_cpu",
-             "bonsai_cuda_depthwise"]
-    labels = {"bonsai_leafwise": "bonsai leafwise (cpu)",
-              "lgbm_cuda": "lgbm cuda", "lgbm_cpu": "lgbm cpu",
-              "bonsai_cuda_depthwise": "bonsai cuda dw (anchor)"}
-    scales = sorted({k[0] for k in best})
-    table = md_table(
-        ["rows", *[labels[v] for v in order]],
-        [[human(n), *[_fmt_cell(best, n, 100, v) for v in order]]
-         for n in scales])
-    return f"""### The leafwise recheck: decision 42's claim at scale (decision 95)
-
-The decision-42-era reading ("bonsai CPU leafwise beats LightGBM's CUDA leaf-wise") was measured at 464k rows; on one pod at ladder scales it inverts, monotonically, to 5.3x in LightGBM's favor at 16M. The engineering conclusion stands the other way up: leaf-wise on the GPU is viable at scale (LightGBM ships it), and bonsai's leafwise grower is now the only grower without device support (issue #268). The anchor arm ties this pod to the ladders; LightGBM-CUDA's higher r2 column is the depth-cap artifact recorded in decision 95.
-
-The CPU `leafwise` row, which is what this section reads, binned on the host by design and is unaffected by anything below. The `bonsai cuda dw` anchor row is not: it was measured through the harness path decision 100 corrects, so it runs slower here than the library does. The correction section at the foot of this page carries the sizes.
-
-{table}
-
-{provenance([Evidence.LEAFWISE_RECHECK], "One pod (L40S, US-MO-1, 2026-08-01), SCALING knobs at 100 iters, best of 2 reps; evidence for decision 95.")}
-"""
-
-
-def leafwise_cadence_section() -> str:
-    """The device-leafwise stage 0 overhead probe (issue #268)."""
-    cad = load_json(Evidence.LEAFWISE_CADENCE)
-    configs = cad["configs"]
-    table = md_table(
-        ["config", "seconds", "us/round"],
-        [[name, f"{c['seconds']:.3f}", f"{c['us_per_round']:.1f}"]
-         for name, c in configs.items()])
-    b = cad["buckets_us"]
-    return f"""### The device-leafwise cadence probe (stage 0 of doc 20's admission)
-
-Before building the device leafwise plane, its per-round fixed cost was priced by replaying the round skeleton ({cad["rounds"]:,} rounds: launches, two pinned syncs, staging, host heap ops) with trivial kernels on an L40S. The fixed cost F is the no-copyback config: **{cad["fixed_cost_us"]:.1f} us/round** against a {cad["budget_us"]:.0f} us budget and a {cad["kill_us"]:.0f} us kill line, so the one-node-per-round design proceeds. Buckets: launch and staging floor {b["launch_floor"]:.1f}, syncs {b["syncs"]:.1f}, grid width {b["grid_width"]:.1f} (the fixed cost does not track node size), and the data-proportional range copy-back {b["copyback"]:.1f} us/round excluded from F.
-
-{table}
-
-{provenance([Evidence.LEAFWISE_CADENCE], "One pod (L40S, US-MO-1, 2026-08-01); probe [experiments/leafwise_cadence/cadence.cu](../../experiments/leafwise_cadence/cadence.cu); evidence [benchmarks/leafwise-cadence-2026-08.md](../../benchmarks/leafwise-cadence-2026-08.md) for issue #268.")}
-"""
-
-
-_LADDER_LABELS = {"bonsai_cuda_leafwise": "bonsai cuda leafwise",
-                  "lgbm_cuda": "lgbm cuda",
-                  "bonsai_leafwise": "bonsai leafwise (cpu)",
-                  "bonsai_cuda_depthwise": "bonsai cuda dw (anchor)"}
-
-# The uncapped-depth arm records max_depth at the uint8 ceiling, which a
-# 256-leaf budget can never reach; the row key separates it from the capped
-# cell of the same shape.
-UNCAPPED_DEPTH = 255
-
-
-def leafwise_ladder_section() -> str:
-    """The device-leafwise admission ladder, stage 2 of doc 20 (issue #268)."""
-    rows = [r for r in load_jsonl(Evidence.LEAFWISE_LADDER)
-            if r[K.STATUS] == "ok"]
-    order = list(_LADDER_LABELS)
-    capped = _cell_best([r for r in rows
-                         if r["cell"]["depth"] != UNCAPPED_DEPTH])
-    scales = sorted({k[0] for k in capped})
-
-    def fit_of(n: int, variant: str) -> float:
-        return capped[(n, 100, variant)][K.FIT_S]
-
-    top = scales[-1]
-    margin = 1 - fit_of(top, "bonsai_cuda_leafwise") / fit_of(top, "lgbm_cuda")
-    over_cpu = [fit_of(n, "bonsai_leafwise") / fit_of(n, "bonsai_cuda_leafwise")
-                for n in scales]
-    table = md_table(
-        ["rows", *[_LADDER_LABELS[v] for v in order]],
-        [[human(n), *[_fmt_cell(capped, n, 100, v) for v in order]]
-         for n in scales])
-    return f"""### The device-leafwise ladder: admission by measurement (stage 2)
-
-**Read the correction at the foot of this page first.** Every bonsai CUDA number in this table was measured through a harness that binned on the host, so the two device columns are slower here than the library is. The kill criterion is met either way, by more than this table says; the absolutes are not the library's.
-
-Same pod, four arms, best of two reps, interleaved. The kill criterion pre-registered in issue #268 was one number: beat LightGBM's CUDA leaf-wise at 16M x 100 on the same pod, or the grower does not register. It is met with {margin:.0%} to spare at 16M, and `cuda_leafwise` beats its own CPU arm at every cell, {min(over_cpu):.1f}x to {max(over_cpu):.1f}x. The anchor row prices what is left: the depthwise plane moves the same histogram volume in less time, because serializing the frontier to one node per round costs launches that the level plane batches away.
-
-{table}
-
-{_uncapped_table(rows)}
-
-{provenance([Evidence.LEAFWISE_LADDER], "One pod (L40S, US-NC-1, 2026-08-01), SCALING knobs at 100 iters and 256 leaves, best of 2 reps; the ladder that admitted `cuda_leafwise` under [docs/architecture/20-cuda-leafwise.md](../architecture/20-cuda-leafwise.md). Absolute times run above the 2026-08-01 recheck, which used a different pod with a wider CPU; only same-pod comparisons are meaningful.")}
-"""
-
-
-def _uncapped_table(rows: list[dict]) -> str:
-    """The uncapped-depth arm, where leaf-wise structurally differs."""
-    best = _cell_best([r for r in rows
-                       if r["cell"]["depth"] == UNCAPPED_DEPTH])
-    order = ["bonsai_cuda_leafwise", "lgbm_cuda", "bonsai_leafwise"]
-    table = md_table(
-        ["16M x 100, no depth cap", K.FIT_S, "test r2"],
-        [[_LADDER_LABELS[v], f"{best[(16_000_000, 100, v)][K.FIT_S]:.1f}s",
-          fmt(best[(16_000_000, 100, v)][K.R2_TEST], 4)] for v in order])
-    return f"""The capped ladder above hides the strategy's point: at a 256-leaf budget and a depth-8 cap the leaf budget and the full tree are the same tree, so every arm returns the depthwise accuracy. Lifting the cap is where leaf-wise differs, and it is also the only comparison against LightGBM that is honest, since its CUDA learner ignores `max_depth` outright (decision 95, confirmed in its source: `CUDASingleGPUTreeLearner::Train` never calls the one site that enforces depth). Uncapped, bonsai's leaf-wise growers reach LightGBM's accuracy to four decimals, which is the reading the capped rows' r2 column was never measuring. LightGBM is faster here: uncapped best-first must find a split for every leaf it creates, doubling bonsai's per-round count from 25,500 to 51,100, and that is the optimization target the admission leaves open rather than a quality difference.
+Three arms at the tall cell: `off` fits the round budget blind, `eval` scores a held-out split every round without acting on it, and `stop` acts on it (patience 50, cap 2000 rounds, learning rate 0.05). The overhead column is what watching costs against not watching, on train time; the last two columns are what watching buys, in fit time and the round the arm actually stopped at. A blank stop column means the arm ran to the cap without triggering.
 
 {table}
 """
 
 
-_STAGE3_ARMS = ["bonsai_cuda_leafwise", "lgbm_cuda", "bonsai_cuda_depthwise"]
+# Perf: private panel helpers ======================================================================
 
 
-def leafwise_stage3_section() -> str:
-    """The closing ladder after stage 3's levers (issue #268, decision 98)."""
-    rows = [r for r in load_jsonl(Evidence.LEAFWISE_STAGE3)
-            if r[K.STATUS] == "ok"]
-    capped = _cell_best([r for r in rows
-                         if r["cell"]["depth"] != UNCAPPED_DEPTH])
-    prior = _cell_best([r for r in load_jsonl(Evidence.LEAFWISE_LADDER)
-                        if r[K.STATUS] == "ok"
-                        and r["cell"]["depth"] != UNCAPPED_DEPTH])
-    scales = sorted({k[0] for k in capped})
-    top = scales[-1]
-
-    def fit(best: dict, n: int, variant: str) -> float:
-        return best[(n, 100, variant)][K.FIT_S]
-
-    def cut(n: int, variant: str) -> float:
-        """Fraction of stage 2's fit time this ladder removes."""
-        return 1 - fit(capped, n, variant) / fit(prior, n, variant)
-
-    # The two ladders ran on different rentals of the same GPU model, so the
-    # reference arms carry the pod comparison the leafwise column needs.
-    drift = max(abs(cut(n, v)) for n in scales
-                for v in ("lgbm_cuda", "bonsai_cuda_depthwise"))
-    cuts = [cut(n, "bonsai_cuda_leafwise") for n in scales]
-    margin = 1 - fit(capped, top, "bonsai_cuda_leafwise") / fit(capped, top,
-                                                               "lgbm_cuda")
-    prior_margin = 1 - fit(prior, top, "bonsai_cuda_leafwise") / fit(
-        prior, top, "lgbm_cuda")
-    anchor_gap = fit(capped, top, "bonsai_cuda_leafwise") - fit(
-        capped, top, "bonsai_cuda_depthwise")
-    table = md_table(
-        ["rows", *[_LADDER_LABELS[v] for v in _STAGE3_ARMS],
-         "stage 2 leafwise"],
-        [[human(n), *[_fmt_cell(capped, n, 100, v) for v in _STAGE3_ARMS],
-          f"{fit(prior, n, 'bonsai_cuda_leafwise'):.1f}s"] for n in scales])
-    return f"""### The closing ladder: what stage 3's levers moved (decision 98)
-
-**Read the correction at the foot of this page first.** Both bonsai columns here were measured through the same host-binning harness as the admission ladder, so this table's absolutes overstate the plane's fit time; the lever deltas it reports were same-path A/Bs and stand.
-
-Same knobs and the same three device arms as the admission ladder above, one pod, best of two reps, interleaved. Stage 3 landed two levers on the leaf plane, the device-resident objective and the round's pinned and packed staging, and reverted a third (the partition chain) that measured worthless. The reference arms carry the cross-ladder comparison, because these are two rentals of the same GPU model rather than one pod: `lgbm_cuda` and the depthwise anchor reproduce their stage 2 times within {drift:.0%} at every cell, so the leafwise column's move is the levers and not the rental. `cuda_leafwise` fits {fit(capped, top, "bonsai_cuda_leafwise"):.1f}s at 16M x 100 against stage 2's {fit(prior, top, "bonsai_cuda_leafwise"):.1f}s, and the cut runs {min(cuts):.0%} to {max(cuts):.0%} across the ladder, largest at the small cells where the round's fixed cost is the fit. The margin over LightGBM's CUDA leaf-wise at 16M widens from {prior_margin:.0%} to {margin:.0%}; {anchor_gap:.1f}s of fit still separate the leaf plane from the resident depthwise anchor at the same cell, and that is what stage 3 leaves open. `r2_test` is identical to stage 2 in every cell of the table.
-
-{table}
-
-{_stage3_uncapped(rows)}
-
-{provenance([Evidence.LEAFWISE_STAGE3], "One pod (L40S, US-NC-1, 2026-08-02), SCALING knobs at 100 iters and 256 leaves, best of 2 reps. Decision 98 describes this ladder as unprofiled; its rows in fact carry profile blocks, because the bench driver sets the counters for every bonsai child and had no opt-out until decision 100, which prices them at 0% to 2% of fit. CPU `leafwise` is unchanged since the stage 2 ladder above and is cited from it rather than re-measured, which is why this ladder is three arms.")}
-"""
+def _scenario_label(axis: str, rows: list[dict]) -> str:
+    """`gpu-tall (16M x 128)`: the axis name and the cell it measured."""
+    cell = rows[0]["cell"]
+    return f"{axis} ({cell_label(cell['rows'], cell['cols'])})"
 
 
-def _stage3_uncapped(rows: list[dict]) -> str:
-    """The closing uncapped-depth arm: the cell stage 3 most wanted to move."""
-    best = _cell_best([r for r in rows
-                       if r["cell"]["depth"] == UNCAPPED_DEPTH])
-    prior = _cell_best([r for r in load_jsonl(Evidence.LEAFWISE_LADDER)
-                        if r[K.STATUS] == "ok"
-                        and r["cell"]["depth"] == UNCAPPED_DEPTH])
-    order = ["bonsai_cuda_leafwise", "lgbm_cuda"]
-    table = md_table(
-        ["16M x 100, no depth cap", K.FIT_S, "test r2", "stage 2 fit_s"],
-        [[_LADDER_LABELS[v], f"{best[(16_000_000, 100, v)][K.FIT_S]:.1f}s",
-          fmt(best[(16_000_000, 100, v)][K.R2_TEST], 4),
-          f"{prior[(16_000_000, 100, v)][K.FIT_S]:.1f}s"] for v in order])
-    lw = best[(16_000_000, 100, "bonsai_cuda_leafwise")][K.FIT_S]
-    lg = best[(16_000_000, 100, "lgbm_cuda")][K.FIT_S]
-    prior_lw = prior[(16_000_000, 100, "bonsai_cuda_leafwise")][K.FIT_S]
-    verdict = (f"bonsai now leads the uncapped cell too, by {lg / lw - 1:.0%}"
-               if lw < lg else
-               f"LightGBM still leads it, by {lw / lg - 1:.0%}")
-    return f"""The uncapped arm is the cell stage 3 most wanted to move, and the one the admission recorded against itself. Lifting the depth cap is where best-first differs from level-wise and where the comparison against LightGBM is honest, since its CUDA learner ignores `max_depth` outright (decision 95). It is also where the round count doubles, from 25,500 to 51,100, because every leaf the tree creates must be found rather than skipped at the cap. Stage 2 measured {prior_lw:.1f}s against LightGBM's 31.6s at equal r2; the levers cut that to {lw:.1f}s, and {verdict}.
+def _arm_cells(r: dict | None,
+               columns: tuple[str, ...]) -> dict[str, tuple[str, float | None]]:
+    """(cell text, comparable value) per column for one arm of one scenario.
 
-{table}
-"""
-
-
-_CORRECTION_RUN: Final = "leafwise-correction"
-_CORRECTION_PROFILED_RUN: Final = "leafwise-correction-profiled"
-_CORRECTION_NOCACHE_RUN: Final = "leafwise-correction-nocache"
+    A row that did not finish carries its status word into every column: an
+    OOM at the extreme cell is the measurement, so it prints where the
+    numbers would have been rather than as a dash.
+    """
+    if r is None:
+        return {c: ("-", None) for c in columns}
+    if r.get(K.STATUS) != "ok":
+        return {c: (str(r.get(K.STATUS)), None) for c in columns}
+    vram = vram_gb(r)
+    rss = r.get(K.PEAK_RSS_GB)
+    values = {
+        Col.INGEST: (_secs(r.get(K.INGEST_S)), r.get(K.INGEST_S)),
+        Col.TRAIN: (_secs(r.get(K.TRAIN_S)), r.get(K.TRAIN_S)),
+        Col.RSS: (rss_headroom_str(r) if rss is not None else "-", rss),
+        Col.VRAM: ("-" if vram is None else f"{vram:.1f}GB", vram),
+        Col.METRIC: (fmt(r.get(K.R2_TEST), 3), r.get(K.R2_TEST)),
+    }
+    return {c: values[c] for c in columns}
 
 
-def leafwise_correction_section() -> str:
-    """The campaign's ladders re-measured on the fixed harness (decision 100)."""
-    rows = [r for r in load_jsonl(Evidence.LEAFWISE_CORRECTION)
-            if r[K.STATUS] == "ok"]
-    capped = _cell_best([r for r in rows if r[K.RUN] == _CORRECTION_RUN
-                         and r["cell"]["depth"] != UNCAPPED_DEPTH])
-    prior = _cell_best([r for r in load_jsonl(Evidence.LEAFWISE_STAGE3)
-                        if r[K.STATUS] == "ok"
-                        and r["cell"]["depth"] != UNCAPPED_DEPTH])
-    scales = sorted({k[0] for k in capped})
-    top = scales[-1]
-
-    def fit(best: dict, n: int, variant: str) -> float:
-        return best[(n, 100, variant)][K.FIT_S]
-
-    def rental(n: int) -> float:
-        """How far this pod's unaffected reference arm sits above stage 3's."""
-        return fit(capped, n, "lgbm_cuda") / fit(prior, n, "lgbm_cuda") - 1
-
-    over = fit(capped, top, "lgbm_cuda") / fit(capped, top,
-                                               "bonsai_cuda_leafwise")
-    margin = 1 - fit(capped, top, "bonsai_cuda_leafwise") / fit(capped, top,
-                                                               "lgbm_cuda")
-    published = 1 - fit(prior, top, "bonsai_cuda_leafwise") / fit(prior, top,
-                                                                 "lgbm_cuda")
-    gap = fit(capped, top, "bonsai_cuda_leafwise") - fit(capped, top,
-                                                         "bonsai_cuda_depthwise")
-    gap_phrase = (
-        f"{gap:.1f}s of fit separate the leaf plane from the depthwise anchor "
-        f"at 16M, where decision 98 read 1.3s, because a host binning pass "
-        f"that sat on both planes flattered their distance" if gap > 0 else
-        f"the leaf plane now fits {-gap:.1f}s faster than the depthwise "
-        f"anchor at 16M, where decision 98 had it 1.3s behind")
-    table = md_table(
-        ["rows", *[_LADDER_LABELS[v] for v in _STAGE3_ARMS],
-         "decision 98 leafwise"],
-        [[human(n), *[_fmt_cell(capped, n, 100, v) for v in _STAGE3_ARMS],
-          f"{fit(prior, n, 'bonsai_cuda_leafwise'):.1f}s"] for n in scales])
-    return f"""### The correction: the campaign ladders on the fixed harness (decision 100)
-
-Every bonsai CUDA number in the two ladders above was measured through a benchmark harness that built its `Dataset` before it knew which grower would consume it, so the device arms binned on the host and carried a host binned matrix, and 2.5GB of host memory with it, for the whole fit. The library was never at fault and the bias ran one way, against bonsai. This ladder is the same three device arms at the same knobs on the fixed harness, one pod, best of two reps, interleaved, with the profile counters off. At 16M x 100 `cuda_leafwise` fits {fit(capped, top, "bonsai_cuda_leafwise"):.1f}s where decision 98 published {fit(prior, top, "bonsai_cuda_leafwise"):.1f}s, and it beats LightGBM's CUDA leaf-wise by {over:.1f}x rather than the published {1 / (1 - published):.1f}x: the kill criterion pre-registered in issue #268 is met by {margin:.0%} where the record claims {published:.0%}. {gap_phrase[0].upper()}{gap_phrase[1:]}.
-
-{table}
-
-Absolutes do not carry across rentals here, and the reference arm says why. `lgbm_cuda` never touched the affected path, and on this pod it reads {min(rental(n) for n in scales):.0%} to {max(rental(n) for n in scales):.0%} above the times decision 98 published for it, so this is the slowest of the three L40S rentals the campaign has run on. That is also why the 250k and 1M leafwise cells read above their published numbers rather than below: the ingest saving at those cells is a fraction of a second and this pod's host latency is not. The then-current standings measured the same 16M cell on the fixed path, on a rental that reproduced the campaign's reference times, and corrected the published margin the same way; that agreement is the reading that survives the pod. The distance between the two numbers is not left as pod luck either: the controls below take it apart into the profile counters, the benchmark data cache, and what remains of the rental.
-
-{_correction_uncapped(rows)}
-
-{_correction_profiler(rows, prior, scales)}
-
-{provenance([Evidence.LEAFWISE_CORRECTION], "One pod (L40S, US-NC-1, 2026-08-03), SCALING knobs at 100 iters and 256 leaves, best of 2 reps, on the fixed ingest path; evidence for decision 100. CPU `leafwise` binned on the host in every run and is unaffected, so it is cited from the admission ladder rather than re-measured.")}
-"""
+def _secs(v: float | None) -> str:
+    """A seconds cell, or the house absent-value marker."""
+    return "-" if v is None else f"{v:.1f}s"
 
 
-def _correction_uncapped(rows: list[dict]) -> str:
-    """The uncapped arm, the campaign's one negative finding, re-measured."""
-    best = _cell_best([r for r in rows if r[K.RUN] == _CORRECTION_RUN
-                       and r["cell"]["depth"] == UNCAPPED_DEPTH])
-    prior = _cell_best([r for r in load_jsonl(Evidence.LEAFWISE_STAGE3)
-                        if r[K.STATUS] == "ok"
-                        and r["cell"]["depth"] == UNCAPPED_DEPTH])
-    order = ["bonsai_cuda_leafwise", "lgbm_cuda"]
-    table = md_table(
-        ["16M x 100, no depth cap", K.FIT_S, "test r2", "decision 98 fit_s"],
-        [[_LADDER_LABELS[v], f"{best[(16_000_000, 100, v)][K.FIT_S]:.1f}s",
-          fmt(best[(16_000_000, 100, v)][K.R2_TEST], 4),
-          f"{prior[(16_000_000, 100, v)][K.FIT_S]:.1f}s"] for v in order])
-    lw = best[(16_000_000, 100, "bonsai_cuda_leafwise")][K.FIT_S]
-    lg = best[(16_000_000, 100, "lgbm_cuda")][K.FIT_S]
-    verdict = (f"the finding inverts: bonsai leads the uncapped cell by "
-               f"{lg / lw - 1:.0%} at equal accuracy" if lw < lg else
-               f"the finding holds: LightGBM still leads it by "
-               f"{lw / lg - 1:.0%} at equal accuracy")
-    return f"""The uncapped arm is the one cell where the campaign recorded a loss, and it is the reading most exposed to the harness, since the handicap it carried is the same absolute number whether the tree is capped or not. Lifting the depth cap doubles the round count from 25,500 to 51,100, because every leaf the tree creates must be found rather than skipped at the cap. Decisions 97 and 98 read this cell as bonsai faster at matched knobs and slower at matched accuracy; on the fixed harness {verdict}.
-
-{table}
-"""
+def _wins(column: str, mine: float | None, theirs: float | None) -> bool:
+    """Whether one arm holds the better value of a comparable pair."""
+    if mine is None or theirs is None or mine == theirs:
+        return False
+    return mine > theirs if column in HIGHER_IS_BETTER else mine < theirs
 
 
-def _correction_profiler(rows: list[dict], prior: dict,
-                         scales: list[int]) -> str:
-    """The two instrument controls: profile counters, and the data cache."""
-    def best(run: str) -> dict:
-        return _cell_best([r for r in rows if r[K.RUN] == run
-                           and r["cell"]["depth"] != UNCAPPED_DEPTH])
-
-    plain, prof, nocache = (best(_CORRECTION_RUN),
-                            best(_CORRECTION_PROFILED_RUN),
-                            best(_CORRECTION_NOCACHE_RUN))
-    v, dw = "bonsai_cuda_leafwise", "bonsai_cuda_depthwise"
-    n = 16_000_000
-
-    def pair(src: dict) -> list[str]:
-        return [f"{src[(n, 100, v)][K.FIT_S]:.1f}s",
-                f"{src[(n, 100, dw)][K.FIT_S]:.1f}s"]
-
-    table = md_table(
-        ["16M x 100, capped", "cuda leafwise", "cuda dw (anchor)"],
-        [["this ladder (cached, counters off)", *pair(plain)],
-         ["counters on", *pair(prof)],
-         ["counters on, no data cache", *pair(nocache)]])
-    costs = [prof[(s, 100, v)][K.FIT_S] / plain[(s, 100, v)][K.FIT_S] - 1
-             for s in scales]
-    cache = 1 - nocache[(n, 100, v)][K.FIT_S] / prof[(n, 100, v)][K.FIT_S]
-    return f"""Two things other than the ingest path differ between this ladder and the published ones, and both are priced rather than argued. The rows of both published ladders carry profile blocks, because the bench driver turns the four counters on for every bonsai child and neither ladder could turn them off; this ladder ran with them off, and running it both ways puts the counters at {min(costs):.0%} to {max(costs):.0%} of leafwise fit. The `--data-cache` memmap the campaign ladders and this one all used costs more than that: dropping it at 16M, the protocol the standings run, takes leafwise fit down another {cache:.0%}. What is left after both is the rental.
-
-{table}
-"""
-
-
-def catboost_door_section() -> str:
-    """The ordered-boosting door probe (decisions 62 to 64)."""
-    edge = load_jsonl(Evidence.CATBOOST_SCALE_EDGE)
-
-    def detail(r):
-        if "iters" in r:
-            return f"iters={r['iters']}"
-        if "n_samples" in r:
-            return f"bin samples={r['n_samples']}"
+def _summary_cell(panel: Panel, axis: str, plane: str) -> str:
+    """`bonsai 6.9s vs XGBoost 8.1s` for one grower on one plane."""
+    rows = axis_rows(axis)
+    if not rows:
         return "-"
+    bonsai, rival = (best_row(rows, v) for v in panel.arms(plane))
+    if bonsai is None or rival is None:
+        return "-"
+    ours, theirs = _fit_value(bonsai), _fit_value(rival)
+    return (f"{_bold('bonsai ' + _fit_text(bonsai), _wins('fit', ours, theirs))}"
+            f" vs "
+            f"{_bold(panel.rival + ' ' + _fit_text(rival), _wins('fit', theirs, ours))}")
 
-    edge_table = md_table(
-        ["door", "rows", "learner", "knob", K.FIT_S, "test r2"],
-        [[r["door"], f"{r['rows']:,}", r["learner"], detail(r),
-          fmt(r[K.FIT_S], 2), fmt(r[K.R2_TEST], 4)] for r in edge])
 
-    return f"""### Ordered boosting at scale (CatBoost door)
+def _fit_value(r: dict | None) -> float | None:
+    """A row's fit total, or None when the row did not finish."""
+    if r is None or r.get(K.STATUS) != "ok":
+        return None
+    return r.get(K.FIT_S)
 
-The probe behind decisions 62 to 64: CatBoost's Ordered vs Plain modes against bonsai levelwise as rows grow.
 
-{edge_table}
+def _fit_text(r: dict | None) -> str:
+    """A row's fit total as text, or its status word."""
+    if r is None:
+        return "-"
+    if r.get(K.STATUS) != "ok":
+        return str(r.get(K.STATUS))
+    return _secs(r.get(K.FIT_S))
 
-{provenance([Evidence.CATBOOST_SCALE_EDGE], "Evidence: [benchmarks/catboost-scale-edge-2026-07.md](../../benchmarks/catboost-scale-edge-2026-07.md).")}
-"""
+
+def _mode_row(rows: list[dict], variant: str, mode: str) -> dict | None:
+    """The best row of one arm under one `eval_mode`."""
+    return best_row([r for r in rows if _eval_mode(r) == mode], variant)
+
+
+def _eval_mode(r: dict) -> str | None:
+    """A row's eval mode, from the row or the cell that produced it."""
+    return r.get("eval_mode") or (r.get("cell") or {}).get("eval_mode")
+
+
+def _overhead(off: dict | None, evaluated: dict | None) -> str:
+    """What scoring every round costs against not scoring at all."""
+    base, watched = _train_time(off), _train_time(evaluated)
+    if not base or watched is None:
+        return "-"
+    return _pct(watched / base - 1)
+
+
+def _train_time(r: dict | None) -> float | None:
+    """The variable half of a row's time, falling back to the total."""
+    if r is None or r.get(K.STATUS) != "ok":
+        return None
+    return r.get(K.TRAIN_S) if r.get(K.TRAIN_S) is not None else r.get(K.FIT_S)
 
 
 def _bold(text: str, on: bool) -> str:
@@ -1288,40 +618,233 @@ def _pct(x: float) -> str:
     return f"{x * 100:+.1f}%"
 
 
-# assembly =========================================================================================
+# Perf: page sections ==============================================================================
 
-GEN_NOTE = ("<!-- GENERATED by scripts/render_results.py. "
-            "Edit the generator, not this page. -->")
 
-HEADER = GEN_NOTE + """
+def perf_summary_section() -> str:
+    """The panels page opening: what the columns mean, then the headline."""
+    return f"""Six scenarios, three growers, two planes, one page. Each grower is measured against the reference library closest to it: depthwise against XGBoost, leafwise against LightGBM, levelwise against CatBoost. The tall and wide scenarios hold the cell count constant (2^31 cells on the GPU plane, 2^28 on the CPU plane) so the pair separates shape from volume, and the extreme scenario sizes the input to most of the card's memory, where a row that runs out of it is published as such.
 
-# The results ledger
+The columns are the same everywhere. `ingest_s` is the fixed cost of turning a float32 matrix into bins, paid once; `train_s` is the variable cost of the boosting rounds, the half that grows with the round budget. {BONSAI_SPLIT_NOTE} {CATBOOST_INGEST_NOTE} Peak RSS is host memory, with its headroom above the resident input array in parentheses; peak VRAM is device memory attributed to the training process by NVML, and a row whose sampler could not attribute it prints `-` rather than a device total that would count every other process on the card.
 
-Every results file behind a published claim is rendered across the pages below, generated straight from the data in [`benchmarks/results/`](../../benchmarks/results): `python3 scripts/render_results.py` rewrites them and CI fails on drift. Rows are as-run records under the [benchmark protocol](benchmark-protocol.md): quality division numbers never cite timing, perf division numbers name their timing mode, and superseded files are deleted rather than kept beside their replacements, so what is here is the current evidence, whole.
+## The headline: the tall scenario
+
+Fit totals (ingest plus train) at the tall cell of each plane, bold to the faster arm.
+
+{summary_matrix()}
 """
 
 
+def perf_panels_section() -> str:
+    """One panel per grower: its GPU table, then its CPU table."""
+    blocks = [_panel_block(panel) for panel in PANELS]
+    return "\n".join(blocks) + _perf_provenance()
 
-def ceiling_section() -> str:
-    """The single-card ceiling section."""
-    raw = load_jsonl(Evidence.SINGLE_CARD_CEILING)
-    meta = raw[0]["meta"]
-    rows = raw[1:]
+
+def _panel_block(panel: Panel) -> str:
+    """One grower's two tables, with the fused anchor under the first."""
+    head = f"## {panel.grower.capitalize()} against {panel.rival}"
+    gpu = panel_table(panel, GPU_AXES, PLANE_GPU)
+    cpu = panel_table(panel, CPU_AXES, PLANE_CPU)
+    if not gpu and not cpu:
+        return f"{head}\n\n{PENDING}\n"
+    anchor = fused_anchor_line() if panel.grower == "depthwise" else ""
+    return f"""{head}
+
+### GPU
+
+{gpu or PENDING}
+{anchor}
+### CPU
+
+{cpu or PENDING}
+"""
+
+
+def _perf_provenance() -> str:
+    """The source line for whichever perf axes have been measured."""
+    files = [f for f in (_STANDINGS_REG[a].get("file") for a in PERF_AXES) if f]
+    if not files:
+        return ""
+    stamp = measured_stamp(axis_rows(Axis.GPU_TALL))
+    return "\n" + provenance(
+        files,
+        "As-run under the redesigned scenario matrix (decision 103), best of "
+        "the session's repeats per arm; the whole matrix runs on one pod so "
+        "the arms compare." + stamp) + "\n"
+
+
+# The archive ======================================================================================
+# Closed campaigns and probes whose data files were deleted from
+# benchmarks/results/ once their decisions froze (results-lifecycle policy,
+# decision 92). The refs are pinned rather than resolved at render time: CI
+# checks out shallow, where `git log` cannot see the commit, and the page
+# would drift between the two environments.
+
+
+@dataclasses.dataclass(frozen=True)
+class Retired:
+    """One closed record: what it found, and where its data still reads."""
+
+    record: str
+    finding: str
+    decisions: str
+    files: tuple[str, ...]
+    ref: str
+
+
+ARCHIVE: Final = (
+    Retired("The retired row and width standings",
+            "The last measurement on the rows and width axes the scenario "
+            "redesign replaced: 16M x 100 and the column sweep to 65k "
+            "features, both planes, on one pod.",
+            "103", ("rebaseline-2026-08.jsonl",
+                    "cols-rebaseline-2026-08.jsonl"), "9221cf7"),
+    Retired("The retired shape and frontier standings",
+            "The iso-volume aspect sweep at 2^31 cells and the 16M "
+            "accuracy-versus-time frontier, both replaced by the tall, wide, "
+            "and extreme scenarios.",
+            "91, 103", ("iso-volume-2026-08.jsonl",
+                        "gpu-pareto-16M-2026-08.jsonl"),
+            "a32eccf"),
+    Retired("The retired airline standings",
+            "The one real-data perf axis, removed with the redesign: its "
+            "10M-row CSV bake answered a protocol question that no longer "
+            "has a scenario.",
+            "103", ("airline-2026-08.jsonl",), "9221cf7"),
+    Retired("The retired early-stop axis",
+            "Early stopping measured at 4M rows, superseded by the "
+            "gpu-early-stop axis at the tall cell.",
+            "103", ("early-stop-4M-2026-08.jsonl",), "89814a0"),
+    Retired("The XGBoost 3.3 recheck",
+            "3.3 matched 3.2 at every GPU cell and did not move host RSS; "
+            "its one real gain was wide-CPU histogram time at 1M x 4096, "
+            "and no published cell flipped.",
+            "87", ("xgb33-recheck-2026-07.jsonl",), "563879a"),
+    Retired("The CPU 16M round",
+            "Software prefetch closed the 16M CPU gap to XGBoost-hist on "
+            "that pod.",
+            "61", ("cpu-prefetch-round-2026-07.jsonl",), "4b40fd9"),
+    Retired("Ordered boosting at scale (the CatBoost door)",
+            "CatBoost's Ordered and Plain modes against bonsai levelwise as "
+            "rows grow: the door that closed the small-data-edge question.",
+            "62 to 64", ("catboost-scale-edge-2026-07.jsonl",), "7b0e1ac"),
+    Retired("The leafwise recheck",
+            "Decision 42's reading, bonsai's CPU leafwise ahead of "
+            "LightGBM's CUDA leaf-wise, inverts monotonically with scale to "
+            "5.3x in LightGBM's favor at 16M.",
+            "95", ("leafwise-recheck-2026-08.jsonl",), "54497c1"),
+    Retired("The device-leafwise cadence probe",
+            "The round skeleton's fixed cost measured 30.3 us against a "
+            "100 us budget, which is what let the one-node-per-round design "
+            "proceed to a build.",
+            "issue #268", ("leafwise-cadence-2026-08.json",), "267b705"),
+    Retired("The device-leafwise admission ladder",
+            "The pre-registered kill criterion met: `cuda_leafwise` beat "
+            "LightGBM's CUDA leaf-wise at 16M x 100 on the same pod, and "
+            "beat its own CPU arm at every cell.",
+            "97", ("leafwise-ladder-2026-08.jsonl",), "db74fb3"),
+    Retired("The closing leafwise ladder",
+            "Stage 3's two levers, the device-resident objective and the "
+            "round's pinned staging, cut leafwise fit at every cell; a third "
+            "was refuted and reverted.",
+            "98", ("leafwise-stage3-2026-08.jsonl",), "a5a2e9d"),
+    Retired("The leafwise correction",
+            "Both campaign ladders re-measured on the fixed ingest path: the "
+            "harness had binned on the host, so every published bonsai CUDA "
+            "time was slow for a reason that was never the library.",
+            "100", ("leafwise-correction-2026-08.jsonl",), "e4eb2b9"),
+    Retired("The wide-CPU fill",
+            "The row-wise u8 fill missed cache at 16k features; routing "
+            "feature-parallel fixed the symptom and one column-block-tiled "
+            "pass retired the strategy pair.",
+            "88, 89", ("wide-cpu-hist-2026-07.jsonl",), "228e2e4"),
+    Retired("The CUDA wide recheck",
+            "The recorded wide-GPU gap to XGBoost no longer existed on "
+            "current main, so the campaign closed at stage 0 and the stale "
+            "reading was corrected wherever it appeared.",
+            "90", ("cuda-wide-recheck-2026-07.jsonl",), "b60cecf"),
+    Retired("The single-card ceiling",
+            "A 500M x 100 float32 matrix trained end to end on one 80GB "
+            "card: 60 rounds in 8.5 minutes at 69.9 GiB peak device memory.",
+            "engine chapter 5", ("single-card-ceiling-2026-07.jsonl",),
+            "7e9c8fd"),
+    Retired("Campaign smoke: ten datasets at matched knobs",
+            "The fast local regression check behind the quality campaign's "
+            "three model-changing fixes.",
+            "56, 57", ("quality-campaign-2026-07.jsonl",), "1f8eb20"),
+    Retired("Probe: per-feature bin budgets",
+            "No bin-budget policy moved a standing outside the chance band, "
+            "so the 255-bin default stayed.",
+            "67", ("binning-probe-2026-07.json",), "98fab49"),
+    Retired("Probe: categorical machinery",
+            "The categorical question resolved as an encoder rather than "
+            "per-split machinery in the core.",
+            "58", ("cat-tradeoff-2026-07.json",), "7465ede"),
+    Retired("Probe: ranking objectives",
+            "The stable NDCG@10 gap is to listwise losses only, which is how "
+            "the ranking issue is scoped.",
+            "issue #58", ("ranking-tradeoff-2026-07.jsonl",), "95f7eca"),
+    Retired("Probe: CatBoost's categorical toggle",
+            "CatBoost's own toggle prices its categorical machinery at 68% "
+            "of its remaining cat-heavy lead over bonsai's encoder.",
+            "80", ("tabarena-cat-probe-2026-07.jsonl",), "0efa5ce"),
+    Retired("Probe: ordered boosting",
+            "Ordered beat Plain beyond the chance band on 0 of 12 datasets, "
+            "at 3.9x the train time.",
+            "81", ("ordered-boosting-probe-2026-07.jsonl",), "885db11"),
+    Retired("Probe: static K-permutation target statistics",
+            "K-averaged ordered statistics recover a negative share of the "
+            "gap: the substance is per-split, not preprocessing.",
+            "82", ("static-k-encoder-probe-2026-07.jsonl",), "66f587f"),
+    Retired("Probe: a per-dataset learning-rate rule",
+            "A validation-selected oracle over eight rates wins validation "
+            "and loses test, and CatBoost's automatic rate transplants to a "
+            "no-op around the shipped 0.05.",
+            "83", ("lr-rule-probe-2026-07.jsonl",), "974f5c6"),
+    Retired("Probe: the bagged-protocol randomization interaction",
+            "CatBoost's small-data lead is not a bagging interaction: "
+            "8-fold data-bagging already gives bonsai the decorrelation.",
+            "85", ("bagging-interaction-probe-2026-07.jsonl",), "9c3ceaa"),
+    Retired("Probe: honest shadow-feature selection",
+            "The shadow selector sits inside the chance band against plain "
+            "top-k on 26 of 27 grower-dataset cells, under all three "
+            "growers.",
+            "86", ("feature-selection-probe-2026-07.jsonl",), "981dc1c"),
+    Retired("The selection-method survey",
+            "Ten selection methods, one shared judge, refit down a budget "
+            "ladder on an untouched holdout; the worked example in guide "
+            "chapter 14.",
+            "86", ("selection-survey-2026-07.jsonl",), "fa6838a"),
+    Retired("The Grinsztajn min_child_weight bracket",
+            "XGBoost's ambiguous knob translation measured at both ends; the "
+            "standings order holds under either convention.",
+            "68", ("grinsztajn-2026-07-xgb-mcw1.jsonl",), "5e45b14"),
+)
+
+
+def archive_section() -> str:
+    """The pointer table that replaces every deleted evidence section."""
     table = md_table(
-        ["rows", "train() wall", "peak device mem", "throughput", "train r2 (1M sample)"],
-        [[f"{r['rows'] // 1_000_000}M", f"{r['fit_s']:.0f}s",
-          f"{r['peak_dev_mib'] / 1024:.1f} GiB",
-          f"{r['rows_per_s'] / 1e6:.1f}M rows/s", fmt(r["r2_train_1m"], 4)]
-         for r in rows])
-    prov = provenance(
-        [Evidence.SINGLE_CARD_CEILING],
-        "Single-pod ladder (2026-07-18, " + meta["gpu"] + "): a 500M x 100 "
-        "float32 matrix trains end to end on one 80GB card at 69.9 GiB peak, "
-        "60 rounds in 8.5 minutes, with the device-resident objective keeping "
-        "the fit loop bus-free. Evidence: "
-        "[benchmarks/single-card-ceiling-2026-07.md]"
-        "(../../benchmarks/single-card-ceiling-2026-07.md).")
-    return "## The single-card ceiling\n\n" + table + "\n\n" + prov + "\n"
+        ["record", "what it found", "decisions", "data files",
+         "last present at"],
+        [[r.record, r.finding, r.decisions,
+          ", ".join(f"`{f}`" for f in r.files), f"`{r.ref}`"]
+         for r in ARCHIVE])
+    return f"""Every campaign and probe below is closed. Its verdict is frozen in [the decisions log](../decisions.md), its narrative is in [`benchmarks/`](../../benchmarks), and its data file was deleted from `benchmarks/results/` rather than kept beside current evidence, which is the results-lifecycle policy (decision 92): the ledger renders what is current, whole, and git history keeps what is not.
+
+The last column is the last commit where the file was present, so the rows still read:
+
+```
+git show <ref>:benchmarks/results/<file>
+```
+
+{table}
+"""
+
+
+# The code division ================================================================================
+
 
 def code_metrics_section() -> str:
     """The code-division standings page body."""
@@ -1372,34 +895,34 @@ The five highest-CCN functions across `core_headers` + `engine_impl`, published 
 """
 
 
-# Per-suite pages under docs/method/results/, perf division first. Suite pages
-# keep their historical section headings verbatim so anchor slugs survive.
+# assembly =========================================================================================
+
+GEN_NOTE = ("<!-- GENERATED by scripts/render_results.py. "
+            "Edit the generator, not this page. -->")
+
+HEADER = GEN_NOTE + """
+
+# The results ledger
+
+Every results file behind a published claim is rendered across the pages below, generated straight from the data in [`benchmarks/results/`](../../benchmarks/results): `python3 scripts/render_results.py` rewrites them and CI fails on drift. Rows are as-run records under the [benchmark protocol](benchmark-protocol.md): quality division numbers never cite timing, perf division numbers name their timing mode, and superseded files are deleted rather than kept beside their replacements, so what is here is the current evidence, whole.
+"""
+
+# Per-suite pages under docs/method/results/, perf division first.
 PAGES: list[tuple[str, str, str, list]] = [
-    ("perf-scale.md", "Fit at scale",
-     "The campaign record at row scale: the XGBoost 3.3 recheck, the CPU "
-     "prefetch round, and the leafwise ladders.",
-     [xgb33_recheck_table, prefetch_section, catboost_door_section,
-      leafwise_recheck_section, leafwise_cadence_section,
-      leafwise_ladder_section, leafwise_stage3_section,
-      leafwise_correction_section]),
-    ("perf-shape.md", "Width and shape",
-     "The wide-data arc: the CPU fill and the CUDA recheck.",
-     [wide_cpu_hist_table, cuda_wide_recheck_table]),
-    ("perf-ceiling.md", "The single-card ceiling",
-     "A 500M x 100 matrix trained end to end on one 80GB card.",
-     [ceiling_section]),
+    ("perf.md", "The scenario panels",
+     "Every grower against its closest rival, both planes, at the "
+     "redesigned scenarios.",
+     [perf_summary_section, perf_panels_section, early_stop_section]),
     ("quality-grinsztajn.md", "Grinsztajn standings",
-     "The only citable standings: 55 third-party tasks, both knob brackets.",
+     "The only citable standings: 55 third-party tasks.",
      [grinsztajn_section]),
-    ("quality-campaign.md", "Campaign smoke",
-     "Ten datasets at matched knobs, the fast local regression check.",
-     [campaign_section]),
-    ("quality-probes.md", "Probes",
-     "Every feature admitted or declined by measurement, with its evidence.",
-     [probes_section]),
     ("code-metrics.md", "The code division",
      "Self-measurement of the tree: lines, complexity, surface counts.",
      [code_metrics_section]),
+    ("archive.md", "The archive",
+     "Closed campaigns and probes: what each found, and the git ref where "
+     "its data still reads.",
+     [archive_section]),
 ]
 
 # Suite pages live one level below docs/method/, so their relative links
@@ -1407,6 +930,7 @@ PAGES: list[tuple[str, str, str, list]] = [
 # ../guide/ and runs first.
 _REROOT = [("](../../", "](../../../"), ("](../guide/", "](../../guide/"),
            ("](../architecture/", "](../../architecture/"),
+           ("](../decisions.md", "](../../decisions.md"),
            ("](assets/", "](../assets/"), ("](benchmark-protocol.md", "](../benchmark-protocol.md")]
 
 
@@ -1419,27 +943,54 @@ def _reroot(body: str) -> str:
 
 def _division_summaries() -> tuple[str, str]:
     """(perf, quality) headline paragraphs, digits computed from standings."""
-    # The perf paragraph carries no digits between the scenario redesign
-    # (decision 103) and the first refresh that measures the new axes: the
-    # files its old digits came from are retired, and quoting a retired
-    # measurement is exactly what the results-lifecycle policy forbids.
-    perf = (
-        "The perf standings are being re-measured on the redesigned scenario "
-        "matrix (decision 103): tall and wide iso-volume pairs plus a "
-        "VRAM-maxout extreme, on both planes, with early stopping as its own "
-        "axis. The retired row, width, shape, frontier, and airline files are "
-        "in git history; the pages below are the campaign record that led "
-        "here, and the panel pages arrive with the first refresh.")
     table, _, n = _standings(load_jsonl(standings_file(Axis.GRINSZTAJN)))
     lead_lib, lead_mean, lead_wins = table[0]
     quality = (
         f"{lead_lib} leads the {n}-task Grinsztajn standings at mean rank "
-        f"{lead_mean:.2f} with {lead_wins} outright wins; the one knob that "
-        f"translates ambiguously is bracketed in both directions on the "
-        f"standings page. The campaign smoke is the fast local regression "
-        f"check, and the probe archive records every feature declined by "
-        f"measurement.")
-    return perf, quality
+        f"{lead_mean:.2f} with {lead_wins} outright wins, and keeps the "
+        f"lead under either reading of the one knob that translates "
+        f"ambiguously between libraries. Every feature declined by "
+        f"measurement is recorded in the archive.")
+    return _perf_summary(), quality
+
+
+def _perf_summary() -> str:
+    """The perf paragraph, read off the summary matrix the panels publish."""
+    gpu = _headline_clauses(Axis.GPU_TALL, PLANE_GPU)
+    cpu = _headline_clauses(Axis.CPU_TALL, PLANE_CPU)
+    if not gpu and not cpu:
+        return ("The perf standings are being re-measured on the redesigned "
+                "scenario matrix (decision 103): tall and wide scenarios at "
+                "constant cell count plus a memory-maxout extreme, on both "
+                "planes, with early stopping as its own axis. The panels "
+                "page fills in with the first refresh; the campaigns that "
+                "led here are in the archive.")
+    parts = []
+    if gpu:
+        parts.append("On GPU at the tall scenario, fit totals run "
+                     + "; ".join(gpu) + ".")
+    if cpu:
+        parts.append("On CPU at the tall scenario: " + "; ".join(cpu) + ".")
+    parts.append("The wide and extreme scenarios, the host and device memory "
+                 "columns, and the early-stopping axis are on the panels "
+                 "page.")
+    return " ".join(parts)
+
+
+def _headline_clauses(axis: str, plane: str) -> list[str]:
+    """`depthwise 6.9s vs XGBoost 8.1s`, one clause per grower."""
+    rows = axis_rows(axis)
+    out = []
+    for panel in PANELS:
+        if not rows:
+            continue
+        bonsai, rival = (best_row(rows, v) for v in panel.arms(plane))
+        ours, theirs = _fit_value(bonsai), _fit_value(rival)
+        if ours is None or theirs is None:
+            continue
+        out.append(f"{panel.grower} {ours:.1f}s vs {panel.rival} "
+                   f"{theirs:.1f}s")
+    return out
 
 
 def _page_table(entries: list[tuple[str, str, str, list]]) -> str:
@@ -1449,27 +1000,34 @@ def _page_table(entries: list[tuple[str, str, str, list]]) -> str:
         [[f"[{title}](results/{rel})", desc] for rel, title, desc, _ in entries])
 
 
+def _page(rel: str) -> tuple[str, str, str, list]:
+    """One PAGES entry by file name."""
+    return next(p for p in PAGES if p[0] == rel)
+
+
 def landing_page() -> str:
     """The results landing: division summaries plus navigation."""
     perf, quality = _division_summaries()
-    perf_pages = [p for p in PAGES if p[0].startswith("perf-")]
-    quality_pages = [p for p in PAGES if p[0].startswith("quality-")]
     return f"""{HEADER}
 ## Perf division
 
 {perf}
 
-{_page_table(perf_pages)}
+{_page_table([_page("perf.md")])}
 
 ## Quality division
 
 {quality}
 
-{_page_table(quality_pages)}
+{_page_table([_page("quality-grinsztajn.md")])}
 
 ## The code division
 
 Self-measurement of the bonsai tree, no comparative claim: [code metrics](results/code-metrics.md).
+
+## The archive
+
+Closed campaigns and probes, deleted from `benchmarks/results/` once their decisions froze: [the archive](results/archive.md) names what each one found and the git ref where its data still reads.
 """
 
 
@@ -1484,7 +1042,7 @@ _LIB_NAMES = {"lgbm": "lightgbm", "xgb": "xgboost"}
 def readme_standings_block() -> str:
     """The README's digit surface, generated so it cannot drift (decision
     92): division summaries plus the quality table."""
-    perf, _quality = _division_summaries()
+    perf = _perf_summary()
 
     table, _, n_tasks = _standings(load_jsonl(standings_file(Axis.GRINSZTAJN)))
     qlines = ["| library | mean rank | outright wins |", "|---|--:|--:|"]
@@ -1500,7 +1058,7 @@ def readme_standings_block() -> str:
 
 {perf}
 
-The campaign record behind those retired axes lives in [the ledger]({_SITE}/method/results/).
+The panels, and the closed campaigns behind them, are in [the ledger]({_SITE}/method/results/).
 
 ### Quality
 
@@ -1535,6 +1093,8 @@ def check_registry(consumed_files: set[str]) -> list[str]:
     """Standings registry invariants (decision 92): each registered file
     exists, is rendered, and its rows carry exactly the registered sha
     (sha_partial entries tolerate provenance-less rows, never a WRONG sha).
+    An axis's companion evidence file, if it has one, is held to the same
+    exists-and-is-rendered rule.
 
     An axis whose `file` is null has never been measured (registry v2's
     placeholder), so there is nothing to check yet; the release gate in
@@ -1546,15 +1106,17 @@ def check_registry(consumed_files: set[str]) -> list[str]:
     for axis, e in reg.items():
         if not e.get("file"):
             continue
-        path = RESULTS / e["file"]
-        if not path.exists():
-            errors.append(f"standings {axis}: {e['file']} does not exist")
+        for kind, name in (("", e["file"]), ("companion ", e.get("companion"))):
+            if not name:
+                continue
+            if not (RESULTS / name).exists():
+                errors.append(f"standings {axis}: {kind}{name} does not exist")
+            elif name not in consumed_files:
+                errors.append(f"standings {axis}: {kind}{name} is not rendered")
+        if not (RESULTS / e["file"]).exists() or not e.get("sha"):
             continue
-        if e["file"] not in consumed_files:
-            errors.append(f"standings {axis}: {e['file']} is not rendered")
-        if not e.get("sha"):
-            continue
-        rows = [json.loads(ln) for ln in path.read_text().splitlines()
+        rows = [json.loads(ln)
+                for ln in (RESULTS / e["file"]).read_text().splitlines()
                 if ln.strip()]
         shas = {r.get(K.GIT_SHA) for r in rows}
         wrong = {s for s in shas if s and not s.startswith(e["sha"])

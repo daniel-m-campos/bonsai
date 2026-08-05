@@ -76,9 +76,9 @@ Two divisions, per the [benchmark charter](https://daniel-m-campos.github.io/bon
 
 ### Perf
 
-The perf standings are being re-measured on the redesigned scenario matrix (decision 103): tall and wide iso-volume pairs plus a VRAM-maxout extreme, on both planes, with early stopping as its own axis. The retired row, width, shape, frontier, and airline files are in git history; the pages below are the campaign record that led here, and the panel pages arrive with the first refresh.
+The perf standings are being re-measured on the redesigned scenario matrix (decision 103): tall and wide scenarios at constant cell count plus a memory-maxout extreme, on both planes, with early stopping as its own axis. The panels page fills in with the first refresh; the campaigns that led here are in the archive.
 
-The campaign record behind those retired axes lives in [the ledger](https://daniel-m-campos.github.io/bonsai/method/results/).
+The panels, and the closed campaigns behind them, are in [the ledger](https://daniel-m-campos.github.io/bonsai/method/results/).
 
 ### Quality
 
@@ -92,7 +92,7 @@ On the [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) (
 | catboost | 3.22 | 8 |
 
 <!-- standings:end -->
-The one knob that translates ambiguously between libraries is bracketed in both directions on [the standings page](https://daniel-m-campos.github.io/bonsai/method/results/quality-grinsztajn/); reproduce with `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite and `python -m bonsai.bench.grinsztajn out.jsonl --report` to render the standings.
+bonsai keeps the lead under either reading of the one knob that translates ambiguously between libraries, which [the standings page](https://daniel-m-campos.github.io/bonsai/method/results/quality-grinsztajn/) records; reproduce with `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite and `python -m bonsai.bench.grinsztajn out.jsonl --report` to render the standings.
 
 Every headline claim links a reproducible run and the decision that records it: [claims and proofs](https://daniel-m-campos.github.io/bonsai/method/).
 
