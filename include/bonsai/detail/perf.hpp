@@ -17,15 +17,23 @@
 namespace bonsai::detail
 {
 
-// Adds the time since construction (or the previous lap) into sink.
+// Adds the time since construction (or the previous lap) into sink; take()
+// returns the same delta for callers feeding more than one sink.
 struct Lap
 {
     std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
-    void                                  operator()(double &sink)
+
+    double take()
     {
-        auto const now = std::chrono::steady_clock::now();
-        sink += std::chrono::duration<double>(now - t0).count();
-        t0 = now;
+        auto const   now = std::chrono::steady_clock::now();
+        double const d   = std::chrono::duration<double>(now - t0).count();
+        t0               = now;
+        return d;
+    }
+
+    void operator()(double &sink)
+    {
+        sink += take();
     }
 };
 
@@ -119,6 +127,12 @@ struct GrowProfiler : Profiler<GrowProfiler>
     // 16M full-data fits); a rung-0 conservation split of populate.
     double assign_s      = 0;
     double populate_adds = 0, populate_row_s = 0;
+    // Per-fill-depth split of populate (slot 0 = root fills, slot d = the
+    // smaller children created at depth d), host plane only; aggregates
+    // across trees and iterations.
+    static constexpr size_t           k_level_slots = 32;
+    std::array<double, k_level_slots> level_populate_s{};
+    std::array<double, k_level_slots> level_populate_adds{};
 
     static constexpr std::array fields = {
         std::pair{"find", &GrowProfiler::find_s},
@@ -134,8 +148,23 @@ struct GrowProfiler : Profiler<GrowProfiler>
 
     std::string extra() const
     {
-        return std::format(" adds={:.0f}M row_s={:.2f}s", populate_adds / 1e6,
-                           populate_row_s);
+        std::string s = std::format(" adds={:.0f}M row_s={:.2f}s", populate_adds / 1e6,
+                                    populate_row_s);
+        std::string levels;
+        for (size_t d = 0; d < k_level_slots; ++d)
+        {
+            if (level_populate_s[d] <= 0.0)
+            {
+                continue;
+            }
+            levels += std::format(" d{}={:.2f}s/{:.0f}M", d, level_populate_s[d],
+                                  level_populate_adds[d] / 1e6);
+        }
+        if (!levels.empty())
+        {
+            s += "\npopulate-levels:" + levels;
+        }
+        return s;
     }
 };
 
