@@ -1,6 +1,6 @@
 # 22. Deep-level sweep fill for the CPU histogram engine
 
-Status: design, unbuilt. This note prices a candidate lever for issue #355 (the CPU populate campaign) and asks permission to overturn one clause of decision 17. Nothing here is admitted; the probe's kill criterion is at the end.
+Status: **refuted by measurement** (issue #355 step 2, 2026-08-05). The probe missed its kill criterion in the wrong direction: populate ran +45% to 5.8x SLOWER than the list fill at every cell on an EPYC 9354. The failure mechanism: the tile-parallel sweep re-fetches each live row's full strip once per tile (16x read amplification at 128 cols) and walks all n rows per tile with ~73% skips, and even L3-resident strips cost a latency-bound dependent-load chain rather than the near-free re-reads this note assumed. Decision 17's rejection of the row_to_node shape is re-confirmed, not overturned. The probe branch (`perf/sweep-fill-probe`) is preserved unmerged as the record; the note below is kept as written, priced-but-declined like doc 17.
 
 ## The evidence this note answers
 
