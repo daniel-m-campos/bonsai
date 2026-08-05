@@ -21,7 +21,7 @@ Release wheels do NOT need this skill: wheels.yml's `validate-cuda` job self-val
 
 ## The loop
 
-Create (MCP `create-pod` or REST per the runbook): image `ghcr.io/daniel-m-campos/bonsai-ci:cuda12.4`, `NVIDIA L40S`, SECURE, 80GB disk, ports `["22/tcp"]`, env `{"PUBLIC_KEY": "<contents of the user's ~/.ssh/id_ed25519.pub>"}`.
+Create (MCP `create-pod` or REST per the runbook): image `ghcr.io/daniel-m-campos/bonsai-ci:cuda12.8`, `NVIDIA L40S`, SECURE, 80GB disk, ports `["22/tcp"]`, env `{"PUBLIC_KEY": "<contents of the user's ~/.ssh/id_ed25519.pub>"}`. cuda12.8 covers sm_120 natively, and L40S r550-driver pods still run its 12.8-built binaries via CUDA minor-version compatibility.
 
 Poll GraphQL until `runtime` is non-null; read the public ip/port for privatePort 22 from the same response.
 

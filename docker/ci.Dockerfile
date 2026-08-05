@@ -4,10 +4,18 @@
 # session needs. Built and pushed by .github/workflows/ci-image.yml to
 # ghcr.io/daniel-m-campos/bonsai-ci.
 #
-# CUDA 12.4 deliberately: every RunPod machine we've rented satisfies a 12.4
-# image, while cu12.8+ images silently fail to start on 12.4-driver hosts.
-# The A100/L40S targets (sm_80/sm_89) need nothing newer.
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+# CUDA 12.8 for Blackwell (sm_120): clang refuses --offload-arch=native
+# under a 12.4 toolkit for sm_120 ("GPU arch sm_120 is supported by CUDA
+# versions between 12.8 and..."), which the redesigned RTX PRO 6000
+# standings host hit on its maiden pod. The image now builds for the
+# fleet's full driver range, r550 L40S through r580 Blackwell: CUDA
+# minor-version compatibility lets 12.8-built binaries run against r550
+# drivers, the same mechanism the xgboost pin below already relies on.
+# Published as the cuda12.8 tag, leaving cuda12.4 frozen for branches
+# still pinned to it. The xgboost pin rationale is unchanged by this
+# bump: 3.3 stays a CUDA 12.9 wheel, so the CUDA-13 bound below still
+# binds; only a deliberate move to a CUDA 13 base would flip it.
+FROM nvidia/cuda:12.8.2-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
