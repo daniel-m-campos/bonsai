@@ -1,58 +1,95 @@
 {
   "_": "The standings registry, v2 (results-lifecycle policy, decision 92; scenario redesign, decision 103). One entry per published perf/quality axis: the current-standings file (null until the axis has been measured), the single sha its rows were measured at, the release it was refreshed for, and `plane` (cpu or gpu), the source set whose digest decides whether the axis is still current. Every axis also carries hash_set (its plane's digest at refresh time) and refs (reference-library versions measured against), which let scripts/check_standings.py's release gate skip a refresh when neither has moved, and let `--stale` tell the refresh driver which axes a session must actually measure. Gates: scripts/check_standings.py; supersession is in place, git history is the archive.",
   "gpu-tall": {
-    "file": null,
-    "sha": null,
-    "host": null,
-    "date": null,
+    "file": "gpu-tall-2026-08.jsonl",
+    "sha": "148f21b",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    "date": "2026-08-05",
     "plane": "gpu",
-    "refreshed_for": null,
-    "as_of_decision": 104
+    "refreshed_for": "1.7.0",
+    "as_of_decision": 104,
+    "companion": "parity-2026-08.jsonl",
+    "hash_set": "ded60c851f52cd8d",
+    "refs": {
+      "xgboost": "3.2.0",
+      "lightgbm": "4.6.0",
+      "catboost": "1.2.10"
+    }
   },
   "gpu-wide": {
-    "file": null,
-    "sha": null,
-    "host": null,
-    "date": null,
+    "file": "gpu-wide-2026-08.jsonl",
+    "sha": "148f21b",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    "date": "2026-08-05",
     "plane": "gpu",
-    "refreshed_for": null,
-    "as_of_decision": 104
+    "refreshed_for": "1.7.0",
+    "as_of_decision": 104,
+    "hash_set": "ded60c851f52cd8d",
+    "refs": {
+      "xgboost": "3.2.0",
+      "lightgbm": "4.6.0",
+      "catboost": "1.2.10"
+    }
   },
   "gpu-extreme": {
-    "file": null,
-    "sha": null,
-    "host": null,
-    "date": null,
+    "file": "gpu-extreme-2026-08.jsonl",
+    "sha": "4fd9531",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    "date": "2026-08-05",
     "plane": "gpu",
-    "refreshed_for": null,
-    "as_of_decision": 104
+    "refreshed_for": "1.7.0",
+    "as_of_decision": 104,
+    "hash_set": "ded60c851f52cd8d",
+    "refs": {
+      "xgboost": "3.2.0",
+      "lightgbm": "4.6.0",
+      "catboost": "1.2.10"
+    }
   },
   "cpu-tall": {
-    "file": null,
-    "sha": null,
-    "host": null,
-    "date": null,
+    "file": "cpu-tall-2026-08.jsonl",
+    "sha": "148f21b",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    "date": "2026-08-05",
     "plane": "cpu",
-    "refreshed_for": null,
-    "as_of_decision": 104
+    "refreshed_for": "1.7.0",
+    "as_of_decision": 104,
+    "hash_set": "7f77ba19c148d42a",
+    "refs": {
+      "xgboost": "3.2.0",
+      "lightgbm": "4.6.0",
+      "catboost": "1.2.10"
+    }
   },
   "cpu-wide": {
-    "file": null,
-    "sha": null,
-    "host": null,
-    "date": null,
+    "file": "cpu-wide-2026-08.jsonl",
+    "sha": "148f21b",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    "date": "2026-08-05",
     "plane": "cpu",
-    "refreshed_for": null,
-    "as_of_decision": 104
+    "refreshed_for": "1.7.0",
+    "as_of_decision": 104,
+    "hash_set": "7f77ba19c148d42a",
+    "refs": {
+      "xgboost": "3.2.0",
+      "lightgbm": "4.6.0",
+      "catboost": "1.2.10"
+    }
   },
   "gpu-early-stop": {
-    "file": null,
-    "sha": null,
-    "host": null,
-    "date": null,
+    "file": "gpu-early-stop-2026-08.jsonl",
+    "sha": "148f21b",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    "date": "2026-08-05",
     "plane": "gpu",
-    "refreshed_for": null,
-    "as_of_decision": 104
+    "refreshed_for": "1.7.0",
+    "as_of_decision": 104,
+    "hash_set": "ded60c851f52cd8d",
+    "refs": {
+      "xgboost": "3.2.0",
+      "lightgbm": "4.6.0",
+      "catboost": "1.2.10"
+    }
   },
   "quality-grinsztajn": {
     "file": "grinsztajn-2026-07.jsonl",
