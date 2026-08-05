@@ -7,7 +7,7 @@
     "date": null,
     "plane": "gpu",
     "refreshed_for": null,
-    "as_of_decision": 103
+    "as_of_decision": 104
   },
   "gpu-wide": {
     "file": null,
@@ -16,7 +16,7 @@
     "date": null,
     "plane": "gpu",
     "refreshed_for": null,
-    "as_of_decision": 103
+    "as_of_decision": 104
   },
   "gpu-extreme": {
     "file": null,
@@ -25,7 +25,7 @@
     "date": null,
     "plane": "gpu",
     "refreshed_for": null,
-    "as_of_decision": 103
+    "as_of_decision": 104
   },
   "cpu-tall": {
     "file": null,
@@ -34,7 +34,7 @@
     "date": null,
     "plane": "cpu",
     "refreshed_for": null,
-    "as_of_decision": 103
+    "as_of_decision": 104
   },
   "cpu-wide": {
     "file": null,
@@ -43,7 +43,7 @@
     "date": null,
     "plane": "cpu",
     "refreshed_for": null,
-    "as_of_decision": 103
+    "as_of_decision": 104
   },
   "gpu-early-stop": {
     "file": null,
@@ -52,7 +52,7 @@
     "date": null,
     "plane": "gpu",
     "refreshed_for": null,
-    "as_of_decision": 103
+    "as_of_decision": 104
   },
   "quality-grinsztajn": {
     "file": "grinsztajn-2026-07.jsonl",
