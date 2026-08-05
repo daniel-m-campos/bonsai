@@ -191,7 +191,7 @@ The six axes are the scenario matrix of decision 103: `gpu-tall`, `gpu-wide`, `g
 
 `gpu-extreme` is the VRAM-maxout scenario and its 2^36-cell float32 input needs about 275GB of host RAM. The pod script checks `free -g` first and prints a `SKIP gpu-extreme:` line if the rental is thinner, so a degraded session is loud rather than silent; pick a higher-RAM machine and rerun that axis alone.
 
-**Phase 2: supersede.** Works from any local results directory, independent of the pod, so a failed or interrupted supersede reruns without paying for measurement again: copies the axis files into `benchmarks/results/`, updates the registry per axis, stages `git add -A benchmarks/` **before** rendering (the committed-files gate reads `git ls-files`, and a month-rollover refresh deletes the old dated files), renders, prints the A/B verdict from `ab.jsonl`, then branches, commits, and opens the PR.
+**Phase 2: supersede.** Works from any local results directory, independent of the pod, so a failed or interrupted supersede reruns without paying for measurement again: copies the axis files into `benchmarks/results/` (with `parity.jsonl` beside them as the gpu-tall axis's companion, which is where the perf page's one fused fit total comes from), updates the registry per axis, stages `git add -A benchmarks/` **before** rendering (the committed-files gate reads `git ls-files`, and a month-rollover refresh deletes the old dated files), renders, prints the A/B verdict from `ab.jsonl`, then branches, commits, and opens the PR.
 
 ```bash
 python3 scripts/standings_refresh.py supersede --results-dir standings-<date> \

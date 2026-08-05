@@ -6,24 +6,24 @@ Every results file behind a published claim is rendered across the pages below, 
 
 ## Perf division
 
-The perf standings are being re-measured on the redesigned scenario matrix (decision 103): tall and wide iso-volume pairs plus a VRAM-maxout extreme, on both planes, with early stopping as its own axis. The retired row, width, shape, frontier, and airline files are in git history; the pages below are the campaign record that led here, and the panel pages arrive with the first refresh.
+The perf standings are being re-measured on the redesigned scenario matrix (decision 103): tall and wide scenarios at constant cell count plus a memory-maxout extreme, on both planes, with early stopping as its own axis. The panels page fills in with the first refresh; the campaigns that led here are in the archive.
 
 | page | what it holds |
 |---|---|
-| [Fit at scale](results/perf-scale.md) | The campaign record at row scale: the XGBoost 3.3 recheck, the CPU prefetch round, and the leafwise ladders. |
-| [Width and shape](results/perf-shape.md) | The wide-data arc: the CPU fill and the CUDA recheck. |
-| [The single-card ceiling](results/perf-ceiling.md) | A 500M x 100 matrix trained end to end on one 80GB card. |
+| [The scenario panels](results/perf.md) | Every grower against its closest rival, both planes, at the redesigned scenarios. |
 
 ## Quality division
 
-bonsai leads the 55-task Grinsztajn standings at mean rank 1.44 with 36 outright wins; the one knob that translates ambiguously is bracketed in both directions on the standings page. The campaign smoke is the fast local regression check, and the probe archive records every feature declined by measurement.
+bonsai leads the 55-task Grinsztajn standings at mean rank 1.44 with 36 outright wins, and keeps the lead under either reading of the one knob that translates ambiguously between libraries. Every feature declined by measurement is recorded in the archive.
 
 | page | what it holds |
 |---|---|
-| [Grinsztajn standings](results/quality-grinsztajn.md) | The only citable standings: 55 third-party tasks, both knob brackets. |
-| [Campaign smoke](results/quality-campaign.md) | Ten datasets at matched knobs, the fast local regression check. |
-| [Probes](results/quality-probes.md) | Every feature admitted or declined by measurement, with its evidence. |
+| [Grinsztajn standings](results/quality-grinsztajn.md) | The only citable standings: 55 third-party tasks. |
 
 ## The code division
 
 Self-measurement of the bonsai tree, no comparative claim: [code metrics](results/code-metrics.md).
+
+## The archive
+
+Closed campaigns and probes, deleted from `benchmarks/results/` once their decisions froze: [the archive](results/archive.md) names what each one found and the git ref where its data still reads.

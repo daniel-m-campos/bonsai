@@ -10,6 +10,11 @@ Supersession also drops the entry's note, since a note describes the
 file being replaced. Run render_results.py afterwards; the generator
 loads through the registry.
 
+`--companion` registers a second file measured in the same session (the
+gpu-tall axis carries its parity rows that way, which is where the perf
+page's fused anchor comes from). It supersedes with its axis and the
+renderer holds it to the same rendered-or-removed rule.
+
 Superseding an axis that carries a plane (or a quality axis) also stamps
 `hash_set` (its plane's digest, `check_standings.plane_digest()`) and `refs`
 (the reference libraries' installed versions) so a later release can use
@@ -78,6 +83,9 @@ def main() -> int:
     ap.add_argument("--file", required=True,
                     help="new results file name (already in benchmarks/results)")
     ap.add_argument("--version", default=None)
+    ap.add_argument("--companion", default=None,
+                    help="evidence file measured with this axis (rendered "
+                         "with it, superseded with it)")
     args = ap.parse_args()
 
     reg = json.loads(REGISTRY.read_text())
@@ -106,6 +114,12 @@ def main() -> int:
             (RESULTS / old).unlink()
             print(f"superseded {old} (git history is the archive)")
         entry.pop("note", None)
+    old_companion = entry.get("companion")
+    if args.companion and old_companion != args.companion:
+        if old_companion and (RESULTS / old_companion).exists():
+            (RESULTS / old_companion).unlink()
+            print(f"superseded {old_companion} (git history is the archive)")
+        entry["companion"] = args.companion
     entry.update(file=args.file, sha=shas.pop(),
                  host=sorted(hosts)[0] if len(hosts) == 1 else None,
                  date=dates[-1] if dates else None,

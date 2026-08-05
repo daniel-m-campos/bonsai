@@ -48,5 +48,5 @@ The 570M extrapolated ceiling is arithmetic beyond the last measured step, not a
 
 ## The record
 
-- Evidence: [the single-card ceiling ladder](../../../benchmarks/single-card-ceiling-2026-07.md), and its rows in [the results ledger](../../method/results/perf-ceiling.md#the-single-card-ceiling).
+- Evidence: [the single-card ceiling ladder](../../../benchmarks/single-card-ceiling-2026-07.md), and its row in [the archive](../../method/results/archive.md).
 - Enabled by: the device-resident objective of case [E4](4-the-resident-objective.md), decisions [77 to 79](../../decisions.md).
