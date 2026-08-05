@@ -35,6 +35,11 @@ struct ProfileCounters
     // upload, and the fused route+score-update that replaces the finalize D2H.
     double obj_kernel_s = 0, score_kernel_s = 0;
     size_t launches = 0, gpu_nodes = 0, cpu_calls = 0;
+    // Nodes histogrammed by the direct-global kernel rather than a shared
+    // build: the counter that proves a cutoff change moved work between the
+    // two. A level histograms only each op's smaller child, so this counts
+    // against ops, not against gpu_nodes.
+    size_t small_nodes = 0;
 
     ProfileCounters()                                       = default;
     ProfileCounters(ProfileCounters const &)                = delete;
@@ -76,9 +81,10 @@ struct ProfileCounters
             std::println(stderr,
                          "cuda-profile: upload={:.2f}s gpu={:.2f}s unpack={:.2f}s "
                          "cpu_fallback={:.2f}s | {} launches covering {} nodes, {} "
-                         "cpu-fallback nodes",
+                         "built by the small-node kernel, {} cpu-fallback nodes",
                          part_stage_s + adv_stage_s + find_stage_s + lfind_stage_s,
-                         gpu_s, unpack_s, cpu_s, launches, gpu_nodes, cpu_calls);
+                         gpu_s, unpack_s, cpu_s, launches, gpu_nodes, small_nodes,
+                         cpu_calls);
             std::println(stderr,
                          "cuda-upload-decomp: gh={:.2f}s root_stage={:.2f}s "
                          "part_stage={:.2f}s adv_stage={:.2f}s find_stage={:.2f}s "

@@ -24,10 +24,28 @@ namespace bonsai
 namespace cuda_detail
 {
 
-// Nodes with fewer rows than this build on the CPU: the kernel launch +
-// synchronous copy-back round trip outweighs the histogram work itself
-// below roughly this size (knee measured on Jetson Orin Nano).
+// Nodes with fewer rows than this take the direct-global small-node kernel
+// instead of a shared-memory build: the shared stage's zero+merge cost is
+// bin-proportional and a small node's work is row-proportional, so below
+// some row count the stage costs more than the row visits it saves. The
+// value is the one the pre-resident CPU-fallback cutoff used and has never
+// been re-tuned; the tiled plane moved the shared build's fixed cost, so it
+// is under sweep.
 inline constexpr size_t k_min_gpu_rows = 512;
+
+// The live cutoff: k_min_gpu_rows unless BONSAI_HIST_SMALL_THRESH names
+// another row count. A sweep knob for one probe session, read once per
+// device context, never per launch.
+inline size_t hist_small_thresh()
+{
+    char const *const env = std::getenv("BONSAI_HIST_SMALL_THRESH");
+    if (env == nullptr)
+    {
+        return k_min_gpu_rows;
+    }
+    auto const rows = std::strtoull(env, nullptr, 10);
+    return rows > 0 ? static_cast<size_t>(rows) : k_min_gpu_rows;
+}
 
 // Default shared-memory histogram footprint cap (stride floats, 48 KiB
 // static budget). The engine raises it at runtime to the device's opt-in

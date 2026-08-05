@@ -197,7 +197,7 @@ size_t CudaDeviceContext::LevelPipeline::stage_children(
     {
         uint32_t const offset = next_offsets[op.small_slot];
         uint32_t const count  = next_counts[op.small_slot];
-        if (count >= k_min_gpu_rows)
+        if (count >= small_thresh)
         {
             row_offsets.host.push_back(offset);
             row_counts.host.push_back(count);
@@ -379,8 +379,9 @@ void CudaDeviceContext::stage_selection(std::span<feature_id_t const> selected,
     lvl.sel_slot.sync();
 }
 
-// Says once per context what layout the plane has and which build reads it,
-// so a profiled session documents its own memory order.
+// Says once per context what layout the plane has, which build reads it, and
+// where the small-node cutoff sits, so a profiled session documents its own
+// memory order and its own routing.
 void CudaDeviceContext::note_plane(bool tiled, size_t shared)
 {
     if (plane_noted || !prof_counters.enabled)
@@ -390,9 +391,10 @@ void CudaDeviceContext::note_plane(bool tiled, size_t shared)
     plane_noted = true;
     std::println(stderr,
                  "bonsai: bin plane is tile-blocked, width {}, {} cells; histogram "
-                 "build is {} at {} shared bytes per block",
+                 "build is {} at {} shared bytes per block; nodes under {} rows take "
+                 "the small-node kernel",
                  k_bin_tile_width, data.bins_are_u8 ? "u8" : "u16",
-                 tiled ? "tiled" : "one feature per block", shared);
+                 tiled ? "tiled" : "one feature per block", shared, lvl.small_thresh);
 }
 
 // Every shared-memory histogram build goes through here, depthwise and leaf
@@ -896,6 +898,7 @@ void CudaDeviceContext::advance_level(Dataset const                             
     {
         ++prof.launches;
         prof.gpu_nodes += child_slots;
+        prof.small_nodes += lvl.small_offsets.size();
     }
     lap(prof.gpu_s);
 }
@@ -1296,9 +1299,9 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
     leaf.build_seg.sync(3);
     lap(prof.adv_stage_s);
 
-    // Same <512-row policy as the level plane: below the cutoff the shared
-    // stage's fixed per-(node, feature) cost dominates the row visits.
-    if (small_count >= k_min_gpu_rows)
+    // Same cutoff as the level plane: below it the shared stage's fixed
+    // per-(node, feature) cost dominates the row visits.
+    if (small_count >= lvl.small_thresh)
     {
         auto const n_chunks =
             std::clamp<uint32_t>((small_count + 32767) / 32768, 1, 64);
@@ -1311,7 +1314,7 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
     data.dispatch_bins(
         [&](auto const *bins)
         {
-            if (small_count < k_min_gpu_rows)
+            if (small_count < lvl.small_thresh)
             {
                 hist_small_kernel<<<dim3(1), dim3(128)>>>(
                     bins, lvl.gh_ordered.data(), lvl.rows.data(),
@@ -1331,6 +1334,7 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
     {
         ++prof.launches;
         prof.gpu_nodes += 2;
+        prof.small_nodes += small_count < lvl.small_thresh ? 1 : 0;
     }
     lap(prof.gpu_s);
 }

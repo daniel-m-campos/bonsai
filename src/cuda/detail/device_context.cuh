@@ -133,13 +133,15 @@ struct CudaDeviceContext
         DeviceBuffer<double> level_b;
         bool                 cur_is_a   = true;
         uint32_t             n_selected = 0;
-        uint32_t             stride = 0;  // doubles per (slot, feature): 2*max_sel_bins
-        Staged<uint32_t>     slots;       // hist out_slot per batched small
-        Staged<uint32_t>     triples;     // (parent, small, large) per op
-        Staged<double>       node_sums;   // 2 per frontier node
-        Staged<double>       node_bounds; // lo, hi per frontier node
-        Staged<char>         allowed;     // n_nodes * n_sel, only when constrained
-        Staged<int>          monotone;    // per feature
+        // The small-node cutoff both planes route by, resolved once here.
+        size_t           small_thresh = hist_small_thresh();
+        uint32_t         stride = 0;  // doubles per (slot, feature): 2*max_sel_bins
+        Staged<uint32_t> slots;       // hist out_slot per batched small
+        Staged<uint32_t> triples;     // (parent, small, large) per op
+        Staged<double>   node_sums;   // 2 per frontier node
+        Staged<double>   node_bounds; // lo, hi per frontier node
+        Staged<char>     allowed;     // n_nodes * n_sel, only when constrained
+        Staged<int>      monotone;    // per feature
         DeviceBuffer<FeatBest> feat_best;
         Staged<FeatBest>       node_best;
         Staged<double>         level_child; // oblivious: 4 per node [gL,hL,gR,hR]
