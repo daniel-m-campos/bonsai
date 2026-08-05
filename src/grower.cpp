@@ -248,6 +248,24 @@ std::span<MirrorSlice const> mirror_slices(Dataset const                &ds,
     return slices;
 }
 
+// Probe toggles, temporary: opt-in gather of (g, h) into node order, and a
+// prefetch-distance override; both default to the shipped behavior.
+bool hist_gather_on()
+{
+    static bool const on = std::getenv("BONSAI_HIST_GATHER") != nullptr;
+    return on;
+}
+
+size_t hist_k_ahead()
+{
+    static size_t const v = []
+    {
+        char const *e = std::getenv("BONSAI_HIST_KAHEAD");
+        return e != nullptr ? static_cast<size_t>(std::atoi(e)) : size_t{16};
+    }();
+    return v;
+}
+
 // Runs the plan's units over one mirror slice in one parallel section: each
 // accumulates its row block, reading the row's bins as one contiguous strip
 // of the slice's mirror block and grad/hess once per row.
@@ -296,8 +314,43 @@ void run_fill(FillPlan const &plan, Dataset const &ds, floats_view grad,
             // 16M cell: 78s of a 107s fit). Pull the strip (two lines at
             // 100 u8 features) and the grad/hess pair a fixed distance
             // ahead; reads only, so results are bit-identical.
-            constexpr size_t k_ahead = 16;
-            size_t const     n_sel_b = sl.n_selected();
+            size_t const k_ahead = hist_k_ahead();
+            size_t const n_sel_b = sl.n_selected();
+            if (hist_gather_on())
+            {
+                // Probe arm: gather the unit's (g, h) pairs into one
+                // contiguous buffer first, so the fill loop keeps two
+                // scattered streams instead of four; add order unchanged,
+                // results bit-identical.
+                static thread_local std::vector<float> gh;
+                gh.resize(2 * (unit.k1 - unit.k0));
+                for (size_t k = unit.k0; k < unit.k1; ++k)
+                {
+                    size_t const r              = rows[k];
+                    gh[2 * (k - unit.k0)]       = grad[r];
+                    gh[(2 * (k - unit.k0)) + 1] = hess[r];
+                }
+                for (size_t k = unit.k0; k < unit.k1; ++k)
+                {
+                    if (k + k_ahead < unit.k1)
+                    {
+                        size_t const rp = rows[k + k_ahead];
+                        __builtin_prefetch(rm_ptr + (rp * width), 0, 0);
+                        __builtin_prefetch(rm_ptr + (rp * width) + 64, 0, 0);
+                    }
+                    size_t const         r  = rows[k];
+                    uint8_t const *const rb = rm_ptr + (r * width);
+                    float const          g  = gh[2 * (k - unit.k0)];
+                    float const          h  = gh[(2 * (k - unit.k0)) + 1];
+                    for (size_t s = 0; s < n_sel_b; ++s)
+                    {
+                        HistCell &c = base_ptr[s][rb[sel_ptr[sl.s0 + s] - fid0]];
+                        c.sum_grad += g;
+                        c.sum_hess += h;
+                    }
+                }
+                return;
+            }
             for (size_t k = unit.k0; k < unit.k1; ++k)
             {
                 if (k + k_ahead < unit.k1)
@@ -392,6 +445,18 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         return;
     }
     auto &prof = grower_detail::GrowProfiler::instance();
+    // Provable toggle engagement: an equality A/B cannot detect an inert
+    // toggle, so the session asserts this line per arm.
+    static bool const announced = [&prof]
+    {
+        if (prof.enabled)
+        {
+            std::println(stderr, "hist-fill: gather={} k_ahead={}",
+                         hist_gather_on() ? "active" : "off", hist_k_ahead());
+        }
+        return true;
+    }();
+    (void) announced;
     for (SplitInput const &node : nodes)
     {
         prof.populate_adds += static_cast<double>(node.rows.size()) *
