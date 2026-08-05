@@ -287,9 +287,14 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         root.id = 0;
         root.rows.assign(row_indices.begin(), row_indices.end());
         engine_.populate(ds_, grad_, hess_, root, selected_);
-        root.sums      = root.totals();
-        root.row_count = root.rows.size();
-        lap(GrowProfiler::instance().populate_s);
+        root.sums         = root.totals();
+        root.row_count    = root.rows.size();
+        auto        &prof = GrowProfiler::instance();
+        double const dt   = lap.take();
+        prof.populate_s += dt;
+        prof.level_populate_s[0] += dt;
+        prof.level_populate_adds[0] += static_cast<double>(root.rows.size()) *
+                                       static_cast<double>(selected_.size());
         return root;
     }
 
@@ -321,7 +326,19 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
     {
         GrowProfiler::Lap lap;
         host_build_children(engine_, ds_, grad_, hess_, selected_, plan);
-        lap(GrowProfiler::instance().populate_s);
+        auto        &prof = GrowProfiler::instance();
+        double const dt   = lap.take();
+        prof.populate_s += dt;
+        size_t const slot =
+            std::min<size_t>(++fill_depth_, GrowProfiler::k_level_slots - 1);
+        double rows_filled = 0;
+        for (auto &d : plan.splits)
+        {
+            rows_filled += static_cast<double>(smaller_child(d.p).rows.size());
+        }
+        prof.level_populate_s[slot] += dt;
+        prof.level_populate_adds[slot] +=
+            rows_filled * static_cast<double>(selected_.size());
     }
 
     // End of tree: the surviving frontier becomes leaves (values and row ids
@@ -540,6 +557,9 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
     floats_view       grad_;
     floats_view       hess_;
     feature_view      selected_;
+    // Depth of the last fill this tree: make_root is slot 0, each
+    // build_children call fills one level deeper.
+    size_t fill_depth_ = 0;
 };
 
 // The finished dense tree flattened for the device-resident epilogue, which
