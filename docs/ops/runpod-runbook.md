@@ -201,3 +201,5 @@ python3 scripts/standings_refresh.py supersede --results-dir standings-<date> \
 `--no-pr` stops after the local commit so you can inspect the diff before pushing and opening the PR by hand.
 
 Release ordering is unchanged from decision 92: merge the version-bump PR FIRST, then run the refresh with `--prev-version` = the last release and no `--only-stale` (a release re-measures every axis on one host), merge the refresh PR (a **moved** verdict needs a `Standings:`-tagged decision first; docs-check enforces), then tag. The order matters because `update_standings.py` stamps `refreshed_for` from pyproject at the refresh's checkout sha: a refresh run before the bump stamps the old version and the publish gate then fails at tag time.
+
+A pushed tag alone publishes nothing: wheels.yml's publish path triggers on the GitHub release event, so the release recipe ends with `gh release create v<version> --notes-file <changelog section>`, which is what fires the build, the pod self-validation, the standings gate, and the PyPI upload. This has been re-learned twice; it is written here so there is no third time.
