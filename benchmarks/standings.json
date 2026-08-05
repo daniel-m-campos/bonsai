@@ -99,7 +99,7 @@
     "refreshed_for": "1.6.1",
     "as_of_decision": 92,
     "sha_partial": true,
-    "hash_set": "fb1ed27e8e981461",
+    "hash_set": "ded60c851f52cd8d",
     "refs": {
       "xgboost": "3.2.0",
       "lightgbm": "4.6.0",
@@ -109,10 +109,10 @@
   },
   "code": {
     "file": "code-metrics-2026-07.jsonl",
-    "sha": "d2b914b9e8d84f9e35548ce79b00c38bd3447915",
+    "sha": "1ead47579afdd9bd5a61c9737d43007354e9d50d",
     "host": null,
     "date": null,
-    "refreshed_for": "1.6.1",
+    "refreshed_for": "1.7.0",
     "as_of_decision": 92,
     "sha_partial": true,
     "note": "Self-measurement; the meta row carries the sha. Refreshed locally by scripts/measure_complexity.py (decision 69)."
