@@ -18,7 +18,7 @@ export RUNPOD_KEY="rpa_..."   # from https://console.runpod.io/user/settings
 PUB=$(cat ~/.ssh/id_ed25519.pub)
 ```
 
-- The image: `ghcr.io/daniel-m-campos/bonsai-ci:cuda12.4` (public GHCR, built by the repo's `ci-image` workflow from `docker/ci.Dockerfile`). CUDA 12.4 toolkit, clang-21 + libc++, cmake/ninja + python 3.12 with numpy/nanobind/xgboost/lightgbm/catboost at `/opt/venv`, FetchContent deps pre-baked. Clone-to-benchmark in under 5 minutes.
+- The image: `ghcr.io/daniel-m-campos/bonsai-ci:cuda12.8` (public GHCR, built by the repo's `ci-image` workflow from `docker/ci.Dockerfile`). CUDA 12.8 toolkit, clang-21 + libc++, cmake/ninja + python 3.12 with numpy/nanobind/xgboost/lightgbm/catboost at `/opt/venv`, FetchContent deps pre-baked. Clone-to-benchmark in under 5 minutes. cuda12.8 covers sm_120 (Blackwell) natively, no toolkit side-install; L40S r550-driver pods still run its 12.8-built binaries via CUDA minor-version compatibility. Branches pinned to the old `cuda12.4` tag keep pulling it unchanged.
 
 ## 1. Create a pod
 
@@ -29,7 +29,7 @@ curl -s https://rest.runpod.io/v1/pods \
   -H "Authorization: Bearer $RUNPOD_KEY" -H 'content-type: application/json' \
   -d "{
     \"name\": \"bonsai-validate\",
-    \"imageName\": \"ghcr.io/daniel-m-campos/bonsai-ci:cuda12.4\",
+    \"imageName\": \"ghcr.io/daniel-m-campos/bonsai-ci:cuda12.8\",
     \"gpuTypeIds\": [\"NVIDIA L40S\"],
     \"gpuCount\": 1,
     \"cloudType\": \"SECURE\",
@@ -151,7 +151,7 @@ The sweep is not optional: **an error-returning create can still have created a 
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `runtime` stays null forever | Image needs a newer driver than the host (e.g. any `cu1281` image on a 12.4-driver machine — most of the SECURE pool) | Use the bonsai-ci image (cu12.4) or check driver via console logs; delete and re-roll |
+| `runtime` stays null forever | Image needs a newer driver than the host (e.g. any `cu1281` image on a 12.4-driver machine — most of the SECURE pool) | The bonsai-ci image is now cuda12.8; L40S r550-driver pods run its 12.8-built binaries via CUDA minor-version compatibility. If it still stalls, check driver via console logs; delete and re-roll |
 | A reference arm trains at CPU speed on a GPU pod, or the bench raises "silently fell back to CPU" | The library's PyPI wheel is built against a newer CUDA major than the host driver supports; xgboost 3.4.0 ships a CUDA 13.3 build, which needs an r580 driver and sees zero devices on the 12.4-driver pool | Compare `xgboost.build_info()["CUDA_VERSION"]` against the `CUDA Version` in `nvidia-smi` (section 3), then pin the last CUDA 12 release (`uv pip install "xgboost<3.4"`) or re-roll onto a newer-driver host |
 | runc mount error in console, crash-loop | Broken host (missing `/dev/dri/cardN`) | Delete immediately, re-roll — waiting never helps |
 | `Permission denied (publickey)` | Pod created without `PUBLIC_KEY` env | Delete + recreate; env cannot be added to a running pod |

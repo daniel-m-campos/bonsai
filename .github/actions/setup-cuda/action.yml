@@ -3,8 +3,8 @@ description: >-
   CUDA toolkit for clang CUDA builds on GPU-less runners (no driver): nvcc's
   ptxas/fatbinary, cudart dev, curand dev. One source of truth for the CUDA
   build-toolkit version across ci.yml and wheels.yml. The pod image
-  (docker/ci.Dockerfile) deliberately stays at 12.4 — that pin is the RunPod
-  driver-compatibility ceiling for container start, not a build toolkit.
+  (docker/ci.Dockerfile) is now pinned at 12.8, the fleet driver-compatibility
+  floor for sm_120 container start, not a build toolkit.
 inputs:
   version:
     description: CUDA toolkit version (major.minor); 12.x only — clang cannot target CUDA 13

@@ -55,7 +55,9 @@ RESULTS = REPO / "benchmarks" / "results"
 POD_SCRIPT = REPO / "scripts" / "standings_refresh_pod.sh"
 
 REST = "https://rest.runpod.io/v1"
-IMAGE = "ghcr.io/daniel-m-campos/bonsai-ci:cuda12.4"
+# cuda12.8, not cuda12.4: the standings GPU below is sm_120 Blackwell,
+# which a 12.4 toolkit cannot target with --offload-arch=native.
+IMAGE = "ghcr.io/daniel-m-campos/bonsai-ci:cuda12.8"
 GPU = "NVIDIA RTX PRO 6000 Blackwell Server Edition"
 
 # The band the fused and two-step forms must agree inside. Measured at 2.5%

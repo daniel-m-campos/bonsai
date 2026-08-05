@@ -4,6 +4,11 @@ name: ci-image
 # and pushes it to GHCR. Runs only when the image definition changes, or on
 # demand. The package must be public for RunPod pods to pull anonymously:
 # github.com -> package bonsai-ci -> settings -> change visibility (one-time).
+#
+# The pushed tag moved to cuda12.8 with the Dockerfile's base bump;
+# cuda12.4 is deliberately absent from the tag list below so the
+# registry's existing cuda12.4 tag stays frozen for branches still pinned
+# to it, instead of being silently overwritten by a 12.8-based rebuild.
 on:
   workflow_dispatch:
   push:
@@ -31,7 +36,7 @@ jobs:
           file: docker/ci.Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/bonsai-ci:cuda12.4
+            ghcr.io/${{ github.repository_owner }}/bonsai-ci:cuda12.8
             ghcr.io/${{ github.repository_owner }}/bonsai-ci:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
