@@ -142,8 +142,8 @@ struct CudaDeviceContext
         Staged<int>          monotone;    // per feature
         DeviceBuffer<FeatBest> feat_best;
         Staged<FeatBest>       node_best;
-        Staged<double>         level_child; // oblivious: 4 per node [gL,hL,gR,hR]
-        DeviceBuffer<double>   level_score; // oblivious: per (feature, dl, bin) scores
+        Staged<double>         level_child; // levelwise: 4 per node [gL,hL,gR,hR]
+        DeviceBuffer<double>   level_score; // levelwise: per (feature, dl, bin) scores
         Staged<uint32_t>       small_offsets; // small-node subset: offset/count/slot
         Staged<uint32_t>       small_counts;
         Staged<uint32_t>       small_slots;
@@ -243,8 +243,8 @@ struct CudaDeviceContext
         void unpack_splits(std::span<SplitInput const> level, TreeConfig const &config,
                            std::span<SplitOutput> out, std::span<HistCell> child_sums);
 
-        // Oblivious level-find staging: node_sums only. The level kernel reads no
-        // bounds/monotone/interaction state (the oblivious grower rejects those
+        // Levelwise level-find staging: node_sums only. The level kernel reads no
+        // bounds/monotone/interaction state (the levelwise grower rejects those
         // constraints at construction), so the full stage_find_inputs is waste.
         void stage_level_sums(std::span<SplitInput const> level);
     };

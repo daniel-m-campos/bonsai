@@ -4,13 +4,15 @@ These notes are the historical engineering record, kept for reference and for ag
 
 Per-component design docs. Numbered roughly in build order. Source of truth for choices is [`../decisions.md`](../decisions.md); when a doc disagrees, decisions wins.
 
+> **Naming note.** These bodies are kept as written, so they call the symmetric-tree grower `oblivious` and its CUDA twin `cuda_oblivious`. Those config names are now `levelwise` and `cuda_levelwise`; the C++ types (`ObliviousTree`, `ObliviousGrower`) keep the old spelling because the *tree* is oblivious while the *growth policy* is level-wise. See the CHANGELOG entry for the break.
+
 ## Contents
 
 | # | Doc | Status |
 |---|---|---|
 | 1 | [`1-dataset.md`](1-dataset.md): Dataset, BinMapper, readers | done |
 | 2 | [`2-histogram.md`](2-histogram.md): gradient/hessian sums, subtraction, parallel reduce | done |
-| 3 | [`3-tree.md`](3-tree.md): Tree concept, `DenseTree` + `ObliviousTree`, depth-wise + oblivious growers, histogram splitter | done |
+| 3 | [`3-tree.md`](3-tree.md): Tree concept, `DenseTree` + `ObliviousTree`, depth-wise + levelwise growers, histogram splitter | done |
 | 4 | [`4-objective.md`](4-objective.md): Objective concept, MSE, logloss | done |
 | 5 | [`5-booster.md`](5-booster.md): Booster, training loop, `update_one_iter` | done |
 | 6 | [`6-dispatch.md`](6-dispatch.md): registry, runtime → static boundary | done |

@@ -176,6 +176,20 @@ TEST_CASE("make_booster: unknown sampler name throws UnknownImplError",
     CHECK_THROWS_AS(make_booster(cfg), UnknownImplError);
 }
 
+TEST_CASE("make_booster: the retired oblivious grower names are unknown",
+          "[registry][make_booster][error]")
+{
+    // The rename to levelwise is a hard break with no alias: the old names
+    // must fail like any other typo, on CPU and CUDA alike.
+    for (auto const *retired : {"oblivious", "cuda_oblivious"})
+    {
+        CAPTURE(retired);
+        Config cfg               = tiny_cfg();
+        cfg.dispatch.grower_name = retired;
+        CHECK_THROWS_AS(make_booster(cfg), UnknownImplError);
+    }
+}
+
 TEMPLATE_LIST_TEST_CASE("make_booster: parity with direct instantiation",
                         "[registry][make_booster][parity]", DispatchCombos)
 {

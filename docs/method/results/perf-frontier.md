@@ -16,13 +16,13 @@
 | bonsai_cuda_depthwise | 130 | 1.1 | 9.3 | 10.42 | 0.8859 |
 | bonsai_cuda_depthwise | 200 | 1.1 | 13.7 | 14.80 | 0.8918 |
 | bonsai_cuda_depthwise | 300 | 1.1 | 19.6 | 20.74 | 0.8934 |
-| bonsai_cuda_oblivious | 60 | 1.1 | 4.5 | 5.52 | 0.8386 |
-| bonsai_cuda_oblivious | 80 | 1.0 | 5.7 | 6.73 | 0.8613 |
-| bonsai_cuda_oblivious | 100 | 1.0 | 6.9 | 7.90 | 0.8743 |
-| bonsai_cuda_oblivious | 130 | 1.1 | 8.7 | 9.87 | 0.8852 |
-| bonsai_cuda_oblivious | 200 | 1.0 | 12.7 | 13.64 | 0.8946 |
-| bonsai_cuda_oblivious | 300 | 1.1 | 18.2 | 19.30 | 0.8973 |
-| bonsai_cuda_oblivious | 450 | 1.2 | 26.3 | 27.50 | 0.8979 |
+| bonsai_cuda_levelwise | 60 | 1.1 | 4.5 | 5.52 | 0.8386 |
+| bonsai_cuda_levelwise | 80 | 1.0 | 5.7 | 6.73 | 0.8613 |
+| bonsai_cuda_levelwise | 100 | 1.0 | 6.9 | 7.90 | 0.8743 |
+| bonsai_cuda_levelwise | 130 | 1.1 | 8.7 | 9.87 | 0.8852 |
+| bonsai_cuda_levelwise | 200 | 1.0 | 12.7 | 13.64 | 0.8946 |
+| bonsai_cuda_levelwise | 300 | 1.1 | 18.2 | 19.30 | 0.8973 |
+| bonsai_cuda_levelwise | 450 | 1.2 | 26.3 | 27.50 | 0.8979 |
 | bonsai_cuda_leafwise | 60 | 1.2 | 7.2 | 8.41 | 0.8459 |
 | bonsai_cuda_leafwise | 80 | 1.2 | 9.5 | 10.63 | 0.8669 |
 | bonsai_cuda_leafwise | 100 | 1.1 | 12.1 | 13.24 | 0.8777 |
@@ -47,32 +47,32 @@
 
 ### Ordered boosting at scale (CatBoost door)
 
-The probe behind decisions 62 to 64: CatBoost's Ordered vs Plain modes against bonsai oblivious as rows grow.
+The probe behind decisions 62 to 64: CatBoost's Ordered vs Plain modes against bonsai levelwise as rows grow.
 
 | door | rows | learner | knob | fit_s | test r2 |
 |---|---|---|---|---|---|
 | ordered | 200,000 | catboost_ordered | iters=100 | 17.06 | 0.8722 |
 | ordered | 200,000 | catboost_plain | iters=100 | 2.51 | 0.8720 |
-| ordered | 200,000 | bonsai_oblivious | iters=100 | 3.91 | 0.8747 |
+| ordered | 200,000 | bonsai_levelwise | iters=100 | 3.91 | 0.8747 |
 | ordered | 200,000 | catboost_ordered | iters=200 | 30.59 | 0.8932 |
 | ordered | 200,000 | catboost_plain | iters=200 | 4.66 | 0.8937 |
-| ordered | 200,000 | bonsai_oblivious | iters=200 | 7.30 | 0.8940 |
+| ordered | 200,000 | bonsai_levelwise | iters=200 | 7.30 | 0.8940 |
 | ordered | 1,000,000 | catboost_ordered | iters=100 | 63.22 | 0.8754 |
 | ordered | 1,000,000 | catboost_plain | iters=100 | 8.36 | 0.8760 |
-| ordered | 1,000,000 | bonsai_oblivious | iters=100 | 9.98 | 0.8766 |
+| ordered | 1,000,000 | bonsai_levelwise | iters=100 | 9.98 | 0.8766 |
 | bins | 1,000,000 | catboost_plain | bin samples=None | 8.01 | 0.8760 |
-| bins | 1,000,000 | bonsai_oblivious | bin samples=200000 | 9.76 | 0.8766 |
-| bins | 1,000,000 | bonsai_oblivious | bin samples=1000000 | 9.98 | 0.8766 |
+| bins | 1,000,000 | bonsai_levelwise | bin samples=200000 | 9.76 | 0.8766 |
+| bins | 1,000,000 | bonsai_levelwise | bin samples=1000000 | 9.98 | 0.8766 |
 | bins | 4,000,000 | catboost_plain | bin samples=None | 36.73 | 0.8762 |
-| bins | 4,000,000 | bonsai_oblivious | bin samples=200000 | 34.36 | 0.8763 |
-| bins | 4,000,000 | bonsai_oblivious | bin samples=1000000 | 35.40 | 0.8766 |
-| bins | 4,000,000 | bonsai_oblivious | bin samples=4000000 | 36.62 | 0.8764 |
+| bins | 4,000,000 | bonsai_levelwise | bin samples=200000 | 34.36 | 0.8763 |
+| bins | 4,000,000 | bonsai_levelwise | bin samples=1000000 | 35.40 | 0.8766 |
+| bins | 4,000,000 | bonsai_levelwise | bin samples=4000000 | 36.62 | 0.8764 |
 | isolate | 16,000,000 | catboost_plain_cpu | - | 157.67 | 0.8744 |
-| isolate | 16,000,000 | bonsai_oblivious_cpu | - | 171.75 | 0.8749 |
+| isolate | 16,000,000 | bonsai_levelwise_cpu | - | 171.75 | 0.8749 |
 | isolate | 16,000,000 | bonsai_depthwise_cpu | - | 151.93 | 0.8782 |
-| gpu | 16,000,000 | bonsai_cuda_oblivious_prefix | iters=100 | - | 0.8638 |
-| gpu | 16,000,000 | bonsai_cuda_oblivious_fixed | iters=100 | 29.21 | 0.8749 |
-| gpu | 16,000,000 | bonsai_cuda_oblivious_fixed | iters=160 | 41.03 | 0.8913 |
+| gpu | 16,000,000 | bonsai_cuda_levelwise_prefix | iters=100 | - | 0.8638 |
+| gpu | 16,000,000 | bonsai_cuda_levelwise_fixed | iters=100 | 29.21 | 0.8749 |
+| gpu | 16,000,000 | bonsai_cuda_levelwise_fixed | iters=160 | 41.03 | 0.8913 |
 | gpu | 16,000,000 | bonsai_cuda_depthwise | iters=100 | 30.37 | 0.8776 |
 | gpu | 16,000,000 | catboost_gpu | iters=100 | 23.81 | 0.8751 |
 | gpu | 16,000,000 | catboost_gpu | iters=150 | 28.37 | 0.8892 |

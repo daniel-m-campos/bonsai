@@ -46,7 +46,7 @@ For MSE, LogLoss, or Poisson with all-rows or Bernoulli sampling, the whole per-
 Labels and scores upload once into `ResidentPlane`.
 Each tree derives its gradients on the card, and the epilogue folds the leaf values back into the resident scores.
 The lesson from [case E4](../learn/engine/4-the-resident-objective.md) is the title of this section: delete a boundary, do not optimize across it.
-The single-GPU 16M oblivious round fell from 104 to 64 ms (decision 78).
+The single-GPU 16M levelwise round fell from 104 to 64 ms (decision 78).
 The resident model proved bit-identical to the host-objective model on a Jetson.
 
 ## What stays host-side on purpose

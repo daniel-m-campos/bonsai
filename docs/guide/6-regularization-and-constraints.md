@@ -64,7 +64,7 @@ alone). Prediction becomes a sum of functions over the groups only.
   features. Config: `tree.interaction_constraints = ["0,1", "2,3"]`
   (CLI: `0+1,2+3`).
 
-The oblivious grower rejects both constraint types at construction rather
+The levelwise grower rejects both constraint types at construction rather
 than silently ignoring them.
 
 ## Try it

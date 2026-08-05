@@ -113,7 +113,7 @@ $SSH 'cd /root/bonsai && spec="{\"variant\":\"bonsai_cuda_depthwise\",\"cell\":{
   grep -o "RESULT .*" /tmp/run.out; grep -E "grow-profile|fit-profile|ingest-profile|cuda-upload-decomp" /tmp/run.err | tail -4'
 ```
 
-Other variants for same-pod ladders: `xgb_cuda`, `lgbm_cpu`, `catboost_gpu`, `bonsai_cuda_oblivious`, etc. (the `VARIANTS` table in `scripts/bench_scaling.py`). Full sweeps go through `make bench-scaling ARGS="--axis rows"` instead of raw worker calls — only the make target writes the results JSONL.
+Other variants for same-pod ladders: `xgb_cuda`, `lgbm_cpu`, `catboost_gpu`, `bonsai_cuda_levelwise`, etc. (the `VARIANTS` table in `scripts/bench_scaling.py`). Full sweeps go through `make bench-scaling ARGS="--axis rows"` instead of raw worker calls — only the make target writes the results JSONL.
 
 For anything longer than a few minutes, detach it so an SSH drop doesn't kill the run, and poll:
 
@@ -187,7 +187,7 @@ python3 scripts/standings_refresh.py measure --axes rows,width,frontier,airline 
 
 A `finally` block deletes the pod and sweeps any stray `bonsai-standings-*` pods regardless of how the run ends. Verify the fleet is empty afterward (same check as section 7): zero pods listed means zero billing. `--keep-pod` skips teardown for debugging; delete it yourself if you use it. Results land in a dated directory printed at the end (`--out-dir` to choose one).
 
-The width axis has two clocks. Without a flag it measures `standings-cols`, which drops the 16384-column CPU arms (`lgbm_cpu`, `bonsai_oblivious`): those two cells pin the wall clock with no GPU-side change able to move them, so a routine refresh chasing a code change skips them. `measure --width-full` measures `standings-cols-full` instead, keeping every arm; both write to the same output file, so `supersede --axes ...` always names `width`, never `width-full`.
+The width axis has two clocks. Without a flag it measures `standings-cols`, which drops the 16384-column CPU arms (`lgbm_cpu`, `bonsai_levelwise`): those two cells pin the wall clock with no GPU-side change able to move them, so a routine refresh chasing a code change skips them. `measure --width-full` measures `standings-cols-full` instead, keeping every arm; both write to the same output file, so `supersede --axes ...` always names `width`, never `width-full`.
 
 **Phase 2: supersede.** Works from any local results directory, independent of the pod, so a failed or interrupted supersede reruns without paying for measurement again: copies the axis files into `benchmarks/results/`, updates the registry per axis, stages `git add -A benchmarks/` **before** rendering (the committed-files gate reads `git ls-files`, and a month-rollover refresh deletes the old dated files), renders, prints the A/B verdict from `ab.jsonl`, then branches, commits, and opens the PR.
 

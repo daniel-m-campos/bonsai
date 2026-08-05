@@ -159,7 +159,7 @@ _XGBOOST: Final = _Library(
               to_native=lambda v: _lookup(_XGB_OBJECTIVES, v, "objective"),
               to_foreign=lambda v: _lookup(_XGB_OBJECTIVES_REV, v, "objective")),
         _Knob("quantile_alpha", "objective.quantile_alpha"),
-        # XGBoost has no symmetric-tree policy, so bonsai's oblivious grower
+        # XGBoost has no symmetric-tree policy, so bonsai's levelwise grower
         # is reported as unmappable rather than flattened to depthwise.
         _Knob("grow_policy", "dispatch.grower_name",
               to_native=lambda v: _lookup(_XGB_GROW_POLICY, v, "grow_policy"),
@@ -293,7 +293,7 @@ _CATBOOST_OBJECTIVES: Final = {
 }
 
 _CATBOOST_GROW_POLICY: Final = {
-    "SymmetricTree": "oblivious",
+    "SymmetricTree": "levelwise",
     "Depthwise": "depthwise",
     "Lossguide": "leafwise",
 }
@@ -348,7 +348,7 @@ _CATBOOST: Final = _Library(
         _Knob("monotone_constraints", "tree.monotone_constraints"),
     ),
     dropped_foreign={
-        "task_type": "in bonsai the device is the grower name, e.g. cuda_oblivious",
+        "task_type": "in bonsai the device is the grower name, e.g. cuda_levelwise",
         "devices": "in bonsai the device is the grower name",
         "verbose": "logging only",
         "logging_level": "logging only",
@@ -502,7 +502,7 @@ def to_xgboost(pairs: Iterable[tuple[str, Any]], *,
     ------
     ValueError
         Under ``strict``, when any key has no XGBoost counterpart. Always,
-        when a value has none (bonsai's ``oblivious`` grower, say).
+        when a value has none (bonsai's ``levelwise`` grower, say).
 
     Examples
     --------

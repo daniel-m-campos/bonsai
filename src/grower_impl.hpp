@@ -481,13 +481,13 @@ ObliviousGrower<EngineT, SplitterT>::ObliviousGrower(TreeConfig const &cfg)
         if (mc != 0)
         {
             throw ConfigError(
-                "monotone_constraints are not supported by the oblivious grower");
+                "monotone_constraints are not supported by the levelwise grower");
         }
     }
     if (!cfg.interaction_constraints.empty())
     {
         throw ConfigError(
-            "interaction_constraints are not supported by the oblivious grower");
+            "interaction_constraints are not supported by the levelwise grower");
     }
 }
 
@@ -591,7 +591,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     // Host plane stamps each leaf's rows; device plane stamps the resident
     // segments and downloads the per-row assignment. Lapped as finalize:
     // the 16M CPU decomposition (issue #46) found ~15s of stamping hiding
-    // in oblivious's conservation gap because only depthwise lapped it.
+    // in levelwise's conservation gap because only depthwise lapped it.
     gd::GrowProfiler::Lap flap;
     step.finalize_leaves(frontier, leaf_table, values, leaf_ids, row_indices,
                          std::span<ObliviousTree::LevelSplit const>{level_splits},

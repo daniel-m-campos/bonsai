@@ -294,7 +294,7 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
     }
 
     // Per-node splitter, or one level-wide find broadcast to every node when
-    // the splitter is level-granular (the oblivious growth shape).
+    // the splitter is level-granular (the levelwise growth shape).
     // Level transaction, phase 1: split decisions for the whole frontier
     // (decision 53). The frontier is the transaction's input; outputs are
     // caller-owned and reused across levels.
@@ -336,7 +336,7 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         }
     }
 
-    // Oblivious leaf finalize, host plane: each frontier node is a leaf,
+    // Levelwise leaf finalize, host plane: each frontier node is a leaf,
     // indexed by position into leaf_table; stamp its rows directly. The level
     // split/bin spans feed only the GPU resident finalize; the host ignores
     // them.
@@ -642,7 +642,7 @@ class LevelStep<EngineT, SplitterT>
             child_sums.clear();
             out.resize(current.size());
             child_sums.resize(2 * current.size());
-            // Oblivious (LevelSplitFinder) picks one split for the whole
+            // Levelwise (LevelSplitFinder) picks one split for the whole
             // frontier; depthwise/leafwise pick one per node. The engine
             // kernels hardcode histogram-gain scoring, so only the histogram
             // finders may select this plane.
@@ -787,7 +787,7 @@ class LevelStep<EngineT, SplitterT>
         }
     }
 
-    // Oblivious leaf finalize: the frontier nodes are the leaves, indexed by
+    // Levelwise leaf finalize: the frontier nodes are the leaves, indexed by
     // position into leaf_table. On device the rows are resident, so stamp each
     // final slot with its leaf index and download the per-row assignment; in
     // fallback mode the rows live on the host and must be stamped here — the

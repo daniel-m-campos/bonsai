@@ -4,6 +4,9 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### Changed
+- **The `oblivious` grower is now `levelwise`, and `cuda_oblivious` is `cuda_levelwise`** (issue #305). This is a hard rename with no alias: `dispatch.grower_name = "oblivious"` raises `make_booster: no impl for (mse, oblivious, all_rows)`, naming the objective and sampler alongside it, and `cuda_oblivious` fails the same way. The estimator argument follows, so `BonsaiRegressor(grower="oblivious")` raises too, and `device="cuda"` maps `levelwise` to `cuda_levelwise` as it always mapped the others. Three growers, three names for the growth order they follow: `depthwise` fills a level at a time, `leafwise` takes the highest-gain leaf, `levelwise` shares one split across the level. `oblivious` named the tree that comes out, not the order the grower works in, and it was the one name a reader could not line up with the other two. The tree keeps the old word where the old word is correct: the C++ types `ObliviousTree` and `ObliviousGrower` are unchanged, and the saved model format is unchanged, but a model saved under an older version with `grower_name = "oblivious"` will not load, because the name in its config no longer resolves to an implementation. Refit, or edit the name in the artifact. Benchmark variants move with the growers: `bonsai_oblivious` and `bonsai_cuda_oblivious` are `bonsai_levelwise` and `bonsai_cuda_levelwise`, and the retired spellings raise instead of resolving.
+
 ## [1.7.0] - 2026-08-05
 
 ### Fixed

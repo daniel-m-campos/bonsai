@@ -709,7 +709,7 @@ __global__ void reduce_kernel(FeatBest const *per_feat, uint32_t n_sel, FeatBest
     out[node] = best;
 }
 
-// Oblivious level-find: one split for the whole frontier. For feature f, the
+// Levelwise level-find: one split for the whole frontier. For feature f, the
 // gain of a cut (bin, default_left) is the sum over ALL frontier nodes of
 // score(left) + score(right) minus the sum of node scores. A node whose cut is
 // infeasible (min_child_hess) contributes its parent score instead of a child
@@ -787,7 +787,7 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
                 // its parent score (zero gain) and the broadcast split still
                 // applies to it. At depth >= 5 some frontier node is always
                 // near-empty, so vetoing rejected every good deep cut and GPU
-                // oblivious trailed its own CPU grower (and catboost) at scale.
+                // levelwise trailed its own CPU grower (and catboost) at scale.
                 bool const   ok = s.hL >= min_child_hess && s.hR >= min_child_hess;
                 double const cs =
                     !active
@@ -830,7 +830,7 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
     }
 }
 
-// Given the winning oblivious level split (read from the reduced FeatBest so
+// Given the winning levelwise level split (read from the reduced FeatBest so
 // no host round-trip is needed), each thread computes one node's (left,
 // right) child sums from its device histogram — 4 doubles per node
 // [gL, hL, gR, hR] — so the host can fill the children's SplitInput.sums

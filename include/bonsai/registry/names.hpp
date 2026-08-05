@@ -66,9 +66,11 @@ template <> struct impl_name<DepthwiseGrower<CpuHistogramEngine>>
     static constexpr std::string_view value = "depthwise";
 };
 
+// The tree it builds is oblivious (symmetric); the growth policy it follows is
+// levelwise, and the external name states the policy like its two siblings.
 template <> struct impl_name<ObliviousGrower<CpuHistogramEngine>>
 {
-    static constexpr std::string_view value = "oblivious";
+    static constexpr std::string_view value = "levelwise";
 };
 
 template <> struct impl_name<LeafwiseGrower<CpuHistogramEngine>>
@@ -83,7 +85,7 @@ template <> struct impl_name<CudaDepthwiseGrower>
 
 template <> struct impl_name<CudaObliviousGrower>
 {
-    static constexpr std::string_view value = "cuda_oblivious";
+    static constexpr std::string_view value = "cuda_levelwise";
 };
 
 template <> struct impl_name<CudaLeafwiseGrower>

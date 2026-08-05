@@ -10,7 +10,7 @@ Same-pod sweep (AMD EPYC 9354 32-Core Processor, NVIDIA L40S), synthetic regress
 
 Scaling rows (100 features):
 
-| rows | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
+| rows | bonsai cuda dw | bonsai cuda lvl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu lvl |
 |---|---|---|---|---|---|---|---|---|
 | 250k | 0.7s (.872) | 1.1s (.877) | 2.4s (.872) | 1.0s (.872) | 1.8s (.875) | 6.3s (.879) | 4.2s (.872) | 8.6s (.877) |
 | 1M | 1.0s (.877) | 1.3s (.877) | 3.6s (.877) | 2.6s (.876) | 2.6s (.876) | 7.0s (.884) | 9.1s (.877) | 11.1s (.877) |
@@ -19,7 +19,7 @@ Scaling rows (100 features):
 
 Ingest / train seconds, the split behind that total (issue #301): the two halves scale differently, so a total-only column hides which one moves. bonsai's split comes from the two-step `Dataset(..., device=...)` plus `train(pairs, ds)` form, which for a cuda arm bins on the device exactly where the fused call does; every refresh fits the anchor cell both ways, interleaved on the same pod, and the supersession is gated on their agreement, so the seam these columns report belongs to the same pipeline the total measures. CatBoost's `Pool()` step only wraps the raw arrays; it quantizes inside `fit`, so its ingest column reads low and that cost sits in train instead (issue #253). Its total is the only number directly comparable to the other libraries' split.
 
-| rows | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
+| rows | bonsai cuda dw | bonsai cuda lvl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu lvl |
 |---|---|---|---|---|---|---|---|---|
 | 250k | 0.1s / 0.6s | 0.1s / 1.0s | 0.1s / 2.4s | 0.5s / 0.6s | 0.1s / 1.8s | 0.9s / 5.5s | 0.8s / 3.4s | 0.2s / 8.4s |
 | 1M | 0.1s / 0.8s | 0.1s / 1.2s | 0.1s / 3.4s | 1.8s / 0.9s | 0.3s / 2.4s | 1.5s / 5.5s | 1.6s / 7.5s | 0.6s / 10.5s |
@@ -28,7 +28,7 @@ Ingest / train seconds, the split behind that total (issue #301): the two halves
 
 Peak host RSS, worst repeat; the parenthetical is headroom above the input array `bonsai.bench.synth.gen_data` holds resident for that cell (16M x 100 float32, rows plus the held-out test rows, which are numpy views into the same buffer and so stay resident too). bonsai's headroom sits near zero at every scale because it bins the data on the device rather than keeping a second host-size copy; that cost lands on the GPU instead (2.8GB device memory at 16M rows, `dev_mem`, same cell). The comparison is host-input only: given device-resident input, XGBoost sketches in place and this headroom gap collapses (issue #289).
 
-| rows | bonsai cuda dw | bonsai cuda obl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu obl |
+| rows | bonsai cuda dw | bonsai cuda lvl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu lvl |
 |---|---|---|---|---|---|---|---|---|
 | 250k | 0.4GB (+0.3) | 0.4GB (+0.3) | 0.4GB (+0.3) | 0.8GB (+0.7) | 0.6GB (+0.5) | 0.8GB (+0.7) | 0.6GB (+0.5) | 0.3GB (+0.2) |
 | 1M | 0.8GB (+0.3) | 0.8GB (+0.3) | 0.8GB (+0.3) | 1.9GB (+1.4) | 1.6GB (+1.1) | 1.3GB (+0.8) | 1.1GB (+0.6) | 0.9GB (+0.4) |

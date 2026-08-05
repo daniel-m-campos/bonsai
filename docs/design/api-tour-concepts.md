@@ -50,7 +50,7 @@ Lives in [`include/bonsai/objective.hpp`](../../include/bonsai/objective.hpp).
 
 ## TreeGrower: three growth strategies as types
 
-Depthwise, leaf-wise, and oblivious are three answers to one question: which node to split next.
+Depthwise, leaf-wise, and level-wise are three answers to one question: which node to split next.
 
 ```cpp
 template <typename T>

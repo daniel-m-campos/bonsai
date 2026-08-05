@@ -332,7 +332,7 @@ TEST_CASE("CudaObliviousGrower matches CPU when deep nodes go infeasible (issue 
     // The CPU level-find lets an infeasible node contribute its parent score
     // (zero gain) rather than veto the whole level candidate (split.cpp,
     // issue #60). The device level-find originally kept the veto, so at depth
-    // >= 5 — where some frontier node is always near-empty — GPU oblivious
+    // >= 5 — where some frontier node is always near-empty — GPU levelwise
     // chose worse splits than its own CPU grower and silently lost accuracy at
     // scale (0.011 test r2 at 16M). A high min_child_hess forces that
     // infeasibility at shallow depth so the divergence reproduces on 4k rows:
@@ -981,7 +981,7 @@ TEST_CASE("CudaDepthwiseGrower: interaction constraints keep groups on separate 
 TEST_CASE("CudaObliviousGrower rejects constraints at construction",
           "[cuda][grower][monotone]")
 {
-    // Construction-time contract (shared with the CPU oblivious grower); the
+    // Construction-time contract (shared with the CPU levelwise grower); the
     // engine allocates lazily, so this pins the ConfigError on every build,
     // device or not — no SKIP.
     TreeConfig mono;

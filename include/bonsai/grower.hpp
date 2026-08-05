@@ -125,7 +125,7 @@ concept GPULevelEngine =
 // The GPU leaf plane: best-first growth expands one leaf at a time, so the
 // histograms live in a per-tree slot pool instead of the level plane's
 // ping-pong (docs/architecture/20-cuda-leafwise.md). A second concept beside
-// GPULevelEngine, not a change to it: the depthwise and oblivious paths are
+// GPULevelEngine, not a change to it: the depthwise and levelwise paths are
 // untouched. Same one-fork rule — leaf_begin_root's bool is the per-tree mode,
 // captured once by the LeafStep, and a declined tree trains on the host plane.
 template <typename T>

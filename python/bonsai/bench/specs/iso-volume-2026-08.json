@@ -8,7 +8,7 @@
      "cols": [128, 512, 2048, 8192, 32768, 65536]},
     {"rows": 1000000, "cols": 100, "tag": "anchor"}
   ],
-  "variants": ["bonsai_cuda_depthwise", "bonsai_cuda_oblivious",
+  "variants": ["bonsai_cuda_depthwise", "bonsai_cuda_levelwise",
                "xgb_cuda", "catboost_gpu", "bonsai_depthwise", "xgb_hist"],
   "threads": [16],
   "repeats": {"default": 2, "cpu": 1},

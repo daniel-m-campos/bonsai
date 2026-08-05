@@ -6,7 +6,7 @@
   "cells": [
     {"gen": "iso_volume", "log2_cells": 33, "cols": [128, 2048, 32768]}
   ],
-  "variants": ["bonsai_cuda_depthwise", "bonsai_cuda_oblivious",
+  "variants": ["bonsai_cuda_depthwise", "bonsai_cuda_levelwise",
                "xgb_cuda", "catboost_gpu"],
   "threads": [16],
   "repeats": {"default": 2},

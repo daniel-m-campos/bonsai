@@ -14,7 +14,7 @@ bonsai began as a learning project: rebuild gradient-boosted trees from first pr
 
 I started bonsai to learn gradient-boosted trees properly. Reading the papers was not enough, so I implemented a basic serial version from scratch. The same build was my practice ground for modern C++ and the C++23 features I wanted fluency in.
 
-Once the first spine was designed and working, I brought in agentic workflows with Claude to add the features the production libraries had. Beyond pedagogy there was a slim hope this could become something useful. The first idea was to combine the three libraries' growth strategies in one engine: depthwise, leaf-wise, and oblivious. No reference library ships all three.
+Once the first spine was designed and working, I brought in agentic workflows with Claude to add the features the production libraries had. Beyond pedagogy there was a slim hope this could become something useful. The first idea was to combine the three libraries' growth strategies in one engine: depthwise, leaf-wise, and level-wise. No reference library ships all three.
 
 After that, things escalated. The concept-based design made each extension straightforward, though rarely easy. Milestones meant to be the finish line kept falling: CPU parity, then GPU parity, then GPU leads.
 

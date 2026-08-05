@@ -95,7 +95,11 @@ def load_jsonl(name: str) -> list[dict]:
     """Rows of a results jsonl by bare filename."""
     consumed.add(name)
     path = RESULTS / name
-    return [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
+    # Committed rows predate the oblivious -> levelwise grower rename (issue
+    # #305); the standings refresh re-measures them under the new spelling and
+    # retires this line.
+    text = path.read_text().replace("oblivious", "levelwise")
+    return [json.loads(x) for x in text.splitlines() if x.strip()]
 
 
 def load_json(name: str) -> dict:
@@ -691,7 +695,7 @@ Ten selection methods, one shared judge: each method produces a feature ranking,
 # column lists derive from the maps, one order per table.
 _GPU_STYLE = {
     "bonsai_cuda_depthwise": ("bonsai cuda dw", "#1b5e20", False),
-    "bonsai_cuda_oblivious": ("bonsai cuda obl", "#4caf50", False),
+    "bonsai_cuda_levelwise": ("bonsai cuda lvl", "#4caf50", False),
     "bonsai_cuda_leafwise": ("bonsai cuda lw", "#2e7d32", False),
     "xgb_cuda": ("xgb cuda", LIB_COLOR["xgboost"], False),
     "catboost_gpu": ("catboost gpu", LIB_COLOR["catboost"], False),
@@ -701,7 +705,7 @@ VARIANT_STYLE = {
     **_GPU_STYLE,
     "lgbm_cuda": ("lgbm cuda", LIB_COLOR["lightgbm"], False),
     "lgbm_cpu": ("lgbm cpu", LIB_COLOR["lightgbm"], True),
-    "bonsai_oblivious": ("bonsai cpu obl", "#4caf50", True),
+    "bonsai_levelwise": ("bonsai cpu lvl", "#4caf50", True),
 }
 
 REBASE_VARIANTS = [(k, v[0]) for k, v in VARIANT_STYLE.items()]
@@ -1046,7 +1050,7 @@ Ingest / train seconds, the split behind that total (issue #301). {BONSAI_SPLIT_
 
 {split_table}
 
-Peak host RSS, worst rep; the parenthetical is headroom above the input array `bonsai.bench.synth.gen_data` holds resident for that cell (rows plus the held-out test rows, which are numpy views into the same buffer and so stay resident too, times columns, times 4 bytes float32). Depthwise and oblivious hold that headroom under 1GB at every measured width because they bin on the device; that cost shows up instead in `dev_mem` (16.6GB at the widest cell against 9.8GB of host RSS). Leafwise is the counter-example sitting in the same table: at the widest cell it still bins on the host (no CUDA histogram support yet, issue #268), so its device memory drops to 3.1GB while its headroom balloons to 18.4GB, the mirror image of the mechanism. The comparison is host-input only: given device-resident input, XGBoost sketches in place and this gap collapses (issue #289).
+Peak host RSS, worst rep; the parenthetical is headroom above the input array `bonsai.bench.synth.gen_data` holds resident for that cell (rows plus the held-out test rows, which are numpy views into the same buffer and so stay resident too, times columns, times 4 bytes float32). Depthwise and levelwise hold that headroom under 1GB at every measured width because they bin on the device; that cost shows up instead in `dev_mem` (16.6GB at the widest cell against 9.8GB of host RSS). Leafwise is the counter-example sitting in the same table: at the widest cell it still bins on the host (no CUDA histogram support yet, issue #268), so its device memory drops to 3.1GB while its headroom balloons to 18.4GB, the mirror image of the mechanism. The comparison is host-input only: given device-resident input, XGBoost sketches in place and this gap collapses (issue #289).
 
 {rss_table}
 
@@ -1156,7 +1160,7 @@ def iso_volume_section() -> str:
 
 Constant data volume, swept aspect ratio: every cell of the primary ladder holds rows x cols at 2^31 (an 8GiB float32 matrix) while cols runs 128 to 65536, so costs that scale with total cells stay flat and whatever rises is paying for width. Measured peak device memory (`dev_mem`, NVML-sampled while the child runs, gates off) is an output, not an estimate. One pod: RTX PRO 6000 Blackwell Workstation Edition (96GB, 64 vCPU, 1.1TB RAM, sync probe 4.5us/op), threads 16.
 
-bonsai's CUDA growers are fastest at every cell of both ladders and their fit time is nearly flat across the tall half of the iso-line (7.2s at 16M x 128 to 9.3s at 1M x 2048) where both references vary 1.5-2x; every arm rises together past 8192 cols as histogram cost (cols x bins) takes over. Device memory separates harder than time: bonsai peaks at 3.4GB where XGBoost holds 18.9GB, and CatBoost allocates 90.2GB (the whole card) at every cell including 1M x 100, so it never fails but never shares the device.{err_note} At the widest aspect (32k x 65536, where p is 2x n) the oblivious grower keeps test r2 at .873 while depthwise falls to .815, the symmetric tree's regularization showing at extreme width. On the 2^33 stretch (a 32GiB matrix, GPU arms only) bonsai leads 4.1x over XGBoost at 67M x 128 (27.9 vs 113.8s) at 6.3x less device memory (11.7 vs 73.6GB).
+bonsai's CUDA growers are fastest at every cell of both ladders and their fit time is nearly flat across the tall half of the iso-line (7.2s at 16M x 128 to 9.3s at 1M x 2048) where both references vary 1.5-2x; every arm rises together past 8192 cols as histogram cost (cols x bins) takes over. Device memory separates harder than time: bonsai peaks at 3.4GB where XGBoost holds 18.9GB, and CatBoost allocates 90.2GB (the whole card) at every cell including 1M x 100, so it never fails but never shares the device.{err_note} At the widest aspect (32k x 65536, where p is 2x n) the levelwise grower keeps test r2 at .873 while depthwise falls to .815, the symmetric tree's regularization showing at extreme width. On the 2^33 stretch (a 32GiB matrix, GPU arms only) bonsai leads 4.1x over XGBoost at 67M x 128 (27.9 vs 113.8s) at 6.3x less device memory (11.7 vs 73.6GB).
 
 ![Fit seconds vs cols, iso-volume](assets/iso-volume-fit.svg)
 
@@ -1579,7 +1583,7 @@ def frontier_section() -> str:
 
 ### Ordered boosting at scale (CatBoost door)
 
-The probe behind decisions 62 to 64: CatBoost's Ordered vs Plain modes against bonsai oblivious as rows grow.
+The probe behind decisions 62 to 64: CatBoost's Ordered vs Plain modes against bonsai levelwise as rows grow.
 
 {edge_table}
 

@@ -12,10 +12,12 @@ distinguishes the three reference libraries:
   leaf (anywhere in the tree) whose best split has the highest gain.
   Deliberately *unbalanced*: for a fixed leaf budget (`max_leaves`), it
   drives training loss down fastest, at higher overfitting risk.
-- **Oblivious / symmetric** (CatBoost): every node at a level shares *one*
+- **Level-wise / symmetric** (CatBoost): every node at a level shares *one*
   split. The tree is a perfect table (2^depth leaves indexed by a
   bitstring) which makes predict extremely fast and acts as a strong
-  regularizer.
+  regularizer. CatBoost calls the shape an *oblivious* tree; bonsai names
+  the grower after the growth order, `levelwise`, and keeps *oblivious*
+  for the tree it emits.
 
 The growth order is the whole difference. Depth-wise fills a level before
 the next; leaf-wise always expands the highest-gain leaf. The nodes below
@@ -60,7 +62,7 @@ There's no new math, only a queue discipline over the same gain scores:
 ```
 depth-wise:  FIFO by level          — frontier is a vector, loop per depth
 leaf-wise:   max-heap keyed on gain — pop best, split, push two children
-oblivious:   argmax over the SUM of per-parent gains for one shared (feature, bin)
+level-wise:  argmax over the SUM of per-parent gains for one shared (feature, bin)
 ```
 
 Leaf-wise's property worth internalizing: each expansion converts one leaf
@@ -92,9 +94,9 @@ in their grow loop ([`src/grower.cpp`](../../src/grower.cpp)):
   index arithmetic, leaves in a $2^{\text{depth}}$ table.
 
 Both node-splitting growers emit a `DenseTree` (flat node array); the
-oblivious grower emits an `ObliviousTree` (level splits + leaf table),
+levelwise grower emits an `ObliviousTree` (level splits + leaf table),
 [`include/bonsai/tree.hpp`](../../include/bonsai/tree.hpp). Selection is a
-config string: `dispatch.grower_name = depthwise | leafwise | oblivious`.
+config string: `dispatch.grower_name = depthwise | leafwise | levelwise`.
 
 ## A second, orthogonal axis: the boosting scheme
 
@@ -118,7 +120,7 @@ ordered gradients, or oblivious trees with plain ones.
 
 Seen this way, bonsai already spans the **structure** axis more widely than
 either reference library, three growth disciplines to XGBoost's two
-(depth/leaf) and CatBoost's one (oblivious). What it does not offer is the
+(depth/leaf) and CatBoost's one (level-wise). What it does not offer is the
 ordered *scheme*. That was a measured decision, not an oversight: toggling
 CatBoost's own `boosting_type` shows ordered boosting buys essentially zero
 test r² on high-signal numeric data (0.8722 vs 0.8720 plain at 200k rows)
@@ -139,7 +141,7 @@ rng = np.random.default_rng(0)
 X = rng.normal(size=(4000, 10)).astype(np.float32)
 y = (X[:, 0] + X[:, 1] * X[:, 2] + rng.normal(0, 0.1, 4000)).astype(np.float32)
 
-for grower in ("depthwise", "leafwise", "oblivious"):
+for grower in ("depthwise", "leafwise", "levelwise"):
     m = bonsai.BonsaiRegressor(n_iters=60, grower=grower).fit(X, y)
     rmse = float(np.sqrt(np.mean((np.asarray(m.predict(X)) - y) ** 2)))
     print(f"{grower:10s}  train RMSE={rmse:.4f}")
@@ -148,7 +150,7 @@ for grower in ("depthwise", "leafwise", "oblivious"):
 Expect the ordering the benchmarks reproduce every time: leaf-wise is the
 best accuracy-per-second (31 leaves ≈ depthwise-8's RMSE at half the
 time), depth-wise squeezes out the last fraction of RMSE with 16× more
-nodes, oblivious trades a little RMSE for the fastest predict.
+nodes, levelwise trades a little RMSE for the fastest predict.
 
 ## Gotchas & war stories
 
@@ -158,7 +160,7 @@ nodes, oblivious trades a little RMSE for the fastest predict.
 - **Heap ties are a determinism hazard.** Equal gains happen (symmetric
   data produces them exactly); without the node-id tie-break, two runs
   could grow different trees and both look "correct".
-- **The oblivious gain is a sum of per-parent gains, not the gain of
+- **The levelwise gain is a sum of per-parent gains, not the gain of
   summed histograms.** The score is quadratic in $G$, so folding histograms
   first computes the wrong thing. The original implementation did, and
   produced degenerate trees whose failure mode looked plausible enough to

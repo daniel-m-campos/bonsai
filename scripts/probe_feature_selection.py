@@ -25,7 +25,7 @@ boosting_rung0.py, imported read-only for its loader and splits):
                  target association while keeping the marginal, so the injected
                  columns are known-noise ground truth for a precision/recall table.
 
-The bonsai arms run once per grower (depthwise, leafwise, oblivious), every other
+The bonsai arms run once per grower (depthwise, leafwise, levelwise), every other
 knob identical; leafwise carries the campaign max_leaves convention from
 bonsai.bench.params (max_leaves is read by the leafwise grower only). One jsonl
 row per (dataset, grower); the grower-independent reference arms (cat_all,
@@ -109,7 +109,7 @@ CAT_SELECT_ALGO = "RecursiveByLossFunctionChange"
 
 # The bonsai grower axis; the reference arms are grower-independent and are
 # recorded on the depthwise row only.
-GROWERS = ("depthwise", "leafwise", "oblivious")
+GROWERS = ("depthwise", "leafwise", "levelwise")
 
 REAL_WIDE = ["QSAR-TID-11", "superconductivity", "spambase"]
 NOISE_INJECTED = [

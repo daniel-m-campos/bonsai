@@ -49,7 +49,7 @@ The footprint also compounds under fit-parallelism: more concurrent fits fit on 
 
 ## Wide or extreme-aspect data: bonsai
 
-The 2026-07-30 studies measured the width axis end to end: fastest at every width from 100 to 16,384 features on the cols re-baseline, and fastest at every aspect ratio at constant 2^31-cell volume on the iso-volume frontier, out to 65,536 features on 96GB silicon ([width and shape](results/perf-shape.md), decisions 90 and 91). Device memory sizes to the problem where CatBoost reserves the whole card, and at p near 2x n the oblivious grower holds test r2 where depthwise-family growers drop.
+The 2026-07-30 studies measured the width axis end to end: fastest at every width from 100 to 16,384 features on the cols re-baseline, and fastest at every aspect ratio at constant 2^31-cell volume on the iso-volume frontier, out to 65,536 features on 96GB silicon ([width and shape](results/perf-shape.md), decisions 90 and 91). Device memory sizes to the problem where CatBoost reserves the whole card, and at p near 2x n the levelwise grower holds test r2 where depthwise-family growers drop.
 
 ## Sparse or high-dimensional-sparse data: XGBoost
 

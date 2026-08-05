@@ -157,7 +157,7 @@ finder rejects candidates whose bounded child weights violate the
 direction, and children inherit midpoint-fenced leaf-value bounds
 (xgboost's scheme), so every prediction path is provably monotone —
 unit tests assert non-decreasing / non-increasing single-tree curves on
-data where the unconstrained tree is non-monotone. Oblivious grower
+data where the unconstrained tree is non-monotone. Levelwise grower
 rejects the option at construction.
 
 California Housing, MedInc constrained +1 (`ch_monotone` vs
@@ -178,7 +178,7 @@ Feature groups as strings (`["0,1", "2,3"]` in TOML, `0+1,2+3` via
 `--set`). A node may split on a feature only if some group contains it
 together with every feature already on the path (features outside all
 groups may keep splitting alone); the allowed set propagates through
-`SplitInput::allowed/path`. Oblivious grower rejects the option. Unit
+`SplitInput::allowed/path`. Levelwise grower rejects the option. Unit
 test walks every root-to-leaf path and asserts groups never mix.
 
 California Housing, groups {0–3 economic} / {4–7 geographic}

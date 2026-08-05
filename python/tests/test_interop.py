@@ -121,7 +121,7 @@ def test_from_catboost_adds_the_border_fencepost():
 
 def test_from_catboost_translates_the_grow_policy():
     assert dict(interop.from_catboost({"grow_policy": "SymmetricTree"})) == {
-        "dispatch.grower_name": "oblivious"
+        "dispatch.grower_name": "levelwise"
     }
 
 
@@ -156,9 +156,9 @@ def test_to_xgboost_strict_names_every_unmappable_key():
         interop.to_xgboost([("tree.min_data_in_leaf", 20)])
 
 
-def test_to_xgboost_rejects_the_oblivious_grower():
+def test_to_xgboost_rejects_the_levelwise_grower():
     with pytest.raises(ValueError, match="grow_policy"):
-        interop.to_xgboost([("dispatch.grower_name", "oblivious")])
+        interop.to_xgboost([("dispatch.grower_name", "levelwise")])
 
 
 # to_lightgbm ======================================================================================
@@ -186,7 +186,7 @@ def test_to_catboost_subtracts_the_border_fencepost():
 
 
 def test_to_catboost_maps_a_cuda_grower_to_its_growth_policy():
-    assert interop.to_catboost([("dispatch.grower_name", "cuda_oblivious")]) == {
+    assert interop.to_catboost([("dispatch.grower_name", "cuda_levelwise")]) == {
         "grow_policy": "SymmetricTree"
     }
 

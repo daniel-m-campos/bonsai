@@ -47,7 +47,7 @@ inline SplitSums split_sums_at(double left_grad, double left_hess,
 // child sums via split_sums_at, the min_child_hess feasibility gate, and
 // the two-child score — computed in exactly this operation order so both
 // finders make bit-identical decisions from identical histograms. Monotone
-// rejection stays node-only (the oblivious grower refuses constraints at
+// rejection stays node-only (the levelwise grower refuses constraints at
 // construction); the level scan adds cross-parent summation on top.
 struct CandidateScore
 {
@@ -200,7 +200,7 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
                 // A node whose children would fall under min_child_hess no
                 // longer vetoes the whole candidate (issue #60: at depth >= 5
                 // some frontier node is always near-empty, so every good cut
-                // was rejected and oblivious trailed catboost by 3-26%). It
+                // was rejected and levelwise trailed catboost by 3-26%). It
                 // contributes its parent score instead — zero gain — and the
                 // broadcast split still applies to it; empty children are
                 // first-class (zero cover, SHAP-safe).

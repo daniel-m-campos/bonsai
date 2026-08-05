@@ -9,13 +9,13 @@ from bonsai.bench import airline, grinsztajn, scaling, variants
 def test_variant_registry():
     # Committed rows pin these exact spellings forever.
     assert variants.SCALING == tuple(scaling.VARIANTS) == (
-        "bonsai_depthwise", "bonsai_leafwise", "bonsai_oblivious",
-        "bonsai_cuda_depthwise", "bonsai_cuda_oblivious", "xgb_hist",
+        "bonsai_depthwise", "bonsai_leafwise", "bonsai_levelwise",
+        "bonsai_cuda_depthwise", "bonsai_cuda_levelwise", "xgb_hist",
         "xgb_cuda", "lgbm_cpu", "lgbm_cuda", "catboost_cpu", "catboost_gpu")
     assert variants.AIRLINE == tuple(airline.VARIANTS) == (
-        "bonsai_depthwise", "bonsai_oblivious", "bonsai_cuda_depthwise",
-        "bonsai_cuda_oblivious", "bonsai_ts_depthwise", "bonsai_ts_oblivious",
-        "bonsai_ts_cuda_depthwise", "bonsai_ts_cuda_oblivious", "xgb_hist",
+        "bonsai_depthwise", "bonsai_levelwise", "bonsai_cuda_depthwise",
+        "bonsai_cuda_levelwise", "bonsai_ts_depthwise", "bonsai_ts_levelwise",
+        "bonsai_ts_cuda_depthwise", "bonsai_ts_cuda_levelwise", "xgb_hist",
         "xgb_cuda", "lgbm_cpu", "catboost_cpu", "catboost_gpu")
     assert grinsztajn.VARIANTS == variants.GRINSZTAJN == (
         "bonsai_dw", "bonsai_lw", "bonsai_obl", "xgb", "lgbm", "catboost")
@@ -24,13 +24,13 @@ def test_variant_registry():
     # Historical alias spellings resolve to the intended canonical arm.
     for alias, canon in {"bonsai_dw": "bonsai_depthwise",
                          "bonsai_lw": "bonsai_leafwise",
-                         "bonsai_obl": "bonsai_oblivious",
+                         "bonsai_obl": "bonsai_levelwise",
                          "xgb": "xgb_hist", "lgbm": "lgbm_cpu",
                          "catboost": "catboost_cpu",
                          "bonsai_cpu": "bonsai_depthwise",
                          "bonsai_leaf_cpu": "bonsai_leafwise",
                          "bonsai_gpu": "bonsai_cuda_depthwise",
-                         "bonsai_obl_gpu": "bonsai_cuda_oblivious",
+                         "bonsai_obl_gpu": "bonsai_cuda_levelwise",
                          "xgb_cpu": "xgb_hist",
                          "xgb_gpu": "xgb_cuda"}.items():
         assert variants.resolve(alias).name == canon
@@ -41,8 +41,12 @@ def test_variant_registry():
     aliases = {a for v in variants.REGISTRY.values() for a in v.aliases}
     assert not aliases & set(variants.REGISTRY)
     # The (lib, device) views survive the derivation.
-    assert scaling.VARIANTS["bonsai_cuda_oblivious"] == ("bonsai", "cuda")
+    assert scaling.VARIANTS["bonsai_cuda_levelwise"] == ("bonsai", "cuda")
     assert scaling.VARIANTS["lgbm_cuda"] == ("lgbm", "cuda")
     assert airline.VARIANTS["bonsai_ts_cuda_depthwise"] == ("bonsai", "cuda")
     with pytest.raises(KeyError):
         variants.resolve("nope")
+    # The retired grower spellings are gone with no alias behind them.
+    for retired in ("bonsai_oblivious", "bonsai_cuda_oblivious"):
+        with pytest.raises(KeyError):
+            variants.resolve(retired)

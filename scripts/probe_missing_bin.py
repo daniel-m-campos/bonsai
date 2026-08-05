@@ -128,7 +128,7 @@ def main() -> int:
     cases = list(SYNTH) + list(REAL) + ["airline_0.1m"]
     rows = []
     for case in cases:
-        for grower in ("depthwise", "oblivious"):
+        for grower in ("depthwise", "levelwise"):
             scores = {}
             for arm in ("off", "on"):
                 env = dict(os.environ)

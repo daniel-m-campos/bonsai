@@ -174,7 +174,7 @@ class CudaHistogramEngine
     void find_splits_many(Dataset const &ds, TreeConfig const &config,
                           std::span<SplitInput const> level, std::span<SplitOutput> out,
                           std::span<HistCell> child_sums);
-    // Oblivious: ONE split for the whole frontier, chosen to maximize the gain
+    // Levelwise: ONE split for the whole frontier, chosen to maximize the gain
     // summed across all nodes and feasible for every node. out is filled with
     // that split for every slot, and child_sums with each node's (left, right)
     // totals at that cut — they seed the children's SplitInput.sums, which the

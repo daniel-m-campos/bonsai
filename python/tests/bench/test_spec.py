@@ -79,6 +79,6 @@ def test_standings_cols_routine_drops_wide_cpu_arms():
     assert len(routine_jobs) == len(full_jobs) - 2
     wide = {(j["variant"]) for j in routine_jobs
             if j["cell"]["rows"] == 131072 and j["cell"]["cols"] == 16384}
-    assert wide == {"bonsai_cuda_depthwise", "bonsai_cuda_oblivious",
+    assert wide == {"bonsai_cuda_depthwise", "bonsai_cuda_levelwise",
                     "bonsai_cuda_leafwise", "xgb_cuda", "catboost_gpu",
                     "lgbm_cuda"}

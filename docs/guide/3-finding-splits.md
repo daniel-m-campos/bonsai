@@ -57,7 +57,7 @@ All of it is [`src/split.cpp`](../../src/split.cpp):
 - `HistogramNodeSplitFinder::find`: the feature loop, parallel, with the
   per-feature bests merged **serially in feature order** afterward so ties
   break identically to a serial scan (lowest feature id wins). There is
-  also a *level* finder used by the oblivious grower which scores one
+  also a *level* finder used by the levelwise grower which scores one
   shared split summed across a whole frontier
   (`update_best_for_feature_for_level`).
 - Applying the winner: `split_node` in

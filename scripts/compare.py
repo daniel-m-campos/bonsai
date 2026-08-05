@@ -41,7 +41,7 @@ LABEL_COL = "label"  # every prepared dataset carries its target under this name
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-BONSAI_GROWERS = ("depthwise", "oblivious", "leafwise")
+BONSAI_GROWERS = ("depthwise", "levelwise", "leafwise")
 BONSAI_SAMPLERS = ("all_rows", "bernoulli")
 BERNOULLI_P = 0.8
 

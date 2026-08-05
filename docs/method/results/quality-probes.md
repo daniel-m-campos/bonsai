@@ -163,31 +163,31 @@ Does a refit-based shadow-feature selector (append a permuted copy of every colu
 |---|---|---|---|---|---|---|---|---|---|---|
 | QSAR-TID-11 | depthwise | real_wide | rmse | 306 / 1024 | 0.88287 | 0.89051 | 0.89300 | 0.89338 | 0.00248 | no |
 | QSAR-TID-11 | leafwise | real_wide | rmse | 306 / 1024 | 0.88287 | 0.89051 | 0.89300 | - | 0.00248 | no |
-| QSAR-TID-11 | oblivious | real_wide | rmse | 249 / 1024 | 0.88780 | 0.89709 | 0.89400 | - | -0.00310 | no |
+| QSAR-TID-11 | levelwise | real_wide | rmse | 249 / 1024 | 0.88780 | 0.89709 | 0.89400 | - | -0.00310 | no |
 | superconductivity | depthwise | real_wide | rmse | 67 / 81 | 9.85628 | 9.92407 | 9.91435 | 10.14472 | -0.00972 | no |
 | superconductivity | leafwise | real_wide | rmse | 67 / 81 | 9.85628 | 9.92407 | 9.91435 | - | -0.00972 | no |
-| superconductivity | oblivious | real_wide | rmse | 72 / 81 | 10.09384 | 10.08169 | 10.10188 | - | 0.02019 | no |
+| superconductivity | levelwise | real_wide | rmse | 72 / 81 | 10.09384 | 10.08169 | 10.10188 | - | 0.02019 | no |
 | spambase | depthwise | real_wide | one_minus_auc | 24 / 57 | 0.01050 | 0.01169 | 0.01197 | 0.01289 | 0.00027 | no |
 | spambase | leafwise | real_wide | one_minus_auc | 24 / 57 | 0.01050 | 0.01169 | 0.01197 | - | 0.00027 | no |
-| spambase | oblivious | real_wide | one_minus_auc | 25 / 57 | 0.01000 | 0.01120 | 0.01120 | - | 0.00000 | no |
+| spambase | levelwise | real_wide | one_minus_auc | 25 / 57 | 0.01000 | 0.01120 | 0.01120 | - | 0.00000 | no |
 | houses | depthwise | noise_injected | rmse | 11 / 16 | 0.23289 | 0.23149 | 0.23149 | 0.22809 | 0.00000 | no |
 | houses | leafwise | noise_injected | rmse | 11 / 16 | 0.23289 | 0.23149 | 0.23149 | - | 0.00000 | no |
-| houses | oblivious | noise_injected | rmse | 10 / 16 | 0.23029 | 0.22639 | 0.22639 | - | 0.00000 | no |
+| houses | levelwise | noise_injected | rmse | 10 / 16 | 0.23029 | 0.22639 | 0.22639 | - | 0.00000 | no |
 | concrete_compressive_strength | depthwise | noise_injected | rmse | 8 / 16 | 5.32359 | 4.58744 | 4.58744 | 4.65285 | 0.00000 | yes |
 | concrete_compressive_strength | leafwise | noise_injected | rmse | 8 / 16 | 5.32359 | 4.58744 | 4.58744 | - | 0.00000 | yes |
-| concrete_compressive_strength | oblivious | noise_injected | rmse | 8 / 16 | 5.36823 | 4.77173 | 4.77173 | - | 0.00000 | yes |
+| concrete_compressive_strength | levelwise | noise_injected | rmse | 8 / 16 | 5.36823 | 4.77173 | 4.77173 | - | 0.00000 | yes |
 | wind | depthwise | noise_injected | rmse | 14 / 28 | 3.07949 | 3.02061 | 3.02729 | 2.99762 | 0.00668 | no |
 | wind | leafwise | noise_injected | rmse | 14 / 28 | 3.07949 | 3.02061 | 3.02729 | - | 0.00668 | no |
-| wind | oblivious | noise_injected | rmse | 13 / 28 | 3.05815 | 2.99657 | 2.96965 | - | -0.02693 | yes |
+| wind | levelwise | noise_injected | rmse | 13 / 28 | 3.05815 | 2.99657 | 2.96965 | - | -0.02693 | yes |
 | breast_cancer | depthwise | noise_injected | one_minus_auc | 17 / 60 | 0.00818 | 0.00692 | 0.00650 | 0.00797 | -0.00042 | yes |
 | breast_cancer | leafwise | noise_injected | one_minus_auc | 17 / 60 | 0.00818 | 0.00692 | 0.00650 | - | -0.00042 | yes |
-| breast_cancer | oblivious | noise_injected | one_minus_auc | 16 / 60 | 0.01048 | 0.00839 | 0.00881 | - | 0.00042 | yes |
+| breast_cancer | levelwise | noise_injected | one_minus_auc | 16 / 60 | 0.01048 | 0.00839 | 0.00881 | - | 0.00042 | yes |
 | pima_diabetes | depthwise | noise_injected | one_minus_auc | 6 / 16 | 0.19104 | 0.20203 | 0.20203 | 0.19116 | 0.00000 | no |
 | pima_diabetes | leafwise | noise_injected | one_minus_auc | 6 / 16 | 0.19104 | 0.20203 | 0.20203 | - | 0.00000 | no |
-| pima_diabetes | oblivious | noise_injected | one_minus_auc | 5 / 16 | 0.18890 | 0.19773 | 0.19057 | - | -0.00716 | no |
+| pima_diabetes | levelwise | noise_injected | one_minus_auc | 5 / 16 | 0.18890 | 0.19773 | 0.19057 | - | -0.00716 | no |
 | MagicTelescope | depthwise | noise_injected | one_minus_auc | 11 / 20 | 0.06516 | 0.06344 | 0.06344 | 0.05787 | 0.00000 | yes |
 | MagicTelescope | leafwise | noise_injected | one_minus_auc | 11 / 20 | 0.06516 | 0.06344 | 0.06344 | - | 0.00000 | yes |
-| MagicTelescope | oblivious | noise_injected | one_minus_auc | 11 / 20 | 0.06428 | 0.05956 | 0.05956 | - | 0.00000 | yes |
+| MagicTelescope | levelwise | noise_injected | one_minus_auc | 11 / 20 | 0.06428 | 0.05956 | 0.05956 | - | 0.00000 | yes |
 
 *Source: [`feature-selection-probe-2026-07.jsonl`](../../../benchmarks/results/feature-selection-probe-2026-07.jsonl). Probe: [scripts/probe_feature_selection.py](../../../scripts/probe_feature_selection.py); evidence [benchmarks/feature-selection-probe-2026-07.md](../../../benchmarks/feature-selection-probe-2026-07.md).*
 

@@ -59,7 +59,7 @@
 <line x1='608' y1='50' x2='630' y2='50' stroke='#1b5e20' stroke-width='2.5'/>
 <text x='636' y='54' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>bonsai cuda dw</text>
 <line x1='608' y1='67' x2='630' y2='67' stroke='#4caf50' stroke-width='2.5'/>
-<text x='636' y='71' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>bonsai cuda obl</text>
+<text x='636' y='71' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>bonsai cuda lvl</text>
 <line x1='608' y1='84' x2='630' y2='84' stroke='#2e7d32' stroke-width='2.5'/>
 <text x='636' y='88' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>bonsai cuda lw</text>
 <line x1='608' y1='101' x2='630' y2='101' stroke='#1f77b4' stroke-width='2.5'/>
@@ -71,5 +71,5 @@
 <line x1='608' y1='152' x2='630' y2='152' stroke='#8e6bbf' stroke-width='2.5' stroke-dasharray='6 4'/>
 <text x='636' y='156' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>lgbm cpu</text>
 <line x1='608' y1='169' x2='630' y2='169' stroke='#4caf50' stroke-width='2.5' stroke-dasharray='6 4'/>
-<text x='636' y='173' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>bonsai cpu obl</text>
+<text x='636' y='173' font-size='11' fill='#8a8a8a' font-family='system-ui,sans-serif' text-anchor='start' font-weight='normal'>bonsai cpu lvl</text>
 </svg>

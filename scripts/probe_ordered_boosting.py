@@ -8,10 +8,10 @@
 
 Runs the feature-admission ladder from benchmarks/catboost-scale-edge-2026-07.md:
   --door ordered : catboost boosting_type Ordered vs Plain vs bonsai (is it the scheme?)
-  --door bins    : bonsai oblivious across bin_mapper.n_samples (is it bin quality?)
+  --door bins    : bonsai levelwise across bin_mapper.n_samples (is it bin quality?)
   --door isolate : bonsai vs catboost on CPU at 16M (does bonsai actually trail on CPU?)
 
-The GPU half — cuda_oblivious 0.8638 (pre-fix) -> 0.8749 (decision 63) vs its own
+The GPU half — cuda_levelwise 0.8638 (pre-fix) -> 0.8749 (decision 63) vs its own
 CPU 0.8749 — needs a device and is reproduced with the standard bench harness on
 build-cuda/python; see the study note. All matched: depth 8, lr 0.1, 100 iters.
 
@@ -80,7 +80,7 @@ def main() -> int:
             for iters in (100, 200):
                 trials = [("catboost_ordered", catboost(X, y, Xte, yte, iters, "Ordered")),
                           ("catboost_plain", catboost(X, y, Xte, yte, iters, "Plain")),
-                          ("bonsai_oblivious", bonsai(X, y, Xte, yte, iters, "oblivious"))]
+                          ("bonsai_levelwise", bonsai(X, y, Xte, yte, iters, "levelwise"))]
                 for name, (fs, r) in trials:
                     emit(out, {"door": "ordered", "rows": rows, "iters": iters,
                                "learner": name, "fit_s": fs, "r2_test": r})
@@ -93,15 +93,15 @@ def main() -> int:
             for ns in (200_000, 1_000_000, rows):
                 if ns > rows:
                     continue
-                fs, r = bonsai(X, y, Xte, yte, 100, "oblivious", ns)
-                emit(out, {"door": "bins", "rows": rows, "learner": "bonsai_oblivious",
+                fs, r = bonsai(X, y, Xte, yte, 100, "levelwise", ns)
+                emit(out, {"door": "bins", "rows": rows, "learner": "bonsai_levelwise",
                            "n_samples": ns, "fit_s": fs, "r2_test": r})
     else:  # isolate
         X, y, Xte, yte = bs.gen_data(16_000_000, 100, 42, 100_000, 20)
         fs, r = catboost(X, y, Xte, yte, 100, "Plain")
         emit(out, {"door": "isolate", "rows": 16_000_000, "learner": "catboost_plain",
                    "fit_s": fs, "r2_test": r})
-        for grower in ("oblivious", "depthwise"):
+        for grower in ("levelwise", "depthwise"):
             fs, r = bonsai(X, y, Xte, yte, 100, grower)
             emit(out, {"door": "isolate", "rows": 16_000_000,
                        "learner": f"bonsai_{grower}", "fit_s": fs, "r2_test": r})
