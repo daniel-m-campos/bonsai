@@ -130,8 +130,8 @@ For multi-hour campaigns (spec ladders, Pareto frontiers), raw heredoc drivers a
 
 ```bash
 scp -i ~/.ssh/id_ed25519 -P $PORT scripts/pod_bench_driver.sh root@$IP:/root/
-$SSH 'setsid env HOST_TAG=<gpu-tag> BRANCH=main SPEC=gpu-pareto-16M \
-  OUT=/root/gpu-pareto-16M.jsonl RUN_LABEL=<label> \
+$SSH 'setsid env HOST_TAG=<gpu-tag> BRANCH=main SPEC=gpu-wide \
+  OUT=/root/gpu-wide.jsonl RUN_LABEL=<label> \
   bash /root/pod_bench_driver.sh > /root/campaign.log 2>&1 < /dev/null & echo launched'
 $SSH 'tail -5 /root/campaign.log'
 ```
@@ -178,24 +178,26 @@ The refresh runs from a developer machine via `scripts/standings_refresh.py`, no
 export RUNPOD_API_KEY="rpa_..."
 ```
 
-**Phase 1: measure.** Rents one L40S, runs `scripts/standings_refresh_pod.sh` detached on the pod, polls the run log, and pulls the axis jsonl files (plus `ab.jsonl` when `--prev-version` is set) incrementally, every poll rather than only at the end, so a pod that dies late still leaves finished axes on this machine.
+**Phase 1: measure.** Rents one RTX PRO 6000 Blackwell (96GB, the host the redesigned matrix is measured on), runs `scripts/standings_refresh_pod.sh` detached on the pod, polls the run log, and pulls the axis jsonl files (plus `ab.jsonl` when `--prev-version` is set) incrementally, every poll rather than only at the end, so a pod that dies late still leaves finished axes on this machine.
 
 ```bash
-python3 scripts/standings_refresh.py measure --axes rows,width,frontier,airline \
+python3 scripts/standings_refresh.py measure --only-stale \
   --prev-version <last-release-version>
 ```
 
 A `finally` block deletes the pod and sweeps any stray `bonsai-standings-*` pods regardless of how the run ends. Verify the fleet is empty afterward (same check as section 7): zero pods listed means zero billing. `--keep-pod` skips teardown for debugging; delete it yourself if you use it. Results land in a dated directory printed at the end (`--out-dir` to choose one).
 
-The width axis has two clocks. Without a flag it measures `standings-cols`, which drops the 16384-column CPU arms (`lgbm_cpu`, `bonsai_levelwise`): those two cells pin the wall clock with no GPU-side change able to move them, so a routine refresh chasing a code change skips them. `measure --width-full` measures `standings-cols-full` instead, keeping every arm; both write to the same output file, so `supersede --axes ...` always names `width`, never `width-full`.
+The six axes are the scenario matrix of decision 103: `gpu-tall`, `gpu-wide`, `gpu-extreme`, `cpu-tall`, `cpu-wide`, `gpu-early-stop`, each one bundled spec of the same name writing `<axis>-YYYY-MM.jsonl`. `--axes` selects a subset; `--only-stale` intersects that subset with `python3 scripts/check_standings.py --stale`, which lists the axes whose plane digest has moved since their last refresh, so a CUDA-only change measures the gpu axes and leaves the cpu ones alone. Run without `--only-stale` for a release refresh, which re-measures everything on one host.
+
+`gpu-extreme` is the VRAM-maxout scenario and its 2^36-cell float32 input needs about 275GB of host RAM. The pod script checks `free -g` first and prints a `SKIP gpu-extreme:` line if the rental is thinner, so a degraded session is loud rather than silent; pick a higher-RAM machine and rerun that axis alone.
 
 **Phase 2: supersede.** Works from any local results directory, independent of the pod, so a failed or interrupted supersede reruns without paying for measurement again: copies the axis files into `benchmarks/results/`, updates the registry per axis, stages `git add -A benchmarks/` **before** rendering (the committed-files gate reads `git ls-files`, and a month-rollover refresh deletes the old dated files), renders, prints the A/B verdict from `ab.jsonl`, then branches, commits, and opens the PR.
 
 ```bash
 python3 scripts/standings_refresh.py supersede --results-dir standings-<date> \
-  --axes rows,width,frontier,airline
+  --axes gpu-tall,gpu-wide,gpu-extreme,cpu-tall,cpu-wide,gpu-early-stop
 ```
 
 `--no-pr` stops after the local commit so you can inspect the diff before pushing and opening the PR by hand.
 
-Release ordering is unchanged from decision 92: merge the version-bump PR FIRST, then run the refresh with `--prev-version` = the last release and `measure --width-full` (the release clock, so the published width standings carry the wide-CPU arms for this release), merge the refresh PR (a **moved** verdict needs a `Standings:`-tagged decision first; docs-check enforces), then tag. The order matters because `update_standings.py` stamps `refreshed_for` from pyproject at the refresh's checkout sha: a refresh run before the bump stamps the old version and the publish gate then fails at tag time.
+Release ordering is unchanged from decision 92: merge the version-bump PR FIRST, then run the refresh with `--prev-version` = the last release and no `--only-stale` (a release re-measures every axis on one host), merge the refresh PR (a **moved** verdict needs a `Standings:`-tagged decision first; docs-check enforces), then tag. The order matters because `update_standings.py` stamps `refreshed_for` from pyproject at the refresh's checkout sha: a refresh run before the bump stamps the old version and the publish gate then fails at tag time.

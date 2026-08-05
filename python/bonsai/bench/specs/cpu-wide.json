@@ -1,0 +1,12 @@
+{
+  "name": "cpu-wide",
+  "suite": "cpu-wide",
+  "defaults": {"depth": 8, "iters": 100, "lr": 0.1, "bins": 255,
+               "informative": 20, "seed": 42},
+  "cells": [{"rows": 16384, "cols": 16384, "timeout_s": 7200}],
+  "variants": ["bonsai_depthwise", "bonsai_leafwise", "bonsai_levelwise",
+               "xgb_hist", "lgbm_cpu", "catboost_cpu"],
+  "threads": [16],
+  "repeats": {"default": 1, "cpu": 1},
+  "timeout_cap": 7200
+}

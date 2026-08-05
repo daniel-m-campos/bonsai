@@ -7,7 +7,6 @@ The packaged suites run as modules, from an installed wheel (`pip install "bonsa
 ```bash
 python -m bonsai.bench.grinsztajn out.jsonl --report   # quality standings
 python -m bonsai.bench.scaling --smoke                 # perf grid, laptop mode
-python -m bonsai.bench.airline out.jsonl --sizes 0.1m  # airline ladder
 python -m bonsai.bench.datasets --list                 # dataset cache state
 ```
 

@@ -15,7 +15,7 @@ Ultra-wide selections broke the row-wise u8 fill: its per-row scatter targets th
 
 ### The CUDA wide recheck: the wall was already gone (decision 90)
 
-A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: the gap no longer exists. The recorded numbers dated to 2026-07-08 code, before the device-resident line landed; on current main, one pod, bonsai's CUDA growers lead every wide cell against both references at 3-4x less host memory. The stale reading ("CatBoost keeps the wide lead") is corrected wherever it appeared; the six-variant cols re-baseline below completes the recorded follow-up.
+A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: the gap no longer exists. The recorded numbers dated to 2026-07-08 code, before the device-resident line landed; on current main, one pod, bonsai's CUDA growers lead every wide cell against both references at 3-4x less host memory. The stale reading ("CatBoost keeps the wide lead") is corrected wherever it appeared.
 
 | variant | rows | cols | fit | test r² | peak RSS |
 |---|---|---|---|---|---|
@@ -28,88 +28,3 @@ A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: 
 | xgb_cuda | 1M | 4096 | 103.7s | 0.8761 | 60.4GB |
 
 *Source: [`cuda-wide-recheck-2026-07.jsonl`](../../../benchmarks/results/cuda-wide-recheck-2026-07.jsonl). Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs; verdict recorded as decision 90.*
-
-### The cols re-baseline: wide standings on current main (decision 90 follow-up)
-
-The six-variant cols-axis re-baseline promised by decision 90. bonsai's CUDA growers hold the fastest slot at every measured width, at a fraction of the reference libraries' peak host memory; the tables below carry the current numbers. The widest cell drops to 131k rows to hold total cells at 2^31, so its column is not comparable to the 1M-row columns (starred in the chart). The CPU reference arms bound the GPU advantage: bonsai CPU and LightGBM trade the widest-cell lead within a rep's noise while the GPU growers are several times faster than either.
-
-![Fit seconds vs features, re-baseline](../assets/cols-rebaseline.svg)
-
-Fit seconds (test r²), best of reps:
-
-| cell | bonsai cuda dw | bonsai cuda lvl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu lvl |
-|---|---|---|---|---|---|---|---|---|
-| 1M x 100 | 0.9s (.877) | 1.3s (.877) | 3.6s (.877) | 2.7s (.876) | 2.7s (.876) | 7.2s (.884) | 9.7s (.877) | 11.9s (.877) |
-| 1M x 1024 | 5.4s (.876) | 5.4s (.876) | 8.8s (.876) | 22.7s (.876) | 12.6s (.875) | 46.9s (.884) | 92.4s (.876) | 77.5s (.876) |
-| 1M x 4096 | 20.0s (.876) | 20.9s (.875) | 30.1s (.876) | 91.7s (.876) | 48.0s (.874) | 200.0s (.883) | 390.0s (.875) | 285.2s (.875) |
-| 131k x 16384 | 42.4s (.860) | 49.4s (.876) | 1139.4s (.860) | 87.3s (.861) | 71.3s (.874) | 563.5s (.868) | - | - |
-
-Ingest / train seconds, the split behind that total (issue #301). bonsai's split comes from the two-step `Dataset(..., device=...)` plus `train(pairs, ds)` form, which for a cuda arm bins on the device exactly where the fused call does; every refresh fits the anchor cell both ways, interleaved on the same pod, and the supersession is gated on their agreement, so the seam these columns report belongs to the same pipeline the total measures. CatBoost's `Pool()` step only wraps the raw arrays; it quantizes inside `fit`, so its ingest column reads low and that cost sits in train instead (issue #253). Its total is the only number directly comparable to the other libraries' split.
-
-| cell | bonsai cuda dw | bonsai cuda lvl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu lvl |
-|---|---|---|---|---|---|---|---|---|
-| 1M x 100 | 0.1s / 0.8s | 0.1s / 1.2s | 0.1s / 3.4s | 1.8s / 0.9s | 0.3s / 2.4s | 1.6s / 5.5s | 1.6s / 8.1s | 0.5s / 11.3s |
-| 1M x 1024 | 1.1s / 4.3s | 1.0s / 4.5s | 1.0s / 7.8s | 17.6s / 5.1s | 1.1s / 11.5s | 17.8s / 29.0s | 16.7s / 75.7s | 5.4s / 72.1s |
-| 1M x 4096 | 3.7s / 16.3s | 4.0s / 16.9s | 4.0s / 26.1s | 72.5s / 19.2s | 4.5s / 43.5s | 84.5s / 115.5s | 81.4s / 308.5s | 22.0s / 263.2s |
-| 131k x 16384 | 7.7s / 34.7s | 7.8s / 41.6s | 6.5s / 1133.0s | 53.4s / 33.9s | 2.4s / 68.8s | 137.4s / 426.1s | - | - |
-
-Peak host RSS, worst rep; the parenthetical is headroom above the input array `bonsai.bench.synth.gen_data` holds resident for that cell (rows plus the held-out test rows, which are numpy views into the same buffer and so stay resident too, times columns, times 4 bytes float32). Depthwise and levelwise hold that headroom under 1GB at every measured width because they bin on the device; that cost shows up instead in `dev_mem` (16.6GB at the widest cell against 9.8GB of host RSS). Leafwise is the counter-example sitting in the same table: at the widest cell it still bins on the host (no CUDA histogram support yet, issue #268), so its device memory drops to 3.1GB while its headroom balloons to 18.4GB, the mirror image of the mechanism. The comparison is host-input only: given device-resident input, XGBoost sketches in place and this gap collapses (issue #289).
-
-| cell | bonsai cuda dw | bonsai cuda lvl | bonsai cuda lw | xgb cuda | catboost gpu | lgbm cuda | lgbm cpu | bonsai cpu lvl |
-|---|---|---|---|---|---|---|---|---|
-| 1M x 100 | 0.8GB (+0.3) | 0.8GB (+0.3) | 0.8GB (+0.3) | 1.8GB (+1.4) | 1.5GB (+1.1) | 1.3GB (+0.8) | 1.0GB (+0.6) | 0.9GB (+0.4) |
-| 1M x 1024 | 4.9GB (+0.3) | 4.9GB (+0.3) | 4.9GB (+0.3) | 15.2GB (+10.6) | 13.1GB (+8.5) | 9.7GB (+5.1) | 9.3GB (+4.8) | 7.3GB (+2.8) |
-| 1M x 4096 | 18.6GB (+0.3) | 18.6GB (+0.3) | 18.6GB (+0.3) | 60.5GB (+42.2) | 51.4GB (+33.1) | 40.4GB (+22.1) | 36.9GB (+18.6) | 29.0GB (+10.7) |
-| 131k x 16384 | 9.9GB (+0.3) | 9.9GB (+0.3) | 28.0GB (+18.4) | 40.4GB (+30.8) | 26.2GB (+16.7) | 57.9GB (+48.3) | - | - |
-
-*Source: [`cols-rebaseline-2026-08.jsonl`](../../../benchmarks/results/cols-rebaseline-2026-08.jsonl). One pod, SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells. Measured at `db383c5` (2026-08-04, pod-NVIDIA-L40S).*
-
-### The iso-volume shape frontier (decision 91)
-
-Constant data volume, swept aspect ratio: every cell of the primary ladder holds rows x cols at 2^31 (an 8GiB float32 matrix) while cols runs 128 to 65536, so costs that scale with total cells stay flat and whatever rises is paying for width. Measured peak device memory (`dev_mem`, NVML-sampled while the child runs, gates off) is an output, not an estimate. One pod: RTX PRO 6000 Blackwell Workstation Edition (96GB, 64 vCPU, 1.1TB RAM, sync probe 4.5us/op), threads 16.
-
-bonsai's CUDA growers are fastest at every cell of both ladders and their fit time is nearly flat across the tall half of the iso-line (7.2s at 16M x 128 to 9.3s at 1M x 2048) where both references vary 1.5-2x; every arm rises together past 8192 cols as histogram cost (cols x bins) takes over. Device memory separates harder than time: bonsai peaks at 3.4GB where XGBoost holds 18.9GB, and CatBoost allocates 90.2GB (the whole card) at every cell including 1M x 100, so it never fails but never shares the device. The one failure is data: xgb_cuda died at 32k x 65536 on both attempts, the sampler recording 33.4GB of device memory at death. At the widest aspect (32k x 65536, where p is 2x n) the levelwise grower keeps test r2 at .873 while depthwise falls to .815, the symmetric tree's regularization showing at extreme width. On the 2^33 stretch (a 32GiB matrix, GPU arms only) bonsai leads 4.1x over XGBoost at 67M x 128 (27.9 vs 113.8s) at 6.3x less device memory (11.7 vs 73.6GB).
-
-![Fit seconds vs cols, iso-volume](../assets/iso-volume-fit.svg)
-
-![Peak device memory vs cols, iso-volume](../assets/iso-volume-vram.svg)
-
-Fit seconds (test r2), best of reps, 2^31 cells plus the 1M x 100 anchor:
-
-| cell | bonsai cuda dw | bonsai cuda lvl | xgb cuda | catboost gpu | bonsai cpu dw | xgb hist |
-|---|---|---|---|---|---|---|
-| 1M x 100 | 0.5s (.877) | 1.1s (.877) | 1.6s (.876) | 1.8s (.876) | 5.2s (.877) | 3.5s (.876) |
-| 16M x 128 | 7.2s (.879) | 6.9s (.876) | 28.1s (.879) | 26.0s (.875) | 70.8s (.879) | 65.1s (.879) |
-| 4M x 512 | 6.8s (.878) | 6.2s (.876) | 24.7s (.878) | 14.8s (.877) | 62.4s (.878) | 60.2s (.878) |
-| 1M x 2048 | 9.3s (.876) | 8.6s (.876) | 27.3s (.877) | 16.6s (.876) | 72.1s (.876) | 84.8s (.877) |
-| 262k x 8192 | 20.5s (.868) | 21.4s (.874) | 34.5s (.867) | 35.5s (.874) | 125.5s (.868) | 127.1s (.867) |
-| 65k x 32768 | 57.8s (.841) | 68.5s (.870) | 62.1s (.840) | 96.3s (.866) | 310.0s (.843) | 276.3s (.841) |
-| 32k x 65536 | 105.5s (.816) | 130.4s (.874) | - | 172.4s (.869) | 491.1s (.816) | 444.0s (.817) |
-
-Measured peak device memory (per-process, worst rep is within sampling noise of best), 2^31 cells plus the 1M x 100 anchor:
-
-| cell | bonsai cuda dw | bonsai cuda lvl | xgb cuda | catboost gpu |
-|---|---|---|---|---|
-| 1M x 100 | 0.8GB | 0.8GB | 0.9GB | 90.2GB |
-| 16M x 128 | 3.4GB | 3.4GB | 18.9GB | 90.2GB |
-| 4M x 512 | 3.2GB | 3.2GB | 18.7GB | 90.2GB |
-| 1M x 2048 | 4.4GB | 4.4GB | 18.7GB | 90.2GB |
-| 262k x 8192 | 9.7GB | 9.7GB | 18.8GB | 90.2GB |
-| 65k x 32768 | 30.7GB | 30.7GB | 48.3GB | 90.2GB |
-| 32k x 65536 | 58.5GB | 58.5GB | - | 90.2GB |
-
-The 2^33 stretch, GPU arms:
-
-| cell | bonsai cuda dw | bonsai cuda lvl | xgb cuda | catboost gpu |
-|---|---|---|---|---|
-| 67M x 128 | 27.9s (.880) | 23.9s (.871) | 113.8s (.880) | 103.8s (.877) |
-| 4M x 2048 | 25.8s (.878) | 22.6s (.876) | 101.6s (.878) | 47.7s (.876) |
-| 262k x 32768 | 85.3s (.870) | 88.3s (.877) | 160.7s (.868) | 154.7s (.876) |
-
-| cell | bonsai cuda dw | bonsai cuda lvl | xgb cuda | catboost gpu |
-|---|---|---|---|---|
-| 67M x 128 | 11.7GB | 11.7GB | 73.6GB | 90.2GB |
-| 4M x 2048 | 10.5GB | 10.5GB | 72.7GB | 90.2GB |
-| 262k x 32768 | 36.7GB | 36.7GB | 73.2GB | 90.2GB |
-
-*Source: [`iso-volume-2026-08.jsonl`](../../../benchmarks/results/iso-volume-2026-08.jsonl). Specs: bundled in [bench/specs/](../../../python/bonsai/bench/specs/); driver: [scripts/pod_bench_driver.sh](../../../scripts/pod_bench_driver.sh); evidence: [benchmarks/iso-volume-2026-08.md](../../../benchmarks/iso-volume-2026-08.md); verdict recorded as decision 91. Measured at `a907895` (2026-07-30, pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition).*

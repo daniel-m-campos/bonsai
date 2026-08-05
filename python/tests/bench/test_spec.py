@@ -5,6 +5,11 @@ from __future__ import annotations
 import pytest
 from bonsai.bench import spec as spec_mod
 
+_GPU_ARMS = ["bonsai_cuda_depthwise", "bonsai_cuda_leafwise",
+             "bonsai_cuda_levelwise", "xgb_cuda", "lgbm_cuda", "catboost_gpu"]
+_CPU_ARMS = ["bonsai_depthwise", "bonsai_leafwise", "bonsai_levelwise",
+             "xgb_hist", "lgbm_cpu", "catboost_cpu"]
+
 
 def test_spec_expansion():
     s = {"name": "iso-test", "suite": "iso-volume",
@@ -53,32 +58,60 @@ def test_spec_expansion_exclude_variants():
     assert all("exclude_variants" not in j["cell"] for j in jobs)
 
 
-def test_bundled_specs():
-    from bonsai.bench import spec as spec_mod
+# The redesigned standings axes (decision 103): scenario name -> the cell it
+# measures, the arms it runs, and how many jobs that expands to.
+STANDINGS_AXES = {
+    "gpu-tall": ((16_777_216, 128), _GPU_ARMS, 6),
+    "gpu-wide": ((131_072, 16_384), _GPU_ARMS, 6),
+    "gpu-extreme": ((67_108_864, 1024), _GPU_ARMS, 6),
+    "cpu-tall": ((2_097_152, 128), _CPU_ARMS, 6),
+    "cpu-wide": ((16_384, 16_384), _CPU_ARMS, 6),
+}
 
+
+def test_bundled_specs():
     names = spec_mod.bundled_specs()
-    assert "iso-volume-2026-08" in names and "gpu-pareto-16M" in names
-    s = spec_mod.load_spec("iso-volume-2026-08")  # bare name, no repo path
-    assert s["suite"] == "iso-volume" and len(spec_mod.expand(s)) > 0
-    pareto = spec_mod.load_spec("gpu-pareto-16M.json")  # suffix tolerated
-    assert len(spec_mod.expand(pareto)) == 32  # the six iteration ladders
+    assert names == ["cpu-tall", "cpu-wide", "gpu-early-stop", "gpu-extreme",
+                     "gpu-tall", "gpu-wide"]
+    s = spec_mod.load_spec("gpu-tall")  # bare name, no repo path
+    assert s["suite"] == "gpu-tall" and len(spec_mod.expand(s)) == 6
+    wide = spec_mod.load_spec("gpu-wide.json")  # suffix tolerated
+    assert len(spec_mod.expand(wide)) == 6
     with pytest.raises(FileNotFoundError):
         spec_mod.load_spec("no-such-spec")
 
 
-def test_standings_cols_routine_drops_wide_cpu_arms():
-    """standings-cols (routine, the change clock) drops the two CPU arms
-    at the 131072x16384 cell that pin the wall clock; standings-cols-full
-    (the release clock) keeps every (cell, variant) pair."""
-    routine = spec_mod.load_spec("standings-cols")
-    full = spec_mod.load_spec("standings-cols-full")
-    assert routine["variants"] == full["variants"]
-    routine_jobs = spec_mod.expand(routine)
-    full_jobs = spec_mod.expand(full)
-    assert len(full_jobs) == 4 * len(full["variants"])  # 4 cells x 8 arms
-    assert len(routine_jobs) == len(full_jobs) - 2
-    wide = {(j["variant"]) for j in routine_jobs
-            if j["cell"]["rows"] == 131072 and j["cell"]["cols"] == 16384}
-    assert wide == {"bonsai_cuda_depthwise", "bonsai_cuda_levelwise",
-                    "bonsai_cuda_leafwise", "xgb_cuda", "catboost_gpu",
-                    "lgbm_cuda"}
+@pytest.mark.parametrize("name", sorted(STANDINGS_AXES))
+def test_standings_axis_expansion(name):
+    """Each scenario axis is one cell across its plane's six arms."""
+    cell, arms, n_jobs = STANDINGS_AXES[name]
+    s = spec_mod.load_spec(name)
+    assert s["suite"] == name and s["variants"] == arms
+    cells = spec_mod.cells_of(s)
+    assert [(c["rows"], c["cols"]) for c in cells] == [cell]
+    assert cells[0]["depth"] == 8 and cells[0]["iters"] == 100
+    jobs = spec_mod.expand(s)
+    assert len(jobs) == n_jobs
+    assert {j["variant"] for j in jobs} == set(arms)
+
+
+def test_gpu_extreme_runs_with_the_memory_gate_off():
+    """The extreme axis exists to publish the OOM boundary, so the driver's
+    memory gates must not pre-empt it: a skipped row is not a measurement."""
+    s = spec_mod.load_spec("gpu-extreme")
+    assert s["gates"] == {"mem_gate": "off", "gpu_max_cols": None}
+    assert s["timeout_cap"] == 10800
+    assert s["repeats"] == {"default": 1}
+
+
+def test_gpu_early_stop_expansion():
+    """Three eval-mode arms at the gpu-tall cell, six GPU variants each."""
+    s = spec_mod.load_spec("gpu-early-stop")
+    cells = spec_mod.cells_of(s)
+    assert [c["eval_mode"] for c in cells] == ["off", "eval", "stop"]
+    assert all((c["rows"], c["cols"]) == (16_777_216, 128) for c in cells)
+    stop = cells[-1]
+    assert (stop["iters"], stop["lr"], stop["patience"]) == (2000, 0.05, 50)
+    jobs = spec_mod.expand(s)
+    assert len(jobs) == 3 * 6
+    assert all(j["repeats"] == 2 for j in jobs)

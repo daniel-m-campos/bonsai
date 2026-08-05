@@ -29,13 +29,13 @@ from _render_common import md_table
 
 
 class Axis:
-    """Standings axes: registry keys in benchmarks/standings.json."""
+    """Standings axes: registry keys in benchmarks/standings.json.
 
-    ROWS: Final = "rows"
-    WIDTH: Final = "width"
-    SHAPE: Final = "shape"
-    FRONTIER: Final = "frontier"
-    AIRLINE: Final = "airline"
+    The six redesigned perf axes (decision 103) are registered but unmeasured,
+    so nothing renders them yet; the panel pages arrive with their first
+    refresh.
+    """
+
     GRINSZTAJN: Final = "quality-grinsztajn"
     CODE: Final = "code"
 
@@ -79,7 +79,6 @@ class Evidence:
     LEAFWISE_LADDER: Final = "leafwise-ladder-2026-08.jsonl"
     LEAFWISE_STAGE3: Final = "leafwise-stage3-2026-08.jsonl"
     LEAFWISE_CORRECTION: Final = "leafwise-correction-2026-08.jsonl"
-    EARLY_STOP: Final = "early-stop-4M-2026-08.jsonl"
 
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -838,69 +837,6 @@ def rss_headroom_str(r: dict) -> str:
     return f"{rss:.1f}GB ({headroom:+.1f})"
 
 
-def rebaseline_section() -> str:
-    """The rows-scaling section of the scale page."""
-    rows = load_jsonl(standings_file(Axis.ROWS))
-    best = _cell_best(rows)
-    host = rows[0]["host"]
-    row_axis = sorted({r["cell"]["rows"] for r in rows if r["cell"]["cols"] == 100})
-    present = present_variants(REBASE_VARIANTS, best)
-
-    rows_table = md_table(
-        ["rows", *[lbl for _, lbl in present]],
-        [[human(n), *[_fmt_cell(best, n, 100, v) for v, _ in present]]
-         for n in row_axis])
-    split_table = split_table_by_rows(best, row_axis, present)
-    rss_table = md_table(
-        ["rows", *[lbl for _, lbl in present]],
-        [[human(n), *[rss_headroom_str(best[(n, 100, v)])
-                      if (n, 100, v) in best else "-" for v, _ in present]]
-         for n in row_axis])
-    top_row = max(row_axis)
-    dev_row = next((r for r in rows if r["cell"]["rows"] == top_row
-                    and r[K.VARIANT].startswith("bonsai_cuda")), None)
-    dev_gb = ((dev_row or {}).get("dev_mem") or {}).get("peak_gb_total")
-
-    def series_for(cells: list[tuple[int, int]]):
-        out = []
-        for variant, (label, color, cpu) in VARIANT_STYLE.items():
-            pts = [(x, best[(r, c, variant)][K.FIT_S])
-                   for x, (r, c) in cells if (r, c, variant) in best]
-            if pts:
-                out.append((label, color, cpu, pts))
-        return out
-
-    line_chart(
-        "rebaseline-rows.svg",
-        "Fit seconds vs rows (100 features, log-log; lower is better)",
-        "fit seconds",
-        series_for([(n, (n, 100)) for n in row_axis]),
-        x_ticks=[(n, human(n)) for n in row_axis], x_label="rows")
-
-    return f"""### The re-baseline: fit seconds at scale
-
-Same-pod sweep ({host['cpu_model']}, {host['gpu']}), synthetic regression, `fit()` timed end to end including each library's own ingest, best of repeats, test r² in parentheses.
-
-![Fit seconds vs rows](assets/rebaseline-rows.svg)
-
-Scaling rows (100 features):
-
-{rows_table}
-
-Ingest / train seconds, the split behind that total (issue #301): the two halves scale differently, so a total-only column hides which one moves. {BONSAI_SPLIT_NOTE} {CATBOOST_INGEST_NOTE}
-
-{split_table}
-
-Peak host RSS, worst repeat; the parenthetical is headroom above the input array `bonsai.bench.synth.gen_data` holds resident for that cell ({human(top_row)} x 100 float32, rows plus the held-out test rows, which are numpy views into the same buffer and so stay resident too). bonsai's headroom sits near zero at every scale because it bins the data on the device rather than keeping a second host-size copy; that cost lands on the GPU instead ({fmt(dev_gb, 1)}GB device memory at {human(top_row)} rows, `dev_mem`, same cell). The comparison is host-input only: given device-resident input, XGBoost sketches in place and this headroom gap collapses (issue #289).
-
-{rss_table}
-
-Width scaling has its own standings axis on [Width and shape](perf-shape.md).
-
-{provenance([standings_file(Axis.ROWS)], "Runner: [scripts/bench_scaling.py](../../scripts/bench_scaling.py) (`python -m bonsai.bench.scaling`); README Performance derives from the same file." + measured_stamp(rows))}
-"""
-
-
 def xgb33_recheck_table() -> str:
     """The xgboost-3.3 recheck section (decision 87)."""
     rc = load_jsonl(Evidence.XGB33_RECHECK)
@@ -938,7 +874,7 @@ def xgb33_recheck_table() -> str:
 
     return f"""### The XGBoost 3.3 recheck (decision 87)
 
-XGBoost 3.3 (2026-07-21) claimed lower GPU quantile-sketching memory and wide-data CPU histogram tiling, both aimed at cells bonsai competes in, so the claims above were rechecked on one pod (L40S) with three same-pod arms: bonsai at main, XGBoost 3.2.0, XGBoost 3.3.0. Every published standing survives. On GPU, 3.3 matches 3.2 within noise at every cell and host RSS does not move (22.1GB at 16M against bonsai's 6.9GB, the README's 3x memory claim reproduced on a second host). On CPU at 16M bonsai sits 6% behind `xgboost-hist`, inside the published "within ~8%, host-dependent" band. The one real improvement: 3.3 halves wide-CPU hist time at 1M x 4096 (nothing at 1024), narrowing bonsai's lead at that cell from 2.4x to 1.19x. No published cell flips; the wide standings above are GPU, where 3.3 changes nothing. Fit is best of repeats; RSS is the worst repeat; this pod's absolutes do not compare to the re-baseline table per the fleet-spread caveat.
+XGBoost 3.3 (2026-07-21) claimed lower GPU quantile-sketching memory and wide-data CPU histogram tiling, both aimed at cells bonsai competes in, so the then-published standings were rechecked on one pod (L40S) with three same-pod arms: bonsai at main, XGBoost 3.2.0, XGBoost 3.3.0. Every published standing survives. On GPU, 3.3 matches 3.2 within noise at every cell and host RSS does not move (22.1GB at 16M against bonsai's 6.9GB, the README's 3x memory claim reproduced on a second host). On CPU at 16M bonsai sits 6% behind `xgboost-hist`, inside the published "within ~8%, host-dependent" band. The one real improvement: 3.3 halves wide-CPU hist time at 1M x 4096 (nothing at 1024), narrowing bonsai's lead at that cell from 2.4x to 1.19x. No published cell flips; the wide standings it questioned are GPU, where 3.3 changes nothing. Fit is best of repeats; RSS is the worst repeat; this pod's absolutes do not compare to the re-baseline table per the fleet-spread caveat.
 
 {table}
 
@@ -988,199 +924,11 @@ def cuda_wide_recheck_table() -> str:
 
     return f"""### The CUDA wide recheck: the wall was already gone (decision 90)
 
-A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: the gap no longer exists. The recorded numbers dated to 2026-07-08 code, before the device-resident line landed; on current main, one pod, bonsai's CUDA growers lead every wide cell against both references at 3-4x less host memory. The stale reading ("CatBoost keeps the wide lead") is corrected wherever it appeared; the six-variant cols re-baseline below completes the recorded follow-up.
+A campaign to close the recorded ~5x wide-GPU gap to XGBoost closed at stage 0: the gap no longer exists. The recorded numbers dated to 2026-07-08 code, before the device-resident line landed; on current main, one pod, bonsai's CUDA growers lead every wide cell against both references at 3-4x less host memory. The stale reading ("CatBoost keeps the wide lead") is corrected wherever it appeared.
 
 {table}
 
 {provenance([Evidence.CUDA_WIDE_RECHECK], "Same pod (L40S, US-NC-1, 2026-07-30), SCALING knobs; verdict recorded as decision 90.")}
-"""
-
-
-def cols_rebaseline_table() -> str:
-    """The width-standings section of the shape page."""
-    cr = [r for r in load_jsonl(standings_file(Axis.WIDTH)) if r[K.STATUS] == "ok"]
-    best = best_fit_by(
-        cr, lambda r: (r["cell"]["rows"], r["cell"]["cols"], r[K.VARIANT]))
-    cells = sorted({(r["cell"]["rows"], r["cell"]["cols"]) for r in cr},
-                   key=lambda rc: rc[1])
-    label = cell_label
-    present = present_variants(REBASE_VARIANTS, best)
-
-    def cell_fmt(rows, cols, variant):
-        r = best.get((rows, cols, variant))
-        return "-" if r is None else fit_r2_str(r)
-
-    fit_table = md_table(
-        ["cell", *[lbl for _, lbl in present]],
-        [[label(nr, nc), *[cell_fmt(nr, nc, v) for v, _ in present]]
-         for nr, nc in cells])
-    split_table = split_table_by_cell(best, cells, present)
-    rss_table = md_table(
-        ["cell", *[lbl for _, lbl in present]],
-        [[label(nr, nc),
-          *[rss_headroom_str(best[(nr, nc, v)])
-            if (nr, nc, v) in best else "-" for v, _ in present]]
-         for nr, nc in cells])
-
-    series = []
-    for variant, (lbl, color, cpu) in VARIANT_STYLE.items():
-        pts = [(nc, best[(nr, nc, variant)][K.FIT_S])
-               for nr, nc in cells if (nr, nc, variant) in best]
-        if pts:
-            series.append((lbl, color, cpu, pts))
-    line_chart(
-        "cols-rebaseline.svg",
-        "Fit seconds vs features (1M rows; 16384-col cell 131k rows; log-log)",
-        "fit seconds",
-        series,
-        x_ticks=[(nc, f"{nc}" if nc < 16_384 else "16384*") for _, nc in cells],
-        x_label="features")
-
-    return f"""### The cols re-baseline: wide standings on current main (decision 90 follow-up)
-
-The six-variant cols-axis re-baseline promised by decision 90. bonsai's CUDA growers hold the fastest slot at every measured width, at a fraction of the reference libraries' peak host memory; the tables below carry the current numbers. The widest cell drops to 131k rows to hold total cells at 2^31, so its column is not comparable to the 1M-row columns (starred in the chart). The CPU reference arms bound the GPU advantage: bonsai CPU and LightGBM trade the widest-cell lead within a rep's noise while the GPU growers are several times faster than either.
-
-![Fit seconds vs features, re-baseline](assets/cols-rebaseline.svg)
-
-Fit seconds (test r²), best of reps:
-
-{fit_table}
-
-Ingest / train seconds, the split behind that total (issue #301). {BONSAI_SPLIT_NOTE} {CATBOOST_INGEST_NOTE}
-
-{split_table}
-
-Peak host RSS, worst rep; the parenthetical is headroom above the input array `bonsai.bench.synth.gen_data` holds resident for that cell (rows plus the held-out test rows, which are numpy views into the same buffer and so stay resident too, times columns, times 4 bytes float32). Depthwise and levelwise hold that headroom under 1GB at every measured width because they bin on the device; that cost shows up instead in `dev_mem` (16.6GB at the widest cell against 9.8GB of host RSS). Leafwise is the counter-example sitting in the same table: at the widest cell it still bins on the host (no CUDA histogram support yet, issue #268), so its device memory drops to 3.1GB while its headroom balloons to 18.4GB, the mirror image of the mechanism. The comparison is host-input only: given device-resident input, XGBoost sketches in place and this gap collapses (issue #289).
-
-{rss_table}
-
-{provenance([standings_file(Axis.WIDTH)], "One pod, SCALING knobs, GPU arms 2 reps / CPU arms 1; supersedes the July 8 study's wide cells." + measured_stamp(cr))}
-"""
-
-
-# Perf: iso-volume =================================================================================
-
-ISO_STYLE = {
-    **_GPU_STYLE,
-    "bonsai_depthwise": ("bonsai cpu dw", "#1b5e20", True),
-    "xgb_hist": ("xgb hist", LIB_COLOR["xgboost"], True),
-}
-
-ISO_VARIANTS = [(k, v[0]) for k, v in ISO_STYLE.items()]
-
-ISO_HOST = _STANDINGS_REG["shape"]["host"]
-
-
-def _iso_cells_for(best: dict, run: str) -> list[tuple[int, int]]:
-    """The (rows, cols) cells measured in one run, narrowest first."""
-    return sorted({(k[1], k[2]) for k in best if k[0] == run},
-                  key=lambda rc: rc[1])
-
-
-def _iso_tables(best: dict, run: str, variants: list) -> tuple[str, str]:
-    """(fit table, device-memory table) for one iso-volume run."""
-    def fit_cell(nr, nc, v):
-        r = best.get((run, nr, nc, v))
-        return "-" if r is None else fit_r2_str(r)
-
-    def vram_cell(nr, nc, v):
-        r = best.get((run, nr, nc, v))
-        dm = (r or {}).get("dev_mem") or {}
-        gb = dm.get("peak_gb_pid")
-        return f"{gb:.1f}GB" if gb is not None else "-"
-
-    cs = _iso_cells_for(best, run)
-    fit = md_table(["cell", *[lbl for _, lbl in variants]],
-                   [[cell_label(nr, nc),
-                     *[fit_cell(nr, nc, v) for v, _ in variants]]
-                    for nr, nc in cs])
-    vram = md_table(["cell", *[lbl for v, lbl in variants
-                               if not ISO_STYLE[v][2]]],
-                    [[cell_label(nr, nc),
-                      *[vram_cell(nr, nc, v) for v, _ in variants
-                        if not ISO_STYLE[v][2]]]
-                     for nr, nc in cs])
-    return fit, vram
-
-
-def _iso_charts(best: dict, run31: str):
-    """The two iso-volume charts over the 2^31 iso-line of one run."""
-    iso_cells = [(nr, nc) for nr, nc in _iso_cells_for(best, run31)
-                 if nr * nc == 1 << 31]
-    series_fit, series_vram = [], []
-    for v, (lbl, color, cpu) in ISO_STYLE.items():
-        pts = [(nc, best[(run31, nr, nc, v)][K.FIT_S])
-               for nr, nc in iso_cells if (run31, nr, nc, v) in best]
-        if pts:
-            series_fit.append((lbl, color, cpu, pts))
-        if not cpu:
-            mpts = [(nc, (best[(run31, nr, nc, v)].get("dev_mem") or {})
-                     .get("peak_gb_pid"))
-                    for nr, nc in iso_cells if (run31, nr, nc, v) in best]
-            mpts = [(x, y) for x, y in mpts if y is not None]
-            if mpts:
-                series_vram.append((lbl, color, cpu, mpts))
-    ticks = [(nc, str(nc)) for _, nc in iso_cells]
-    line_chart("iso-volume-fit.svg",
-               "Fit seconds vs cols at constant rows x cols = 2^31 (log-log)",
-               "fit seconds", series_fit, x_ticks=ticks,
-               x_label="features (rows x cols = 2^31)")
-    line_chart("iso-volume-vram.svg",
-               "Measured peak device memory vs cols at 2^31 cells (log-log)",
-               "peak GB", series_vram, x_ticks=ticks,
-               x_label="features (rows x cols = 2^31)")
-
-
-def iso_volume_section() -> str:
-    """The decision-91 shape-frontier section of the width/shape page."""
-    rows = load_jsonl(standings_file(Axis.SHAPE))
-    pod = [r for r in rows if r["host"]["name"] == ISO_HOST]
-    errors = [r for r in pod if r[K.STATUS] != "ok"]
-    best = best_fit_by(
-        [r for r in pod if r[K.STATUS] == "ok"],
-        lambda r: (r["run"], r["cell"]["rows"], r["cell"]["cols"],
-                   r[K.VARIANT]))
-    label = cell_label
-    run31, run33 = "iso-volume-2026-08-pod", "iso-volume-33-2026-08-pod"
-    gpu_variants = [(v, lbl) for v, lbl in ISO_VARIANTS if not ISO_STYLE[v][2]]
-    fit31, vram31 = _iso_tables(best, run31, present_variants(ISO_VARIANTS, best))
-    fit33, vram33 = _iso_tables(best, run33, present_variants(gpu_variants, best))
-    _iso_charts(best, run31)
-
-    err_note = ""
-    if errors:
-        e = errors[0]
-        gb = (e.get("dev_mem") or {}).get("peak_gb_pid")
-        c = e["cell"]
-        err_note = (f" The one failure is data: xgb_cuda died at "
-                    f"{label(c['rows'], c['cols'])} on both attempts, the "
-                    f"sampler recording {gb:.1f}GB of device memory at death.")
-
-    return f"""### The iso-volume shape frontier (decision 91)
-
-Constant data volume, swept aspect ratio: every cell of the primary ladder holds rows x cols at 2^31 (an 8GiB float32 matrix) while cols runs 128 to 65536, so costs that scale with total cells stay flat and whatever rises is paying for width. Measured peak device memory (`dev_mem`, NVML-sampled while the child runs, gates off) is an output, not an estimate. One pod: RTX PRO 6000 Blackwell Workstation Edition (96GB, 64 vCPU, 1.1TB RAM, sync probe 4.5us/op), threads 16.
-
-bonsai's CUDA growers are fastest at every cell of both ladders and their fit time is nearly flat across the tall half of the iso-line (7.2s at 16M x 128 to 9.3s at 1M x 2048) where both references vary 1.5-2x; every arm rises together past 8192 cols as histogram cost (cols x bins) takes over. Device memory separates harder than time: bonsai peaks at 3.4GB where XGBoost holds 18.9GB, and CatBoost allocates 90.2GB (the whole card) at every cell including 1M x 100, so it never fails but never shares the device.{err_note} At the widest aspect (32k x 65536, where p is 2x n) the levelwise grower keeps test r2 at .873 while depthwise falls to .815, the symmetric tree's regularization showing at extreme width. On the 2^33 stretch (a 32GiB matrix, GPU arms only) bonsai leads 4.1x over XGBoost at 67M x 128 (27.9 vs 113.8s) at 6.3x less device memory (11.7 vs 73.6GB).
-
-![Fit seconds vs cols, iso-volume](assets/iso-volume-fit.svg)
-
-![Peak device memory vs cols, iso-volume](assets/iso-volume-vram.svg)
-
-Fit seconds (test r2), best of reps, 2^31 cells plus the 1M x 100 anchor:
-
-{fit31}
-
-Measured peak device memory (per-process, worst rep is within sampling noise of best), 2^31 cells plus the 1M x 100 anchor:
-
-{vram31}
-
-The 2^33 stretch, GPU arms:
-
-{fit33}
-
-{vram33}
-
-{provenance([standings_file(Axis.SHAPE)], "Specs: bundled in [bench/specs/](../../python/bonsai/bench/specs/); driver: [scripts/pod_bench_driver.sh](../../scripts/pod_bench_driver.sh); evidence: [benchmarks/iso-volume-2026-08.md](../../benchmarks/iso-volume-2026-08.md); verdict recorded as decision 91." + measured_stamp(pod))}
 """
 
 
@@ -1204,38 +952,6 @@ def prefetch_section() -> str:
 
 {provenance([Evidence.CPU_PREFETCH], "Decision 61: software prefetch closed the 16M CPU gap to XGBoost-hist on this pod.")}
 """
-
-
-def _pareto_chart(pareto: list[dict], par_variants: list[str]):
-    """The accuracy-vs-time chart; ticks derive from the data so a refresh
-    with faster fits or higher accuracy cannot strand them outside the
-    plotted range."""
-    par_series = []
-    par_labels = []
-    for v in par_variants:
-        label, color, cpu = VARIANT_STYLE.get(v, (v, TEXT, False))
-        pts = sorted((r[K.FIT_S], r[K.R2_TEST]) for r in pareto if r[K.VARIANT] == v)
-        par_series.append((label, color, cpu, pts))
-        for r in pareto:
-            if r[K.VARIANT] == v:
-                par_labels.append((r[K.FIT_S], r[K.R2_TEST],
-                                   str(r["cell"]["iters"])))
-    fmin, fmax = (min(r[K.FIT_S] for r in pareto), max(r[K.FIT_S] for r in pareto))
-    x_step = 10 if fmax - fmin > 25 else 5
-    r2min, r2max = (min(r[K.R2_TEST] for r in pareto),
-                    max(r[K.R2_TEST] for r in pareto))
-    line_chart(
-        "gpu-pareto-16M.svg",
-        "16M rows: accuracy vs fit time by iteration count (up-left is better)",
-        "test r2",
-        par_series,
-        x_ticks=[(s, f"{s}s") for s in range(0, int(fmax) + 1, x_step)
-                 if fmin <= s <= fmax],
-        x_label="fit seconds",
-        log_x=False, log_y=False, height=420,
-        y_ticks=[(v / 100, f"{v / 100:.2f}")
-                 for v in range(math.ceil(r2min * 100), int(r2max * 100) + 1, 2)],
-        point_labels=par_labels)
 
 
 def leafwise_recheck_section() -> str:
@@ -1447,8 +1163,6 @@ def leafwise_correction_section() -> str:
 
     over = fit(capped, top, "lgbm_cuda") / fit(capped, top,
                                                "bonsai_cuda_leafwise")
-    stand = _cell_best([r for r in load_jsonl(standings_file(Axis.ROWS))
-                        if r[K.STATUS] == "ok"])
     margin = 1 - fit(capped, top, "bonsai_cuda_leafwise") / fit(capped, top,
                                                                "lgbm_cuda")
     published = 1 - fit(prior, top, "bonsai_cuda_leafwise") / fit(prior, top,
@@ -1472,7 +1186,7 @@ Every bonsai CUDA number in the two ladders above was measured through a benchma
 
 {table}
 
-Absolutes do not carry across rentals here, and the reference arm says why. `lgbm_cuda` never touched the affected path, and on this pod it reads {min(rental(n) for n in scales):.0%} to {max(rental(n) for n in scales):.0%} above the times decision 98 published for it, so this is the slowest of the three L40S rentals the campaign has run on. That is also why the 250k and 1M leafwise cells read above their published numbers rather than below: the ingest saving at those cells is a fraction of a second and this pod's host latency is not. The standings measure the same 16M cell on the fixed path, on a rental that reproduces the campaign's reference times, and read `cuda_leafwise` {stand[(16_000_000, 100, "bonsai_cuda_leafwise")][K.FIT_S]:.1f}s against `lgbm_cuda` {stand[(16_000_000, 100, "lgbm_cuda")][K.FIT_S]:.1f}s. Both rentals correct the published margin the same way, and that agreement is the reading that survives the pod. The distance between the two numbers is not left as pod luck either: the controls below take it apart into the profile counters, the benchmark data cache, and what remains of the rental.
+Absolutes do not carry across rentals here, and the reference arm says why. `lgbm_cuda` never touched the affected path, and on this pod it reads {min(rental(n) for n in scales):.0%} to {max(rental(n) for n in scales):.0%} above the times decision 98 published for it, so this is the slowest of the three L40S rentals the campaign has run on. That is also why the 250k and 1M leafwise cells read above their published numbers rather than below: the ingest saving at those cells is a fraction of a second and this pod's host latency is not. The then-current standings measured the same 16M cell on the fixed path, on a rental that reproduced the campaign's reference times, and corrected the published margin the same way; that agreement is the reading that survives the pod. The distance between the two numbers is not left as pod luck either: the controls below take it apart into the profile counters, the benchmark data cache, and what remains of the rental.
 
 {_correction_uncapped(rows)}
 
@@ -1517,8 +1231,6 @@ def _correction_profiler(rows: list[dict], prior: dict,
     plain, prof, nocache = (best(_CORRECTION_RUN),
                             best(_CORRECTION_PROFILED_RUN),
                             best(_CORRECTION_NOCACHE_RUN))
-    stand = _cell_best([r for r in load_jsonl(standings_file(Axis.ROWS))
-                        if r[K.STATUS] == "ok"])
     v, dw = "bonsai_cuda_leafwise", "bonsai_cuda_depthwise"
     n = 16_000_000
 
@@ -1530,33 +1242,18 @@ def _correction_profiler(rows: list[dict], prior: dict,
         ["16M x 100, capped", "cuda leafwise", "cuda dw (anchor)"],
         [["this ladder (cached, counters off)", *pair(plain)],
          ["counters on", *pair(prof)],
-         ["counters on, no data cache", *pair(nocache)],
-         ["standings pod (counters on, no data cache)", *pair(stand)]])
+         ["counters on, no data cache", *pair(nocache)]])
     costs = [prof[(s, 100, v)][K.FIT_S] / plain[(s, 100, v)][K.FIT_S] - 1
              for s in scales]
     cache = 1 - nocache[(n, 100, v)][K.FIT_S] / prof[(n, 100, v)][K.FIT_S]
-    pod = nocache[(n, 100, v)][K.FIT_S] / stand[(n, 100, v)][K.FIT_S] - 1
-    return f"""Two things other than the ingest path differ between this ladder and the published ones, and both are priced rather than argued. The rows of both published ladders carry profile blocks, because the bench driver turns the four counters on for every bonsai child and neither ladder could turn them off; this ladder ran with them off, and running it both ways puts the counters at {min(costs):.0%} to {max(costs):.0%} of leafwise fit. The `--data-cache` memmap the campaign ladders and this one all used costs more than that: dropping it at 16M, the protocol the standings run, takes leafwise fit down another {cache:.0%}. What is left is the rental, {pod:.0%} on identical protocol.
+    return f"""Two things other than the ingest path differ between this ladder and the published ones, and both are priced rather than argued. The rows of both published ladders carry profile blocks, because the bench driver turns the four counters on for every bonsai child and neither ladder could turn them off; this ladder ran with them off, and running it both ways puts the counters at {min(costs):.0%} to {max(costs):.0%} of leafwise fit. The `--data-cache` memmap the campaign ladders and this one all used costs more than that: dropping it at 16M, the protocol the standings run, takes leafwise fit down another {cache:.0%}. What is left after both is the rental.
 
 {table}
 """
 
 
-def frontier_section() -> str:
-    """The accuracy-vs-time frontier page body."""
-    pareto = [r for r in load_jsonl(standings_file(Axis.FRONTIER))
-              if r[K.STATUS] == "ok"]
-    par_variants = []
-    for r in pareto:
-        if r[K.VARIANT] not in par_variants:
-            par_variants.append(r[K.VARIANT])
-    par_table = md_table(
-        [K.VARIANT, "iters", "ingest_s", "train_s", K.FIT_S, "test r2"],
-        [[r[K.VARIANT], str(r["cell"]["iters"]), fmt(r.get("ingest_s"), 1),
-          fmt(r.get("train_s"), 1), fmt(r[K.FIT_S], 2), fmt(r[K.R2_TEST], 4)]
-         for r in pareto])
-    _pareto_chart(pareto, par_variants)
-
+def catboost_door_section() -> str:
+    """The ordered-boosting door probe (decisions 62 to 64)."""
     edge = load_jsonl(Evidence.CATBOOST_SCALE_EDGE)
 
     def detail(r):
@@ -1571,17 +1268,7 @@ def frontier_section() -> str:
         [[r["door"], f"{r['rows']:,}", r["learner"], detail(r),
           fmt(r[K.FIT_S], 2), fmt(r[K.R2_TEST], 4)] for r in edge])
 
-    return f"""### GPU accuracy-vs-time frontier at 16M
-
-![Accuracy vs fit time at 16M rows](assets/gpu-pareto-16M.svg)
-
-`ingest_s` and `train_s` are the split behind `fit_s` (issue #301). {BONSAI_SPLIT_NOTE} {CATBOOST_INGEST_NOTE}
-
-{par_table}
-
-{provenance([standings_file(Axis.FRONTIER)], "bonsai is first to every measured accuracy across the grid (terminal accuracies tie within the noise band) and its marginal round cost stays below CatBoost's on the same pod. Evidence: [benchmarks/gpu-pareto-16M-2026-07.md](../../benchmarks/gpu-pareto-16M-2026-07.md)." + measured_stamp(pareto))}
-
-### Ordered boosting at scale (CatBoost door)
+    return f"""### Ordered boosting at scale (CatBoost door)
 
 The probe behind decisions 62 to 64: CatBoost's Ordered vs Plain modes against bonsai levelwise as rows grow.
 
@@ -1589,28 +1276,6 @@ The probe behind decisions 62 to 64: CatBoost's Ordered vs Plain modes against b
 
 {provenance([Evidence.CATBOOST_SCALE_EDGE], "Evidence: [benchmarks/catboost-scale-edge-2026-07.md](../../benchmarks/catboost-scale-edge-2026-07.md).")}
 """
-
-
-# Perf: early stopping =============================================================================
-
-# The suite fits one cell three ways and `eval_mode` names the arm: `off` and
-# `eval` are the fixed-iteration pair whose fit_s ratio is the eval cost,
-# `stop` is the patience run.
-EVAL_OFF, EVAL_ON, EVAL_STOP = "off", "eval", "stop"
-
-EARLY_STOP_LABELS = {
-    "bonsai_cuda_depthwise": "bonsai cuda dw",
-    "bonsai_cuda_leafwise": "bonsai cuda lw",
-    "xgb_cuda": "xgb cuda",
-    "lgbm_cuda": "lgbm cuda",
-    "catboost_gpu": "catboost gpu",
-    "bonsai_depthwise": "bonsai cpu dw",
-    "xgb_hist": "xgb hist",
-    "lgbm_cpu": "lgbm cpu",
-    "catboost_cpu": "catboost cpu",
-}
-
-EARLY_STOP_CPU = ("bonsai_depthwise", "xgb_hist", "lgbm_cpu", "catboost_cpu")
 
 
 def _bold(text: str, on: bool) -> str:
@@ -1623,100 +1288,6 @@ def _pct(x: float) -> str:
     return f"{x * 100:+.1f}%"
 
 
-def _arm_best(rows: list[dict], mode: str) -> dict[str, dict]:
-    """Best-fit row per variant within one eval-mode arm."""
-    return best_fit_by([r for r in rows if r["eval_mode"] == mode],
-                       lambda r: r[K.VARIANT])
-
-
-def _paired_overhead(rows: list[dict], variant: str) -> list[float]:
-    """Eval-overhead ratios paired by repeat index, smallest first: the
-    spread behind a best-of-repeats ratio, which takes its two halves from
-    repeats that need not be the same one."""
-    by = {mode: {r["repeat"]: r[K.FIT_S] for r in rows
-                 if r[K.VARIANT] == variant and r["eval_mode"] == mode}
-          for mode in (EVAL_OFF, EVAL_ON)}
-    return sorted(by[EVAL_ON][i] / by[EVAL_OFF][i] - 1
-                  for i in by[EVAL_OFF] if i in by[EVAL_ON])
-
-
-def early_stop_section() -> str:
-    """The first early-stopping measurement: per-round eval overhead on one
-    cell, and time to a stopped model on the same one."""
-    rows = [r for r in load_jsonl(Evidence.EARLY_STOP) if r[K.STATUS] == "ok"]
-    off = _arm_best(rows, EVAL_OFF)
-    ev = _arm_best(rows, EVAL_ON)
-    stop = _arm_best(rows, EVAL_STOP)
-    order = [v for v in EARLY_STOP_LABELS if v in off]
-    ovh = {v: ev[v][K.FIT_S] / off[v][K.FIT_S] - 1 for v in order}
-    fixed, stopped_cell = off[order[0]]["cell"], stop[order[0]]["cell"]
-    train_rows = off[order[0]]["fit_rows_per_s"] * off[order[0]][K.FIT_S]
-
-    cheapest = min((v for v in order if v not in EARLY_STOP_CPU),
-                   key=lambda v: ovh[v])
-    ovh_table = md_table(
-        ["arm", "off fit_s", "eval fit_s", "eval overhead"],
-        [[EARLY_STOP_LABELS[v], f"{off[v][K.FIT_S]:.2f}s",
-          f"{ev[v][K.FIT_S]:.2f}s", _bold(_pct(ovh[v]), v == cheapest)]
-         for v in order])
-
-    fastest = min(order, key=lambda v: stop[v][K.FIT_S])
-    sharpest = max(order, key=lambda v: stop[v][K.R2_TEST])
-    stop_table = md_table(
-        ["arm", K.FIT_S, "stopped_at", "test r2"],
-        [[EARLY_STOP_LABELS[v],
-          _bold(f"{stop[v][K.FIT_S]:.1f}s", v == fastest),
-          str(stop[v]["stopped_at"]),
-          _bold(fmt(stop[v][K.R2_TEST], 4), v == sharpest)]
-         for v in order])
-
-    cpu_ovh = sorted(ovh[v] for v in EARLY_STOP_CPU if v in ovh)
-    dw_pair = _paired_overhead(rows, "bonsai_cuda_depthwise")
-    xgb_pair = _paired_overhead(rows, "xgb_cuda")
-    agreed_r2 = stop["bonsai_cuda_depthwise"][K.R2_TEST]
-    agreed = [v for v in order if stop[v][K.R2_TEST] == agreed_r2]
-    agreed_rounds = sorted(stop[v]["stopped_at"] for v in agreed)
-    patience = stopped_cell["patience"]
-    per_round = {v: stop[v]["train_s"] / (stop[v]["stopped_at"] + patience)
-                 for v in order}
-    cpu_stop = sorted(stop[v][K.FIT_S] for v in EARLY_STOP_CPU if v in stop)
-    gpu_stop = sorted(stop[v][K.FIT_S] for v in order
-                      if v not in EARLY_STOP_CPU)
-
-    return f"""### The first early-stopping measurement (issue #306)
-
-One cell, {human(fixed["rows"])} rows by {fixed["cols"]} columns of synthetic regression, {len(order)} arms on one L40S, and the two quantities the [protocol](benchmark-protocol.md#early-stopping) keeps apart: what it costs a library to score a validation set every round, and how long it takes to reach a model that stopped on its own. The eval rows come off the train side, 10 percent of it, so every arm below fits {train_rows / 1e6:.1f}M rows and the held-out test split stays untouched.
-
-#### Per-round eval overhead
-
-Each arm fits those rows twice at {fixed["iters"]} fixed rounds, once with a validation set attached and once without, with no patience armed either time. Nothing but the eval set differs between the two fits, so the ratio of their `fit_s` values is what scoring a validation set every round costs that library.
-
-bonsai's device growers pay the most of anything measured here: {_pct(ovh["bonsai_cuda_depthwise"])} for CUDA depthwise and {_pct(ovh["bonsai_cuda_leafwise"])} for CUDA leafwise, against {_pct(ovh["xgb_cuda"])} for XGBoost-GPU and {_pct(ovh["lgbm_cuda"])} for LightGBM-CUDA, with CatBoost-GPU between them at {_pct(ovh["catboost_gpu"])}. bonsai's own CPU depthwise reads {_pct(ovh["bonsai_depthwise"])}, so the cost belongs to the device plane and not to eval work as such. Issue #326 is the finding's home: the per-round eval predicts on the host, which charges a device-resident fit a host round trip every round, and both fix candidates (a device-side eval predict, or scoring every k rounds) want sizing measurements before any code.
-
-Two of the four CPU arms read below zero, {_pct(cpu_ovh[0])} and {_pct(cpu_ovh[1])}, and an attached eval set cannot make a fit faster; that is what puts the noise floor of this measurement near 2 percent, and all four CPU arms sit inside it. The device readings do not. Pairing the repeats by index instead of taking best of repeats on each side, bonsai's CUDA depthwise spans {_pct(dw_pair[0])} to {_pct(dw_pair[-1])} while XGBoost-GPU never exceeds {_pct(xgb_pair[-1])}, so the ordering survives every pairing even where the digit moves.
-
-Fit seconds without and with the eval set, best of repeats (GPU arms 2, CPU arms 1); the cheapest device arm is bolded, and the CPU arms are left unbolded because a reading inside the noise floor is not a win.
-
-{ovh_table}
-
-#### Time to stop
-
-Patience {patience}, an iteration cap of {stopped_cell["iters"]} that the validation set rather than the cap is meant to end, learning rate {stopped_cell["lr"]}. This is the latency of a retrain nobody has hand-tuned the round count for, so the wall clock includes the patience rounds each library grew and then discarded.
-
-XGBoost-GPU reaches a stopped model fastest, {stop["xgb_cuda"][K.FIT_S]:.1f}s against bonsai CUDA depthwise's {stop["bonsai_cuda_depthwise"][K.FIT_S]:.1f}s, which inverts the fixed-iteration ordering of the same cell above ({off["bonsai_cuda_depthwise"][K.FIT_S]:.1f}s against {off["xgb_cuda"][K.FIT_S]:.1f}s at {fixed["iters"]} rounds). The two readings agree: bonsai's lead at this shape is ingest ({off["bonsai_cuda_depthwise"]["ingest_s"]:.1f}s against {off["xgb_cuda"]["ingest_s"]:.1f}s), a run of roughly a thousand rounds amortizes ingest to nothing, and bonsai's per-round device cost sits above XGBoost's here ({per_round["bonsai_cuda_depthwise"] * 1000:.1f}ms against {per_round["xgb_cuda"] * 1000:.1f}ms, eval overhead included). The overhead reading above is part of that gap rather than separate from it.
-
-{len(agreed)} of the {len(order)} arms stop between {agreed_rounds[0]} and {agreed_rounds[-1]} rounds and return the same test r2 to four decimals, {fmt(agreed_r2, 4)}: six implementations of one stopping rule landing on one model. LightGBM-CUDA stops earliest at {stop["lgbm_cuda"]["stopped_at"]} rounds and gives up a little accuracy for it ({fmt(stop["lgbm_cuda"][K.R2_TEST], 4)}). CatBoost runs longest on both planes ({stop["catboost_gpu"]["stopped_at"]} and {stop["catboost_cpu"]["stopped_at"]} rounds) and returns the best metric ({fmt(stop["catboost_gpu"][K.R2_TEST], 4)}), but it scores with its own objective's eval metric and runs without a leaf-size floor, so its extra rounds are not a like-for-like reading of the same rule. The plane gap is the largest spread on the page: {gpu_stop[0]:.0f}s to {gpu_stop[-1]:.0f}s on the GPU against {cpu_stop[0]:.0f}s to {cpu_stop[-1]:.0f}s on the CPU for the same stopped model.
-
-Fit seconds to a stopped model, retained rounds, and the test metric of the model stopping actually produced; fastest fit and best metric bolded.
-
-{stop_table}
-
-Three protocol caveats this section inherits. `stopped_at` is the retained round count rather than a best-iteration index, because the four libraries number that index two different ways. XGBoost is the only arm that does not truncate on a stop, so the runner passes `iteration_range` explicitly; read without it, the metric would describe the overshot model. CatBoost shrinks its model to the best iteration whenever an eval set is present, detector or no detector, so the fixed-iteration arm pins `use_best_model=False`, or its metric would describe a shorter model than the one whose fit was timed.
-
-{provenance([Evidence.EARLY_STOP], "One pod (L40S, 2026-08-04), SCALING knobs, spec [early-stop-4M.json](../../python/bonsai/bench/specs/early-stop-4M.json) run as `python -m bonsai.bench run --spec early-stop-4M`, measured on the tail of the standings-refresh rental; evidence for issue #306, and the eval-overhead reading is issue #326." + measured_stamp(rows))}
-"""
-
-
 # assembly =========================================================================================
 
 GEN_NOTE = ("<!-- GENERATED by scripts/render_results.py. "
@@ -1727,70 +1298,6 @@ HEADER = GEN_NOTE + """
 # The results ledger
 
 Every results file behind a published claim is rendered across the pages below, generated straight from the data in [`benchmarks/results/`](../../benchmarks/results): `python3 scripts/render_results.py` rewrites them and CI fails on drift. Rows are as-run records under the [benchmark protocol](benchmark-protocol.md): quality division numbers never cite timing, perf division numbers name their timing mode, and superseded files are deleted rather than kept beside their replacements, so what is here is the current evidence, whole.
-"""
-
-
-
-def airline_section() -> str:
-    """The airline (real-data, binary) page body."""
-    rows = [r for r in load_jsonl(standings_file(Axis.AIRLINE)) if r[K.STATUS] == "ok"]
-
-    def cell(variant, size, depth):
-        m = [r for r in rows if r[K.VARIANT] == variant and r["size"] == size
-             and r["knobs"]["depth"] == depth]
-        return f"{m[0]['fit_s']:.1f}s / {m[0]['auc_test']:.4f}" if m else "-"
-
-    def split_cell(variant, size, depth):
-        m = [r for r in rows if r[K.VARIANT] == variant and r["size"] == size
-             and r["knobs"]["depth"] == depth]
-        return split_str(m[0]) if m else "-"
-
-    variants = []
-    for r in rows:
-        if r[K.VARIANT] not in variants:
-            variants.append(r[K.VARIANT])
-
-    tables = []
-    for depth, label in ((8, "campaign knobs (depth 8)"),
-                         (10, "Pafka protocol (depth 10)")):
-        tables.append(f"**{label}**, fit seconds / test AUC:\n\n" + md_table(
-            [K.VARIANT, "0.1m", "1m", "10m"],
-            [[v, cell(v, "0.1m", depth), cell(v, "1m", depth),
-              cell(v, "10m", depth)] for v in variants]))
-    split_table = md_table(
-        [K.VARIANT, "0.1m", "1m", "10m"],
-        [[v, split_cell(v, "0.1m", 8), split_cell(v, "1m", 8),
-          split_cell(v, "10m", 8)] for v in variants])
-
-    def lib_of(v):
-        return ("bonsai" if v.startswith("bonsai")
-                else "xgb" if v.startswith("xgb")
-                else "lgbm" if v.startswith("lgbm") else "catboost")
-
-    bars = sorted(((r[K.VARIANT], r[K.FIT_S], f"AUC {r['auc_test']:.4f}")
-                   for r in rows
-                   if r["size"] == "10m" and r["knobs"]["depth"] == 8),
-                  key=lambda t: t[1])
-    bar_chart("airline-10m.svg", "airline 10M rows: fit seconds (depth 8, one pod)",
-              [(v, s, note) for v, s, note in bars],
-              max(s for _v, s, _n in bars),
-              "bonsai_ts_* = OrderedTargetEncoder pipeline (encode time included); "
-              "all rows same-pod L40S")
-    return f"""## Airline delays: the real-data speed ladder
-
-The benchm-ml airline ladder (0.1M/1M/10M rows, mixed categorical/numeric, AUC), both the campaign knob shape and Pafka's depth-10 protocol, all rows one pod. `bonsai_ts_*` rows are the labeled exception to the uniform ordinal-code convention (OrderedTargetEncoder pipeline; `fit_s` includes the encode).
-
-![airline 10M fit seconds](assets/airline-10m.svg)
-
-{tables[0]}
-
-{tables[1]}
-
-Ingest / train seconds behind the campaign-knob total above (issue #301). {BONSAI_SPLIT_NOTE} {CATBOOST_INGEST_NOTE}
-
-{split_table}
-
-{provenance([standings_file(Axis.AIRLINE)], "A bonsai variant has the best AUC in every cell under both protocols, and bonsai CUDA depthwise is also the fastest fit from 1M rows up under ordinal encoding; XGBoost-GPU keeps only the smallest cell. Evidence: [benchmarks/airline-2026-07.md](../../benchmarks/airline-2026-07.md)." + measured_stamp(rows))}
 """
 
 
@@ -1869,27 +1376,15 @@ The five highest-CCN functions across `core_headers` + `engine_impl`, published 
 # keep their historical section headings verbatim so anchor slugs survive.
 PAGES: list[tuple[str, str, str, list]] = [
     ("perf-scale.md", "Fit at scale",
-     "Row-scale standings: the re-baseline, the XGBoost 3.3 recheck, and "
-     "the CPU prefetch round.",
-     [rebaseline_section, xgb33_recheck_table, prefetch_section,
+     "The campaign record at row scale: the XGBoost 3.3 recheck, the CPU "
+     "prefetch round, and the leafwise ladders.",
+     [xgb33_recheck_table, prefetch_section, catboost_door_section,
       leafwise_recheck_section, leafwise_cadence_section,
       leafwise_ladder_section, leafwise_stage3_section,
       leafwise_correction_section]),
     ("perf-shape.md", "Width and shape",
-     "The wide-data arc: the CPU fill, the CUDA recheck, the cols "
-     "re-baseline, and the iso-volume shape frontier with measured VRAM.",
-     [wide_cpu_hist_table, cuda_wide_recheck_table, cols_rebaseline_table,
-      iso_volume_section]),
-    ("perf-frontier.md", "The accuracy-time frontier",
-     "Accuracy versus fit time at 16M rows, plus the ordered-boosting door.",
-     [frontier_section]),
-    ("perf-early-stop.md", "Early stopping",
-     "What an eval set costs per round, and how long a stop takes at 4M "
-     "rows.",
-     [early_stop_section]),
-    ("perf-airline.md", "Airline delays",
-     "The benchm-ml real-data speed ladder at 0.1M, 1M, and 10M rows.",
-     [airline_section]),
+     "The wide-data arc: the CPU fill and the CUDA recheck.",
+     [wide_cpu_hist_table, cuda_wide_recheck_table]),
     ("perf-ceiling.md", "The single-card ceiling",
      "A 500M x 100 matrix trained end to end on one 80GB card.",
      [ceiling_section]),
@@ -1924,71 +1419,17 @@ def _reroot(body: str) -> str:
 
 def _division_summaries() -> tuple[str, str]:
     """(perf, quality) headline paragraphs, digits computed from standings."""
-    rb = load_jsonl(standings_file(Axis.ROWS))
-    fit = {}
-    rss = {}
-    for r in rb:
-        c = r["cell"]
-        if c["rows"] != 16_000_000 or r.get(K.FIT_S) is None:
-            continue
-        v = r[K.VARIANT]
-        fit[v] = min(fit.get(v, r[K.FIT_S]), r[K.FIT_S])
-        rss[v] = max(rss.get(v, 0.0), r[K.PEAK_RSS_GB])
-    b_fit = min(fit[v] for v in fit if v.startswith("bonsai_cuda"))
-    b_rss = min(rss[v] for v in rss if v.startswith("bonsai_cuda"))
-    br = _cell_best(rb)
-    xgb_row = br.get((16_000_000, 100, "xgb_cuda"))
-    cat_row = br.get((16_000_000, 100, "catboost_gpu"))
-    cell_16m = next(r["cell"] for r in rb if r["cell"]["rows"] == 16_000_000
-                    and r["cell"]["cols"] == 100)
-    input_16m = synthetic_input_gib(cell_16m)
-    dev_row_16m = next((r for r in rb if r["cell"]["rows"] == 16_000_000
-                        and r["cell"]["cols"] == 100
-                        and r[K.VARIANT].startswith("bonsai_cuda")), None)
-    b_dev_16m = ((dev_row_16m or {}).get("dev_mem") or {}).get("peak_gb_total")
-    iso = load_jsonl(standings_file(Axis.SHAPE))
-    dev = {}
-    for r in iso:
-        c = r["cell"]
-        if (c["rows"], c["cols"]) != (16_777_216, 128) or r[K.STATUS] != "ok":
-            continue
-        gb = (r.get("dev_mem") or {}).get("peak_gb_pid")
-        if gb is not None:
-            dev[r[K.VARIANT]] = max(dev.get(r[K.VARIANT], 0.0), gb)
+    # The perf paragraph carries no digits between the scenario redesign
+    # (decision 103) and the first refresh that measures the new axes: the
+    # files its old digits came from are retired, and quoting a retired
+    # measurement is exactly what the results-lifecycle policy forbids.
     perf = (
-        f"bonsai's CUDA growers hold the fastest slot at every measured row "
-        f"scale ({b_fit:.1f}s at 16M rows against XGBoost-GPU's "
-        f"{fit['xgb_cuda']:.1f}s) at {b_rss:.1f}GB peak host memory against "
-        f"XGBoost's {rss['xgb_cuda']:.1f}GB and CatBoost's "
-        f"{rss['catboost_gpu']:.1f}GB. Most of that is the {input_16m:.1f}GB "
-        f"input array every arm holds identically; bonsai's headroom above "
-        f"it is {b_rss - input_16m:.1f}GB against XGBoost's "
-        f"{rss['xgb_cuda'] - input_16m:.1f}GB and CatBoost's "
-        f"{rss['catboost_gpu'] - input_16m:.1f}GB, because bonsai bins on "
-        f"the device instead of keeping a second host-size copy "
-        f"({fmt(b_dev_16m, 1)}GB device memory here, `dev_mem`). The "
-        f"comparison is host-input only: device-resident input lets "
-        f"XGBoost sketch in place instead, closing this gap (issue #289). "
-        f"On the narrow airline shape bonsai "
-        f"holds both best AUC and fastest fit from 1M rows up. "
-        f"The 2026-07-30 studies hold every "
-        f"width and aspect ratio, with measured device memory that sizes to "
-        f"the problem: {dev['bonsai_cuda_depthwise']:.1f}GB at 16M x 128 at "
-        f"constant 2^31-cell volume against XGBoost's "
-        f"{dev['xgb_cuda']:.1f}GB and CatBoost's "
-        f"{dev['catboost_gpu']:.1f}GB. Every number is same-pod; "
-        f"identical-model GPUs across the rental fleet measure up to "
-        f"~25% apart. The committed rows also carry an ingest/train split "
-        f"for the reference libraries (issue #301): at 16M rows, "
-        f"XGBoost-GPU's ingest is {xgb_row['ingest_s'] / xgb_row[K.FIT_S]:.0%} "
-        f"of its total ({xgb_row['ingest_s']:.1f}s of "
-        f"{xgb_row[K.FIT_S]:.1f}s) while CatBoost's train is "
-        f"{cat_row['train_s'] / cat_row[K.FIT_S]:.0%} of its total "
-        f"({cat_row['train_s']:.1f}s of {cat_row[K.FIT_S]:.1f}s), since "
-        f"CatBoost's `Pool()` step only wraps the arrays and quantizes "
-        f"inside `fit`. bonsai's own split reads `-` until the device-hint "
-        f"runner change lands and a refresh measures it; only its total "
-        f"is comparable today.")
+        "The perf standings are being re-measured on the redesigned scenario "
+        "matrix (decision 103): tall and wide iso-volume pairs plus a "
+        "VRAM-maxout extreme, on both planes, with early stopping as its own "
+        "axis. The retired row, width, shape, frontier, and airline files are "
+        "in git history; the pages below are the campaign record that led "
+        "here, and the panel pages arrive with the first refresh.")
     table, _, n = _standings(load_jsonl(standings_file(Axis.GRINSZTAJN)))
     lead_lib, lead_mean, lead_wins = table[0]
     quality = (
@@ -2042,27 +1483,8 @@ _LIB_NAMES = {"lgbm": "lightgbm", "xgb": "xgboost"}
 
 def readme_standings_block() -> str:
     """The README's digit surface, generated so it cannot drift (decision
-    92): division summaries plus the two tables, fastest per row in bold."""
+    92): division summaries plus the quality table."""
     perf, _quality = _division_summaries()
-
-    rb = load_jsonl(standings_file(Axis.ROWS))
-    best = _cell_best(rb)
-    scales = sorted({r["cell"]["rows"] for r in rb if r["cell"]["cols"] == 100})
-    present = present_variants(REBASE_VARIANTS, best)
-    lines = ["| rows | " + " | ".join(lbl for _, lbl in present) + " |",
-             "|---|" + "--:|" * len(present)]
-    for n in scales:
-        cells, fits = [], []
-        for v, _lbl in present:
-            r = best.get((n, 100, v))
-            fits.append(r[K.FIT_S] if r else float("inf"))
-            cells.append(_fmt_cell(best, n, 100, v))
-        k = fits.index(min(fits))
-        secs, rest = cells[k].split("s (", 1)
-        cells[k] = f"**{secs}s** ({rest}"
-        lines.append(f"| {human(n)} | " + " | ".join(cells) + " |")
-    rows_table = "\n".join(lines)
-    split_table = split_table_by_rows(best, scales, present)
 
     table, _, n_tasks = _standings(load_jsonl(standings_file(Axis.GRINSZTAJN)))
     qlines = ["| library | mean rank | outright wins |", "|---|--:|--:|"]
@@ -2078,15 +1500,7 @@ def readme_standings_block() -> str:
 
 {perf}
 
-Same-pod re-baseline ladder, best of repeats, test r² in parentheses, fastest per row in bold.{measured_stamp(rb)}
-
-{rows_table}
-
-Ingest / train seconds behind that total: `-` is bonsai's fused call, which has no split until a runner refresh measures it (issue #301); CatBoost's ingest reads low because `Pool()` only wraps the arrays and it quantizes inside `fit`.
-
-{split_table}
-
-The width, shape, and accuracy-time frontier tables live in [the ledger]({_SITE}/method/results/).
+The campaign record behind those retired axes lives in [the ledger]({_SITE}/method/results/).
 
 ### Quality
 
@@ -2120,11 +1534,18 @@ def render_pages() -> dict[pathlib.Path, str]:
 def check_registry(consumed_files: set[str]) -> list[str]:
     """Standings registry invariants (decision 92): each registered file
     exists, is rendered, and its rows carry exactly the registered sha
-    (sha_partial entries tolerate provenance-less rows, never a WRONG sha)."""
+    (sha_partial entries tolerate provenance-less rows, never a WRONG sha).
+
+    An axis whose `file` is null has never been measured (registry v2's
+    placeholder), so there is nothing to check yet; the release gate in
+    scripts/check_standings.py is what refuses to ship one.
+    """
     reg = json.loads((REPO / "benchmarks" / "standings.json").read_text())
     reg.pop("_", None)
     errors = []
     for axis, e in reg.items():
+        if not e.get("file"):
+            continue
         path = RESULTS / e["file"]
         if not path.exists():
             errors.append(f"standings {axis}: {e['file']} does not exist")

@@ -31,9 +31,9 @@ def test_data_cache():
 
 
 def test_binary_task_runners():
-    """The shared runners serve airline's binary suite: task="binary" in the
-    cell selects the logloss objective and AUC scoring, and the airline knob
-    set carries every field the runners read (the row-shape contract).
+    """The shared runners serve binary suites: task="binary" in the cell
+    selects the logloss objective and AUC scoring, and the SCALING knob set
+    carries every field the runners read (the row-shape contract).
 
     Also covers the ingest/train breakdown: every runner reports ingest_s
     (data-structure construction) and train_s (the fit call) alongside
@@ -41,17 +41,17 @@ def test_binary_task_runners():
     sum. bonsai included: its Dataset carries the device hint that keeps
     the two-step form on the same binning path the fused call takes.
     """
-    from bonsai.bench import airline, runners
+    from bonsai.bench import params, runners
 
     need = {"depth", "iters", "lr", "bins", "seed", "min_data_in_leaf",
             "lambda_l2"}
-    assert need <= set(airline.KNOBS)
+    assert need <= set(params.SCALING)
 
     rng = np.random.default_rng(0)
     X = rng.random((600, 6), dtype=np.float32)
     yb = (X[:, 0] + 0.2 * rng.random(600) > 0.6).astype(np.float32)
-    cell = dict(airline.KNOBS, iters=10, bins_effective=airline.KNOBS["bins"],
-                task="binary")
+    cell = dict(params.SCALING, iters=10,
+                bins_effective=params.SCALING["bins"], task="binary")
     eps = 1e-3
     for variant in ("bonsai_depthwise", "lgbm_cpu"):
         run = runners.RUNNERS[runners.resolve(variant).lib]
@@ -518,26 +518,20 @@ def test_legacy_cells_carry_no_eval_fields():
 
 
 def test_early_stop_spec_expands_both_quantities():
-    """The bundled spec must carry all three arms per library.
-
-    Two of them (off, eval) differ only in whether the library sees the eval
-    set, which is what makes their ratio the eval overhead, so they must
-    also be distinguishable to the resume key or the second arm is skipped
-    as a duplicate of the first.
+    """The off and eval arms differ only in whether the library sees the eval
+    set, which is what makes their ratio the eval overhead, so they must also
+    be distinguishable to the resume key or the second arm is skipped as a
+    duplicate of the first.
     """
     from bonsai.bench import driver
     from bonsai.bench import spec as spec_mod
 
-    spec = spec_mod.load_spec("early-stop-4M")
-    cells = spec_mod.cells_of(spec)
-    assert [c["eval_mode"] for c in cells] == ["off", "eval", "stop"]
-    off, ev, stop = cells
+    spec = spec_mod.load_spec("gpu-early-stop")
+    off, ev, _stop = spec_mod.cells_of(spec)
     assert off["iters"] == ev["iters"] and off["lr"] == ev["lr"]
-    assert (stop["iters"], stop["lr"], stop["patience"]) == (2000, 0.05, 50)
 
     jobs = spec_mod.expand(spec)
-    assert len(jobs) == 3 * len(spec["variants"])
-    keys = {driver._job_key(j, 0, "pod", "early-stop-4M") for j in jobs}
+    keys = {driver._job_key(j, 0, "pod", "gpu-early-stop") for j in jobs}
     assert len(keys) == len(jobs)
 
 
@@ -556,8 +550,8 @@ def test_standings_ab_knobs_match_the_standings_spec():
     sys.path.insert(0, "scripts")
     import standings_ab
 
-    spec = spec_mod.load_spec("standings-rows")
-    cell = spec_mod.make_cell(spec["defaults"], rows=16_000_000, cols=100)
+    spec = spec_mod.load_spec("gpu-tall")
+    cell = spec_mod.make_cell(spec["defaults"], rows=16_777_216, cols=128)
     knobs = {k: v for k, v in standings_ab.ANCHOR_KNOBS.items()
              if k != "n_test"}
     assert knobs == {k: cell[k] for k in knobs}
@@ -619,4 +613,4 @@ def test_variant_canonicalization_and_ts_guard():
     with pytest.raises(RuntimeError) as e:
         runners.worker({"cell": cell, "variant": "bonsai_ts_depthwise",
                         "threads": 1})
-        assert "airline" in str(e.value)
+        assert "no suite" in str(e.value)

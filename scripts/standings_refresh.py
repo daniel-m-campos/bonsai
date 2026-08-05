@@ -7,20 +7,18 @@ exact ritual succeeded by hand.
     python3 scripts/standings_refresh.py measure --prev-version 1.5.4
     python3 scripts/standings_refresh.py supersede --results-dir <dir>
 
-Phases are independent: `measure` rents one L40S, runs
+Phases are independent: `measure` rents one pod, runs
 scripts/standings_refresh_pod.sh detached, polls, pulls the jsonl files
 into a local directory, and tears the pod down (sweep + verify-empty).
 `supersede` works from any results directory: registry update, staging,
 render, A/B verdict, branch, and `gh pr create`. A failed supersede is
 rerunnable without touching a pod; that separation is the whole point.
 
-Two width clocks: routine measures the standings-cols spec, which drops
-the 16384-col CPU arms that pin the wall clock with no GPU-side change
-able to move them; `measure --width-full` measures standings-cols-full
-instead, keeping those arms. Run `--width-full` for the release refresh
-(decision 92's ordering) so the published width standings stay complete
-at least once per release; routine refreshes catch perf drift faster
-without it.
+The axes are the redesigned scenario matrix (decision 103): tall and wide
+iso-volume pairs on each plane, a VRAM-maxout extreme, and early stopping.
+`measure --only-stale` asks `check_standings.py --stale` which of the
+requested axes a source change can actually have moved, and runs only
+those, so a CUDA-only change never pays for a CPU-plane sweep.
 
 It also gates on the pod's fused/two-step parity rows before touching
 anything: the published ingest/train split is only honest while bonsai's
@@ -52,16 +50,18 @@ POD_SCRIPT = REPO / "scripts" / "standings_refresh_pod.sh"
 
 REST = "https://rest.runpod.io/v1"
 IMAGE = "ghcr.io/daniel-m-campos/bonsai-ci:cuda12.4"
-GPU = "NVIDIA L40S"
+GPU = "NVIDIA RTX PRO 6000 Blackwell Server Edition"
 
 # The band the fused and two-step forms must agree inside. Measured at 2.5%
 # on one L40S at 4M x 512 and inside repeat noise at 16M; 5% matches the A/B
 # band, which is the same pod-noise question.
 PARITY_BAND_PCT = 5
 
-AXIS_FILE = {"rows": "rebaseline", "width": "cols-rebaseline",
-             "shape": "iso-volume", "frontier": "gpu-pareto-16M",
-             "airline": "airline"}
+# Axis -> the stem of its dated results file; the bundled spec of the same
+# name is what the pod script runs to produce it.
+AXES = ("gpu-tall", "gpu-wide", "gpu-extreme", "cpu-tall", "cpu-wide",
+        "gpu-early-stop")
+AXIS_FILE = {axis: axis for axis in AXES}
 
 SSH_OPTS = ["-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=15"]
@@ -78,20 +78,19 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="phase", required=True)
     m = sub.add_parser("measure", help="rent a pod, run the suites, pull results")
-    m.add_argument("--axes", default="rows,width,frontier,airline")
+    m.add_argument("--axes", default=",".join(AXES))
     m.add_argument("--prev-version", default="",
                    help="wheel for the A/B old arm (empty skips the A/B)")
     m.add_argument("--out-dir", default=None,
                    help="where the jsonl files land (default: a dated dir)")
     m.add_argument("--keep-pod", action="store_true",
                    help="skip teardown (debugging; delete it yourself)")
-    m.add_argument("--width-full", action="store_true",
-                   help="width axis measures standings-cols-full (with the "
-                   "16384-col CPU arms) instead of the routine spec; the "
-                   "release-clock refresh sets this, the routine one does not")
+    m.add_argument("--only-stale", action="store_true",
+                   help="drop the requested axes whose plane digest has not "
+                   "moved since their last refresh (check_standings --stale)")
     s = sub.add_parser("supersede", help="build the supersession PR from results")
     s.add_argument("--results-dir", required=True)
-    s.add_argument("--axes", default="rows,width,frontier,airline")
+    s.add_argument("--axes", default=",".join(AXES))
     s.add_argument("--no-pr", action="store_true",
                    help="stop after commit (inspect before pushing)")
     s.add_argument("--no-parity", action="store_true",
@@ -110,8 +109,8 @@ def measure(args: argparse.Namespace) -> int:
     Parameters
     ----------
     args : argparse.Namespace
-        Parsed ``measure`` arguments: ``axes``, ``prev_version``, ``out_dir``,
-        ``keep_pod``.
+        Parsed ``measure`` arguments: ``axes``, ``only_stale``,
+        ``prev_version``, ``out_dir``, ``keep_pod``.
 
     Returns
     -------
@@ -123,6 +122,17 @@ def measure(args: argparse.Namespace) -> int:
         print("ERROR: export RUNPOD_API_KEY first (runbook section 0)",
               file=sys.stderr)
         return 1
+    axes = [a.strip() for a in args.axes.split(",") if a.strip()]
+    if args.only_stale:
+        stale = stale_axes()
+        current = [a for a in axes if a not in stale]
+        axes = [a for a in axes if a in stale]
+        if current:
+            print(f"--only-stale: {', '.join(current)} unchanged since their "
+                  "last refresh, skipping")
+        if not axes:
+            print("every requested axis is current; nothing to measure")
+            return 0
     out_dir = pathlib.Path(args.out_dir or
                            f"standings-{time.strftime('%Y%m%d-%H%M')}")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -143,10 +153,10 @@ def measure(args: argparse.Namespace) -> int:
                         *SSH_OPTS, "-P", str(port), str(POD_SCRIPT),
                         f"root@{ip}:/root/"], check=True)
         # Detached: an ssh drop must not kill a multi-hour sweep.
-        width_full = "1" if args.width_full else ""
-        subprocess.run([*ssh, f"nohup env AXES='{args.axes}' GIT_SHA='{sha}' "
+        axes_arg = ",".join(axes)
+        subprocess.run([*ssh, f"nohup env AXES='{axes_arg}' "
+                        f"GIT_SHA='{sha}' "
                         f"PREV_VERSION='{args.prev_version}' "
-                        f"WIDTH_FULL='{width_full}' "
                         "bash /root/standings_refresh_pod.sh "
                         "> /root/refresh.log 2>&1 & echo launched"], check=True)
         _poll_pod_run(ssh, out_dir, ip, port)
@@ -248,6 +258,14 @@ def supersede(args: argparse.Namespace) -> int:
     return 0
 
 
+def stale_axes() -> set[str]:
+    """The axes `check_standings.py --stale` says a refresh must measure."""
+    out = subprocess.run([sys.executable, "scripts/check_standings.py",
+                          "--stale"], capture_output=True, text=True,
+                         check=True, cwd=REPO)
+    return {line.strip() for line in out.stdout.splitlines() if line.strip()}
+
+
 # Private Helpers ==================================================================================
 
 def _api(url: str, key: str, payload: dict | None = None,
@@ -264,7 +282,7 @@ def _api(url: str, key: str, payload: dict | None = None,
 
 
 def _create_pod(key: str, pubkey: str) -> str:
-    """Create the L40S with the runbook-mandated PUBLIC_KEY env."""
+    """Create the standings pod with the runbook-mandated PUBLIC_KEY env."""
     name = f"bonsai-standings-{time.strftime('%Y%m%d-%H%M')}"
     for attempt in (1, 2):
         try:

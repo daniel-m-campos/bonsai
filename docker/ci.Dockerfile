@@ -25,10 +25,12 @@ RUN wget -qO- https://astral.sh/uv/install.sh | sh \
 ENV PATH="/root/.local/bin:${PATH}"
 # xgboost bounded below 3.4: its 3.4.0 wheel ships a CUDA 13 runtime that
 # silently falls back to CPU on this image's r550-and-older driver hosts.
+# nvidia-ml-py gives the bench VRAM sampler per-pid attribution via NVML, which
+# works inside containers where nvidia-smi's PID namespace does not.
 RUN uv venv --python 3.12 /opt/venv \
     && uv pip install --python /opt/venv/bin/python \
         cmake ninja numpy nanobind scikit-learn pandas tabulate matplotlib \
-        "xgboost>=3.2,<3.4" catboost
+        "xgboost>=3.2,<3.4" catboost nvidia-ml-py
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # lightgbm from source with the CUDA backend: the PyPI wheel is CPU-only,
@@ -46,19 +48,6 @@ RUN mkdir -p /opt/deps \
     && git clone -q --depth 1 --branch v2.6.2 https://github.com/CLIUtils/CLI11.git /opt/deps/CLI11 \
     && git clone -q --depth 1 --branch v3.4.0 https://github.com/marzer/tomlplusplus.git /opt/deps/tomlplusplus \
     && git clone -q --depth 1 --branch v3.11.3 https://github.com/nlohmann/json.git /opt/deps/json
-
-# Airline benchmark's 10m-row train file plus the shared test file, baked
-# in so a standings refresh skips the ~10 minute per-session S3 download;
-# bonsai.bench.airline.fetch() prefers this path when present. Checksummed
-# against the known-good bytes so a corrupt or substituted download fails
-# the image build instead of a benchmark row.
-RUN mkdir -p /opt/bonsai-data/airline \
-    && curl -sSL -o /opt/bonsai-data/airline/train-10m.csv \
-        https://s3.amazonaws.com/benchm-ml--main/train-10m.csv \
-    && curl -sSL -o /opt/bonsai-data/airline/test.csv \
-        https://s3.amazonaws.com/benchm-ml--main/test.csv \
-    && echo "e2207a7bb18d1387d2030adde5b4b1d56373a7feefbbe7a94baf2911dc260724  /opt/bonsai-data/airline/train-10m.csv" | sha256sum -c - \
-    && echo "1e9d9fc90b6a4ffe786e7a0652ee0c5d7074c04be8e00741b9b266177bbb2ba0  /opt/bonsai-data/airline/test.csv" | sha256sum -c -
 
 # RunPod-compatible entrypoint: installs the PUBLIC_KEY env into
 # authorized_keys and runs sshd in the foreground for direct-IP SSH access.

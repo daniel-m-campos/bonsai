@@ -37,7 +37,9 @@ classifiers = [
 # xgboost is bounded below 3.4 because its 3.4.0 wheel ships a CUDA 13 runtime
 # that silently falls back to CPU on any pre-r580 driver; the bound moves only
 # with a deliberate driver/image bump.
-bench = ["xgboost>=3.2,<3.4", "lightgbm", "catboost", "scikit-learn", "pandas", "openml"]
+# nvidia-ml-py gives the VRAM sampler per-pid attribution via NVML, which works
+# inside containers where nvidia-smi's PID namespace does not.
+bench = ["xgboost>=3.2,<3.4", "lightgbm", "catboost", "scikit-learn", "pandas", "openml", "nvidia-ml-py"]
 test = ["pytest"]
 
 [project.urls]

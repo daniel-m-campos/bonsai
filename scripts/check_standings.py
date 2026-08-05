@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Standings freshness gates (results-lifecycle policy, decision 92).
 
-Two hard-fail chokepoints, stdlib only:
+Two hard-fail chokepoints plus the refresh planner, stdlib only:
 
     python3 scripts/check_standings.py --decisions
         Claim-time gate (runs in make docs-check). A decisions-log entry that
@@ -14,17 +14,20 @@ Two hard-fail chokepoints, stdlib only:
         Release-time gate (runs in the wheels publish job). Fails unless every
         registry entry was refreshed for exactly this release (and has a sha),
         bounding worst-case staleness at one release even for untagged
-        changes. Quality axes (registry key starts with "quality") get one
-        mechanical exception: the hash-unchanged skip, below.
+        changes, with one mechanical exception: the hash-unchanged skip below.
 
-The hash-unchanged skip. A quality axis may pass the release gate without a
-fresh refresh when its committed `hash_set` digest still matches
-`hash_set_digest()` AND none of its `refs` reference libraries has bumped a
-major version since. Bit-identical CPU model-hash bytes cannot move quality
-standings by construction (decision 40's contract: CPU-only builds stay
-bit-identical), so an unmoved guard proves the axis current for free. Perf
-axes carry no such proof (their numbers are wall-clock, not bytes) and are
-unaffected: they still require `refreshed_for == version` exactly.
+    python3 scripts/check_standings.py --stale
+        The refresh driver's planner: one axis name per line, for the axes a
+        refresh must actually measure. Everything else is provably current.
+
+The hash-unchanged skip. An axis may pass the release gate without a fresh
+refresh when its committed `hash_set` digest still matches its plane's current
+digest AND none of its `refs` reference libraries has bumped a major version
+since. Quality axes lean on decision 40's contract (CPU-only builds stay
+bit-identical, so unmoved model-hash inputs cannot move a quality standing).
+Perf axes lean on the plane split: a CUDA-only change cannot move a CPU-plane
+wall clock, so the cpu axes stay current across it and the refresh skips them,
+which is the whole point of registry v2's `plane` field.
 
 Reference-library majors are compared against the installed package in this
 environment when available (`importlib.metadata`, no import needed); most
@@ -52,6 +55,19 @@ MODEL_HASH_SCRIPT = REPO / "scripts" / "model_hash.py"
 ENTRY_RE = re.compile(r"^## (\d+)\. ", re.M)
 TAG_RE = re.compile(r"^Standings: (.+)$", re.M)
 
+# Axes the scenario redesign retired (decision 103). Frozen decisions-log
+# entries still carry `Standings:` tags naming them and the record is never
+# rewritten, so the claim-time gate accepts the name and has nothing left to
+# compare it against.
+RETIRED_AXES = frozenset({"rows", "width", "shape", "frontier", "airline"})
+
+PLANE_CPU = "cpu"
+PLANE_GPU = "gpu"
+# The device plane's sources, by repo-relative prefix: everything under them
+# can only move a device timing, so a cpu-plane axis is current across a
+# change confined here.
+CUDA_PREFIXES = ("src/cuda/", "include/bonsai/cuda/")
+
 
 def load_registry() -> dict:
     reg = json.loads(REGISTRY.read_text())
@@ -69,6 +85,8 @@ def check_decisions(reg: dict) -> list[str]:
                     else len(text)]
         for tag in TAG_RE.finditer(body):
             for axis in (a.strip() for a in tag.group(1).split(",")):
+                if axis in RETIRED_AXES:
+                    continue
                 if axis not in reg:
                     errors.append(f"decision {n}: unknown standings axis "
                                   f"{axis!r} (known: {sorted(reg)})")
@@ -85,25 +103,38 @@ def check_release(reg: dict, version: str) -> list[str]:
     errors = []
     for axis, e in reg.items():
         if not e.get("sha"):
-            errors.append(f"{axis}: standings have no measurement sha; "
+            errors.append(f"{axis}: never refreshed (no measurement sha); "
                           "run the standings refresh before releasing")
-        elif e.get("refreshed_for") == version:
+            continue
+        if e.get("refreshed_for") == version:
             print(f"{axis}: fresh refresh for {version!r}")
-        elif is_quality_axis(axis):
-            ok, reason = quality_skip(e)
-            if ok:
-                print(f"{axis}: hash-unchanged skip ({reason})")
-            else:
-                errors.append(
-                    f"{axis}: refreshed for {e.get('refreshed_for')!r}, not "
-                    f"{version!r}, and the hash-unchanged skip does not "
-                    f"apply ({reason}); run the standings refresh before "
-                    "releasing")
+            continue
+        ok, reason = hash_skip(axis, e)
+        if ok:
+            print(f"{axis}: hash-unchanged skip ({reason})")
         else:
             errors.append(
                 f"{axis}: refreshed for {e.get('refreshed_for')!r}, not "
-                f"{version!r}; run the standings refresh before releasing")
+                f"{version!r}, and the hash-unchanged skip does not apply "
+                f"({reason}); run the standings refresh before releasing")
     return errors
+
+
+def stale_axes(reg: dict) -> list[str]:
+    """Axes a refresh must measure: never refreshed, or their plane moved.
+
+    Parameters
+    ----------
+    reg : dict
+        The loaded registry.
+
+    Returns
+    -------
+    list[str]
+        Registry keys in registry order.
+    """
+    return [axis for axis, e in reg.items()
+            if not e.get("sha") or not hash_skip(axis, e)[0]]
 
 
 def is_quality_axis(axis: str) -> bool:
@@ -111,35 +142,45 @@ def is_quality_axis(axis: str) -> bool:
     return axis.startswith("quality")
 
 
-def hash_set_digest() -> str:
-    """sha256 over every file that feeds the model-hash guard.
+def plane_digest(plane: str) -> str:
+    """sha256 over the sources that can move one plane's measured numbers.
 
-    Covers the fixed-model harness (`scripts/model_hash.py`) and the whole
-    C++ implementation it drives (`src/`, `include/`): together these are
-    what the cross-arch CI hash jobs build and run. `update_standings.py`
-    computes this the same way when stamping a quality axis's `hash_set`, so
-    the two are directly comparable.
+    The gpu plane is the whole C++ implementation (`src/`, `include/`) plus
+    the fixed-model harness `scripts/model_hash.py` it drives: that set is
+    what the cross-arch CI hash jobs build and run, and any of it can move a
+    device timing. The cpu plane is the same set minus the CUDA subtrees.
+    `update_standings.py` computes this the same way when stamping an axis's
+    `hash_set`, so the two are directly comparable.
+
+    Parameters
+    ----------
+    plane : str
+        `PLANE_CPU` or `PLANE_GPU`.
 
     Returns
     -------
     str
         A 16-character hex digest.
     """
-    paths = sorted(p for p in (REPO / "src").rglob("*") if p.is_file())
-    paths += sorted(p for p in (REPO / "include").rglob("*") if p.is_file())
-    paths.append(MODEL_HASH_SCRIPT)
     digest = hashlib.sha256()
-    for path in paths:
+    for path in _plane_paths(plane):
         digest.update(path.relative_to(REPO).as_posix().encode())
         digest.update(path.read_bytes())
     return digest.hexdigest()[:16]
 
 
-def quality_skip(entry: dict) -> tuple[bool, str]:
-    """Whether a quality axis may skip refresh, and why.
+def hash_set_digest() -> str:
+    """The whole-implementation digest, the gpu plane's by construction."""
+    return plane_digest(PLANE_GPU)
+
+
+def hash_skip(axis: str, entry: dict) -> tuple[bool, str]:
+    """Whether an axis may skip refresh, and why.
 
     Parameters
     ----------
+    axis : str
+        The registry key, which decides the plane when the entry names none.
     entry : dict
         The axis's registry entry; needs `hash_set` and `refs`.
 
@@ -149,13 +190,16 @@ def quality_skip(entry: dict) -> tuple[bool, str]:
         `(True, reason)` when the skip applies, `(False, reason)` otherwise;
         `reason` is always a human-readable audit line.
     """
-    current = hash_set_digest()
+    plane = entry.get("plane") or (PLANE_GPU if is_quality_axis(axis) else None)
+    if plane is None:
+        return False, "no plane registered, so nothing proves the axis current"
+    current = plane_digest(plane)
     if entry.get("hash_set") != current:
-        return False, "model-hash guard inputs changed since this axis's refresh"
+        return False, f"{plane}-plane sources changed since this axis's refresh"
     bumped = bumped_ref_majors(entry.get("refs", {}))
     if bumped:
         return False, f"reference-library major bumped: {', '.join(bumped)}"
-    return True, f"hash set {current} unchanged, refs current"
+    return True, f"{plane} hash set {current} unchanged, refs current"
 
 
 def bumped_ref_majors(refs: dict) -> list[str]:
@@ -200,6 +244,17 @@ def recorded_ref_versions() -> dict:
     return versions
 
 
+def _plane_paths(plane: str) -> list[pathlib.Path]:
+    """The digested files for one plane, in a stable order."""
+    paths = sorted(p for p in (REPO / "src").rglob("*") if p.is_file())
+    paths += sorted(p for p in (REPO / "include").rglob("*") if p.is_file())
+    paths.append(MODEL_HASH_SCRIPT)
+    if plane == PLANE_CPU:
+        return [p for p in paths
+                if not p.relative_to(REPO).as_posix().startswith(CUDA_PREFIXES)]
+    return paths
+
+
 def _major(version: str) -> int:
     return int(str(version).split(".")[0])
 
@@ -213,9 +268,14 @@ def main() -> int:
         version = sys.argv[sys.argv.index("--release") + 1]
         errors = check_release(reg, version)
         label = f"release gate ({version})"
+    elif "--stale" in sys.argv:
+        # One name per line and nothing else: the refresh driver reads this.
+        for axis in stale_axes(reg):
+            print(axis)
+        return 0
     else:
-        print("usage: check_standings.py --decisions | --release <version>",
-              file=sys.stderr)
+        print("usage: check_standings.py --decisions | --release <version> "
+              "| --stale", file=sys.stderr)
         return 2
     if errors:
         for e in errors:
