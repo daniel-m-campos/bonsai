@@ -4,6 +4,8 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-08-05
+
 ### Fixed
 - **A Python fit no longer writes to the process stdout.** The early-stop notice was an unconditional `std::println` inside the training loop, so a fit that stopped early printed to the C runtime's stdout whatever the caller asked for. That stream is not Python's: `contextlib.redirect_stdout` could not capture it, a library embedding bonsai could not silence it, and the text arrived interleaved or at process exit. The line is now written only when the caller passes a progress callback, which the CLI does and the Python bindings do not, so a fit through Python prints nothing and the CLI's output is unchanged. Per-round logging from Python remains unwired: `booster.log_intervals` still has no effect there.
 
