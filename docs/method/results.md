@@ -6,15 +6,12 @@ Every results file behind a published claim is rendered across the pages below, 
 
 ## Perf division
 
-bonsai's CUDA growers hold the fastest slot at every measured row scale (7.9s at 16M rows against XGBoost-GPU's 35.5s) at 6.9GB peak host memory against XGBoost's 22.1GB and CatBoost's 19.2GB. Most of that is the 6.1GB input array every arm holds identically; bonsai's headroom above it is 0.8GB against XGBoost's 15.9GB and CatBoost's 13.0GB, because bonsai bins on the device instead of keeping a second host-size copy (2.8GB device memory here, `dev_mem`). The comparison is host-input only: device-resident input lets XGBoost sketch in place instead, closing this gap (issue #289). On the narrow airline shape bonsai holds both best AUC and fastest fit from 1M rows up. The 2026-07-30 studies hold every width and aspect ratio, with measured device memory that sizes to the problem: 3.4GB at 16M x 128 at constant 2^31-cell volume against XGBoost's 18.9GB and CatBoost's 90.2GB. Every number is same-pod; identical-model GPUs across the rental fleet measure up to ~25% apart. The committed rows also carry an ingest/train split for the reference libraries (issue #301): at 16M rows, XGBoost-GPU's ingest is 80% of its total (28.5s of 35.5s) while CatBoost's train is 82% of its total (19.5s of 23.7s), since CatBoost's `Pool()` step only wraps the arrays and quantizes inside `fit`. bonsai's own split reads `-` until the device-hint runner change lands and a refresh measures it; only its total is comparable today.
+The perf standings are being re-measured on the redesigned scenario matrix (decision 103): tall and wide iso-volume pairs plus a VRAM-maxout extreme, on both planes, with early stopping as its own axis. The retired row, width, shape, frontier, and airline files are in git history; the pages below are the campaign record that led here, and the panel pages arrive with the first refresh.
 
 | page | what it holds |
 |---|---|
-| [Fit at scale](results/perf-scale.md) | Row-scale standings: the re-baseline, the XGBoost 3.3 recheck, and the CPU prefetch round. |
-| [Width and shape](results/perf-shape.md) | The wide-data arc: the CPU fill, the CUDA recheck, the cols re-baseline, and the iso-volume shape frontier with measured VRAM. |
-| [The accuracy-time frontier](results/perf-frontier.md) | Accuracy versus fit time at 16M rows, plus the ordered-boosting door. |
-| [Early stopping](results/perf-early-stop.md) | What an eval set costs per round, and how long a stop takes at 4M rows. |
-| [Airline delays](results/perf-airline.md) | The benchm-ml real-data speed ladder at 0.1M, 1M, and 10M rows. |
+| [Fit at scale](results/perf-scale.md) | The campaign record at row scale: the XGBoost 3.3 recheck, the CPU prefetch round, and the leafwise ladders. |
+| [Width and shape](results/perf-shape.md) | The wide-data arc: the CPU fill and the CUDA recheck. |
 | [The single-card ceiling](results/perf-ceiling.md) | A 500M x 100 matrix trained end to end on one 80GB card. |
 
 ## Quality division

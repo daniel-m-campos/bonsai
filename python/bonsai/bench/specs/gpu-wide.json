@@ -1,0 +1,14 @@
+{
+  "name": "gpu-wide",
+  "suite": "gpu-wide",
+  "defaults": {"depth": 8, "iters": 100, "lr": 0.1, "bins": 255,
+               "informative": 20, "seed": 42},
+  "cells": [{"rows": 131072, "cols": 16384}],
+  "variants": ["bonsai_cuda_depthwise", "bonsai_cuda_leafwise",
+               "bonsai_cuda_levelwise", "xgb_cuda", "lgbm_cuda",
+               "catboost_gpu"],
+  "threads": [16],
+  "repeats": {"default": 2},
+  "gates": {"gpu_max_cols": null},
+  "timeout_cap": 7200
+}

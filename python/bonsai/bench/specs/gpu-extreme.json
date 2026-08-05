@@ -1,0 +1,14 @@
+{
+  "name": "gpu-extreme",
+  "suite": "gpu-extreme",
+  "defaults": {"depth": 8, "iters": 100, "lr": 0.1, "bins": 255,
+               "informative": 20, "seed": 42},
+  "cells": [{"rows": 67108864, "cols": 1024}],
+  "variants": ["bonsai_cuda_depthwise", "bonsai_cuda_leafwise",
+               "bonsai_cuda_levelwise", "xgb_cuda", "lgbm_cuda",
+               "catboost_gpu"],
+  "threads": [16],
+  "repeats": {"default": 1},
+  "gates": {"mem_gate": "off", "gpu_max_cols": null},
+  "timeout_cap": 10800
+}

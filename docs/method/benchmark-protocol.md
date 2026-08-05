@@ -24,10 +24,9 @@ The current evidence, rendered whole from every committed results file, is [the 
 | campaign | quality | internal ten (quality-smoke) | per-task | `results/quality-campaign-2026-07.jsonl` | `scripts/compare.py` per config | 56 |
 | probes | quality | per-study | per-study | `results/<probe>-<date>.*` | `scripts/probe_*.py` | 57, 58, 67, ... |
 | scaling | perf | friedman1 (perf-synthetic) | fit_s, predict_s, RSS | per-run `--out` | `python -m bonsai.bench.scaling` | 46 |
-| airline | perf | benchm-ml airline 0.1m/1m/10m (perf-external) | fit_s, AUC | `results/airline-2026-07.jsonl` | `python -m bonsai.bench.airline` | issue #154 |
-| rebaseline | perf | friedman1 | fit_s, r² guard | `results/rebaseline-2026-07.jsonl` | scaling runner, rows axis | 62 to 64 |
-| iso-volume | perf | friedman1 (perf-synthetic) | fit_s, dev_mem, r² guard | `results/iso-volume-2026-08.jsonl` | `python -m bonsai.bench run --spec iso-volume-2026-08` | 91 |
-| early-stop | perf | friedman1 (perf-synthetic) | fit_s ratio, time to stop | `results/early-stop-4M-2026-08.jsonl` | `python -m bonsai.bench run --spec early-stop-4M` | issue #306 |
+| gpu-tall / gpu-wide / gpu-extreme | perf | friedman1 (perf-synthetic) | ingest_s, train_s, RSS, VRAM, r² | `results/<axis>-<date>.jsonl` | `python -m bonsai.bench run --spec <axis>` | 103 |
+| cpu-tall / cpu-wide | perf | friedman1 (perf-synthetic) | ingest_s, train_s, RSS, r² | `results/<axis>-<date>.jsonl` | `python -m bonsai.bench run --spec <axis>` | 103 |
+| gpu-early-stop | perf | friedman1 (perf-synthetic) | fit_s ratio, time to stop | `results/gpu-early-stop-<date>.jsonl` | `python -m bonsai.bench run --spec gpu-early-stop` | 103 |
 
 The Grinsztajn suite is the only citable standings table: its 55 tasks were selected by third parties (Grinsztajn, Oyallon, Varoquaux 2022), which removes the selection-bias objection a self-picked suite can never answer. The internal campaign remains the fast local regression check.
 
@@ -101,7 +100,7 @@ Every results file is one of two classes, and the class sets its lifecycle.
 
 Evidence: the dated record behind a decision. Frozen forever; its claim carries its date and sha, so it cannot go stale. The probe files, the recheck files, and the campaign smoke are evidence.
 
-Standings: the current claim on one published axis. The registry [`benchmarks/standings.json`](../../benchmarks/standings.json) lists one file per axis (rows, width, shape, frontier, airline, quality-grinsztajn, code) with the single sha its rows were measured at. Standings supersede in place by re-measurement, generalizing the code division's rule (decision 69): the tree has exactly one current state per axis. The ledger stamps every standings caption with the measured sha computed from the rows, so the reader always sees the vintage.
+Standings: the current claim on one published axis. The registry [`benchmarks/standings.json`](../../benchmarks/standings.json) lists one file per axis (gpu-tall, gpu-wide, gpu-extreme, cpu-tall, cpu-wide, gpu-early-stop, quality-grinsztajn, code) with the single sha its rows were measured at. Standings supersede in place by re-measurement, generalizing the code division's rule (decision 69): the tree has exactly one current state per axis. The ledger stamps every standings caption with the measured sha computed from the rows, so the reader always sees the vintage.
 
 Two gates hard-fail, enforced by `scripts/check_standings.py`. Claim time: a decisions-log entry that claims a perf change on an axis carries a `Standings: <axis>` line, and `make docs-check` fails while any tagged entry is newer than the axis's registered state. Release time: the wheels publish job fails unless every axis was refreshed for exactly the version being released, bounding staleness at one release even for untagged changes.
 
@@ -113,7 +112,7 @@ Reader-facing prose never restates standings digits; only generated tables carry
 
 The refresh is one rented pod session, driven locally by `scripts/standings_refresh.py` (decision 96; section 10 of the RunPod runbook): a same-pod A/B of the previous release wheel against HEAD on anchor cells detects whether perf moved, then the standings specs re-measure the axes and the supersession lands as one reviewed PR.
 
-The width axis runs on two clocks. The routine refresh measures the `standings-cols` spec, which excludes the 16384-column CPU arms (`lgbm_cpu`, `bonsai_levelwise`): those two cells pin the wall clock at several minutes each with no GPU-side change able to move them, so a refresh chasing a code change does not need to pay for them every time. The release refresh (`measure --width-full`) measures `standings-cols-full` instead, which keeps every arm, so the published width standings stay complete at least once per release.
+Every axis carries a `plane` (cpu or gpu) and the digest of that plane's sources at its last refresh. A routine refresh runs `measure --only-stale`, which measures the axes whose plane digest has moved and leaves the rest alone, so a device-only change never pays for a CPU-plane sweep; a release refresh measures every axis on one host.
 
 ## Amendments
 

@@ -10,13 +10,14 @@ Supersession also drops the entry's note, since a note describes the
 file being replaced. Run render_results.py afterwards; the generator
 loads through the registry.
 
-Superseding a quality axis (registry key starts with "quality") also stamps
-`hash_set` (the model-hash guard digest, `check_standings.hash_set_digest()`)
-and `refs` (the reference libraries' installed versions) so a later release
-can use check_standings.py's hash-unchanged skip instead of a full refresh.
-The refresh is the one moment the installed reference-library versions are
-known for certain (the grinsztajn suite runs against them), so it also
-refreshes benchmarks/reference_versions.json to match.
+Superseding an axis that carries a plane (or a quality axis) also stamps
+`hash_set` (its plane's digest, `check_standings.plane_digest()`) and `refs`
+(the reference libraries' installed versions) so a later release can use
+check_standings.py's hash-unchanged skip instead of a full refresh, and so
+`--stale` can tell the next refresh which axes to measure. The refresh is the
+one moment the installed reference-library versions are known for certain (the
+suites run against them), so it also refreshes
+benchmarks/reference_versions.json to match.
 """
 
 from __future__ import annotations
@@ -43,9 +44,15 @@ def project_version() -> str:
     return m.group(1)
 
 
-def stamp_quality_gate(entry: dict) -> None:
-    """Record the hash-unchanged skip's inputs on a freshly refreshed axis."""
-    entry["hash_set"] = check_standings.hash_set_digest()
+def stamp_skip_gate(entry: dict) -> None:
+    """Record the hash-unchanged skip's inputs on a freshly refreshed axis.
+
+    A perf axis stamps its own plane's digest, so a later change confined to
+    the other plane leaves it provably current; a quality axis has no plane
+    and stamps the whole-implementation digest, as it always did.
+    """
+    entry["hash_set"] = check_standings.plane_digest(
+        entry.get("plane") or check_standings.PLANE_GPU)
     ref_versions = current_ref_versions()
     entry["refs"] = ref_versions
     refresh_ref_ledger(ref_versions)
@@ -91,9 +98,11 @@ def main() -> int:
               else r.get("host")) for r in rows if r.get("host")}
     dates = sorted({r["ts"][:10] for r in rows if r.get("ts")})
 
-    old = entry["file"]
+    # file is null on an axis that has never been measured (registry v2
+    # placeholder), so there is nothing to supersede on its first refresh.
+    old = entry.get("file")
     if old != args.file:
-        if (RESULTS / old).exists():
+        if old and (RESULTS / old).exists():
             (RESULTS / old).unlink()
             print(f"superseded {old} (git history is the archive)")
         entry.pop("note", None)
@@ -101,8 +110,8 @@ def main() -> int:
                  host=sorted(hosts)[0] if len(hosts) == 1 else None,
                  date=dates[-1] if dates else None,
                  refreshed_for=args.version or project_version())
-    if check_standings.is_quality_axis(args.axis):
-        stamp_quality_gate(entry)
+    if check_standings.is_quality_axis(args.axis) or entry.get("plane"):
+        stamp_skip_gate(entry)
     REGISTRY.write_text(json.dumps(reg, indent=2) + "\n")
     print(f"{args.axis}: {args.file} at {entry['sha']} "
           f"(refreshed for {entry['refreshed_for']})")

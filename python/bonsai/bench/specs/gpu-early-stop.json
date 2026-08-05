@@ -1,0 +1,18 @@
+{
+  "name": "gpu-early-stop",
+  "suite": "gpu-early-stop",
+  "defaults": {"depth": 8, "iters": 100, "lr": 0.1, "bins": 255,
+               "informative": 20, "seed": 42},
+  "cells": [
+    {"rows": 16777216, "cols": 128, "eval_mode": "off", "tag": "overhead"},
+    {"rows": 16777216, "cols": 128, "eval_mode": "eval", "tag": "overhead"},
+    {"rows": 16777216, "cols": 128, "eval_mode": "stop", "tag": "time-to-stop",
+     "iters": 2000, "lr": 0.05, "patience": 50}
+  ],
+  "variants": ["bonsai_cuda_depthwise", "bonsai_cuda_leafwise",
+               "bonsai_cuda_levelwise", "xgb_cuda", "lgbm_cuda",
+               "catboost_gpu"],
+  "threads": [16],
+  "repeats": {"default": 2},
+  "timeout_cap": 7200
+}

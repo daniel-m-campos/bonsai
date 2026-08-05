@@ -46,6 +46,8 @@ _TABLE = (
     Variant("bonsai_cuda_depthwise", Lib.BONSAI, Device.CUDA, ("bonsai_gpu",)),
     Variant("bonsai_cuda_leafwise", Lib.BONSAI, Device.CUDA),
     Variant("bonsai_cuda_levelwise", Lib.BONSAI, Device.CUDA, ("bonsai_obl_gpu",)),
+    # The ordered-TS arms ran the retired airline suite; they stay registered
+    # so committed probe rows that name them still resolve.
     Variant("bonsai_ts_depthwise", Lib.BONSAI, Device.CPU),
     Variant("bonsai_ts_levelwise", Lib.BONSAI, Device.CPU),
     Variant("bonsai_ts_cuda_depthwise", Lib.BONSAI, Device.CUDA),
@@ -65,10 +67,6 @@ _BY_ALIAS = {a: v for v in _TABLE for a in v.aliases}
 SCALING = ("bonsai_depthwise", "bonsai_leafwise", "bonsai_levelwise",
            "bonsai_cuda_depthwise", "bonsai_cuda_levelwise", "xgb_hist",
            "xgb_cuda", "lgbm_cpu", "lgbm_cuda", "catboost_cpu", "catboost_gpu")
-AIRLINE = ("bonsai_depthwise", "bonsai_levelwise", "bonsai_cuda_depthwise",
-           "bonsai_cuda_levelwise", "bonsai_ts_depthwise", "bonsai_ts_levelwise",
-           "bonsai_ts_cuda_depthwise", "bonsai_ts_cuda_levelwise", "xgb_hist",
-           "xgb_cuda", "lgbm_cpu", "catboost_cpu", "catboost_gpu")
 GRINSZTAJN = ("bonsai_dw", "bonsai_lw", "bonsai_obl", "xgb", "lgbm", "catboost")
 
 

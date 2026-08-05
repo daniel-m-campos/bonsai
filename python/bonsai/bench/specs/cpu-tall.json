@@ -1,0 +1,12 @@
+{
+  "name": "cpu-tall",
+  "suite": "cpu-tall",
+  "defaults": {"depth": 8, "iters": 100, "lr": 0.1, "bins": 255,
+               "informative": 20, "seed": 42},
+  "cells": [{"rows": 2097152, "cols": 128}],
+  "variants": ["bonsai_depthwise", "bonsai_leafwise", "bonsai_levelwise",
+               "xgb_hist", "lgbm_cpu", "catboost_cpu"],
+  "threads": [16],
+  "repeats": {"default": 2, "cpu": 2},
+  "timeout_cap": 3600
+}

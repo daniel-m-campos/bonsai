@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 
 import pytest
@@ -101,6 +102,72 @@ def test_mem_sampler():
     finally:
         driver.subprocess.run = real
     assert pid_mb == 768 and total_mb == 7168
+
+
+class _FakeNvml:
+    """The three NVML calls the sampler makes, over a fixed process table."""
+
+    NVMLError = RuntimeError
+
+    def __init__(self, procs, used_bytes=7 * 2**30, broken=False):
+        self.procs, self.used_bytes, self.broken = procs, used_bytes, broken
+        self.inits = 0
+
+    def nvmlInit(self):
+        self.inits += 1
+        if self.broken:
+            raise self.NVMLError("no driver")
+
+    def nvmlDeviceGetHandleByIndex(self, index):
+        return ("handle", index)
+
+    def nvmlDeviceGetComputeRunningProcesses(self, handle):
+        return self.procs
+
+    def nvmlDeviceGetMemoryInfo(self, handle):
+        return type("Mem", (), {"used": self.used_bytes})()
+
+
+class _FakeProc:
+    def __init__(self, pid, used_bytes):
+        self.pid, self.usedGpuMemory = pid, used_bytes
+
+
+def test_mem_sampler_prefers_nvml(monkeypatch):
+    """NVML is the default backend and attributes memory to the child pid;
+    the pid the container sees is the one the sampler must match."""
+    from bonsai.bench import driver
+
+    fake = _FakeNvml([_FakeProc(4321, 2**30), _FakeProc(1234, 3 * 2**30)])
+    monkeypatch.setitem(sys.modules, "pynvml", fake)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2")
+    driver._default_query.cache_clear()
+    try:
+        query, source = driver._default_query()
+        assert source == "nvml" and fake.inits == 1
+        assert query(1234) == (3072.0, 7168.0)
+        assert query(9999) == (None, 7168.0)  # a foreign pid is not ours
+        # One init per process, not one per sampled job.
+        driver._default_query()
+        assert fake.inits == 1
+    finally:
+        driver._default_query.cache_clear()
+
+
+def test_mem_sampler_falls_back_to_smi(monkeypatch):
+    """A host without a usable NVML keeps sampling through nvidia-smi, and
+    the row says so rather than passing smi numbers off as NVML ones."""
+    from bonsai.bench import driver
+
+    monkeypatch.setitem(sys.modules, "pynvml",
+                        _FakeNvml([], broken=True))
+    driver._default_query.cache_clear()
+    try:
+        query, source = driver._default_query()
+        assert source == "nvidia-smi" and query is driver._smi_query
+        assert driver.DeviceMemSampler(1).source == "nvidia-smi"
+    finally:
+        driver._default_query.cache_clear()
 
 
 def test_error_classification():

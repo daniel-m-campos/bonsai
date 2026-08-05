@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import functools
 import json
 import os
 import pathlib
@@ -99,16 +100,18 @@ class DeviceMemSampler:
     Records BOTH the child's per-process usage and the whole-device number
     (allocator slack and context overhead lag the per-pid counter), plus the
     sampling interval, so the row never claims more precision than sampled.
+    The `source` field names the backend that produced the numbers ("nvml",
+    "nvidia-smi", or "injected"): only NVML attributes memory to the child pid
+    inside a container, so a reader can tell a per-process number from a
+    device total that stood in for one.
     """
 
     def __init__(self, pid: int, interval_s: float = 0.25, query=None):
         self.pid, self.interval_s = pid, interval_s
-        # nvidia-smi ships with the driver on every GPU host (detect_host
-        # already shells it), so sampling needs no python package.
         if query is not None:
             self._query, self.source = query, "injected"
         else:
-            self._query, self.source = _smi_query, "nvidia-smi"
+            self._query, self.source = _default_query()
         self._stop = threading.Event()
         self._peak_pid: float | None = None
         self._peak_total: float | None = None
@@ -333,6 +336,36 @@ def _device_index() -> int:
     tenant's memory to this run."""
     first = os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0].strip()
     return int(first) if first.isdigit() else 0
+
+
+@functools.lru_cache(maxsize=1)
+def _default_query() -> tuple:
+    """The (query, source) pair this host samples device memory with.
+
+    NVML is preferred and initialized once: inside a container it attributes
+    memory to the child's own pid, while nvidia-smi's compute-apps query
+    reports host-namespace pids that match nothing, which is how per-process
+    VRAM came back null on the L40S pods. nvidia-smi remains the fallback for
+    hosts without `nvidia-ml-py` installed.
+    """
+    # Any NVML failure (missing package, no driver, MIG topology) means the
+    # fallback, never a dead sampler.
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(_device_index())
+    except Exception:
+        return _smi_query, "nvidia-smi"
+    return functools.partial(_nvml_query, pynvml, handle), "nvml"
+
+
+def _nvml_query(pynvml, handle, pid: int):
+    """(pid_mb, total_mb) from NVML for one device handle."""
+    pid_mb = None
+    for proc in pynvml.nvmlDeviceGetComputeRunningProcesses(handle):
+        if proc.pid == pid and proc.usedGpuMemory:
+            pid_mb = (pid_mb or 0) + proc.usedGpuMemory / 2**20
+    return pid_mb, pynvml.nvmlDeviceGetMemoryInfo(handle).used / 2**20
 
 
 def _smi_query(pid: int):
