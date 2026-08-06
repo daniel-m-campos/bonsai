@@ -25,6 +25,17 @@ class HistBlockPool
 
     void *take(size_t bytes)
     {
+        // Per-thread front cache: the level fill takes and gives hundreds of
+        // node arenas per level from every worker, and a single mutex over
+        // that traffic serializes the allocator. The global pool stays the
+        // spill target, so memory stays bounded.
+        auto &local = local_free()[bytes];
+        if (!local.empty())
+        {
+            void *p = local.back();
+            local.pop_back();
+            return p;
+        }
         {
             std::scoped_lock lock(mu_);
             auto            &list = free_[bytes];
@@ -40,6 +51,12 @@ class HistBlockPool
 
     void give(void *p, size_t bytes)
     {
+        auto &local = local_free()[bytes];
+        if (local.size() < k_local_cap)
+        {
+            local.push_back(p);
+            return;
+        }
         std::scoped_lock lock(mu_);
         free_[bytes].push_back(p);
     }
@@ -60,6 +77,14 @@ class HistBlockPool
 
   private:
     HistBlockPool() = default;
+
+    static constexpr size_t k_local_cap = 64;
+
+    static std::unordered_map<size_t, std::vector<void *>> &local_free()
+    {
+        static thread_local std::unordered_map<size_t, std::vector<void *>> lists;
+        return lists;
+    }
 
     std::mutex                                      mu_;
     std::unordered_map<size_t, std::vector<void *>> free_;
