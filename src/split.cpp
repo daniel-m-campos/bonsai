@@ -236,17 +236,25 @@ SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
     {
         return {};
     }
-    feature_id_t const       n_features  = input.hists.size();
-    HistCell const           node_totals = input.totals();
-    std::vector<SplitOutput> per_feature(n_features);
-    parallel::for_each_index(n_features,
-                             [&](size_t fid)
-                             {
-                                 update_best_for_feature_for_node(
-                                     input, static_cast<feature_id_t>(fid), node_totals,
-                                     config, per_feature[fid]);
-                             });
-    return reduce_in_feature_order(per_feature);
+    feature_id_t const n_features  = input.hists.size();
+    HistCell const     node_totals = input.totals();
+    // Serial by design: the scan costs n_features x n_bins cells whatever the
+    // node's row count, and a nested region plus a per-call output vector cost
+    // more. A depthwise level runs one worker per node above this call
+    // (LevelStep::host_find); the root and the leafwise pair are serial here
+    // because there is one node and two to walk. The feature-order walk with
+    // strict > keeps the same tie-break as the parallel reduce it replaces.
+    SplitOutput best;
+    for (feature_id_t fid = 0; fid < n_features; ++fid)
+    {
+        SplitOutput cand;
+        update_best_for_feature_for_node(input, fid, node_totals, config, cand);
+        if (cand.valid && cand.gain > best.gain)
+        {
+            best = cand;
+        }
+    }
+    return best;
 }
 
 SplitOutput HistogramLevelSplitFinder::find(FrontierInput     frontier,
