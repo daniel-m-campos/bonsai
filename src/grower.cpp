@@ -89,15 +89,13 @@ void fill_feature_parallel(Dataset const &ds, floats_view grad, floats_view hess
 
 constexpr size_t direct_fill = static_cast<size_t>(-1);
 
-// One row segment of one node, owned by one stripe: fills either the node's
-// own histogram cells (single-stripe nodes) or a private partial slab merged
-// afterwards.
+// One row block of one node: fills either the node's own histogram cells
+// (single-block nodes) or a private partial slab merged afterwards.
 struct FillUnit
 {
     std::reference_wrapper<SplitInput> node;
     size_t                             k0, k1;
-    size_t   partial_off; // cell offset into the partials slab, or direct_fill
-    uint32_t stripe = 0;
+    size_t partial_off; // cell offset into the partials slab, or direct_fill
 };
 
 struct MergeJob
@@ -107,14 +105,13 @@ struct MergeJob
     size_t                             n_blocks;
 };
 
-// A level's fill schedule plus the partial-slab size its boundary nodes
+// A level's fill schedule plus the partial-slab size its multi-block nodes
 // need.
 struct FillPlan
 {
     std::vector<FillUnit> units;
     std::vector<MergeJob> merges;
     size_t                partial_cells = 0;
-    size_t                n_stripes     = 1;
 };
 
 // Cell offset of each selected feature inside one partial slab.
@@ -138,38 +135,18 @@ SelectedOffsets selected_offsets(Dataset const                &ds,
     return {.cells = offsets, .total_cells = total};
 }
 
-// Cuts the batch's concatenated rows into one contiguous stripe per thread,
-// row-weighted so the stripes carry equal work regardless of node-size skew.
-// A node whose rows sit inside one stripe fills its cells directly (no
-// partials, no zeroing, no merge); only nodes crossing a stripe boundary pay
-// a partial per stripe touched, merged in stripe order. Stripe boundaries
-// depend on the batch and the configured thread count only, never
-// scheduling (docs/architecture/7-parallel.md).
+// Splits each node into row blocks: enough that a block's fill work dwarfs
+// its partial's zero+merge cost (>= ~16x), capped at 4x the thread count.
+// Single-block nodes write their cells directly and need no partials; block
+// counts depend on node size, selection width, and the configured thread
+// count only, never scheduling (docs/architecture/7-parallel.md).
 FillPlan const &plan_fill(split_input_refs nodes, size_t n_sel, size_t total_sel_bins)
 {
     static thread_local FillPlan plan;
     plan.units.clear();
     plan.merges.clear();
-    plan.partial_cells = 0;
-    size_t total_rows  = 0;
-    for (SplitInput const &node : nodes)
-    {
-        total_rows += node.rows.size();
-    }
-    if (total_rows == 0)
-    {
-        plan.n_stripes = 1;
-        return plan;
-    }
-    // Stripe count scales with the batch's fill work so a stripe's work
-    // dwarfs its partial's zero+merge cost (>= ~16x); small batches stay
-    // single-stripe and keep the serial order bit-identically.
-    plan.n_stripes  = std::clamp(total_rows * n_sel / (16 * total_sel_bins), size_t{1},
-                                 static_cast<size_t>(parallel::n_threads()));
-    size_t const nt = plan.n_stripes;
-    auto         stripe_of_row = [&](size_t g)
-    { return std::min(nt - 1, g * nt / total_rows); };
-    size_t offset = 0;
+    plan.partial_cells      = 0;
+    size_t const max_blocks = 4 * static_cast<size_t>(parallel::n_threads());
     for (SplitInput &node : nodes)
     {
         size_t const n = node.rows.size();
@@ -177,33 +154,20 @@ FillPlan const &plan_fill(split_input_refs nodes, size_t n_sel, size_t total_sel
         {
             continue;
         }
-        size_t const s_first = stripe_of_row(offset);
-        size_t const s_last  = stripe_of_row(offset + n - 1);
-        if (s_first == s_last)
+        size_t const n_blocks =
+            std::clamp(n * n_sel / (16 * total_sel_bins), size_t{1}, max_blocks);
+        if (n_blocks == 1)
         {
-            plan.units.push_back(
-                {node, 0, n, direct_fill, static_cast<uint32_t>(s_first)});
-            offset += n;
+            plan.units.push_back({node, 0, n, direct_fill});
             continue;
         }
-        size_t const first_off = plan.partial_cells;
-        size_t       blocks    = 0;
-        for (size_t s = s_first; s <= s_last; ++s)
+        plan.merges.push_back({node, plan.partial_cells, n_blocks});
+        for (size_t b = 0; b < n_blocks; ++b)
         {
-            size_t const g0 = std::max(offset, s * total_rows / nt);
-            size_t const g1 = std::min(
-                offset + n, s + 1 == nt ? total_rows : (s + 1) * total_rows / nt);
-            if (g1 <= g0)
-            {
-                continue;
-            }
-            plan.units.push_back({node, g0 - offset, g1 - offset, plan.partial_cells,
-                                  static_cast<uint32_t>(s)});
+            plan.units.push_back(
+                {node, b * n / n_blocks, (b + 1) * n / n_blocks, plan.partial_cells});
             plan.partial_cells += total_sel_bins;
-            ++blocks;
         }
-        plan.merges.push_back({node, first_off, blocks});
-        offset += n;
     }
     return plan;
 }
@@ -305,71 +269,56 @@ void run_fill(FillPlan const &plan, Dataset const &ds, floats_view grad,
     size_t const              total     = offsets.total_cells;
     FillUnit const *const     units_ptr = plan.units.data();
     parallel::for_each_index(
-        plan.n_stripes,
-        [&, parts, off_ptr, sel_ptr, rm_ptr, units_ptr](size_t sid)
+        plan.units.size(),
+        [&, parts, off_ptr, sel_ptr, rm_ptr, units_ptr](size_t u)
         {
-            for (size_t u = 0; u < plan.units.size(); ++u)
+            FillUnit const &unit   = units_ptr[u];
+            size_t const    stripe = unit.partial_off == direct_fill
+                                         ? 0
+                                         : stripe_of(unit.partial_off, total, sl);
+            if (unit.partial_off != direct_fill)
             {
-                FillUnit const &unit = units_ptr[u];
-                if (unit.stripe != sid)
-                {
-                    continue;
-                }
-                size_t const slab = unit.partial_off == direct_fill
-                                        ? 0
-                                        : stripe_of(unit.partial_off, total, sl);
-                if (unit.partial_off != direct_fill)
-                {
-                    std::fill_n(parts + slab, sl.cells, HistCell{});
-                }
-                static thread_local std::vector<HistCell *> bases;
-                bases.resize(sl.n_selected());
-                for (size_t s = sl.s0; s < sl.s1; ++s)
-                {
-                    bases[s - sl.s0] =
-                        unit.partial_off == direct_fill
-                            ? unit.node.get().hists[sel_ptr[s]].cells().data()
-                            : parts + slab + (off_ptr[s] - sl.cell0);
-                }
-                HistCell **const base_ptr = bases.data();
-                row_id_t const  *rows     = unit.node.get().rows.data();
-                // Software prefetch: below the root, a node's rows are an
-                // ascending SUBSET, so successive mirror strips sit at
-                // irregular strides the hardware prefetcher cannot follow —
-                // the populate ledger showed the row loop DRAM-latency-bound
-                // at depth. Pull the strip and the grad/hess pair a fixed
-                // distance ahead; the tail rows run in a branch-free loop of
-                // their own instead of testing bounds every iteration. Reads
-                // only, so results are bit-identical.
-                constexpr size_t k_ahead  = 16;
-                size_t const     n_sel_b  = sl.n_selected();
-                auto             fill_row = [&](size_t k)
-                {
-                    size_t const         r  = rows[k];
-                    uint8_t const *const rb = rm_ptr + (r * width);
-                    float const          g  = grad[r];
-                    float const          h  = hess[r];
-                    for (size_t s = 0; s < n_sel_b; ++s)
-                    {
-                        HistCell &c = base_ptr[s][rb[sel_ptr[sl.s0 + s] - fid0]];
-                        c.sum_grad += g;
-                        c.sum_hess += h;
-                    }
-                };
-                size_t const main_end =
-                    unit.k1 - unit.k0 > k_ahead ? unit.k1 - k_ahead : unit.k0;
-                for (size_t k = unit.k0; k < main_end; ++k)
+                std::fill_n(parts + stripe, sl.cells, HistCell{});
+            }
+            static thread_local std::vector<HistCell *> bases;
+            bases.resize(sl.n_selected());
+            for (size_t s = sl.s0; s < sl.s1; ++s)
+            {
+                bases[s - sl.s0] =
+                    unit.partial_off == direct_fill
+                        ? unit.node.get().hists[sel_ptr[s]].cells().data()
+                        : parts + stripe + (off_ptr[s] - sl.cell0);
+            }
+            HistCell **const base_ptr = bases.data();
+            row_id_t const  *rows     = unit.node.get().rows.data();
+            // Software prefetch: below the root, a node's rows are an
+            // ascending SUBSET, so successive mirror strips sit at irregular
+            // strides the hardware prefetcher cannot follow — the populate
+            // ledger showed the row loop DRAM-latency-bound at depth (the
+            // 16M cell: 78s of a 107s fit). Pull the strip (two lines at
+            // 100 u8 features) and the grad/hess pair a fixed distance
+            // ahead; reads only, so results are bit-identical.
+            constexpr size_t k_ahead = 16;
+            size_t const     n_sel_b = sl.n_selected();
+            for (size_t k = unit.k0; k < unit.k1; ++k)
+            {
+                if (k + k_ahead < unit.k1)
                 {
                     size_t const rp = rows[k + k_ahead];
                     __builtin_prefetch(rm_ptr + (rp * width), 0, 0);
                     __builtin_prefetch(rm_ptr + (rp * width) + 64, 0, 0);
                     __builtin_prefetch(&grad[rp], 0, 0);
                     __builtin_prefetch(&hess[rp], 0, 0);
-                    fill_row(k);
                 }
-                for (size_t k = main_end; k < unit.k1; ++k)
+                size_t const         r  = rows[k];
+                uint8_t const *const rb = rm_ptr + (r * width);
+                float const          g  = grad[r];
+                float const          h  = hess[r];
+                for (size_t s = 0; s < n_sel_b; ++s)
                 {
-                    fill_row(k);
+                    HistCell &c = base_ptr[s][rb[sel_ptr[sl.s0 + s] - fid0]];
+                    c.sum_grad += g;
+                    c.sum_hess += h;
                 }
             }
         });
