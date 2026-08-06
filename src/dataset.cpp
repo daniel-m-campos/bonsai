@@ -1,5 +1,14 @@
 #include "bonsai/dataset.hpp"
 
+#ifdef __linux__
+#include <sys/mman.h>
+// Strict -std hides the GNU madvise extensions; the kernel ABI value is
+// stable across architectures.
+#ifndef MADV_HUGEPAGE
+#define MADV_HUGEPAGE 14
+#endif
+#endif
+
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
