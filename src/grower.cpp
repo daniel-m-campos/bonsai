@@ -9,10 +9,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <functional>
 #include <memory>
-#include <print>
 #include <span>
 #include <vector>
 
@@ -383,17 +381,8 @@ void merge_partials(FillPlan const &plan, std::span<feature_id_t const> selected
 // L1-resident 2KB target, no partials and no merge, bit-identical at any
 // thread count. Sparse nodes keep the row-wise units, whose 128B strips
 // amortize the fetch at any sparsity. The denominator sets the density
-// cutoff (rows >= n/den); the env override exists for the admission A/B and
-// dies with it.
-size_t col_fill_den()
-{
-    static size_t const v = []
-    {
-        char const *e = std::getenv("BONSAI_HIST_COLFILL_DEN");
-        return e != nullptr ? static_cast<size_t>(std::atoi(e)) : size_t{4};
-    }();
-    return v;
-}
+// cutoff (rows >= n/den); measured, not tunable.
+constexpr size_t k_col_fill_den = 4;
 
 // One arena per node backs the selected histograms as contiguous views; u8
 // datasets pad every chunk to 256 cells so the dense row-wise fill can
@@ -461,17 +450,6 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         return;
     }
     auto &prof = grower_detail::GrowProfiler::instance();
-    // Provable strategy engagement: an equality A/B cannot detect an inert
-    // toggle, so the session asserts this line per arm.
-    static bool const announced = [&prof]
-    {
-        if (prof.enabled)
-        {
-            std::println(stderr, "hist-fill: colfill_den={}", col_fill_den());
-        }
-        return true;
-    }();
-    (void) announced;
     for (SplitInput const &node : nodes)
     {
         prof.populate_adds += static_cast<double>(node.rows.size()) *
@@ -486,12 +464,12 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         return;
     }
     grower_detail::GrowProfiler::Lap row_lap;
-    size_t const                     den = col_fill_den();
+
     static thread_local std::vector<std::reference_wrapper<SplitInput>> sparse_nodes;
     sparse_nodes.clear();
     for (SplitInput &node : nodes)
     {
-        if (den != 0 && node.rows.size() * den >= ds.n_rows())
+        if (node.rows.size() * k_col_fill_den >= ds.n_rows())
         {
             fill_feature_parallel(ds, grad, hess, node, selected);
         }
