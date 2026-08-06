@@ -147,6 +147,11 @@ FillPlan const &plan_fill(split_input_refs nodes, size_t n_sel, size_t total_sel
     plan.merges.clear();
     plan.partial_cells      = 0;
     size_t const max_blocks = 4 * static_cast<size_t>(parallel::n_threads());
+    // Probe, temporary: a direct fill scatters read-modify-writes into the
+    // node's freshly recycled (cold) arena, one DRAM round-trip per add; a
+    // single partial keeps the scatter target in the worker's hot slab and
+    // pays a sequential streaming merge instead.
+    static bool const scratch_all = std::getenv("BONSAI_HIST_SCRATCH") != nullptr;
     for (SplitInput &node : nodes)
     {
         size_t const n = node.rows.size();
@@ -156,9 +161,16 @@ FillPlan const &plan_fill(split_input_refs nodes, size_t n_sel, size_t total_sel
         }
         size_t const n_blocks =
             std::clamp(n * n_sel / (16 * total_sel_bins), size_t{1}, max_blocks);
-        if (n_blocks == 1)
+        if (n_blocks == 1 && !scratch_all)
         {
             plan.units.push_back({node, 0, n, direct_fill});
+            continue;
+        }
+        if (n_blocks == 1)
+        {
+            plan.merges.push_back({node, plan.partial_cells, 1});
+            plan.units.push_back({node, 0, n, plan.partial_cells});
+            plan.partial_cells += total_sel_bins;
             continue;
         }
         plan.merges.push_back({node, plan.partial_cells, n_blocks});
@@ -467,7 +479,8 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     {
         if (prof.enabled)
         {
-            std::println(stderr, "hist-fill: colfill_den={}", col_fill_den());
+            std::println(stderr, "hist-fill: colfill_den={} scratch={}", col_fill_den(),
+                         std::getenv("BONSAI_HIST_SCRATCH") != nullptr ? "on" : "off");
         }
         return true;
     }();
