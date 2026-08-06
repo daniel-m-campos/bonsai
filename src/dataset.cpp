@@ -224,6 +224,16 @@ std::span<uint8_t const> Dataset::row_major_bins() const
         size_t const width = mirror_tile_width();
         auto         rm    = std::make_shared<std::vector<uint8_t>>(n_rows_ * f);
         uint8_t     *out   = rm->data();
+#ifdef __linux__
+        // Probe, temporary: back the mirror with huge pages. Deep-node fills
+        // walk it at irregular strides, and at 4KB pages the mirror's page
+        // count dwarfs the TLB; opt-in until the effect is priced.
+        if (std::getenv("BONSAI_THP") != nullptr)
+        {
+            madvise(out, rm->size(), MADV_HUGEPAGE);
+            std::println(stderr, "mirror-thp: active bytes={}", rm->size());
+        }
+#endif
         // Tiled column-to-row transpose into the block layout: each worker
         // owns a row block, so writes never overlap and the mirror is
         // byte-identical at any thread count. Feature c lands in mirror
