@@ -9,8 +9,10 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <memory>
+#include <print>
 #include <span>
 #include <vector>
 
@@ -350,6 +352,22 @@ void merge_partials(FillPlan const &plan, std::span<feature_id_t const> selected
         });
 }
 
+// Dense nodes route to the column fill: per-feature sequential scans with an
+// L1-resident 2KB target, no partials and no merge, bit-identical at any
+// thread count. Sparse nodes keep the row-wise units, whose 128B strips
+// amortize the fetch at any sparsity. The denominator sets the density
+// cutoff (rows >= n/den); the env override exists for the admission A/B and
+// dies with it.
+size_t col_fill_den()
+{
+    static size_t const v = []
+    {
+        char const *e = std::getenv("BONSAI_HIST_COLFILL_DEN");
+        return e != nullptr ? static_cast<size_t>(std::atoi(e)) : size_t{4};
+    }();
+    return v;
+}
+
 void emplace_placeholders(Dataset const &ds, SplitInput &node,
                           std::span<feature_id_t const> selected)
 {
@@ -392,6 +410,17 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         return;
     }
     auto &prof = grower_detail::GrowProfiler::instance();
+    // Provable strategy engagement: an equality A/B cannot detect an inert
+    // toggle, so the session asserts this line per arm.
+    static bool const announced = [&prof]
+    {
+        if (prof.enabled)
+        {
+            std::println(stderr, "hist-fill: colfill_den={}", col_fill_den());
+        }
+        return true;
+    }();
+    (void) announced;
     for (SplitInput const &node : nodes)
     {
         prof.populate_adds += static_cast<double>(node.rows.size()) *
@@ -405,21 +434,41 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         }
         return;
     }
-    SelectedOffsets const offsets = selected_offsets(ds, selected);
-    // Tiles outer, rows inner: one fill pass per mirror block keeps the
-    // live scatter target at one block's histograms (cache-resident by
-    // construction) at any selection width, while reads stay sequential
-    // inside each block. One block at narrow widths degenerates to the
-    // classic single-pass fill. Measured against the per-width strategy
-    // pair it replaced in benchmarks/wide-cpu-hist-2026-07.md (issue #217).
     grower_detail::GrowProfiler::Lap row_lap;
-    FillPlan const &plan = plan_fill(nodes, selected.size(), offsets.total_cells);
-    size_t const    n_partial_groups = plan.partial_cells / offsets.total_cells;
-    for (MirrorSlice const &sl : mirror_slices(ds, selected, offsets))
+    size_t const                     den = col_fill_den();
+    static thread_local std::vector<std::reference_wrapper<SplitInput>> sparse_nodes;
+    sparse_nodes.clear();
+    for (SplitInput &node : nodes)
     {
-        std::span<HistCell> const partials = partials_slab(n_partial_groups * sl.cells);
-        run_fill(plan, ds, grad, hess, selected, offsets, partials, sl);
-        merge_partials(plan, selected, offsets, partials, sl);
+        if (den != 0 && node.rows.size() * den >= ds.n_rows())
+        {
+            fill_feature_parallel(ds, grad, hess, node, selected);
+        }
+        else
+        {
+            sparse_nodes.push_back(node);
+        }
+    }
+    if (!sparse_nodes.empty())
+    {
+        SelectedOffsets const offsets = selected_offsets(ds, selected);
+        // Tiles outer, rows inner: one fill pass per mirror block keeps the
+        // live scatter target at one block's histograms (cache-resident by
+        // construction) at any selection width, while reads stay sequential
+        // inside each block. One block at narrow widths degenerates to the
+        // classic single-pass fill. Measured against the per-width strategy
+        // pair it replaced in benchmarks/wide-cpu-hist-2026-07.md (issue
+        // #217).
+        FillPlan const &plan =
+            plan_fill(sparse_nodes, selected.size(), offsets.total_cells);
+        size_t const n_partial_groups = plan.partial_cells / offsets.total_cells;
+        for (MirrorSlice const &sl : mirror_slices(ds, selected, offsets))
+        {
+            std::span<HistCell> const partials =
+                partials_slab(n_partial_groups * sl.cells);
+            run_fill(plan, ds, grad, hess, selected, offsets, partials, sl);
+            merge_partials(plan, selected, offsets, partials, sl);
+        }
     }
     row_lap(prof.populate_row_s);
 }
