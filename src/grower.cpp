@@ -300,6 +300,10 @@ void run_fill(FillPlan const &plan, Dataset const &ds, floats_view grad,
             // ahead; reads only, so results are bit-identical.
             constexpr size_t k_ahead = 16;
             size_t const     n_sel_b = sl.n_selected();
+            // A fully selected block indexes the strip directly (the common
+            // case); the general loop pays a selection lookup per add to
+            // support column sampling.
+            bool const dense_sel = n_sel_b == width;
             for (size_t k = unit.k0; k < unit.k1; ++k)
             {
                 if (k + k_ahead < unit.k1)
@@ -314,6 +318,16 @@ void run_fill(FillPlan const &plan, Dataset const &ds, floats_view grad,
                 uint8_t const *const rb = rm_ptr + (r * width);
                 float const          g  = grad[r];
                 float const          h  = hess[r];
+                if (dense_sel)
+                {
+                    for (size_t s = 0; s < n_sel_b; ++s)
+                    {
+                        HistCell &c = base_ptr[s][rb[s]];
+                        c.sum_grad += g;
+                        c.sum_hess += h;
+                    }
+                    continue;
+                }
                 for (size_t s = 0; s < n_sel_b; ++s)
                 {
                     HistCell &c = base_ptr[s][rb[sel_ptr[sl.s0 + s] - fid0]];
