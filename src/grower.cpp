@@ -302,38 +302,51 @@ void run_fill(FillPlan const &plan, Dataset const &ds, floats_view grad,
             size_t const     n_sel_b = sl.n_selected();
             // A fully selected block indexes the strip directly (the common
             // case); the general loop pays a selection lookup per add to
-            // support column sampling.
+            // support column sampling. Direct fills into a u8 node compute
+            // the cell address arithmetically over the node's padded arena
+            // (chunk stride 256), with no per-feature base load at all.
             bool const dense_sel = n_sel_b == width;
-            for (size_t k = unit.k0; k < unit.k1; ++k)
+            bool const uniform =
+                dense_sel && unit.partial_off == direct_fill && ds.bins_are_u8();
+            HistCell *const a0       = uniform ? base_ptr[0] : nullptr;
+            auto            run_rows = [&](auto cell_at)
             {
-                if (k + k_ahead < unit.k1)
+                for (size_t k = unit.k0; k < unit.k1; ++k)
                 {
-                    size_t const rp = rows[k + k_ahead];
-                    __builtin_prefetch(rm_ptr + (rp * width), 0, 0);
-                    __builtin_prefetch(rm_ptr + (rp * width) + 64, 0, 0);
-                    __builtin_prefetch(&grad[rp], 0, 0);
-                    __builtin_prefetch(&hess[rp], 0, 0);
-                }
-                size_t const         r  = rows[k];
-                uint8_t const *const rb = rm_ptr + (r * width);
-                float const          g  = grad[r];
-                float const          h  = hess[r];
-                if (dense_sel)
-                {
+                    if (k + k_ahead < unit.k1)
+                    {
+                        size_t const rp = rows[k + k_ahead];
+                        __builtin_prefetch(rm_ptr + (rp * width), 0, 0);
+                        __builtin_prefetch(rm_ptr + (rp * width) + 64, 0, 0);
+                        __builtin_prefetch(&grad[rp], 0, 0);
+                        __builtin_prefetch(&hess[rp], 0, 0);
+                    }
+                    size_t const         r  = rows[k];
+                    uint8_t const *const rb = rm_ptr + (r * width);
+                    float const          g  = grad[r];
+                    float const          h  = hess[r];
                     for (size_t s = 0; s < n_sel_b; ++s)
                     {
-                        HistCell &c = base_ptr[s][rb[s]];
+                        HistCell &c = cell_at(s, rb);
                         c.sum_grad += g;
                         c.sum_hess += h;
                     }
-                    continue;
                 }
-                for (size_t s = 0; s < n_sel_b; ++s)
-                {
-                    HistCell &c = base_ptr[s][rb[sel_ptr[sl.s0 + s] - fid0]];
-                    c.sum_grad += g;
-                    c.sum_hess += h;
-                }
+            };
+            if (uniform)
+            {
+                run_rows([&](size_t s, uint8_t const *rb) -> HistCell &
+                         { return a0[(s << 8) + rb[s]]; });
+            }
+            else if (dense_sel)
+            {
+                run_rows([&](size_t s, uint8_t const *rb) -> HistCell &
+                         { return base_ptr[s][rb[s]]; });
+            }
+            else
+            {
+                run_rows([&](size_t s, uint8_t const *rb) -> HistCell &
+                         { return base_ptr[s][rb[sel_ptr[sl.s0 + s] - fid0]]; });
             }
         });
 }
@@ -382,16 +395,37 @@ size_t col_fill_den()
     return v;
 }
 
+// One arena per node backs the selected histograms as contiguous views; u8
+// datasets pad every chunk to 256 cells so the dense row-wise fill can
+// address any cell as arena[(feature << 8) + bin] with no per-feature base
+// load. Unselected slots stay empty views the split finders skip.
+constexpr size_t k_u8_chunk = 256;
+
 void emplace_placeholders(Dataset const &ds, SplitInput &node,
                           std::span<feature_id_t const> selected)
 {
+    bool const u8    = ds.bins_are_u8();
+    size_t     total = 0;
+    for (feature_id_t const fid : selected)
+    {
+        total += u8 ? k_u8_chunk : ds.n_bins(fid);
+    }
+    node.arena.assign(total, HistCell{});
     node.hists.reserve(ds.n_features());
-    size_t j = 0;
+    size_t j   = 0;
+    size_t off = 0;
     for (feature_id_t fid = 0; fid < ds.n_features(); ++fid)
     {
         bool const sel = j < selected.size() && selected[j] == fid;
-        node.hists.emplace_back(sel ? ds.n_bins(fid) : 0);
-        j += sel ? 1 : 0;
+        if (!sel)
+        {
+            node.hists.emplace_back(std::span<HistCell>{});
+            continue;
+        }
+        node.hists.emplace_back(
+            std::span<HistCell>{node.arena.data() + off, ds.n_bins(fid)});
+        off += u8 ? k_u8_chunk : ds.n_bins(fid);
+        ++j;
     }
 }
 
