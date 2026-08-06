@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
+#include <cstring>
+#include <thread>
 #include <vector>
 
 #include "bonsai/histogram.hpp"
@@ -215,4 +217,33 @@ TEST_CASE("Histogram: fill_prefix on degenerate hist (prefix_size = 0) is a no-o
     std::vector<HistCell> prefix; // empty, matches prefix_size() == 0
     hist.fill_prefix(prefix);     // must not assert / crash
     CHECK(prefix.empty());
+}
+
+TEST_CASE("HistBlockPool: a thread's front cache is freed on exit, not dropped",
+          "[histogram][pool]")
+{
+    auto            &pool     = detail::HistBlockPool::instance();
+    constexpr size_t k_bytes  = 8 * 7919; // size class no histogram uses
+    void            *from_thr = nullptr;
+
+    // Catch2 assertions are not thread-safe, so the worker only records.
+    std::thread worker(
+        [&]
+        {
+            from_thr = pool.take(k_bytes);
+            pool.give(from_thr, k_bytes); // lands in the thread's front cache
+        });
+    worker.join();
+    CHECK(from_thr != nullptr);
+
+    // The block the worker cached is freed by its cache destructor, never
+    // handed back, so the sanitizer leak check is what proves it is not
+    // dropped. What this thread must still see is a consistent pool: a take
+    // in that size class serves a usable block and the front cache recycles.
+    void *block = pool.take(k_bytes);
+    REQUIRE(block != nullptr);
+    std::memset(block, 0, k_bytes); // writable for its whole size
+    pool.give(block, k_bytes);
+    CHECK(pool.take(k_bytes) == block);
+    pool.give(block, k_bytes);
 }
