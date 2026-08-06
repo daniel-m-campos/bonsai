@@ -34,28 +34,7 @@ using cell_view_t = std::span<HistCell const>;
 class Histogram
 {
   public:
-    explicit Histogram(size_t n_bins) : storage_(n_bins), cells_(storage_) {}
-
-    // Non-owning view over externally owned cells (a node's arena); the
-    // arena must outlive the view and never reallocate under it.
-    explicit Histogram(std::span<HistCell> view) : cells_(view) {}
-
-    // Moves keep the span valid (vector moves preserve the heap buffer);
-    // copies of an owning histogram must re-point at their own storage.
-    Histogram(Histogram &&) noexcept            = default;
-    Histogram &operator=(Histogram &&) noexcept = default;
-    Histogram(Histogram const &o)
-        : storage_(o.storage_),
-          cells_(storage_.empty() ? o.cells_ : std::span<HistCell>{storage_})
-    {
-    }
-    Histogram &operator=(Histogram const &o)
-    {
-        storage_ = o.storage_;
-        cells_   = storage_.empty() ? o.cells_ : std::span<HistCell>{storage_};
-        return *this;
-    }
-    ~Histogram() = default;
+    explicit Histogram(size_t n_bins) : cells_(n_bins) {}
 
     void add(bin_id_t bin, float grad, float hess)
     {
@@ -101,12 +80,12 @@ class Histogram
 
     cell_view_t sweep_cells() const
     {
-        return cells_.first(cells_.size() - 1);
+        return std::span{cells_}.first(cells_.size() - 1);
     }
 
     cell_view_t all_cells() const
     {
-        return cells_;
+        return std::span{cells_};
     }
 
     // Mutable view for the row-wise fill, which accumulates straight into
@@ -120,7 +99,7 @@ class Histogram
     // since "all real bins on the left, none on the right" is degenerate.
     cell_view_t cut_cells() const
     {
-        return cells_.first(cells_.size() - 2);
+        return std::span{cells_}.first(cells_.size() - 2);
     }
 
     // Buffer size required by fill_prefix; equals cut_cells().size().
@@ -187,8 +166,7 @@ class Histogram
     }
 
   private:
-    std::vector<HistCell, detail::PoolAllocator<HistCell>> storage_;
-    std::span<HistCell>                                    cells_;
+    std::vector<HistCell, detail::PoolAllocator<HistCell>> cells_;
 };
 
 using histogram_view_t = std::span<Histogram const>;
