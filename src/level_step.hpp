@@ -408,11 +408,15 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         }
         else
         {
-            out.reserve(current.size());
-            for (auto const &input : current)
-            {
-                out.push_back(S::find(input, config));
-            }
+            // One worker per node: the finder's inner feature loops nest
+            // serial and its scratch is thread_local, so per-node results
+            // are identical to the serial walk. A region per level replaces
+            // a region per node.
+            out.resize(current.size());
+            SplitInput const *cur = current.data();
+            SplitOutput      *op  = out.data();
+            parallel::for_each_index(current.size(), [&, cur, op](size_t i)
+                                     { op[i] = S::find(cur[i], config); });
         }
     }
 

@@ -497,7 +497,7 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         }
         else
         {
-            sparse_nodes.push_back(node);
+            sparse_nodes.emplace_back(node);
         }
     }
     if (!sparse_nodes.empty())
