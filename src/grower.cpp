@@ -12,6 +12,7 @@
 #include <functional>
 #include <memory>
 #include <span>
+#include <type_traits>
 #include <vector>
 
 namespace bonsai
@@ -248,6 +249,82 @@ std::span<MirrorSlice const> mirror_slices(Dataset const                &ds,
     return slices;
 }
 
+// Accumulates rows [k0, k1) of one node for one mirror slice, reading the
+// row's bins as one contiguous strip of the slice's mirror block and
+// grad/hess once per row. `bases` holds one histogram base per selected
+// feature of the slice; `uniform` takes the arithmetic address path over a
+// padded u8 arena.
+void fill_rows(SplitInput const &node, size_t k0, size_t k1, floats_view grad,
+               floats_view hess, uint8_t const *rm_ptr, size_t width,
+               HistCell *const *base_ptr, feature_id_t const *sel_ptr, size_t s0,
+               size_t fid0, size_t n_sel_b, bool dense_sel, bool uniform)
+{
+    row_id_t const *rows = node.rows.data();
+    // Software prefetch: below the root, a node's rows are an ascending
+    // SUBSET, so successive mirror strips sit at irregular strides the
+    // hardware prefetcher cannot follow — the populate ledger showed the row
+    // loop DRAM-latency-bound at depth (the 16M cell: 78s of a 107s fit).
+    // Pull the strip (two lines at 100 u8 features) and the grad/hess pair a
+    // fixed distance ahead; reads only, so results are bit-identical.
+    constexpr size_t k_ahead = 16;
+    // The lookahead reads the NODE's row list, not this row block's, so a
+    // block boundary costs no dead zone however fine the blocks are cut; only
+    // the node's last rows run unprefetched, peeled out so the hot loop
+    // carries no per-row bound test.
+    size_t const n_rows = node.rows.size();
+    size_t const kp     = n_rows > k_ahead ? std::clamp(n_rows - k_ahead, k0, k1) : k0;
+    // A fully selected block indexes the strip directly (the common case);
+    // the general loop pays a selection lookup per add to support column
+    // sampling. Direct fills into a u8 node compute the cell address
+    // arithmetically over the node's padded arena (chunk stride 256), with no
+    // per-feature base load at all.
+    HistCell *const a0       = uniform ? base_ptr[0] : nullptr;
+    auto            run_rows = [&](auto cell_at)
+    {
+        auto walk = [&](auto prefetch, size_t a, size_t b)
+        {
+            for (size_t k = a; k < b; ++k)
+            {
+                if constexpr (decltype(prefetch)::value)
+                {
+                    size_t const rp = rows[k + k_ahead];
+                    __builtin_prefetch(rm_ptr + (rp * width), 0, 0);
+                    __builtin_prefetch(rm_ptr + (rp * width) + 64, 0, 0);
+                    __builtin_prefetch(&grad[rp], 0, 0);
+                    __builtin_prefetch(&hess[rp], 0, 0);
+                }
+                size_t const         r  = rows[k];
+                uint8_t const *const rb = rm_ptr + (r * width);
+                float const          g  = grad[r];
+                float const          h  = hess[r];
+                for (size_t s = 0; s < n_sel_b; ++s)
+                {
+                    HistCell &c = cell_at(s, rb);
+                    c.sum_grad += g;
+                    c.sum_hess += h;
+                }
+            }
+        };
+        walk(std::true_type{}, k0, kp);
+        walk(std::false_type{}, kp, k1);
+    };
+    if (uniform)
+    {
+        run_rows([&](size_t s, uint8_t const *rb) -> HistCell &
+                 { return a0[(s << 8) + rb[s]]; });
+    }
+    else if (dense_sel)
+    {
+        run_rows([&](size_t s, uint8_t const *rb) -> HistCell &
+                 { return base_ptr[s][rb[s]]; });
+    }
+    else
+    {
+        run_rows([&](size_t s, uint8_t const *rb) -> HistCell &
+                 { return base_ptr[s][rb[sel_ptr[s0 + s] - fid0]]; });
+    }
+}
+
 // Runs the plan's units over one mirror slice in one parallel section: each
 // accumulates its row block, reading the row's bins as one contiguous strip
 // of the slice's mirror block and grad/hess once per row.
@@ -287,65 +364,12 @@ void run_fill(FillPlan const &plan, Dataset const &ds, floats_view grad,
                         ? unit.node.get().hists[sel_ptr[s]].cells().data()
                         : parts + stripe + (off_ptr[s] - sl.cell0);
             }
-            HistCell **const base_ptr = bases.data();
-            row_id_t const  *rows     = unit.node.get().rows.data();
-            // Software prefetch: below the root, a node's rows are an
-            // ascending SUBSET, so successive mirror strips sit at irregular
-            // strides the hardware prefetcher cannot follow — the populate
-            // ledger showed the row loop DRAM-latency-bound at depth (the
-            // 16M cell: 78s of a 107s fit). Pull the strip (two lines at
-            // 100 u8 features) and the grad/hess pair a fixed distance
-            // ahead; reads only, so results are bit-identical.
-            constexpr size_t k_ahead = 16;
-            size_t const     n_sel_b = sl.n_selected();
-            // A fully selected block indexes the strip directly (the common
-            // case); the general loop pays a selection lookup per add to
-            // support column sampling. Direct fills into a u8 node compute
-            // the cell address arithmetically over the node's padded arena
-            // (chunk stride 256), with no per-feature base load at all.
-            bool const dense_sel = n_sel_b == width;
-            bool const uniform =
+            size_t const n_sel_b   = sl.n_selected();
+            bool const   dense_sel = n_sel_b == width;
+            bool const   uniform =
                 dense_sel && unit.partial_off == direct_fill && ds.bins_are_u8();
-            HistCell *const a0       = uniform ? base_ptr[0] : nullptr;
-            auto            run_rows = [&](auto cell_at)
-            {
-                for (size_t k = unit.k0; k < unit.k1; ++k)
-                {
-                    if (k + k_ahead < unit.k1)
-                    {
-                        size_t const rp = rows[k + k_ahead];
-                        __builtin_prefetch(rm_ptr + (rp * width), 0, 0);
-                        __builtin_prefetch(rm_ptr + (rp * width) + 64, 0, 0);
-                        __builtin_prefetch(&grad[rp], 0, 0);
-                        __builtin_prefetch(&hess[rp], 0, 0);
-                    }
-                    size_t const         r  = rows[k];
-                    uint8_t const *const rb = rm_ptr + (r * width);
-                    float const          g  = grad[r];
-                    float const          h  = hess[r];
-                    for (size_t s = 0; s < n_sel_b; ++s)
-                    {
-                        HistCell &c = cell_at(s, rb);
-                        c.sum_grad += g;
-                        c.sum_hess += h;
-                    }
-                }
-            };
-            if (uniform)
-            {
-                run_rows([&](size_t s, uint8_t const *rb) -> HistCell &
-                         { return a0[(s << 8) + rb[s]]; });
-            }
-            else if (dense_sel)
-            {
-                run_rows([&](size_t s, uint8_t const *rb) -> HistCell &
-                         { return base_ptr[s][rb[s]]; });
-            }
-            else
-            {
-                run_rows([&](size_t s, uint8_t const *rb) -> HistCell &
-                         { return base_ptr[s][rb[sel_ptr[sl.s0 + s] - fid0]]; });
-            }
+            fill_rows(unit.node.get(), unit.k0, unit.k1, grad, hess, rm_ptr, width,
+                      bases.data(), sel_ptr, sl.s0, fid0, n_sel_b, dense_sel, uniform);
         });
 }
 
@@ -375,6 +399,203 @@ void merge_partials(FillPlan const &plan, std::span<feature_id_t const> selected
                              h.size()});
             }
         });
+}
+
+constexpr size_t no_thread = static_cast<size_t>(-1);
+
+// One (node, row-block) work item of the buffer-and-reduce fill.
+struct Stripe
+{
+    size_t node;
+    size_t k0, k1;
+};
+
+// A sparse node's place in the stripe partition. The lowest thread touching
+// it accumulates straight into its arena; every higher thread owns one
+// partial at slot0 + (thread - first_thread - 1).
+struct ReduceNode
+{
+    size_t first_thread = no_thread;
+    size_t last_thread  = no_thread;
+    size_t slot0        = 0;
+};
+
+// A level's stripe partition: the flat work list, the per-thread stripe
+// bounds, each node's thread run, and the nodes that need a reduce at all.
+struct ReducePlan
+{
+    std::vector<Stripe>     stripes;
+    std::vector<size_t>     thread_begin;
+    std::vector<ReduceNode> nodes;
+    std::vector<size_t>     reduce_nodes;
+    size_t                  n_slots = 0;
+};
+
+// Uniform static striping: every node's rows are cut into fixed-grain
+// blocks, and the node-major stripe list is split into contiguous per-thread
+// ranges, so a thread walks few nodes and its live scatter target stays one
+// node histogram. Contiguity also bounds the partials: the threads touching
+// a node form a run, so the slot count is at most n_threads - 1. The
+// partition depends on node sizes, the grain, and the configured thread
+// count only, never scheduling (docs/architecture/7-parallel.md).
+ReducePlan const &plan_reduce(split_input_refs nodes, size_t grain)
+{
+    static thread_local ReducePlan plan;
+    plan.stripes.clear();
+    plan.reduce_nodes.clear();
+    plan.nodes.assign(nodes.size(), ReduceNode{});
+    for (size_t i = 0; i < nodes.size(); ++i)
+    {
+        size_t const n = nodes[i].get().rows.size();
+        if (n == 0)
+        {
+            continue;
+        }
+        size_t const n_blocks = (n + grain - 1) / grain;
+        for (size_t b = 0; b < n_blocks; ++b)
+        {
+            plan.stripes.push_back({i, b * n / n_blocks, (b + 1) * n / n_blocks});
+        }
+    }
+    size_t const n_stripes = plan.stripes.size();
+    auto const   nt        = static_cast<size_t>(parallel::n_threads());
+    plan.thread_begin.resize(nt + 1);
+    for (size_t t = 0; t <= nt; ++t)
+    {
+        plan.thread_begin[t] = t * n_stripes / nt;
+    }
+    for (size_t t = 0; t < nt; ++t)
+    {
+        for (size_t i = plan.thread_begin[t]; i < plan.thread_begin[t + 1]; ++i)
+        {
+            ReduceNode &rn = plan.nodes[plan.stripes[i].node];
+            if (rn.first_thread == no_thread)
+            {
+                rn.first_thread = t;
+            }
+            rn.last_thread = t;
+        }
+    }
+    plan.n_slots = 0;
+    for (size_t i = 0; i < plan.nodes.size(); ++i)
+    {
+        ReduceNode &rn = plan.nodes[i];
+        if (rn.first_thread == no_thread || rn.last_thread == rn.first_thread)
+        {
+            continue;
+        }
+        rn.slot0 = plan.n_slots;
+        plan.n_slots += rn.last_thread - rn.first_thread;
+        plan.reduce_nodes.push_back(i);
+    }
+    return plan;
+}
+
+// Fills every sparse node for one mirror slice through the static stripe
+// partition, then sums each node's partials into its arena in ascending
+// thread order. A partial is zeroed on first touch, so an untouched
+// (thread, node) pair costs neither a zero fill nor a reduce.
+void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes, Dataset const &ds,
+                     floats_view grad, floats_view hess,
+                     std::span<feature_id_t const> selected,
+                     SelectedOffsets const &offsets, MirrorSlice const &sl)
+{
+    static thread_local std::vector<HistCell, detail::PoolAllocator<HistCell>> slab;
+    static thread_local std::vector<uint8_t>                                   touched;
+    if (size_t const need = plan.n_slots * sl.cells; slab.size() < need)
+    {
+        slab.resize(need);
+    }
+    touched.assign(plan.n_slots, 0);
+    // Capture raw pointers: naming a thread_local inside the parallel region
+    // would resolve to each worker's own (empty) container.
+    HistCell *const           parts     = slab.data();
+    uint8_t *const            used      = touched.data();
+    size_t const             *off_ptr   = offsets.cells.data();
+    feature_id_t const *const sel_ptr   = selected.data();
+    uint8_t const *const      rm_ptr    = ds.row_major_bins().data() + sl.rm_base;
+    Stripe const *const       strip_ptr = plan.stripes.data();
+    size_t const *const       tbeg_ptr  = plan.thread_begin.data();
+    ReduceNode const *const   rn_ptr    = plan.nodes.data();
+    std::reference_wrapper<SplitInput> const *node_ptr  = nodes.data();
+    size_t const                              width     = sl.rm_width;
+    size_t const                              fid0      = sl.fid0;
+    size_t const                              n_sel_b   = sl.n_selected();
+    bool const                                dense_sel = n_sel_b == width;
+    // One index per stripe-partition slot, not per worker: buffers are keyed
+    // by the index, so which worker picks it up changes nothing.
+    parallel::for_each_index(
+        plan.thread_begin.size() - 1,
+        [&, parts, used, off_ptr, sel_ptr, rm_ptr, strip_ptr, tbeg_ptr, rn_ptr,
+         node_ptr](size_t t)
+        {
+            static thread_local std::vector<HistCell *> bases;
+            bases.resize(n_sel_b);
+            size_t last_node = nodes.size();
+            for (size_t i = tbeg_ptr[t]; i < tbeg_ptr[t + 1]; ++i)
+            {
+                Stripe const     &st     = strip_ptr[i];
+                ReduceNode const &rn     = rn_ptr[st.node];
+                bool const        direct = t == rn.first_thread;
+                size_t const slot = direct ? 0 : rn.slot0 + (t - rn.first_thread - 1);
+                if (!direct && used[slot] == 0)
+                {
+                    std::fill_n(parts + (slot * sl.cells), sl.cells, HistCell{});
+                    used[slot] = 1;
+                }
+                if (st.node != last_node)
+                {
+                    SplitInput &node = node_ptr[st.node];
+                    for (size_t s = sl.s0; s < sl.s1; ++s)
+                    {
+                        bases[s - sl.s0] =
+                            direct
+                                ? node.hists[sel_ptr[s]].cells().data()
+                                : parts + (slot * sl.cells) + (off_ptr[s] - sl.cell0);
+                    }
+                    last_node = st.node;
+                }
+                fill_rows(node_ptr[st.node], st.k0, st.k1, grad, hess, rm_ptr, width,
+                          bases.data(), sel_ptr, sl.s0, fid0, n_sel_b, dense_sel,
+                          dense_sel && direct && ds.bins_are_u8());
+            }
+        });
+    size_t const *const red_ptr = plan.reduce_nodes.data();
+    parallel::for_each_index(
+        plan.reduce_nodes.size() * n_sel_b,
+        [&, parts, used, off_ptr, sel_ptr, rn_ptr, node_ptr, red_ptr](size_t j)
+        {
+            size_t const      ni   = red_ptr[j / n_sel_b];
+            ReduceNode const &rn   = rn_ptr[ni];
+            size_t const      s    = sl.s0 + (j % n_sel_b);
+            size_t const      cell = off_ptr[s] - sl.cell0;
+            Histogram        &h    = node_ptr[ni].get().hists[sel_ptr[s]];
+            for (size_t t = rn.first_thread + 1; t <= rn.last_thread; ++t)
+            {
+                size_t const slot = rn.slot0 + (t - rn.first_thread - 1);
+                if (used[slot] != 0)
+                {
+                    h.add_cells({parts + (slot * sl.cells) + cell, h.size()});
+                }
+            }
+        });
+}
+
+// Row-block grain of the buffer-and-reduce fill for sparse nodes: 0 keeps
+// the per-block partial slab and its merge, 1 selects the reduce fill at the
+// default grain, any larger value sets the grain in rows. A block is streamed
+// once and never re-walked, so its size gates no cache reuse; the default is
+// where balance and per-block setup trade off. The env override exists for
+// the admission A/B and dies with it.
+size_t hist_reduce_grain()
+{
+    static size_t const v = []
+    {
+        char const  *e = std::getenv("BONSAI_HIST_REDUCE");
+        size_t const n = e != nullptr ? static_cast<size_t>(std::atoi(e)) : size_t{0};
+        return n == 1 ? size_t{1024} : n;
+    }();
+    return v;
 }
 
 // Dense nodes route to the column fill: per-feature sequential scans with an
@@ -481,6 +702,17 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     if (!sparse_nodes.empty())
     {
         SelectedOffsets const offsets = selected_offsets(ds, selected);
+        if (size_t const grain = hist_reduce_grain(); grain != 0)
+        {
+            ReducePlan const &plan = plan_reduce(sparse_nodes, grain);
+            for (MirrorSlice const &sl : mirror_slices(ds, selected, offsets))
+            {
+                run_fill_reduce(plan, sparse_nodes, ds, grad, hess, selected, offsets,
+                                sl);
+            }
+            row_lap(prof.populate_row_s);
+            return;
+        }
         // Tiles outer, rows inner: one fill pass per mirror block keeps the
         // live scatter target at one block's histograms (cache-resident by
         // construction) at any selection width, while reads stay sequential
