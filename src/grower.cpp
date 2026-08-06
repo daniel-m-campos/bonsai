@@ -449,10 +449,13 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
                                        floats_view hess, split_input_refs nodes,
                                        std::span<feature_id_t const> selected)
 {
-    for (SplitInput &node : nodes)
-    {
-        emplace_placeholders(ds, node, selected);
-    }
+    // Placeholder construction is one arena allocation plus a ~256KB zero
+    // fill per node; run serially it is an Amdahl chunk that caps the level
+    // fill near half its thread efficiency. Nodes are independent, so
+    // workers build them concurrently; the pool's mutex serializes only the
+    // per-node arena take.
+    parallel::for_each_index(nodes.size(), [&](size_t i)
+                             { emplace_placeholders(ds, nodes[i], selected); });
     if (selected.empty())
     {
         return;
