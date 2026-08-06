@@ -89,6 +89,20 @@ void fill_feature_parallel(Dataset const &ds, floats_view grad, floats_view hess
 
 constexpr size_t direct_fill = static_cast<size_t>(-1);
 
+// Probe, temporary: feature-tiled row fill for direct units. Tiles of W
+// features give the scatter an L1-resident target (W x 2KB) at the price of
+// re-reading the unit's strips once per tile from L2; per-feature add order
+// stays ascending rows, so models are bit-identical to the untiled loop.
+size_t row_tile_w()
+{
+    static size_t const v = []
+    {
+        char const *e = std::getenv("BONSAI_HIST_ROWTILE");
+        return e != nullptr ? static_cast<size_t>(std::atoi(e)) : size_t{0};
+    }();
+    return v;
+}
+
 // One row block of one node: fills either the node's own histogram cells
 // (single-block nodes) or a private partial slab merged afterwards.
 struct FillUnit
@@ -303,7 +317,37 @@ void run_fill(FillPlan const &plan, Dataset const &ds, floats_view grad,
             // A fully selected block indexes the strip directly (the common
             // case); the general loop pays a selection lookup per add to
             // support column sampling.
-            bool const dense_sel = n_sel_b == width;
+            bool const   dense_sel = n_sel_b == width;
+            size_t const tile_w    = row_tile_w();
+            if (dense_sel && tile_w != 0)
+            {
+                for (size_t t0 = 0; t0 < n_sel_b; t0 += tile_w)
+                {
+                    size_t const t1 = std::min(n_sel_b, t0 + tile_w);
+                    for (size_t k = unit.k0; k < unit.k1; ++k)
+                    {
+                        if (t0 == 0 && k + k_ahead < unit.k1)
+                        {
+                            size_t const rp = rows[k + k_ahead];
+                            __builtin_prefetch(rm_ptr + (rp * width), 0, 0);
+                            __builtin_prefetch(rm_ptr + (rp * width) + 64, 0, 0);
+                            __builtin_prefetch(&grad[rp], 0, 0);
+                            __builtin_prefetch(&hess[rp], 0, 0);
+                        }
+                        size_t const         r  = rows[k];
+                        uint8_t const *const rb = rm_ptr + (r * width);
+                        float const          g  = grad[r];
+                        float const          h  = hess[r];
+                        for (size_t s = t0; s < t1; ++s)
+                        {
+                            HistCell &c = base_ptr[s][rb[s]];
+                            c.sum_grad += g;
+                            c.sum_hess += h;
+                        }
+                    }
+                }
+                return;
+            }
             for (size_t k = unit.k0; k < unit.k1; ++k)
             {
                 if (k + k_ahead < unit.k1)
@@ -430,7 +474,8 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     {
         if (prof.enabled)
         {
-            std::println(stderr, "hist-fill: colfill_den={}", col_fill_den());
+            std::println(stderr, "hist-fill: colfill_den={} rowtile={}", col_fill_den(),
+                         row_tile_w());
         }
         return true;
     }();
