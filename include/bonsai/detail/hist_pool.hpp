@@ -76,18 +76,40 @@ class HistBlockPool
     HistBlockPool &operator=(HistBlockPool const &) = delete;
 
   private:
+    using block_lists_t = std::unordered_map<size_t, std::vector<void *>>;
+
     HistBlockPool() = default;
 
     static constexpr size_t k_local_cap = 64;
 
-    static std::unordered_map<size_t, std::vector<void *>> &local_free()
+    // Thread exit frees its own cached blocks rather than handing them to the
+    // pool, which may already be gone: static and thread storage destroy in
+    // unspecified order. Recycling is lost for at most k_local_cap blocks per
+    // size class per exiting thread, and OpenMP workers live for the process.
+    struct LocalCache
     {
-        static thread_local std::unordered_map<size_t, std::vector<void *>> lists;
-        return lists;
+        block_lists_t lists;
+
+        ~LocalCache()
+        {
+            for (auto &[bytes, list] : lists)
+            {
+                for (void *p : list)
+                {
+                    ::operator delete(p);
+                }
+            }
+        }
+    };
+
+    static block_lists_t &local_free()
+    {
+        static thread_local LocalCache cache;
+        return cache.lists;
     }
 
-    std::mutex                                      mu_;
-    std::unordered_map<size_t, std::vector<void *>> free_;
+    std::mutex    mu_;
+    block_lists_t free_;
 };
 
 // Stateless allocator over the pool; all instances compare equal, so vector
