@@ -345,16 +345,36 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
             rows_filled * static_cast<double>(selected_.size());
     }
 
-    // End of tree: the surviving frontier becomes leaves (values and row ids
-    // stamped on the host).
+    // End of tree: the surviving frontier becomes leaves. Values and the
+    // node table are serial (tiny); the row stamping runs one region for
+    // the whole frontier, since per-leaf regions cost more than the writes.
     void end_tree(std::vector<SplitInput> const &current, DenseTree::Nodes &nodes,
                   size_t &n_leaves, train_leaf_values &values,
                   std::vector<node_id_t> &leaf_ids, row_index_view /*row_indices*/)
     {
-        for (auto const &input : current)
+        static thread_local std::vector<float> leaf_values;
+        leaf_values.resize(current.size());
+        for (size_t li = 0; li < current.size(); ++li)
         {
-            finalize_as_leaf(nodes, input, config_, n_leaves, values, leaf_ids);
+            auto const &input = current[li];
+            auto const  v     = static_cast<float>(bounded_leaf_weight(
+                input.total_grad(), input.total_hess(), config_, input.lo, input.hi));
+            nodes[input.id]   = DenseTree::leaf(v);
+            leaf_values[li]   = v;
+            ++n_leaves;
         }
+        float const *lv = leaf_values.data();
+        parallel::for_each_index(current.size(),
+                                 [&, lv](size_t li)
+                                 {
+                                     SplitInput const &input = current[li];
+                                     float const       v     = lv[li];
+                                     for (row_id_t const r : input.rows)
+                                     {
+                                         values[r]   = v;
+                                         leaf_ids[r] = input.id;
+                                     }
+                                 });
     }
 
     // Levelwise leaf finalize, host plane: each frontier node is a leaf,
@@ -467,30 +487,38 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
                                   b.n_left = n_left;
                               });
             });
-        size_t prev_split = static_cast<size_t>(-1);
-        size_t li         = 0;
-        size_t ri         = 0;
-        for (Block &b : blocks)
+        // Per-split prefix and child sizing runs one worker per split: the
+        // sizing resize is a value-init of the children's row storage, and
+        // serial it is the same Amdahl chunk the placeholder build was.
+        static thread_local std::vector<size_t> split_b0;
+        split_b0.assign(plan.splits.size() + 1, blocks.size());
+        for (size_t u = blocks.size(); u-- > 0;)
         {
-            if (b.split_idx != prev_split)
+            split_b0[blk[u].split_idx] = u;
+        }
+        split_b0[plan.splits.size()] = blocks.size();
+        for (size_t i = plan.splits.size(); i-- > 0;)
+        {
+            if (split_b0[i] == blocks.size())
             {
-                if (prev_split != static_cast<size_t>(-1))
-                {
-                    finish_sizes(splits[prev_split], li, ri);
-                }
-                prev_split = b.split_idx;
-                li         = 0;
-                ri         = 0;
+                split_b0[i] = split_b0[i + 1];
             }
-            b.left0  = li;
-            b.right0 = ri;
-            li += b.n_left;
-            ri += (b.k1 - b.k0) - b.n_left;
         }
-        if (prev_split != static_cast<size_t>(-1))
-        {
-            finish_sizes(splits[prev_split], li, ri);
-        }
+        size_t const *b0 = split_b0.data();
+        parallel::for_each_index(plan.splits.size(),
+                                 [&, blk, splits, b0](size_t i)
+                                 {
+                                     size_t li = 0;
+                                     size_t ri = 0;
+                                     for (size_t u = b0[i]; u < b0[i + 1]; ++u)
+                                     {
+                                         blk[u].left0  = li;
+                                         blk[u].right0 = ri;
+                                         li += blk[u].n_left;
+                                         ri += (blk[u].k1 - blk[u].k0) - blk[u].n_left;
+                                     }
+                                     finish_sizes(splits[i], li, ri);
+                                 });
         parallel::for_each_index(
             blocks.size(),
             [&, blk, splits](size_t u)
@@ -520,15 +548,19 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
                                   }
                               });
             });
-        for (DeferredSplit &d : plan.splits)
-        {
-            d.p.left.id      = d.left_id;
-            d.p.right.id     = d.right_id;
-            d.p.parent_hists = std::move(d.parent.hists);
-            d.p.parent_arena = std::move(d.parent.arena);
-            d.parent.rows.clear();
-            d.parent.rows.shrink_to_fit();
-        }
+        // Hand-off and parent-row release are independent per split; the
+        // shrink's deallocation otherwise serializes on the orchestrator.
+        parallel::for_each_index(plan.splits.size(),
+                                 [&, splits](size_t i)
+                                 {
+                                     DeferredSplit &d = splits[i];
+                                     d.p.left.id      = d.left_id;
+                                     d.p.right.id     = d.right_id;
+                                     d.p.parent_hists = std::move(d.parent.hists);
+                                     d.p.parent_arena = std::move(d.parent.arena);
+                                     d.parent.rows.clear();
+                                     d.parent.rows.shrink_to_fit();
+                                 });
     }
 
     static void finish_sizes(DeferredSplit &d, size_t n_left, size_t n_right)
