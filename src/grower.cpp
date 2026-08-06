@@ -468,36 +468,36 @@ void run_plane_fill(Dataset const &ds, floats_view grad, floats_view hess,
             size_t const       nb  = ds.n_bins(fid);
             size_t const       per_pass =
                 std::max<size_t>(1, plane_slab_bytes / (nb * sizeof(HistCell)));
-            ds.visit_bins(fid,
-                          [&](auto bins)
-                          {
-                              for (size_t j0 = 0; j0 < n_fill; j0 += per_pass)
-                              {
-                                  size_t const n_slice =
-                                      std::min(per_pass, n_fill - j0);
-                                  std::span<HistCell> const slab =
-                                      plane_slab(n_slice * nb);
-                                  HistCell *const sl = slab.data();
-                                  std::fill_n(sl, n_slice * nb, HistCell{});
-                                  for (size_t r = 0; r < n_rows; ++r)
-                                  {
-                                      // Unsigned wrap puts both the sentinel and the
-                                      // other slices' nodes out of range.
-                                      size_t const j = static_cast<size_t>(m[r]) - j0;
-                                      if (j < n_slice)
-                                      {
-                                          HistCell &c = sl[(j * nb) + bins[r]];
-                                          c.sum_grad += grad[r];
-                                          c.sum_hess += hess[r];
-                                      }
-                                  }
-                                  for (size_t j = 0; j < n_slice; ++j)
-                                  {
-                                      nodes[j0 + j].get().hists[fid].add_cells(
-                                          {sl + (j * nb), nb});
-                                  }
-                              }
-                          });
+            ds.visit_bins(
+                fid,
+                [&](auto bins)
+                {
+                    for (size_t j0 = 0; j0 < n_fill; j0 += per_pass)
+                    {
+                        size_t const n_slice = std::min(per_pass, n_fill - j0);
+                        // One row past the slice is a sink: the walk
+                        // is predicated, not branched, since no
+                        // predictor can learn the map's pattern.
+                        std::span<HistCell> const slab = plane_slab((n_slice + 1) * nb);
+                        HistCell *const           sl   = slab.data();
+                        std::fill_n(sl, (n_slice + 1) * nb, HistCell{});
+                        for (size_t r = 0; r < n_rows; ++r)
+                        {
+                            // Unsigned wrap puts both the sentinel and the
+                            // other slices' nodes past the slice.
+                            size_t const j =
+                                std::min(static_cast<size_t>(m[r]) - j0, n_slice);
+                            HistCell &c = sl[(j * nb) + bins[r]];
+                            c.sum_grad += grad[r];
+                            c.sum_hess += hess[r];
+                        }
+                        for (size_t j = 0; j < n_slice; ++j)
+                        {
+                            nodes[j0 + j].get().hists[fid].add_cells(
+                                {sl + (j * nb), nb});
+                        }
+                    }
+                });
         });
 }
 
