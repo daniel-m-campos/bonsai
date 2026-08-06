@@ -9,6 +9,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <span>
@@ -350,6 +351,156 @@ void merge_partials(FillPlan const &plan, std::span<feature_id_t const> selected
         });
 }
 
+// --- feature-major plane fill (BONSAI_HIST_PLANE) --------------------------
+// The row-wise fill above gathers each node's scattered rows out of the
+// row-major mirror, so every load stream is latency-bound and its throughput
+// decays with depth. The plane fill trades that for depth-invariant
+// sequential streams: a thread owns whole features and walks the feature's
+// own contiguous bin column in row order, testing a row-to-node map instead
+// of following a row list. Experimental, off by default.
+
+bool plane_fill_on()
+{
+    static bool const on = []
+    {
+        char const *const v = std::getenv("BONSAI_HIST_PLANE");
+        return v != nullptr && v[0] != '0';
+    }();
+    return on;
+}
+
+// Rows in nodes that are not filled this level; also caps the fill set.
+constexpr uint16_t no_fill_node = UINT16_MAX;
+
+// One thread's live scatter target, sized to stay L2-resident; a wider fill
+// set splits into slices and walks the plane once per slice.
+constexpr size_t plane_slab_bytes = size_t{768} * 1024;
+
+// map[row] = index into `nodes` of the fill node holding the row, else
+// no_fill_node. u16 because a level's frontier can exceed 255 nodes.
+std::span<uint16_t const> row_node_map(size_t n_rows, split_input_refs nodes)
+{
+    // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
+    static thread_local std::unique_ptr<uint16_t[]> map;
+    static thread_local size_t                      cap = 0;
+    if (n_rows > cap)
+    {
+        map = std::make_unique_for_overwrite<uint16_t[]>(n_rows);
+        cap = n_rows;
+    }
+    // NOLINTEND(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
+    uint16_t *const  m          = map.get();
+    constexpr size_t block_rows = 65536;
+    parallel::for_each_index((n_rows + block_rows - 1) / block_rows,
+                             [&, m](size_t b)
+                             {
+                                 size_t const r0 = b * block_rows;
+                                 std::fill_n(m + r0, std::min(block_rows, n_rows - r0),
+                                             no_fill_node);
+                             });
+    // Row blocks, not nodes: one huge parent (the root) and many small deep
+    // nodes both have to fill every worker.
+    struct MapBlock
+    {
+        uint16_t nid;
+        size_t   k0, k1;
+    };
+    static thread_local std::vector<MapBlock> blocks;
+    blocks.clear();
+    for (size_t j = 0; j < nodes.size(); ++j)
+    {
+        size_t const n = nodes[j].get().rows.size();
+        for (size_t k0 = 0; k0 < n; k0 += block_rows)
+        {
+            blocks.push_back(
+                {static_cast<uint16_t>(j), k0, std::min(k0 + block_rows, n)});
+        }
+    }
+    // Capture raw pointers: naming a thread_local inside the parallel region
+    // would resolve to each worker's own (empty) vector.
+    MapBlock const *const blk = blocks.data();
+    parallel::for_each_index(blocks.size(),
+                             [&, m, blk](size_t u)
+                             {
+                                 MapBlock const &b    = blk[u];
+                                 row_id_t const *rows = nodes[b.nid].get().rows.data();
+                                 for (size_t k = b.k0; k < b.k1; ++k)
+                                 {
+                                     m[rows[k]] = b.nid;
+                                 }
+                             });
+    return {m, n_rows};
+}
+
+// One feature's private slab of n_slice x n_bins cells. Grow-only and
+// thread_local so the fill never allocates per feature or per level.
+std::span<HistCell> plane_slab(size_t n_cells)
+{
+    // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
+    static thread_local std::unique_ptr<HistCell[]> slab;
+    static thread_local size_t                      cap = 0;
+    if (n_cells > cap)
+    {
+        slab = std::make_unique_for_overwrite<HistCell[]>(n_cells);
+        cap  = n_cells;
+    }
+    // NOLINTEND(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
+    return {slab.get(), n_cells};
+}
+
+// Feature-parallel plane walk. Exactly one thread touches a (feature, node)
+// pair, so nothing reduces across threads and each cell accumulates in plane
+// row order: identical models at any thread count, though not bit-identical
+// to the row-wise fill's block order.
+void run_plane_fill(Dataset const &ds, floats_view grad, floats_view hess,
+                    split_input_refs nodes, std::span<feature_id_t const> selected,
+                    std::span<uint16_t const> map)
+{
+    size_t const              n_fill = nodes.size();
+    size_t const              n_rows = ds.n_rows();
+    uint16_t const *const     m      = map.data();
+    feature_id_t const *const sel    = selected.data();
+    parallel::for_each_index(
+        selected.size(),
+        [&, m, sel](size_t s)
+        {
+            feature_id_t const fid = sel[s];
+            size_t const       nb  = ds.n_bins(fid);
+            size_t const       per_pass =
+                std::max<size_t>(1, plane_slab_bytes / (nb * sizeof(HistCell)));
+            ds.visit_bins(fid,
+                          [&](auto bins)
+                          {
+                              for (size_t j0 = 0; j0 < n_fill; j0 += per_pass)
+                              {
+                                  size_t const n_slice =
+                                      std::min(per_pass, n_fill - j0);
+                                  std::span<HistCell> const slab =
+                                      plane_slab(n_slice * nb);
+                                  HistCell *const sl = slab.data();
+                                  std::fill_n(sl, n_slice * nb, HistCell{});
+                                  for (size_t r = 0; r < n_rows; ++r)
+                                  {
+                                      // Unsigned wrap puts both the sentinel and the
+                                      // other slices' nodes out of range.
+                                      size_t const j = static_cast<size_t>(m[r]) - j0;
+                                      if (j < n_slice)
+                                      {
+                                          HistCell &c = sl[(j * nb) + bins[r]];
+                                          c.sum_grad += grad[r];
+                                          c.sum_hess += hess[r];
+                                      }
+                                  }
+                                  for (size_t j = 0; j < n_slice; ++j)
+                                  {
+                                      nodes[j0 + j].get().hists[fid].add_cells(
+                                          {sl + (j * nb), nb});
+                                  }
+                              }
+                          });
+        });
+}
+
 void emplace_placeholders(Dataset const &ds, SplitInput &node,
                           std::span<feature_id_t const> selected)
 {
@@ -396,6 +547,18 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     {
         prof.populate_adds += static_cast<double>(node.rows.size()) *
                               static_cast<double>(selected.size());
+    }
+    // The plane fill serves either bin width; the map indexes the fill set,
+    // so a frontier past the sentinel falls back.
+    if (plane_fill_on() && nodes.size() < no_fill_node)
+    {
+        grower_detail::GrowProfiler::Lap map_lap;
+        auto const                       map = row_node_map(ds.n_rows(), nodes);
+        map_lap(prof.plane_map_s);
+        prof.plane_planes = ds.n_features();
+        run_plane_fill(ds, grad, hess, nodes, selected, map);
+        map_lap(prof.populate_row_s);
+        return;
     }
     if (!ds.bins_are_u8())
     {

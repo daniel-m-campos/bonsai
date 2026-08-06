@@ -133,6 +133,10 @@ struct GrowProfiler : Profiler<GrowProfiler>
     static constexpr size_t           k_level_slots = 32;
     std::array<double, k_level_slots> level_populate_s{};
     std::array<double, k_level_slots> level_populate_adds{};
+    // Feature-major plane fill (BONSAI_HIST_PLANE): engagement provenance
+    // and the per-level row-to-node map's build cost.
+    size_t plane_planes = 0;
+    double plane_map_s  = 0;
 
     static constexpr std::array fields = {
         std::pair{"find", &GrowProfiler::find_s},
@@ -163,6 +167,11 @@ struct GrowProfiler : Profiler<GrowProfiler>
         if (!levels.empty())
         {
             s += "\npopulate-levels:" + levels;
+        }
+        if (plane_planes > 0)
+        {
+            s += std::format("\nplane-fill: enabled=1 planes={} map={:.2f}s",
+                             plane_planes, plane_map_s);
         }
         return s;
     }
