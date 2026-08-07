@@ -148,33 +148,31 @@ Rejected: 32B padding to a cache line (wasteful: 4 bins per line is fine, the lo
 ```cpp
 class Histogram {
 public:
-    explicit Histogram(size_t n_bins);
+    explicit Histogram(size_t n_bins);           // owns its cells
+    explicit Histogram(std::span<HistCell> v);   // views a node's arena
 
     void add(uint16_t bin, float grad, float hess);
-    void clear();                                      // zero cells + totals, keep size
+    void clear();                                      // zero cells, keep size
 
     HistCell const& operator[](size_t bin) const;
     size_t size() const;
 
-    // Running totals across all bins (incl. missing). Maintained by
-    // add() and operator-=. Cheap accessors; no resum.
-    double total_grad() const;
-    double total_hess() const;
+    // One O(n_bins) sweep over the cells, accumulated in double.
+    HistCell totals() const;
 
-    // Subtraction trick: *this -= other, in place. Subtracts cells
-    // AND totals atomically. size() must match.
+    // Subtraction trick: *this -= other, in place. size() must match.
     Histogram& operator-=(Histogram const& other);
 
 private:
-    std::vector<HistCell> cells_;
-    double total_grad_ = 0.0;
-    double total_hess_ = 0.0;
+    std::vector<HistCell, detail::PoolAllocator<HistCell>> storage_;  // empty in a view
+    std::span<HistCell> cells_;
 };
 ```
 
 - One `Histogram` per `(node, feature)`. The grower owns the matrix of these (see §"Ownership" below).
+- Move-only. A copy would mean two different things (deep for an owner, aliasing for a view) and nothing in the grower copies one: the larger child takes the parent's histograms by move.
 - `size() == n_bins[fid]`, not `max_bin`. Variable per feature because `BinMapper::fit` deduplicates collisions and does low-cardinality fallback (decision 1 in [`../decisions.md`](../decisions.md)).
-- `clear()` zeros the cells and totals in place; `size()` is invariant. Histograms are allocated once per `(node-slot, feature)` and reused across iterations; `clear()` is the reset, not a destructor.
+- `clear()` zeros the cells in place; `size()` is invariant. A node's cells are zeroed when its arena is built and `clear()` is the in-place reset, not a destructor.
 - `operator-=` is the subtraction trick primitive; precondition `size() == other.size()`. Asserted in debug, UB otherwise; this is a hot path called per `(child, feature)`. The cell loop and the two scalar total subtractions are fused so the trick stays a single call site.
 - Node totals: **no longer maintained in `add()`** (decision 33). The running scalar pair cost two redundant double-adds per row × feature and duplicated the same node-level totals across every feature. Histograms now carry cells only; node totals are one O(n_bins) cell sweep (`Histogram::totals()`), computed once per node via `SplitInput::totals()`, which uses the first *populated* histogram, since `feature_fraction < 1` leaves unselected features as zero-binned placeholders.
 
@@ -182,13 +180,21 @@ The missing-bin cell (`cells_[n_bins - 1]`) accumulates like any other; the hist
 
 ## Ownership
 
-A node's histograms across all features = `vector<Histogram>` indexed by `fid`. Per-feature, not flattened across features, because:
+A node's histograms are one `NodeHistograms` value: a `vector<Histogram>` indexed by `fid`, plus the single arena holding every cell those histograms address. Each `Histogram` is a non-owning span over its feature's slice of that arena, so the per-feature handle stays the unit the rest of the grower speaks in.
 
-- Bucket count varies per feature (decision 1). A flattened `vector<HistCell>` would need a per-feature offset table: same indirection cost without the type-level clarity.
-- Subtraction is per-(node, feature). `feat_hist[fid] -= sibling[fid]` reads one contiguous run.
-- Parallel construction is feature-parallel in the OpenMP backend (Phase 3). Per-feature handles drop straight into a `parallel_for over fid`.
+One arena per node, not one allocation per (node, feature):
 
-Lives in the grower (`3-tree.md`), not in `Dataset`. Histograms are training-time scratch; `Dataset` is immutable input. Allocating in the grower lets the grower reuse arenas across nodes.
+- Bucket count varies per feature (decision 1), so slices are sized per feature. Selected features get a slice; unselected ones get a zero-binned placeholder span the split finders skip.
+- With `max_bin <= 255` every feature takes a fixed 256-cell chunk, so the row-wise fill addresses a cell as `arena[(feature * 256) + bin]` with no per-feature base to load. Wider bins pack the slices at `n_bins` and the fill loads a base per feature.
+- The sparse fill's lowest thread range accumulates straight into the node's arena while higher ranges accumulate into partials (decision 105). One contiguous target per node is what makes that direct arm addressable.
+- Subtraction stays per-(node, feature): `hists[fid] -= sibling[fid]` reads one contiguous run, exactly as it did when every feature owned its own vector.
+- Parallel construction is feature-parallel in the OpenMP backend. Per-feature handles drop straight into a `parallel_for over fid`.
+
+The arena and the views are one type because they have one lifetime. A view into an arena that moved away is a dangling read, and nodes move constantly: the parent's histograms become the larger child's before subtraction, and a demoted split hands them back to the parent. Bundling the two makes the compiler carry that rule instead of a comment on every site.
+
+Cells come from a size-class free list (`detail::HistBlockPool`), so a node's arena reuses pages the last node handed back rather than first-touching fresh ones (decision 47).
+
+Lives in the grower (`3-tree.md`), not in `Dataset`. Histograms are training-time scratch; `Dataset` is immutable input.
 
 ## Subtraction trick: API
 
