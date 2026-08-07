@@ -535,12 +535,6 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     {
         return;
     }
-    auto &prof = grower_detail::GrowProfiler::instance();
-    for (SplitInput const &node : nodes)
-    {
-        prof.populate_adds += static_cast<double>(node.rows.size()) *
-                              static_cast<double>(selected.size());
-    }
     if (!ds.bins_are_u8())
     {
         for (SplitInput &node : nodes)
@@ -549,8 +543,6 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         }
         return;
     }
-    grower_detail::GrowProfiler::Lap row_lap;
-
     static thread_local std::vector<std::reference_wrapper<SplitInput>> sparse_nodes;
     sparse_nodes.clear();
     for (SplitInput &node : nodes)
@@ -568,7 +560,6 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     {
         fill_sparse(ds, grad, hess, sparse_nodes, selected);
     }
-    row_lap(prof.populate_row_s);
 }
 
 template class DepthwiseGrower<CpuHistogramEngine, HistogramNodeSplitFinder>;

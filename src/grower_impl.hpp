@@ -213,8 +213,8 @@ plan_level(Dataset const &ds, TreeConfig const &config,
            std::vector<bin_id_t> &split_bins, std::vector<float> &split_gains,
            std::vector<float> &covers, std::vector<node_id_t> &leaf_ids)
 {
-    GrowProfiler::Lap lap;
-    LevelPlan         plan;
+    Phase<&GrowProfiler::bookkeep_s> phase;
+    LevelPlan                        plan;
     plan.splits.reserve(current.size());
     for (node_id_t i = 0; i < current.size(); ++i)
     {
@@ -247,7 +247,6 @@ plan_level(Dataset const &ds, TreeConfig const &config,
                                .left_sums   = ls,
                                .right_sums  = rs});
     }
-    lap(GrowProfiler::instance().bookkeep_s);
     return plan;
 }
 
@@ -302,7 +301,6 @@ inline void commit_children(Dataset const &ds, TreeConfig const &config,
                             std::vector<SplitInput> &current,
                             std::vector<SplitInput> &next)
 {
-    GrowProfiler::Lap lap;
     for (auto &d : plan.splits)
     {
         SplitInput &left  = d.p.left;
@@ -317,7 +315,6 @@ inline void commit_children(Dataset const &ds, TreeConfig const &config,
         next.push_back(std::move(left));
         next.push_back(std::move(right));
     }
-    lap(GrowProfiler::instance().finalize_s);
     std::swap(current, next);
     next.clear();
 }
@@ -453,13 +450,12 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
         ++depth;
     }
     {
-        gd::GrowProfiler::Lap flap;
+        gd::Phase<&gd::GrowProfiler::finalize_s> phase;
         step.end_tree(current, nodes, n_leaves, values, leaf_ids, row_indices);
         if (!resident)
         {
             gd::route_unsampled(ds, nodes, split_bins, row_indices, values, leaf_ids);
         }
-        flap(gd::GrowProfiler::instance().finalize_s);
     }
     gd::GrowProfiler::Lap alap;
     split_gains.resize(nodes.size(), 0.0F);

@@ -41,6 +41,7 @@ namespace bonsai::grower_detail
 using feature_view = std::span<feature_id_t const>;
 
 using detail::GrowProfiler; // definitions live in bonsai/detail/perf.hpp
+using detail::Phase;
 
 inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
                              TreeConfig const &config, size_t &n_leaves,
@@ -286,14 +287,13 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
 
     SplitInput make_root(row_index_view row_indices)
     {
-        GrowProfiler::Lap lap;
-        SplitInput        root;
+        Phase<&GrowProfiler::populate_s> phase;
+        SplitInput                       root;
         root.id = 0;
         root.rows.assign(row_indices.begin(), row_indices.end());
         engine_.populate(ds_, grad_, hess_, root, selected_);
         root.sums      = root.totals();
         root.row_count = root.rows.size();
-        lap(GrowProfiler::instance().populate_s);
         return root;
     }
 
@@ -304,9 +304,8 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
     // caller-owned and reused across levels.
     void open_level(std::vector<SplitInput> const &frontier, LevelOutputs &out)
     {
-        GrowProfiler::Lap lap;
+        Phase<&GrowProfiler::find_s> phase;
         host_find<SplitterT>(frontier, config_, out.splits, out.child_sums);
-        lap(GrowProfiler::instance().find_s);
     }
 
     // Routes every split parent's rows into its children, one node per worker
@@ -314,18 +313,16 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
     // serial at any thread count).
     void apply_level(LevelPlan &plan)
     {
-        GrowProfiler::Lap lap;
+        Phase<&GrowProfiler::partition_s> phase;
         host_partition(ds_, plan);
-        lap(GrowProfiler::instance().partition_s);
     }
 
     // Fills every smaller child's histograms in one engine call; the larger
     // sibling derives by subtraction.
     void build_children(LevelPlan &plan, bool /*last*/ = false)
     {
-        GrowProfiler::Lap lap;
+        Phase<&GrowProfiler::populate_s> phase;
         host_build_children(engine_, ds_, grad_, hess_, selected_, plan);
-        lap(GrowProfiler::instance().populate_s);
     }
 
     // End of tree: the surviving frontier becomes leaves. Values and the
@@ -616,8 +613,8 @@ class LevelStep<EngineT, SplitterT>
 
     SplitInput make_root(row_index_view row_indices)
     {
-        GrowProfiler::Lap lap;
-        SplitInput        root;
+        Phase<&GrowProfiler::populate_s> phase;
+        SplitInput                       root;
         root.id = 0;
         // Full-data fits pass the identity by contract (empty rows +
         // row_count): the 64MB host copy and its upload never happen; the
@@ -631,11 +628,9 @@ class LevelStep<EngineT, SplitterT>
         {
             root.rows.assign(row_indices.begin(), row_indices.end());
         }
-        lap(GrowProfiler::instance().assign_s);
         on_device_ = engine_.begin_root(ds_, grad_, hess_, root, selected_);
         if (on_device_)
         {
-            lap(GrowProfiler::instance().populate_s);
             return root; // hists/rows stay device-resident; root carries sums
         }
         if (identity)
@@ -647,21 +642,19 @@ class LevelStep<EngineT, SplitterT>
             // cached-statistics contract).
             root.rows.assign(row_indices.begin(), row_indices.end());
             root.row_count = 0;
-            lap(GrowProfiler::instance().assign_s);
         }
         engine_.populate(ds_, grad_, hess_, root, selected_);
         root.sums      = root.totals();
         root.row_count = root.rows.size();
-        lap(GrowProfiler::instance().populate_s);
         return root;
     }
 
     void open_level(std::vector<SplitInput> const &frontier, LevelOutputs &lout)
     {
-        auto             &out        = lout.splits;
-        auto             &child_sums = lout.child_sums;
-        auto const       &current    = frontier;
-        GrowProfiler::Lap lap;
+        Phase<&GrowProfiler::find_s> phase;
+        auto                        &out        = lout.splits;
+        auto                        &child_sums = lout.child_sums;
+        auto const                  &current    = frontier;
         if (on_device_)
         {
             out.clear();
@@ -687,7 +680,6 @@ class LevelStep<EngineT, SplitterT>
         {
             HostStep::template host_find<SplitterT>(current, config_, out, child_sums);
         }
-        lap(GrowProfiler::instance().find_s);
     }
 
     // Leaves stamp their device segments, splits partition on the device
@@ -695,7 +687,7 @@ class LevelStep<EngineT, SplitterT>
     // from the counts — SplitInput degrades to node metadata on this plane.
     void apply_level(LevelPlan &plan)
     {
-        GrowProfiler::Lap lap;
+        Phase<&GrowProfiler::partition_s> phase;
         if (on_device_)
         {
             std::vector<typename EngineT::LeafStamp> stamps;
@@ -731,7 +723,6 @@ class LevelStep<EngineT, SplitterT>
         {
             HostStep::host_partition(ds_, plan);
         }
-        lap(GrowProfiler::instance().partition_s);
     }
 
     // Smaller children build from their device row segments; the larger
@@ -739,7 +730,7 @@ class LevelStep<EngineT, SplitterT>
     // current.
     void build_children(LevelPlan &plan, bool last = false)
     {
-        GrowProfiler::Lap lap;
+        Phase<&GrowProfiler::populate_s> phase;
         if (on_device_)
         {
             if (last)
@@ -748,7 +739,6 @@ class LevelStep<EngineT, SplitterT>
                 // never read, so skip the build and keep the layout flip
                 // stamping depends on (decision 71).
                 engine_.advance_layout_only();
-                lap(GrowProfiler::instance().populate_s);
                 return;
             }
             std::vector<typename EngineT::LevelOp> ops;
@@ -766,7 +756,6 @@ class LevelStep<EngineT, SplitterT>
         {
             HostStep::host_build_children(engine_, ds_, grad_, hess_, selected_, plan);
         }
-        lap(GrowProfiler::instance().populate_s);
     }
 
     // End of tree: stamp the surviving frontier's device segments, then hand
@@ -973,10 +962,9 @@ template <HistogramEngine EngineT, typename SplitterT> class LeafStep
                                          Candidate &c, node_id_t left_id,
                                          node_id_t right_id)
     {
-        GrowProfiler::Lap lap;
+        Phase<&GrowProfiler::partition_s> phase;
         auto [left, right] = split_node(ds, grad, hess, std::move(c.node), c.split,
                                         left_id, right_id, selected, engine);
-        lap(GrowProfiler::instance().partition_s);
         return {.nodes = {std::move(left), std::move(right)},
                 .depth = static_cast<uint8_t>(c.depth + 1)};
     }
@@ -995,13 +983,12 @@ template <HistogramEngine EngineT, typename SplitterT> class LeafStep
     static void host_find_children(TreeConfig const &config, ChildPair &pair,
                                    bool may_split)
     {
-        GrowProfiler::Lap lap;
+        Phase<&GrowProfiler::find_s> phase;
         for (size_t i = 0; i < pair.nodes.size(); ++i)
         {
             pair.splits[i] =
                 may_split ? SplitterT::find(pair.nodes[i], config) : SplitOutput{};
         }
-        lap(GrowProfiler::instance().find_s);
     }
 
   protected:
@@ -1046,7 +1033,6 @@ template <GPULeafEngine EngineT, typename SplitterT> class LeafStep<EngineT, Spl
         {
             root.rows.assign(row_indices.begin(), row_indices.end());
         }
-        lap(GrowProfiler::instance().assign_s);
         on_device_ =
             engine_.leaf_begin_root(ds_, config_, grad_, hess_, root, selected_);
         if (!on_device_)
@@ -1059,7 +1045,6 @@ template <GPULeafEngine EngineT, typename SplitterT> class LeafStep<EngineT, Spl
                 // build (SplitInput's cached-statistics contract).
                 root.rows.assign(row_indices.begin(), row_indices.end());
                 root.row_count = 0;
-                lap(GrowProfiler::instance().assign_s);
             }
             engine_.populate(ds_, grad_, hess_, root, selected_);
             root.sums      = root.totals();
@@ -1093,7 +1078,7 @@ template <GPULeafEngine EngineT, typename SplitterT> class LeafStep<EngineT, Spl
             return HostStep::host_split_children(engine_, ds_, grad_, hess_, selected_,
                                                  c, left_id, right_id);
         }
-        GrowProfiler::Lap                  lap;
+        Phase<&GrowProfiler::partition_s>  phase;
         typename EngineT::LeafPartOp const op{c.slot, c.split.feature_id,
                                               c.split.bin_id, c.split.default_left};
         auto const                         round = engine_.leaf_split(ds_, op);
@@ -1106,7 +1091,6 @@ template <GPULeafEngine EngineT, typename SplitterT> class LeafStep<EngineT, Spl
         pair.nodes[1].row_count = round.right_count;
         pair.nodes[1].sums      = c.right_sums;
         pair.slots              = {round.left_slot, round.right_slot};
-        lap(GrowProfiler::instance().partition_s);
         return pair;
     }
 

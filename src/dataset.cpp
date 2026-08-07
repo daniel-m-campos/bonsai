@@ -107,8 +107,8 @@ Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers
                      std::shared_ptr<IngestPlane const> plane)
 {
     assert(batch.features.size() == mappers.size());
-    detail::IngestProfiler::Lap lap;
-    Dataset                     ds;
+    detail::Phase<&detail::IngestProfiler::bin_s> phase;
+    Dataset                                       ds;
     ds.n_rows_     = batch.labels.size();
     ds.n_features_ = batch.features.size();
     ds.mappers_    = mappers;
@@ -127,7 +127,6 @@ Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers
                     batch.features.size(), ds.n_rows_, mappers,
                     [&](size_t f, size_t r) { return batch.features[f][r]; });
     }
-    lap(detail::IngestProfiler::instance().bin_s);
     return ds;
 }
 
@@ -141,8 +140,8 @@ Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mapp
         return bin(labels.size(), X.extent(1), labels, mappers, cfg, std::move(plane),
                    weights);
     }
-    detail::IngestProfiler::Lap lap;
-    Dataset                     ds;
+    detail::Phase<&detail::IngestProfiler::bin_s> phase;
+    Dataset                                       ds;
     ds.n_rows_     = labels.size();
     ds.n_features_ = X.extent(1);
     ds.mappers_    = mappers;
@@ -151,7 +150,6 @@ Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mapp
     ds.is_categorical_.assign(X.extent(1), false);
     fill_binned(ds.features_u8_, ds.features_u16_, ds.bins_are_u8_, X.extent(1),
                 ds.n_rows_, mappers, [&](size_t f, size_t r) { return X[r, f]; });
-    lap(detail::IngestProfiler::instance().bin_s);
     return ds;
 }
 
@@ -161,8 +159,8 @@ Dataset Dataset::bin(size_t n_rows, size_t n_features, floats_view labels,
 {
     assert(plane != nullptr);
     assert(n_features == mappers.size());
-    detail::IngestProfiler::Lap lap;
-    Dataset                     ds;
+    detail::Phase<&detail::IngestProfiler::bin_s> phase;
+    Dataset                                       ds;
     ds.n_rows_     = n_rows;
     ds.n_features_ = n_features;
     ds.mappers_    = mappers;
@@ -172,7 +170,6 @@ Dataset Dataset::bin(size_t n_rows, size_t n_features, floats_view labels,
     ds.plane_       = std::move(plane);
     ds.lazy_        = std::make_shared<HostBins>();
     ds.bins_are_u8_ = all_fit_u8(mappers);
-    lap(detail::IngestProfiler::instance().bin_s);
     return ds;
 }
 
