@@ -16,7 +16,8 @@ The human-readable version with every failure mode explained is `docs/ops/runpod
 3. Export the PATH below in every ssh session; sshd does not inherit Docker ENV.
 4. After ANY create failure: list pods and delete strays (failed creates can still bill).
 5. Delete the pod the moment results are copied off; verify list-pods is empty before ending.
-6. **A pod never waits on a human gate without a deadline.** If a run finishes and the next step needs a merge or a decision, tear down and re-rent later; every watcher carries a wall-clock cap sized about 2x the expected run.
+6. **A GPU pod cannot time the CPU plane.** Its CPU share is whatever the host had spare (13.6 cores against the 128 `nproc` advertises), so CPU-plane runs go on a rented **CPU** pod, where the vCPU count is bought: rent `ceil(threads * 1.5)` vCPU, assert the container's allowance meets that before measuring, run with `OMP_WAIT_POLICY=passive`, and confirm `nr_throttled` barely moves around the fit (runbook section 11, issues #355, #360).
+7. **A pod never waits on a human gate without a deadline.** If a run finishes and the next step needs a merge or a decision, tear down and re-rent later; every watcher carries a wall-clock cap sized about 2x the expected run.
 
 ## Provisioning
 

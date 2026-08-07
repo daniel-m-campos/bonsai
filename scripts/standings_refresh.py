@@ -26,6 +26,24 @@ companion file, because the fused fit total the perf page publishes once is
 their median: the anchor is read from a measurement the session already
 takes, never from a new run.
 
+The two planes rent different machines. A GPU pod is sold by device and
+throws in whatever CPU share the host has left, which is how a 16-thread CPU
+comparison ended up describing a cgroup rather than the code (issue #355):
+the container's CPU ceiling is invisible to nproc, and bonsai's spin-wait
+barriers spend exactly what the ceiling withholds. A CPU pod is sold by vCPU,
+so the ceiling is a line on the invoice. The CPU axes therefore run on a
+rented CPU pod sized by the rule below, and the GPU axes run on the GPU pod
+exactly as before. Both sessions pull into one results directory, and every
+row carries the host block it was measured under.
+
+The sizing rule: rent at least ceil(threads * 1.5) vCPU for the thread count
+the CPU specs ask for. bonsai's barriers spin, so a waiting thread is still a
+running thread and the process draws against its cap even between phases; at
+threads == cap that draw is the cap. The headroom is what keeps a fit off the
+ceiling. The pod script asserts the rental it landed on before it measures
+anything, and fails the axis rather than publishing a number made under a
+ceiling nobody declared.
+
 It gates on the pod's fused/two-step parity rows before touching
 anything: the published ingest/train split is only honest while bonsai's
 two-step form still bins where its fused call does, so a parity failure
@@ -41,6 +59,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import pathlib
 import shutil
@@ -59,6 +78,21 @@ REST = "https://rest.runpod.io/v1"
 IMAGE = "ghcr.io/daniel-m-campos/bonsai-ci:cuda12.8"
 GPU = "NVIDIA RTX PRO 6000 Blackwell Server Edition"
 
+# The CPU plane's rental. cpu5g is the general-purpose CPU5 flavor at 4GB of
+# RAM per vCPU, which covers both cpu cells with room to spare.
+CPU_FLAVOR = "cpu5g"
+CPU_VCPU = 24
+# vCPUs per thread the CPU specs ask for. A spin-wait barrier keeps every
+# thread runnable, so a fit at threads == cap draws the whole cap and the
+# timing describes the container; headroom is what prevents that.
+CPU_HEADROOM = 1.5
+# CPU pods cap the container disk far below a GPU pod's 80GB: the API refuses
+# anything over 20GB on the CPU3 flavors and 30GB on the CPU5 ones.
+CPU_DISK_GB = 30
+GPU_DISK_GB = 80
+PLANE_GPU = "gpu"
+PLANE_CPU = "cpu"
+
 # The band the fused and two-step forms must agree inside. Measured at 2.5%
 # on one L40S at 4M x 512 and inside repeat noise at 16M; 5% matches the A/B
 # band, which is the same pod-noise question.
@@ -72,6 +106,13 @@ AXIS_FILE = {axis: axis for axis in AXES}
 
 # The axis the parity rows anchor: same cell, same pod, same session.
 PARITY_AXIS = "gpu-tall"
+
+# Axis name prefix -> the plane whose pod measures it.
+CPU_PREFIX = "cpu-"
+SPECS = REPO / "python" / "bonsai" / "bench" / "specs"
+# The pod script's loud half: written when the headroom assertion fails or
+# the throttle bracket catches material throttling, pulled back with results.
+QUOTA_FAIL = "quota-fail.txt"
 
 SSH_OPTS = ["-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=15"]
@@ -98,6 +139,14 @@ def main() -> int:
     m.add_argument("--only-stale", action="store_true",
                    help="drop the requested axes whose plane digest has not "
                    "moved since their last refresh (check_standings --stale)")
+    m.add_argument("--cpu-flavor", default=CPU_FLAVOR,
+                   help="RunPod CPU flavor for the cpu-plane pod")
+    m.add_argument("--cpu-vcpu", type=int, default=CPU_VCPU,
+                   help="vCPUs to buy for the cpu-plane pod; must satisfy "
+                        f"the {CPU_HEADROOM}-per-thread sizing rule")
+    m.add_argument("--dry-run", action="store_true",
+                   help="print the rental plan and the sizing arithmetic, "
+                        "then exit without renting anything")
     s = sub.add_parser("supersede", help="build the supersession PR from results")
     s.add_argument("--results-dir", required=True)
     s.add_argument("--axes", default=",".join(AXES))
@@ -114,24 +163,21 @@ def main() -> int:
 # Measure ==========================================================================================
 
 def measure(args: argparse.Namespace) -> int:
-    """Run one pod session: create, launch the on-pod script, poll, pull.
+    """Run one pod session per plane: create, launch, poll, pull, tear down.
 
     Parameters
     ----------
     args : argparse.Namespace
         Parsed ``measure`` arguments: ``axes``, ``only_stale``,
-        ``prev_version``, ``out_dir``, ``keep_pod``.
+        ``prev_version``, ``out_dir``, ``keep_pod``, ``cpu_flavor``,
+        ``cpu_vcpu``, ``dry_run``.
 
     Returns
     -------
     int
-        0 on success, 1 if ``RUNPOD_API_KEY`` is not set.
+        0 on success, 1 if the requested CPU rental is too small for the
+        specs, ``RUNPOD_API_KEY`` is not set, or a pod's gate failed an axis.
     """
-    key = os.environ.get("RUNPOD_API_KEY")
-    if not key:
-        print("ERROR: export RUNPOD_API_KEY first (runbook section 0)",
-              file=sys.stderr)
-        return 1
     axes = [a.strip() for a in args.axes.split(",") if a.strip()]
     if args.only_stale:
         stale = stale_axes()
@@ -143,43 +189,76 @@ def measure(args: argparse.Namespace) -> int:
         if not axes:
             print("every requested axis is current; nothing to measure")
             return 0
+    planes = [(PLANE_GPU, [a for a in axes if not a.startswith(CPU_PREFIX)]),
+              (PLANE_CPU, [a for a in axes if a.startswith(CPU_PREFIX)])]
+    planes = [(plane, plane_axes) for plane, plane_axes in planes if plane_axes]
+    cpu_axes = dict(planes).get(PLANE_CPU, [])
+    if cpu_axes:
+        needed = required_vcpu(cpu_axes)
+        print(f"cpu plane: {', '.join(cpu_axes)} at "
+              f"{max(spec_threads(a) for a in cpu_axes)}t need >= {needed} "
+              f"vCPU ({CPU_HEADROOM} per thread); renting "
+              f"{args.cpu_vcpu} x {args.cpu_flavor}")
+        if args.cpu_vcpu < needed:
+            print(f"ERROR: --cpu-vcpu {args.cpu_vcpu} is below the {needed} "
+                  f"the sizing rule requires; a fit at threads == cap draws "
+                  f"the whole cap and times the container, not the code",
+                  file=sys.stderr)
+            return 1
+    if args.dry_run:
+        print("--dry-run: nothing rented")
+        return 0
+    key = os.environ.get("RUNPOD_API_KEY")
+    if not key:
+        print("ERROR: export RUNPOD_API_KEY first (runbook section 0)",
+              file=sys.stderr)
+        return 1
     out_dir = pathlib.Path(args.out_dir or
                            f"standings-{time.strftime('%Y%m%d-%H%M')}")
     out_dir.mkdir(parents=True, exist_ok=True)
     sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
                          text=True, cwd=REPO).stdout.strip()
     pubkey = (pathlib.Path.home() / ".ssh" / "id_ed25519.pub").read_text().strip()
-
-    pod_id = _create_pod(key, pubkey)
-    print(f"pod {pod_id} created; waiting for ssh")
-    try:
-        ip, port = _wait_ssh(key, pod_id)
-        ssh = ["ssh", "-i", str(pathlib.Path.home() / ".ssh" / "id_ed25519"),
-               *SSH_OPTS, "-p", str(port), f"root@{ip}"]
-        _wait_until(lambda: subprocess.run([*ssh, "true"],
-                                           capture_output=True).returncode == 0,
-                    timeout_s=180, what="sshd")
-        subprocess.run(["scp", "-i", str(pathlib.Path.home() / ".ssh" / "id_ed25519"),
-                        *SSH_OPTS, "-P", str(port), str(POD_SCRIPT),
-                        f"root@{ip}:/root/"], check=True)
-        # Detached: an ssh drop must not kill a multi-hour sweep.
-        axes_arg = ",".join(axes)
-        subprocess.run([*ssh, f"nohup env AXES='{axes_arg}' "
-                        f"GIT_SHA='{sha}' "
-                        f"PREV_VERSION='{args.prev_version}' "
-                        "bash /root/standings_refresh_pod.sh "
-                        "> /root/refresh.log 2>&1 & echo launched"], check=True)
-        _poll_pod_run(ssh, out_dir, ip, port)
-    finally:
-        if args.keep_pod:
-            print(f"pod {pod_id} KEPT per --keep-pod; delete it yourself")
-        else:
-            _delete_pod(key, pod_id)
-            _sweep(key)
+    for plane, plane_axes in planes:
+        _run_session(key, args, plane=plane, axes=plane_axes, out_dir=out_dir,
+                     sha=sha, pubkey=pubkey)
+    quota_fail = out_dir / QUOTA_FAIL
+    if quota_fail.exists():
+        print("ERROR: a pod's gate failed an axis; its rows were renamed "
+              "QUOTAFAIL-* and must not be superseded:\n"
+              + quota_fail.read_text().rstrip(), file=sys.stderr)
+        return 1
     print(f"results in {out_dir}/; next:\n"
           f"  python3 scripts/standings_refresh.py supersede "
           f"--results-dir {out_dir}")
     return 0
+
+
+def spec_threads(axis: str) -> int:
+    """The thread count an axis's bundled spec publishes its claim at."""
+    spec = json.loads((SPECS / f"{axis}.json").read_text())
+    return max(spec.get("threads", [16]))
+
+
+def required_vcpu(axes: list[str]) -> int:
+    """The smallest CPU rental that satisfies the sizing rule for these axes.
+
+    A spin-wait barrier keeps every thread runnable, so the process draws
+    against its CPU cap even while threads wait. Renting exactly as many
+    vCPUs as threads therefore pins the fit to the ceiling and the timing
+    describes the container. The rule is ``ceil(threads * 1.5)``.
+
+    Parameters
+    ----------
+    axes : list[str]
+        The cpu-plane axes this session measures.
+
+    Returns
+    -------
+    int
+        vCPUs the widest of those axes needs.
+    """
+    return max(math.ceil(spec_threads(axis) * CPU_HEADROOM) for axis in axes)
 
 
 # Supersede ========================================================================================
@@ -241,6 +320,13 @@ def supersede(args: argparse.Namespace) -> int:
     verdict = _verdict(src / "ab.jsonl")
     print(verdict or "A/B skipped (no ab.jsonl)")
 
+    cpu_axes = [a for a in axes if a.startswith(CPU_PREFIX)]
+    hosts_note = ("" if not cpu_axes else
+                  f"\n\nCPU axes ({', '.join(cpu_axes)}) were measured on a "
+                  "rented CPU pod, whose vCPU count is bought rather than "
+                  "inherited from a GPU rental (issue #355). Every row "
+                  "carries its own host block, so the registry records "
+                  "which machine and which ceiling stands behind each axis.")
     branch = f"standings-refresh-{time.strftime('%Y%m%d')}"
     subprocess.run(["git", "checkout", "-b", branch], check=True, cwd=REPO)
     subprocess.run(["git", "add", "-A", "benchmarks/", "docs/method/",
@@ -250,15 +336,15 @@ def supersede(args: argparse.Namespace) -> int:
                     f"bench(standings): refresh {axes_label}\n\n"
                     "Same-pod refresh via scripts/standings_refresh.py "
                     "(decision 96); superseded files deleted, registry "
-                    "updated, ledger and README regenerated."],
+                    "updated, ledger and README regenerated." + hosts_note],
                    check=True, cwd=REPO)
     if args.no_pr:
         print(f"committed on {branch}; push and open the PR when ready")
         return 0
     subprocess.run(["git", "push", "-u", "origin", branch], check=True, cwd=REPO)
     body = (f"Standings refresh via `scripts/standings_refresh.py` "
-            f"(decision 96).\n\nIngest/train parity (bonsai's fused call vs "
-            f"the two-step Dataset form, same pod, interleaved, "
+            f"(decision 96).{hosts_note}\n\nIngest/train parity (bonsai's "
+            f"fused call vs the two-step Dataset form, same pod, interleaved, "
             f"+-{PARITY_BAND_PCT}% band):\n\n{parity}\n\n"
             f"A/B verdict (previous release wheel vs HEAD, "
             f"same pod, interleaved, +-5% band):\n\n"
@@ -311,6 +397,49 @@ def _copy_parity(path: pathlib.Path, axis_file: str | None) -> str | None:
 
 
 
+def _run_session(key: str, args: argparse.Namespace, *, plane: str,
+                 axes: list[str], out_dir: pathlib.Path, sha: str,
+                 pubkey: str):
+    """One pod, one plane: create, launch the on-pod script, poll, tear down.
+
+    Both planes write into the same results directory. Their file names do
+    not collide (one dated file per axis), and the GPU session owns the
+    parity and A/B rows, which are cuda measurements the CPU pod skips.
+    """
+    pod_id = _create_pod(key, pubkey, plane=plane, flavor=args.cpu_flavor,
+                         vcpu=args.cpu_vcpu)
+    print(f"{plane} pod {pod_id} created for {', '.join(axes)}; waiting for ssh")
+    host_tag = (f"cpupod-{args.cpu_flavor}-{args.cpu_vcpu}vcpu"
+                if plane == PLANE_CPU else "")
+    # The A/B compares cuda growers against a released wheel; only the GPU
+    # session can run it, so the CPU pod is never asked to.
+    prev_version = args.prev_version if plane == PLANE_GPU else ""
+    try:
+        ip, port = _wait_ssh(key, pod_id)
+        ssh = ["ssh", "-i", str(pathlib.Path.home() / ".ssh" / "id_ed25519"),
+               *SSH_OPTS, "-p", str(port), f"root@{ip}"]
+        _wait_until(lambda: subprocess.run([*ssh, "true"],
+                                           capture_output=True).returncode == 0,
+                    timeout_s=180, what="sshd")
+        subprocess.run(["scp", "-i", str(pathlib.Path.home() / ".ssh" / "id_ed25519"),
+                        *SSH_OPTS, "-P", str(port), str(POD_SCRIPT),
+                        f"root@{ip}:/root/"], check=True)
+        # Detached: an ssh drop must not kill a multi-hour sweep.
+        subprocess.run([*ssh, f"nohup env AXES='{','.join(axes)}' "
+                        f"GIT_SHA='{sha}' "
+                        f"PREV_VERSION='{prev_version}' "
+                        f"PLANE='{plane}' HOST_TAG='{host_tag}' "
+                        "bash /root/standings_refresh_pod.sh "
+                        "> /root/refresh.log 2>&1 & echo launched"], check=True)
+        _poll_pod_run(ssh, out_dir, ip, port)
+    finally:
+        if args.keep_pod:
+            print(f"pod {pod_id} KEPT per --keep-pod; delete it yourself")
+        else:
+            _delete_pod(key, pod_id)
+            _sweep(key)
+
+
 def _api(url: str, key: str, payload: dict | None = None,
          method: str = "POST") -> dict:
     """One authenticated RunPod API call; the key never reaches stdout."""
@@ -324,21 +453,32 @@ def _api(url: str, key: str, payload: dict | None = None,
     return json.loads(body) if body.strip() else {}
 
 
-def _create_pod(key: str, pubkey: str) -> str:
-    """Create the standings pod with the runbook-mandated PUBLIC_KEY env."""
-    name = f"bonsai-standings-{time.strftime('%Y%m%d-%H%M')}"
+def _create_pod(key: str, pubkey: str, *, plane: str, flavor: str,
+                vcpu: int) -> str:
+    """Create a standings pod for one plane, with the mandated PUBLIC_KEY env.
+
+    A GPU pod is bought by device. A CPU pod is bought by vCPU, which is the
+    point: the CPU ceiling is a number the invoice states rather than
+    whatever share of the host the device rental happened to leave over.
+    """
+    name = f"bonsai-standings-{plane}-{time.strftime('%Y%m%d-%H%M')}"
+    body = {"name": name, "imageName": IMAGE, "cloudType": "SECURE",
+            "ports": ["22/tcp"], "env": {"PUBLIC_KEY": pubkey}}
+    if plane == PLANE_CPU:
+        body |= {"computeType": "CPU", "cpuFlavorIds": [flavor],
+                 "vcpuCount": vcpu, "containerDiskInGb": CPU_DISK_GB}
+    else:
+        body |= {"gpuTypeIds": [GPU], "gpuCount": 1,
+                 "containerDiskInGb": GPU_DISK_GB}
     for attempt in (1, 2):
         try:
-            out = _api(f"{REST}/pods", key, {
-                "name": name, "imageName": IMAGE, "gpuTypeIds": [GPU],
-                "gpuCount": 1, "cloudType": "SECURE", "containerDiskInGb": 80,
-                "ports": ["22/tcp"], "env": {"PUBLIC_KEY": pubkey}})
+            out = _api(f"{REST}/pods", key, body)
             if out.get("id"):
                 return out["id"]
         except OSError as e:
             print(f"create attempt {attempt}: {e}", file=sys.stderr)
         time.sleep(15)
-    raise SystemExit("no usable pod after 2 attempts")
+    raise SystemExit(f"no usable {plane} pod after 2 attempts")
 
 
 def _wait_ssh(key: str, pod_id: str) -> tuple[str, int]:
@@ -354,7 +494,14 @@ def _wait_ssh(key: str, pod_id: str) -> tuple[str, int]:
         out = _api(f"{REST}/pods/{pod_id}", key, method="GET")
         port = (out.get("portMappings") or {}).get("22")
         ip = out.get("publicIp")
-        return (ip, int(port)) if ip and port else None
+        if ip and port:
+            return ip, int(port)
+        # CPU pods are served by the v1 API, which publishes the same pair
+        # under runtime.ports instead of publicIp/portMappings.
+        for entry in ((out.get("runtime") or {}).get("ports") or []):
+            if entry.get("private") == 22 and entry.get("ip"):
+                return entry["ip"], int(entry["public"])
+        return None
 
     ip, port = _wait_until(mapping, timeout_s=360, what="pod port mapping")
 
@@ -368,23 +515,25 @@ def _wait_ssh(key: str, pod_id: str) -> tuple[str, int]:
 
 
 def _poll_pod_run(ssh: list[str], out_dir: pathlib.Path, ip: str, port: int):
-    """Poll the detached run; pull the jsonl files incrementally.
+    """Poll the detached run; pull the session directory incrementally.
 
     Pulling every poll (not just at the end) means a pod that dies late
-    still leaves the finished axes on this machine.
+    still leaves the finished axes on this machine. The whole directory
+    comes over, not just *.jsonl, because the quota gate's marker file is
+    the evidence that some of those axes must not be published.
     """
     scp_base = ["scp", "-i", str(pathlib.Path.home() / ".ssh" / "id_ed25519"),
                 *SSH_OPTS, "-P", str(port)]
     while True:
         time.sleep(120)
-        subprocess.run([*scp_base, f"root@{ip}:/root/standings/*.jsonl",
+        subprocess.run([*scp_base, f"root@{ip}:/root/standings/*",
                         str(out_dir) + "/"], capture_output=True)
         tail = subprocess.run([*ssh, "tail -2 /root/refresh.log"],
                               capture_output=True, text=True)
         last = tail.stdout.strip().splitlines()[-1:] or [""]
         print(f"  pod: {last[0][:110]}", flush=True)
         if "STANDINGS_REFRESH_DONE" in tail.stdout:
-            subprocess.run([*scp_base, f"root@{ip}:/root/standings/*.jsonl",
+            subprocess.run([*scp_base, f"root@{ip}:/root/standings/*",
                             str(out_dir) + "/"], check=True)
             return
         if tail.returncode != 0:
