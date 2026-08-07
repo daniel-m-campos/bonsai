@@ -1,8 +1,15 @@
 #pragma once
 
 #include <algorithm>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
+
+#ifdef __linux__
+#include <fstream>
+#include <string>
+#endif
 
 #ifdef BONSAI_USE_OPENMP
 #include <omp.h>
@@ -20,6 +27,64 @@ inline int &n_threads_slot()
     static int n = 0;
     return n;
 }
+
+// Whole CPUs a "QUOTA PERIOD" microsecond pair allows, the cgroup v2
+// cpu.max line and the v1 file pair joined. 0 = unlimited ("max" or a
+// negative quota), malformed, or empty; a sub-CPU quota still needs one
+// worker.
+inline int quota_cpus(std::string_view pair)
+{
+    char const *const begin     = pair.data();
+    char const *const end       = begin + pair.size();
+    int64_t           quota     = 0;
+    auto const [rest, quota_ec] = std::from_chars(begin, end, quota);
+    if (quota_ec != std::errc{} || quota <= 0)
+    {
+        return 0;
+    }
+    char const *cursor = rest;
+    while (cursor != end && (*cursor == ' ' || *cursor == '\t'))
+    {
+        ++cursor;
+    }
+    int64_t period = 0;
+    if (std::from_chars(cursor, end, period).ec != std::errc{} || period <= 0)
+    {
+        return 0;
+    }
+    return static_cast<int>(std::max<int64_t>(1, quota / period));
+}
+
+#ifdef __linux__
+// First line of a file, empty when it does not open.
+inline std::string first_line(char const *path)
+{
+    std::ifstream in{path};
+    std::string   line;
+    std::getline(in, line);
+    return line;
+}
+#endif
+
+// Whole CPUs the CPU bandwidth quota allows, 0 when there is none. Reads
+// the unified cgroup v2 mount then the v1 pair, both at the paths a
+// container sees for its own cgroup; a process in a non-root cgroup of the
+// host namespace reads its quota as unlimited, since resolving that needs
+// the relative path from /proc/self/cgroup joined to the mount point.
+inline int cgroup_quota_cpus()
+{
+#ifdef __linux__
+    if (int const unified = quota_cpus(first_line("/sys/fs/cgroup/cpu.max"));
+        unified > 0)
+    {
+        return unified;
+    }
+    return quota_cpus(first_line("/sys/fs/cgroup/cpu/cpu.cfs_quota_us") + " " +
+                      first_line("/sys/fs/cgroup/cpu/cpu.cfs_period_us"));
+#else
+    return 0;
+#endif
+}
 } // namespace internal
 
 inline void set_n_threads(uint32_t n)
@@ -29,7 +94,11 @@ inline void set_n_threads(uint32_t n)
 
 // Auto (n_threads = 0) caps the worker count: per-level parallel sections
 // are short, so on many-core hosts OpenMP barrier spin-wait dominates
-// useful work (issue #2: 60 vCPU ran 10x slower than 16). Explicit counts
+// useful work (issue #2: 60 vCPU ran 10x slower than 16). Auto also clamps
+// to the cgroup CPU bandwidth quota when one is set: OpenMP sizes its pool
+// from the affinity mask, which a quota-limited container leaves at the
+// host's core count, so an unclamped pool burns its quota early and the
+// fit spends most of every period frozen by the scheduler. Explicit counts
 // pass through uncapped.
 inline constexpr int auto_thread_cap = 16;
 
@@ -37,7 +106,14 @@ inline int n_threads()
 {
 #ifdef BONSAI_USE_OPENMP
     int const requested = internal::n_threads_slot();
-    return requested > 0 ? requested : std::min(omp_get_max_threads(), auto_thread_cap);
+    if (requested > 0)
+    {
+        return requested;
+    }
+    // Read once: the quota is fixed for the process lifetime.
+    static int const quota  = internal::cgroup_quota_cpus();
+    int const        capped = std::min(omp_get_max_threads(), auto_thread_cap);
+    return quota > 0 ? std::min(capped, quota) : capped;
 #else
     return 1;
 #endif

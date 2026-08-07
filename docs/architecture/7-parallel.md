@@ -16,7 +16,8 @@ template <typename F> void parallel::for_each_index(size_t n, F &&f);
 Runs `f(i)` for `i in [0, n)`. OpenMP body when built with `BONSAI_OPENMP`
 (default), plain loop otherwise. Callers never see the difference. The
 worker count comes from `[parallel] n_threads` (0 = auto: hardware threads
-capped at 16), applied process-wide by `resolve_config` / the Python module.
+capped at 16 and at any cgroup CPU quota), applied process-wide by
+`resolve_config` / the Python module.
 
 Auto is capped because the per-level parallel sections are short: on hosts
 where the core count far exceeds per-level parallelism, OpenMP spin-wait at
@@ -25,6 +26,22 @@ the section barriers dominates useful work: a 60-vCPU host ran the MSD fit
 `n_threads = N` passes through uncapped; on oversubscribed many-core hosts
 `OMP_WAIT_POLICY=passive` (or `KMP_BLOCKTIME=0`) is the operator knob that
 makes idle workers sleep instead of spin.
+
+Auto also clamps to the cgroup CPU bandwidth quota when the process runs
+under one (`cpu.max` on cgroup v2, `cpu.cfs_quota_us` over
+`cpu.cfs_period_us` on v1, floor of the ratio). OpenMP's max-thread count
+follows the cpuset affinity mask, which a Kubernetes CPU limit or `docker
+--cpus` leaves at the host's core count, so an unclamped pool burns the
+quota early in each period and the scheduler freezes the cgroup for the
+rest of it: on a container advertising 128 CPUs with a 13.6-CPU quota, 16
+threads left 97% of periods throttled against XGBoost's 1.2% (issue #359).
+The clamp reads the cgroup paths a container sees for itself; a process in
+a non-root cgroup of the host namespace reads unlimited and sizes as
+before, since resolving that case needs the relative path from
+`/proc/self/cgroup` joined to the mount point. `OMP_WAIT_POLICY=passive`
+stays the mitigation for whatever oversubscription remains: on that
+container it removed 22% of the CPU-seconds, 86% of the throttled time,
+and 5 to 11% of train.
 
 Why not the proposed `ParallelBackend` concept dispatched like objectives
 and growers? One implementation doesn't earn a typelist dimension. The

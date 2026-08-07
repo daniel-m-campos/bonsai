@@ -36,7 +36,9 @@ of configuration, never of scheduling.
   [`include/bonsai/parallel.hpp`](../../include/bonsai/parallel.hpp): an
   OpenMP `parallel for` (dynamic schedule, size-scaled chunks so
   asymmetric P/E cores stay busy) with a serial fallback. Worker count:
-  `[parallel] n_threads`, 0 = all cores. Design notes in
+  `[parallel] n_threads`, 0 = auto (hardware threads, capped at 16 and at
+  any cgroup CPU quota, so a quota-limited container sizes to what it is
+  allowed to burn rather than to the cores it is shown). Design notes in
   [architecture/7-parallel.md](../architecture/7-parallel.md).
 - Histogram fill ([`src/grower.cpp`](../../src/grower.cpp)): u16 bins
   keep the feature-parallel shape (`fill_feature_parallel`): each
