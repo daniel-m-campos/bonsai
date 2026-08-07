@@ -43,14 +43,25 @@ using feature_view = std::span<feature_id_t const>;
 using detail::GrowProfiler; // definitions live in bonsai/detail/perf.hpp
 using detail::Phase;
 
+// Turns one frontier node into a leaf of the tree and returns its value.
+// Stamping that value onto the node's rows is the caller's: the per-node and
+// whole-frontier paths parallelize it differently.
+inline float write_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
+                        TreeConfig const &config, size_t &n_leaves)
+{
+    auto const v   = static_cast<float>(bounded_leaf_weight(
+        node.total_grad(), node.total_hess(), config, node.lo, node.hi));
+    nodes[node.id] = DenseTree::leaf(v);
+    ++n_leaves;
+    return v;
+}
+
 inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
                              TreeConfig const &config, size_t &n_leaves,
                              train_leaf_values      &values,
                              std::vector<node_id_t> &leaf_ids)
 {
-    auto const v   = static_cast<float>(bounded_leaf_weight(
-        node.total_grad(), node.total_hess(), config, node.lo, node.hi));
-    nodes[node.id] = DenseTree::leaf(v);
+    float const v = write_leaf(nodes, node, config, n_leaves);
     // Row-parallel: each row is written exactly once with the same value,
     // so the order is immaterial (byte-identical at any thread count). The
     // stamping loops were ~17s of the 16M CPU fit on dual-EPYC hosts
@@ -62,7 +73,6 @@ inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
                                  values[r]        = v;
                                  leaf_ids[r]      = node.id;
                              });
-    ++n_leaves;
 }
 
 // A split with rows partitioned and histograms pending: the smaller child
@@ -76,6 +86,9 @@ struct PendingSplit
     std::vector<HistCell, detail::PoolAllocator<HistCell>> parent_arena;
 };
 
+// The size tie goes to the left child. Every site that picks a smaller child
+// repeats this comparison and all of them must agree, host and device, or a
+// subtraction reads the wrong sibling's histogram.
 inline SplitInput &smaller_child(PendingSplit &p)
 {
     return p.left.rows.size() <= p.right.rows.size() ? p.left : p.right;
@@ -129,6 +142,7 @@ inline PendingSplit partition_rows(Dataset const &ds, SplitInput parent,
 // larger child takes the parent's histograms and subtracts the sibling.
 inline void finish_split(Dataset const &ds, PendingSplit &p)
 {
+    // Size tie: left wins (smaller_child).
     bool const  left_smaller = p.left.rows.size() <= p.right.rows.size();
     SplitInput &small        = left_smaller ? p.left : p.right;
     SplitInput &large        = left_smaller ? p.right : p.left;
@@ -334,10 +348,7 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
     {
         for (auto const &input : current)
         {
-            auto const v    = static_cast<float>(bounded_leaf_weight(
-                input.total_grad(), input.total_hess(), config_, input.lo, input.hi));
-            nodes[input.id] = DenseTree::leaf(v);
-            ++n_leaves;
+            write_leaf(nodes, input, config_, n_leaves);
         }
         parallel::for_each_index(current.size(),
                                  [&](size_t li)
@@ -746,7 +757,8 @@ class LevelStep<EngineT, SplitterT>
             for (uint32_t k = 0; k < plan.splits.size(); ++k)
             {
                 DeferredSplit const &d = plan.splits[k];
-                bool const left_small  = d.p.left.row_count <= d.p.right.row_count;
+                // Size tie: left wins (smaller_child).
+                bool const left_small = d.p.left.row_count <= d.p.right.row_count;
                 ops.push_back({d.parent_slot, (2 * k) + (left_small ? 0U : 1U),
                                (2 * k) + (left_small ? 1U : 0U)});
             }
@@ -1123,9 +1135,8 @@ template <GPULeafEngine EngineT, typename SplitterT> class LeafStep<EngineT, Spl
             return;
         }
         GrowProfiler::Lap lap;
-        // The smaller child built the fresh slot in split_children; tie goes
-        // to the left child, matching leaf_split's device-side choice
-        // (CudaDeviceContext::leaf_split: left_small = left_count <= right_count).
+        // The smaller child built the fresh slot in split_children; size tie:
+        // left wins (smaller_child, matched by leaf_split on the device).
         bool const     left_small = pair.nodes[0].row_count <= pair.nodes[1].row_count;
         uint32_t const small_slot = left_small ? pair.slots[0] : pair.slots[1];
         uint32_t const large_slot = left_small ? pair.slots[1] : pair.slots[0];
