@@ -7,7 +7,8 @@ namespace bonsai
 
 struct ParallelConfig
 {
-    uint32_t n_threads = 0; // 0 = auto (hardware threads, capped at 16)
+    // 0 = auto (hardware threads, capped at 16 and at any cgroup CPU quota)
+    uint32_t n_threads = 0;
     // CUDA device for cuda_* growers (issue #158). 0 = the default device;
     // ignored by CPU growers (the sampler.subsample precedent for
     // regime-scoped knobs). Placement only: model bits are unaffected, and
