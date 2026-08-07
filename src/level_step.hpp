@@ -79,11 +79,9 @@ inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
 // populates, then finish_split derives the larger by subtraction.
 struct PendingSplit
 {
-    SplitInput             left;
-    SplitInput             right;
-    std::vector<Histogram> parent_hists;
-    // The parent's arena backs parent_hists' views; it travels with them.
-    std::vector<HistCell, detail::PoolAllocator<HistCell>> parent_arena;
+    SplitInput     left;
+    SplitInput     right;
+    NodeHistograms parent_hists;
 };
 
 // The size tie goes to the left child. Every site that picks a smaller child
@@ -134,7 +132,6 @@ inline PendingSplit partition_rows(Dataset const &ds, SplitInput parent,
             }
         });
     p.parent_hists = std::move(parent.hists);
-    p.parent_arena = std::move(parent.arena);
     return p;
 }
 
@@ -146,12 +143,7 @@ inline void finish_split(Dataset const &ds, PendingSplit &p)
     bool const  left_smaller = p.left.rows.size() <= p.right.rows.size();
     SplitInput &small        = left_smaller ? p.left : p.right;
     SplitInput &large        = left_smaller ? p.right : p.left;
-    large.hists.reserve(ds.n_features());
-    for (feature_id_t f = 0; f < ds.n_features(); ++f)
-    {
-        large.hists.push_back(std::move(p.parent_hists[f]));
-    }
-    large.arena = std::move(p.parent_arena);
+    large.hists              = std::move(p.parent_hists);
     // Unselected slots are zero-binned on both sides: no-op subtraction.
     parallel::for_each_index(ds.n_features(),
                              [&](size_t f) { large.hists[f] -= small.hists[f]; });
@@ -537,7 +529,6 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
                                      d.p.left.id      = d.left_id;
                                      d.p.right.id     = d.right_id;
                                      d.p.parent_hists = std::move(d.parent.hists);
-                                     d.p.parent_arena = std::move(d.parent.arena);
                                      d.parent.rows.clear();
                                      d.parent.rows.shrink_to_fit();
                                  });

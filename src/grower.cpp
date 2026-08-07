@@ -485,7 +485,7 @@ void emplace_placeholders(Dataset const &ds, SplitInput &node,
         assert(!u8 || ds.n_bins(fid) <= k_u8_chunk);
         total += u8 ? k_u8_chunk : ds.n_bins(fid);
     }
-    node.arena.assign(total, HistCell{});
+    std::span<HistCell> const arena = node.hists.reset_arena(total);
     node.hists.reserve(ds.n_features());
     size_t j   = 0;
     size_t off = 0;
@@ -494,11 +494,11 @@ void emplace_placeholders(Dataset const &ds, SplitInput &node,
         bool const sel = j < selected.size() && selected[j] == fid;
         if (!sel)
         {
-            node.hists.emplace_back(std::span<HistCell>{});
+            node.hists.push_back(Histogram{std::span<HistCell>{}});
             continue;
         }
-        node.hists.emplace_back(
-            std::span<HistCell>{node.arena.data() + off, ds.n_bins(fid)});
+        node.hists.push_back(
+            Histogram{std::span<HistCell>{arena.data() + off, ds.n_bins(fid)}});
         off += u8 ? k_u8_chunk : ds.n_bins(fid);
         ++j;
     }

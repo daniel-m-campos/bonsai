@@ -14,14 +14,9 @@ namespace bonsai
 
 struct SplitInput
 {
-    std::vector<Histogram> hists;
-    // Backing cells for this node's selected histograms, one contiguous
-    // allocation the hists view into; must move with hists and never
-    // reallocate while views exist.
-    // NOLINTNEXTLINE(readability-redundant-member-init)
-    std::vector<HistCell, detail::PoolAllocator<HistCell>> arena = {};
-    std::vector<row_id_t>                                  rows;
-    node_id_t                                              id = 0;
+    NodeHistograms        hists;
+    std::vector<row_id_t> rows;
+    node_id_t             id = 0;
     // Leaf-value bounds inherited down the tree by monotone constraints.
     double lo = -std::numeric_limits<double>::infinity();
     double hi = std::numeric_limits<double>::infinity();

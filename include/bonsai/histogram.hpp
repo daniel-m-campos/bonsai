@@ -37,8 +37,7 @@ class Histogram
   public:
     explicit Histogram(size_t n_bins) : storage_(n_bins), cells_(storage_) {}
 
-    // Non-owning view over externally owned cells (a node's arena); the
-    // arena must outlive the view and never reallocate under it.
+    // Non-owning view over cells a NodeHistograms arena owns.
     explicit Histogram(std::span<HistCell> view) : cells_(view) {}
 
     // Move-only: a copy would mean two things (deep for an owner, aliasing
@@ -191,5 +190,65 @@ class Histogram
 };
 
 using histogram_view_t = std::span<Histogram const>;
+
+// One node's per-feature histograms and the single arena their cells live
+// in. The two are one type because they are one lifetime: the histograms
+// view the arena, and both move together whenever a node's histograms do
+// (docs/architecture/2-histogram.md).
+class NodeHistograms
+{
+  public:
+    // Sizes the arena for one node and zeroes it; the views built next point
+    // into the returned span, which never reallocates while they exist.
+    std::span<HistCell> reset_arena(size_t n_cells)
+    {
+        arena_.assign(n_cells, HistCell{});
+        return arena_;
+    }
+
+    void reserve(size_t n)
+    {
+        hists_.reserve(n);
+    }
+
+    void push_back(Histogram h)
+    {
+        hists_.push_back(std::move(h));
+    }
+
+    Histogram &operator[](size_t fid)
+    {
+        return hists_[fid];
+    }
+
+    Histogram const &operator[](size_t fid) const
+    {
+        return hists_[fid];
+    }
+
+    size_t size() const
+    {
+        return hists_.size();
+    }
+
+    bool empty() const
+    {
+        return hists_.empty();
+    }
+
+    auto begin() const
+    {
+        return hists_.begin();
+    }
+
+    auto end() const
+    {
+        return hists_.end();
+    }
+
+  private:
+    std::vector<Histogram>                                 hists_;
+    std::vector<HistCell, detail::PoolAllocator<HistCell>> arena_;
+};
 
 } // namespace bonsai
