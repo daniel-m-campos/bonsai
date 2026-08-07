@@ -164,6 +164,47 @@ TEST_CASE("row-wise single-block fill is bit-identical to the serial order",
     parallel::set_n_threads(0);
 }
 
+TEST_CASE("sparse fill sums its per-thread partials into the node arena", "[populate]")
+{
+    // The partial-and-reduce arm: 8192 of 40960 rows clears the density gate
+    // (rows * 4 < n_rows) so the node routes to the sparse fill, and 8 row
+    // stripes of grain 1024 spread over 4 threads, so three of the four
+    // write partials that the reduce pass must sum back in.
+    auto const fx = make_fixture(40960, 3);
+    REQUIRE(fx.ds.bins_are_u8());
+
+    std::vector<row_id_t> rows;
+    for (row_id_t r = 0; r < fx.ds.n_rows(); r += 5)
+    {
+        rows.push_back(r);
+    }
+    REQUIRE(rows.size() == 8192);
+    REQUIRE(rows.size() * 4 < fx.ds.n_rows());
+
+    parallel::set_n_threads(1);
+    auto const serial = populate_node(fx, rows); // one stripe range, no partials
+    parallel::set_n_threads(4);
+    auto const shared = populate_node(fx, rows); // partials plus reduce
+    auto const ref    = reference_hists(fx, rows);
+
+    for (size_t s = 0; s < fx.selected.size(); ++s)
+    {
+        auto const cells = shared.hists[fx.selected[s]].all_cells();
+        auto const one   = serial.hists[fx.selected[s]].all_cells();
+        REQUIRE(cells.size() == ref[s].size());
+        for (size_t b = 0; b < cells.size(); ++b)
+        {
+            // A dropped or double-counted partial loses or repeats whole
+            // stripes of rows; only reassociation rounding is in tolerance.
+            CHECK(cells[b].sum_grad == Catch::Approx(one[b].sum_grad).margin(1e-2));
+            CHECK(cells[b].sum_hess == Catch::Approx(one[b].sum_hess).margin(1e-2));
+            CHECK(cells[b].sum_grad == Catch::Approx(ref[s][b].sum_grad).margin(1e-2));
+            CHECK(cells[b].sum_hess == Catch::Approx(ref[s][b].sum_hess).margin(1e-2));
+        }
+    }
+    parallel::set_n_threads(0);
+}
+
 TEST_CASE("populate is reproducible at a fixed thread count", "[populate]")
 {
     parallel::set_n_threads(3);
@@ -217,8 +258,8 @@ TEST_CASE("row-major mirror matches the binned columns across mirror blocks",
 TEST_CASE("wide multi-slice fill matches serial sums within tolerance", "[populate]")
 {
     parallel::set_n_threads(4);
-    // 2048 + 64 features span two mirror slices; max_bin = 16 keeps the
-    // per-node fill multi-block (partials + merge) at this row count.
+    // 2048 + 64 features span two mirror slices, so the fill runs one pass
+    // per slice; max_bin = 16 keeps the two slices' arenas small.
     auto const fx = make_fixture(4096, 2112, BinMapperConfig{.max_bin = 16});
     REQUIRE(fx.ds.bins_are_u8());
     REQUIRE(fx.ds.n_features() > Dataset::mirror_tile_width());
