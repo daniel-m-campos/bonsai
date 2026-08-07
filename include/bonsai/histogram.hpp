@@ -6,6 +6,7 @@
 #include <cassert>
 #include <cstddef>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace bonsai
@@ -40,22 +41,20 @@ class Histogram
     // arena must outlive the view and never reallocate under it.
     explicit Histogram(std::span<HistCell> view) : cells_(view) {}
 
-    // Moves keep the span valid (vector moves preserve the heap buffer);
-    // copies of an owning histogram must re-point at their own storage.
-    Histogram(Histogram &&) noexcept            = default;
-    Histogram &operator=(Histogram &&) noexcept = default;
-    Histogram(Histogram const &o)
-        : storage_(o.storage_),
-          cells_(storage_.empty() ? o.cells_ : std::span<HistCell>{storage_})
+    // Move-only: a copy would mean two things (deep for an owner, aliasing
+    // for a view) and nothing copies a Histogram. Moves keep the span valid
+    // (vector moves preserve the heap buffer) and empty the source's view,
+    // so a moved-from owner reports size() == 0.
+    Histogram(Histogram &&o) noexcept
+        : storage_(std::move(o.storage_)), cells_(std::exchange(o.cells_, {}))
     {
     }
-    Histogram &operator=(Histogram const &o)
+    Histogram &operator=(Histogram &&o) noexcept
     {
-        storage_ = o.storage_;
-        cells_   = storage_.empty() ? o.cells_ : std::span<HistCell>{storage_};
+        storage_ = std::move(o.storage_);
+        cells_   = std::exchange(o.cells_, {});
         return *this;
     }
-    ~Histogram() = default;
 
     void add(bin_id_t bin, float grad, float hess)
     {

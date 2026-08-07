@@ -31,9 +31,8 @@ TEST_CASE("HistogramLevelSplitFinder: single-parent frontier reproduces node fin
     h.add(0, -1.0, 1.0);
     h.add(1, +1.0, 1.0);
 
-    auto                node         = make_node_with_one_hist(std::move(h));
-    auto const          frontier_arr = std::array{node};
-    FrontierInput const span         = frontier_arr;
+    auto                node = make_node_with_one_hist(std::move(h));
+    FrontierInput const span{&node, 1};
 
     TreeConfig cfg{.lambda_l2 = 1.0F, .min_data_in_leaf = 0};
 
