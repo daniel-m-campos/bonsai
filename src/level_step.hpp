@@ -335,23 +335,18 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
                   size_t &n_leaves, train_leaf_values &values,
                   std::vector<node_id_t> &leaf_ids, row_index_view /*row_indices*/)
     {
-        static thread_local std::vector<float> leaf_values;
-        leaf_values.resize(current.size());
-        for (size_t li = 0; li < current.size(); ++li)
+        for (auto const &input : current)
         {
-            auto const &input = current[li];
-            auto const  v     = static_cast<float>(bounded_leaf_weight(
+            auto const v    = static_cast<float>(bounded_leaf_weight(
                 input.total_grad(), input.total_hess(), config_, input.lo, input.hi));
-            nodes[input.id]   = DenseTree::leaf(v);
-            leaf_values[li]   = v;
+            nodes[input.id] = DenseTree::leaf(v);
             ++n_leaves;
         }
-        float const *lv = leaf_values.data();
         parallel::for_each_index(current.size(),
-                                 [&, lv](size_t li)
+                                 [&](size_t li)
                                  {
                                      SplitInput const &input = current[li];
-                                     float const       v     = lv[li];
+                                     float const v = nodes[input.id].threshold_or_value;
                                      for (row_id_t const r : input.rows)
                                      {
                                          values[r]   = v;
@@ -433,17 +428,21 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
             size_t split_idx, k0, k1;
             size_t n_left = 0, left0 = 0, right0 = 0;
         };
-        constexpr size_t                       block_rows = 65536;
-        static thread_local std::vector<Block> blocks;
+        constexpr size_t                        block_rows = 65536;
+        static thread_local std::vector<Block>  blocks;
+        static thread_local std::vector<size_t> split_b0;
         blocks.clear();
+        split_b0.assign(plan.splits.size() + 1, 0);
         for (size_t i = 0; i < plan.splits.size(); ++i)
         {
+            split_b0[i]    = blocks.size();
             size_t const n = plan.splits[i].parent.rows.size();
             for (size_t k0 = 0; k0 < n; k0 += block_rows)
             {
                 blocks.push_back({i, k0, std::min(k0 + block_rows, n)});
             }
         }
+        split_b0[plan.splits.size()] = blocks.size();
         // Capture raw pointers: naming a thread_local inside the parallel
         // regions would resolve to each worker's own (empty) vector.
         Block *const         blk          = blocks.data();
@@ -477,20 +476,6 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         // Per-split prefix and child sizing runs one worker per split: the
         // sizing resize is a value-init of the children's row storage, and
         // serial it is the same Amdahl chunk the placeholder build was.
-        static thread_local std::vector<size_t> split_b0;
-        split_b0.assign(plan.splits.size() + 1, blocks.size());
-        for (size_t u = blocks.size(); u-- > 0;)
-        {
-            split_b0[blk[u].split_idx] = u;
-        }
-        split_b0[plan.splits.size()] = blocks.size();
-        for (size_t i = plan.splits.size(); i-- > 0;)
-        {
-            if (split_b0[i] == blocks.size())
-            {
-                split_b0[i] = split_b0[i + 1];
-            }
-        }
         size_t const *b0 = split_b0.data();
         parallel::for_each_index(plan.splits.size(),
                                  [&, blk, splits, b0](size_t i)
