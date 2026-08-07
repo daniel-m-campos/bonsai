@@ -17,15 +17,54 @@
 namespace bonsai::detail
 {
 
-// Adds the time since construction (or the previous lap) into sink.
-struct Lap
+// Adds the time since construction (or the previous lap) into sink. A
+// disabled profiler costs one branch on a cached bool, never a clock read.
+template <typename Prof> struct Lap
 {
-    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
-    void                                  operator()(double &sink)
+    bool const                            on = Prof::instance().enabled;
+    std::chrono::steady_clock::time_point t0 =
+        on ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+
+    void operator()(double &sink)
     {
+        if (!on)
+        {
+            return;
+        }
         auto const now = std::chrono::steady_clock::now();
         sink += std::chrono::duration<double>(now - t0).count();
         t0 = now;
+    }
+};
+
+template <typename T> struct MemberClass;
+template <typename C, typename M> struct MemberClass<M C::*>
+{
+    using type = C;
+};
+
+// RAII phase: one declaration charges its whole enclosing scope to the named
+// bucket, so the phase is stated where a reader meets it. The instrument
+// boundary: laps sit at step public methods and at the grow loop's phase
+// edges, never inside a loop body. A function that narrates a sequence of
+// phases keeps a plain Lap; a scope guard has one exit and one bucket.
+template <auto Member> struct Phase
+{
+    using Prof = typename MemberClass<decltype(Member)>::type;
+
+    Lap<Prof> lap;
+
+    Phase()                         = default;
+    Phase(Phase const &)            = delete;
+    Phase &operator=(Phase const &) = delete;
+
+    // Guarded so a disabled profiler never even forms the member reference.
+    ~Phase()
+    {
+        if (lap.on)
+        {
+            lap(Prof::instance().*Member);
+        }
     }
 };
 
@@ -35,7 +74,7 @@ struct Lap
 // and optionally `std::string extra() const` for non-phase counters.
 template <typename Derived> struct Profiler
 {
-    using Lap          = detail::Lap;
+    using Lap          = detail::Lap<Derived>;
     bool const enabled = std::getenv(Derived::env) != nullptr;
 
     static Derived &instance()
@@ -101,8 +140,7 @@ struct FitProfiler : Profiler<FitProfiler>
 };
 
 // Grow-loop phases (BONSAI_GROW_PROFILE=1), host-side counterpart of the
-// CUDA engine's ProfileCounters. populate_adds counts histogram adds
-// scheduled; populate_row_s is the row-wise fill's share of populate.
+// CUDA engine's ProfileCounters.
 struct GrowProfiler : Profiler<GrowProfiler>
 {
     static constexpr char const *env    = "BONSAI_GROW_PROFILE";
@@ -115,10 +153,6 @@ struct GrowProfiler : Profiler<GrowProfiler>
     // commit = demote + commit_children between the engine phases;
     // assemble = gains/covers resize + Tree construction + result move-out.
     double setup_s = 0, commit_s = 0, assemble_s = 0;
-    // assign = make_root's host copy of the sampler's row list (64MB/tree at
-    // 16M full-data fits); a rung-0 conservation split of populate.
-    double assign_s      = 0;
-    double populate_adds = 0, populate_row_s = 0;
 
     static constexpr std::array fields = {
         std::pair{"find", &GrowProfiler::find_s},
@@ -129,14 +163,7 @@ struct GrowProfiler : Profiler<GrowProfiler>
         std::pair{"setup", &GrowProfiler::setup_s},
         std::pair{"commit", &GrowProfiler::commit_s},
         std::pair{"assemble", &GrowProfiler::assemble_s},
-        std::pair{"assign", &GrowProfiler::assign_s},
     };
-
-    std::string extra() const
-    {
-        return std::format(" adds={:.0f}M row_s={:.2f}s", populate_adds / 1e6,
-                           populate_row_s);
-    }
 };
 
 // CSV-to-Dataset pipeline stages (BONSAI_INGEST_PROFILE=1); accumulates
