@@ -42,13 +42,20 @@ of configuration, never of scheduling.
   keep the feature-parallel shape (`fill_feature_parallel`): each
   feature's histogram owned by one thread, filled in row order,
   determinism by ownership. u8 bins use the row-wise fill
-  (`populate_many`/`run_fill`, decision 49): row *blocks* own partial
-  histograms over a row-major mirror, merged in fixed block order; the
-  block count derives from the configured thread count, which is exactly
+  (`populate_many`/`fill_sparse`, decisions 49 and 105): row *blocks*
+  stream a row-major mirror, and a node touched by more than one thread
+  range owns a partial per extra range, reduced in fixed range order; the
+  partition derives from the configured thread count, which is exactly
   where the fixed-count contract comes from.
-- Parallel split scan ([`src/split.cpp`](../../src/split.cpp)): each
-  feature finds its own best independently; the winners merge **serially
-  in feature order**, so gain ties break exactly as a serial scan would.
+- Split scan ([`src/split.cpp`](../../src/split.cpp)): the levelwise
+  finder is feature-parallel, each feature finding its own best
+  independently and the winners merging **serially in feature order**, so
+  gain ties break exactly as a serial scan would; the per-node finder
+  walks its features serially and inherits that tie-break outright.
+- Node-parallel split scan
+  ([`src/level_step.hpp`](../../src/level_step.hpp)): a level runs one
+  worker per frontier node (`LevelStep::host_find`), so each node's
+  serial scan is independent and nothing is shared between them.
 - Row-parallel predict / gradients / scatter: one row, one thread, no
   shared accumulator.
 
