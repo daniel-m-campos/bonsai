@@ -63,13 +63,7 @@ class HistBlockPool
 
     ~HistBlockPool()
     {
-        for (auto &[bytes, list] : free_)
-        {
-            for (void *p : list)
-            {
-                ::operator delete(p);
-            }
-        }
+        free_blocks(free_);
     }
 
     HistBlockPool(HistBlockPool const &)            = delete;
@@ -82,6 +76,19 @@ class HistBlockPool
 
     static constexpr size_t k_local_cap = 64;
 
+    // Blocks come from unsized ::operator new, so unsized delete is the
+    // matching form.
+    static void free_blocks(block_lists_t &lists)
+    {
+        for (auto &[bytes, list] : lists)
+        {
+            for (void *p : list)
+            {
+                ::operator delete(p);
+            }
+        }
+    }
+
     // Thread exit frees its own cached blocks rather than handing them to the
     // pool, which may already be gone: static and thread storage destroy in
     // unspecified order. Recycling is lost for at most k_local_cap blocks per
@@ -92,13 +99,7 @@ class HistBlockPool
 
         ~LocalCache()
         {
-            for (auto &[bytes, list] : lists)
-            {
-                for (void *p : list)
-                {
-                    ::operator delete(p);
-                }
-            }
+            free_blocks(lists);
         }
     };
 
