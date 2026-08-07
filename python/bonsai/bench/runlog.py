@@ -22,6 +22,10 @@ SCHEMA_VERSION = 1
 DIVISIONS = ("quality", "perf")
 TIMING_MODES = ("in_memory", "pipeline")
 
+CGROUP_V2_CPU_MAX = "/sys/fs/cgroup/cpu.max"
+CGROUP_V1_QUOTA = "/sys/fs/cgroup/cpu/cpu.cfs_quota_us"
+CGROUP_V1_PERIOD = "/sys/fs/cgroup/cpu/cpu.cfs_period_us"
+
 class Row:
     """Field names shared by the result rows every suite emits."""
 
@@ -75,6 +79,36 @@ def lib_versions() -> dict:
     return libs
 
 
+def cpu_quota() -> float | None:
+    """The cores this container may use, or None when nothing caps it.
+
+    Two mechanisms cap a container and a host can carry either, so the
+    tighter of the two is the readable ceiling. A GPU pod caps CPU
+    bandwidth with a CFS quota well below what the machine advertises
+    (13.6 cores against 128, issue #355) and a spin-wait barrier burns
+    exactly the bandwidth the cap withholds. A rented CPU pod caps by
+    cpuset instead: its CFS quota reads `max`, and the purchased vCPU
+    count appears as that many CPUs in the affinity mask, so a quota read
+    alone would call it unlimited.
+
+    Returns
+    -------
+    float or None
+        Cores the cgroup allows, or None on a host neither mechanism caps
+        (bare metal, or macOS, where the controller files do not exist).
+    """
+    caps = [cap for cap in (_cfs_quota_cores(), _cpuset_cores())
+            if cap is not None]
+    return min(caps) if caps else None
+
+
+def usable_cpus() -> int:
+    """CPUs this process may run on, which is what `nproc` reports."""
+    if hasattr(os, "sched_getaffinity"):
+        return len(os.sched_getaffinity(0))
+    return os.cpu_count() or 1
+
+
 def detect_host(name: str | None = None) -> dict:
     """The host block every row embeds.
 
@@ -82,7 +116,15 @@ def detect_host(name: str | None = None) -> dict:
     -------
     dict
         name, gpu, driver, gpu_vram_gb, cpu_model, n_vcpu, ram_gb, os,
-        python, and libs (the imported reference-library versions).
+        python, libs (the imported reference-library versions), and the
+        two fields a CPU-plane row is only readable with: cpu_quota (the
+        cgroup ceiling in cores, null when nothing caps the host) and
+        omp_wait_policy.
+
+    ``n_vcpu`` counts the CPUs this process may actually run on, not the
+    ones the machine owns: on a rented CPU pod those differ by two orders
+    of magnitude (24 against 256), and the smaller number is the one a
+    thread count has to be read against.
     """
     gpu, vram = None, None
     try:
@@ -118,7 +160,9 @@ def detect_host(name: str | None = None) -> dict:
         ram = round(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
                     / 2**30)
     return {"name": name or platform.node(), "gpu": gpu, "driver": driver,
-            "gpu_vram_gb": vram, "cpu_model": cpu, "n_vcpu": os.cpu_count(),
+            "gpu_vram_gb": vram, "cpu_model": cpu, "n_vcpu": usable_cpus(),
+            "cpu_quota": cpu_quota(),
+            "omp_wait_policy": os.environ.get("OMP_WAIT_POLICY"),
             "ram_gb": ram, "os": platform.platform(),
             "python": platform.python_version(), "libs": lib_versions()}
 
@@ -174,3 +218,30 @@ def repo_root() -> pathlib.Path | None:
         if (p / "pyproject.toml").is_file() and (p / "benchmarks").is_dir():
             return p
     return None
+
+
+# Private Functions ================================================================================
+
+def _cfs_quota_cores() -> float | None:
+    """The CFS bandwidth ceiling in cores; None when it reads unlimited."""
+    v2 = pathlib.Path(CGROUP_V2_CPU_MAX)
+    if v2.is_file():
+        quota, _, period = v2.read_text().strip().partition(" ")
+        if quota == "max":
+            return None
+        return round(int(quota) / int(period), 2)
+    quota_file, period_file = pathlib.Path(CGROUP_V1_QUOTA), pathlib.Path(CGROUP_V1_PERIOD)
+    if not quota_file.is_file() or not period_file.is_file():
+        return None
+    quota_us = int(quota_file.read_text().strip())
+    if quota_us <= 0:
+        return None
+    return round(quota_us / int(period_file.read_text().strip()), 2)
+
+
+def _cpuset_cores() -> float | None:
+    """CPUs in the affinity mask, or None when the mask is the whole machine."""
+    if not hasattr(os, "sched_getaffinity"):
+        return None
+    allowed = len(os.sched_getaffinity(0))
+    return None if allowed >= (os.cpu_count() or allowed) else float(allowed)

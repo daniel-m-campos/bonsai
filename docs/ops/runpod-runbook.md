@@ -163,6 +163,8 @@ The sweep is not optional: **an error-returning create can still have created a 
 | One pod much slower than another, same GPU model | Fleet variance (~25% measured) or the defective-host class (GPU sync ~300µs vs ~4µs healthy) | Same-pod comparisons only; for latency-sensitive work run a 30s sync probe first and reject hosts >50µs |
 | "No resources" / capacity errors | DC out of that GPU | Retry, switch GPU type (L40S↔A100), or switch cloudType |
 | Create succeeded per billing but API returned an error | Known API quirk | Always list-and-sweep after failures (section 7) |
+| CPU pod create 500s with "Container Disk must be less than or equal to 20" | CPU pods cap the container disk per flavor: 20GB on the CPU3 flavors, 30GB on the CPU5 ones, against a GPU pod's 80 | Ask for 30 or less (`CPU_DISK_GB` in `standings_refresh.py`) |
+| A CPU pod reports the host's RAM, or its `cpu.max` reads `max` | A CPU pod caps by cpuset and `memory.max`, not by CFS bandwidth, and `free`/`/proc/meminfo` show the machine rather than the container | Read `nproc` for CPUs and `/sys/fs/cgroup/memory.max` for RAM (section 11) |
 
 ## 9. Cost notes
 
@@ -202,4 +204,42 @@ python3 scripts/standings_refresh.py supersede --results-dir standings-<date> \
 
 Release ordering is unchanged from decision 92: merge the version-bump PR FIRST, then run the refresh with `--prev-version` = the last release and no `--only-stale` (a release re-measures every axis on one host), merge the refresh PR (a **moved** verdict needs a `Standings:`-tagged decision first; docs-check enforces), then tag. The order matters because `update_standings.py` stamps `refreshed_for` from pyproject at the refresh's checkout sha: a refresh run before the bump stamps the old version and the publish gate then fails at tag time.
 
+A refresh that includes CPU axes rents two pods, not one, because the two planes need different machines; see section 11 before running `cpu-tall` or `cpu-wide`.
+
 A pushed tag alone publishes nothing: wheels.yml's publish path triggers on the GitHub release event, so the release recipe ends with `gh release create v<version> --notes-file <changelog section>`, which is what fires the build, the pod self-validation, the standings gate, and the PyPI upload. This has been re-learned twice; it is written here so there is no third time.
+
+## 11. CPU plane hosts (rented CPU pods)
+
+The CPU axes run on a rented **CPU pod**, not on the GPU pod that measures the device planes. A GPU rental sells you a device and leaves the CPU share to whatever the host has spare, which is how a 16-thread CPU comparison ended up describing a cgroup: the standings pods advertise 128 vCPUs and cap the container at 13.6 cores, other pods in the same fleet cap at 27.2, and `nproc` shows neither number. bonsai's barriers spin-wait, so they spend the capped bandwidth on waiting, and a 16-thread fit sat on the ceiling at 13.4 cpu-seconds per wall second, throttled in 97% of enforcement periods against xgboost's 1.2% (issue #355 step 18). A CPU pod is sold by vCPU instead, so the ceiling is a line on the invoice rather than a property of whichever machine the scheduler picked.
+
+**What a CPU pod actually enforces**, measured on one rented pod (`cpu3c`, 2 vCPU, AMD EPYC 7713, US-CA-2):
+
+| file | reading | meaning |
+|---|---|---|
+| `/sys/fs/cgroup/cpu.max` | `max 100000` | no CFS bandwidth quota at all |
+| `/sys/fs/cgroup/cpu.stat` | `nr_periods 0`, `nr_throttled 0` | bandwidth enforcement is not even running |
+| `/sys/fs/cgroup/cpuset.cpus.effective` | two CPU ids | the purchase, enforced as an affinity mask |
+| `nproc` | `2` | equals the rented vCPU count |
+| `os.cpu_count()` | `256` | still the whole host, so read the mask, not this |
+| `/sys/fs/cgroup/memory.max` | `4.0GB` | vCPU count times the flavor's GB per vCPU, exactly |
+| `/proc/meminfo` MemTotal, `free -g` | 1TB | the host's RAM, **not** the container's; a RAM check must read `memory.max` |
+
+So the cap is a cpuset, not a bandwidth quota, and it equals what was bought. That is a stronger guarantee than the GPU pods give: a container that cannot be throttled cannot have its timing eaten by throttling. It also means a quota read alone reports "unlimited" on a CPU pod, which is why `cpu_quota()` and the pod script both take the tighter of the CFS quota and the cpuset. The 24-vCPU `cpu5g` rental the refresh defaults to has not itself been measured; the assertion below is what confirms each session's rental rather than trusting this table.
+
+**The sizing rule: rent at least `ceil(threads * 1.5)` vCPU.** At 16 threads that is 24 vCPU. The reason is the spin-wait barrier: a waiting thread is still a runnable thread, so the process draws against its cap even between phases, and at threads == cap that draw is the whole cap with nothing left for the allocator, the runtime's own threads, or the reference library's helpers. Headroom is what keeps a fit off the ceiling. `standings_refresh.py` refuses a `--cpu-vcpu` below the rule before it rents anything, and `standings_refresh_pod.sh` asserts the landed container's allowance against it before it measures anything, failing the axis rather than publishing a number made under a ceiling nobody declared.
+
+**Measuring.** One command; the driver rents a GPU pod for the GPU axes and a CPU pod for the CPU axes, tears each down after its half, and pulls both into one results directory:
+
+```bash
+python3 scripts/standings_refresh.py measure --prev-version <last-release>
+python3 scripts/standings_refresh.py measure --dry-run     # plan and sizing only
+python3 scripts/standings_refresh.py supersede --results-dir <dir>
+```
+
+`--cpu-flavor` and `--cpu-vcpu` change the rental (defaults `cpu5g` and 24). `--dry-run` prints the plane split, the thread count read out of the bundled specs, and the vCPU the rule demands, and rents nothing. The GPU session owns `parity.jsonl` and `ab.jsonl`, which are cuda measurements; the CPU pod builds the plain `make python` module and skips both.
+
+**The gate on the pod.** It reads the allowance (`cpu.max` with the v1 files as a fallback, `nproc` for the cpuset, tighter wins), exports `OMP_WAIT_POLICY=passive` for the CPU arms only so the flag never crosses into a device axis, and brackets the axis's first fit with the `nr_throttled` counters. More than 5% throttled enforcement periods aborts the rest of the axis. On a correctly sized CPU pod that counter cannot move, which makes it a check on the rental rather than a knob to tune.
+
+A failed gate is loud in three places: a `STANDINGS_REFRESH_FAIL` line in the run log, a `quota-fail.txt` that travels back with the results and makes `measure` exit nonzero, and the partial rows renamed to `QUOTAFAIL-<axis>-<YYYY-MM>.jsonl` so the supersession glob cannot pick them up. Every row also carries its host block, with `n_vcpu` counting the CPUs the process may actually use and `cpu_quota` and `omp_wait_policy` beside it, so a committed standings file says which machine and which ceiling produced it without anyone having to remember.
+
+**Cost.** cpu5g is $0.046 per vCPU per hour, so a 24-vCPU CPU pod is about **$1.10/hr** and a full CPU refresh (both cells, six variants, two repeats on the tall cell) lands under **$2**. That is cheap next to the GPU half, and cheap enough that a rental too small to satisfy the sizing rule is never the economical choice.
