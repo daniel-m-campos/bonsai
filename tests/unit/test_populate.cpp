@@ -94,7 +94,7 @@ SplitInput populate_node(Fixture const &fx, std::vector<row_id_t> rows)
     return node;
 }
 
-// Block-aware mirror lookup: feature f lives in block f / width at strip
+// Block-aware mirror lookup: feature f lives in block f / width at column
 // position f % width; one block reproduces the classic row-major layout.
 void check_mirror_layout(Fixture const &fx)
 {
@@ -168,7 +168,7 @@ TEST_CASE("sparse fill sums its per-thread partials into the node arena", "[popu
 {
     // The partial-and-reduce arm: 8192 of 40960 rows clears the density gate
     // (rows * 4 < n_rows) so the node routes to the sparse fill, and 8 row
-    // stripes of grain 1024 spread over 4 threads, so three of the four
+    // chunks of grain 1024 spread over 4 threads, so three of the four
     // write partials that the reduce pass must sum back in.
     auto const fx = make_fixture(40960, 3);
     REQUIRE(fx.ds.bins_are_u8());
@@ -182,7 +182,7 @@ TEST_CASE("sparse fill sums its per-thread partials into the node arena", "[popu
     REQUIRE(rows.size() * 4 < fx.ds.n_rows());
 
     parallel::set_n_threads(1);
-    auto const serial = populate_node(fx, rows); // one stripe range, no partials
+    auto const serial = populate_node(fx, rows); // one chunk range, no partials
     parallel::set_n_threads(4);
     auto const shared = populate_node(fx, rows); // partials plus reduce
     auto const ref    = reference_hists(fx, rows);
@@ -195,7 +195,7 @@ TEST_CASE("sparse fill sums its per-thread partials into the node arena", "[popu
         for (size_t b = 0; b < cells.size(); ++b)
         {
             // A dropped or double-counted partial loses or repeats whole
-            // stripes of rows; only reassociation rounding is in tolerance.
+            // chunks of rows; only reassociation rounding is in tolerance.
             CHECK(cells[b].sum_grad == Catch::Approx(one[b].sum_grad).margin(1e-2));
             CHECK(cells[b].sum_hess == Catch::Approx(one[b].sum_hess).margin(1e-2));
             CHECK(cells[b].sum_grad == Catch::Approx(ref[s][b].sum_grad).margin(1e-2));

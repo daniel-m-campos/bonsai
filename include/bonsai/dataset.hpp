@@ -161,7 +161,7 @@ class Dataset
     //
     // Layout is column-block-tiled (issue #217): features are grouped into
     // blocks of mirror_tile_width() and each block is row-major on its own
-    // (block b starts at n_rows * b * width; a row's strip inside it is
+    // (block b starts at n_rows * b * width; a row's bins inside it are
     // width_b bytes). At n_features <= the tile width there is exactly one
     // block and the layout is the classic n_rows x n_features mirror.
     std::span<uint8_t const> row_major_bins() const;

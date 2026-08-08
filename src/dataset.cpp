@@ -224,7 +224,7 @@ std::span<uint8_t const> Dataset::row_major_bins() const
         // Tiled column-to-row transpose into the block layout: each worker
         // owns a row block, so writes never overlap and the mirror is
         // byte-identical at any thread count. Feature c lands in mirror
-        // block c/width at strip position c%width; one block reproduces
+        // block c/width at column position c%width; one block reproduces
         // the classic layout exactly.
         constexpr size_t tile = 64;
         parallel::for_each_index((n_rows_ + tile - 1) / tile,

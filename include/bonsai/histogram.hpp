@@ -112,8 +112,8 @@ class Histogram
         return cells_;
     }
 
-    // Mutable view for the row-wise fill, which accumulates straight into
-    // single-block nodes' cells.
+    // Mutable view for the row-wise fill, whose direct arm accumulates
+    // straight into a node's own cells.
     std::span<HistCell> cells()
     {
         return cells_;
@@ -166,9 +166,9 @@ class Histogram
         return out;
     }
 
-    // Accumulates a partial-histogram block (the row-wise fill's per-thread
-    // scratch). Callers merge partials in a fixed order, so sums depend on
-    // the thread count but not on scheduling.
+    // Accumulates one partial (the row-wise fill's per-thread scratch).
+    // Callers merge partials in a fixed order, so sums depend on the thread
+    // count but not on scheduling.
     void add_cells(cell_view_t src)
     {
         assert(src.size() == size());
@@ -196,19 +196,19 @@ class Histogram
 
 using histogram_view_t = std::span<Histogram const>;
 
-// One arena per node backs the selected histograms as contiguous views; u8
-// datasets pad every chunk to this many cells so the dense row-wise fill can
+// One arena per node backs the selected histograms as contiguous slices; u8
+// datasets pad every feature to this many cells so the dense row-wise fill can
 // address any cell as arena[feature, bin] with no per-feature base load.
-constexpr size_t k_u8_chunk = 256;
+constexpr size_t k_feature_stride = 256;
 
 // The padded arena as the grid it already is: one row per selected feature,
-// the chunk stride a static extent so the address folds to a shift.
+// the feature stride a static extent so the address folds to a shift.
 using ArenaView =
-    std::mdspan<HistCell, std::extents<size_t, std::dynamic_extent, k_u8_chunk>>;
+    std::mdspan<HistCell, std::extents<size_t, std::dynamic_extent, k_feature_stride>>;
 
 // The packing rule for a node's arena, built once from the selected features'
-// bin counts: u8 data pads every feature to a k_u8_chunk row, wider bins pack
-// to their exact widths. It views the bin counts, so they outlive it.
+// bin counts: u8 data pads every feature to a k_feature_stride row, wider bins
+// pack to their exact widths. It views the bin counts, so they outlive it.
 class ArenaLayout
 {
   public:
@@ -217,11 +217,11 @@ class ArenaLayout
     {
         if (u8_)
         {
-            // A u8 chunk holds the feature's whole histogram; a wider one
-            // would overlap the next feature's view of the arena.
-            assert(
-                std::ranges::all_of(bins_, [](size_t n) { return n <= k_u8_chunk; }));
-            total_ = bins_.size() * k_u8_chunk;
+            // One feature stride holds the feature's whole histogram; a wider
+            // one would overlap the next feature's view of the arena.
+            assert(std::ranges::all_of(bins_,
+                                       [](size_t n) { return n <= k_feature_stride; }));
+            total_ = bins_.size() * k_feature_stride;
             return;
         }
         starts_.reserve(bins_.size());
