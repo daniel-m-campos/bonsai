@@ -472,14 +472,18 @@ def _wait_ssh(key: str, pod_id: str) -> tuple[str, int]:
         ip = out.get("publicIp")
         if ip and port:
             return ip, int(port)
-        # CPU pods are served by the v1 API, which publishes the same pair
-        # under runtime.ports instead of publicIp/portMappings.
+        # A CPU pod publishes the same publicIp and portMappings pair a GPU
+        # pod does, measured; runtime.ports is the older shape, kept because
+        # a pod that reports it would otherwise look like it never placed.
         for entry in ((out.get("runtime") or {}).get("ports") or []):
             if entry.get("private") == 22 and entry.get("ip"):
                 return entry["ip"], int(entry["public"])
         return None
 
-    ip, port = _wait_until(mapping, timeout_s=360, what="pod port mapping")
+    # A pod reports RUNNING long before it is reachable: a 2 vCPU cpu5g took
+    # 173s to publish its mapping, and a rental large enough to wait for
+    # placement takes longer, so this budget is generous on purpose.
+    ip, port = _wait_until(mapping, timeout_s=900, what="pod port mapping")
 
     probe = ["ssh", "-i", str(pathlib.Path.home() / ".ssh" / "id_ed25519"),
              *SSH_OPTS, "-p", str(port), f"root@{ip}", "true"]
