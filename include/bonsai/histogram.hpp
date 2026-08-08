@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <mdspan>
+#include <ranges>
 #include <span>
 #include <utility>
 #include <vector>
@@ -35,6 +37,9 @@ using cell_view_t = std::span<HistCell const>;
 class Histogram
 {
   public:
+    // An unselected feature's slot: an empty view the split finders skip.
+    Histogram() = default;
+
     explicit Histogram(size_t n_bins) : storage_(n_bins), cells_(storage_) {}
 
     // Non-owning view over cells a NodeHistograms arena owns.
@@ -191,6 +196,67 @@ class Histogram
 
 using histogram_view_t = std::span<Histogram const>;
 
+// One arena per node backs the selected histograms as contiguous views; u8
+// datasets pad every chunk to this many cells so the dense row-wise fill can
+// address any cell as arena[feature, bin] with no per-feature base load.
+constexpr size_t k_u8_chunk = 256;
+
+// The padded arena as the grid it already is: one row per selected feature,
+// the chunk stride a static extent so the address folds to a shift.
+using ArenaView =
+    std::mdspan<HistCell, std::extents<size_t, std::dynamic_extent, k_u8_chunk>>;
+
+// The packing rule for a node's arena, built once from the selected features'
+// bin counts: u8 data pads every feature to a k_u8_chunk row, wider bins pack
+// to their exact widths. It views the bin counts, so they outlive it.
+class ArenaLayout
+{
+  public:
+    ArenaLayout(std::span<size_t const> bin_counts, bool u8)
+        : bins_(bin_counts), u8_(u8)
+    {
+        if (u8_)
+        {
+            // A u8 chunk holds the feature's whole histogram; a wider one
+            // would overlap the next feature's view of the arena.
+            assert(
+                std::ranges::all_of(bins_, [](size_t n) { return n <= k_u8_chunk; }));
+            total_ = bins_.size() * k_u8_chunk;
+            return;
+        }
+        starts_.reserve(bins_.size());
+        for (size_t const n : bins_)
+        {
+            starts_.push_back(total_);
+            total_ += n;
+        }
+    }
+
+    size_t total_cells() const
+    {
+        return total_;
+    }
+
+    // The j-th selected feature's cells within an arena of total_cells().
+    std::span<HistCell> slice(std::span<HistCell> arena, size_t j) const
+    {
+        if (!u8_)
+        {
+            return arena.subspan(starts_[j], bins_[j]);
+        }
+        // A row extracts by hand: std::submdspan is C++26 and libc++ has not
+        // shipped it.
+        ArenaView const grid{arena.data(), bins_.size()};
+        return {&grid[j, 0], bins_[j]};
+    }
+
+  private:
+    std::span<size_t const> bins_;
+    std::vector<size_t>     starts_; // packed starts; empty when padded
+    size_t                  total_ = 0;
+    bool                    u8_    = false;
+};
+
 // One node's per-feature histograms and the single arena their cells live
 // in. The two are one type because they are one lifetime: the histograms
 // view the arena, and both move together whenever a node's histograms do
@@ -198,17 +264,24 @@ using histogram_view_t = std::span<Histogram const>;
 class NodeHistograms
 {
   public:
-    // Sizes the arena for one node and zeroes it; the views built next point
-    // into the returned span, which never reallocates while they exist.
-    std::span<HistCell> reset_arena(size_t n_cells)
+    // Sizes and zeroes this node's arena, then hands every feature its slot:
+    // a view into the arena for the selected ones (in `selected` order, which
+    // is ascending), an empty view for the rest.
+    void carve(ArenaLayout const &layout, std::span<feature_id_t const> selected,
+               size_t n_features)
     {
-        arena_.assign(n_cells, HistCell{});
-        return arena_;
-    }
-
-    void reserve(size_t n)
-    {
-        hists_.reserve(n);
+        std::span<HistCell> const arena = reset_arena(layout.total_cells());
+        auto const                slot  = [&](feature_id_t fid)
+        {
+            auto const it = std::ranges::lower_bound(selected, fid);
+            return it != selected.end() && *it == fid
+                       ? Histogram{layout.slice(
+                             arena, static_cast<size_t>(it - selected.begin()))}
+                       : Histogram{};
+        };
+        hists_ =
+            std::views::iota(feature_id_t{0}, static_cast<feature_id_t>(n_features)) |
+            std::views::transform(slot) | std::ranges::to<std::vector>();
     }
 
     void push_back(Histogram h)
@@ -247,7 +320,15 @@ class NodeHistograms
     }
 
   private:
-    std::vector<Histogram>                                 hists_;
+    std::span<HistCell> reset_arena(size_t n_cells)
+    {
+        arena_.assign(n_cells, HistCell{});
+        return arena_;
+    }
+
+    std::vector<Histogram> hists_;
+    // The histograms alias this buffer, so it never reallocates while they
+    // live: only carve() sizes it, and moves carry both together.
     std::vector<HistCell, detail::PoolAllocator<HistCell>> arena_;
 };
 

@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <functional>
 #include <mdspan>
+#include <ranges>
 #include <span>
 #include <type_traits>
 #include <vector>
@@ -172,17 +173,6 @@ std::span<MirrorSlice const> mirror_slices(Dataset const                &ds,
     }
     return slices;
 }
-
-// One arena per node backs the selected histograms as contiguous views; u8
-// datasets pad every chunk to this many cells so the dense row-wise fill can
-// address any cell as arena[feature, bin] with no per-feature base load.
-// Unselected slots stay empty views the split finders skip.
-constexpr size_t k_u8_chunk = 256;
-
-// The padded arena as the grid it already is: one row per selected feature,
-// the chunk stride a static extent so the address folds to a shift.
-using ArenaView =
-    std::mdspan<HistCell, std::extents<size_t, std::dynamic_extent, k_u8_chunk>>;
 
 // The partials slab is the same grid with a run-time row width: one row per
 // stripe-partition slot, packed to the slice's cells.
@@ -483,40 +473,14 @@ void fill_sparse(Dataset const &ds, floats_view grad, floats_view hess,
 // (docs/architecture/7-parallel.md).
 constexpr size_t k_col_fill_den = 4;
 
-void emplace_placeholders(Dataset const &ds, SplitInput &node,
-                          std::span<feature_id_t const> selected)
+// The selected features' bin counts, in selection order: all the arena
+// layout needs from the dataset.
+std::vector<size_t> selected_bins(Dataset const                &ds,
+                                  std::span<feature_id_t const> selected)
 {
-    bool const u8    = ds.bins_are_u8();
-    size_t     total = 0;
-    for (feature_id_t const fid : selected)
-    {
-        // A u8 chunk holds the feature's whole histogram; a wider one would
-        // overlap the next feature's view of the arena.
-        assert(!u8 || ds.n_bins(fid) <= k_u8_chunk);
-        total += u8 ? k_u8_chunk : ds.n_bins(fid);
-    }
-    std::span<HistCell> const arena = node.hists.reset_arena(total);
-    // Only the padded u8 arena is a uniform grid; wider bins pack, so they
-    // keep the running offset.
-    ArenaView const grid{arena.data(), u8 ? selected.size() : 0};
-    node.hists.reserve(ds.n_features());
-    size_t j   = 0;
-    size_t off = 0;
-    for (feature_id_t fid = 0; fid < ds.n_features(); ++fid)
-    {
-        bool const sel = j < selected.size() && selected[j] == fid;
-        if (!sel)
-        {
-            node.hists.push_back(Histogram{std::span<HistCell>{}});
-            continue;
-        }
-        // A row extracts by hand: std::submdspan is C++26 and libc++ has not
-        // shipped it.
-        HistCell *const row = u8 ? &grid[j, 0] : arena.data() + off;
-        node.hists.push_back(Histogram{std::span<HistCell>{row, ds.n_bins(fid)}});
-        off += u8 ? k_u8_chunk : ds.n_bins(fid);
-        ++j;
-    }
+    return selected |
+           std::views::transform([&](feature_id_t fid) { return ds.n_bins(fid); }) |
+           std::ranges::to<std::vector<size_t>>();
 }
 
 } // namespace
@@ -539,13 +503,17 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
                                        floats_view hess, split_input_refs nodes,
                                        std::span<feature_id_t const> selected)
 {
+    // One layout for the level: every node's arena packs the same way.
+    std::vector<size_t> const bins = selected_bins(ds, selected);
+    ArenaLayout const         layout{bins, ds.bins_are_u8()};
     // Placeholder construction is one arena allocation plus a ~256KB zero
     // fill per node; run serially it is an Amdahl chunk that caps the level
     // fill near half its thread efficiency. Nodes are independent, so
     // workers build them concurrently; the pool's mutex serializes only the
     // per-node arena take.
-    parallel::for_each_index(nodes.size(), [&](size_t i)
-                             { emplace_placeholders(ds, nodes[i], selected); });
+    parallel::for_each_index(
+        nodes.size(), [&](size_t i)
+        { nodes[i].get().hists.carve(layout, selected, ds.n_features()); });
     if (selected.empty())
     {
         return;
