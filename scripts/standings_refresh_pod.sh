@@ -117,6 +117,34 @@ fi
 # pod without the RAM must say so instead of dying halfway through a
 # three-hour sweep.
 EXTREME_RAM_GB=320
+# cgroup v1 spells "no memory limit" as a sentinel near 2^63 rather than a
+# word, so anything at or above this is unlimited.
+V1_MEM_UNLIMITED=4611686018427387904
+
+# The RAM this container may use, in whole GB: the cgroup limit when one caps
+# it, the machine's otherwise. free and /proc/meminfo report the machine even
+# inside a container, so a guard reading them alone cannot fail: a 4GB pod
+# reads the host's 1TB and sails past a check meant to stop an OOM.
+container_ram_gb() {
+    host_gb=$(free -g | awk '/^Mem:/ {print $2}')
+    limit_gb=""
+    if [ -r /sys/fs/cgroup/memory.max ]; then
+        bytes=$(cat /sys/fs/cgroup/memory.max)
+        if [ "$bytes" != max ]; then
+            limit_gb=$((bytes / 1024 / 1024 / 1024))
+        fi
+    elif [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+        bytes=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
+        if [ "$bytes" -lt "$V1_MEM_UNLIMITED" ]; then
+            limit_gb=$((bytes / 1024 / 1024 / 1024))
+        fi
+    fi
+    if [ -n "$limit_gb" ] && [ "$limit_gb" -lt "$host_gb" ]; then
+        echo "$limit_gb"
+        return
+    fi
+    echo "$host_gb"
+}
 
 # The cgroup CPU-bandwidth ceiling in cores, or "unlimited". v2 first, v1
 # fallback; anything unreadable is unlimited, which is what bare metal is.
@@ -168,9 +196,9 @@ fail_axis() {  # <axis> <why>
 run_axis() {
     case "$1" in
         gpu-extreme)
-            ram_gb=$(free -g | awk '/^Mem:/ {print $2}')
+            ram_gb=$(container_ram_gb)
             if [ "$ram_gb" -lt "$EXTREME_RAM_GB" ]; then
-                echo "SKIP gpu-extreme: host has ${ram_gb}GB RAM, the 2^36-cell f32 input needs >= ${EXTREME_RAM_GB}GB"
+                echo "SKIP gpu-extreme: this container may use ${ram_gb}GB RAM, the 2^36-cell f32 input needs >= ${EXTREME_RAM_GB}GB"
                 return 0
             fi
             run_spec gpu-extreme ;;

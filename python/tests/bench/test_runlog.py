@@ -72,6 +72,36 @@ def test_cpu_quota_takes_the_tighter_of_the_two_caps(monkeypatch):
     assert runlog.cpu_quota() == 13.6
 
 
+def test_usable_ram_takes_the_cgroup_limit_over_the_host(tmp_path, monkeypatch):
+    """The verified pod case: a 4GB container on a host reporting 1TB."""
+    path = tmp_path / "memory.max"
+    path.write_text(f"{4 * 2**30}\n")
+    monkeypatch.setattr(runlog, "CGROUP_V2_MEMORY_MAX", str(path))
+    monkeypatch.setattr(runlog, "_machine_ram_bytes", lambda: 1024 * 2**30)
+    assert runlog.usable_ram_gb() == 4
+
+
+@pytest.mark.parametrize("text", ["max", str(2**63 - 4096)])
+def test_usable_ram_falls_back_to_the_host_when_uncapped(tmp_path, monkeypatch,
+                                                         text):
+    """`max` on v2 and the near-2**63 sentinel on v1 both mean no limit."""
+    v2, v1 = tmp_path / "memory.max", tmp_path / "limit_in_bytes"
+    (v2 if text == "max" else v1).write_text(text + "\n")
+    monkeypatch.setattr(runlog, "CGROUP_V2_MEMORY_MAX", str(v2))
+    monkeypatch.setattr(runlog, "CGROUP_V1_MEMORY_LIMIT", str(v1))
+    monkeypatch.setattr(runlog, "_machine_ram_bytes", lambda: 64 * 2**30)
+    assert runlog.usable_ram_gb() == 64
+
+
+def test_usable_ram_reads_the_cgroup_v1_limit(tmp_path, monkeypatch):
+    path = tmp_path / "limit_in_bytes"
+    path.write_text(f"{8 * 2**30}\n")
+    monkeypatch.setattr(runlog, "CGROUP_V2_MEMORY_MAX", str(tmp_path / "absent"))
+    monkeypatch.setattr(runlog, "CGROUP_V1_MEMORY_LIMIT", str(path))
+    monkeypatch.setattr(runlog, "_machine_ram_bytes", lambda: 1024 * 2**30)
+    assert runlog.usable_ram_gb() == 8
+
+
 def test_cpuset_cores_is_none_when_the_mask_is_the_whole_machine(monkeypatch):
     monkeypatch.setattr(runlog.os, "cpu_count", lambda: 8)
     monkeypatch.setattr(runlog.os, "sched_getaffinity", lambda pid: set(range(8)),

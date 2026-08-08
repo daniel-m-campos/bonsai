@@ -25,6 +25,11 @@ TIMING_MODES = ("in_memory", "pipeline")
 CGROUP_V2_CPU_MAX = "/sys/fs/cgroup/cpu.max"
 CGROUP_V1_QUOTA = "/sys/fs/cgroup/cpu/cpu.cfs_quota_us"
 CGROUP_V1_PERIOD = "/sys/fs/cgroup/cpu/cpu.cfs_period_us"
+CGROUP_V2_MEMORY_MAX = "/sys/fs/cgroup/memory.max"
+CGROUP_V1_MEMORY_LIMIT = "/sys/fs/cgroup/memory/memory.limit_in_bytes"
+# cgroup v1 spells "no memory limit" as a sentinel near 2**63 rather than a
+# word, so any limit at or above this one is no limit at all.
+CGROUP_V1_MEMORY_UNLIMITED = 2**62
 
 class Row:
     """Field names shared by the result rows every suite emits."""
@@ -109,6 +114,25 @@ def usable_cpus() -> int:
     return os.cpu_count() or 1
 
 
+def usable_ram_gb() -> int:
+    """RAM this container may use, the machine's when nothing caps it.
+
+    /proc/meminfo and `free` report the machine even inside a container, so
+    a memory gate reading them alone cannot fail where it matters: a 4GB
+    container reads the host's 1TB and every cell looks affordable right up
+    to the OOM kill. The cgroup limit is the number to compare against, and
+    the smaller of the two is the honest answer on any host.
+
+    Returns
+    -------
+    int
+        Whole GB the container may allocate.
+    """
+    limit = _cgroup_memory_limit_bytes()
+    total = _machine_ram_bytes()
+    return round(min(total, limit) / 2**30 if limit else total / 2**30)
+
+
 def detect_host(name: str | None = None) -> dict:
     """The host block every row embeds.
 
@@ -121,10 +145,10 @@ def detect_host(name: str | None = None) -> dict:
         cgroup ceiling in cores, null when nothing caps the host) and
         omp_wait_policy.
 
-    ``n_vcpu`` counts the CPUs this process may actually run on, not the
-    ones the machine owns: on a rented CPU pod those differ by two orders
-    of magnitude (24 against 256), and the smaller number is the one a
-    thread count has to be read against.
+    ``n_vcpu`` and ``ram_gb`` both describe the container rather than the
+    machine, because on a rented pod the two differ by orders of magnitude
+    (16 CPUs against 256, 4GB against 1TB) and the smaller number is the
+    one a thread count or a cell size has to be read against.
     """
     gpu, vram = None, None
     try:
@@ -148,17 +172,13 @@ def detect_host(name: str | None = None) -> dict:
     if sys.platform == "darwin":
         cpu = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
                              capture_output=True, text=True).stdout.strip()
-        ram = round(int(subprocess.run(["sysctl", "-n", "hw.memsize"],
-                                       capture_output=True,
-                                       text=True).stdout) / 2**30)
     else:
         cpu = ""
         for line in pathlib.Path("/proc/cpuinfo").read_text().splitlines():
             if line.startswith("model name"):
                 cpu = line.split(":", 1)[1].strip()
                 break
-        ram = round(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
-                    / 2**30)
+    ram = usable_ram_gb()
     return {"name": name or platform.node(), "gpu": gpu, "driver": driver,
             "gpu_vram_gb": vram, "cpu_model": cpu, "n_vcpu": usable_cpus(),
             "cpu_quota": cpu_quota(),
@@ -245,3 +265,25 @@ def _cpuset_cores() -> float | None:
         return None
     allowed = len(os.sched_getaffinity(0))
     return None if allowed >= (os.cpu_count() or allowed) else float(allowed)
+
+
+def _cgroup_memory_limit_bytes() -> int | None:
+    """The cgroup memory ceiling in bytes; None when it reads unlimited."""
+    v2 = pathlib.Path(CGROUP_V2_MEMORY_MAX)
+    if v2.is_file():
+        value = v2.read_text().strip()
+        return None if value == "max" else int(value)
+    v1 = pathlib.Path(CGROUP_V1_MEMORY_LIMIT)
+    if not v1.is_file():
+        return None
+    limit = int(v1.read_text().strip())
+    return None if limit >= CGROUP_V1_MEMORY_UNLIMITED else limit
+
+
+def _machine_ram_bytes() -> int:
+    """Physical RAM the machine owns, container limits ignored."""
+    if sys.platform == "darwin":
+        out = subprocess.run(["sysctl", "-n", "hw.memsize"],
+                             capture_output=True, text=True).stdout
+        return int(out.strip())
+    return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
