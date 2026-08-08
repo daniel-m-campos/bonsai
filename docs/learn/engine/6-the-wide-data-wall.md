@@ -6,7 +6,7 @@ Every case so far ran on data shaped like the benchmarks: millions of rows, arou
 
 A histogram booster spends its life doing one thing: for every row in a node, add that row's gradient and hessian into one bin of every feature's histogram. bonsai has two loops that do it, and they differ only in which array they walk sequentially.
 
-The **row-wise fill** walks rows. For each row it reads one contiguous strip of the row-major bin mirror (all 16,384 features' bin ids for that row, one byte each) and scatters 16,384 add-pairs into 16,384 different histograms. The reads are perfectly sequential; the writes go everywhere.
+The **row-wise fill** walks rows. For each row it reads that row's bins out of the row-major mirror, one contiguous stretch of bytes (all 16,384 features' bin ids for that row, one byte each), and scatters 16,384 add-pairs into 16,384 different histograms. The reads are perfectly sequential; the writes go everywhere.
 
 The **feature-parallel fill** walks columns. Each thread owns whole features: it scans one feature's column of bin ids top to bottom and accumulates into that one feature's histogram, 2KB that never leaves the fastest cache. The writes are perfectly local; on a node that covers a subset of rows, the reads go everywhere.
 
@@ -23,7 +23,7 @@ The row-wise fill's scattered side is the histogram working set: every selected 
 | 4,096 | 8.4 MB |
 | 16,384 | 33.6 MB |
 
-At 100 features the whole target fits in a core's L2 cache and every add costs a few cycles: this is the regime every earlier case optimized, and the row path is excellent there. At 16,384 features the target is 33.6MB per fill block, and with 16 threads each writing its own partial copy, over half a gigabyte of histogram scratch is live at once. No cache holds it. Every add becomes a DRAM round trip at roughly a hundred cycles instead of four, and the machine spends its time waiting, not adding. On top of that, the partial copies that make the row path deterministic must each be zeroed before the fill and merged after it, and both passes also scale with the footprint.
+At 100 features the whole target fits in a core's L2 cache and every add costs a few cycles: this is the regime every earlier case optimized, and the row path is excellent there. At 16,384 features the target is 33.6MB per row chunk filled, and with 16 threads each writing its own partial copy, over half a gigabyte of histogram scratch is live at once. No cache holds it. Every add becomes a DRAM round trip at roughly a hundred cycles instead of four, and the machine spends its time waiting, not adding. On top of that, the partial copies that make the row path deterministic must each be zeroed before the fill and merged after it, and both passes also scale with the footprint.
 
 That is why the effect is worth multiples and not percent: the fill is 85% of a wide fit (the stage-0 profile read populate at 84 to 88s of a 100s fit), and the wall multiplies the cost of its innermost instruction by the L2-to-DRAM latency ratio. A fit does not get 20% slower when its hottest loop's cache hit rate collapses; it changes regime.
 

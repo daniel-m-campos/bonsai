@@ -79,9 +79,9 @@ most important optimization in histogram GBT.
 - **Building per node**: `CpuHistogramEngine::populate_many` in
   [`src/grower.cpp`](../../src/grower.cpp), which picks one of two fills.
   u8 bins (the `max_bin ≤ 255` default) take the **row-wise fill**
-  (`fill_sparse`, decisions 49 and 105): row blocks stream a row-major
+  (`fill_sparse`, decisions 49 and 105): row chunks stream a row-major
   mirror of the bins (`Dataset::row_major_bins`), reading each row's
-  features as one contiguous strip (full cache lines at any node
+  bins as one contiguous stretch of bytes (full cache lines at any node
   sparsity) into at most one partial histogram per thread, reduced in
   fixed order. u16 bins keep the
   **feature-parallel fill** (`fill_feature_parallel`): one thread owns one
