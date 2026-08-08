@@ -41,7 +41,13 @@ before, since resolving that case needs the relative path from
 `/proc/self/cgroup` joined to the mount point. `OMP_WAIT_POLICY=passive`
 stays the mitigation for whatever oversubscription remains: on that
 container it removed 22% of the CPU-seconds, 86% of the throttled time,
-and 5 to 11% of train.
+and 5 to 11% of train. An explicit `n_threads = N` above the quota is
+still honored: the fixed-N contract keys the model bytes to the resolved
+count, so clamping it would make one configuration produce different
+models in different containers. It draws a one-time stderr warning
+instead, naming the quota and pointing at the lower count and
+`OMP_WAIT_POLICY=passive` (XGBoost clamps explicit counts as well, making
+no equivalent reproducibility promise).
 
 Why not the proposed `ParallelBackend` concept dispatched like objectives
 and growers? One implementation doesn't earn a typelist dimension. The

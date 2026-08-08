@@ -1,9 +1,11 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <print>
 #include <string_view>
 
 #ifdef __linux__
@@ -85,11 +87,45 @@ inline int cgroup_quota_cpus()
     return 0;
 #endif
 }
+
+// Read once: the quota is fixed for the process lifetime.
+inline int cached_quota_cpus()
+{
+    static int const quota = cgroup_quota_cpus();
+    return quota;
+}
+
+// An explicit count above the quota is honored, not clamped, so the
+// warning is the only signal. No quota (0, including an unreadable one)
+// and counts within it stay silent, as does auto (0), which clamps.
+inline bool should_warn(int requested, int quota)
+{
+    return requested > 0 && quota > 0 && requested > quota;
+}
+
+// Once per process, off the parallel path: set_n_threads is the
+// configuration point, called before a fit and never inside a section.
+inline void warn_if_over_quota(int requested)
+{
+    static std::atomic_flag warned;
+    int const               quota = cached_quota_cpus();
+    if (!should_warn(requested, quota) ||
+        warned.test_and_set(std::memory_order_relaxed))
+    {
+        return;
+    }
+    std::println(stderr,
+                 "bonsai: n_threads={} exceeds the cgroup CPU quota of {}, so "
+                 "CFS throttling will slow the fit; lower n_threads to {} or "
+                 "set OMP_WAIT_POLICY=passive to avoid it.",
+                 requested, quota, quota);
+}
 } // namespace internal
 
 inline void set_n_threads(uint32_t n)
 {
     internal::n_threads_slot() = static_cast<int>(n);
+    internal::warn_if_over_quota(static_cast<int>(n));
 }
 
 // Auto (n_threads = 0) caps the worker count: per-level parallel sections
@@ -99,7 +135,8 @@ inline void set_n_threads(uint32_t n)
 // from the affinity mask, which a quota-limited container leaves at the
 // host's core count, so an unclamped pool burns its quota early and the
 // fit spends most of every period frozen by the scheduler. Explicit counts
-// pass through uncapped.
+// pass through uncapped, since the fixed-N contract keys model bytes to the
+// resolved count; one over the quota draws a warning instead.
 inline constexpr int auto_thread_cap = 16;
 
 inline int n_threads()
@@ -110,9 +147,8 @@ inline int n_threads()
     {
         return requested;
     }
-    // Read once: the quota is fixed for the process lifetime.
-    static int const quota  = internal::cgroup_quota_cpus();
-    int const        capped = std::min(omp_get_max_threads(), auto_thread_cap);
+    int const quota  = internal::cached_quota_cpus();
+    int const capped = std::min(omp_get_max_threads(), auto_thread_cap);
     return quota > 0 ? std::min(capped, quota) : capped;
 #else
     return 1;
