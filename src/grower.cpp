@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <mdspan>
 #include <span>
 #include <type_traits>
 #include <vector>
@@ -174,9 +175,18 @@ std::span<MirrorSlice const> mirror_slices(Dataset const                &ds,
 
 // One arena per node backs the selected histograms as contiguous views; u8
 // datasets pad every chunk to this many cells so the dense row-wise fill can
-// address any cell as arena[(feature * k_u8_chunk) + bin] with no per-feature
-// base load. Unselected slots stay empty views the split finders skip.
+// address any cell as arena[feature, bin] with no per-feature base load.
+// Unselected slots stay empty views the split finders skip.
 constexpr size_t k_u8_chunk = 256;
+
+// The padded arena as the grid it already is: one row per selected feature,
+// the chunk stride a static extent so the address folds to a shift.
+using ArenaView =
+    std::mdspan<HistCell, std::extents<size_t, std::dynamic_extent, k_u8_chunk>>;
+
+// The partials slab is the same grid with a run-time row width: one row per
+// stripe-partition slot, packed to the slice's cells.
+using SlabView = std::mdspan<HistCell, std::dextents<size_t, 2>>;
 
 // How a row's strip byte becomes a histogram cell address.
 enum class CellMode : uint8_t
@@ -226,8 +236,9 @@ void fill_rows(SplitInput const &node, size_t k0, size_t k1, floats_view grad,
     // sampling. Direct fills into a u8 node compute the cell address
     // arithmetically over the node's padded arena (chunk stride 256), with no
     // per-feature base load at all.
-    HistCell *const a0       = target.mode == CellMode::uniform ? base_ptr[0] : nullptr;
-    auto            run_rows = [&](auto cell_at)
+    ArenaView const a0{target.mode == CellMode::uniform ? base_ptr[0] : nullptr,
+                       n_sel_b};
+    auto run_rows = [&](auto cell_at)
     {
         auto walk = [&](auto prefetch, size_t a, size_t b)
         {
@@ -259,7 +270,7 @@ void fill_rows(SplitInput const &node, size_t k0, size_t k1, floats_view grad,
     if (target.mode == CellMode::uniform)
     {
         run_rows([&](size_t s, uint8_t const *rb) -> HistCell &
-                 { return a0[(s * k_u8_chunk) + rb[s]]; });
+                 { return a0[s, rb[s]]; });
     }
     else if (target.mode == CellMode::dense)
     {
@@ -372,9 +383,9 @@ void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes, Dataset con
     static thread_local std::vector<uint8_t> touched;
     std::span<HistCell> const slab = partials_slab(plan.n_slots * sl.cells);
     touched.assign(plan.n_slots, 0);
-    // Capture raw pointers: naming a thread_local inside the parallel region
-    // would resolve to each worker's own (empty) container.
-    HistCell *const           parts     = slab.data();
+    // Capture views and raw pointers: naming a thread_local inside the
+    // parallel region would resolve to each worker's own (empty) container.
+    SlabView const            parts{slab.data(), plan.n_slots, sl.cells};
     uint8_t *const            used      = touched.data();
     size_t const             *off_ptr   = offsets.cells.data();
     feature_id_t const *const sel_ptr   = selected.data();
@@ -407,7 +418,7 @@ void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes, Dataset con
                 size_t const slot = direct ? 0 : rn.slot0 + (t - rn.first_thread - 1);
                 if (!direct && used[slot] == 0)
                 {
-                    std::fill_n(parts + (slot * sl.cells), sl.cells, HistCell{});
+                    std::fill_n(&parts[slot, 0], sl.cells, HistCell{});
                     used[slot] = 1;
                 }
                 if (st.node != last_node)
@@ -415,10 +426,9 @@ void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes, Dataset con
                     SplitInput &node = node_ptr[st.node];
                     for (size_t s = sl.s0; s < sl.s1; ++s)
                     {
-                        bases[s - sl.s0] =
-                            direct
-                                ? node.hists[sel_ptr[s]].cells().data()
-                                : parts + (slot * sl.cells) + (off_ptr[s] - sl.cell0);
+                        bases[s - sl.s0] = direct
+                                               ? node.hists[sel_ptr[s]].cells().data()
+                                               : &parts[slot, off_ptr[s] - sl.cell0];
                     }
                     last_node = st.node;
                 }
@@ -445,7 +455,7 @@ void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes, Dataset con
                 size_t const slot = rn.slot0 + (t - rn.first_thread - 1);
                 if (used[slot] != 0)
                 {
-                    h.add_cells({parts + (slot * sl.cells) + cell, h.size()});
+                    h.add_cells({&parts[slot, cell], h.size()});
                 }
             }
         });
@@ -486,6 +496,9 @@ void emplace_placeholders(Dataset const &ds, SplitInput &node,
         total += u8 ? k_u8_chunk : ds.n_bins(fid);
     }
     std::span<HistCell> const arena = node.hists.reset_arena(total);
+    // Only the padded u8 arena is a uniform grid; wider bins pack, so they
+    // keep the running offset.
+    ArenaView const grid{arena.data(), u8 ? selected.size() : 0};
     node.hists.reserve(ds.n_features());
     size_t j   = 0;
     size_t off = 0;
@@ -497,8 +510,10 @@ void emplace_placeholders(Dataset const &ds, SplitInput &node,
             node.hists.push_back(Histogram{std::span<HistCell>{}});
             continue;
         }
-        node.hists.push_back(
-            Histogram{std::span<HistCell>{arena.data() + off, ds.n_bins(fid)}});
+        // A row extracts by hand: std::submdspan is C++26 and libc++ has not
+        // shipped it.
+        HistCell *const row = u8 ? &grid[j, 0] : arena.data() + off;
+        node.hists.push_back(Histogram{std::span<HistCell>{row, ds.n_bins(fid)}});
         off += u8 ? k_u8_chunk : ds.n_bins(fid);
         ++j;
     }
