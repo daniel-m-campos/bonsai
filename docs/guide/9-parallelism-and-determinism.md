@@ -26,8 +26,8 @@ gradients, duplicated rows).
 
 The design rule that buys determinism: **no unordered cross-thread
 floating-point reductions.** Every accumulator is either written by
-exactly one thread in serial order, or assembled from per-block partials
-merged in a *fixed* block order, so the addition order is a pure function
+exactly one thread in serial order, or assembled from per-thread partials
+merged in a *fixed* order, so the addition order is a pure function
 of configuration, never of scheduling.
 
 ## In bonsai
@@ -42,7 +42,7 @@ of configuration, never of scheduling.
   keep the feature-parallel shape (`fill_feature_parallel`): each
   feature's histogram owned by one thread, filled in row order,
   determinism by ownership. u8 bins use the row-wise fill
-  (`populate_many`/`fill_sparse`, decisions 49 and 105): row *blocks*
+  (`populate_many`/`fill_sparse`, decisions 49 and 105): *row chunks*
   stream a row-major mirror, and a node touched by more than one thread
   range owns a partial per extra range, reduced in fixed range order; the
   partition derives from the configured thread count, which is exactly
@@ -118,7 +118,7 @@ those: run-to-run identity is the contract. Try the same with XGBoost's
   (`BONSAI_OPENMP_STATIC=ON`; decision 36). bonsai, XGBoost, and LightGBM
   now interleave in one process.
 - **NUMA first-touch can halve your fill rate silently.** The row-wise
-  fill's partial-histogram slabs were first zeroed by the main thread,
+  fill's partial histograms were first zeroed by the main thread,
   which *homed every page on one socket* of a dual-socket EPYC; workers on
   the other socket then paid remote-memory latency for every add (2× fill
   penalty, 3.1× thread scaling). Per-block zeroing into

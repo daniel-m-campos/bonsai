@@ -127,6 +127,19 @@ Totals over real bins (0..2): `G_real = +0.1, H_real = 5.0`. Scoring sweeps `b =
 
 Plug into `gain(...)` with whatever `λ`, pick the bigger. The splitter then decides whether the missing bin's `(+0.2, 1.0)` rides left or right and re-scores. That's the whole inner game; the rest is making it fast and parallel and deterministic.
 
+## Names
+
+One noun, one meaning. The code (`include/bonsai/histogram.hpp`) and the rest of this file use these and nothing else for the same things. The work nouns of the parallel fill (row chunk, partials, reduce) live in [`7-parallel.md`](7-parallel.md).
+
+| Noun | What it names |
+| --- | --- |
+| cell | one bin's `{sum_grad, sum_hess}` pair, `HistCell` |
+| histogram | one node's cells for one feature, `Histogram` |
+| arena | one node's single backing allocation, holding every cell that node owns |
+| slice | one feature's cells inside an arena, the span its `Histogram` views |
+| feature stride | the padded per-feature offset in a u8 arena, `k_feature_stride`, 256 cells |
+| carve | to zero an arena and build the histogram views over it, `NodeHistograms::carve` |
+
 ## Cell layout
 
 ```cpp
@@ -185,7 +198,7 @@ A node's histograms are one `NodeHistograms` value: a `vector<Histogram>` indexe
 One arena per node, not one allocation per (node, feature):
 
 - Bucket count varies per feature (decision 1), so slices are sized per feature. Selected features get a slice; unselected ones get a zero-binned placeholder span the split finders skip.
-- With `max_bin <= 255` every feature takes a fixed 256-cell chunk, so the row-wise fill addresses a cell as `arena[(feature * 256) + bin]` with no per-feature base to load. Wider bins pack the slices at `n_bins` and the fill loads a base per feature.
+- With `max_bin <= 255` every feature takes the fixed 256-cell feature stride, so the row-wise fill addresses a cell as `arena[(feature * 256) + bin]` with no per-feature base to load. Wider bins pack the slices at `n_bins` and the fill loads a base per feature.
 - The sparse fill's lowest thread range accumulates straight into the node's arena while higher ranges accumulate into partials (decision 105). One contiguous target per node is what makes that direct arm addressable.
 - Subtraction stays per-(node, feature): `hists[fid] -= sibling[fid]` reads one contiguous run, exactly as it did when every feature owned its own vector.
 - Parallel construction is feature-parallel in the OpenMP backend. Per-feature handles drop straight into a `parallel_for over fid`.
