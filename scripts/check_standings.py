@@ -29,17 +29,11 @@ Perf axes lean on the plane split: a CUDA-only change cannot move a CPU-plane
 wall clock, so the cpu axes stay current across it and the refresh skips them,
 which is the whole point of registry v2's `plane` field.
 
-Carried-forward stamps. `update_standings.py --restamp-verified` can move an
-axis's `hash_set` to the current digest with no new measurement, for the case
-where the changed sources provably cannot reach the axis. Such an entry keeps
-the file and sha of its last real run and carries a `carried_forward` block
-naming the stamped commit, the reason, and the evidence, which is byte
-identity on the host plane and an equivalence within the measured noise floor
-on the device plane, where model bytes are not reproducible run to run. It
-clears the gates like any other skip, and every report that clears it says so:
-the release gate labels it "carried-forward stamp", the audit line names the
-evidence kind, and `--stale` prints a note on stderr, so the distinction
-outlives the commit that made it.
+Carried-forward stamps. An entry's `carried_forward` block says its `hash_set`
+was moved to the current digest by an equivalence argument rather than a new
+measurement (`update_standings.py --restamp-verified`). Such an entry clears
+the gates like any other skip, so every report that clears it labels it
+carried-forward rather than a run.
 
 Reference-library majors are compared against the installed package in this
 environment when available (`importlib.metadata`, no import needed); most
@@ -223,27 +217,6 @@ def hash_skip(axis: str, entry: dict) -> tuple[bool, str]:
     return True, f"{plane} hash set {current} unchanged, refs current"
 
 
-def carried_forward_notes(reg: dict) -> list[str]:
-    """Audit lines for axes riding a carried-forward stamp, not a fresh run.
-
-    A carry-forward passes the gates exactly like a measured stamp, so the
-    distinction only survives if every report that clears an axis says which
-    kind of stamp cleared it.
-
-    Parameters
-    ----------
-    reg : dict
-        The loaded registry.
-
-    Returns
-    -------
-    list[str]
-        One line per currently valid carry-forward, in registry order.
-    """
-    return [f"{axis}: {hash_skip(axis, e)[1]}" for axis, e in reg.items()
-            if e.get("carried_forward") and hash_skip(axis, e)[0]]
-
-
 def bumped_ref_majors(refs: dict) -> list[str]:
     """Reference libraries whose current major version outruns `refs`.
 
@@ -314,9 +287,13 @@ def main() -> int:
         # One name per line and nothing else: the refresh driver reads this.
         for axis in stale_axes(reg):
             print(axis)
-        for note in carried_forward_notes(reg):
-            print(f"note: carried-forward stamp, not a run: {note}",
-                  file=sys.stderr)
+        for axis, e in reg.items():
+            if not e.get("carried_forward"):
+                continue
+            ok, reason = hash_skip(axis, e)
+            if ok:
+                print(f"note: carried-forward stamp, not a run: {axis}: "
+                      f"{reason}", file=sys.stderr)
         return 0
     else:
         print("usage: check_standings.py --decisions | --release <version> "

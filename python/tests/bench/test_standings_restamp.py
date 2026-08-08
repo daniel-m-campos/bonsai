@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import subprocess
 import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -13,6 +14,7 @@ import check_standings  # noqa: E402
 import update_standings  # noqa: E402
 
 MEASURED_SHA = "148f21b"
+STAMPED_SHA = "f078f51"
 PROOF = "9f0a1c2d3e4f5061"
 REASON = "host-side fill only; src/cuda byte-identical"
 
@@ -50,7 +52,9 @@ def _stale_gpu_axis(monkeypatch, tmp_path) -> pathlib.Path:
     monkeypatch.setattr(check_standings, "REPO", tmp_path)
     monkeypatch.setattr(check_standings, "MODEL_HASH_SCRIPT",
                         tmp_path / "scripts" / "model_hash.py")
-    monkeypatch.setattr(update_standings, "head_sha", lambda: "f078f51")
+    monkeypatch.setattr(
+        update_standings.subprocess, "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, 0, STAMPED_SHA, ""))
     entry = {"file": "gpu-tall-2026-08.jsonl", "sha": MEASURED_SHA,
              "host": "pod-blackwell", "date": "2026-08-05", "plane": "gpu",
              "refreshed_for": "1.7.0", "as_of_decision": 104,
@@ -119,20 +123,19 @@ def test_carry_forward_round_trip_clears_the_gates(monkeypatch, tmp_path,
     assert entry["hash_set"] == check_standings.plane_digest(
         check_standings.PLANE_GPU)
     assert entry["carried_forward"] == {
-        "measured_at": MEASURED_SHA, "stamped_at": "f078f51",
+        "measured_at": MEASURED_SHA, "stamped_at": STAMPED_SHA,
         "reason": REASON,
         "evidence": {"kind": "model-hash", "before": PROOF, "after": PROOF}}
 
     assert check_standings.stale_axes(reg) == []
     assert check_standings.check_release(reg, "1.8.0") == []
     assert "carried-forward stamp" in capsys.readouterr().out
-    notes = check_standings.carried_forward_notes(reg)
-    assert len(notes) == 1 and REASON in notes[0]
+    ok, audit = check_standings.hash_skip("gpu-tall", entry)
+    assert ok and REASON in audit and "model-hash evidence" in audit
 
     # Spent on the next move: a carry-forward is not a standing exemption.
     (tmp_path / "src" / "cuda" / "kernel.cu").write_text("device, faster\n")
     assert check_standings.stale_axes(reg) == ["gpu-tall"]
-    assert check_standings.carried_forward_notes(reg) == []
 
 
 def test_carry_forward_refuses_an_axis_that_is_already_current(monkeypatch,
@@ -199,8 +202,8 @@ def test_tolerance_carries_a_delta_inside_the_noise_floor(monkeypatch,
     reg = json.loads(registry.read_text())
     assert check_standings.check_release(reg, "1.8.0") == []
     assert "carried-forward stamp" in capsys.readouterr().out
-    notes = check_standings.carried_forward_notes(reg)
-    assert len(notes) == 1 and "tolerance evidence" in notes[0]
+    assert "tolerance evidence" in check_standings.hash_skip(
+        "gpu-tall", reg["gpu-tall"])[1]
 
 
 def test_tolerance_refuses_a_delta_outside_the_noise_floor(monkeypatch,
