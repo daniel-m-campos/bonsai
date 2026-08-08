@@ -26,6 +26,17 @@ TEST_CASE("cgroup quota pairs parse to whole CPUs", "[parallel]")
     CHECK(parallel::internal::quota_cpus("") == 0);
 }
 
+// The predicate is tested directly; the emission itself is one line on
+// stderr, once per process, which no unit test can observe twice.
+TEST_CASE("only an explicit count over a real quota warns", "[parallel]")
+{
+    CHECK(parallel::internal::should_warn(24, 13));
+    CHECK_FALSE(parallel::internal::should_warn(13, 13));
+    CHECK_FALSE(parallel::internal::should_warn(8, 13));
+    CHECK_FALSE(parallel::internal::should_warn(24, 0));
+    CHECK_FALSE(parallel::internal::should_warn(0, 13));
+}
+
 TEST_CASE("explicit thread count passes through uncapped", "[parallel]")
 {
     parallel::set_n_threads(24);
