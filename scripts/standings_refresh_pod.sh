@@ -16,7 +16,7 @@
 #
 # PLANE picks which half of the matrix this pod measures. A gpu pod builds
 # python-cuda and runs the device axes; a cpu pod builds the plain python
-# module and runs the cpu axes behind the headroom gate below (issue #355).
+# module and runs the cpu axes behind the CPU-cap gate below (issue #355).
 set -euo pipefail
 
 AXES="${AXES:?comma list of axes}"
@@ -55,12 +55,12 @@ CPU_BENCH=(env OMP_WAIT_POLICY=passive PYTHONPATH="$BUILD" \
     /opt/venv/bin/python -m bonsai.bench)
 SPECS=/root/bonsai/python/bonsai/bench/specs
 QUOTA_FAIL=/root/standings/quota-fail.txt
-# The sizing rule, enforced here as well as at rental time: a cpu axis needs
-# 1.5 CPUs per thread it asks for. bonsai's barriers spin, so every thread
-# stays runnable through a barrier and the process draws against the cap even
-# while it waits; at threads == cap that draw is the cap, and the timing
-# describes the container. Headroom is what keeps the fit off the ceiling.
-CPU_HEADROOM=1.5
+# Extra CPUs per thread demanded of a host that caps by CFS bandwidth. There
+# the threads share one pool of core-seconds, and a spinning barrier spends
+# that pool on waiting, so a fit at threads == quota sits on the ceiling and
+# the timing describes the container. A cpuset host needs no such headroom:
+# each thread owns a core, and a thread that spins burns only its own.
+QUOTA_HEADROOM=1.5
 # Throttled share of CFS enforcement periods around the axis's first fit that
 # makes the rest of the axis unpublishable. A rented cpu pod caps by cpuset
 # and cannot throttle at all (nr_periods stays 0); a gpu pod caps by CFS
@@ -137,18 +137,6 @@ quota_cores() {
     echo unlimited
 }
 
-# The cores this container may actually use: the tighter of the bandwidth
-# quota and the cpuset. Two caps exist and a host carries either. A gpu pod
-# caps bandwidth (13.6 cores against the 128 nproc advertises). A rented cpu
-# pod caps the cpuset instead: its cpu.max reads "max", and nproc reports the
-# vcpu count that was purchased, so the quota alone would call it unlimited.
-cpu_allowance() {
-    allowed=$(nproc)
-    q=$(quota_cores)
-    [ "$q" = unlimited ] && { echo "$allowed"; return; }
-    awk -v a="$allowed" -v q="$q" 'BEGIN {printf "%.2f", (q < a ? q : a)}'
-}
-
 cpu_stat_path() {
     if [ -r /sys/fs/cgroup/cpu.stat ]; then echo /sys/fs/cgroup/cpu.stat
     else echo /sys/fs/cgroup/cpu/cpu.stat; fi
@@ -201,21 +189,36 @@ run_spec() {
         --run-label "standings-$1-$YM" --host-name "$HOST_TAG"
 }
 
-# The headroom gate. The spec's thread count is the published claim, so it
-# is never adapted: either the rental has 1.5 CPUs per thread or the axis
-# fails and is re-run on a bigger one. Sizing the rental is the driver's job;
-# this is the assertion that the rental is what the driver thinks it bought.
+# The CPU-cap gate. The spec's thread count is the published claim, so it is
+# never adapted: either the container can honour it or the axis fails and is
+# re-run on a bigger rental. Sizing is the driver's job; this asserts that the
+# rental is what the driver thinks it bought.
+#
+# Which cap the host enforces decides what the axis needs, because it decides
+# whether a spinning barrier costs anything. A cpuset host hands the container
+# whole CPUs, so one CPU per thread is enough and a spinning thread only burns
+# the core it already owns. A bandwidth host meters core-seconds across all
+# threads, so spin-wait eats the shared allowance and the quota has to exceed
+# the thread count by the headroom above.
 run_cpu_axis() {
     axis=$1
     out="/root/standings/$axis-$YM.jsonl"
     spec_threads=$(spec_field "$axis" "max(s.get('threads', [16]))")
-    allowance=$(cpu_allowance)
-    required=$(awk -v t="$spec_threads" -v h="$CPU_HEADROOM" \
-        'BEGIN {printf "%d", (t * h == int(t * h)) ? t * h : int(t * h) + 1}')
-    echo "QUOTA $axis: allowance=${allowance} cores (quota=$(quota_cores), nproc=$(nproc)), spec=${spec_threads}t, needs>=${required}"
-    if awk -v a="$allowance" -v r="$required" 'BEGIN {exit !(a < r)}'; then
-        fail_axis "$axis" "needs ${required} cores for its ${spec_threads}t claim (${CPU_HEADROOM} per thread) but this container may use ${allowance}; rent a wider cpu pod (--cpu-vcpu) and re-run the axis"
-        return 0
+    quota=$(quota_cores)
+    usable=$(nproc)
+    echo "CPUCAP $axis: quota=${quota}, usable=${usable} cpus, spec=${spec_threads}t"
+    if [ "$quota" = unlimited ]; then
+        if [ "$usable" -lt "$spec_threads" ]; then
+            fail_axis "$axis" "no bandwidth quota, so the cpuset is the cap, and its ${usable} cpus are fewer than the ${spec_threads} threads the spec claims; rent a wider cpu pod (--cpu-vcpu) and re-run the axis"
+            return 0
+        fi
+    else
+        required=$(awk -v t="$spec_threads" -v h="$QUOTA_HEADROOM" \
+            'BEGIN {printf "%.2f", t * h}')
+        if awk -v q="$quota" -v r="$required" 'BEGIN {exit !(q < r)}'; then
+            fail_axis "$axis" "this host meters cpu bandwidth at ${quota} cores, below the ${required} its ${spec_threads}t claim needs (${QUOTA_HEADROOM} per thread, because spin-wait spends the shared allowance); measure the cpu plane on a cpu pod, which caps by cpuset instead"
+            return 0
+        fi
     fi
 
     # The first fit is measured with the throttle counters bracketing it;

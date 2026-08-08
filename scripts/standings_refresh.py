@@ -36,13 +36,16 @@ rented CPU pod sized by the rule below, and the GPU axes run on the GPU pod
 exactly as before. Both sessions pull into one results directory, and every
 row carries the host block it was measured under.
 
-The sizing rule: rent at least ceil(threads * 1.5) vCPU for the thread count
-the CPU specs ask for. bonsai's barriers spin, so a waiting thread is still a
-running thread and the process draws against its cap even between phases; at
-threads == cap that draw is the cap. The headroom is what keeps a fit off the
-ceiling. The pod script asserts the rental it landed on before it measures
-anything, and fails the axis rather than publishing a number made under a
-ceiling nobody declared.
+The sizing rule: rent one vCPU per thread the CPU specs ask for, 16 at the
+published thread count. What makes that enough is the enforcement mechanism. A
+CPU pod hands the container a cpuset, a set of whole CPUs equal to the
+purchase, and a thread that spins at a barrier burns only the core it already
+owns, so spin-wait costs the fit nothing. A host that meters CPU bandwidth
+instead, which is what a GPU pod does, shares one pool of core-seconds across
+all the threads, and there spin-wait does eat the allowance: such a host needs
+1.5 cores per thread before its numbers mean anything. The pod script asserts
+whichever cap it landed under before it measures anything, and fails the axis
+rather than publishing a number made under a ceiling nobody declared.
 
 It gates on the pod's fused/two-step parity rows before touching
 anything: the published ingest/train split is only honest while bonsai's
@@ -59,7 +62,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import pathlib
 import shutil
@@ -81,11 +83,11 @@ GPU = "NVIDIA RTX PRO 6000 Blackwell Server Edition"
 # The CPU plane's rental. cpu5g is the general-purpose CPU5 flavor at 4GB of
 # RAM per vCPU, which covers both cpu cells with room to spare.
 CPU_FLAVOR = "cpu5g"
-CPU_VCPU = 24
-# vCPUs per thread the CPU specs ask for. A spin-wait barrier keeps every
-# thread runnable, so a fit at threads == cap draws the whole cap and the
-# timing describes the container; headroom is what prevents that.
-CPU_HEADROOM = 1.5
+CPU_VCPU = 16
+# Extra cores per thread a bandwidth-metered host must hold on top of the
+# thread count, because there a spinning barrier spends the shared allowance.
+# A cpuset host gives each thread its own core and needs none of it.
+QUOTA_HEADROOM = 1.5
 # CPU pods cap the container disk far below a GPU pod's 80GB: the API refuses
 # anything over 20GB on the CPU3 flavors and 30GB on the CPU5 ones.
 CPU_DISK_GB = 30
@@ -110,7 +112,7 @@ PARITY_AXIS = "gpu-tall"
 # Axis name prefix -> the plane whose pod measures it.
 CPU_PREFIX = "cpu-"
 SPECS = REPO / "python" / "bonsai" / "bench" / "specs"
-# The pod script's loud half: written when the headroom assertion fails or
+# The pod script's loud half: written when the CPU-cap assertion fails or
 # the throttle bracket catches material throttling, pulled back with results.
 QUOTA_FAIL = "quota-fail.txt"
 
@@ -142,11 +144,12 @@ def main() -> int:
     m.add_argument("--cpu-flavor", default=CPU_FLAVOR,
                    help="RunPod CPU flavor for the cpu-plane pod")
     m.add_argument("--cpu-vcpu", type=int, default=CPU_VCPU,
-                   help="vCPUs to buy for the cpu-plane pod; must satisfy "
-                        f"the {CPU_HEADROOM}-per-thread sizing rule")
+                   help="vCPUs to buy for the cpu-plane pod; must be at "
+                        "least one per thread the specs claim")
     m.add_argument("--dry-run", action="store_true",
-                   help="print the rental plan and the sizing arithmetic, "
-                        "then exit without renting anything")
+                   help="print the rental plan, the sizing arithmetic, and "
+                        "what the on-pod gate accepts, then exit without "
+                        "renting anything")
     s = sub.add_parser("supersede", help="build the supersession PR from results")
     s.add_argument("--results-dir", required=True)
     s.add_argument("--axes", default=",".join(AXES))
@@ -197,15 +200,16 @@ def measure(args: argparse.Namespace) -> int:
         needed = required_vcpu(cpu_axes)
         print(f"cpu plane: {', '.join(cpu_axes)} at "
               f"{max(spec_threads(a) for a in cpu_axes)}t need >= {needed} "
-              f"vCPU ({CPU_HEADROOM} per thread); renting "
-              f"{args.cpu_vcpu} x {args.cpu_flavor}")
+              f"vCPU (one per thread, because a cpu pod caps by cpuset); "
+              f"renting {args.cpu_vcpu} x {args.cpu_flavor}")
         if args.cpu_vcpu < needed:
             print(f"ERROR: --cpu-vcpu {args.cpu_vcpu} is below the {needed} "
-                  f"the sizing rule requires; a fit at threads == cap draws "
-                  f"the whole cap and times the container, not the code",
-                  file=sys.stderr)
+                  f"the sizing rule requires; the axis would run more "
+                  f"threads than the cpuset has cpus", file=sys.stderr)
             return 1
     if args.dry_run:
+        for line in gate_preview(cpu_axes):
+            print(line)
         print("--dry-run: nothing rented")
         return 0
     key = os.environ.get("RUNPOD_API_KEY")
@@ -243,10 +247,10 @@ def spec_threads(axis: str) -> int:
 def required_vcpu(axes: list[str]) -> int:
     """The smallest CPU rental that satisfies the sizing rule for these axes.
 
-    A spin-wait barrier keeps every thread runnable, so the process draws
-    against its CPU cap even while threads wait. Renting exactly as many
-    vCPUs as threads therefore pins the fit to the ceiling and the timing
-    describes the container. The rule is ``ceil(threads * 1.5)``.
+    A rented CPU pod enforces the purchase as a cpuset: the container gets
+    that many whole CPUs and nothing meters how they are spent, so a thread
+    that spins at a barrier burns only the core it already owns. One vCPU
+    per thread is therefore the whole rule.
 
     Parameters
     ----------
@@ -258,7 +262,59 @@ def required_vcpu(axes: list[str]) -> int:
     int
         vCPUs the widest of those axes needs.
     """
-    return max(math.ceil(spec_threads(axis) * CPU_HEADROOM) for axis in axes)
+    return max(spec_threads(axis) for axis in axes)
+
+
+def gate_verdict(threads: int, *, quota: float | None, usable: int) -> str:
+    """What the on-pod gate says about a container, in one line.
+
+    Mirrors the assertion in ``scripts/standings_refresh_pod.sh``, which is
+    the enforcing copy; this one exists so ``--dry-run`` can show the rule
+    without renting anything. Two cap mechanisms exist and a host carries
+    one of them. Under a cpuset the threads own their cores and the question
+    is only whether there are enough. Under a CFS bandwidth quota they share
+    a pool of core-seconds that spin-wait drains, so the quota must clear the
+    thread count by ``QUOTA_HEADROOM``.
+
+    Parameters
+    ----------
+    threads : int
+        Threads the axis publishes its claim at.
+    quota : float or None
+        Cores the CFS bandwidth quota allows, None when the host sets none.
+    usable : int
+        CPUs in the container's cpuset, which is what ``nproc`` reports.
+
+    Returns
+    -------
+    str
+        ``ACCEPT`` or ``REJECT``, with the reason.
+    """
+    if quota is None:
+        if usable < threads:
+            return (f"REJECT: no quota, so the cpuset is the cap, and "
+                    f"{usable} cpus cannot run {threads} threads")
+        return (f"ACCEPT: no quota, cpuset of {usable} cpus covers "
+                f"{threads} threads with a core each")
+    required = threads * QUOTA_HEADROOM
+    if quota < required:
+        return (f"REJECT: bandwidth quota of {quota} cores is below the "
+                f"{required} that {threads} spinning threads need")
+    return (f"ACCEPT: bandwidth quota of {quota} cores clears the "
+            f"{required} that {threads} spinning threads need")
+
+
+def gate_preview(cpu_axes: list[str]) -> list[str]:
+    """The gate's verdict on the two host kinds, for ``--dry-run``."""
+    if not cpu_axes:
+        return []
+    threads = max(spec_threads(axis) for axis in cpu_axes)
+    return [
+        f"gate at {threads}t on a cpu pod (cpuset, no quota, {threads} cpus): "
+        + gate_verdict(threads, quota=None, usable=threads),
+        f"gate at {threads}t on a gpu pod (quota 13.6 cores, 128 cpus): "
+        + gate_verdict(threads, quota=13.6, usable=128),
+    ]
 
 
 # Supersede ========================================================================================
