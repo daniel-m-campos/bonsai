@@ -9,11 +9,27 @@
     "refreshed_for": "1.7.0",
     "as_of_decision": 104,
     "companion": "parity-2026-08.jsonl",
-    "hash_set": "ded60c851f52cd8d",
+    "hash_set": "6b5329b2d128917f",
     "refs": {
       "xgboost": "3.2.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "148f21b",
+      "stamped_at": "706be89",
+      "reason": "Host CPU-fill changes moved the plane digest but cannot reach the device plane. src/cuda and include/bonsai/cuda are byte-identical between this axis's measured commit and the stamped one, verified for both 148f21b and 4fd9531, whose src/ and include/ trees are themselves identical to each other. Every GPU spec pins its thread count, so the auto-path cgroup quota clamp cannot apply either. Byte identity is not available as proof on this plane because device accumulation order varies run to run, so equivalence is argued against the measured noise floor: cross-commit prediction deltas at 148f21b versus f078f51 sit at the same magnitude as run-to-run deltas within either commit. Measured on cuda_depthwise, the tighter arm and the one recorded here, and on cuda_leafwise, whose deltas were identical within and across commits. cuda_levelwise shares the level-batched path and was not measured directly.",
+      "evidence": {
+        "kind": "tolerance",
+        "metric": "max_abs_prediction_delta",
+        "floor_before": 2.4e-06,
+        "floor_after": 2.9e-06,
+        "cross_commit": 3.3e-06,
+        "factor": 2.0,
+        "cell": "500000x100 depth 8 iters 20 threads 16",
+        "config": "device=cuda, growers depthwise and leafwise, seed 42",
+        "host": "NVIDIA L40S pod"
+      }
     }
   },
   "gpu-wide": {
@@ -24,11 +40,27 @@
     "plane": "gpu",
     "refreshed_for": "1.7.0",
     "as_of_decision": 104,
-    "hash_set": "ded60c851f52cd8d",
+    "hash_set": "6b5329b2d128917f",
     "refs": {
       "xgboost": "3.2.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "148f21b",
+      "stamped_at": "706be89",
+      "reason": "Host CPU-fill changes moved the plane digest but cannot reach the device plane. src/cuda and include/bonsai/cuda are byte-identical between this axis's measured commit and the stamped one, verified for both 148f21b and 4fd9531, whose src/ and include/ trees are themselves identical to each other. Every GPU spec pins its thread count, so the auto-path cgroup quota clamp cannot apply either. Byte identity is not available as proof on this plane because device accumulation order varies run to run, so equivalence is argued against the measured noise floor: cross-commit prediction deltas at 148f21b versus f078f51 sit at the same magnitude as run-to-run deltas within either commit. Measured on cuda_depthwise, the tighter arm and the one recorded here, and on cuda_leafwise, whose deltas were identical within and across commits. cuda_levelwise shares the level-batched path and was not measured directly.",
+      "evidence": {
+        "kind": "tolerance",
+        "metric": "max_abs_prediction_delta",
+        "floor_before": 2.4e-06,
+        "floor_after": 2.9e-06,
+        "cross_commit": 3.3e-06,
+        "factor": 2.0,
+        "cell": "500000x100 depth 8 iters 20 threads 16",
+        "config": "device=cuda, growers depthwise and leafwise, seed 42",
+        "host": "NVIDIA L40S pod"
+      }
     }
   },
   "gpu-extreme": {
@@ -39,11 +71,27 @@
     "plane": "gpu",
     "refreshed_for": "1.7.0",
     "as_of_decision": 104,
-    "hash_set": "ded60c851f52cd8d",
+    "hash_set": "6b5329b2d128917f",
     "refs": {
       "xgboost": "3.2.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "4fd9531",
+      "stamped_at": "706be89",
+      "reason": "Host CPU-fill changes moved the plane digest but cannot reach the device plane. src/cuda and include/bonsai/cuda are byte-identical between this axis's measured commit and the stamped one, verified for both 148f21b and 4fd9531, whose src/ and include/ trees are themselves identical to each other. Every GPU spec pins its thread count, so the auto-path cgroup quota clamp cannot apply either. Byte identity is not available as proof on this plane because device accumulation order varies run to run, so equivalence is argued against the measured noise floor: cross-commit prediction deltas at 148f21b versus f078f51 sit at the same magnitude as run-to-run deltas within either commit. Measured on cuda_depthwise, the tighter arm and the one recorded here, and on cuda_leafwise, whose deltas were identical within and across commits. cuda_levelwise shares the level-batched path and was not measured directly.",
+      "evidence": {
+        "kind": "tolerance",
+        "metric": "max_abs_prediction_delta",
+        "floor_before": 2.4e-06,
+        "floor_after": 2.9e-06,
+        "cross_commit": 3.3e-06,
+        "factor": 2.0,
+        "cell": "500000x100 depth 8 iters 20 threads 16",
+        "config": "device=cuda, growers depthwise and leafwise, seed 42",
+        "host": "NVIDIA L40S pod"
+      }
     }
   },
   "cpu-tall": {
@@ -84,11 +132,27 @@
     "plane": "gpu",
     "refreshed_for": "1.7.0",
     "as_of_decision": 104,
-    "hash_set": "ded60c851f52cd8d",
+    "hash_set": "6b5329b2d128917f",
     "refs": {
       "xgboost": "3.2.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "148f21b",
+      "stamped_at": "706be89",
+      "reason": "Host CPU-fill changes moved the plane digest but cannot reach the device plane. src/cuda and include/bonsai/cuda are byte-identical between this axis's measured commit and the stamped one, verified for both 148f21b and 4fd9531, whose src/ and include/ trees are themselves identical to each other. Every GPU spec pins its thread count, so the auto-path cgroup quota clamp cannot apply either. Byte identity is not available as proof on this plane because device accumulation order varies run to run, so equivalence is argued against the measured noise floor: cross-commit prediction deltas at 148f21b versus f078f51 sit at the same magnitude as run-to-run deltas within either commit. Measured on cuda_depthwise, the tighter arm and the one recorded here, and on cuda_leafwise, whose deltas were identical within and across commits. cuda_levelwise shares the level-batched path and was not measured directly.",
+      "evidence": {
+        "kind": "tolerance",
+        "metric": "max_abs_prediction_delta",
+        "floor_before": 2.4e-06,
+        "floor_after": 2.9e-06,
+        "cross_commit": 3.3e-06,
+        "factor": 2.0,
+        "cell": "500000x100 depth 8 iters 20 threads 16",
+        "config": "device=cuda, growers depthwise and leafwise, seed 42",
+        "host": "NVIDIA L40S pod"
+      }
     }
   },
   "quality-grinsztajn": {
