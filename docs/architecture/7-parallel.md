@@ -108,6 +108,25 @@ asymmetric cores. The partial bound and the load balance are the same dial
 and the fill picks the bound; cutting more ranges per thread for balance
 would hand the partial count back (decision 105).
 
+For example, a level holds three sparse nodes: A (2500 rows), B (900), C
+(3100). At grain 1024 each node's rows cut into row chunks of at most 1024,
+laid node-major in one flat list, eight chunks in all. Four threads take
+contiguous ranges of that list:
+
+```
+chunks: A0 A1 A2 | B0 | C0 C1 C2 C3
+thread: T0 T0 T1 | T1 | T2 T2 T3 T3
+```
+
+The threads touching each node: A {T0, T1}, B {T1}, C {T2, T3}, always a run
+of adjacent threads because the chunk list is node-major. The lowest thread
+of each run writes straight into the node's arena (T0 for A, T1 for B, T2
+for C); only the non-lowest members of a run write partials (T1 for A, T3
+for C), so this level's reduce merges exactly two partials. B's run has one
+thread and no non-lowest member, so it needs no partial at all. Partials are
+bounded by `n_threads - 1` per level because runs overlap only at thread
+boundaries, and a level has at most `n_threads - 1` of those.
+
 ## The CPU fill's four constants
 
 All four are measured, none is tunable, and each is a constant because its
