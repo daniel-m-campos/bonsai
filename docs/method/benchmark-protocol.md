@@ -122,6 +122,18 @@ The refresh is one rented pod session, driven locally by `scripts/standings_refr
 
 Every axis carries a `plane` (cpu or gpu) and the digest of that plane's sources at its last refresh. A routine refresh runs `measure --only-stale`, which measures the axes whose plane digest has moved and leaves the rest alone, so a device-only change never pays for a CPU-plane sweep; a release refresh measures every axis on one host.
 
+## Carry-forward stamps
+
+Plane gating is mechanical, and mechanical rules are coarse. The gpu digest covers every host source too, so a change to host-side fill code invalidates a GPU axis whose device sources are byte-identical and whose thread count its spec pins. The digest says "something that could matter moved"; sometimes the tree says it could not have. A carry-forward stamp is the recorded way to say so. `python3 scripts/update_standings.py --axis <axis> --restamp-verified` moves the axis's `hash_set` to the current digest with no new measurement, leaving the results file, measured sha, host, date, and `refreshed_for` exactly as the last real run set them.
+
+It is legitimate under two conditions together, and neither is a matter of taste. The changed sources must be unable to reach the axis: not "unlikely to move it", unable, by an argument you can state in one sentence about which code the axis executes. And the equivalence must be verified rather than assumed: run the check that would catch you being wrong, and record what it printed.
+
+The entry records the argument as structured fields, in a `carried_forward` block: `measured_at` (the sha the data still comes from), `stamped_at` (the commit whose digest was carried onto it), `reason` (why the change cannot reach the axis), and `evidence` (the kind of proof and its two values, which must be equal; `model-hash` is the usual one). The tool refuses without all of them, refuses when the two evidence values differ, refuses on an axis that is already current, and refuses when the staleness comes from a reference-library major bump, which no argument about our own sources can answer.
+
+The distinction is permanent by construction. The measured sha and results file never move, so the published caption still shows the real vintage; the release gate prints `carried-forward stamp` rather than `hash-unchanged skip`; and `--stale` prints a note naming the axis, its stamped commit, and its reason. A carry-forward is also spent: the next time the plane digest moves, the axis is stale again like any other, because the argument was about one specific change and not about the axis.
+
+The rule this exists to protect: a carry-forward must never be used to dodge a refresh that is merely expensive. Cost is not evidence. If the honest answer is "the change probably did not move this number and the pod costs money", the axis is stale and gets measured.
+
 ## Amendments
 
 Evidence files are append-only: committed rows are never edited or regenerated, and corrections are banner annotations plus a decisions-log entry (the pattern of decisions 48, 63, and 68). Standings files supersede in place instead (the standings section above). Superseded artifacts of either class are deleted from the tree; git history is the archive.
