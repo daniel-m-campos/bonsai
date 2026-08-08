@@ -117,33 +117,14 @@ fi
 # pod without the RAM must say so instead of dying halfway through a
 # three-hour sweep.
 EXTREME_RAM_GB=320
-# cgroup v1 spells "no memory limit" as a sentinel near 2^63 rather than a
-# word, so anything at or above this is unlimited.
-V1_MEM_UNLIMITED=4611686018427387904
 
-# The RAM this container may use, in whole GB: the cgroup limit when one caps
-# it, the machine's otherwise. free and /proc/meminfo report the machine even
-# inside a container, so a guard reading them alone cannot fail: a 4GB pod
-# reads the host's 1TB and sails past a check meant to stop an OOM.
+# The RAM this container may use, in whole GB. runlog.usable_ram_gb() is the
+# one implementation of the cgroup-limit-or-machine rule, including the v1
+# unlimited sentinel; a second copy here is a rule that can disagree with the
+# host block the rows carry.
 container_ram_gb() {
-    host_gb=$(free -g | awk '/^Mem:/ {print $2}')
-    limit_gb=""
-    if [ -r /sys/fs/cgroup/memory.max ]; then
-        bytes=$(cat /sys/fs/cgroup/memory.max)
-        if [ "$bytes" != max ]; then
-            limit_gb=$((bytes / 1024 / 1024 / 1024))
-        fi
-    elif [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
-        bytes=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
-        if [ "$bytes" -lt "$V1_MEM_UNLIMITED" ]; then
-            limit_gb=$((bytes / 1024 / 1024 / 1024))
-        fi
-    fi
-    if [ -n "$limit_gb" ] && [ "$limit_gb" -lt "$host_gb" ]; then
-        echo "$limit_gb"
-        return
-    fi
-    echo "$host_gb"
+    env PYTHONPATH="$BUILD" /opt/venv/bin/python \
+        -c "from bonsai.bench import runlog; print(runlog.usable_ram_gb())"
 }
 
 # The cgroup CPU-bandwidth ceiling in cores, or "unlimited". v2 first, v1
@@ -165,14 +146,10 @@ quota_cores() {
     echo unlimited
 }
 
-cpu_stat_path() {
-    if [ -r /sys/fs/cgroup/cpu.stat ]; then echo /sys/fs/cgroup/cpu.stat
-    else echo /sys/fs/cgroup/cpu/cpu.stat; fi
-}
-
 # "<nr_periods> <nr_throttled>", zeros when the controller exposes neither.
 throttle_counters() {
-    stat=$(cpu_stat_path)
+    stat=/sys/fs/cgroup/cpu.stat
+    [ -r "$stat" ] || stat=/sys/fs/cgroup/cpu/cpu.stat
     [ -r "$stat" ] || { echo "0 0"; return; }
     awk '/^nr_periods /{p=$2} /^nr_throttled /{t=$2} END {print (p?p:0), (t?t:0)}' "$stat"
 }
