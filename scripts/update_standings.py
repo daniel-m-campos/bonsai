@@ -1,70 +1,16 @@
 #!/usr/bin/env python3
-"""Point a standings axis at a freshly measured file (decision 92).
+"""Move a standings axis's stamp: onto a fresh run, or forward (decision 92).
 
     python3 scripts/update_standings.py --axis rows --file rebaseline-2026-08.jsonl
-
-Reads sha/host/date from the new file's rows, deletes the superseded file
-(git history is the archive), and rewrites the registry entry with
-refreshed_for taken from pyproject.toml (override with --version).
-Supersession also drops the entry's note, since a note describes the
-file being replaced. Run render_results.py afterwards; the generator
-loads through the registry.
-
-`--companion` registers a second file measured in the same session (the
-gpu-tall axis carries its parity rows that way, which is where the perf
-page's fused anchor comes from). It supersedes with its axis and the
-renderer holds it to the same rendered-or-removed rule.
-
-Superseding an axis that carries a plane (or a quality axis) also stamps
-`hash_set` (its plane's digest, `check_standings.plane_digest()`) and `refs`
-(the reference libraries' installed versions) so a later release can use
-check_standings.py's hash-unchanged skip instead of a full refresh, and so
-`--stale` can tell the next refresh which axes to measure. The refresh is the
-one moment the installed reference-library versions are known for certain (the
-suites run against them), so it also refreshes
-benchmarks/reference_versions.json to match.
-
-`--restamp-verified` is the other, much narrower way an axis's stamp moves:
 
     python3 scripts/update_standings.py --axis gpu-tall --restamp-verified \
         --reason "host-side fill only; src/cuda byte-identical" \
         --evidence-kind model-hash \
         --evidence-before 9f0a1c2d3e4f5061 --evidence-after 9f0a1c2d3e4f5061
 
-It carries the current plane digest forward onto an axis the changed sources
-provably cannot reach, with no new measurement. The measured sha, results
-file, host, date, and refreshed_for are left exactly as the last real run set
-them, and a `carried_forward` block records the equivalence argument, so the
-entry stays visibly a carry-forward rather than a run.
-
-The evidence has a kind, because equivalence does not mean the same thing on
-both planes. `model-hash` is byte identity: two model hashes that must be
-equal, which is what the host plane can prove. The device plane cannot prove
-it at all. Its histogram accumulation order varies from run to run, so the
-same fit at one commit writes different model bytes each time. There
-`tolerance` argues the equivalence against the noise the plane already has,
-recording the metric, the within-commit noise floor measured at each commit,
-the cross-commit delta, and the cell, configuration, and host it ran on:
-
-    python3 scripts/update_standings.py --axis gpu-tall --restamp-verified \
-        --reason "no src/cuda change; every gpu spec pins its thread count" \
-        --evidence-kind tolerance --metric "max abs prediction delta" \
-        --floor-before 2.4e-06 --floor-after 2.9e-06 --cross-commit 3.3e-06 \
-        --cell "500k x 100" --config "20 iters, depth 8, threads 16" \
-        --evidence-host L40S
-
-A tolerance claim holds when the cross-commit delta stays within
-`--tolerance-factor` (default 2.0) of the larger of the two measured floors.
-
-The refusals are per kind. `model-hash` refuses on any difference at all.
-`tolerance` refuses when the delta outruns the floor by more than the factor,
-when a floor is missing (with no floor there is no scale to read the delta
-against, so there is no evidence), and when a floor is zero, which says the
-plane is bit-reproducible and byte identity is the instrument to use. Both
-kinds refuse without a reason, on an axis that is already current, and when
-the staleness comes from a reference-library major rather than the source
-tree. Superseding an axis drops the block; a carry-forward is spent the moment
-the plane moves again.
+Both modes, the evidence kinds, their refusals, and the rule that a
+carry-forward is spent when the plane moves again are specified in
+docs/method/benchmark-protocol.md; `--help` lists the flags.
 """
 
 from __future__ import annotations
@@ -124,13 +70,6 @@ def refresh_ref_ledger(ref_versions: dict) -> None:
     check_standings.REF_VERSIONS.write_text(json.dumps(ledger, indent=2) + "\n")
 
 
-def head_sha() -> str:
-    """The short sha of the checkout doing the stamping."""
-    return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO,
-                          capture_output=True, text=True,
-                          check=True).stdout.strip()
-
-
 def restamp_verified(args: argparse.Namespace, reg: dict) -> int:
     """Carry the current plane digest forward onto an unreachable axis.
 
@@ -184,10 +123,13 @@ def restamp_verified(args: argparse.Namespace, reg: dict) -> int:
               "answers; re-measure the axis", file=sys.stderr)
         return 1
 
+    stamped_at = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                                cwd=REPO, capture_output=True, text=True,
+                                check=True).stdout.strip()
     entry["hash_set"] = check_standings.plane_digest(plane)
     entry["carried_forward"] = {
         "measured_at": entry["sha"],
-        "stamped_at": head_sha(),
+        "stamped_at": stamped_at,
         "reason": args.reason,
         "evidence": evidence,
     }
@@ -303,7 +245,7 @@ def _tolerance_evidence(
     ----------
     args : argparse.Namespace
         Parsed arguments; needs `metric`, `cell`, `config`, `evidence_host`,
-        `floor_before`, `floor_after`, `cross_commit`, `tolerance_factor`.
+        `floor_before`, `floor_after`, and `cross_commit`.
 
     Returns
     -------
@@ -333,16 +275,16 @@ def _tolerance_evidence(
         return None, (f"tolerance evidence records a {floor:g} noise floor, "
                       "which says this plane reproduces its bytes run to run; "
                       "prove that with --evidence-kind model-hash instead")
-    if args.cross_commit > args.tolerance_factor * floor:
+    if args.cross_commit > TOLERANCE_FACTOR * floor:
         return None, (f"cross-commit {args.cross_commit:g} exceeds "
-                      f"{args.tolerance_factor:g}x the {floor:g} within-commit "
+                      f"{TOLERANCE_FACTOR:g}x the {floor:g} within-commit "
                       "noise floor; that is a measured difference, not an "
                       "equivalence")
     return {"kind": "tolerance", "metric": args.metric,
             "floor_before": args.floor_before,
             "floor_after": args.floor_after,
             "cross_commit": args.cross_commit,
-            "factor": args.tolerance_factor, "cell": args.cell,
+            "factor": TOLERANCE_FACTOR, "cell": args.cell,
             "config": args.config, "host": args.evidence_host}, None
 
 
@@ -386,9 +328,6 @@ def main() -> int:
                          "the stamped sha")
     ap.add_argument("--cross-commit", type=float, default=None,
                     help="tolerance: the metric between the two commits")
-    ap.add_argument("--tolerance-factor", type=float, default=TOLERANCE_FACTOR,
-                    help="tolerance: how many noise floors the cross-commit "
-                         f"delta may reach (default {TOLERANCE_FACTOR})")
     ap.add_argument("--cell", default=None,
                     help="tolerance: the cell the comparison ran on")
     ap.add_argument("--config", default=None,
