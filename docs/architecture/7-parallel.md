@@ -103,7 +103,7 @@ score updates, CSV row parsing, out-of-bag routing.
 ## The determinism contract
 
 **Models and predictions are bit-identical at a fixed configured thread
-count**, decision 7's contract. From v0.2.0 to decision 49 the codebase
+count on the host plane**, decision 7's contract. From v0.2.0 to decision 49 the codebase
 held a stronger any-thread-count guarantee (no parallel site performed a
 cross-thread FP reduction); the row-wise fill spends it deliberately: a node
 that more than one thread range touches accumulates one partial per extra
@@ -120,6 +120,17 @@ cut points and therefore its summation order. A fixed `n_threads` is still
 reproducible across runs and machines with the same core count under auto.
 Set `parallel.n_threads` explicitly when reproducibility across machines
 matters.
+
+The plane qualifier is load-bearing: this whole doc is about host
+parallelism, and the contract does not extend to the CUDA growers. Device
+histogram cells are accumulated by thousands of threads under atomics, so
+the add order is whatever the scheduler produced and the same device fit
+writes different model bytes on every run (measured: four repetitions of
+one `cuda_depthwise` fit at one commit, four different model hashes). The
+device plane's claim is tolerance equality, not bit equality
+([`11-gpu-resident.md`](11-gpu-resident.md)), and comparisons across
+commits there are argued against the measured run-to-run spread rather
+than against a hash.
 
 Emitting exactly `n_threads` ranges is what bounds the partials. The ranges
 touching a node are contiguous, so the runs telescope and a level needs at

@@ -10,10 +10,21 @@ last bit, so any parallel scheme that lets thread scheduling change the
 *order* of additions produces models that differ run to run. The reference
 libraries mostly accept this (fixed thread count → same model, different
 count → close-but-different). bonsai's contract is the same, held
-deliberately rather than by accident: **the model is bit-identical across
-runs at a fixed thread count**, and for everything *except* the u8
-histogram fill, bit-identical to a serial run at any count. The one
-exception was bought, measured, and is this chapter's closing story.
+deliberately rather than by accident: **when training on the CPU, the
+model is bit-identical across runs at a fixed thread count**, and for
+everything *except* the u8 histogram fill, bit-identical to a serial run
+at any count. The one exception was bought, measured, and is this
+chapter's closing story.
+
+The "on the CPU" is not a hedge, it is the boundary. GPU training
+accumulates histogram cells with device atomics, and the order those adds
+land in is the scheduler's, not the configuration's, so **the same GPU
+fit produces different model bytes every run** (four repetitions of one
+`cuda_depthwise` fit at one commit gave four different model hashes).
+There is no thread count to pin that would fix it: the promise below is a
+CPU promise, and on the device the equivalent question is answered by
+measuring the run-to-run spread and showing a change stays inside it
+([chapter 10](10-gpu-training.md)).
 
 ## The math (of non-determinism)
 

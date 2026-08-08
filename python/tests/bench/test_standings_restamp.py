@@ -16,6 +16,14 @@ MEASURED_SHA = "148f21b"
 PROOF = "9f0a1c2d3e4f5061"
 REASON = "host-side fill only; src/cuda byte-identical"
 
+# The L40S session behind the tolerance kind: four reps of one cuda_depthwise
+# fit at one commit wrote four different model hashes, so the argument is made
+# against the run-to-run spread instead (500k x 100, 20 iters, depth 8).
+DEVICE_REASON = "no src/cuda change; every gpu spec pins its thread count"
+FLOOR_BEFORE = 2.4e-06
+FLOOR_AFTER = 2.9e-06
+CROSS_COMMIT = 3.3e-06
+
 
 def _fake_tree(root: pathlib.Path) -> None:
     """A miniature repo: one host source, one device source, one harness."""
@@ -59,9 +67,27 @@ def _run(monkeypatch, *argv: str) -> int:
     return update_standings.main()
 
 
+def _tolerance_argv(floor_before: str | None = str(FLOOR_BEFORE),
+                    floor_after: str | None = str(FLOOR_AFTER),
+                    cross_commit: str = str(CROSS_COMMIT)) -> list[str]:
+    """A complete tolerance-kind command line, with the numbers swappable."""
+    argv = ["--axis", "gpu-tall", "--restamp-verified",
+            "--reason", DEVICE_REASON, "--evidence-kind", "tolerance",
+            "--metric", "max abs prediction delta",
+            "--cross-commit", cross_commit, "--cell", "500k x 100",
+            "--config", "20 iters, depth 8, threads 16",
+            "--evidence-host", "L40S"]
+    if floor_before is not None:
+        argv += ["--floor-before", floor_before]
+    if floor_after is not None:
+        argv += ["--floor-after", floor_after]
+    return argv
+
+
 def test_carry_forward_refuses_without_a_recorded_proof(monkeypatch, tmp_path):
-    """No reason, no evidence, or evidence that is not an equality: refuse and
-    leave the registry byte-identical, so a carry-forward is never a shrug."""
+    """The byte-identity kind with no reason, no hashes, or hashes that are
+    not equal: refuse and leave the registry byte-identical, so a
+    carry-forward is never a shrug."""
     registry = _stale_gpu_axis(monkeypatch, tmp_path)
     before = registry.read_text()
 
@@ -146,3 +172,67 @@ def test_supersession_drops_a_carried_forward_block(monkeypatch, tmp_path):
     entry = json.loads(registry.read_text())["gpu-tall"]
     assert "carried_forward" not in entry
     assert entry["sha"] == "abc1234" and entry["refreshed_for"] == "1.8.0"
+
+
+def test_tolerance_carries_a_delta_inside_the_noise_floor(monkeypatch,
+                                                          tmp_path, capsys):
+    """The device plane has no byte identity to offer, so the claim is that
+    the cross-commit delta is the size of the plane's own run-to-run spread.
+    The block records every number that claim rests on, the provenance stays
+    where the last real run left it, and the reports still say
+    carried-forward."""
+    registry = _stale_gpu_axis(monkeypatch, tmp_path)
+    assert _run(monkeypatch, *_tolerance_argv()) == 0
+
+    entry = json.loads(registry.read_text())["gpu-tall"]
+    assert entry["carried_forward"]["evidence"] == {
+        "kind": "tolerance", "metric": "max abs prediction delta",
+        "floor_before": FLOOR_BEFORE, "floor_after": FLOOR_AFTER,
+        "cross_commit": CROSS_COMMIT,
+        "factor": update_standings.TOLERANCE_FACTOR, "cell": "500k x 100",
+        "config": "20 iters, depth 8, threads 16", "host": "L40S"}
+    assert entry["sha"] == MEASURED_SHA
+    assert entry["carried_forward"]["measured_at"] == MEASURED_SHA
+    assert entry["file"] == "gpu-tall-2026-08.jsonl"
+    assert entry["date"] == "2026-08-05"
+
+    reg = json.loads(registry.read_text())
+    assert check_standings.check_release(reg, "1.8.0") == []
+    assert "carried-forward stamp" in capsys.readouterr().out
+    notes = check_standings.carried_forward_notes(reg)
+    assert len(notes) == 1 and "tolerance evidence" in notes[0]
+
+
+def test_tolerance_refuses_a_delta_outside_the_noise_floor(monkeypatch,
+                                                           tmp_path):
+    """A delta many floors wide is a measured difference: the factor is where
+    "the same up to noise" stops and "changed" begins."""
+    registry = _stale_gpu_axis(monkeypatch, tmp_path)
+    before = registry.read_text()
+    outside = update_standings.TOLERANCE_FACTOR * FLOOR_AFTER * 10
+
+    assert _run(monkeypatch, *_tolerance_argv(cross_commit=str(outside))) == 1
+    assert registry.read_text() == before
+
+
+def test_tolerance_refuses_a_missing_noise_floor(monkeypatch, tmp_path):
+    """With no floor the delta has no scale to be read against, so it is a
+    number rather than evidence; both commits have to have been sampled."""
+    registry = _stale_gpu_axis(monkeypatch, tmp_path)
+    before = registry.read_text()
+
+    assert _run(monkeypatch, *_tolerance_argv(floor_before=None)) == 1
+    assert _run(monkeypatch, *_tolerance_argv(floor_after=None)) == 1
+    assert registry.read_text() == before
+
+
+def test_tolerance_refuses_a_zero_noise_floor(monkeypatch, tmp_path):
+    """A zero floor says the plane reproduces its bytes run to run, which is a
+    stronger claim than a tolerance and belongs to the model-hash kind."""
+    registry = _stale_gpu_axis(monkeypatch, tmp_path)
+    before = registry.read_text()
+
+    assert _run(monkeypatch, *_tolerance_argv(floor_before="0",
+                                              floor_after="0",
+                                              cross_commit="0")) == 1
+    assert registry.read_text() == before

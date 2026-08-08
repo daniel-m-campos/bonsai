@@ -28,17 +28,43 @@ benchmarks/reference_versions.json to match.
 
     python3 scripts/update_standings.py --axis gpu-tall --restamp-verified \
         --reason "host-side fill only; src/cuda byte-identical" \
+        --evidence-kind model-hash \
         --evidence-before 9f0a1c2d3e4f5061 --evidence-after 9f0a1c2d3e4f5061
 
 It carries the current plane digest forward onto an axis the changed sources
 provably cannot reach, with no new measurement. The measured sha, results
 file, host, date, and refreshed_for are left exactly as the last real run set
 them, and a `carried_forward` block records the equivalence argument, so the
-entry stays visibly a carry-forward rather than a run. It refuses without a
-reason and a pair of equal evidence hashes, refuses on an axis that is
-already current, and refuses when the staleness comes from a reference-library
-major rather than the source tree. Superseding an axis drops the block; a
-carry-forward is spent the moment the plane moves again.
+entry stays visibly a carry-forward rather than a run.
+
+The evidence has a kind, because equivalence does not mean the same thing on
+both planes. `model-hash` is byte identity: two model hashes that must be
+equal, which is what the host plane can prove. The device plane cannot prove
+it at all. Its histogram accumulation order varies from run to run, so the
+same fit at one commit writes different model bytes each time. There
+`tolerance` argues the equivalence against the noise the plane already has,
+recording the metric, the within-commit noise floor measured at each commit,
+the cross-commit delta, and the cell, configuration, and host it ran on:
+
+    python3 scripts/update_standings.py --axis gpu-tall --restamp-verified \
+        --reason "no src/cuda change; every gpu spec pins its thread count" \
+        --evidence-kind tolerance --metric "max abs prediction delta" \
+        --floor-before 2.4e-06 --floor-after 2.9e-06 --cross-commit 3.3e-06 \
+        --cell "500k x 100" --config "20 iters, depth 8, threads 16" \
+        --evidence-host L40S
+
+A tolerance claim holds when the cross-commit delta stays within
+`--tolerance-factor` (default 2.0) of the larger of the two measured floors.
+
+The refusals are per kind. `model-hash` refuses on any difference at all.
+`tolerance` refuses when the delta outruns the floor by more than the factor,
+when a floor is missing (with no floor there is no scale to read the delta
+against, so there is no evidence), and when a floor is zero, which says the
+plane is bit-reproducible and byte identity is the instrument to use. Both
+kinds refuse without a reason, on an axis that is already current, and when
+the staleness comes from a reference-library major rather than the source
+tree. Superseding an axis drops the block; a carry-forward is spent the moment
+the plane moves again.
 """
 
 from __future__ import annotations
@@ -58,6 +84,10 @@ sys.path.insert(0, str(REPO / "scripts"))
 import check_standings  # noqa: E402
 
 REF_LIBRARIES = ("xgboost", "lightgbm", "catboost")
+
+# A cross-commit delta this many times the larger measured within-commit noise
+# floor is still indistinguishable from that noise at two samples per commit.
+TOLERANCE_FACTOR = 2.0
 
 
 def project_version() -> str:
@@ -111,8 +141,8 @@ def restamp_verified(args: argparse.Namespace, reg: dict) -> int:
     Parameters
     ----------
     args : argparse.Namespace
-        Parsed arguments; needs `axis`, `reason`, `evidence`,
-        `evidence_before`, and `evidence_after`.
+        Parsed arguments; needs `axis`, `reason`, `evidence_kind`, and
+        whichever fields that kind requires.
     reg : dict
         The loaded registry, mutated and written on success.
 
@@ -122,19 +152,14 @@ def restamp_verified(args: argparse.Namespace, reg: dict) -> int:
         0 on success, 1 when the carry-forward is refused.
     """
     entry = reg[args.axis]
-    missing = [name for name, value in (("--reason", args.reason),
-                                        ("--evidence-before", args.evidence_before),
-                                        ("--evidence-after", args.evidence_after))
-               if not value]
-    if missing:
-        print(f"ERROR: --restamp-verified needs {', '.join(missing)}: a stamp "
-              "without a recorded proof is a guess, not a carry-forward",
+    if not args.reason:
+        print("ERROR: --restamp-verified needs --reason: a stamp without a "
+              "recorded argument is a guess, not a carry-forward",
               file=sys.stderr)
         return 1
-    if args.evidence_before != args.evidence_after:
-        print(f"ERROR: evidence {args.evidence_before!r} and "
-              f"{args.evidence_after!r} differ; that is a measured difference, "
-              "not an equivalence proof", file=sys.stderr)
+    evidence, refusal = EVIDENCE_KINDS[args.evidence_kind](args)
+    if refusal:
+        print(f"ERROR: {refusal}", file=sys.stderr)
         return 1
     if not entry.get("sha"):
         print(f"ERROR: {args.axis} has never been measured; there is no "
@@ -164,13 +189,12 @@ def restamp_verified(args: argparse.Namespace, reg: dict) -> int:
         "measured_at": entry["sha"],
         "stamped_at": head_sha(),
         "reason": args.reason,
-        "evidence": {"kind": args.evidence,
-                     "before": args.evidence_before,
-                     "after": args.evidence_after},
+        "evidence": evidence,
     }
     REGISTRY.write_text(json.dumps(reg, indent=2) + "\n")
     print(f"{args.axis}: {plane} stamp carried forward to "
-          f"{entry['carried_forward']['stamped_at']}, still measured at "
+          f"{entry['carried_forward']['stamped_at']} on "
+          f"{evidence['kind']} evidence, still measured at "
           f"{entry['sha']} ({args.reason})")
     return 0
 
@@ -232,6 +256,100 @@ def supersede(args: argparse.Namespace, reg: dict) -> int:
     return 0
 
 
+def _byte_identity_evidence(
+        args: argparse.Namespace) -> tuple[dict | None, str | None]:
+    """Build a byte-identity evidence block, or say why it is not one.
+
+    The claim is that the same inputs produce the same model bytes at both
+    commits, so the only acceptable reading is equality: any difference is a
+    measured difference and ends the argument.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed arguments; needs `evidence_before` and `evidence_after`.
+
+    Returns
+    -------
+    tuple[dict | None, str | None]
+        `(block, None)` when the evidence holds, `(None, refusal)` otherwise.
+    """
+    missing = [name for name, value in
+               (("--evidence-before", args.evidence_before),
+                ("--evidence-after", args.evidence_after)) if not value]
+    if missing:
+        return None, (f"model-hash evidence needs {', '.join(missing)}: a "
+                      "stamp without a recorded proof is a guess, not a "
+                      "carry-forward")
+    if args.evidence_before != args.evidence_after:
+        return None, (f"model hashes {args.evidence_before!r} and "
+                      f"{args.evidence_after!r} differ; that is a measured "
+                      "difference, not an equivalence proof")
+    return {"kind": "model-hash", "before": args.evidence_before,
+            "after": args.evidence_after}, None
+
+
+def _tolerance_evidence(
+        args: argparse.Namespace) -> tuple[dict | None, str | None]:
+    """Build a tolerance evidence block, or say why it is not one.
+
+    The claim is weaker than byte identity and is the only one available on a
+    plane whose accumulation order varies run to run: the cross-commit delta
+    is no larger than the run-to-run delta the plane already shows at a single
+    commit, up to a stated factor. It is only an argument if the floor it is
+    read against was measured, which is why an absent or zero floor refuses.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed arguments; needs `metric`, `cell`, `config`, `evidence_host`,
+        `floor_before`, `floor_after`, `cross_commit`, `tolerance_factor`.
+
+    Returns
+    -------
+    tuple[dict | None, str | None]
+        `(block, None)` when the evidence holds, `(None, refusal)` otherwise.
+    """
+    missing = [name for name, value in (("--metric", args.metric),
+                                        ("--cell", args.cell),
+                                        ("--config", args.config),
+                                        ("--evidence-host", args.evidence_host))
+               if not value]
+    if missing:
+        return None, (f"tolerance evidence needs {', '.join(missing)}: a "
+                      "tolerance is only readable next to what was compared, "
+                      "on what, and where")
+    absent = [name for name, value in (("--floor-before", args.floor_before),
+                                       ("--floor-after", args.floor_after),
+                                       ("--cross-commit", args.cross_commit))
+              if value is None]
+    if absent:
+        return None, (f"tolerance evidence needs {', '.join(absent)}: with no "
+                      "measured within-commit noise floor there is no scale "
+                      "to read the cross-commit delta against, so there is no "
+                      "evidence")
+    floor = max(args.floor_before, args.floor_after)
+    if floor <= 0.0:
+        return None, (f"tolerance evidence records a {floor:g} noise floor, "
+                      "which says this plane reproduces its bytes run to run; "
+                      "prove that with --evidence-kind model-hash instead")
+    if args.cross_commit > args.tolerance_factor * floor:
+        return None, (f"cross-commit {args.cross_commit:g} exceeds "
+                      f"{args.tolerance_factor:g}x the {floor:g} within-commit "
+                      "noise floor; that is a measured difference, not an "
+                      "equivalence")
+    return {"kind": "tolerance", "metric": args.metric,
+            "floor_before": args.floor_before,
+            "floor_after": args.floor_after,
+            "cross_commit": args.cross_commit,
+            "factor": args.tolerance_factor, "cell": args.cell,
+            "config": args.config, "host": args.evidence_host}, None
+
+
+EVIDENCE_KINDS = {"model-hash": _byte_identity_evidence,
+                  "tolerance": _tolerance_evidence}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--axis", required=True)
@@ -244,16 +362,39 @@ def main() -> int:
     ap.add_argument("--restamp-verified", action="store_true",
                     help="carry the current plane digest forward with no new "
                          "measurement, for an axis the changed sources cannot "
-                         "reach; needs --reason and the evidence hashes")
+                         "reach; needs --reason and its kind's evidence")
     ap.add_argument("--reason", default=None,
                     help="carry-forward: why the changed plane cannot reach "
                          "this axis")
-    ap.add_argument("--evidence", default="model-hash",
-                    help="carry-forward: what the equality proof is")
+    ap.add_argument("--evidence-kind", default="model-hash",
+                    choices=sorted(EVIDENCE_KINDS),
+                    help="carry-forward: what kind of equivalence was proven; "
+                         "model-hash is byte identity, tolerance is a delta "
+                         "read against a measured noise floor")
     ap.add_argument("--evidence-before", default=None,
-                    help="carry-forward: the proof's value at the measured sha")
+                    help="model-hash: the model hash at the measured sha")
     ap.add_argument("--evidence-after", default=None,
-                    help="carry-forward: the proof's value at the stamped sha")
+                    help="model-hash: the model hash at the stamped sha")
+    ap.add_argument("--metric", default=None,
+                    help="tolerance: what was compared, e.g. 'max abs "
+                         "prediction delta'")
+    ap.add_argument("--floor-before", type=float, default=None,
+                    help="tolerance: the within-commit noise floor measured at "
+                         "the measured sha")
+    ap.add_argument("--floor-after", type=float, default=None,
+                    help="tolerance: the within-commit noise floor measured at "
+                         "the stamped sha")
+    ap.add_argument("--cross-commit", type=float, default=None,
+                    help="tolerance: the metric between the two commits")
+    ap.add_argument("--tolerance-factor", type=float, default=TOLERANCE_FACTOR,
+                    help="tolerance: how many noise floors the cross-commit "
+                         f"delta may reach (default {TOLERANCE_FACTOR})")
+    ap.add_argument("--cell", default=None,
+                    help="tolerance: the cell the comparison ran on")
+    ap.add_argument("--config", default=None,
+                    help="tolerance: the fit configuration it ran under")
+    ap.add_argument("--evidence-host", default=None,
+                    help="tolerance: the host the comparison ran on")
     args = ap.parse_args()
 
     reg = json.loads(REGISTRY.read_text())
