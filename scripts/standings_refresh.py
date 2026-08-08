@@ -81,13 +81,11 @@ IMAGE = "ghcr.io/daniel-m-campos/bonsai-ci:cuda12.8"
 GPU = "NVIDIA RTX PRO 6000 Blackwell Server Edition"
 
 # The CPU plane's rental. cpu5g is the general-purpose CPU5 flavor at 4GB of
-# RAM per vCPU, which covers both cpu cells with room to spare.
+# RAM per vCPU, which covers both cpu cells with room to spare. Not a knob:
+# CPU_DISK_GB below is pinned at the CPU5 disk cap, so any other flavor fails
+# at create.
 CPU_FLAVOR = "cpu5g"
 CPU_VCPU = 16
-# Extra cores per thread a bandwidth-metered host must hold on top of the
-# thread count, because there a spinning barrier spends the shared allowance.
-# A cpuset host gives each thread its own core and needs none of it.
-QUOTA_HEADROOM = 1.5
 # CPU pods cap the container disk far below a GPU pod's 80GB: the API refuses
 # anything over 20GB on the CPU3 flavors and 30GB on the CPU5 ones.
 CPU_DISK_GB = 30
@@ -141,15 +139,12 @@ def main() -> int:
     m.add_argument("--only-stale", action="store_true",
                    help="drop the requested axes whose plane digest has not "
                    "moved since their last refresh (check_standings --stale)")
-    m.add_argument("--cpu-flavor", default=CPU_FLAVOR,
-                   help="RunPod CPU flavor for the cpu-plane pod")
     m.add_argument("--cpu-vcpu", type=int, default=CPU_VCPU,
                    help="vCPUs to buy for the cpu-plane pod; must be at "
                         "least one per thread the specs claim")
     m.add_argument("--dry-run", action="store_true",
-                   help="print the rental plan, the sizing arithmetic, and "
-                        "what the on-pod gate accepts, then exit without "
-                        "renting anything")
+                   help="print the rental plan and the sizing arithmetic, "
+                        "then exit without renting anything")
     s = sub.add_parser("supersede", help="build the supersession PR from results")
     s.add_argument("--results-dir", required=True)
     s.add_argument("--axes", default=",".join(AXES))
@@ -172,8 +167,8 @@ def measure(args: argparse.Namespace) -> int:
     ----------
     args : argparse.Namespace
         Parsed ``measure`` arguments: ``axes``, ``only_stale``,
-        ``prev_version``, ``out_dir``, ``keep_pod``, ``cpu_flavor``,
-        ``cpu_vcpu``, ``dry_run``.
+        ``prev_version``, ``out_dir``, ``keep_pod``, ``cpu_vcpu``,
+        ``dry_run``.
 
     Returns
     -------
@@ -197,19 +192,19 @@ def measure(args: argparse.Namespace) -> int:
     planes = [(plane, plane_axes) for plane, plane_axes in planes if plane_axes]
     cpu_axes = dict(planes).get(PLANE_CPU, [])
     if cpu_axes:
-        needed = required_vcpu(cpu_axes)
-        print(f"cpu plane: {', '.join(cpu_axes)} at "
-              f"{max(spec_threads(a) for a in cpu_axes)}t need >= {needed} "
-              f"vCPU (one per thread, because a cpu pod caps by cpuset); "
-              f"renting {args.cpu_vcpu} x {args.cpu_flavor}")
+        # One vCPU per thread is the whole sizing rule: a rented CPU pod
+        # enforces the purchase as a cpuset, so a thread that spins at a
+        # barrier burns only the core it already owns.
+        needed = max(spec_threads(axis) for axis in cpu_axes)
+        print(f"cpu plane: {', '.join(cpu_axes)} at {needed}t need >= "
+              f"{needed} vCPU (one per thread, because a cpu pod caps by "
+              f"cpuset); renting {args.cpu_vcpu} x {CPU_FLAVOR}")
         if args.cpu_vcpu < needed:
             print(f"ERROR: --cpu-vcpu {args.cpu_vcpu} is below the {needed} "
                   f"the sizing rule requires; the axis would run more "
                   f"threads than the cpuset has cpus", file=sys.stderr)
             return 1
     if args.dry_run:
-        for line in gate_preview(cpu_axes):
-            print(line)
         print("--dry-run: nothing rented")
         return 0
     key = os.environ.get("RUNPOD_API_KEY")
@@ -242,79 +237,6 @@ def spec_threads(axis: str) -> int:
     """The thread count an axis's bundled spec publishes its claim at."""
     spec = json.loads((SPECS / f"{axis}.json").read_text())
     return max(spec.get("threads", [16]))
-
-
-def required_vcpu(axes: list[str]) -> int:
-    """The smallest CPU rental that satisfies the sizing rule for these axes.
-
-    A rented CPU pod enforces the purchase as a cpuset: the container gets
-    that many whole CPUs and nothing meters how they are spent, so a thread
-    that spins at a barrier burns only the core it already owns. One vCPU
-    per thread is therefore the whole rule.
-
-    Parameters
-    ----------
-    axes : list[str]
-        The cpu-plane axes this session measures.
-
-    Returns
-    -------
-    int
-        vCPUs the widest of those axes needs.
-    """
-    return max(spec_threads(axis) for axis in axes)
-
-
-def gate_verdict(threads: int, *, quota: float | None, usable: int) -> str:
-    """What the on-pod gate says about a container, in one line.
-
-    Mirrors the assertion in ``scripts/standings_refresh_pod.sh``, which is
-    the enforcing copy; this one exists so ``--dry-run`` can show the rule
-    without renting anything. Two cap mechanisms exist and a host carries
-    one of them. Under a cpuset the threads own their cores and the question
-    is only whether there are enough. Under a CFS bandwidth quota they share
-    a pool of core-seconds that spin-wait drains, so the quota must clear the
-    thread count by ``QUOTA_HEADROOM``.
-
-    Parameters
-    ----------
-    threads : int
-        Threads the axis publishes its claim at.
-    quota : float or None
-        Cores the CFS bandwidth quota allows, None when the host sets none.
-    usable : int
-        CPUs in the container's cpuset, which is what ``nproc`` reports.
-
-    Returns
-    -------
-    str
-        ``ACCEPT`` or ``REJECT``, with the reason.
-    """
-    if quota is None:
-        if usable < threads:
-            return (f"REJECT: no quota, so the cpuset is the cap, and "
-                    f"{usable} cpus cannot run {threads} threads")
-        return (f"ACCEPT: no quota, cpuset of {usable} cpus covers "
-                f"{threads} threads with a core each")
-    required = threads * QUOTA_HEADROOM
-    if quota < required:
-        return (f"REJECT: bandwidth quota of {quota} cores is below the "
-                f"{required} that {threads} spinning threads need")
-    return (f"ACCEPT: bandwidth quota of {quota} cores clears the "
-            f"{required} that {threads} spinning threads need")
-
-
-def gate_preview(cpu_axes: list[str]) -> list[str]:
-    """The gate's verdict on the two host kinds, for ``--dry-run``."""
-    if not cpu_axes:
-        return []
-    threads = max(spec_threads(axis) for axis in cpu_axes)
-    return [
-        f"gate at {threads}t on a cpu pod (cpuset, no quota, {threads} cpus): "
-        + gate_verdict(threads, quota=None, usable=threads),
-        f"gate at {threads}t on a gpu pod (quota 13.6 cores, 128 cpus): "
-        + gate_verdict(threads, quota=13.6, usable=128),
-    ]
 
 
 # Supersede ========================================================================================
@@ -462,10 +384,9 @@ def _run_session(key: str, args: argparse.Namespace, *, plane: str,
     not collide (one dated file per axis), and the GPU session owns the
     parity and A/B rows, which are cuda measurements the CPU pod skips.
     """
-    pod_id = _create_pod(key, pubkey, plane=plane, flavor=args.cpu_flavor,
-                         vcpu=args.cpu_vcpu)
+    pod_id = _create_pod(key, pubkey, plane=plane, vcpu=args.cpu_vcpu)
     print(f"{plane} pod {pod_id} created for {', '.join(axes)}; waiting for ssh")
-    host_tag = (f"cpupod-{args.cpu_flavor}-{args.cpu_vcpu}vcpu"
+    host_tag = (f"cpupod-{CPU_FLAVOR}-{args.cpu_vcpu}vcpu"
                 if plane == PLANE_CPU else "")
     # The A/B compares cuda growers against a released wheel; only the GPU
     # session can run it, so the CPU pod is never asked to.
@@ -509,8 +430,7 @@ def _api(url: str, key: str, payload: dict | None = None,
     return json.loads(body) if body.strip() else {}
 
 
-def _create_pod(key: str, pubkey: str, *, plane: str, flavor: str,
-                vcpu: int) -> str:
+def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int) -> str:
     """Create a standings pod for one plane, with the mandated PUBLIC_KEY env.
 
     A GPU pod is bought by device. A CPU pod is bought by vCPU, which is the
@@ -521,7 +441,7 @@ def _create_pod(key: str, pubkey: str, *, plane: str, flavor: str,
     body = {"name": name, "imageName": IMAGE, "cloudType": "SECURE",
             "ports": ["22/tcp"], "env": {"PUBLIC_KEY": pubkey}}
     if plane == PLANE_CPU:
-        body |= {"computeType": "CPU", "cpuFlavorIds": [flavor],
+        body |= {"computeType": "CPU", "cpuFlavorIds": [CPU_FLAVOR],
                  "vcpuCount": vcpu, "containerDiskInGb": CPU_DISK_GB}
     else:
         body |= {"gpuTypeIds": [GPU], "gpuCount": 1,

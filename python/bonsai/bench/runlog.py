@@ -261,9 +261,7 @@ def _cfs_quota_cores() -> float | None:
 
 def _cpuset_cores() -> float | None:
     """CPUs in the affinity mask, or None when the mask is the whole machine."""
-    if not hasattr(os, "sched_getaffinity"):
-        return None
-    allowed = len(os.sched_getaffinity(0))
+    allowed = usable_cpus()
     return None if allowed >= (os.cpu_count() or allowed) else float(allowed)
 
 
