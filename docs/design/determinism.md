@@ -2,6 +2,8 @@
 
 The rule: model bytes are identical across runs, across thread counts (outside one documented relaxation), and across CPU architectures, and CI enforces it per commit by training a reference model on an arm64 Mac and an x86-64 Linux box and comparing file hashes.
 
+The rule is about CPU training, and the boundary is worth stating plainly rather than leaving to inference. GPU training accumulates histogram cells with device atomics, so the add order is the scheduler's and the same fit writes different model bytes on every run: four repetitions of one `cuda_depthwise` fit at a single commit produced four different model hashes. No configuration pins that. On the device plane a change is shown to be behavior-preserving by measuring the run-to-run spread and demonstrating the change stays inside it, which is a weaker claim honestly made rather than the same claim quietly extended.
+
 This is not an aesthetic. A bit-exact contract turns "did this change alter behavior?" from a judgment call into a file comparison, and that one property pays for itself everywhere.
 
 ## What the contract caught

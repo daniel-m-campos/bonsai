@@ -33,10 +33,13 @@ Carried-forward stamps. `update_standings.py --restamp-verified` can move an
 axis's `hash_set` to the current digest with no new measurement, for the case
 where the changed sources provably cannot reach the axis. Such an entry keeps
 the file and sha of its last real run and carries a `carried_forward` block
-naming the stamped commit, the reason, and the evidence. It clears the gates
-like any other skip, and every report that clears it says so: the release gate
-labels it "carried-forward stamp" and `--stale` prints a note on stderr, so the
-distinction outlives the commit that made it.
+naming the stamped commit, the reason, and the evidence, which is byte
+identity on the host plane and an equivalence within the measured noise floor
+on the device plane, where model bytes are not reproducible run to run. It
+clears the gates like any other skip, and every report that clears it says so:
+the release gate labels it "carried-forward stamp", the audit line names the
+evidence kind, and `--stale` prints a note on stderr, so the distinction
+outlives the commit that made it.
 
 Reference-library majors are compared against the installed package in this
 environment when available (`importlib.metadata`, no import needed); most
@@ -212,9 +215,11 @@ def hash_skip(axis: str, entry: dict) -> tuple[bool, str]:
         return False, f"reference-library major bumped: {', '.join(bumped)}"
     carried = entry.get("carried_forward")
     if carried:
+        kind = carried.get("evidence", {}).get("kind", "unrecorded")
         return True, (f"{plane} hash set {current} carried forward at "
-                      f"{carried.get('stamped_at')}, still measured at "
-                      f"{carried.get('measured_at')}: {carried.get('reason')}")
+                      f"{carried.get('stamped_at')} on {kind} evidence, still "
+                      f"measured at {carried.get('measured_at')}: "
+                      f"{carried.get('reason')}")
     return True, f"{plane} hash set {current} unchanged, refs current"
 
 
