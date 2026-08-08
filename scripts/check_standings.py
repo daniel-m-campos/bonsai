@@ -29,6 +29,15 @@ Perf axes lean on the plane split: a CUDA-only change cannot move a CPU-plane
 wall clock, so the cpu axes stay current across it and the refresh skips them,
 which is the whole point of registry v2's `plane` field.
 
+Carried-forward stamps. `update_standings.py --restamp-verified` can move an
+axis's `hash_set` to the current digest with no new measurement, for the case
+where the changed sources provably cannot reach the axis. Such an entry keeps
+the file and sha of its last real run and carries a `carried_forward` block
+naming the stamped commit, the reason, and the evidence. It clears the gates
+like any other skip, and every report that clears it says so: the release gate
+labels it "carried-forward stamp" and `--stale` prints a note on stderr, so the
+distinction outlives the commit that made it.
+
 Reference-library majors are compared against the installed package in this
 environment when available (`importlib.metadata`, no import needed); most
 release-gate runs have no bench extras installed, so this falls back to
@@ -106,12 +115,14 @@ def check_release(reg: dict, version: str) -> list[str]:
             errors.append(f"{axis}: never refreshed (no measurement sha); "
                           "run the standings refresh before releasing")
             continue
-        if e.get("refreshed_for") == version:
+        if e.get("refreshed_for") == version and not e.get("carried_forward"):
             print(f"{axis}: fresh refresh for {version!r}")
             continue
         ok, reason = hash_skip(axis, e)
         if ok:
-            print(f"{axis}: hash-unchanged skip ({reason})")
+            label = ("carried-forward stamp" if e.get("carried_forward")
+                     else "hash-unchanged skip")
+            print(f"{axis}: {label} ({reason})")
         else:
             errors.append(
                 f"{axis}: refreshed for {e.get('refreshed_for')!r}, not "
@@ -199,7 +210,33 @@ def hash_skip(axis: str, entry: dict) -> tuple[bool, str]:
     bumped = bumped_ref_majors(entry.get("refs", {}))
     if bumped:
         return False, f"reference-library major bumped: {', '.join(bumped)}"
+    carried = entry.get("carried_forward")
+    if carried:
+        return True, (f"{plane} hash set {current} carried forward at "
+                      f"{carried.get('stamped_at')}, still measured at "
+                      f"{carried.get('measured_at')}: {carried.get('reason')}")
     return True, f"{plane} hash set {current} unchanged, refs current"
+
+
+def carried_forward_notes(reg: dict) -> list[str]:
+    """Audit lines for axes riding a carried-forward stamp, not a fresh run.
+
+    A carry-forward passes the gates exactly like a measured stamp, so the
+    distinction only survives if every report that clears an axis says which
+    kind of stamp cleared it.
+
+    Parameters
+    ----------
+    reg : dict
+        The loaded registry.
+
+    Returns
+    -------
+    list[str]
+        One line per currently valid carry-forward, in registry order.
+    """
+    return [f"{axis}: {hash_skip(axis, e)[1]}" for axis, e in reg.items()
+            if e.get("carried_forward") and hash_skip(axis, e)[0]]
 
 
 def bumped_ref_majors(refs: dict) -> list[str]:
@@ -272,6 +309,9 @@ def main() -> int:
         # One name per line and nothing else: the refresh driver reads this.
         for axis in stale_axes(reg):
             print(axis)
+        for note in carried_forward_notes(reg):
+            print(f"note: carried-forward stamp, not a run: {note}",
+                  file=sys.stderr)
         return 0
     else:
         print("usage: check_standings.py --decisions | --release <version> "
