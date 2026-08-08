@@ -43,7 +43,7 @@ Every claim links a reproducible run and the decision that records it; the point
 | Claim | Evidence |
 |---|---|
 | **Bit-identical models across CPU architectures** (arm64 == x86-64) at a fixed thread count; no reference library offers this | decisions [59/60](../decisions.md); asserted per-commit by [`cross-arch.yml`](../../.github/workflows/cross-arch.yml) via [`scripts/model_hash.py`](../../scripts/model_hash.py); [the contract](../design/determinism.md) |
-| **Best mean rank on the 55-task Grinsztajn benchmark under either min_child_weight convention** (36 outright wins; second-or-better on 50/55, never last) | [the standings page](results/quality-grinsztajn.md), [grinsztajn-2026-07](../../benchmarks/grinsztajn-2026-07.md), decision 68 |
+| **Best mean rank on the 55-task Grinsztajn benchmark under either min_child_weight convention** (36 outright wins; second-or-better on 48/55, never last) | [the standings page](results/quality-grinsztajn.md), [grinsztajn-2026-07](../../benchmarks/grinsztajn-2026-07.md), decision 68 |
 | **Fastest GPU slot at every row scale**; at 16M `levelwise` edges CatBoost and beats XGBoost-GPU at matched accuracy | [the archive](results/archive.md), [scale-edge](../../benchmarks/catboost-scale-edge-2026-07.md), decisions 62 to 64 |
 | **Fastest at every measured width and aspect ratio**, with measured device memory that sizes to the problem | [the archive](results/archive.md), decisions 90 and 91 |
 | **The only GBT whose GPU path ships in a 2.3MB pip install, validated on live GPU hardware per release** | decision 70; [`wheels.yml`](../../.github/workflows/wheels.yml) |

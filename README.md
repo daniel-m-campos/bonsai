@@ -86,10 +86,10 @@ On the [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) (
 
 | library | mean rank | outright wins |
 |---|--:|--:|
-| **bonsai** | **1.44** | **36** |
-| lightgbm | 2.51 | 5 |
-| xgboost | 2.84 | 6 |
-| catboost | 3.22 | 8 |
+| **bonsai** | **1.47** | **36** |
+| lightgbm | 2.40 | 6 |
+| xgboost | 2.93 | 5 |
+| catboost | 3.20 | 8 |
 
 <!-- standings:end -->
 bonsai keeps the lead under either reading of the one knob that translates ambiguously between libraries, which [the standings page](https://daniel-m-campos.github.io/bonsai/method/results/quality-grinsztajn/) records; reproduce with `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite and `python -m bonsai.bench.grinsztajn out.jsonl --report` to render the standings.

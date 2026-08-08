@@ -14,7 +14,7 @@ On GPU at the tall scenario, fit totals run depthwise 5.6s vs XGBoost 21.7s; lea
 
 ## Quality division
 
-bonsai leads the 55-task Grinsztajn standings at mean rank 1.44 with 36 outright wins, and keeps the lead under either reading of the one knob that translates ambiguously between libraries. Every feature declined by measurement is recorded in the archive.
+bonsai leads the 55-task Grinsztajn standings at mean rank 1.47 with 36 outright wins, and keeps the lead under either reading of the one knob that translates ambiguously between libraries. Every feature declined by measurement is recorded in the archive.
 
 | page | what it holds |
 |---|---|

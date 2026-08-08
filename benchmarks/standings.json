@@ -156,24 +156,23 @@
     }
   },
   "quality-grinsztajn": {
-    "file": "grinsztajn-2026-07.jsonl",
-    "sha": "b3267d5",
+    "file": "grinsztajn-2026-08.jsonl",
+    "sha": "6db4aee",
     "host": "MacBook-Air-M2.local",
-    "date": "2026-07-15",
-    "refreshed_for": "1.6.1",
+    "date": "2026-08-08",
+    "refreshed_for": "1.7.0",
     "as_of_decision": 92,
     "sha_partial": true,
-    "hash_set": "ded60c851f52cd8d",
+    "hash_set": "6b5329b2d128917f",
     "refs": {
-      "xgboost": "3.2.0",
+      "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
-    },
-    "note": "Library split: bonsai rows carry schema v1, reference rows predate provenance; the mcw1 bracket file rides along. Slow clock: refresh on engine quality changes or reference-library majors regenerates all arms (mechanically gated by scripts/check_standings.py's hash-unchanged skip)."
+    }
   },
   "code": {
     "file": "code-metrics-2026-07.jsonl",
-    "sha": "1ead47579afdd9bd5a61c9737d43007354e9d50d",
+    "sha": "6db4aeed019bbed1179d76c8cb9c4b75606f5cad",
     "host": null,
     "date": null,
     "refreshed_for": "1.7.0",
