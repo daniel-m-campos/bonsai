@@ -23,7 +23,7 @@ The engine already represents a fitted feature as an explicit cut vector inside 
 
 1. `BinMapper::from_cuts(std::vector<float>)` beside the fitting path (validation + the same missing/+inf sentinel handling).
 2. `BinMappers::fit(...)` gains an optional per-column override map; overridden columns skip sampling and fitting entirely.
-3. `module.cpp Dataset` gains the `bin_edges` argument (dict of int to float array) and threads it through; the sealed-config guard extends to it.
+3. `module.cpp Dataset` gains the `bin_edges` argument (dict of int to float array) and threads it through. The sealed-config guard does not extend to it and does not need to: the guard rejects `bin_mapper.*` param pairs and a `[bin_mapper]` config section on `train(params, dataset)`, and there is no param key or config section by which a later `train()` could restate edges. Edges enter only through the `Dataset` constructor.
 4. No model-format bump (cuts already serialize), no hot-path branches (binning is ingest-time), no CUDA change (the device plane consumes mappers as-is).
 
 Estimate: 100 to 150 lines core-adjacent plus tests; the predict/save/load round-trip on raw values is the acceptance test that the emulation structurally cannot pass.
