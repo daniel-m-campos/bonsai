@@ -6,6 +6,8 @@ Per-component design docs. Numbered roughly in build order. Source of truth for 
 
 > **Naming note.** These bodies are kept as written, so they call the symmetric-tree grower `oblivious` and its CUDA twin `cuda_oblivious`. Those config names are now `levelwise` and `cuda_levelwise`; the C++ types (`ObliviousTree`, `ObliviousGrower`) keep the old spelling because the *tree* is oblivious while the *growth policy* is level-wise. See the CHANGELOG entry for the break.
 
+> **Deleted-symbol note (2026-08-09).** An audit removed code these bodies name in the present tense. The bodies stay as written, so read the following as history: `finalize_rows` (docs 10, 12, 13, 14, 20) is gone from all six sites including the `GPULevelEngine` concept clause, because `finalize_tree` already downloads everything the epilogue needs; and `Dataset::is_categorical` with its backing flag (docs 1 and 17) is gone, having stayed always-false since doc 17's design was declined by measurement.
+
 ## Contents
 
 | # | Doc | Status |

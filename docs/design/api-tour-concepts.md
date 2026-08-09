@@ -97,7 +97,7 @@ Lives in [`include/bonsai/grower.hpp`](../../include/bonsai/grower.hpp).
 ## GPULevelEngine: the device cluster, all or nothing
 
 When histograms, rows, and split finding all stay on the GPU, only decisions and counts cross the bus.
-`GPULevelEngine` refines `HistogramEngine` with the whole device vocabulary: `begin_root`, `find_splits_many`, `partition_level`, `advance_level`, `stamp_leaves`, `finalize_rows`, and the resident-objective seam.
+`GPULevelEngine` refines `HistogramEngine` with the whole device vocabulary: `begin_root`, `find_splits_many`, `partition_level`, `advance_level`, `stamp_leaves`, `finalize_tree`, and the resident-objective seam.
 Why one concept and not seven: the device data plane works whole or not at all.
 So `begin_root` returns a single `bool` that the grow loop captures once as the per-tree mode ([grower-backend doc](../architecture/12-grower-backend.md)).
 What a new device backend must honor: satisfy the floor `HistogramEngine` too, because the decline path falls back to the exact host operations.
