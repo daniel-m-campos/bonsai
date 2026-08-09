@@ -54,15 +54,20 @@ of configuration, never of scheduling.
   resolved count is part of the model's identity and a clamp would change
   the model bytes a container produces. Design notes in
   [architecture/7-parallel.md](../architecture/7-parallel.md).
-- Histogram fill ([`src/grower.cpp`](../../src/grower.cpp)): u16 bins
-  keep the feature-parallel shape (`fill_feature_parallel`): each
-  feature's histogram owned by one thread, filled in row order,
-  determinism by ownership. u8 bins use the row-wise fill
-  (`populate_many`/`fill_sparse`, decisions 49 and 105): *row chunks*
-  stream a row-major mirror, and a node touched by more than one thread
-  range owns a partial per extra range, reduced in fixed range order; the
-  partition derives from the configured thread count, which is exactly
-  where the fixed-count contract comes from.
+- Histogram fill ([`src/grower.cpp`](../../src/grower.cpp)): the routing
+  is per node, not per bin width. u16 bins keep the feature-parallel
+  shape (`fill_feature_parallel`): each feature's histogram owned by one
+  thread, filled in row order, determinism by ownership. u8 bins take
+  that same fill whenever the node holds at least a quarter of the rows
+  (`k_col_fill_den = 4`), and only sparser u8 nodes take the row-wise
+  fill (`populate_many`/`fill_sparse`, decisions 49 and 105): *row
+  chunks* stream a row-major mirror, tiled into 2048-feature blocks, and
+  a node touched by more than one thread range owns a partial per extra
+  range, reduced in fixed range order; the partition derives from the
+  configured thread count, which is exactly where the fixed-count
+  contract comes from. So the dense nodes near the root stay
+  bit-identical at any thread count, and the contract narrows only for
+  the sparse nodes deeper in the tree.
 - Split scan ([`src/split.cpp`](../../src/split.cpp)): the levelwise
   finder is feature-parallel, each feature finding its own best
   independently and the winners merging **serially in feature order**, so

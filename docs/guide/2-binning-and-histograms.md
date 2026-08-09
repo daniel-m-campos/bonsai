@@ -77,18 +77,23 @@ most important optimization in histogram GBT.
   duplicated across every feature of the node, and were hoisted to a
   once-per-node cell sweep (`totals()`; decision 33).
 - **Building per node**: `CpuHistogramEngine::populate_many` in
-  [`src/grower.cpp`](../../src/grower.cpp), which picks one of two fills.
-  u8 bins (the `max_bin ≤ 255` default) take the **row-wise fill**
-  (`fill_sparse`, decisions 49 and 105): row chunks stream a row-major
-  mirror of the bins (`Dataset::row_major_bins`), reading each row's
-  bins as one contiguous stretch of bytes (full cache lines at any node
-  sparsity) into at most one partial histogram per thread, reduced in
-  fixed order. u16 bins keep the
-  **feature-parallel fill** (`fill_feature_parallel`): one thread owns one
-  feature's histogram and walks that column. Why two: the column walk
-  reads `bins[rows[k]]` at random row offsets, which is fine when a node
-  holds most rows and disastrous (one cache line per *byte* used) when a
-  deep node's rows are sparse: the row-wise shape fixed a measured 5×
+  [`src/grower.cpp`](../../src/grower.cpp), which routes each node to one
+  of two fills. The choice is not simply u8 against u16. u16 bins always
+  take the **feature-parallel fill** (`fill_feature_parallel`): one thread
+  owns one feature's histogram and walks that column. u8 bins (the
+  `max_bin ≤ 255` default) are routed per node by density. A node holding
+  at least a quarter of the rows takes that same feature-parallel fill
+  (`k_col_fill_den = 4`); only the sparse remainder takes the **row-wise
+  fill** (`fill_sparse`, decisions 49 and 105). The row-wise fill streams
+  row chunks over a row-major mirror of the bins
+  (`Dataset::row_major_bins`), reading each row's bins as one contiguous
+  stretch of bytes into at most one partial histogram per thread range,
+  reduced in fixed order. That mirror is column-block-tiled at 2048
+  features (`Dataset::mirror_tile_width`), so one block's histograms stay
+  cache-resident on wide data. Why route at all: the column walk reads
+  `bins[rows[k]]` at random row offsets, which is fine when a node holds
+  most rows and disastrous (one cache line per *byte* used) when a deep
+  node's rows are sparse. The row-wise shape fixed a measured 5×
   dense-vs-sparse throughput gap ([chapter 9](9-parallelism-and-determinism.md)
   has the determinism price).
 - **The subtraction trick**: `plan_level`/`build_children` route every

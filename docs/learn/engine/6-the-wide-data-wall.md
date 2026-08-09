@@ -45,13 +45,13 @@ The real mechanism is the feature-parallel fill's own scattered side. Below the 
 
 ## What shipped
 
-One constant: levels whose selected-histogram footprint exceeds 24MB take the feature-parallel fill. That flips only the ultra-wide shapes that lost on every measured host, and leaves 4,096-column shapes on the row path that a big L3 wins. The narrow path is code-identical below the threshold, and the fixed-input model hash proved it byte for byte. Above it, models change bytes at identical accuracy, and gain something the row path never had: the feature-parallel fill's sums are bit-identical at any thread count.
+One constant: levels whose selected-histogram footprint exceeds 24MB take the feature-parallel fill. Read that in the past tense. The epilogue below retired the constant the next day, and there is no footprint threshold in the code today; what routes a node on main is the u8 density cutoff of chapter 9 in the guide. That flips only the ultra-wide shapes that lost on every measured host, and leaves 4,096-column shapes on the row path that a big L3 wins. The narrow path is code-identical below the threshold, and the fixed-input model hash proved it byte for byte. Above it, models change bytes at identical accuracy, and gain something the row path never had: the feature-parallel fill's sums are bit-identical at any thread count.
 
 | cell (t=16, same pod) | grower | before | after | LightGBM CPU |
 |--|--|--:|--:|--:|
 | 1M x 4096 | depthwise | 348s | unchanged | 382s |
 
-The 131k x 16384 rows of the same ladder, where the routing collapsed a 7x deficit to parity, are in [the archive](../../method/results/archive.md).
+The 131k x 16384 rows of the same ladder, where the routing collapsed a 7x deficit to parity, are in [the archive](../../method/results/archive.md). That parity is a 2026-07 reading; the epilogue closes with where wide CPU stands now.
 
 Peak memory at the wide cell: 18.8GB against LightGBM's 50.1GB.
 
@@ -63,10 +63,12 @@ The discipline held: the price list came before the lever, and the lever was rou
 
 ## Epilogue: the wall dissolves
 
-The threshold lived one day. Its recorded residual, XGBoost 3.3's column-tiling lever, was probed the next morning: store the mirror in 2048-feature blocks, each row-major on its own, and run the fill tiles outer, rows inner. Now the scattered side always fits, because the live target is one block's histograms at any width, and the sequential side stays sequential inside each block. The choice between the two fills stopped existing, which is different from being made well.
+The threshold lived one day. Its recorded residual, XGBoost 3.3's column-tiling lever, was tried the next morning and shipped that day (decision 89): store the mirror in 2048-feature blocks, each row-major on its own, and run the fill tiles outer, rows inner. That is the layout on main, `Dataset::mirror_tile_width`. Now the scattered side always fits, because the live target is one block's histograms at any width, and the sequential side stays sequential inside each block. The choice between the two fills stopped existing, which is different from being made well.
 
-The probe's interleaved A/B beat both strategies at their own best cells: 326s against the row path's 369 at 1M x 4096, 442s against feature-parallel's 514 at 131k x 16384, a wash at 16M x 100. And because tiling never changes a feature's accumulation order, the tiled fill produces bit-identical models to the classic row path at every width, so the determinism contract came out stronger than either strategy could make it. The chapter's closing lesson gains its final form: when a trade-off is real, ship the honest threshold and record what it leaves on the table, and then look for the restructuring that makes the trade-off imaginary. It existed here, one layout change away, published in a competitor's release notes all along.
+The admitting interleaved A/B beat both strategies at their own best cells: 326s against the row path's 369 at 1M x 4096, 442s against feature-parallel's 514 at 131k x 16384, a wash at 16M x 100. And because tiling never changes a feature's accumulation order, the tiled fill produces bit-identical models to the classic row path at every width, so the determinism contract came out stronger than either strategy could make it. The chapter's closing lesson gains its final form: when a trade-off is real, ship the honest threshold and record what it leaves on the table, and then look for the restructuring that makes the trade-off imaginary. It existed here, one layout change away, published in a competitor's release notes all along.
 
 The CUDA wide wall this case left as a residual got the same treatment on 2026-07-30, and it had already fallen: the recorded deficit dated to 2026-07-08 code, and on current main the CUDA growers lead every wide cell (refutation-by-progress, decision 90). The iso-volume frontier (decision 91) then measured the shape axis wholesale, holding rows x cols constant while width swept 128 to 65536 columns; both are in [the archive](../../method/results/archive.md).
+
+**Where wide CPU stands today (2026-08-08 note).** The parity this case won is a 2026-07 reading and it did not carry to the current scenario. On the standings' cpu-wide cell (16k x 16384) depthwise trains in 96.8s against XGBoost's 134.9s, and leafwise trains in 516.7s against LightGBM's 57.2s. The depthwise lead held; the leaf plane's parity did not, and it is a named gap rather than a closed one. Current numbers are on [the perf standings](../../method/results/perf.md); every number in this chapter is the campaign's.
 
 Evidence: [benchmarks/wide-cpu-hist-2026-07.md](https://github.com/daniel-m-campos/bonsai/blob/main/benchmarks/wide-cpu-hist-2026-07.md); decisions 88 to 91; the ratifying field report is issue #217.
