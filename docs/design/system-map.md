@@ -87,8 +87,4 @@ The [dispatch doc](../architecture/6-dispatch.md) records how it is held: prune 
 
 ## Where to go next
 
-- [Concepts to types](api-tour-concepts.md): the concepts above as an implementer's surface, with the requires-clauses.
-- [The HPC tension](the-hpc-tension.md): where these seams meet the GPU, and what they cost.
-- [Determinism as a contract](determinism.md): why the same inputs produce the same model bytes.
-- [The API in one read](../use/api-tour.md): the user-facing surface, estimators and `train` and config keys.
-- The full historical record is the [architecture notes](../architecture/README.md) and the [decisions log](../decisions.md).
+Read [Concepts to types](api-tour-concepts.md) next: it turns the seams above into an implementer's surface, with the requires-clauses. The rest of the Design section follows it in the nav, and the full historical record is the [architecture notes](../architecture/README.md) and the [decisions log](../decisions.md).

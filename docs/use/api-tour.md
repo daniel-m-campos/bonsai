@@ -146,20 +146,7 @@ On linux x86_64 the release wheel trains on GPU out of the box: any NVIDIA drive
 
 ## Reproducing the benchmarks
 
-The harness behind every published table ships in the package. `pip install bonsai-gbt[bench]` adds the reference libraries, then `python -m bonsai.bench.grinsztajn out.jsonl` runs the external standings suite and `--report` renders the standings from the jsonl; [Running the benchmarks](benchmarks.md) walks every suite. The building blocks are importable directly:
-
-```{.python .run}
-import bonsai
-from bonsai.bench import metrics, params, synth
-
-X_train, y_train, X_test, y_test = synth.gen_data(
-    10_000, 20, seed=42, n_test=1_000, informative=20)
-model = bonsai.BonsaiRegressor(n_iters=8).fit(X_train, y_train)
-print(round(metrics.r2(y_test, model.predict(X_test)), 3),
-      params.CAMPAIGN["iters"])
-```
-
-The protocol (divisions, metrics, timing modes) is the [benchmark charter](https://daniel-m-campos.github.io/bonsai/method/benchmark-protocol/).
+`bonsai.bench` is the harness behind every published table and it ships in the package. [Running the benchmarks](benchmarks.md) walks every suite, from the one-line `[bench]` install to custom spec-driven ladders.
 
 ## What to read next
 
