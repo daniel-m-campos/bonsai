@@ -139,9 +139,10 @@ fit-benchmark: build $(TOY_SENTINEL)  ## Compare bonsai against reference librar
 	@uv run scripts/compare.py --config configs/california_housing.toml $(ARGS)
 
 # Scaling suite (benchmarks/README.md): synthetic rows/cols/bins/threads
-# sweep vs xgboost/lightgbm/catboost, appends benchmarks/results/scaling.jsonl.
+# sweep vs xgboost/lightgbm/catboost. The ladders are bundled specs, one per
+# axis: ARGS='run --spec scaling-rows' (also scaling-cols/-bins/-threads).
 # Uses the CUDA module tree when present, else the CPU one.
-bench-scaling:  ## Run the synthetic rows/cols/bins/threads scaling sweep.
+bench-scaling:  ## Run a synthetic scaling spec (ARGS='run --spec scaling-rows').
 	@PYTHONPATH=$(if $(wildcard build-cuda/python),build-cuda/python,build/python) \
 	    uv run scripts/bench_scaling.py $(ARGS)
 

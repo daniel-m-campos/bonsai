@@ -39,7 +39,10 @@ classifiers = [
 # with a deliberate driver/image bump.
 # nvidia-ml-py gives the VRAM sampler per-pid attribution via NVML, which works
 # inside containers where nvidia-smi's PID namespace does not.
-bench = ["xgboost>=3.2,<3.4", "lightgbm", "catboost", "scikit-learn", "pandas", "openml", "nvidia-ml-py"]
+# scikit-learn is NOT listed: no bench module needs it. metrics.auc prefers
+# roc_auc_score when it happens to be importable and otherwise computes the
+# same tie-aware rank statistic itself.
+bench = ["xgboost>=3.2,<3.4", "lightgbm", "catboost", "pandas", "openml", "nvidia-ml-py"]
 test = ["pytest"]
 
 [project.urls]

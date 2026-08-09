@@ -292,7 +292,6 @@ def run_jobs(jobs: list[dict], *, out: str, suite: str, knobs: dict,
     sink = _Sink(out_path=out_path, suite=suite, knobs=knobs, host=host,
                  run_label=run_label)
     done = resume_keys(resume_path) if resume_path else set()
-    warmed: set[str] = set()
     for job in jobs:
         cell, variant, threads = (job[runlog.Row.CELL], job[runlog.Row.VARIANT],
                                   job[runlog.Row.THREADS])
@@ -311,9 +310,6 @@ def run_jobs(jobs: list[dict], *, out: str, suite: str, knobs: dict,
         if dry_run:
             _print_dry_plan(sink, job, cell, timeout, done)
             continue
-        if v.device == Device.CUDA and v.lib not in warmed:
-            _warm_gpu(cell, variant, data_cache)
-            warmed.add(v.lib)
         sample = mem_sampler and v.device == Device.CUDA
         for rep in range(job["repeats"]):
             if _job_key(job, rep, sink.host_name, run_label) in done:
@@ -469,13 +465,3 @@ def _print_dry_plan(sink: _Sink, job: dict, cell: dict, timeout: int,
           f"repeats={job['repeats']}"
           + (f" resume-skip={already}/{job['repeats']}" if already else ""))
 
-
-def _warm_gpu(cell: dict, variant: str, data_cache: str | None):
-    """One tiny unrecorded fit so CUDA context/JIT cost stays out of rep 0."""
-    warm_cell = {"axis": "warmup", "rows": 32_768, "cols": 16,
-                 "bins": 63, "bins_effective": 63,
-                 "depth": cell["depth"], "iters": 5, "lr": cell["lr"],
-                 "informative": cell["informative"], "n_test": 1024,
-                 "seed": cell["seed"]}
-    run_one({runlog.Row.CELL: warm_cell, runlog.Row.VARIANT: variant,
-             runlog.Row.THREADS: 4}, timeout=600, data_cache=data_cache)

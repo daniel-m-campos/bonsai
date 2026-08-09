@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from bonsai._bonsai import Model, load, train
-from bonsai._coerce import _as_1d_f32, _as_2d_f32, _to_config_str
+from bonsai._coerce import _as_f32, _to_config_str
 
 __all__ = ["BonsaiClassifier", "BonsaiRegressor"]
 
@@ -141,12 +141,12 @@ class _BonsaiEstimator:
         starts at the head, because a boosted sum has no meaning without
         it."""
         self._check_fitted("fit() or load first")
-        return np.asarray(self._model.predict(_as_2d_f32(X), num_iteration))
+        return np.asarray(self._model.predict(_as_f32(X, 2, "X"), num_iteration))
 
     def staged_predict(self, X) -> np.ndarray:
         """(n_iters, n_rows): predictions after each boosting iteration."""
         self._check_fitted()
-        return np.asarray(self._model.staged_predict(_as_2d_f32(X)))
+        return np.asarray(self._model.staged_predict(_as_f32(X, 2, "X")))
 
     def predict_leaf(self, X) -> np.ndarray:
         """(n_rows, n_trees): per-tree leaf indices (feature engineering /
@@ -155,7 +155,7 @@ class _BonsaiEstimator:
         columns and column ``t`` is round ``t // n_classes``, class
         ``t % n_classes``."""
         self._check_fitted()
-        return np.asarray(self._model.predict_leaf(_as_2d_f32(X)))
+        return np.asarray(self._model.predict_leaf(_as_f32(X, 2, "X")))
 
     def dump(self) -> str:
         """Every tree as indented text."""
@@ -166,7 +166,7 @@ class _BonsaiEstimator:
         """(n_rows, n_features + 1) TreeSHAP contributions; last column is
         the bias. Rows sum to the raw (pre-link) prediction exactly."""
         self._check_fitted()
-        return np.asarray(self._model.pred_contribs(_as_2d_f32(X)))
+        return np.asarray(self._model.pred_contribs(_as_f32(X, 2, "X")))
 
     def importance(self, type: str = "gain") -> np.ndarray:
         """Raw per-feature importance: total split gain or split count."""
@@ -179,11 +179,6 @@ class _BonsaiEstimator:
         raw = self.importance("gain")
         total = raw.sum()
         return raw / total if total > 0 else raw
-
-    def apply(self, X) -> np.ndarray:
-        """sklearn's name for per-tree leaf indices (as on
-        ``GradientBoostingRegressor``); same as ``predict_leaf``."""
-        return self.predict_leaf(X)
 
     def save(self, path: str):
         """Serialize the fitted model to a ``.msgpack`` file."""
@@ -425,11 +420,11 @@ class BonsaiRegressor(_BonsaiEstimator):
         ev = None
         if eval_set is not None:
             self._reject_dart_eval_set(pairs)
-            ev = (_as_2d_f32(eval_set[0]), _as_1d_f32(eval_set[1]))
-        sw = None if sample_weight is None else _as_1d_f32(sample_weight)
-        Xa = _as_2d_f32(X)
+            ev = (_as_f32(eval_set[0], 2, "X"), _as_f32(eval_set[1], 1, "y"))
+        sw = None if sample_weight is None else _as_f32(sample_weight, 1, "sample_weight")
+        Xa = _as_f32(X, 2, "X")
         self._model = train(
-            pairs, Xa, _as_1d_f32(y), ev, init_model, self.config,
+            pairs, Xa, _as_f32(y, 1, "y"), ev, init_model, self.config,
             sample_weight=sw,
         )
         self.n_features_in_ = Xa.shape[1]
@@ -438,9 +433,10 @@ class BonsaiRegressor(_BonsaiEstimator):
     def score(self, X, y, sample_weight=None) -> float:
         """R² (coefficient of determination), matching sklearn's
         ``RegressorMixin.score`` — computed by hand, no sklearn import."""
-        y_true = _as_1d_f32(y).astype(np.float64)
+        y_true = _as_f32(y, 1, "y").astype(np.float64)
         y_pred = np.asarray(self.predict(X), dtype=np.float64)
-        w = None if sample_weight is None else _as_1d_f32(sample_weight).astype(np.float64)
+        w = (None if sample_weight is None
+             else _as_f32(sample_weight, 1, "sample_weight").astype(np.float64))
 
         if w is None:
             avg_true = y_true.mean()
@@ -553,8 +549,8 @@ class BonsaiClassifier(_BonsaiEstimator):
         if eval_set is not None:
             self._reject_dart_eval_set(pairs)
             ev = self._encode_eval_set(eval_set)
-        sw = None if sample_weight is None else _as_1d_f32(sample_weight)
-        Xa = _as_2d_f32(X)
+        sw = None if sample_weight is None else _as_f32(sample_weight, 1, "sample_weight")
+        Xa = _as_f32(X, 2, "X")
         self._model = train(
             pairs, Xa, y_enc, ev, init_model, self.config,
             sample_weight=sw,
@@ -566,7 +562,7 @@ class BonsaiClassifier(_BonsaiEstimator):
         """Original class labels (from ``classes_``), not the encoded
         ``0..K-1`` ids the native booster works in."""
         self._check_fitted("fit() or load first")
-        raw = np.asarray(self._model.predict(_as_2d_f32(X), num_iteration))
+        raw = np.asarray(self._model.predict(_as_f32(X, 2, "X"), num_iteration))
         if self.n_classes_ == 2:
             idx = (raw >= 0.5).astype(np.int64)
         else:
@@ -583,9 +579,9 @@ class BonsaiClassifier(_BonsaiEstimator):
         """
         self._check_fitted("fit() or load first")
         if self.n_classes_ == 2:
-            p = np.asarray(self._model.predict(_as_2d_f32(X)), dtype=np.float64)
+            p = np.asarray(self._model.predict(_as_f32(X, 2, "X")), dtype=np.float64)
             return np.column_stack([1.0 - p, p])
-        return np.asarray(self._model.predict_proba(_as_2d_f32(X)), dtype=np.float64)
+        return np.asarray(self._model.predict_proba(_as_f32(X, 2, "X")), dtype=np.float64)
 
     def score(self, X, y, sample_weight=None) -> float:
         """Accuracy, matching sklearn's ``ClassifierMixin.score`` — computed
@@ -596,7 +592,7 @@ class BonsaiClassifier(_BonsaiEstimator):
 
         if sample_weight is None:
             return float(correct.mean())
-        w = _as_1d_f32(sample_weight).astype(np.float64)
+        w = _as_f32(sample_weight, 1, "sample_weight").astype(np.float64)
         if w.sum() == 0.0:
             raise ValueError("sample_weight sums to zero; accuracy is undefined")
         return float(np.average(correct, weights=w))
@@ -659,7 +655,7 @@ class BonsaiClassifier(_BonsaiEstimator):
                 f"eval_set labels {np.unique(ev_y_arr[bad])!r} are not in the "
                 f"training classes {self.classes_!r}"
             )
-        return (_as_2d_f32(eval_set[0]), _as_1d_f32(ev_y))
+        return (_as_f32(eval_set[0], 2, "X"), _as_f32(ev_y, 1, "y"))
 
 
 # Private Functions ================================================================================

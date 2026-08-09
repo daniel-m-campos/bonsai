@@ -60,7 +60,7 @@ def test_full_regressor_script():
     assert pred.shape == yva.shape
     head = est.predict(Xva, num_iteration=5)
     assert not np.allclose(head, pred)
-    leaves = est.apply(Xva)
+    leaves = est.predict_leaf(Xva)
     assert leaves.shape[0] == Xva.shape[0]
     assert est.feature_importances_.shape == (Xtr.shape[1],)
 
