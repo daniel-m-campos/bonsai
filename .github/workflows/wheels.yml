@@ -242,17 +242,24 @@ jobs:
       # land because checkout cleans the workspace.
       - uses: actions/checkout@v4
 
+      # Scoped by pattern: the model-hash artifacts are a CI cross-check,
+      # not package files, and must never reach dist/.
       - uses: actions/download-artifact@v4
         with:
+          pattern: wheel-*
           path: dist
           merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
 
       # The linux x86_64 wheel is the CUDA-enabled one; it attaches only
       # after passing on a real GPU (the pod gate), never straight from a
       # GPU-less build. arm64/macOS wheels and the sdist attach here.
       - name: Withhold the CUDA wheel pending the GPU gate
         run: |
-          rm -f dist/model-hash.txt
           ls dist/
           rm -f dist/*manylinux*_x86_64*.whl
           echo "after withholding the CUDA (linux x86_64) wheel:"
@@ -537,14 +544,21 @@ jobs:
     permissions:
       id-token: write
     steps:
+      # Scoped by pattern: the model-hash artifacts are a CI cross-check,
+      # not package files, and must never reach dist/.
       - uses: actions/download-artifact@v4
         with:
+          pattern: wheel-*
           path: dist
           merge-multiple: true
 
-      - name: Withhold the CUDA wheel and non-package files
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+      - name: Withhold the CUDA wheel
         run: |
-          rm -f dist/model-hash.txt
           rm -f dist/*manylinux*_x86_64*.whl
           ls dist/
 
@@ -561,14 +575,17 @@ jobs:
     permissions:
       id-token: write
     steps:
+      # Scoped by pattern: the model-hash artifacts are a CI cross-check,
+      # not package files, and must never reach dist/.
       - uses: actions/download-artifact@v4
         with:
+          pattern: wheel-*
           path: dist
           merge-multiple: true
 
-      - name: Drop non-package files
-        run: |
-          rm -f dist/model-hash.txt
-          ls dist/
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
 
       - uses: pypa/gh-action-pypi-publish@release/v1

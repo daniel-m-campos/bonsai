@@ -1,5 +1,3 @@
-CAVEMAN_URL  := https://raw.githubusercontent.com/juliusbrussee/caveman/main/skills/caveman/SKILL.md
-SKILLS_DIR   := .claude/skills
 SOURCES      := $(shell find src include tests benchmarks -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.cu' -o -name '*.cuh' \) 2>/dev/null)
 # src/python is excluded: the nanobind NB_MODULE macro and capsule-deleter
 # FFI patterns trip cppcoreguidelines checks that don't apply to boundary code.
@@ -69,8 +67,6 @@ test-asan: build-asan $(TOY_SENTINEL)  ## Build the ASan + UBSan variant and run
 clean:  ## Remove build/, build-cuda/, and build-asan/.
 	@rm -rf build build-cuda build-asan
 
-rebuild: clean build  ## Clean, then build.
-
 format:  ## clang-format in place over src/, include/, tests/, benchmarks/.
 	@$(LLVM_BIN)/clang-format -i $(SOURCES)
 
@@ -97,9 +93,6 @@ lint: build/build.ninja  ## Run clang-tidy over src/, header-filtered to bonsai.
 	if [ $$status -ne 0 ]; then echo "$$log" | tail -20; \
 	    echo "lint: run-clang-tidy failed"; exit 1; fi; \
 	echo "lint: no findings."
-
-run: build  ## Build, then run ./build/src/bonsai with ARGS.
-	@./build/src/bonsai $(ARGS)
 
 # Re-extract the parameters reference input from the built CLI, then rerender
 # docs/use/parameters.md. `bonsai params` dumps the default Config as TOML
@@ -185,15 +178,4 @@ install-hooks:  ## Point core.hooksPath at the versioned hooks (commit-msg forma
 	@git config core.hooksPath scripts/git-hooks
 	@echo "hooks installed: core.hooksPath = scripts/git-hooks"
 
-skills: $(SKILLS_DIR)/caveman/SKILL.md  ## Install project-local Claude Code skills (currently caveman).
-
-$(SKILLS_DIR)/caveman/SKILL.md:
-	@mkdir -p $(@D)
-	@echo "Fetching caveman skill -> $@"
-	@curl -fsSL $(CAVEMAN_URL) -o $@
-	@echo "Done. Restart Claude Code (or trigger a skill rediscovery) to pick it up."
-
-skills-clean:  ## Remove installed project-local skills.
-	rm -rf $(SKILLS_DIR)/caveman
-
-.PHONY: configure build build-cuda build-asan clean rebuild format format-check lint lint-python all run params-json test test-cuda test-asan fit-benchmark bench-scaling bench-iso python python-cuda python-test docs-check install-hooks skills skills-clean help
+.PHONY: configure build build-cuda build-asan clean format format-check lint lint-python all params-json test test-cuda test-asan fit-benchmark bench-scaling bench-iso python python-cuda python-test docs-check install-hooks help
