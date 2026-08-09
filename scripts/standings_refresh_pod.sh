@@ -55,12 +55,13 @@ CPU_BENCH=(env OMP_WAIT_POLICY=passive PYTHONPATH="$BUILD" \
     /opt/venv/bin/python -m bonsai.bench)
 SPECS=/root/bonsai/python/bonsai/bench/specs
 QUOTA_FAIL=/root/standings/quota-fail.txt
-# Extra CPUs per thread demanded of a host that caps by CFS bandwidth. There
-# the threads share one pool of core-seconds, and a spinning barrier spends
-# that pool on waiting, so a fit at threads == quota sits on the ceiling and
-# the timing describes the container. A cpuset host needs no such headroom:
-# each thread owns a core, and a thread that spins burns only its own.
-QUOTA_HEADROOM=1.5
+# A bandwidth host must leave one core of its quota unclaimed, because a fit
+# at threads == quota sits on the ceiling and the timing describes the
+# container rather than the engine. A larger static margin was tried and
+# dropped: no rental reliably offers one, twelve consecutive draws across two
+# gpu families all metered 13.6 cores, and the throttle counters below
+# measure the thing the margin was guessing at.
+QUOTA_SPARE_CORES=1
 # Throttled share of CFS enforcement periods around the axis's first fit that
 # makes the rest of the axis unpublishable. A rented cpu pod caps by cpuset
 # and cannot throttle at all (nr_periods stays 0); a gpu pod caps by CFS
@@ -204,7 +205,7 @@ run_spec() {
 # whole CPUs, so one CPU per thread is enough and a spinning thread only burns
 # the core it already owns. A bandwidth host meters core-seconds across all
 # threads, so spin-wait eats the shared allowance and the quota has to exceed
-# the thread count by the headroom above.
+# the thread count, with the measured throttle share below as the real check.
 run_cpu_axis() {
     axis=$1
     out="/root/standings/$axis-$YM.jsonl"
@@ -218,10 +219,10 @@ run_cpu_axis() {
             return 0
         fi
     else
-        required=$(awk -v t="$spec_threads" -v h="$QUOTA_HEADROOM" \
-            'BEGIN {printf "%.2f", t * h}')
+        required=$(awk -v t="$spec_threads" -v s="$QUOTA_SPARE_CORES" \
+            'BEGIN {printf "%.2f", t + s}')
         if awk -v q="$quota" -v r="$required" 'BEGIN {exit !(q < r)}'; then
-            fail_axis "$axis" "this host meters cpu bandwidth at ${quota} cores, below the ${required} its ${spec_threads}t claim needs (${QUOTA_HEADROOM} per thread, because spin-wait spends the shared allowance); measure the cpu plane on a cpu pod, which caps by cpuset instead"
+            fail_axis "$axis" "this host meters cpu bandwidth at ${quota} cores, below the ${required} its ${spec_threads}t claim needs (one spare core, so the fit is not pinned to the ceiling); draw another pod or lower the spec's thread count"
             return 0
         fi
     fi

@@ -6,7 +6,7 @@
   "cells": [{"rows": 16384, "cols": 16384, "timeout_s": 7200}],
   "variants": ["bonsai_depthwise", "bonsai_leafwise", "bonsai_levelwise",
                "xgb_hist", "lgbm_cpu", "catboost_cpu"],
-  "threads": [16],
+  "threads": [12],
   "repeats": {"default": 1, "cpu": 1},
   "timeout_cap": 7200
 }
