@@ -21,19 +21,12 @@ namespace
 {
 
 using LinkFn     = void (*)(floats_out);
-using EvalFn     = float (*)(Config const &, floats_view, floats_view);
 using DefaultsFn = std::span<std::string_view const> (*)();
 
 struct LinkEntry
 {
     std::string_view name;
     LinkFn           apply;
-};
-
-struct EvalEntry
-{
-    std::string_view name;
-    EvalFn           eval;
 };
 
 struct TaskEntry
@@ -53,12 +46,6 @@ template <typename O> void link_thunk(floats_out scores)
     link_inverse_of<O>::apply(scores);
 }
 
-template <typename O>
-float eval_thunk(Config const &cfg, floats_view scores, floats_view labels)
-{
-    return O{cfg}.eval(scores, labels);
-}
-
 template <typename O> std::span<std::string_view const> defaults_thunk()
 {
     return default_metrics_of<O>::value();
@@ -71,8 +58,6 @@ inline constexpr auto link_table = make_table<Objectives, LinkEntry>(
                       "Objective needs link_inverse_of specialization");
         return LinkEntry{impl_name<O>::value, &link_thunk<O>};
     });
-inline constexpr auto eval_table = make_table<Objectives, EvalEntry>(
-    []<typename O>() { return EvalEntry{impl_name<O>::value, &eval_thunk<O>}; });
 inline constexpr auto task_table = make_table<Objectives, TaskEntry>(
     []<typename O>()
     {
@@ -87,61 +72,40 @@ inline constexpr auto defaults_table = make_table<Objectives, DefaultsEntry>(
         return DefaultsEntry{impl_name<O>::value, &defaults_thunk<O>};
     });
 
+// The one scan every by-name lookup shares: tables are a handful of entries
+// built at compile time, so linear is the right shape; what must not be
+// repeated per lookup is the not-found message.
+template <typename Table>
+auto const &lookup(Table const &table, std::string_view name, char const *what)
+{
+    for (auto const &e : table)
+    {
+        if (e.name == name)
+        {
+            return e;
+        }
+    }
+    throw UnknownImplError(std::string{what} + ": no objective '" + std::string{name} +
+                           "'");
+}
+
 } // namespace
 
 void apply_link_inverse_by_name(std::string_view objective_name, floats_out scores)
 {
-    for (auto const &e : link_table)
-    {
-        if (e.name == objective_name)
-        {
-            e.apply(scores);
-            return;
-        }
-    }
-    throw UnknownImplError("apply_link_inverse_by_name: no objective '" +
-                           std::string{objective_name} + "'");
-}
-
-float eval_objective_by_name(std::string_view objective_name, Config const &cfg,
-                             floats_view scores, floats_view labels)
-{
-    for (auto const &e : eval_table)
-    {
-        if (e.name == objective_name)
-        {
-            return e.eval(cfg, scores, labels);
-        }
-    }
-    throw UnknownImplError("eval_objective_by_name: no objective '" +
-                           std::string{objective_name} + "'");
+    lookup(link_table, objective_name, "apply_link_inverse_by_name").apply(scores);
 }
 
 TaskKind task_kind_by_name(std::string_view objective_name)
 {
-    for (auto const &e : task_table)
-    {
-        if (e.name == objective_name)
-        {
-            return e.task;
-        }
-    }
-    throw UnknownImplError("task_kind_by_name: no objective '" +
-                           std::string{objective_name} + "'");
+    return lookup(task_table, objective_name, "task_kind_by_name").task;
 }
 
 std::span<std::string_view const>
 default_metric_names_by_name(std::string_view objective_name)
 {
-    for (auto const &e : defaults_table)
-    {
-        if (e.name == objective_name)
-        {
-            return e.defaults();
-        }
-    }
-    throw UnknownImplError("default_metric_names_by_name: no objective '" +
-                           std::string{objective_name} + "'");
+    return lookup(defaults_table, objective_name, "default_metric_names_by_name")
+        .defaults();
 }
 
 } // namespace bonsai

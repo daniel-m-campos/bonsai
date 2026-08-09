@@ -86,7 +86,6 @@ class Dataset
     floats_view       weights() const; // empty if uniform
     BinMappers const &mappers() const;
     size_t            n_bins(size_t fid) const;
-    bool              is_categorical(size_t fid) const;
 
     // Feature f's strictly increasing bin cut points.
     std::span<float const> cuts(feature_id_t f) const
@@ -203,7 +202,6 @@ class Dataset
     std::vector<float>                            labels_;
     std::vector<float>                            weights_;
     BinMappers                                    mappers_;
-    std::vector<bool>                             is_categorical_;
     size_t                                        n_rows_     = 0;
     size_t                                        n_features_ = 0;
 };

@@ -22,25 +22,6 @@ namespace bonsai::cli
 namespace
 {
 
-std::vector<std::string_view>
-choose_metric_names(std::vector<std::string> const &override_names,
-                    std::string const              &objective_name)
-{
-    std::vector<std::string_view> out;
-    if (!override_names.empty())
-    {
-        out.reserve(override_names.size());
-        for (auto const &n : override_names)
-        {
-            out.emplace_back(n);
-        }
-        return out;
-    }
-    auto const defaults = default_metric_names_by_name(objective_name);
-    out.assign(defaults.begin(), defaults.end());
-    return out;
-}
-
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void print_metric_row(std::string_view label, floats_view raw, floats_view preds,
                       floats_view labels, std::vector<Metric> const &metrics)

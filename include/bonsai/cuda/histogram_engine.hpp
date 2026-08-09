@@ -159,9 +159,6 @@ class CudaHistogramEngine
     // Last level of a tree: children are leaves, their histograms unread;
     // performs only the segment-layout flip that stamping depends on.
     void advance_layout_only();
-    // End of tree: the per-row leaf assignment (indexed by row id; only rows
-    // this tree trained on carry fresh values).
-    void finalize_rows(std::span<node_id_t> leaf_by_row);
     // Tree epilogue, engine-owned (decision 53 step 3): maps the resident
     // per-row leaf assignment through node_values on device and downloads
     // values and leaf ids in two bulk copies — replacing the per-tree

@@ -762,12 +762,12 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
         }
     }
 
+    // Both survivors are leaves: what is still in the heap when the budget
+    // runs out, and what was set aside as unsplittable. Heap first, then
+    // pending, is the order leaf ids are assigned in.
+    heap.insert(heap.end(), std::make_move_iterator(pending.begin()),
+                std::make_move_iterator(pending.end()));
     for (auto const &c : heap)
-    {
-        step.leaf(c.node.id, c.slot);
-        gd::finalize_as_leaf(nodes, c.node, config_, n_leaves, values, leaf_ids);
-    }
-    for (auto const &c : pending)
     {
         step.leaf(c.node.id, c.slot);
         gd::finalize_as_leaf(nodes, c.node, config_, n_leaves, values, leaf_ids);

@@ -370,7 +370,6 @@ struct CudaDeviceContext
     void     partition_level(Dataset const                                    &ds,
                              std::span<CudaHistogramEngine::PartitionOp const> ops,
                              std::span<uint32_t> child_counts);
-    void     finalize_rows(std::span<node_id_t> leaf_by_row);
     void     finalize_tree(std::span<float const> node_values, std::span<float> values,
                            std::span<node_id_t> leaf_ids);
     void     advance_level(Dataset const                                &ds,

@@ -14,11 +14,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "bonsai/bin_mappers.hpp"
@@ -47,6 +49,19 @@ using cuda_1d  = nb::ndarray<float const, nb::ndim<1>, nb::c_contig, nb::device:
 bonsai::features_view as_view(array_2d const &X)
 {
     return bonsai::features_view{X.data(), X.shape(0), X.shape(1)};
+}
+
+// Hand an owning vector to numpy: the capsule takes the vector, the array
+// takes the capsule, and the buffer is never copied. The unique_ptr is
+// consumed, so a throw before this call still frees.
+template <typename T>
+nb::ndarray<nb::numpy, T> to_numpy(std::unique_ptr<std::vector<T>> out,
+                                   std::initializer_list<size_t>   shape)
+{
+    auto       *raw = out.release();
+    nb::capsule owner(raw, [](void *p) noexcept
+                      { delete static_cast<std::vector<T> *>(p); });
+    return {raw->data(), shape, owner};
 }
 
 // --- device-resident input (DLPack)
@@ -176,6 +191,40 @@ VectorArg resolve_vector(nb::handle v, uint32_t device_id, char const *what)
     return out;
 }
 
+// X, y and an optional weight vector resolved together with the two length
+// checks every entry point owes its caller. `weight_name` is the keyword the
+// caller spells the weights as, so the message names the user's own argument;
+// `where` prefixes the entry point when it is not the free train function.
+struct Inputs
+{
+    MatrixArg                xarg;
+    VectorArg                yarg;
+    std::optional<VectorArg> warg;
+};
+
+Inputs resolve_inputs(nb::handle X, nb::handle y, nb::handle weight, uint32_t device_id,
+                      char const *weight_name, std::string_view where)
+{
+    Inputs in{.xarg = resolve_matrix(X, device_id),
+              .yarg = resolve_vector(y, device_id, "y"),
+              .warg = std::nullopt};
+    if (!weight.is_none())
+    {
+        in.warg = resolve_vector(weight, device_id, weight_name);
+    }
+    if (in.yarg.size() != in.xarg.n_rows)
+    {
+        throw std::invalid_argument(std::string{where} +
+                                    "len(y) must equal the row count");
+    }
+    if (in.warg && in.warg->size() != in.xarg.n_rows)
+    {
+        throw std::invalid_argument(std::string{where} + "len(" + weight_name +
+                                    ") must equal the row count");
+    }
+    return in;
+}
+
 // The bin mappers for X. The device arm gathers exactly the rows the host
 // sampler would have drawn and fits on those, so the cuts, and therefore the
 // bins, are bit-identical to the host path's for the same seed.
@@ -279,22 +328,8 @@ class Dataset
             std::optional<std::string> const &device, uint32_t device_id,
             uint32_t n_threads)
     {
-        auto const               xarg = resolve_matrix(X, device_id);
-        auto const               yarg = resolve_vector(y, device_id, "y");
-        std::optional<VectorArg> warg;
-        if (!weight.is_none())
-        {
-            warg = resolve_vector(weight, device_id, "weight");
-        }
-        if (yarg.size() != xarg.n_rows)
-        {
-            throw std::invalid_argument("Dataset: len(y) must equal the row count");
-        }
-        if (warg && warg->size() != xarg.n_rows)
-        {
-            throw std::invalid_argument(
-                "Dataset: len(weight) must equal the row count");
-        }
+        auto const [xarg, yarg, warg] =
+            resolve_inputs(X, y, weight, device_id, "weight", "Dataset: ");
         // A device hint is an explicit user request, so an absent backend or
         // device is an error here, unlike the engine's own inference from a
         // grower name (which degrades to the host silently). Device-resident
@@ -432,10 +467,7 @@ class Model
                                  num_iteration);
             bonsai::apply_link_inverse_by_name(cfg_.dispatch.objective_name, *out);
         }
-        auto       *raw = out.release();
-        nb::capsule owner(raw, [](void *p) noexcept
-                          { delete static_cast<std::vector<float> *>(p); });
-        return {raw->data(), {n}, owner};
+        return to_numpy(std::move(out), {n});
     }
 
     // Per-class probabilities. Softmax models return (n_rows, n_classes) — a
@@ -477,14 +509,11 @@ class Model
                 }
             }
         }
-        auto       *raw = out.release();
-        nb::capsule owner(raw, [](void *p) noexcept
-                          { delete static_cast<std::vector<double> *>(p); });
         if (w > 1)
         {
-            return {raw->data(), {n, w}, owner};
+            return to_numpy(std::move(out), {n, w});
         }
-        return {raw->data(), {n}, owner};
+        return to_numpy(std::move(out), {n});
     }
 
     // (n_iters, n_rows): prediction after each boosting iteration.
@@ -504,10 +533,7 @@ class Model
                     bonsai::floats_out{out->data() + (t * n), n});
             }
         }
-        auto       *raw = out.release();
-        nb::capsule owner(raw, [](void *p) noexcept
-                          { delete static_cast<std::vector<float> *>(p); });
-        return {raw->data(), {k, n}, owner};
+        return to_numpy(std::move(out), {k, n});
     }
 
     // (n_rows, n_trees): the leaf each row lands in, per tree. The width is
@@ -523,10 +549,7 @@ class Model
             booster_->predict_leaf(bonsai::features_view{X.data(), n, X.shape(1)},
                                    std::span<bonsai::node_id_t>{*out});
         }
-        auto       *raw = out.release();
-        nb::capsule owner(raw, [](void *p) noexcept
-                          { delete static_cast<std::vector<bonsai::node_id_t> *>(p); });
-        return {raw->data(), {n, k}, owner};
+        return to_numpy(std::move(out), {n, k});
     }
 
     std::string dump() const
@@ -549,14 +572,11 @@ class Model
             booster_->pred_contribs(bonsai::features_view{X.data(), n, nf},
                                     std::span<double>{*out}, nf);
         }
-        auto       *raw = out.release();
-        nb::capsule owner(raw, [](void *p) noexcept
-                          { delete static_cast<std::vector<double> *>(p); });
         if (width > 1)
         {
-            return {raw->data(), {n, width, cols}, owner};
+            return to_numpy(std::move(out), {n, width, cols});
         }
-        return {raw->data(), {n, cols}, owner};
+        return to_numpy(std::move(out), {n, cols});
     }
 
     void save(std::string const &path) const
@@ -583,10 +603,8 @@ class Model
         auto out =
             std::make_unique<std::vector<double>>(booster_->feature_importance(t));
         out->resize(std::max(out->size(), mappers_.size()), 0.0);
-        auto       *raw = out.release();
-        nb::capsule owner(raw, [](void *p) noexcept
-                          { delete static_cast<std::vector<double> *>(p); });
-        return {raw->data(), {raw->size()}, owner};
+        size_t const n = out->size();
+        return to_numpy(std::move(out), {n});
     }
 
     size_t n_iters() const
@@ -645,22 +663,8 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
     // Device-resident input places the fit itself: the matrix is already on a
     // device, so it bins there whatever grower was named, and a CPU grower
     // materializes host bins from the plane on first use.
-    auto const               xarg = resolve_matrix(X, cfg.parallel.device_id);
-    auto const               yarg = resolve_vector(y, cfg.parallel.device_id, "y");
-    std::optional<VectorArg> warg;
-    if (!sample_weight.is_none())
-    {
-        warg = resolve_vector(sample_weight, cfg.parallel.device_id, "sample_weight");
-    }
-    if (yarg.size() != xarg.n_rows)
-    {
-        throw std::invalid_argument("len(y) must equal the number of rows");
-    }
-    if (warg && warg->size() != xarg.n_rows)
-    {
-        throw std::invalid_argument(
-            "sample_weight length must equal the number of rows");
-    }
+    auto const [xarg, yarg, warg] = resolve_inputs(
+        X, y, sample_weight, cfg.parallel.device_id, "sample_weight", "");
 
     std::optional<bonsai::io::LoadedBooster> init;
     if (init_model)

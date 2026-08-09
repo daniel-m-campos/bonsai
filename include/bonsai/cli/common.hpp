@@ -3,12 +3,14 @@
 #include <cstddef>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "bonsai/config/config.hpp"
 #include "bonsai/config/toml.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/parallel.hpp"
+#include "bonsai/registry/objective_dispatch.hpp"
 #include "bonsai/types.hpp"
 
 namespace bonsai::cli
@@ -30,6 +32,29 @@ inline Config resolve_config(CommonOpts const &opts)
     Config cfg = config::resolve(opts.config_path, opts.overrides);
     parallel::set_n_threads(cfg.parallel.n_threads);
     return cfg;
+}
+
+// The metric-name list a subcommand reports: the user's override if it is
+// non-empty, else the objective's declared defaults. The returned views point
+// into override_names (or into the objective's static name table), so it must
+// outlive them.
+inline std::vector<std::string_view>
+choose_metric_names(std::vector<std::string> const &override_names,
+                    std::string const              &objective_name)
+{
+    std::vector<std::string_view> out;
+    if (!override_names.empty())
+    {
+        out.reserve(override_names.size());
+        for (auto const &n : override_names)
+        {
+            out.emplace_back(n);
+        }
+        return out;
+    }
+    auto const defaults = default_metric_names_by_name(objective_name);
+    out.assign(defaults.begin(), defaults.end());
+    return out;
 }
 
 // Row-major contiguous feature buffer matching features_view. Either owns
