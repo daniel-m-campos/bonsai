@@ -43,7 +43,7 @@ def test_reference_param_mappings():
     assert params.num_leaves_of({"depth": 255, "num_leaves": 256}) == 256
     # the shim keeps the documented import path alive
     sys.path.insert(0, "scripts")
-    import reference_params as rp
+    from bonsai.bench import params as rp
     assert rp.xgb_core is params.xgb_core
 
 

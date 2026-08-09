@@ -1,6 +1,6 @@
 # Sparse-input benchmark: a9a (Adult preprocessed to 123 binary features,
 # LIBSVM format), 32,561 train / 16,281 test rows, binary labels.
-# Fetch with `uv run scripts/fetch_a9a.py`. bonsai materializes the sparse
+# Fetch with `uv run scripts/fetch.py a9a`. bonsai materializes the sparse
 # input dense; the reference libraries may consume it sparsely.
 
 [data]

@@ -188,7 +188,7 @@ def main():
             "tests/data/year_prediction_msd_train.csv",
             "tests/data/year_prediction_msd_test.csv"), results)
     else:
-        print("year_msd skipped (run scripts/fetch_year_msd.py first)")
+        print("year_msd skipped (run scripts/fetch.py year_msd first)")
     print("done ->", OUT)
 
 

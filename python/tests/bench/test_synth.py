@@ -6,7 +6,7 @@ import hashlib
 
 from bonsai.bench import synth
 
-# Captured from scripts/bench_scaling.py::gen_data BEFORE the move to
+# Captured from the pre-move scripts/bench_scaling.py::gen_data, before
 # bonsai.bench.synth (2026-07-14): the generator must stay byte-stable or
 # every perf-division result loses comparability.
 GEN_DATA_GOLDENS = {

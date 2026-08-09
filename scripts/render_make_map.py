@@ -26,7 +26,7 @@ import pathlib
 import re
 import sys
 
-from _render_common import md_table
+from _render_common import md_table, write_or_check
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 MAKEFILE = REPO / "Makefile"
@@ -74,16 +74,10 @@ def main() -> int:
               "the map would be empty.", file=sys.stderr)
         return 1
     text = render()
-    if "--check" in sys.argv:
-        if not OUT.exists() or OUT.read_text() != text:
-            print("ERROR: docs/use/make-map.md is stale; run "
-                  "python3 scripts/render_make_map.py", file=sys.stderr)
-            return 1
-        print(f"make-target map: in sync ({len(rows)} targets)")
-        return 0
-    OUT.write_text(text)
-    print(f"wrote {OUT.relative_to(REPO)} ({len(rows)} targets)")
-    return 0
+    return write_or_check(OUT, text, repo=REPO,
+                          script="scripts/render_make_map.py",
+                          label="make-target map",
+                          detail=f"{len(rows)} targets")
 
 
 if __name__ == "__main__":

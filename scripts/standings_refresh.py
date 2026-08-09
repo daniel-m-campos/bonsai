@@ -98,11 +98,10 @@ PLANE_CPU = "cpu"
 # band, which is the same pod-noise question.
 PARITY_BAND_PCT = 5
 
-# Axis -> the stem of its dated results file; the bundled spec of the same
-# name is what the pod script runs to produce it.
+# Every axis is the stem of its dated results file AND the name of the
+# bundled spec the pod script runs to produce it.
 AXES = ("gpu-tall", "gpu-wide", "gpu-extreme", "cpu-tall", "cpu-wide",
         "gpu-early-stop")
-AXIS_FILE = {axis: axis for axis in AXES}
 
 # The axis the parity rows anchor: same cell, same pod, same session.
 PARITY_AXIS = "gpu-tall"
@@ -276,9 +275,9 @@ def supersede(args: argparse.Namespace) -> int:
         return 1
     files = {}
     for axis in axes:
-        got = sorted(src.glob(f"{AXIS_FILE[axis]}-*.jsonl"))
+        got = sorted(src.glob(f"{axis}-*.jsonl"))
         if not got:
-            print(f"ERROR: no {AXIS_FILE[axis]}-*.jsonl in {src}",
+            print(f"ERROR: no {axis}-*.jsonl in {src}",
                   file=sys.stderr)
             return 1
         files[axis] = got[-1].name

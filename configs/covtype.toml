@@ -1,6 +1,6 @@
 # Multiclass (7-way) classification on UCI Covertype: 500,012 train rows /
 # 81,000 test rows, 54 numeric features, label = forest cover type 0..6.
-# Fetch with `uv run scripts/fetch_covtype.py`.
+# Fetch with `uv run scripts/fetch.py covtype`.
 
 [data]
 train = "tests/data/covtype_train.csv"

@@ -30,7 +30,7 @@ cd /root/bonsai
 
 # Blackwell (compute capability >= 10) needs CUDA >= 12.8; the bonsai-ci image
 # ships 12.4, so side-install the 12.8 toolkit (same recipe as
-# scripts/setup_gpu_node.sh) and point the configure at it. A pre-existing
+# the runpod runbook) and point the configure at it. A pre-existing
 # build-cuda/build.ninja satisfies the python-cuda prerequisite, so the extra
 # -DCUDAToolkit_ROOT survives the make call below.
 CC_MAJOR=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | cut -d. -f1 || echo 0)

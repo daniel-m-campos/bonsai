@@ -1,6 +1,6 @@
 # Binary classification on a HIGGS subset (UCI): 500,000 train rows /
 # 50,000 test rows, 28 kinematic features, label = signal vs background.
-# Fetch with `uv run scripts/fetch_higgs.py`.
+# Fetch with `uv run scripts/fetch.py higgs`.
 
 [data]
 train = "tests/data/higgs_train.csv"

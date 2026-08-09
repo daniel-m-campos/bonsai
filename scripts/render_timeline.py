@@ -30,7 +30,7 @@ import re
 import sys
 import unicodedata
 
-from _render_common import md_table
+from _render_common import md_table, write_or_check
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 DOCS = REPO / "docs"
@@ -225,16 +225,9 @@ def main() -> int:
         return 1
     text = render()
     n = len(entries)
-    if "--check" in sys.argv:
-        if not OUT.exists() or OUT.read_text() != text:
-            print("ERROR: docs/learn/timeline.md is stale; run "
-                  "python3 scripts/render_timeline.py", file=sys.stderr)
-            return 1
-        print(f"timeline: in sync ({n} milestones)")
-        return 0
-    OUT.write_text(text)
-    print(f"wrote {OUT.relative_to(REPO)} ({n} milestones)")
-    return 0
+    return write_or_check(OUT, text, repo=REPO,
+                          script="scripts/render_timeline.py",
+                          label="timeline", detail=f"{n} milestones")
 
 
 if __name__ == "__main__":

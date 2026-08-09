@@ -26,9 +26,9 @@ import time
 
 sys.path.insert(0, "scripts")
 sys.path.insert(0, "build/python")
-import bench_scaling as bs
 import numpy as np
-import reference_params as rp
+from bonsai.bench import params as rp
+from bonsai.bench.synth import gen_data
 
 
 def r2(pred, y):
@@ -76,7 +76,7 @@ def main() -> int:
 
     if args.door == "ordered":
         for rows in (200_000, 1_000_000):
-            X, y, Xte, yte = bs.gen_data(rows, 100, 42, 50_000, 20)
+            X, y, Xte, yte = gen_data(rows, 100, 42, 50_000, 20)
             for iters in (100, 200):
                 trials = [("catboost_ordered", catboost(X, y, Xte, yte, iters, "Ordered")),
                           ("catboost_plain", catboost(X, y, Xte, yte, iters, "Plain")),
@@ -86,7 +86,7 @@ def main() -> int:
                                "learner": name, "fit_s": fs, "r2_test": r})
     elif args.door == "bins":
         for rows in (1_000_000, 4_000_000):
-            X, y, Xte, yte = bs.gen_data(rows, 100, 42, 50_000, 20)
+            X, y, Xte, yte = gen_data(rows, 100, 42, 50_000, 20)
             fs, r = catboost(X, y, Xte, yte, 100, "Plain")
             emit(out, {"door": "bins", "rows": rows, "learner": "catboost_plain",
                        "n_samples": None, "fit_s": fs, "r2_test": r})
@@ -97,7 +97,7 @@ def main() -> int:
                 emit(out, {"door": "bins", "rows": rows, "learner": "bonsai_levelwise",
                            "n_samples": ns, "fit_s": fs, "r2_test": r})
     else:  # isolate
-        X, y, Xte, yte = bs.gen_data(16_000_000, 100, 42, 100_000, 20)
+        X, y, Xte, yte = gen_data(16_000_000, 100, 42, 100_000, 20)
         fs, r = catboost(X, y, Xte, yte, 100, "Plain")
         emit(out, {"door": "isolate", "rows": 16_000_000, "learner": "catboost_plain",
                    "fit_s": fs, "r2_test": r})

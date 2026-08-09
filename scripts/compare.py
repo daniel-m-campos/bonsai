@@ -34,9 +34,9 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-import reference_params
 import tomllib
 from bonsai.bench import metrics
+from bonsai.bench import params as reference_params
 from bonsai.bench.variants import Device
 
 LABEL_COL = "label"  # every prepared dataset carries its target under this name

@@ -29,7 +29,7 @@ import pathlib
 import struct
 import sys
 
-from _render_common import md_table
+from _render_common import md_table, write_or_check
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 SRC = REPO / "docs" / "use" / "parameters.src.json"
@@ -232,16 +232,9 @@ def main() -> int:
         return 1
     text = render()
     n = sum(len(rows) for rows in sections_from_src()[0].values())
-    if "--check" in sys.argv:
-        if not OUT.exists() or OUT.read_text() != text:
-            print("ERROR: docs/use/parameters.md is stale; run "
-                  "python3 scripts/render_params.py", file=sys.stderr)
-            return 1
-        print(f"parameters reference: in sync ({n} knobs)")
-        return 0
-    OUT.write_text(text)
-    print(f"wrote {OUT.relative_to(REPO)} ({n} knobs)")
-    return 0
+    return write_or_check(OUT, text, repo=REPO,
+                          script="scripts/render_params.py",
+                          label="parameters reference", detail=f"{n} knobs")
 
 
 def _clean_float(x: float) -> float:
