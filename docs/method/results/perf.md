@@ -6,7 +6,7 @@ Six scenarios, three growers, two planes, one page. Each grower is measured agai
 
 The columns are the same everywhere. `ingest_s` is the fixed cost of turning a float32 matrix into bins, paid once; `train_s` is the variable cost of the boosting rounds, the half that grows with the round budget. bonsai's split comes from the two-step `Dataset(..., device=...)` plus `train(pairs, ds)` form, which for a cuda arm bins on the device exactly where the fused call does; every refresh fits the anchor cell both ways, interleaved on the same pod, and the supersession is gated on their agreement, so the seam these columns report belongs to the same pipeline the total measures. CatBoost's `Pool()` step only wraps the raw arrays; it quantizes inside `fit`, so its ingest column reads low and that cost sits in train instead (issue #253). Its total is the only number directly comparable to the other libraries' split. Peak RSS is host memory, with its headroom above the resident input array in parentheses; peak VRAM is device memory attributed to the training process by NVML, and a row whose sampler could not attribute it prints `-` rather than a device total that would count every other process on the card.
 
-Bold marks the better value of a pair, but only where the measurement can tell the two arms apart. Where a scenario repeats an arm, the spread across that arm's own repeats is what the host resolved on the day. A margin that falls inside the wider of the two arms' spreads is reported as a tie, because the protocol cannot resolve it. Where a cell ran once and no spread is observable, a stated 5% margin stands in for it. Both values of a tied pair print plain, with `(tie)` beside them.
+Bold marks the better value of a pair, but only where the measurement can tell the two arms apart. The tie rule governs the cost columns: `ingest_s`, `train_s`, the fit totals they add up to, peak RSS and peak VRAM. Those are host measurements that wander between repeats. Where a scenario repeats an arm, the spread across that arm's own repeats is what the host resolved on the day, and a margin inside the wider of the two arms' spreads prints as a tie. Where such a cell ran once and no spread is observable, a stated 5% margin stands in for it. Accuracy is read on its own scale, because a fit at a fixed seed repeats exactly and a 5% band on r2 would bury differences the suite can resolve. Two r2 values are a tie when they sit within 0.001 of each other, the chance band the quality work treats as threshold-placement luck. Both values of a tied pair print plain, with `(tie)` beside them.
 
 ## The headline: the tall scenario
 
@@ -24,10 +24,10 @@ Fit totals (ingest plus train) at the tall cell of each plane, bold to the faste
 
 | scenario | arm | ingest_s | train_s | peak RSS | peak VRAM | test r2 |
 |---|---|---|---|---|---|---|
-| gpu-tall (16M x 128) | bonsai depthwise | **1.2s** | **4.4s** | **9.1GB (+0.8)** | **3.4GB** | 0.879 |
-| gpu-tall (16M x 128) | XGBoost | 16.2s | 5.5s | 29.5GB (+21.3) | 18.9GB | **0.879** |
-| gpu-wide (131k x 16384) | bonsai depthwise | **7.4s** | 27.4s | **9.8GB (+0.3)** | **16.7GB** | 0.860 |
-| gpu-wide (131k x 16384) | XGBoost | 19.4s | **24.1s** | 36.4GB (+26.8) | 18.9GB | **0.861** |
+| gpu-tall (16M x 128) | bonsai depthwise | **1.2s** | **4.4s** | **9.1GB (+0.8)** | **3.4GB** | 0.879 (tie) |
+| gpu-tall (16M x 128) | XGBoost | 16.2s | 5.5s | 29.5GB (+21.3) | 18.9GB | 0.879 (tie) |
+| gpu-wide (131k x 16384) | bonsai depthwise | **7.4s** | 27.4s | **9.8GB (+0.3)** | **16.7GB** | 0.860 (tie) |
+| gpu-wide (131k x 16384) | XGBoost | 19.4s | **24.1s** | 36.4GB (+26.8) | 18.9GB | 0.861 (tie) |
 | gpu-extreme (16M x 1024) | bonsai depthwise | 9.4s | 20.4s | 66.7GB (+0.8) | 18.2GB | 0.879 |
 | gpu-extreme (16M x 1024) | XGBoost | oom | oom | oom | oom | oom |
 
@@ -37,10 +37,10 @@ The two columns are one call taken apart. bonsai's fused `train(X, y)` form fits
 
 | scenario | arm | ingest_s | train_s | peak RSS | test r2 |
 |---|---|---|---|---|---|
-| cpu-tall (2M x 128) | bonsai depthwise | **1.0s** | 13.4s | **2.0GB (+0.8)** | **0.878** |
-| cpu-tall (2M x 128) | XGBoost | 4.0s | **10.7s** | 2.3GB (+1.1) | 0.877 |
-| cpu-wide (16k x 16384) | bonsai depthwise | **1.6s** | **96.8s** | **10.3GB (+9.1)** | 0.773 (tie) |
-| cpu-wide (16k x 16384) | XGBoost | 5.7s | 134.9s | 23.0GB (+21.8) | 0.772 (tie) |
+| cpu-tall (2M x 128) | bonsai depthwise | **1.0s** | 13.4s | **2.0GB (+0.8)** | 0.878 (tie) |
+| cpu-tall (2M x 128) | XGBoost | 4.0s | **10.7s** | 2.3GB (+1.1) | 0.877 (tie) |
+| cpu-wide (16k x 16384) | bonsai depthwise | **1.6s** | **96.8s** | **10.3GB (+9.1)** | **0.773** |
+| cpu-wide (16k x 16384) | XGBoost | 5.7s | 134.9s | 23.0GB (+21.8) | 0.772 |
 
 ## Leafwise against LightGBM
 
@@ -52,17 +52,17 @@ The two columns are one call taken apart. bonsai's fused `train(X, y)` form fits
 | gpu-tall (16M x 128) | LightGBM | 15.2s | 12.8s | 15.2GB (+7.0) | 5.4GB | **0.885** |
 | gpu-wide (131k x 16384) | bonsai leafwise | **7.5s** | **88.0s** | **9.8GB (+0.3)** | **18.5GB** | 0.860 |
 | gpu-wide (131k x 16384) | LightGBM | 123.5s | 165.9s | 57.7GB (+48.1) | 20.8GB | **0.868** |
-| gpu-extreme (16M x 1024) | bonsai leafwise | **9.3s** | **23.4s** | **66.7GB (+0.8)** | **18.4GB** | 0.879 (tie) |
-| gpu-extreme (16M x 1024) | LightGBM | 130.7s | 87.6s | 115.8GB (+49.9) | 34.3GB | 0.886 (tie) |
+| gpu-extreme (16M x 1024) | bonsai leafwise | **9.3s** | **23.4s** | **66.7GB (+0.8)** | **18.4GB** | 0.879 |
+| gpu-extreme (16M x 1024) | LightGBM | 130.7s | 87.6s | 115.8GB (+49.9) | 34.3GB | **0.886** |
 
 ### CPU
 
 | scenario | arm | ingest_s | train_s | peak RSS | test r2 |
 |---|---|---|---|---|---|
-| cpu-tall (2M x 128) | bonsai leafwise | **1.0s** | 38.8s | **1.9GB (+0.7)** | **0.878** |
-| cpu-tall (2M x 128) | LightGBM | 2.6s | **17.4s** | 2.1GB (+0.9) | 0.877 |
-| cpu-wide (16k x 16384) | bonsai leafwise | **1.6s** | 516.7s | **8.9GB (+7.7)** | 0.773 (tie) |
-| cpu-wide (16k x 16384) | LightGBM | 11.9s | **57.2s** | 19.6GB (+18.4) | 0.776 (tie) |
+| cpu-tall (2M x 128) | bonsai leafwise | **1.0s** | 38.8s | **1.9GB (+0.7)** | 0.878 (tie) |
+| cpu-tall (2M x 128) | LightGBM | 2.6s | **17.4s** | 2.1GB (+0.9) | 0.877 (tie) |
+| cpu-wide (16k x 16384) | bonsai leafwise | **1.6s** | 516.7s | **8.9GB (+7.7)** | 0.773 |
+| cpu-wide (16k x 16384) | LightGBM | 11.9s | **57.2s** | 19.6GB (+18.4) | **0.776** |
 
 ## Levelwise against CatBoost
 
@@ -70,8 +70,8 @@ The two columns are one call taken apart. bonsai's fused `train(X, y)` form fits
 
 | scenario | arm | ingest_s | train_s | peak RSS | peak VRAM | test r2 |
 |---|---|---|---|---|---|---|
-| gpu-tall (16M x 128) | bonsai levelwise | **1.2s** | **4.8s** | **9.1GB (+0.8)** | **3.4GB** | **0.876** |
-| gpu-tall (16M x 128) | CatBoost | 2.4s | 14.4s | 25.6GB (+17.4) | 90.2GB | 0.875 |
+| gpu-tall (16M x 128) | bonsai levelwise | **1.2s** | **4.8s** | **9.1GB (+0.8)** | **3.4GB** | 0.876 (tie) |
+| gpu-tall (16M x 128) | CatBoost | 2.4s | 14.4s | 25.6GB (+17.4) | 90.2GB | 0.875 (tie) |
 | gpu-wide (131k x 16384) | bonsai levelwise | 7.6s | **32.6s** | **9.8GB (+0.2)** | **16.7GB** | **0.876** |
 | gpu-wide (131k x 16384) | CatBoost | **2.7s** | 68.6s | 26.3GB (+16.7) | 90.2GB | 0.874 |
 | gpu-extreme (16M x 1024) | bonsai levelwise | 9.8s | 18.1s | 66.7GB (+0.8) | 18.2GB | 0.877 |
@@ -83,8 +83,8 @@ The two columns are one call taken apart. bonsai's fused `train(X, y)` form fits
 |---|---|---|---|---|---|
 | cpu-tall (2M x 128) | bonsai levelwise | 1.0s | **11.2s** | **2.0GB (+0.8)** | **0.876** |
 | cpu-tall (2M x 128) | CatBoost | **0.4s** | 13.0s | 4.2GB (+3.0) | 0.874 |
-| cpu-wide (16k x 16384) | bonsai levelwise | 1.6s | 153.6s | **11.4GB (+10.3)** | 0.862 (tie) |
-| cpu-wide (16k x 16384) | CatBoost | **0.3s** | **82.6s** | 18.6GB (+17.4) | 0.840 (tie) |
+| cpu-wide (16k x 16384) | bonsai levelwise | 1.6s | 153.6s | **11.4GB (+10.3)** | **0.862** |
+| cpu-wide (16k x 16384) | CatBoost | **0.3s** | **82.6s** | 18.6GB (+17.4) | 0.840 |
 
 *Source: [`gpu-tall-2026-08.jsonl`](../../../benchmarks/results/gpu-tall-2026-08.jsonl), [`gpu-wide-2026-08.jsonl`](../../../benchmarks/results/gpu-wide-2026-08.jsonl), [`gpu-extreme-2026-08.jsonl`](../../../benchmarks/results/gpu-extreme-2026-08.jsonl), [`cpu-tall-2026-08.jsonl`](../../../benchmarks/results/cpu-tall-2026-08.jsonl), [`cpu-wide-2026-08.jsonl`](../../../benchmarks/results/cpu-wide-2026-08.jsonl), [`gpu-early-stop-2026-08.jsonl`](../../../benchmarks/results/gpu-early-stop-2026-08.jsonl). As-run under the redesigned scenario matrix (decision 103), best of the session's repeats per arm; the whole matrix runs on one pod so the arms compare. Measured at `148f21b` (2026-08-05, pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition).*
 

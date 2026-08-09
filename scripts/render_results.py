@@ -300,11 +300,17 @@ GPU_COLUMNS: Final = (Col.INGEST, Col.TRAIN, Col.RSS, Col.VRAM, Col.METRIC)
 CPU_COLUMNS: Final = (Col.INGEST, Col.TRAIN, Col.RSS, Col.METRIC)
 HIGHER_IS_BETTER: Final = frozenset({Col.METRIC})
 
-# A margin the protocol cannot resolve is a tie, not a win. Where a scenario
-# repeats an arm, that arm's own spread across its repeats is the measured
-# resolution and no constant is needed; where a cell ran once, no spread is
-# observable and this stated margin stands in for it.
+METRIC_COLUMNS: Final = frozenset({Col.METRIC})
+
+# A margin the protocol cannot resolve is a tie, not a win, and the two kinds
+# of column are unresolvable for different reasons. Time and memory wander
+# between repeats on a rented host: where a scenario repeats an arm, that
+# arm's own spread is the measured resolution, and where a cell ran once
+# TIE_MARGIN stands in for it. Accuracy does not wander that way, so a metric
+# column takes the quality work's chance band as an absolute difference
+# instead of a relative one.
 TIE_MARGIN: Final = 0.05
+CHANCE_BAND: Final = 0.001
 TIE_NOTE: Final = "(tie)"
 
 
@@ -578,8 +584,10 @@ def _spread(values: list[float | None]) -> float | None:
 
 
 def _tie_floor(mine: float | None, theirs: float | None) -> float:
-    """The margin a comparison must clear to count as a win: the wider of
-    the two arms' observed spreads, or TIE_MARGIN when neither arm repeated."""
+    """The margin a comparison must clear to count as a win: the wider of the
+    two arms' observed spreads, or TIE_MARGIN when neither arm repeated. An
+    arm whose repeats came out identical has a spread of zero, which is a
+    resolution and not a missing one, so it never reaches the fallback."""
     seen = [s for s in (mine, theirs) if s is not None]
     return max(seen) if seen else TIE_MARGIN
 
@@ -589,6 +597,14 @@ def _is_tie(mine: float | None, theirs: float | None, floor: float) -> bool:
     if mine is None or theirs is None:
         return False
     return _gap(mine, theirs) <= floor
+
+
+def _in_chance_band(mine: float | None, theirs: float | None) -> bool:
+    """Whether an accuracy pair sits inside the chance band, the margin the
+    quality work reads as threshold-placement luck rather than a difference."""
+    if mine is None or theirs is None:
+        return False
+    return abs(mine - theirs) <= CHANCE_BAND
 
 
 def _arm_spreads(rows: list[dict], variant: str,
@@ -602,10 +618,14 @@ def _arm_spreads(rows: list[dict], variant: str,
 def _compare(column: str, mine: tuple[str, float | None],
              theirs: tuple[str, float | None], floor: float) -> str:
     """One arm's cell, marked against the other arm: bold when it holds the
-    better value, noted as a tie when the margin sits inside `floor`."""
+    better value, noted as a tie when the margin sits inside the column's own
+    resolution, `floor` for a measured cost and the chance band for accuracy.
+    """
     text, value = mine
     other = theirs[1]
-    if _is_tie(value, other, floor):
+    tied = (_in_chance_band(value, other) if column in METRIC_COLUMNS
+            else _is_tie(value, other, floor))
+    if tied:
         return f"{text} {TIE_NOTE}"
     return _bold(text, _wins(column, value, other))
 
@@ -695,7 +715,7 @@ def perf_summary_section() -> str:
 
 The columns are the same everywhere. `ingest_s` is the fixed cost of turning a float32 matrix into bins, paid once; `train_s` is the variable cost of the boosting rounds, the half that grows with the round budget. {BONSAI_SPLIT_NOTE} {CATBOOST_INGEST_NOTE} Peak RSS is host memory, with its headroom above the resident input array in parentheses; peak VRAM is device memory attributed to the training process by NVML, and a row whose sampler could not attribute it prints `-` rather than a device total that would count every other process on the card.
 
-Bold marks the better value of a pair, but only where the measurement can tell the two arms apart. Where a scenario repeats an arm, the spread across that arm's own repeats is what the host resolved on the day. A margin that falls inside the wider of the two arms' spreads is reported as a tie, because the protocol cannot resolve it. Where a cell ran once and no spread is observable, a stated {TIE_MARGIN:.0%} margin stands in for it. Both values of a tied pair print plain, with `{TIE_NOTE}` beside them.
+Bold marks the better value of a pair, but only where the measurement can tell the two arms apart. The tie rule governs the cost columns: `ingest_s`, `train_s`, the fit totals they add up to, peak RSS and peak VRAM. Those are host measurements that wander between repeats. Where a scenario repeats an arm, the spread across that arm's own repeats is what the host resolved on the day, and a margin inside the wider of the two arms' spreads prints as a tie. Where such a cell ran once and no spread is observable, a stated {TIE_MARGIN:.0%} margin stands in for it. Accuracy is read on its own scale, because a fit at a fixed seed repeats exactly and a {TIE_MARGIN:.0%} band on r2 would bury differences the suite can resolve. Two r2 values are a tie when they sit within {CHANCE_BAND} of each other, the chance band the quality work treats as threshold-placement luck. Both values of a tied pair print plain, with `{TIE_NOTE}` beside them.
 
 ## The headline: the tall scenario
 
