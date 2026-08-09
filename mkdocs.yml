@@ -48,7 +48,6 @@ exclude_docs: |
   reviews/
   hooks/
   feature_gap.md
-  leafwise_grower.md
   report.md
   proposal.md
   context.md

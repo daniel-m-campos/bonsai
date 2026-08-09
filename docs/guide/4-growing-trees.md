@@ -85,9 +85,8 @@ in their grow loop ([`src/grower.cpp`](../../src/grower.cpp)):
   because `top()` returns const& and fights moving the histogram-heavy
   payload out). Gain is the key; ties break on lower node id so growth is
   deterministic. Stops at `max_leaves`, `max_depth`, or a drained heap.
-  There's a full implementation walkthrough in
-  [leafwise_grower.md](https://github.com/daniel-m-campos/bonsai/blob/main/docs/leafwise_grower.md), the guide this grower was
-  actually built from.
+  The design record, including why the heap is a `std::vector` and what
+  `max_leaves = 0` means, is [decision 31](../decisions.md).
 - `ObliviousGrower::grow`: one shared split per level via the *level*
   finder (gain = sum of per-parent gains, see decision 30 for the
   fold-then-score mistake that summing per-parent fixes), children by
