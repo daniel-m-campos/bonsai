@@ -1,6 +1,6 @@
 # Regression run on the UCI Year Prediction MSD dataset.
 # 463,715 train rows / 51,630 test rows, 90 audio timbre features per row,
-# label = release year (1922-2011). Fetch with `uv run scripts/fetch_year_msd.py`.
+# label = release year (1922-2011). Fetch with `uv run scripts/fetch.py year_msd`.
 
 [data]
 train = "tests/data/year_prediction_msd_train.csv"

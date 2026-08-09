@@ -76,9 +76,9 @@ def test_quality_axis_keeps_the_whole_implementation_digest(monkeypatch,
     the gpu plane's by construction, so decision 92's rule is unchanged."""
     _fake_tree(tmp_path)
     _point_at(monkeypatch, tmp_path)
-    assert (check_standings.hash_set_digest()
+    assert (check_standings.plane_digest(check_standings.PLANE_GPU)
             == check_standings.plane_digest(check_standings.PLANE_GPU))
-    entry = {"sha": "abc1234", "hash_set": check_standings.hash_set_digest()}
+    entry = {"sha": "abc1234", "hash_set": check_standings.plane_digest(check_standings.PLANE_GPU)}
     assert check_standings.hash_skip("quality-grinsztajn", entry)[0]
     (tmp_path / "src" / "cuda" / "kernel.cu").write_text("device, faster\n")
     assert not check_standings.hash_skip("quality-grinsztajn", entry)[0]

@@ -177,11 +177,6 @@ def plane_digest(plane: str) -> str:
     return digest.hexdigest()[:16]
 
 
-def hash_set_digest() -> str:
-    """The whole-implementation digest, the gpu plane's by construction."""
-    return plane_digest(PLANE_GPU)
-
-
 def hash_skip(axis: str, entry: dict) -> tuple[bool, str]:
     """Whether an axis may skip refresh, and why.
 
