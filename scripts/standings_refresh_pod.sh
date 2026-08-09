@@ -23,8 +23,10 @@ AXES="${AXES:?comma list of axes}"
 GIT_SHA="${GIT_SHA:?commit to measure}"
 PREV_VERSION="${PREV_VERSION:-}"
 PLANE="${PLANE:-gpu}"
-# The tag for the rows this pod writes. The driver passes the rental it
-# bought (flavor and vcpu count) for a cpu pod; a gpu pod reads its device.
+# The tag for the rows this pod writes, derived below from what this
+# container actually resolved rather than from what was requested: a name
+# built out of a purchase is how a 12-thread run got committed under a
+# 16-thread tag. Settable by hand for a one-off session.
 HOST_TAG="${HOST_TAG:-}"
 
 export PATH=/opt/venv/bin:/root/.local/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -39,7 +41,9 @@ git fetch origin "$GIT_SHA" && git checkout -f "$GIT_SHA"
 if [ "$PLANE" = cpu ]; then
     make python PYTHON=/opt/venv/bin/python
     BUILD=/root/bonsai/build/python
-    [ -n "$HOST_TAG" ] || HOST_TAG="cpupod-$(nproc)vcpu"
+    # nproc is the cpuset the container was handed, which is what the fit
+    # can actually run on; the rented vCPU count is only a request.
+    [ -n "$HOST_TAG" ] || HOST_TAG="cpupod-$(nproc)cpu"
 else
     make python-cuda PYTHON=/opt/venv/bin/python
     BUILD=/root/bonsai/build-cuda/python

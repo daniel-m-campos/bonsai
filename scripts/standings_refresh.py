@@ -416,8 +416,9 @@ def _run_session(key: str, args: argparse.Namespace, *, plane: str,
     """
     pod_id = _create_pod(key, pubkey, plane=plane, vcpu=args.cpu_vcpu)
     print(f"{plane} pod {pod_id} created for {', '.join(axes)}; waiting for ssh")
-    host_tag = (f"cpupod-{CPU_FLAVOR}-{args.cpu_vcpu}vcpu"
-                if plane == PLANE_CPU else "")
+    # No HOST_TAG on either plane: the driver knows what it asked for, the
+    # pod knows what it got, and naming a row after the request is how a
+    # 12-thread run ended up committed under a 16-thread tag.
     # The A/B compares cuda growers against a released wheel; only the GPU
     # session can run it, so the CPU pod is never asked to.
     prev_version = args.prev_version if plane == PLANE_GPU else ""
@@ -435,7 +436,7 @@ def _run_session(key: str, args: argparse.Namespace, *, plane: str,
         subprocess.run([*ssh, f"nohup env AXES='{','.join(axes)}' "
                         f"GIT_SHA='{sha}' "
                         f"PREV_VERSION='{prev_version}' "
-                        f"PLANE='{plane}' HOST_TAG='{host_tag}' "
+                        f"PLANE='{plane}' "
                         "bash /root/standings_refresh_pod.sh "
                         "> /root/refresh.log 2>&1 & echo launched"], check=True)
         _poll_pod_run(ssh, out_dir, ip, port)
