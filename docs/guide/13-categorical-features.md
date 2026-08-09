@@ -101,20 +101,9 @@ Two readings: the crosses *are* CatBoost's whole remaining edge (its no-cross li
 
 ## Inside CatBoost, for comparison: the engine we didn't need
 
-It is worth seeing exactly what CatBoost runs *inside training* to earn its 0.8897, because each engine piece has a preprocessing counterpart we measured.
-
 Per tree, CatBoost draws from a pool of random permutations and recomputes its categorical statistics ("CTRs") **online** (every split candidate's statistic reflects the current permutation, quantized against CTR-specific borders), and as a tree grows it **greedily builds combinations**: the categoricals along the current path get crossed with each remaining categorical, up to `max_ctr_complexity` (default effectively pairs-and-beyond), each cross getting its own online TS.
 
-That machinery is why categoricals are stitched through CatBoost's training loop, model format, and predictor: the equivalent of what doc 17 priced for bonsai and decision 58 declined.
-
-The measured counterpart of each piece:
-
-| engine piece | preprocessing counterpart | measured |
-|---|---|---|
-| ordered TS, per-tree fresh permutations | one seeded permutation at encode time | multi-permutation averaging buys nothing (0.8512 four-perm vs 0.8536 single, OpenML-split probe) |
-| online recomputation per split | one causal pass before training | the parity table above: 0.8877 vs 0.8897 |
-| greedy path-driven combinations | all pairs, encoded once (`cross=2`) | pairs capture it (0.8877); exhaustive triples overfit (0.8859) |
-| CTR borders / multiple CTR types | ordinary quantile binning of the TS column | no measurable residue at this test size |
+That machinery is why categoricals are stitched through CatBoost's training loop, model format, and predictor: the equivalent of what doc 17 priced for bonsai and decision 58 declined. Every piece of it has a preprocessing counterpart in the two tables above, and each counterpart measures level with it: fresh per-tree permutations against one seeded permutation, online recomputation against one causal pass, greedy path combinations against all pairs encoded once.
 
 The pattern behind the pattern: **a feature earns engine residency only if it must see training state that preprocessing cannot.** Ordered target statistics need labels and a permutation, both available before the first tree, so the engine version buys freshness that measures as noise. Contrast a ranking objective, which needs the loss itself and genuinely cannot be preprocessed; that is what the [feature-admission gate](../../.claude/skills/feature-admission/SKILL.md) asks first.
 

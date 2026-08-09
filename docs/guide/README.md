@@ -33,9 +33,9 @@ the whole implementation.
 | 14 | [Feature selection](14-feature-selection.md) | Ten selection methods raced on real data: who wins at which budget, and what it costs |
 | 15 | [Explaining predictions](15-explaining-predictions.md) | From a broken attribution to Shapley to the path trick to global importance, every step a hand-checkable table |
 
-## The template
+## The shape of a chapter
 
-Every chapter has the same skeleton:
+Most chapters share a skeleton:
 
 - **The idea**: what problem this solves, in plain language.
 - **The math**: just enough notation to make the code inevitable.
@@ -45,13 +45,18 @@ Every chapter has the same skeleton:
   supplies genuine ones (a divergence bug, a deadlock, a factor-of-20
   normalization mistake), not hypotheticals.
 
+Chapters 14 and 15 are built around one measured survey and one worked
+example, so they run their own section order. Every chapter still links the
+implementation and ends somewhere you can run something.
+
 ## Reading order
 
 Chapter 0 is the on-ramp. Chapters 1 to 4 are the core algorithm and build
 on each other. Chapters 5 to 9 are independent; read each as the matching
 knob becomes relevant. Chapters 10 and 11 go where the engineering is: GPU
-training, then performance. Chapters 12 and 13 are applied chapters that put
-the core to work: multiclass, then categorical features.
+training, then performance. Chapters 12 to 15 put the core to work:
+multiclass, categorical features, feature selection, then explaining
+predictions.
 For design *rationale* (why this data layout, why this dispatch mechanism)
 see the [architecture notes](../architecture/README.md); for the audit trail
 of every non-trivial choice, [decisions.md](../decisions.md).

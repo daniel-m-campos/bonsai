@@ -12,12 +12,7 @@ A developer who knows some C++ and has never priced a GPU kernel. You do not nee
 
 ## The method in brief
 
-Four rules recur across every case.
-
-- **Instrument first.** No optimization begins until instrumentation has decomposed and priced the cost it attacks.
-- **Price before building.** An edge move states its model price from measured constants before anyone writes a kernel.
-- **Same-pod discipline.** Two identical GPUs measured 25% apart across the fleet, so every delta is a same-pod delta.
-- **Refutation is a deliverable.** A measured no, with the conditions that would reopen it, is worth as much as a win.
+The rules are the compute-DAG method's, stated once in [guide chapter 11](../../guide/11-performance-engineering.md): price a move before betting on it, decompose a line before optimizing it, and treat whatever conservation cannot explain as the next target. Two working habits run alongside them in every case here. Every delta is a same-pod delta, because two identical GPUs measured 25% apart across the fleet. And a refutation is a deliverable: a measured no, with the conditions that would reopen it, is worth as much as a win.
 
 ## The chapters
 
