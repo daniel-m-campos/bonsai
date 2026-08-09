@@ -10,7 +10,7 @@ pip install bonsai-gbt
 
 That is the whole install story: CPU and CUDA, Linux (x86_64 with GPU support, aarch64) and macOS (arm64), CPython 3.9 through 3.13, from [PyPI](https://pypi.org/project/bonsai-gbt/). The package installs as `bonsai-gbt` and imports as `bonsai`. GPU training needs nothing extra beyond an NVIDIA driver; there is no separate GPU package, no CUDA toolkit install, and no 300MB download (the whole wheel is ~2.3MB).
 
-To pin a specific release instead of the index's latest, `pip install bonsai-gbt==1.5.0`, or point pip straight at a release's attached assets: `pip install bonsai-gbt --find-links https://github.com/daniel-m-campos/bonsai/releases/expanded_assets/v1.5.0` (the [releases page](https://github.com/daniel-m-campos/bonsai/releases) lists every tag; wheels attach there too).
+To pin a specific release instead of the index's latest, `pip install bonsai-gbt==1.7.0`, or point pip straight at a release's attached assets: `pip install bonsai-gbt --find-links https://github.com/daniel-m-campos/bonsai/releases/expanded_assets/v1.7.0` (the [releases page](https://github.com/daniel-m-campos/bonsai/releases) lists every tag; wheels attach there too). One file per (CPython version, platform) combination attaches to each release, named `bonsai_gbt-<version>-cp312-manylinux_2_34_x86_64.whl` and so on, so a locked-down environment can install one by direct URL.
 
 ## What ships
 
@@ -47,11 +47,7 @@ If `cuda_available()` is `True`, pass `device="cuda"` (the XGBoost spelling) or 
 
 ## The bench extra
 
-```bash
-pip install "bonsai-gbt[bench]"
-```
-
-The extra pulls XGBoost, LightGBM, CatBoost, scikit-learn, pandas, and openml: everything `bonsai.bench` needs to reproduce the published benchmark tables. `python -m bonsai.bench.grinsztajn out.jsonl` runs the external standings suite under the [benchmark protocol](../method/benchmark-protocol.md), and `--report` renders the standings from the finished jsonl; [Running the benchmarks](benchmarks.md) walks every suite.
+`pip install "bonsai-gbt[bench]"` adds the reference libraries the benchmark suites compare against. [Running the benchmarks](benchmarks.md) is the page for it.
 
 ## Docker
 
@@ -61,17 +57,7 @@ A runtime image with the CUDA wheel preinstalled ships alongside each release:
 docker run --gpus all ghcr.io/daniel-m-campos/bonsai:cuda python3 -c "import bonsai; print(bonsai.cuda_available())"
 ```
 
-`bonsai:cuda` tracks the latest release; versioned tags (`bonsai:v1.4.0-cuda`) pin one. The image carries an sshd entrypoint keyed by a `PUBLIC_KEY` environment variable, so it boots directly as a RunPod (or similar) GPU pod. The release gate validates this exact image on real hardware before promoting it.
-
-## Picking a wheel by hand
-
-For locked-down environments or requirements files, install a release asset by direct URL:
-
-```bash
-pip install https://github.com/daniel-m-campos/bonsai/releases/download/v1.4.0/bonsai_gbt-1.4.0-cp312-cp312-manylinux_2_34_x86_64.manylinux_2_35_x86_64.whl
-```
-
-Filename anatomy: `cp312` is the CPython version (pick yours, 39 through 313), the platform tag is `manylinux_*_x86_64` / `manylinux_*_aarch64` / `macosx_14_0_arm64`, and there is one file per combination on the release page.
+`bonsai:cuda` tracks the latest release; versioned tags (`bonsai:v1.7.0-cuda`) pin one. The image carries an sshd entrypoint keyed by a `PUBLIC_KEY` environment variable, so it boots directly as a RunPod (or similar) GPU pod. The release gate validates this exact image on real hardware before promoting it.
 
 ## No wheel for your platform?
 

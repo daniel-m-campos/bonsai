@@ -1,18 +1,18 @@
-# RunPod validation runbook — every workflow on the CLI
+# RunPod validation runbook: every workflow on the CLI
 
-> **Status:** operational reference. Every command block here was used live during the 2026-07 optimization campaign; the failure-mode table at the end is the decoder ring for when they misbehave. GPU changes are validated on rented pods because the dev Mac has no CUDA device — the loop is: create pod → wait for SSH → clone/build → run the `[cuda]` suite + a profiled benchmark → read the profile lines → delete the pod.
+> **Status:** operational reference. Every command block here was used live during the 2026-07 optimization campaign; the failure-mode table at the end is the decoder ring for when they misbehave. GPU changes are validated on rented pods because the dev Mac has no CUDA device, so the loop is: create pod → wait for SSH → clone/build → run the `[cuda]` suite + a profiled benchmark → read the profile lines → delete the pod.
 >
 > **Release wheels validate themselves**: wheels.yml's `validate-cuda` job (decision 70) automates this loop per release with the `RUNPOD_API_KEY` repo secret, booting the candidate runtime image (`ghcr.io/daniel-m-campos/bonsai:candidate-<tag>`) and running the wheel smokes on it, with an unconditional teardown and leftover-pod sweep. This runbook remains the manual path for development sessions, benchmarks, and anything the gate doesn't cover.
 
 ## 0. Prerequisites
 
-- A RunPod API key (`rpa_...`). Keep it out of the repo and out of files — GitHub push protection has already blocked one near-miss commit of a key file. Export it per shell session and rotate it if it ever touches disk:
+- A RunPod API key (`rpa_...`). Keep it out of the repo and out of files. GitHub push protection has already blocked one near-miss commit of a key file. Export it per shell session and rotate it if it ever touches disk:
 
 ```bash
 export RUNPOD_KEY="rpa_..."   # from https://console.runpod.io/user/settings
 ```
 
-- Your SSH public key. The bonsai-ci image only installs the key you pass at create time (`PUBLIC_KEY` env); the account-level key in RunPod settings is used by the `ssh.runpod.io` proxy, which this image does NOT support (no proxy agent — direct IP only).
+- Your SSH public key. The bonsai-ci image only installs the key you pass at create time (`PUBLIC_KEY` env); the account-level key in RunPod settings is used by the `ssh.runpod.io` proxy, which this image does NOT support (no proxy agent, direct IP only).
 
 ```bash
 PUB=$(cat ~/.ssh/id_ed25519.pub)
@@ -22,7 +22,7 @@ PUB=$(cat ~/.ssh/id_ed25519.pub)
 
 ## 1. Create a pod
 
-REST v1 is the reliable API surface (the GraphQL mutation works too; the v2 endpoint has had DNS outages). **`PUBLIC_KEY` in `env` is mandatory** — without it the pod boots but SSH refuses your key and the only fix is delete + recreate.
+REST v1 is the reliable API surface (the GraphQL mutation works too; the v2 endpoint has had DNS outages). **`PUBLIC_KEY` in `env` is mandatory**: without it the pod boots but SSH refuses your key and the only fix is delete + recreate.
 
 ```bash
 curl -s https://rest.runpod.io/v1/pods \
@@ -39,7 +39,7 @@ curl -s https://rest.runpod.io/v1/pods \
   }" | python3 -m json.tool
 ```
 
-Note the returned `id`. GPU choice: L40S (SECURE, ~$1/hr) is the workhorse — consistently available with direct public IPs. A100-80GB SECURE (~$1.64/hr) is the fallback; community 4090/5090 capacity comes and goes hourly. Fleet caveat: identical code on two same-model pods has measured ~25% apart — **only same-pod before/after comparisons are valid**; never quote cross-pod absolute numbers.
+Note the returned `id`. GPU choice: L40S (SECURE, ~$1/hr) is the workhorse, consistently available with direct public IPs. A100-80GB SECURE (~$1.64/hr) is the fallback; community 4090/5090 capacity comes and goes hourly. Fleet caveat: identical code on two same-model pods has measured ~25% apart, so **only same-pod before/after comparisons are valid**; never quote cross-pod absolute numbers.
 
 ## 2. Wait for liveness and get the SSH endpoint
 
@@ -56,7 +56,7 @@ while true; do
 done
 ```
 
-Read the entry with `"isIpPublic": true` and `"privatePort": 22` — that pair is your SSH target. Typical boot is 1–3 minutes (image pull is cached in each datacenter after the first use). If `runtime` stays null past ~5 minutes, read the container logs in the web console (the reason lives only there) and see the failure table.
+Read the entry with `"isIpPublic": true` and `"privatePort": 22`: that pair is your SSH target. Typical boot is 1–3 minutes (image pull is cached in each datacenter after the first use). If `runtime` stays null past ~5 minutes, read the container logs in the web console (the reason lives only there) and see the failure table.
 
 ## 3. Connect
 
@@ -93,7 +93,7 @@ $SSH 'export PATH=/opt/venv/bin:$PATH && cd /root \
   && cmake --build build-cuda --target bonsai_tests -j"$(nproc)" 2>&1 | tail -1'
 ```
 
-Shallow single-branch clones have no `origin/<branch>` refs — **checkout `FETCH_HEAD`** after fetching the branch (this trap has been hit three times). `make python-cuda` builds the CUDA python module into `build-cuda/python`; the tests target builds the Catch2 binary.
+Shallow single-branch clones have no `origin/<branch>` refs, so **checkout `FETCH_HEAD`** after fetching the branch (this trap has been hit three times). `make python-cuda` builds the CUDA python module into `build-cuda/python`; the tests target builds the Catch2 binary.
 
 ## 5. Run the validation
 
@@ -103,7 +103,7 @@ The CUDA test suite (cases SKIP without a device, so a passing run on a GPU host
 $SSH 'cd /root/bonsai && ./build-cuda/tests/bonsai_tests "[cuda]" 2>&1 | tail -2'
 ```
 
-The profiled single-cell benchmark — a spec JSON piped into the bench harness's worker mode. This is the 16M×100 ledger cell; scale `rows`/`iters` down for smoke tests. The four profile envs produce the `grow-profile` / `cuda-profile` / `cuda-upload-decomp` / `ingest-profile` / `fit-profile` stderr lines that every optimization decision is priced against:
+The profiled single-cell benchmark is a spec JSON piped into the bench harness's worker mode. This is the 16M×100 ledger cell; scale `rows`/`iters` down for smoke tests. The four profile envs produce the `grow-profile` / `cuda-profile` / `cuda-upload-decomp` / `ingest-profile` / `fit-profile` stderr lines that every optimization decision is priced against:
 
 ```bash
 $SSH 'cd /root/bonsai && spec="{\"variant\":\"bonsai_cuda_depthwise\",\"cell\":{\"axis\":\"rows\",\"rows\":16000000,\"cols\":100,\"bins\":255,\"bins_effective\":255,\"depth\":8,\"iters\":100,\"lr\":0.1,\"informative\":20,\"n_test\":500000,\"seed\":42},\"threads\":16}"; \
@@ -113,7 +113,7 @@ $SSH 'cd /root/bonsai && spec="{\"variant\":\"bonsai_cuda_depthwise\",\"cell\":{
   grep -o "RESULT .*" /tmp/run.out; grep -E "grow-profile|fit-profile|ingest-profile|cuda-upload-decomp" /tmp/run.err | tail -4'
 ```
 
-Other variants for same-pod ladders: `xgb_cuda`, `lgbm_cpu`, `catboost_gpu`, `bonsai_cuda_levelwise`, etc. (the `VARIANTS` table in `scripts/bench_scaling.py`). Full sweeps go through `make bench-scaling ARGS="--axis rows"` instead of raw worker calls — only the make target writes the results JSONL.
+Other variants for same-pod ladders: `xgb_cuda`, `lgbm_cpu`, `catboost_gpu`, `bonsai_cuda_levelwise`, etc. (the `VARIANTS` table in `scripts/bench_scaling.py`). Full sweeps go through `make bench-scaling ARGS="--axis rows"` instead of raw worker calls; only the make target writes the results JSONL.
 
 For anything longer than a few minutes, detach it so an SSH drop doesn't kill the run, and poll:
 
@@ -122,7 +122,7 @@ $SSH 'cd /root/bonsai && nohup env PATH=/opt/venv/bin:$PATH bash my_run.sh > /ro
 $SSH 'tail -5 /root/run.log'
 ```
 
-When killing a detached run, kill explicit PIDs and verify `pgrep` returns nothing before relaunching — an orphaned worker (PPID 1) still fitting 16M rows makes every subsequent measurement ~2× slow (the contention signature: everything inflates uniformly, including phases you didn't touch).
+When killing a detached run, kill explicit PIDs and verify `pgrep` returns nothing before relaunching. An orphaned worker (PPID 1) still fitting 16M rows makes every subsequent measurement ~2× slow (the contention signature: everything inflates uniformly, including phases you didn't touch).
 
 ## 6. Campaign driver
 
@@ -151,9 +151,9 @@ The sweep is not optional: **an error-returning create can still have created a 
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `runtime` stays null forever | Image needs a newer driver than the host (e.g. any `cu1281` image on a 12.4-driver machine — most of the SECURE pool) | The bonsai-ci image is now cuda12.8; L40S r550-driver pods run its 12.8-built binaries via CUDA minor-version compatibility. If it still stalls, check driver via console logs; delete and re-roll |
+| `runtime` stays null forever | Image needs a newer driver than the host (e.g. any `cu1281` image on a 12.4-driver machine, most of the SECURE pool) | The bonsai-ci image is now cuda12.8; L40S r550-driver pods run its 12.8-built binaries via CUDA minor-version compatibility. If it still stalls, check driver via console logs; delete and re-roll |
 | A reference arm trains at CPU speed on a GPU pod, or the bench raises "silently fell back to CPU" | The library's PyPI wheel is built against a newer CUDA major than the host driver supports; xgboost 3.4.0 ships a CUDA 13.3 build, which needs an r580 driver and sees zero devices on the 12.4-driver pool | Compare `xgboost.build_info()["CUDA_VERSION"]` against the `CUDA Version` in `nvidia-smi` (section 3), then pin the last CUDA 12 release (`uv pip install "xgboost<3.4"`) or re-roll onto a newer-driver host |
-| runc mount error in console, crash-loop | Broken host (missing `/dev/dri/cardN`) | Delete immediately, re-roll — waiting never helps |
+| runc mount error in console, crash-loop | Broken host (missing `/dev/dri/cardN`) | Delete immediately, re-roll; waiting never helps |
 | `Permission denied (publickey)` | Pod created without `PUBLIC_KEY` env | Delete + recreate; env cannot be added to a running pod |
 | `ssh.runpod.io`: "container not found" | Image lacks RunPod's proxy agent (bonsai-ci is plain sshd) | Use direct IP + port from the GraphQL port mapping |
 | `cmake: not found` on the pod | sshd didn't inherit Docker ENV | `export PATH=/opt/venv/bin:...` (section 3) |
@@ -168,7 +168,7 @@ The sweep is not optional: **an error-returning create can still have created a 
 
 ## 9. Cost notes
 
-L40S SECURE ≈ $0.99/hr, billed per-minute while the pod exists (not just while computing). A typical validation session — boot, build, `[cuda]` suite, two 16M profiled fits, teardown — is 25–40 minutes ≈ **$0.40–0.70**. The entire 2026-07 optimization campaign's pod spend was dominated by a handful of full-fleet sweeps, not validation sessions; there is no reason to hesitate about spinning a pod to check a GPU change, and no excuse for leaving one running overnight.
+L40S SECURE ≈ $0.99/hr, billed per-minute while the pod exists (not just while computing). A typical validation session (boot, build, `[cuda]` suite, two 16M profiled fits, teardown) is 25–40 minutes ≈ **$0.40–0.70**. The entire 2026-07 optimization campaign's pod spend was dominated by a handful of full-fleet sweeps, not validation sessions; there is no reason to hesitate about spinning a pod to check a GPU change, and no excuse for leaving one running overnight.
 
 ## 10. Standings refresh (decisions 92, 96)
 
