@@ -22,7 +22,7 @@ GPU support was the biggest swing, taken when a promotional window with Anthropi
 
 The ambition grew with the milestones: assimilate the defining ideas of XGBoost, LightGBM, and CatBoost into one library, match or beat their performance, and keep the code readable enough that reading it is still the point.
 
-Where that landed, measured on shared hardware at matched settings: on GPU, bonsai holds the fastest slot at every row scale tested, edging CatBoost and beating XGBoost at 16M rows at matched accuracy, on ~3x less host memory. Where it still loses (XGBoost's last 0.001 r² of cut quality on some tasks, learning-to-rank as a measured and scoped gap), the runs are linked with the same prominence as the wins.
+Here is where that landed, measured on shared hardware at matched settings. On GPU at the tall scenario (16M x 128), fit totals run 5.6s against XGBoost's 21.7s, 9.1s against LightGBM's 28.0s, and 5.9s against CatBoost's 16.9s. bonsai holds 9.1GB of peak host memory there, against LightGBM's 15.2GB and XGBoost's 29.5GB. At the extreme scenario (16M x 1024), XGBoost and CatBoost run out of memory and bonsai finishes. LightGBM wins test r2 in every GPU scenario: 0.885, 0.868 and 0.886 against 0.879, 0.860 and 0.879. On CPU the leafwise grower loses to LightGBM, 39.8s against 19.9s at the tall scenario and 518.3s against 69.1s at the wide one. Both sides sit on the same page, [the scenario panels](method/results/perf.md).
 
 One property none of the reference libraries offer: models are bit-identical across CPU architectures and thread counts, enforced per-commit in CI.
 
