@@ -26,26 +26,27 @@ companion file, because the fused fit total the perf page publishes once is
 their median: the anchor is read from a measurement the session already
 takes, never from a new run.
 
-The two planes rent different machines. A GPU pod is sold by device and
-throws in whatever CPU share the host has left, which is how a 16-thread CPU
-comparison ended up describing a cgroup rather than the code (issue #355):
-the container's CPU ceiling is invisible to nproc, and bonsai's spin-wait
-barriers spend exactly what the ceiling withholds. A CPU pod is sold by vCPU,
-so the ceiling is a line on the invoice. The CPU axes therefore run on a
-rented CPU pod sized by the rule below, and the GPU axes run on the GPU pod
-exactly as before. Both sessions pull into one results directory, and every
-row carries the host block it was measured under.
+The host of record for the CPU plane is a GPU pod's CPU, at the 12 threads
+the CPU specs pin (runbook section 11). That is server silicon rather than
+the desktop-class parts a CPU rental buys, and a CPU ranking is a claim
+about a class of machine as much as about an engine. So the default is one
+rental: every axis rides the GPU session, and `--cpu-plane-host cpupod`
+buys a separate CPU pod for the CPU axes when that is what is wanted.
 
-The sizing rule: rent one vCPU per thread the CPU specs ask for, 16 at the
-published thread count. What makes that enough is the enforcement mechanism. A
-CPU pod hands the container a cpuset, a set of whole CPUs equal to the
-purchase, and a thread that spins at a barrier burns only the core it already
-owns, so spin-wait costs the fit nothing. A host that meters CPU bandwidth
-instead, which is what a GPU pod does, shares one pool of core-seconds across
-all the threads, and there spin-wait does eat the allowance: such a host needs
-1.5 cores per thread before its numbers mean anything. The pod script asserts
-whichever cap it landed under before it measures anything, and fails the axis
-rather than publishing a number made under a ceiling nobody declared.
+The two hosts cap by different mechanisms, which is why the pod script
+asserts whichever cap it landed under rather than one rule. A GPU pod
+meters CPU bandwidth: the threads share one pool of core-seconds, bonsai's
+spin-wait barriers spend on waiting whatever the ceiling withholds, and a
+16-thread fit on a 13.6-core quota sat throttled in 97% of enforcement
+periods (issue #355). What the specs' 12 threads buy under that quota is
+one spare core, and the throttle counters bracketing each axis's first fit
+measure directly what an older 1.5-cores-per-thread margin was guessing at.
+That margin is retired: no rental reliably offers it. A CPU pod instead
+hands the container a cpuset, whole CPUs equal to the purchase, so a
+spinning thread burns only the core it already owns and one vCPU per thread
+is enough; the sizing check below applies to that path only. Either way the
+axis fails rather than publishing a number made under a ceiling nobody
+declared, and every row carries the host block it was measured under.
 
 It gates on the pod's fused/two-step parity rows before touching
 anything: the published ingest/train split is only honest while bonsai's
@@ -80,7 +81,8 @@ REST = "https://rest.runpod.io/v1"
 IMAGE = "ghcr.io/daniel-m-campos/bonsai-ci:cuda12.8"
 GPU = "NVIDIA RTX PRO 6000 Blackwell Server Edition"
 
-# The CPU plane's rental. cpu5g is the general-purpose CPU5 flavor at 4GB of
+# The optional separate CPU rental (--cpu-plane-host cpupod), not the
+# default host of record. cpu5g is the general-purpose CPU5 flavor at 4GB of
 # RAM per vCPU, which covers both cpu cells with room to spare. Not a knob:
 # CPU_DISK_GB below is pinned at the CPU5 disk cap, so any other flavor fails
 # at create.
@@ -92,6 +94,9 @@ CPU_DISK_GB = 30
 GPU_DISK_GB = 80
 PLANE_GPU = "gpu"
 PLANE_CPU = "cpu"
+# Where the CPU axes are measured. "gpu" is the host of record: they ride
+# the GPU session and no second pod is rented.
+CPU_PLANE_HOSTS = (PLANE_GPU, "cpupod")
 
 # The band the fused and two-step forms must agree inside. Measured at 2.5%
 # on one L40S at 4M x 512 and inside repeat noise at 16M; 5% matches the A/B
@@ -138,9 +143,14 @@ def main() -> int:
     m.add_argument("--only-stale", action="store_true",
                    help="drop the requested axes whose plane digest has not "
                    "moved since their last refresh (check_standings --stale)")
+    m.add_argument("--cpu-plane-host", choices=CPU_PLANE_HOSTS,
+                   default=PLANE_GPU,
+                   help="where the cpu axes are measured: on the GPU pod's "
+                        "own CPU (default, the host of record) or on a "
+                        "separately rented CPU pod")
     m.add_argument("--cpu-vcpu", type=int, default=CPU_VCPU,
-                   help="vCPUs to buy for the cpu-plane pod; must be at "
-                        "least one per thread the specs claim")
+                   help="vCPUs to buy when --cpu-plane-host is cpupod; must "
+                        "be at least one per thread the specs claim")
     m.add_argument("--dry-run", action="store_true",
                    help="print the rental plan and the sizing arithmetic, "
                         "then exit without renting anything")
@@ -160,14 +170,14 @@ def main() -> int:
 # Measure ==========================================================================================
 
 def measure(args: argparse.Namespace) -> int:
-    """Run one pod session per plane: create, launch, poll, pull, tear down.
+    """Run one pod session per host: create, launch, poll, pull, tear down.
 
     Parameters
     ----------
     args : argparse.Namespace
         Parsed ``measure`` arguments: ``axes``, ``only_stale``,
-        ``prev_version``, ``out_dir``, ``keep_pod``, ``cpu_vcpu``,
-        ``dry_run``.
+        ``prev_version``, ``out_dir``, ``keep_pod``, ``cpu_plane_host``,
+        ``cpu_vcpu``, ``dry_run``.
 
     Returns
     -------
@@ -186,23 +196,34 @@ def measure(args: argparse.Namespace) -> int:
         if not axes:
             print("every requested axis is current; nothing to measure")
             return 0
-    planes = [(PLANE_GPU, [a for a in axes if not a.startswith(CPU_PREFIX)]),
-              (PLANE_CPU, [a for a in axes if a.startswith(CPU_PREFIX)])]
-    planes = [(plane, plane_axes) for plane, plane_axes in planes if plane_axes]
-    cpu_axes = dict(planes).get(PLANE_CPU, [])
-    if cpu_axes:
-        # One vCPU per thread is the whole sizing rule: a rented CPU pod
-        # enforces the purchase as a cpuset, so a thread that spins at a
-        # barrier burns only the core it already owns.
-        needed = max(spec_threads(axis) for axis in cpu_axes)
-        print(f"cpu plane: {', '.join(cpu_axes)} at {needed}t need >= "
-              f"{needed} vCPU (one per thread, because a cpu pod caps by "
-              f"cpuset); renting {args.cpu_vcpu} x {CPU_FLAVOR}")
-        if args.cpu_vcpu < needed:
-            print(f"ERROR: --cpu-vcpu {args.cpu_vcpu} is below the {needed} "
-                  f"the sizing rule requires; the axis would run more "
-                  f"threads than the cpuset has cpus", file=sys.stderr)
-            return 1
+    cpu_axes = [a for a in axes if a.startswith(CPU_PREFIX)]
+    if args.cpu_plane_host == PLANE_GPU:
+        # The host of record: the cpu axes ride the GPU session, so one
+        # rental measures the whole matrix and the pod script's cap
+        # assertion is the bandwidth-quota branch.
+        sessions = [(PLANE_GPU, axes)]
+        if cpu_axes:
+            print(f"cpu plane: {', '.join(cpu_axes)} on the GPU pod's own "
+                  f"CPU at {max(spec_threads(a) for a in cpu_axes)}t "
+                  "(runbook section 11); no second rental")
+    else:
+        sessions = [(PLANE_GPU, [a for a in axes if a not in cpu_axes]),
+                    (PLANE_CPU, cpu_axes)]
+        sessions = [(p, sax) for p, sax in sessions if sax]
+        if cpu_axes:
+            # One vCPU per thread is the whole sizing rule for this path: a
+            # rented CPU pod enforces the purchase as a cpuset, so a thread
+            # that spins at a barrier burns only the core it already owns.
+            needed = max(spec_threads(axis) for axis in cpu_axes)
+            print(f"cpu plane: {', '.join(cpu_axes)} at {needed}t need >= "
+                  f"{needed} vCPU (one per thread, because a cpu pod caps by "
+                  f"cpuset); renting {args.cpu_vcpu} x {CPU_FLAVOR}")
+            if args.cpu_vcpu < needed:
+                print(f"ERROR: --cpu-vcpu {args.cpu_vcpu} is below the "
+                      f"{needed} the sizing rule requires; the axis would "
+                      f"run more threads than the cpuset has cpus",
+                      file=sys.stderr)
+                return 1
     if args.dry_run:
         print("--dry-run: nothing rented")
         return 0
@@ -217,9 +238,9 @@ def measure(args: argparse.Namespace) -> int:
     sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
                          text=True, cwd=REPO).stdout.strip()
     pubkey = (pathlib.Path.home() / ".ssh" / "id_ed25519.pub").read_text().strip()
-    for plane, plane_axes in planes:
-        _run_session(key, args, plane=plane, axes=plane_axes, out_dir=out_dir,
-                     sha=sha, pubkey=pubkey)
+    for plane, session_axes in sessions:
+        _run_session(key, args, plane=plane, axes=session_axes,
+                     out_dir=out_dir, sha=sha, pubkey=pubkey)
     quota_fail = out_dir / QUOTA_FAIL
     if quota_fail.exists():
         print("ERROR: a pod's gate failed an axis; its rows were renamed "
@@ -298,12 +319,13 @@ def supersede(args: argparse.Namespace) -> int:
     print(verdict or "A/B skipped (no ab.jsonl)")
 
     cpu_axes = [a for a in axes if a.startswith(CPU_PREFIX)]
+    cpu_hosts = sorted({_row_host(RESULTS / files[a]) for a in cpu_axes})
     hosts_note = ("" if not cpu_axes else
-                  f"\n\nCPU axes ({', '.join(cpu_axes)}) were measured on a "
-                  "rented CPU pod, whose vCPU count is bought rather than "
-                  "inherited from a GPU rental (issue #355). Every row "
-                  "carries its own host block, so the registry records "
-                  "which machine and which ceiling stands behind each axis.")
+                  f"\n\nCPU axes ({', '.join(cpu_axes)}) were measured on "
+                  f"{', '.join(h for h in cpu_hosts if h)} (issue #355). "
+                  "Every row carries its own host block, so the registry "
+                  "records which machine and which ceiling stands behind "
+                  "each axis.")
     branch = f"standings-refresh-{time.strftime('%Y%m%d')}"
     subprocess.run(["git", "checkout", "-b", branch], check=True, cwd=REPO)
     subprocess.run(["git", "add", "-A", "benchmarks/", "docs/method/",
@@ -343,6 +365,15 @@ def stale_axes() -> set[str]:
 
 
 # Private Helpers ==================================================================================
+
+def _row_host(path: pathlib.Path) -> str:
+    """The host name the rows in one results file were measured under."""
+    with path.open() as fh:
+        for line in fh:
+            if line.strip():
+                return json.loads(line).get("host", {}).get("name", "")
+    return ""
+
 
 def _copy_parity(path: pathlib.Path, axis_file: str | None) -> str | None:
     """Commit the session's parity rows as the anchor axis's companion.
@@ -432,9 +463,10 @@ def _api(url: str, key: str, payload: dict | None = None,
 def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int) -> str:
     """Create a standings pod for one plane, with the mandated PUBLIC_KEY env.
 
-    A GPU pod is bought by device. A CPU pod is bought by vCPU, which is the
-    point: the CPU ceiling is a number the invoice states rather than
-    whatever share of the host the device rental happened to leave over.
+    A GPU pod is bought by device, and its CPU share is whatever the host
+    has spare, read off the container rather than assumed. A CPU pod is
+    bought by vCPU, so its ceiling is a line on the invoice; that is the
+    ``--cpu-plane-host cpupod`` path, not the host of record.
     """
     name = f"bonsai-standings-{plane}-{time.strftime('%Y%m%d-%H%M')}"
     body = {"name": name, "imageName": IMAGE, "cloudType": "SECURE",
