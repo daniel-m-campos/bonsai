@@ -67,7 +67,9 @@ So for learning-to-rank today, reach for XGBoost's `rank:ndcg`, the listwise los
 
 ## Bit-reproducible artifacts across CPUs: bonsai only
 
-bonsai's model bytes are identical across runs, thread counts, and CPU architectures, and CI enforces it per commit. It trains a reference model on an arm64 Mac and an x86-64 Linux box and compares file hashes. No reference library makes this claim. If you need a bit-exact artifact to compare two builds by file hash, this is the one row where bonsai stands alone.
+Train on the host plane and bonsai's model bytes are identical across runs, thread counts, and CPU architectures, and CI enforces it per commit. It trains a reference model on an arm64 Mac and an x86-64 Linux box and compares file hashes. No reference library makes this claim. If you need a bit-exact artifact to compare two builds by file hash, this is the one row where bonsai stands alone.
+
+The device plane does not make the claim and does not pretend to. CUDA histogram cells are accumulated by thousands of threads under atomics, so the add order is whatever the scheduler produced and the same fit at the same commit writes different model bytes on every run. What the GPU plane offers instead is a measured run-to-run spread: a change is shown to be behavior-preserving by demonstrating it stays inside that spread ([the contract](../design/determinism.md), [the HPC tension](../design/the-hpc-tension.md)). Pick a CPU grower when the artifact itself has to be reproducible.
 
 The contract also caught real bugs: an FMA contraction that diverged bytes across architectures, and a silent OpenMP downgrade. Both became hard errors, so the guarantee is enforced, not aspirational.
 
