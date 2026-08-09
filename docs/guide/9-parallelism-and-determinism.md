@@ -80,15 +80,12 @@ of configuration, never of scheduling.
 - Row-parallel predict / gradients / scatter: one row, one thread, no
   shared accumulator.
 
-An earlier revision of this chapter ended: "row-parallel histogram
-building with per-thread partials is the remaining fit-speed lever, and
-taking it would relax the contract (documented, not taken by accident)."
-The lever **was** then taken, deliberately (decision 49): ground-truth
-instrumentation showed deep sparse nodes filling at a fifth of the dense
-rate (a cache problem no feature-parallel scan could fix), and the
-row-wise fill bought a measured 1.6–1.7× on real cells for the narrowed
-contract above. The models are still exactly reproducible; you just have
-to hold `n_threads` fixed, like every reference library. What did NOT
+Relaxing the contract was a deliberate trade, not an accident (decision
+49): ground-truth instrumentation showed deep sparse nodes filling at a
+fifth of the dense rate, a cache problem no feature-parallel scan could
+fix, and the row-wise fill bought a measured 1.6–1.7× on real cells for
+the narrowing above. The models are still exactly reproducible; you just
+have to hold `n_threads` fixed, like every reference library. What did NOT
 survive contact with measurement: a per-parity two-way split promising
 1.6× in a microbenchmark delivered nothing in the real loop (the
 microbenchmark's arrays were cache-resident; the streaming loop's are
