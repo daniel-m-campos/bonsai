@@ -49,8 +49,9 @@ leaf values, not the histograms that produced them). So:
 - Growers stamp each split's gain the moment they create an internal node:
   the `split_gains` bookkeeping next to `split_bins` in
   [`src/grower.cpp`](../../src/grower.cpp); `DenseTree` carries them
-  per node id, `ObliviousTree` per level, and both serialize (model
-  format v5).
+  per node id, `ObliviousTree` per level, and both serialize. Gains have
+  been in the model format since v5; the format is at v7 today
+  (`k_format_version`, [`src/io/model.cpp`](../../src/io/model.cpp)).
 - Accumulation is a ~20-line walk: `internal::accumulate_importance` in
   [`include/bonsai/booster.hpp`](../../include/bonsai/booster.hpp):
   for each internal node, `out[feature] += 1` or `+= gain`. That is the
