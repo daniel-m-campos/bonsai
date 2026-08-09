@@ -1,12 +1,5 @@
 ---
-# 1. The Checks
-# We enable a mix of checks:
-# - bugprone-*: Detects likely bugs (e.g., use after free, unsafe casts).
-# - modern-*: Suggests C++20/23 improvements (e.g., "use std::print", "use auto").
-# - performance-*: Flags expensive copies.
-# - readability-*: Enforces clear code style.
-#
-# The second disable block (decision 43) curates checks the codebase
+# The disable block (decision 43) curates checks the codebase
 # deliberately does not satisfy: pointers/arithmetic at C/CUDA/codec
 # boundaries, reference members in view-like classes, callback F&& APIs
 # that use rather than forward, concept archetypes with unnamed params,
@@ -20,7 +13,6 @@ Checks: >
   modernize-*,
   performance-*,
   readability-*,
-  -google-runtime-references,
   -readability-identifier-length,
   -readability-uppercase-literal-suffix,
   -readability-magic-numbers,
@@ -46,12 +38,7 @@ Checks: >
   -modernize-use-integer-sign-comparison,
   -modernize-use-designated-initializers,
 
-# 2. Settings
-# Treat warnings as errors? (Like --strict in Python)
-# WarningsAsErrors: '*'
-
-# 3. Check Options (Fine-tuning)
 CheckOptions:
-  # Enforce variable naming (snake_case is standard in C++ std lib)
+  # snake_case is the standard library's convention, and the repo's.
   readability-identifier-naming.VariableCase: lower_case
   readability-identifier-naming.FunctionCase: lower_case

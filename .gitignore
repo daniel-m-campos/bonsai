@@ -77,13 +77,11 @@ tests/data/.toy-fetched
 benchmarks/results/*.json
 benchmarks/results/*.md
 
-# Claude Code: ignore everything under .claude/, except project-owned skills.
-# `make skills` installs upstream skills (e.g. caveman) into .claude/skills/
-# alongside committed project-owned ones (e.g. bonsai-policy).
+# Claude Code: ignore everything under .claude/, except the committed
+# project-owned skills listed below.
 .claude/*
 !.claude/skills/
 .claude/skills/*
-!.claude/skills/bonsai-policy/
 !.claude/skills/quality-gates/
 !.claude/skills/pod-validate/
 !.claude/skills/perf-round/

@@ -14,12 +14,10 @@ Every make target you run day to day, generated from the `##` comments in the [M
 | `make build-asan` | Build the ASan + UBSan variant (build-asan/). |
 | `make test-asan` | Build the ASan + UBSan variant and run ctest (CI-only on macOS). |
 | `make clean` | Remove build/, build-cuda/, and build-asan/. |
-| `make rebuild` | Clean, then build. |
 | `make format` | clang-format in place over src/, include/, tests/, benchmarks/. |
 | `make format-check` | Check formatting with clang-format --dry-run --Werror (CI gate). |
 | `make lint-python` | Run ruff over python/ and scripts/ (pinned via uvx). |
 | `make lint` | Run clang-tidy over src/, header-filtered to bonsai. |
-| `make run` | Build, then run ./build/src/bonsai with ARGS. |
 | `make params-json` | Re-extract docs/use/parameters.src.json from the built CLI and rerender the page. |
 | `make test` | Build, fetch the pinned test datasets, run ctest. |
 | `make python` | Build the _bonsai Python extension into build/python/. |
@@ -31,5 +29,3 @@ Every make target you run day to day, generated from the `##` comments in the [M
 | `make help` | List the common make targets. |
 | `make docs-check` | Verify generated docs and lint prose (the five CI doc gates). |
 | `make install-hooks` | Point core.hooksPath at the versioned hooks (commit-msg format gate). |
-| `make skills` | Install project-local Claude Code skills (currently caveman). |
-| `make skills-clean` | Remove installed project-local skills. |

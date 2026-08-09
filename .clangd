@@ -15,22 +15,22 @@ CompileFlags:
 
 ---
 # Headers have no compile-command entry of their own, so clangd guesses a TU by
-# directory proximity and picks a host-only .cpp instead of histogram_builder.cu.
+# directory proximity and picks a host-only .cpp instead of histogram_engine.cu.
 # Force CUDA device-compilation flags directly to remove that ambiguity.
 #
-# --cuda-path and --offload-arch below are hand-copied from what CMake itself
-# resolves (CUDAToolkit_LIBRARY_ROOT, BONSAI_CUDA_ARCH in CMakeLists.txt) since
-# clangd config can't read CMake variables; re-sync these if either changes.
+# --cuda-path points at the unversioned symlink every CUDA install maintains,
+# so a toolkit bump does not strand the editor; --offload-arch is hand-copied
+# from BONSAI_CUDA_ARCH in CMakeLists.txt, which clangd config cannot read.
 If:
   PathMatch: src/cuda/detail/.*\.cuh
 CompileFlags:
   Add:
     - -x
     - cuda
-    - --cuda-path=/usr/local/cuda-12.6
+    - --cuda-path=/usr/local/cuda
     - --offload-arch=native
     - -Wno-unknown-cuda-version
-# Symbols here are only referenced from histogram_builder.cu (the real TU) or
+# Symbols here are only referenced from histogram_engine.cu (the real TU) or
 # from uninstantiated function templates within these headers; clangd parses
 # each header standalone and can't see either use, producing false positives.
 #

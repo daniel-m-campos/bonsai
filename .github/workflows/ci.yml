@@ -124,7 +124,7 @@ jobs:
         with:
           path: build/_deps
           key: deps-build-${{ hashFiles('CMakeLists.txt') }}
-      - run: make configure
+      # make lint depends on build/build.ninja, so it configures itself.
       - run: make lint
 
   python:
