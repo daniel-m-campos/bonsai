@@ -300,6 +300,13 @@ GPU_COLUMNS: Final = (Col.INGEST, Col.TRAIN, Col.RSS, Col.VRAM, Col.METRIC)
 CPU_COLUMNS: Final = (Col.INGEST, Col.TRAIN, Col.RSS, Col.METRIC)
 HIGHER_IS_BETTER: Final = frozenset({Col.METRIC})
 
+# A margin the protocol cannot resolve is a tie, not a win. Where a scenario
+# repeats an arm, that arm's own spread across its repeats is the measured
+# resolution and no constant is needed; where a cell ran once, no spread is
+# observable and this stated margin stands in for it.
+TIE_MARGIN: Final = 0.05
+TIE_NOTE: Final = "(tie)"
+
 
 @dataclasses.dataclass(frozen=True)
 class Panel:
@@ -447,13 +454,14 @@ def panel_table(panel: Panel, axes: tuple[str, ...], plane: str) -> str:
         if not rows:
             continue
         label = _scenario_label(axis, rows)
-        cells = [_arm_cells(best_row(rows, v), columns)
-                 for v in panel.arms(plane)]
+        variants = panel.arms(plane)
+        cells = [_arm_cells(best_row(rows, v), columns) for v in variants]
+        spreads = [_arm_spreads(rows, v, columns) for v in variants]
         for i, arm in enumerate(panel.labels()):
-            other = cells[1 - i]
+            j = 1 - i
             body.append([label, arm,
-                         *[_bold(cells[i][c][0],
-                                 _wins(c, cells[i][c][1], other[c][1]))
+                         *[_compare(c, cells[i][c], cells[j][c],
+                                    _tie_floor(spreads[i][c], spreads[j][c]))
                            for c in columns]])
     if not body:
         return ""
@@ -553,6 +561,55 @@ def _wins(column: str, mine: float | None, theirs: float | None) -> bool:
     return mine > theirs if column in HIGHER_IS_BETTER else mine < theirs
 
 
+def _gap(mine: float, theirs: float) -> float:
+    """The relative margin between two comparable values, against the
+    smaller of the two, so a margin and a spread read on the same scale."""
+    smaller = min(abs(mine), abs(theirs))
+    return abs(mine - theirs) / smaller if smaller else float("inf")
+
+
+def _spread(values: list[float | None]) -> float | None:
+    """One arm's observed relative spread across a scenario's repeats, or
+    None when the cell ran once and no spread is observable."""
+    seen = [v for v in values if v is not None]
+    if len(seen) < 2:
+        return None
+    return _gap(max(seen), min(seen))
+
+
+def _tie_floor(mine: float | None, theirs: float | None) -> float:
+    """The margin a comparison must clear to count as a win: the wider of
+    the two arms' observed spreads, or TIE_MARGIN when neither arm repeated."""
+    seen = [s for s in (mine, theirs) if s is not None]
+    return max(seen) if seen else TIE_MARGIN
+
+
+def _is_tie(mine: float | None, theirs: float | None, floor: float) -> bool:
+    """Whether a comparable pair sits inside the measurement's resolution."""
+    if mine is None or theirs is None:
+        return False
+    return _gap(mine, theirs) <= floor
+
+
+def _arm_spreads(rows: list[dict], variant: str,
+                 columns: tuple[str, ...]) -> dict[str, float | None]:
+    """One arm's observed spread per column, across the scenario's repeats."""
+    finished = [_arm_cells(r, columns) for r in rows
+                if r[K.VARIANT] == variant and r[K.STATUS] == "ok"]
+    return {c: _spread([cells[c][1] for cells in finished]) for c in columns}
+
+
+def _compare(column: str, mine: tuple[str, float | None],
+             theirs: tuple[str, float | None], floor: float) -> str:
+    """One arm's cell, marked against the other arm: bold when it holds the
+    better value, noted as a tie when the margin sits inside `floor`."""
+    text, value = mine
+    other = theirs[1]
+    if _is_tie(value, other, floor):
+        return f"{text} {TIE_NOTE}"
+    return _bold(text, _wins(column, value, other))
+
+
 def _summary_cell(panel: Panel, axis: str, plane: str) -> str:
     """`bonsai 6.9s vs XGBoost 8.1s` for one grower on one plane."""
     rows = axis_rows(axis)
@@ -562,9 +619,20 @@ def _summary_cell(panel: Panel, axis: str, plane: str) -> str:
     if bonsai is None or rival is None:
         return "-"
     ours, theirs = _fit_value(bonsai), _fit_value(rival)
+    if _fit_is_tie(rows, panel, plane, ours, theirs):
+        return (f"bonsai {_fit_text(bonsai)} vs "
+                f"{panel.rival} {_fit_text(rival)} {TIE_NOTE}")
     return (f"{_bold('bonsai ' + _fit_text(bonsai), _wins('fit', ours, theirs))}"
             f" vs "
             f"{_bold(panel.rival + ' ' + _fit_text(rival), _wins('fit', theirs, ours))}")
+
+
+def _fit_is_tie(rows: list[dict], panel: Panel, plane: str,
+                ours: float | None, theirs: float | None) -> bool:
+    """Whether a fit-total pair sits inside the two arms' own repeat spreads."""
+    spreads = (_spread([_fit_value(r) for r in rows if r[K.VARIANT] == v])
+               for v in panel.arms(plane))
+    return _is_tie(ours, theirs, _tie_floor(*spreads))
 
 
 def _fit_value(r: dict | None) -> float | None:
@@ -627,9 +695,11 @@ def perf_summary_section() -> str:
 
 The columns are the same everywhere. `ingest_s` is the fixed cost of turning a float32 matrix into bins, paid once; `train_s` is the variable cost of the boosting rounds, the half that grows with the round budget. {BONSAI_SPLIT_NOTE} {CATBOOST_INGEST_NOTE} Peak RSS is host memory, with its headroom above the resident input array in parentheses; peak VRAM is device memory attributed to the training process by NVML, and a row whose sampler could not attribute it prints `-` rather than a device total that would count every other process on the card.
 
+Bold marks the better value of a pair, but only where the measurement can tell the two arms apart. Where a scenario repeats an arm, the spread across that arm's own repeats is what the host resolved on the day. A margin that falls inside the wider of the two arms' spreads is reported as a tie, because the protocol cannot resolve it. Where a cell ran once and no spread is observable, a stated {TIE_MARGIN:.0%} margin stands in for it. Both values of a tied pair print plain, with `{TIE_NOTE}` beside them.
+
 ## The headline: the tall scenario
 
-Fit totals (ingest plus train) at the tall cell of each plane, bold to the faster arm.
+Fit totals (ingest plus train) at the tall cell of each plane, bold to the faster arm, `{TIE_NOTE}` where the margin sits inside the measurement's own spread.
 
 {summary_matrix()}
 """
@@ -978,7 +1048,8 @@ def _perf_summary() -> str:
 
 
 def _headline_clauses(axis: str, plane: str) -> list[str]:
-    """`depthwise 6.9s vs XGBoost 8.1s`, one clause per grower."""
+    """`depthwise 6.9s vs XGBoost 8.1s`, one clause per grower, with the
+    same tie note the tables carry so the prose cannot claim more."""
     rows = axis_rows(axis)
     out = []
     for panel in PANELS:
@@ -988,8 +1059,10 @@ def _headline_clauses(axis: str, plane: str) -> list[str]:
         ours, theirs = _fit_value(bonsai), _fit_value(rival)
         if ours is None or theirs is None:
             continue
+        note = (f" {TIE_NOTE}"
+                if _fit_is_tie(rows, panel, plane, ours, theirs) else "")
         out.append(f"{panel.grower} {ours:.1f}s vs {panel.rival} "
-                   f"{theirs:.1f}s")
+                   f"{theirs:.1f}s{note}")
     return out
 
 
