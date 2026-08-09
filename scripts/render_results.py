@@ -26,7 +26,7 @@ import sys
 from collections import defaultdict
 from typing import Final
 
-from _render_common import md_table
+from _render_common import md_table, write_or_check
 
 
 class Axis:
@@ -1306,24 +1306,11 @@ def main() -> int:
         print(f"ERROR: orphaned generated pages: {names}; remove them or wire "
               "them into PAGES.", file=sys.stderr)
         return 1
-    if "--check" in sys.argv:
-        stale = [p for p, content in outputs.items()
-                 if not p.exists() or p.read_text() != content]
-        if stale:
-            names = ", ".join(str(p.relative_to(REPO)) for p in stale)
-            print(f"ERROR: stale generated files: {names}; run "
-                  "python3 scripts/render_results.py", file=sys.stderr)
-            return 1
-        print(f"results ledger: in sync ({len(PAGES)} pages + landing, "
-              f"{len(charts)} charts)")
-        return 0
-    ASSETS.mkdir(parents=True, exist_ok=True)
-    pages_dir.mkdir(parents=True, exist_ok=True)
-    for p, content in outputs.items():
-        p.write_text(content)
-    print(f"wrote the ledger landing + {len(PAGES)} suite pages "
-          f"({len(consumed)} data files consumed) + {len(charts)} charts")
-    return 0
+    return write_or_check(outputs, repo=REPO,
+                          script="scripts/render_results.py",
+                          label="results ledger",
+                          detail=f"{len(PAGES)} pages + landing, "
+                                 f"{len(charts)} charts")
 
 
 if __name__ == "__main__":

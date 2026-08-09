@@ -232,7 +232,7 @@ def main() -> int:
         return 1
     text = render()
     n = sum(len(rows) for rows in sections_from_src()[0].values())
-    return write_or_check(OUT, text, repo=REPO,
+    return write_or_check({OUT: text}, repo=REPO,
                           script="scripts/render_params.py",
                           label="parameters reference", detail=f"{n} knobs")
 
