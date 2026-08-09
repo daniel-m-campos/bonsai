@@ -9,7 +9,7 @@ pip install "bonsai-gbt[bench]"
 python -m bonsai.bench.grinsztajn out.jsonl
 ```
 
-The `[bench]` extra pulls the reference libraries the suites compare against (XGBoost, LightGBM, CatBoost, scikit-learn, pandas, openml). Plain `import bonsai.bench` needs none of them; heavy libraries load lazily per suite.
+The `[bench]` extra pulls the reference libraries the suites compare against (XGBoost, LightGBM, CatBoost, pandas, openml). Plain `import bonsai.bench` needs none of them; heavy libraries load lazily per suite.
 
 **From a source tree** (when you are hacking on bonsai itself):
 

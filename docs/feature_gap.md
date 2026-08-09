@@ -278,7 +278,7 @@ trees.
 
 ### 11. Classification benchmark — HIGGS + AUC (landed)
 
-`scripts/fetch_higgs.py` streams the first 550k rows of UCI HIGGS
+`scripts/fetch.py higgs` streams the first 550k rows of UCI HIGGS
 (500k train / 50k test, 28 features); `configs/higgs.toml` runs the
 logloss objective; compare.py maps it to `binary:logistic` / `binary` /
 `Logloss` (CatBoostClassifier) and adds an AUC column (regression rows
