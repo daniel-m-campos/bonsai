@@ -7,20 +7,34 @@ from __future__ import annotations
 import numpy as np
 
 
-def _as_2d_f32(X) -> np.ndarray:
-    """Contiguous float32 2-D view; the native boundary's input shape."""
-    a = np.ascontiguousarray(X, dtype=np.float32)
-    if a.ndim != 2:
-        raise ValueError(f"X must be 2-dimensional, got shape {a.shape}")
-    return a
+def _as_f32(a, ndim: int, name: str) -> np.ndarray:
+    """Contiguous float32 view of the given rank; the native boundary's shape.
 
+    Parameters
+    ----------
+    a
+        Anything numpy can make an array of.
+    ndim
+        The rank the boundary requires: 2 for a feature matrix, 1 for a target
+        or weight vector.
+    name
+        The argument's name, for the error message.
 
-def _as_1d_f32(y) -> np.ndarray:
-    """Contiguous float32 1-D view; the native boundary's target shape."""
-    a = np.ascontiguousarray(y, dtype=np.float32)
-    if a.ndim != 1:
-        raise ValueError(f"y must be 1-dimensional, got shape {a.shape}")
-    return a
+    Returns
+    -------
+    numpy.ndarray
+        C-contiguous float32, rank ``ndim``.
+
+    Raises
+    ------
+    ValueError
+        When the array's rank is not ``ndim``.
+    """
+    arr = np.ascontiguousarray(a, dtype=np.float32)
+    if arr.ndim != ndim:
+        raise ValueError(
+            f"{name} must be {ndim}-dimensional, got shape {arr.shape}")
+    return arr
 
 
 def _to_config_str(v) -> str:

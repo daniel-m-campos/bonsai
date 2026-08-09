@@ -601,16 +601,10 @@ def test_parity_gate_bands_the_two_step_form():
         assert not ok and "FAIL" in table, table
 
 
-def test_variant_canonicalization_and_ts_guard():
-    from bonsai.bench import runners
+def test_variant_canonicalization():
     from bonsai.bench import spec as spec_mod
 
     s = {"name": "t", "cells": [{"rows": 1000, "cols": 8}],
          "variants": ["bonsai_dw", "xgb"]}
     jobs = spec_mod.expand(s)
     assert [j["variant"] for j in jobs] == ["bonsai_depthwise", "xgb_hist"]
-    cell = spec_mod.make_cell({}, rows=512, cols=4)
-    with pytest.raises(RuntimeError) as e:
-        runners.worker({"cell": cell, "variant": "bonsai_ts_depthwise",
-                        "threads": 1})
-        assert "no suite" in str(e.value)

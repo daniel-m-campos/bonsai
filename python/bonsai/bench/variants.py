@@ -46,12 +46,6 @@ _TABLE = (
     Variant("bonsai_cuda_depthwise", Lib.BONSAI, Device.CUDA, ("bonsai_gpu",)),
     Variant("bonsai_cuda_leafwise", Lib.BONSAI, Device.CUDA),
     Variant("bonsai_cuda_levelwise", Lib.BONSAI, Device.CUDA, ("bonsai_obl_gpu",)),
-    # The ordered-TS arms ran the retired airline suite; they stay registered
-    # so committed probe rows that name them still resolve.
-    Variant("bonsai_ts_depthwise", Lib.BONSAI, Device.CPU),
-    Variant("bonsai_ts_levelwise", Lib.BONSAI, Device.CPU),
-    Variant("bonsai_ts_cuda_depthwise", Lib.BONSAI, Device.CUDA),
-    Variant("bonsai_ts_cuda_levelwise", Lib.BONSAI, Device.CUDA),
     Variant("xgb_hist", Lib.XGB, Device.CPU, ("xgb", "xgb_cpu")),
     Variant("xgb_cuda", Lib.XGB, Device.CUDA, ("xgb_gpu",)),
     Variant("lgbm_cpu", Lib.LGBM, Device.CPU, ("lgbm",)),
@@ -76,8 +70,3 @@ def resolve(name: str) -> Variant:
     if v is None:
         raise KeyError(f"unknown variant {name!r}")
     return v
-
-
-def names(device: str | None = None) -> list[str]:
-    """Canonical variant names, optionally filtered by device."""
-    return [v.name for v in _TABLE if device in (None, v.device)]

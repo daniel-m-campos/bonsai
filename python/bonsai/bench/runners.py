@@ -398,10 +398,6 @@ def worker(spec: dict) -> dict:
         X, y, Xte, yte = gen_data(c["rows"], c["cols"], c["seed"], c["n_test"],
                                   c["informative"])
     v = resolve(spec[runlog.Row.VARIANT])
-    if v.name.startswith("bonsai_ts_"):
-        raise RuntimeError("unsupported: ordered-TS arms have no suite since "
-                           "the airline axis retired; bonsai.encoding is the "
-                           "product feature")
     run = RUNNERS[v.lib]
     if v.device == Device.CUDA:
         # Untimed micro-fit absorbs CUDA context creation (and, once per

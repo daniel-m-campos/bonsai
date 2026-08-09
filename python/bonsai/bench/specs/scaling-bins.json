@@ -1,0 +1,21 @@
+{
+  "name": "scaling-bins",
+  "suite": "scaling",
+  "defaults": {"depth": 8, "iters": 100, "lr": 0.1, "bins": 255,
+               "min_data_in_leaf": 20, "lambda_l2": 1.0,
+               "informative": 20, "seed": 42},
+  "cells": [{"rows": 1000000, "cols": 100, "bins": 15, "axis": "bins"},
+            {"rows": 1000000, "cols": 100, "bins": 63, "axis": "bins"},
+            {"rows": 1000000, "cols": 100, "bins": 255, "axis": "bins"},
+            {"rows": 1000000, "cols": 100, "bins": 1023, "axis": "bins"},
+            {"rows": 1000000, "cols": 100, "bins": 4095, "axis": "bins"},
+            {"rows": 1000000, "cols": 100, "bins": 16383, "axis": "bins"},
+            {"rows": 1000000, "cols": 100, "bins": 65535, "axis": "bins"}],
+  "variants": ["bonsai_depthwise", "bonsai_leafwise", "bonsai_levelwise",
+               "bonsai_cuda_depthwise", "bonsai_cuda_levelwise", "xgb_hist",
+               "xgb_cuda", "lgbm_cpu", "lgbm_cuda", "catboost_cpu",
+               "catboost_gpu"],
+  "threads": [16],
+  "repeats": 1,
+  "timeout_cap": 3600
+}

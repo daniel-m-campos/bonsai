@@ -12,11 +12,12 @@ _CPU_ARMS = ["bonsai_depthwise", "bonsai_leafwise", "bonsai_levelwise",
 
 
 def test_spec_expansion():
-    s = {"name": "iso-test", "suite": "iso-volume",
+    s = {"name": "cell-test", "suite": "cells",
          "defaults": {"depth": 8, "iters": 100, "lr": 0.1, "bins": 255,
                       "informative": 20, "seed": 42},
-         "cells": [{"gen": "iso_volume", "log2_cells": 31,
-                    "cols": [128, 2048, 65536]},
+         "cells": [{"rows": 16_777_216, "cols": 128},
+                   {"rows": 1_048_576, "cols": 2048},
+                   {"rows": 32_768, "cols": 65_536},
                    {"rows": 1_000_000, "cols": 100}],
          "variants": ["bonsai_cuda_depthwise", "xgb_cuda", "bonsai_depthwise"],
          "threads": [16],
@@ -24,8 +25,6 @@ def test_spec_expansion():
     cells = spec_mod.cells_of(s)
     assert [(c["rows"], c["cols"]) for c in cells[:3]] == [
         (16_777_216, 128), (1_048_576, 2048), (32_768, 65_536)]
-    assert all(c["rows"] * c["cols"] == 1 << 31 for c in cells[:3])
-    assert cells[0]["axis"] == "iso_volume" and cells[0]["aspect"] == 131072.0
     assert cells[3]["axis"] == "cell" and cells[3]["n_test"] == 200_000
     jobs = spec_mod.expand(s)
     assert len(jobs) == 4 * 3
@@ -39,8 +38,7 @@ def test_spec_expansion():
         ("bonsai_cuda_depthwise", 100), ("xgb_cuda", 50), ("xgb_cuda", 100),
         ("bonsai_depthwise", 100)]
     with pytest.raises(ValueError):
-        spec_mod.cells_of({"cells": [{"gen": "iso_volume", "log2_cells": 31,
-                                      "cols": [1000]}]})
+        spec_mod.cells_of({"cells": [{"cols": 1000}]})
 
 
 def test_spec_expansion_exclude_variants():
@@ -72,7 +70,8 @@ STANDINGS_AXES = {
 def test_bundled_specs():
     names = spec_mod.bundled_specs()
     assert names == ["cpu-tall", "cpu-wide", "gpu-early-stop", "gpu-extreme",
-                     "gpu-tall", "gpu-wide"]
+                     "gpu-tall", "gpu-wide", "scaling-bins", "scaling-cols",
+                     "scaling-rows", "scaling-threads"]
     s = spec_mod.load_spec("gpu-tall")  # bare name, no repo path
     assert s["suite"] == "gpu-tall" and len(spec_mod.expand(s)) == 6
     wide = spec_mod.load_spec("gpu-wide.json")  # suffix tolerated

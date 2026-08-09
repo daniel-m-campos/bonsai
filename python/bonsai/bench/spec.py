@@ -1,9 +1,8 @@
-"""Declarative benchmark specs: cell lists, ladder generators, job expansion.
+"""Declarative benchmark specs: cell lists and job expansion.
 
 A spec is a JSON file (bundled under bench/specs/ for committed campaigns) that
 names its cells, variants, threads, and repeats; expand() turns it into the
-flat job list the driver executes. Generators cover the recurring ladder
-shapes so campaigns stop hand-writing driver scripts.
+flat job list the driver executes.
 """
 
 from __future__ import annotations
@@ -67,34 +66,10 @@ def make_cell(defaults: dict, **over) -> dict:
     return c
 
 
-def gen_iso_volume(entry: dict, defaults: dict) -> list[dict]:
-    """Cells of constant rows x cols volume, sweeping the aspect ratio."""
-    cells_total = 1 << entry["log2_cells"]
-    out = []
-    for cols in entry["cols"]:
-        if cells_total % cols:
-            raise ValueError(f"cols {cols} does not divide 2^{entry['log2_cells']}")
-        rows = cells_total // cols
-        over = {k: v for k, v in entry.items()
-                if k not in ("gen", "log2_cells", "cols")}
-        out.append(make_cell(defaults, rows=rows, cols=cols, axis="iso_volume",
-                             aspect=rows / cols, **over))
-    return out
-
-
-_GENERATORS = {"iso_volume": gen_iso_volume}
-
-
 def cells_of(spec: dict) -> list[dict]:
-    """The spec's concrete cells, generator entries expanded in place."""
+    """The spec's concrete cells, each fully defaulted."""
     defaults = spec.get("defaults", {})
-    out = []
-    for entry in spec["cells"]:
-        if "gen" in entry:
-            out.extend(_GENERATORS[entry["gen"]](entry, defaults))
-        else:
-            out.append(make_cell(defaults, **entry))
-    return out
+    return [make_cell(defaults, **entry) for entry in spec["cells"]]
 
 
 def expand(spec: dict, *, variants: list[str] | None = None,
