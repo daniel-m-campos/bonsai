@@ -19,32 +19,6 @@
 namespace bonsai::cli
 {
 
-namespace
-{
-
-// Resolve the metric-name list to use for eval: user override if non-empty,
-// else the objective's declared defaults.
-std::vector<std::string_view>
-choose_metric_names(std::vector<std::string> const &override_names,
-                    std::string const              &objective_name)
-{
-    std::vector<std::string_view> out;
-    if (!override_names.empty())
-    {
-        out.reserve(override_names.size());
-        for (auto const &n : override_names)
-        {
-            out.emplace_back(n);
-        }
-        return out;
-    }
-    auto const defaults = default_metric_names_by_name(objective_name);
-    out.assign(defaults.begin(), defaults.end());
-    return out;
-}
-
-} // namespace
-
 int run_eval(EvalOpts const &opts)
 {
     auto cfg = resolve_config(opts.common);

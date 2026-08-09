@@ -785,13 +785,6 @@ void CudaDeviceContext::partition_level(
     lvl.layout_children(ops, child_counts);
 }
 
-void CudaDeviceContext::finalize_rows(std::span<node_id_t> leaf_by_row)
-{
-    check(cudaMemcpy(leaf_by_row.data(), lvl.leaf_by_row.data(),
-                     leaf_by_row.size() * sizeof(node_id_t), cudaMemcpyDeviceToHost),
-          "leaf ids copy");
-}
-
 void CudaDeviceContext::finalize_tree(std::span<float const> node_values,
                                       std::span<float>       values,
                                       std::span<node_id_t>   leaf_ids)

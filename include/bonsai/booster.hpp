@@ -303,6 +303,40 @@ inline void shap_one_row(DenseTree const &tree, features_view X, row_id_t row,
     tree_shap(tree, X, row, phi);
 }
 
+// Per-row, per-tree leaf indices; out is n_rows * trees.size(), row-major by
+// row. Both boosters store trees flat (multiclass round-major), so the walk
+// is the same one.
+template <typename Trees>
+void predict_leaf_over(Trees const &trees, features_view X, std::span<node_id_t> out)
+{
+    size_t const n       = X.extent(0);
+    size_t const n_trees = trees.size();
+    assert(out.size() == n * n_trees);
+    parallel::for_each_index(n,
+                             [&](size_t i)
+                             {
+                                 for (size_t t = 0; t < n_trees; ++t)
+                                 {
+                                     out[(i * n_trees) + t] =
+                                         trees[t].leaf_for(X, static_cast<row_id_t>(i));
+                                 }
+                             });
+}
+
+// TreeSHAP's cover-weighted walk is written against the dense shape, so an
+// oblivious ensemble is expanded once per tree (2^depth nodes) rather than
+// once per row.
+inline std::vector<DenseTree> densify(std::vector<ObliviousTree> const &trees)
+{
+    std::vector<DenseTree> dense;
+    dense.reserve(trees.size());
+    for (auto const &tree : trees)
+    {
+        dense.push_back(dense_equivalent(tree));
+    }
+    return dense;
+}
+
 } // namespace internal
 
 template <Objective Obj, TreeGrower Gr, Sampler Sa>
@@ -508,16 +542,7 @@ class Booster final : public IBooster
 
     void predict(features_view X, floats_out scores) const override
     {
-        assert(X.extent(0) == scores.size());
-        std::fill(scores.begin(), scores.end(), 0.0F);
-        for (auto const &tree : trees_)
-        {
-            tree.predict(X, scores);
-        }
-        for (float &score : scores)
-        {
-            score = init_score_ + (score * config_.learning_rate);
-        }
+        predict_at(X, scores, 0);
     }
 
     size_t n_iters() const override
@@ -655,18 +680,7 @@ class Booster final : public IBooster
 
     void predict_leaf(features_view X, std::span<node_id_t> out) const override
     {
-        size_t const n = X.extent(0);
-        assert(out.size() == n * trees_.size());
-        size_t const n_trees = trees_.size();
-        parallel::for_each_index(n,
-                                 [&](size_t i)
-                                 {
-                                     for (size_t t = 0; t < n_trees; ++t)
-                                     {
-                                         out[(i * n_trees) + t] = trees_[t].leaf_for(
-                                             X, static_cast<row_id_t>(i));
-                                     }
-                                 });
+        internal::predict_leaf_over(trees_, X, out);
     }
 
     std::string dump(std::span<std::string const> feature_names) const override
@@ -685,15 +699,7 @@ class Booster final : public IBooster
     {
         if constexpr (std::same_as<tree_type, ObliviousTree>)
         {
-            // Expand once per tree (2^depth nodes), not per row: TreeSHAP's
-            // cover-weighted walk then runs unchanged on the dense shape.
-            std::vector<DenseTree> dense;
-            dense.reserve(trees_.size());
-            for (auto const &tree : trees_)
-            {
-                dense.push_back(dense_equivalent(tree));
-            }
-            contribs_over(dense, X, out, n_features);
+            contribs_over(internal::densify(trees_), X, out, n_features);
         }
         else
         {

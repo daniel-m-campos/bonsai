@@ -275,18 +275,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
 
     void predict_leaf(features_view X, std::span<node_id_t> out) const override
     {
-        size_t const n = X.extent(0);
-        assert(out.size() == n * trees_.size());
-        size_t const n_trees = trees_.size();
-        parallel::for_each_index(n,
-                                 [&](size_t i)
-                                 {
-                                     for (size_t t = 0; t < n_trees; ++t)
-                                     {
-                                         out[(i * n_trees) + t] = trees_[t].leaf_for(
-                                             X, static_cast<row_id_t>(i));
-                                     }
-                                 });
+        internal::predict_leaf_over(trees_, X, out);
     }
 
     std::string dump(std::span<std::string const> feature_names) const override
@@ -310,13 +299,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     {
         if constexpr (std::same_as<tree_type, ObliviousTree>)
         {
-            std::vector<DenseTree> dense;
-            dense.reserve(trees_.size());
-            for (auto const &tree : trees_)
-            {
-                dense.push_back(dense_equivalent(tree));
-            }
-            contribs_over(dense, X, out, n_features);
+            contribs_over(internal::densify(trees_), X, out, n_features);
         }
         else
         {

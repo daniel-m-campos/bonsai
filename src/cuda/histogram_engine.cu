@@ -136,11 +136,6 @@ void CudaHistogramEngine::partition_level(Dataset const               &ds,
     impl_->ctx.partition_level(ds, ops, child_counts);
 }
 
-void CudaHistogramEngine::finalize_rows(std::span<node_id_t> leaf_by_row)
-{
-    impl_->ctx.finalize_rows(leaf_by_row);
-}
-
 void CudaHistogramEngine::finalize_tree(std::span<float const> node_values,
                                         std::span<float>       values,
                                         std::span<node_id_t>   leaf_ids)

@@ -156,16 +156,6 @@ class Histogram
         }
     }
 
-    // Convenience: allocates a buffer sized to prefix_size() and
-    // fills it. For tests / one-off code; hot-path callers should
-    // reuse a thread_local buffer with resize() + fill_prefix().
-    std::vector<HistCell> create_prefix() const
-    {
-        std::vector<HistCell> out(prefix_size());
-        fill_prefix(out);
-        return out;
-    }
-
     // Accumulates one partial (the row-wise fill's per-thread scratch).
     // Callers merge partials in a fixed order, so sums depend on the thread
     // count but not on scheduling.

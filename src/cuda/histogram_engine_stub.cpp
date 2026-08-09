@@ -91,11 +91,6 @@ void CudaHistogramEngine::advance_level(Dataset const & /*ds*/,
 
 void CudaHistogramEngine::advance_layout_only() {}
 
-void CudaHistogramEngine::finalize_rows(std::span<node_id_t> /*leaf_by_row*/)
-{
-    throw_unavailable();
-}
-
 void CudaHistogramEngine::finalize_tree(std::span<float const> /*node_values*/,
                                         std::span<float> /*values*/,
                                         std::span<node_id_t> /*leaf_ids*/)

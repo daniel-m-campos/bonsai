@@ -187,29 +187,6 @@ TEST_CASE("Histogram: fill_prefix produces cumulative sums over cut_cells",
     CHECK(prefix[2].sum_hess == 3.5);
 }
 
-TEST_CASE("Histogram: create_prefix returns the same values as fill_prefix",
-          "[histogram][prefix]")
-{
-    Histogram hist{5};
-    hist.add(0, -2.0, 1.0);
-    hist.add(1, +0.5, 1.0);
-    hist.add(2, +1.0, 2.0);
-    hist.add(3, +0.25, 1.0);
-    hist.add(4, +0.125, 1.0); // missing
-
-    std::vector<HistCell> filled(hist.prefix_size());
-    hist.fill_prefix(filled);
-
-    auto const created = hist.create_prefix();
-
-    REQUIRE(created.size() == filled.size());
-    for (size_t i = 0; i < filled.size(); ++i)
-    {
-        CHECK(created[i].sum_grad == filled[i].sum_grad);
-        CHECK(created[i].sum_hess == filled[i].sum_hess);
-    }
-}
-
 TEST_CASE("Histogram: fill_prefix on degenerate hist (prefix_size = 0) is a no-op",
           "[histogram][prefix][edge]")
 {
