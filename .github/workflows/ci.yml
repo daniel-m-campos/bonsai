@@ -1,33 +1,15 @@
 name: CI
 
+# No workflow-level paths filter: the workflow always starts and the changes
+# job below decides what runs. A skipped workflow never reports, so required
+# checks stay pending forever under branch protection, and a second copy of
+# the path rules drifts from the first (docs/guide/** was re-included here
+# but missing from the snippets filter, so guide-only pull requests started
+# the workflow and ran nothing).
 on:
   pull_request:
-    # Prose-only changes skip the build. Include-with-negation instead of
-    # paths-ignore so NEW docs subdirectories are excluded automatically;
-    # docs/use/** and docs/guide/** are re-included because the python job
-    # executes their .run code blocks (README.md stays in via '**').
-    paths:
-      - "**"
-      - "!docs/**"
-      - "docs/use/**"
-      - "docs/guide/**"
-      - "!mkdocs.yml"
-      - "!CHANGELOG.md"
-      - "!.github/workflows/docs-site.yml"
   push:
     branches: [main]
-    # Prose-only changes skip the build. Include-with-negation instead of
-    # paths-ignore so NEW docs subdirectories are excluded automatically;
-    # docs/use/** and docs/guide/** are re-included because the python job
-    # executes their .run code blocks (README.md stays in via '**').
-    paths:
-      - "**"
-      - "!docs/**"
-      - "docs/use/**"
-      - "docs/guide/**"
-      - "!mkdocs.yml"
-      - "!CHANGELOG.md"
-      - "!.github/workflows/docs-site.yml"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -39,9 +21,10 @@ env:
   CMAKE_CXX_COMPILER_LAUNCHER: ccache
 
 jobs:
-  # Classifies what changed so heavy jobs can skip when only snippet-tested
-  # prose (docs/use/**, README.md) is touched; the workflow-level paths
-  # filter already excludes pure prose entirely.
+  # The single path rule. `snippets` is prose that carries executable .run
+  # blocks (docs/use/**, docs/guide/**, README.md), which only the python job
+  # needs; `code` is everything else outside docs. Prose with neither leaves
+  # both false, and every job below skips.
   changes:
     runs-on: ubuntu-24.04
     outputs:
@@ -55,6 +38,7 @@ jobs:
           filters: |
             snippets:
               - "docs/use/**"
+              - "docs/guide/**"
               - "README.md"
             code:
               - "**"
