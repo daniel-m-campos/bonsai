@@ -11,7 +11,7 @@ xgboost's 16M edge (27.9s vs 37.4s in the re-baseline) is device binning: raw va
 ## Pipeline facts the design must respect
 
 - **Raw floats are not retained.** Both ingest paths (`features_view` borrowed from the Python module's numpy matrix, `ColumnBatch` from the CSV parser) are consumed by `Dataset::bin`; only binned columns survive. Device binning must therefore hook the ingest step itself: after `Dataset` construction the raw data is gone.
-- **Cuts are tiny and host-fitted.** `BinMappers::fit` subsamples ≤200k values per feature (`n_samples`), sorts once, strides (decision 51). Cuts per feature ≤ `max_bin` floats. `transform` semantics: NaN → last bin, else `lower_bound(cuts, x)`.
+- **Cuts are tiny and host-fitted.** `BinMappers::fit` draws one shared row sample for the whole matrix (`bin_sample_rows`, `src/bin_mappers.cpp`, ≤`n_samples` rows, decision 64), then gathers each feature's non-NaN values at those rows and cuts on them. `create_cuts` branches three ways: distinct values when they fit the budget, `greedy_weighted_cuts` when some value's count reaches a mean-sized bin (decision 57), the decision-51 quantile stride otherwise. Every branch ends with a `FLT_MAX` closer and the `+inf` missing sentinel (decision 74). Cuts per feature ≤ `max_bin` floats. `transform` semantics: NaN → last bin, else `lower_bound(cuts, x)`.
 - **In device mode, host bins have exactly two consumers.** (1) The fallback decline (`begin_root` refusing oversized `max_bin` → full CPU data plane); (2) `route_unsampled`'s `bin_at` random access, only when row sampling is on. The device plane partitions, finds, and stamps on device (stages A–D); host partition/populate arms run only in fallback mode.
 - **The stub build must stay CUDA-free.** `Dataset` is built long before any engine exists and cannot name CUDA types.
 
@@ -62,9 +62,11 @@ Replaced: host `bin` ~4.6s + unlapped 1.6GB upload ~0.5s. New cost: 6.4GB raw ov
 - `ingest-profile` gains `dbin` (device-binning transfer+kernel) so the before/after decomposes.
 - `cuda-upload-decomp` gains `bins_upload` (the `ensure_dataset` copy+upload, today's dark matter) and finalize lap counters (`fin_wait`/`fin_d2h`): the PR #35 refutation showed the finalize line is undecomposed and misleads design; never again.
 
-## Phase 2 (not this round): mapper-fit
+## Phase 2 (mapper-fit): closed on the host by decision 64
 
-The remaining ~3.9s is `create_subsample`'s reservoir scan (`std::ranges::sample` over a filter view: 16M reads + per-element RNG, per feature). Any device or algorithmic change to sampling changes the sampled set → different cuts → **model-changing**; it needs its own decision with quality data, and is deferred until the byte-identical levers are exhausted.
+When this design shipped, the remaining ~3.9s was `create_subsample`'s reservoir scan (`std::ranges::sample` over a filter view: 16M reads plus per-element RNG, once per feature). Decision 64 deleted that cost without going near the device: `BinMappers::fit` draws one shared row sample and each feature gathers its values at those rows, so the O(n) selection pass runs once instead of once per feature. Measured at 16M×100, mapper-fit fell 8.45s → 0.35s.
+
+The rule that deferred the round still holds. Any change to *which* rows are sampled changes the cuts and therefore the model, so the sample is drawn on the host on every path. Decision 102's device-resident arm obeys the same rule from the other side: it gathers exactly the rows `bin_sample_rows` names and downloads that block, which is why its cuts are bit-identical.
 
 ## Device-resident input: the same transaction, one step earlier
 
