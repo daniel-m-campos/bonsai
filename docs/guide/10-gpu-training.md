@@ -35,7 +35,7 @@ Follow one fit through the transactions:
 
 The host control plane between transactions is [`src/level_step.hpp`](../../src/level_step.hpp) and the growers, the same `plan_level`/`commit_children` logic the CPU path uses, because it *is* the CPU path's logic. When the device declines (a feature's bins exceed the shared-memory budget), the same grower runs the same tree on the host engine mid-fit.
 
-What this buys, measured (same-pod L40S re-baseline, 16M rows × 100 features × 100 trees, `fit()` timed end-to-end including binning): **bonsai 18.4s levelwise / 20.5s depthwise vs XGBoost-GPU 19.9s, at a third of the host memory (7.0GB vs 22.2GB)**, recorded in [the archive](../method/results/archive.md). The path from 3× slower to ahead is [chapter 11](11-performance-engineering.md).
+What this buys is measured on [the perf standings](../method/results/perf.md), which own the digits and are refreshed with each release. At the gpu-tall scenario every bonsai device plane finishes the fit ahead of the reference GPU trainer it is paired with, in about a third of the peak host memory. Much of that margin is ingest rather than boosting: bonsai bins on the device, where the references sketch on the host and ship the result over the bus. The path from 3× slower to ahead is [chapter 11](11-performance-engineering.md).
 
 ## In bonsai: the leaf step
 
@@ -45,7 +45,7 @@ It is what `device="cuda"` runs by default: the Python estimators default to `gr
 
 Leaf-wise and depthwise agree structurally at a capped depth with a full leaf budget: the tree that comes out is the same tree either way. The two strategies only differentiate at uncapped depth or under a small leaf budget, where best-first order decides which nodes get split at all.
 
-Measured standing (decision 98, same-pod L40S, 100 iters, 256 leaves): `cuda_leafwise` fits 250k/1M/4M/16M rows x 100 features in 2.1/3.2/7.6/24.4 s against LightGBM's CUDA leaf-wise at 6.6/7.6/12.3/31.9 s. Uncapped at 16M, where best-first structurally diverges from depthwise, bonsai reads 32.3 s against LightGBM's 31.7 s at matched r2: LightGBM is about 2% faster there, honestly reported, even though bonsai stays ahead everywhere depth is capped.
+Where the leaf plane stands against LightGBM's CUDA leaf-wise is on [the perf standings](../method/results/perf.md): bonsai trains faster at every published GPU scenario, on less host and device memory, and LightGBM scores the better test r2 on those same cells. Uncapped depth is the cell to read carefully, because best-first there must find a split for every leaf it creates and so pays about twice the rounds; the last measurement of it still put bonsai ahead (decision 100), and [architecture/20](../architecture/20-cuda-leafwise.md) carries the reasoning.
 
 The device-resident objective (MSE, LogLoss, or Poisson; no DART; all-rows or Bernoulli sampling) arms for `cuda_leafwise` the same way it arms for `cuda_depthwise` and `cuda_levelwise`. There is nothing to configure: an eligible fit keeps labels and scores on the device for the whole fit, and `BONSAI_HOST_OBJECTIVE=1` forces the host path.
 
