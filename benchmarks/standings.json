@@ -97,7 +97,7 @@
   "cpu-tall": {
     "file": "cpu-tall-2026-08.jsonl",
     "sha": "709ed71",
-    "host": "gpupod-a100-epyc9554-16t",
+    "host": "gpupod-a100-epyc9374f-12t",
     "date": "2026-08-09",
     "plane": "cpu",
     "refreshed_for": "1.7.0",
@@ -112,7 +112,7 @@
   "cpu-wide": {
     "file": "cpu-wide-2026-08.jsonl",
     "sha": "709ed71",
-    "host": "gpupod-a100-epyc9554-16t",
+    "host": "gpupod-a100-epyc9374f-12t",
     "date": "2026-08-09",
     "plane": "cpu",
     "refreshed_for": "1.7.0",
