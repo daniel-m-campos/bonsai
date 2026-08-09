@@ -6,7 +6,7 @@
 
 The training narrative is a small compute DAG. Nodes are the algorithmic steps; each node has a measured cost per feasible placement (host or device); edges carry data, and an edge crossing the placement boundary costs `bytes / bandwidth(direction)`. Choosing an implementation *is* choosing a placement of nodes and a schedule of edges. General DAG placement with communication costs is NP-hard; ours has ~10 node types and ≤6 with free placement, so **exhaustive enumeration is trivial**: the hard part is honest constants, which the profilers already emit (`BONSAI_GROW_PROFILE`, `BONSAI_CUDA_PROFILE`, `BONSAI_INGEST_PROFILE`).
 
-`scripts/dag_model.py` is the living companion: node/edge tables with measured constants, placement enumeration, and makespan estimates. Constants must come from **same-pod** profile lines (fleet spread between two L40S pods measured at ~25%; cross-pod absolutes are noise).
+`scripts/dag_model.py` is the living companion: node/edge tables with measured constants and makespan estimates. It does not enumerate placements. It prices two hand-written ones, the pre-54 host bin and decision 54's device bin, so the enumeration above is a paper argument about the size of the search space, not something the script performs. Constants must come from **same-pod** profile lines (fleet spread between two L40S pods measured at ~25%; cross-pod absolutes are noise).
 
 ## The graph
 
@@ -17,9 +17,9 @@ flowchart TD
     subgraph ingest [ingest — once per fit]
         X[/"raw X (6.4GB f32)"/]
         MF["mapper-fit 0.45s\n(subsample+sort cuts)"]
-        BIN("device bin 0.55s\nkernel + streamed upload")
+        BIN("device bin 0.55s\nkernel + chunked upload")
         X --> MF --> BIN
-        X -. "6.4GB H2D pinned\n~0.2s overlapped" .-> BIN
+        X -. "6.4GB H2D pageable\nblocking, inside the 0.55s" .-> BIN
     end
 
     subgraph tree ["tree loop — ×100"]
@@ -62,14 +62,14 @@ flowchart TD
 | 53 step 3 (epilogue) | 16M-row host loop → kernel + 128MB/tree D2H | several s | finalize 9.35→3.90 |
 | 52 (device gradients) | delete 128MB/tree H2D, move grad compute | **~0.7–0.9s: NO-GO by arithmetic** | experiment measured 1.6s of 42.5; killed |
 | 35 (pinned epilogue D2H) | reroute D2H through pinned + memcpy | *unpriceable: finalize line undecomposed* | refuted (3.78→4.45) |
-| 54 (device binning) | delete 4.6s host node + 1.6GB H2D; add 6.4GB H2D streamed | ~4.5s | fit 37.9→31.3 |
+| 54 (device binning) | delete 4.6s host node + 1.6GB H2D; add 6.4GB H2D chunked | ~4.5s | fit 37.9→31.3 |
 | 72 (marginal round) | delete identity copy + host root reduce + final-level build; three more levers priced 0.1/0.5/0ms and killed | ~63ms/round | round 181→125ms |
 
 The model corrected its own author while being written: the design draft priced the 6.4GB raw upload at ~2.4s from stale intuition; the measured gh edge (12.8GB in 0.68s ⇒ ~19GB/s) prices it at **~0.35–0.5s**, nearly doubling decision 54's projected win. Arithmetic beats intuition even when the intuition is a week old.
 
 Two lessons the table encodes: decision 52 cost a pod-day that the model prices in one line: H2D at ~14GB/s makes gradient-upload edges *cheap*, so deleting them can't pay. And #35 was unpriceable because the finalize node was an aggregate; **a node you can't decompose is a node you can't optimize**, hence the `fin_wait`/`fin_d2h` counters shipping with decision 54.
 
-Decision 54 is also the canonical example that **min-bytes ≠ min-time**: it *increases* boundary traffic 4× (6.4GB raw vs 1.6GB binned) and still wins, because the edge is cheaper than the host node it displaces, and the transfer overlaps the kernel.
+Decision 54 is also the canonical example that **min-bytes ≠ min-time**: it *increases* boundary traffic 4× (6.4GB raw vs 1.6GB binned) and still wins, because the edge at bus rate is far cheaper than the 4.6s host node it displaces. The win does not depend on overlap: the shipped transfer is a blocking pageable copy per 64MB chunk (doc 15), and 6.4GB at the measured pageable rate is ~0.46s.
 
 ```mermaid
 flowchart LR
@@ -78,25 +78,30 @@ flowchart LR
         B -. "1.6GB H2D 0.5s" .-> C("device bins")
     end
     subgraph after ["after (decision 54)"]
-        D[/"raw 6.4GB"/] -. "6.4GB H2D ~0.5s\nstreamed, overlapped" .-> E("bin kernel ~0.2s") --> F("device bins")
+        D[/"raw 6.4GB"/] -. "6.4GB H2D ~0.46s\nblocking, 64MB chunks" .-> E("bin kernel") --> F("device bins")
     end
 ```
 
 ## The floor
 
-For any placement, makespan ≥ (host-pinned work) + (device compute) + (irreducible boundary traffic), minus overlap. With today's kernels and everything feasible moved to device:
+For any placement, makespan ≥ (host-pinned work) + (device compute) + (irreducible boundary traffic). With today's kernels and everything feasible moved to device, using only measured node lines:
 
 ```
-raw ingest transfer   ~0.2s   (once, streamed + overlapped)
-mapper-fit (pinned)   ~0.45s
-device compute        ~11.3s  (hist build 7.9 + partition 1.9 + root sums 1.0 + epilogue map 0.33 + find 0.13)
-gh + epilogue edges   ~1.8s   (12.8GB each way, measured)
-per-level sync floor  ~0.02s  (healthy host)
+host-pinned work      0.99s   (mapper-fit 0.45 + gradients/scores 0.51 + split decisions 0.03)
+device compute       11.83s   (hist build 7.90 + partition 1.90 + root sums 1.02
+                               + ingest bin 0.55 + epilogue map 0.33 + find 0.13)
+boundary edges        1.82s   (gh 12.8GB H2D 0.88 + epilogue 12.8GB D2H 0.94, both measured)
 ```
 
-≈ **13.9s against a measured 15.70s fit**: the placement game is nearly played out, and the model says so by arithmetic. The old version of this section demanded the 12.1s unattributed block be decomposed before any bet; that demand was met (PR #38 named it, decision 72 closed the last per-round residues), and the reward is a floor tight enough to trust.
+≈ **14.6s against a measured 15.70s fit**: the placement game is nearly played out, and the model says so by arithmetic. Two accounting rules make that sum honest, and both were violated by the version of this section that claimed 13.9s. First, the ingest bin line is the `dbin` lap, which already contains the raw 6.4GB upload, so the transfer is not a separate row: the code copies each 64MB chunk with a blocking pageable `cudaMemcpy` and bins it (doc 15), and pricing a pinned overlapped transport that was never built understates the floor. Second, the gh and epilogue edges cross the boundary in *every* placement, because the objective is host-pinned, so a floor that drops them is not a floor.
 
-The floor also bounds ambition honestly: placement alone cannot beat `device compute ≈ 11.3s`, and **the histogram build is now 70% of that line**. Below the floor the levers are kernel engineering (the build's occupancy/layout, decision 72's named residue at ~72ms of the oblivious round's ~125ms) and algorithm changes, not residency. The find kernel, once believed to be the 7.6s giant, is 0.13s: decision 62's peel relocated the weight to where it always was.
+The remaining ~1.1s between 14.6s and the wall clock is undecomposed: about 0.5s sits inside the ingest line past mapper-fit and `dbin`, the rest inside grow past the evented kernel spans. Under the conservation rule that gap is the next target, not noise.
+
+**`scripts/dag_model.py --floor` prints 13.1s and is wrong in both directions named above**: it prices the raw upload at `h2d_pinned` with 30% declared overlap, and it omits the per-tree gh and epilogue edges. Read it as a lower bound on the device-compute-plus-mapper-fit part, not as the floor, until its `raw_X` edge is repriced against the pageable blocking copy and the floor branch counts the host-pinned objective's two edges. The node constants themselves are sound: they are same-pod profile lines from the 2026-07-15 US-NC-1 run, and nothing here needs re-measuring, only re-adding.
+
+**Vintage (2026-08-08).** Every constant above is the 2026-07-15 tree. Decision 103 has since tile-blocked the binned plane and cut the depth-8 `adv_hist` line by 61% on its own pod, so the histogram node is the one that moved most and the floor is owed a same-pod refresh before it is quoted as today's. The structure of the accounting survives a refresh; the digits do not.
+
+The floor also bounds ambition honestly: placement alone cannot beat `device compute ≈ 11.8s`, and **the histogram build is two thirds of that line**. Below the floor the levers are kernel engineering (the build's occupancy/layout, decision 72's named residue at ~72ms of the oblivious round's ~125ms) and algorithm changes, not residency. The find kernel, once believed to be the 7.6s giant, is 0.13s: decision 62's peel relocated the weight to where it always was.
 
 ## What this is for
 
