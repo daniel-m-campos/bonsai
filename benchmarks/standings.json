@@ -96,30 +96,30 @@
   },
   "cpu-tall": {
     "file": "cpu-tall-2026-08.jsonl",
-    "sha": "148f21b",
-    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-08-05",
+    "sha": "709ed71",
+    "host": "gpupod-a100-epyc9554-16t",
+    "date": "2026-08-09",
     "plane": "cpu",
     "refreshed_for": "1.7.0",
     "as_of_decision": 104,
-    "hash_set": "7f77ba19c148d42a",
+    "hash_set": "717689f5af53d4f8",
     "refs": {
-      "xgboost": "3.2.0",
+      "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
     }
   },
   "cpu-wide": {
     "file": "cpu-wide-2026-08.jsonl",
-    "sha": "148f21b",
-    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-08-05",
+    "sha": "709ed71",
+    "host": "gpupod-a100-epyc9554-16t",
+    "date": "2026-08-09",
     "plane": "cpu",
     "refreshed_for": "1.7.0",
     "as_of_decision": 104,
-    "hash_set": "7f77ba19c148d42a",
+    "hash_set": "717689f5af53d4f8",
     "refs": {
-      "xgboost": "3.2.0",
+      "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
     }
