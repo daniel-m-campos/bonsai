@@ -61,11 +61,11 @@ m = bonsai.BonsaiRegressor(n_iters=200, objective="logloss", grower="depthwise")
 m.fit(enc.fit_transform(Xtr, ytr), ytr)
 ```
 
-On this dataset the encoder is worth **+0.049 AUC** over ordinal codes (0.811 → 0.860), past LightGBM's *native* categorical machinery on the same data.
+On the committed `tests/data/amazon_train.csv` / `amazon_test.csv` split the encoder is worth **+0.049 AUC** over ordinal codes (0.811 → 0.860), past LightGBM's *native* categorical machinery on the same data. That split is the one the code above runs and the one `python/tests/test_encoding.py` pins, so it is the number to expect if you copy the snippet.
 
 ## The evidence: why an encoder and not an engine feature
 
-Every library's categorical machinery, toggled on/off at matched knobs, on three real categorical datasets (test AUC; `scripts/probe_categorical.py`):
+Every library's categorical machinery, toggled on/off at matched knobs, on three real categorical datasets (test AUC; `scripts/probe_categorical.py`). This is a different protocol from the snippet above: the full OpenML dataset, split 80/20 at random with seed 42, so the amazon row reads +0.028 rather than +0.049 for the same encoder.
 
 | variant | amazon | adult | kick |
 |---|--:|--:|--:|

@@ -19,13 +19,15 @@ The loop lives in `train_with_progress`
 ([`src/cli/pipeline.cpp`](../../src/cli/pipeline.cpp)). The interesting
 part is keeping the per-round valid evaluation $O(\text{rows})$ instead of $O(\text{rows} \times \text{trees})$:
 re-predicting the whole ensemble every round is quadratic in total. bonsai accumulates valid scores *incrementally*:
-`IBooster::score_base()` seeds the buffer with the init score, and
-`accumulate_last_tree` adds just the newest tree's (shrinkage-scaled)
-contribution each round
+`IBooster::seed_valid_scores` fills the buffer as of the rounds already in the
+model, and `accumulate_last_round` adds just the newest round's tree or trees
 ([`include/bonsai/booster.hpp`](../../include/bonsai/booster.hpp)).
-The loss comes from `eval_objective_by_name`, so any registered objective
-works. On stop, `truncate(best_iter + 1)` drops the trailing trees: the
-saved model *is* the best iteration, like the references.
+Seeding at zero rounds gives base scores only, which is also the warm-start
+seam. The loss comes from `IBooster::valid_loss`, which scores with the
+booster's own configured objective, so any registered objective works. On stop,
+`truncate(es_base + best_iter + 1)` drops the trailing trees, where `es_base`
+is the round count a warm start brought in: the saved model *is* the best
+iteration, like the references.
 
 Config: `booster.early_stopping_rounds` + a `data.valid` CSV (Python:
 `eval_set=(Xv, yv)`).
