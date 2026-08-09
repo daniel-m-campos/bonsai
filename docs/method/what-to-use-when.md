@@ -43,7 +43,7 @@ On the tuned TabArena-Lite gauge, CatBoost's Elo is 1340 against bonsai_ts's 120
 
 ## Memory-constrained hosts: bonsai
 
-bonsai bins each feature to one byte per cell, which holds its memory down. Peak host RSS at 16M rows is 7.0 GB, against XGBoost's 22.2 GB and CatBoost's 19.4 GB, roughly 3x less ([the perf division](results.md#perf-division), from [the re-baseline data](../../benchmarks/results/rebaseline-2026-07.jsonl)). Predict is about 3x faster on the same runs. That same u8 storage is what puts a 500M-row fit on one 80GB card in [case E5](../learn/engine/5-the-ceiling.md).
+bonsai bins each feature to one byte per cell, which holds its memory down. At the tall GPU scenario (16M x 128) peak host RSS is 9.1GB against XGBoost's 29.5GB and CatBoost's 25.6GB, roughly 3x less; read as headroom over the shared input array, which every arm holds, it is 0.8GB against 21.3 and 17.4 ([the scenario panels](results/perf.md)). That same u8 storage is what puts a 500M-row fit on one 80GB card in [case E5](../learn/engine/5-the-ceiling.md).
 
 The footprint also compounds under fit-parallelism: more concurrent fits fit on one card. And a shared `bonsai.Dataset` bins once for a whole sweep.
 

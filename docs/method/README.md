@@ -47,10 +47,10 @@ Every claim links a reproducible run and the decision that records it; the point
 | **Fastest GPU slot at every row scale**; at 16M `levelwise` edges CatBoost and beats XGBoost-GPU at matched accuracy | [the archive](results/archive.md), [scale-edge](../../benchmarks/catboost-scale-edge-2026-07.md), decisions 62 to 64 |
 | **Fastest at every measured width and aspect ratio**, with measured device memory that sizes to the problem | [the archive](results/archive.md), decisions 90 and 91 |
 | **The only GBT whose GPU path ships in a 2.3MB pip install, validated on live GPU hardware per release** | decision 70; [`wheels.yml`](../../.github/workflows/wheels.yml) |
-| **Within ~8% of XGBoost-hist at 16M rows on CPU, host-dependent**: a dead tie on one pod, XGBoost ahead on another | decision 61; [the archive](results/archive.md) |
+| **A tie with XGBoost on the CPU tall scenario** (2M x 128), the two fit totals inside the measurement's own spread | [the scenario panels](results/perf.md), decision 103 |
 | **Best library on 9 of 10 datasets of the internal quality campaign** | [the archive](results/archive.md), decisions 56 to 57 |
 | **Categorical parity with CatBoost within the chance band**, via preprocessing not an engine feature | decision 58; [categorical-tradeoff](../../benchmarks/categorical-tradeoff-2026-07.md); [`encoding.py`](../../python/bonsai/encoding.py) |
-| **~3x less host memory than XGBoost at 16M** (7.0 vs 22.2GB) and ~3x faster predict | [the archive](results/archive.md) |
+| **About 3x less host memory than XGBoost at 16M rows**, at 0.8GB over the shared input array against 21.3GB | [the scenario panels](results/perf.md) |
 | **Ranking is a measured, scoped gap**: ~+0.015 NDCG@10 to a listwise loss, not pairwise LambdaRank | [ranking-tradeoff](../../benchmarks/ranking-tradeoff-2026-07.md); [`probe_ranking.py`](../../scripts/probe_ranking.py) |
 | **Every feature earns its place by measurement**; refutations are recorded too | [how we decide](how-we-decide.md); the declined probes in [the archive](results/archive.md) |
 
