@@ -6,7 +6,7 @@
 
 The standings answer "who wins this cell" with end-to-end grids, and the grids are why a refresh costs hours: every cell of every axis re-fits everything, even though most changes move exactly one node of doc 16's DAG. The 2026-08-04 refresh spent 60 percent of its wall clock on wide-CPU cells that no GPU-side change can move (#320 addresses the scheduling), but the deeper issue is that end-to-end grids are the wrong instrument for pricing a change: they answer "did anything move" at the cost of re-measuring everything, where a component axis answers "what moved and by how much" at the cost of one profiled anchor run.
 
-The macro decomposition already landed: every perf row now carries `ingest_s` and `train_s` (decision 101), so the fixed-versus-variable split is published. The micro level is the tree loop itself: fixed setup (mapper fit, bin, plane build) plus a per-tree cost per grower, which is what decision 98's campaign measured by hand and what this doc makes standing.
+The macro decomposition already landed: every perf row measured through the two-step form carries `ingest_s` and `train_s` (decision 101), so the fixed-versus-variable split is published. The one exception is the fused parity arm, which fits in a single call and therefore reports `fit_s` with both halves `None` (`python/bonsai/bench/runners.py`); it exists to check the two-step total, not to be decomposed. The micro level is the tree loop itself: fixed setup (mapper fit, bin, plane build) plus a per-tree cost per grower, which is what decision 98's campaign measured by hand and what this doc makes standing.
 
 ## The design
 

@@ -1,6 +1,8 @@
 # 19: Single-node multi-GPU: a data-parallel backend beside the single-GPU one
 
 > **Status:** experiment, parked (decision 76). Built and validated through the full doc plan (P1-P4a plus a five-lever optimization round), then measured to END-TO-END PARITY with single-GPU at both 16M and 64M rows on 4x A100 NVLink: the floor is the host-computed gradient stream (host-memory-bandwidth-bound) plus the reduction's correctness syncs, an architectural property, not a tuning residue. The engine, registry surface, and all five levers live on the `experiment/multi-gpu` branch; main keeps the single-device `parallel.device_id` (fit-parallel sweeps are the multi-GPU story that scales linearly today). Reopener: a device-resident objective (each GPU computing its shard's grad/hess from resident scores), which is also the single-GPU engine's own next frontier. The single-GPU device-resident objective has since landed (decision 77) and now arms for `cuda_leafwise` too (decision 98, [`20-cuda-leafwise.md`](20-cuda-leafwise.md)); this reopener's per-shard extension for multi-GPU remains open.
+>
+> **Dated note (2026-08-08).** Two things below have moved since this design was parked. Phasing step 2, the `CudaDeviceContext` extraction, landed on main on its own account and is marked as such. Every code link carried a line number and every one of them had rotted, so the links now name files and symbols instead: line anchors are the only reference form here that goes wrong silently.
 
 ## The claim
 
@@ -10,7 +12,7 @@ This doc prices that design against the current code so the work can be phased b
 
 ## Why the seam holds
 
-Growers are templated on the engine and own it by value ([`grower.hpp:135/165`](../../include/bonsai/grower.hpp)); the booster registry is a compile-time cartesian product `cartesian_product_t<Objectives, Growers, Samplers>` ([`configurations.hpp:17`](../../include/bonsai/registry/configurations.hpp)) that emits a booster for every combo. Adding a backend is: write a concept-satisfying type, add its grower instantiations to the `Growers` typelist, and the registry builds the boosters. No existing engine, grower, or dispatch code changes shape.
+Growers are templated on the engine and own it by value (the `EngineT engine_` member in [`grower.hpp`](../../include/bonsai/grower.hpp)); the booster registry is a compile-time cartesian product `cartesian_product_t<Objectives, Growers, Samplers>` ([`configurations.hpp`](../../include/bonsai/registry/configurations.hpp)) that emits a booster for every combo. Adding a backend is: write a concept-satisfying type, add its grower instantiations to the `Growers` typelist, and the registry builds the boosters. No existing engine, grower, or dispatch code changes shape.
 
 The host-side split-decision contract (doc 12) is what makes data-parallel a small delta: the grower calls `find_*`, receives a `SplitOutput` on the host, decides, then calls `partition/advance`. Multi-GPU changes what the engine does *inside* those calls, never the orchestration around them.
 
@@ -49,15 +51,15 @@ flowchart TD
 
 ## Blast radius
 
-**Untouched.** `CudaHistogramEngine` ([`histogram_engine.cu`](../../src/cuda/histogram_engine.cu), 1423 lines), all three growers, the CPU plane, the host control plane, the split math, SHAP, and the model format. The single-GPU crown regime is not disturbed.
+**Untouched.** `CudaHistogramEngine` ([`histogram_engine.cu`](../../src/cuda/histogram_engine.cu)), all three growers, the CPU plane, the host control plane, the split math, SHAP, and the model format. The single-GPU crown regime is not disturbed.
 
 **New (additive).**
 - `MultiCudaHistogramEngine`, satisfying `HistogramEngine` + `GPULevelEngine`. Fans each op across N devices.
 - The histogram reduction (hand-rolled peer memcpy + add kernel first, zero new deps; NCCL only if measured to matter), inserted inside `begin_root` / `advance_level` after the per-device build, before find. **It must ship with a host-staged fallback** (pinned bounce buffer + add): cloud multi-GPU pods frequently disable peer access (IOMMU/ACS in virtualized secure cloud, even on same-board SXM parts), so the engine probes `cudaDeviceCanAccessPeer` at construction and takes the peer path only when it is real. Every measurement is labeled with the regime it ran in.
-- A sharded ingest (`cuda_ingest_sharded`) producing a multi-shard `IngestPlane`, additive next to `cuda_ingest` ([`histogram_engine.cu:143`](../../src/cuda/histogram_engine.cu)) at the same call site that already selects the CUDA plane ([`module.cpp:66`](../../src/python/module.cpp)).
+- A sharded ingest (`cuda_ingest_sharded`) producing a multi-shard `IngestPlane`, additive next to `cuda_ingest` ([`histogram_engine.cu`](../../src/cuda/histogram_engine.cu)) at the same call site that already selects the CUDA plane ([`module.cpp`](../../src/python/module.cpp)).
 - Config `parallel.device_ids` (the list sibling of #158's `parallel.device_id`) and grower names `cuda_multi_depthwise` / `cuda_multi_oblivious`.
 
-**One refactor to keep single-GPU DRY.** Per-device state lives in `CudaHistogramEngine::Impl` (pimpl). Extract that state and its kernels into a reusable `CudaDeviceContext`, then make both `CudaHistogramEngine` (owns one) and `MultiCudaHistogramEngine` (owns N + a reducer) thin wrappers over it. This is a behavior-neutral, hash-gated extraction, not a rewrite: the single-GPU engine stays a thin wrapper and the histogram/partition/find kernels are shared rather than duplicated. It is the only place existing single-GPU code moves, and it moves sideways into a shared struct.
+**One refactor to keep single-GPU DRY. Landed on main (2026-08-08 note).** Per-device state lived in `CudaHistogramEngine::Impl` (pimpl). The plan was to extract that state and its kernels into a reusable `CudaDeviceContext`, then make both `CudaHistogramEngine` (owns one) and `MultiCudaHistogramEngine` (owns N + a reducer) thin wrappers over it: a behavior-neutral, hash-gated extraction, not a rewrite. The single-GPU half of that has since shipped on its own account: `CudaDeviceContext` lives in [`device_context.cuh`](../../src/cuda/detail/device_context.cuh) and `CudaHistogramEngine::Impl` is now that context plus the CPU fallback engine. What a multi-GPU build would add is the N-context owner and the reducer, not the extraction.
 
 ## Find-split placement
 
@@ -65,7 +67,7 @@ flowchart TD
 
 ## Reproducibility
 
-The CPU plane is hash-canonical (`scripts/model_hash.py` is CPU-only); the GPU path is a tolerance-match by construction, not bit-exact, because atomics accumulate in arbitrary order ([`histogram_engine.hpp:33`](../../include/bonsai/cuda/histogram_engine.hpp)). Multi-GPU inherits that contract unchanged: it must hold the same tolerance the single-GPU engine holds, and it fixes the reduction order (device id ascending) for run-to-run determinism at a given device count. There is no bit-identical-GPU guarantee for multi-GPU to break; the reproducibility posture is CPU-side and survives.
+The CPU plane is hash-canonical (`scripts/model_hash.py` is CPU-only); the GPU path is a tolerance-match by construction, not bit-exact, because atomics accumulate in arbitrary order (the tolerance contract stated on `CudaHistogramEngine` in [`histogram_engine.hpp`](../../include/bonsai/cuda/histogram_engine.hpp)). Multi-GPU inherits that contract unchanged: it must hold the same tolerance the single-GPU engine holds, and it fixes the reduction order (device id ascending) for run-to-run determinism at a given device count. There is no bit-identical-GPU guarantee for multi-GPU to break; the reproducibility posture is CPU-side and survives.
 
 ## Costs and risks (honest)
 
@@ -78,7 +80,7 @@ The CPU plane is hash-canonical (`scripts/model_hash.py` is CPU-only); the GPU p
 ## Phasing
 
 1. Land #158 (`parallel.device_id`): the foundation, `device_id` becoming `device_ids`.
-2. Extract `CudaDeviceContext` from `CudaHistogramEngine::Impl`: behavior-neutral, hash-gated, single-GPU identical.
+2. ~~Extract `CudaDeviceContext` from `CudaHistogramEngine::Impl`: behavior-neutral, hash-gated, single-GPU identical.~~ Landed on main; see the blast radius above.
 3. Build `MultiCudaHistogramEngine` over N contexts with the reduce-to-coordinator scheme (peer path + host-staged fallback).
 4. Add sharded ingest, the grower instantiations, and the registry/dispatch entries.
 5. Validate on multi-GPU pods: tolerance match vs single-GPU at a fixed device count, then the scaling ladder (1/2/4 GPUs) at 16M+ rows. The ladder is **same-pod** (the 1-GPU baseline runs on GPU 0 of the multi-GPU host; fleet spread makes cross-pod comparisons noise), opens with the P2P gate, and measures BOTH interconnect regimes: 4x L40S (PCIe floor, same sm_89 silicon as every published bonsai GPU number, ~$4/hr secure) and 4x A100 SXM (NVLink 600GB/s headroom, sm_80 already validated, ~$6/hr secure); 2x A40 (~$0.9/hr) serves for P3 correctness bring-up and the fallback path. A100 PCIe is dominated (same interconnect class as L40S, older arch, more cost); H100 is overkill for a scaling-shape question.

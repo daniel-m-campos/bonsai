@@ -119,7 +119,7 @@ The `feature_id`-equality checks in SHAP must compare the *masked* id, so a nume
 
 Stage 2a is **CPU-only by design**: the cuda growers decline datasets with categorical columns at `begin_root` (the existing oversized-`max_bin` decline arm in [`../../src/level_step.hpp`](../../src/level_step.hpp), the ONE runtime fork the doc-12/13 design allows) and training proceeds on the host plane with a one-line log, exactly like the current fallback.
 
-What the device path needs later, priced now so the decline is a decision and not an accident: `find_kernel` / `level_find_kernel` ([`../../src/cuda/histogram_engine.cu`](../../src/cuda/histogram_engine.cu)) gain a per-(node, cat-feature) key sort of ≤ `max_bin` cells (single-warp bitonic in shared memory) before the prefix walk; the winning sorted-prefix is materialized as a device bitset the apply/partition kernels test; the set rides the existing find-stage D2H alongside `SplitOutput`.
+What the device path needs later, priced now so the decline is a decision and not an accident: `find_kernel` / `level_find_kernel` ([`../../src/cuda/detail/kernels.cuh`](../../src/cuda/detail/kernels.cuh); they left `histogram_engine.cu` with the device-context extraction after this doc was shelved) gain a per-(node, cat-feature) key sort of ≤ `max_bin` cells (single-warp bitonic in shared memory) before the prefix walk; the winning sorted-prefix is materialized as a device bitset the apply/partition kernels test; the set rides the existing find-stage D2H alongside `SplitOutput`.
 
 None of that changes the level-transaction vocabulary (decision 53); it is find/apply kernel work only, but it is real effort and ships only if 2a's measured host-side quality delta justifies it.
 
