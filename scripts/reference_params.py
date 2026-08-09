@@ -5,6 +5,7 @@ harness that trains bonsai already needs.
 """
 from bonsai.bench.params import (  # noqa: F401
     catboost_core,
+    catboost_early_stop,
     lgbm_core,
     xgb_core,
 )

@@ -36,6 +36,8 @@ import numpy as np
 import pandas as pd
 import reference_params
 import tomllib
+from bonsai.bench import metrics
+from bonsai.bench.variants import Device
 
 LABEL_COL = "label"  # every prepared dataset carries its target under this name
 
@@ -144,34 +146,37 @@ def padded_constraints(hp: HP, n_features: int) -> list:
     return mc + [0] * (n_features - len(mc))
 
 
+# The metrics themselves live in bonsai.bench.metrics (one implementation for
+# every harness); these wrappers only carry this script's (pred, y) argument
+# order and its "which runs report this column" guards.
+
+
 def rmse(pred: np.ndarray, y: np.ndarray) -> float:
     """Root mean squared error."""
-    return float(np.sqrt(np.mean((pred - y) ** 2)))
+    return metrics.rmse(y, pred)
 
 
 def r2(pred: np.ndarray, y: np.ndarray) -> float:
-    """Coefficient of determination (bonsai.bench.metrics)."""
-    from bonsai.bench import metrics
+    """Coefficient of determination."""
     return metrics.r2(y, pred)
 
 
 def mae(pred: np.ndarray, y: np.ndarray) -> float:
     """Mean absolute error."""
-    return float(np.mean(np.abs(pred - y)))
+    return metrics.mae(y, pred)
 
 
 def maybe_acc(pred: np.ndarray, y: np.ndarray, multiclass: bool) -> float:
     """Classification accuracy on class-id predictions (multiclass only)."""
     if not multiclass:
         return float("nan")
-    return float(np.mean(np.round(pred) == np.round(y)))
+    return metrics.acc(np.round(y), np.round(pred))
 
 
 def maybe_auc(pred: np.ndarray, y: np.ndarray) -> float:
     """AUC when labels are binary; NaN otherwise (regression runs)."""
     if set(np.unique(y)).issubset({0.0, 1.0}):
-        from sklearn.metrics import roc_auc_score
-        return float(roc_auc_score(y, pred))
+        return metrics.auc(y, pred)
     return float("nan")
 
 
@@ -443,18 +448,18 @@ def run_catboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
            else CatBoostRegressor)
     model = cls(
         iterations=hp.n_iters,
-        learning_rate=hp.learning_rate,
-        depth=hp.max_depth,
-        l2_leaf_reg=hp.lambda_l2,
         rsm=hp.feature_fraction,
-        random_seed=hp.random_seed,
         loss_function=CATBOOST_LOSS[hp.objective].format(
             delta=hp.huber_delta, alpha=hp.quantile_alpha),
         verbose=False,
+        **reference_params.catboost_core(
+            learning_rate=hp.learning_rate, max_depth=hp.max_depth,
+            lambda_l2=hp.lambda_l2, max_bin=hp.max_bin, seed=hp.random_seed,
+            device=Device.CPU),
         **({"monotone_constraints": padded_constraints(hp, len(feature_cols))}
            if hp.monotone_constraints else {}),
-        **({"early_stopping_rounds": hp.early_stopping_rounds,
-            "use_best_model": True} if use_es else {}),
+        **reference_params.catboost_early_stop(hp.early_stopping_rounds,
+                                               has_eval_set=use_es),
     )
     fit_kwargs = {}
     if use_es:
