@@ -94,18 +94,46 @@ def standings_file(axis: str) -> str:
     return _STANDINGS_REG[axis]["file"]
 
 
-def measured_stamp(rows: list[dict]) -> str:
-    """One-sha standings stamp computed from the rows themselves, so the
-    reader always sees the vintage (results-lifecycle policy, decision 92)."""
+def measured_stamp(label: str, rows: list[dict]) -> str:
+    """One group's standings stamp, computed from that group's own rows.
+
+    A stamp is only honest for the rows it was read from, so callers pass
+    the rows they are about to attribute and label them (results-lifecycle
+    policy, decision 92). Every distinct commit, date and host in the group
+    is named, because a group measured at two commits has two vintages and
+    printing one of them would credit rows to a build that never ran them.
+
+    Parameters
+    ----------
+    label : str
+        What the stamp is about, for example ``"GPU plane"``.
+    rows : list[dict]
+        The runlog rows this stamp attributes.
+
+    Returns
+    -------
+    str
+        A sentence, or an empty string when the rows carry no commit.
+    """
     shas = sorted({r[K.GIT_SHA] for r in rows if r.get(K.GIT_SHA)})
-    if len(shas) != 1:
+    if not shas:
         return ""
     dates = sorted({r["ts"][:10] for r in rows if r.get("ts")})
     hosts = sorted({(r["host"].get("name") if isinstance(r.get("host"), dict)
                      else r.get("host")) for r in rows if r.get("host")})
-    when = f" ({dates[-1]}" if dates else " ("
-    where = f", {hosts[0]})" if len(hosts) == 1 else ")"
-    return f" Measured at `{shas[0]}`{when}{where}."
+    when = _prose_list(dates)
+    where = _prose_list(hosts)
+    detail = ", ".join(x for x in (when, where) if x)
+    tail = f" ({detail})" if detail else ""
+    return f"{label} measured at {_prose_list(shas, code=True)}{tail}."
+
+
+def _prose_list(items: list[str], *, code: bool = False) -> str:
+    """`a`, `b` and `c`: a list the way the caption reads it aloud."""
+    shown = [f"`{x}`" for x in items] if code else list(items)
+    if len(shown) < 2:
+        return shown[0] if shown else ""
+    return f"{', '.join(shown[:-1])} and {shown[-1]}"
 
 
 def provenance(files: list[str], note: str) -> str:
@@ -280,6 +308,8 @@ PLANE_CPU: Final = "cpu"
 GPU_AXES: Final = (Axis.GPU_TALL, Axis.GPU_WIDE, Axis.GPU_EXTREME)
 CPU_AXES: Final = (Axis.CPU_TALL, Axis.CPU_WIDE)
 PERF_AXES: Final = (*GPU_AXES, *CPU_AXES, Axis.GPU_EARLY_STOP)
+PLANE_LABEL: Final = {PLANE_GPU: "The GPU plane is",
+                      PLANE_CPU: "The CPU plane is"}
 
 PENDING: Final = ("*Measurement pending the first redesigned refresh "
                   "(decision 103): the axis files land with it and this "
@@ -752,16 +782,30 @@ def _panel_block(panel: Panel) -> str:
 
 
 def _perf_provenance() -> str:
-    """The source line for whichever perf axes have been measured."""
+    """The source line for whichever perf axes have been measured.
+
+    The two planes are rented separately, so each one is stamped from its
+    own rows and the pod claim is scoped to a single plane. One stamp taken
+    from one axis would credit the whole matrix to that axis's machine.
+    """
     files = [f for f in (_STANDINGS_REG[a].get("file") for a in PERF_AXES) if f]
     if not files:
         return ""
-    stamp = measured_stamp(axis_rows(Axis.GPU_TALL))
+    stamps = " ".join(s for s in (measured_stamp(PLANE_LABEL[plane], rows)
+                                  for plane, rows in _perf_plane_rows()) if s)
     return "\n" + provenance(
         files,
         "As-run under the redesigned scenario matrix (decision 103), best of "
-        "the session's repeats per arm; the whole matrix runs on one pod so "
-        "the arms compare." + stamp) + "\n"
+        "the session's repeats per arm. Each plane runs on one pod, so the "
+        "arms compare within a plane and not across the two. " + stamps) + "\n"
+
+
+def _perf_plane_rows() -> list[tuple[str, list[dict]]]:
+    """Every measured perf row, grouped by the plane its axis belongs to."""
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for axis in PERF_AXES:
+        grouped[_STANDINGS_REG[axis]["plane"]].extend(axis_rows(axis))
+    return [(plane, grouped[plane]) for plane in PLANE_LABEL if grouped[plane]]
 
 
 # The archive ======================================================================================
