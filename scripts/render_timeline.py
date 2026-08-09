@@ -225,7 +225,7 @@ def main() -> int:
         return 1
     text = render()
     n = len(entries)
-    return write_or_check(OUT, text, repo=REPO,
+    return write_or_check({OUT: text}, repo=REPO,
                           script="scripts/render_timeline.py",
                           label="timeline", detail=f"{n} milestones")
 

@@ -10,22 +10,21 @@ import pathlib
 import sys
 
 
-def write_or_check(out: pathlib.Path, text: str, *, repo: pathlib.Path,
+def write_or_check(outputs: dict[pathlib.Path, str], *, repo: pathlib.Path,
                    script: str, label: str, detail: str) -> int:
-    """Write the rendered page, or verify it under `--check`.
+    """Write the rendered files, or verify them under `--check`.
 
     Every generator ends the same way: `--check` (what CI runs) compares the
-    committed page against the render and fails when they differ, and a plain
-    run writes it.
+    committed files against the render and fails when any differ, and a plain
+    run writes them, creating parent directories as needed.
 
     Parameters
     ----------
-    out
-        The page to write or verify.
-    text
-        The rendered page body.
+    outputs
+        Path to rendered content, one entry per file. Most generators write
+        one page; the results ledger writes pages, charts, and the README.
     repo
-        Repository root, for spelling `out` relatively in the messages.
+        Repository root, for spelling the paths relatively in the messages.
     script
         The generator's path, named in the stale-page message.
     label
@@ -38,16 +37,22 @@ def write_or_check(out: pathlib.Path, text: str, *, repo: pathlib.Path,
     int
         Process exit code: 0 written or in sync, 1 stale.
     """
-    rel = out.relative_to(repo)
     if "--check" in sys.argv:
-        if not out.exists() or out.read_text() != text:
-            print(f"ERROR: {rel} is stale; run python3 {script}",
+        stale = [p for p, text in outputs.items()
+                 if not p.exists() or p.read_text() != text]
+        if stale:
+            names = ", ".join(str(p.relative_to(repo)) for p in stale)
+            print(f"ERROR: {names} is stale; run python3 {script}",
                   file=sys.stderr)
             return 1
         print(f"{label}: in sync ({detail})")
         return 0
-    out.write_text(text)
-    print(f"wrote {rel} ({detail})")
+    for path, text in outputs.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    written = (str(next(iter(outputs)).relative_to(repo))
+               if len(outputs) == 1 else label)
+    print(f"wrote {written} ({detail})")
     return 0
 
 

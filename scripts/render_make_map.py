@@ -74,7 +74,7 @@ def main() -> int:
               "the map would be empty.", file=sys.stderr)
         return 1
     text = render()
-    return write_or_check(OUT, text, repo=REPO,
+    return write_or_check({OUT: text}, repo=REPO,
                           script="scripts/render_make_map.py",
                           label="make-target map",
                           detail=f"{len(rows)} targets")
