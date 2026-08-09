@@ -36,8 +36,8 @@ The pipeline seam: `Dataset::bin` cannot know the grower, but the train pipeline
 cuda ingest(raw columns or row-major view, cuts tables) -> IngestPlane
 ```
 
-- **Transfer**: raw floats stream through a double-buffered pinned staging pair (bounded, ~64MB each) with `cudaMemcpyAsync`: upload of chunk *k+1* overlaps the bin kernel of chunk *k*. Raw data never fully resides on device; total device footprint = staging + the binned matrix (same as today).
-- **Kernel**: one thread per cell; binary search over the feature's cut table in shared memory (cuts ≤ 255 floats/feature fit easily; u16 datasets read the table from global). `ColumnBatch` chunks are feature-major (kernel is a straight map); `features_view` chunks are row-major (kernel writes transposed; coalesced on the read side, the write pattern is the same scatter `fill_binned` does today).
+- **Transfer, as built**: raw floats stream through one device buffer of ~64MB (`k_ingest_chunk_bytes`, `src/cuda/histogram_engine.cu`). Each chunk is copied by a blocking `cudaMemcpy` from the caller's pageable memory, binned, and then the buffer is reused. The double-buffered pinned staging pair with `cudaMemcpyAsync` that this design proposed was not built: the copy already runs at bus rate and dominates the kernel, so the overlap machinery stayed unpriced, and the comment above the chunk constant records that `dbin` is the counter that would decide it. Raw data never fully resides on device; total device footprint = one chunk + the binned matrix.
+- **Kernel, as built**: one thread per cell; binary search over the feature's cut table in **global** memory (`transform_bin`, `src/cuda/detail/ingest_kernels.cuh`), reading one flat cuts array with per-feature offsets. The proposed shared-memory cut table was not built either. `features_view` chunks are row-major (`bin_rows_kernel`, feature varies fastest across threads, so the raw reads coalesce); `ColumnBatch` chunks arrive one column at a time (`bin_col_kernel`, whose writes stride by the strip width). Both arms write the tile-blocked plane of decision 103.
 - **Exactness**: the kernel reproduces `transform` exactly: NaN → last bin, else `lower_bound`. Same cuts, same total order on floats ⇒ **bit-identical bins** to the host fill, which is the whole byte-identity argument: CPU-path models are untouched by construction, and device-path models must equal the before-models exactly (r² equality gate, as PR #34).
 
 ### Scope
@@ -53,7 +53,9 @@ When device binning ran, host binned columns are not materialized at ingest. The
 
 ## What this buys (projection, same-pod discipline)
 
-Replaced: host `bin` ~4.6s + unlapped 1.6GB upload ~0.5s. New cost: 6.4GB raw over PCIe, streamed and overlapped with the bin kernel, priced by the measured gh edge (12.8GB in 0.68s ⇒ ~19GB/s) at **~0.35–0.5s**, plus ~0.2s of kernel. (The first draft said 2.3–2.6s from stale intuition; `scripts/dag_model.py` corrected it: doc 16.) **Projected: fit 39.4 → ~34.8–35.3s on the US-MO-1 host class**, leaving mapper-fit as the dominant ingest line. Cross-pod absolutes are meaningless (~25% fleet spread measured between two L40S pods); the gate is the same-pod before/after delta.
+Replaced: host `bin` ~4.6s + unlapped 1.6GB upload ~0.5s. New cost: 6.4GB raw over PCIe plus the bin kernel, priced at design time by the measured gh edge (12.8GB in 0.68s ⇒ ~19GB/s) at **~0.35–0.5s** of transfer and ~0.2s of kernel. (The first draft said 2.3–2.6s from stale intuition; `scripts/dag_model.py` corrected it: doc 16.) **Projected: fit 39.4 → ~34.8–35.3s on the US-MO-1 host class**, leaving mapper-fit as the dominant ingest line. Cross-pod absolutes are meaningless (~25% fleet spread measured between two L40S pods); the gate is the same-pod before/after delta.
+
+**Measured after the round.** The `dbin` lap reads **0.55s** for transfer and kernel together at 16M×100 (L40S US-NC-1, 2026-07-15), and the fit moved 37.9 → 31.3s (doc 16's moves table). The projection held even though the transfer is blocking and pageable rather than overlapped and pinned, because 6.4GB at the measured pageable H2D rate is ~0.46s on its own. Doc 16 prices the placement floor on that measured line, not on the overlapped transport.
 
 ## Instrumentation shipped with the round
 
@@ -88,6 +90,6 @@ The import itself is nanobind's: a `nb::ndarray<float const, nb::ndim<2>, nb::c_
 
 - **A `DeviceBins` side channel on `Dataset` without the narrative verb** (this design's first draft): identical mechanics, but the API grows by exception instead of by vocabulary: the convolutedness the transaction narrative exists to prevent. Superseded by the ingest transaction.
 - **Engine-side rebinning** (host bins → device rebin): saves nothing; the host `transform` cost is the line item.
-- **Retaining raw floats on Dataset** so the engine can bin later: +6.4GB host RSS at 16M for a copy the ingest hook can stream through 128MB of staging.
+- **Retaining raw floats on Dataset** so the engine can bin later: +6.4GB host RSS at 16M for a copy the ingest hook can stream through one 64MB device chunk.
 - **Device mapper-fit** in this round: RNG-identical reservoir sampling on device is not worth inventing; see phase 2.
 - ~~Transposing kernel only for CSV~~; corrected during implementation: the module path bins straight from the borrowed row-major numpy view (`features_view`), and CSV parses into the feature-major `ColumnBatch`; the row-major arm is therefore the primary (bench) arm. Both arms shipped.
