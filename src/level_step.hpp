@@ -183,9 +183,14 @@ split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput par
            SplitOutput const &s, node_id_t left_id, node_id_t right_id,
            feature_view selected, EngineT &engine)
 {
+    // Same buckets the level plane charges: the scatter is partition, the
+    // child fill and its subtraction are populate.
+    GrowProfiler::Lap lap;
     PendingSplit p = partition_rows(ds, std::move(parent), s, left_id, right_id);
+    lap(GrowProfiler::instance().partition_s);
     engine.populate(ds, grad, hess, smaller_child(p), selected);
     finish_split(ds, p);
+    lap(GrowProfiler::instance().populate_s);
     return {std::move(p.left), std::move(p.right)};
 }
 
@@ -965,7 +970,6 @@ template <HistogramEngine EngineT, typename SplitterT> class LeafStep
                                          Candidate &c, node_id_t left_id,
                                          node_id_t right_id)
     {
-        Phase<&GrowProfiler::partition_s> phase;
         auto [left, right] = split_node(ds, grad, hess, std::move(c.node), c.split,
                                         left_id, right_id, selected, engine);
         return {.nodes = {std::move(left), std::move(right)},
