@@ -144,6 +144,3 @@ nav:
       - Archive:
           - architecture/README.md
           - Decisions log: decisions.md
-          - "Lineage: XGBoost": lineage/xgboost.md
-          - "Lineage: LightGBM": lineage/lightgbm.md
-          - "Lineage: CatBoost": lineage/catboost.md
