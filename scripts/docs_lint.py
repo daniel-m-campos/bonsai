@@ -5,9 +5,8 @@ half of it that a machine can judge, so a regression fails CI instead of
 review. Stdlib only, like the other doc generators; no build required.
 
 Scope: the published pages only. `exclude_docs` in mkdocs.yml lists what
-never reaches the site (STYLE.md itself, ops/, conversations/, reviews/, and
-the loose working notes); this script parses that block and skips the same
-files. It ADDITIONALLY exempts the frozen archive, docs/decisions.md and
+never reaches the site (STYLE.md itself, ops/, reviews/, and the loose
+working notes); this script parses that block and skips the same files. It ADDITIONALLY exempts the frozen archive, docs/decisions.md and
 docs/architecture/**: that material is a historical record, first-class
 for agents and deep divers but deliberately out of the main line, and
 rewriting it to today's style would falsify the record.
