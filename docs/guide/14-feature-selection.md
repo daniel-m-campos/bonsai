@@ -71,7 +71,7 @@ Every method here produces a feature ranking, best first. The families, in incre
 
 **One absence in the table below.** `shap_train` is left out of the superconductivity results because its top-$k$ sets coincide with `shap_val`'s there at every budget except one; it stays in the raw rows and in the overlap matrix, where their 1.00 cell records the coincidence.
 
-Full protocol: [`scripts/probe_selection_survey.py`](../../scripts/probe_selection_survey.py). The raw rows are closed evidence and live in git history; [the archive](../method/results/archive.md) names the commit that still reads them.
+The protocol above is the whole of it. The survey script and its raw rows are closed evidence and live in git history; [the archive](../method/results/archive.md) names the commit that still reads them.
 
 ## Reading the curves
 

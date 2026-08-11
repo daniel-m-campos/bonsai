@@ -8,7 +8,7 @@ description: >
   pitch is "the other libraries have it". Invoke via /feature-admission.
 ---
 
-A feature is admitted by measurement, not by ecosystem envy. The burden of proof is on the feature; the default answer is "not in the core". Worked example: decision 58 + `benchmarks/categorical-tradeoff-2026-07.md` + `scripts/probe_categorical.py`, where this method killed a fully-designed engine feature (architecture doc 17) and shipped a 100-line encoder that beat it.
+A feature is admitted by measurement, not by ecosystem envy. The burden of proof is on the feature; the default answer is "not in the core". Worked example: decision 58 + `benchmarks/categorical-tradeoff-2026-07.md` (the probe script itself is closed evidence and lives in git history), where this method killed a fully-designed engine feature (architecture doc 17) and shipped a 100-line encoder that beat it.
 
 ## Step 1 — prototype the benefit at zero core cost
 
