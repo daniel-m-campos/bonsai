@@ -65,7 +65,7 @@ On the committed `tests/data/amazon_train.csv` / `amazon_test.csv` split the enc
 
 ## The evidence: why an encoder and not an engine feature
 
-Every library's categorical machinery, toggled on/off at matched knobs, on three real categorical datasets (test AUC; `scripts/probe_categorical.py`). This is a different protocol from the snippet above: the full OpenML dataset, split 80/20 at random with seed 42, so the amazon row reads +0.028 rather than +0.049 for the same encoder.
+Every library's categorical machinery, toggled on/off at matched knobs, on three real categorical datasets (test AUC; protocol recorded in [the tradeoff writeup](../../benchmarks/categorical-tradeoff-2026-07.md), probe script in git history). This is a different protocol from the snippet above: the full OpenML dataset, split 80/20 at random with seed 42, so the amazon row reads +0.028 rather than +0.049 for the same encoder.
 
 | variant | amazon | adult | kick |
 |---|--:|--:|--:|
