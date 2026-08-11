@@ -42,7 +42,16 @@ C = params.CAMPAIGN
 
 
 def fit_predict(variant, Xtr, ytr, Xte, kind):
-    if variant.startswith(vr.Lib.BONSAI):
+    """Fit one arm at the campaign knobs and predict the test split.
+
+    The arm's library comes from the variant registry, the same lookup the
+    perf runners' dispatch table is keyed by, so a name this suite committed
+    (its short aliases) and a canonical one both land on the same fit. The
+    fits themselves stay this suite's own: sklearn-style estimators at the
+    campaign knobs, untimed, predicting rather than scoring.
+    """
+    lib = vr.resolve(variant).lib
+    if lib == vr.Lib.BONSAI:
         import bonsai
         grower = vr.resolve(variant).name.removeprefix("bonsai_")
         obj = "logloss" if kind == "auc" else "mse"
@@ -53,7 +62,7 @@ def fit_predict(variant, Xtr, ytr, Xte, kind):
             random_seed=C["seed"], n_threads=8,
             params=params.BONSAI_CAMPAIGN_PARAMS).fit(Xtr, ytr)
         return np.asarray(m.predict(Xte))
-    if variant == vr.Lib.XGB:
+    if lib == vr.Lib.XGB:
         import xgboost as xgb
         cls = xgb.XGBClassifier if kind == "auc" else xgb.XGBRegressor
         core = params.xgb_core(
@@ -62,8 +71,8 @@ def fit_predict(variant, Xtr, ytr, Xte, kind):
             max_bin=C["bins"], seed=C["seed"])
         core["random_state"] = core.pop("seed")
         m = cls(n_estimators=C["iters"], n_jobs=8, **core).fit(Xtr, ytr)
-        return m.predict_proba(Xte)[:, 1] if kind == "auc" else m.predict(Xte)
-    if variant == vr.Lib.LGBM:
+        return _predicted(m, Xte, kind)
+    if lib == vr.Lib.LGBM:
         import lightgbm as lgb
         obj = "binary" if kind == "auc" else "regression"
         p = {**params.lgbm_core(
@@ -75,18 +84,15 @@ def fit_predict(variant, Xtr, ytr, Xte, kind):
              "deterministic": True, "num_threads": 8}
         m = lgb.train(p, lgb.Dataset(Xtr, label=ytr))
         return m.predict(Xte)
-    if variant == vr.Lib.CATBOOST:
-        import catboost as cb
-        cls = cb.CatBoostClassifier if kind == "auc" else cb.CatBoostRegressor
-        m = cls(**params.catboost_core(
-                    learning_rate=C["lr"], max_depth=C["depth"],
-                    lambda_l2=C["lambda_l2"], max_bin=C["bins"],
-                    seed=C["seed"], device=vr.Device.CPU),
-                iterations=C["iters"], verbose=False, thread_count=8,
-                allow_writing_files=False).fit(Xtr, ytr)
-        return (m.predict_proba(Xte)[:, 1] if kind == "auc"
-                else m.predict(Xte))
-    raise ValueError(variant)
+    import catboost as cb
+    cls = cb.CatBoostClassifier if kind == "auc" else cb.CatBoostRegressor
+    m = cls(**params.catboost_core(
+                learning_rate=C["lr"], max_depth=C["depth"],
+                lambda_l2=C["lambda_l2"], max_bin=C["bins"],
+                seed=C["seed"], device=vr.Device.CPU),
+            iterations=C["iters"], verbose=False, thread_count=8,
+            allow_writing_files=False).fit(Xtr, ytr)
+    return _predicted(m, Xte, kind)
 
 
 def load_task(task):
@@ -189,6 +195,24 @@ def report(out_path):
           + rk.groupby(["suite"])["dataset"].nunique().to_string())
 
 
+def main():
+    """`grinsztajn out.jsonl` runs; `... --report` prints the standings."""
+    if "--report" in sys.argv:
+        report(sys.argv[1])
+    else:
+        run(sys.argv[1])
+
+
+# Private Functions ================================================================================
+
+def _predicted(model, Xte, kind):
+    """A binary task scores P(positive class); a regression scores the value.
+
+    The positive class is column 1 because load_task encodes it as 1.0.
+    """
+    if kind == "auc":
+        return model.predict_proba(Xte)[:, 1]
+    return model.predict(Xte)
 
 
 def _value(row) -> float | None:
@@ -198,13 +222,6 @@ def _value(row) -> float | None:
     if v is None and not isinstance(row.get("metric"), str):
         v = row.get("metric")
     return v
-
-def main():
-    """`grinsztajn out.jsonl` runs; `... --report` prints the standings."""
-    if "--report" in sys.argv:
-        report(sys.argv[1])
-    else:
-        run(sys.argv[1])
 
 
 if __name__ == "__main__":

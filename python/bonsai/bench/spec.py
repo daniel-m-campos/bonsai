@@ -14,7 +14,7 @@ from bonsai.bench import params
 from bonsai.bench.variants import resolve
 
 _SPEC_KEYS = {"name", "suite", "defaults", "cells", "variants", "threads",
-              "repeats", "gates", "timeout_cap", "variant_iters"}
+              "repeats", "gates", "timeout_cap"}
 
 # Cell knob defaults when a spec omits them: the scaling regime, single-
 # sourced from params so the two cannot drift.
@@ -82,23 +82,11 @@ def expand(spec: dict, *, variants: list[str] | None = None,
     chosen = [resolve(v).name for v in (variants or spec["variants"])]
     policy = repeats if repeats is not None else spec.get("repeats", 1)
     threads = spec.get("threads", [16])
-    variant_iters = spec.get("variant_iters", {})
-    jobs = []
-    for cell in cells_of(spec):
-        # A cell-level exclude_variants drops named arms at that one shape
-        # only; popped before the cell rides into a job so it never lands
-        # in an emitted row.
-        excluded = set(cell.pop("exclude_variants", ()))
-        for variant in chosen:
-            if variant in excluded:
-                continue
-            for t in threads:
-                iters_ladder = variant_iters.get(variant)
-                for iters in (iters_ladder or [cell["iters"]]):
-                    c = dict(cell, iters=iters) if iters_ladder else dict(cell)
-                    jobs.append({"cell": c, "variant": variant, "threads": t,
-                                 "repeats": _repeats_for(variant, policy)})
-    return jobs
+    return [{"cell": dict(cell), "variant": variant, "threads": t,
+             "repeats": _repeats_for(variant, policy)}
+            for cell in cells_of(spec)
+            for variant in chosen
+            for t in threads]
 
 
 def _spec_text(name_or_path: str | pathlib.Path) -> str:

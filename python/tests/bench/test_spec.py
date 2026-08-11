@@ -31,29 +31,8 @@ def test_spec_expansion():
     by = {(j["variant"], j["cell"]["cols"]): j for j in jobs}
     assert by[("bonsai_cuda_depthwise", 128)]["repeats"] == 2
     assert by[("bonsai_depthwise", 128)]["repeats"] == 1  # cpu policy
-    # variant_iters cross-products the listed variant only.
-    s2 = dict(s, variant_iters={"xgb_cuda": [50, 100]},
-              cells=[{"rows": 1000, "cols": 10}], repeats=1)
-    assert [(j["variant"], j["cell"]["iters"]) for j in spec_mod.expand(s2)] == [
-        ("bonsai_cuda_depthwise", 100), ("xgb_cuda", 50), ("xgb_cuda", 100),
-        ("bonsai_depthwise", 100)]
     with pytest.raises(ValueError):
         spec_mod.cells_of({"cells": [{"cols": 1000}]})
-
-
-def test_spec_expansion_exclude_variants():
-    s = {"name": "exclude-test", "cells": [
-            {"rows": 1000, "cols": 10},
-            {"rows": 2000, "cols": 20, "exclude_variants": ["xgb_cuda"]}],
-         "variants": ["bonsai_cuda_depthwise", "xgb_cuda"],
-         "threads": [16], "repeats": 1}
-    jobs = spec_mod.expand(s)
-    assert len(jobs) == 3  # 2 variants at cols=10, 1 at cols=20
-    by_cols = {(j["cell"]["cols"], j["variant"]) for j in jobs}
-    assert (20, "xgb_cuda") not in by_cols
-    assert (20, "bonsai_cuda_depthwise") in by_cols
-    # exclude_variants never rides into the emitted cell dict.
-    assert all("exclude_variants" not in j["cell"] for j in jobs)
 
 
 # The redesigned standings axes (decision 103): scenario name -> the cell it

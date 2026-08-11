@@ -36,6 +36,21 @@ SCALING = dict(iters=100, lr=0.1, depth=8, bins=255, min_data_in_leaf=20,
 # untouched for the final metric.
 EARLY_STOP = dict(iters=2000, lr=0.05, patience=50, eval_frac=0.1)
 
+# The bonsai dotted key each *_core knob is stated in, so the three builders
+# name a knob once and interop does the renaming. min_data_in_leaf appears
+# twice on purpose: it rides tree.min_data_in_leaf everywhere except
+# xgboost, whose row floor is a hessian floor (see xgb_core).
+_BONSAI_KEY = {
+    "learning_rate": "booster.learning_rate",
+    "max_depth": "tree.max_depth",
+    "max_leaves": "tree.max_leaves",
+    "min_data_in_leaf": "tree.min_data_in_leaf",
+    "min_child_hess": "tree.min_child_hess",
+    "lambda_l2": "tree.lambda_l2",
+    "max_bin": "bin_mapper.max_bin",
+    "seed": "booster.random_seed",
+}
+
 # bonsai dotted keys for the campaign regime (the estimator kwargs carry the
 # rest); used by quality suites and probes.
 BONSAI_CAMPAIGN_PARAMS = {
@@ -108,29 +123,19 @@ def xgb_core(*, learning_rate, max_depth, min_data_in_leaf, lambda_l2, max_bin,
     false conclusion once. tree_method is the histogram method bonsai always
     uses, and has no bonsai key to be renamed from.
     """
-    core = interop.to_xgboost([
-        ("booster.learning_rate", learning_rate),
-        ("tree.max_depth", max_depth),
-        ("tree.min_child_hess", min_data_in_leaf),
-        ("tree.lambda_l2", lambda_l2),
-        ("bin_mapper.max_bin", max_bin),
-        ("booster.random_seed", seed),
-    ])
+    core = _translated(interop.to_xgboost, learning_rate=learning_rate,
+                       max_depth=max_depth, min_child_hess=min_data_in_leaf,
+                       lambda_l2=lambda_l2, max_bin=max_bin, seed=seed)
     return {**core, "tree_method": "hist"}
 
 
 def lgbm_core(*, learning_rate, max_depth, num_leaves, min_data_in_leaf,
               lambda_l2, max_bin, seed) -> dict:
     """lightgbm params matched to the shared knob names, silenced logs."""
-    core = interop.to_lightgbm([
-        ("booster.learning_rate", learning_rate),
-        ("tree.max_depth", max_depth),
-        ("tree.max_leaves", num_leaves),
-        ("tree.min_data_in_leaf", min_data_in_leaf),
-        ("tree.lambda_l2", lambda_l2),
-        ("bin_mapper.max_bin", max_bin),
-        ("booster.random_seed", seed),
-    ])
+    core = _translated(interop.to_lightgbm, learning_rate=learning_rate,
+                       max_depth=max_depth, max_leaves=num_leaves,
+                       min_data_in_leaf=min_data_in_leaf, lambda_l2=lambda_l2,
+                       max_bin=max_bin, seed=seed)
     return {**core, "verbose": -1}
 
 
@@ -144,13 +149,9 @@ def catboost_core(*, learning_rate, max_depth, lambda_l2, max_bin, seed,
     translation stays here: GPU caps border_count at 254 (= 255 bins,
     matching the campaign/scale default exactly).
     """
-    core = interop.to_catboost([
-        ("booster.learning_rate", learning_rate),
-        ("tree.max_depth", max_depth),
-        ("tree.lambda_l2", lambda_l2),
-        ("bin_mapper.max_bin", max_bin),
-        ("booster.random_seed", seed),
-    ])
+    core = _translated(interop.to_catboost, learning_rate=learning_rate,
+                       max_depth=max_depth, lambda_l2=lambda_l2,
+                       max_bin=max_bin, seed=seed)
     if device == Device.CUDA:
         core["border_count"] = min(core["border_count"], 254)
     return core
@@ -197,3 +198,9 @@ def catboost_early_stop(rounds: int, *, has_eval_set: bool) -> dict:
     if not rounds:
         return {"use_best_model": False}
     return {"od_type": "Iter", "od_wait": rounds}
+
+
+def _translated(rename, **knobs) -> dict:
+    """Hand the named knobs to one of interop's renamers, spelled as the
+    bonsai dotted keys they are stated in."""
+    return rename([(_BONSAI_KEY[knob], value) for knob, value in knobs.items()])
