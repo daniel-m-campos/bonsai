@@ -139,17 +139,6 @@ bench-scaling:  ## Run a synthetic scaling spec (ARGS='run --spec scaling-rows')
 	@PYTHONPATH=$(if $(wildcard build-cuda/python),build-cuda/python,build/python) \
 	    uv run scripts/bench_scaling.py $(ARGS)
 
-# Replicates the iso-volume campaign's bonsai arms on this host (the pod
-# campaign runs all six arms via scripts/pod_bench_driver.sh). Rows land in
-# the shared results file, distinguished by host name and run label.
-bench-iso: python-cuda  ## Run the iso-volume bonsai arms on this host's GPU.
-	@PYTHONPATH=build-cuda/python $(PYTHON) -m bonsai.bench run \
-	    --spec iso-volume-2026-08 \
-	    --variants bonsai_cuda_depthwise,bonsai_cuda_levelwise \
-	    --out benchmarks/results/iso-volume-2026-08.jsonl \
-	    --run-label iso-volume-2026-08-workrig \
-	    --host-name workrig-rtx-pro-6000 $(ARGS)
-
 $(TOY_SENTINEL):
 	@uv run scripts/fetch_toy.py
 	@touch $@
@@ -178,4 +167,4 @@ install-hooks:  ## Point core.hooksPath at the versioned hooks (commit-msg forma
 	@git config core.hooksPath scripts/git-hooks
 	@echo "hooks installed: core.hooksPath = scripts/git-hooks"
 
-.PHONY: configure build build-cuda build-asan clean format format-check lint lint-python all params-json test test-cuda test-asan fit-benchmark bench-scaling bench-iso python python-cuda python-test docs-check install-hooks help
+.PHONY: configure build build-cuda build-asan clean format format-check lint lint-python all params-json test test-cuda test-asan fit-benchmark bench-scaling python python-cuda python-test docs-check install-hooks help
