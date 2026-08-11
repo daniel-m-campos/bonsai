@@ -66,7 +66,7 @@ The CUDA backend needs a CUDA 12.x toolkit at build time only (clang cannot targ
 | `BONSAI_CUDA_PTX_ARCH` | embed PTX for this single arch only (forward-JIT floor) | clang's per-arch default |
 | `BONSAI_CUDA_STATIC_RUNTIME` | link cudart statically (what release wheels do) | `OFF` |
 
-How the backend works (device-resident training, the one kernel TU compiled by the project's own clang) is [guide chapter 10](../guide/10-gpu-training.md) and [the architecture note](../architecture/11-gpu-resident.md); the wider scaling study lives in the [benchmarks README](../../benchmarks/README.md).
+How the backend works (device-resident training, the one kernel TU compiled by the project's own clang) is [guide chapter 10](../guide/10-gpu-training.md) and [the architecture note](../architecture/11-gpu-resident.md); running the scaling suite against a CUDA build is [Running the benchmarks](benchmarks.md).
 
 ## When the build fails
 

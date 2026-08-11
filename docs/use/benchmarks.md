@@ -39,7 +39,15 @@ python -m bonsai.bench run --spec gpu-tall --out gpu-tall.jsonl
 python -m bonsai.bench variants
 ```
 
-`plan` prints the expansion (every cell, variant, timeout, repeat count) without fitting anything. `run` resumes by default when the output file already exists: finished rows are skipped, failures re-attempt, so an interrupted sweep continues by re-running the same command. Campaign specs ship inside the package (`bench/specs/`), so a bare name works from any install and `--spec` also takes a path to your own JSON; the `iso_volume` generator holds rows x cols constant while sweeping the aspect ratio, and GPU rows record measured peak device memory (`dev_mem`) sampled while the child runs. Pod campaigns wrap this in `scripts/pod_bench_driver.sh` (see `benchmarks/README.md`).
+`plan` prints the expansion (every cell, variant, timeout, repeat count) without fitting anything. `run` resumes by default when the output file already exists: finished rows are skipped, failures re-attempt, so an interrupted sweep continues by re-running the same command. Campaign specs ship inside the package (`bench/specs/`), so a bare name works from any install and `--spec` also takes a path to your own JSON; the `iso_volume` generator holds rows x cols constant while sweeping the aspect ratio, and GPU rows record measured peak device memory (`dev_mem`) sampled while the child runs.
+
+Every measurement runs in its own child process, so an out-of-memory, a segfault, or a timeout lands as a jsonl row instead of killing the sweep. Cells the driver judges infeasible from host RAM and VRAM are recorded as `status="skipped"` with the estimate that ruled them out, because the feasibility frontier is data rather than an error; a spec can switch the gates off (`gates.mem_gate: off`) when the measured failure is the point.
+
+## GPU and pod runs
+
+The GPU variants need the extension built against the interpreter that will run it, since the nanobind module is ABI-tied to one Python: `make python-cuda PYTHON=$(uv python find 3.12)`. The `bench-scaling` target picks up `build-cuda/python` on its own when that build exists.
+
+For a campaign on a rented pod, copy the committed driver `scripts/pod_bench_driver.sh` up and launch it with `HOST_TAG`, `SPEC`, `OUT`, and `RUN_LABEL` set: it clones, builds, and runs the spec, and re-invoking resumes. Bring the rows home with `ssh pod cat <out>.jsonl >> benchmarks/results/<file>.jsonl`, since jsonl appends compose, then commit and delete the pod. The [RunPod runbook](https://github.com/daniel-m-campos/bonsai/blob/main/docs/ops/runpod-runbook.md) covers the image, pod acceptance, and the rest of the loop.
 
 ## Reading what comes out
 

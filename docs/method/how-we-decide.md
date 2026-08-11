@@ -6,21 +6,9 @@ Two rules govern every change to bonsai. Price a change before you build it. Adm
 
 No optimization begins until instrumentation has decomposed and priced the cost it attacks. None ships without a measurement showing the predicted win arrived. The full cycle is decompose, price, implement, validate, record ([architecture doc 16](https://github.com/daniel-m-campos/bonsai/blob/main/docs/architecture/16-compute-dag.md) is the canonical statement; [guide chapter 11](../guide/11-performance-engineering.md) tells it as a story).
 
-The rule exists because profilers lie in exactly the places that matter.
+The rule exists because profilers lie in exactly the places that matter. [Case E1](../learn/engine/1-the-marginal-round.md) is the round instrumentation cancelled: the largest line in the GPU grow profile turned out to be the previous level's histograms draining at the profiler's own sync, and a multi-hour kernel rewrite was called off before any kernel code was written ([decision 62](../decisions.md)). Run the other way, the same ledger predicted the one-line prefetch that closed the largest CPU loss on any chart ([decision 61](../decisions.md)).
 
-### The round that instrumentation cancelled
-
-At 16M rows, the GPU grow profile showed 8.4 seconds in the split-find lap, the largest single line. The obvious plan was a multi-hour rewrite of the find kernel, whose warp scan runs in double precision on an L40S with weak FP64.
-
-Instrumenting first told a different story. A profile-gated sync split the lap into kernel-compute versus transfer and showed the find kernel costs 0.17 seconds. The 8.4 seconds was the profiler's opening `cudaDeviceSynchronize` catching the previous level's asynchronous histogram kernels: async work billed to whoever synchronizes next. Every hypothesis banked for the round was refuted by one measurement, and the rewrite was cancelled before any kernel code was written ([decision 62](../decisions.md)).
-
-The same discipline, run the other way, produced the best single win. An instruction-level cost ledger of the 16M CPU fit showed the histogram fill loop DRAM-latency-bound, 82 of 107 seconds. It predicted that a software prefetch would close most of the gap. The one-line change landed inside the estimate: 107 seconds down to 75.8, a tie with XGBoost-hist's 75.7 in the same session ([decision 61](../decisions.md)). On a later pod XGBoost leads by ~7%, and the CPU order is recorded as host-dependent.
-
-### Microbenchmarks lie too
-
-A microbenchmark of the fill loop promised 1.6x from splitting the accumulator chain. The real loop was flat at every thread count. The microbenchmark's arrays were cache-resident, which isolated a floating-point dependency that the real streaming loop hides behind memory latency. The code was dropped and the lesson recorded ([decision 49](../decisions.md)).
-
-An isolated measurement inherits the bottleneck structure of the isolation, not of the system. Price a change in the real loop or not at all.
+Isolated measurements mislead in the same shape: a microbenchmark inherits the bottleneck structure of the isolation, not of the system, which is why an accumulator split that looked like a win on cache-resident arrays was flat in the real streaming loop ([chapter 9](../guide/9-parallelism-and-determinism.md), [decision 49](../decisions.md)). Price a change in the real loop or not at all.
 
 ## Admit a feature by measurement
 
