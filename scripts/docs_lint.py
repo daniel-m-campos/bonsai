@@ -6,7 +6,8 @@ review. Stdlib only, like the other doc generators; no build required.
 
 Scope: the published pages only. `exclude_docs` in mkdocs.yml lists what
 never reaches the site (STYLE.md itself, ops/, reviews/, and the loose
-working notes); this script parses that block and skips the same files. It ADDITIONALLY exempts the frozen archive, docs/decisions.md and
+working notes); `_docs_corpus.corpus_files` parses that block and skips the
+same files. It ADDITIONALLY exempts the frozen archive, docs/decisions.md and
 docs/architecture/**: that material is a historical record, first-class
 for agents and deep divers but deliberately out of the main line, and
 rewriting it to today's style would falsify the record.
@@ -43,10 +44,7 @@ import pathlib
 import re
 import sys
 
-from _docs_corpus import excluded_patterns, is_excluded
-
-REPO = pathlib.Path(__file__).resolve().parents[1]
-DOCS = REPO / "docs"
+from _docs_corpus import REPO, corpus_files
 
 EM_DASH = "—"
 LIBS = ("xgboost", "lightgbm", "catboost")
@@ -66,25 +64,6 @@ SOFT_WORD_LIMIT = 25
 
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
 LIB_RE = re.compile(r"(?<![A-Za-z0-9_/.])(" + "|".join(LIBS) + r")")
-
-
-# ---- corpus selection --------------------------------------------------------
-
-def is_archive(rel: str) -> bool:
-    """The frozen historical record, exempt by policy (see the module docstring)."""
-    return rel == "decisions.md" or rel.startswith("architecture/")
-
-
-def corpus_files() -> list[pathlib.Path]:
-    """The published prose files the lint covers."""
-    pats = excluded_patterns((REPO / "mkdocs.yml").read_text())
-    files = [REPO / "README.md"]
-    for path in sorted(DOCS.rglob("*.md")):
-        rel = path.relative_to(DOCS).as_posix()
-        if is_excluded(rel, pats) or is_archive(rel):
-            continue
-        files.append(path)
-    return files
 
 
 # ---- text handling -----------------------------------------------------------
