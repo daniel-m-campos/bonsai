@@ -85,9 +85,11 @@ std::vector<std::vector<HistCell>> reference_hists(Fixture const               &
     return out;
 }
 
-SplitInput populate_node(Fixture const &fx, std::vector<row_id_t> rows)
+SplitInput populate_node(Fixture const &fx, std::vector<row_id_t> rows,
+                         node_id_t id = 0)
 {
     SplitInput node;
+    node.id   = id;
     node.rows = std::move(rows);
     CpuHistogramEngine engine;
     engine.populate(fx.ds, fx.grad, fx.hess, node, fx.selected);
@@ -201,6 +203,40 @@ TEST_CASE("sparse fill sums its per-thread partials into the node arena", "[popu
             CHECK(cells[b].sum_grad == Catch::Approx(ref[s][b].sum_grad).margin(1e-2));
             CHECK(cells[b].sum_hess == Catch::Approx(ref[s][b].sum_hess).margin(1e-2));
         }
+    }
+    parallel::set_n_threads(0);
+}
+
+TEST_CASE("a lone sparse node fills feature-major in serial order", "[populate]")
+{
+    // The leaf plane's per-split fill: a sparse node that is not the root
+    // takes the feature-ranged arm, where one worker owns a whole feature's
+    // cells, so they sum in ascending row order at any thread count.
+    auto const fx = make_fixture(40960, 3);
+    REQUIRE(fx.ds.bins_are_u8());
+
+    std::vector<row_id_t> rows;
+    for (row_id_t r = 0; r < fx.ds.n_rows(); r += 5)
+    {
+        rows.push_back(r);
+    }
+    REQUIRE(rows.size() * 4 < fx.ds.n_rows());
+
+    parallel::set_n_threads(1);
+    auto const one = populate_node(fx, rows, 1);
+    parallel::set_n_threads(4);
+    auto const four = populate_node(fx, rows, 1);
+    auto const ref  = reference_hists(fx, rows);
+
+    for (size_t s = 0; s < fx.selected.size(); ++s)
+    {
+        auto const cells = four.hists[fx.selected[s]].all_cells();
+        auto const c1    = one.hists[fx.selected[s]].all_cells();
+        REQUIRE(cells.size() == ref[s].size());
+        REQUIRE(std::memcmp(cells.data(), ref[s].data(),
+                            cells.size() * sizeof(HistCell)) == 0);
+        REQUIRE(std::memcmp(cells.data(), c1.data(), cells.size() * sizeof(HistCell)) ==
+                0);
     }
     parallel::set_n_threads(0);
 }

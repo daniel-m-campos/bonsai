@@ -24,6 +24,49 @@ namespace bonsai
 namespace
 {
 
+// grad and hess in one node's row order. A fill that walks the node once per
+// feature reads them sequentially from here instead of re-walking the full
+// arrays with scattered indices (n_features x full-array traffic otherwise).
+struct OrderedGh
+{
+    float const *g;
+    float const *h;
+};
+
+// Below this the gather runs serially: one pass over a node this small costs
+// less than the parallel region that would spread it.
+constexpr size_t k_gather_region_rows = 1 << 14;
+
+OrderedGh ordered_gh(std::span<row_id_t const> rows, floats_view grad, floats_view hess)
+{
+    static thread_local std::vector<float> ordered_grad;
+    static thread_local std::vector<float> ordered_hess;
+    size_t const                           n = rows.size();
+    ordered_grad.resize(n);
+    ordered_hess.resize(n);
+    // Capture raw pointers: naming the thread_local inside the parallel
+    // region would resolve to each worker's own (empty) vector.
+    float *const          g     = ordered_grad.data();
+    float *const          h     = ordered_hess.data();
+    row_id_t const *const r_ptr = rows.data();
+    if (n < k_gather_region_rows)
+    {
+        for (size_t k = 0; k < n; ++k)
+        {
+            g[k] = grad[r_ptr[k]];
+            h[k] = hess[r_ptr[k]];
+        }
+        return {.g = g, .h = h};
+    }
+    parallel::for_each_index(n,
+                             [&, g, h, r_ptr](size_t k)
+                             {
+                                 g[k] = grad[r_ptr[k]];
+                                 h[k] = hess[r_ptr[k]];
+                             });
+    return {.g = g, .h = h};
+}
+
 // The column fill, taken by u16 (high max_bin) data and by dense u8 nodes:
 // one thread owns one feature's histogram and fills it in row order, so
 // results are bit-identical at any thread count. visit_bins monomorphizes
@@ -32,35 +75,14 @@ void fill_feature_parallel(Dataset const &ds, floats_view grad, floats_view hess
                            SplitInput                   &split_input,
                            std::span<feature_id_t const> selected)
 {
-    // Gather grad/hess into node-row order once, so every feature's scan
-    // below reads them sequentially instead of re-walking the full arrays
-    // with scattered indices (n_features x full-array traffic otherwise).
+    size_t const n = split_input.rows.size();
     // A node covering every row (the root, absent row sampling) needs no
     // gather at all: rows is the identity, so grad/hess are used in place.
-    static thread_local std::vector<float> ordered_grad;
-    static thread_local std::vector<float> ordered_hess;
-    size_t const                           n     = split_input.rows.size();
-    bool const                             dense = n == ds.n_rows();
-    float const                           *og    = grad.data();
-    float const                           *oh    = hess.data();
-    if (!dense)
-    {
-        ordered_grad.resize(n);
-        ordered_hess.resize(n);
-        // Capture raw pointers: naming the thread_local inside the parallel
-        // region would resolve to each worker's own (empty) vector.
-        float *const g = ordered_grad.data();
-        float *const h = ordered_hess.data();
-        parallel::for_each_index(n,
-                                 [&, g, h](size_t k)
-                                 {
-                                     row_id_t const r = split_input.rows[k];
-                                     g[k]             = grad[r];
-                                     h[k]             = hess[r];
-                                 });
-        og = g;
-        oh = h;
-    }
+    bool const      dense = n == ds.n_rows();
+    OrderedGh const gh    = dense ? OrderedGh{.g = grad.data(), .h = hess.data()}
+                                  : ordered_gh(split_input.rows, grad, hess);
+    float const    *og    = gh.g;
+    float const    *oh    = gh.h;
     parallel::for_each_index(
         selected.size(),
         [&](size_t s)
@@ -255,9 +277,11 @@ struct FillTarget
 
 // Accumulates rows [first, last) of one node into `target`, reading each row's
 // bins as contiguous bytes of the slice's mirror tile and grad/hess once per
-// row.
-void fill_rows(SplitInput const &node, size_t first, size_t last, floats_view grad,
-               floats_view hess, FillTarget const &target)
+// row. NodeOrder says grad/hess are already gathered into the node's row
+// order, so they are read at the row's position instead of its id.
+template <bool NodeOrder = false>
+void fill_rows(SplitInput const &node, size_t first, size_t last, float const *grad,
+               float const *hess, FillTarget const &target)
 {
     uint8_t const *const      rm_ptr   = target.rm;
     HistCell *const *const    base_ptr = target.bases;
@@ -295,13 +319,17 @@ void fill_rows(SplitInput const &node, size_t first, size_t last, floats_view gr
                     size_t const rp = rows[k + k_ahead];
                     __builtin_prefetch(rm_ptr + (rp * width), 0, 0);
                     __builtin_prefetch(rm_ptr + (rp * width) + 64, 0, 0);
-                    __builtin_prefetch(&grad[rp], 0, 0);
-                    __builtin_prefetch(&hess[rp], 0, 0);
+                    if constexpr (!NodeOrder)
+                    {
+                        __builtin_prefetch(grad + rp, 0, 0);
+                        __builtin_prefetch(hess + rp, 0, 0);
+                    }
                 }
                 size_t const         r        = rows[k];
                 uint8_t const *const row_bins = rm_ptr + (r * width);
-                float const          g        = grad[r];
-                float const          h        = hess[r];
+                size_t const         gk       = NodeOrder ? k : r;
+                float const          g        = grad[gk];
+                float const          h        = hess[gk];
                 for (size_t s = 0; s < n_sel_b; ++s)
                 {
                     HistCell &c = cell_at(s, row_bins);
@@ -491,8 +519,8 @@ void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes, Dataset con
                                         .bases    = bases.data(),
                                         .selected = sel_ptr,
                                         .mode     = mode};
-                fill_rows(node_ptr[chunk.node], chunk.first, chunk.last, grad, hess,
-                          target);
+                fill_rows(node_ptr[chunk.node], chunk.first, chunk.last, grad.data(),
+                          hess.data(), target);
             }
         });
     size_t const *const red_ptr = plan.reduce_nodes.data();
@@ -539,6 +567,88 @@ void fill_sparse(Dataset const &ds, floats_view grad, floats_view hess,
     }
 }
 
+// One worker's share of a lone node's fill: the selected features [b0, b1) of
+// one mirror tile, contiguous so the arena cells the worker touches are its
+// own.
+struct FeatureRange
+{
+    size_t slice, b0, b1;
+};
+
+// A lone node's fill, cut by feature: each worker walks the whole node over
+// one contiguous range of a mirror tile and accumulates straight into that
+// range of the node's arena. Nothing is shared, so no partial is zeroed and
+// none is reduced, and each cell takes its rows in ascending order whatever
+// the thread count. The row-chunk fill the level plane uses stays as it is:
+// there a worker owns whole nodes, and the partials it does write are the
+// price of spreading a frontier.
+void fill_one_node(Dataset const &ds, floats_view grad, floats_view hess,
+                   SplitInput &node, std::span<feature_id_t const> selected,
+                   SelectionPlan const &sp)
+{
+    size_t const n = node.rows.size();
+    if (n == 0)
+    {
+        return;
+    }
+    OrderedGh const gh = ordered_gh(node.rows, grad, hess);
+    static thread_local std::vector<FeatureRange> ranges;
+    ranges.clear();
+    // A range walks the whole node, so equal feature counts are equal work:
+    // one range per worker, cut inside the mirror tiles it spans.
+    auto const   workers = static_cast<size_t>(parallel::n_threads());
+    size_t const width = std::max<size_t>(1, (selected.size() + workers - 1) / workers);
+    for (size_t i = 0; i < sp.slices.size(); ++i)
+    {
+        size_t const n_sel_b = sp.slices[i].n_selected();
+        for (size_t b = 0; b < n_sel_b; b += width)
+        {
+            ranges.push_back({.slice = i, .b0 = b, .b1 = std::min(b + width, n_sel_b)});
+        }
+    }
+    uint8_t const *const      rm_all  = ds.row_major_bins().data();
+    feature_id_t const *const sel_ptr = selected.data();
+    NodeHistograms           &hists   = node.hists;
+    // Capture a raw pointer: naming the thread_local inside the parallel
+    // region would resolve to each worker's own (empty) vector.
+    FeatureRange const *const range_ptr = ranges.data();
+    parallel::for_each_index(
+        ranges.size(),
+        [&, rm_all, sel_ptr, range_ptr](size_t t)
+        {
+            FeatureRange const &r  = range_ptr[t];
+            MirrorSlice const  &sl = sp.slices[r.slice];
+            // A fully selected tile indexes the row's bins directly, so the
+            // range addresses its cells from one base; a sampled one pays a
+            // selection lookup and a base load per feature.
+            bool const        dense_sel = sl.n_selected() == sl.rm_width;
+            MirrorSlice const sub{.s0       = sl.s0 + r.b0,
+                                  .s1       = sl.s0 + r.b1,
+                                  .rm_base  = sl.rm_base,
+                                  .rm_width = sl.rm_width,
+                                  .cell0    = sl.cell0,
+                                  .cells    = sl.cells,
+                                  .fid0     = sl.fid0 + r.b0};
+            static thread_local std::vector<HistCell *> bases;
+            bases.clear();
+            bases.push_back(hists[sel_ptr[sub.s0]].cells().data());
+            if (!dense_sel)
+            {
+                for (size_t s = sub.s0 + 1; s < sub.s1; ++s)
+                {
+                    bases.push_back(hists[sel_ptr[s]].cells().data());
+                }
+            }
+            FillTarget const target{.slice    = sub,
+                                    .rm       = rm_all + sl.rm_base + r.b0,
+                                    .bases    = bases.data(),
+                                    .selected = sel_ptr,
+                                    .mode     = dense_sel ? CellMode::uniform
+                                                          : CellMode::gathered};
+            fill_rows<true>(node, 0, n, gh.g, gh.h, target);
+        });
+}
+
 // Density cutoff: a node holding rows >= n_rows / den routes to the column
 // fill, sparser ones to the row-chunk fill; measured, not tunable
 // (docs/architecture/7-parallel.md).
@@ -546,10 +656,23 @@ constexpr size_t k_col_fill_den = 4;
 
 } // namespace
 
+// One node's fill. The leaf plane calls this per split, and its node is a
+// sparse child with no frontier to spread the work over, so the fill is cut
+// by feature instead of by row chunk (#367). Dense nodes already fill
+// feature-major over the columns, and the root keeps the level growers' path:
+// it is the one lone node they populate too.
 void CpuHistogramEngine::populate(Dataset const &ds, floats_view grad, floats_view hess,
                                   SplitInput                   &split_input,
                                   std::span<feature_id_t const> selected)
 {
+    if (split_input.id != 0 && ds.bins_are_u8() && !selected.empty() &&
+        split_input.rows.size() * k_col_fill_den < ds.n_rows())
+    {
+        SelectionPlan const &sp = selection_plan(ds, selected);
+        split_input.hists.carve(sp.layout, selected, ds.n_features(), true);
+        fill_one_node(ds, grad, hess, split_input, selected, sp);
+        return;
+    }
     std::array one = {std::ref(split_input)};
     populate_many(ds, grad, hess, one, selected);
 }
