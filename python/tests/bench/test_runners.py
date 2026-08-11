@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import pathlib
 import tempfile
 import time
+from collections.abc import Callable
 
 import numpy as np
 import pytest
@@ -327,13 +329,42 @@ def test_eval_split_carves_the_train_side_only():
         runners.eval_split({"eval_mode": "sometimes"}, X, y)
 
 
-def test_bonsai_runner_arms_early_stopping_through_the_config_key(monkeypatch):
+# Early stopping ===================================================================================
+#
+# Every library arms early stopping through a different surface, and none of
+# the four is visible in a timing number, so what the runner asked the
+# library for is what these guards read. One probe per library installs the
+# spies and says how to read that surface back; the arms themselves (off,
+# eval, stop) are the same three for all four, and are swept once below.
+
+
+@dataclasses.dataclass
+class _StopProbe:
+    """One library's early-stopping surface, as seen from outside the runner.
+
+    ``patience`` returns the patience the library was handed, in that
+    library's own spelling, or None when the arm never armed one.
+    """
+
+    run: Callable
+    variant: str
+    base: dict
+    reset: Callable
+    saw_eval_set: Callable
+    patience: Callable
+    armed_patience: object = 5
+    tail: Callable | None = None
+
+
+_REF_BASE = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42,
+             "iters": 20}
+
+
+def _bonsai_stop_probe(monkeypatch) -> _StopProbe:
     """bonsai's surface is eval_set= on train plus the patience config key.
 
-    Both halves are load-bearing and neither is visible in a timing number:
-    an eval_set with no patience runs the full cap, and a patience with no
-    eval_set has nothing to watch. The "off" arm must reach train with
-    eval_set=None, or the overhead denominator is paying for eval too.
+    Both halves are load-bearing: an eval_set with no patience runs the full
+    cap, and a patience with no eval_set has nothing to watch.
     """
     import bonsai
     from bonsai.bench import runners
@@ -346,35 +377,25 @@ def test_bonsai_runner_arms_early_stopping_through_the_config_key(monkeypatch):
         return real_train(pairs, data, *args, **kwargs)
 
     monkeypatch.setattr(bonsai, "train", spy)
-    rng = np.random.default_rng(0)
-    X = rng.random((2000, 8), dtype=np.float32)
-    y = X[:, :3].sum(axis=1).astype(np.float32)
-    base = {"lr": 0.1, "depth": 4, "bins": 63, "seed": 42, "iters": 20}
     key = "booster.early_stopping_rounds"
-
-    for mode, armed in (("off", False), ("eval", False), ("stop", True)):
-        seen.clear()
-        cell = dict(base, eval_mode=mode, patience=5)
-        out = runners.run_bonsai(
-            {"cell": cell, "variant": "bonsai_depthwise", "threads": 1},
-            X[:1500], y[:1500], X[1500:], y[1500:])
-        pairs, eval_set = seen[0]
-        assert (eval_set is not None) == (mode != "off"), (mode, eval_set)
-        assert (key in pairs) == armed, (mode, pairs.get(key))
-        assert out["eval_mode"] == mode
-        assert (out["stopped_at"] is not None) == armed, out
-    assert pairs[key] == "5"
+    return _StopProbe(
+        run=runners.run_bonsai, variant="bonsai_depthwise",
+        base={"lr": 0.1, "depth": 4, "bins": 63, "seed": 42, "iters": 20},
+        reset=seen.clear,
+        saw_eval_set=lambda: seen[0][1] is not None,
+        patience=lambda: seen[0][0].get(key),
+        armed_patience="5")
 
 
-def test_xgb_runner_arms_early_stopping_through_train_kwargs(monkeypatch):
+def _xgb_stop_probe(monkeypatch) -> _StopProbe:
     """xgboost takes evals and early_stopping_rounds at the xgb.train call.
 
     The validation matrix must be a QuantileDMatrix built with ref=dtrain
     AND the same max_bin: xgboost 3.3 rejects a ref matrix whose max_bin
-    disagrees, and the failure is a fit-time exception on a rented pod.
-    Prediction is checked too, because xgboost is the one library that does
-    not truncate on a stop: its default iteration_range is every tree, so a
-    metric read without an explicit range describes the overshot model.
+    disagrees, and the failure is a fit-time exception on a rented pod. The
+    tail check is what pins the matrix type; xgboost is also the one library
+    that does not truncate on a stop, so the runner's own iteration_range is
+    what keeps the metric off the overshot model.
     """
     xgb = pytest.importorskip("xgboost")
     from bonsai.bench import runners
@@ -387,28 +408,15 @@ def test_xgb_runner_arms_early_stopping_through_train_kwargs(monkeypatch):
         return real_train(params, dtrain, *args, **kwargs)
 
     monkeypatch.setattr(xgb, "train", spy)
-    rng = np.random.default_rng(0)
-    X = rng.random((2000, 8), dtype=np.float32)
-    y = X[:, :3].sum(axis=1).astype(np.float32)
-    base = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42,
-            "iters": 20}
-
-    for mode, armed in (("off", False), ("eval", False), ("stop", True)):
-        calls.clear()
-        cell = dict(base, eval_mode=mode, patience=5)
-        out = runners.run_xgb(
-            {"cell": cell, "variant": "xgb_hist", "threads": 1},
-            X[:1500], y[:1500], X[1500:], y[1500:])
-        kwargs = calls[0]
-        assert ("evals" in kwargs) == (mode != "off"), (mode, kwargs)
-        assert ("early_stopping_rounds" in kwargs) == armed, (mode, kwargs)
-        assert out["eval_mode"] == mode
-        assert (out["stopped_at"] is not None) == armed, out
-    assert kwargs["early_stopping_rounds"] == 5
-    assert isinstance(kwargs["evals"][0][0], xgb.QuantileDMatrix)
+    return _StopProbe(
+        run=runners.run_xgb, variant="xgb_hist", base=_REF_BASE,
+        reset=calls.clear,
+        saw_eval_set=lambda: "evals" in calls[0],
+        patience=lambda: calls[0].get("early_stopping_rounds"),
+        tail=lambda: isinstance(calls[0]["evals"][0][0], xgb.QuantileDMatrix))
 
 
-def test_lgbm_runner_arms_early_stopping_through_the_callback(monkeypatch):
+def _lgbm_stop_probe(monkeypatch) -> _StopProbe:
     """lightgbm's documented mechanism is the lgb.early_stopping callback.
 
     Setting a params key instead would ride on an alias the library is free
@@ -429,35 +437,26 @@ def test_lgbm_runner_arms_early_stopping_through_the_callback(monkeypatch):
         calls.append(kwargs)
         return real_train(params, dtrain, *args, **kwargs)
 
-    monkeypatch.setattr(lgb, "early_stopping", spy_es)
-    monkeypatch.setattr(lgb, "train", spy_train)
-    rng = np.random.default_rng(0)
-    X = rng.random((2000, 8), dtype=np.float32)
-    y = X[:, :3].sum(axis=1).astype(np.float32)
-    base = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42,
-            "iters": 20}
-
-    for mode, armed in (("off", False), ("eval", False), ("stop", True)):
+    def reset():
         rounds.clear()
         calls.clear()
-        cell = dict(base, eval_mode=mode, patience=5)
-        out = runners.run_lgbm(
-            {"cell": cell, "variant": "lgbm_cpu", "threads": 1},
-            X[:1500], y[:1500], X[1500:], y[1500:])
-        assert ("valid_sets" in calls[0]) == (mode != "off"), (mode, calls[0])
-        assert bool(rounds) == armed, (mode, rounds)
-        assert out["eval_mode"] == mode
-        assert (out["stopped_at"] is not None) == armed, out
-    assert rounds == [5]
+
+    monkeypatch.setattr(lgb, "early_stopping", spy_es)
+    monkeypatch.setattr(lgb, "train", spy_train)
+    return _StopProbe(
+        run=runners.run_lgbm, variant="lgbm_cpu", base=_REF_BASE, reset=reset,
+        saw_eval_set=lambda: "valid_sets" in calls[0],
+        patience=lambda: rounds[0] if rounds else None)
 
 
-def test_catboost_runner_arms_the_overfitting_detector(monkeypatch):
+def _catboost_stop_probe(monkeypatch) -> _StopProbe:
     """CatBoost's patience is od_type="Iter" plus od_wait on the estimator.
 
-    The fixed-iteration arm is checked for use_best_model=False as well:
-    CatBoost shrinks the model to its best iteration whenever an eval set is
-    present, detector or not, so without it the "eval" arm would report a
-    metric from a model shorter than the one whose fit was timed.
+    The tail check reads od_type, and params.catboost_early_stop carries the
+    other half: CatBoost shrinks the model to its best iteration whenever an
+    eval set is present, detector or not, so without use_best_model=False the
+    "eval" arm would report a metric from a model shorter than the one whose
+    fit was timed.
     """
     catboost = pytest.importorskip("catboost")
     from bonsai.bench import runners
@@ -474,27 +473,50 @@ def test_catboost_runner_arms_the_overfitting_detector(monkeypatch):
         fits.append(kwargs)
         return real_fit(self, pool, *args, **kwargs)
 
+    def reset():
+        built.clear()
+        fits.clear()
+
     monkeypatch.setattr(catboost.CatBoostRegressor, "__init__", spy_init)
     monkeypatch.setattr(catboost.CatBoostRegressor, "fit", spy_fit)
+    return _StopProbe(
+        run=runners.run_catboost, variant="catboost_cpu", base=_REF_BASE,
+        reset=reset,
+        saw_eval_set=lambda: fits[0]["eval_set"] is not None,
+        patience=lambda: built[0].get("od_wait"),
+        tail=lambda: built[0]["od_type"] == "Iter")
+
+
+@pytest.mark.parametrize("probe_of", [
+    pytest.param(_bonsai_stop_probe, id="bonsai"),
+    pytest.param(_xgb_stop_probe, id="xgb"),
+    pytest.param(_lgbm_stop_probe, id="lgbm"),
+    pytest.param(_catboost_stop_probe, id="catboost"),
+])
+def test_runners_arm_early_stopping_on_the_stop_arm_only(probe_of, monkeypatch):
+    """The eval set reaches the library on every arm but "off", and the
+    patience on "stop" alone.
+
+    The "off" arm must reach the fit with no eval set, or the overhead
+    denominator is paying for eval too; the "eval" arm must reach it with no
+    patience, or it stops before the fixed cap it exists to price.
+    """
+    p = probe_of(monkeypatch)
     rng = np.random.default_rng(0)
     X = rng.random((2000, 8), dtype=np.float32)
     y = X[:, :3].sum(axis=1).astype(np.float32)
-    base = {"lr": 0.1, "depth": 4, "bins_effective": 63, "seed": 42,
-            "iters": 20}
 
     for mode, armed in (("off", False), ("eval", False), ("stop", True)):
-        built.clear()
-        fits.clear()
-        cell = dict(base, eval_mode=mode, patience=5)
-        out = runners.run_catboost(
-            {"cell": cell, "variant": "catboost_cpu", "threads": 1},
-            X[:1500], y[:1500], X[1500:], y[1500:])
-        kwargs = built[0]
-        assert (fits[0]["eval_set"] is not None) == (mode != "off"), mode
-        assert ("od_wait" in kwargs) == armed, (mode, kwargs)
+        p.reset()
+        cell = dict(p.base, eval_mode=mode, patience=5)
+        out = p.run({"cell": cell, "variant": p.variant, "threads": 1},
+                    X[:1500], y[:1500], X[1500:], y[1500:])
+        assert p.saw_eval_set() == (mode != "off"), mode
+        assert (p.patience() is not None) == armed, (mode, p.patience())
         assert out["eval_mode"] == mode
         assert (out["stopped_at"] is not None) == armed, out
-    assert kwargs["od_type"] == "Iter" and kwargs["od_wait"] == 5
+    assert p.patience() == p.armed_patience
+    assert p.tail is None or p.tail(), p.variant
 
 
 def test_legacy_cells_carry_no_eval_fields():

@@ -13,6 +13,22 @@ import numpy as np
 import pytest
 from conftest import CH_PARAMS, TEST_CSV, TRAIN_CSV, load_csv
 
+# The sklearn contract (clone, cross-validation, pickling, get/set_params) is
+# the same promise for both estimators, so those tests run against each.
+ESTIMATORS = [
+    pytest.param(bonsai.BonsaiRegressor, id="regressor"),
+    pytest.param(bonsai.BonsaiClassifier, id="classifier"),
+]
+
+
+def _fit_data(cls):
+    """A small train set the estimator type can fit: the housing regression
+    CSV, or the separable binary blobs for the classifier."""
+    if cls is bonsai.BonsaiClassifier:
+        return _separable_binary()
+    Xtr, ytr = load_csv(TRAIN_CSV)
+    return Xtr[:600], ytr[:600]
+
 
 def test_fit_predict_rmse():
     Xtr, ytr = load_csv(TRAIN_CSV)
@@ -208,12 +224,16 @@ def test_cuda_available_reports():
         assert m.n_iters_ == 5
 
 
-def test_get_set_params_round_trip():
-    est = bonsai.BonsaiRegressor(n_iters=17, learning_rate=0.2, max_depth=4)
+@pytest.mark.parametrize("cls", ESTIMATORS)
+def test_get_set_params_round_trip(cls):
+    est = cls(n_iters=17, learning_rate=0.2, max_depth=4)
     params = est.get_params()
     assert params["n_iters"] == 17
     assert params["learning_rate"] == 0.2
     assert params["max_depth"] == 4
+    # only the regressor has an objective knob; the classifier derives it
+    # from the number of classes at fit time
+    assert ("objective" in params) == (cls is bonsai.BonsaiRegressor)
 
     clone_est = type(est)(**est.get_params())
     assert clone_est.get_params() == params
@@ -222,9 +242,8 @@ def test_get_set_params_round_trip():
     assert est.n_iters == 99
     assert est.get_params()["n_iters"] == 99
 
-    with pytest.raises(ValueError) as e:
+    with pytest.raises(ValueError, match="not_a_real_param"):
         est.set_params(not_a_real_param=1)
-        assert "not_a_real_param" in str(e.value)
 
 
 def test_score_r2_matches_hand_computation():
@@ -240,41 +259,32 @@ def test_score_r2_matches_hand_computation():
     assert abs(m.score(Xte, yte) - expected) < 1e-9
 
 
-def test_sklearn_clone():
-    try:
-        import sklearn.base
-    except ImportError:
-        return
+@pytest.mark.parametrize("cls", ESTIMATORS)
+def test_sklearn_clone(cls):
+    sklearn_base = pytest.importorskip("sklearn.base")
 
-    est = bonsai.BonsaiRegressor(n_iters=17, learning_rate=0.2, max_depth=4)
-    cloned = sklearn.base.clone(est)
+    est = cls(n_iters=17, learning_rate=0.2, max_depth=4)
+    cloned = sklearn_base.clone(est)
     assert cloned is not est
     assert cloned.get_params() == est.get_params()
     assert cloned._model is None
 
 
-def test_sklearn_cross_val_score():
-    try:
-        import sklearn.model_selection
-    except ImportError:
-        return
+@pytest.mark.parametrize("cls", ESTIMATORS)
+def test_sklearn_cross_val_score(cls):
+    model_selection = pytest.importorskip("sklearn.model_selection")
 
-    Xtr, ytr = load_csv(TRAIN_CSV)
-    scores = sklearn.model_selection.cross_val_score(
-        bonsai.BonsaiRegressor(n_iters=20), Xtr[:600], ytr[:600], cv=3
-    )
+    X, y = _fit_data(cls)
+    scores = model_selection.cross_val_score(cls(n_iters=20), X, y, cv=3)
     assert len(scores) == 3
     assert all(np.isfinite(scores))
 
 
 def test_sklearn_grid_search_cv():
-    try:
-        import sklearn.model_selection
-    except ImportError:
-        return
+    model_selection = pytest.importorskip("sklearn.model_selection")
 
     Xtr, ytr = load_csv(TRAIN_CSV)
-    gs = sklearn.model_selection.GridSearchCV(
+    gs = model_selection.GridSearchCV(
         bonsai.BonsaiRegressor(), {"n_iters": [10, 20]}, cv=2
     )
     gs.fit(Xtr[:400], ytr[:400])
@@ -282,15 +292,12 @@ def test_sklearn_grid_search_cv():
 
 
 def test_sklearn_pipeline():
-    try:
-        import sklearn.pipeline
-        import sklearn.preprocessing
-    except ImportError:
-        return
+    pipeline = pytest.importorskip("sklearn.pipeline")
+    preprocessing = pytest.importorskip("sklearn.preprocessing")
 
     Xtr, ytr = load_csv(TRAIN_CSV)
-    pipe = sklearn.pipeline.Pipeline([
-        ("sc", sklearn.preprocessing.StandardScaler()),
+    pipe = pipeline.Pipeline([
+        ("sc", preprocessing.StandardScaler()),
         ("gb", bonsai.BonsaiRegressor(n_iters=20)),
     ])
     pipe.fit(Xtr[:400], ytr[:400])
@@ -299,17 +306,19 @@ def test_sklearn_pipeline():
     assert np.all(np.isfinite(pred))
 
 
-def test_pickle_round_trip_fitted():
-    Xtr, ytr = load_csv(TRAIN_CSV)
-    Xte, _ = load_csv(TEST_CSV)
-    m = bonsai.BonsaiRegressor(n_iters=20).fit(Xtr, ytr)
-    before = m.predict(Xte)
+@pytest.mark.parametrize("cls", ESTIMATORS)
+def test_pickle_round_trip_fitted(cls):
+    X, y = _fit_data(cls)
+    m = cls(n_iters=20).fit(X, y)
+    before = m.predict(X)
 
     restored = pickle.loads(pickle.dumps(m))
-    after = restored.predict(Xte)
+    after = restored.predict(X)
 
     assert np.array_equal(before, after)
     assert restored.n_iters_ == m.n_iters_
+    if cls is bonsai.BonsaiClassifier:
+        np.testing.assert_array_equal(restored.classes_, m.classes_)
 
 
 def test_pickle_round_trip_unfitted():
@@ -428,60 +437,6 @@ def test_classifier_too_few_classes_raises():
     with pytest.raises(ValueError) as e:
         bonsai.BonsaiClassifier(n_iters=5).fit(X, y)
         assert "class" in str(e.value).lower()
-
-
-def test_classifier_get_set_params_round_trip():
-    est = bonsai.BonsaiClassifier(n_iters=17, learning_rate=0.2, max_depth=4)
-    params = est.get_params()
-    # the classifier has no objective knob; it is derived from the number
-    # of classes at fit time
-    assert "objective" not in params
-    assert params["n_iters"] == 17
-
-    clone_est = type(est)(**est.get_params())
-    assert clone_est.get_params() == params
-
-    est.set_params(n_iters=99)
-    assert est.n_iters == 99
-
-
-def test_classifier_sklearn_clone():
-    try:
-        import sklearn.base
-    except ImportError:
-        return
-
-    est = bonsai.BonsaiClassifier(n_iters=17, learning_rate=0.2, max_depth=4)
-    cloned = sklearn.base.clone(est)
-    assert cloned is not est
-    assert cloned.get_params() == est.get_params()
-    assert cloned._model is None
-
-
-def test_classifier_sklearn_cross_val_score():
-    try:
-        import sklearn.model_selection
-    except ImportError:
-        return
-
-    X, y = _separable_binary()
-    scores = sklearn.model_selection.cross_val_score(
-        bonsai.BonsaiClassifier(n_iters=20), X, y, cv=3
-    )
-    assert len(scores) == 3
-    assert all(np.isfinite(scores))
-
-
-def test_classifier_pickle_round_trip_fitted():
-    X, y = _separable_binary()
-    m = bonsai.BonsaiClassifier(n_iters=20).fit(X, y)
-    before = m.predict(X)
-
-    restored = pickle.loads(pickle.dumps(m))
-    after = restored.predict(X)
-
-    assert np.array_equal(before, after)
-    np.testing.assert_array_equal(restored.classes_, m.classes_)
 
 
 def test_predict_proba_rejects_regression_objective():
