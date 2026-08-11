@@ -1,11 +1,13 @@
 #pragma once
 
 #include "bonsai/detail/hist_pool.hpp"
+#include "bonsai/parallel.hpp"
 #include "bonsai/types.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <mdspan>
+#include <new>
 #include <ranges>
 #include <span>
 #include <utility>
@@ -256,11 +258,13 @@ class NodeHistograms
   public:
     // Sizes and zeroes this node's arena, then hands every feature its slot:
     // a view into the arena for the selected ones (in `selected` order, which
-    // is ascending), an empty view for the rest.
+    // is ascending), an empty view for the rest. `alone` spreads the zero fill
+    // across workers: a caller carving a whole level already runs one node per
+    // worker, but a lone node has to parallelize inside or the fill is serial.
     void carve(ArenaLayout const &layout, std::span<feature_id_t const> selected,
-               size_t n_features)
+               size_t n_features, bool alone = false)
     {
-        std::span<HistCell> const arena = reset_arena(layout.total_cells());
+        std::span<HistCell> const arena = reset_arena(layout.total_cells(), alone);
         auto const                slot  = [&](feature_id_t fid)
         {
             auto const it = std::ranges::lower_bound(selected, fid);
@@ -310,16 +314,32 @@ class NodeHistograms
     }
 
   private:
-    std::span<HistCell> reset_arena(size_t n_cells)
+    std::span<HistCell> reset_arena(size_t n_cells, bool alone)
     {
-        arena_.assign(n_cells, HistCell{});
+        // The allocator leaves the resize untouched, so this is where every
+        // cell's lifetime starts. Chunked so one worker takes a run of cells;
+        // a single chunk runs serially, which is the level path's case.
+        arena_.clear();
+        arena_.resize(n_cells);
+        HistCell *const cells = arena_.data();
+        size_t const chunk = alone ? (size_t{1} << 14U) : std::max<size_t>(n_cells, 1);
+        parallel::for_each_index((n_cells + chunk - 1) / chunk,
+                                 [cells, n_cells, chunk](size_t c)
+                                 {
+                                     size_t const hi =
+                                         std::min((c + 1) * chunk, n_cells);
+                                     for (size_t i = c * chunk; i < hi; ++i)
+                                     {
+                                         ::new (cells + i) HistCell{};
+                                     }
+                                 });
         return arena_;
     }
 
     std::vector<Histogram> hists_;
     // The histograms alias this buffer, so it never reallocates while they
     // live: only carve() sizes it, and moves carry both together.
-    std::vector<HistCell, detail::PoolAllocator<HistCell>> arena_;
+    std::vector<HistCell, detail::RawPoolAllocator<HistCell>> arena_;
 };
 
 } // namespace bonsai

@@ -526,10 +526,12 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     // fill per node; run serially it is a serial fraction that caps the level
     // fill near half its thread efficiency. Nodes are independent, so
     // workers build them concurrently; the pool's mutex serializes only the
-    // per-node arena take.
+    // per-node arena take. A lone node (the leafwise grower's every fill) has
+    // no such spread and carves its arena across workers instead.
+    bool const alone = nodes.size() == 1;
     parallel::for_each_index(
         nodes.size(), [&](size_t i)
-        { nodes[i].get().hists.carve(layout, selected, ds.n_features()); });
+        { nodes[i].get().hists.carve(layout, selected, ds.n_features(), alone); });
     if (selected.empty())
     {
         return;
