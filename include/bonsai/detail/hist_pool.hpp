@@ -140,4 +140,22 @@ template <typename T> struct PoolAllocator
     }
 };
 
+// Pool allocator whose sizing leaves cells untouched: a vector using it holds
+// raw storage until the owner starts every element's lifetime itself. Only
+// NodeHistograms may use it, and only because its arena reset zeroes every
+// cell across workers right after the resize.
+template <typename T> struct RawPoolAllocator : PoolAllocator<T>
+{
+    using value_type = T;
+
+    RawPoolAllocator() = default;
+    // Allocator rebind requires an implicit converting constructor.
+    // NOLINTNEXTLINE(google-explicit-constructor)
+    template <typename U> RawPoolAllocator(RawPoolAllocator<U> const & /*other*/) {}
+
+    // Value-init from resize() lands here and does nothing; every other
+    // construction falls through to allocator_traits' placement new.
+    void construct(T * /*p*/) {}
+};
+
 } // namespace bonsai::detail
