@@ -489,7 +489,8 @@ def panel_table(panel: Panel, axes: tuple[str, ...], plane: str) -> str:
         rows = axis_rows(axis)
         if not rows:
             continue
-        label = _scenario_label(axis, rows)
+        cell = rows[0]["cell"]
+        label = f"{axis} ({cell_label(cell['rows'], cell['cols'])})"
         variants = panel.arms(plane)
         cells = [_arm_cells(best_row(rows, v), columns) for v in variants]
         spreads = [_arm_spreads(rows, v, columns) for v in variants]
@@ -555,12 +556,6 @@ Three arms at the tall cell: `off` fits the round budget blind, `eval` scores a 
 # Perf: private panel helpers ======================================================================
 
 
-def _scenario_label(axis: str, rows: list[dict]) -> str:
-    """`gpu-tall (16M x 128)`: the axis name and the cell it measured."""
-    cell = rows[0]["cell"]
-    return f"{axis} ({cell_label(cell['rows'], cell['cols'])})"
-
-
 def _arm_cells(r: dict | None,
                columns: tuple[str, ...]) -> dict[str, tuple[str, float | None]]:
     """(cell text, comparable value) per column for one arm of one scenario.
@@ -588,6 +583,14 @@ def _arm_cells(r: dict | None,
 def _secs(v: float | None) -> str:
     """A seconds cell, or the house absent-value marker."""
     return "-" if v is None else f"{v:.1f}s"
+
+
+def _ok_value(r: dict | None, *keys: str) -> float | None:
+    """A finished row's first present value among `keys`, or None when the
+    row is missing or did not finish."""
+    if r is None or r.get(K.STATUS) != "ok":
+        return None
+    return next((r[k] for k in keys if r.get(k) is not None), None)
 
 
 def _wins(column: str, mine: float | None, theirs: float | None) -> bool:
@@ -629,14 +632,6 @@ def _is_tie(mine: float | None, theirs: float | None, floor: float) -> bool:
     return _gap(mine, theirs) <= floor
 
 
-def _in_chance_band(mine: float | None, theirs: float | None) -> bool:
-    """Whether an accuracy pair sits inside the chance band, the margin the
-    quality work reads as threshold-placement luck rather than a difference."""
-    if mine is None or theirs is None:
-        return False
-    return abs(mine - theirs) <= CHANCE_BAND
-
-
 def _arm_spreads(rows: list[dict], variant: str,
                  columns: tuple[str, ...]) -> dict[str, float | None]:
     """One arm's observed spread per column, across the scenario's repeats."""
@@ -650,90 +645,77 @@ def _compare(column: str, mine: tuple[str, float | None],
     """One arm's cell, marked against the other arm: bold when it holds the
     better value, noted as a tie when the margin sits inside the column's own
     resolution, `floor` for a measured cost and the chance band for accuracy.
+    The chance band is the margin the quality work reads as threshold-placement
+    luck rather than a difference.
     """
     text, value = mine
     other = theirs[1]
-    tied = (_in_chance_band(value, other) if column in METRIC_COLUMNS
-            else _is_tie(value, other, floor))
-    if tied:
-        return f"{text} {TIE_NOTE}"
+    if value is not None and other is not None:
+        tied = (abs(value - other) <= CHANCE_BAND if column in METRIC_COLUMNS
+                else _gap(value, other) <= floor)
+        if tied:
+            return f"{text} {TIE_NOTE}"
     return _bold(text, _wins(column, value, other))
+
+
+def _fit_arms(axis: str, panel: Panel,
+              plane: str) -> tuple[dict | None, dict | None, bool]:
+    """One grower's bonsai and rival rows at one scenario, and whether their
+    fit totals sit inside the two arms' own repeat spreads."""
+    rows = axis_rows(axis)
+    if not rows:
+        return None, None, False
+    bonsai, rival = (best_row(rows, v) for v in panel.arms(plane))
+    spreads = (_spread([_ok_value(r, K.FIT_S)
+                        for r in rows if r[K.VARIANT] == v])
+               for v in panel.arms(plane))
+    tied = _is_tie(_ok_value(bonsai, K.FIT_S), _ok_value(rival, K.FIT_S),
+                   _tie_floor(*spreads))
+    return bonsai, rival, tied
 
 
 def _summary_cell(panel: Panel, axis: str, plane: str) -> str:
     """`bonsai 6.9s vs XGBoost 8.1s` for one grower on one plane."""
-    rows = axis_rows(axis)
-    if not rows:
-        return "-"
-    bonsai, rival = (best_row(rows, v) for v in panel.arms(plane))
+    bonsai, rival, tied = _fit_arms(axis, panel, plane)
     if bonsai is None or rival is None:
         return "-"
-    ours, theirs = _fit_value(bonsai), _fit_value(rival)
-    if _fit_is_tie(rows, panel, plane, ours, theirs):
+    if tied:
         return (f"bonsai {_fit_text(bonsai)} vs "
                 f"{panel.rival} {_fit_text(rival)} {TIE_NOTE}")
+    ours, theirs = (_ok_value(r, K.FIT_S) for r in (bonsai, rival))
     return (f"{_bold('bonsai ' + _fit_text(bonsai), _wins('fit', ours, theirs))}"
             f" vs "
             f"{_bold(panel.rival + ' ' + _fit_text(rival), _wins('fit', theirs, ours))}")
 
 
-def _fit_is_tie(rows: list[dict], panel: Panel, plane: str,
-                ours: float | None, theirs: float | None) -> bool:
-    """Whether a fit-total pair sits inside the two arms' own repeat spreads."""
-    spreads = (_spread([_fit_value(r) for r in rows if r[K.VARIANT] == v])
-               for v in panel.arms(plane))
-    return _is_tie(ours, theirs, _tie_floor(*spreads))
-
-
-def _fit_value(r: dict | None) -> float | None:
-    """A row's fit total, or None when the row did not finish."""
-    if r is None or r.get(K.STATUS) != "ok":
-        return None
-    return r.get(K.FIT_S)
-
-
 def _fit_text(r: dict | None) -> str:
     """A row's fit total as text, or its status word."""
-    if r is None:
-        return "-"
-    if r.get(K.STATUS) != "ok":
+    if r is not None and r.get(K.STATUS) != "ok":
         return str(r.get(K.STATUS))
-    return _secs(r.get(K.FIT_S))
+    return _secs(_ok_value(r, K.FIT_S))
 
 
 def _mode_row(rows: list[dict], variant: str, mode: str) -> dict | None:
-    """The best row of one arm under one `eval_mode`."""
-    return best_row([r for r in rows if _eval_mode(r) == mode], variant)
-
-
-def _eval_mode(r: dict) -> str | None:
-    """A row's eval mode, from the row or the cell that produced it."""
-    return r.get("eval_mode") or (r.get("cell") or {}).get("eval_mode")
+    """The best row of one arm under one `eval_mode`, read from the row or
+    the cell that produced it."""
+    return best_row(
+        [r for r in rows
+         if (r.get("eval_mode") or (r.get("cell") or {}).get("eval_mode")) == mode],
+        variant)
 
 
 def _overhead(off: dict | None, evaluated: dict | None) -> str:
-    """What scoring every round costs against not scoring at all."""
-    base, watched = _train_time(off), _train_time(evaluated)
+    """What scoring every round costs against not scoring at all, on the
+    variable half of a row's time, falling back to the total."""
+    base, watched = (_ok_value(r, K.TRAIN_S, K.FIT_S) for r in (off, evaluated))
     if not base or watched is None:
         return "-"
-    return _pct(watched / base - 1)
-
-
-def _train_time(r: dict | None) -> float | None:
-    """The variable half of a row's time, falling back to the total."""
-    if r is None or r.get(K.STATUS) != "ok":
-        return None
-    return r.get(K.TRAIN_S) if r.get(K.TRAIN_S) is not None else r.get(K.FIT_S)
+    return f"{(watched / base - 1) * 100:+.1f}%"
 
 
 def _bold(text: str, on: bool) -> str:
     """One table cell, bolded when it holds the best value in its column."""
     return f"**{text}**" if on else text
-
-
-def _pct(x: float) -> str:
-    """A signed percentage, the eval-overhead unit."""
-    return f"{x * 100:+.1f}%"
 
 
 # Perf: page sections ==============================================================================
@@ -1114,17 +1096,13 @@ def _perf_summary() -> str:
 def _headline_clauses(axis: str, plane: str) -> list[str]:
     """`depthwise 6.9s vs XGBoost 8.1s`, one clause per grower, with the
     same tie note the tables carry so the prose cannot claim more."""
-    rows = axis_rows(axis)
     out = []
     for panel in PANELS:
-        if not rows:
-            continue
-        bonsai, rival = (best_row(rows, v) for v in panel.arms(plane))
-        ours, theirs = _fit_value(bonsai), _fit_value(rival)
+        bonsai, rival, tied = _fit_arms(axis, panel, plane)
+        ours, theirs = (_ok_value(r, K.FIT_S) for r in (bonsai, rival))
         if ours is None or theirs is None:
             continue
-        note = (f" {TIE_NOTE}"
-                if _fit_is_tie(rows, panel, plane, ours, theirs) else "")
+        note = f" {TIE_NOTE}" if tied else ""
         out.append(f"{panel.grower} {ours:.1f}s vs {panel.rival} "
                    f"{theirs:.1f}s{note}")
     return out
