@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <functional>
 #include <mdspan>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <type_traits>
@@ -88,27 +89,6 @@ void fill_feature_parallel(Dataset const &ds, floats_view grad, floats_view hess
         });
 }
 
-// Cell offset of each selected feature inside one row of partials.
-struct SelectedOffsets
-{
-    std::span<size_t const> cells;
-    size_t                  total_cells = 0;
-};
-
-SelectedOffsets selected_offsets(Dataset const                &ds,
-                                 std::span<feature_id_t const> selected)
-{
-    static thread_local std::vector<size_t> offsets;
-    offsets.resize(selected.size());
-    size_t total = 0;
-    for (size_t s = 0; s < selected.size(); ++s)
-    {
-        offsets[s] = total;
-        total += ds.n_bins(selected[s]);
-    }
-    return {.cells = offsets, .total_cells = total};
-}
-
 // Grow-only storage for the fill's partials: kept at its high-water mark for
 // the whole fit, so its zero fill is paid a handful of times per process
 // (docs/architecture/7-parallel.md).
@@ -142,15 +122,15 @@ struct MirrorSlice
     }
 };
 
-std::span<MirrorSlice const> mirror_slices(Dataset const                &ds,
-                                           std::span<feature_id_t const> selected,
-                                           SelectedOffsets const        &offsets)
+std::vector<MirrorSlice> mirror_slices(Dataset const                &ds,
+                                       std::span<feature_id_t const> selected,
+                                       std::span<size_t const>       offsets,
+                                       size_t                        total_cells)
 {
-    static thread_local std::vector<MirrorSlice> slices;
-    slices.clear();
-    size_t const width = Dataset::mirror_tile_width();
-    size_t const f     = ds.n_features();
-    size_t       s     = 0;
+    std::vector<MirrorSlice> slices;
+    size_t const             width = Dataset::mirror_tile_width();
+    size_t const             f     = ds.n_features();
+    size_t                   s     = 0;
     while (s < selected.size())
     {
         size_t const tile       = selected[s] / width;
@@ -160,22 +140,89 @@ std::span<MirrorSlice const> mirror_slices(Dataset const                &ds,
         {
             ++e;
         }
-        size_t const cell_end =
-            e < selected.size() ? offsets.cells[e] : offsets.total_cells;
+        size_t const cell_end = e < selected.size() ? offsets[e] : total_cells;
         slices.push_back({.s0       = s,
                           .s1       = e,
                           .rm_base  = ds.n_rows() * tile * width,
                           .rm_width = tile_width,
-                          .cell0    = offsets.cells[s],
-                          .cells    = cell_end - offsets.cells[s],
+                          .cell0    = offsets[s],
+                          .cells    = cell_end - offsets[s],
                           .fid0     = tile * width});
         s = e;
     }
     return slices;
 }
 
+// The selected features' bin counts, in selection order: all the arena
+// layout needs from the dataset.
+std::vector<size_t> selected_bins(Dataset const                &ds,
+                                  std::span<feature_id_t const> selected)
+{
+    return selected |
+           std::views::transform([&](feature_id_t fid) { return ds.n_bins(fid); }) |
+           std::ranges::to<std::vector<size_t>>();
+}
+
+// Everything a fill derives from the dataset and the tree's feature
+// selection: the arena packing, each selected feature's cell offset, and the
+// mirror-tile slices. Identical for every node of the tree, and O(n_features)
+// to build, so the leafwise grower's one-node fills would otherwise rebuild it
+// once per split instead of once per level (#367).
+struct SelectionPlan
+{
+    SelectionPlan(Dataset const &ds, std::span<feature_id_t const> selected)
+        : bins(selected_bins(ds, selected)), layout(bins, ds.bins_are_u8()),
+          offsets(selected.size())
+    {
+        for (size_t s = 0; s < selected.size(); ++s)
+        {
+            offsets[s] = total_cells;
+            total_cells += bins[s];
+        }
+        slices = mirror_slices(ds, selected, offsets, total_cells);
+    }
+
+    std::vector<size_t>      bins; // layout views this, so it is declared first
+    ArenaLayout              layout;
+    std::vector<size_t>      offsets;
+    size_t                   total_cells = 0;
+    std::vector<MirrorSlice> slices;
+};
+
+// The tree's plan, held across its fills. Keyed by dataset and selection so a
+// stale plan can never be read; begin_tree drops it, since a fresh tree may
+// draw a different selection into the same buffer.
+struct PlanCache
+{
+    std::optional<SelectionPlan> plan;
+    Dataset const               *ds  = nullptr;
+    feature_id_t const          *sel = nullptr;
+    size_t                       n   = 0;
+};
+
+PlanCache &plan_cache()
+{
+    static thread_local PlanCache cache;
+    return cache;
+}
+
+SelectionPlan const &selection_plan(Dataset const                &ds,
+                                    std::span<feature_id_t const> selected)
+{
+    PlanCache &cache = plan_cache();
+    if (!cache.plan || cache.ds != &ds || cache.sel != selected.data() ||
+        cache.n != selected.size())
+    {
+        cache.plan.emplace(ds, selected);
+        cache.ds  = &ds;
+        cache.sel = selected.data();
+        cache.n   = selected.size();
+    }
+    return *cache.plan;
+}
+
 // The partials are the same grid with a run-time row width: one row per
-// partition slot, packed to the slice's cells.
+// partition slot, packed the way the slice's node arenas are.
 using PartialsView = std::mdspan<HistCell, std::dextents<size_t, 2>>;
 
 // The per-(thread, node) scratch histograms the reduce merges, plus the flag
@@ -377,34 +424,42 @@ ReducePlan const &plan_reduce(split_input_refs nodes, size_t grain)
 // (thread, node) pair costs neither a zero fill nor a reduce.
 void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes, Dataset const &ds,
                      floats_view grad, floats_view hess,
-                     std::span<feature_id_t const> selected,
-                     SelectedOffsets const &offsets, MirrorSlice const &sl)
+                     std::span<feature_id_t const> selected, SelectionPlan const &sp,
+                     MirrorSlice const &sl)
 {
     static thread_local std::vector<uint8_t> touched;
-    std::span<HistCell> const cells = partials_storage(plan.n_slots * sl.cells);
+    size_t const                             n_sel_b   = sl.n_selected();
+    bool const                               dense_sel = n_sel_b == sl.rm_width;
+    // A partial row repeats the node arena's packing, so both take the same
+    // addressing: u8 pads every feature to k_feature_stride, wider bins pack.
+    // Only the scratch layout moves; the adds and their order do not.
+    bool const   padded             = ds.bins_are_u8();
+    size_t const row_cells          = padded ? n_sel_b * k_feature_stride : sl.cells;
+    std::span<HistCell> const cells = partials_storage(plan.n_slots * row_cells);
     touched.assign(plan.n_slots, 0);
     // Capture views and raw pointers: naming a thread_local inside the
     // parallel region would resolve to each worker's own (empty) container.
-    PartialsView const        view{cells.data(), plan.n_slots, sl.cells};
+    PartialsView const        view{cells.data(), plan.n_slots, row_cells};
     Partials const            parts{.cells = view, .used = touched.data()};
-    size_t const             *off_ptr   = offsets.cells.data();
+    size_t const             *off_ptr   = sp.offsets.data();
     feature_id_t const *const sel_ptr   = selected.data();
     uint8_t const *const      rm_ptr    = ds.row_major_bins().data() + sl.rm_base;
     RowChunk const *const     chunk_ptr = plan.chunks.data();
     ReduceNode const *const   rn_ptr    = plan.nodes.data();
-    std::reference_wrapper<SplitInput> const *node_ptr  = nodes.data();
-    size_t const                              n_sel_b   = sl.n_selected();
-    bool const                                dense_sel = n_sel_b == sl.rm_width;
-    CellMode const partial_mode = dense_sel ? CellMode::dense : CellMode::gathered;
-    // Only a direct fill addresses a node's padded u8 arena arithmetically;
-    // partials are packed to the slice's cells.
-    CellMode const direct_mode =
-        dense_sel && ds.bins_are_u8() ? CellMode::uniform : partial_mode;
+    std::reference_wrapper<SplitInput> const *node_ptr = nodes.data();
+    // Where selected feature s starts inside one partial row.
+    auto const part_cell = [&, off_ptr](size_t s)
+    { return padded ? (s - sl.s0) * k_feature_stride : off_ptr[s] - sl.cell0; };
+    // A fully selected tile over padded cells addresses arithmetically, with
+    // no per-feature base load; anything else loads a base per feature.
+    CellMode const mode = dense_sel && padded ? CellMode::uniform
+                          : dense_sel         ? CellMode::dense
+                                              : CellMode::gathered;
     // One index per partition slot, not per worker: buffers are keyed by the
     // index, so which worker picks it up changes nothing.
     parallel::for_each_index(
         plan.n_threads,
-        [&, parts, off_ptr, sel_ptr, rm_ptr, chunk_ptr, rn_ptr, node_ptr](size_t t)
+        [&, parts, sel_ptr, rm_ptr, chunk_ptr, rn_ptr, node_ptr](size_t t)
         {
             static thread_local std::vector<HistCell *> bases;
             bases.resize(n_sel_b);
@@ -417,7 +472,7 @@ void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes, Dataset con
                 size_t const slot = direct ? 0 : rn.slot0 + (t - rn.first_thread - 1);
                 if (!direct && parts.used[slot] == 0)
                 {
-                    std::fill_n(&parts.cells[slot, 0], sl.cells, HistCell{});
+                    std::fill_n(&parts.cells[slot, 0], row_cells, HistCell{});
                     parts.used[slot] = 1;
                 }
                 if (chunk.node != last_node)
@@ -425,9 +480,9 @@ void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes, Dataset con
                     SplitInput &node = node_ptr[chunk.node];
                     for (size_t s = sl.s0; s < sl.s1; ++s)
                     {
-                        bases[s - sl.s0] =
-                            direct ? node.hists[sel_ptr[s]].cells().data()
-                                   : &parts.cells[slot, off_ptr[s] - sl.cell0];
+                        bases[s - sl.s0] = direct
+                                               ? node.hists[sel_ptr[s]].cells().data()
+                                               : &parts.cells[slot, part_cell(s)];
                     }
                     last_node = chunk.node;
                 }
@@ -435,7 +490,7 @@ void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes, Dataset con
                                         .rm       = rm_ptr,
                                         .bases    = bases.data(),
                                         .selected = sel_ptr,
-                                        .mode = direct ? direct_mode : partial_mode};
+                                        .mode     = mode};
                 fill_rows(node_ptr[chunk.node], chunk.first, chunk.last, grad, hess,
                           target);
             }
@@ -443,12 +498,12 @@ void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes, Dataset con
     size_t const *const red_ptr = plan.reduce_nodes.data();
     parallel::for_each_index(
         plan.reduce_nodes.size() * n_sel_b,
-        [&, parts, off_ptr, sel_ptr, rn_ptr, node_ptr, red_ptr](size_t j)
+        [&, parts, sel_ptr, rn_ptr, node_ptr, red_ptr](size_t j)
         {
             size_t const      ni   = red_ptr[j / n_sel_b];
             ReduceNode const &rn   = rn_ptr[ni];
             size_t const      s    = sl.s0 + (j % n_sel_b);
-            size_t const      cell = off_ptr[s] - sl.cell0;
+            size_t const      cell = part_cell(s);
             Histogram        &h    = node_ptr[ni].get().hists[sel_ptr[s]];
             for (size_t t = rn.first_thread + 1; t <= rn.last_thread; ++t)
             {
@@ -474,13 +529,13 @@ constexpr size_t k_reduce_grain = 1024;
 // slices carved from each node's arena, one per selected feature, at a fixed
 // feature stride when the data is u8.
 void fill_sparse(Dataset const &ds, floats_view grad, floats_view hess,
-                 split_input_refs nodes, std::span<feature_id_t const> selected)
+                 split_input_refs nodes, std::span<feature_id_t const> selected,
+                 SelectionPlan const &sp)
 {
-    SelectedOffsets const offsets = selected_offsets(ds, selected);
-    ReducePlan const     &plan    = plan_reduce(nodes, k_reduce_grain);
-    for (MirrorSlice const &sl : mirror_slices(ds, selected, offsets))
+    ReducePlan const &plan = plan_reduce(nodes, k_reduce_grain);
+    for (MirrorSlice const &sl : sp.slices)
     {
-        run_fill_reduce(plan, nodes, ds, grad, hess, selected, offsets, sl);
+        run_fill_reduce(plan, nodes, ds, grad, hess, selected, sp, sl);
     }
 }
 
@@ -488,16 +543,6 @@ void fill_sparse(Dataset const &ds, floats_view grad, floats_view hess,
 // fill, sparser ones to the row-chunk fill; measured, not tunable
 // (docs/architecture/7-parallel.md).
 constexpr size_t k_col_fill_den = 4;
-
-// The selected features' bin counts, in selection order: all the arena
-// layout needs from the dataset.
-std::vector<size_t> selected_bins(Dataset const                &ds,
-                                  std::span<feature_id_t const> selected)
-{
-    return selected |
-           std::views::transform([&](feature_id_t fid) { return ds.n_bins(fid); }) |
-           std::ranges::to<std::vector<size_t>>();
-}
 
 } // namespace
 
@@ -519,9 +564,8 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
                                        floats_view hess, split_input_refs nodes,
                                        std::span<feature_id_t const> selected)
 {
-    // One layout for the level: every node's arena packs the same way.
-    std::vector<size_t> const bins = selected_bins(ds, selected);
-    ArenaLayout const         layout{bins, ds.bins_are_u8()};
+    // One layout for the tree: every node's arena packs the same way.
+    SelectionPlan const &sp = selection_plan(ds, selected);
     // Placeholder construction is one arena allocation plus a ~256KB zero
     // fill per node; run serially it is a serial fraction that caps the level
     // fill near half its thread efficiency. Nodes are independent, so
@@ -531,7 +575,7 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     bool const alone = nodes.size() == 1;
     parallel::for_each_index(
         nodes.size(), [&](size_t i)
-        { nodes[i].get().hists.carve(layout, selected, ds.n_features(), alone); });
+        { nodes[i].get().hists.carve(sp.layout, selected, ds.n_features(), alone); });
     if (selected.empty())
     {
         return;
@@ -559,8 +603,16 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     }
     if (!sparse_nodes.empty())
     {
-        fill_sparse(ds, grad, hess, sparse_nodes, selected);
+        fill_sparse(ds, grad, hess, sparse_nodes, selected, sp);
     }
+}
+
+// A fresh tree may draw a different selection into the same buffer, so the
+// cached plan cannot outlive the tree that built it.
+void CpuHistogramEngine::begin_tree(Dataset const & /*ds*/, floats_view /*grad*/,
+                                    floats_view /*hess*/)
+{
+    plan_cache() = {};
 }
 
 template class DepthwiseGrower<CpuHistogramEngine, HistogramNodeSplitFinder>;
