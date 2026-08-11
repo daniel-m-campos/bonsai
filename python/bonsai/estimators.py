@@ -132,8 +132,24 @@ class _BonsaiEstimator:
         (mirroring what ``RegressorMixin``/``ClassifierMixin``/
         ``BaseEstimator`` produce) so sklearn stays import-only-in-tests;
         empirically verified against the installed sklearn (see test
-        suite). Subclasses fill in the estimator-type-specific tag."""
-        raise NotImplementedError
+        suite). ``_estimator_type`` is what picks the per-type tag."""
+        from sklearn.utils import (
+            ClassifierTags,
+            InputTags,
+            RegressorTags,
+            Tags,
+            TargetTags,
+        )
+
+        kind = self._estimator_type
+        per_type = ({"regressor_tags": RegressorTags()} if kind == "regressor"
+                    else {"classifier_tags": ClassifierTags()})
+        return Tags(
+            estimator_type=kind,
+            target_tags=TargetTags(required=True),
+            input_tags=InputTags(),
+            **per_type,
+        )
 
     def predict(self, X, num_iteration: int = 0) -> np.ndarray:
         """``num_iteration`` truncates the ensemble to its first ``n``
@@ -387,22 +403,7 @@ class BonsaiRegressor(_BonsaiEstimator):
         config: str | None = None,
     ):
         """Same storage contract as the base; adds the regression objective."""
-        super().__init__(
-            n_iters=n_iters,
-            learning_rate=learning_rate,
-            max_depth=max_depth,
-            max_leaves=max_leaves,
-            grower=grower,
-            sampler=sampler,
-            early_stopping_rounds=early_stopping_rounds,
-            n_threads=n_threads,
-            random_seed=random_seed,
-            max_bin=max_bin,
-            subsample=subsample,
-            device=device,
-            params=params,
-            config=config,
-        )
+        super().__init__(**_shared_args(locals()))
         self.objective = objective
         self.quantile_alpha = quantile_alpha
 
@@ -451,16 +452,6 @@ class BonsaiRegressor(_BonsaiEstimator):
             return 1.0 if ss_res == 0 else 0.0
         return float(1.0 - ss_res / ss_tot)
 
-    def __sklearn_tags__(self):
-        from sklearn.utils import InputTags, RegressorTags, Tags, TargetTags
-
-        return Tags(
-            estimator_type="regressor",
-            target_tags=TargetTags(required=True),
-            regressor_tags=RegressorTags(),
-            input_tags=InputTags(),
-        )
-
     def _objective_pairs(self) -> dict[str, str]:
         pairs = {"dispatch.objective_name": self.objective}
         if self.quantile_alpha is not None:
@@ -507,22 +498,7 @@ class BonsaiClassifier(_BonsaiEstimator):
     ):
         """Same storage contract as the base; the objective is derived from
         the number of classes at fit time, so there is none to store."""
-        super().__init__(
-            n_iters=n_iters,
-            learning_rate=learning_rate,
-            max_depth=max_depth,
-            max_leaves=max_leaves,
-            grower=grower,
-            sampler=sampler,
-            early_stopping_rounds=early_stopping_rounds,
-            n_threads=n_threads,
-            random_seed=random_seed,
-            max_bin=max_bin,
-            subsample=subsample,
-            device=device,
-            params=params,
-            config=config,
-        )
+        super().__init__(**_shared_args(locals()))
 
     def fit(self, X, y, sample_weight=None,
             eval_set: tuple | None = None,
@@ -597,16 +573,6 @@ class BonsaiClassifier(_BonsaiEstimator):
             raise ValueError("sample_weight sums to zero; accuracy is undefined")
         return float(np.average(correct, weights=w))
 
-    def __sklearn_tags__(self):
-        from sklearn.utils import ClassifierTags, InputTags, Tags, TargetTags
-
-        return Tags(
-            estimator_type="classifier",
-            target_tags=TargetTags(required=True),
-            classifier_tags=ClassifierTags(),
-            input_tags=InputTags(),
-        )
-
     @classmethod
     def from_file(cls, path: str) -> BonsaiClassifier:
         """Load a saved ``.msgpack`` classifier.
@@ -659,6 +625,22 @@ class BonsaiClassifier(_BonsaiEstimator):
 
 
 # Private Functions ================================================================================
+
+def _shared_args(scope: dict) -> dict:
+    """The arguments a subclass ``__init__`` hands straight to the base.
+
+    Reads the base signature and picks those names out of the caller's
+    locals, so a shared knob is spelled once there instead of three times
+    per subclass. The subclass signatures stay explicit and complete:
+    sklearn's ``get_params`` and ``clone`` read them with
+    ``inspect.signature``, so a ``**kwargs`` there would erase the
+    parameters.
+    """
+    names = [name for name in
+             inspect.signature(_BonsaiEstimator.__init__).parameters
+             if name != "self"]
+    return {name: scope[name] for name in names}
+
 
 def _grower_for_device(grower: str, device: str) -> str:
     """The grower that runs ``grower``'s strategy on ``device``.

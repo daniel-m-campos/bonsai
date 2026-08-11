@@ -19,6 +19,7 @@ untouched: no carve, no eval set, no extra row fields.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import pathlib
@@ -143,33 +144,29 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
     ev = (Xev, yev) if Xev is not None else None
     pairs = rp.bonsai_core(
         learning_rate=c["lr"], max_depth=c["depth"],
-        num_leaves=rp.num_leaves_of(c),
-        min_data_in_leaf=c.get("min_data_in_leaf", rp.SCALING["min_data_in_leaf"]),
-        lambda_l2=c.get("lambda_l2", rp.SCALING["lambda_l2"]),
+        num_leaves=rp.num_leaves_of(c), **_knobs(c),
         max_bin=c["bins"], seed=c["seed"],
         n_iters=c["iters"], n_threads=threads, grower=grower,
         objective="logloss" if task == "binary" else "mse",
         early_stopping_rounds=rounds)
+    timed = {}
     if spec.get("fused"):
-        fit_t0 = time.perf_counter()
-        model = bonsai.train(pairs, X, y, eval_set=ev)
-        fit_s, ingest_s, train_s = time.perf_counter() - fit_t0, None, None
+        with _phase(timed, runlog.Row.FIT_S):
+            model = bonsai.train(pairs, X, y, eval_set=ev)
     else:
-        fit_t0 = t0 = time.perf_counter()
-        ds = bonsai.Dataset(X, y, max_bin=c["bins"], n_threads=threads,
-                            device="cuda" if grower.startswith("cuda") else "cpu")
-        ingest_s = time.perf_counter() - t0
-        t0 = time.perf_counter()
-        model = bonsai.train([p for p in pairs
-                              if not p[0].startswith("bin_mapper.")], ds,
-                             eval_set=ev)
-        train_s = time.perf_counter() - t0
-        fit_s = time.perf_counter() - fit_t0
-    t0 = time.perf_counter()
-    pred_te = np.asarray(model.predict(Xte))
-    predict_s = time.perf_counter() - t0
-    return _score(task, fit_s, predict_s, y, yte, pred_te,
-                  lambda: np.asarray(model.predict(X)), ingest_s, train_s,
+        with _phase(timed, runlog.Row.FIT_S):
+            with _phase(timed, runlog.Row.INGEST_S):
+                ds = bonsai.Dataset(
+                    X, y, max_bin=c["bins"], n_threads=threads,
+                    device="cuda" if grower.startswith("cuda") else "cpu")
+            with _phase(timed, runlog.Row.TRAIN_S):
+                model = bonsai.train([p for p in pairs
+                                      if not p[0].startswith("bin_mapper.")],
+                                     ds, eval_set=ev)
+    with _phase(timed, runlog.Row.PREDICT_S):
+        pred_te = np.asarray(model.predict(Xte))
+    return _score(task, timed, y, yte, pred_te,
+                  lambda: np.asarray(model.predict(X)),
                   cell=c, stopped_at=model.n_iters if rounds else None)
 
 
@@ -199,30 +196,27 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
     X, y, Xev, yev = eval_split(c, X, y)
     rounds = patience_of(c)
     params = {**rp.xgb_core(learning_rate=c["lr"], max_depth=c["depth"],
-                            min_data_in_leaf=c.get(
-                                "min_data_in_leaf",
-                                rp.SCALING["min_data_in_leaf"]),
-                            lambda_l2=c.get("lambda_l2",
-                                            rp.SCALING["lambda_l2"]),
+                            **_knobs(c),
                             max_bin=c["bins_effective"], seed=c["seed"]),
               "objective": ("binary:logistic" if task == "binary"
                             else "reg:squarederror"),
               "device": device, "nthread": spec[runlog.Row.THREADS]}
-    fit_t0 = t0 = time.perf_counter()
-    dtrain = xgb.QuantileDMatrix(X, label=y, max_bin=c["bins_effective"])
-    fit_kwargs = {}
-    if Xev is not None:
-        dval = xgb.QuantileDMatrix(Xev, label=yev, ref=dtrain,
-                                   max_bin=c["bins_effective"])
-        fit_kwargs = {"evals": [(dval, "val")], "verbose_eval": False}
-    ingest_s = time.perf_counter() - t0
-    t0 = time.perf_counter()
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        booster = xgb.train(params, dtrain, num_boost_round=c["iters"],
-                            **fit_kwargs, **rp.xgb_early_stop(rounds))
-    train_s = time.perf_counter() - t0
-    fit_s = time.perf_counter() - fit_t0
+    timed = {}
+    with _phase(timed, runlog.Row.FIT_S):
+        with _phase(timed, runlog.Row.INGEST_S):
+            dtrain = xgb.QuantileDMatrix(X, label=y,
+                                         max_bin=c["bins_effective"])
+            fit_kwargs = {}
+            if Xev is not None:
+                dval = xgb.QuantileDMatrix(Xev, label=yev, ref=dtrain,
+                                           max_bin=c["bins_effective"])
+                fit_kwargs = {"evals": [(dval, "val")], "verbose_eval": False}
+        with _phase(timed, runlog.Row.TRAIN_S):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                booster = xgb.train(params, dtrain,
+                                    num_boost_round=c["iters"], **fit_kwargs,
+                                    **rp.xgb_early_stop(rounds))
     if device == Device.CUDA:
         _assert_xgb_trained_on_device(booster, caught)
     # (0, 0) is xgboost's "every tree"; a stop needs the explicit range.
@@ -231,12 +225,11 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
     # route through a slower device path; kept intentionally, since fit_s
     # and r2 are unaffected and a device-consistent path needs a new
     # dependency this bench does not otherwise carry.
-    t0 = time.perf_counter()
-    pred_te = booster.inplace_predict(Xte, iteration_range=span)
-    predict_s = time.perf_counter() - t0
-    return _score(task, fit_s, predict_s, y, yte, pred_te,
+    with _phase(timed, runlog.Row.PREDICT_S):
+        pred_te = booster.inplace_predict(Xte, iteration_range=span)
+    return _score(task, timed, y, yte, pred_te,
                   lambda: booster.inplace_predict(X, iteration_range=span),
-                  ingest_s, train_s, cell=c,
+                  cell=c,
                   stopped_at=booster.best_iteration + 1 if rounds else None)
 
 
@@ -266,40 +259,34 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
     X, y, Xev, yev = eval_split(c, X, y)
     rounds = patience_of(c)
     params = {**rp.lgbm_core(learning_rate=c["lr"], max_depth=c["depth"],
-                             num_leaves=rp.num_leaves_of(c),
-                             min_data_in_leaf=c.get(
-                                 "min_data_in_leaf",
-                                 rp.SCALING["min_data_in_leaf"]),
-                             lambda_l2=c.get("lambda_l2",
-                                             rp.SCALING["lambda_l2"]),
+                             num_leaves=rp.num_leaves_of(c), **_knobs(c),
                              max_bin=c["bins_effective"], seed=c["seed"]),
               "objective": "binary" if task == "binary" else "regression",
               "device_type": device, "num_threads": spec[runlog.Row.THREADS]}
-    fit_t0 = t0 = time.perf_counter()
-    # lgb.Dataset is lazy; construct() forces the binning pass now so its
-    # cost lands in ingest_s rather than leaking into the train() call. The
-    # params must be present AT construction: binning knobs (max_bin) are
-    # frozen then, and a later train() cannot change them.
-    dtrain = lgb.Dataset(X, label=y, params=params).construct()
-    fit_kwargs = {}
-    if Xev is not None:
-        fit_kwargs = {"valid_sets": [lgb.Dataset(Xev, label=yev,
-                                                 reference=dtrain,
-                                                 params=params).construct()]}
-    stop_kwargs = rp.lgbm_early_stop(rounds)
-    if stop_kwargs:
-        fit_kwargs["callbacks"] = [lgb.early_stopping(**stop_kwargs)]
-    ingest_s = time.perf_counter() - t0
-    t0 = time.perf_counter()
-    model = lgb.train(params, dtrain, num_boost_round=c["iters"], **fit_kwargs)
-    train_s = time.perf_counter() - t0
-    fit_s = time.perf_counter() - fit_t0
-    t0 = time.perf_counter()
-    pred_te = model.predict(Xte)
-    predict_s = time.perf_counter() - t0
-    return _score(task, fit_s, predict_s, y, yte, pred_te,
-                  lambda: model.predict(X), ingest_s, train_s, cell=c,
-                  stopped_at=model.best_iteration if rounds else None)
+    timed = {}
+    with _phase(timed, runlog.Row.FIT_S):
+        with _phase(timed, runlog.Row.INGEST_S):
+            # lgb.Dataset is lazy; construct() forces the binning pass now so
+            # its cost lands in ingest_s rather than leaking into the train()
+            # call. The params must be present AT construction: binning knobs
+            # (max_bin) are frozen then, and a later train() cannot change
+            # them.
+            dtrain = lgb.Dataset(X, label=y, params=params).construct()
+            fit_kwargs = {}
+            if Xev is not None:
+                fit_kwargs = {"valid_sets": [
+                    lgb.Dataset(Xev, label=yev, reference=dtrain,
+                                params=params).construct()]}
+            stop_kwargs = rp.lgbm_early_stop(rounds)
+            if stop_kwargs:
+                fit_kwargs["callbacks"] = [lgb.early_stopping(**stop_kwargs)]
+        with _phase(timed, runlog.Row.TRAIN_S):
+            model = lgb.train(params, dtrain, num_boost_round=c["iters"],
+                              **fit_kwargs)
+    with _phase(timed, runlog.Row.PREDICT_S):
+        pred_te = model.predict(Xte)
+    return _score(task, timed, y, yte, pred_te, lambda: model.predict(X),
+                  cell=c, stopped_at=model.best_iteration if rounds else None)
 
 
 def run_catboost(spec, X, y, Xte, yte) -> dict:
@@ -328,8 +315,7 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
     cls = CatBoostClassifier if task == "binary" else CatBoostRegressor
     model = cls(
         **rp.catboost_core(learning_rate=c["lr"], max_depth=c["depth"],
-                           lambda_l2=c.get("lambda_l2",
-                                           rp.SCALING["lambda_l2"]),
+                           lambda_l2=_knobs(c)["lambda_l2"],
                            max_bin=c["bins_effective"], seed=c["seed"],
                            device=device),
         **rp.catboost_early_stop(rounds, has_eval_set=Xev is not None),
@@ -337,24 +323,22 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
         loss_function="Logloss" if task == "binary" else "RMSE",
         task_type=("GPU" if device == Device.CUDA else "CPU"), devices="0",
         thread_count=spec[runlog.Row.THREADS], verbose=False)
-    fit_t0 = t0 = time.perf_counter()
-    # Pool() only wraps the raw arrays; CatBoost quantizes at fit() time, so
-    # this ingest_s underestimates relative to the other libraries' eager
-    # construction. That asymmetry is a finding, not a bug (issue #253).
-    pool = Pool(X, label=y)
-    eval_pool = Pool(Xev, label=yev) if Xev is not None else None
-    ingest_s = time.perf_counter() - t0
-    t0 = time.perf_counter()
-    model.fit(pool, eval_set=eval_pool)
-    train_s = time.perf_counter() - t0
-    fit_s = time.perf_counter() - fit_t0
-    t0 = time.perf_counter()
-    pred_te = (model.predict_proba(Xte)[:, 1] if task == "binary"
-               else model.predict(Xte))
-    predict_s = time.perf_counter() - t0
-    return _score(task, fit_s, predict_s, y, yte, pred_te,
-                  lambda: model.predict(X), ingest_s, train_s, cell=c,
-                  stopped_at=model.tree_count_ if rounds else None)
+    timed = {}
+    with _phase(timed, runlog.Row.FIT_S):
+        with _phase(timed, runlog.Row.INGEST_S):
+            # Pool() only wraps the raw arrays; CatBoost quantizes at fit()
+            # time, so this ingest_s underestimates relative to the other
+            # libraries' eager construction. That asymmetry is a finding, not
+            # a bug (issue #253).
+            pool = Pool(X, label=y)
+            eval_pool = Pool(Xev, label=yev) if Xev is not None else None
+        with _phase(timed, runlog.Row.TRAIN_S):
+            model.fit(pool, eval_set=eval_pool)
+    with _phase(timed, runlog.Row.PREDICT_S):
+        pred_te = (model.predict_proba(Xte)[:, 1] if task == "binary"
+                   else model.predict(Xte))
+    return _score(task, timed, y, yte, pred_te, lambda: model.predict(X),
+                  cell=c, stopped_at=model.tree_count_ if rounds else None)
 
 
 RUNNERS = {Lib.BONSAI: run_bonsai, Lib.XGB: run_xgb, Lib.LGBM: run_lgbm,
@@ -426,6 +410,31 @@ def worker(spec: dict) -> dict:
 
 # Private Helpers ==================================================================================
 
+@contextlib.contextmanager
+def _phase(timed: dict, name: str):
+    """Time the block and record it under `name` in `timed`.
+
+    The phases nest: ingest and train sit inside fit, so fit_s stays the
+    outer wall clock over both and is never redefined as their sum. What is
+    left outside a phase is left out on purpose (the xgboost placement guard
+    reads the booster after the fit and must not land in predict_s).
+    """
+    t0 = time.perf_counter()
+    yield
+    timed[name] = time.perf_counter() - t0
+
+
+def _knobs(c: dict) -> dict:
+    """The cell's shared tree knobs, defaulted to the scaling regime.
+
+    A cell may name min_data_in_leaf and lambda_l2; the suites that predate
+    them do not, and their rows were measured at the SCALING values, so that
+    is what the fallback has to be.
+    """
+    return {k: c.get(k, rp.SCALING[k])
+            for k in ("min_data_in_leaf", "lambda_l2")}
+
+
 def _assert_xgb_trained_on_device(booster, caught_warnings) -> None:
     """Raise if a cuda-requested xgboost fit actually ran on CPU.
 
@@ -453,16 +462,16 @@ def _assert_xgb_trained_on_device(booster, caught_warnings) -> None:
         f"device=cuda, trained device={actual!r}){detail}")
 
 
-def _score(task: str, fit_s: float, predict_s: float, y, yte, pred_te,
-           predict_train, ingest_s: float | None, train_s: float | None, *,
+def _score(task: str, timed: dict, y, yte, pred_te, predict_train, *,
            cell: dict | None = None, stopped_at: int | None = None) -> dict:
     """The runner result dict; predict_train runs only for regression, so
     binary tasks never pay a full train-side predict.
 
-    fit_s is the outer wall clock (raw-floats-to-model, unchanged protocol);
-    ingest_s/train_s are the inner breakdown and are not summed back into
-    it. Every arm reports the split; the pair is None only for a fused
-    bonsai arm, which has no seam to report.
+    `timed` is what the _phase blocks recorded. fit_s is the outer wall clock
+    (raw-floats-to-model, unchanged protocol); ingest_s/train_s are the inner
+    breakdown and are not summed back into it. Every arm reports the split;
+    the pair is None only for a fused bonsai arm, which has no seam to
+    report and so never timed those phases.
 
     eval_mode and stopped_at appear only for an eval-mode cell, so a legacy
     row's key set is exactly what it was before early stopping existed.
@@ -470,8 +479,10 @@ def _score(task: str, fit_s: float, predict_s: float, y, yte, pred_te,
     model the reported metric came from, which is the one comparable number
     across four different best-iteration conventions.
     """
-    base = {runlog.Row.FIT_S: fit_s, runlog.Row.INGEST_S: ingest_s,
-            runlog.Row.TRAIN_S: train_s, runlog.Row.PREDICT_S: predict_s}
+    base = {runlog.Row.FIT_S: timed[runlog.Row.FIT_S],
+            runlog.Row.INGEST_S: timed.get(runlog.Row.INGEST_S),
+            runlog.Row.TRAIN_S: timed.get(runlog.Row.TRAIN_S),
+            runlog.Row.PREDICT_S: timed[runlog.Row.PREDICT_S]}
     mode = (cell or {}).get(EVAL_MODE)
     if mode is not None:
         base[EVAL_MODE] = mode
