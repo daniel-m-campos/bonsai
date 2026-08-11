@@ -119,7 +119,7 @@
       "link": "https://proceedings.neurips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html",
       "adopters": ["lightgbm"],
       "bonsai_status": "declined",
-      "bonsai_link": "../lineage/lightgbm.md#not-yet-measured-efb"
+      "bonsai_link": "../method/what-to-use-when.md"
     },
     {
       "year": 2017,

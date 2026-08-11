@@ -7,10 +7,10 @@ review. Stdlib only, like the other doc generators; no build required.
 Scope: the published pages only. `exclude_docs` in mkdocs.yml lists what
 never reaches the site (STYLE.md itself, ops/, conversations/, reviews/, and
 the loose working notes); this script parses that block and skips the same
-files. It ADDITIONALLY exempts the frozen archive, docs/decisions.md,
-docs/architecture/**, and docs/lineage/**: that material is a historical
-record, first-class for agents and deep divers but deliberately out of the
-main line, and rewriting it to today's style would falsify the record.
+files. It ADDITIONALLY exempts the frozen archive, docs/decisions.md and
+docs/architecture/**: that material is a historical record, first-class
+for agents and deep divers but deliberately out of the main line, and
+rewriting it to today's style would falsify the record.
 README.md is linted too (it is the repo's front page).
 
 Two tiers of rule:
@@ -21,7 +21,7 @@ HARD (exit 1, one message per offending line):
      XGBoost, LightGBM, CatBoost. "Prose" excludes fenced code, inline
      backtick spans, URLs and markdown link targets, table rows, and any
      token that is part of an identifier or path (an adjacent _, /, ., or
-     word character, so xgboost.train and lineage/xgboost stay quiet).
+     word character, so xgboost.train and use/from-xgboost stay quiet).
   c. A tight banned-phrase list: unfalsifiable hype ("blazingly", "blazing
      fast", "clean code", "simple API", "easy to use", "world-class") and
      the comparatives "significantly/much faster|slower" when no digit
@@ -73,9 +73,7 @@ LIB_RE = re.compile(r"(?<![A-Za-z0-9_/.])(" + "|".join(LIBS) + r")")
 
 def is_archive(rel: str) -> bool:
     """The frozen historical record, exempt by policy (see the module docstring)."""
-    return (rel == "decisions.md"
-            or rel.startswith("architecture/")
-            or rel.startswith("lineage/"))
+    return rel == "decisions.md" or rel.startswith("architecture/")
 
 
 def corpus_files() -> list[pathlib.Path]:

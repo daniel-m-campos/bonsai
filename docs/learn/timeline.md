@@ -4,8 +4,6 @@
 
 Gradient-boosted trees are the sum of forty years of small, sharp ideas. This page traces that lineage and marks where bonsai stands on each idea: adopted, adapted, declined, still open, or first done here.
 
-This page supersedes the archived library notes for [XGBoost](../lineage/xgboost.md), [LightGBM](../lineage/lightgbm.md), and [CatBoost](../lineage/catboost.md).
-
 The diagram sketches the timeline. The table below carries the detail, one row per idea. Each row links into the guide, the decisions log, or a design note for how bonsai handles that idea.
 
 ```mermaid
@@ -44,7 +42,7 @@ timeline
 | 2016 | **[Sparsity-aware split finding](https://arxiv.org/abs/1603.02754)**: Learn one default branch direction per split in a single pass over the present values, for missing and implicitly-zero entries. *(Chen and Guestrin, KDD 2016)* | XGBoost | [declined](../guide/3-finding-splits.md) |
 | 2017 | **[Histogram binning](https://proceedings.neurips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html)**: Bucket each feature into a few hundred bins, so splits search over bins, not raw values. *(Ke et al., NeurIPS 2017)* | XGBoost, LightGBM, CatBoost, bonsai | [adopted](../guide/2-binning-and-histograms.md) |
 | 2017 | **[GOSS](https://proceedings.neurips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html)**: Keep every large-gradient row and subsample the rest, focusing the fit on the hard examples. *(Ke et al., NeurIPS 2017)* | LightGBM, bonsai | [adopted](../guide/5-sampling.md) |
-| 2017 | **[EFB](https://proceedings.neurips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html)**: Bundle mutually exclusive sparse features into one, shrinking the feature count with little accuracy loss. *(Ke et al., NeurIPS 2017)* | LightGBM | [declined](../lineage/lightgbm.md#not-yet-measured-efb) |
+| 2017 | **[EFB](https://proceedings.neurips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html)**: Bundle mutually exclusive sparse features into one, shrinking the feature count with little accuracy loss. *(Ke et al., NeurIPS 2017)* | LightGBM | [declined](../method/what-to-use-when.md) |
 | 2017 | **[Leaf-wise growth](https://proceedings.neurips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html)**: Grow the single highest-gain leaf next instead of a whole level, cutting loss faster per node. *(Ke et al. (LightGBM), NeurIPS 2017)* | XGBoost, LightGBM, bonsai | [adopted](../guide/4-growing-trees.md) |
 | 2017 | **[GPU histogram training](https://doi.org/10.7717/peerj-cs.127)**: Build the split histograms on the GPU, moving the training bottleneck onto the device. *(Mitchell and Frank, PeerJ CS 2017)* | XGBoost, LightGBM, CatBoost, bonsai | [adopted](../guide/10-gpu-training.md) |
 | 2018 | **[Oblivious trees](https://arxiv.org/abs/1706.09516)**: Use the same split across a whole tree level, giving symmetric trees and branch-free prediction. *(Prokhorenkova et al., NeurIPS 2018)* | CatBoost, bonsai | [adopted](../guide/4-growing-trees.md) |
