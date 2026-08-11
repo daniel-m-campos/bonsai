@@ -5,24 +5,14 @@ This page is where those seams meet performance: the GPU.
 The honest story is that a concept can only check so much.
 The rest is held by tests, and by rules the code refuses to break.
 
-## The concept checks two signatures; determinism is the real contract
+## The concept is only a syntactic floor
 
-`HistogramEngine` requires exactly two methods, `begin_tree` and `populate` ([Concepts to types](api-tour-concepts.md) quotes it).
-The load-bearing contract is not in the requires-clause.
-It is in the comment above the concept in [`grower.hpp`](../../include/bonsai/grower.hpp): `populate` must accumulate the node's rows into the bins the mappers define, in "an order that is a pure function of configuration," with missing values in the last bin.
-A type can satisfy the syntax and bend any of those.
-The comment names the consequence: it "trains silently wrong models."
+[Concepts to types](api-tour-concepts.md) quotes both engine concepts and says why they are shaped that way: `HistogramEngine` requires two methods, `GPULevelEngine` refines it with the whole device vocabulary as one concept rather than seven, because the device data plane works whole or not at all.
+What that page hands to this one is the part no requires-clause can hold: `populate` must accumulate the node's rows into the bins the mappers define, in "an order that is a pure function of configuration," with missing values in the last bin ([`grower.hpp`](../../include/bonsai/grower.hpp)).
+A type can satisfy every signature and bend all of it, and the comment names the consequence: it "trains silently wrong models."
 The compiler cannot see this, but the `[cuda]` parity suite can.
 It asserts CPU and GPU agree within `1e-4` ([`tests/unit/test_cuda_grower.cpp`](../../tests/unit/test_cuda_grower.cpp)).
 The contract lives in the suite, and the concept is only its syntactic floor.
-
-## One concept, not seven, because the device works whole or not at all
-
-The GPU LevelStep is a single concept, `GPULevelEngine`, not one concept per stage.
-Its comment gives the reason: the LevelStep "drives this whole cluster or none of it," so it is one concept and not seven.
-Device histograms, rows, and split finding are coupled to the same resident state ([grower-backend doc](../architecture/12-grower-backend.md)).
-So they cannot be mixed with host stages.
-`begin_root` returns `false` when the resident buffers will not fit, and the grow loop then runs that whole tree on the host plane.
 
 ## The planes divide state by lifetime
 
