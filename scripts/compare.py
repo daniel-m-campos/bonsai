@@ -28,7 +28,6 @@ import json
 import math
 import pathlib
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 
@@ -63,8 +62,6 @@ class HP:
     lambda_l2: float
     lambda_l1: float
     feature_fraction: float
-    top_rate: float
-    other_rate: float
     early_stopping_rounds: int
     dart_drop_rate: float
     objective: str
@@ -82,7 +79,6 @@ def hp_from(cfg: dict) -> HP:
     tree = cfg.get("tree", {})
     booster = cfg.get("booster", {})
     bin_mapper = cfg.get("bin_mapper", {})
-    sampler = cfg.get("sampler", {})
     dispatch = cfg.get("dispatch", {})
     objective = cfg.get("objective", {})
     return HP(
@@ -94,8 +90,6 @@ def hp_from(cfg: dict) -> HP:
         lambda_l2=float(tree.get("lambda_l2", 1.0)),
         lambda_l1=float(tree.get("lambda_l1", 0.0)),
         feature_fraction=float(tree.get("feature_fraction", 1.0)),
-        top_rate=float(sampler.get("top_rate", 0.2)),
-        other_rate=float(sampler.get("other_rate", 0.1)),
         early_stopping_rounds=int(booster.get("early_stopping_rounds", 0)),
         dart_drop_rate=float(booster.get("dart_drop_rate", 0.0)),
         objective=str(dispatch.get("objective_name", "mse")),
@@ -259,75 +253,6 @@ def run_bonsai(config_path: pathlib.Path, hp: HP, grower: str, sampler: str,
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
-def _flatten_cfg_overrides(cfg: dict) -> list[tuple[str, str]]:
-    """Dotted (key, value) pairs for every non-data scalar in the TOML config.
-    Lists are comma-joined (fine for monotone_constraints; interaction
-    groups would need the + form)."""
-    out = []
-    for sec, kv in cfg.items():
-        if sec == "data" or not isinstance(kv, dict):
-            continue
-        for k, v in kv.items():
-            if isinstance(v, (list, tuple)):
-                sv = ",".join(str(x) for x in v)
-            elif isinstance(v, bool):
-                sv = "true" if v else "false"
-            else:
-                sv = str(v)
-            out.append((f"{sec}.{k}", sv))
-    return out
-
-
-def import_native_bonsai():
-    """The built native module, or None without a build."""
-    sys.path.insert(0, str(REPO_ROOT / "build" / "python"))
-    try:
-        import bonsai as native
-        return native
-    except ImportError:
-        return None
-
-
-def run_bonsai_native(native, cfg: dict, train_df, test_df, hp: HP, grower: str,
-                      sampler: str, hp_overrides: list[str],
-                      valid_df=None) -> Result:
-    """One bonsai native-module arm at the shared knobs."""
-    feature_cols = [c for c in train_df.columns if c != LABEL_COL]
-    Xtr = np.ascontiguousarray(train_df[feature_cols], dtype=np.float32)
-    ytr = np.ascontiguousarray(train_df[LABEL_COL], dtype=np.float32)
-    Xte = np.ascontiguousarray(test_df[feature_cols], dtype=np.float32)
-
-    pairs = _flatten_cfg_overrides(cfg)
-    pairs += [("dispatch.grower_name", grower),
-              ("dispatch.sampler_name", sampler)]
-    if sampler == "bernoulli":
-        pairs.append(("sampler.subsample", str(BERNOULLI_P)))
-    for ov in hp_overrides:
-        key, _, raw = ov.partition("=")
-        if not key.startswith("data."):
-            pairs.append((key, raw))
-
-    ev = None
-    if valid_df is not None and hp.early_stopping_rounds > 0:
-        ev = (np.ascontiguousarray(valid_df[feature_cols], dtype=np.float32),
-              np.ascontiguousarray(valid_df[LABEL_COL], dtype=np.float32))
-
-    t0 = time.perf_counter()
-    model = native.train(pairs, Xtr, ytr, ev)
-    fit_s = time.perf_counter() - t0
-
-    t1 = time.perf_counter()
-    pred = np.asarray(model.predict(Xte))
-    pred_s = time.perf_counter() - t1
-
-    y = test_df[LABEL_COL].to_numpy()
-    mc = hp.objective == "softmax"
-    return Result(rmse=rmse(pred, y), mae=mae(pred, y), r2=r2(pred, y),
-                  auc=maybe_auc(pred, y),
-                  acc=maybe_acc(pred, y, mc),
-                  fit_seconds=fit_s, predict_seconds=pred_s)
-
-
 def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
     """The xgboost reference arm at mapped knobs."""
     import xgboost as xgb
@@ -380,9 +305,8 @@ def run_xgboost(train_df, test_df, hp: HP, valid_df=None) -> Result:
                   fit_seconds=fit_s, predict_seconds=pred_s)
 
 
-def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
-                 valid_df=None) -> Result:
-    """The lightgbm reference arm at mapped knobs (optionally GOSS)."""
+def run_lightgbm(train_df, test_df, hp: HP, valid_df=None) -> Result:
+    """The lightgbm reference arm at mapped knobs."""
     import lightgbm as lgb
 
     feature_cols = [c for c in train_df.columns if c != LABEL_COL]
@@ -394,9 +318,6 @@ def run_lightgbm(train_df, test_df, hp: HP, goss: bool = False,
         **({"alpha": hp.quantile_alpha} if hp.objective == "quantile" else {}),
         "metric": {"softmax": "multi_logloss",
                    "logloss": "binary_logloss"}.get(hp.objective, "rmse"),
-        **({"data_sample_strategy": "goss",
-            "top_rate": hp.top_rate,
-            "other_rate": hp.other_rate} if goss else {}),
         **reference_params.lgbm_core(
             learning_rate=hp.learning_rate, max_depth=hp.max_depth,
             num_leaves=(hp.max_leaves if hp.max_leaves > 0
@@ -505,8 +426,8 @@ def write_markdown(path: pathlib.Path, dataset: str, results: dict[str, Result])
         )
     note = ("Timing modes (docs/method/benchmark-protocol.md): `bonsai` rows "
             "time the CLI pipeline end to end (CSV read + fit + model I/O, "
-            "timing_mode=pipeline); `*_native` and reference rows time "
-            "in-process from arrays (timing_mode=in_memory).\n\n")
+            "timing_mode=pipeline); reference rows time in-process from "
+            "arrays (timing_mode=in_memory).\n\n")
     path.write_text(f"# {dataset} comparison\n\n" + note + "\n".join(rows)
                     + "\n")
 
@@ -514,44 +435,17 @@ def write_markdown(path: pathlib.Path, dataset: str, results: dict[str, Result])
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True, type=pathlib.Path)
-    ap.add_argument("--name", default=None,
-                    help="report stem (defaults to config stem)")
-    ap.add_argument("--hp", action="append", default=[], metavar="SEC.KEY=VAL",
-                    help="hyperparameter override applied to bonsai (--set) and "
-                         "the mapped reference-library params, e.g. "
-                         "tree.feature_fraction=0.8")
     ap.add_argument("--growers", default=",".join(BONSAI_GROWERS),
                     help="comma-separated bonsai growers to run")
-    ap.add_argument("--samplers", default=",".join(BONSAI_SAMPLERS),
-                    help="comma-separated bonsai samplers to run")
     args = ap.parse_args()
 
-    cfg = _config_with_overrides(args)
+    cfg = load_toml(args.config)
     hp = hp_from(cfg)
     train_df, test_df = _load_frames(cfg)
-    train_df, valid_df, bonsai_hp_overrides = _early_stopping_split(
-        train_df, hp, args)
-    results = _run_all(args, cfg, hp, train_df, test_df, valid_df,
-                       bonsai_hp_overrides)
+    train_df, valid_df, bonsai_overrides = _early_stopping_split(train_df, hp)
+    results = _run_all(args, hp, train_df, test_df, valid_df, bonsai_overrides)
     _write_outputs(args, results)
     return 0
-
-
-def _config_with_overrides(args) -> dict:
-    """The TOML config with --hp SEC.KEY=VAL overrides folded in."""
-    cfg = load_toml(args.config)
-    for ov in args.hp:
-        key, _, raw = ov.partition("=")
-        sec, _, name = key.partition(".")
-        try:
-            val: object = int(raw)
-        except ValueError:
-            try:
-                val = float(raw)
-            except ValueError:
-                val = raw
-        cfg.setdefault(sec, {})[name] = val
-    return cfg
 
 
 def _load_frames(cfg: dict):
@@ -572,7 +466,7 @@ def _load_frames(cfg: dict):
     return train_df, test_df
 
 
-def _early_stopping_split(train_df, hp: HP, args):
+def _early_stopping_split(train_df, hp: HP):
     """Carve the shared validation fold when early stopping is on.
 
     Early stopping needs a valid set every library sees identically: the
@@ -580,7 +474,7 @@ def _early_stopping_split(train_df, hp: HP, args):
     via CSVs + --set.
     """
     valid_df = None
-    bonsai_hp_overrides = list(args.hp)
+    bonsai_hp_overrides: list[str] = []
     if hp.early_stopping_rounds > 0:
         n_valid = max(1, len(train_df) // 10)
         valid_df = train_df.iloc[-n_valid:]
@@ -596,34 +490,20 @@ def _early_stopping_split(train_df, hp: HP, args):
     return train_df, valid_df, bonsai_hp_overrides
 
 
-def _run_all(args, cfg, hp: HP, train_df, test_df, valid_df,
+def _run_all(args, hp: HP, train_df, test_df, valid_df,
              bonsai_hp_overrides) -> dict[str, Result]:
     """Every bonsai (grower, sampler) arm plus the reference libraries."""
     results: dict[str, Result] = {}
-    native = import_native_bonsai()
-    if native is None:
-        print("native module not importable (build with -DBONSAI_PYTHON=ON); "
-              "CLI subprocess rows only", flush=True)
     for grower in args.growers.split(","):
-        for sampler in args.samplers.split(","):
+        for sampler in BONSAI_SAMPLERS:
             label = f"bonsai ({grower}, {sampler})"
             print(f"{label} (n_iters={hp.n_iters})", flush=True)
             results[label] = run_bonsai(args.config, hp, grower, sampler,
                                         bonsai_hp_overrides, test_df=test_df)
-            if native is not None:
-                nlabel = f"bonsai ({grower}, {sampler}, native)"
-                print(nlabel, flush=True)
-                results[nlabel] = run_bonsai_native(
-                    native, cfg, train_df, test_df, hp, grower, sampler,
-                    args.hp, valid_df=valid_df)
     print("xgboost", flush=True)
     results["xgboost"] = run_xgboost(train_df, test_df, hp, valid_df=valid_df)
     print("lightgbm", flush=True)
     results["lightgbm"] = run_lightgbm(train_df, test_df, hp, valid_df=valid_df)
-    if "goss" in args.samplers.split(","):
-        print("lightgbm (goss)", flush=True)
-        results["lightgbm (goss)"] = run_lightgbm(train_df, test_df, hp, goss=True,
-                                                  valid_df=valid_df)
     print("catboost", flush=True)
     results["catboost"] = run_catboost(train_df, test_df, hp, valid_df=valid_df)
     return results
@@ -633,7 +513,7 @@ def _write_outputs(args, results: dict[str, Result]):
     """The stem.json + stem.md report pair under benchmarks/results/."""
     out_dir = REPO_ROOT / "benchmarks" / "results"
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = args.name or args.config.stem
+    stem = args.config.stem
     json_path = out_dir / f"{stem}.json"
     md_path = out_dir / f"{stem}.md"
     json_path.write_text(
