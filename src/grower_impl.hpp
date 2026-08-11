@@ -705,6 +705,7 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
 
     while (!heap.empty() && has_budget())
     {
+        gd::GrowProfiler::Lap blap;
         std::pop_heap(heap.begin(), heap.end(), gain_less);
         gd::Candidate c = std::move(heap.back());
         heap.pop_back();
@@ -712,12 +713,15 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
         auto const [left_id, right_id] = gd::commit_split_node(
             nodes, split_bins, split_gains, covers, ds, c.node.id, c.split);
 
-        double const  parent_lo   = c.node.lo;
-        double const  parent_hi   = c.node.hi;
-        auto const    parent_path = std::move(c.node.path);
-        gd::ChildPair pair        = step.split_children(c, left_id, right_id);
-        SplitInput   &left        = pair.nodes[0];
-        SplitInput   &right       = pair.nodes[1];
+        double const parent_lo   = c.node.lo;
+        double const parent_hi   = c.node.hi;
+        auto const   parent_path = std::move(c.node.path);
+        blap(gd::GrowProfiler::instance().bookkeep_s);
+
+        gd::ChildPair         pair  = step.split_children(c, left_id, right_id);
+        SplitInput           &left  = pair.nodes[0];
+        SplitInput           &right = pair.nodes[1];
+        gd::GrowProfiler::Lap clap;
         // A partition that leaves one child empty demotes the split back to
         // a leaf — same ground-truth guard as the depthwise plan (decision
         // 50); the pre-allocated children stay as unreachable placeholders.
@@ -727,6 +731,7 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
             step.leaf(demoted.id, c.slot);
             gd::finalize_as_leaf(nodes, demoted, config_, n_leaves, values, leaf_ids);
             split_gains[c.node.id] = 0.0F;
+            clap(gd::GrowProfiler::instance().commit_s);
             continue;
         }
         // Host children carry rows; device-resident children carry row_count.
@@ -741,7 +746,10 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
 
         uint8_t const child_depth = pair.depth;
         depth                     = std::max(depth, child_depth);
+        clap(gd::GrowProfiler::instance().commit_s);
+
         step.find_children(pair, child_depth < config_.max_depth);
+        gd::GrowProfiler::Lap clap2;
         for (size_t i = 0; i < pair.nodes.size(); ++i)
         {
             gd::Candidate child{.node       = std::move(pair.nodes[i]),
@@ -760,29 +768,35 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
                 pending.push_back(std::move(child));
             }
         }
+        clap2(gd::GrowProfiler::instance().commit_s);
     }
 
     // Both survivors are leaves: what is still in the heap when the budget
     // runs out, and what was set aside as unsplittable. Heap first, then
     // pending, is the order leaf ids are assigned in.
-    heap.insert(heap.end(), std::make_move_iterator(pending.begin()),
-                std::make_move_iterator(pending.end()));
-    for (auto const &c : heap)
     {
-        step.leaf(c.node.id, c.slot);
-        gd::finalize_as_leaf(nodes, c.node, config_, n_leaves, values, leaf_ids);
+        gd::Phase<&gd::GrowProfiler::finalize_s> phase;
+        heap.insert(heap.end(), std::make_move_iterator(pending.begin()),
+                    std::make_move_iterator(pending.end()));
+        for (auto const &c : heap)
+        {
+            step.leaf(c.node.id, c.slot);
+            gd::finalize_as_leaf(nodes, c.node, config_, n_leaves, values, leaf_ids);
+        }
+        // Device plane: every leaf's segment is stamped and the per-row values
+        // download here, so the out-of-bag routing below still has the last
+        // word. In resident mode the device route+add already scored every row,
+        // sampled or not, and there are no host values to route into.
+        step.end_tree(nodes, values, leaf_ids);
+        if (!resident)
+        {
+            gd::route_unsampled(ds, nodes, split_bins, row_indices, values, leaf_ids);
+        }
     }
-    // Device plane: every leaf's segment is stamped and the per-row values
-    // download here, so the out-of-bag routing below still has the last word.
-    // In resident mode the device route+add already scored every row, sampled
-    // or not, and there are no host values to route into.
-    step.end_tree(nodes, values, leaf_ids);
-    if (!resident)
-    {
-        gd::route_unsampled(ds, nodes, split_bins, row_indices, values, leaf_ids);
-    }
+    gd::GrowProfiler::Lap alap;
     split_gains.resize(nodes.size(), 0.0F);
     covers.resize(nodes.size(), 0.0F);
+    alap(gd::GrowProfiler::instance().assemble_s);
 
     return {.tree     = Tree(std::move(nodes), {.depth = depth, .n_leaves = n_leaves},
                              std::move(split_gains), std::move(covers)),
