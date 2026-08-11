@@ -105,7 +105,7 @@ The home is **[daniel-m-campos.github.io/bonsai](https://daniel-m-campos.github.
 - **[Results](https://daniel-m-campos.github.io/bonsai/method/)**: the measurement discipline; its rules in the [benchmark charter](https://daniel-m-campos.github.io/bonsai/method/benchmark-protocol/), its evidence in [the results ledger](https://daniel-m-campos.github.io/bonsai/method/results/).
 - **[Design](https://daniel-m-campos.github.io/bonsai/design/system-map/)**: the system map, the concept-to-type tour, determinism as a contract, and the archive ([decisions log](https://daniel-m-campos.github.io/bonsai/decisions/), [architecture notes](https://daniel-m-campos.github.io/bonsai/architecture/)).
 
-Repo-only records, unpublished by design: the [project retrospective](https://github.com/daniel-m-campos/bonsai/blob/main/docs/report.md), the [original proposal](https://github.com/daniel-m-campos/bonsai/blob/main/docs/proposal.md), and the [context/roadmap](https://github.com/daniel-m-campos/bonsai/blob/main/docs/context.md).
+The early planning records (proposal, context briefing, MVP retrospective) have been retired; git history holds them.
 
 ## Project layout
 
