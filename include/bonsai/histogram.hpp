@@ -229,17 +229,20 @@ class ArenaLayout
         return total_;
     }
 
+    // The arena run the j-th selected feature owns, u8 padding included. The
+    // runs tile the arena exactly, so a carve that walks them touches every
+    // cell.
+    std::span<HistCell> run(std::span<HistCell> arena, size_t j) const
+    {
+        size_t const start = u8_ ? j * k_feature_stride : starts_[j];
+        size_t const width = u8_ ? k_feature_stride : bins_[j];
+        return arena.subspan(start, width);
+    }
+
     // The j-th selected feature's cells within an arena of total_cells().
     std::span<HistCell> slice(std::span<HistCell> arena, size_t j) const
     {
-        if (!u8_)
-        {
-            return arena.subspan(starts_[j], bins_[j]);
-        }
-        // A row extracts by hand: std::submdspan is C++26 and libc++ has not
-        // shipped it.
-        ArenaView const grid{arena.data(), bins_.size()};
-        return {&grid[j, 0], bins_[j]};
+        return run(arena, j).first(bins_[j]);
     }
 
   private:
@@ -258,24 +261,45 @@ class NodeHistograms
   public:
     // Sizes and zeroes this node's arena, then hands every feature its slot:
     // a view into the arena for the selected ones (in `selected` order, which
-    // is ascending), an empty view for the rest. `alone` spreads the zero fill
-    // across workers: a caller carving a whole level already runs one node per
-    // worker, but a lone node has to parallelize inside or the fill is serial.
+    // is ascending), an empty view for the rest. One selected feature's arena
+    // run is the work unit, so the zero fill and the slot hand-out are one
+    // pass; unselected features keep the default empty view and cost nothing.
+    // `alone` spreads that pass across workers: a caller carving a whole level
+    // already runs one node per worker, but a lone node has to parallelize
+    // inside or the carve is serial.
     void carve(ArenaLayout const &layout, std::span<feature_id_t const> selected,
                size_t n_features, bool alone = false)
     {
-        std::span<HistCell> const arena = reset_arena(layout.total_cells(), alone);
-        auto const                slot  = [&](feature_id_t fid)
-        {
-            auto const it = std::ranges::lower_bound(selected, fid);
-            return it != selected.end() && *it == fid
-                       ? Histogram{layout.slice(
-                             arena, static_cast<size_t>(it - selected.begin()))}
-                       : Histogram{};
-        };
-        hists_ =
-            std::views::iota(feature_id_t{0}, static_cast<feature_id_t>(n_features)) |
-            std::views::transform(slot) | std::ranges::to<std::vector>();
+        // The allocator leaves the resize untouched, so the placement-new
+        // below is where every cell's lifetime starts.
+        arena_.clear();
+        arena_.resize(layout.total_cells());
+        hists_.clear();
+        hists_.resize(n_features);
+        std::span<HistCell> const arena{arena_.data(), arena_.size()};
+        Histogram *const          hists = hists_.data();
+        feature_id_t const *const sel   = selected.data();
+        size_t const              n_sel = selected.size();
+        size_t const              grain =
+            alone ? std::max<size_t>(
+                        1, n_sel / (static_cast<size_t>(parallel::n_threads()) * 4))
+                               : std::max<size_t>(n_sel, 1);
+        parallel::for_each_index((n_sel + grain - 1) / grain,
+                                 [&, arena, hists, sel](size_t c)
+                                 {
+                                     size_t const hi = std::min((c + 1) * grain, n_sel);
+                                     for (size_t j = c * grain; j < hi; ++j)
+                                     {
+                                         std::span<HistCell> const cells =
+                                             layout.run(arena, j);
+                                         for (HistCell &cell : cells)
+                                         {
+                                             ::new (&cell) HistCell{};
+                                         }
+                                         hists[sel[j]] =
+                                             Histogram{layout.slice(arena, j)};
+                                     }
+                                 });
     }
 
     void push_back(Histogram h)
@@ -314,28 +338,6 @@ class NodeHistograms
     }
 
   private:
-    std::span<HistCell> reset_arena(size_t n_cells, bool alone)
-    {
-        // The allocator leaves the resize untouched, so this is where every
-        // cell's lifetime starts. Chunked so one worker takes a run of cells;
-        // a single chunk runs serially, which is the level path's case.
-        arena_.clear();
-        arena_.resize(n_cells);
-        HistCell *const cells = arena_.data();
-        size_t const chunk = alone ? (size_t{1} << 14U) : std::max<size_t>(n_cells, 1);
-        parallel::for_each_index((n_cells + chunk - 1) / chunk,
-                                 [cells, n_cells, chunk](size_t c)
-                                 {
-                                     size_t const hi =
-                                         std::min((c + 1) * chunk, n_cells);
-                                     for (size_t i = c * chunk; i < hi; ++i)
-                                     {
-                                         ::new (cells + i) HistCell{};
-                                     }
-                                 });
-        return arena_;
-    }
-
     std::vector<Histogram> hists_;
     // The histograms alias this buffer, so it never reallocates while they
     // live: only carve() sizes it, and moves carry both together.

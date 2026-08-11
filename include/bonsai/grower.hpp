@@ -164,9 +164,8 @@ concept GPULeafEngine =
 
 struct CpuHistogramEngine
 {
-    void begin_tree(Dataset const & /*ds*/, floats_view /*grad*/, floats_view /*hess*/)
-    {
-    }
+    // Drops the tree's cached fill plan: the next tree redraws its features.
+    void begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
     void populate(Dataset const &ds, floats_view grad, floats_view hess,
                   SplitInput &split_input, std::span<feature_id_t const> selected);
     // Level-batched fill: all of a level's nodes in one call, so row-wise
