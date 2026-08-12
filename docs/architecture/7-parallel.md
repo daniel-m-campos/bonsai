@@ -187,7 +187,12 @@ pair a fixed distance ahead. These are reads only, so results are
 bit-identical. The lookahead reads the *node's* row list rather than the
 current chunk's, so a chunk boundary costs no dead zone however fine the
 chunks are cut; only the node's last rows go unprefetched, and they are
-peeled out so the hot loop carries no per-row bound test.
+peeled out so the hot loop carries no per-row bound test. The column fill's
+gathered arm prefetches too, at 64 rows: it reads one column at a time, so
+its lookahead is measured in rows of that column and each row costs it only
+one L1-resident add, where the mirror's row carries a whole strip of them.
+LightGBM's column fill prefetches the same pattern at the same distance
+(`dense_bin.hpp`).
 
 **Partials, grow-only and reused.** The storage reaches its high-water
 mark within the first levels and is kept for the rest of the fit, so its
