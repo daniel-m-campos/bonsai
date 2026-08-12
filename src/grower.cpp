@@ -74,6 +74,12 @@ OrderedGh ordered_gh(std::span<row_id_t const> rows, floats_view grad, floats_vi
     return {.g = g, .h = h};
 }
 
+// Prefetch distance for the column fill's gathered arm, in rows: the loop
+// carries one L1-resident add per row, so the lookahead has to cover a DRAM
+// latency in row iterations rather than the mirror fill's 16
+// (docs/architecture/7-parallel.md).
+constexpr size_t k_col_ahead = 64;
+
 // The column fill, taken by u16 (high max_bin) data and by dense u8 nodes:
 // one thread owns one feature's histogram and fills it in row order, so
 // results are bit-identical at any thread count. visit_bins monomorphizes
@@ -104,41 +110,60 @@ void fill_feature_parallel(Dataset const &ds, floats_view grad, floats_view hess
             }
             feature_id_t const fid = selected[s];
             Histogram         &h   = split_input.hists[fid];
-            ds.visit_bins(fid,
-                          [&](auto bins)
-                          {
-                              row_id_t const *rows = split_input.rows.data();
-                              // Hoisted out of the row loop: both selectors
-                              // are loop-invariant, and this is the fill's
-                              // innermost work.
-                              auto add = [&](auto bin_of, auto hess_of)
-                              {
-                                  for (size_t k = 0; k < n; ++k)
-                                  {
-                                      h.add(bin_of(k), og[k], hess_of(k));
-                                  }
-                              };
-                              auto at_k     = [&](size_t k) { return bins[k]; };
-                              auto at_row   = [&](size_t k) { return bins[rows[k]]; };
-                              auto unit     = [](size_t) { return 1.0F; };
-                              auto gathered = [oh](size_t k) { return oh[k]; };
-                              if (dense && oh == nullptr)
-                              {
-                                  add(at_k, unit);
-                              }
-                              else if (dense)
-                              {
-                                  add(at_k, gathered);
-                              }
-                              else if (oh == nullptr)
-                              {
-                                  add(at_row, unit);
-                              }
-                              else
-                              {
-                                  add(at_row, gathered);
-                              }
-                          });
+            ds.visit_bins(
+                fid,
+                [&](auto bins)
+                {
+                    row_id_t const *rows = split_input.rows.data();
+                    // Hoisted out of the row loop: the selectors are
+                    // loop-invariant, and this is the fill's innermost work.
+                    auto add = [&](auto bin_of, auto hess_of)
+                    {
+                        for (size_t k = 0; k < n; ++k)
+                        {
+                            h.add(bin_of(k), og[k], hess_of(k));
+                        }
+                    };
+                    // Below the root a node's rows are an ascending SUBSET, so
+                    // this column's bytes sit at irregular strides the hardware
+                    // prefetcher cannot follow and the gather runs
+                    // DRAM-latency-bound (#367). Pull the byte a fixed distance
+                    // ahead; reads only, so the sums are untouched. The node's
+                    // last rows go unprefetched, peeled out so the hot loop
+                    // carries no per-row bound test.
+                    auto gather = [&](auto hess_of)
+                    {
+                        size_t const kp = n > k_col_ahead ? n - k_col_ahead : 0;
+                        for (size_t k = 0; k < kp; ++k)
+                        {
+                            __builtin_prefetch(&bins[rows[k + k_col_ahead]], 0, 0);
+                            h.add(bins[rows[k]], og[k], hess_of(k));
+                        }
+                        for (size_t k = kp; k < n; ++k)
+                        {
+                            h.add(bins[rows[k]], og[k], hess_of(k));
+                        }
+                    };
+                    auto at_k     = [&](size_t k) { return bins[k]; };
+                    auto unit     = [](size_t) { return 1.0F; };
+                    auto gathered = [oh](size_t k) { return oh[k]; };
+                    if (dense && oh == nullptr)
+                    {
+                        add(at_k, unit);
+                    }
+                    else if (dense)
+                    {
+                        add(at_k, gathered);
+                    }
+                    else if (oh == nullptr)
+                    {
+                        gather(unit);
+                    }
+                    else
+                    {
+                        gather(gathered);
+                    }
+                });
             if (sibling != nullptr)
             {
                 (*sibling)[fid] -= h;

@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstring>
 #include <random>
+#include <utility>
 #include <vector>
 
 #include "bonsai/dataset.hpp"
@@ -92,6 +93,9 @@ SplitInput populate_node(Fixture const &fx, std::vector<row_id_t> rows,
     node.id   = id;
     node.rows = std::move(rows);
     CpuHistogramEngine engine;
+    // As a grower drives it: begin_tree drops the cached selection plan, which
+    // is keyed by addresses a second fixture in this process may reuse.
+    engine.begin_tree(fx.ds, fx.grad, fx.hess);
     engine.populate(fx.ds, fx.grad, fx.hess, node, fx.selected);
     return node;
 }
@@ -287,6 +291,42 @@ TEST_CASE("a lone node cut into row blocks is reproducible and serial at one "
         }
     }
     parallel::set_n_threads(0);
+}
+
+TEST_CASE("the column fill gathers a lone node in serial order", "[populate]")
+{
+    // A lone node above the density cut takes the column fill, which reads
+    // each feature's bins through the node's row list. Both sides of the
+    // prefetch peel run: the wide node is longer than the lookahead, the
+    // narrow one shorter than it.
+    for (auto const [n_rows, stride] : {std::pair{8192UL, 2UL}, std::pair{128UL, 3UL}})
+    {
+        auto const fx = make_fixture(n_rows, 3);
+        REQUIRE(fx.ds.bins_are_u8());
+
+        std::vector<row_id_t> rows;
+        for (row_id_t r = 1; r < fx.ds.n_rows(); r += stride)
+        {
+            rows.push_back(r);
+        }
+        REQUIRE(rows.size() * 4 >= fx.ds.n_rows()); // routes to the column fill
+        REQUIRE(rows.size() < fx.ds.n_rows());      // and gathers, not in place
+
+        auto const ref = reference_hists(fx, rows);
+        for (int const threads : {1, 4})
+        {
+            parallel::set_n_threads(threads);
+            auto const node = populate_node(fx, rows, 1);
+            for (size_t s = 0; s < fx.selected.size(); ++s)
+            {
+                auto const cells = node.hists[fx.selected[s]].all_cells();
+                REQUIRE(cells.size() == ref[s].size());
+                REQUIRE(std::memcmp(cells.data(), ref[s].data(),
+                                    cells.size() * sizeof(HistCell)) == 0);
+            }
+        }
+        parallel::set_n_threads(0);
+    }
 }
 
 TEST_CASE("populate is reproducible at a fixed thread count", "[populate]")
