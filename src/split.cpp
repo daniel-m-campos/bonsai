@@ -74,6 +74,15 @@ inline CandidateScore score_candidate(double left_grad, double left_hess,
             .feasible = true};
 }
 
+// A missing cell holding no gradient mass. Zero sums add nothing on either
+// routing, so the two default_left candidates coincide; ±0.0 is safe here
+// because every consumer of the sums (score's square, the min_child_hess
+// compare, the monotone weight difference) is blind to zero's sign.
+inline bool missing_empty(HistCell const &missing)
+{
+    return missing.sum_grad == 0.0F && missing.sum_hess == 0.0F;
+}
+
 // Strict > keeps the earliest (bin, default_left) candidate on exact gain
 // ties in both scans, matching the serial order.
 inline void update_best(SplitOutput &best, double gain, feature_id_t fid, bin_id_t bin,
@@ -111,6 +120,11 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
 
     int const mc = monotone_constraint_of(config, fid);
 
+    // An empty missing cell routes nothing either way, so both directions
+    // give the same sums and gain and strict > keeps the first: scanning
+    // default_left = false again is pure cost.
+    size_t const n_dirs = missing_empty(missing_cell) ? 1 : 2;
+
     // Running left-side sums stay double: the scan crosses every cell, so
     // float storage rounding must not compound across bins.
     double   left_grad = 0.0;
@@ -120,8 +134,9 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
     {
         left_grad += cell.sum_grad;
         left_hess += cell.sum_hess;
-        for (bool const default_left : {true, false})
+        for (size_t d = 0; d < n_dirs; ++d)
         {
+            bool const default_left = d == 0;
             auto const c = score_candidate(left_grad, left_hess, missing_cell,
                                            real_grad, real_hess, default_left, config);
             if (!c.feasible)
@@ -173,7 +188,8 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
 
     static thread_local std::vector<double> parent_score;
     parent_score.resize(n_parents);
-    double sum_parent_score = 0.0;
+    double sum_parent_score  = 0.0;
+    bool   all_missing_empty = true;
     for (size_t p = 0; p < n_parents; ++p)
     {
         auto const &hist    = frontier[p].hists[fid];
@@ -182,15 +198,20 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
         parent_score[p] = score(node_totals[p].sum_grad, node_totals[p].sum_hess,
                                 config.lambda_l1, config.lambda_l2);
         sum_parent_score += parent_score[p];
-        real_grad[p] = node_totals[p].sum_grad - missing.sum_grad;
-        real_hess[p] = node_totals[p].sum_hess - missing.sum_hess;
+        real_grad[p]      = node_totals[p].sum_grad - missing.sum_grad;
+        real_hess[p]      = node_totals[p].sum_hess - missing.sum_hess;
+        all_missing_empty = all_missing_empty && missing_empty(missing);
     }
+    // Every parent's missing cell empty makes the two routings identical for
+    // each parent, so their summed scores match and strict > keeps the first.
+    size_t const n_dirs = all_missing_empty ? 1 : 2;
 
     for (size_t b = 0; b < n_bins; ++b)
     {
-        for (bool const default_left : {true, false})
+        for (size_t d = 0; d < n_dirs; ++d)
         {
-            double sum_children_score = 0.0;
+            bool const default_left       = d == 0;
+            double     sum_children_score = 0.0;
             for (size_t p = 0; p < n_parents; ++p)
             {
                 auto const     &hist = frontier[p].hists[fid];
