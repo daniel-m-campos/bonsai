@@ -41,28 +41,35 @@ OrderedGh ordered_gh(std::span<row_id_t const> rows, floats_view grad, floats_vi
 {
     static thread_local std::vector<float> ordered_grad;
     static thread_local std::vector<float> ordered_hess;
-    size_t const                           n = rows.size();
+    size_t const                           n    = rows.size();
+    bool const                             unit = hess.empty();
     ordered_grad.resize(n);
-    ordered_hess.resize(n);
+    ordered_hess.resize(unit ? 0 : n);
     // Capture raw pointers: naming the thread_local inside the parallel
     // region would resolve to each worker's own (empty) vector.
     float *const          g     = ordered_grad.data();
-    float *const          h     = ordered_hess.data();
+    float *const          h     = unit ? nullptr : ordered_hess.data();
     row_id_t const *const r_ptr = rows.data();
     if (n < k_gather_region_rows)
     {
         for (size_t k = 0; k < n; ++k)
         {
             g[k] = grad[r_ptr[k]];
-            h[k] = hess[r_ptr[k]];
+            if (!unit)
+            {
+                h[k] = hess[r_ptr[k]];
+            }
         }
         return {.g = g, .h = h};
     }
     parallel::for_each_index(n,
-                             [&, g, h, r_ptr](size_t k)
+                             [&, g, h, r_ptr, unit](size_t k)
                              {
                                  g[k] = grad[r_ptr[k]];
-                                 h[k] = hess[r_ptr[k]];
+                                 if (!unit)
+                                 {
+                                     h[k] = hess[r_ptr[k]];
+                                 }
                              });
     return {.g = g, .h = h};
 }
@@ -100,20 +107,36 @@ void fill_feature_parallel(Dataset const &ds, floats_view grad, floats_view hess
             ds.visit_bins(fid,
                           [&](auto bins)
                           {
-                              if (dense)
+                              row_id_t const *rows = split_input.rows.data();
+                              // Hoisted out of the row loop: both selectors
+                              // are loop-invariant, and this is the fill's
+                              // innermost work.
+                              auto add = [&](auto bin_of, auto hess_of)
                               {
                                   for (size_t k = 0; k < n; ++k)
                                   {
-                                      h.add(bins[k], og[k], oh[k]);
+                                      h.add(bin_of(k), og[k], hess_of(k));
                                   }
+                              };
+                              auto at_k     = [&](size_t k) { return bins[k]; };
+                              auto at_row   = [&](size_t k) { return bins[rows[k]]; };
+                              auto unit     = [](size_t) { return 1.0F; };
+                              auto gathered = [oh](size_t k) { return oh[k]; };
+                              if (dense && oh == nullptr)
+                              {
+                                  add(at_k, unit);
+                              }
+                              else if (dense)
+                              {
+                                  add(at_k, gathered);
+                              }
+                              else if (oh == nullptr)
+                              {
+                                  add(at_row, unit);
                               }
                               else
                               {
-                                  row_id_t const *rows = split_input.rows.data();
-                                  for (size_t k = 0; k < n; ++k)
-                                  {
-                                      h.add(bins[rows[k]], og[k], oh[k]);
-                                  }
+                                  add(at_row, gathered);
                               }
                           });
             if (sibling != nullptr)
@@ -232,12 +255,29 @@ struct PlanCache
     Dataset const               *ds  = nullptr;
     feature_id_t const          *sel = nullptr;
     size_t                       n   = 0;
+    // Every row's hessian is exactly 1.0F this tree, so the fills add the
+    // literal instead of reading one. begin_tree owns this: it is the one
+    // call that says which hessians a tree will fill from, and the pointer
+    // it saw guards against a fill handed a different array.
+    float const *hess      = nullptr;
+    bool         unit_hess = false;
 };
 
 PlanCache &plan_cache()
 {
     static thread_local PlanCache cache;
     return cache;
+}
+
+// What the fills read for hessians: an empty view when every row's hessian is
+// 1.0F, which the fills answer with the literal. Adding 1.0F is the same
+// float operation the gathered value would have performed, so cell sums,
+// their order, and the sibling subtraction are untouched; what goes is the
+// gather and the stream the fill re-reads once per feature.
+floats_view fill_hess(floats_view hess)
+{
+    PlanCache const &cache = plan_cache();
+    return cache.unit_hess && cache.hess == hess.data() ? floats_view{} : hess;
 }
 
 SelectionPlan const &selection_plan(Dataset const                &ds,
@@ -290,7 +330,8 @@ struct FillTarget
 // Accumulates rows [first, last) of one node into `target`, reading each row's
 // bins as contiguous bytes of the slice's mirror tile and grad/hess once per
 // row. NodeOrder says grad/hess are already gathered into the node's row
-// order, so they are read at the row's position instead of its id.
+// order, so they are read at the row's position instead of its id. A null
+// `hess` is the unit hessian: every row adds the literal 1.0F.
 template <bool NodeOrder = false>
 void fill_rows(SplitInput const &node, size_t first, size_t last, float const *grad,
                float const *hess, FillTarget const &target)
@@ -320,7 +361,10 @@ void fill_rows(SplitInput const &node, size_t first, size_t last, float const *g
     // no per-feature base load at all.
     ArenaView const a0{target.mode == CellMode::uniform ? base_ptr[0] : nullptr,
                        n_sel_b};
-    auto run_rows = [&](auto cell_at)
+    // The hessian source is a compile-time choice, not a per-row test: this is
+    // the fill's innermost loop and a branch inside it costs more than the
+    // load it skips.
+    auto run_rows = [&](auto cell_at, auto unit_hess)
     {
         auto walk = [&](auto prefetch, size_t a, size_t b)
         {
@@ -334,14 +378,17 @@ void fill_rows(SplitInput const &node, size_t first, size_t last, float const *g
                     if constexpr (!NodeOrder)
                     {
                         __builtin_prefetch(grad + rp, 0, 0);
-                        __builtin_prefetch(hess + rp, 0, 0);
+                        if constexpr (!decltype(unit_hess)::value)
+                        {
+                            __builtin_prefetch(hess + rp, 0, 0);
+                        }
                     }
                 }
                 size_t const         r        = rows[k];
                 uint8_t const *const row_bins = rm_ptr + (r * width);
                 size_t const         gk       = NodeOrder ? k : r;
                 float const          g        = grad[gk];
-                float const          h        = hess[gk];
+                float const          h = decltype(unit_hess)::value ? 1.0F : hess[gk];
                 for (size_t s = 0; s < n_sel_b; ++s)
                 {
                     HistCell &c = cell_at(s, row_bins);
@@ -353,20 +400,32 @@ void fill_rows(SplitInput const &node, size_t first, size_t last, float const *g
         walk(std::true_type{}, first, kp);
         walk(std::false_type{}, kp, last);
     };
-    if (target.mode == CellMode::uniform)
+    auto by_mode = [&](auto unit_hess)
     {
-        run_rows([&](size_t s, uint8_t const *row_bins) -> HistCell &
-                 { return a0[s, row_bins[s]]; });
-    }
-    else if (target.mode == CellMode::dense)
+        if (target.mode == CellMode::uniform)
+        {
+            run_rows([&](size_t s, uint8_t const *row_bins) -> HistCell &
+                     { return a0[s, row_bins[s]]; }, unit_hess);
+        }
+        else if (target.mode == CellMode::dense)
+        {
+            run_rows([&](size_t s, uint8_t const *row_bins) -> HistCell &
+                     { return base_ptr[s][row_bins[s]]; }, unit_hess);
+        }
+        else
+        {
+            run_rows([&](size_t s, uint8_t const *row_bins) -> HistCell &
+                     { return base_ptr[s][row_bins[sel_ptr[s0 + s] - fid0]]; },
+                     unit_hess);
+        }
+    };
+    if (hess == nullptr)
     {
-        run_rows([&](size_t s, uint8_t const *row_bins) -> HistCell &
-                 { return base_ptr[s][row_bins[s]]; });
+        by_mode(std::true_type{});
     }
     else
     {
-        run_rows([&](size_t s, uint8_t const *row_bins) -> HistCell &
-                 { return base_ptr[s][row_bins[sel_ptr[s0 + s] - fid0]]; });
+        by_mode(std::false_type{});
     }
 }
 
@@ -805,6 +864,7 @@ bool CpuHistogramEngine::populate(Dataset const &ds, floats_view grad, floats_vi
                                   std::span<feature_id_t const> selected,
                                   NodeHistograms               *sibling)
 {
+    hess = fill_hess(hess);
     if (split_input.id != 0 && !selected.empty() && !split_input.rows.empty())
     {
         SelectionPlan const &sp = selection_plan(ds, selected);
@@ -839,6 +899,7 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
                                        floats_view hess, split_input_refs nodes,
                                        std::span<feature_id_t const> selected)
 {
+    hess = fill_hess(hess);
     // One layout for the tree: every node's arena packs the same way.
     SelectionPlan const &sp = selection_plan(ds, selected);
     // Placeholder construction is one arena allocation plus a ~256KB zero
@@ -883,11 +944,17 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
 }
 
 // A fresh tree may draw a different selection into the same buffer, so the
-// cached plan cannot outlive the tree that built it.
+// cached plan cannot outlive the tree that built it. The unit-hessian test
+// is a property of this tree's hessians, not of the objective: one pass over
+// the array per tree, against a fill that walks it once per feature.
 void CpuHistogramEngine::begin_tree(Dataset const & /*ds*/, floats_view /*grad*/,
-                                    floats_view /*hess*/)
+                                    floats_view hess)
 {
-    plan_cache() = {};
+    bool const unit =
+        !hess.empty() && std::ranges::all_of(hess, [](float h) { return h == 1.0F; });
+    plan_cache()           = {};
+    plan_cache().hess      = hess.data();
+    plan_cache().unit_hess = unit;
 }
 
 template class DepthwiseGrower<CpuHistogramEngine, HistogramNodeSplitFinder>;
