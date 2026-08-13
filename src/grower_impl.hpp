@@ -320,6 +320,110 @@ inline void commit_children(Dataset const &ds, TreeConfig const &config,
     next.clear();
 }
 
+// One heap pop, ready for the data plane: the popped candidate, the child
+// ids the tree just allocated for it, and the parent state its children
+// inherit (the candidate's own copy is moved out by the commit).
+struct PoppedSplit
+{
+    Candidate                 c;
+    node_id_t                 left_id  = 0;
+    node_id_t                 right_id = 0;
+    double                    parent_lo;
+    double                    parent_hi;
+    std::vector<feature_id_t> parent_path;
+};
+
+// Control plane, first half of a heap pop: take the best candidate and write
+// its split into the tree. The leaf plane's counterpart to plan_level.
+template <typename LessT>
+inline PoppedSplit
+pop_split(std::vector<Candidate> &heap, LessT gain_less, DenseTree::Nodes &nodes,
+          Dataset const &ds, std::vector<bin_id_t> &split_bins,
+          std::vector<float> &split_gains, std::vector<float> &covers)
+{
+    Phase<&GrowProfiler::bookkeep_s> phase;
+    std::pop_heap(heap.begin(), heap.end(), gain_less);
+    Candidate c = std::move(heap.back());
+    heap.pop_back();
+    auto const [left_id, right_id] = commit_split_node(nodes, split_bins, split_gains,
+                                                       covers, ds, c.node.id, c.split);
+    double const parent_lo         = c.node.lo;
+    double const parent_hi         = c.node.hi;
+    auto         parent_path       = std::move(c.node.path);
+    return {.c           = std::move(c),
+            .left_id     = left_id,
+            .right_id    = right_id,
+            .parent_lo   = parent_lo,
+            .parent_hi   = parent_hi,
+            .parent_path = std::move(parent_path)};
+}
+
+// Control plane, between the partition and the children's find: record the
+// two children, or demote the split back to a leaf when the partition left
+// one of them empty (the same ground-truth guard as the depthwise plan,
+// decision 50; the pre-allocated children stay as unreachable placeholders).
+// Returns whether the split stands.
+// NOLINTNEXTLINE(readability-function-size)
+template <typename StepT>
+inline bool commit_pop(StepT &step, Dataset const &ds, TreeConfig const &config,
+                       interaction_groups const &groups, PoppedSplit &ps,
+                       ChildPair &pair, DenseTree::Nodes &nodes,
+                       std::vector<float> &covers, std::vector<float> &split_gains,
+                       size_t &n_leaves, size_t &live_leaves, uint8_t &depth,
+                       train_leaf_values &values, std::vector<node_id_t> &leaf_ids)
+{
+    Phase<&GrowProfiler::commit_s> phase;
+    SplitInput                    &left  = pair.nodes[0];
+    SplitInput                    &right = pair.nodes[1];
+    if (is_empty_child(left) || is_empty_child(right))
+    {
+        SplitInput const demoted =
+            step.demoted_leaf(ps.c, pair, ps.parent_lo, ps.parent_hi);
+        step.leaf(demoted.id, ps.c.slot);
+        finalize_as_leaf(nodes, demoted, config, n_leaves, values, leaf_ids);
+        split_gains[ps.c.node.id] = 0.0F;
+        return false;
+    }
+    // Host children carry rows; device-resident children carry row_count.
+    covers[ps.left_id]  = static_cast<float>(row_count_of(left));
+    covers[ps.right_id] = static_cast<float>(row_count_of(right));
+    propagate_monotone_bounds(ps.parent_lo, ps.parent_hi, ps.c.split, config, left,
+                              right);
+    propagate_interaction_state(groups, ps.parent_path, ps.c.split.feature_id,
+                                ds.n_features(), left, right);
+    ++live_leaves;
+    depth = std::max(depth, pair.depth);
+    return true;
+}
+
+// Control plane, after the children's find: a child with a valid split
+// re-enters the gain heap, one without is set aside for the tree epilogue.
+template <typename LessT>
+inline void queue_children(ChildPair &pair, LessT gain_less,
+                           std::vector<Candidate> &heap,
+                           std::vector<Candidate> &pending)
+{
+    Phase<&GrowProfiler::commit_s> phase;
+    for (size_t i = 0; i < pair.nodes.size(); ++i)
+    {
+        Candidate child{.node       = std::move(pair.nodes[i]),
+                        .split      = pair.splits[i],
+                        .depth      = pair.depth,
+                        .slot       = pair.slots[i],
+                        .left_sums  = pair.child_sums[2 * i],
+                        .right_sums = pair.child_sums[(2 * i) + 1]};
+        if (child.split.valid)
+        {
+            heap.push_back(std::move(child));
+            std::push_heap(heap.begin(), heap.end(), gain_less);
+        }
+        else
+        {
+            pending.push_back(std::move(child));
+        }
+    }
+}
+
 // Rows not in `sampled` (sorted) never reach a leaf during growth, so
 // finalize_as_leaf can't stamp their train values — yet the booster's score
 // accumulator covers every row. Route them through the finished tree in bin
@@ -706,70 +810,17 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
 
     while (!heap.empty() && has_budget())
     {
-        gd::GrowProfiler::Lap blap;
-        std::pop_heap(heap.begin(), heap.end(), gain_less);
-        gd::Candidate c = std::move(heap.back());
-        heap.pop_back();
-
-        auto const [left_id, right_id] = gd::commit_split_node(
-            nodes, split_bins, split_gains, covers, ds, c.node.id, c.split);
-
-        double const parent_lo   = c.node.lo;
-        double const parent_hi   = c.node.hi;
-        auto const   parent_path = std::move(c.node.path);
-        blap(gd::GrowProfiler::instance().bookkeep_s);
-
-        gd::ChildPair         pair  = step.split_children(c, left_id, right_id);
-        SplitInput           &left  = pair.nodes[0];
-        SplitInput           &right = pair.nodes[1];
-        gd::GrowProfiler::Lap clap;
-        // A partition that leaves one child empty demotes the split back to
-        // a leaf — same ground-truth guard as the depthwise plan (decision
-        // 50); the pre-allocated children stay as unreachable placeholders.
-        if (gd::is_empty_child(left) || gd::is_empty_child(right))
+        gd::PoppedSplit ps =
+            gd::pop_split(heap, gain_less, nodes, ds, split_bins, split_gains, covers);
+        gd::ChildPair pair = step.split_children(ps.c, ps.left_id, ps.right_id);
+        if (!gd::commit_pop(step, ds, config_, interaction_groups_, ps, pair, nodes,
+                            covers, split_gains, n_leaves, live_leaves, depth, values,
+                            leaf_ids))
         {
-            SplitInput const demoted = step.demoted_leaf(c, pair, parent_lo, parent_hi);
-            step.leaf(demoted.id, c.slot);
-            gd::finalize_as_leaf(nodes, demoted, config_, n_leaves, values, leaf_ids);
-            split_gains[c.node.id] = 0.0F;
-            clap(gd::GrowProfiler::instance().commit_s);
             continue;
         }
-        // Host children carry rows; device-resident children carry row_count.
-        covers[left_id]  = static_cast<float>(gd::row_count_of(left));
-        covers[right_id] = static_cast<float>(gd::row_count_of(right));
-        gd::propagate_monotone_bounds(parent_lo, parent_hi, c.split, config_, left,
-                                      right);
-        gd::propagate_interaction_state(interaction_groups_, parent_path,
-                                        c.split.feature_id, ds.n_features(), left,
-                                        right);
-        ++live_leaves;
-
-        uint8_t const child_depth = pair.depth;
-        depth                     = std::max(depth, child_depth);
-        clap(gd::GrowProfiler::instance().commit_s);
-
-        step.find_children(pair, child_depth < config_.max_depth);
-        gd::GrowProfiler::Lap clap2;
-        for (size_t i = 0; i < pair.nodes.size(); ++i)
-        {
-            gd::Candidate child{.node       = std::move(pair.nodes[i]),
-                                .split      = pair.splits[i],
-                                .depth      = child_depth,
-                                .slot       = pair.slots[i],
-                                .left_sums  = pair.child_sums[2 * i],
-                                .right_sums = pair.child_sums[(2 * i) + 1]};
-            if (child.split.valid)
-            {
-                heap.push_back(std::move(child));
-                std::push_heap(heap.begin(), heap.end(), gain_less);
-            }
-            else
-            {
-                pending.push_back(std::move(child));
-            }
-        }
-        clap2(gd::GrowProfiler::instance().commit_s);
+        step.find_children(pair, pair.depth < config_.max_depth);
+        gd::queue_children(pair, gain_less, heap, pending);
     }
 
     // Both survivors are leaves: what is still in the heap when the budget
