@@ -234,9 +234,10 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
     }
 }
 
-// Merge per-feature bests in feature order: strict > keeps the lowest
-// feature id on gain ties, matching the serial scan exactly.
-SplitOutput reduce_in_feature_order(std::vector<SplitOutput> const &per_feature)
+// Merge candidates produced in ascending feature order, one per feature or one
+// per feature range: strict > keeps the lowest feature id on gain ties,
+// matching the serial scan exactly.
+SplitOutput reduce_in_feature_order(std::span<SplitOutput const> per_feature)
 {
     SplitOutput best;
     for (auto const &cand : per_feature)
@@ -270,7 +271,7 @@ size_t scan_ranges(size_t n_features)
 SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
                                            TreeConfig const &config)
 {
-    if (input.hists.empty() || input.rows.size() < 2 * size_t{config.min_data_in_leaf})
+    if (cannot_split(input, config))
     {
         return {};
     }
@@ -309,7 +310,6 @@ void HistogramNodeSplitFinder::find_parallel(std::span<SplitInput const> nodes,
     partials.assign(n * ranges, SplitOutput{});
     for (size_t i = 0; i < n; ++i)
     {
-        out[i] = {};
         if (!cannot_split(nodes[i], config))
         {
             totals[i] = nodes[i].totals();
@@ -341,15 +341,9 @@ void HistogramNodeSplitFinder::find_parallel(std::span<SplitInput const> nodes,
         });
     for (size_t i = 0; i < n; ++i)
     {
-        // Ascending range order, strict >: the lowest feature id wins ties.
-        for (size_t r = 0; r < ranges; ++r)
-        {
-            SplitOutput const &cand = partials[(i * ranges) + r];
-            if (cand.valid && cand.gain > out[i].gain)
-            {
-                out[i] = cand;
-            }
-        }
+        // The ranges are ascending in feature order, so the same merge the
+        // per-feature bests take gives find's tie-break here.
+        out[i] = reduce_in_feature_order({part_ptr + (i * ranges), ranges});
     }
 }
 

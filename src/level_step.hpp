@@ -114,12 +114,6 @@ inline SplitInput &smaller_child(PendingSplit &p)
     return p.left.rows.size() <= p.right.rows.size() ? p.left : p.right;
 }
 
-// Its sibling, by the same comparison.
-inline SplitInput &larger_child(PendingSplit &p)
-{
-    return p.left.rows.size() <= p.right.rows.size() ? p.right : p.left;
-}
-
 // Scatters parent.rows into the children in one stable pass. Stability
 // keeps every node's rows ascending (the root's are iota), so later
 // per-feature bin lookups walk memory near-sequentially.
@@ -164,17 +158,21 @@ inline PendingSplit partition_rows(Dataset const &ds, SplitInput parent,
 }
 
 // Completes a partitioned split whose smaller child has been populated: the
-// larger child takes the parent's histograms and subtracts the sibling.
-inline void finish_split(Dataset const &ds, PendingSplit &p)
+// larger child takes the parent's histograms and subtracts the sibling, unless
+// the fill already subtracted into them itself.
+inline void finish_split(Dataset const &ds, PendingSplit &p, bool fused = false)
 {
-    // Size tie: left wins (smaller_child).
-    bool const  left_smaller = p.left.rows.size() <= p.right.rows.size();
-    SplitInput &small        = left_smaller ? p.left : p.right;
-    SplitInput &large        = left_smaller ? p.right : p.left;
-    large.hists              = std::move(p.parent_hists);
-    // Unselected slots are zero-binned on both sides: no-op subtraction.
-    parallel::for_each_index(ds.n_features(),
-                             [&](size_t f) { large.hists[f] -= small.hists[f]; });
+    SplitInput &small = smaller_child(p);
+    // The sibling, derived from the pick rather than re-comparing: the two
+    // must agree or the subtraction reads the wrong histogram.
+    SplitInput &large = &small == &p.left ? p.right : p.left;
+    large.hists       = std::move(p.parent_hists);
+    if (!fused)
+    {
+        // Unselected slots are zero-binned on both sides: no-op subtraction.
+        parallel::for_each_index(ds.n_features(),
+                                 [&](size_t f) { large.hists[f] -= small.hists[f]; });
+    }
     small.sums      = small.totals(); // row_count still 0: totals() scans hists
     large.sums      = large.totals();
     small.row_count = small.rows.size();
@@ -260,12 +258,6 @@ inline int partition_workers(size_t n_rows, int threads)
                                                                               : 1;
 }
 
-inline void finish_sizes(DeferredSplit &d, size_t n_left, size_t n_right)
-{
-    d.p.left.rows.resize(n_left);
-    d.p.right.rows.resize(n_right);
-}
-
 // Level-wide blocked partition: nodes decompose into fixed-size row
 // blocks so one huge parent (the root) and many small deep nodes both
 // fill every worker. Per block, count goes-left; a serial scan turns
@@ -342,7 +334,8 @@ inline void host_partition(Dataset const &ds, LevelPlan &plan,
                                         li += blk[u].n_left;
                                         ri += (blk[u].k1 - blk[u].k0) - blk[u].n_left;
                                     }
-                                    finish_sizes(splits[i], li, ri);
+                                    splits[i].p.left.rows.resize(li);
+                                    splits[i].p.right.rows.resize(ri);
                                 });
     parallel::for_each_index_on(
         workers, blocks.size(),
@@ -422,32 +415,22 @@ split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput par
         p = partition_rows(ds, std::move(parent), s, left_id, right_id);
     }
     lap(GrowProfiler::instance().partition_s);
-    // The larger child takes the parent's histograms before the fill, so the
-    // fill can subtract into them feature by feature without a second region.
+    // The fill subtracts straight into the parent's histograms, feature by
+    // feature, without a second region; finish_split then hands them to the
+    // larger child.
     SplitInput &small = smaller_child(p);
-    SplitInput &large = larger_child(p);
-    large.hists       = std::move(p.parent_hists);
-    bool fused        = false;
+    bool        fused = false;
     if constexpr (requires {
-                      engine.populate(ds, grad, hess, small, selected, &large.hists);
+                      engine.populate(ds, grad, hess, small, selected, &p.parent_hists);
                   })
     {
-        fused = engine.populate(ds, grad, hess, small, selected, &large.hists);
+        fused = engine.populate(ds, grad, hess, small, selected, &p.parent_hists);
     }
     else
     {
         engine.populate(ds, grad, hess, small, selected);
     }
-    if (!fused)
-    {
-        // Unselected slots are zero-binned on both sides: no-op subtraction.
-        parallel::for_each_index(ds.n_features(),
-                                 [&](size_t f) { large.hists[f] -= small.hists[f]; });
-    }
-    small.sums      = small.totals(); // row_count still 0: totals() scans hists
-    large.sums      = large.totals();
-    small.row_count = small.rows.size();
-    large.row_count = large.rows.size();
+    finish_split(ds, p, fused);
     lap(GrowProfiler::instance().populate_s);
     return {std::move(p.left), std::move(p.right)};
 }
@@ -982,7 +965,7 @@ class LevelStep<EngineT, SplitterT>
 // time, so there is no level to batch and no LevelPlan — the same
 // partition/populate/subtract primitives compose one node deep.
 // Branch-free: no GPU concept appears below.
-template <HistogramEngine EngineT, typename SplitterT> class LeafStep
+template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT> class LeafStep
 {
   public:
     LeafStep(EngineT &engine, Dataset const &ds, TreeConfig const &config,
@@ -1107,7 +1090,8 @@ template <HistogramEngine EngineT, typename SplitterT> class LeafStep
 // level plane has — leaf_begin_root declines (oversized max_bin, pool won't
 // fit) and the step falls back to the host ops above for the rest of the tree.
 // There is no per-node fallback: a tree is device-resident or it is not.
-template <GPULeafEngine EngineT, typename SplitterT> class LeafStep<EngineT, SplitterT>
+template <GPULeafEngine EngineT, ParallelNodeSplitFinder SplitterT>
+class LeafStep<EngineT, SplitterT>
 {
   public:
     LeafStep(EngineT &engine, Dataset const &ds, TreeConfig const &config,

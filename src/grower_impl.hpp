@@ -626,14 +626,14 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
             .leaf_ids = std::move(leaf_ids)};
 }
 
-template <HistogramEngine EngineT, NodeSplitFinder SplitterT>
+template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT>
 LeafwiseGrower<EngineT, SplitterT>::LeafwiseGrower(TreeConfig const &cfg)
     : config_(cfg), feature_rng_(cfg.feature_seed),
       interaction_groups_(grower_detail::parse_interaction_groups(cfg))
 {
 }
 
-template <HistogramEngine EngineT, NodeSplitFinder SplitterT>
+template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT>
 auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view grad,
                                               floats_view    hess,
                                               row_index_view row_indices)

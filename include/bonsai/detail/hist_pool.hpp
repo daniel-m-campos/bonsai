@@ -114,15 +114,25 @@ class HistBlockPool
 };
 
 // Stateless allocator over the pool; all instances compare equal, so vector
-// moves and swaps behave exactly like std::allocator.
-template <typename T> struct PoolAllocator
+// moves and swaps behave exactly like std::allocator. Init = false drops the
+// value-init a resize would do, leaving raw storage the owner must start every
+// element's lifetime in: only NodeHistograms may ask for that, and only
+// because its arena reset zeroes every cell across workers right after the
+// resize.
+template <typename T, bool Init = true> struct PoolAllocator
 {
     using value_type = T;
+    // A non-type parameter puts this allocator outside allocator_traits'
+    // default rebind, so it spells its own.
+    template <typename U> struct rebind
+    {
+        using other = PoolAllocator<U, Init>;
+    };
 
     PoolAllocator() = default;
     // Allocator rebind requires an implicit converting constructor.
     // NOLINTNEXTLINE(google-explicit-constructor)
-    template <typename U> PoolAllocator(PoolAllocator<U> const & /*other*/) {}
+    template <typename U> PoolAllocator(PoolAllocator<U, Init> const & /*other*/) {}
 
     T *allocate(size_t n)
     {
@@ -134,28 +144,19 @@ template <typename T> struct PoolAllocator
         HistBlockPool::instance().give(p, n * sizeof(T));
     }
 
+    // Value-init from resize() lands here and does nothing; every other
+    // construction falls through to allocator_traits' placement new.
+    void construct(T * /*p*/)
+        requires(!Init)
+    {
+    }
+
     friend bool operator==(PoolAllocator const &, PoolAllocator const &)
     {
         return true;
     }
 };
 
-// Pool allocator whose sizing leaves cells untouched: a vector using it holds
-// raw storage until the owner starts every element's lifetime itself. Only
-// NodeHistograms may use it, and only because its arena reset zeroes every
-// cell across workers right after the resize.
-template <typename T> struct RawPoolAllocator : PoolAllocator<T>
-{
-    using value_type = T;
-
-    RawPoolAllocator() = default;
-    // Allocator rebind requires an implicit converting constructor.
-    // NOLINTNEXTLINE(google-explicit-constructor)
-    template <typename U> RawPoolAllocator(RawPoolAllocator<U> const & /*other*/) {}
-
-    // Value-init from resize() lands here and does nothing; every other
-    // construction falls through to allocator_traits' placement new.
-    void construct(T * /*p*/) {}
-};
+template <typename T> using RawPoolAllocator = PoolAllocator<T, false>;
 
 } // namespace bonsai::detail
