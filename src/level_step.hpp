@@ -959,9 +959,10 @@ template <HistogramEngine EngineT, typename SplitterT> class LeafStep
         root.sums      = root.totals();
         root.row_count = root.rows.size();
         lap(GrowProfiler::instance().populate_s);
-        SplitOutput const split = SplitterT::find(root, config);
+        std::array<SplitOutput, 1> split{};
+        SplitterT::find_parallel({&root, 1}, config, split);
         lap(GrowProfiler::instance().find_s);
-        return {.node = std::move(root), .split = split, .depth = 0};
+        return {.node = std::move(root), .split = split[0], .depth = 0};
     }
 
     template <HistogramEngine E>
@@ -987,15 +988,19 @@ template <HistogramEngine EngineT, typename SplitterT> class LeafStep
         return std::move(survivor);
     }
 
+    // Best-first growth has no frontier to spread across workers, so a node
+    // takes its parallelism over features. A split's two children go in
+    // together: one parallel region, not two.
     static void host_find_children(TreeConfig const &config, ChildPair &pair,
                                    bool may_split)
     {
         Phase<&GrowProfiler::find_s> phase;
-        for (size_t i = 0; i < pair.nodes.size(); ++i)
+        if (!may_split)
         {
-            pair.splits[i] =
-                may_split ? SplitterT::find(pair.nodes[i], config) : SplitOutput{};
+            pair.splits = {};
+            return;
         }
+        SplitterT::find_parallel(pair.nodes, config, pair.splits);
     }
 
   protected:
