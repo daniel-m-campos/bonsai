@@ -270,36 +270,64 @@ class NodeHistograms
     void carve(ArenaLayout const &layout, std::span<feature_id_t const> selected,
                size_t n_features, bool alone = false)
     {
-        // The allocator leaves the resize untouched, so the placement-new
-        // below is where every cell's lifetime starts.
-        arena_.clear();
-        arena_.resize(layout.total_cells());
-        hists_.clear();
-        hists_.resize(n_features);
-        std::span<HistCell> const arena{arena_.data(), arena_.size()};
-        Histogram *const          hists = hists_.data();
-        feature_id_t const *const sel   = selected.data();
-        size_t const              n_sel = selected.size();
-        size_t const              grain =
+        carve_storage(layout, n_features);
+        size_t const n_sel = selected.size();
+        size_t const grain =
             alone ? std::max<size_t>(
                         1, n_sel / (static_cast<size_t>(parallel::n_threads()) * 4))
-                               : std::max<size_t>(n_sel, 1);
+                  : std::max<size_t>(n_sel, 1);
         parallel::for_each_index((n_sel + grain - 1) / grain,
-                                 [&, arena, hists, sel](size_t c)
+                                 [&](size_t c)
                                  {
                                      size_t const hi = std::min((c + 1) * grain, n_sel);
                                      for (size_t j = c * grain; j < hi; ++j)
                                      {
-                                         std::span<HistCell> const cells =
-                                             layout.run(arena, j);
-                                         for (HistCell &cell : cells)
-                                         {
-                                             ::new (&cell) HistCell{};
-                                         }
-                                         hists[sel[j]] =
-                                             Histogram{layout.slice(arena, j)};
+                                         carve_run(layout, selected, j);
                                      }
                                  });
+    }
+
+    // Sizes the arena and the slot table without touching a cell. Pairs with
+    // carve_run for callers that carve inside their own fill.
+    void carve_storage(ArenaLayout const &layout, size_t n_features)
+    {
+        // The allocator leaves the resize untouched, so carve_run's
+        // placement-new is where every cell's lifetime starts.
+        arena_.clear();
+        arena_.resize(layout.total_cells());
+        hists_.clear();
+        hists_.resize(n_features);
+    }
+
+    // Zeroes the j-th selected feature's arena run and hands it its slot.
+    // Runs are disjoint, so any worker may take any j.
+    void carve_run(ArenaLayout const &layout, std::span<feature_id_t const> selected,
+                   size_t j)
+    {
+        std::span<HistCell> const arena{arena_.data(), arena_.size()};
+        for (HistCell &cell : layout.run(arena, j))
+        {
+            ::new (&cell) HistCell{};
+        }
+        hists_[selected[j]] = Histogram{layout.slice(arena, j)};
+    }
+
+    // Debug-only postcondition for a fill that carves inside its own work
+    // list: every selected run must have been reached, or the cells the fill
+    // read had no lifetime. A carved run's slot views its own arena offset,
+    // which nothing but carve_run puts there.
+    bool all_runs_carved(ArenaLayout const            &layout,
+                         std::span<feature_id_t const> selected)
+    {
+        std::span<HistCell> const arena{arena_.data(), arena_.size()};
+        for (size_t j = 0; j < selected.size(); ++j)
+        {
+            if (hists_[selected[j]].cells().data() != layout.slice(arena, j).data())
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     void push_back(Histogram h)
