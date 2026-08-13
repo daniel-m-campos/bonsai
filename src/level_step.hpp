@@ -114,6 +114,12 @@ inline SplitInput &smaller_child(PendingSplit &p)
     return p.left.rows.size() <= p.right.rows.size() ? p.left : p.right;
 }
 
+// Its sibling, by the same comparison.
+inline SplitInput &larger_child(PendingSplit &p)
+{
+    return p.left.rows.size() <= p.right.rows.size() ? p.right : p.left;
+}
+
 // Scatters parent.rows into the children in one stable pass. Stability
 // keeps every node's rows ascending (the root's are iota), so later
 // per-feature bin lookups walk memory near-sequentially.
@@ -416,8 +422,32 @@ split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput par
         p = partition_rows(ds, std::move(parent), s, left_id, right_id);
     }
     lap(GrowProfiler::instance().partition_s);
-    engine.populate(ds, grad, hess, smaller_child(p), selected);
-    finish_split(ds, p);
+    // The larger child takes the parent's histograms before the fill, so the
+    // fill can subtract into them feature by feature without a second region.
+    SplitInput &small = smaller_child(p);
+    SplitInput &large = larger_child(p);
+    large.hists       = std::move(p.parent_hists);
+    bool fused        = false;
+    if constexpr (requires {
+                      engine.populate(ds, grad, hess, small, selected, &large.hists);
+                  })
+    {
+        fused = engine.populate(ds, grad, hess, small, selected, &large.hists);
+    }
+    else
+    {
+        engine.populate(ds, grad, hess, small, selected);
+    }
+    if (!fused)
+    {
+        // Unselected slots are zero-binned on both sides: no-op subtraction.
+        parallel::for_each_index(ds.n_features(),
+                                 [&](size_t f) { large.hists[f] -= small.hists[f]; });
+    }
+    small.sums      = small.totals(); // row_count still 0: totals() scans hists
+    large.sums      = large.totals();
+    small.row_count = small.rows.size();
+    large.row_count = large.rows.size();
     lap(GrowProfiler::instance().populate_s);
     return {std::move(p.left), std::move(p.right)};
 }

@@ -70,10 +70,14 @@ OrderedGh ordered_gh(std::span<row_id_t const> rows, floats_view grad, floats_vi
 // The column fill, taken by u16 (high max_bin) data and by dense u8 nodes:
 // one thread owns one feature's histogram and fills it in row order, so
 // results are bit-identical at any thread count. visit_bins monomorphizes
-// the fill per bin width.
+// the fill per bin width. A lone node passes `carve` and its sibling: the
+// worker owning a feature zeroes its arena run and subtracts it from the
+// sibling without leaving the region.
 void fill_feature_parallel(Dataset const &ds, floats_view grad, floats_view hess,
                            SplitInput                   &split_input,
-                           std::span<feature_id_t const> selected)
+                           std::span<feature_id_t const> selected,
+                           ArenaLayout const            *carve   = nullptr,
+                           NodeHistograms               *sibling = nullptr)
 {
     size_t const n = split_input.rows.size();
     // A node covering every row (the root, absent row sampling) needs no
@@ -87,6 +91,10 @@ void fill_feature_parallel(Dataset const &ds, floats_view grad, floats_view hess
         selected.size(),
         [&](size_t s)
         {
+            if (carve != nullptr)
+            {
+                split_input.hists.carve_run(*carve, selected, s);
+            }
             feature_id_t const fid = selected[s];
             Histogram         &h   = split_input.hists[fid];
             ds.visit_bins(fid,
@@ -108,6 +116,10 @@ void fill_feature_parallel(Dataset const &ds, floats_view grad, floats_view hess
                                   }
                               }
                           });
+            if (sibling != nullptr)
+            {
+                (*sibling)[fid] -= h;
+            }
         });
 }
 
@@ -584,7 +596,8 @@ struct FeatureRange
 // price of spreading a frontier.
 void fill_one_node(Dataset const &ds, floats_view grad, floats_view hess,
                    SplitInput &node, std::span<feature_id_t const> selected,
-                   SelectionPlan const &sp)
+                   SelectionPlan const &sp, ArenaLayout const *carve,
+                   NodeHistograms *sibling)
 {
     size_t const n = node.rows.size();
     if (n == 0)
@@ -629,6 +642,13 @@ void fill_one_node(Dataset const &ds, floats_view grad, floats_view hess,
                                   .cell0    = sl.cell0,
                                   .cells    = sl.cells,
                                   .fid0     = sl.fid0 + r.b0};
+            if (carve != nullptr)
+            {
+                for (size_t s = sub.s0; s < sub.s1; ++s)
+                {
+                    node.hists.carve_run(*carve, selected, s);
+                }
+            }
             static thread_local std::vector<HistCell *> bases;
             bases.clear();
             bases.push_back(hists[sel_ptr[sub.s0]].cells().data());
@@ -646,6 +666,13 @@ void fill_one_node(Dataset const &ds, floats_view grad, floats_view hess,
                                     .mode     = dense_sel ? CellMode::uniform
                                                           : CellMode::gathered};
             fill_rows<true>(node, 0, n, gh.g, gh.h, target);
+            if (sibling != nullptr)
+            {
+                for (size_t s = sub.s0; s < sub.s1; ++s)
+                {
+                    (*sibling)[sel_ptr[s]] -= hists[sel_ptr[s]];
+                }
+            }
         });
 }
 
@@ -656,25 +683,39 @@ constexpr size_t k_col_fill_den = 4;
 
 } // namespace
 
-// One node's fill. The leaf plane calls this per split, and its node is a
-// sparse child with no frontier to spread the work over, so the fill is cut
-// by feature instead of by row chunk (#367). Dense nodes already fill
-// feature-major over the columns, and the root keeps the level growers' path:
-// it is the one lone node they populate too.
-void CpuHistogramEngine::populate(Dataset const &ds, floats_view grad, floats_view hess,
+// One node's fill. The leaf plane calls this per split, and its node has no
+// frontier to spread the work over, so the fill is cut by feature: a sparse
+// node by mirror-tile range, a dense or u16 one column by column. The carve
+// and the sibling subtraction ride those same feature ranges, so a split's
+// whole histogram step costs one parallel region. The root keeps the level
+// growers' path: it is the one lone node they populate too.
+bool CpuHistogramEngine::populate(Dataset const &ds, floats_view grad, floats_view hess,
                                   SplitInput                   &split_input,
-                                  std::span<feature_id_t const> selected)
+                                  std::span<feature_id_t const> selected,
+                                  NodeHistograms               *sibling)
 {
-    if (split_input.id != 0 && ds.bins_are_u8() && !selected.empty() &&
-        split_input.rows.size() * k_col_fill_den < ds.n_rows())
+    if (split_input.id != 0 && !selected.empty() && !split_input.rows.empty())
     {
         SelectionPlan const &sp = selection_plan(ds, selected);
-        split_input.hists.carve(sp.layout, selected, ds.n_features(), true);
-        fill_one_node(ds, grad, hess, split_input, selected, sp);
-        return;
+        split_input.hists.carve_storage(sp.layout, ds.n_features());
+        if (ds.bins_are_u8() && split_input.rows.size() * k_col_fill_den < ds.n_rows())
+        {
+            fill_one_node(ds, grad, hess, split_input, selected, sp, &sp.layout,
+                          sibling);
+        }
+        else
+        {
+            fill_feature_parallel(ds, grad, hess, split_input, selected, &sp.layout,
+                                  sibling);
+        }
+        // The carve rides the fill's decomposition, so a work list that missed
+        // a run would read cells whose lifetime never started.
+        assert(split_input.hists.all_runs_carved(sp.layout, selected));
+        return true;
     }
     std::array one = {std::ref(split_input)};
     populate_many(ds, grad, hess, one, selected);
+    return false;
 }
 
 // Builds histograms for `selected` features only; unselected slots stay
