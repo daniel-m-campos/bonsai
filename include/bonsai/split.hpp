@@ -89,13 +89,8 @@ concept ParallelNodeSplitFinder =
 struct HistogramNodeSplitFinder
 {
     static SplitOutput find(SplitInput const &input, TreeConfig const &config);
-    // Same decisions, one worker per feature range: for callers with no
-    // frontier to spread across workers. Each range keeps a running best over
-    // ascending features and the merge takes the ranges in the same order, so
-    // the lowest-feature tie-break is find's. Takes the caller's whole batch
-    // (one split's two children) so a pair costs one parallel region.
-    static void find_parallel(std::span<SplitInput const> nodes,
-                              TreeConfig const &config, std::span<SplitOutput> out);
+    static void        find_parallel(std::span<SplitInput const> nodes,
+                                     TreeConfig const &config, std::span<SplitOutput> out);
 };
 
 using FrontierInput = std::span<SplitInput const>;

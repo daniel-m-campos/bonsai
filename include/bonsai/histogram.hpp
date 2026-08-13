@@ -7,7 +7,7 @@
 #include <cassert>
 #include <cstddef>
 #include <mdspan>
-#include <new>
+#include <memory>
 #include <ranges>
 #include <span>
 #include <utility>
@@ -296,10 +296,7 @@ class NodeHistograms
                    size_t j)
     {
         std::span<HistCell> const arena{arena_.data(), arena_.size()};
-        for (HistCell &cell : layout.run(arena, j))
-        {
-            ::new (&cell) HistCell{};
-        }
+        std::ranges::uninitialized_value_construct(layout.run(arena, j));
         hists_[selected[j]] = Histogram{layout.slice(arena, j)};
     }
 

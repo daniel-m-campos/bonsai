@@ -27,17 +27,18 @@ namespace
 // grad and hess in one node's row order. A fill that walks the node once per
 // feature reads them sequentially from here instead of re-walking the full
 // arrays with scattered indices (n_features x full-array traffic otherwise).
-struct OrderedGh
+// An empty hess view is the unit hessian: the fills add the literal 1.0F.
+struct GhView
 {
-    float const *g;
-    float const *h;
+    std::span<float const> g;
+    std::span<float const> h;
 };
 
 // Below this the gather runs serially: one pass over a node this small costs
 // less than the parallel region that would spread it.
 constexpr size_t k_gather_region_rows = 1 << 14;
 
-OrderedGh ordered_gh(std::span<row_id_t const> rows, floats_view grad, floats_view hess)
+GhView ordered_gh(std::span<row_id_t const> rows, floats_view grad, floats_view hess)
 {
     static thread_local std::vector<float> ordered_grad;
     static thread_local std::vector<float> ordered_hess;
@@ -45,20 +46,19 @@ OrderedGh ordered_gh(std::span<row_id_t const> rows, floats_view grad, floats_vi
     bool const                             unit = hess.empty();
     ordered_grad.resize(n);
     ordered_hess.resize(unit ? 0 : n);
-    // Capture raw pointers: naming the thread_local inside the parallel
-    // region would resolve to each worker's own (empty) vector.
-    float *const          g     = ordered_grad.data();
-    float *const          h     = unit ? nullptr : ordered_hess.data();
-    row_id_t const *const r_ptr = rows.data();
+    // Capture views over the thread_local storage: naming the vectors inside
+    // the parallel region would resolve to each worker's own (empty) one.
+    std::span<float> const g{ordered_grad};
+    std::span<float> const h{ordered_hess};
     // A team of one runs the loop inline and enters no region, which is what
     // a node below the threshold wants.
     parallel::for_each_index_on(n < k_gather_region_rows ? 1 : parallel::n_threads(), n,
-                                [&, g, h, r_ptr, unit](size_t k)
+                                [&, g, h, rows, unit](size_t k)
                                 {
-                                    g[k] = grad[r_ptr[k]];
+                                    g[k] = grad[rows[k]];
                                     if (!unit)
                                     {
-                                        h[k] = hess[r_ptr[k]];
+                                        h[k] = hess[rows[k]];
                                     }
                                 });
     return {.g = g, .h = h};
@@ -85,11 +85,11 @@ void fill_feature_parallel(Dataset const &ds, floats_view grad, floats_view hess
     size_t const n = split_input.rows.size();
     // A node covering every row (the root, absent row sampling) needs no
     // gather at all: rows is the identity, so grad/hess are used in place.
-    bool const      dense = n == ds.n_rows();
-    OrderedGh const gh    = dense ? OrderedGh{.g = grad.data(), .h = hess.data()}
-                                  : ordered_gh(split_input.rows, grad, hess);
-    float const    *og    = gh.g;
-    float const    *oh    = gh.h;
+    bool const   dense = n == ds.n_rows();
+    GhView const gh =
+        dense ? GhView{.g = grad, .h = hess} : ordered_gh(split_input.rows, grad, hess);
+    std::span<float const> const og = gh.g;
+    std::span<float const> const oh = gh.h;
     parallel::for_each_index(
         selected.size(),
         [&](size_t s)
@@ -104,7 +104,7 @@ void fill_feature_parallel(Dataset const &ds, floats_view grad, floats_view hess
                 fid,
                 [&](auto bins)
                 {
-                    row_id_t const *rows = split_input.rows.data();
+                    std::span<row_id_t const> const rows = split_input.rows;
                     // Hoisted out of the row loop: the hessian selector is
                     // loop-invariant, and this is the fill's innermost work.
                     auto add = [&](auto hess_of)
@@ -145,7 +145,7 @@ void fill_feature_parallel(Dataset const &ds, floats_view grad, floats_view hess
                         }
                         gather(hess_of);
                     };
-                    if (oh == nullptr)
+                    if (oh.empty())
                     {
                         fill([](size_t) { return 1.0F; });
                     }
@@ -325,8 +325,8 @@ using PartialsView = std::mdspan<HistCell, std::dextents<size_t, 2>>;
 // per slot saying whether this slice has zeroed it yet.
 struct Partials
 {
-    PartialsView cells;
-    uint8_t     *used;
+    PartialsView       cells;
+    std::span<uint8_t> used;
 };
 
 // How a byte of the row's bins becomes a histogram cell address.
@@ -342,30 +342,32 @@ enum class CellMode : uint8_t
 // (indexed from `slice.s0`), and the addressing mode.
 struct FillTarget
 {
-    MirrorSlice const  &slice;
-    uint8_t const      *rm;
-    HistCell *const    *bases;
-    feature_id_t const *selected;
-    CellMode            mode;
+    MirrorSlice const            &slice;
+    std::span<uint8_t const>      rm;
+    std::span<HistCell *const>    bases;
+    std::span<feature_id_t const> selected;
+    CellMode                      mode;
 };
 
 // Accumulates rows [first, last) of one node into `target`, reading each row's
 // bins as contiguous bytes of the slice's mirror tile and grad/hess once per
 // row. NodeOrder says grad/hess are already gathered into the node's row
-// order, so they are read at the row's position instead of its id. A null
+// order, so they are read at the row's position instead of its id. An empty
 // `hess` is the unit hessian: every row adds the literal 1.0F.
 template <bool NodeOrder = false>
-void fill_rows(SplitInput const &node, size_t first, size_t last, float const *grad,
-               float const *hess, FillTarget const &target)
+void fill_rows(SplitInput const &node, size_t first, size_t last, floats_view grad,
+               floats_view hess, FillTarget const &target)
 {
-    uint8_t const *const      rm_ptr   = target.rm;
-    HistCell *const *const    base_ptr = target.bases;
-    feature_id_t const *const sel_ptr  = target.selected;
-    size_t const              width    = target.slice.rm_width;
-    size_t const              s0       = target.slice.s0;
-    size_t const              fid0     = target.slice.fid0;
-    size_t const              n_sel_b  = target.slice.n_selected();
-    row_id_t const           *rows     = node.rows.data();
+    // The mirror is walked by hand from one base: a row's bins are
+    // rm_ptr + (row * width), which is this loop's whole addressing.
+    uint8_t const *const                rm_ptr  = target.rm.data();
+    std::span<HistCell *const> const    bases   = target.bases;
+    std::span<feature_id_t const> const sel     = target.selected;
+    size_t const                        width   = target.slice.rm_width;
+    size_t const                        s0      = target.slice.s0;
+    size_t const                        fid0    = target.slice.fid0;
+    size_t const                        n_sel_b = target.slice.n_selected();
+    std::span<row_id_t const> const     rows    = node.rows;
     // Prefetch distance: the row loop is DRAM-latency-bound at depth, and the
     // lookahead reads the node's row list rather than this chunk's, so a chunk
     // boundary costs no dead zone (docs/architecture/7-parallel.md). Reads
@@ -381,8 +383,7 @@ void fill_rows(SplitInput const &node, size_t first, size_t last, float const *g
     // sampling. Direct fills into a u8 node compute the cell address
     // arithmetically over the node's padded arena (feature stride 256), with
     // no per-feature base load at all.
-    ArenaView const a0{target.mode == CellMode::uniform ? base_ptr[0] : nullptr,
-                       n_sel_b};
+    ArenaView const a0{target.mode == CellMode::uniform ? bases[0] : nullptr, n_sel_b};
     // The hessian source is a compile-time choice, not a per-row test: this is
     // the fill's innermost loop and a branch inside it costs more than the
     // load it skips.
@@ -399,10 +400,10 @@ void fill_rows(SplitInput const &node, size_t first, size_t last, float const *g
                     __builtin_prefetch(rm_ptr + (rp * width) + 64, 0, 0);
                     if constexpr (!NodeOrder)
                     {
-                        __builtin_prefetch(grad + rp, 0, 0);
+                        __builtin_prefetch(&grad[rp], 0, 0);
                         if constexpr (!decltype(unit_hess)::value)
                         {
-                            __builtin_prefetch(hess + rp, 0, 0);
+                            __builtin_prefetch(&hess[rp], 0, 0);
                         }
                     }
                 }
@@ -432,16 +433,15 @@ void fill_rows(SplitInput const &node, size_t first, size_t last, float const *g
         else if (target.mode == CellMode::dense)
         {
             run_rows([&](size_t s, uint8_t const *row_bins) -> HistCell &
-                     { return base_ptr[s][row_bins[s]]; }, unit_hess);
+                     { return bases[s][row_bins[s]]; }, unit_hess);
         }
         else
         {
             run_rows([&](size_t s, uint8_t const *row_bins) -> HistCell &
-                     { return base_ptr[s][row_bins[sel_ptr[s0 + s] - fid0]]; },
-                     unit_hess);
+                     { return bases[s][row_bins[sel[s0 + s] - fid0]]; }, unit_hess);
         }
     };
-    if (hess == nullptr)
+    if (hess.empty())
     {
         by_mode(std::true_type{});
     }
@@ -558,19 +558,17 @@ void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes, Dataset con
     size_t const row_cells          = padded ? n_sel_b * k_feature_stride : sl.cells;
     std::span<HistCell> const cells = partials_storage(plan.n_slots * row_cells);
     touched.assign(plan.n_slots, 0);
-    // Capture views and raw pointers: naming a thread_local inside the
-    // parallel region would resolve to each worker's own (empty) container.
-    PartialsView const        view{cells.data(), plan.n_slots, row_cells};
-    Partials const            parts{.cells = view, .used = touched.data()};
-    size_t const             *off_ptr   = sp.offsets.data();
-    feature_id_t const *const sel_ptr   = selected.data();
-    uint8_t const *const      rm_ptr    = ds.row_major_bins().data() + sl.rm_base;
-    RowChunk const *const     chunk_ptr = plan.chunks.data();
-    ReduceNode const *const   rn_ptr    = plan.nodes.data();
-    std::reference_wrapper<SplitInput> const *node_ptr = nodes.data();
+    // Capture views, not the containers: naming a thread_local inside the
+    // parallel region would resolve to each worker's own (empty) one.
+    PartialsView const                view{cells.data(), plan.n_slots, row_cells};
+    Partials const                    parts{.cells = view, .used = touched};
+    std::span<size_t const> const     off    = sp.offsets;
+    std::span<uint8_t const> const    rm     = ds.row_major_bins().subspan(sl.rm_base);
+    std::span<RowChunk const> const   chunks = plan.chunks;
+    std::span<ReduceNode const> const rns    = plan.nodes;
     // Where selected feature s starts inside one partial row.
-    auto const part_cell = [&, off_ptr](size_t s)
-    { return padded ? (s - sl.s0) * k_feature_stride : off_ptr[s] - sl.cell0; };
+    auto const part_cell = [&, off](size_t s)
+    { return padded ? (s - sl.s0) * k_feature_stride : off[s] - sl.cell0; };
     // A fully selected tile over padded cells addresses arithmetically, with
     // no per-feature base load; anything else loads a base per feature.
     CellMode const mode = dense_sel && padded ? CellMode::uniform
@@ -580,15 +578,15 @@ void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes, Dataset con
     // index, so which worker picks it up changes nothing.
     parallel::for_each_index(
         plan.n_threads,
-        [&, parts, sel_ptr, rm_ptr, chunk_ptr, rn_ptr, node_ptr](size_t t)
+        [&, parts, selected, rm, chunks, rns, nodes](size_t t)
         {
             static thread_local std::vector<HistCell *> bases;
             bases.resize(n_sel_b);
             size_t last_node = nodes.size();
             for (size_t i = plan.begin(t); i < plan.begin(t + 1); ++i)
             {
-                RowChunk const   &chunk  = chunk_ptr[i];
-                ReduceNode const &rn     = rn_ptr[chunk.node];
+                RowChunk const   &chunk  = chunks[i];
+                ReduceNode const &rn     = rns[chunk.node];
                 bool const        direct = t == rn.first_thread;
                 size_t const slot = direct ? 0 : rn.slot0 + (t - rn.first_thread - 1);
                 if (!direct && parts.used[slot] == 0)
@@ -598,34 +596,34 @@ void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes, Dataset con
                 }
                 if (chunk.node != last_node)
                 {
-                    SplitInput &node = node_ptr[chunk.node];
+                    SplitInput &node = nodes[chunk.node];
                     for (size_t s = sl.s0; s < sl.s1; ++s)
                     {
                         bases[s - sl.s0] = direct
-                                               ? node.hists[sel_ptr[s]].cells().data()
+                                               ? node.hists[selected[s]].cells().data()
                                                : &parts.cells[slot, part_cell(s)];
                     }
                     last_node = chunk.node;
                 }
                 FillTarget const target{.slice    = sl,
-                                        .rm       = rm_ptr,
-                                        .bases    = bases.data(),
-                                        .selected = sel_ptr,
+                                        .rm       = rm,
+                                        .bases    = bases,
+                                        .selected = selected,
                                         .mode     = mode};
-                fill_rows(node_ptr[chunk.node], chunk.first, chunk.last, grad.data(),
-                          hess.data(), target);
+                fill_rows(nodes[chunk.node], chunk.first, chunk.last, grad, hess,
+                          target);
             }
         });
-    size_t const *const red_ptr = plan.reduce_nodes.data();
+    std::span<size_t const> const reds = plan.reduce_nodes;
     parallel::for_each_index(
         plan.reduce_nodes.size() * n_sel_b,
-        [&, parts, sel_ptr, rn_ptr, node_ptr, red_ptr](size_t j)
+        [&, parts, selected, rns, nodes, reds](size_t j)
         {
-            size_t const      ni   = red_ptr[j / n_sel_b];
-            ReduceNode const &rn   = rn_ptr[ni];
+            size_t const      ni   = reds[j / n_sel_b];
+            ReduceNode const &rn   = rns[ni];
             size_t const      s    = sl.s0 + (j % n_sel_b);
             size_t const      cell = part_cell(s);
-            Histogram        &h    = node_ptr[ni].get().hists[sel_ptr[s]];
+            Histogram        &h    = nodes[ni].get().hists[selected[s]];
             for (size_t t = rn.first_thread + 1; t <= rn.last_thread; ++t)
             {
                 size_t const slot = rn.slot0 + (t - rn.first_thread - 1);
@@ -685,7 +683,7 @@ struct FillBlock
 void fill_lone(Dataset const &ds, SplitInput &node,
                std::span<feature_id_t const> selected, SelectionPlan const &sp,
                ArenaLayout const *carve, NodeHistograms *sibling, size_t ranges,
-               size_t blocks, OrderedGh const &gh)
+               size_t blocks, GhView const &gh)
 {
     size_t const              n         = node.rows.size();
     size_t const              n_sel     = selected.size();
@@ -711,17 +709,16 @@ void fill_lone(Dataset const &ds, SplitInput &node,
             }
         }
     }
-    uint8_t const *const      rm_all  = ds.row_major_bins().data();
-    feature_id_t const *const sel_ptr = selected.data();
-    NodeHistograms           &hists   = node.hists;
-    // Capture a raw pointer: naming the thread_local inside the parallel
-    // region would resolve to each worker's own (empty) vector.
-    FillBlock const *const work_ptr = work.data();
+    std::span<uint8_t const> const rm_all = ds.row_major_bins();
+    NodeHistograms                &hists  = node.hists;
+    // Capture a view, not the container: naming the thread_local inside the
+    // parallel region would resolve to each worker's own (empty) vector.
+    std::span<FillBlock const> const items = work;
     parallel::for_each_index_on(
         static_cast<int>(ranges * blocks), work.size(),
-        [&, view, rm_all, sel_ptr, work_ptr](size_t t)
+        [&, view, rm_all, selected, items](size_t t)
         {
-            FillBlock const   &r      = work_ptr[t];
+            FillBlock const   &r      = items[t];
             MirrorSlice const &sl     = sp.slices[r.slice];
             bool const         direct = r.block == 0;
             // A fully selected tile indexes the row's bins directly, so the
@@ -738,7 +735,7 @@ void fill_lone(Dataset const &ds, SplitInput &node,
             HistCell *const   part    = direct ? nullptr : &view[r.block - 1, 0];
             auto const        base_of = [&](size_t s)
             {
-                return direct ? hists[sel_ptr[s]].cells().data()
+                return direct ? hists[selected[s]].cells().data()
                               : part + (s * k_feature_stride);
             };
             if (direct)
@@ -767,9 +764,9 @@ void fill_lone(Dataset const &ds, SplitInput &node,
                 }
             }
             FillTarget const target{.slice    = sub,
-                                    .rm       = rm_all + sl.rm_base + r.b0,
-                                    .bases    = bases.data(),
-                                    .selected = sel_ptr,
+                                    .rm       = rm_all.subspan(sl.rm_base + r.b0),
+                                    .bases    = bases,
+                                    .selected = selected,
                                     .mode     = dense_sel ? CellMode::uniform
                                                           : CellMode::gathered};
             fill_rows<true>(node, n * r.block / blocks, n * (r.block + 1) / blocks,
@@ -778,7 +775,7 @@ void fill_lone(Dataset const &ds, SplitInput &node,
             {
                 for (size_t s = sub.s0; s < sub.s1; ++s)
                 {
-                    (*sibling)[sel_ptr[s]] -= hists[sel_ptr[s]];
+                    (*sibling)[selected[s]] -= hists[selected[s]];
                 }
             }
         });
@@ -790,16 +787,16 @@ void fill_lone(Dataset const &ds, SplitInput &node,
     // until a feature's partials are in, so the fill cannot carry it.
     parallel::for_each_index_on(
         static_cast<int>(ranges * blocks), n_sel,
-        [&, view, sel_ptr](size_t s)
+        [&, view, selected](size_t s)
         {
-            Histogram &h = hists[sel_ptr[s]];
+            Histogram &h = hists[selected[s]];
             for (size_t j = 1; j < blocks; ++j)
             {
                 h.add_cells({&view[j - 1, s * k_feature_stride], h.size()});
             }
             if (sibling != nullptr)
             {
-                (*sibling)[sel_ptr[s]] -= h;
+                (*sibling)[selected[s]] -= h;
             }
         });
 }
