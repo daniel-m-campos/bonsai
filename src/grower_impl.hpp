@@ -26,6 +26,7 @@
 #include <numeric>
 #include <print>
 #include <random>
+#include <ranges>
 #include <span>
 #include <string>
 #include <utility>
@@ -781,8 +782,10 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
         for (auto const &c : heap)
         {
             step.leaf(c.node.id, c.slot);
-            gd::finalize_as_leaf(nodes, c.node, config_, n_leaves, values, leaf_ids);
+            gd::write_leaf(nodes, c.node, config_, n_leaves);
         }
+        gd::stamp_leaf_rows(nodes, heap | std::views::transform(&gd::Candidate::node),
+                            values, leaf_ids);
         // Device plane: every leaf's segment is stamped and the per-row values
         // download here, so the out-of-bag routing below still has the last
         // word. In resident mode the device route+add already scored every row,
