@@ -30,7 +30,7 @@ void cuda_select_device(uint32_t device_id);
 // Dataset::bin to carry. Returns nullptr — leaving the caller on the host
 // fill — when the build has no backend, no usable device is present, or the
 // dataset's total bins exceed the resident path's shared-memory ceiling
-// (grow would decline into the host fallback anyway). Bin ids are
+// (grow would refuse such a dataset on the device anyway). Bin ids are
 // bit-identical to the host fill over the same mappers.
 std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const &batch,
                                                BinMappers const          &mappers);
@@ -61,8 +61,8 @@ void cuda_gather_rows(DeviceMatrix const &X, std::span<uint32_t const> rows,
 // Bins a device-resident matrix in place: the same kernel over the same cuts
 // as cuda_ingest, with no host-to-device copy, so bin ids are bit-identical to
 // both the host fill and cuda_ingest. Unlike cuda_ingest this never declines
-// on bin count: there is no host copy of the matrix to fall back to, and a
-// grower that declines materializes host bins from the plane instead.
+// on bin count: there is no host copy of the matrix to bin instead, and a
+// host grower materializes host bins from the plane.
 std::shared_ptr<IngestPlane const> cuda_ingest_device(DeviceMatrix const &X,
                                                       BinMappers const   &mappers);
 
@@ -82,8 +82,10 @@ class CudaHistogramEngine
     CudaHistogramEngine &operator=(CudaHistogramEngine const &) = delete;
 
     // --- HistogramEngine concept (required): begin_tree stages the per-tree
-    // gradient upload; populate is the CPU fallback for trees begin_root
-    // declines (the GPU copy-back path was retired by decision 41).
+    // gradient upload. populate is the concept's per-node fill, which this
+    // engine does not implement and which nothing calls: its nodes are built
+    // on the device, and a tree the device cannot hold is refused by
+    // begin_root rather than moved to the host.
     void begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
     void populate(Dataset const &ds, floats_view grad, floats_view hess,
                   SplitInput &split_input, std::span<feature_id_t const> selected);
@@ -92,8 +94,7 @@ class CudaHistogramEngine
     // docs/architecture/11-gpu-resident.md). Level histograms stay on the device, keyed
     // by the node's index in the grower's frontier ("slot"); splits are found on the
     // device and only decisions and child sums cross the bus. The depthwise grower
-    // gates this whole cluster on the GPULevelEngine concept; the splitter
-    // policy remains the host fallback when begin_root declines.
+    // gates this whole cluster on the GPULevelEngine concept.
 
     // One child-level derivation: the smaller child's histogram builds from
     // its device row segment; the larger derives on-device as parent minus
@@ -139,11 +140,11 @@ class CudaHistogramEngine
         bool         is_leaf      = false;
     };
 
-    // Starts the resident path for this tree: builds the root histogram into
-    // slot 0 and fills root.sums/row_count. Returns false (leaving root
-    // untouched) when the resident path cannot run — no device, or a feature's
-    // bins exceed the shared-memory budget — and the caller uses populate.
-    bool begin_root(Dataset const &ds, floats_view grad, floats_view hess,
+    // Starts this tree on the device: builds the root histogram into slot 0
+    // and fills root.sums/row_count. Throws ConfigError when the device cannot
+    // hold the tree (a feature's bins exceed the shared-memory budget), naming
+    // the limit and the host-plane remedy.
+    void begin_root(Dataset const &ds, floats_view grad, floats_view hess,
                     SplitInput &root, std::span<feature_id_t const> selected);
     // Records final leaf assignment for every row in the given slots'
     // segments (call before the level advances past them).
@@ -216,10 +217,10 @@ class CudaHistogramEngine
     };
 
     // Opens the tree's slot pool and builds the root into slot 0, filling
-    // root.sums/row_count. Returns false (leaving root untouched) when the
-    // histogram or pool budget declines, and the caller trains this tree on
-    // the host plane.
-    bool leaf_begin_root(Dataset const &ds, TreeConfig const &config, floats_view grad,
+    // root.sums/row_count. Throws ConfigError when the histogram or the pool
+    // budget cannot hold the tree, naming the limit and the host-plane
+    // remedy.
+    void leaf_begin_root(Dataset const &ds, TreeConfig const &config, floats_view grad,
                          floats_view hess, SplitInput &root,
                          std::span<feature_id_t const> selected);
     // Routes one leaf's rows into two adjacent subranges of its own segment.
@@ -255,8 +256,8 @@ class CudaHistogramEngine
     // The leaf plane's arming: the level plane's gate plus the leaf plane's
     // own, applied once per fit over EVERY feature and the full leaf budget.
     // Feature subsampling can only narrow a tree's demand, so an arming that
-    // passes this bound leaves no tree able to decline into a host-gradient
-    // path; a config that would only fit per tree simply never arms.
+    // passes this bound leaves no tree able to fail the per-tree test; a
+    // config that would only fit per tree simply never arms.
     bool resident_begin_leaf(Dataset const &ds, TreeConfig const &config,
                              DeviceObjectiveKind    kind,
                              std::span<float const> initial_scores,

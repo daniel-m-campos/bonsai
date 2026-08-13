@@ -31,8 +31,8 @@ inline constexpr size_t k_min_gpu_rows = 512;
 
 // Default shared-memory histogram footprint cap (stride floats, 48 KiB
 // static budget). The engine raises it at runtime to the device's opt-in
-// limit (~99 KiB on consumer parts, 227 KiB on sm_90), moving the CPU
-// fallback cliff from ~3k to ~6k+ bins per feature.
+// limit (~99 KiB on consumer parts, 227 KiB on sm_90), moving the bin count
+// the device refuses from ~3k to ~6k+ per feature.
 inline constexpr size_t k_max_shared_bytes = 48UL * 1024UL;
 
 // --- The device bin plane's layout, in one place ----------------------------

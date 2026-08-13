@@ -45,16 +45,28 @@ template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT> class Leaf
     // Opens the tree and seeds the heap: the root node plus its best split.
     Candidate open_root(row_index_view row_indices)
     {
-        return host_open_root(engine_, ds_, config_, grad_, hess_, selected_,
-                              row_indices);
+        GrowProfiler::Lap lap;
+        SplitInput        root;
+        root.id = 0;
+        root.rows.assign(row_indices.begin(), row_indices.end());
+        engine_.populate(ds_, grad_, hess_, root, selected_);
+        root.sums      = root.totals();
+        root.row_count = root.rows.size();
+        lap(GrowProfiler::instance().populate_s);
+        std::array<SplitOutput, 1> split{};
+        SplitterT::find_parallel({&root, 1}, config_, split);
+        lap(GrowProfiler::instance().find_s);
+        return {.node = std::move(root), .split = split[0], .depth = 0};
     }
 
     // Routes the popped candidate's rows into its two children: they come back
     // with rows, histograms, and totals, their splits still empty.
     ChildPair split_children(Candidate &c, node_id_t left_id, node_id_t right_id)
     {
-        return host_split_children(engine_, ds_, grad_, hess_, selected_, c, left_id,
-                                   right_id);
+        auto [left, right] = split_node(ds_, grad_, hess_, std::move(c.node), c.split,
+                                        left_id, right_id, selected_, engine_);
+        return {.nodes = {std::move(left), std::move(right)},
+                .depth = static_cast<uint8_t>(c.depth + 1)};
     }
 
     // A split whose partition emptied one child demotes back to a leaf: the
@@ -62,61 +74,6 @@ template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT> class Leaf
     // parent's id and bounds.
     SplitInput demoted_leaf(Candidate const &c, ChildPair &pair, double parent_lo,
                             double parent_hi)
-    {
-        return host_demoted_leaf(c, pair, parent_lo, parent_hi);
-    }
-
-    // Each child's best split, once its histograms are ready. At the depth cap
-    // the children can only be leaves, so no split is looked for.
-    void find_children(ChildPair &pair, bool may_split)
-    {
-        host_find_children(config_, pair, may_split);
-    }
-
-    // This node is final; the host plane already stamped its rows.
-    void leaf(node_id_t /*id*/, uint32_t /*slot*/) {}
-
-    void end_tree(DenseTree::Nodes const & /*nodes*/, train_leaf_values & /*values*/,
-                  std::vector<node_id_t> & /*leaf_ids*/)
-    {
-    }
-
-    // --- shared host ops (the GPU specialization's fallback calls these) ----
-
-    template <HistogramEngine E>
-    static Candidate host_open_root(E &engine, Dataset const &ds,
-                                    TreeConfig const &config, floats_view grad,
-                                    floats_view hess, feature_view selected,
-                                    row_index_view row_indices)
-    {
-        GrowProfiler::Lap lap;
-        SplitInput        root;
-        root.id = 0;
-        root.rows.assign(row_indices.begin(), row_indices.end());
-        engine.populate(ds, grad, hess, root, selected);
-        root.sums      = root.totals();
-        root.row_count = root.rows.size();
-        lap(GrowProfiler::instance().populate_s);
-        std::array<SplitOutput, 1> split{};
-        SplitterT::find_parallel({&root, 1}, config, split);
-        lap(GrowProfiler::instance().find_s);
-        return {.node = std::move(root), .split = split[0], .depth = 0};
-    }
-
-    template <HistogramEngine E>
-    static ChildPair host_split_children(E &engine, Dataset const &ds, floats_view grad,
-                                         floats_view hess, feature_view selected,
-                                         Candidate &c, node_id_t left_id,
-                                         node_id_t right_id)
-    {
-        auto [left, right] = split_node(ds, grad, hess, std::move(c.node), c.split,
-                                        left_id, right_id, selected, engine);
-        return {.nodes = {std::move(left), std::move(right)},
-                .depth = static_cast<uint8_t>(c.depth + 1)};
-    }
-
-    static SplitInput host_demoted_leaf(Candidate const &c, ChildPair &pair,
-                                        double parent_lo, double parent_hi)
     {
         SplitInput &survivor =
             pair.nodes[0].rows.empty() ? pair.nodes[1] : pair.nodes[0];
@@ -126,11 +83,12 @@ template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT> class Leaf
         return std::move(survivor);
     }
 
-    // Best-first growth has no frontier to spread across workers, so a node
-    // takes its parallelism over features. A split's two children go in
-    // together: one parallel region, not two.
-    static void host_find_children(TreeConfig const &config, ChildPair &pair,
-                                   bool may_split)
+    // Each child's best split, once its histograms are ready. Best-first growth
+    // has no frontier to spread across workers, so a node takes its parallelism
+    // over features and a split's two children go in together: one parallel
+    // region, not two. At the depth cap the children can only be leaves, so no
+    // split is looked for.
+    void find_children(ChildPair &pair, bool may_split)
     {
         Phase<&GrowProfiler::find_s> phase;
         if (!may_split)
@@ -138,7 +96,15 @@ template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT> class Leaf
             pair.splits = {};
             return;
         }
-        SplitterT::find_parallel(pair.nodes, config, pair.splits);
+        SplitterT::find_parallel(pair.nodes, config_, pair.splits);
+    }
+
+    // This node is final; the host plane already stamped its rows.
+    void leaf(node_id_t /*id*/, uint32_t /*slot*/) {}
+
+    void end_tree(DenseTree::Nodes const & /*nodes*/, train_leaf_values & /*values*/,
+                  std::vector<node_id_t> & /*leaf_ids*/)
+    {
     }
 
   protected:
@@ -152,10 +118,9 @@ template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT> class Leaf
 
 // ---------------------------------------------------------------------------
 // GPU leaf plane (docs/architecture/20-cuda-leafwise.md): one histogram slot
-// pool per tree, one partition per heap pop, and the same one runtime fork the
-// level plane has — leaf_begin_root declines (oversized max_bin, pool won't
-// fit) and the step falls back to the host ops above for the rest of the tree.
-// There is no per-node fallback: a tree is device-resident or it is not.
+// pool per tree and one partition per heap pop. Every tree runs on the device:
+// leaf_begin_root refuses a tree whose histograms or slot pool the device
+// cannot hold rather than moving it to the host plane.
 template <GPULeafEngine EngineT, ParallelNodeSplitFinder SplitterT>
 class LeafStep<EngineT, SplitterT>
 {
@@ -175,8 +140,7 @@ class LeafStep<EngineT, SplitterT>
         root.id = 0;
         // Identity contract, as on the level plane: a full-data fit passes
         // empty rows + row_count and the permutation never crosses the bus.
-        bool const identity = row_indices.size() == ds_.n_rows();
-        if (identity)
+        if (row_indices.size() == ds_.n_rows())
         {
             root.row_count = row_indices.size();
         }
@@ -184,27 +148,7 @@ class LeafStep<EngineT, SplitterT>
         {
             root.rows.assign(row_indices.begin(), row_indices.end());
         }
-        on_device_ =
-            engine_.leaf_begin_root(ds_, config_, grad_, hess_, root, selected_);
-        if (!on_device_)
-        {
-            if (identity)
-            {
-                // The host fallback walks explicit row lists; row_count must
-                // drop back to 0 or totals() would return the zeroed cached
-                // sums instead of the histogram totals populate is about to
-                // build (SplitInput's cached-statistics contract).
-                root.rows.assign(row_indices.begin(), row_indices.end());
-                root.row_count = 0;
-            }
-            engine_.populate(ds_, grad_, hess_, root, selected_);
-            root.sums      = root.totals();
-            root.row_count = root.rows.size();
-            lap(GrowProfiler::instance().populate_s);
-            SplitOutput const split = SplitterT::find(root, config_);
-            lap(GrowProfiler::instance().find_s);
-            return {.node = std::move(root), .split = split, .depth = 0};
-        }
+        engine_.leaf_begin_root(ds_, config_, grad_, hess_, root, selected_);
         lap(GrowProfiler::instance().populate_s);
         std::array<uint32_t, 1> const slots{0};
         std::array<SplitOutput, 1>    out{};
@@ -224,11 +168,6 @@ class LeafStep<EngineT, SplitterT>
     // find already produced; rows never cross the bus.
     ChildPair split_children(Candidate &c, node_id_t left_id, node_id_t right_id)
     {
-        if (!on_device_)
-        {
-            return HostStep::host_split_children(engine_, ds_, grad_, hess_, selected_,
-                                                 c, left_id, right_id);
-        }
         Phase<&GrowProfiler::partition_s>  phase;
         typename EngineT::LeafPartOp const op{c.slot, c.split.feature_id,
                                               c.split.bin_id, c.split.default_left};
@@ -247,13 +186,9 @@ class LeafStep<EngineT, SplitterT>
 
     // Device demotion: the partition took no slot, so the parent keeps its
     // histogram, its segment, and its totals, and becomes the leaf itself.
-    SplitInput demoted_leaf(Candidate &c, ChildPair &pair, double parent_lo,
-                            double parent_hi)
+    SplitInput demoted_leaf(Candidate &c, ChildPair & /*pair*/, double /*parent_lo*/,
+                            double /*parent_hi*/)
     {
-        if (!on_device_)
-        {
-            return HostStep::host_demoted_leaf(c, pair, parent_lo, parent_hi);
-        }
         return std::move(c.node);
     }
 
@@ -261,11 +196,6 @@ class LeafStep<EngineT, SplitterT>
     // in place in the slot it inherited, and one find covers both.
     void find_children(ChildPair &pair, bool may_split)
     {
-        if (!on_device_)
-        {
-            HostStep::host_find_children(config_, pair, may_split);
-            return;
-        }
         if (!may_split)
         {
             // The children are leaves at the depth cap: their histograms would
@@ -292,7 +222,7 @@ class LeafStep<EngineT, SplitterT>
     // assignment and nothing is stamped.
     void leaf(node_id_t id, uint32_t slot)
     {
-        if (on_device_ && !resident_)
+        if (!resident_)
         {
             stamps_.push_back({slot, id});
         }
@@ -306,10 +236,6 @@ class LeafStep<EngineT, SplitterT>
     void end_tree(DenseTree::Nodes const &nodes, train_leaf_values &values,
                   std::vector<node_id_t> &leaf_ids)
     {
-        if (!on_device_)
-        {
-            return;
-        }
         if (resident_)
         {
             engine_.resident_finalize(
@@ -327,10 +253,6 @@ class LeafStep<EngineT, SplitterT>
     }
 
   private:
-    // The host ops are static on the primary template; name it with a host
-    // engine stand-in so the fallback arms reuse them without duplication.
-    using HostStep = LeafStep<CpuHistogramEngine, SplitterT>;
-
     EngineT                                 &engine_;
     Dataset const                           &ds_;
     TreeConfig const                        &config_;
@@ -338,7 +260,6 @@ class LeafStep<EngineT, SplitterT>
     floats_view                              hess_;
     feature_view                             selected_;
     std::vector<typename EngineT::LeafStamp> stamps_;
-    bool                                     on_device_ = false;
     // Captured once at construction: arming happens per fit before any tree
     // opens (see LeafwiseGrower::resident_begin), so it cannot change while
     // this step is alive.

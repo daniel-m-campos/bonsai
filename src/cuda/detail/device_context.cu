@@ -5,6 +5,7 @@
 // is a move-only split of the former header-only implementation: no logic,
 // ordering, or launch changes.
 
+#include "bonsai/config/errors.hpp"
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/dataset.hpp"
@@ -24,6 +25,7 @@
 #include <memory>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 #include <vector_types.h>
@@ -49,6 +51,40 @@ constexpr uint32_t k_sum_blocks = 64;
 
 namespace
 {
+
+// What a tree the device cannot hold is answered with. The device plane has no
+// host fallback: a configuration the kernels cannot serve is a configuration
+// error, named where it is decided, the way the reference GPU trainers answer
+// it (silently hopping to the host trained a wrong model once, cd4e726, and
+// hid a large slowdown the rest of the time).
+[[noreturn]] void refuse_hist_budget(size_t max_bins, size_t limit)
+{
+    throw ConfigError(
+        "cuda: the widest selected feature has " + std::to_string(max_bins) +
+        " bins, so one node histogram needs " +
+        std::to_string(4 * max_bins * sizeof(float)) +
+        " bytes of shared memory, above this device's " + std::to_string(limit) +
+        "-byte limit. Lower bin_mapper.max_bin, or train on the host plane "
+        "(device=\"cpu\", or a dispatch.grower_name without the cuda_ prefix).");
+}
+
+[[noreturn]] void refuse_leaf_pool(size_t max_slots, size_t n_selected, size_t max_bins)
+{
+    throw ConfigError(
+        "cuda_leafwise: a leaf budget of " + std::to_string(max_slots) +
+        " leaves over " + std::to_string(n_selected) + " features at " +
+        std::to_string(max_bins) +
+        " bins needs a histogram pool larger than a quarter of this device's free "
+        "memory. Lower tree.max_leaves or bin_mapper.max_bin, or train on the host "
+        "plane (device=\"cpu\", or a dispatch.grower_name without the cuda_ prefix).");
+}
+
+[[noreturn]] void refuse_empty_selection()
+{
+    throw ConfigError("cuda: this tree selected no features; raise "
+                      "tree.feature_fraction, or train on the host plane "
+                      "(device=\"cpu\").");
+}
 
 // Host columns out of the tiled plane: a column is one strip position, so the
 // copy comes home a tile at a time in row chunks and the strips scatter into
@@ -398,7 +434,8 @@ void CudaDeviceContext::note_plane(bool tiled, size_t shared)
 // Every shared-memory histogram build goes through here, depthwise and leaf
 // alike: the tiled kernel when one tile's sub-histograms fit the static
 // budget, else one feature per block, which reads the same plane a cell at a
-// time. The fallback is what keeps the wide-bin envelope the opt-in opened.
+// time. That second kernel is what keeps the wide-bin envelope the opt-in
+// opened.
 void CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
                                     uint32_t n_nodes, uint32_t n_chunks,
                                     float2 const *gh, uint32_t const *rows,
@@ -568,7 +605,7 @@ uint32_t CudaDeviceContext::stage_root_rows(SplitInput const &root, bool identit
     return n;
 }
 
-bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
+void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
                                    floats_view hess, SplitInput &root,
                                    std::span<feature_id_t const> selected)
 {
@@ -578,9 +615,13 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
         max_sel_bins = std::max(max_sel_bins, ds.n_bins(fid));
     }
     init_shared_limit();
-    if (selected.empty() || !hist_budget_ok(max_sel_bins))
+    if (selected.empty())
     {
-        return false; // the LevelStep falls back to host histogram building
+        refuse_empty_selection();
+    }
+    if (!hist_budget_ok(max_sel_bins))
+    {
+        refuse_hist_budget(max_sel_bins, shared_limit);
     }
     lvl.n_selected = static_cast<uint32_t>(selected.size());
     lvl.stride     = static_cast<uint32_t>(2 * max_sel_bins);
@@ -694,7 +735,6 @@ bool CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
         ++prof_counters.launches;
         ++prof_counters.gpu_nodes;
     }
-    return true;
 }
 
 void CudaDeviceContext::stamp_leaves(
@@ -1094,7 +1134,7 @@ bool CudaDeviceContext::leaf_budget_ok(TreeConfig const &config, size_t n_select
     return leaf_pool_ok(max_slots * slot_doubles * sizeof(double));
 }
 
-bool CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &config,
+void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &config,
                                         floats_view /*grad*/, floats_view /*hess*/,
                                         SplitInput                   &root,
                                         std::span<feature_id_t const> selected)
@@ -1105,16 +1145,27 @@ bool CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
         max_sel_bins = std::max(max_sel_bins, ds.n_bins(fid));
     }
     init_shared_limit();
-    // Resident mode decided this once per fit, over every feature and the same
-    // leaf budget: a decline here would leave the tree deriving gradients on a
-    // device the host cannot read.
-    if (!resident.armed && !leaf_budget_ok(config, selected.size(), max_sel_bins))
-    {
-        return false; // the LeafStep falls back to the host plane for this tree
-    }
     size_t const max_slots = leaf_max_slots(config);
-    lvl.n_selected         = static_cast<uint32_t>(selected.size());
-    lvl.stride             = static_cast<uint32_t>(2 * max_sel_bins);
+    // Resident mode decided this once per fit, over every feature and the same
+    // leaf budget, and the pool it then allocated is gone from the free memory
+    // a per-tree test would measure: once armed, the fit's capacity is settled.
+    if (!resident.armed)
+    {
+        if (selected.empty())
+        {
+            refuse_empty_selection();
+        }
+        if (!hist_budget_ok(max_sel_bins))
+        {
+            refuse_hist_budget(max_sel_bins, shared_limit);
+        }
+        if (!leaf_budget_ok(config, selected.size(), max_sel_bins))
+        {
+            refuse_leaf_pool(max_slots, selected.size(), max_sel_bins);
+        }
+    }
+    lvl.n_selected = static_cast<uint32_t>(selected.size());
+    lvl.stride     = static_cast<uint32_t>(2 * max_sel_bins);
     stage_selection(selected, ds.n_features());
     leaf.monotone.host.resize(ds.n_features());
     for (feature_id_t f = 0; f < ds.n_features(); ++f)
@@ -1184,7 +1235,6 @@ bool CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
         ++prof_counters.launches;
         ++prof_counters.gpu_nodes;
     }
-    return true;
 }
 
 CudaHistogramEngine::LeafRound
@@ -1447,12 +1497,12 @@ bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind ki
     }
     ensure_dataset(ds);
     init_shared_limit();
-    // Capacity must be decidable once per fit: every tree's begin_root must
-    // stay device-resident, or a per-node host fallback would read the empty
-    // resident grad/hess spans. Feature subsampling only ever narrows the
-    // selected set, so the worst case is the single widest feature; if that
-    // fits the shared budget (hist_budget_ok, the same predicate begin_root
-    // applies), no tree can decline.
+    // Capacity must be decidable once per fit: arming leaves grad/hess empty
+    // on the host, so a tree that then failed begin_root's test would refuse a
+    // fit that was already under way. Feature subsampling only ever narrows
+    // the selected set, so the worst case is the single widest feature; if
+    // that fits the shared budget (hist_budget_ok, the same predicate
+    // begin_root applies), no tree can fail it.
     if (ds.n_features() == 0 || initial_scores.size() != ds.n_rows() ||
         !hist_budget_ok(widest_bins(ds)))
     {

@@ -1,9 +1,9 @@
-// CUDA histogram-backend parity tests. Compiled in every build; each case
-// SKIPs at runtime unless cuda_available(). They exercise the real device:
-// scenarios are sized above the engine's CPU-fallback cutoff so populate
-// really launches kernels. GPU histograms accumulate per-chunk in float
-// (merged in double), and atomics add in arbitrary order, so comparisons
-// are tolerance-based rather than bit-exact.
+// CUDA grower parity tests. Compiled in every build; each case SKIPs at
+// runtime unless cuda_available(). GPU histograms accumulate per-chunk in
+// float (merged in double), and atomics add in arbitrary order, so
+// comparisons are tolerance-based rather than bit-exact. A configuration the
+// device cannot hold is refused with ConfigError, not moved to the host, so
+// the cases that used to assert host-fallback parity assert the error.
 
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/cuda/grower.hpp"
@@ -34,8 +34,7 @@ namespace
 
 using namespace bonsai;
 
-// 4096 rows (comfortably above the GPU engine's CPU-fallback cutoff, so
-// the device path actually runs) x 4 features with duplicates-heavy value
+// 4096 rows x 4 features with duplicates-heavy value
 // ranges and a NaN column so the missing bin is populated; seeded so
 // failures reproduce.
 test::ScenarioInputs random_scenario()
@@ -65,90 +64,6 @@ test::ScenarioInputs random_scenario()
             .grad  = std::move(grad),
             .hess  = std::move(hess),
             .rows  = test::iota_rows(n)};
-}
-
-// Float per-chunk accumulation bounds the error at ~1e-5 relative for the
-// few-thousand-row sums these scenarios produce.
-void require_hists_match(SplitInput const &cpu, SplitInput const &gpu)
-{
-    REQUIRE(cpu.hists.size() == gpu.hists.size());
-    for (size_t f = 0; f < cpu.hists.size(); ++f)
-    {
-        REQUIRE(cpu.hists[f].size() == gpu.hists[f].size());
-        for (size_t b = 0; b < cpu.hists[f].size(); ++b)
-        {
-            auto const bin = static_cast<bin_id_t>(b);
-            REQUIRE_THAT(
-                gpu.hists[f][bin].sum_grad,
-                Catch::Matchers::WithinRel(cpu.hists[f][bin].sum_grad, 1e-4F) ||
-                    Catch::Matchers::WithinAbs(cpu.hists[f][bin].sum_grad, 1e-5));
-            REQUIRE_THAT(
-                gpu.hists[f][bin].sum_hess,
-                Catch::Matchers::WithinRel(cpu.hists[f][bin].sum_hess, 1e-4F) ||
-                    Catch::Matchers::WithinAbs(cpu.hists[f][bin].sum_hess, 1e-5));
-        }
-    }
-}
-
-TEST_CASE("CudaHistogramEngine matches CPU histograms on all rows", "[cuda][histogram]")
-{
-    if (!cuda_available())
-    {
-        SKIP("no usable CUDA device");
-    }
-    auto        scenario = random_scenario();
-    auto const &ds       = scenario.built.ds;
-
-    std::vector<feature_id_t> selected(ds.n_features());
-    std::iota(selected.begin(), selected.end(), feature_id_t{0});
-
-    CpuHistogramEngine  cpu_engine;
-    CudaHistogramEngine gpu_engine;
-    gpu_engine.begin_tree(ds, scenario.grad, scenario.hess);
-
-    SplitInput cpu_node;
-    cpu_node.rows = scenario.rows;
-    cpu_engine.populate(ds, scenario.grad, scenario.hess, cpu_node, selected);
-
-    SplitInput gpu_node;
-    gpu_node.rows = scenario.rows;
-    gpu_engine.populate(ds, scenario.grad, scenario.hess, gpu_node, selected);
-
-    require_hists_match(cpu_node, gpu_node);
-}
-
-TEST_CASE("CudaHistogramEngine matches CPU histograms on a row subset",
-          "[cuda][histogram]")
-{
-    if (!cuda_available())
-    {
-        SKIP("no usable CUDA device");
-    }
-    auto        scenario = random_scenario();
-    auto const &ds       = scenario.built.ds;
-
-    // Every third row, plus a feature subset with a placeholder gap.
-    std::vector<row_id_t> rows;
-    for (row_id_t r = 0; r < ds.n_rows(); r += 3)
-    {
-        rows.push_back(r);
-    }
-    std::vector<feature_id_t> const selected{0, 2, 3};
-
-    CpuHistogramEngine  cpu_engine;
-    CudaHistogramEngine gpu_engine;
-    gpu_engine.begin_tree(ds, scenario.grad, scenario.hess);
-
-    SplitInput cpu_node;
-    cpu_node.rows = rows;
-    cpu_engine.populate(ds, scenario.grad, scenario.hess, cpu_node, selected);
-
-    SplitInput gpu_node;
-    gpu_node.rows = rows;
-    gpu_engine.populate(ds, scenario.grad, scenario.hess, gpu_node, selected);
-
-    REQUIRE(gpu_node.hists[1].size() == 0); // unselected placeholder
-    require_hists_match(cpu_node, gpu_node);
 }
 
 TEST_CASE("CudaDepthwiseGrower predictions match DepthwiseGrower", "[cuda][grower]")
@@ -553,16 +468,15 @@ TEST_CASE("CudaLeafwiseGrower matches CPU on a deep unconstrained tree",
     require_values_match(cpu.values, gpu.values);
 }
 
-TEST_CASE("CudaLeafwiseGrower declines an oversized leaf budget to the host plane",
-          "[cuda][grower][fit]")
+TEST_CASE("CudaLeafwiseGrower refuses an oversized leaf budget", "[cuda][grower][fit]")
 {
     if (!cuda_available())
     {
         SKIP("no usable CUDA device");
     }
-    // A leaf budget whose slot pool no device can hold: leaf_begin_root must
-    // decline wholesale and the tree trains on the host plane, silently and
-    // correctly (the depth cap is what actually bounds this tree).
+    // A leaf budget whose slot pool no device can hold. The tree is refused
+    // where the pool is sized, naming the budget: the alternative, training it
+    // on the host plane, is a silent 10x that reads as a working fit.
     auto        scenario = random_scenario();
     auto const &ds       = scenario.built.ds;
 
@@ -571,12 +485,9 @@ TEST_CASE("CudaLeafwiseGrower declines an oversized leaf budget to the host plan
     cfg.max_leaves       = 1U << 30U;
     cfg.min_data_in_leaf = 4;
 
-    LeafwiseGrower<CpuHistogramEngine> cpu_grower(cfg);
-    CudaLeafwiseGrower                 gpu_grower(cfg);
-
-    auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
-    auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
-    require_values_match(cpu.values, gpu.values);
+    CudaLeafwiseGrower gpu_grower(cfg);
+    REQUIRE_THROWS_AS(gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows),
+                      ConfigError);
 }
 
 TEST_CASE("CudaDepthwiseGrower handles consecutive trees and datasets",
@@ -622,9 +533,9 @@ TEST_CASE("CudaDepthwiseGrower matches CPU past the 48KiB shared-memory budget",
         SKIP("no usable CUDA device");
     }
     // ~4095 bins per feature: over the static 48KiB budget (3072 bins), so
-    // this exercises the dynamic shared-memory opt-in on devices that grant
-    // it and the CPU fallback on devices that don't — parity must hold
-    // either way.
+    // this exercises the dynamic shared-memory opt-in. A device that does not
+    // grant an opt-in this wide refuses the fit instead (see the max_bin case
+    // below); every device this suite runs on does.
     std::mt19937                          rng(11);
     std::uniform_real_distribution<float> value(0.0F, 1.0F);
     std::normal_distribution<float>       gradient(0.0F, 1.0F);
@@ -668,17 +579,17 @@ TEST_CASE("CudaDepthwiseGrower matches CPU past the 48KiB shared-memory budget",
     }
 }
 
-TEST_CASE("CudaObliviousGrower host fallback matches ObliviousGrower (issue #12)",
-          "[cuda][grower]")
+TEST_CASE("A max_bin past the shared-memory ceiling is refused", "[cuda][grower]")
 {
     if (!cuda_available())
     {
         SKIP("no usable CUDA device");
     }
     // ~16k bins per feature: 4*16384*4B = 256KiB of shared memory, past every
-    // device's opt-in ceiling, so begin_root declines and the whole tree runs
-    // the host-fallback plane. The fallback used to skip leaf stamping and
-    // silently train garbage (issue #12).
+    // device's opt-in ceiling. begin_root refuses the tree and names the
+    // limit; the host fallback this replaced trained a wrong model once
+    // (issue #12, fixed in cd4e726) and hid a large slowdown the rest of the
+    // time.
     std::mt19937                          rng(13);
     std::uniform_real_distribution<float> value(0.0F, 1.0F);
     std::normal_distribution<float>       gradient(0.0F, 1.0F);
@@ -699,29 +610,32 @@ TEST_CASE("CudaObliviousGrower host fallback matches ObliviousGrower (issue #12)
     }
     BinMapperConfig bm;
     // 24576, not 16384: decision 51's ceiling stride caps cuts at the budget,
-    // and 40960 rows at 16384 now bin to ~13.7k bins — below the smem opt-in
-    // ceiling this test must exceed to guarantee the fallback path.
+    // and 40960 rows at 16384 now bin to ~13.7k bins, below the smem opt-in
+    // ceiling this test must exceed.
     bm.max_bin         = 24576;
     BinMappers mappers = BinMappers::fit(batch, bm);
     Dataset    ds      = Dataset::bin(batch, mappers, {});
-    REQUIRE(4 * ds.n_bins(0) * sizeof(float) > 227UL * 1024UL); // must force fallback
+    REQUIRE(4 * ds.n_bins(0) * sizeof(float) > 227UL * 1024UL); // past every ceiling
 
     TreeConfig cfg;
     cfg.max_depth        = 4;
     cfg.min_data_in_leaf = 4;
 
-    ObliviousGrower<CpuHistogramEngine> cpu_grower(cfg);
-    CudaObliviousGrower                 gpu_grower(cfg);
-
     auto rows = test::iota_rows(n);
-    auto cpu  = cpu_grower.grow(ds, grad, hess, rows);
-    auto gpu  = gpu_grower.grow(ds, grad, hess, rows);
+    // Every device plane refuses it: level-batched growth and best-first
+    // growth gate on the same histogram budget.
+    CudaObliviousGrower oblivious(cfg);
+    REQUIRE_THROWS_AS(oblivious.grow(ds, grad, hess, rows), ConfigError);
+    CudaDepthwiseGrower depthwise(cfg);
+    REQUIRE_THROWS_AS(depthwise.grow(ds, grad, hess, rows), ConfigError);
+    CudaLeafwiseGrower leafwise(cfg);
+    REQUIRE_THROWS_AS(leafwise.grow(ds, grad, hess, rows), ConfigError);
 
-    REQUIRE(cpu.values.size() == gpu.values.size());
-    for (size_t r = 0; r < cpu.values.size(); ++r)
-    {
-        REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
-    }
+    // The host plane trains the same dataset without complaint: the refusal is
+    // a device-capacity fact, not a rejected dataset.
+    ObliviousGrower<CpuHistogramEngine> cpu_grower(cfg);
+    auto const                          cpu = cpu_grower.grow(ds, grad, hess, rows);
+    REQUIRE(cpu.values.size() == n);
 }
 
 // ---- The ingest transaction (decision 54) ------------------------------------

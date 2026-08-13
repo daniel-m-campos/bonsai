@@ -44,8 +44,8 @@ namespace cuda_detail
 // in this API, matching the gradient-boosting literature's convention.
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)
 
-// Per-device state and its operations. CudaHistogramEngine owns exactly one and
-// forwards through it; the CPU fallback engine stays in the wrapper.
+// Per-device state and its operations. CudaHistogramEngine owns exactly one
+// and forwards every call through it.
 struct CudaDeviceContext
 {
     // Identity of the uploaded dataset. The pointers are identity cookies
@@ -320,31 +320,31 @@ struct CudaDeviceContext
     bool   plane_noted   = false;
 
     // The one histogram-capacity predicate: a node's per-feature scratch is
-    // 4 * bins floats in shared memory. begin_root declines a tree with it,
-    // and resident_begin must apply the SAME test (once per fit, on the
-    // worst-case feature) so no tree can decline into a host-gradient path
-    // after the resident mode armed. Any new decline condition must land
-    // here, visible to both callers.
+    // 4 * bins floats in shared memory. begin_root refuses a tree that fails
+    // it, and resident_begin must apply the SAME test (once per fit, on the
+    // worst-case feature) so no tree can fail it after the resident mode
+    // armed. Any new capacity condition must land here, visible to both
+    // callers.
     bool hist_budget_ok(size_t max_bins) const
     {
         return 4 * max_bins * sizeof(float) <= shared_limit;
     }
 
     // The leaf plane's second gate, applied beside hist_budget_ok in
-    // leaf_budget_ok: the histogram pool is that plane's only new allocation
-    // and an oversized leaf budget must decline to the host plane rather than
-    // fail the fit. A quarter of the device's free memory is the bound; the
-    // buffer is grow-only and doubles on reallocation.
+    // leaf_budget_ok: the histogram pool is that plane's only new allocation,
+    // and a leaf budget that overruns it is refused. A quarter of the device's
+    // free memory is the bound; the buffer is grow-only and doubles on
+    // reallocation.
     bool leaf_pool_ok(size_t bytes) const;
 
-    // The leaf plane's whole decline predicate, both gates in one place:
+    // The leaf plane's whole capacity predicate, both gates in one place:
     // leaf_begin_root applies it per tree over the selected features, and
     // resident_begin_leaf once per fit over every feature and the full leaf
     // budget. A tree's selection is a subset of every feature, so passing the
     // conservative form guarantees the per-tree form; the pool's free-memory
     // bound additionally cannot be retested per tree once armed, since the
     // pool the first tree allocates shrinks the free memory the later trees
-    // would measure. Any new leaf-plane decline condition lands here.
+    // would measure. Any new leaf-plane capacity condition lands here.
     bool leaf_budget_ok(TreeConfig const &config, size_t n_selected,
                         size_t max_bins) const;
 
@@ -364,16 +364,19 @@ struct CudaDeviceContext
     // level and leaf planes' root opens.
     uint32_t stage_root_rows(SplitInput const &root, bool identity);
     void     begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
-    bool     begin_root(Dataset const &ds, floats_view grad, floats_view hess,
-                        SplitInput &root, std::span<feature_id_t const> selected);
-    void     stamp_leaves(std::span<CudaHistogramEngine::LeafStamp const> stamps);
-    void     partition_level(Dataset const                                    &ds,
-                             std::span<CudaHistogramEngine::PartitionOp const> ops,
-                             std::span<uint32_t> child_counts);
-    void     finalize_tree(std::span<float const> node_values, std::span<float> values,
-                           std::span<node_id_t> leaf_ids);
-    void     advance_level(Dataset const                                &ds,
-                           std::span<CudaHistogramEngine::LevelOp const> ops);
+    // Opens the tree on the device: builds the root histogram into slot 0 and
+    // fills root.sums/row_count. Throws ConfigError when the device cannot
+    // hold this tree's histograms; there is no host fallback.
+    void begin_root(Dataset const &ds, floats_view grad, floats_view hess,
+                    SplitInput &root, std::span<feature_id_t const> selected);
+    void stamp_leaves(std::span<CudaHistogramEngine::LeafStamp const> stamps);
+    void partition_level(Dataset const                                    &ds,
+                         std::span<CudaHistogramEngine::PartitionOp const> ops,
+                         std::span<uint32_t> child_counts);
+    void finalize_tree(std::span<float const> node_values, std::span<float> values,
+                       std::span<node_id_t> leaf_ids);
+    void advance_level(Dataset const                                &ds,
+                       std::span<CudaHistogramEngine::LevelOp const> ops);
     // Final-level advance: the children of the last level are leaves, so their
     // histograms are never read by any find; only the layout flip survives so
     // stamping sees the final segments.
@@ -387,9 +390,9 @@ struct CudaDeviceContext
 
     // --- Leaf plane (docs/architecture/20-cuda-leafwise.md) -------------------
     // Opens the tree's slot pool, seeds the root segment, and builds slot 0.
-    // Returns false — leaving root untouched — when the histogram budget or
-    // the pool budget declines, and the caller trains on the host plane.
-    bool leaf_begin_root(Dataset const &ds, TreeConfig const &config, floats_view grad,
+    // Throws ConfigError when the histogram or the pool budget cannot hold
+    // this tree; there is no host fallback.
+    void leaf_begin_root(Dataset const &ds, TreeConfig const &config, floats_view grad,
                          floats_view hess, SplitInput &root,
                          std::span<feature_id_t const> selected);
     // Routes one leaf's row segment into two adjacent subranges in place and
