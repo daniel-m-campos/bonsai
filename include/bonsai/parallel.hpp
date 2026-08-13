@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <print>
 #include <string_view>
+#include <utility>
 
 #ifdef __linux__
 #include <fstream>
@@ -155,18 +156,19 @@ inline int n_threads()
 #endif
 }
 
-// Runs f(i) for i in [0, n). Iterations must be independent. Each index is
-// processed by exactly one thread, so per-index OUTPUTS are bit-identical
-// at any thread count; sites whose work DECOMPOSITION consults
-// n_threads() (the fill plan) key the model bits to the configured count
-// — the fixed-N contract (docs/architecture/7-parallel.md).
-// Dynamic scheduling keeps asymmetric cores (e.g. P/E) busy; the chunk
-// size scales with n so per-chunk overhead stays negligible for big loops
-// while small loops still spread one index per thread.
-template <typename F> void for_each_index(size_t n, F &&f)
+// Runs f(i) for i in [0, n) on a team of `workers`. Iterations must be
+// independent. Each index is processed by exactly one thread, so per-index
+// OUTPUTS are bit-identical at any thread count; sites whose work
+// DECOMPOSITION consults n_threads() (the fill plan) key the model bits to
+// the configured count, the fixed-N contract
+// (docs/architecture/7-parallel.md). Dynamic scheduling keeps asymmetric
+// cores (e.g. P/E) busy; the chunk size scales with n so per-chunk overhead
+// stays negligible for big loops while small loops still spread one index
+// per thread. A team of one runs the loop inline, entering no region.
+template <typename F> void for_each_index_on(int workers, size_t n, F &&f)
 {
 #ifdef BONSAI_USE_OPENMP
-    int const nt = n_threads();
+    int const nt = std::max(1, workers);
     if (nt > 1 && n > 1)
     {
         // maybe_unused: referenced only by the pragma, which CUDA device
@@ -185,6 +187,13 @@ template <typename F> void for_each_index(size_t n, F &&f)
     {
         f(i);
     }
+}
+
+// The same loop on the configured team. Sites that size a team to the work
+// call for_each_index_on directly; everything else spreads over n_threads().
+template <typename F> void for_each_index(size_t n, F &&f)
+{
+    for_each_index_on(n_threads(), n, std::forward<F>(f));
 }
 
 } // namespace bonsai::parallel

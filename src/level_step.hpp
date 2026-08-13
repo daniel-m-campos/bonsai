@@ -174,26 +174,6 @@ inline void populate_nodes(Dataset const &ds, floats_view grad, floats_view hess
     }
 }
 
-// The data plane for a single node — the leafwise grower's unit of work: its
-// gain heap expands one node at a time, so there is no level to batch and no
-// LevelPlan; the same partition/populate/subtract primitives compose directly.
-template <HistogramEngine EngineT>
-inline std::pair<SplitInput, SplitInput>
-split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput parent,
-           SplitOutput const &s, node_id_t left_id, node_id_t right_id,
-           feature_view selected, EngineT &engine)
-{
-    // Same buckets the level plane charges: the scatter is partition, the
-    // child fill and its subtraction are populate.
-    GrowProfiler::Lap lap;
-    PendingSplit p = partition_rows(ds, std::move(parent), s, left_id, right_id);
-    lap(GrowProfiler::instance().partition_s);
-    engine.populate(ds, grad, hess, smaller_child(p), selected);
-    finish_split(ds, p);
-    lap(GrowProfiler::instance().populate_s);
-    return {std::move(p.left), std::move(p.right)};
-}
-
 // One split node's deferred work, produced by the control plane (plan_level)
 // and executed by the LevelStep: partition fills p's children, build_children
 // fills their histograms (host) or slots (device).
@@ -226,6 +206,199 @@ struct LevelPlan
     std::vector<DeferredSplit> splits;
     std::vector<SlotLeaf>      leaves;
 };
+
+// Rows per block the level plane cuts with: a level's nodes are partitioned
+// together, so the block size only has to keep every worker fed.
+inline constexpr size_t partition_block_rows = 65536;
+
+// Rows one partition worker must own to earn its share of the region entry:
+// below it the entry costs more than the scan it splits (measured, #367).
+inline constexpr size_t partition_rows_per_worker = 4096;
+
+// Blocks per worker: an equal cut strands the slowest core with a whole
+// share, so every worker takes several blocks and the dynamic schedule
+// evens the rest out (measured on asymmetric cores, #367).
+inline constexpr size_t partition_blocks_per_worker = 4;
+
+// Workers one parent's partition earns: the whole configured team, or none
+// of it. Every other region in a fit runs on the configured team, so a
+// partition region of a different size between them rebuilds the team the
+// runtime keeps hot, and the fills around it pay more than the partition
+// saves (measured at 12 threads, #367). A parent that cannot give every
+// worker its floor of rows takes the serial scan instead.
+inline int partition_workers(size_t n_rows, int threads)
+{
+    return n_rows / partition_rows_per_worker >= static_cast<size_t>(threads) ? threads
+                                                                              : 1;
+}
+
+inline void finish_sizes(DeferredSplit &d, size_t n_left, size_t n_right)
+{
+    d.p.left.rows.resize(n_left);
+    d.p.right.rows.resize(n_right);
+}
+
+// Level-wide blocked partition: nodes decompose into fixed-size row
+// blocks so one huge parent (the root) and many small deep nodes both
+// fill every worker. Per block, count goes-left; a serial scan turns
+// counts into stable scatter offsets; blocks then scatter concurrently.
+// The output is the exact stable order of a serial pass — bit-identical
+// at any thread count and any block size (integers only, no reductions).
+// block_rows and workers are the decomposition, not the result: the leaf
+// plane sizes both to one parent, the level plane takes the defaults.
+inline void host_partition(Dataset const &ds, LevelPlan &plan,
+                           size_t block_rows = partition_block_rows,
+                           int    workers    = parallel::n_threads())
+{
+    struct Block
+    {
+        size_t split_idx, k0, k1;
+        size_t n_left = 0, left0 = 0, right0 = 0;
+    };
+    static thread_local std::vector<Block>  blocks;
+    static thread_local std::vector<size_t> split_b0;
+    blocks.clear();
+    split_b0.assign(plan.splits.size() + 1, 0);
+    for (size_t i = 0; i < plan.splits.size(); ++i)
+    {
+        split_b0[i]    = blocks.size();
+        size_t const n = plan.splits[i].parent.rows.size();
+        for (size_t k0 = 0; k0 < n; k0 += block_rows)
+        {
+            blocks.push_back({i, k0, std::min(k0 + block_rows, n)});
+        }
+    }
+    split_b0[plan.splits.size()] = blocks.size();
+    // Capture raw pointers: naming a thread_local inside the parallel
+    // regions would resolve to each worker's own (empty) vector.
+    Block *const         blk          = blocks.data();
+    DeferredSplit *const splits       = plan.splits.data();
+    auto const           goes_left_of = [&ds](DeferredSplit const &d)
+    {
+        auto const last_bin = static_cast<bin_id_t>(ds.n_bins(d.split.feature_id) - 1);
+        return [&d, last_bin](bin_id_t b)
+        { return routes_left(b, last_bin, d.split.bin_id, d.split.default_left); };
+    };
+    parallel::for_each_index_on(
+        workers, blocks.size(),
+        [&, blk, splits](size_t u)
+        {
+            Block               &b         = blk[u];
+            DeferredSplit const &d         = splits[b.split_idx];
+            auto const           goes_left = goes_left_of(d);
+            row_id_t const      *rows      = d.parent.rows.data();
+            ds.visit_bins(d.split.feature_id,
+                          [&](auto bins)
+                          {
+                              size_t n_left = 0;
+                              for (size_t k = b.k0; k < b.k1; ++k)
+                              {
+                                  n_left += goes_left(bins[rows[k]]) ? 1 : 0;
+                              }
+                              b.n_left = n_left;
+                          });
+        });
+    // Per-split prefix and child sizing runs one worker per split: the
+    // sizing resize is a value-init of the children's row storage, and
+    // serial it is the same Amdahl chunk the placeholder build was.
+    size_t const *b0 = split_b0.data();
+    parallel::for_each_index_on(workers, plan.splits.size(),
+                                [&, blk, splits, b0](size_t i)
+                                {
+                                    size_t li = 0;
+                                    size_t ri = 0;
+                                    for (size_t u = b0[i]; u < b0[i + 1]; ++u)
+                                    {
+                                        blk[u].left0  = li;
+                                        blk[u].right0 = ri;
+                                        li += blk[u].n_left;
+                                        ri += (blk[u].k1 - blk[u].k0) - blk[u].n_left;
+                                    }
+                                    finish_sizes(splits[i], li, ri);
+                                });
+    parallel::for_each_index_on(
+        workers, blocks.size(),
+        [&, blk, splits](size_t u)
+        {
+            Block const    &b         = blk[u];
+            DeferredSplit  &d         = splits[b.split_idx];
+            auto const      goes_left = goes_left_of(d);
+            row_id_t const *rows      = d.parent.rows.data();
+            row_id_t *const left      = d.p.left.rows.data() + b.left0;
+            row_id_t *const right     = d.p.right.rows.data() + b.right0;
+            ds.visit_bins(d.split.feature_id,
+                          [&](auto bins)
+                          {
+                              size_t li2 = 0;
+                              size_t ri2 = 0;
+                              for (size_t k = b.k0; k < b.k1; ++k)
+                              {
+                                  row_id_t const r = rows[k];
+                                  if (goes_left(bins[r]))
+                                  {
+                                      left[li2++] = r;
+                                  }
+                                  else
+                                  {
+                                      right[ri2++] = r;
+                                  }
+                              }
+                          });
+        });
+    // Hand-off and parent-row release are independent per split; the
+    // shrink's deallocation otherwise serializes on the orchestrator.
+    parallel::for_each_index_on(workers, plan.splits.size(),
+                                [&, splits](size_t i)
+                                {
+                                    DeferredSplit &d = splits[i];
+                                    d.p.left.id      = d.left_id;
+                                    d.p.right.id     = d.right_id;
+                                    d.p.parent_hists = std::move(d.parent.hists);
+                                    d.parent.rows.clear();
+                                    d.parent.rows.shrink_to_fit();
+                                });
+}
+
+// The data plane for a single node — the leafwise grower's unit of work: its
+// gain heap expands one node at a time, so there is no level to batch and no
+// LevelPlan; the same partition/populate/subtract primitives compose directly.
+template <HistogramEngine EngineT>
+inline std::pair<SplitInput, SplitInput>
+split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput parent,
+           SplitOutput const &s, node_id_t left_id, node_id_t right_id,
+           feature_view selected, EngineT &engine)
+{
+    // Same buckets the level plane charges: the scatter is partition, the
+    // child fill and its subtraction are populate.
+    GrowProfiler::Lap lap;
+    PendingSplit      p;
+    size_t const      n_rows  = parent.rows.size();
+    int const         workers = partition_workers(n_rows, parallel::n_threads());
+    if (workers > 1)
+    {
+        // Blocks cut for this parent's team, in a one-element plan: all the
+        // blocked partition needs to spread one node's scatter.
+        LevelPlan      plan;
+        DeferredSplit &d = plan.splits.emplace_back();
+        d.parent         = std::move(parent);
+        d.split          = s;
+        d.left_id        = left_id;
+        d.right_id       = right_id;
+        size_t const blocks =
+            static_cast<size_t>(workers) * partition_blocks_per_worker;
+        host_partition(ds, plan, (n_rows + blocks - 1) / blocks, workers);
+        p = std::move(plan.splits.front().p);
+    }
+    else
+    {
+        p = partition_rows(ds, std::move(parent), s, left_id, right_id);
+    }
+    lap(GrowProfiler::instance().partition_s);
+    engine.populate(ds, grad, hess, smaller_child(p), selected);
+    finish_split(ds, p);
+    lap(GrowProfiler::instance().populate_s);
+    return {std::move(p.left), std::move(p.right)};
+}
 
 // A leaf awaiting expansion: its histograms/rows, its best split (heap key),
 // and its depth (to enforce the max_depth cap on children). On the device leaf
@@ -420,131 +593,6 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         }
     }
 
-    // Level-wide blocked partition: nodes decompose into fixed-size row
-    // blocks so one huge parent (the root) and many small deep nodes both
-    // fill every worker. Per block, count goes-left; a serial scan turns
-    // counts into stable scatter offsets; blocks then scatter concurrently.
-    // The output is the exact stable order of a serial pass — bit-identical
-    // at any thread count (integers only, no reductions).
-    static void host_partition(Dataset const &ds, LevelPlan &plan)
-    {
-        struct Block
-        {
-            size_t split_idx, k0, k1;
-            size_t n_left = 0, left0 = 0, right0 = 0;
-        };
-        constexpr size_t                        block_rows = 65536;
-        static thread_local std::vector<Block>  blocks;
-        static thread_local std::vector<size_t> split_b0;
-        blocks.clear();
-        split_b0.assign(plan.splits.size() + 1, 0);
-        for (size_t i = 0; i < plan.splits.size(); ++i)
-        {
-            split_b0[i]    = blocks.size();
-            size_t const n = plan.splits[i].parent.rows.size();
-            for (size_t k0 = 0; k0 < n; k0 += block_rows)
-            {
-                blocks.push_back({i, k0, std::min(k0 + block_rows, n)});
-            }
-        }
-        split_b0[plan.splits.size()] = blocks.size();
-        // Capture raw pointers: naming a thread_local inside the parallel
-        // regions would resolve to each worker's own (empty) vector.
-        Block *const         blk          = blocks.data();
-        DeferredSplit *const splits       = plan.splits.data();
-        auto const           goes_left_of = [&ds](DeferredSplit const &d)
-        {
-            auto const last_bin =
-                static_cast<bin_id_t>(ds.n_bins(d.split.feature_id) - 1);
-            return [&d, last_bin](bin_id_t b)
-            { return routes_left(b, last_bin, d.split.bin_id, d.split.default_left); };
-        };
-        parallel::for_each_index(
-            blocks.size(),
-            [&, blk, splits](size_t u)
-            {
-                Block               &b         = blk[u];
-                DeferredSplit const &d         = splits[b.split_idx];
-                auto const           goes_left = goes_left_of(d);
-                row_id_t const      *rows      = d.parent.rows.data();
-                ds.visit_bins(d.split.feature_id,
-                              [&](auto bins)
-                              {
-                                  size_t n_left = 0;
-                                  for (size_t k = b.k0; k < b.k1; ++k)
-                                  {
-                                      n_left += goes_left(bins[rows[k]]) ? 1 : 0;
-                                  }
-                                  b.n_left = n_left;
-                              });
-            });
-        // Per-split prefix and child sizing runs one worker per split: the
-        // sizing resize is a value-init of the children's row storage, and
-        // serial it is the same Amdahl chunk the placeholder build was.
-        size_t const *b0 = split_b0.data();
-        parallel::for_each_index(plan.splits.size(),
-                                 [&, blk, splits, b0](size_t i)
-                                 {
-                                     size_t li = 0;
-                                     size_t ri = 0;
-                                     for (size_t u = b0[i]; u < b0[i + 1]; ++u)
-                                     {
-                                         blk[u].left0  = li;
-                                         blk[u].right0 = ri;
-                                         li += blk[u].n_left;
-                                         ri += (blk[u].k1 - blk[u].k0) - blk[u].n_left;
-                                     }
-                                     finish_sizes(splits[i], li, ri);
-                                 });
-        parallel::for_each_index(
-            blocks.size(),
-            [&, blk, splits](size_t u)
-            {
-                Block const    &b         = blk[u];
-                DeferredSplit  &d         = splits[b.split_idx];
-                auto const      goes_left = goes_left_of(d);
-                row_id_t const *rows      = d.parent.rows.data();
-                row_id_t *const left      = d.p.left.rows.data() + b.left0;
-                row_id_t *const right     = d.p.right.rows.data() + b.right0;
-                ds.visit_bins(d.split.feature_id,
-                              [&](auto bins)
-                              {
-                                  size_t li2 = 0;
-                                  size_t ri2 = 0;
-                                  for (size_t k = b.k0; k < b.k1; ++k)
-                                  {
-                                      row_id_t const r = rows[k];
-                                      if (goes_left(bins[r]))
-                                      {
-                                          left[li2++] = r;
-                                      }
-                                      else
-                                      {
-                                          right[ri2++] = r;
-                                      }
-                                  }
-                              });
-            });
-        // Hand-off and parent-row release are independent per split; the
-        // shrink's deallocation otherwise serializes on the orchestrator.
-        parallel::for_each_index(plan.splits.size(),
-                                 [&, splits](size_t i)
-                                 {
-                                     DeferredSplit &d = splits[i];
-                                     d.p.left.id      = d.left_id;
-                                     d.p.right.id     = d.right_id;
-                                     d.p.parent_hists = std::move(d.parent.hists);
-                                     d.parent.rows.clear();
-                                     d.parent.rows.shrink_to_fit();
-                                 });
-    }
-
-    static void finish_sizes(DeferredSplit &d, size_t n_left, size_t n_right)
-    {
-        d.p.left.rows.resize(n_left);
-        d.p.right.rows.resize(n_right);
-    }
-
     template <HistogramEngine E>
     static void host_build_children(E &engine, Dataset const &ds, floats_view grad,
                                     floats_view hess, feature_view selected,
@@ -728,7 +776,7 @@ class LevelStep<EngineT, SplitterT>
         }
         else
         {
-            HostStep::host_partition(ds_, plan);
+            host_partition(ds_, plan);
         }
     }
 
