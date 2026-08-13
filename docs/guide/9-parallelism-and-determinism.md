@@ -56,7 +56,7 @@ of configuration, never of scheduling.
   [architecture/7-parallel.md](../architecture/7-parallel.md).
 - Histogram fill ([`src/grower.cpp`](../../src/grower.cpp)): the routing
   is per node, not per bin width. u16 bins keep the feature-parallel
-  shape (`fill_feature_parallel`): each feature's histogram owned by one
+  shape (`fill_columns`): each feature's histogram owned by one
   thread, filled in row order, determinism by ownership. u8 bins take
   that same fill whenever the node holds at least a quarter of the rows
   (`k_col_fill_den = 4`), and only sparser u8 nodes take the row-wise

@@ -79,7 +79,7 @@ most important optimization in histogram GBT.
 - **Building per node**: `CpuHistogramEngine::populate_many` in
   [`src/grower.cpp`](../../src/grower.cpp), which routes each node to one
   of two fills. The choice is not simply u8 against u16. u16 bins always
-  take the **feature-parallel fill** (`fill_feature_parallel`): one thread
+  take the **feature-parallel fill** (`fill_columns`): one thread
   owns one feature's histogram and walks that column. u8 bins (the
   `max_bin ≤ 255` default) are routed per node by density. A node holding
   at least a quarter of the rows takes that same feature-parallel fill
