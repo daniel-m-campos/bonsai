@@ -3,6 +3,7 @@
 #include "bonsai/histogram.hpp"
 #include "bonsai/parallel.hpp"
 #include "bonsai/types.hpp"
+#include <algorithm>
 #include <cstddef>
 #include <mdspan>
 #include <span>
@@ -227,6 +228,22 @@ SplitOutput reduce_in_feature_order(std::vector<SplitOutput> const &per_feature)
     return best;
 }
 
+// A node the scan can skip: no histograms, or too few rows to leave two
+// children above min_data_in_leaf.
+bool cannot_split(SplitInput const &input, TreeConfig const &config)
+{
+    return input.hists.empty() ||
+           input.rows.size() < 2 * size_t{config.min_data_in_leaf};
+}
+
+// Feature ranges one node's scan splits into: enough to spread across
+// workers, few enough that the ordered merge stays a handful of compares.
+size_t scan_ranges(size_t n_features)
+{
+    size_t const units = static_cast<size_t>(parallel::n_threads()) * 4;
+    return std::max<size_t>(1, std::min(n_features, units));
+}
+
 } // namespace
 
 SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
@@ -255,6 +272,64 @@ SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
         }
     }
     return best;
+}
+
+void HistogramNodeSplitFinder::find_parallel(std::span<SplitInput const> nodes,
+                                             TreeConfig const           &config,
+                                             std::span<SplitOutput>      out)
+{
+    // Per-node scratch reused across splits: a fresh vector per call would
+    // page-fault its footprint on every heap pop.
+    static thread_local std::vector<HistCell>    totals;
+    static thread_local std::vector<SplitOutput> partials;
+    size_t const                                 n = nodes.size();
+    size_t const ranges = scan_ranges(nodes.empty() ? 0 : nodes.front().hists.size());
+    totals.assign(n, HistCell{});
+    partials.assign(n * ranges, SplitOutput{});
+    for (size_t i = 0; i < n; ++i)
+    {
+        out[i] = {};
+        if (!cannot_split(nodes[i], config))
+        {
+            totals[i] = nodes[i].totals();
+        }
+    }
+    // Capture raw pointers: naming a thread_local inside the parallel region
+    // would resolve to each worker's own (empty) vector.
+    HistCell const *const tot_ptr  = totals.data();
+    SplitOutput *const    part_ptr = partials.data();
+    parallel::for_each_index(
+        n * ranges,
+        [&, tot_ptr, part_ptr](size_t u)
+        {
+            SplitInput const &input = nodes[u / ranges];
+            if (cannot_split(input, config))
+            {
+                return;
+            }
+            size_t const nf = input.hists.size();
+            size_t const r  = u % ranges;
+            // A range keeps one running best over ascending features, which
+            // is find's serial scan restricted to the range.
+            for (size_t fid = r * nf / ranges; fid < (r + 1) * nf / ranges; ++fid)
+            {
+                update_best_for_feature_for_node(input, static_cast<feature_id_t>(fid),
+                                                 tot_ptr[u / ranges], config,
+                                                 part_ptr[u]);
+            }
+        });
+    for (size_t i = 0; i < n; ++i)
+    {
+        // Ascending range order, strict >: the lowest feature id wins ties.
+        for (size_t r = 0; r < ranges; ++r)
+        {
+            SplitOutput const &cand = partials[(i * ranges) + r];
+            if (cand.valid && cand.gain > out[i].gain)
+            {
+                out[i] = cand;
+            }
+        }
+    }
 }
 
 SplitOutput HistogramLevelSplitFinder::find(FrontierInput     frontier,
