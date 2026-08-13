@@ -6,6 +6,8 @@ Per-component design docs. Numbered roughly in build order. Source of truth for 
 
 > **Naming note.** These bodies are kept as written, so they call the symmetric-tree grower `oblivious` and its CUDA twin `cuda_oblivious`. Those config names are now `levelwise` and `cuda_levelwise`; the C++ types (`ObliviousTree`, `ObliviousGrower`) keep the old spelling because the *tree* is oblivious while the *growth policy* is level-wise. See the CHANGELOG entry for the break.
 
+> **Deleted-path note (2026-08-12).** The CUDA engine's CPU fallback is gone, so read docs 10, 11, 12, and 20 as history where they describe it: `begin_root` and `leaf_begin_root` no longer decline a tree to the host plane, they raise a `ConfigError` naming the shared-memory or pool limit and the `device="cpu"` remedy. With it went `CudaHistogramEngine`'s CPU member, the `cpu_fallback` line of the CUDA profile, and the `on_device` fork in both `LevelStep` and `LeafStep` (doc 12's "one irreducible runtime fork" is now no fork). The fallback trained a wrong model once (issue #12, fixed in cd4e726) and hid a large slowdown the rest of the time; every reference GPU trainer errors here instead.
+
 > **Deleted-symbol note (2026-08-09).** An audit removed code these bodies name in the present tense. The bodies stay as written, so read the following as history: `finalize_rows` (docs 10, 12, 13, 14, 20) is gone from all six sites including the `GPULevelEngine` concept clause, because `finalize_tree` already downloads everything the epilogue needs; and `Dataset::is_categorical` with its backing flag (docs 1 and 17) is gone, having stayed always-false since doc 17's design was declined by measurement.
 
 ## Contents

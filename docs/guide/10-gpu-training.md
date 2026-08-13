@@ -63,7 +63,7 @@ BONSAI_CUDA_PROFILE=1 BONSAI_GROW_PROFILE=1 \
   --set dispatch.grower_name=cuda_depthwise
 ```
 
-Read the `cuda-profile` line first: `upload` vs `gpu` vs `cpu_fallback` tells you whether the device path even ran (a large `cpu_fallback` means `max_bin` pushed past the shared-memory ceiling). Then `cuda-upload-decomp` splits every transfer by transaction: this is the line every optimization in chapter 11 was priced against.
+Read the `cuda-profile` line first: `upload` vs `gpu` tells you where the fit's time went. A fit whose `max_bin` pushes a feature's histogram past the device's shared-memory ceiling does not appear here at all, because it does not run: the fit stops with an error naming the limit, and the remedy is a lower `max_bin` or `device="cpu"`. Then `cuda-upload-decomp` splits every transfer by transaction: this is the line every optimization in chapter 11 was priced against.
 
 ```bash
 # CPU vs GPU on the same data — expect tolerance-level agreement, not bit-equality:

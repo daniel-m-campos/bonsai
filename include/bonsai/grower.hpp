@@ -85,8 +85,8 @@ concept HistogramEngine =
 // The GPU data plane: histograms and rows stay device-resident, so only
 // decisions and counts cross the bus (docs/architecture/12-grower-backend.md).
 // The LevelStep drives this whole cluster or none of it, so it is one concept
-// and not seven; begin_root's bool return is the per-tree mode (it declines
-// when the resident buffers cannot fit), captured once by the LevelStep.
+// and not seven. begin_root opens the tree on the device or throws: there is
+// no host fallback, so the step has no per-tree mode to carry.
 template <typename T>
 concept GPULevelEngine =
     HistogramEngine<T> &&
@@ -105,7 +105,7 @@ concept GPULevelEngine =
         typename T::PartitionOp;
         typename T::LeafStamp;
         typename T::ResidentNode;
-        { b.begin_root(ds, grad, hess, root, selected) } -> std::convertible_to<bool>;
+        b.begin_root(ds, grad, hess, root, selected);
         b.stamp_leaves(stamps);
         b.partition_level(ds, pops, counts);
         b.advance_level(ds, lops);
@@ -125,8 +125,8 @@ concept GPULevelEngine =
 // histograms live in a per-tree slot pool instead of the level plane's
 // ping-pong (docs/architecture/20-cuda-leafwise.md). A second concept beside
 // GPULevelEngine, not a change to it: the depthwise and levelwise paths are
-// untouched. Same one-fork rule — leaf_begin_root's bool is the per-tree mode,
-// captured once by the LeafStep, and a declined tree trains on the host plane.
+// untouched. Same rule as begin_root: leaf_begin_root opens the tree on the
+// device or throws.
 template <typename T>
 concept GPULeafEngine =
     HistogramEngine<T> &&
@@ -145,9 +145,7 @@ concept GPULeafEngine =
         typename T::LeafRound;
         typename T::LeafStamp;
         typename T::ResidentNode;
-        {
-            b.leaf_begin_root(ds, config, grad, hess, root, selected)
-        } -> std::convertible_to<bool>;
+        b.leaf_begin_root(ds, config, grad, hess, root, selected);
         { b.leaf_split(ds, part_op) } -> std::convertible_to<typename T::LeafRound>;
         b.leaf_build(ds, small_slot, large_slot);
         b.leaf_find(ds, config, nodes, slots, out, child_sums);

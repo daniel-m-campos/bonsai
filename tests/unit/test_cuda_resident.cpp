@@ -12,6 +12,7 @@
 
 #include "bonsai/booster.hpp"
 #include "bonsai/config/config.hpp"
+#include "bonsai/config/errors.hpp"
 #include "bonsai/cuda/grower.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/dataset.hpp"
@@ -53,7 +54,7 @@ struct RegData
 };
 
 // A linear-signal regression scenario with light noise: comfortably above the
-// engine's CPU-fallback cutoff so the device path (and thus resident mode)
+// engine's device cutoff so the device path (and thus resident mode)
 // really runs, and learnable enough that r2 is a meaningful sanity gate.
 // `weighted` attaches non-uniform per-row weights, drawn AFTER the feature and
 // label stream so the same seed yields identical features/labels with and
@@ -658,10 +659,11 @@ TEST_CASE("Leafwise arming refuses a leaf budget the pool cannot hold",
                                     std::span<float const>{scores}, 0.1F));
         leaf.resident_end(std::span<float>{scores});
     }
-    // A refused arming is not a failed fit: the whole fit runs non-resident,
-    // exactly as it did before the seam existed.
-    auto const res = fit_predict<MseBooster<CudaLeafwiseGrower>>(cfg, data, 40, false);
-    REQUIRE(r2_of(res, data.y) > 0.9);
+    // Arming refused the pool once per fit, and the per-tree open refuses it
+    // again: the fit stops with the budget named instead of quietly training
+    // this leaf budget on the host plane.
+    REQUIRE_THROWS_AS(fit_predict<MseBooster<CudaLeafwiseGrower>>(cfg, data, 40, false),
+                      ConfigError);
 }
 
 TEST_CASE("Resident leafwise matches host-objective GPU under Bernoulli sampling",

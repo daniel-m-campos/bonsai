@@ -21,7 +21,7 @@ struct ProfileCounters
 {
     using clock     = std::chrono::steady_clock;
     bool   enabled  = std::getenv("BONSAI_CUDA_PROFILE") != nullptr;
-    double upload_s = 0, gpu_s = 0, unpack_s = 0, cpu_s = 0;
+    double upload_s = 0, gpu_s = 0, unpack_s = 0;
     double part_stage_s = 0, adv_stage_s = 0, find_stage_s = 0, lfind_stage_s = 0;
     double gh_upload_s = 0, root_stage_s = 0, gpu_wait_s = 0;
     double bins_upload_s = 0, fin_wait_s = 0, fin_d2h_s = 0;
@@ -34,7 +34,7 @@ struct ProfileCounters
     // Resident-objective laps: the device gradient kernel that replaces the gh
     // upload, and the fused route+score-update that replaces the finalize D2H.
     double obj_kernel_s = 0, score_kernel_s = 0;
-    size_t launches = 0, gpu_nodes = 0, cpu_calls = 0;
+    size_t launches = 0, gpu_nodes = 0;
 
     ProfileCounters()                                       = default;
     ProfileCounters(ProfileCounters const &)                = delete;
@@ -67,7 +67,7 @@ struct ProfileCounters
 
     ~ProfileCounters()
     {
-        if (!enabled || (gpu_s == 0 && cpu_s == 0))
+        if (!enabled || gpu_s == 0)
         {
             return;
         }
@@ -75,10 +75,9 @@ struct ProfileCounters
         {
             std::println(stderr,
                          "cuda-profile: upload={:.2f}s gpu={:.2f}s unpack={:.2f}s "
-                         "cpu_fallback={:.2f}s | {} launches covering {} nodes, {} "
-                         "cpu-fallback nodes",
+                         "| {} launches covering {} nodes",
                          part_stage_s + adv_stage_s + find_stage_s + lfind_stage_s,
-                         gpu_s, unpack_s, cpu_s, launches, gpu_nodes, cpu_calls);
+                         gpu_s, unpack_s, launches, gpu_nodes);
             std::println(stderr,
                          "cuda-upload-decomp: gh={:.2f}s root_stage={:.2f}s "
                          "part_stage={:.2f}s adv_stage={:.2f}s find_stage={:.2f}s "

@@ -280,7 +280,7 @@ SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
     // Serial by design: the scan costs n_features x n_bins cells whatever the
     // node's row count, and a nested region plus a per-call output vector cost
     // more. A depthwise level runs one worker per node above this call
-    // (LevelStep::host_find); the root and the leafwise pair are serial here
+    // (LevelStep::open_level); the root and the leafwise pair are serial here
     // because there is one node and two to walk. The feature-order walk with
     // strict > keeps the same tie-break as the parallel reduce it replaces.
     SplitOutput best;

@@ -22,11 +22,11 @@ namespace cuda_detail
 // The CUDA ingest transaction's product: the tile-blocked binned matrix,
 // resident from birth (layout in device_buffer.cuh). Dataset carries it as an opaque
 // receipt; ensure_dataset adopts it instead of uploading host columns; materialize()
-// pulls host columns home once for the host consumers (fallback decline,
-// route_unsampled under row sampling). The problem this solves: ensure_dataset receives
-// a shared_ptr<IngestPlane> (the base type) and must prove it is really a
-// CudaIngestPlane before downcasting, without RTTI. Every plane carries an
-// opaque tag pointer, and this function is the only source of this backend's
+// pulls host columns home once for the host consumers (a CPU grower over a
+// device-ingested dataset, route_unsampled under row sampling). The problem this
+// solves: ensure_dataset receives a shared_ptr<IngestPlane> (the base type) and must
+// prove it is really a CudaIngestPlane before downcasting, without RTTI. Every plane
+// carries an opaque tag pointer, and this function is the only source of this backend's
 // tag (the address of a function-local static, unique process-wide), so tag
 // equality proves the concrete type and makes the static_cast sound. The
 // inline function's local static is guaranteed to be one object across every

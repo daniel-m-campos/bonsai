@@ -61,8 +61,8 @@ void cuda_select_device(uint32_t device_id)
     if (device_id == 0)
     {
         // The default device: set it when one exists, stay a no-op on
-        // GPU-less hosts so graceful degradation (begin_root declines,
-        // host fallback trains) is untouched.
+        // GPU-less hosts, where the first device call is what reports the
+        // absence.
         if (n > 0)
         {
             cudaSetDevice(0);
@@ -82,13 +82,11 @@ void cuda_select_device(uint32_t device_id)
     }
 }
 
-// The device-resident state (CudaDeviceContext) plus the CPU fallback engine
-// used when begin_root declines the resident path. The engine forwards its
-// device methods to ctx and keeps the fallback branches (populate) on cpu.
+// The device-resident state: the engine forwards every method to it. There is
+// no host plane behind this engine, so there is nothing else to hold.
 struct CudaHistogramEngine::Impl
 {
-    CudaDeviceContext  ctx;
-    CpuHistogramEngine cpu;
+    CudaDeviceContext ctx;
 };
 
 CudaHistogramEngine::CudaHistogramEngine() : impl_(std::make_unique<Impl>()) {}
@@ -103,25 +101,22 @@ void CudaHistogramEngine::begin_tree(Dataset const &ds, floats_view grad,
     impl_->ctx.begin_tree(ds, grad, hess);
 }
 
-// Host-plane fallback: builds the node's histograms on the CPU. Runs only
-// when begin_root declines the resident path (oversized max_bin) — the GPU
-// copy-back path this replaced was phase-1/2 research, retired by decision 41.
-void CudaHistogramEngine::populate(Dataset const &ds, floats_view grad,
-                                   floats_view hess, SplitInput &split_input,
-                                   std::span<feature_id_t const> selected)
+// The HistogramEngine concept's per-node fill, which this engine does not
+// implement: its nodes are built by begin_root / advance_level / leaf_build
+// on the device, and a tree the device cannot hold is refused there.
+void CudaHistogramEngine::populate(Dataset const & /*ds*/, floats_view /*grad*/,
+                                   floats_view /*hess*/, SplitInput & /*split_input*/,
+                                   std::span<feature_id_t const> /*selected*/)
 {
-    auto &prof_counters = impl_->ctx.prof_counters;
-    auto  lap           = prof_counters.lap();
-    ++prof_counters.cpu_calls;
-    impl_->cpu.populate(ds, grad, hess, split_input, selected);
-    lap(prof_counters.cpu_s);
+    throw ConfigError("cuda: this engine has no host fill; a tree it cannot hold "
+                      "is refused by begin_root");
 }
 
-bool CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
+void CudaHistogramEngine::begin_root(Dataset const &ds, floats_view grad,
                                      floats_view hess, SplitInput &root,
                                      std::span<feature_id_t const> selected)
 {
-    return impl_->ctx.begin_root(ds, grad, hess, root, selected);
+    impl_->ctx.begin_root(ds, grad, hess, root, selected);
 }
 
 void CudaHistogramEngine::stamp_leaves(std::span<LeafStamp const> stamps)
@@ -169,12 +164,12 @@ void CudaHistogramEngine::find_level_split(Dataset const &ds, TreeConfig const &
     impl_->ctx.find_level_split(ds, config, level, out, child_sums);
 }
 
-bool CudaHistogramEngine::leaf_begin_root(Dataset const &ds, TreeConfig const &config,
+void CudaHistogramEngine::leaf_begin_root(Dataset const &ds, TreeConfig const &config,
                                           floats_view grad, floats_view hess,
                                           SplitInput                   &root,
                                           std::span<feature_id_t const> selected)
 {
-    return impl_->ctx.leaf_begin_root(ds, config, grad, hess, root, selected);
+    impl_->ctx.leaf_begin_root(ds, config, grad, hess, root, selected);
 }
 
 CudaHistogramEngine::LeafRound CudaHistogramEngine::leaf_split(Dataset const    &ds,
@@ -262,11 +257,11 @@ void upload_cuts(BinMappers const &mappers, CutsTable &t)
     t.ofs.upload(ofs.data(), ofs.size());
 }
 
-// Mirror of begin_root's resident-path gate with every feature selected
-// (the hist kernel's shared budget holds ONE feature's histogram, so the
-// gate is the max single-feature bins, not the sum): if grow would fall
-// back to the host data plane — which wants host bins — decline device
-// ingest and keep today's eager host fill.
+// Mirror of begin_root's capacity gate with every feature selected (the hist
+// kernel's shared budget holds ONE feature's histogram, so the gate is the max
+// single-feature bins, not the sum): a dataset grow would refuse on the device
+// has no use for device-resident bins, so ingest declines and the host fill
+// runs. Training with a cuda_* grower then raises begin_root's error.
 bool ingest_would_decline(BinMappers const &mappers)
 {
     size_t max_bins = 0;

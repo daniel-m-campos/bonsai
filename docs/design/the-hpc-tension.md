@@ -51,9 +51,9 @@ Reproducing that stream on the device would risk the determinism identity for no
 ## The honest cost
 
 The seams forbid two things a looser design would allow.
-There is no per-node GPU fallback.
-An engine either grows a whole tree resident or declines it in `begin_root`.
-A single oversized feature then sends the tree to the CPU plane ([GPU-resident doc](../architecture/11-gpu-resident.md)).
+There is no GPU fallback at all, per node or per tree.
+An engine grows a whole tree resident or refuses it in `begin_root`, with an error naming the limit it hit and the `device="cpu"` remedy.
+A single oversized feature therefore stops the fit rather than quietly moving it to the CPU plane, which is the same standard the [benchmark protocol](../method/benchmark-protocol.md) holds the reference libraries to: a run that asks for a device and trains somewhere else reads as a working fit and is not one.
 There are no cross-plane shortcuts: a placement move must not change accumulation order or precision, and the byte-identity gate catches it if it does.
 
 What that bought:

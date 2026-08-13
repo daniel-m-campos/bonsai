@@ -64,7 +64,7 @@ void CudaHistogramEngine::populate(Dataset const & /*ds*/, floats_view /*grad*/,
     throw_unavailable();
 }
 
-bool CudaHistogramEngine::begin_root(Dataset const & /*ds*/, floats_view /*grad*/,
+void CudaHistogramEngine::begin_root(Dataset const & /*ds*/, floats_view /*grad*/,
                                      floats_view /*hess*/, SplitInput & /*root*/,
                                      std::span<feature_id_t const> /*selected*/)
 {
@@ -148,7 +148,7 @@ void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
     throw_unavailable();
 }
 
-bool CudaHistogramEngine::leaf_begin_root(Dataset const & /*ds*/,
+void CudaHistogramEngine::leaf_begin_root(Dataset const & /*ds*/,
                                           TreeConfig const & /*config*/,
                                           floats_view /*grad*/, floats_view /*hess*/,
                                           SplitInput & /*root*/,
