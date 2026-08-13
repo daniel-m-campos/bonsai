@@ -207,10 +207,11 @@ TEST_CASE("sparse fill sums its per-thread partials into the node arena", "[popu
     parallel::set_n_threads(0);
 }
 
-TEST_CASE("a lone sparse node fills feature-major in serial order", "[populate]")
+TEST_CASE("a lone node fills feature-major in serial order in one row block",
+          "[populate]")
 {
-    // The leaf plane's per-split fill: a sparse node that is not the root
-    // takes the feature-ranged arm, where one worker owns a whole feature's
+    // The leaf plane's per-split fill: a node short enough to fill in one row
+    // block is cut by feature only, where one worker owns a whole feature's
     // cells, so they sum in ascending row order at any thread count.
     auto const fx = make_fixture(40960, 3);
     REQUIRE(fx.ds.bins_are_u8());
@@ -237,6 +238,53 @@ TEST_CASE("a lone sparse node fills feature-major in serial order", "[populate]"
                             cells.size() * sizeof(HistCell)) == 0);
         REQUIRE(std::memcmp(cells.data(), c1.data(), cells.size() * sizeof(HistCell)) ==
                 0);
+    }
+    parallel::set_n_threads(0);
+}
+
+TEST_CASE("a lone node cut into row blocks is reproducible and serial at one "
+          "thread",
+          "[populate]")
+{
+    // A long, narrow node spends its team on row blocks, which regroups the
+    // per-cell sums: the bytes are keyed to the thread count (the fixed-N
+    // contract), not invariant across it. What holds is that one thread
+    // reproduces the serial order exactly, a fixed count repeats itself
+    // exactly, and every count lands on the same sums within float
+    // tolerance.
+    auto const fx = make_fixture(262144, 8);
+    REQUIRE(fx.ds.bins_are_u8());
+
+    std::vector<row_id_t> rows;
+    for (row_id_t r = 0; r < fx.ds.n_rows(); r += 8)
+    {
+        rows.push_back(r);
+    }
+    REQUIRE(rows.size() * 4 < fx.ds.n_rows());
+
+    parallel::set_n_threads(1);
+    auto const one = populate_node(fx, rows, 1);
+    parallel::set_n_threads(4);
+    auto const four  = populate_node(fx, rows, 1);
+    auto const again = populate_node(fx, rows, 1);
+    auto const ref   = reference_hists(fx, rows);
+
+    for (size_t s = 0; s < fx.selected.size(); ++s)
+    {
+        auto const c1  = one.hists[fx.selected[s]].all_cells();
+        auto const c4  = four.hists[fx.selected[s]].all_cells();
+        auto const c4b = again.hists[fx.selected[s]].all_cells();
+        REQUIRE(c4.size() == ref[s].size());
+        // One thread is one row block, which is the serial order.
+        REQUIRE(std::memcmp(c1.data(), ref[s].data(), c1.size() * sizeof(HistCell)) ==
+                0);
+        // Four threads repeat themselves byte for byte.
+        REQUIRE(std::memcmp(c4.data(), c4b.data(), c4.size() * sizeof(HistCell)) == 0);
+        for (size_t b = 0; b < c4.size(); ++b)
+        {
+            CHECK(c4[b].sum_grad == Catch::Approx(ref[s][b].sum_grad).margin(1e-2));
+            CHECK(c4[b].sum_hess == Catch::Approx(ref[s][b].sum_hess).margin(1e-2));
+        }
     }
     parallel::set_n_threads(0);
 }
