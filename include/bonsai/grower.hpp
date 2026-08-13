@@ -314,8 +314,8 @@ class ObliviousGrower
     bool            resident_ = false;
 };
 
-template <HistogramEngine EngineT   = CpuHistogramEngine,
-          NodeSplitFinder SplitterT = HistogramNodeSplitFinder>
+template <HistogramEngine         EngineT   = CpuHistogramEngine,
+          ParallelNodeSplitFinder SplitterT = HistogramNodeSplitFinder>
 class LeafwiseGrower
 {
   public:

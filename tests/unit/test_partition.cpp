@@ -78,6 +78,7 @@ TEST_CASE("the blocked partition is the serial order at every decomposition",
         REQUIRE(got.left.rows == ref.left.rows);
         REQUIRE(got.right.rows == ref.right.rows);
     }
+    parallel::set_n_threads(0);
 }
 
 TEST_CASE("a parent partitions on the whole team or on none of it", "[partition]")

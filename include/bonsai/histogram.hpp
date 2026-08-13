@@ -231,8 +231,8 @@ class ArenaLayout
 
     // The arena run the j-th selected feature owns, u8 padding included. The
     // runs tile the arena exactly, so a carve that walks them touches every
-    // cell.
-    std::span<HistCell> run(std::span<HistCell> arena, size_t j) const
+    // cell. Addressing only, so a const arena addresses the same way.
+    template <typename C> std::span<C> run(std::span<C> arena, size_t j) const
     {
         size_t const start = u8_ ? j * k_feature_stride : starts_[j];
         size_t const width = u8_ ? k_feature_stride : bins_[j];
@@ -240,7 +240,7 @@ class ArenaLayout
     }
 
     // The j-th selected feature's cells within an arena of total_cells().
-    std::span<HistCell> slice(std::span<HistCell> arena, size_t j) const
+    template <typename C> std::span<C> slice(std::span<C> arena, size_t j) const
     {
         return run(arena, j).first(bins_[j]);
     }
@@ -271,20 +271,11 @@ class NodeHistograms
                size_t n_features, bool alone = false)
     {
         carve_storage(layout, n_features);
-        size_t const n_sel = selected.size();
-        size_t const grain =
-            alone ? std::max<size_t>(
-                        1, n_sel / (static_cast<size_t>(parallel::n_threads()) * 4))
-                  : std::max<size_t>(n_sel, 1);
-        parallel::for_each_index((n_sel + grain - 1) / grain,
-                                 [&](size_t c)
-                                 {
-                                     size_t const hi = std::min((c + 1) * grain, n_sel);
-                                     for (size_t j = c * grain; j < hi; ++j)
-                                     {
-                                         carve_run(layout, selected, j);
-                                     }
-                                 });
+        // The runtime's dynamic chunk is n_sel / (n_threads * 4), so one
+        // index per run hands out the same contiguous groups a hand-rolled
+        // grain would; a team of one is the serial pass.
+        parallel::for_each_index_on(alone ? parallel::n_threads() : 1, selected.size(),
+                                    [&](size_t j) { carve_run(layout, selected, j); });
     }
 
     // Sizes the arena and the slot table without touching a cell. Pairs with
@@ -317,12 +308,12 @@ class NodeHistograms
     // read had no lifetime. A carved run's slot views its own arena offset,
     // which nothing but carve_run puts there.
     bool all_runs_carved(ArenaLayout const            &layout,
-                         std::span<feature_id_t const> selected)
+                         std::span<feature_id_t const> selected) const
     {
-        std::span<HistCell> const arena{arena_.data(), arena_.size()};
+        std::span<HistCell const> const arena{arena_.data(), arena_.size()};
         for (size_t j = 0; j < selected.size(); ++j)
         {
-            if (hists_[selected[j]].cells().data() != layout.slice(arena, j).data())
+            if (hists_[selected[j]].all_cells().data() != layout.slice(arena, j).data())
             {
                 return false;
             }

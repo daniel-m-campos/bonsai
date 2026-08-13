@@ -50,27 +50,17 @@ OrderedGh ordered_gh(std::span<row_id_t const> rows, floats_view grad, floats_vi
     float *const          g     = ordered_grad.data();
     float *const          h     = unit ? nullptr : ordered_hess.data();
     row_id_t const *const r_ptr = rows.data();
-    if (n < k_gather_region_rows)
-    {
-        for (size_t k = 0; k < n; ++k)
-        {
-            g[k] = grad[r_ptr[k]];
-            if (!unit)
-            {
-                h[k] = hess[r_ptr[k]];
-            }
-        }
-        return {.g = g, .h = h};
-    }
-    parallel::for_each_index(n,
-                             [&, g, h, r_ptr, unit](size_t k)
-                             {
-                                 g[k] = grad[r_ptr[k]];
-                                 if (!unit)
-                                 {
-                                     h[k] = hess[r_ptr[k]];
-                                 }
-                             });
+    // A team of one runs the loop inline and enters no region, which is what
+    // a node below the threshold wants.
+    parallel::for_each_index_on(n < k_gather_region_rows ? 1 : parallel::n_threads(), n,
+                                [&, g, h, r_ptr, unit](size_t k)
+                                {
+                                    g[k] = grad[r_ptr[k]];
+                                    if (!unit)
+                                    {
+                                        h[k] = hess[r_ptr[k]];
+                                    }
+                                });
     return {.g = g, .h = h};
 }
 
@@ -115,13 +105,13 @@ void fill_feature_parallel(Dataset const &ds, floats_view grad, floats_view hess
                 [&](auto bins)
                 {
                     row_id_t const *rows = split_input.rows.data();
-                    // Hoisted out of the row loop: the selectors are
+                    // Hoisted out of the row loop: the hessian selector is
                     // loop-invariant, and this is the fill's innermost work.
-                    auto add = [&](auto bin_of, auto hess_of)
+                    auto add = [&](auto hess_of)
                     {
                         for (size_t k = 0; k < n; ++k)
                         {
-                            h.add(bin_of(k), og[k], hess_of(k));
+                            h.add(bins[k], og[k], hess_of(k));
                         }
                     };
                     // Below the root a node's rows are an ascending SUBSET, so
@@ -144,24 +134,24 @@ void fill_feature_parallel(Dataset const &ds, floats_view grad, floats_view hess
                             h.add(bins[rows[k]], og[k], hess_of(k));
                         }
                     };
-                    auto at_k     = [&](size_t k) { return bins[k]; };
-                    auto unit     = [](size_t) { return 1.0F; };
-                    auto gathered = [oh](size_t k) { return oh[k]; };
-                    if (dense && oh == nullptr)
+                    // Density picks the arm; the hessian selector is picked
+                    // once and rides into whichever arm runs.
+                    auto fill = [&](auto hess_of)
                     {
-                        add(at_k, unit);
-                    }
-                    else if (dense)
+                        if (dense)
+                        {
+                            add(hess_of);
+                            return;
+                        }
+                        gather(hess_of);
+                    };
+                    if (oh == nullptr)
                     {
-                        add(at_k, gathered);
-                    }
-                    else if (oh == nullptr)
-                    {
-                        gather(unit);
+                        fill([](size_t) { return 1.0F; });
                     }
                     else
                     {
-                        gather(gathered);
+                        fill([oh](size_t k) { return oh[k]; });
                     }
                 });
             if (sibling != nullptr)
@@ -271,15 +261,21 @@ struct SelectionPlan
     std::vector<MirrorSlice> slices;
 };
 
-// The tree's plan, held across its fills. Keyed by dataset and selection so a
-// stale plan can never be read; begin_tree drops it, since a fresh tree may
-// draw a different selection into the same buffer.
+// The tree's plan, held across its fills. A grower samples its features once
+// per tree and hands the same span to every fill, so one plan serves the whole
+// tree; begin_tree drops it, since the next tree may draw a different
+// selection into the same buffer. That call is the whole freshness protocol,
+// for the plan and for the unit-hessian flag alike: a fill reached without it
+// reads whatever the last tree left.
 struct PlanCache
 {
     std::optional<SelectionPlan> plan;
-    Dataset const               *ds  = nullptr;
-    feature_id_t const          *sel = nullptr;
-    size_t                       n   = 0;
+    // What the held plan was built from, checked on every use in debug builds
+    // the way the carve's work list is: begin_tree is the whole protocol, and
+    // the one path that ever reached a fill without it was a live bug.
+    Dataset const      *ds  = nullptr;
+    feature_id_t const *sel = nullptr;
+    size_t              n   = 0;
     // Every row's hessian is exactly 1.0F this tree, so the fills add the
     // literal instead of reading one. begin_tree owns this: it is the one
     // call that says which hessians a tree will fill from, and the pointer
@@ -309,14 +305,15 @@ SelectionPlan const &selection_plan(Dataset const                &ds,
                                     std::span<feature_id_t const> selected)
 {
     PlanCache &cache = plan_cache();
-    if (!cache.plan || cache.ds != &ds || cache.sel != selected.data() ||
-        cache.n != selected.size())
+    if (!cache.plan)
     {
         cache.plan.emplace(ds, selected);
         cache.ds  = &ds;
         cache.sel = selected.data();
         cache.n   = selected.size();
     }
+    assert(cache.ds == &ds && cache.sel == selected.data() &&
+           cache.n == selected.size());
     return *cache.plan;
 }
 
@@ -832,9 +829,9 @@ struct FillPlan
 // The decomposition rule: size the team to the work, spend it on row blocks
 // while each one earns its partial and the mirror row is too narrow to give
 // every worker its own cache line, and on feature ranges after that.
-FillPlan plan_lone_fill(size_t n_rows, SelectionPlan const &sp, size_t n_sel,
-                        size_t threads)
+FillPlan plan_lone_fill(size_t n_rows, SelectionPlan const &sp, size_t threads)
 {
+    size_t const n_sel   = sp.offsets.size();
     size_t const workers = std::clamp(((n_sel * k_feature_stride) + (n_rows * n_sel)) /
                                           k_fill_cells_per_worker,
                                       size_t{1}, threads);
@@ -851,23 +848,6 @@ FillPlan plan_lone_fill(size_t n_rows, SelectionPlan const &sp, size_t n_sel,
         std::clamp(workers / std::max(lines, size_t{1}), size_t{1},
                    std::max(n_rows / k_fill_rows_per_block, size_t{1}));
     return {.ranges = std::clamp(workers / blocks, size_t{1}, n_sel), .blocks = blocks};
-}
-
-// One lone node's fill, decomposed to the node and the mirror row's width.
-void fill_one_node(Dataset const &ds, floats_view grad, floats_view hess,
-                   SplitInput &node, std::span<feature_id_t const> selected,
-                   SelectionPlan const &sp, ArenaLayout const *carve,
-                   NodeHistograms *sibling)
-{
-    size_t const n = node.rows.size();
-    if (n == 0)
-    {
-        return;
-    }
-    auto const      threads = static_cast<size_t>(parallel::n_threads());
-    FillPlan const  plan    = plan_lone_fill(n, sp, selected.size(), threads);
-    OrderedGh const gh      = ordered_gh(node.rows, grad, hess);
-    fill_lone(ds, node, selected, sp, carve, sibling, plan.ranges, plan.blocks, gh);
 }
 
 // Density cutoff: a node holding rows >= n_rows / den routes to the column
@@ -896,8 +876,12 @@ bool CpuHistogramEngine::populate(Dataset const &ds, floats_view grad, floats_vi
         split_input.hists.carve_storage(sp.layout, ds.n_features());
         if (ds.bins_are_u8() && split_input.rows.size() * k_col_fill_den < ds.n_rows())
         {
-            fill_one_node(ds, grad, hess, split_input, selected, sp, &sp.layout,
-                          sibling);
+            // Decomposed to the node and the mirror row's width.
+            FillPlan const plan =
+                plan_lone_fill(split_input.rows.size(), sp,
+                               static_cast<size_t>(parallel::n_threads()));
+            fill_lone(ds, split_input, selected, sp, &sp.layout, sibling, plan.ranges,
+                      plan.blocks, ordered_gh(split_input.rows, grad, hess));
         }
         else
         {

@@ -75,6 +75,17 @@ concept NodeSplitFinder = requires(SplitInput const &input, TreeConfig const &co
     { T::find(input, config) } -> std::same_as<SplitOutput>;
 };
 
+// What the leaf plane needs on top of find: best-first growth has no frontier
+// to spread across workers, so it drives the batched find instead of the
+// serial one.
+template <typename T>
+concept ParallelNodeSplitFinder =
+    NodeSplitFinder<T> &&
+    requires(std::span<SplitInput const> nodes, TreeConfig const &config,
+             std::span<SplitOutput> out) {
+        { T::find_parallel(nodes, config, out) } -> std::same_as<void>;
+    };
+
 struct HistogramNodeSplitFinder
 {
     static SplitOutput find(SplitInput const &input, TreeConfig const &config);
