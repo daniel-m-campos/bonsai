@@ -75,6 +75,28 @@ inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
                              });
 }
 
+// Stamps a finished frontier's rows with their leaves' values. One region for
+// the whole frontier, not one per leaf: the leaves partition the sampled rows
+// so nothing collides, and a region per leaf costs more than the writes it
+// spreads. Takes a range of SplitInput so the level plane's frontier vector
+// and the leaf plane's heap of candidates both fit.
+template <typename R>
+inline void stamp_leaf_rows(DenseTree::Nodes const &nodes, R &&frontier,
+                            train_leaf_values &values, std::vector<node_id_t> &leaf_ids)
+{
+    parallel::for_each_index(std::ranges::size(frontier),
+                             [&](size_t li)
+                             {
+                                 SplitInput const &input = frontier[li];
+                                 float const v = nodes[input.id].threshold_or_value;
+                                 for (row_id_t const r : input.rows)
+                                 {
+                                     values[r]   = v;
+                                     leaf_ids[r] = input.id;
+                                 }
+                             });
+}
+
 // A split with rows partitioned and histograms pending: the smaller child
 // populates, then finish_split derives the larger by subtraction.
 struct PendingSplit
@@ -510,8 +532,7 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
     }
 
     // End of tree: the surviving frontier becomes leaves. Values and the
-    // node table are serial (tiny); the row stamping runs one region for
-    // the whole frontier, since per-leaf regions cost more than the writes.
+    // node table are serial (tiny); the row stamping takes one region.
     void end_tree(std::vector<SplitInput> const &current, DenseTree::Nodes &nodes,
                   size_t &n_leaves, train_leaf_values &values,
                   std::vector<node_id_t> &leaf_ids, row_index_view /*row_indices*/)
@@ -520,17 +541,7 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         {
             write_leaf(nodes, input, config_, n_leaves);
         }
-        parallel::for_each_index(current.size(),
-                                 [&](size_t li)
-                                 {
-                                     SplitInput const &input = current[li];
-                                     float const v = nodes[input.id].threshold_or_value;
-                                     for (row_id_t const r : input.rows)
-                                     {
-                                         values[r]   = v;
-                                         leaf_ids[r] = input.id;
-                                     }
-                                 });
+        stamp_leaf_rows(nodes, current, values, leaf_ids);
     }
 
     // Levelwise leaf finalize, host plane: each frontier node is a leaf,
