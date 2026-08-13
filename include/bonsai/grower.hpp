@@ -166,13 +166,17 @@ struct CpuHistogramEngine
 {
     // Drops the tree's cached fill plan: the next tree redraws its features.
     void begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
-    // Fills one node. `sibling` is the leaf plane's larger child, holding the
-    // parent's histograms: the worker that fills a feature subtracts it from
-    // the sibling in the same region. Returns whether it did, so a caller the
-    // fused path declines still subtracts for itself.
-    bool populate(Dataset const &ds, floats_view grad, floats_view hess,
-                  SplitInput &split_input, std::span<feature_id_t const> selected,
-                  NodeHistograms *sibling = nullptr);
+    // Fills one node the level plane's way: a level of one.
+    void populate(Dataset const &ds, floats_view grad, floats_view hess,
+                  SplitInput &split_input, std::span<feature_id_t const> selected);
+    // The leaf plane's fused fill of one split's smaller child. `sibling` is
+    // the larger child, holding the parent's histograms: the worker that fills
+    // a feature subtracts it from the sibling in the same region. Returns
+    // whether it did, so a caller the fused path declines still subtracts for
+    // itself.
+    bool populate_lone(Dataset const &ds, floats_view grad, floats_view hess,
+                       SplitInput &split_input, std::span<feature_id_t const> selected,
+                       NodeHistograms &sibling);
     // Level-batched fill: all of a level's nodes in one call, so row-wise
     // work units from many small nodes share one parallel section
     // (docs/architecture/7-parallel.md). populate() is the one-node case.

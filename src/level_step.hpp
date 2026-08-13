@@ -420,11 +420,15 @@ split_node(Dataset const &ds, floats_view grad, floats_view hess, SplitInput par
     // larger child.
     SplitInput &small = smaller_child(p);
     bool        fused = false;
+    // Engines offering the fused lone fill (the CPU engine) carve, fill, and
+    // subtract in one decomposition and say whether the subtraction rode it;
+    // others fill the child alone and leave the subtraction to finish_split.
     if constexpr (requires {
-                      engine.populate(ds, grad, hess, small, selected, &p.parent_hists);
+                      engine.populate_lone(ds, grad, hess, small, selected,
+                                           p.parent_hists);
                   })
     {
-        fused = engine.populate(ds, grad, hess, small, selected, &p.parent_hists);
+        fused = engine.populate_lone(ds, grad, hess, small, selected, p.parent_hists);
     }
     else
     {

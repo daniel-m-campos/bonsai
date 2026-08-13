@@ -86,6 +86,9 @@ std::vector<std::vector<HistCell>> reference_hists(Fixture const               &
     return out;
 }
 
+// The level plane's fill of one node, or — for a nonzero id, as the leaf
+// plane drives it — the fused lone fill against a sibling holding the
+// parent's histograms.
 SplitInput populate_node(Fixture const &fx, std::vector<row_id_t> rows,
                          node_id_t id = 0)
 {
@@ -96,7 +99,15 @@ SplitInput populate_node(Fixture const &fx, std::vector<row_id_t> rows,
     // As a grower drives it: begin_tree drops the cached selection plan, which
     // is keyed by addresses a second fixture in this process may reuse.
     engine.begin_tree(fx.ds, fx.grad, fx.hess);
-    engine.populate(fx.ds, fx.grad, fx.hess, node, fx.selected);
+    if (id == 0)
+    {
+        engine.populate(fx.ds, fx.grad, fx.hess, node, fx.selected);
+        return node;
+    }
+    SplitInput parent;
+    parent.rows = test::iota_rows(fx.ds.n_rows());
+    engine.populate(fx.ds, fx.grad, fx.hess, parent, fx.selected);
+    engine.populate_lone(fx.ds, fx.grad, fx.hess, node, fx.selected, parent.hists);
     return node;
 }
 

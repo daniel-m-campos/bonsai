@@ -70,95 +70,115 @@ GhView ordered_gh(std::span<row_id_t const> rows, floats_view grad, floats_view 
 // (docs/architecture/7-parallel.md).
 constexpr size_t k_col_ahead = 64;
 
-// The column fill, taken by u16 (high max_bin) data and by dense u8 nodes:
-// one thread owns one feature's histogram and fills it in row order, so
-// results are bit-identical at any thread count. visit_bins monomorphizes
-// the fill per bin width. A lone node passes `carve` and its sibling: the
-// worker owning a feature zeroes its arena run and subtracts it from the
-// sibling without leaving the region.
-void fill_feature_parallel(Dataset const &ds, floats_view grad, floats_view hess,
-                           SplitInput                   &split_input,
-                           std::span<feature_id_t const> selected,
-                           ArenaLayout const            *carve   = nullptr,
-                           NodeHistograms               *sibling = nullptr)
+// grad and hess as one node's fill reads them: in place when the node covers
+// every row (the root, absent row sampling), gathered into its row order
+// otherwise.
+GhView node_gh(Dataset const &ds, SplitInput const &node, floats_view grad,
+               floats_view hess)
 {
-    size_t const n = split_input.rows.size();
-    // A node covering every row (the root, absent row sampling) needs no
-    // gather at all: rows is the identity, so grad/hess are used in place.
-    bool const   dense = n == ds.n_rows();
-    GhView const gh =
-        dense ? GhView{.g = grad, .h = hess} : ordered_gh(split_input.rows, grad, hess);
+    return node.rows.size() == ds.n_rows() ? GhView{.g = grad, .h = hess}
+                                           : ordered_gh(node.rows, grad, hess);
+}
+
+// One feature's column fill: the thread owning this histogram fills it in the
+// node's row order, so the cell sums are bit-identical at any thread count.
+// visit_bins monomorphizes the fill per bin width. `dense` says the node
+// covers every row, so gh is indexed by row id and no gather happened.
+void fill_column(Dataset const &ds, feature_id_t fid, Histogram &h,
+                 std::span<row_id_t const> rows, bool dense, GhView const &gh)
+{
+    size_t const                 n  = rows.size();
     std::span<float const> const og = gh.g;
     std::span<float const> const oh = gh.h;
-    parallel::for_each_index(
-        selected.size(),
-        [&](size_t s)
-        {
-            if (carve != nullptr)
-            {
-                split_input.hists.carve_run(*carve, selected, s);
-            }
-            feature_id_t const fid = selected[s];
-            Histogram         &h   = split_input.hists[fid];
-            ds.visit_bins(
-                fid,
-                [&](auto bins)
-                {
-                    std::span<row_id_t const> const rows = split_input.rows;
-                    // Hoisted out of the row loop: the hessian selector is
-                    // loop-invariant, and this is the fill's innermost work.
-                    auto add = [&](auto hess_of)
-                    {
-                        for (size_t k = 0; k < n; ++k)
-                        {
-                            h.add(bins[k], og[k], hess_of(k));
-                        }
-                    };
-                    // Below the root a node's rows are an ascending SUBSET, so
-                    // this column's bytes sit at irregular strides the hardware
-                    // prefetcher cannot follow and the gather runs
-                    // DRAM-latency-bound (#367). Pull the byte a fixed distance
-                    // ahead; reads only, so the sums are untouched. The node's
-                    // last rows go unprefetched, peeled out so the hot loop
-                    // carries no per-row bound test.
-                    auto gather = [&](auto hess_of)
-                    {
-                        size_t const kp = n > k_col_ahead ? n - k_col_ahead : 0;
-                        for (size_t k = 0; k < kp; ++k)
-                        {
-                            __builtin_prefetch(&bins[rows[k + k_col_ahead]], 0, 0);
-                            h.add(bins[rows[k]], og[k], hess_of(k));
-                        }
-                        for (size_t k = kp; k < n; ++k)
-                        {
-                            h.add(bins[rows[k]], og[k], hess_of(k));
-                        }
-                    };
-                    // Density picks the arm; the hessian selector is picked
-                    // once and rides into whichever arm runs.
-                    auto fill = [&](auto hess_of)
-                    {
-                        if (dense)
-                        {
-                            add(hess_of);
-                            return;
-                        }
-                        gather(hess_of);
-                    };
-                    if (oh.empty())
-                    {
-                        fill([](size_t) { return 1.0F; });
-                    }
-                    else
-                    {
-                        fill([oh](size_t k) { return oh[k]; });
-                    }
-                });
-            if (sibling != nullptr)
-            {
-                (*sibling)[fid] -= h;
-            }
-        });
+    ds.visit_bins(fid,
+                  [&](auto bins)
+                  {
+                      // Hoisted out of the row loop: the hessian selector is
+                      // loop-invariant, and this is the fill's innermost work.
+                      auto add = [&](auto hess_of)
+                      {
+                          for (size_t k = 0; k < n; ++k)
+                          {
+                              h.add(bins[k], og[k], hess_of(k));
+                          }
+                      };
+                      // Below the root a node's rows are an ascending SUBSET, so
+                      // this column's bytes sit at irregular strides the hardware
+                      // prefetcher cannot follow and the gather runs
+                      // DRAM-latency-bound (#367). Pull the byte a fixed distance
+                      // ahead; reads only, so the sums are untouched. The node's
+                      // last rows go unprefetched, peeled out so the hot loop
+                      // carries no per-row bound test.
+                      auto gather = [&](auto hess_of)
+                      {
+                          size_t const kp = n > k_col_ahead ? n - k_col_ahead : 0;
+                          for (size_t k = 0; k < kp; ++k)
+                          {
+                              __builtin_prefetch(&bins[rows[k + k_col_ahead]], 0, 0);
+                              h.add(bins[rows[k]], og[k], hess_of(k));
+                          }
+                          for (size_t k = kp; k < n; ++k)
+                          {
+                              h.add(bins[rows[k]], og[k], hess_of(k));
+                          }
+                      };
+                      // Density picks the arm; the hessian selector is picked
+                      // once and rides into whichever arm runs.
+                      auto fill = [&](auto hess_of)
+                      {
+                          if (dense)
+                          {
+                              add(hess_of);
+                              return;
+                          }
+                          gather(hess_of);
+                      };
+                      if (oh.empty())
+                      {
+                          fill([](size_t) { return 1.0F; });
+                      }
+                      else
+                      {
+                          fill([oh](size_t k) { return oh[k]; });
+                      }
+                  });
+}
+
+// The column fill, taken by u16 (high max_bin) data and by dense u8 nodes:
+// one worker per selected feature.
+void fill_columns(Dataset const &ds, floats_view grad, floats_view hess,
+                  SplitInput &node, std::span<feature_id_t const> selected)
+{
+    bool const   dense = node.rows.size() == ds.n_rows();
+    GhView const gh    = node_gh(ds, node, grad, hess);
+    parallel::for_each_index(selected.size(),
+                             [&](size_t s)
+                             {
+                                 feature_id_t const fid = selected[s];
+                                 fill_column(ds, fid, node.hists[fid], node.rows, dense,
+                                             gh);
+                             });
+}
+
+// The same column fill for a lone node, with the carve and the sibling
+// subtraction riding it: the worker owning a feature zeroes that feature's
+// arena run and subtracts its histogram from the sibling without leaving the
+// region.
+void fill_columns_lone(Dataset const &ds, floats_view grad, floats_view hess,
+                       SplitInput &node, std::span<feature_id_t const> selected,
+                       ArenaLayout const &carve, NodeHistograms &sibling)
+{
+    bool const   dense = node.rows.size() == ds.n_rows();
+    GhView const gh    = node_gh(ds, node, grad, hess);
+    parallel::for_each_index(selected.size(),
+                             [&](size_t s)
+                             {
+                                 node.hists.carve_run(carve, selected, s);
+                                 feature_id_t const fid = selected[s];
+                                 Histogram         &h   = node.hists[fid];
+                                 fill_column(ds, fid, h, node.rows, dense, gh);
+                                 sibling[fid] -= h;
+                             });
 }
 
 // Grow-only storage for the fill's partials: kept at its high-water mark for
@@ -682,7 +702,7 @@ struct FillBlock
 // spreading a frontier.
 void fill_lone(Dataset const &ds, SplitInput &node,
                std::span<feature_id_t const> selected, SelectionPlan const &sp,
-               ArenaLayout const *carve, NodeHistograms *sibling, size_t ranges,
+               ArenaLayout const &carve, NodeHistograms &sibling, size_t ranges,
                size_t blocks, GhView const &gh)
 {
     size_t const              n         = node.rows.size();
@@ -740,12 +760,9 @@ void fill_lone(Dataset const &ds, SplitInput &node,
             };
             if (direct)
             {
-                if (carve != nullptr)
+                for (size_t s = sub.s0; s < sub.s1; ++s)
                 {
-                    for (size_t s = sub.s0; s < sub.s1; ++s)
-                    {
-                        node.hists.carve_run(*carve, selected, s);
-                    }
+                    node.hists.carve_run(carve, selected, s);
                 }
             }
             else
@@ -771,11 +788,11 @@ void fill_lone(Dataset const &ds, SplitInput &node,
                                                           : CellMode::gathered};
             fill_rows<true>(node, n * r.block / blocks, n * (r.block + 1) / blocks,
                             gh.g, gh.h, target);
-            if (blocks == 1 && sibling != nullptr)
+            if (blocks == 1)
             {
                 for (size_t s = sub.s0; s < sub.s1; ++s)
                 {
-                    (*sibling)[selected[s]] -= hists[selected[s]];
+                    sibling[selected[s]] -= hists[selected[s]];
                 }
             }
         });
@@ -794,10 +811,7 @@ void fill_lone(Dataset const &ds, SplitInput &node,
             {
                 h.add_cells({&view[j - 1, s * k_feature_stride], h.size()});
             }
-            if (sibling != nullptr)
-            {
-                (*sibling)[selected[s]] -= h;
-            }
+            sibling[selected[s]] -= h;
         });
 }
 
@@ -854,45 +868,55 @@ constexpr size_t k_col_fill_den = 4;
 
 } // namespace
 
-// One node's fill. The leaf plane calls this per split, and its node has no
-// frontier to spread the work over, so the fill cuts the node itself: a sparse
-// one into feature ranges by row blocks over the mirror, a dense or u16 one
-// column by column. The carve and the sibling subtraction ride the same cut,
-// so a split's whole histogram step costs one parallel region, two when row
-// blocks leave partials to reduce. The root keeps the level growers' path: it
-// is the one lone node they populate too.
-bool CpuHistogramEngine::populate(Dataset const &ds, floats_view grad, floats_view hess,
+// One node's fill, the level plane's way: the node is a level of one, so it
+// takes the same batched path a frontier does.
+void CpuHistogramEngine::populate(Dataset const &ds, floats_view grad, floats_view hess,
                                   SplitInput                   &split_input,
-                                  std::span<feature_id_t const> selected,
-                                  NodeHistograms               *sibling)
+                                  std::span<feature_id_t const> selected)
 {
-    hess = fill_hess(hess);
-    if (split_input.id != 0 && !selected.empty() && !split_input.rows.empty())
-    {
-        SelectionPlan const &sp = selection_plan(ds, selected);
-        split_input.hists.carve_storage(sp.layout, ds.n_features());
-        if (ds.bins_are_u8() && split_input.rows.size() * k_col_fill_den < ds.n_rows())
-        {
-            // Decomposed to the node and the mirror row's width.
-            FillPlan const plan =
-                plan_lone_fill(split_input.rows.size(), sp,
-                               static_cast<size_t>(parallel::n_threads()));
-            fill_lone(ds, split_input, selected, sp, &sp.layout, sibling, plan.ranges,
-                      plan.blocks, ordered_gh(split_input.rows, grad, hess));
-        }
-        else
-        {
-            fill_feature_parallel(ds, grad, hess, split_input, selected, &sp.layout,
-                                  sibling);
-        }
-        // The carve rides the fill's decomposition, so a work list that missed
-        // a run would read cells whose lifetime never started.
-        assert(split_input.hists.all_runs_carved(sp.layout, selected));
-        return true;
-    }
     std::array one = {std::ref(split_input)};
     populate_many(ds, grad, hess, one, selected);
-    return false;
+}
+
+// The leaf plane's per-split fill. Its node has no frontier to spread the work
+// over, so the fill cuts the node itself: a sparse one into feature ranges by
+// row blocks over the mirror, a dense or u16 one column by column. The carve
+// and the subtraction from `sibling` (the larger child, holding the parent's
+// histograms) ride the same cut, so a split's whole histogram step costs one
+// parallel region, two when row blocks leave partials to reduce. Returns
+// whether the subtraction rode the fill: a node this path declines falls back
+// to the level plane's fill, which leaves the sibling to the caller.
+bool CpuHistogramEngine::populate_lone(Dataset const &ds, floats_view grad,
+                                       floats_view hess, SplitInput &split_input,
+                                       std::span<feature_id_t const> selected,
+                                       NodeHistograms               &sibling)
+{
+    hess = fill_hess(hess);
+    // The root is the one lone node the level growers populate too, and it
+    // has no sibling to subtract from: it keeps their path.
+    if (split_input.id == 0 || selected.empty() || split_input.rows.empty())
+    {
+        populate(ds, grad, hess, split_input, selected);
+        return false;
+    }
+    SelectionPlan const &sp = selection_plan(ds, selected);
+    split_input.hists.carve_storage(sp.layout, ds.n_features());
+    if (ds.bins_are_u8() && split_input.rows.size() * k_col_fill_den < ds.n_rows())
+    {
+        // Decomposed to the node and the mirror row's width.
+        FillPlan const plan = plan_lone_fill(
+            split_input.rows.size(), sp, static_cast<size_t>(parallel::n_threads()));
+        fill_lone(ds, split_input, selected, sp, sp.layout, sibling, plan.ranges,
+                  plan.blocks, ordered_gh(split_input.rows, grad, hess));
+    }
+    else
+    {
+        fill_columns_lone(ds, grad, hess, split_input, selected, sp.layout, sibling);
+    }
+    // The carve rides the fill's decomposition, so a work list that missed a
+    // run would read cells whose lifetime never started.
+    assert(split_input.hists.all_runs_carved(sp.layout, selected));
+    return true;
 }
 
 // Builds histograms for `selected` features only; unselected slots stay
@@ -926,7 +950,7 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     {
         for (SplitInput &node : nodes)
         {
-            fill_feature_parallel(ds, grad, hess, node, selected);
+            fill_columns(ds, grad, hess, node, selected);
         }
         return;
     }
@@ -936,7 +960,7 @@ void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     {
         if (node.rows.size() * k_col_fill_den >= ds.n_rows())
         {
-            fill_feature_parallel(ds, grad, hess, node, selected);
+            fill_columns(ds, grad, hess, node, selected);
         }
         else
         {
