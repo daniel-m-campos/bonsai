@@ -27,6 +27,7 @@ add_executable(bonsai_tests
     unit/test_typelist.cpp
     unit/test_parallel.cpp
     unit/test_populate.cpp
+    unit/test_partition.cpp
     unit/test_demote.cpp
     unit/test_make_booster.cpp
     unit/test_toml.cpp
