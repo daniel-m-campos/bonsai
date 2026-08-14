@@ -590,6 +590,11 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
     int const      mc         = monotone[f];
     uint32_t const n_cut      = nb - 2; // cut cells are bins [0, nb-2)
 
+    // An empty missing cell routes nothing either way, so both directions give
+    // the same sums and gain and feat_better keeps the first: scanning dl = 0
+    // again is pure cost. Warp-uniform, so no divergence inside the warp.
+    int const n_dirs = (miss_g == 0.0 && miss_h == 0.0) ? 1 : 2;
+
     double  best_gain = 0.0;
     int32_t best_bin = 0, best_dl = 0, best_valid = 0;
     double  bgL = 0, bhL = 0, bgR = 0, bhR = 0;
@@ -622,8 +627,9 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
 
         if (b < n_cut)
         {
-            for (int dl = 1; dl >= 0; --dl)
+            for (int d = 0; d < n_dirs; ++d)
             {
+                int const  dl = 1 - d; // dl = 1 first, as the serial scan orders it
                 auto const s =
                     split_sums_dev(pg, ph, miss_g, miss_h, real_grad, real_hess, dl);
                 if (s.hL < min_child_hess || s.hR < min_child_hess)
@@ -745,11 +751,33 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
         return;
     }
     uint32_t const n_cut = nb - 2; // cut cells are bins [0, nb-2)
+
+    // Every parent's missing cell empty makes the two routings identical for
+    // each parent, so their summed scores match and the lane-0 scan's strict >
+    // keeps the first. One warp-wide pass over the frontier decides it; the
+    // reduce makes n_dirs warp-uniform, so the scan below stays convergent.
+    bool all_missing_empty = true;
+    for (uint32_t base = 0; base < n_nodes; base += 32)
+    {
+        uint32_t const p     = base + lane;
+        bool           empty = true;
+        if (p < n_nodes)
+        {
+            double const *cells =
+                hists + ((static_cast<size_t>(p) * n_sel + f) * stride);
+            empty =
+                cells[pair_off(nb - 1)] == 0.0 && cells[pair_off(nb - 1) + 1] == 0.0;
+        }
+        all_missing_empty =
+            all_missing_empty && (__all_sync(0xffffffffU, empty ? 1 : 0) != 0);
+    }
+    int const n_dirs = all_missing_empty ? 1 : 2;
+
     for (uint32_t b = lane; b < n_cut; b += 32)
     {
-        for (int dl = 0; dl < 2; ++dl)
+        for (int d = 0; d < n_dirs; ++d)
         {
-            s_score[dl][b] = 0.0;
+            s_score[1 - d][b] = 0.0;
         }
     }
     __syncwarp();
@@ -778,8 +806,9 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
                 pg += cells[pair_off(b)];
                 ph += cells[pair_off(b) + 1];
             }
-            for (int dl = 1; dl >= 0; --dl)
+            for (int d = 0; d < n_dirs; ++d)
             {
+                int const  dl = 1 - d; // dl = 1 first, as the serial scan orders it
                 auto const s =
                     split_sums_dev(pg, ph, miss_g, miss_h, real_g, real_h, dl);
                 // Ported from the CPU level find (split.cpp): an infeasible
@@ -809,8 +838,9 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
         FeatBest best = {};
         for (uint32_t b = 0; b < n_cut; ++b)
         {
-            for (int dl = 1; dl >= 0; --dl)
+            for (int d = 0; d < n_dirs; ++d)
             {
+                int const    dl   = 1 - d;
                 double const gain = s_score[dl][b] - parent_sum;
                 if (gain > best.gain && gain >= min_gain)
                 {
