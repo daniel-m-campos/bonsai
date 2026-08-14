@@ -255,6 +255,21 @@ train_with_progress(Config const &cfg, LabeledData const &train,
         throw ConfigError("early_stopping_rounds cannot be combined with "
                           "dart_drop_rate");
     }
+    // Per-round routing reads the valid matrix once per round, so binning it
+    // once beats re-reading its raw floats: a bin row is a quarter of a float
+    // row. The pass itself costs what ~90 rounds of the raw walk cost (2M x
+    // 128 at 20% held out), so shorter fits keep the raw path, and 8-bit bins
+    // are the only width the row-major mirror the walk indexes exists at.
+    constexpr uint32_t     k_bin_valid_min_iters = 96;
+    std::optional<Dataset> valid_bins;
+    if ((es_enabled || track_eval) && n_iters >= k_bin_valid_min_iters &&
+        bins_fit_u8(train.dataset.mappers()))
+    {
+        valid_bins = Dataset::bin(valid->features.view(), valid->labels,
+                                  train.dataset.mappers(), cfg.data);
+    }
+    Dataset const *const bins = valid_bins ? &*valid_bins : nullptr;
+
     std::vector<float> es_scores;
     float              best_loss = 0.0F;
     uint32_t           best_iter = 0;
@@ -291,7 +306,7 @@ train_with_progress(Config const &cfg, LabeledData const &train,
                 }
             }
             detail::Lap<detail::FitProfiler> lap;
-            booster->accumulate_last_round(valid->features.view(), es_scores);
+            booster->accumulate_last_round(valid->features.view(), bins, es_scores);
             lap(detail::FitProfiler::instance().eval_route_s);
             float const loss = booster->valid_loss(es_scores, valid->labels);
             lap(detail::FitProfiler::instance().eval_loss_s);
