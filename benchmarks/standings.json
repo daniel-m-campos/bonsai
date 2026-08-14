@@ -2,96 +2,48 @@
   "_": "The standings registry, v2 (results-lifecycle policy, decision 92; scenario redesign, decision 103). One entry per published perf/quality axis: the current-standings file (null until the axis has been measured), the single sha its rows were measured at, the release it was refreshed for, and `plane` (cpu or gpu), the source set whose digest decides whether the axis is still current. Every axis also carries hash_set (its plane's digest at refresh time) and refs (reference-library versions measured against), which let scripts/check_standings.py's release gate skip a refresh when neither has moved, and let `--stale` tell the refresh driver which axes a session must actually measure. Gates: scripts/check_standings.py; supersession is in place, git history is the archive.",
   "gpu-tall": {
     "file": "gpu-tall-2026-08.jsonl",
-    "sha": "148f21b",
+    "sha": "c266f26",
     "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-08-05",
+    "date": "2026-08-14",
     "plane": "gpu",
-    "refreshed_for": "1.7.0",
+    "refreshed_for": "1.8.0",
     "as_of_decision": 104,
     "companion": "parity-2026-08.jsonl",
-    "hash_set": "eaa6ca65e077846d",
+    "hash_set": "132360938c3f1eab",
     "refs": {
-      "xgboost": "3.2.0",
+      "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
-    },
-    "carried_forward": {
-      "measured_at": "148f21b",
-      "stamped_at": "028dba6",
-      "reason": "src/cuda moved with the host-fallback deletion (PR 369); completing device fits are unchanged: cross-commit r2 delta 1.78e-05 vs within-commit floor 7.12e-05 on one L40S, 4 reps per commit per arm; representative tall cell, all three cuda growers measured; leafwise cross-delta exactly 0",
-      "evidence": {
-        "kind": "tolerance",
-        "metric": "r2",
-        "floor_before": 7.12e-05,
-        "floor_after": 7.12e-05,
-        "cross_commit": 1.78e-05,
-        "factor": 2.0,
-        "cell": "2097152x128",
-        "config": "cuda_depthwise",
-        "host": "pod-NVIDIA-L40S"
-      }
     }
   },
   "gpu-wide": {
     "file": "gpu-wide-2026-08.jsonl",
-    "sha": "148f21b",
+    "sha": "c266f26",
     "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-08-05",
+    "date": "2026-08-14",
     "plane": "gpu",
-    "refreshed_for": "1.7.0",
+    "refreshed_for": "1.8.0",
     "as_of_decision": 104,
-    "hash_set": "eaa6ca65e077846d",
+    "hash_set": "132360938c3f1eab",
     "refs": {
-      "xgboost": "3.2.0",
+      "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
-    },
-    "carried_forward": {
-      "measured_at": "148f21b",
-      "stamped_at": "028dba6",
-      "reason": "src/cuda moved with the host-fallback deletion (PR 369); completing device fits are unchanged: cross-commit r2 delta 1.16e-07 vs within-commit floor 2.62e-06 on one L40S, 4 reps per commit per arm; the axis's own cell; leafwise/levelwise raise the identical pre-existing pool refusal on both commits",
-      "evidence": {
-        "kind": "tolerance",
-        "metric": "r2",
-        "floor_before": 1.52e-06,
-        "floor_after": 2.62e-06,
-        "cross_commit": 1.16e-07,
-        "factor": 2.0,
-        "cell": "131072x16384",
-        "config": "cuda_depthwise",
-        "host": "pod-NVIDIA-L40S"
-      }
     }
   },
   "gpu-extreme": {
     "file": "gpu-extreme-2026-08.jsonl",
-    "sha": "4fd9531",
+    "sha": "c266f26",
     "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-08-05",
+    "date": "2026-08-14",
     "plane": "gpu",
-    "refreshed_for": "1.7.0",
+    "refreshed_for": "1.8.0",
     "as_of_decision": 104,
-    "hash_set": "eaa6ca65e077846d",
+    "hash_set": "132360938c3f1eab",
     "refs": {
-      "xgboost": "3.2.0",
+      "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
-    },
-    "carried_forward": {
-      "measured_at": "4fd9531",
-      "stamped_at": "028dba6",
-      "reason": "src/cuda moved with the host-fallback deletion (PR 369); completing device fits are unchanged: cross-commit r2 delta 1.78e-05 vs within-commit floor 7.12e-05 on one L40S, 4 reps per commit per arm; same grower set as the axis; extreme cell shares the depthwise device path measured here",
-      "evidence": {
-        "kind": "tolerance",
-        "metric": "r2",
-        "floor_before": 7.12e-05,
-        "floor_after": 7.12e-05,
-        "cross_commit": 1.78e-05,
-        "factor": 2.0,
-        "cell": "2097152x128",
-        "config": "cuda_depthwise",
-        "host": "pod-NVIDIA-L40S"
-      }
     }
   },
   "cpu-tall": {
@@ -126,33 +78,17 @@
   },
   "gpu-early-stop": {
     "file": "gpu-early-stop-2026-08.jsonl",
-    "sha": "148f21b",
+    "sha": "c266f26",
     "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-08-05",
+    "date": "2026-08-14",
     "plane": "gpu",
-    "refreshed_for": "1.7.0",
+    "refreshed_for": "1.8.0",
     "as_of_decision": 104,
-    "hash_set": "eaa6ca65e077846d",
+    "hash_set": "132360938c3f1eab",
     "refs": {
-      "xgboost": "3.2.0",
+      "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
-    },
-    "carried_forward": {
-      "measured_at": "148f21b",
-      "stamped_at": "028dba6",
-      "reason": "src/cuda moved with the host-fallback deletion (PR 369); completing device fits are unchanged: cross-commit r2 delta 0.00e+00 vs within-commit floor 7.12e-05 on one L40S, 4 reps per commit per arm; eval machinery untouched by the change; grower evidence at the tall cell, cross-delta 0",
-      "evidence": {
-        "kind": "tolerance",
-        "metric": "r2",
-        "floor_before": 7.12e-05,
-        "floor_after": 7.12e-05,
-        "cross_commit": 0.0,
-        "factor": 2.0,
-        "cell": "2097152x128",
-        "config": "cuda_leafwise",
-        "host": "pod-NVIDIA-L40S"
-      }
     }
   },
   "quality-grinsztajn": {
