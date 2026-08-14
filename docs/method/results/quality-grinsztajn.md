@@ -28,4 +28,4 @@ XGBoost's campaign mapping sets `min_child_weight=20` (hessian-weighted, the kno
 
 Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite (hours; datasets fetch from OpenML), then `--report` on the same file to render the standings from the jsonl.
 
-*Source: [`grinsztajn-2026-08.jsonl`](../../../benchmarks/results/grinsztajn-2026-08.jsonl). As-run; evidence narrative in [benchmarks/grinsztajn-2026-07.md](../../../benchmarks/grinsztajn-2026-07.md), ruling in decision 68.*
+*Source: [`quality-grinsztajn-2026-08.jsonl`](../../../benchmarks/results/quality-grinsztajn-2026-08.jsonl). As-run; evidence narrative in [benchmarks/grinsztajn-2026-07.md](../../../benchmarks/grinsztajn-2026-07.md), ruling in decision 68.*
