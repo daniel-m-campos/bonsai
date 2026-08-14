@@ -752,10 +752,13 @@ class Booster final : public IBooster
     {
         assert(!trees_.empty());
         assert(X.extent(0) == scores.size());
-        std::vector<float> raw(scores.size(), 0.0F);
-        trees_.back().predict(X, raw);
-        parallel::for_each_index(scores.size(), [&](size_t i)
-                                 { scores[i] += config_.learning_rate * raw[i]; });
+        // One pass: predict's buffer starts at zero, so lr * value_for is the
+        // same product the two-pass form formed.
+        auto const &tree = trees_.back();
+        float const lr   = config_.learning_rate;
+        parallel::for_each_index(
+            scores.size(), [&](size_t i)
+            { scores[i] += lr * tree.value_for(X, static_cast<row_id_t>(i)); });
     }
 
     void truncate(size_t n_trees) override

@@ -37,7 +37,7 @@ node_id_t DenseTree::leaf_for(features_view X, row_id_t i) const
     return index;
 }
 
-float DenseTree::walk_row(features_view X, row_id_t i) const
+float DenseTree::value_for(features_view X, row_id_t i) const
 {
     return nodes_[leaf_for(X, i)].threshold_or_value;
 }
@@ -46,7 +46,7 @@ void DenseTree::predict(features_view X, floats_out out) const
 {
     assert(X.extent(0) == out.size());
     parallel::for_each_index(out.size(), [&](size_t i)
-                             { out[i] += walk_row(X, static_cast<row_id_t>(i)); });
+                             { out[i] += value_for(X, static_cast<row_id_t>(i)); });
 }
 
 ObliviousTree::ObliviousTree(LevelSplits splits, LeafTable values,
@@ -129,7 +129,7 @@ node_id_t ObliviousTree::leaf_for(features_view X, row_id_t i) const
     return index;
 }
 
-float ObliviousTree::walk_row(features_view X, row_id_t i) const
+float ObliviousTree::value_for(features_view X, row_id_t i) const
 {
     return leaf_table_[leaf_for(X, i)];
 }
@@ -138,7 +138,7 @@ void ObliviousTree::predict(features_view X, floats_out out) const
 {
     assert(X.extent(0) == out.size());
     parallel::for_each_index(out.size(), [&](size_t i)
-                             { out[i] += walk_row(X, static_cast<row_id_t>(i)); });
+                             { out[i] += value_for(X, static_cast<row_id_t>(i)); });
 }
 
 } // namespace bonsai

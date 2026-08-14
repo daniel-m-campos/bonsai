@@ -224,18 +224,20 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     void accumulate_last_round(features_view X, floats_out scores) const override
     {
         assert(trees_.size() >= n_classes_);
-        size_t const       n     = X.extent(0);
-        size_t const       first = trees_.size() - n_classes_;
-        std::vector<float> raw(n);
-        for (size_t k = 0; k < n_classes_; ++k)
-        {
-            std::ranges::fill(raw, 0.0F);
-            trees_[first + k].predict(X, raw);
-            for (size_t i = 0; i < n; ++i)
-            {
-                scores[(i * n_classes_) + k] += config_.learning_rate * raw[i];
-            }
-        }
+        size_t const first = trees_.size() - n_classes_;
+        float const  lr    = config_.learning_rate;
+        // Row-major over classes: each row's features are read once for all K
+        // trees instead of K passes over X, and the per-row add is unchanged.
+        parallel::for_each_index(X.extent(0),
+                                 [&](size_t i)
+                                 {
+                                     for (size_t k = 0; k < n_classes_; ++k)
+                                     {
+                                         scores[(i * n_classes_) + k] +=
+                                             lr * trees_[first + k].value_for(
+                                                      X, static_cast<row_id_t>(i));
+                                     }
+                                 });
     }
 
     float valid_loss(std::span<float const> scores, floats_view labels) const override
