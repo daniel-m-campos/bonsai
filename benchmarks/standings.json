@@ -99,16 +99,26 @@
     "refreshed_for": "1.7.0",
     "as_of_decision": 92,
     "sha_partial": true,
-    "hash_set": "eaa6ca65e077846d",
+    "hash_set": "132360938c3f1eab",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "f2202a4",
+      "stamped_at": "5740b4f",
+      "reason": "src/cuda-only change (device find halving); host plane byte-identical, all 12 model hashes unchanged, quality rows are host-plane measurements",
+      "evidence": {
+        "kind": "model-hash",
+        "before": "eaccfd9ee522db69",
+        "after": "eaccfd9ee522db69"
+      }
     }
   },
   "code": {
     "file": "code-metrics-2026-08.jsonl",
-    "sha": "028dba67e056275bc1105c586eb253efaf6a4746",
+    "sha": "5740b4f17c249a21c2f90334ac663f1af4613714",
     "host": null,
     "date": null,
     "refreshed_for": "1.8.0",
