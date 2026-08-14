@@ -22,18 +22,6 @@ namespace bonsai
 namespace
 {
 
-bool all_fit_u8(BinMappers const &mappers)
-{
-    for (size_t f = 0; f < mappers.size(); ++f)
-    {
-        if (mappers[f].n_bins() > 256)
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
 // Shared bin loop: `read(f, r)` yields the raw float for (row, feature);
 // values are identical either width, so models stay byte-identical. Workers
 // own row tiles and visit every feature within the tile, so a row-major
@@ -46,7 +34,7 @@ void fill_binned(std::vector<std::vector<uint8_t>>  &u8,
                  std::vector<std::vector<uint16_t>> &u16, bool &u8_mode,
                  size_t n_features, size_t n_rows, BinMappers const &mappers, Read read)
 {
-    u8_mode = all_fit_u8(mappers);
+    u8_mode = bins_fit_u8(mappers);
     if (u8_mode)
     {
         u8.resize(n_features);
@@ -118,7 +106,7 @@ Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers
     {
         ds.plane_       = std::move(plane);
         ds.lazy_        = std::make_shared<HostBins>();
-        ds.bins_are_u8_ = all_fit_u8(mappers);
+        ds.bins_are_u8_ = bins_fit_u8(mappers);
     }
     else
     {
@@ -166,7 +154,7 @@ Dataset Dataset::bin(size_t n_rows, size_t n_features, floats_view labels,
     ds.weights_.assign(weights.begin(), weights.end());
     ds.plane_       = std::move(plane);
     ds.lazy_        = std::make_shared<HostBins>();
-    ds.bins_are_u8_ = all_fit_u8(mappers);
+    ds.bins_are_u8_ = bins_fit_u8(mappers);
     return ds;
 }
 

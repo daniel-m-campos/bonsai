@@ -108,16 +108,19 @@ class IBooster
     // seed_valid_scores fills it as of n_rounds boosting rounds (0 = base
     // scores only — the warm-start seam); accumulate_last_round adds the
     // newest round's tree(s); valid_loss scores it with the booster's own
-    // configured objective.
+    // configured objective. `bins` is the same rows in bin space when the
+    // caller has them (identical routing, a quarter the bytes); null falls
+    // back to the raw floats.
     virtual size_t score_width() const
     {
         return 1;
     }
     virtual void  seed_valid_scores(features_view X, std::span<float> out,
-                                    size_t n_rounds) const                        = 0;
-    virtual void  accumulate_last_round(features_view X, floats_out scores) const = 0;
+                                    size_t n_rounds) const       = 0;
+    virtual void  accumulate_last_round(features_view X, Dataset const *bins,
+                                        floats_out scores) const = 0;
     virtual float valid_loss(std::span<float const> scores,
-                             floats_view            labels) const                            = 0;
+                             floats_view            labels) const           = 0;
     // Drop trees beyond the first n_trees (keep the best iteration's model).
     virtual void truncate(size_t n_trees) = 0;
 };
@@ -183,6 +186,81 @@ inline void accumulate_train_contribution(ObliviousTree const &tree, Dataset con
             }
             out[r] += tree.leaf_table()[index];
         });
+}
+
+// A tree's splits in bin space, so a routing loop inverts bin_of_threshold
+// once per tree instead of once per row: per split, the bin its threshold came
+// from and its feature's missing bin. Indexed by node id (DenseTree) or by
+// level (ObliviousTree).
+struct SplitBins
+{
+    std::vector<bin_id_t> split;
+    std::vector<bin_id_t> last;
+};
+
+inline SplitBins split_bins(DenseTree const &tree, Dataset const &ds)
+{
+    auto const &nodes = tree.nodes();
+    SplitBins   sb{std::vector<bin_id_t>(nodes.size(), 0),
+                 std::vector<bin_id_t>(nodes.size(), 0)};
+    for (size_t i = 0; i < nodes.size(); ++i)
+    {
+        if (!DenseTree::is_leaf(nodes[i]))
+        {
+            auto const f = nodes[i].feature_id;
+            sb.split[i]  = ds.bin_of_threshold(f, nodes[i].threshold_or_value);
+            sb.last[i]   = static_cast<bin_id_t>(ds.n_bins(f) - 1);
+        }
+    }
+    return sb;
+}
+
+inline SplitBins split_bins(ObliviousTree const &tree, Dataset const &ds)
+{
+    auto const &splits = tree.splits();
+    SplitBins   sb{std::vector<bin_id_t>(splits.size(), 0),
+                 std::vector<bin_id_t>(splits.size(), 0)};
+    for (size_t lvl = 0; lvl < splits.size(); ++lvl)
+    {
+        auto const f  = splits[lvl].feature_id;
+        sb.split[lvl] = ds.bin_of_threshold(f, splits[lvl].threshold);
+        sb.last[lvl]  = static_cast<bin_id_t>(ds.n_bins(f) - 1);
+    }
+    return sb;
+}
+
+// Row r's leaf contribution, routed over the row-major bin mirror instead of
+// the raw floats. Same routing (bin(v) <= split_bin iff v <= cuts[split_bin],
+// and the missing bin follows default_left) over a quarter of the bytes a
+// float row costs. `rm` is ds.row_major_bins(), hoisted by the caller.
+inline float value_binned(DenseTree const &tree, SplitBins const &sb, Dataset const &ds,
+                          std::span<uint8_t const> rm, size_t r)
+{
+    auto const &nodes = tree.nodes();
+    node_id_t   idx   = 0;
+    while (!DenseTree::is_leaf(nodes[idx]))
+    {
+        auto const    &nd = nodes[idx];
+        bin_id_t const b  = rm[ds.mirror_index(r, nd.feature_id)];
+        idx = routes_left(b, sb.last[idx], sb.split[idx], nd.default_left) ? nd.left
+                                                                           : nd.right;
+    }
+    return nodes[idx].threshold_or_value;
+}
+
+inline float value_binned(ObliviousTree const &tree, SplitBins const &sb,
+                          Dataset const &ds, std::span<uint8_t const> rm, size_t r)
+{
+    auto const &splits = tree.splits();
+    size_t      index  = 0;
+    for (size_t lvl = 0; lvl < splits.size(); ++lvl)
+    {
+        auto const    &s = splits[lvl];
+        bin_id_t const b = rm[ds.mirror_index(r, s.feature_id)];
+        bool const left  = routes_left(b, sb.last[lvl], sb.split[lvl], s.default_left);
+        index            = (index << 1U) | (left ? 0U : 1U);
+    }
+    return tree.leaf_table()[index];
 }
 
 inline std::string feature_label(std::span<std::string const> names, size_t f)
@@ -748,14 +826,24 @@ class Booster final : public IBooster
         return objective_.eval(floats_view{scores.data(), scores.size()}, labels);
     }
 
-    void accumulate_last_round(features_view X, floats_out scores) const override
+    void accumulate_last_round(features_view X, Dataset const *bins,
+                               floats_out scores) const override
     {
         assert(!trees_.empty());
+        auto const &tree = trees_.back();
+        float const lr   = config_.learning_rate;
+        if (bins != nullptr)
+        {
+            auto const sb = internal::split_bins(tree, *bins);
+            auto const rm = bins->row_major_bins();
+            parallel::for_each_index(
+                scores.size(), [&](size_t r)
+                { scores[r] += lr * internal::value_binned(tree, sb, *bins, rm, r); });
+            return;
+        }
         assert(X.extent(0) == scores.size());
         // One pass: predict's buffer starts at zero, so lr * value_for is the
         // same product the two-pass form formed.
-        auto const &tree = trees_.back();
-        float const lr   = config_.learning_rate;
         parallel::for_each_index(
             scores.size(), [&](size_t i)
             { scores[i] += lr * tree.value_for(X, static_cast<row_id_t>(i)); });

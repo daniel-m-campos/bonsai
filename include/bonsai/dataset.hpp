@@ -165,6 +165,20 @@ class Dataset
     // block and the layout is the classic n_rows x n_features mirror.
     std::span<uint8_t const> row_major_bins() const;
 
+    // Where (row, fid) sits in row_major_bins(). The block layout's one
+    // addressing rule, so tree-routing loops never restate it.
+    size_t mirror_index(size_t row, size_t fid) const
+    {
+        size_t const width = mirror_tile_width();
+        if (n_features_ <= width)
+        {
+            return (row * n_features_) + fid;
+        }
+        size_t const block = fid / width;
+        size_t const wide  = std::min(width, n_features_ - (block * width));
+        return (n_rows_ * block * width) + (row * wide) + (fid - (block * width));
+    }
+
     // Features per mirror block: sized so one block's full histogram
     // footprint (width x 256 bins x 8B cells) stays cache-resident during
     // a tiled row-wise fill.
@@ -205,6 +219,20 @@ class Dataset
     size_t                                        n_rows_     = 0;
     size_t                                        n_features_ = 0;
 };
+
+// Whether every feature's bins index an 8-bit column, which is what decides
+// Dataset's storage width and whether row_major_bins() exists.
+inline bool bins_fit_u8(BinMappers const &mappers)
+{
+    for (size_t f = 0; f < mappers.size(); ++f)
+    {
+        if (mappers[f].n_bins() > 256)
+        {
+            return false;
+        }
+    }
+    return true;
+}
 
 // The one host routing truth: which child a row takes at an internal node.
 // The last bin holds missing values and follows default_left; every other bin
