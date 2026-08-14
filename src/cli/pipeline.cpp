@@ -23,6 +23,7 @@
 #include "bonsai/config/errors.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
+#include "bonsai/detail/perf.hpp"
 #include "bonsai/io/csv.hpp"
 #include "bonsai/registry/make_booster.hpp"
 #include "bonsai/registry/objective_dispatch.hpp"
@@ -289,8 +290,11 @@ train_with_progress(Config const &cfg, LabeledData const &train,
                                                std::numeric_limits<float>::quiet_NaN());
                 }
             }
+            detail::Lap<detail::FitProfiler> lap;
             booster->accumulate_last_round(valid->features.view(), es_scores);
+            lap(detail::FitProfiler::instance().eval_route_s);
             float const loss = booster->valid_loss(es_scores, valid->labels);
+            lap(detail::FitProfiler::instance().eval_loss_s);
             if (track_eval)
             {
                 eval_history->get().push_back(loss);
