@@ -59,12 +59,15 @@ budget showed.
 ### Reusing the validation set
 
 Each round walks the validation rows, and the walk reads a quarter of the
-bytes when those rows are binned instead of raw. bonsai bins them inside the
-fit, but only when the rounds it will run pay for the pass, because that
-pass costs about what 90 rounds of the raw walk cost. A hyperparameter
-search is where that arithmetic goes wrong: every fit pays it again for the
-same rows. Bin them once instead, against the training set's own cut points,
-and hand the same object to every fit:
+bytes when those rows are binned instead of raw. The pass that bins them
+costs about what 86 rounds of the raw walk cost, so a fit starts raw and
+switches to the binned rows once it has run that many: a short fit never
+pays for the pass, and a long one collects on it. Nobody has to guess how
+long the fit will be, which matters here because early stopping is what
+decides it. A hyperparameter search is where that still leaves money on the
+table: every fit pays the pass again for the same rows, and runs its first
+86 rounds raw before it does. Bin them once instead, against the training
+set's own cut points, and hand the same object to every fit:
 
 ```{.python .run}
 import numpy as np
