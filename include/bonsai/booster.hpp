@@ -112,13 +112,8 @@ class IBooster
     // caller that has binned them (identical routing, a quarter the bytes);
     // validation_loss scores the matrix with the booster's own configured
     // objective.
-    //
-    // accumulate_last_round_binned's two preconditions are the caller's, and
-    // both are asserted: `bins` must be binned with the same BinMappers that
-    // produced this booster's trees (the walk inverts each stored threshold
-    // into a bin id, which only names the same cut under those mappers), and
-    // it must carry a u8 row-major mirror (row_major_bins() non-empty, i.e.
-    // every feature fits 256 bins). scores stays n_rows x score_width().
+    // What `bins` owes accumulate_last_round_binned is the caller's to
+    // supply, and each implementation's asserts spell it out.
     virtual size_t score_width() const
     {
         return 1;
