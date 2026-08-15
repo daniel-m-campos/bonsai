@@ -128,10 +128,11 @@ struct FitProfiler : Profiler<FitProfiler>
 
     double objective_s = 0, sample_s = 0, grow_s = 0, renew_s = 0, score_s = 0,
            dart_s = 0;
-    // Per-round validation eval, which only an eval_set/early-stopping fit
-    // pays: route = the new round's contribution into the running margins,
-    // loss = the objective's metric over them.
-    double eval_route_s = 0, eval_loss_s = 0;
+    // Validation eval, which only an eval_set/early-stopping fit pays: bin =
+    // the one-time pass the bin-space route is gated on (zero when the fit
+    // routes raw floats), route = the new round's contribution into the
+    // running margins, loss = the objective's metric over them.
+    double eval_bin_s = 0, eval_route_s = 0, eval_loss_s = 0;
 
     static constexpr std::array fields = {
         std::pair{"objective", &FitProfiler::objective_s},
@@ -140,6 +141,7 @@ struct FitProfiler : Profiler<FitProfiler>
         std::pair{"renew", &FitProfiler::renew_s},
         std::pair{"score", &FitProfiler::score_s},
         std::pair{"dart", &FitProfiler::dart_s},
+        std::pair{"eval-bin", &FitProfiler::eval_bin_s},
         std::pair{"eval-route", &FitProfiler::eval_route_s},
         std::pair{"eval-loss", &FitProfiler::eval_loss_s},
     };
