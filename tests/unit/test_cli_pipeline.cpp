@@ -115,6 +115,44 @@ TEST_CASE("train_with_progress: early stopping truncates to the best iteration",
     CHECK(full->n_iters() == 200);
 }
 
+TEST_CASE("train_with_progress: a prebinned validation set routes identically",
+          "[cli_pipeline][early_stop][eval]")
+{
+    // A validation set handed over already binned skips the gate and routes
+    // in bin space from the first round. Three features at depth 6 never pay
+    // for the bin pass at this round count, so the reference arm below is the
+    // raw walk, and the two must agree round for round.
+    Config cfg;
+    cfg.data.train                           = k_tiny_path;
+    cfg.data.valid                           = {k_tiny_path};
+    cfg.bin_mapper.max_bin                   = 8;
+    cfg.bin_mapper.n_samples                 = 100;
+    cfg.booster_config.n_iters               = 40;
+    cfg.booster_config.learning_rate         = 0.3F;
+    cfg.booster_config.early_stopping_rounds = 3;
+    cfg.tree_config.min_data_in_leaf         = 0;
+    cfg.tree_config.min_child_hess           = 0.0F;
+
+    auto const loaded = load_train_and_validation_from_csv(cfg);
+    REQUIRE(loaded.validation.has_value());
+    std::vector<float> raw_history;
+    auto const raw = train_with_progress(cfg, loaded.train, &*loaded.validation, {}, {},
+                                         std::ref(raw_history));
+
+    // The same rows, binned once with the training set's own mappers.
+    LabeledData prebinned = *loaded.validation;
+    prebinned.dataset     = Dataset::bin(prebinned.features.view(), prebinned.labels,
+                                         loaded.mappers, cfg.data);
+    REQUIRE(prebinned.dataset.bins_are_u8());
+    std::vector<float> binned_history;
+    auto const binned = train_with_progress(cfg, loaded.train, &prebinned, {}, {},
+                                            std::ref(binned_history));
+
+    REQUIRE(!raw_history.empty());
+    CHECK(binned->n_iters() == raw->n_iters());
+    CHECK(binned_history == raw_history);
+}
+
 TEST_CASE("train_with_progress: warm start continues a saved model",
           "[cli_pipeline][warm_start]")
 {
