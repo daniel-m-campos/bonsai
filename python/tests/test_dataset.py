@@ -133,10 +133,10 @@ def test_dataset_eval_set_early_stopping():
 
 def test_dataset_reference_reuses_the_training_cuts():
     """A validation Dataset built with reference= carries the training cuts,
-    so a fit routes it in bin space with no per-fit bin pass. The three ways
-    to hand the same rows over (raw arrays under the gate's raw walk, raw
-    arrays where the gate bins them, a pre-binned Dataset) must produce one
-    trace: the routing is byte-equal, only the bytes it reads differ."""
+    so a fit routes it in bin space with no per-fit bin pass. The ways to hand
+    the same rows over must produce one trace: the raw walk, the deferred
+    switch to bin space mid-fit, and a pre-binned Dataset routed in bin space
+    from round 1 all route the same rows to the same leaves."""
     rng = np.random.default_rng(0)
     X = rng.random((6000, 8), dtype=np.float32)
     y = (X[:, 0] * 2 + rng.normal(0, 0.3, 6000)).astype(np.float32)
@@ -145,28 +145,33 @@ def test_dataset_reference_reuses_the_training_cuts():
     train_ds = bonsai.Dataset(Xt, yt)
     valid_ds = bonsai.Dataset(Xv, yv, reference=train_ds)
     assert valid_ds.n_rows == 2000 and valid_ds.n_features == 8
-    np.testing.assert_array_equal(np.asarray(valid_ds.labels), yv)
 
-    # 8 columns at depth 6 need 86 rounds before binning the validation set
-    # pays, so the gate stands down at 20 rounds and engages at 150.
+    # 8 columns at depth 6 take 86 raw rounds to cost what one bin pass costs,
+    # so a 20-round fit stays raw start to finish and a 150-round fit switches
+    # partway through. Both traces must equal the pre-binned one.
     for n_iters in ("20", "150"):
         pairs = [("booster.n_iters", n_iters), ("tree.max_depth", "6")]
         arrays = np.asarray(bonsai.train(pairs, Xt, yt, eval_set=(Xv, yv)).eval_history)
         assert len(arrays) == int(n_iters)
+        # the fused path fits the same cuts from the same arrays, so the
+        # prebinned eval set is routable there too: the precondition is the
+        # cuts, not the object
         for other in (bonsai.train(pairs, train_ds, eval_set=valid_ds),
                       bonsai.train(pairs, train_ds, eval_set=(Xv, yv)),
-                      # the fused path fits the same cuts from the same
-                      # arrays, so the prebinned eval set is routable there
-                      # too: the precondition is the cuts, not the object
                       bonsai.train(pairs, Xt, yt, eval_set=valid_ds)):
             np.testing.assert_array_equal(arrays, np.asarray(other.eval_history))
 
-    # ...and the early-stop decision the trace drives is the same one.
-    es = [("booster.n_iters", "400"), ("booster.learning_rate", "0.3"),
-          ("booster.early_stopping_rounds", "10")]
+    # ...and the early-stop decision the trace drives is the same one. This
+    # fit runs long enough to cross the break-even, which is the case the
+    # round count can never be predicted for.
+    es = [("booster.n_iters", "400"), ("booster.learning_rate", "0.02"),
+          ("booster.early_stopping_rounds", "20"), ("tree.max_depth", "6")]
+    raw = bonsai.train(es, Xt, yt, eval_set=(Xv, yv))
+    assert 86 < len(raw.eval_history) < 400
     stopped = bonsai.train(es, train_ds, eval_set=valid_ds)
-    assert stopped.n_iters < 400
-    assert stopped.n_iters == bonsai.train(es, Xt, yt, eval_set=(Xv, yv)).n_iters
+    assert stopped.n_iters == raw.n_iters
+    np.testing.assert_array_equal(np.asarray(raw.eval_history),
+                                  np.asarray(stopped.eval_history))
 
 
 def test_dataset_reference_survives_a_warm_start():
@@ -205,8 +210,7 @@ def test_dataset_reference_refuses_a_mapper_mismatch():
 
     train_ds = bonsai.Dataset(Xt, yt)
     own_cuts = bonsai.Dataset(Xv, yv, max_bin=63)
-    for train_arg in (train_ds, Xt):
-        args = (train_arg,) if train_arg is train_ds else (Xt, yt)
+    for args in ((train_ds,), (Xt, yt)):
         with pytest.raises(Exception, match="reference=train_dataset"):
             bonsai.train([("booster.n_iters", "5")], *args, eval_set=own_cuts)
 
@@ -219,10 +223,44 @@ def test_dataset_reference_refuses_a_mapper_mismatch():
     with pytest.raises(Exception, match="columns"):
         bonsai.Dataset(Xv[:, :3], yv, reference=train_ds)
 
-    # ...and restating the reference's own settings is not a disagreement.
-    coarse = bonsai.Dataset(Xt, yt, max_bin=63)
-    bonsai.train([("booster.n_iters", "5")], coarse,
-                 eval_set=bonsai.Dataset(Xv, yv, reference=coarse, max_bin=63))
+
+def test_dataset_reference_inherits_the_binning_settings():
+    """The reference decides the binning, so an unset setting takes its value
+    instead of the library default: a train set built with max_bin=127 pairs
+    with a plain reference= call, not with a restatement of every knob."""
+    rng = np.random.default_rng(3)
+    X = rng.random((3000, 6), dtype=np.float32)
+    y = (X[:, 0] + rng.normal(0, 0.1, 3000)).astype(np.float32)
+    Xt, yt, Xv, yv = X[:2000], y[:2000], X[2000:], y[2000:]
+
+    coarse = bonsai.Dataset(Xt, yt, max_bin=127, seed=7, min_data_in_bin=3)
+    pairs = [("booster.n_iters", "5")]
+    inherited = bonsai.Dataset(Xv, yv, reference=coarse)
+    restated = bonsai.Dataset(Xv, yv, reference=coarse, max_bin=127, seed=7,
+                              min_data_in_bin=3)
+    ref = np.asarray(bonsai.train(pairs, coarse, eval_set=inherited).eval_history)
+    np.testing.assert_array_equal(
+        ref, np.asarray(bonsai.train(pairs, coarse, eval_set=restated).eval_history)
+    )
+    # ...and an explicit disagreement still raises rather than being inherited
+    # over the caller's head.
+    with pytest.raises(Exception, match="inherit"):
+        bonsai.Dataset(Xv, yv, reference=coarse, max_bin=255)
+
+
+def test_dataset_eval_set_refuses_sample_weights():
+    """The validation loss is the unweighted metric, so weights on an eval-set
+    Dataset would be silently dropped. Say so instead."""
+    rng = np.random.default_rng(4)
+    X = rng.random((3000, 6), dtype=np.float32)
+    y = (X[:, 0] + rng.normal(0, 0.1, 3000)).astype(np.float32)
+    Xt, yt, Xv, yv = X[:2000], y[:2000], X[2000:], y[2000:]
+
+    train_ds = bonsai.Dataset(Xt, yt)
+    weighted = bonsai.Dataset(Xv, yv, weight=np.ones(1000, np.float32),
+                              reference=train_ds)
+    with pytest.raises(Exception, match="unweighted"):
+        bonsai.train([("booster.n_iters", "5")], train_ds, eval_set=weighted)
 
 
 def test_dataset_device_hint_rejects_unknown_and_absent_devices():
