@@ -29,7 +29,7 @@ struct LoadedTrain
 // file. Used by tests that don't need a row-major feature buffer.
 LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path);
 
-// One side of a train/valid pair. Carries both the binned Dataset (for
+// One side of a train/validation pair. Carries both the binned Dataset (for
 // update_one_iter / labels) and the row-major FeatureBuffer (for predict).
 struct LabeledData
 {
@@ -38,22 +38,23 @@ struct LabeledData
     std::vector<float> labels;
 };
 
-struct LoadedTrainValid
+struct LoadedTrainValidation
 {
     BinMappers                 mappers;
     LabeledData                train;
-    std::optional<LabeledData> valid;
+    std::optional<LabeledData> validation;
 };
 
 // Fit bin mappers on cfg.data.train, bin it, and capture a row-major buffer.
-// If cfg.data.valid is non-empty, additionally bin valid[0] with the same
-// mappers. valid[1..] are ignored with a stderr warning.
-LoadedTrainValid load_train_and_valid_from_csv(Config const &cfg);
+// If cfg.data.valid is non-empty, additionally load valid[0] as the
+// validation set. valid[1..] are ignored with a stderr warning.
+LoadedTrainValidation load_train_and_validation_from_csv(Config const &cfg);
 
-// Warm-start variant: bin train/valid with EXISTING mappers (from a loaded
-// model) instead of refitting them — continuation must see the same bins.
-LoadedTrainValid load_train_and_valid_with_mappers(Config const &cfg,
-                                                   BinMappers    mappers);
+// Warm-start variant: bin train/validation with EXISTING mappers (from a
+// loaded model) instead of refitting them: continuation must see the same
+// bins.
+LoadedTrainValidation load_train_and_validation_with_mappers(Config const &cfg,
+                                                             BinMappers    mappers);
 
 // Progress callback: receives (iter_one_based, total_iters) after each
 // boosting iteration. The helper calls it every iteration; the caller throttles
@@ -76,8 +77,8 @@ struct FitTick
     size_t      n_iters;     // cfg.booster_config.n_iters
     floats_out  train_preds; // mutable; link-inversion target
     floats_view train_labels;
-    floats_out  valid_preds; // empty if no valid set
-    floats_view valid_labels;
+    floats_out  validation_preds; // empty if no validation set
+    floats_view validation_labels;
 };
 
 using FitTickFn = std::function<void(FitTick const &)>;
@@ -96,11 +97,11 @@ using FitTickFn = std::function<void(FitTick const &)>;
 // no ownership): std::ref(vec) to opt in, default {} to opt out.
 using EvalHistoryRef = std::optional<std::reference_wrapper<std::vector<float>>>;
 
-std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
-                                              LoadedTrainValid const   &loaded,
-                                              FitTickFn const          &on_tick = {},
-                                              std::unique_ptr<IBooster> initial = {},
-                                              EvalHistoryRef eval_history       = {});
+std::unique_ptr<IBooster> train_with_progress(Config const                &cfg,
+                                              LoadedTrainValidation const &loaded,
+                                              FitTickFn const             &on_tick = {},
+                                              std::unique_ptr<IBooster>    initial = {},
+                                              EvalHistoryRef eval_history = {});
 
 // Same, but train and validation arrive separately (validation may be null).
 // Lets a caller pair a long-lived pre-binned train set with a per-call

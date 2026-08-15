@@ -117,7 +117,7 @@ LabeledData load_labeled(std::string const &path, DataConfig const &data_cfg,
 // and bins them itself, but only when the rounds it will run pay for the pass.
 // Binning here would charge every fit for it, including the fits the gate
 // below turns down.
-LabeledData load_valid_labeled(std::string const &path, DataConfig const &data_cfg)
+LabeledData load_validation_labeled(std::string const &path, DataConfig const &data_cfg)
 {
     auto               batch    = detail::parse_input(path, data_cfg);
     auto               features = to_feature_buffer(batch);
@@ -128,28 +128,28 @@ LabeledData load_valid_labeled(std::string const &path, DataConfig const &data_c
 
 } // namespace
 
-LoadedTrainValid load_train_and_valid_with_mappers(Config const &cfg,
-                                                   BinMappers    mappers)
+LoadedTrainValidation load_train_and_validation_with_mappers(Config const &cfg,
+                                                             BinMappers    mappers)
 {
     auto                       train = load_labeled(cfg.data.train, cfg.data, mappers);
-    std::optional<LabeledData> valid;
+    std::optional<LabeledData> validation;
     if (!cfg.data.valid.empty())
     {
-        valid = load_valid_labeled(cfg.data.valid[0], cfg.data);
+        validation = load_validation_labeled(cfg.data.valid[0], cfg.data);
     }
-    return LoadedTrainValid{.mappers = std::move(mappers),
-                            .train   = std::move(train),
-                            .valid   = std::move(valid)};
+    return LoadedTrainValidation{.mappers    = std::move(mappers),
+                                 .train      = std::move(train),
+                                 .validation = std::move(validation)};
 }
 
-LoadedTrainValid load_train_and_valid_from_csv(Config const &cfg)
+LoadedTrainValidation load_train_and_validation_from_csv(Config const &cfg)
 {
     // Parse the train CSV once: fit mappers and bin from the same batch.
     auto const train_batch = detail::parse_input(cfg.data.train, cfg.data);
     auto       mappers     = BinMappers::fit(train_batch, cfg.bin_mapper);
     auto       train       = make_labeled(train_batch, cfg.data, mappers);
 
-    std::optional<LabeledData> valid;
+    std::optional<LabeledData> validation;
     if (!cfg.data.valid.empty())
     {
         if (cfg.data.valid.size() > 1)
@@ -159,23 +159,23 @@ LoadedTrainValid load_train_and_valid_from_csv(Config const &cfg)
                          "for per-iter eval metrics",
                          cfg.data.valid.size());
         }
-        valid = load_valid_labeled(cfg.data.valid[0], cfg.data);
+        validation = load_validation_labeled(cfg.data.valid[0], cfg.data);
     }
 
-    return LoadedTrainValid{.mappers = std::move(mappers),
-                            .train   = std::move(train),
-                            .valid   = std::move(valid)};
+    return LoadedTrainValidation{.mappers    = std::move(mappers),
+                                 .train      = std::move(train),
+                                 .validation = std::move(validation)};
 }
 
-std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
-                                              LoadedTrainValid const   &loaded,
-                                              FitTickFn const          &on_tick,
-                                              std::unique_ptr<IBooster> initial,
-                                              EvalHistoryRef            eval_history)
+std::unique_ptr<IBooster> train_with_progress(Config const                &cfg,
+                                              LoadedTrainValidation const &loaded,
+                                              FitTickFn const             &on_tick,
+                                              std::unique_ptr<IBooster>    initial,
+                                              EvalHistoryRef               eval_history)
 {
     return train_with_progress(cfg, loaded.train,
-                               loaded.valid ? &*loaded.valid : nullptr, on_tick,
-                               std::move(initial), eval_history);
+                               loaded.validation ? &*loaded.validation : nullptr,
+                               on_tick, std::move(initial), eval_history);
 }
 
 namespace
@@ -280,12 +280,12 @@ train_with_progress(Config const &cfg, LabeledData const &train,
             v_labels = validation->labels;
         }
         on_tick(FitTick{
-            .iter         = iter,
-            .n_iters      = static_cast<size_t>(n_iters),
-            .train_preds  = train_preds,
-            .train_labels = train.labels,
-            .valid_preds  = v_preds,
-            .valid_labels = v_labels,
+            .iter              = iter,
+            .n_iters           = static_cast<size_t>(n_iters),
+            .train_preds       = train_preds,
+            .train_labels      = train.labels,
+            .validation_preds  = v_preds,
+            .validation_labels = v_labels,
         });
     };
 

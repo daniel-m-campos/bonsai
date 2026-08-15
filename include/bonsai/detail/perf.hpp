@@ -175,7 +175,7 @@ struct GrowProfiler : Profiler<GrowProfiler>
 };
 
 // CSV-to-Dataset pipeline stages (BONSAI_INGEST_PROFILE=1); accumulates
-// across files (train + valid).
+// across files (train + validation).
 struct IngestProfiler : Profiler<IngestProfiler>
 {
     static constexpr char const *env    = "BONSAI_INGEST_PROFILE";
