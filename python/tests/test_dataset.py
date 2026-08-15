@@ -169,6 +169,31 @@ def test_dataset_reference_reuses_the_training_cuts():
     assert stopped.n_iters == bonsai.train(es, Xt, yt, eval_set=(Xv, yv)).n_iters
 
 
+def test_dataset_reference_survives_a_warm_start():
+    """A warm start scores the eval set on the rounds already in the model,
+    which predicts from raw rows: the pre-binned Dataset holds its matrix for
+    exactly that seam, so the continuation's trace matches the arrays'."""
+    rng = np.random.default_rng(2)
+    X = rng.random((3000, 6), dtype=np.float32)
+    y = (X[:, 0] + rng.normal(0, 0.1, 3000)).astype(np.float32)
+    Xt, yt, Xv, yv = X[:2000], y[:2000], X[2000:], y[2000:]
+
+    pairs = [("booster.n_iters", "10")]
+    with tempfile.NamedTemporaryFile(suffix=".msgpack", delete=False) as f:
+        warm = f.name
+    bonsai.train(pairs, Xt, yt).save(warm)
+
+    train_ds = bonsai.Dataset(Xt, yt)
+    valid_ds = bonsai.Dataset(Xv, yv, reference=train_ds)
+    arrays = bonsai.train(pairs, Xt, yt, eval_set=(Xv, yv), init_model=warm)
+    prebinned = bonsai.train(pairs, train_ds, eval_set=valid_ds, init_model=warm)
+    # The warm rounds are unmeasured NaN placeholders on both sides.
+    np.testing.assert_array_equal(
+        np.asarray(arrays.eval_history)[10:],
+        np.asarray(prebinned.eval_history)[10:],
+    )
+
+
 def test_dataset_reference_refuses_a_mapper_mismatch():
     """Bins from other cut points name other splits, so a validation Dataset
     that was not built against the fit's own binning is refused rather than
