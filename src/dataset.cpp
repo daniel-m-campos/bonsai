@@ -200,52 +200,53 @@ size_t Dataset::n_bins(size_t fid) const
     return mappers_[fid].n_bins();
 }
 
+void Dataset::mint_row_major() const
+{
+    auto const  &cols  = plane_ ? host_bins().u8 : features_u8_;
+    size_t const f     = cols.size();
+    size_t const width = mirror_tile_width();
+    row_major_->bins.resize(n_rows_ * f);
+    uint8_t *out = row_major_->bins.data();
+    // Tiled column-to-row transpose into the block layout: each worker
+    // owns a row block, so writes never overlap and the mirror is
+    // byte-identical at any thread count. Feature c lands in mirror
+    // block c/width at column position c%width; one block reproduces
+    // the classic layout exactly.
+    constexpr size_t tile = 64;
+    parallel::for_each_index((n_rows_ + tile - 1) / tile,
+                             [&](size_t block)
+                             {
+                                 size_t const r0 = block * tile;
+                                 size_t const r1 = std::min(r0 + tile, n_rows_);
+                                 for (size_t c0 = 0; c0 < f; c0 += tile)
+                                 {
+                                     size_t const c1 = std::min(c0 + tile, f);
+                                     for (size_t c = c0; c < c1; ++c)
+                                     {
+                                         size_t const mb = c / width;
+                                         size_t const width_b =
+                                             std::min(width, f - (mb * width));
+                                         size_t const   base = n_rows_ * mb * width;
+                                         size_t const   in_b = c - (mb * width);
+                                         uint8_t       *dst  = out + base + in_b;
+                                         uint8_t const *col  = cols[c].data();
+                                         for (size_t r = r0; r < r1; ++r)
+                                         {
+                                             dst[r * width_b] = col[r];
+                                         }
+                                     }
+                                 }
+                             });
+}
+
 std::span<uint8_t const> Dataset::row_major_bins() const
 {
     if (!bins_are_u8_)
     {
         return {};
     }
-    auto const &cols = plane_ ? host_bins().u8 : features_u8_;
-    if (!row_major_)
-    {
-        size_t const f     = cols.size();
-        size_t const width = mirror_tile_width();
-        auto         rm    = std::make_shared<std::vector<uint8_t>>(n_rows_ * f);
-        uint8_t     *out   = rm->data();
-        // Tiled column-to-row transpose into the block layout: each worker
-        // owns a row block, so writes never overlap and the mirror is
-        // byte-identical at any thread count. Feature c lands in mirror
-        // block c/width at column position c%width; one block reproduces
-        // the classic layout exactly.
-        constexpr size_t tile = 64;
-        parallel::for_each_index((n_rows_ + tile - 1) / tile,
-                                 [&](size_t block)
-                                 {
-                                     size_t const r0 = block * tile;
-                                     size_t const r1 = std::min(r0 + tile, n_rows_);
-                                     for (size_t c0 = 0; c0 < f; c0 += tile)
-                                     {
-                                         size_t const c1 = std::min(c0 + tile, f);
-                                         for (size_t c = c0; c < c1; ++c)
-                                         {
-                                             size_t const mb = c / width;
-                                             size_t const width_b =
-                                                 std::min(width, f - (mb * width));
-                                             size_t const   base = n_rows_ * mb * width;
-                                             size_t const   in_b = c - (mb * width);
-                                             uint8_t       *dst  = out + base + in_b;
-                                             uint8_t const *col  = cols[c].data();
-                                             for (size_t r = r0; r < r1; ++r)
-                                             {
-                                                 dst[r * width_b] = col[r];
-                                             }
-                                         }
-                                     }
-                                 });
-        row_major_ = std::move(rm);
-    }
-    return *row_major_;
+    std::call_once(row_major_->once, [this] { mint_row_major(); });
+    return row_major_->bins;
 }
 
 } // namespace bonsai
