@@ -310,8 +310,8 @@ TEST_CASE("multiclass warm start keeps the loaded class priors",
     // Seed the ES matrix as of the 3 warm rounds: with priors intact this
     // is exactly the loaded model, so the losses match.
     std::vector<float> seeded(X.n_rows * continued->score_width());
-    continued->seed_valid_scores(X.view(), seeded, 3);
+    continued->seed_validation_scores(X.view(), seeded, 3);
     float const seeded_loss =
-        continued->valid_loss(seeded, floats_view{loaded_a.train.labels});
+        continued->validation_loss(seeded, floats_view{loaded_a.train.labels});
     CHECK(seeded_loss == Catch::Approx(loaded_loss).margin(1e-5));
 }

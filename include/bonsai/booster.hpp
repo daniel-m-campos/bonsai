@@ -105,22 +105,29 @@ class IBooster
     // Incremental prediction support for early stopping, shape-agnostic so
     // multiclass composes: the caller maintains a raw-score matrix of
     // n_rows x score_width() (row-major, width 1 except softmax).
-    // seed_valid_scores fills it as of n_rounds boosting rounds (0 = base
-    // scores only — the warm-start seam); accumulate_last_round adds the
-    // newest round's tree(s); valid_loss scores it with the booster's own
-    // configured objective. `bins` is the same rows in bin space when the
-    // caller has them (identical routing, a quarter the bytes); null falls
-    // back to the raw floats.
+    // seed_validation_scores fills it as of n_rounds boosting rounds (0 =
+    // base scores only, the warm-start seam); accumulate_last_round adds the
+    // newest round's tree(s) by routing the raw float rows, and
+    // accumulate_last_round_binned routes the same rows in bin space for a
+    // caller that has binned them (identical routing, a quarter the bytes);
+    // validation_loss scores the matrix with the booster's own configured
+    // objective.
     virtual size_t score_width() const
     {
         return 1;
     }
-    virtual void  seed_valid_scores(features_view X, std::span<float> out,
-                                    size_t n_rounds) const       = 0;
-    virtual void  accumulate_last_round(features_view X, Dataset const *bins,
-                                        floats_out scores) const = 0;
-    virtual float valid_loss(std::span<float const> scores,
-                             floats_view            labels) const           = 0;
+
+    virtual void seed_validation_scores(features_view X, std::span<float> out,
+                                        size_t n_rounds) const = 0;
+
+    virtual void accumulate_last_round(features_view X, floats_out scores) const = 0;
+
+    virtual void accumulate_last_round_binned(Dataset const &bins,
+                                              floats_out     scores) const = 0;
+
+    virtual float validation_loss(std::span<float const> scores,
+                                  floats_view            labels) const = 0;
+
     // Drop trees beyond the first n_trees (keep the best iteration's model).
     virtual void truncate(size_t n_trees) = 0;
 };
@@ -810,8 +817,8 @@ class Booster final : public IBooster
             });
     }
 
-    void seed_valid_scores(features_view X, std::span<float> out,
-                           size_t n_rounds) const override
+    void seed_validation_scores(features_view X, std::span<float> out,
+                                size_t n_rounds) const override
     {
         if (n_rounds > 0)
         {
@@ -821,32 +828,37 @@ class Booster final : public IBooster
         std::ranges::fill(out, init_score_);
     }
 
-    float valid_loss(std::span<float const> scores, floats_view labels) const override
+    float validation_loss(std::span<float const> scores,
+                          floats_view            labels) const override
     {
         return objective_.eval(floats_view{scores.data(), scores.size()}, labels);
     }
 
-    void accumulate_last_round(features_view X, Dataset const *bins,
-                               floats_out scores) const override
+    void accumulate_last_round(features_view X, floats_out scores) const override
     {
         assert(!trees_.empty());
+        assert(X.extent(0) == scores.size());
         auto const &tree = trees_.back();
         float const lr   = config_.learning_rate;
-        if (bins != nullptr)
-        {
-            auto const sb = internal::split_bins(tree, *bins);
-            auto const rm = bins->row_major_bins();
-            parallel::for_each_index(
-                scores.size(), [&](size_t r)
-                { scores[r] += lr * internal::value_binned(tree, sb, *bins, rm, r); });
-            return;
-        }
-        assert(X.extent(0) == scores.size());
         // One pass: predict's buffer starts at zero, so lr * value_for is the
         // same product the two-pass form formed.
         parallel::for_each_index(
             scores.size(), [&](size_t i)
             { scores[i] += lr * tree.value_for(X, static_cast<row_id_t>(i)); });
+    }
+
+    void accumulate_last_round_binned(Dataset const &bins,
+                                      floats_out     scores) const override
+    {
+        assert(!trees_.empty());
+        assert(bins.n_rows() == scores.size());
+        auto const &tree = trees_.back();
+        float const lr   = config_.learning_rate;
+        auto const  sb   = internal::split_bins(tree, bins);
+        auto const  rm   = bins.row_major_bins();
+        parallel::for_each_index(
+            scores.size(), [&](size_t r)
+            { scores[r] += lr * internal::value_binned(tree, sb, bins, rm, r); });
     }
 
     void truncate(size_t n_trees) override

@@ -176,9 +176,36 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
                                std::move(initial), eval_history);
 }
 
+namespace
+{
+
+// The two per-round eval phases, one bucket each. The Phase covers a whole
+// call the way a grower's step methods carry theirs, so the round loop below
+// states what runs and the instrument boundary lives at the seam.
+void route_last_round(IBooster const &booster, LabeledData const &validation,
+                      std::optional<Dataset> const &validation_bins, floats_out scores)
+{
+    detail::Phase<&detail::FitProfiler::eval_route_s> phase;
+    if (validation_bins)
+    {
+        booster.accumulate_last_round_binned(*validation_bins, scores);
+        return;
+    }
+    booster.accumulate_last_round(validation.features.view(), scores);
+}
+
+float round_validation_loss(IBooster const &booster, std::span<float const> scores,
+                            floats_view labels)
+{
+    detail::Phase<&detail::FitProfiler::eval_loss_s> phase;
+    return booster.validation_loss(scores, labels);
+}
+
+} // namespace
+
 std::unique_ptr<IBooster>
 train_with_progress(Config const &cfg, LabeledData const &train,
-                    LabeledData const *valid, FitTickFn const &on_tick,
+                    LabeledData const *validation, FitTickFn const &on_tick,
                     std::unique_ptr<IBooster> initial, EvalHistoryRef eval_history)
 {
     select_device_for(cfg);
@@ -199,10 +226,10 @@ train_with_progress(Config const &cfg, LabeledData const &train,
                       : n_iters;
 
     std::vector<float> train_preds(train.features.n_rows);
-    std::vector<float> valid_preds;
-    if (valid != nullptr)
+    std::vector<float> validation_preds;
+    if (validation != nullptr)
     {
-        valid_preds.resize(valid->features.n_rows);
+        validation_preds.resize(validation->features.n_rows);
     }
 
     auto fire_tick = [&](size_t iter)
@@ -210,11 +237,11 @@ train_with_progress(Config const &cfg, LabeledData const &train,
         booster->predict(train.features.view(), train_preds);
         floats_out  v_preds;
         floats_view v_labels;
-        if (valid != nullptr)
+        if (validation != nullptr)
         {
-            booster->predict(valid->features.view(), valid_preds);
-            v_preds  = valid_preds;
-            v_labels = valid->labels;
+            booster->predict(validation->features.view(), validation_preds);
+            v_preds  = validation_preds;
+            v_labels = validation->labels;
         }
         on_tick(FitTick{
             .iter         = iter,
@@ -232,43 +259,43 @@ train_with_progress(Config const &cfg, LabeledData const &train,
         fire_tick(0);
     }
 
-    // Early stopping: incremental valid raw scores (score_base + per-tree
-    // contributions) keep the per-iteration eval O(rows), not O(rows*trees).
+    // Early stopping: incremental validation raw scores (score_base +
+    // per-tree contributions) keep the per-iteration eval O(rows), not
+    // O(rows*trees).
     auto const es_rounds  = cfg.booster_config.early_stopping_rounds;
-    bool const es_enabled = es_rounds > 0 && valid != nullptr;
+    bool const es_enabled = es_rounds > 0 && validation != nullptr;
     // History shares the incremental accumulation below; DART's per-round
     // rescaling invalidates it, so no history there (es already throws).
-    bool const track_eval = eval_history.has_value() && valid != nullptr &&
-                            valid->features.n_rows > 0 &&
+    bool const track_eval = eval_history.has_value() && validation != nullptr &&
+                            validation->features.n_rows > 0 &&
                             cfg.booster_config.dart_drop_rate == 0.0F;
-    if (es_enabled && valid->features.n_rows == 0)
+    if (es_enabled && validation->features.n_rows == 0)
     {
-        // A zero-row valid set makes every loss NaN, and NaN never improves,
-        // so patience would fire at the first opportunity and silently
-        // truncate the model.
+        // A zero-row validation set makes every loss NaN, and NaN never
+        // improves, so patience would fire at the first opportunity and
+        // silently truncate the model.
         throw ConfigError("early stopping needs a non-empty validation set");
     }
     if (es_enabled && cfg.booster_config.dart_drop_rate > 0.0F)
     {
         // DART rescales earlier trees each iteration, which invalidates the
-        // incrementally accumulated valid scores below.
+        // incrementally accumulated validation scores below.
         throw ConfigError("early_stopping_rounds cannot be combined with "
                           "dart_drop_rate");
     }
-    // Per-round routing reads the valid matrix once per round, so binning it
-    // once beats re-reading its raw floats: a bin row is a quarter of a float
-    // row. The pass itself costs what ~90 rounds of the raw walk cost (2M x
-    // 128 at 20% held out), so shorter fits keep the raw path, and 8-bit bins
-    // are the only width the row-major mirror the walk indexes exists at.
-    constexpr uint32_t     k_bin_valid_min_iters = 96;
-    std::optional<Dataset> valid_bins;
-    if ((es_enabled || track_eval) && n_iters >= k_bin_valid_min_iters &&
+    // Per-round routing reads the validation matrix once per round, so binning
+    // it once beats re-reading its raw floats: a bin row is a quarter of a
+    // float row. The pass itself costs what ~90 rounds of the raw walk cost
+    // (2M x 128 at 20% held out), so shorter fits keep the raw path, and 8-bit
+    // bins are the only width the row-major mirror the walk indexes exists at.
+    constexpr uint32_t     k_bin_validation_min_iters = 96;
+    std::optional<Dataset> validation_bins;
+    if ((es_enabled || track_eval) && n_iters >= k_bin_validation_min_iters &&
         bins_fit_u8(train.dataset.mappers()))
     {
-        valid_bins = Dataset::bin(valid->features.view(), valid->labels,
-                                  train.dataset.mappers(), cfg.data);
+        validation_bins = Dataset::bin(validation->features.view(), validation->labels,
+                                       train.dataset.mappers(), cfg.data);
     }
-    Dataset const *const bins = valid_bins ? &*valid_bins : nullptr;
 
     std::vector<float> es_scores;
     float              best_loss = 0.0F;
@@ -295,8 +322,9 @@ train_with_progress(Config const &cfg, LabeledData const &train,
                 // Warm start: seed with the pre-existing rounds' raw scores,
                 // excluding the round just added (0 rounds = base scores).
                 es_base = booster->n_iters() - 1;
-                es_scores.resize(valid->features.n_rows * booster->score_width());
-                booster->seed_valid_scores(valid->features.view(), es_scores, es_base);
+                es_scores.resize(validation->features.n_rows * booster->score_width());
+                booster->seed_validation_scores(validation->features.view(), es_scores,
+                                                es_base);
                 if (track_eval && es_base > 0)
                 {
                     // NaN placeholders for the warm-start rounds keep history
@@ -305,11 +333,9 @@ train_with_progress(Config const &cfg, LabeledData const &train,
                                                std::numeric_limits<float>::quiet_NaN());
                 }
             }
-            detail::Lap<detail::FitProfiler> lap;
-            booster->accumulate_last_round(valid->features.view(), bins, es_scores);
-            lap(detail::FitProfiler::instance().eval_route_s);
-            float const loss = booster->valid_loss(es_scores, valid->labels);
-            lap(detail::FitProfiler::instance().eval_loss_s);
+            route_last_round(*booster, *validation, validation_bins, es_scores);
+            float const loss =
+                round_validation_loss(*booster, es_scores, validation->labels);
             if (track_eval)
             {
                 eval_history->get().push_back(loss);
