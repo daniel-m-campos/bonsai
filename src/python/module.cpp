@@ -294,7 +294,7 @@ bonsai::cli::LabeledData make_labeled(MatrixArg const &X, bonsai::floats_view y,
 // labels and bins them itself, only when the rounds it will run pay for the
 // pass, so binning here would charge every fit for it and, under cuda
 // growers, add a wasted GPU upload per call.
-bonsai::cli::LabeledData make_valid_labeled(array_2d const &X, array_1d const &y)
+bonsai::cli::LabeledData make_validation_labeled(array_2d const &X, array_1d const &y)
 {
     size_t const n = X.shape(0);
 
@@ -425,16 +425,16 @@ class Dataset
     {
         return n_features_;
     }
-    bonsai::cli::LoadedTrainValid const &loaded() const
+    bonsai::cli::LoadedTrainValidation const &loaded() const
     {
         return loaded_;
     }
 
   private:
-    std::optional<array_2d>       x_;
-    size_t                        n_features_ = 0;
-    bonsai::cli::LoadedTrainValid loaded_;
-    std::optional<uint32_t>       device_id_;
+    std::optional<array_2d>            x_;
+    size_t                             n_features_ = 0;
+    bonsai::cli::LoadedTrainValidation loaded_;
+    std::optional<uint32_t>            device_id_;
 };
 
 // A trained model: booster + the bin mappers and config it was fit with.
@@ -682,7 +682,7 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
         names.push_back("f" + std::to_string(c));
     }
 
-    bonsai::cli::LoadedTrainValid loaded;
+    bonsai::cli::LoadedTrainValidation loaded;
     loaded.mappers =
         init ? std::move(init->mappers) : fit_mappers(xarg, std::move(names), cfg);
     bonsai::floats_view const wview = warg ? warg->view() : bonsai::floats_view{};
@@ -690,7 +690,7 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
                                 cfg.dispatch.grower_name.starts_with("cuda"), wview);
     if (eval_set)
     {
-        loaded.valid = make_valid_labeled(eval_set->first, eval_set->second);
+        loaded.validation = make_validation_labeled(eval_set->first, eval_set->second);
     }
 
     std::vector<float> history;
@@ -754,17 +754,17 @@ Model train_dataset(std::vector<std::pair<std::string, std::string>> const &para
         init.emplace(bonsai::io::load_booster(*init_model));
     }
     nb::gil_scoped_release release;
-    // The valid set is per-call state; the train side stays the Dataset's own
-    // LabeledData (no copy: a copy would also change the address that keys
+    // The validation set is per-call state; the train side stays the Dataset's
+    // own LabeledData (no copy: a copy would also change the address that keys
     // the GPU upload-skip cache).
-    std::optional<bonsai::cli::LabeledData> valid;
+    std::optional<bonsai::cli::LabeledData> validation;
     if (eval_set)
     {
-        valid = make_valid_labeled(eval_set->first, eval_set->second);
+        validation = make_validation_labeled(eval_set->first, eval_set->second);
     }
     std::vector<float> history;
     auto               booster = bonsai::cli::train_with_progress(
-        cfg, dataset.loaded().train, valid ? &*valid : nullptr, {},
+        cfg, dataset.loaded().train, validation ? &*validation : nullptr, {},
         init ? std::move(init->booster) : nullptr, std::ref(history));
     return Model{std::move(booster), dataset.loaded().mappers, cfg, std::move(history)};
 }

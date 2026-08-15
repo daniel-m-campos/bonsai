@@ -104,14 +104,14 @@ TEST_CASE("train_with_progress: early stopping truncates to the best iteration",
     cfg.tree_config.min_data_in_leaf         = 0;
     cfg.tree_config.min_child_hess           = 0.0F;
 
-    auto const loaded  = load_train_and_valid_from_csv(cfg);
+    auto const loaded  = load_train_and_validation_from_csv(cfg);
     auto       booster = train_with_progress(cfg, loaded, {});
     CHECK(booster->n_iters() < 200);
 
     Config no_es                               = cfg;
     no_es.booster_config.early_stopping_rounds = 0;
-    auto const loaded2                         = load_train_and_valid_from_csv(no_es);
-    auto       full = train_with_progress(no_es, loaded2, {});
+    auto const loaded2 = load_train_and_validation_from_csv(no_es);
+    auto       full    = train_with_progress(no_es, loaded2, {});
     CHECK(full->n_iters() == 200);
 }
 
@@ -128,20 +128,20 @@ TEST_CASE("train_with_progress: warm start continues a saved model",
     cfg.tree_config.min_child_hess   = 0.0F;
 
     // Reference: 6 iterations straight through.
-    auto const loaded_a = load_train_and_valid_from_csv(cfg);
+    auto const loaded_a = load_train_and_validation_from_csv(cfg);
     auto       straight = train_with_progress(cfg, loaded_a, {});
 
     // Warm start: 3 iterations, save, reload, 3 more.
     Config half                 = cfg;
     half.booster_config.n_iters = 3;
-    auto const loaded_b         = load_train_and_valid_from_csv(half);
+    auto const loaded_b         = load_train_and_validation_from_csv(half);
     auto       first            = train_with_progress(half, loaded_b, {});
     auto const tmp = std::string{BONSAI_TESTS_DATA_DIR} + "/_warm_start_tmp.msgpack";
     io::save_booster(*first, tmp, loaded_b.mappers, half);
 
     auto       reloaded = io::load_booster(tmp);
     auto const loaded_c =
-        load_train_and_valid_with_mappers(half, std::move(reloaded.mappers));
+        load_train_and_validation_with_mappers(half, std::move(reloaded.mappers));
     auto continued =
         train_with_progress(half, loaded_c, {}, std::move(reloaded.booster));
     std::remove(tmp.c_str());
@@ -202,7 +202,7 @@ TEST_CASE("train_with_progress: multiclass early stopping truncates whole rounds
     cfg.tree_config.min_data_in_leaf         = 0;
     cfg.tree_config.min_child_hess           = 0.0F;
 
-    auto const loaded  = load_train_and_valid_from_csv(cfg);
+    auto const loaded  = load_train_and_validation_from_csv(cfg);
     auto       booster = train_with_progress(cfg, loaded, {});
     CHECK(booster->n_iters() < 60);
 
@@ -210,15 +210,15 @@ TEST_CASE("train_with_progress: multiclass early stopping truncates whole rounds
     // (n_iters() reports rounds, so seeing it at all proves the division).
     // The truncated model still separates the three clean valid rows.
     std::vector<float> preds(4);
-    booster->predict(loaded.valid->features.view(), preds);
+    booster->predict(loaded.validation->features.view(), preds);
     CHECK(preds[0] == Catch::Approx(0.0F));
     CHECK(preds[1] == Catch::Approx(1.0F));
     CHECK(preds[2] == Catch::Approx(2.0F));
 
     Config no_es                               = cfg;
     no_es.booster_config.early_stopping_rounds = 0;
-    auto const loaded2                         = load_train_and_valid_from_csv(no_es);
-    auto       full = train_with_progress(no_es, loaded2, {});
+    auto const loaded2 = load_train_and_validation_from_csv(no_es);
+    auto       full    = train_with_progress(no_es, loaded2, {});
     CHECK(full->n_iters() == 60);
     std::filesystem::remove(train_path);
     std::filesystem::remove(valid_path);
@@ -242,7 +242,7 @@ TEST_CASE("train_with_progress: early stopping after warm start keeps the "
     cfg.tree_config.min_data_in_leaf = 0;
     cfg.tree_config.min_child_hess   = 0.0F;
 
-    auto const loaded_a = load_train_and_valid_from_csv(cfg);
+    auto const loaded_a = load_train_and_validation_from_csv(cfg);
     auto       first    = train_with_progress(cfg, loaded_a, {});
     auto const tmp      = std::string{BONSAI_TESTS_DATA_DIR} + "/_warm_es_tmp.msgpack";
     io::save_booster(*first, tmp, loaded_a.mappers, cfg);
@@ -252,7 +252,7 @@ TEST_CASE("train_with_progress: early stopping after warm start keeps the "
     more.booster_config.early_stopping_rounds = 3;
     auto       reloaded                       = io::load_booster(tmp);
     auto const loaded_b =
-        load_train_and_valid_with_mappers(more, std::move(reloaded.mappers));
+        load_train_and_validation_with_mappers(more, std::move(reloaded.mappers));
     auto continued =
         train_with_progress(more, loaded_b, {}, std::move(reloaded.booster));
     std::remove(tmp.c_str());
@@ -288,7 +288,7 @@ TEST_CASE("multiclass warm start keeps the loaded class priors",
     cfg.tree_config.min_data_in_leaf = 0;
     cfg.tree_config.min_child_hess   = 0.0F;
 
-    auto const loaded_a = load_train_and_valid_from_csv(cfg);
+    auto const loaded_a = load_train_and_validation_from_csv(cfg);
     auto       first    = train_with_progress(cfg, loaded_a, {});
     auto const tmp      = std::string{BONSAI_TESTS_DATA_DIR} + "/_mc_prior_tmp.msgpack";
     io::save_booster(*first, tmp, loaded_a.mappers, cfg);
@@ -301,7 +301,7 @@ TEST_CASE("multiclass warm start keeps the loaded class priors",
     Config one                 = cfg;
     one.booster_config.n_iters = 1; // one continued round re-runs lazy init
     auto const loaded_b =
-        load_train_and_valid_with_mappers(one, std::move(reloaded.mappers));
+        load_train_and_validation_with_mappers(one, std::move(reloaded.mappers));
     auto continued =
         train_with_progress(one, loaded_b, {}, std::move(reloaded.booster));
     std::remove(path.string().c_str());

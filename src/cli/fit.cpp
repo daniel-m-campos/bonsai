@@ -56,9 +56,10 @@ int run_fit(FitOpts const &opts)
         init = io::load_booster(opts.init_model_path);
     }
     std::println("fit: fitting bin mappers from {}", cfg.data.train);
-    auto loaded = init.booster
-                      ? load_train_and_valid_with_mappers(cfg, std::move(init.mappers))
-                      : load_train_and_valid_from_csv(cfg);
+    auto loaded =
+        init.booster
+            ? load_train_and_validation_with_mappers(cfg, std::move(init.mappers))
+            : load_train_and_validation_from_csv(cfg);
     std::println("fit: {} rows x {} features", loaded.train.dataset.n_rows(),
                  loaded.train.dataset.n_features());
 
@@ -91,13 +92,14 @@ int run_fit(FitOpts const &opts)
         print_metric_row(" train", raw_train, tick.train_preds, tick.train_labels,
                          metrics);
 
-        if (!tick.valid_preds.empty())
+        if (!tick.validation_preds.empty())
         {
-            std::vector<float> const raw_valid(tick.valid_preds.begin(),
-                                               tick.valid_preds.end());
-            apply_link_inverse_by_name(obj_name, tick.valid_preds);
-            print_metric_row(" | valid", raw_valid, tick.valid_preds, tick.valid_labels,
-                             metrics);
+            std::vector<float> const raw_validation(tick.validation_preds.begin(),
+                                                    tick.validation_preds.end());
+            apply_link_inverse_by_name(obj_name, tick.validation_preds);
+            // " | valid" is the printed column header, a user-facing name.
+            print_metric_row(" | valid", raw_validation, tick.validation_preds,
+                             tick.validation_labels, metrics);
         }
         std::println("");
     };
