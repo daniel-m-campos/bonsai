@@ -155,8 +155,13 @@ class Dataset
     // Row-major mirror of the u8 columns, built on first use by the
     // row-wise histogram fill; empty when bins are u16 (that fill stays
     // feature-parallel). Lazy so CUDA and predict-only workflows never pay
-    // the +n_rows*n_features bytes. Safe unguarded: boosters grow one tree
-    // at a time, so first use is single-threaded.
+    // the +n_rows*n_features bytes, and permanent once minted, which a
+    // shared eval-set Dataset carries for the rest of its life. Minting is
+    // guarded because first use is no longer always single-threaded: a
+    // validation Dataset outlives the fit that mints it, so concurrent fits
+    // under a released GIL can reach it at once. A later call pays the once
+    // flag's atomic load and nothing else; the fill's inner loops index the
+    // returned span directly.
     //
     // Layout is column-block-tiled (issue #217): features are grouped into
     // blocks of mirror_tile_width() and each block is row-major on its own
@@ -197,6 +202,16 @@ class Dataset
         std::once_flag                     once;
     };
 
+    // The row-major mirror and the flag that mints it exactly once. Heap
+    // -allocated so Dataset copies share one materialization, as HostBins is.
+    struct RowMajor
+    {
+        std::vector<uint8_t> bins;
+        std::once_flag       once;
+    };
+
+    void mint_row_major() const;
+
     HostBins const &host_bins() const
     {
         std::call_once(lazy_->once,
@@ -204,17 +219,17 @@ class Dataset
         return *lazy_;
     }
 
-    std::vector<std::vector<uint8_t>>             features_u8_;
-    std::vector<std::vector<uint16_t>>            features_u16_;
-    mutable std::shared_ptr<std::vector<uint8_t>> row_major_;
-    std::shared_ptr<IngestPlane const>            plane_;
-    std::shared_ptr<HostBins>                     lazy_;
-    bool                                          bins_are_u8_ = false;
-    std::vector<float>                            labels_;
-    std::vector<float>                            weights_;
-    BinMappers                                    mappers_;
-    size_t                                        n_rows_     = 0;
-    size_t                                        n_features_ = 0;
+    std::vector<std::vector<uint8_t>>  features_u8_;
+    std::vector<std::vector<uint16_t>> features_u16_;
+    std::shared_ptr<RowMajor>          row_major_ = std::make_shared<RowMajor>();
+    std::shared_ptr<IngestPlane const> plane_;
+    std::shared_ptr<HostBins>          lazy_;
+    bool                               bins_are_u8_ = false;
+    std::vector<float>                 labels_;
+    std::vector<float>                 weights_;
+    BinMappers                         mappers_;
+    size_t                             n_rows_     = 0;
+    size_t                             n_features_ = 0;
 };
 
 // The one host routing truth: which child a row takes at an internal node.
