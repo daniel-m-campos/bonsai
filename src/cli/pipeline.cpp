@@ -113,8 +113,10 @@ LabeledData load_labeled(std::string const &path, DataConfig const &data_cfg,
     return make_labeled(detail::parse_input(path, data_cfg), data_cfg, mappers);
 }
 
-// Validation sets feed train_with_progress, which reads features and labels
-// only; skip the Dataset::bin pass (the binned data would have no readers).
+// Validation sets feed train_with_progress, which takes features and labels
+// and bins them itself, but only when the rounds it will run pay for the pass.
+// Binning here would charge every fit for it, including the fits the gate
+// below turns down.
 LabeledData load_valid_labeled(std::string const &path, DataConfig const &data_cfg)
 {
     auto               batch    = detail::parse_input(path, data_cfg);
@@ -179,10 +181,44 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
 namespace
 {
 
+// Whether binning the validation set once beats routing its raw floats every
+// round. Two terms, both proportional to the validation row count, so it
+// cancels and the comparison is per row:
+//
+//   saving  min(p * 4, depth * 64) - min(p, depth * 64) bytes a round. A
+//           float row is 4p bytes and a bin row p, but a walk visits at most
+//           `depth` internal nodes and so touches at most that many cache
+//           lines either way. Wide and shallow shapes hit the cap on both
+//           sides and save nothing: p = 4096 at depth 6 is 384 - 384 = 0, and
+//           the raw path stands however long the fit runs.
+//   cost    p transforms, one per column, each priced at k_transform_bytes
+//           of the bandwidth the walk saves. The round's own measurement
+//           sets that price: a 400k x 128 bin pass cost 0.18s against
+//           1.95ms a round saved at depth 8, break-even near 90 rounds,
+//           which 256 puts at 85.
+constexpr size_t k_transform_bytes = 256;
+
+bool bin_validation_pays(size_t n_features, uint8_t max_depth, uint32_t expected_rounds)
+{
+    size_t const lines  = size_t{max_depth} * 64;
+    size_t const saving = std::min(n_features * 4, lines) - std::min(n_features, lines);
+    return expected_rounds * saving > n_features * k_transform_bytes;
+}
+
+// The one-time bin pass, lapped so the gate's cost shows up beside the
+// per-round buckets it buys.
+Dataset bin_validation(LabeledData const &validation, Dataset const &train,
+                       DataConfig const &data_cfg)
+{
+    detail::Phase<&detail::FitProfiler::eval_bin_s> phase;
+    return Dataset::bin(validation.features.view(), validation.labels, train.mappers(),
+                        data_cfg);
+}
+
 // The two per-round eval phases, one bucket each. The Phase covers a whole
 // call the way a grower's step methods carry theirs, so the round loop below
 // states what runs and the instrument boundary lives at the seam.
-void route_last_round(IBooster const &booster, LabeledData const &validation,
+void route_last_round(IBooster const &booster, features_view X,
                       std::optional<Dataset> const &validation_bins, floats_out scores)
 {
     detail::Phase<&detail::FitProfiler::eval_route_s> phase;
@@ -191,7 +227,7 @@ void route_last_round(IBooster const &booster, LabeledData const &validation,
         booster.accumulate_last_round_binned(*validation_bins, scores);
         return;
     }
-    booster.accumulate_last_round(validation.features.view(), scores);
+    booster.accumulate_last_round(X, scores);
 }
 
 float round_validation_loss(IBooster const &booster, std::span<float const> scores,
@@ -283,18 +319,20 @@ train_with_progress(Config const &cfg, LabeledData const &train,
         throw ConfigError("early_stopping_rounds cannot be combined with "
                           "dart_drop_rate");
     }
-    // Per-round routing reads the validation matrix once per round, so binning
-    // it once beats re-reading its raw floats: a bin row is a quarter of a
-    // float row. The pass itself costs what ~90 rounds of the raw walk cost
-    // (2M x 128 at 20% held out), so shorter fits keep the raw path, and 8-bit
-    // bins are the only width the row-major mirror the walk indexes exists at.
-    constexpr uint32_t     k_bin_validation_min_iters = 96;
+    // Early stopping ends the fit an unknown number of rounds in, so the gate
+    // credits an armed fit only the rounds it is guaranteed to run, patience
+    // plus one: paying the bin pass up front for a fit that stops at its first
+    // opportunity would be a regression, and the raw path is never one.
+    uint32_t const expected_rounds =
+        es_enabled ? std::min(n_iters, es_rounds + 1) : n_iters;
+    // The mirror the binned walk indexes exists only at 8-bit bins, which is
+    // what the train set's own mappers decide for the validation set too.
     std::optional<Dataset> validation_bins;
-    if ((es_enabled || track_eval) && n_iters >= k_bin_validation_min_iters &&
-        bins_fit_u8(train.dataset.mappers()))
+    if ((es_enabled || track_eval) && train.dataset.bins_are_u8() &&
+        bin_validation_pays(validation->features.n_features, cfg.tree_config.max_depth,
+                            expected_rounds))
     {
-        validation_bins = Dataset::bin(validation->features.view(), validation->labels,
-                                       train.dataset.mappers(), cfg.data);
+        validation_bins = bin_validation(*validation, train.dataset, cfg.data);
     }
 
     std::vector<float> es_scores;
@@ -333,7 +371,8 @@ train_with_progress(Config const &cfg, LabeledData const &train,
                                                std::numeric_limits<float>::quiet_NaN());
                 }
             }
-            route_last_round(*booster, *validation, validation_bins, es_scores);
+            route_last_round(*booster, validation->features.view(), validation_bins,
+                             es_scores);
             float const loss =
                 round_validation_loss(*booster, es_scores, validation->labels);
             if (track_eval)

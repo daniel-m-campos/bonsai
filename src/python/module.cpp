@@ -290,10 +290,10 @@ bonsai::cli::LabeledData make_labeled(MatrixArg const &X, bonsai::floats_view y,
         .labels   = std::vector<float>(y.begin(), y.end())};
 }
 
-// Validation-only LabeledData: train_with_progress reads a valid set's
-// features and labels, never its binned dataset, so skip Dataset::bin and
-// the device ingest entirely (a wasted bin pass plus, under cuda growers, a
-// wasted GPU upload per call).
+// Validation-only LabeledData: train_with_progress takes the features and
+// labels and bins them itself, only when the rounds it will run pay for the
+// pass, so binning here would charge every fit for it and, under cuda
+// growers, add a wasted GPU upload per call.
 bonsai::cli::LabeledData make_valid_labeled(array_2d const &X, array_1d const &y)
 {
     size_t const n = X.shape(0);
