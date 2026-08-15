@@ -19,11 +19,11 @@ The loop lives in `train_with_progress`
 ([`src/cli/pipeline.cpp`](../../src/cli/pipeline.cpp)). The interesting
 part is keeping the per-round valid evaluation $O(\text{rows})$ instead of $O(\text{rows} \times \text{trees})$:
 re-predicting the whole ensemble every round is quadratic in total. bonsai accumulates valid scores *incrementally*:
-`IBooster::seed_valid_scores` fills the buffer as of the rounds already in the
+`IBooster::seed_validation_scores` fills the buffer as of the rounds already in the
 model, and `accumulate_last_round` adds just the newest round's tree or trees
 ([`include/bonsai/booster.hpp`](../../include/bonsai/booster.hpp)).
 Seeding at zero rounds gives base scores only, which is also the warm-start
-seam. The loss comes from `IBooster::valid_loss`, which scores with the
+seam. The loss comes from `IBooster::validation_loss`, which scores with the
 booster's own configured objective, so any registered objective works. On stop,
 `truncate(es_base + best_iter + 1)` drops the trailing trees, where `es_base`
 is the round count a warm start brought in: the saved model *is* the best
@@ -55,6 +55,47 @@ Measured (feature_gap §3): with everyone stopping on the same 90/10 split,
 all five libraries converge to RMSE 8.96–9.00, and bonsai leafwise lands
 *between* XGBoost and LightGBM, erasing the gap a fixed 200-iteration
 budget showed.
+
+### Reusing the validation set
+
+Each round walks the validation rows, and the walk reads a quarter of the
+bytes when those rows are binned instead of raw. bonsai bins them inside the
+fit, but only when the rounds it will run pay for the pass, because that
+pass costs about what 90 rounds of the raw walk cost. A hyperparameter
+search is where that arithmetic goes wrong: every fit pays it again for the
+same rows. Bin them once instead, against the training set's own cut points,
+and hand the same object to every fit:
+
+```{.python .run}
+import numpy as np
+import bonsai
+
+rng = np.random.default_rng(0)
+X = rng.normal(size=(6000, 12)).astype(np.float32)
+y = (X[:, 0] * 2.0 + X[:, 3] + rng.normal(0, 0.2, 6000)).astype(np.float32)
+train = bonsai.Dataset(X[:5000], y[:5000])
+valid = bonsai.Dataset(X[5000:], y[5000:], reference=train)
+
+for depth in ("4", "6", "8"):
+    m = bonsai.train(
+        [("tree.max_depth", depth), ("booster.n_iters", "400"),
+         ("booster.learning_rate", "0.15"),
+         ("booster.early_stopping_rounds", "20")],
+        train, eval_set=valid)
+    print(f"depth {depth}: stopped at {m.n_iters}, valid mse "
+          f"{min(m.eval_history):.4f}")
+```
+
+`reference=train` is the whole feature: it binds the validation rows to the
+training cuts, which is the only binning a fit can route them through, since
+a split's stored threshold names a bin under those cuts and no others. A
+`Dataset` binned any other way is refused with that spelling in the message
+rather than scored against the wrong splits. The estimators take the same
+object: `fit(X, y, eval_set=valid)`, where `BonsaiClassifier` wants the
+labels already encoded to `0..K-1`. This is what LightGBM's
+`Dataset(reference=...)`, XGBoost's `QuantileDMatrix`, and CatBoost's `Pool`
+do at construction, and it is why a per-fit bin pass never shows up in their
+sweeps.
 
 ## DART
 

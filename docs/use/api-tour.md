@@ -104,11 +104,14 @@ For hyperparameter searches and cross-validation, bin once and train many times.
 
 ```python
 ds = bonsai.Dataset(X, y, max_bin=255)
+valid = bonsai.Dataset(Xv, yv, reference=ds)
 for params in grid:
-    m = bonsai.train(params, ds, eval_set=(Xv, yv))
+    m = bonsai.train(params, ds, eval_set=valid)
 ```
 
 Bin settings are sealed into the `Dataset`; a `bin_mapper.*` override in `params` or a config file raises instead of silently diverging.
+
+The validation set is the same story one level down. `eval_set=(Xv, yv)` hands over raw arrays, and the fit bins them itself when the rounds it will run pay for the pass, which in a sweep means paying for it once per fit. `reference=ds` bins them once, with the training set's own cut points, and every fit routes them in bin space from its first round. Those cut points are the precondition, not a preference: a split's stored threshold names a bin under the cuts it came from, so a `Dataset` binned any other way is refused with the `reference=` spelling in the message rather than scored against the wrong splits. The settings the reference already decided (`max_bin`, `n_samples`, `seed`, `min_data_in_bin`, `bin_edges`) are refused at construction for the same reason. `BonsaiRegressor.fit` and `BonsaiClassifier.fit` take the same object where they take the tuple, and the classifier wants labels already encoded to `0..K-1`, since a `Dataset` is built before `fit` has seen a class. The CLI's `data.valid` still bins per fit; a pre-binned validation file has no config key yet.
 
 The binning pass runs on the host by default. For GPU work, say so at construction: `bonsai.Dataset(X, y, device="cuda", device_id=0)` bins on the device and leaves the matrix resident there. A `cuda_*` fit then costs what the fused `train(params, X, y)` call costs, and a sweep uploads the matrix once instead of once per fit. Without the hint the `Dataset` bins on the CPU and every GPU fit uploads the result. `device="cuda"` raises when the build carries no CUDA backend or no device is visible: it is an explicit request, not an engine inference. `ds.device` reports where the bins ended up. Handing a device-binned `Dataset` to a CPU grower is fine: host columns materialize once, on first use, bit-identical to the host fill. A `parallel.device_id` at `train` time that disagrees with the `Dataset`'s raises instead of migrating the matrix. A `Dataset` cannot be pickled either way; rebuild it from `X` and `y` in the target process.
 
