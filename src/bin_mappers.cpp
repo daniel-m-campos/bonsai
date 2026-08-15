@@ -188,4 +188,20 @@ std::span<std::string const> BinMappers::feature_names() const
     return feature_names_;
 }
 
+bool BinMappers::same_cuts(BinMappers const &other) const
+{
+    if (mappers_.size() != other.mappers_.size())
+    {
+        return false;
+    }
+    for (size_t f = 0; f < mappers_.size(); ++f)
+    {
+        if (!std::ranges::equal(mappers_[f].cuts(), other.mappers_[f].cuts()))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace bonsai

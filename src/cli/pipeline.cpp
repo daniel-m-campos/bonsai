@@ -219,10 +219,10 @@ Dataset bin_validation(LabeledData const &validation, Dataset const &train,
 // call the way a grower's step methods carry theirs, so the round loop below
 // states what runs and the instrument boundary lives at the seam.
 void route_last_round(IBooster const &booster, features_view X,
-                      std::optional<Dataset> const &validation_bins, floats_out scores)
+                      Dataset const *validation_bins, floats_out scores)
 {
     detail::Phase<&detail::FitProfiler::eval_route_s> phase;
-    if (validation_bins)
+    if (validation_bins != nullptr)
     {
         booster.accumulate_last_round_binned(*validation_bins, scores);
         return;
@@ -327,12 +327,24 @@ train_with_progress(Config const &cfg, LabeledData const &train,
         es_enabled ? std::min(n_iters, es_rounds + 1) : n_iters;
     // The mirror the binned walk indexes exists only at 8-bit bins, which is
     // what the train set's own mappers decide for the validation set too.
-    std::optional<Dataset> validation_bins;
-    if ((es_enabled || track_eval) && train.dataset.bins_are_u8() &&
-        bin_validation_pays(validation->features.n_features, cfg.tree_config.max_depth,
-                            expected_rounds))
+    // A validation set that arrives already binned (the caller pre-binned it
+    // once, for reuse across fits) skips the gate: its pass is paid, so there
+    // is nothing left to price and the walk routes in bin space from round 1.
+    std::optional<Dataset> binned_here;
+    Dataset const         *validation_bins = nullptr;
+    if (es_enabled || track_eval)
     {
-        validation_bins = bin_validation(*validation, train.dataset, cfg.data);
+        if (validation->dataset.n_rows() > 0 && validation->dataset.bins_are_u8())
+        {
+            validation_bins = &validation->dataset;
+        }
+        else if (validation->dataset.n_rows() == 0 && train.dataset.bins_are_u8() &&
+                 bin_validation_pays(validation->features.n_features,
+                                     cfg.tree_config.max_depth, expected_rounds))
+        {
+            binned_here     = bin_validation(*validation, train.dataset, cfg.data);
+            validation_bins = &*binned_here;
+        }
     }
 
     std::vector<float> es_scores;

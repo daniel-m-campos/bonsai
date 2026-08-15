@@ -49,6 +49,12 @@ class BinMappers
     size_t                       size() const;
     std::span<std::string const> feature_names() const;
 
+    // Whether both sets cut every feature at the same points. Binning a
+    // second matrix for a booster's use is only meaningful under the cuts
+    // that booster's thresholds came from, so this is the precondition a
+    // caller pairing two datasets owes.
+    bool same_cuts(BinMappers const &other) const;
+
   private:
     std::vector<BinMapper>   mappers_;
     std::vector<std::string> feature_names_;

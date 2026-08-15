@@ -31,6 +31,10 @@ LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path);
 
 // One side of a train/validation pair. Carries both the binned Dataset (for
 // update_one_iter / labels) and the row-major FeatureBuffer (for predict).
+// A validation set may leave the Dataset empty, which asks the fit to bin it
+// only if the rounds it will run pay for the pass; one that arrives binned
+// (with the training set's own mappers, the routing precondition) is routed
+// in bin space from the first round instead.
 struct LabeledData
 {
     Dataset            dataset;
