@@ -131,6 +131,75 @@ def test_dataset_eval_set_early_stopping():
     )
 
 
+def test_dataset_reference_reuses_the_training_cuts():
+    """A validation Dataset built with reference= carries the training cuts,
+    so a fit routes it in bin space with no per-fit bin pass. The three ways
+    to hand the same rows over (raw arrays under the gate's raw walk, raw
+    arrays where the gate bins them, a pre-binned Dataset) must produce one
+    trace: the routing is byte-equal, only the bytes it reads differ."""
+    rng = np.random.default_rng(0)
+    X = rng.random((6000, 8), dtype=np.float32)
+    y = (X[:, 0] * 2 + rng.normal(0, 0.3, 6000)).astype(np.float32)
+    Xt, yt, Xv, yv = X[:4000], y[:4000], X[4000:], y[4000:]
+
+    train_ds = bonsai.Dataset(Xt, yt)
+    valid_ds = bonsai.Dataset(Xv, yv, reference=train_ds)
+    assert valid_ds.n_rows == 2000 and valid_ds.n_features == 8
+    np.testing.assert_array_equal(np.asarray(valid_ds.labels), yv)
+
+    # 8 columns at depth 6 need 86 rounds before binning the validation set
+    # pays, so the gate stands down at 20 rounds and engages at 150.
+    for n_iters in ("20", "150"):
+        pairs = [("booster.n_iters", n_iters), ("tree.max_depth", "6")]
+        arrays = np.asarray(bonsai.train(pairs, Xt, yt, eval_set=(Xv, yv)).eval_history)
+        assert len(arrays) == int(n_iters)
+        for other in (bonsai.train(pairs, train_ds, eval_set=valid_ds),
+                      bonsai.train(pairs, train_ds, eval_set=(Xv, yv)),
+                      # the fused path fits the same cuts from the same
+                      # arrays, so the prebinned eval set is routable there
+                      # too: the precondition is the cuts, not the object
+                      bonsai.train(pairs, Xt, yt, eval_set=valid_ds)):
+            np.testing.assert_array_equal(arrays, np.asarray(other.eval_history))
+
+    # ...and the early-stop decision the trace drives is the same one.
+    es = [("booster.n_iters", "400"), ("booster.learning_rate", "0.3"),
+          ("booster.early_stopping_rounds", "10")]
+    stopped = bonsai.train(es, train_ds, eval_set=valid_ds)
+    assert stopped.n_iters < 400
+    assert stopped.n_iters == bonsai.train(es, Xt, yt, eval_set=(Xv, yv)).n_iters
+
+
+def test_dataset_reference_refuses_a_mapper_mismatch():
+    """Bins from other cut points name other splits, so a validation Dataset
+    that was not built against the fit's own binning is refused rather than
+    routed into a quietly wrong metric."""
+    rng = np.random.default_rng(1)
+    X = rng.random((3000, 6), dtype=np.float32)
+    y = (X[:, 0] + rng.normal(0, 0.1, 3000)).astype(np.float32)
+    Xt, yt, Xv, yv = X[:2000], y[:2000], X[2000:], y[2000:]
+
+    train_ds = bonsai.Dataset(Xt, yt)
+    own_cuts = bonsai.Dataset(Xv, yv, max_bin=63)
+    for train_arg in (train_ds, Xt):
+        args = (train_arg,) if train_arg is train_ds else (Xt, yt)
+        with pytest.raises(Exception, match="reference=train_dataset"):
+            bonsai.train([("booster.n_iters", "5")], *args, eval_set=own_cuts)
+
+    # The binning settings belong to the reference; a disagreeing one is an
+    # error at construction, not a silently ignored argument.
+    for bad in (dict(max_bin=63), dict(seed=7), dict(min_data_in_bin=5),
+                dict(n_samples=100), dict(bin_edges={0: np.array([0.5], np.float32)})):
+        with pytest.raises(Exception, match="reference"):
+            bonsai.Dataset(Xv, yv, reference=train_ds, **bad)
+    with pytest.raises(Exception, match="columns"):
+        bonsai.Dataset(Xv[:, :3], yv, reference=train_ds)
+
+    # ...and restating the reference's own settings is not a disagreement.
+    coarse = bonsai.Dataset(Xt, yt, max_bin=63)
+    bonsai.train([("booster.n_iters", "5")], coarse,
+                 eval_set=bonsai.Dataset(Xv, yv, reference=coarse, max_bin=63))
+
+
 def test_dataset_device_hint_rejects_unknown_and_absent_devices():
     """A device hint is an explicit request, so an absent backend or device is
     an error — unlike the engine's own inference from a grower name, which
