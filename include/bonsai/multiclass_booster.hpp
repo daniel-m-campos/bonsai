@@ -244,6 +244,8 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                                       floats_out     scores) const override
     {
         assert(trees_.size() >= n_classes_);
+        assert(bins.n_rows() * n_classes_ == scores.size());
+        assert(!bins.row_major_bins().empty());
         size_t const first = trees_.size() - n_classes_;
         float const  lr    = config_.learning_rate;
         // One SplitBins per class, hoisted out of the row loop.
@@ -257,12 +259,13 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         parallel::for_each_index(bins.n_rows(),
                                  [&](size_t i)
                                  {
+                                     auto const bin_of = [&](size_t f)
+                                     { return rm[bins.mirror_index(i, f)]; };
                                      for (size_t k = 0; k < n_classes_; ++k)
                                      {
                                          scores[(i * n_classes_) + k] +=
-                                             lr *
-                                             internal::value_binned(trees_[first + k],
-                                                                    sb[k], bins, rm, i);
+                                             lr * internal::value_binned(
+                                                      trees_[first + k], sb[k], bin_of);
                                      }
                                  });
     }

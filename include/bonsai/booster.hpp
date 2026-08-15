@@ -112,6 +112,13 @@ class IBooster
     // caller that has binned them (identical routing, a quarter the bytes);
     // validation_loss scores the matrix with the booster's own configured
     // objective.
+    //
+    // accumulate_last_round_binned's two preconditions are the caller's, and
+    // both are asserted: `bins` must be binned with the same BinMappers that
+    // produced this booster's trees (the walk inverts each stored threshold
+    // into a bin id, which only names the same cut under those mappers), and
+    // it must carry a u8 row-major mirror (row_major_bins() non-empty, i.e.
+    // every feature fits 256 bins). scores stays n_rows x score_width().
     virtual size_t score_width() const
     {
         return 1;
@@ -135,67 +142,7 @@ class IBooster
 namespace internal
 {
 
-// Accumulate a tree's (unscaled-by-lr) train contribution into `out` by
-// routing rows in bin space. ds.bin_of_threshold recovers each internal
-// node's split bin from its stored threshold. Used by DART to subtract
-// dropped trees without caching per-tree train predictions.
-inline void accumulate_train_contribution(DenseTree const &tree, Dataset const &ds,
-                                          floats_out out)
-{
-    auto const           &nodes = tree.nodes();
-    std::vector<bin_id_t> tbin(nodes.size(), 0);
-    for (size_t i = 0; i < nodes.size(); ++i)
-    {
-        if (!DenseTree::is_leaf(nodes[i]))
-        {
-            tbin[i] =
-                ds.bin_of_threshold(nodes[i].feature_id, nodes[i].threshold_or_value);
-        }
-    }
-    parallel::for_each_index(
-        ds.n_rows(),
-        [&](size_t r)
-        {
-            node_id_t idx = 0;
-            while (!DenseTree::is_leaf(nodes[idx]))
-            {
-                auto const &nd   = nodes[idx];
-                auto const  last = static_cast<bin_id_t>(ds.n_bins(nd.feature_id) - 1);
-                bin_id_t const b = ds.bin_at(nd.feature_id, r);
-                bool const     left = routes_left(b, last, tbin[idx], nd.default_left);
-                idx                 = left ? nd.left : nd.right;
-            }
-            out[r] += nodes[idx].threshold_or_value;
-        });
-}
-
-inline void accumulate_train_contribution(ObliviousTree const &tree, Dataset const &ds,
-                                          floats_out out)
-{
-    auto const           &splits = tree.splits();
-    std::vector<bin_id_t> tbin(splits.size(), 0);
-    for (size_t lvl = 0; lvl < splits.size(); ++lvl)
-    {
-        tbin[lvl] = ds.bin_of_threshold(splits[lvl].feature_id, splits[lvl].threshold);
-    }
-    parallel::for_each_index(
-        ds.n_rows(),
-        [&](size_t r)
-        {
-            size_t index = 0;
-            for (size_t lvl = 0; lvl < splits.size(); ++lvl)
-            {
-                auto const &s    = splits[lvl];
-                auto const  last = static_cast<bin_id_t>(ds.n_bins(s.feature_id) - 1);
-                bin_id_t const b = ds.bin_at(s.feature_id, r);
-                bool const     left = routes_left(b, last, tbin[lvl], s.default_left);
-                index               = (index << 1U) | (left ? 0U : 1U);
-            }
-            out[r] += tree.leaf_table()[index];
-        });
-}
-
-// A tree's splits in bin space, so a routing loop inverts bin_of_threshold
+// A tree's splits in bin space, so a routing walk inverts bin_of_threshold
 // once per tree instead of once per row: per split, the bin its threshold came
 // from and its feature's missing bin. Indexed by node id (DenseTree) or by
 // level (ObliviousTree).
@@ -236,38 +183,55 @@ inline SplitBins split_bins(ObliviousTree const &tree, Dataset const &ds)
     return sb;
 }
 
-// Row r's leaf contribution, routed over the row-major bin mirror instead of
-// the raw floats. Same routing (bin(v) <= split_bin iff v <= cuts[split_bin],
-// and the missing bin follows default_left) over a quarter of the bytes a
-// float row costs. `rm` is ds.row_major_bins(), hoisted by the caller.
-inline float value_binned(DenseTree const &tree, SplitBins const &sb, Dataset const &ds,
-                          std::span<uint8_t const> rm, size_t r)
+// Row r's leaf contribution, routed in bin space. `bin_of(fid)` yields that
+// row's bin for one feature, which is the only thing the two bin layouts
+// disagree on: the training columns answer with Dataset::bin_at, the eval path
+// with the row-major mirror. Routing itself is routes_left either way, because
+// bin(v) <= split_bin exactly when v <= cuts[split_bin] and the missing bin
+// follows default_left.
+template <typename BinOf>
+float value_binned(DenseTree const &tree, SplitBins const &sb, BinOf const &bin_of)
 {
     auto const &nodes = tree.nodes();
     node_id_t   idx   = 0;
     while (!DenseTree::is_leaf(nodes[idx]))
     {
-        auto const    &nd = nodes[idx];
-        bin_id_t const b  = rm[ds.mirror_index(r, nd.feature_id)];
-        idx = routes_left(b, sb.last[idx], sb.split[idx], nd.default_left) ? nd.left
-                                                                           : nd.right;
+        auto const &nd   = nodes[idx];
+        bool const  left = routes_left(bin_of(nd.feature_id), sb.last[idx],
+                                       sb.split[idx], nd.default_left);
+        idx              = left ? nd.left : nd.right;
     }
     return nodes[idx].threshold_or_value;
 }
 
-inline float value_binned(ObliviousTree const &tree, SplitBins const &sb,
-                          Dataset const &ds, std::span<uint8_t const> rm, size_t r)
+template <typename BinOf>
+float value_binned(ObliviousTree const &tree, SplitBins const &sb, BinOf const &bin_of)
 {
     auto const &splits = tree.splits();
     size_t      index  = 0;
     for (size_t lvl = 0; lvl < splits.size(); ++lvl)
     {
-        auto const    &s = splits[lvl];
-        bin_id_t const b = rm[ds.mirror_index(r, s.feature_id)];
-        bool const left  = routes_left(b, sb.last[lvl], sb.split[lvl], s.default_left);
-        index            = (index << 1U) | (left ? 0U : 1U);
+        auto const &s   = splits[lvl];
+        bool const left = routes_left(bin_of(s.feature_id), sb.last[lvl], sb.split[lvl],
+                                      s.default_left);
+        index           = (index << 1U) | (left ? 0U : 1U);
     }
     return tree.leaf_table()[index];
+}
+
+// Accumulate a tree's (unscaled-by-lr) contribution over the training rows,
+// routing the columns the tree was grown on. Used by DART to subtract dropped
+// trees without caching per-tree train predictions.
+template <Tree T>
+void accumulate_train_contribution(T const &tree, Dataset const &ds, floats_out out)
+{
+    auto const sb = split_bins(tree, ds);
+    parallel::for_each_index(ds.n_rows(),
+                             [&](size_t r)
+                             {
+                                 out[r] += value_binned(tree, sb, [&](size_t f)
+                                                        { return ds.bin_at(f, r); });
+                             });
 }
 
 inline std::string feature_label(std::span<std::string const> names, size_t f)
@@ -852,13 +816,19 @@ class Booster final : public IBooster
     {
         assert(!trees_.empty());
         assert(bins.n_rows() == scores.size());
+        assert(!bins.row_major_bins().empty());
         auto const &tree = trees_.back();
         float const lr   = config_.learning_rate;
         auto const  sb   = internal::split_bins(tree, bins);
         auto const  rm   = bins.row_major_bins();
         parallel::for_each_index(
-            scores.size(), [&](size_t r)
-            { scores[r] += lr * internal::value_binned(tree, sb, bins, rm, r); });
+            scores.size(),
+            [&](size_t r)
+            {
+                scores[r] += lr * internal::value_binned(
+                                      tree, sb, [&](size_t f)
+                                      { return rm[bins.mirror_index(r, f)]; });
+            });
     }
 
     void truncate(size_t n_trees) override
