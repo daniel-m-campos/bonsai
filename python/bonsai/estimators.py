@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from bonsai._bonsai import Model, load, train
+from bonsai._bonsai import Dataset, Model, load, train
 from bonsai._coerce import _as_f32, _to_config_str
 
 __all__ = ["BonsaiClassifier", "BonsaiRegressor"]
@@ -408,20 +408,22 @@ class BonsaiRegressor(_BonsaiEstimator):
         self.quantile_alpha = quantile_alpha
 
     def fit(self, X, y, sample_weight=None,
-            eval_set: tuple | None = None,
+            eval_set: tuple | Dataset | None = None,
             init_model: str | None = None) -> BonsaiRegressor:
         """`sample_weight` scales each row's gradient and hessian (sklearn's
-        convention). `eval_set` is one bare `(X, y)` tuple; bonsai tracks a
-        single validation set, so a list of them is rejected rather than
-        silently reduced to its last entry. init_model continues training
-        from a saved .msgpack (warm start); binning reuses the loaded
-        model's cut points."""
+        convention). `eval_set` is one bare `(X, y)` tuple, or a
+        `bonsai.Dataset` built with `reference=` the training dataset, which
+        bins the validation rows once and reuses them across fits; bonsai
+        tracks a single validation set, so a list of them is rejected rather
+        than silently reduced to its last entry. init_model continues
+        training from a saved .msgpack (warm start); binning reuses the
+        loaded model's cut points."""
         _reject_eval_set_list(eval_set)
         pairs = self._build_pairs()
         ev = None
         if eval_set is not None:
             self._reject_dart_eval_set(pairs)
-            ev = (_as_f32(eval_set[0], 2, "X"), _as_f32(eval_set[1], 1, "y"))
+            ev = _coerce_eval_set(eval_set)
         sw = None if sample_weight is None else _as_f32(sample_weight, 1, "sample_weight")
         Xa = _as_f32(X, 2, "X")
         self._model = train(
@@ -501,11 +503,13 @@ class BonsaiClassifier(_BonsaiEstimator):
         super().__init__(**_shared_args(locals()))
 
     def fit(self, X, y, sample_weight=None,
-            eval_set: tuple | None = None,
+            eval_set: tuple | Dataset | None = None,
             init_model: str | None = None) -> BonsaiClassifier:
         """`sample_weight` scales each row's gradient and hessian (sklearn's
-        convention). `eval_set` is one bare `(X, y)` tuple; a list of them
-        is rejected. init_model continues training from a saved .msgpack
+        convention). `eval_set` is one bare `(X, y)` tuple, or a
+        `bonsai.Dataset` built with `reference=` the training dataset and
+        carrying labels already encoded to `0..K-1`; a list of them is
+        rejected. init_model continues training from a saved .msgpack
         (warm start); binning reuses the loaded model's cut points."""
         _reject_eval_set_list(eval_set)
         y_arr = np.asarray(y)
@@ -604,13 +608,18 @@ class BonsaiClassifier(_BonsaiEstimator):
             "objective.n_classes": self.n_classes_,
         }
 
-    def _encode_eval_set(self, eval_set) -> tuple[np.ndarray, np.ndarray]:
+    def _encode_eval_set(self, eval_set) -> tuple[np.ndarray, np.ndarray] | Dataset:
         """Encode eval-set labels against ``classes_``.
 
         A label the training fold never saw cannot be encoded; letting
         searchsorted guess silently corrupts the eval metric and early
-        stopping, so reject it.
+        stopping, so reject it. A pre-binned ``Dataset`` was built before
+        ``fit`` saw any class, so its labels have to be the encoded ids
+        already; a value outside ``0..K-1`` says they are the raw ones.
         """
+        if isinstance(eval_set, Dataset):
+            self._reject_unencoded_labels(eval_set)
+            return eval_set
         ev_y_arr = np.asarray(eval_set[1])
         ev_y = np.clip(
             np.searchsorted(self.classes_, ev_y_arr), 0, self.n_classes_ - 1
@@ -622,6 +631,24 @@ class BonsaiClassifier(_BonsaiEstimator):
                 f"training classes {self.classes_!r}"
             )
         return (_as_f32(eval_set[0], 2, "X"), _as_f32(ev_y, 1, "y"))
+
+    def _reject_unencoded_labels(self, eval_set: Dataset):
+        """Refuse a pre-binned eval set carrying raw class labels.
+
+        The native booster scores against ``0..K-1``, so raw labels would be
+        measured as the wrong class and quietly steer early stopping.
+        """
+        labels = np.asarray(eval_set.labels)
+        bad = (labels != np.floor(labels)) | (labels < 0) | (labels > self.n_classes_ - 1)
+        if not bad.any():
+            return
+        raise ValueError(
+            f"eval_set Dataset labels {np.unique(labels[bad])!r} are not encoded "
+            f"class ids. A Dataset is built before fit sees the classes "
+            f"{self.classes_!r}, so encode them first "
+            f"(np.searchsorted(clf.classes_, y_valid)), or pass "
+            f"eval_set=(X_valid, y_valid)."
+        )
 
 
 # Private Functions ================================================================================
@@ -664,3 +691,15 @@ def _reject_eval_set_list(eval_set):
         "eval_set takes one (X, y) tuple, not a list of them: bonsai tracks "
         "a single validation set. Pass eval_set=(X_valid, y_valid)."
     )
+
+
+def _coerce_eval_set(eval_set):
+    """The eval set as the native layer takes it.
+
+    A pre-binned ``Dataset`` already carries its rows, its labels, and the
+    cut points it was built against, so it passes straight through; a raw
+    ``(X, y)`` tuple is coerced to float32 like every other array argument.
+    """
+    if isinstance(eval_set, Dataset):
+        return eval_set
+    return (_as_f32(eval_set[0], 2, "X"), _as_f32(eval_set[1], 1, "y"))

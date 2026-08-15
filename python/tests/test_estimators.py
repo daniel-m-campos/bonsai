@@ -100,6 +100,52 @@ assert model.n_iters_ < 200, model.n_iters_
 """
 
 
+def test_fit_accepts_a_prebinned_eval_set():
+    """The estimators take the same reusable validation Dataset the explicit
+    layer takes, so an HP search bins the held-out rows once: same trace,
+    same stopping round, and the mismatch is refused here too."""
+    Xtr, ytr = load_csv(TRAIN_CSV)
+    Xt, yt, Xv, yv = Xtr[:-2000], ytr[:-2000], Xtr[-2000:], ytr[-2000:]
+    valid_ds = bonsai.Dataset(Xv, yv, reference=bonsai.Dataset(Xt, yt))
+
+    params = dict(n_iters=200, learning_rate=0.3, early_stopping_rounds=10)
+    arrays = bonsai.BonsaiRegressor(**params).fit(Xt, yt, eval_set=(Xv, yv))
+    prebinned = bonsai.BonsaiRegressor(**params).fit(Xt, yt, eval_set=valid_ds)
+    assert prebinned.n_iters_ == arrays.n_iters_ < 200
+    assert prebinned.best_iteration == arrays.best_iteration
+    np.testing.assert_array_equal(
+        np.asarray(arrays.evals_result()["valid"]["mse"]),
+        np.asarray(prebinned.evals_result()["valid"]["mse"]),
+    )
+
+    with pytest.raises(Exception, match="reference=train_dataset"):
+        bonsai.BonsaiRegressor(n_iters=5).fit(
+            Xt, yt, eval_set=bonsai.Dataset(Xv, yv, max_bin=31)
+        )
+
+
+def test_classifier_prebinned_eval_set_labels_must_be_encoded():
+    """A Dataset is built before fit sees the classes, so its labels have to
+    be the encoded ids; raw labels would be scored as the wrong class and
+    steer early stopping from there."""
+    X, y = _three_class_data(1500)
+    labels = np.array(["cat", "dog", "fox"])
+    named = labels[y.astype(int)]
+    Xt, Xv, named_t, named_v = X[:1000], X[1000:], named[:1000], named[1000:]
+
+    train_ds = bonsai.Dataset(Xt, y[:1000])
+    encoded = bonsai.Dataset(Xv, y[1000:], reference=train_ds)
+    arrays = bonsai.BonsaiClassifier(n_iters=20).fit(
+        Xt, named_t, eval_set=(Xv, named_v))
+    prebinned = bonsai.BonsaiClassifier(n_iters=20).fit(
+        Xt, named_t, eval_set=encoded)
+    assert prebinned.evals_result() == arrays.evals_result()
+
+    raw = bonsai.Dataset(Xv, y[1000:] + 3.0, reference=train_ds)
+    with pytest.raises(ValueError, match="encoded class ids"):
+        bonsai.BonsaiClassifier(n_iters=5).fit(Xt, named_t, eval_set=raw)
+
+
 def test_early_stopping_fit_writes_nothing_to_stdout():
     """The native fit must not write to the process stdout. A subprocess is the
     only honest check: the C runtime's stdout is not python's, so it escapes

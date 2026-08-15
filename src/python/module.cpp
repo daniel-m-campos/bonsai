@@ -8,6 +8,7 @@
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/variant.h>
 #include <nanobind/stl/vector.h>
 
 #include <algorithm>
@@ -319,6 +320,9 @@ bonsai::cli::LabeledData make_validation_labeled(array_2d const &X, array_1d con
 // device="cuda", where the resident matrix is then adopted by every fit.
 // Device-resident input (DLPack) carries its own answer: the bytes are
 // already there, so it bins there whatever the hint's default.
+// `reference` binds the new dataset to another one's cuts instead of fitting
+// its own, which is what makes a validation set reusable: a fit can only
+// route rows binned under the cuts its own trees were grown on.
 class Dataset
 {
   public:
@@ -326,7 +330,7 @@ class Dataset
             size_t n_samples, uint64_t seed, int min_data_in_bin,
             std::optional<std::map<size_t, array_1d>> const &bin_edges,
             std::optional<std::string> const &device, uint32_t device_id,
-            uint32_t n_threads)
+            uint32_t n_threads, Dataset const *reference)
     {
         auto const [xarg, yarg, warg] =
             resolve_inputs(X, y, weight, device_id, "weight", "Dataset: ");
@@ -360,6 +364,11 @@ class Dataset
         cfg.bin_mapper.min_data_in_bin = min_data_in_bin;
         cfg.parallel.n_threads         = n_threads;
         cfg.parallel.device_id         = device_id;
+        if (reference != nullptr)
+        {
+            check_reference(*reference, cfg.bin_mapper, bin_edges.has_value(),
+                            xarg.n_features);
+        }
 
         size_t const             f = xarg.n_features;
         std::vector<std::string> names;
@@ -384,7 +393,10 @@ class Dataset
         bonsai::floats_view const w = warg ? warg->view() : bonsai::floats_view{};
         nb::gil_scoped_release    release;
         bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
-        loaded_.mappers = fit_mappers(xarg, std::move(names), cfg, edges);
+        bin_cfg_        = cfg.bin_mapper;
+        loaded_.mappers = reference != nullptr
+                              ? reference->loaded_.mappers
+                              : fit_mappers(xarg, std::move(names), cfg, edges);
         loaded_.train =
             make_labeled(xarg, yarg.view(), loaded_.mappers, cfg, on_device, w);
         // Device state is recorded only when a plane was actually minted:
@@ -425,16 +437,67 @@ class Dataset
     {
         return n_features_;
     }
+
+    // The labels as bonsai holds them, copied out. An eval-set dataset trains
+    // nothing, so this is the only way to read back what it will be scored
+    // against (the classifier layer checks its own encoding with it).
+    nb::ndarray<nb::numpy, float> labels() const
+    {
+        auto const  &labels = loaded_.train.labels;
+        size_t const n      = labels.size();
+        return to_numpy(std::make_unique<std::vector<float>>(labels), {n});
+    }
+
+    // Whether the caller's host matrix is still reachable. Device-resident
+    // (DLPack) input leaves no host copy, and a warm start's validation seam
+    // predicts the pre-existing rounds from raw rows.
+    bool has_host_matrix() const
+    {
+        return x_.has_value();
+    }
+
     bonsai::cli::LoadedTrainValidation const &loaded() const
     {
         return loaded_;
     }
 
   private:
+    // A reference supplies the cuts, so every setting that would have shaped
+    // them is inert here: rather than ignore a disagreeing one, say so. The
+    // comparison is against the reference's own resolved binning config, so
+    // restating its values is fine and changing one is an error.
+    static void check_reference(Dataset const                 &reference,
+                                bonsai::BinMapperConfig const &bin_cfg,
+                                bool has_bin_edges, size_t n_features)
+    {
+        if (bin_cfg != reference.bin_cfg_)
+        {
+            throw std::invalid_argument(
+                "Dataset(reference=...) bins with the reference's cut points, so "
+                "max_bin/n_samples/seed/min_data_in_bin cannot differ from the "
+                "reference's; set them there instead");
+        }
+        if (has_bin_edges)
+        {
+            throw std::invalid_argument(
+                "Dataset(reference=...) bins with the reference's cut points, so "
+                "bin_edges belongs on the reference instead");
+        }
+        if (n_features != reference.n_features_)
+        {
+            throw std::invalid_argument(
+                "Dataset(reference=...): X has " + std::to_string(n_features) +
+                " columns and the reference has " +
+                std::to_string(reference.n_features_) +
+                "; one set of cuts describes one set of columns");
+        }
+    }
+
     std::optional<array_2d>            x_;
     size_t                             n_features_ = 0;
     bonsai::cli::LoadedTrainValidation loaded_;
     std::optional<uint32_t>            device_id_;
+    bonsai::BinMapperConfig            bin_cfg_;
 };
 
 // A trained model: booster + the bin mappers and config it was fit with.
@@ -636,6 +699,70 @@ class Model
     std::vector<float>                eval_history_;
 };
 
+// The validation set a fit was handed: raw arrays, which the fit bins itself
+// and only when the rounds it will run pay for the pass, or a Dataset the
+// caller binned once, which routes in bin space from the first round and
+// charges the fit nothing. The Dataset arm is borrowed, so one validation
+// Dataset serves a whole sweep.
+using EvalSet = std::variant<std::pair<array_2d, array_1d>, Dataset const *>;
+
+// Owns the raw-array arm's LabeledData, borrows the Dataset arm's; `get()`
+// is what train_with_progress takes either way (null for no eval set).
+struct Validation
+{
+    std::optional<bonsai::cli::LabeledData> owned;
+    bonsai::cli::LabeledData const         *borrowed = nullptr;
+
+    bonsai::cli::LabeledData const *get() const
+    {
+        if (borrowed != nullptr)
+        {
+            return borrowed;
+        }
+        return owned ? &*owned : nullptr;
+    }
+};
+
+// A prebinned eval set must carry the fit's own cuts: the walk inverts each
+// stored threshold into a bin id, which names the same cut only under the
+// mappers the trees were grown on. The C++ side asserts that contract; this
+// is where a Python caller is told how to satisfy it.
+Validation resolve_eval_set(std::optional<EvalSet> const &eval_set,
+                            bonsai::BinMappers const &mappers, bool warm_start)
+{
+    Validation out;
+    if (!eval_set)
+    {
+        return out;
+    }
+    if (auto const *const arrays =
+            std::get_if<std::pair<array_2d, array_1d>>(&*eval_set))
+    {
+        out.owned = make_validation_labeled(arrays->first, arrays->second);
+        return out;
+    }
+    auto const *const dataset = std::get<Dataset const *>(*eval_set);
+    if (!mappers.same_cuts(dataset->loaded().mappers))
+    {
+        throw std::invalid_argument(
+            "the eval_set Dataset was binned with different cut points than this "
+            "fit's training data, so its bins name different splits. Build it "
+            "against the training data: bonsai.Dataset(X_valid, y_valid, "
+            "reference=train_dataset).");
+    }
+    if (warm_start && !dataset->has_host_matrix())
+    {
+        throw std::invalid_argument(
+            "an init_model warm start scores the eval set on the rounds already "
+            "in the model, which predicts from raw rows; this eval_set Dataset "
+            "was built from device-resident (DLPack) input and kept no host "
+            "matrix. Pass eval_set=(X_valid, y_valid), or build the Dataset from "
+            "a host array.");
+    }
+    out.borrowed = &dataset->loaded().train;
+    return out;
+}
+
 // Precedence: TOML file (when given) provides the base, params override it —
 // the CLI's -c + --set ordering.
 bonsai::Config
@@ -652,9 +779,8 @@ config_from_params(std::vector<std::pair<std::string, std::string>> const &param
 }
 
 Model train(std::vector<std::pair<std::string, std::string>> const &params,
-            nb::handle X, nb::handle y,
-            std::optional<std::pair<array_2d, array_1d>> const &eval_set,
-            std::optional<std::string> const                   &init_model,
+            nb::handle X, nb::handle y, std::optional<EvalSet> const &eval_set,
+            std::optional<std::string> const &init_model,
             std::optional<std::string> const &config, nb::handle sample_weight)
 {
     bonsai::Config const cfg = config_from_params(params, config);
@@ -688,14 +814,13 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
     bonsai::floats_view const wview = warg ? warg->view() : bonsai::floats_view{};
     loaded.train = make_labeled(xarg, yarg.view(), loaded.mappers, cfg,
                                 cfg.dispatch.grower_name.starts_with("cuda"), wview);
-    if (eval_set)
-    {
-        loaded.validation = make_validation_labeled(eval_set->first, eval_set->second);
-    }
+    Validation const validation =
+        resolve_eval_set(eval_set, loaded.mappers, init.has_value());
 
     std::vector<float> history;
     auto               booster = bonsai::cli::train_with_progress(
-        cfg, loaded, {}, init ? std::move(init->booster) : nullptr, std::ref(history));
+        cfg, loaded.train, validation.get(), {},
+        init ? std::move(init->booster) : nullptr, std::ref(history));
     return Model{std::move(booster), std::move(loaded.mappers), cfg,
                  std::move(history)};
 }
@@ -706,10 +831,9 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
 // bin_mapper.* overrides are rejected rather than silently ignored — whether
 // they arrive as a param pair or inside the config file.
 Model train_dataset(std::vector<std::pair<std::string, std::string>> const &params,
-                    Dataset const                                          &dataset,
-                    std::optional<std::pair<array_2d, array_1d>> const     &eval_set,
-                    std::optional<std::string> const                       &init_model,
-                    std::optional<std::string> const                       &config)
+                    Dataset const &dataset, std::optional<EvalSet> const &eval_set,
+                    std::optional<std::string> const &init_model,
+                    std::optional<std::string> const &config)
 {
     for (auto const &[key, value] : params)
     {
@@ -757,14 +881,11 @@ Model train_dataset(std::vector<std::pair<std::string, std::string>> const &para
     // The validation set is per-call state; the train side stays the Dataset's
     // own LabeledData (no copy: a copy would also change the address that keys
     // the GPU upload-skip cache).
-    std::optional<bonsai::cli::LabeledData> validation;
-    if (eval_set)
-    {
-        validation = make_validation_labeled(eval_set->first, eval_set->second);
-    }
+    Validation const validation =
+        resolve_eval_set(eval_set, dataset.loaded().mappers, init.has_value());
     std::vector<float> history;
     auto               booster = bonsai::cli::train_with_progress(
-        cfg, dataset.loaded().train, validation ? &*validation : nullptr, {},
+        cfg, dataset.loaded().train, validation.get(), {},
         init ? std::move(init->booster) : nullptr, std::ref(history));
     return Model{std::move(booster), dataset.loaded().mappers, cfg, std::move(history)};
 }
@@ -818,15 +939,17 @@ NB_MODULE(_bonsai, m)
     nb::class_<Dataset>(m, "Dataset")
         .def(nb::init<nb::handle, nb::handle, nb::handle, int, size_t, uint64_t, int,
                       std::optional<std::map<size_t, array_1d>> const &,
-                      std::optional<std::string> const &, uint32_t, uint32_t>(),
+                      std::optional<std::string> const &, uint32_t, uint32_t,
+                      Dataset const *>(),
              nb::arg("X"), nb::arg("y"), nb::arg("weight") = nb::none(),
              nb::arg("max_bin")         = k_bin_defaults.max_bin,
              nb::arg("n_samples")       = k_bin_defaults.n_samples,
              nb::arg("seed")            = k_bin_defaults.seed,
              nb::arg("min_data_in_bin") = k_bin_defaults.min_data_in_bin,
              nb::arg("bin_edges") = nb::none(), nb::arg("device") = nb::none(),
-             nb::arg("device_id") = k_parallel_defaults.device_id,
-             nb::arg("n_threads") = k_parallel_defaults.n_threads,
+             nb::arg("device_id")        = k_parallel_defaults.device_id,
+             nb::arg("n_threads")        = k_parallel_defaults.n_threads,
+             nb::arg("reference").none() = nb::none(),
              "A pre-binned dataset. Bins X once at construction and is reused "
              "across train(params, dataset) calls (hyperparameter search / CV), "
              "skipping the per-fit bin pass. All bin_mapper settings "
@@ -848,7 +971,13 @@ NB_MODULE(_bonsai, m)
              "trip; y and weight may be device-resident too and "
              "are downloaded once, because bonsai keeps labels on the host. "
              "`n_threads` sizes the binning pass (0 = auto), the way "
-             "parallel.n_threads sizes a fit.")
+             "parallel.n_threads sizes a fit. `reference=train_dataset` bins "
+             "with another dataset's cut points instead of fitting its own, "
+             "which is what a validation set needs: the result can be handed "
+             "to train(..., eval_set=valid_dataset) and every fit routes it "
+             "in bin space with no per-fit bin pass. The binning settings and "
+             "`bin_edges` come from the reference, so passing a different one "
+             "raises.")
         .def("__reduce__",
              [](Dataset const &) -> nb::object
              {
@@ -862,7 +991,11 @@ NB_MODULE(_bonsai, m)
                      "Where the binned columns live: \"cuda\" for a "
                      "device-binned dataset, \"cpu\" otherwise.")
         .def_prop_ro("n_rows", &Dataset::n_rows)
-        .def_prop_ro("n_features", &Dataset::n_features);
+        .def_prop_ro("n_features", &Dataset::n_features)
+        .def_prop_ro("labels", &Dataset::labels, nb::rv_policy::automatic,
+                     "The labels this dataset carries, as a float32 copy. An "
+                     "eval-set dataset is scored against these, so this is how "
+                     "a caller checks what it built.");
 
     // Dataset overload first: the array overload takes X and y untyped (a numpy
     // array or any DLPack producer), so it would otherwise shadow a Dataset
@@ -872,8 +1005,10 @@ NB_MODULE(_bonsai, m)
           nb::arg("config") = nb::none(),
           "Train on a prebuilt Dataset, reusing its binning across calls. "
           "bin_mapper.* overrides are rejected (binning is fixed by the Dataset). "
-          "`eval_set=(Xv, yv)` is binned per call with the Dataset's mappers and "
-          "enables per-iter eval and early stopping.");
+          "`eval_set` enables per-iter eval and early stopping, either as "
+          "`(Xv, yv)` arrays the fit bins itself when the rounds pay for the "
+          "pass, or as a Dataset built with `reference=` this one, which is "
+          "binned once and routed in bin space by every fit.");
     m.def("train", &train, nb::arg("params"), nb::arg("X"), nb::arg("y"),
           nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
           nb::arg("config") = nb::none(), nb::arg("sample_weight") = nb::none(),
@@ -885,8 +1020,10 @@ NB_MODULE(_bonsai, m)
           "(scales each row's gradient and hessian). X, y and sample_weight "
           "may instead be CUDA arrays supporting DLPack (cupy, torch, jax): "
           "X is then binned on the GPU in place, with no host round trip, "
-          "and y and the weights are downloaded once. `eval_set` stays "
-          "host-side, because the per-iteration eval predicts on the host.");
+          "and y and the weights are downloaded once. `eval_set` is either "
+          "`(Xv, yv)` host arrays or a Dataset binned with this fit's cut "
+          "points, and stays host-side either way, because the per-iteration "
+          "eval predicts on the host.");
     m.def("load", &load, nb::arg("path"), "Load a model saved by Model.save.");
 
     m.def("default_config_toml", [] { return bonsai::config::dump_toml({}); });
