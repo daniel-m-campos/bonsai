@@ -244,6 +244,7 @@ train_with_progress(Config const &cfg, LabeledData const &train,
                     std::unique_ptr<IBooster> initial, EvalHistoryRef eval_history)
 {
     select_device_for(cfg);
+    [[maybe_unused]] bool const warm_start = initial != nullptr;
     auto       booster = initial ? std::move(initial) : make_booster(cfg);
     auto const n_iters = cfg.booster_config.n_iters;
     auto const log_iv  = cfg.booster_config.log_intervals;
@@ -341,6 +342,12 @@ train_with_progress(Config const &cfg, LabeledData const &train,
             defer_binning = validation->dataset.n_rows() == 0 &&
                             train.dataset.bins_are_u8() && has_raw_rows(*validation);
         }
+        // The raw walk and the warm-start seed read the caller's matrix, so a
+        // validation set that kept none must arrive binned and start cold.
+        // The Python binding refuses the rest with a message; this is the
+        // seam restating it.
+        assert(has_raw_rows(*validation) ||
+               (validation_bins != nullptr && !warm_start));
     }
 
     std::vector<float> es_scores;

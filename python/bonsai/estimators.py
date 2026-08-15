@@ -423,7 +423,8 @@ class BonsaiRegressor(_BonsaiEstimator):
         ev = None
         if eval_set is not None:
             self._reject_dart_eval_set(pairs)
-            ev = _coerce_eval_set(eval_set)
+            ev = (eval_set if isinstance(eval_set, Dataset)
+                  else (_as_f32(eval_set[0], 2, "X"), _as_f32(eval_set[1], 1, "y")))
         sw = None if sample_weight is None else _as_f32(sample_weight, 1, "sample_weight")
         Xa = _as_f32(X, 2, "X")
         self._model = train(
@@ -614,11 +615,10 @@ class BonsaiClassifier(_BonsaiEstimator):
         A label the training fold never saw cannot be encoded; letting
         searchsorted guess silently corrupts the eval metric and early
         stopping, so reject it. A pre-binned ``Dataset`` was built before
-        ``fit`` saw any class, so its labels have to be the encoded ids
-        already; a value outside ``0..K-1`` says they are the raw ones.
+        ``fit`` saw any class, so its labels are already the encoded ids and
+        the native layer range-checks them.
         """
         if isinstance(eval_set, Dataset):
-            self._reject_unencoded_labels(eval_set)
             return eval_set
         ev_y_arr = np.asarray(eval_set[1])
         ev_y = np.clip(
@@ -631,24 +631,6 @@ class BonsaiClassifier(_BonsaiEstimator):
                 f"training classes {self.classes_!r}"
             )
         return (_as_f32(eval_set[0], 2, "X"), _as_f32(ev_y, 1, "y"))
-
-    def _reject_unencoded_labels(self, eval_set: Dataset):
-        """Refuse a pre-binned eval set carrying raw class labels.
-
-        The native booster scores against ``0..K-1``, so raw labels would be
-        measured as the wrong class and quietly steer early stopping.
-        """
-        labels = np.asarray(eval_set.labels)
-        bad = (labels != np.floor(labels)) | (labels < 0) | (labels > self.n_classes_ - 1)
-        if not bad.any():
-            return
-        raise ValueError(
-            f"eval_set Dataset labels {np.unique(labels[bad])!r} are not encoded "
-            f"class ids. A Dataset is built before fit sees the classes "
-            f"{self.classes_!r}, so encode them first "
-            f"(np.searchsorted(clf.classes_, y_valid)), or pass "
-            f"eval_set=(X_valid, y_valid)."
-        )
 
 
 # Private Functions ================================================================================
@@ -691,15 +673,3 @@ def _reject_eval_set_list(eval_set):
         "eval_set takes one (X, y) tuple, not a list of them: bonsai tracks "
         "a single validation set. Pass eval_set=(X_valid, y_valid)."
     )
-
-
-def _coerce_eval_set(eval_set):
-    """The eval set as the native layer takes it.
-
-    A pre-binned ``Dataset`` already carries its rows, its labels, and the
-    cut points it was built against, so it passes straight through; a raw
-    ``(X, y)`` tuple is coerced to float32 like every other array argument.
-    """
-    if isinstance(eval_set, Dataset):
-        return eval_set
-    return (_as_f32(eval_set[0], 2, "X"), _as_f32(eval_set[1], 1, "y"))
