@@ -206,8 +206,8 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         return n_classes_;
     }
 
-    void seed_valid_scores(features_view X, std::span<float> out,
-                           size_t n_rounds) const override
+    void seed_validation_scores(features_view X, std::span<float> out,
+                                size_t n_rounds) const override
     {
         if (n_rounds > 0)
         {
@@ -221,36 +221,13 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         }
     }
 
-    void accumulate_last_round(features_view X, Dataset const *bins,
-                               floats_out scores) const override
+    // Row-major over classes: each row's features are read once for all K
+    // trees instead of K passes over X, and the per-row add is unchanged.
+    void accumulate_last_round(features_view X, floats_out scores) const override
     {
         assert(trees_.size() >= n_classes_);
         size_t const first = trees_.size() - n_classes_;
         float const  lr    = config_.learning_rate;
-        // Row-major over classes: each row's features are read once for all K
-        // trees instead of K passes over X, and the per-row add is unchanged.
-        if (bins != nullptr)
-        {
-            std::vector<internal::SplitBins> sb;
-            sb.reserve(n_classes_);
-            for (size_t k = 0; k < n_classes_; ++k)
-            {
-                sb.push_back(internal::split_bins(trees_[first + k], *bins));
-            }
-            auto const rm = bins->row_major_bins();
-            parallel::for_each_index(bins->n_rows(),
-                                     [&](size_t i)
-                                     {
-                                         for (size_t k = 0; k < n_classes_; ++k)
-                                         {
-                                             scores[(i * n_classes_) + k] +=
-                                                 lr * internal::value_binned(
-                                                          trees_[first + k], sb[k],
-                                                          *bins, rm, i);
-                                         }
-                                     });
-            return;
-        }
         parallel::for_each_index(X.extent(0),
                                  [&](size_t i)
                                  {
@@ -263,7 +240,35 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                                  });
     }
 
-    float valid_loss(std::span<float const> scores, floats_view labels) const override
+    void accumulate_last_round_binned(Dataset const &bins,
+                                      floats_out     scores) const override
+    {
+        assert(trees_.size() >= n_classes_);
+        size_t const first = trees_.size() - n_classes_;
+        float const  lr    = config_.learning_rate;
+        // One SplitBins per class, hoisted out of the row loop.
+        std::vector<internal::SplitBins> sb;
+        sb.reserve(n_classes_);
+        for (size_t k = 0; k < n_classes_; ++k)
+        {
+            sb.push_back(internal::split_bins(trees_[first + k], bins));
+        }
+        auto const rm = bins.row_major_bins();
+        parallel::for_each_index(bins.n_rows(),
+                                 [&](size_t i)
+                                 {
+                                     for (size_t k = 0; k < n_classes_; ++k)
+                                     {
+                                         scores[(i * n_classes_) + k] +=
+                                             lr *
+                                             internal::value_binned(trees_[first + k],
+                                                                    sb[k], bins, rm, i);
+                                     }
+                                 });
+    }
+
+    float validation_loss(std::span<float const> scores,
+                          floats_view            labels) const override
     {
         return logloss_from_scores(scores, labels);
     }
