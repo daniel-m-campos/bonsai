@@ -842,9 +842,14 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
         resolve_eval_set(eval_set, cfg, loaded.mappers, init.has_value(), owned);
 
     std::vector<float> history;
-    auto               booster = bonsai::cli::train_with_progress(
-        cfg, loaded.train, validation, {}, init ? std::move(init->booster) : nullptr,
-        std::ref(history));
+    auto               initial = init ? std::move(init->booster) : nullptr;
+    // The eval set is optional at this boundary; the fit takes one or none.
+    auto booster =
+        validation != nullptr
+            ? bonsai::cli::train_with_progress(cfg, loaded.train, *validation, {},
+                                               std::move(initial), std::ref(history))
+            : bonsai::cli::train_with_progress(cfg, loaded.train, {},
+                                               std::move(initial), std::ref(history));
     return Model{std::move(booster), std::move(loaded.mappers), cfg,
                  std::move(history)};
 }
@@ -909,10 +914,16 @@ Model train_dataset(std::vector<std::pair<std::string, std::string>> const &para
     auto const *const                       validation = resolve_eval_set(
         eval_set, cfg, dataset.loaded().mappers, init.has_value(), owned);
     std::vector<float> history;
-    auto               booster = bonsai::cli::train_with_progress(
-        cfg, dataset.loaded().train, validation, {},
-        init ? std::move(init->booster) : nullptr, std::ref(history));
-    return Model{std::move(booster), dataset.loaded().mappers, cfg, std::move(history)};
+    auto               initial = init ? std::move(init->booster) : nullptr;
+    auto const        &loaded  = dataset.loaded();
+
+    auto booster =
+        validation != nullptr
+            ? bonsai::cli::train_with_progress(cfg, loaded.train, *validation, {},
+                                               std::move(initial), std::ref(history))
+            : bonsai::cli::train_with_progress(cfg, loaded.train, {},
+                                               std::move(initial), std::ref(history));
+    return Model{std::move(booster), loaded.mappers, cfg, std::move(history)};
 }
 
 Model load(std::string const &path)

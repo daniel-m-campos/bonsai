@@ -107,21 +107,29 @@ std::unique_ptr<IBooster> train_with_progress(Config const                &cfg,
                                               std::unique_ptr<IBooster>    initial = {},
                                               EvalHistoryRef eval_history = {});
 
-// Same, but train and validation arrive separately (validation may be null).
-// Lets a caller pair a long-lived pre-binned train set with a per-call
-// validation set without copying the train LabeledData (the copy would also
-// change the Dataset address that keys the GPU upload-skip cache, decision
-// 54). `eval_history`, when engaged and a validation set exists, receives the
-// validation loss after every boosting round (the objective's own eval
-// metric), whether or not early stopping is on; DART skips it (per-round
-// rescaling invalidates the incremental accumulation the history shares with
-// early stopping).
+// Same, but the sets arrive separately instead of inside a
+// LoadedTrainValidation. Lets a caller pair a long-lived pre-binned train set
+// with a per-call validation set without copying the train LabeledData (the
+// copy would also change the Dataset address that keys the GPU upload-skip
+// cache, decision 54).
+// Train alone: no validation set, so no early stopping and no eval history
+// (`eval_history` is left as the caller passed it).
+std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
+                                              LabeledData const        &train,
+                                              FitTickFn const          &on_tick = {},
+                                              std::unique_ptr<IBooster> initial = {},
+                                              EvalHistoryRef eval_history       = {});
+
+// With a validation set: `eval_history`, when engaged, receives the validation
+// loss after every boosting round (the objective's own eval metric), whether
+// or not early stopping is on; DART skips it (per-round rescaling invalidates
+// the incremental accumulation the history shares with early stopping).
 // Indices are absolute model rounds: a warm start (`initial`) prefixes one
 // quiet-NaN entry per pre-existing round, so argmin over the vector lines up
 // with n_iters()/truncate()/predict-at-round counting.
 std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
                                               LabeledData const        &train,
-                                              LabeledData const        *validation,
+                                              LabeledData const        &validation,
                                               FitTickFn const          &on_tick = {},
                                               std::unique_ptr<IBooster> initial = {},
                                               EvalHistoryRef eval_history       = {});
