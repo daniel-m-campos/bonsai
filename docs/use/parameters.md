@@ -42,8 +42,8 @@ Per-tree shape and regularization, the primary overfitting controls.
 | `lambda_l2` | float | `1.0` | L2 penalty on leaf weights. Higher values shrink leaf outputs toward zero, smoothing predictions and reducing variance. |
 | `max_depth` | integer | `6` | Maximum tree depth. Deeper trees capture more feature interactions but overfit and cost more; the primary complexity knob. |
 | `max_leaves` | integer | `31` | Leaf cap for leafwise growth. 0 is unbounded (depth-capped). Fewer leaves regularize; more leaves fit finer structure. |
-| `min_child_hess` | float | `1.0` | Minimum summed hessian per leaf. Higher values block splits on thin data, reducing overfitting; the hessian-weighted analog of min_child_weight. |
-| `min_data_in_leaf` | integer | `20` | Minimum training rows per leaf. Higher values prevent tiny leaves fit to noise, a strong overfitting guard on small data. |
+| `min_child_hess` | float | `1.0` | Minimum hessian each child of a split must hold, or the candidate is rejected. Under squared error a row weighs 1, so this counts rows. |
+| `min_data_in_leaf` | integer | `20` | Rows a node needs to split at all, twice this value. It gates the node, not the child: min_child_hess is the per-child floor. |
 | `min_gain_to_split` | float | `0.0` | Minimum loss reduction to accept a split. Raising it prunes low-value splits and shrinks trees, curbing overfitting. |
 | `monotone_constraints` | list | `[]` | Per-feature monotone direction: +1 increasing, -1 decreasing, 0 free. Forces predictions to respect known monotonic relationships. Node-splitting growers only. |
 
