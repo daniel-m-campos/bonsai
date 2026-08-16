@@ -219,6 +219,11 @@ _LIGHTGBM: Final = _Library(
         _Knob("max_depth", "tree.max_depth", to_native=lambda v: _lgbm_depth(v)),
         _Knob("num_leaves", "tree.max_leaves"),
         _Knob("max_leaves", "tree.max_leaves", alias=True),
+        # Same name, different gate. LightGBM rejects a candidate whose
+        # child would hold fewer rows than this; bonsai only refuses to
+        # split a node holding fewer than twice it, so a translated fit can
+        # still leave one row in a leaf. tree.min_child_hess is the
+        # per-candidate floor, and counts rows under squared error.
         _Knob("min_data_in_leaf", "tree.min_data_in_leaf"),
         _Knob("min_child_samples", "tree.min_data_in_leaf", alias=True),
         _Knob("min_data", "tree.min_data_in_leaf", alias=True),
@@ -313,6 +318,8 @@ _CATBOOST: Final = _Library(
         _Knob("num_leaves", "tree.max_leaves", alias=True),
         _Knob("l2_leaf_reg", "tree.lambda_l2"),
         _Knob("reg_lambda", "tree.lambda_l2", alias=True),
+        # A node gate on bonsai's side, a child gate on CatBoost's; see the
+        # LightGBM table's note.
         _Knob("min_data_in_leaf", "tree.min_data_in_leaf"),
         _Knob("min_child_samples", "tree.min_data_in_leaf", alias=True),
         # The fencepost: border_count counts SPLITS where max_bin counts
