@@ -77,9 +77,17 @@ RESULTS = REPO / "benchmarks" / "results"
 POD_SCRIPT = REPO / "scripts" / "standings_refresh_pod.sh"
 
 REST = "https://rest.runpod.io/v1"
+# Per-datacenter stock is a v2 catalog reading; pods are still created on v1.
+CATALOG = "https://api.runpod.io/v2/catalog/gpus"
 # cuda12.8: the GPU below is sm_120, past 12.4's --offload-arch=native reach.
 IMAGE = "ghcr.io/daniel-m-campos/bonsai-ci:cuda12.8"
 GPU = "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+
+# Never rented, whatever it reports in stock: excluded by policy, not supply.
+BANNED_DATACENTERS = ("EUR-IS-2",)
+# The stock levels worth trying, best first. A datacenter reporting NONE, or
+# any level not on this list, is not a candidate.
+STOCK_ORDER = ("HIGH", "MEDIUM", "LOW")
 
 # The optional separate CPU rental (--cpu-plane-host cpupod), not the
 # default host of record. cpu5g is the general-purpose CPU5 flavor at 4GB of
@@ -152,8 +160,9 @@ def main() -> int:
                    help="vCPUs to buy when --cpu-plane-host is cpupod; must "
                         "be at least one per thread the specs claim")
     m.add_argument("--dry-run", action="store_true",
-                   help="print the rental plan and the sizing arithmetic, "
-                        "then exit without renting anything")
+                   help="print the rental plan, the sizing arithmetic, and "
+                        "the datacenters the GPU is in stock in, then exit "
+                        "without renting anything")
     s = sub.add_parser("supersede", help="build the supersession PR from results")
     s.add_argument("--results-dir", required=True)
     s.add_argument("--axes", default=",".join(AXES))
@@ -224,10 +233,11 @@ def measure(args: argparse.Namespace) -> int:
                       f"run more threads than the cpuset has cpus",
                       file=sys.stderr)
                 return 1
+    key = os.environ.get("RUNPOD_API_KEY")
     if args.dry_run:
+        _dry_run_datacenters(key, sessions)
         print("--dry-run: nothing rented")
         return 0
-    key = os.environ.get("RUNPOD_API_KEY")
     if not key:
         print("ERROR: export RUNPOD_API_KEY first (runbook section 0)",
               file=sys.stderr)
@@ -257,6 +267,46 @@ def spec_threads(axis: str) -> int:
     """The thread count an axis's bundled spec publishes its claim at."""
     spec = json.loads((SPECS / f"{axis}.json").read_text())
     return max(spec.get("threads", [16]))
+
+
+def stocked_datacenters(gpu_type: str, key: str) -> list[str]:
+    """The datacenters holding one GPU type, best stock first.
+
+    A create that names no datacenter lands wherever RunPod places it, and
+    that region can be empty while the same GPU sits in stock two regions
+    over: the create then fails 500 "no instances" against a fleet that has
+    the machine. So the GPU create body pins one datacenter read from here.
+    EUR-IS-2 is off the list by policy rather than by stock.
+
+    Parameters
+    ----------
+    gpu_type : str
+        The ``gpuTypeIds`` value the create body asks for.
+    key : str
+        The RunPod API key. Never printed, here or on the failure path.
+
+    Returns
+    -------
+    list[str]
+        Datacenter ids, HIGH before MEDIUM before LOW. Empty when the
+        lookup fails or the fleet reports no stock anywhere, which leaves
+        the caller with the unpinned create it would have issued anyway.
+    """
+    try:
+        # product=POD is mandatory with include=AVAILABILITY, and Cloudflare
+        # rejects urllib's default User-Agent with a bare 403 (error 1010).
+        out = _api(f"{CATALOG}?include=AVAILABILITY&cloud=SECURE&product=POD",
+                   key, method="GET")
+    except OSError as e:
+        print(f"WARNING: availability lookup failed ({e}); the create goes "
+              "unpinned", file=sys.stderr)
+        return []
+    gpu = next((g for g in out.get("gpus", []) if g.get("id") == gpu_type), {})
+    ranked = sorted((STOCK_ORDER.index(dc["availability"]), dc["id"])
+                    for dc in gpu.get("dataCenters", [])
+                    if dc.get("availability") in STOCK_ORDER
+                    and dc.get("id") not in BANNED_DATACENTERS)
+    return [dc for _, dc in ranked]
 
 
 # Supersede ========================================================================================
@@ -366,6 +416,22 @@ def stale_axes() -> set[str]:
 
 # Private Helpers ==================================================================================
 
+def _dry_run_datacenters(key: str | None, sessions: list[tuple[str, list[str]]]):
+    """Print the datacenters a GPU create would try, renting nothing.
+
+    This is the only way to exercise the stock reading without buying a
+    pod, so it hits the live catalog rather than reporting a plan.
+    """
+    if not any(plane == PLANE_GPU for plane, _ in sessions):
+        return
+    if not key:
+        print("--dry-run: RUNPOD_API_KEY unset, skipping the stock reading")
+        return
+    stocked = stocked_datacenters(GPU, key)
+    print(f"gpu datacenters in stock, best first: "
+          f"{', '.join(stocked) or 'none; the create would go unpinned'}")
+
+
 def _row_host(path: pathlib.Path) -> str:
     """The host name the rows in one results file were measured under."""
     with path.open() as fh:
@@ -455,6 +521,7 @@ def _api(url: str, key: str, payload: dict | None = None,
         url, method=method,
         data=json.dumps(payload).encode() if payload is not None else None,
         headers={"Authorization": f"Bearer {key}",
+                 "User-Agent": "bonsai-standings-refresh",
                  "content-type": "application/json"})
     with urllib.request.urlopen(req, timeout=30) as resp:
         body = resp.read().decode()
@@ -468,6 +535,9 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int) -> str:
     has spare, read off the container rather than assumed. A CPU pod is
     bought by vCPU, so its ceiling is a line on the invoice; that is the
     ``--cpu-plane-host cpupod`` path, not the host of record.
+
+    The GPU create is tried once per stocked datacenter. The CPU create is
+    unpinned: a cpu flavor is not a device with a per-region stock reading.
     """
     name = f"bonsai-standings-{plane}-{time.strftime('%Y%m%d-%H%M')}"
     body = {"name": name, "imageName": IMAGE, "cloudType": "SECURE",
@@ -475,16 +545,29 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int) -> str:
     if plane == PLANE_CPU:
         body |= {"computeType": "CPU", "cpuFlavorIds": [CPU_FLAVOR],
                  "vcpuCount": vcpu, "containerDiskInGb": CPU_DISK_GB}
+        bodies = [body]
     else:
         body |= {"gpuTypeIds": [GPU], "gpuCount": 1,
                  "containerDiskInGb": GPU_DISK_GB}
+        # One datacenter per attempt: a multi-entry dataCenterIds list can
+        # 400 on the create schema. The unpinned body stays last so an
+        # empty or failed stock reading is never worse than not pinning.
+        bodies = [body | {"dataCenterIds": [dc]}
+                  for dc in stocked_datacenters(GPU, key)] + [body]
     for attempt in (1, 2):
-        try:
-            out = _api(f"{REST}/pods", key, body)
-            if out.get("id"):
-                return out["id"]
-        except OSError as e:
-            print(f"create attempt {attempt}: {e}", file=sys.stderr)
+        for candidate in bodies:
+            where = ",".join(candidate.get("dataCenterIds", ["unpinned"]))
+            try:
+                out = _api(f"{REST}/pods", key, candidate)
+                if out.get("id"):
+                    return out["id"]
+            except OSError as e:
+                # 500 is that datacenter out of instances; 400 is a
+                # datacenter the stock reading lists but the create
+                # schema's enum rejects (US-MO-2 and US-NC-2 were). Both
+                # mean try the next datacenter, neither is fatal.
+                print(f"create attempt {attempt} ({where}): {e}",
+                      file=sys.stderr)
         time.sleep(15)
     raise SystemExit(f"no usable {plane} pod after 2 attempts")
 
