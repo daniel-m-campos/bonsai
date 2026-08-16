@@ -136,7 +136,7 @@ TEST_CASE("train_with_progress: a prebinned validation set routes identically",
     auto const loaded = load_train_and_validation_from_csv(cfg);
     REQUIRE(loaded.validation.has_value());
     std::vector<float> raw_history;
-    auto const raw = train_with_progress(cfg, loaded.train, &*loaded.validation, {}, {},
+    auto const raw = train_with_progress(cfg, loaded.train, *loaded.validation, {}, {},
                                          std::ref(raw_history));
 
     // The same rows, binned once with the training set's own mappers.
@@ -145,7 +145,7 @@ TEST_CASE("train_with_progress: a prebinned validation set routes identically",
                                          loaded.mappers, cfg.data);
     REQUIRE(prebinned.dataset.bins_are_u8());
     std::vector<float> binned_history;
-    auto const binned = train_with_progress(cfg, loaded.train, &prebinned, {}, {},
+    auto const binned = train_with_progress(cfg, loaded.train, prebinned, {}, {},
                                             std::ref(binned_history));
 
     REQUIRE(!raw_history.empty());

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -174,9 +175,13 @@ std::unique_ptr<IBooster> train_with_progress(Config const                &cfg,
                                               std::unique_ptr<IBooster>    initial,
                                               EvalHistoryRef               eval_history)
 {
-    return train_with_progress(cfg, loaded.train,
-                               loaded.validation ? &*loaded.validation : nullptr,
-                               on_tick, std::move(initial), eval_history);
+    if (loaded.validation)
+    {
+        return train_with_progress(cfg, loaded.train, *loaded.validation, on_tick,
+                                   std::move(initial), eval_history);
+    }
+    return train_with_progress(cfg, loaded.train, on_tick, std::move(initial),
+                               eval_history);
 }
 
 namespace
@@ -214,19 +219,21 @@ Dataset bin_validation(LabeledData const &validation, Dataset const &train,
                         data_cfg);
 }
 
-// The two per-round eval phases, one bucket each. The Phase covers a whole
-// call the way a grower's step methods carry theirs, so the round loop below
-// states what runs and the instrument boundary lives at the seam.
-void route_last_round(IBooster const &booster, features_view X,
-                      Dataset const *validation_bins, floats_out scores)
+// The per-round eval phases, one bucket each. The Phase covers a whole call
+// the way a grower's step methods carry theirs, so the round loop below states
+// what runs and the instrument boundary lives at the seam. Which of the two
+// routes runs is the loop's own state, so each is its own call.
+void route_last_round(IBooster const &booster, features_view X, floats_out scores)
 {
     detail::Phase<&detail::FitProfiler::eval_route_s> phase;
-    if (validation_bins != nullptr)
-    {
-        booster.accumulate_last_round_binned(*validation_bins, scores);
-        return;
-    }
     booster.accumulate_last_round(X, scores);
+}
+
+void route_last_round_binned(IBooster const &booster, Dataset const &bins,
+                             floats_out scores)
+{
+    detail::Phase<&detail::FitProfiler::eval_route_s> phase;
+    booster.accumulate_last_round_binned(bins, scores);
 }
 
 float round_validation_loss(IBooster const &booster, std::span<float const> scores,
@@ -236,12 +243,14 @@ float round_validation_loss(IBooster const &booster, std::span<float const> scor
     return booster.validation_loss(scores, labels);
 }
 
-} // namespace
+// The one body behind both public forms: an engaged reference is a fit with a
+// validation set, an empty one a fit without.
+using ValidationRef = std::optional<std::reference_wrapper<LabeledData const>>;
 
-std::unique_ptr<IBooster>
-train_with_progress(Config const &cfg, LabeledData const &train,
-                    LabeledData const *validation, FitTickFn const &on_tick,
-                    std::unique_ptr<IBooster> initial, EvalHistoryRef eval_history)
+std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train,
+                                     ValidationRef validation, FitTickFn const &on_tick,
+                                     std::unique_ptr<IBooster> initial,
+                                     EvalHistoryRef            eval_history)
 {
     select_device_for(cfg);
     [[maybe_unused]] bool const warm_start = initial != nullptr;
@@ -263,9 +272,9 @@ train_with_progress(Config const &cfg, LabeledData const &train,
 
     std::vector<float> train_preds(train.features.n_rows);
     std::vector<float> validation_preds;
-    if (validation != nullptr)
+    if (validation)
     {
-        validation_preds.resize(validation->features.n_rows);
+        validation_preds.resize(validation->get().features.n_rows);
     }
 
     auto fire_tick = [&](size_t iter)
@@ -273,11 +282,11 @@ train_with_progress(Config const &cfg, LabeledData const &train,
         booster->predict(train.features.view(), train_preds);
         floats_out  v_preds;
         floats_view v_labels;
-        if (validation != nullptr)
+        if (validation)
         {
-            booster->predict(validation->features.view(), validation_preds);
+            booster->predict(validation->get().features.view(), validation_preds);
             v_preds  = validation_preds;
-            v_labels = validation->labels;
+            v_labels = validation->get().labels;
         }
         on_tick(FitTick{
             .iter              = iter,
@@ -299,13 +308,13 @@ train_with_progress(Config const &cfg, LabeledData const &train,
     // per-tree contributions) keep the per-iteration eval O(rows), not
     // O(rows*trees).
     auto const es_rounds  = cfg.booster_config.early_stopping_rounds;
-    bool const es_enabled = es_rounds > 0 && validation != nullptr;
+    bool const es_enabled = es_rounds > 0 && validation.has_value();
     // History shares the incremental accumulation below; DART's per-round
     // rescaling invalidates it, so no history there (es already throws).
-    bool const track_eval = eval_history.has_value() && validation != nullptr &&
-                            validation->features.n_rows > 0 &&
+    bool const track_eval = eval_history.has_value() && validation.has_value() &&
+                            validation->get().features.n_rows > 0 &&
                             cfg.booster_config.dart_drop_rate == 0.0F;
-    if (es_enabled && validation->features.n_rows == 0)
+    if (es_enabled && validation->get().features.n_rows == 0)
     {
         // A zero-row validation set makes every loss NaN, and NaN never
         // improves, so patience would fire at the first opportunity and
@@ -333,21 +342,21 @@ train_with_progress(Config const &cfg, LabeledData const &train,
     bool                   defer_binning   = false;
     if (es_enabled || track_eval)
     {
-        if (validation->dataset.n_rows() > 0 && validation->dataset.bins_are_u8())
+        auto const &valid = validation->get();
+        if (valid.dataset.n_rows() > 0 && valid.dataset.bins_are_u8())
         {
-            validation_bins = &validation->dataset;
+            validation_bins = &valid.dataset;
         }
         else
         {
-            defer_binning = validation->dataset.n_rows() == 0 &&
-                            train.dataset.bins_are_u8() && has_raw_rows(*validation);
+            defer_binning = valid.dataset.n_rows() == 0 &&
+                            train.dataset.bins_are_u8() && has_raw_rows(valid);
         }
         // The raw walk and the warm-start seed read the caller's matrix, so a
         // validation set that kept none must arrive binned and start cold.
         // The Python binding refuses the rest with a message; this is the
         // seam restating it.
-        assert(has_raw_rows(*validation) ||
-               (validation_bins != nullptr && !warm_start));
+        assert(has_raw_rows(valid) || (validation_bins != nullptr && !warm_start));
     }
 
     std::vector<float> es_scores;
@@ -370,13 +379,14 @@ train_with_progress(Config const &cfg, LabeledData const &train,
         }
         if (es_enabled || track_eval)
         {
+            auto const &valid = validation->get();
             if (i == 0)
             {
                 // Warm start: seed with the pre-existing rounds' raw scores,
                 // excluding the round just added (0 rounds = base scores).
                 es_base = booster->n_iters() - 1;
-                es_scores.resize(validation->features.n_rows * booster->score_width());
-                booster->seed_validation_scores(validation->features.view(), es_scores,
+                es_scores.resize(valid.features.n_rows * booster->score_width());
+                booster->seed_validation_scores(valid.features.view(), es_scores,
                                                 es_base);
                 if (track_eval && es_base > 0)
                 {
@@ -386,17 +396,22 @@ train_with_progress(Config const &cfg, LabeledData const &train,
                                                std::numeric_limits<float>::quiet_NaN());
                 }
             }
-            if (defer_binning && bin_validation_pays(validation->features.n_features,
+            if (defer_binning && bin_validation_pays(valid.features.n_features,
                                                      cfg.tree_config.max_depth, i))
             {
-                binned_here     = bin_validation(*validation, train.dataset, cfg.data);
+                binned_here     = bin_validation(valid, train.dataset, cfg.data);
                 validation_bins = &*binned_here;
                 defer_binning   = false;
             }
-            route_last_round(*booster, validation->features.view(), validation_bins,
-                             es_scores);
-            float const loss =
-                round_validation_loss(*booster, es_scores, validation->labels);
+            if (validation_bins != nullptr)
+            {
+                route_last_round_binned(*booster, *validation_bins, es_scores);
+            }
+            else
+            {
+                route_last_round(*booster, valid.features.view(), es_scores);
+            }
+            float const loss = round_validation_loss(*booster, es_scores, valid.labels);
             if (track_eval)
             {
                 eval_history->get().push_back(loss);
@@ -428,6 +443,26 @@ train_with_progress(Config const &cfg, LabeledData const &train,
     }
 
     return booster;
+}
+
+} // namespace
+
+std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
+                                              LabeledData const        &train,
+                                              FitTickFn const          &on_tick,
+                                              std::unique_ptr<IBooster> initial,
+                                              EvalHistoryRef            eval_history)
+{
+    return train_impl(cfg, train, {}, on_tick, std::move(initial), eval_history);
+}
+
+std::unique_ptr<IBooster>
+train_with_progress(Config const &cfg, LabeledData const &train,
+                    LabeledData const &validation, FitTickFn const &on_tick,
+                    std::unique_ptr<IBooster> initial, EvalHistoryRef eval_history)
+{
+    return train_impl(cfg, train, std::ref(validation), on_tick, std::move(initial),
+                      eval_history);
 }
 
 ScoredBatch score_csv(IBooster const &booster, std::string const &path,
