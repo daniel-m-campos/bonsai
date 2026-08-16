@@ -41,6 +41,29 @@ curl -s https://rest.runpod.io/v1/pods \
 
 Note the returned `id`. GPU choice: L40S (SECURE, ~$1/hr) is the workhorse, consistently available with direct public IPs. A100-80GB SECURE (~$1.64/hr) is the fallback; community 4090/5090 capacity comes and goes hourly. Fleet caveat: identical code on two same-model pods has measured ~25% apart, so **only same-pod before/after comparisons are valid**; never quote cross-pod absolute numbers.
 
+### Pin the datacenter
+
+A create that names no datacenter is placed wherever RunPod picks, which fails with a 500 "no instances" while that same GPU sits in stock two regions over (measured on the 2026-08-14 GPU refresh). Read the per-datacenter stock first, then pin one in the create body.
+
+The stock reading is a v2 catalog call, on `api.runpod.io` rather than the `rest.runpod.io` host the v1 pod endpoints live on:
+
+```bash
+GPU="NVIDIA RTX PRO 6000 Blackwell Server Edition"
+curl -s "https://api.runpod.io/v2/catalog/gpus?include=AVAILABILITY&cloud=SECURE&product=POD" \
+  -H "Authorization: Bearer $RUNPOD_KEY" \
+  | python3 -c "import json,sys,os; g=next(x for x in json.load(sys.stdin)['gpus'] if x['id']==os.environ['GPU']); print(g['dataCenters'])"
+```
+
+Each entry is `{id, name, availability}` with availability `HIGH`, `MEDIUM`, `LOW`, or `NONE`. Pick one that is not `NONE` and add `"dataCenterIds": ["EU-RO-1"]` to the create body above.
+
+Three rules, all measured:
+
+- **One datacenter per create.** A multi-entry `dataCenterIds` list can 400 on the create schema, so iterate over candidates on failure instead of listing them all at once.
+- **A 400 on a pinned create means try the next one, not stop.** The v1 create schema carries its own enum of datacenter ids and it is not the set the catalog reports: US-MO-2 and US-NC-2 are readable as stocked and rejected at create.
+- **EUR-IS-2 is never rented.** That is policy, not availability; skip it whatever it reports.
+
+`standings_refresh.py` encodes all three in `stocked_datacenters()`, tries the stocked datacenters best-first with one create each, and falls back to an unpinned create if the catalog call fails, so a lookup outage is never worse than not pinning.
+
 ## 2. Wait for liveness and get the SSH endpoint
 
 `desiredStatus: RUNNING` from REST means nothing: the container may never have started. REST publishes `publicIp` and `portMappings` once the pod is placed, which is necessary but still not proof the container is up, so the only trustworthy readiness signal is sshd answering. `standings_refresh.py` polls the REST mapping and then probes ssh; the legacy GraphQL `runtime.uptimeInSeconds` query this runbook used to recommend now returns 403 for current API keys.
@@ -161,7 +184,8 @@ The sweep is not optional: **an error-returning create can still have created a 
 | `origin/<branch>` doesn't exist | Shallow single-branch clone | `git fetch origin <branch> && git checkout FETCH_HEAD` |
 | Everything ~2× slower than the last run, uniformly | Orphaned worker from a killed run still computing | `pgrep -af python`, kill PIDs, verify empty, re-run |
 | One pod much slower than another, same GPU model | Fleet variance (~25% measured) or the defective-host class (GPU sync ~300µs vs ~4µs healthy) | Same-pod comparisons only; for latency-sensitive work run a 30s sync probe first and reject hosts >50µs |
-| "No resources" / capacity errors | DC out of that GPU | Retry, switch GPU type (L40S↔A100), or switch cloudType |
+| "No resources" / capacity errors, 500 "no instances" | The datacenter RunPod placed the create in is out of that GPU, even when others hold stock | Pin a stocked datacenter (section 1), then switch GPU type (L40S↔A100) or cloudType if every one is empty |
+| A pinned create 400s on the request body | The create schema's datacenter enum is narrower than the catalog's stock list (US-MO-2, US-NC-2) | Try the next stocked datacenter; send one `dataCenterIds` entry per create |
 | Create succeeded per billing but API returned an error | Known API quirk | Always list-and-sweep after failures (section 7) |
 | CPU pod create 500s with "Container Disk must be less than or equal to 20" | CPU pods cap the container disk per flavor: 20GB on the CPU3 flavors, 30GB on the CPU5 ones, against a GPU pod's 80 | Ask for 30 or less (`CPU_DISK_GB` in `standings_refresh.py`) |
 | A CPU pod reports the host's RAM, or its `cpu.max` reads `max` | A CPU pod caps by cpuset and `memory.max`, not by CFS bandwidth, and `free`/`/proc/meminfo` show the machine rather than the container | Read `nproc` for CPUs and `/sys/fs/cgroup/memory.max` for RAM (section 11) |
@@ -186,6 +210,8 @@ export RUNPOD_API_KEY="rpa_..."
 python3 scripts/standings_refresh.py measure --only-stale \
   --prev-version <last-release-version>
 ```
+
+The GPU create is pinned to a stocked datacenter per section 1, one per attempt; `measure --dry-run` prints the list it would try, live, without renting anything.
 
 A `finally` block deletes the pod and sweeps any stray `bonsai-standings-*` pods regardless of how the run ends. Verify the fleet is empty afterward (same check as section 7): zero pods listed means zero billing. `--keep-pod` skips teardown for debugging; delete it yourself if you use it. Results land in a dated directory printed at the end (`--out-dir` to choose one).
 
