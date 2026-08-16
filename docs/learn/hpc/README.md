@@ -1,6 +1,6 @@
 # The HPC track
 
-This track teaches how bonsai's CPU histogram fill got fast, starting at the cache line and stopping at the trade-off ledger.
+This track teaches how bonsai's CPU histogram fill got fast, starting at the cache line and stopping at the trade-off ledger. <!-- HPC track should also cover GPU at some point, not just cpu. actually this seems like a naming issue engine vs hpc. It's all HPC, maybe gpu vs. cpu is better. -->
 
 ## What this is
 
@@ -15,8 +15,8 @@ The refutations are the curriculum. A mechanism you can name is worth more than 
 Three claims the campaign closed, in order of how much they teach:
 
 - A fill's speed is not a property of its code. It is a property of whether the bytes it scatters over fit in cache.
-- Two cuts of the same loop have opposite cache behavior. Which one wins flips with the data's shape.
-- Synchronization is cheap in absolute terms and expensive against small work. Region count matters only where the work per region is small.
+- Two cuts of the same loop have opposite cache behavior. Which one wins flips with the data's shape. <!-- "cuts of the loop" refering to row or feature looping is unclear, you used this is various places and the "cut" slang should be avoided -->
+- Synchronization is cheap in absolute terms and expensive against small work. Region count matters only where the work per region is small. <!-- region is vague-->
 
 ## Who it is for
 
@@ -34,9 +34,9 @@ Every chapter uses the same two datasets, introduced here once. They are the sta
 |---|--:|--:|
 | rows | 2,097,152 | 16,384 |
 | features | 128 | 16,384 |
-| cells, rows times features | 2^28 | 2^28 |
+| `n_cells = n_rows * n_features` | 2^28 | 2^28 |
 | one row of bins, one byte each | 128 bytes | 16,384 bytes |
-| one node's histogram arena | 256KB | 33.5MB |
+| one node's histogram arena | 256KiB | 32MiB |
 
 The two cells hold the same number of bins by construction. Nothing that differs between them is a size effect.
 

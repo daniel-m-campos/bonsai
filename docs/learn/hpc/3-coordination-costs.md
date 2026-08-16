@@ -54,7 +54,7 @@ Now do the same division at each shape, using measured quantities.
 
 The counts are the same. The work is not.
 
-A wide fill starts a 33.5MB arena and reads 16,384 bytes of every row. A tall fill starts 256KB and reads 128.
+A wide fill starts a 32MiB arena and reads 16,384 bytes of every row. A tall fill starts 256KiB and reads 128.
 
 So the same 35 microseconds is a term worth chasing at tall and a rounding error at wide. The campaign's rounds moved between the two shapes accordingly.
 
@@ -68,13 +68,13 @@ If the fee is per region and per worker, the first defense is to stop asking for
 
 A team of one runs the loop inline and enters no region at all. The smallest nodes therefore pay nothing, which is the cheapest fix in this chapter.
 
-Counting the arena is what keeps a wide node from looking small. A node holding a handful of rows still has a full arena to start, and at 16,384 features that is 33.5MB of zeroing.
+Counting the arena is what keeps a wide node from looking small. A node holding a handful of rows still has a full arena to start, and at 16,384 features that is 32MiB of zeroing.
 
 **The floor's own measurement.** Parallelism stops paying below roughly 400 to 800 rows. That comes from the 14-band node-size attribution [chapter H2](2-cutting-the-work.md) introduced.
 
 Round five got the floor wrong in its first form, and the wide cell caught it. The work count included the accumulates but not the arena start.
 
-So a wide node with few rows scored as tiny work, and zeroed its 33.5MB arena on a team of one. Measured: 84.9 milliseconds per such fill against 7.5 on the full team.
+So a wide node with few rows scored as tiny work, and zeroed its 32MiB arena on a team of one. Measured: 84.9 milliseconds per such fill against 7.5 on the full team.
 
 That is an 11x self-inflicted penalty, on exactly the shape the round was not trying to change. The fix counts the start, and a full-team single-block plan then executes the previous round's function unchanged.
 

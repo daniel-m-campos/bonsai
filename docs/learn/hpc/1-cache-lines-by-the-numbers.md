@@ -30,14 +30,16 @@ Hold those two numbers. Every mechanism in this track is a consequence of 2 agai
 
 Caches come in levels: small and fast near the core, large and slow further out. Sizes and latencies are host properties, not universal constants.
 
+Units in this series are binary for storage: 1KiB is 1,024 bytes, 1MiB is 1,024KiB, and every power-of-two size lands exactly (the wide arena is 2^25 bytes, so 32MiB, not "33.5MB"). Measured traffic totals keep the decimal GB the instruments report.
+
 Here are two real topologies, both of them hosts this campaign measured on.
 
 | level | Apple M2, 4 performance plus 4 efficiency cores | server EPYC Zen 4, up to 96 cores |
 |---|---|---|
-| L1 data | 128KB per performance core, ~1ns | 32KB per core, ~1ns |
-| L2 | 16MB shared by the 4 performance cores | 1MB private per core, ~4ns |
-| | 4MB shared by the 4 efficiency cores, ~5ns | |
-| last level | 8MB system cache shared by everything | 32MB per 8-core complex, ~15ns |
+| L1 data | 128KiB per performance core, ~1ns | 32KiB per core, ~1ns |
+| L2 | 16MiB shared by the 4 performance cores | 1MiB private per core, ~4ns |
+| | 4MiB shared by the 4 efficiency cores, ~5ns | |
+| last level | 8MiB system cache shared by everything | 32MiB per 8-core complex, ~15ns |
 | DRAM | ~100ns | ~110ns |
 
 These are representative figures from vendor documentation and published latency work. They are not measurements from this campaign, so read the ratios and not the digits.
@@ -46,9 +48,9 @@ The ratio that matters is the last row against the first. A DRAM access costs ro
 
 That is why a loop whose working set falls out of cache does not get 20% slower. It changes regime, which the engine track's [wide-data case](../engine/6-the-wide-data-wall.md) shows end to end.
 
-The second thing to read off the table is the sharing column. The M2 has no per-core L2 at all. Four performance cores share one 16MB pool, and the efficiency cores share a different one.
+The second thing to read off the table is the sharing column. The M2 has no per-core L2 at all. Four performance cores share one 16MiB pool, and the efficiency cores share a different one.
 
-The EPYC gives every core a private 1MB L2. It then shares an L3 within each 8-core complex, and no level above that is cheap to cross.
+The EPYC gives every core a private 1MiB L2. It then shares an L3 within each 8-core complex, and no level above that is cheap to cross.
 
 So "the cache" is not one thing. Whether two workers help each other or evict each other depends on which level they share, and the two hosts answer differently.
 
@@ -62,27 +64,27 @@ A histogram cell is a gradient sum and a hessian sum, 8 bytes. A feature's histo
 
 **Formula.** Arena bytes equals features times 256 cells times 8 bytes.
 
-**Example.** cpu-tall gives 128 x 256 x 8, which is 256KB. cpu-wide gives 16,384 x 256 x 8, which is 33.5MB.
+**Example.** cpu-tall gives 128 x 256 x 8, which is 256KiB. cpu-wide gives 16,384 x 256 x 8, which is 32MiB.
 
 **Formula.** Mirror bytes equals rows times features times 1 byte.
 
-**Example.** cpu-tall gives 2,097,152 x 128, which is 256MB. cpu-wide gives 16,384 x 16,384, which is the same 256MB.
+**Example.** cpu-tall gives 2,097,152 x 128, which is 256MiB. cpu-wide gives 16,384 x 16,384, which is the same 256MiB.
 
 Now place those working sets against the table above. Three readings come out of it.
 
 | working set | size | where it lives |
 |---|--:|---|
 | one tall row of bins | 128 bytes | any level |
-| one wide row of bins | 16KB | L1 on the M2, half of the EPYC's L1 |
-| tall's histogram arena | 256KB | L2 on either host |
-| wide's histogram arena | 33.5MB | past the M2's shared levels, past one EPYC complex's L3 |
-| either mirror, whole | 256MB | DRAM, on any host in this table |
+| one wide row of bins | 16KiB | L1 on the M2, half of the EPYC's L1 |
+| tall's histogram arena | 256KiB | L2 on either host |
+| wide's histogram arena | 32MiB | past the M2's shared levels, past one EPYC complex's L3 |
+| either mirror, whole | 256MiB | DRAM, on any host in this table |
 
-First, the tall fill's target is small enough to stay resident. One worker filling 128 features holds a 256KB arena, which its L2 keeps.
+First, the tall fill's target is small enough to stay resident. One worker filling 128 features holds a 256KiB arena, which its L2 keeps.
 
 The scattered writes a row-order walk makes are therefore cheap. What the tall fill costs is the streaming read of the mirror.
 
-Second, the wide fill's target cannot stay resident anywhere. 33.5MB is larger than one EPYC complex's L3 and four times the M2's system cache.
+Second, the wide fill's target cannot stay resident anywhere. 32MiB is larger than one EPYC complex's L3 and four times the M2's system cache.
 
 That is the wall the engine track's [wide-data case](../engine/6-the-wide-data-wall.md) hit. The fix there was tiling the mirror into 2048-feature blocks, so one block's histograms fit again.
 
@@ -140,6 +142,6 @@ That is a weaker statement than either measurement alone, and a more useful one.
 
 - A line is 64 bytes, and lines per row is ceil(features / 64): 2 for tall, 256 for wide.
 - A DRAM access costs roughly 100 L1 hits, so a working set that stops fitting changes regime rather than degrading.
-- An arena is features times 2KB: 256KB at tall and 33.5MB at wide, and only the first stays resident.
+- An arena is features times 2KiB: 256KiB at tall and 32MiB at wide, and only the first stays resident.
 - Cutting a 2-line row among 12 workers multiplies its read traffic by roughly 12. Cutting a 256-line row does not.
 - Which fill wins is a property of the host, so a threshold tuned on one machine is a claim about that machine.
