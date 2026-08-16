@@ -1,4 +1,4 @@
-# E3. The parity verdict
+# G3. The parity verdict
 
 A data-parallel multi-GPU engine passed every correctness test on real 2x and 4x hardware, then never shipped. This case is why passing correctness is not the same as earning a place in the core.
 
@@ -66,7 +66,7 @@ None of this disturbed the single-GPU crown regime. The extraction that let the 
 
 The decision records why the admission gate would have caught this. The gate asks for a measured benefit at zero core cost before any C++ is written. Merge-as-you-go inverted that order, putting the complexity in main first and pricing the value last.
 
-The reopener is a device-resident objective, where each GPU derives its shard's gradients on the card. That removes the host gradient stream, the one cost the floor is made of. It is also the single-GPU engine's own next frontier, so it was pursued there first. That is case E4.
+The reopener is a device-resident objective, where each GPU derives its shard's gradients on the card. That removes the host gradient stream, the one cost the floor is made of. It is also the single-GPU engine's own next frontier, so it was pursued there first. That is case G4.
 
 ## What it teaches
 
@@ -76,6 +76,6 @@ The reopener is a device-resident objective, where each GPU derives its shard's 
 
 ## The record
 
-- Decisions: [76](../../decisions.md) (built, measured to parity, parked as an experiment).
+- Decisions: [76](../../../decisions.md) (built, measured to parity, parked as an experiment).
 - Design: [architecture doc 19](https://github.com/daniel-m-campos/bonsai/blob/main/docs/architecture/19-multi-gpu.md), the priced multi-GPU plan with its validation hardware.
-- Reopener: [decision 77](../../decisions.md) pursued the device-resident objective single-GPU first, told as case [E4](4-the-resident-objective.md).
+- Reopener: [decision 77](../../../decisions.md) pursued the device-resident objective single-GPU first, told as case [G4](4-the-resident-objective.md).

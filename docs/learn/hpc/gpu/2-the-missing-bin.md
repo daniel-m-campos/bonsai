@@ -1,4 +1,4 @@
-# E2. The missing bin
+# G2. The missing bin
 
 Decision 73 shipped a new capability. An acceptance test failed on the first try. The failure exposed a train/predict routing skew that every fitted model had been carrying, and closing it moved the standings. This case is why an acceptance test is worth more than the feature that prompted it.
 
@@ -10,7 +10,7 @@ Domain edges are a reproducibility statement. The bin boundaries live inside the
 
 The feature cleared bonsai's admission gate on roadmap signal, not on an accuracy claim. Decision 67 had asked for a workload needing domain bins in the artifact, and the owner ranked it onto the roadmap. Accuracy stayed a non-claim; decision 67 had already measured bin choice as saturated.
 
-Background on binning is in [guide chapter 2](../../guide/2-binning-and-histograms.md). The short version: each feature is discretized into at most 255 quantile buckets once, and the last bin is reserved for missing values (NaN). Splits are scored by scanning the bins, and the missing bin is excluded from that scan.
+Background on binning is in [guide chapter 2](../../../guide/2-binning-and-histograms.md). The short version: each feature is discretized into at most 255 quantile buckets once, and the last bin is reserved for missing values (NaN). Splits are scored by scanning the bins, and the missing bin is excluded from that scan.
 
 ## The test that failed
 
@@ -76,6 +76,6 @@ The durable facts are the head-to-head counts and the zero last places, not the 
 
 ## The record
 
-- Decisions: [73](../../decisions.md) (explicit bin edges, and the failing acceptance test) and [74](../../decisions.md) (the FLT_MAX closer on every fitting path).
-- Evidence: [the missing-bin closer probe](../../../benchmarks/missing-bin-closer-2026-07.md), with the synthetics table, the real suite, and the standings re-validation.
-- Background: [guide chapter 2](../../guide/2-binning-and-histograms.md) on binning, the missing bin, and the right-inclusive edge convention.
+- Decisions: [73](../../../decisions.md) (explicit bin edges, and the failing acceptance test) and [74](../../../decisions.md) (the FLT_MAX closer on every fitting path).
+- Evidence: [the missing-bin closer probe](../../../../benchmarks/missing-bin-closer-2026-07.md), with the synthetics table, the real suite, and the standings re-validation.
+- Background: [guide chapter 2](../../../guide/2-binning-and-histograms.md) on binning, the missing bin, and the right-inclusive edge convention.

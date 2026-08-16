@@ -1,6 +1,6 @@
-# E4. The resident objective
+# G4. The resident objective
 
-Case E3 parked a multi-GPU engine and named its reopener: a device-resident objective. This case pursues that reopener single-GPU first, and the 16M levelwise round falls from 104 to 64 milliseconds.
+Case G3 parked a multi-GPU engine and named its reopener: a device-resident objective. This case pursues that reopener single-GPU first, and the 16M levelwise round falls from 104 to 64 milliseconds.
 
 The move is not to optimize the host round-trip. It is to delete it. Every tree, the objective crossed host RAM for work the device could already do in place, and the fix makes the crossing cease to exist.
 
@@ -85,6 +85,6 @@ Softmax stays host-side as well, because its per-class tree shape is a separate 
 
 ## The record
 
-- Decisions: [77](../../decisions.md) (the per-tree host round-trip deleted), [78](../../decisions.md) (the frontier re-run, unconditional at 16M), and [79](../../decisions.md) (LogLoss, Poisson, and sample weights).
-- Evidence: [the resident-objective price list and A/B](../../../benchmarks/resident-objective-2026-07.md), and [the 16M GPU frontier](../../../benchmarks/gpu-pareto-16M-2026-07.md) superseded in place for the 104-to-64 ms round.
-- Earlier: case [E3](3-the-parity-verdict.md) named this reopener, and case [E1](1-the-marginal-round.md) left the round at 104 ms.
+- Decisions: [77](../../../decisions.md) (the per-tree host round-trip deleted), [78](../../../decisions.md) (the frontier re-run, unconditional at 16M), and [79](../../../decisions.md) (LogLoss, Poisson, and sample weights).
+- Evidence: [the resident-objective price list and A/B](../../../../benchmarks/resident-objective-2026-07.md), and [the 16M GPU frontier](../../../../benchmarks/gpu-pareto-16M-2026-07.md) superseded in place for the 104-to-64 ms round.
+- Earlier: case [G3](3-the-parity-verdict.md) named this reopener, and case [G1](1-the-marginal-round.md) left the round at 104 ms.

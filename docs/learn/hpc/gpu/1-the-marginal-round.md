@@ -1,4 +1,4 @@
-# E1. The marginal round
+# G1. The marginal round
 
 At 16M rows, one CatBoost boosting round took 77 milliseconds and ours took 155. This case is how we closed most of that gap without writing the kernel we set out to write. The discipline that did it is instrument-first: price a change from measurement before you build it, and treat every refutation as a result.
 
@@ -72,7 +72,7 @@ The frontier crossing had moved past the plateau, which is the whole point: the 
 
 One caveat travels with these numbers. Two identical L40S pods measured 25% apart, so every delta above is same-pod. The cross-pod number that transfers is the decomposition shape, not the absolute milliseconds.
 
-A pointer forward: decision 78 moved this frontier again. When the device-resident objective removed the per-tree host round-trip, the same levelwise round fell from 104 to 64 ms on a July 18 re-run. That is cheaper than CatBoost's round, and the crossover disappeared entirely. That story is case E4.
+A pointer forward: decision 78 moved this frontier again. When the device-resident objective removed the per-tree host round-trip, the same levelwise round fell from 104 to 64 ms on a July 18 re-run. That is cheaper than CatBoost's round, and the crossover disappeared entirely. That story is case G4.
 
 ## Reading it yourself
 
@@ -86,6 +86,6 @@ You can watch this loop on any machine with a CUDA device. Set the grow, cuda, f
 
 ## The record
 
-- Decisions: [62](../../decisions.md) (the cancelled kernel round), [71](../../decisions.md) (the target named), and [72](../../decisions.md) (the campaign and its close-out).
-- Evidence: [the 16M GPU frontier](../../../benchmarks/gpu-pareto-16M-2026-07.md), superseded in place, with git history holding the decision-72 measurement. [Guide chapter 11](../../guide/11-performance-engineering.md) walks the same round step by step.
-- Later: [decision 78](../../decisions.md) re-ran the frontier after the device-resident objective and cut the round to 64 ms.
+- Decisions: [62](../../../decisions.md) (the cancelled kernel round), [71](../../../decisions.md) (the target named), and [72](../../../decisions.md) (the campaign and its close-out).
+- Evidence: [the 16M GPU frontier](../../../../benchmarks/gpu-pareto-16M-2026-07.md), superseded in place, with git history holding the decision-72 measurement. [Guide chapter 11](../../../guide/11-performance-engineering.md) walks the same round step by step.
+- Later: [decision 78](../../../decisions.md) re-ran the frontier after the device-resident objective and cut the round to 64 ms.

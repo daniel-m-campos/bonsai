@@ -1,4 +1,4 @@
-# E6. The wide-data wall
+# G6. The wide-data wall
 
 Every case so far ran on data shaped like the benchmarks: millions of rows, around a hundred features. This case is what happened when the first production user fitted the other shape, 131 thousand rows by 16,384 features, and LightGBM's CPU beat every bonsai grower by 2 to 3x. The fix was eleven lines, because the fast path already existed; the work was finding out why the slow path was slow, and the first two theories were wrong.
 
@@ -51,7 +51,7 @@ One constant: levels whose selected-histogram footprint exceeds 24MB take the fe
 |--|--|--:|--:|--:|
 | 1M x 4096 | depthwise | 348s | unchanged | 382s |
 
-The 131k x 16384 rows of the same ladder, where the routing collapsed a 7x deficit to parity, are in [the archive](../../method/results/archive.md). That parity is a 2026-07 reading; the epilogue closes with where wide CPU stands now.
+The 131k x 16384 rows of the same ladder, where the routing collapsed a 7x deficit to parity, are in [the archive](../../../method/results/archive.md). That parity is a 2026-07 reading; the epilogue closes with where wide CPU stands now.
 
 Peak memory at the wide cell: 18.8GB against LightGBM's 50.1GB.
 
@@ -67,8 +67,8 @@ The threshold lived one day. Its recorded residual, XGBoost 3.3's column-tiling 
 
 The admitting interleaved A/B beat both strategies at their own best cells: 326s against the row path's 369 at 1M x 4096, 442s against feature-parallel's 514 at 131k x 16384, a wash at 16M x 100. And because tiling never changes a feature's accumulation order, the tiled fill produces bit-identical models to the classic row path at every width, so the determinism contract came out stronger than either strategy could make it. The chapter's closing lesson gains its final form: when a trade-off is real, ship the honest threshold and record what it leaves on the table, and then look for the restructuring that makes the trade-off imaginary. It existed here, one layout change away, published in a competitor's release notes all along.
 
-The CUDA wide wall this case left as a residual got the same treatment on 2026-07-30, and it had already fallen: the recorded deficit dated to 2026-07-08 code, and on current main the CUDA growers lead every wide cell (refutation-by-progress, decision 90). The iso-volume frontier (decision 91) then measured the shape axis wholesale, holding rows x cols constant while width swept 128 to 65536 columns; both are in [the archive](../../method/results/archive.md).
+The CUDA wide wall this case left as a residual got the same treatment on 2026-07-30, and it had already fallen: the recorded deficit dated to 2026-07-08 code, and on current main the CUDA growers lead every wide cell (refutation-by-progress, decision 90). The iso-volume frontier (decision 91) then measured the shape axis wholesale, holding rows x cols constant while width swept 128 to 65536 columns; both are in [the archive](../../../method/results/archive.md).
 
-**Where wide CPU stands today (2026-08-08 note).** The parity this case won is a 2026-07 reading and it did not carry to the current scenario. On the standings' cpu-wide cell (16k x 16384) depthwise trains in 96.8s against XGBoost's 134.9s, and leafwise trains in 516.7s against LightGBM's 57.2s. The depthwise lead held; the leaf plane's parity did not, and it is a named gap rather than a closed one. Current numbers are on [the perf standings](../../method/results/perf.md); every number in this chapter is the campaign's.
+**Where wide CPU stands today (2026-08-08 note).** The parity this case won is a 2026-07 reading and it did not carry to the current scenario. On the standings' cpu-wide cell (16k x 16384) depthwise trains in 96.8s against XGBoost's 134.9s, and leafwise trains in 516.7s against LightGBM's 57.2s. The depthwise lead held; the leaf plane's parity did not, and it is a named gap rather than a closed one. Current numbers are on [the perf standings](../../../method/results/perf.md); every number in this chapter is the campaign's.
 
 Evidence: [benchmarks/wide-cpu-hist-2026-07.md](https://github.com/daniel-m-campos/bonsai/blob/main/benchmarks/wide-cpu-hist-2026-07.md); decisions 88 to 91; the ratifying field report is issue #217.

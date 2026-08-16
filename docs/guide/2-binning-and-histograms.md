@@ -112,7 +112,7 @@ One tree can route NaN left at one node and right at another.
 Finite values above the last real cut used to bin as missing. Training
 routed them by `default_left`, but prediction sent them right of every
 threshold, so the same row could route two ways. The
-[missing-bin case](../learn/engine/2-the-missing-bin.md) closed that skew
+[missing-bin case](../learn/hpc/gpu/2-the-missing-bin.md) closed that skew
 (decisions 73 and 74).
 
 ## The Dataset API

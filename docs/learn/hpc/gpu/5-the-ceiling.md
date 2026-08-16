@@ -1,4 +1,4 @@
-# E5. The ceiling
+# G5. The ceiling
 
 The u8-bin arithmetic had always implied that one 80GB card holds a half-billion-row dataset. This case is one pod checking whether that was a promise or a wall.
 
@@ -27,7 +27,7 @@ The 500M fit runs 8.5 minutes end to end on one card. The wall time is the whole
 
 Throughput rises with scale, from 54.8 to 58.5M row-iterations per second, because the fixed costs amortize across more rows. There is no cliff anywhere on the ladder. A rising curve with no cliff is the shape you want, and here it holds to the last measured step.
 
-What keeps the loop bus-free at this scale is the device-resident objective of case E4. Per tree, gradients derive on the card from resident scores and labels, and nothing per-row crosses the PCIe bus.
+What keeps the loop bus-free at this scale is the device-resident objective of case G4. Per tree, gradients derive on the card from resident scores and labels, and nothing per-row crosses the PCIe bus.
 
 ## The contrast
 
@@ -48,5 +48,5 @@ The 570M extrapolated ceiling is arithmetic beyond the last measured step, not a
 
 ## The record
 
-- Evidence: [the single-card ceiling ladder](../../../benchmarks/single-card-ceiling-2026-07.md), and its row in [the archive](../../method/results/archive.md).
-- Enabled by: the device-resident objective of case [E4](4-the-resident-objective.md), decisions [77 to 79](../../decisions.md).
+- Evidence: [the single-card ceiling ladder](../../../../benchmarks/single-card-ceiling-2026-07.md), and its row in [the archive](../../../method/results/archive.md).
+- Enabled by: the device-resident objective of case [G4](4-the-resident-objective.md), decisions [77 to 79](../../../decisions.md).
