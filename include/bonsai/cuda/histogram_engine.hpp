@@ -266,6 +266,16 @@ class CudaHistogramEngine
     void resident_finalize(std::span<ResidentNode const> nodes);
     void resident_end(std::span<float> scores_out);
 
+    // The validation plane: eval_begin uploads the binned validation rows and
+    // seed scores once per fit and returns false when the mirror is not u8;
+    // eval_accumulate walks the finished tree there and returns the updated
+    // scores, so the host loss pass reads current values every round.
+    bool eval_begin(Dataset const &valid, std::span<float const> initial_scores);
+    bool eval_armed() const;
+    void eval_accumulate(std::span<ResidentNode const> nodes, float lr,
+                         std::span<float> scores_out);
+    void eval_end();
+
   private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

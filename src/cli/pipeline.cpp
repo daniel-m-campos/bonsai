@@ -236,6 +236,13 @@ void route_last_round_binned(IBooster const &booster, Dataset const &bins,
     booster.accumulate_last_round_binned(bins, scores);
 }
 
+bool route_last_round_resident(IBooster &booster, Dataset const &bins,
+                               floats_out scores)
+{
+    detail::Phase<&detail::FitProfiler::eval_route_s> phase;
+    return booster.accumulate_last_round_resident(bins, scores);
+}
+
 float round_validation_loss(IBooster const &booster, std::span<float const> scores,
                             floats_view labels)
 {
@@ -363,6 +370,11 @@ std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train
     float              best_loss = 0.0F;
     uint32_t           best_iter = 0;
     size_t             es_base   = 0; // warm-start rounds present before this loop
+    // A device grower bins the validation set immediately (skipping the
+    // pays-off gate) so its eval plane can arm at round 0; the transform cost
+    // is one upload against a per-round host walk saved.
+    bool const cuda_grower = cfg.dispatch.grower_name.starts_with("cuda");
+    bool       device_eval = false;
 
     for (uint32_t i = 0; i < n_iters; ++i)
     {
@@ -396,16 +408,33 @@ std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train
                                                std::numeric_limits<float>::quiet_NaN());
                 }
             }
-            if (defer_binning && bin_validation_pays(valid.features.n_features,
-                                                     cfg.tree_config.max_depth, i))
+            if (defer_binning &&
+                (cuda_grower || bin_validation_pays(valid.features.n_features,
+                                                    cfg.tree_config.max_depth, i)))
             {
                 binned_here     = bin_validation(valid, train.dataset, cfg.data);
                 validation_bins = &*binned_here;
                 defer_binning   = false;
             }
+            if (i == 0 && cuda_grower && validation_bins != nullptr)
+            {
+                device_eval = booster->begin_resident_validation(
+                    *validation_bins, std::span<float const>{es_scores});
+            }
             if (validation_bins != nullptr)
             {
-                route_last_round_binned(*booster, *validation_bins, es_scores);
+                // A device decline disarms for the rest of the fit: the plane's
+                // scores stop tracking the model the moment one round routes on
+                // the host instead.
+                if (device_eval)
+                {
+                    device_eval = route_last_round_resident(*booster, *validation_bins,
+                                                            es_scores);
+                }
+                if (!device_eval)
+                {
+                    route_last_round_binned(*booster, *validation_bins, es_scores);
+                }
             }
             else
             {

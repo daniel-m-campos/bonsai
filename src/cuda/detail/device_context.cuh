@@ -304,11 +304,35 @@ struct CudaDeviceContext
         size_t              n_rows        = 0;
     };
 
+    // Device-resident validation plane: the binned validation rows (device
+    // tiled layout, its own copy beside the training plane), the running
+    // validation scores, and its own SoA node staging. Per round the finished
+    // tree walks here exactly as the resident epilogue walks the training
+    // plane; the scores come back each round because the loss is still host
+    // work. u8 mirrors only; armed per (validation dataset, fit).
+    struct EvalPlane
+    {
+        DeviceBuffer<uint8_t>  bins;
+        DeviceBuffer<uint32_t> n_bins;
+        DeviceBuffer<float>    scores;
+        Staged<uint32_t>       node_feature;
+        Staged<uint32_t>       node_split_bin;
+        Staged<uint32_t>       node_left;
+        Staged<uint32_t>       node_right;
+        Staged<uint32_t>       node_default_left;
+        Staged<uint32_t>       node_is_leaf;
+        Staged<float>          node_value;
+        bool                   armed   = false;
+        size_t                 n_rows  = 0;
+        size_t                 n_feats = 0;
+    };
+
     DeviceData      data;
     GradientPlane   grads;
     LevelPipeline   lvl;
     LeafPipeline    leaf;
     ResidentPlane   resident;
+    EvalPlane       veval;
     ProfileCounters prof_counters;
 
     // Runtime shared-memory ceiling for the hist kernels: the opt-in limit
@@ -432,6 +456,19 @@ struct CudaDeviceContext
     }
     void resident_finalize(std::span<CudaHistogramEngine::ResidentNode const> nodes);
     void resident_end(std::span<float> scores_out);
+
+    // Arms the validation plane: uploads the binned rows in the device tiled
+    // layout plus the seed scores. Refuses non-u8 mirrors.
+    bool eval_begin(Dataset const &valid, std::span<float const> initial_scores);
+    bool eval_armed() const
+    {
+        return veval.armed;
+    }
+    // Walks the finished tree over the validation plane (the resident
+    // epilogue's kernel on the eval buffers) and returns the updated scores.
+    void eval_accumulate(std::span<CudaHistogramEngine::ResidentNode const> nodes,
+                         float lr, std::span<float> scores_out);
+    void eval_end();
 };
 
 // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)

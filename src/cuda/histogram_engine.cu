@@ -230,6 +230,28 @@ void CudaHistogramEngine::resident_end(std::span<float> scores_out)
     impl_->ctx.resident_end(scores_out);
 }
 
+bool CudaHistogramEngine::eval_begin(Dataset const         &valid,
+                                     std::span<float const> initial_scores)
+{
+    return impl_->ctx.eval_begin(valid, initial_scores);
+}
+
+bool CudaHistogramEngine::eval_armed() const
+{
+    return impl_->ctx.eval_armed();
+}
+
+void CudaHistogramEngine::eval_accumulate(std::span<ResidentNode const> nodes, float lr,
+                                          std::span<float> scores_out)
+{
+    impl_->ctx.eval_accumulate(nodes, lr, scores_out);
+}
+
+void CudaHistogramEngine::eval_end()
+{
+    impl_->ctx.eval_end();
+}
+
 // ---- The ingest transaction (decision 54) -----------------------------------
 
 namespace
