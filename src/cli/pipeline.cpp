@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -416,7 +417,8 @@ std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train
                 validation_bins = &*binned_here;
                 defer_binning   = false;
             }
-            if (i == 0 && cuda_grower && validation_bins != nullptr)
+            if (i == 0 && cuda_grower && validation_bins != nullptr &&
+                std::getenv("BONSAI_HOST_EVAL") == nullptr)
             {
                 device_eval = booster->begin_resident_validation(
                     *validation_bins, std::span<float const>{es_scores});
