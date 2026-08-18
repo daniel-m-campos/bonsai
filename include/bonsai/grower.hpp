@@ -10,6 +10,7 @@
 #include <concepts>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <random>
 #include <span>
 #include <vector>
@@ -235,12 +236,12 @@ void engine_resident_end(EngineT &engine, std::span<float> scores)
 // The validation-plane shims, same collapse: a host engine has no eval plane,
 // so eval_begin answers false and the booster keeps the host walk.
 template <typename EngineT>
-bool engine_eval_begin(EngineT &engine, Dataset const &valid,
+bool engine_eval_begin(EngineT &engine, Dataset const &valid, DeviceObjectiveKind kind,
                        std::span<float const> scores)
 {
-    if constexpr (requires { engine.eval_begin(valid, scores); })
+    if constexpr (requires { engine.eval_begin(valid, kind, scores); })
     {
-        return engine.eval_begin(valid, scores);
+        return engine.eval_begin(valid, kind, scores);
     }
     else
     {
@@ -292,13 +293,15 @@ class DepthwiseGrower
 
     // Device validation seam: mirrors the resident seam for the per-round
     // eval walk. eval_accumulate flattens the tree grower-side, where the
-    // node-table helper lives.
-    bool eval_begin(Dataset const &valid, std::span<float const> scores)
+    // node-table helper lives; loss carries the device-reduced metric when
+    // the kind has one.
+    bool eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
+                    std::span<float const> scores)
     {
-        return engine_eval_begin(engine_, valid, scores);
+        return engine_eval_begin(engine_, valid, kind, scores);
     }
     bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
-                         std::span<float> scores_out);
+                         std::span<float> scores_out, std::optional<float> &loss);
     void eval_end()
     {
         engine_eval_end(engine_);
@@ -348,12 +351,14 @@ class ObliviousGrower
 
     // Device validation seam: the oblivious flatten is not wired yet, so this
     // grower always answers false and keeps the host walk.
-    bool eval_begin(Dataset const & /*valid*/, std::span<float const> /*scores*/)
+    bool eval_begin(Dataset const & /*valid*/, DeviceObjectiveKind /*kind*/,
+                    std::span<float const> /*scores*/)
     {
         return false;
     }
     bool eval_accumulate(Tree const & /*tree*/, Dataset const & /*valid*/, float /*lr*/,
-                         std::span<float> /*scores_out*/)
+                         std::span<float> /*scores_out*/,
+                         std::optional<float> & /*loss*/)
     {
         return false;
     }
@@ -406,12 +411,13 @@ class LeafwiseGrower
 
     // Device validation seam (see DepthwiseGrower::eval_begin). The eval walk
     // is plane-independent, so no leaf variant exists.
-    bool eval_begin(Dataset const &valid, std::span<float const> scores)
+    bool eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
+                    std::span<float const> scores)
     {
-        return engine_eval_begin(engine_, valid, scores);
+        return engine_eval_begin(engine_, valid, kind, scores);
     }
     bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
-                         std::span<float> scores_out);
+                         std::span<float> scores_out, std::optional<float> &loss);
     void eval_end()
     {
         engine_eval_end(engine_);

@@ -7,6 +7,7 @@
 #include "bonsai/types.hpp"
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 
 namespace bonsai
@@ -266,15 +267,18 @@ class CudaHistogramEngine
     void resident_finalize(std::span<ResidentNode const> nodes);
     void resident_end(std::span<float> scores_out);
 
-    // The validation plane: eval_begin uploads the binned validation rows and
-    // seed scores once per fit and returns false when the mirror is not u8;
-    // eval_accumulate walks the finished tree there and returns the updated
-    // scores, so the host loss pass reads current values every round.
-    bool eval_begin(Dataset const &valid, std::span<float const> initial_scores);
-    bool eval_armed() const;
-    void eval_accumulate(std::span<ResidentNode const> nodes, float lr,
-                         std::span<float> scores_out);
-    void eval_end();
+    // The validation plane: eval_begin uploads the binned validation rows,
+    // the labels when the kind has a device loss, and the seed scores once
+    // per fit; false when the mirror is not u8. eval_accumulate walks the
+    // finished tree there; with a device loss it returns the round's loss
+    // and moves one double, otherwise it returns the scores through
+    // scores_out for the host loss pass.
+    bool                 eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
+                                    std::span<float const> initial_scores);
+    bool                 eval_armed() const;
+    std::optional<float> eval_accumulate(std::span<ResidentNode const> nodes, float lr,
+                                         std::span<float> scores_out);
+    void                 eval_end();
 
   private:
     struct Impl;

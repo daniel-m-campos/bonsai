@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <driver_types.h>
 #include <memory>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -315,6 +316,10 @@ struct CudaDeviceContext
         DeviceBuffer<uint8_t>  bins;
         DeviceBuffer<uint32_t> n_bins;
         DeviceBuffer<float>    scores;
+        DeviceBuffer<float>    labels;
+        DeviceBuffer<double>   loss_partial;
+        DeviceBuffer<double>   loss_out;
+        DeviceObjectiveKind    kind = DeviceObjectiveKind::none;
         Staged<uint32_t>       node_feature;
         Staged<uint32_t>       node_split_bin;
         Staged<uint32_t>       node_left;
@@ -458,16 +463,21 @@ struct CudaDeviceContext
     void resident_end(std::span<float> scores_out);
 
     // Arms the validation plane: uploads the binned rows in the device tiled
-    // layout plus the seed scores. Refuses non-u8 mirrors.
-    bool eval_begin(Dataset const &valid, std::span<float const> initial_scores);
+    // layout, the labels when the kind supports a device loss, and the seed
+    // scores. Refuses non-u8 mirrors.
+    bool eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
+                    std::span<float const> initial_scores);
     bool eval_armed() const
     {
         return veval.armed;
     }
     // Walks the finished tree over the validation plane (the resident
-    // epilogue's kernel on the eval buffers) and returns the updated scores.
-    void eval_accumulate(std::span<CudaHistogramEngine::ResidentNode const> nodes,
-                         float lr, std::span<float> scores_out);
+    // epilogue's kernel on the eval buffers). With a device-capable kind the
+    // loss reduces on device and comes back as the return value; otherwise
+    // the scores come back through scores_out for the host loss pass.
+    std::optional<float>
+    eval_accumulate(std::span<CudaHistogramEngine::ResidentNode const> nodes, float lr,
+                    std::span<float> scores_out);
     void eval_end();
 };
 

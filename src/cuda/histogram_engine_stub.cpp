@@ -5,6 +5,7 @@
 #include "bonsai/cuda/histogram_engine.hpp"
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -211,6 +212,7 @@ void CudaHistogramEngine::resident_finalize(std::span<ResidentNode const> /*node
 void CudaHistogramEngine::resident_end(std::span<float> /*scores_out*/) {}
 
 bool CudaHistogramEngine::eval_begin(Dataset const & /*valid*/,
+                                     DeviceObjectiveKind /*kind*/,
                                      std::span<float const> /*initial_scores*/)
 {
     return false;
@@ -221,9 +223,11 @@ bool CudaHistogramEngine::eval_armed() const
     return false;
 }
 
-void CudaHistogramEngine::eval_accumulate(std::span<ResidentNode const> /*nodes*/,
-                                          float /*lr*/, std::span<float> /*scores_out*/)
+std::optional<float>
+CudaHistogramEngine::eval_accumulate(std::span<ResidentNode const> /*nodes*/,
+                                     float /*lr*/, std::span<float> /*scores_out*/)
 {
+    return std::nullopt;
 }
 
 void CudaHistogramEngine::eval_end() {}

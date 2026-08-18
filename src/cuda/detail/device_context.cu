@@ -1605,13 +1605,23 @@ void CudaDeviceContext::resident_end(std::span<float> scores_out)
     resident.armed = false;
 }
 
-bool CudaDeviceContext::eval_begin(Dataset const         &valid,
+bool CudaDeviceContext::eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
                                    std::span<float const> initial_scores)
 {
     if (!valid.bins_are_u8() || valid.n_features() == 0 ||
         initial_scores.size() != valid.n_rows())
     {
         return false;
+    }
+    // The device loss needs the labels beside the scores; a kind without a
+    // device formula walks on device and leaves the loss to the host.
+    veval.kind =
+        valid.labels().size() == valid.n_rows() ? kind : DeviceObjectiveKind::none;
+    if (veval.kind != DeviceObjectiveKind::none)
+    {
+        veval.labels.upload(valid.labels().data(), valid.labels().size());
+        veval.loss_partial.reserve(1024);
+        veval.loss_out.reserve(1);
     }
     size_t const n_rows  = valid.n_rows();
     size_t const n_feats = valid.n_features();
@@ -1647,7 +1657,7 @@ bool CudaDeviceContext::eval_begin(Dataset const         &valid,
     return true;
 }
 
-void CudaDeviceContext::eval_accumulate(
+std::optional<float> CudaDeviceContext::eval_accumulate(
     std::span<CudaHistogramEngine::ResidentNode const> nodes, float lr,
     std::span<float> scores_out)
 {
@@ -1688,10 +1698,26 @@ void CudaDeviceContext::eval_accumulate(
         veval.node_default_left.device(), veval.node_is_leaf.device(),
         veval.node_value.device(), lr, veval.scores.data(), n);
     check(cudaGetLastError(), "eval route+add launch");
+    if (veval.kind != DeviceObjectiveKind::none)
+    {
+        uint32_t const blocks =
+            eval_loss_pass1(veval.kind, veval.scores.data(), veval.labels.data(), n,
+                            veval.loss_partial.data());
+        eval_loss_pass2_kernel<<<dim3(1), dim3(1)>>>(veval.loss_partial.data(), blocks,
+                                                     veval.loss_out.data());
+        check(cudaGetLastError(), "eval loss pass2 launch");
+        double total = 0.0;
+        check(cudaMemcpy(&total, veval.loss_out.data(), sizeof(double),
+                         cudaMemcpyDeviceToHost),
+              "eval loss fetch");
+        lap(prof_counters.eval_kernel_s);
+        return static_cast<float>(total / static_cast<double>(n));
+    }
     check(cudaMemcpy(scores_out.data(), veval.scores.data(),
                      scores_out.size() * sizeof(float), cudaMemcpyDeviceToHost),
           "eval scores fetch");
     lap(prof_counters.eval_kernel_s);
+    return std::nullopt;
 }
 
 void CudaDeviceContext::eval_end()
