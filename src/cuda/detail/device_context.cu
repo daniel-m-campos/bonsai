@@ -1605,6 +1605,100 @@ void CudaDeviceContext::resident_end(std::span<float> scores_out)
     resident.armed = false;
 }
 
+bool CudaDeviceContext::eval_begin(Dataset const         &valid,
+                                   std::span<float const> initial_scores)
+{
+    if (!valid.bins_are_u8() || valid.n_features() == 0 ||
+        initial_scores.size() != valid.n_rows())
+    {
+        return false;
+    }
+    size_t const n_rows  = valid.n_rows();
+    size_t const n_feats = valid.n_features();
+    // Rearrange the host bins into the device plane's tile order once; the
+    // per-round walk then reads the same addressing as the training plane.
+    std::vector<uint8_t> tiled(n_rows * n_feats);
+    for (size_t r = 0; r < n_rows; ++r)
+    {
+        for (size_t f = 0; f < n_feats; ++f)
+        {
+            tiled[tiled_cell(static_cast<uint32_t>(f), static_cast<uint32_t>(r),
+                             static_cast<uint32_t>(n_rows),
+                             static_cast<uint32_t>(n_feats))] =
+                static_cast<uint8_t>(valid.bin_at(f, r));
+        }
+    }
+    std::vector<uint32_t> nb(n_feats);
+    for (size_t f = 0; f < n_feats; ++f)
+    {
+        nb[f] = static_cast<uint32_t>(valid.n_bins(f));
+    }
+    veval.bins.upload(tiled.data(), tiled.size());
+    veval.n_bins.upload(nb.data(), nb.size());
+    veval.scores.upload(initial_scores.data(), initial_scores.size());
+    veval.n_rows  = n_rows;
+    veval.n_feats = n_feats;
+    veval.armed   = true;
+    if (prof_counters.enabled)
+    {
+        std::fprintf(stderr, "cuda eval plane armed: rows=%zu feats=%zu\n", n_rows,
+                     n_feats);
+    }
+    return true;
+}
+
+void CudaDeviceContext::eval_accumulate(
+    std::span<CudaHistogramEngine::ResidentNode const> nodes, float lr,
+    std::span<float> scores_out)
+{
+    auto         lap = prof_counters.lap();
+    size_t const nn  = nodes.size();
+    veval.node_feature.host.resize(nn);
+    veval.node_split_bin.host.resize(nn);
+    veval.node_left.host.resize(nn);
+    veval.node_right.host.resize(nn);
+    veval.node_default_left.host.resize(nn);
+    veval.node_is_leaf.host.resize(nn);
+    veval.node_value.host.resize(nn);
+    for (size_t i = 0; i < nn; ++i)
+    {
+        CudaHistogramEngine::ResidentNode const &rn = nodes[i];
+        veval.node_feature.host[i]                  = rn.feature_id;
+        veval.node_split_bin.host[i]                = rn.split_bin;
+        veval.node_left.host[i]                     = rn.left;
+        veval.node_right.host[i]                    = rn.right;
+        veval.node_default_left.host[i]             = rn.default_left ? 1U : 0U;
+        veval.node_is_leaf.host[i]                  = rn.is_leaf ? 1U : 0U;
+        veval.node_value.host[i]                    = rn.value;
+    }
+    veval.node_feature.sync();
+    veval.node_split_bin.sync();
+    veval.node_left.sync();
+    veval.node_right.sync();
+    veval.node_default_left.sync();
+    veval.node_is_leaf.sync();
+    veval.node_value.sync();
+
+    auto const n = static_cast<uint32_t>(veval.n_rows);
+    dim3 const grid((n + 255) / 256);
+    route_add_kernel<<<grid, dim3(256)>>>(
+        veval.bins.data(), veval.n_bins.data(), n, static_cast<uint32_t>(veval.n_feats),
+        veval.node_feature.device(), veval.node_split_bin.device(),
+        veval.node_left.device(), veval.node_right.device(),
+        veval.node_default_left.device(), veval.node_is_leaf.device(),
+        veval.node_value.device(), lr, veval.scores.data(), n);
+    check(cudaGetLastError(), "eval route+add launch");
+    check(cudaMemcpy(scores_out.data(), veval.scores.data(),
+                     scores_out.size() * sizeof(float), cudaMemcpyDeviceToHost),
+          "eval scores fetch");
+    lap(prof_counters.eval_kernel_s);
+}
+
+void CudaDeviceContext::eval_end()
+{
+    veval.armed = false;
+}
+
 // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)
 
 } // namespace cuda_detail

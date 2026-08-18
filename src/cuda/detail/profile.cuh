@@ -34,6 +34,8 @@ struct ProfileCounters
     // Resident-objective laps: the device gradient kernel that replaces the gh
     // upload, and the fused route+score-update that replaces the finalize D2H.
     double obj_kernel_s = 0, score_kernel_s = 0;
+    // Validation-plane lap: the per-round eval walk plus its scores fetch.
+    double eval_kernel_s = 0;
     size_t launches = 0, gpu_nodes = 0;
 
     ProfileCounters()                                       = default;
@@ -95,8 +97,8 @@ struct ProfileCounters
                          fin_stamp_s, fin_map_s);
             std::println(stderr,
                          "cuda-resident-decomp: obj_kernel={:.2f}s "
-                         "score_kernel={:.2f}s",
-                         obj_kernel_s, score_kernel_s);
+                         "score_kernel={:.2f}s eval_kernel={:.2f}s",
+                         obj_kernel_s, score_kernel_s, eval_kernel_s);
         }
         catch (...)
         {

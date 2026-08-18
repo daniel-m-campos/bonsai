@@ -858,4 +858,55 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
             .leaf_ids = std::move(leaf_ids)};
 }
 
+// The device validation walk: flatten the finished tree into the engine's
+// node table (bin-space thresholds against the validation dataset's shared
+// mappers) and hand it to the eval plane. Collapses to false for engines
+// without one, so the booster keeps the host walk.
+template <HistogramEngine EngineT, NodeSplitFinder SplitterT>
+bool DepthwiseGrower<EngineT, SplitterT>::eval_accumulate(Tree const      &tree,
+                                                          Dataset const   &valid,
+                                                          float            lr,
+                                                          std::span<float> scores_out)
+{
+    if constexpr (requires { engine_.eval_armed(); })
+    {
+        if (!engine_.eval_armed())
+        {
+            return false;
+        }
+        engine_.eval_accumulate(
+            grower_detail::resident_node_table<typename EngineT::ResidentNode>(
+                tree.nodes(), valid),
+            lr, scores_out);
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+}
+
+template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT>
+bool LeafwiseGrower<EngineT, SplitterT>::eval_accumulate(Tree const    &tree,
+                                                         Dataset const &valid, float lr,
+                                                         std::span<float> scores_out)
+{
+    if constexpr (requires { engine_.eval_armed(); })
+    {
+        if (!engine_.eval_armed())
+        {
+            return false;
+        }
+        engine_.eval_accumulate(
+            grower_detail::resident_node_table<typename EngineT::ResidentNode>(
+                tree.nodes(), valid),
+            lr, scores_out);
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+}
+
 } // namespace bonsai

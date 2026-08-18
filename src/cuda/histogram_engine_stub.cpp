@@ -210,4 +210,22 @@ void CudaHistogramEngine::resident_finalize(std::span<ResidentNode const> /*node
 
 void CudaHistogramEngine::resident_end(std::span<float> /*scores_out*/) {}
 
+bool CudaHistogramEngine::eval_begin(Dataset const & /*valid*/,
+                                     std::span<float const> /*initial_scores*/)
+{
+    return false;
+}
+
+bool CudaHistogramEngine::eval_armed() const
+{
+    return false;
+}
+
+void CudaHistogramEngine::eval_accumulate(std::span<ResidentNode const> /*nodes*/,
+                                          float /*lr*/, std::span<float> /*scores_out*/)
+{
+}
+
+void CudaHistogramEngine::eval_end() {}
+
 } // namespace bonsai

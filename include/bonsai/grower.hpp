@@ -232,6 +232,30 @@ void engine_resident_end(EngineT &engine, std::span<float> scores)
     }
 }
 
+// The validation-plane shims, same collapse: a host engine has no eval plane,
+// so eval_begin answers false and the booster keeps the host walk.
+template <typename EngineT>
+bool engine_eval_begin(EngineT &engine, Dataset const &valid,
+                       std::span<float const> scores)
+{
+    if constexpr (requires { engine.eval_begin(valid, scores); })
+    {
+        return engine.eval_begin(valid, scores);
+    }
+    else
+    {
+        return false;
+    }
+}
+
+template <typename EngineT> void engine_eval_end(EngineT &engine)
+{
+    if constexpr (requires { engine.eval_end(); })
+    {
+        engine.eval_end();
+    }
+}
+
 template <HistogramEngine EngineT   = CpuHistogramEngine,
           NodeSplitFinder SplitterT = HistogramNodeSplitFinder>
 class DepthwiseGrower
@@ -264,6 +288,20 @@ class DepthwiseGrower
     bool resident() const
     {
         return resident_;
+    }
+
+    // Device validation seam: mirrors the resident seam for the per-round
+    // eval walk. eval_accumulate flattens the tree grower-side, where the
+    // node-table helper lives.
+    bool eval_begin(Dataset const &valid, std::span<float const> scores)
+    {
+        return engine_eval_begin(engine_, valid, scores);
+    }
+    bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
+                         std::span<float> scores_out);
+    void eval_end()
+    {
+        engine_eval_end(engine_);
     }
 
   private:
@@ -308,6 +346,19 @@ class ObliviousGrower
         return resident_;
     }
 
+    // Device validation seam: the oblivious flatten is not wired yet, so this
+    // grower always answers false and keeps the host walk.
+    bool eval_begin(Dataset const & /*valid*/, std::span<float const> /*scores*/)
+    {
+        return false;
+    }
+    bool eval_accumulate(Tree const & /*tree*/, Dataset const & /*valid*/, float /*lr*/,
+                         std::span<float> /*scores_out*/)
+    {
+        return false;
+    }
+    void eval_end() {}
+
   private:
     TreeConfig      config_;
     std::mt19937    feature_rng_;
@@ -351,6 +402,19 @@ class LeafwiseGrower
     bool resident() const
     {
         return resident_;
+    }
+
+    // Device validation seam (see DepthwiseGrower::eval_begin). The eval walk
+    // is plane-independent, so no leaf variant exists.
+    bool eval_begin(Dataset const &valid, std::span<float const> scores)
+    {
+        return engine_eval_begin(engine_, valid, scores);
+    }
+    bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
+                         std::span<float> scores_out);
+    void eval_end()
+    {
+        engine_eval_end(engine_);
     }
 
   private:

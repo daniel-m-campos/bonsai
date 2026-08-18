@@ -130,6 +130,23 @@ class IBooster
     virtual float validation_loss(std::span<float const> scores,
                                   floats_view            labels) const = 0;
 
+    // Device validation seam. begin_resident_validation arms the grower's eval
+    // plane with the binned validation rows and the seeded scores; false keeps
+    // the host walk. accumulate_last_round_resident walks the newest tree on
+    // that plane and writes the updated scores back; false means the plane
+    // declined and the caller must run the host walk for this round.
+    virtual bool begin_resident_validation(Dataset const & /*bins*/,
+                                           std::span<float const> /*seed*/)
+    {
+        return false;
+    }
+
+    virtual bool accumulate_last_round_resident(Dataset const & /*bins*/,
+                                                floats_out /*scores*/)
+    {
+        return false;
+    }
+
     // Drop trees beyond the first n_trees (keep the best iteration's model).
     virtual void truncate(size_t n_trees) = 0;
 };
@@ -804,6 +821,20 @@ class Booster final : public IBooster
         parallel::for_each_index(
             scores.size(), [&](size_t i)
             { scores[i] += lr * tree.value_for(X, static_cast<row_id_t>(i)); });
+    }
+
+    bool begin_resident_validation(Dataset const         &bins,
+                                   std::span<float const> seed) override
+    {
+        grower_.eval_end();
+        return grower_.eval_begin(bins, seed);
+    }
+
+    bool accumulate_last_round_resident(Dataset const &bins, floats_out scores) override
+    {
+        assert(!trees_.empty());
+        return grower_.eval_accumulate(trees_.back(), bins, config_.learning_rate,
+                                       {scores.data(), scores.size()});
     }
 
     void accumulate_last_round_binned(Dataset const &bins,
