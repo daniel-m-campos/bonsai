@@ -280,6 +280,20 @@ struct CudaDeviceContext
         uint32_t    max_slots = 0;
     };
 
+    // One flattened tree staged as SoA node arrays, the shape the route+add
+    // kernel walks. Both device planes stage into their own copy per round.
+    struct NodeTable
+    {
+        Staged<uint32_t> feature;
+        Staged<uint32_t> split_bin;
+        Staged<uint32_t> left;
+        Staged<uint32_t> right;
+        Staged<uint32_t> default_left;
+        Staged<uint32_t> is_leaf;
+        Staged<float>    value;
+        void stage(std::span<CudaHistogramEngine::ResidentNode const> nodes);
+    };
+
     // Device-resident objective plane: labels and the per-row score vector live
     // here for the whole fit. begin_tree derives gh from them by the kind's
     // gradient kernel; the resident finalize walks the finished tree (SoA node
@@ -291,13 +305,7 @@ struct CudaDeviceContext
         DeviceBuffer<float> scores;
         DeviceBuffer<float> weights; // uploaded only when the dataset is weighted
         DatasetKey          labels_key;
-        Staged<uint32_t>    node_feature;
-        Staged<uint32_t>    node_split_bin;
-        Staged<uint32_t>    node_left;
-        Staged<uint32_t>    node_right;
-        Staged<uint32_t>    node_default_left;
-        Staged<uint32_t>    node_is_leaf;
-        Staged<float>       node_value;
+        NodeTable           nodes;
         DeviceObjectiveKind kind          = DeviceObjectiveKind::none;
         bool                weighted      = false;
         bool                armed         = false;
@@ -309,24 +317,18 @@ struct CudaDeviceContext
     // tiled layout, its own copy beside the training plane), the running
     // validation scores, and its own SoA node staging. Per round the finished
     // tree walks here exactly as the resident epilogue walks the training
-    // plane; the scores come back each round because the loss is still host
-    // work. u8 mirrors only; armed per (validation dataset, fit).
+    // plane; with a device-capable kind the loss partials reduce on device
+    // and finish on the host in fixed order. u8 mirrors only; armed per
+    // (validation dataset, fit).
     struct EvalPlane
     {
         DeviceBuffer<uint8_t>  bins;
         DeviceBuffer<uint32_t> n_bins;
         DeviceBuffer<float>    scores;
         DeviceBuffer<float>    labels;
-        DeviceBuffer<double>   loss_partial;
-        DeviceBuffer<double>   loss_out;
+        Staged<double>         loss_partial;
         DeviceObjectiveKind    kind = DeviceObjectiveKind::none;
-        Staged<uint32_t>       node_feature;
-        Staged<uint32_t>       node_split_bin;
-        Staged<uint32_t>       node_left;
-        Staged<uint32_t>       node_right;
-        Staged<uint32_t>       node_default_left;
-        Staged<uint32_t>       node_is_leaf;
-        Staged<float>          node_value;
+        NodeTable              nodes;
         bool                   armed   = false;
         size_t                 n_rows  = 0;
         size_t                 n_feats = 0;
@@ -464,13 +466,10 @@ struct CudaDeviceContext
 
     // Arms the validation plane: uploads the binned rows in the device tiled
     // layout, the labels when the kind supports a device loss, and the seed
-    // scores. Refuses non-u8 mirrors.
+    // scores. Refuses non-u8 mirrors; a refusal also disarms, so a stale plane
+    // can never outlive a failed re-arm.
     bool eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
                     std::span<float const> initial_scores);
-    bool eval_armed() const
-    {
-        return veval.armed;
-    }
     // Walks the finished tree over the validation plane (the resident
     // epilogue's kernel on the eval buffers). With a device-capable kind the
     // loss reduces on device and comes back as the return value; otherwise
@@ -478,7 +477,6 @@ struct CudaDeviceContext
     std::optional<float>
     eval_accumulate(std::span<CudaHistogramEngine::ResidentNode const> nodes, float lr,
                     std::span<float> scores_out);
-    void eval_end();
 };
 
 // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)

@@ -515,4 +515,46 @@ std::vector<ResidentNodeT> resident_node_table(DenseTree::Nodes const &nodes,
     return table;
 }
 
+// The finished oblivious tree flattened the same way: synthesize the
+// perfect-tree numbering (children 2i+1 / 2i+2) from the per-level splits,
+// as the resident finalize_leaves does, with each level's threshold
+// converted to bin space once. Leaves 2^D-1 .. hold leaf_table in
+// left-to-right order (the oblivious index is exactly that order).
+template <typename ResidentNodeT>
+std::vector<ResidentNodeT> oblivious_node_table(ObliviousTree const &tree,
+                                                Dataset const       &ds)
+{
+    auto const                &splits     = tree.splits();
+    size_t const               depth      = splits.size();
+    size_t const               n_internal = (size_t{1} << depth) - 1;
+    size_t const               n_leaves   = size_t{1} << depth;
+    std::vector<ResidentNodeT> table(n_internal + n_leaves);
+    for (size_t i = 0; i < n_internal; ++i)
+    {
+        size_t lvl = 0;
+        size_t cap = 1;
+        size_t off = i;
+        while (off >= cap)
+        {
+            off -= cap;
+            cap <<= 1U;
+            ++lvl;
+        }
+        ResidentNodeT &rn = table[i];
+        rn.feature_id     = splits[lvl].feature_id;
+        rn.split_bin =
+            ds.bin_of_threshold(splits[lvl].feature_id, splits[lvl].threshold);
+        rn.default_left = splits[lvl].default_left;
+        rn.left         = static_cast<node_id_t>((2 * i) + 1);
+        rn.right        = static_cast<node_id_t>((2 * i) + 2);
+    }
+    for (size_t j = 0; j < n_leaves; ++j)
+    {
+        ResidentNodeT &rn = table[n_internal + j];
+        rn.is_leaf        = true;
+        rn.value          = tree.leaf_table()[j];
+    }
+    return table;
+}
+
 } // namespace bonsai::grower_detail

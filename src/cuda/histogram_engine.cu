@@ -236,21 +236,11 @@ bool CudaHistogramEngine::eval_begin(Dataset const &valid, DeviceObjectiveKind k
     return impl_->ctx.eval_begin(valid, kind, initial_scores);
 }
 
-bool CudaHistogramEngine::eval_armed() const
-{
-    return impl_->ctx.eval_armed();
-}
-
 std::optional<float>
 CudaHistogramEngine::eval_accumulate(std::span<ResidentNode const> nodes, float lr,
                                      std::span<float> scores_out)
 {
     return impl_->ctx.eval_accumulate(nodes, lr, scores_out);
-}
-
-void CudaHistogramEngine::eval_end()
-{
-    impl_->ctx.eval_end();
 }
 
 // ---- The ingest transaction (decision 54) -----------------------------------

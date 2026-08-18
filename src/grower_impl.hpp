@@ -858,27 +858,22 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
             .leaf_ids = std::move(leaf_ids)};
 }
 
-// The device validation walk: flatten the finished tree into the engine's
-// node table (bin-space thresholds against the validation dataset's shared
-// mappers) and hand it to the eval plane. Collapses to false for engines
-// without one, so the booster keeps the host walk.
-template <HistogramEngine EngineT, NodeSplitFinder SplitterT>
-bool DepthwiseGrower<EngineT, SplitterT>::eval_accumulate(Tree const      &tree,
-                                                          Dataset const   &valid,
-                                                          float            lr,
-                                                          std::span<float> scores_out,
-                                                          std::optional<float> &loss)
+// The device eval walk shared by the growers. The flatten runs inside the
+// capability branch because the engine's node type only exists on device
+// engines, so the table builder is a generic lambda that branch instantiates.
+template <typename EngineT, typename TableFn>
+bool eval_walk(EngineT &engine, bool armed, TableFn &&table, float lr,
+               std::span<float> scores_out, std::optional<float> &loss)
 {
-    if constexpr (requires { engine_.eval_armed(); })
+    if constexpr (requires { typename EngineT::ResidentNode; })
     {
-        if (!engine_.eval_armed())
+        if (!armed)
         {
             return false;
         }
-        loss = engine_.eval_accumulate(
-            grower_detail::resident_node_table<typename EngineT::ResidentNode>(
-                tree.nodes(), valid),
-            lr, scores_out);
+        loss = engine.eval_accumulate(
+            table.template operator()<typename EngineT::ResidentNode>(), lr,
+            scores_out);
         return true;
     }
     else
@@ -887,28 +882,42 @@ bool DepthwiseGrower<EngineT, SplitterT>::eval_accumulate(Tree const      &tree,
     }
 }
 
+template <HistogramEngine EngineT, NodeSplitFinder SplitterT>
+bool DepthwiseGrower<EngineT, SplitterT>::eval_accumulate(Tree const      &tree,
+                                                          Dataset const   &valid,
+                                                          float            lr,
+                                                          std::span<float> scores_out,
+                                                          std::optional<float> &loss)
+{
+    return eval_walk(
+        engine_, eval_, [&]<typename NodeT>()
+        { return grower_detail::resident_node_table<NodeT>(tree.nodes(), valid); }, lr,
+        scores_out, loss);
+}
+
+template <HistogramEngine EngineT, LevelSplitFinder SplitterT>
+bool ObliviousGrower<EngineT, SplitterT>::eval_accumulate(Tree const      &tree,
+                                                          Dataset const   &valid,
+                                                          float            lr,
+                                                          std::span<float> scores_out,
+                                                          std::optional<float> &loss)
+{
+    return eval_walk(
+        engine_, eval_, [&]<typename NodeT>()
+        { return grower_detail::oblivious_node_table<NodeT>(tree, valid); }, lr,
+        scores_out, loss);
+}
+
 template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT>
 bool LeafwiseGrower<EngineT, SplitterT>::eval_accumulate(Tree const    &tree,
                                                          Dataset const &valid, float lr,
                                                          std::span<float> scores_out,
                                                          std::optional<float> &loss)
 {
-    if constexpr (requires { engine_.eval_armed(); })
-    {
-        if (!engine_.eval_armed())
-        {
-            return false;
-        }
-        loss = engine_.eval_accumulate(
-            grower_detail::resident_node_table<typename EngineT::ResidentNode>(
-                tree.nodes(), valid),
-            lr, scores_out);
-        return true;
-    }
-    else
-    {
-        return false;
-    }
+    return eval_walk(
+        engine_, eval_, [&]<typename NodeT>()
+        { return grower_detail::resident_node_table<NodeT>(tree.nodes(), valid); }, lr,
+        scores_out, loss);
 }
 
 } // namespace bonsai

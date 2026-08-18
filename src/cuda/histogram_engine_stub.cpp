@@ -218,18 +218,11 @@ bool CudaHistogramEngine::eval_begin(Dataset const & /*valid*/,
     return false;
 }
 
-bool CudaHistogramEngine::eval_armed() const
-{
-    return false;
-}
-
 std::optional<float>
 CudaHistogramEngine::eval_accumulate(std::span<ResidentNode const> /*nodes*/,
                                      float /*lr*/, std::span<float> /*scores_out*/)
 {
     return std::nullopt;
 }
-
-void CudaHistogramEngine::eval_end() {}
 
 } // namespace bonsai
