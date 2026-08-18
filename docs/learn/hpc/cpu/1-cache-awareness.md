@@ -136,7 +136,7 @@ Split the row instead, and each line is fetched once by every worker whose slice
 
 **Example, cpu-wide at 12 workers.** `max(1, 12 / 256) = 1`, plus boundary sharing: about 1.1.
 
-The campaign measured the consequence rather than the multiplier. When the fill stopped slicing narrow rows across all 12 workers, mirror traffic per tree fell from 3.85GB to 1.45GB at the tall cell (round five).
+The campaign measured the consequence rather than the multiplier. When the fill stopped slicing narrow rows across all 12 workers, mirror traffic per tree fell from 3.85GB to 1.45GB at the tall cell.
 
 That is 2.7x fewer bytes moved. It came from changing how the work was divided, not what the loop computes.
 
@@ -150,11 +150,11 @@ Four measured facts, then the conclusion they force.
 1. bonsai's mirror fill reads about 1.45GB per tree at the tall cell. Its workers share cache lines, the 6x multiplier above.
 2. LightGBM's column fill reads about 30GB per tree at the same cell. Its workers share nothing: every read stream is private.
 3. On the M2, bonsai trains tall 2.4x faster: 17.4 to 22.1 seconds against LightGBM's 42.4 to 70.7, at 4 and 8 threads on identical data, knobs, and r2.
-4. On a bandwidth-rich EPYC draw (a draw is the specific machine a cloud rental hands you), LightGBM trains tall 1.35x faster: 15.6 seconds against bonsai's 21.6, both measured back to back on that one machine (round eight).
+4. On a bandwidth-rich EPYC draw (a draw is the specific machine a cloud rental hands you), LightGBM trains tall 1.35x faster: 15.6 seconds against bonsai's 21.6, both measured back to back on that one machine.
 
 The same two binaries, the same data, and the winner flips with the host. Only one variable moved: how much bandwidth the memory system supplies.
 
-So the conclusion is forced. A 20x read-volume handicap decides the race where bandwidth is scarce, and stops mattering where bandwidth is abundant. The fast loop is a property of the pair (loop, host), never of the loop alone.
+So the conclusion is forced. A 20x read-traffic handicap decides the race where bandwidth is scarce, and stops mattering where bandwidth is abundant. The fast loop is a property of the pair (loop, host), never of the loop alone.
 
 ## What to carry forward
 

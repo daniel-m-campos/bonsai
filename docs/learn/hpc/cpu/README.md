@@ -38,6 +38,6 @@ Both fits use the same knobs: 100 boosting rounds, depth 8, 255 bins, and 12 thr
 
 - **C1. [Cache awareness](1-cache-awareness.md).** What a line is, what the levels cost, and what fits where. Why a 128-byte row and a 16,384-byte row are different machines.
 - **C2. [Dividing the work](2-dividing-the-work.md).** The histogram fill as a worked problem: row-parallel against feature-parallel, who pays for each, and the storage orientation underneath both.
-- **C3. [Coordination costs](3-coordination-costs.md).** What a parallel region costs and when that cost dominates. How team sizing goes wrong, and the four-entry ledger the campaign closed with.
+- **C3. [Coordination costs](3-coordination-costs.md).** The fixed and variable costs of a parallel fill, and the team-sizing rule they derive. How the rule's first forms went wrong, and the four-entry ledger the campaign closed with.
 
 Read them in order. Each one spends the arithmetic the one before it set up.
