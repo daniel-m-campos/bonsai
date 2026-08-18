@@ -14,6 +14,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
@@ -31,14 +32,20 @@ namespace cuda_detail
 inline constexpr size_t k_min_gpu_rows = 512;
 
 // BONSAI_MIN_GPU_ROWS overrides the small-node cutoff, so a threshold sweep
-// runs one binary. Read once; the default is the constant above.
+// runs one binary. Read once; the default is the constant above. The active
+// line is the sweep's proof of engagement; an inert toggle passes A/B silently.
 inline size_t min_gpu_rows()
 {
     static size_t const value = []
     {
         char const *env = std::getenv("BONSAI_MIN_GPU_ROWS");
-        return env == nullptr ? k_min_gpu_rows
-                              : static_cast<size_t>(std::strtoull(env, nullptr, 10));
+        if (env == nullptr)
+        {
+            return k_min_gpu_rows;
+        }
+        auto const parsed = static_cast<size_t>(std::strtoull(env, nullptr, 10));
+        std::fprintf(stderr, "BONSAI_MIN_GPU_ROWS active: %zu\n", parsed);
+        return parsed;
     }();
     return value;
 }
