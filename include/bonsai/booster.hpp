@@ -831,7 +831,6 @@ class Booster final : public IBooster
     bool begin_resident_validation(Dataset const         &bins,
                                    std::span<float const> seed) override
     {
-        grower_.eval_end();
         return grower_.eval_begin(bins, device_objective_kind<objective_type>, seed);
     }
 

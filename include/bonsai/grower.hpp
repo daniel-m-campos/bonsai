@@ -249,14 +249,6 @@ bool engine_eval_begin(EngineT &engine, Dataset const &valid, DeviceObjectiveKin
     }
 }
 
-template <typename EngineT> void engine_eval_end(EngineT &engine)
-{
-    if constexpr (requires { engine.eval_end(); })
-    {
-        engine.eval_end();
-    }
-}
-
 template <HistogramEngine EngineT   = CpuHistogramEngine,
           NodeSplitFinder SplitterT = HistogramNodeSplitFinder>
 class DepthwiseGrower
@@ -294,18 +286,15 @@ class DepthwiseGrower
     // Device validation seam: mirrors the resident seam for the per-round
     // eval walk. eval_accumulate flattens the tree grower-side, where the
     // node-table helper lives; loss carries the device-reduced metric when
-    // the kind has one.
+    // the kind has one. eval_ remembers the arming (the resident_ pattern).
     bool eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
                     std::span<float const> scores)
     {
-        return engine_eval_begin(engine_, valid, kind, scores);
+        eval_ = engine_eval_begin(engine_, valid, kind, scores);
+        return eval_;
     }
     bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
                          std::span<float> scores_out, std::optional<float> &loss);
-    void eval_end()
-    {
-        engine_eval_end(engine_);
-    }
 
   private:
     TreeConfig                             config_;
@@ -314,6 +303,7 @@ class DepthwiseGrower
     EngineT                                engine_;
     RecycledOutputs                        recycled_;
     bool                                   resident_ = false;
+    bool                                   eval_     = false;
 };
 
 template <HistogramEngine  EngineT   = CpuHistogramEngine,
@@ -349,20 +339,16 @@ class ObliviousGrower
         return resident_;
     }
 
-    // Device validation seam: the oblivious flatten is not wired yet, so this
-    // grower always answers false and keeps the host walk.
-    bool eval_begin(Dataset const & /*valid*/, DeviceObjectiveKind /*kind*/,
-                    std::span<float const> /*scores*/)
+    // Device validation seam (see DepthwiseGrower::eval_begin). The oblivious
+    // flatten synthesizes the perfect-tree numbering from the level splits.
+    bool eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
+                    std::span<float const> scores)
     {
-        return false;
+        eval_ = engine_eval_begin(engine_, valid, kind, scores);
+        return eval_;
     }
-    bool eval_accumulate(Tree const & /*tree*/, Dataset const & /*valid*/, float /*lr*/,
-                         std::span<float> /*scores_out*/,
-                         std::optional<float> & /*loss*/)
-    {
-        return false;
-    }
-    void eval_end() {}
+    bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
+                         std::span<float> scores_out, std::optional<float> &loss);
 
   private:
     TreeConfig      config_;
@@ -370,6 +356,7 @@ class ObliviousGrower
     EngineT         engine_;
     RecycledOutputs recycled_;
     bool            resident_ = false;
+    bool            eval_     = false;
 };
 
 template <HistogramEngine         EngineT   = CpuHistogramEngine,
@@ -414,14 +401,11 @@ class LeafwiseGrower
     bool eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
                     std::span<float const> scores)
     {
-        return engine_eval_begin(engine_, valid, kind, scores);
+        eval_ = engine_eval_begin(engine_, valid, kind, scores);
+        return eval_;
     }
     bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
                          std::span<float> scores_out, std::optional<float> &loss);
-    void eval_end()
-    {
-        engine_eval_end(engine_);
-    }
 
   private:
     TreeConfig                             config_;
@@ -430,6 +414,7 @@ class LeafwiseGrower
     EngineT                                engine_;
     RecycledOutputs                        recycled_;
     bool                                   resident_ = false;
+    bool                                   eval_     = false;
 };
 
 } // namespace bonsai

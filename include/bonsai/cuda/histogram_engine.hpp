@@ -269,16 +269,14 @@ class CudaHistogramEngine
 
     // The validation plane: eval_begin uploads the binned validation rows,
     // the labels when the kind has a device loss, and the seed scores once
-    // per fit; false when the mirror is not u8. eval_accumulate walks the
-    // finished tree there; with a device loss it returns the round's loss
-    // and moves one double, otherwise it returns the scores through
-    // scores_out for the host loss pass.
+    // per fit; false when the mirror is not u8 (and any prior arming is
+    // dropped). eval_accumulate walks the finished tree there; with a device
+    // loss it returns the round's loss and moves at most a KiB, otherwise it
+    // returns the scores through scores_out for the host loss pass.
     bool                 eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
                                     std::span<float const> initial_scores);
-    bool                 eval_armed() const;
     std::optional<float> eval_accumulate(std::span<ResidentNode const> nodes, float lr,
                                          std::span<float> scores_out);
-    void                 eval_end();
 
   private:
     struct Impl;

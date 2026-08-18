@@ -1545,48 +1545,54 @@ bool CudaDeviceContext::resident_begin_leaf(Dataset const &ds, TreeConfig const 
     return resident_begin(ds, kind, initial_scores, learning_rate);
 }
 
-void CudaDeviceContext::resident_finalize(
+void CudaDeviceContext::NodeTable::stage(
     std::span<CudaHistogramEngine::ResidentNode const> nodes)
 {
-    auto         lap = prof_counters.lap();
-    size_t const nn  = nodes.size();
-    resident.node_feature.host.resize(nn);
-    resident.node_split_bin.host.resize(nn);
-    resident.node_left.host.resize(nn);
-    resident.node_right.host.resize(nn);
-    resident.node_default_left.host.resize(nn);
-    resident.node_is_leaf.host.resize(nn);
-    resident.node_value.host.resize(nn);
+    size_t const nn = nodes.size();
+    feature.host.resize(nn);
+    split_bin.host.resize(nn);
+    left.host.resize(nn);
+    right.host.resize(nn);
+    default_left.host.resize(nn);
+    is_leaf.host.resize(nn);
+    value.host.resize(nn);
     for (size_t i = 0; i < nn; ++i)
     {
         CudaHistogramEngine::ResidentNode const &rn = nodes[i];
-        resident.node_feature.host[i]               = rn.feature_id;
-        resident.node_split_bin.host[i]             = rn.split_bin;
-        resident.node_left.host[i]                  = rn.left;
-        resident.node_right.host[i]                 = rn.right;
-        resident.node_default_left.host[i]          = rn.default_left ? 1U : 0U;
-        resident.node_is_leaf.host[i]               = rn.is_leaf ? 1U : 0U;
-        resident.node_value.host[i]                 = rn.value;
+        feature.host[i]                             = rn.feature_id;
+        split_bin.host[i]                           = rn.split_bin;
+        left.host[i]                                = rn.left;
+        right.host[i]                               = rn.right;
+        default_left.host[i]                        = rn.default_left ? 1U : 0U;
+        is_leaf.host[i]                             = rn.is_leaf ? 1U : 0U;
+        value.host[i]                               = rn.value;
     }
-    resident.node_feature.sync();
-    resident.node_split_bin.sync();
-    resident.node_left.sync();
-    resident.node_right.sync();
-    resident.node_default_left.sync();
-    resident.node_is_leaf.sync();
-    resident.node_value.sync();
+    feature.sync();
+    split_bin.sync();
+    left.sync();
+    right.sync();
+    default_left.sync();
+    is_leaf.sync();
+    value.sync();
+}
+
+void CudaDeviceContext::resident_finalize(
+    std::span<CudaHistogramEngine::ResidentNode const> nodes)
+{
+    auto lap = prof_counters.lap();
+    resident.nodes.stage(nodes);
 
     auto const n = static_cast<uint32_t>(resident.n_rows);
     dim3 const grid((n + 255) / 256);
     data.dispatch_bins(
         [&](auto const *bins)
         {
+            NodeTable const &t = resident.nodes;
             route_add_kernel<<<grid, dim3(256)>>>(
                 bins, data.n_bins_ptr(), static_cast<uint32_t>(data.key.n_rows),
-                static_cast<uint32_t>(data.key.n_feats), resident.node_feature.device(),
-                resident.node_split_bin.device(), resident.node_left.device(),
-                resident.node_right.device(), resident.node_default_left.device(),
-                resident.node_is_leaf.device(), resident.node_value.device(),
+                static_cast<uint32_t>(data.key.n_feats), t.feature.device(),
+                t.split_bin.device(), t.left.device(), t.right.device(),
+                t.default_left.device(), t.is_leaf.device(), t.value.device(),
                 resident.learning_rate, resident.scores.data(), n);
         });
     check(cudaGetLastError(), "resident route+add launch");
@@ -1608,6 +1614,8 @@ void CudaDeviceContext::resident_end(std::span<float> scores_out)
 bool CudaDeviceContext::eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
                                    std::span<float const> initial_scores)
 {
+    // Disarm first: a refused re-arm must not leave a stale plane behind.
+    veval.armed = false;
     if (!valid.bins_are_u8() || valid.n_features() == 0 ||
         initial_scores.size() != valid.n_rows())
     {
@@ -1621,7 +1629,6 @@ bool CudaDeviceContext::eval_begin(Dataset const &valid, DeviceObjectiveKind kin
     {
         veval.labels.upload(valid.labels().data(), valid.labels().size());
         veval.loss_partial.reserve(1024);
-        veval.loss_out.reserve(1);
     }
     size_t const n_rows  = valid.n_rows();
     size_t const n_feats = valid.n_features();
@@ -1665,55 +1672,31 @@ std::optional<float> CudaDeviceContext::eval_accumulate(
     std::span<CudaHistogramEngine::ResidentNode const> nodes, float lr,
     std::span<float> scores_out)
 {
-    auto         lap = prof_counters.lap();
-    size_t const nn  = nodes.size();
-    veval.node_feature.host.resize(nn);
-    veval.node_split_bin.host.resize(nn);
-    veval.node_left.host.resize(nn);
-    veval.node_right.host.resize(nn);
-    veval.node_default_left.host.resize(nn);
-    veval.node_is_leaf.host.resize(nn);
-    veval.node_value.host.resize(nn);
-    for (size_t i = 0; i < nn; ++i)
-    {
-        CudaHistogramEngine::ResidentNode const &rn = nodes[i];
-        veval.node_feature.host[i]                  = rn.feature_id;
-        veval.node_split_bin.host[i]                = rn.split_bin;
-        veval.node_left.host[i]                     = rn.left;
-        veval.node_right.host[i]                    = rn.right;
-        veval.node_default_left.host[i]             = rn.default_left ? 1U : 0U;
-        veval.node_is_leaf.host[i]                  = rn.is_leaf ? 1U : 0U;
-        veval.node_value.host[i]                    = rn.value;
-    }
-    veval.node_feature.sync();
-    veval.node_split_bin.sync();
-    veval.node_left.sync();
-    veval.node_right.sync();
-    veval.node_default_left.sync();
-    veval.node_is_leaf.sync();
-    veval.node_value.sync();
+    auto lap = prof_counters.lap();
+    veval.nodes.stage(nodes);
 
-    auto const n = static_cast<uint32_t>(veval.n_rows);
-    dim3 const grid((n + 255) / 256);
+    auto const       n = static_cast<uint32_t>(veval.n_rows);
+    dim3 const       grid((n + 255) / 256);
+    NodeTable const &t = veval.nodes;
     route_add_kernel<<<grid, dim3(256)>>>(
         veval.bins.data(), veval.n_bins.data(), n, static_cast<uint32_t>(veval.n_feats),
-        veval.node_feature.device(), veval.node_split_bin.device(),
-        veval.node_left.device(), veval.node_right.device(),
-        veval.node_default_left.device(), veval.node_is_leaf.device(),
-        veval.node_value.device(), lr, veval.scores.data(), n);
+        t.feature.device(), t.split_bin.device(), t.left.device(), t.right.device(),
+        t.default_left.device(), t.is_leaf.device(), t.value.device(), lr,
+        veval.scores.data(), n);
     check(cudaGetLastError(), "eval route+add launch");
     if (veval.kind != DeviceObjectiveKind::none)
     {
         uint32_t const blocks =
             eval_loss_pass1(veval.kind, veval.scores.data(), veval.labels.data(), n,
-                            veval.loss_partial.data());
-        eval_loss_pass2_kernel<<<dim3(1), dim3(1)>>>(veval.loss_partial.data(), blocks,
-                                                     veval.loss_out.data());
-        check(cudaGetLastError(), "eval loss pass2 launch");
+                            veval.loss_partial.device());
+        // The second pass is a host sum in block order: at most 1024 doubles
+        // cross the bus, and the fixed order keeps the loss run-to-run stable.
+        veval.loss_partial.fetch(blocks);
         double total = 0.0;
-        check(cudaMemcpy(&total, veval.loss_out.data(), sizeof(double),
-                         cudaMemcpyDeviceToHost),
-              "eval loss fetch");
+        for (uint32_t b = 0; b < blocks; ++b)
+        {
+            total += veval.loss_partial.host[b];
+        }
         lap(prof_counters.eval_kernel_s);
         return static_cast<float>(total / static_cast<double>(n));
     }
@@ -1722,11 +1705,6 @@ std::optional<float> CudaDeviceContext::eval_accumulate(
           "eval scores fetch");
     lap(prof_counters.eval_kernel_s);
     return std::nullopt;
-}
-
-void CudaDeviceContext::eval_end()
-{
-    veval.armed = false;
 }
 
 // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)

@@ -1016,9 +1016,10 @@ inline void gh_from_scores(DeviceObjectiveKind kind, bool weighted, float const 
 }
 
 // Device validation loss: per-row loss mirroring src/objective.cpp's eval
-// formulas, reduced in the sum_gh two-pass shape (fixed grid, fixed in-block
-// order, single-block second pass, no atomics), so one double crosses the
-// bus per round instead of the whole score vector.
+// formulas, reduced deterministically (fixed grid, fixed in-block order, no
+// atomics) into per-block partials; the caller finishes the sum on the host
+// in block order, so at most 1024 doubles cross the bus per round instead of
+// the whole score vector.
 template <DeviceObjectiveKind Kind>
 __global__ void eval_loss_pass1_kernel(float const *scores, float const *labels,
                                        uint32_t n, double *partial)
@@ -1063,22 +1064,8 @@ __global__ void eval_loss_pass1_kernel(float const *scores, float const *labels,
     }
 }
 
-__global__ void eval_loss_pass2_kernel(double const *partial, uint32_t n_blocks,
-                                       double *out)
-{
-    if (threadIdx.x == 0 && blockIdx.x == 0)
-    {
-        double total = 0.0;
-        for (uint32_t b = 0; b < n_blocks; ++b)
-        {
-            total += partial[b];
-        }
-        *out = total;
-    }
-}
-
 // Runtime dispatch, gh_from_scores' shape. Returns the grid size so the
-// caller passes the same block count to the second pass.
+// caller knows how many block partials to fetch and sum on the host.
 inline uint32_t eval_loss_pass1(DeviceObjectiveKind kind, float const *scores,
                                 float const *labels, uint32_t n, double *partial)
 {
