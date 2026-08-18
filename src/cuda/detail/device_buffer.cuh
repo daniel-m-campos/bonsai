@@ -24,10 +24,24 @@ namespace bonsai
 namespace cuda_detail
 {
 
-// Nodes with fewer rows than this build on the CPU: the kernel launch +
-// synchronous copy-back round trip outweighs the histogram work itself
-// below roughly this size (knee measured on Jetson Orin Nano).
+// Nodes with fewer rows than this leave the tiled main kernel for the
+// direct-global small-node kernel: the main kernel's fixed per-block costs
+// outweigh the row visits below roughly this size (knee measured against the
+// pre-tiling layout; docs/architecture/10-cuda.md).
 inline constexpr size_t k_min_gpu_rows = 512;
+
+// BONSAI_MIN_GPU_ROWS overrides the small-node cutoff, so a threshold sweep
+// runs one binary. Read once; the default is the constant above.
+inline size_t min_gpu_rows()
+{
+    static size_t const value = []
+    {
+        char const *env = std::getenv("BONSAI_MIN_GPU_ROWS");
+        return env == nullptr ? k_min_gpu_rows
+                              : static_cast<size_t>(std::strtoull(env, nullptr, 10));
+    }();
+    return value;
+}
 
 // Default shared-memory histogram footprint cap (stride floats, 48 KiB
 // static budget). The engine raises it at runtime to the device's opt-in

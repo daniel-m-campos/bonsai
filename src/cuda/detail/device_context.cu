@@ -233,7 +233,7 @@ size_t CudaDeviceContext::LevelPipeline::stage_children(
     {
         uint32_t const offset = next_offsets[op.small_slot];
         uint32_t const count  = next_counts[op.small_slot];
-        if (count >= k_min_gpu_rows)
+        if (count >= min_gpu_rows())
         {
             row_offsets.host.push_back(offset);
             row_counts.host.push_back(count);
@@ -1339,9 +1339,9 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
     leaf.build_seg.sync(3);
     lap(prof.adv_stage_s);
 
-    // Same <512-row policy as the level plane: below the cutoff the shared
+    // Same small-node policy as the level plane: below the cutoff the shared
     // stage's fixed per-(node, feature) cost dominates the row visits.
-    if (small_count >= k_min_gpu_rows)
+    if (small_count >= min_gpu_rows())
     {
         auto const n_chunks =
             std::clamp<uint32_t>((small_count + 32767) / 32768, 1, 64);
@@ -1354,7 +1354,7 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
     data.dispatch_bins(
         [&](auto const *bins)
         {
-            if (small_count < k_min_gpu_rows)
+            if (small_count < min_gpu_rows())
             {
                 hist_small_kernel<<<dim3(1), dim3(128)>>>(
                     bins, lvl.gh_ordered.data(), lvl.rows.data(),
