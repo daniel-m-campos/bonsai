@@ -5,6 +5,7 @@
 // device cannot hold is refused with ConfigError, not moved to the host, so
 // the cases that used to assert host-fallback parity assert the error.
 
+#include "bonsai/booster.hpp"
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/cuda/grower.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
@@ -89,6 +90,42 @@ TEST_CASE("CudaDepthwiseGrower predictions match DepthwiseGrower", "[cuda][growe
     for (size_t r = 0; r < cpu.values.size(); ++r)
     {
         REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
+    }
+}
+
+// The eval plane's walk has no atomics (each thread owns its row), so device
+// against host is a rounding-level comparison, not the growers' 1e-4 one.
+TEST_CASE("CudaDepthwiseGrower device eval walk matches the host binned walk",
+          "[cuda][grower][eval]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
+
+    TreeConfig cfg;
+    cfg.max_depth        = 5;
+    cfg.min_data_in_leaf = 4;
+
+    CudaDepthwiseGrower grower(cfg);
+    auto grown = grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+
+    float const        lr = 0.1F;
+    std::vector<float> host_scores(ds.n_rows(), 0.25F);
+    std::vector<float> dev_scores = host_scores;
+
+    REQUIRE(grower.eval_begin(ds, dev_scores));
+    REQUIRE(grower.eval_accumulate(grown.tree, ds, lr, dev_scores));
+    grower.eval_end();
+
+    auto const sb = internal::split_bins(grown.tree, ds);
+    for (size_t r = 0; r < host_scores.size(); ++r)
+    {
+        host_scores[r] += lr * internal::value_binned(grown.tree, sb, [&](size_t f)
+                                                      { return ds.bin_at(f, r); });
+        REQUIRE_THAT(dev_scores[r], Catch::Matchers::WithinAbs(host_scores[r], 1e-6));
     }
 }
 
