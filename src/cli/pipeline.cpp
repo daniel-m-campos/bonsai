@@ -238,10 +238,10 @@ void route_last_round_binned(IBooster const &booster, Dataset const &bins,
 }
 
 bool route_last_round_resident(IBooster &booster, Dataset const &bins,
-                               floats_out scores)
+                               floats_out scores, std::optional<float> &loss)
 {
     detail::Phase<&detail::FitProfiler::eval_route_s> phase;
-    return booster.accumulate_last_round_resident(bins, scores);
+    return booster.accumulate_last_round_resident(bins, scores, loss);
 }
 
 float round_validation_loss(IBooster const &booster, std::span<float const> scores,
@@ -417,6 +417,7 @@ std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train
                 validation_bins = &*binned_here;
                 defer_binning   = false;
             }
+            std::optional<float> device_loss;
             if (i == 0 && cuda_grower && validation_bins != nullptr &&
                 std::getenv("BONSAI_HOST_EVAL") == nullptr)
             {
@@ -431,7 +432,7 @@ std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train
                 if (device_eval)
                 {
                     device_eval = route_last_round_resident(*booster, *validation_bins,
-                                                            es_scores);
+                                                            es_scores, device_loss);
                 }
                 if (!device_eval)
                 {
@@ -442,7 +443,10 @@ std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train
             {
                 route_last_round(*booster, valid.features.view(), es_scores);
             }
-            float const loss = round_validation_loss(*booster, es_scores, valid.labels);
+            float const loss =
+                device_loss.has_value()
+                    ? *device_loss
+                    : round_validation_loss(*booster, es_scores, valid.labels);
             if (track_eval)
             {
                 eval_history->get().push_back(loss);

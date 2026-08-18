@@ -866,7 +866,8 @@ template <HistogramEngine EngineT, NodeSplitFinder SplitterT>
 bool DepthwiseGrower<EngineT, SplitterT>::eval_accumulate(Tree const      &tree,
                                                           Dataset const   &valid,
                                                           float            lr,
-                                                          std::span<float> scores_out)
+                                                          std::span<float> scores_out,
+                                                          std::optional<float> &loss)
 {
     if constexpr (requires { engine_.eval_armed(); })
     {
@@ -874,7 +875,7 @@ bool DepthwiseGrower<EngineT, SplitterT>::eval_accumulate(Tree const      &tree,
         {
             return false;
         }
-        engine_.eval_accumulate(
+        loss = engine_.eval_accumulate(
             grower_detail::resident_node_table<typename EngineT::ResidentNode>(
                 tree.nodes(), valid),
             lr, scores_out);
@@ -889,7 +890,8 @@ bool DepthwiseGrower<EngineT, SplitterT>::eval_accumulate(Tree const      &tree,
 template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT>
 bool LeafwiseGrower<EngineT, SplitterT>::eval_accumulate(Tree const    &tree,
                                                          Dataset const &valid, float lr,
-                                                         std::span<float> scores_out)
+                                                         std::span<float> scores_out,
+                                                         std::optional<float> &loss)
 {
     if constexpr (requires { engine_.eval_armed(); })
     {
@@ -897,7 +899,7 @@ bool LeafwiseGrower<EngineT, SplitterT>::eval_accumulate(Tree const    &tree,
         {
             return false;
         }
-        engine_.eval_accumulate(
+        loss = engine_.eval_accumulate(
             grower_detail::resident_node_table<typename EngineT::ResidentNode>(
                 tree.nodes(), valid),
             lr, scores_out);

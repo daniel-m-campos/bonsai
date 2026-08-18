@@ -1015,6 +1015,96 @@ inline void gh_from_scores(DeviceObjectiveKind kind, bool weighted, float const 
     check(cudaGetLastError(), "gh_from_scores launch");
 }
 
+// Device validation loss: per-row loss mirroring src/objective.cpp's eval
+// formulas, reduced in the sum_gh two-pass shape (fixed grid, fixed in-block
+// order, single-block second pass, no atomics), so one double crosses the
+// bus per round instead of the whole score vector.
+template <DeviceObjectiveKind Kind>
+__global__ void eval_loss_pass1_kernel(float const *scores, float const *labels,
+                                       uint32_t n, double *partial)
+{
+    __shared__ double sl[256];
+    double            acc = 0.0;
+    for (uint32_t r = (blockIdx.x * blockDim.x) + threadIdx.x; r < n;
+         r += gridDim.x * blockDim.x)
+    {
+        float const s = scores[r];
+        float const y = labels[r];
+        if constexpr (Kind == DeviceObjectiveKind::mse)
+        {
+            double const d = static_cast<double>(s) - static_cast<double>(y);
+            acc += d * d;
+        }
+        else if constexpr (Kind == DeviceObjectiveKind::logloss)
+        {
+            float const ax = fabsf(s);
+            acc += fmaxf(0.0F, s) + log1pf(expf(-ax)) - (y * s);
+        }
+        else if constexpr (Kind == DeviceObjectiveKind::poisson)
+        {
+            float const f = fminf(fmaxf(s, -k_poisson_max_log), k_poisson_max_log);
+            acc += static_cast<double>(expf(f)) -
+                   (static_cast<double>(y) * static_cast<double>(f));
+        }
+    }
+    sl[threadIdx.x] = acc;
+    __syncthreads();
+    for (uint32_t s = blockDim.x / 2; s > 0; s >>= 1U)
+    {
+        if (threadIdx.x < s)
+        {
+            sl[threadIdx.x] += sl[threadIdx.x + s];
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0)
+    {
+        partial[blockIdx.x] = sl[0];
+    }
+}
+
+__global__ void eval_loss_pass2_kernel(double const *partial, uint32_t n_blocks,
+                                       double *out)
+{
+    if (threadIdx.x == 0 && blockIdx.x == 0)
+    {
+        double total = 0.0;
+        for (uint32_t b = 0; b < n_blocks; ++b)
+        {
+            total += partial[b];
+        }
+        *out = total;
+    }
+}
+
+// Runtime dispatch, gh_from_scores' shape. Returns the grid size so the
+// caller passes the same block count to the second pass.
+inline uint32_t eval_loss_pass1(DeviceObjectiveKind kind, float const *scores,
+                                float const *labels, uint32_t n, double *partial)
+{
+    dim3 const grid(std::clamp<uint32_t>(n / 256, 1, 1024));
+    dim3 const block(256);
+    switch (kind)
+    {
+    case DeviceObjectiveKind::mse:
+        eval_loss_pass1_kernel<DeviceObjectiveKind::mse>
+            <<<grid, block>>>(scores, labels, n, partial);
+        break;
+    case DeviceObjectiveKind::logloss:
+        eval_loss_pass1_kernel<DeviceObjectiveKind::logloss>
+            <<<grid, block>>>(scores, labels, n, partial);
+        break;
+    case DeviceObjectiveKind::poisson:
+        eval_loss_pass1_kernel<DeviceObjectiveKind::poisson>
+            <<<grid, block>>>(scores, labels, n, partial);
+        break;
+    case DeviceObjectiveKind::none:
+        break;
+    }
+    check(cudaGetLastError(), "eval loss pass1 launch");
+    return grid.x;
+}
+
 // Resident tree epilogue: walk the finished tree in bin space for every row
 // and fuse scores[r] += lr * leaf_value on device. The routing mirrors
 // routes_left in dataset.hpp (bin == last -> default_left, else bin <=

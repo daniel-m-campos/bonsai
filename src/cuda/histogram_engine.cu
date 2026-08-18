@@ -230,10 +230,10 @@ void CudaHistogramEngine::resident_end(std::span<float> scores_out)
     impl_->ctx.resident_end(scores_out);
 }
 
-bool CudaHistogramEngine::eval_begin(Dataset const         &valid,
+bool CudaHistogramEngine::eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
                                      std::span<float const> initial_scores)
 {
-    return impl_->ctx.eval_begin(valid, initial_scores);
+    return impl_->ctx.eval_begin(valid, kind, initial_scores);
 }
 
 bool CudaHistogramEngine::eval_armed() const
@@ -241,10 +241,11 @@ bool CudaHistogramEngine::eval_armed() const
     return impl_->ctx.eval_armed();
 }
 
-void CudaHistogramEngine::eval_accumulate(std::span<ResidentNode const> nodes, float lr,
-                                          std::span<float> scores_out)
+std::optional<float>
+CudaHistogramEngine::eval_accumulate(std::span<ResidentNode const> nodes, float lr,
+                                     std::span<float> scores_out)
 {
-    impl_->ctx.eval_accumulate(nodes, lr, scores_out);
+    return impl_->ctx.eval_accumulate(nodes, lr, scores_out);
 }
 
 void CudaHistogramEngine::eval_end()

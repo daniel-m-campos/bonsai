@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <numeric>
+#include <optional>
 #include <random>
 #include <span>
 #include <stdexcept>
@@ -133,8 +134,11 @@ class IBooster
     // Device validation seam. begin_resident_validation arms the grower's eval
     // plane with the binned validation rows and the seeded scores; false keeps
     // the host walk. accumulate_last_round_resident walks the newest tree on
-    // that plane and writes the updated scores back; false means the plane
-    // declined and the caller must run the host walk for this round.
+    // that plane; false means the plane declined and the caller must run the
+    // host walk for this round. When the objective has a device loss, the
+    // round's loss comes back through `loss` and the scores stay on the
+    // device; otherwise the updated scores come back through `scores` for the
+    // host loss pass.
     virtual bool begin_resident_validation(Dataset const & /*bins*/,
                                            std::span<float const> /*seed*/)
     {
@@ -142,7 +146,8 @@ class IBooster
     }
 
     virtual bool accumulate_last_round_resident(Dataset const & /*bins*/,
-                                                floats_out /*scores*/)
+                                                floats_out /*scores*/,
+                                                std::optional<float> & /*loss*/)
     {
         return false;
     }
@@ -827,14 +832,15 @@ class Booster final : public IBooster
                                    std::span<float const> seed) override
     {
         grower_.eval_end();
-        return grower_.eval_begin(bins, seed);
+        return grower_.eval_begin(bins, device_objective_kind<objective_type>, seed);
     }
 
-    bool accumulate_last_round_resident(Dataset const &bins, floats_out scores) override
+    bool accumulate_last_round_resident(Dataset const &bins, floats_out scores,
+                                        std::optional<float> &loss) override
     {
         assert(!trees_.empty());
         return grower_.eval_accumulate(trees_.back(), bins, config_.learning_rate,
-                                       {scores.data(), scores.size()});
+                                       {scores.data(), scores.size()}, loss);
     }
 
     void accumulate_last_round_binned(Dataset const &bins,

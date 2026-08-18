@@ -11,6 +11,7 @@
 #include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/grower.hpp"
+#include "bonsai/objective.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
 #include "test_grower_helpers.hpp"
@@ -25,6 +26,7 @@
 #include <cstddef>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <random>
 #include <set>
 #include <utility>
@@ -116,8 +118,10 @@ TEST_CASE("CudaDepthwiseGrower device eval walk matches the host binned walk",
     std::vector<float> host_scores(ds.n_rows(), 0.25F);
     std::vector<float> dev_scores = host_scores;
 
-    REQUIRE(grower.eval_begin(ds, dev_scores));
-    REQUIRE(grower.eval_accumulate(grown.tree, ds, lr, dev_scores));
+    std::optional<float> loss;
+    REQUIRE(grower.eval_begin(ds, DeviceObjectiveKind::none, dev_scores));
+    REQUIRE(grower.eval_accumulate(grown.tree, ds, lr, dev_scores, loss));
+    REQUIRE(!loss.has_value());
     grower.eval_end();
 
     auto const sb = internal::split_bins(grown.tree, ds);
@@ -127,6 +131,19 @@ TEST_CASE("CudaDepthwiseGrower device eval walk matches the host binned walk",
                                                       { return ds.bin_at(f, r); });
         REQUIRE_THAT(dev_scores[r], Catch::Matchers::WithinAbs(host_scores[r], 1e-6));
     }
+
+    // With a device-capable kind the loss reduces on device and the scores
+    // stay there; the value must match the host objective over the same
+    // walked scores.
+    std::vector<float> dev_scores2(ds.n_rows(), 0.25F);
+    REQUIRE(grower.eval_begin(ds, DeviceObjectiveKind::mse, dev_scores2));
+    std::optional<float> dev_loss;
+    REQUIRE(grower.eval_accumulate(grown.tree, ds, lr, dev_scores2, dev_loss));
+    grower.eval_end();
+    REQUIRE(dev_loss.has_value());
+    float const host_loss = MSEObjective::eval(
+        floats_view{host_scores.data(), host_scores.size()}, ds.labels());
+    REQUIRE_THAT(*dev_loss, Catch::Matchers::WithinAbs(host_loss, 1e-5));
 }
 
 // Twelve features: more than one bin tile at the shipping width, so a fit
