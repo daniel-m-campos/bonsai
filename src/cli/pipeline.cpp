@@ -421,6 +421,7 @@ std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train
             if (i == 0 && cuda_grower && validation_bins != nullptr &&
                 std::getenv("BONSAI_HOST_EVAL") == nullptr)
             {
+                detail::Phase<&detail::FitProfiler::eval_arm_s> phase;
                 device_eval = booster->begin_resident_validation(
                     *validation_bins, std::span<float const>{es_scores});
             }

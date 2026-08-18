@@ -132,7 +132,7 @@ struct FitProfiler : Profiler<FitProfiler>
     // the one-time pass the bin-space route is gated on (zero when the fit
     // routes raw floats), route = the new round's contribution into the
     // running margins, loss = the objective's metric over them.
-    double eval_bin_s = 0, eval_route_s = 0, eval_loss_s = 0;
+    double eval_bin_s = 0, eval_route_s = 0, eval_loss_s = 0, eval_arm_s = 0;
 
     static constexpr std::array fields = {
         std::pair{"objective", &FitProfiler::objective_s},
@@ -144,6 +144,7 @@ struct FitProfiler : Profiler<FitProfiler>
         std::pair{"eval-bin", &FitProfiler::eval_bin_s},
         std::pair{"eval-route", &FitProfiler::eval_route_s},
         std::pair{"eval-loss", &FitProfiler::eval_loss_s},
+        std::pair{"eval-arm", &FitProfiler::eval_arm_s},
     };
 };
 

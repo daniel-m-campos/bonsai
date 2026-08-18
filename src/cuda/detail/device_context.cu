@@ -1627,17 +1627,21 @@ bool CudaDeviceContext::eval_begin(Dataset const &valid, DeviceObjectiveKind kin
     size_t const n_feats = valid.n_features();
     // Rearrange the host bins into the device plane's tile order once; the
     // per-round walk then reads the same addressing as the training plane.
+    // Parallel over rows: serial, this pass costs more than the walks it
+    // enables (0.5s per 134M cells measured on an EPYC draw).
     std::vector<uint8_t> tiled(n_rows * n_feats);
-    for (size_t r = 0; r < n_rows; ++r)
-    {
-        for (size_t f = 0; f < n_feats; ++f)
+    parallel::for_each_index(
+        n_rows,
+        [&](size_t r)
         {
-            tiled[tiled_cell(static_cast<uint32_t>(f), static_cast<uint32_t>(r),
-                             static_cast<uint32_t>(n_rows),
-                             static_cast<uint32_t>(n_feats))] =
-                static_cast<uint8_t>(valid.bin_at(f, r));
-        }
-    }
+            for (size_t f = 0; f < n_feats; ++f)
+            {
+                tiled[tiled_cell(static_cast<uint32_t>(f), static_cast<uint32_t>(r),
+                                 static_cast<uint32_t>(n_rows),
+                                 static_cast<uint32_t>(n_feats))] =
+                    static_cast<uint8_t>(valid.bin_at(f, r));
+            }
+        });
     std::vector<uint32_t> nb(n_feats);
     for (size_t f = 0; f < n_feats; ++f)
     {
