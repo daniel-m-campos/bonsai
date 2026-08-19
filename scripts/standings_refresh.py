@@ -192,7 +192,8 @@ def measure(args: argparse.Namespace) -> int:
     -------
     int
         0 on success, 1 if the requested CPU rental is too small for the
-        specs, ``RUNPOD_API_KEY`` is not set, or a pod's gate failed an axis.
+        specs, ``RUNPOD_API_KEY`` is not set, a pod's gate failed an axis,
+        or a pod finished without delivering rows for a requested axis.
     """
     axes = [a.strip() for a in args.axes.split(",") if a.strip()]
     if args.only_stale:
@@ -256,6 +257,18 @@ def measure(args: argparse.Namespace) -> int:
         print("ERROR: a pod's gate failed an axis; its rows were renamed "
               "QUOTAFAIL-* and must not be superseded:\n"
               + quota_fail.read_text().rstrip(), file=sys.stderr)
+    # DONE only means the pod script ran to its last line; an axis its RAM
+    # guard skipped ends there with no rows and no failure count, so the
+    # delivery is verified file by file rather than trusted from the marker.
+    missing = [a for a in axes
+               if not any(out_dir.glob(f"{a}-*.jsonl"))
+               and not any(out_dir.glob(f"QUOTAFAIL-{a}-*.jsonl"))]
+    if missing:
+        print("ERROR: the pod reported done but delivered no rows for "
+              f"{', '.join(missing)}; a pod-side SKIP is not a measurement. "
+              "Re-run these axes on a host that can take them.",
+              file=sys.stderr)
+    if quota_fail.exists() or missing:
         return 1
     print(f"results in {out_dir}/; next:\n"
           f"  python3 scripts/standings_refresh.py supersede "
