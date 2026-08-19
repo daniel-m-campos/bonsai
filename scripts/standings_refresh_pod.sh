@@ -118,9 +118,10 @@ if [ "$PLANE" = gpu ]; then
     done
 fi
 
-# The extreme axis generates a 2^36-cell float32 input, ~275GB resident. A
-# pod without the RAM must say so instead of dying halfway through a
-# three-hour sweep.
+# The extreme axis input is 2^34 f32 cells (~64GiB); what sizes this floor
+# is catboost, whose ingest copies peak near 196GB host RSS on that input,
+# measured. A pod without the headroom must say so instead of dying halfway
+# through a three-hour sweep.
 EXTREME_RAM_GB=320
 
 # The RAM this container may use, in whole GB. runlog.usable_ram_gb() is the
@@ -180,7 +181,7 @@ run_axis() {
         gpu-extreme)
             ram_gb=$(container_ram_gb)
             if [ "$ram_gb" -lt "$EXTREME_RAM_GB" ]; then
-                echo "SKIP gpu-extreme: this container may use ${ram_gb}GB RAM, the 2^36-cell f32 input needs >= ${EXTREME_RAM_GB}GB"
+                echo "SKIP gpu-extreme: this container may use ${ram_gb}GB RAM, below the ${EXTREME_RAM_GB}GB floor (catboost ingest peaks near 196GB host on the 2^34-cell input)"
                 return 0
             fi
             run_spec gpu-extreme ;;
