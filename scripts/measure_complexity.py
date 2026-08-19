@@ -1,5 +1,5 @@
 """Measure bonsai's own tree: size, cyclomatic complexity, and surface
-counts, written to benchmarks/results/code-metrics-2026-07.jsonl (the code
+counts, written to benchmarks/results/code-metrics-<YYYY-MM>.jsonl (the code
 division of the results ledger; rules in docs/method/benchmark-protocol.md).
 
     make python                              # extension for the API count
@@ -38,7 +38,7 @@ import sys
 from typing import Final
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
-OUT = REPO / "benchmarks" / "results" / "code-metrics-2026-07.jsonl"
+OUT_DIR = REPO / "benchmarks" / "results"
 
 LIZARD_PIN = "lizard@1.23.0"
 CODE_EXTS = (".hpp", ".cpp", ".cu", ".cuh", ".py")
@@ -242,6 +242,13 @@ def runtime_deps() -> dict:
 # ---- assembly ----------------------------------------------------------------
 
 
+def out_path() -> pathlib.Path:
+    """The dated output file, month taken from HEAD's commit date like the
+    meta row's date field, so the name is a pure function of the tree too."""
+    ym = git("show", "-s", "--format=%cs", "HEAD")[:7]
+    return OUT_DIR / f"code-metrics-{ym}.jsonl"
+
+
 def main() -> int:
     version = run_lizard([], "--version").strip()
     planes = plane_files()
@@ -292,8 +299,9 @@ def main() -> int:
         "python_public_api": python_public_api(), **runtime_deps(),
     })
 
-    OUT.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
-    print(f"wrote {OUT.relative_to(REPO)} ({len(rows)} rows, "
+    out = out_path()
+    out.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
+    print(f"wrote {out.relative_to(REPO)} ({len(rows)} rows, "
           f"{len(all_files)} files, lizard {version})")
     return 0
 
