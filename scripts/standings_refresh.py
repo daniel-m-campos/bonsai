@@ -381,9 +381,11 @@ def supersede(args: argparse.Namespace) -> int:
     subprocess.run(["git", "add", "-A", "benchmarks/", "docs/method/",
                     "README.md"], check=True, cwd=REPO)
     axes_label = ",".join(axes)
+    title = _refresh_title(axes)
     subprocess.run(["git", "commit", "-m",
-                    f"bench(standings): refresh {axes_label}\n\n"
-                    "Same-pod refresh via scripts/standings_refresh.py "
+                    f"{title}\n\n"
+                    f"Axes: {axes_label}. Same-pod refresh via "
+                    "scripts/standings_refresh.py "
                     "(decision 96); superseded files deleted, registry "
                     "updated, ledger and README regenerated." + hosts_note],
                    check=True, cwd=REPO)
@@ -391,7 +393,8 @@ def supersede(args: argparse.Namespace) -> int:
         print(f"committed on {branch}; push and open the PR when ready")
         return 0
     subprocess.run(["git", "push", "-u", "origin", branch], check=True, cwd=REPO)
-    body = (f"Standings refresh via `scripts/standings_refresh.py` "
+    body = (f"Standings refresh of {axes_label} via "
+            f"`scripts/standings_refresh.py` "
             f"(decision 96).{hosts_note}\n\nIngest/train parity (bonsai's "
             f"fused call vs the two-step Dataset form, same pod, interleaved, "
             f"+-{PARITY_BAND_PCT}% band):\n\n{parity}\n\n"
@@ -401,8 +404,7 @@ def supersede(args: argparse.Namespace) -> int:
             f"`Standings:`-tagged decision entry before merge; the docs-check "
             f"gate enforces it.")
     subprocess.run(["gh", "pr", "create", "--base", "main", "--title",
-                    f"bench(standings): refresh {axes_label}", "--body", body],
-                   check=True, cwd=REPO)
+                    title, "--body", body], check=True, cwd=REPO)
     return 0
 
 
@@ -415,6 +417,19 @@ def stale_axes() -> set[str]:
 
 
 # Private Helpers ==================================================================================
+
+def _refresh_title(axes: list[str]) -> str:
+    """The commit and PR title; the axis list appears only while it fits.
+
+    The commit hook hard-caps titles at 72 characters, which a full
+    six-axis list exceeds, so past the 50-character target the title
+    carries the count and the body carries the list.
+    """
+    title = f"bench(standings): refresh {','.join(axes)}"
+    if len(title) <= 50:
+        return title
+    return f"bench(standings): refresh {len(axes)} axes"
+
 
 def _dry_run_datacenters(key: str | None, sessions: list[tuple[str, list[str]]]):
     """Print the datacenters a GPU create would try, renting nothing.
