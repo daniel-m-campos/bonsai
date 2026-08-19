@@ -99,7 +99,7 @@
     "refreshed_for": "1.7.0",
     "as_of_decision": 92,
     "sha_partial": true,
-    "hash_set": "900f8e153ac68679",
+    "hash_set": "e504879c3371c857",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
@@ -107,21 +107,21 @@
     },
     "carried_forward": {
       "measured_at": "f2202a4",
-      "stamped_at": "041bdf3",
-      "reason": "eval-path refactor only (PR 376): host models byte-identical, quality rows unaffected",
+      "stamped_at": "3afb498",
+      "reason": "eval-only releases since the 2026-08-14 measurement (bin-space eval route, prebinned eval set, device-resident validation eval): training paths untouched, host models byte-identical at the measured commit and the release commit",
       "evidence": {
         "kind": "model-hash",
-        "before": "eaccfd9ee522db69",
-        "after": "eaccfd9ee522db69"
+        "before": "55c6fe308852d9bb",
+        "after": "55c6fe308852d9bb"
       }
     }
   },
   "code": {
     "file": "code-metrics-2026-08.jsonl",
-    "sha": "041bdf32a3ae8e9563fb1c83cfc819953e7ed8b1",
+    "sha": "3afb498684ae33c44b571d7b9c3b31b012f3c0b9",
     "host": null,
     "date": null,
-    "refreshed_for": "1.8.0",
+    "refreshed_for": "1.9.0",
     "as_of_decision": 92,
     "sha_partial": true
   }
