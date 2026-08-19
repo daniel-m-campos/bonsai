@@ -370,7 +370,7 @@ jobs:
   validate-cuda:
     needs: [runtime-image-candidate]
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       RUNPOD_KEY: ${{ secrets.RUNPOD_API_KEY }}
       POD_NAME: bonsai-wheel-gate-${{ github.run_id }}
@@ -401,14 +401,16 @@ jobs:
                    \"ports\": [\"22/tcp\"], \"env\": {\"PUBLIC_KEY\": \"$PUB\"}}" \
               | jq -r .id
           }
-          # Two attempts: pods occasionally land without a public IP or never
-          # start (runbook failure table); each attempt polls up to 6 minutes
-          # on the GraphQL runtime, the only truthful liveness signal.
-          for attempt in 1 2; do
+          # Five attempts, because capacity churns on ~10-minute cycles: two
+          # quick tries can both land in the same empty window, so failed
+          # creates back off 150s to spread the attempts across a full cycle.
+          # Each successful create polls up to 6 minutes on the GraphQL
+          # runtime, the only truthful liveness signal.
+          for attempt in 1 2 3 4 5; do
             POD="$(create || true)"
             if [ -z "${POD}" ] || [ "${POD}" = "null" ]; then
               echo "attempt ${attempt}: pod create call failed"
-              sleep 15
+              sleep 150
               continue
             fi
             echo "attempt ${attempt}: pod ${POD}"
@@ -430,7 +432,7 @@ jobs:
             curl -s -X DELETE "https://rest.runpod.io/v1/pods/$POD" \
               -H "Authorization: Bearer $RUNPOD_KEY" || true
           done
-          echo "::error::no usable pod after 2 attempts"
+          echo "::error::no usable pod after 5 attempts"
           exit 1
 
       - name: On-pod validation
