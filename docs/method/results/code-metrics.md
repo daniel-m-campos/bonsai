@@ -6,13 +6,13 @@ Self-measurement of the bonsai tree, no comparison: line counts and lizard compl
 
 | plane | files | LOC | NLOC | functions | mean CCN | max CCN |
 |---|---|---|---|---|---|---|
-| core_headers | 54 | 5564 | 4004 | 248 | 1.95 | 15 |
-| engine_impl | 27 | 6631 | 5243 | 243 | 3.11 | 29 |
-| cuda_plane | 12 | 4872 | 3770 | 181 | 2.98 | 30 |
-| bindings_cli | 20 | 4228 | 2877 | 158 | 2.69 | 41 |
-| bench_tooling | 38 | 7704 | 4693 | 302 | 4.44 | 26 |
-| tests | 58 | 12861 | 9785 | 633 | 1.68 | 12 |
-| all | 209 | 41860 | 30372 | 1765 | - | - |
+| core_headers | 54 | 5656 | 4070 | 256 | 1.93 | 15 |
+| engine_impl | 27 | 6741 | 5334 | 249 | 3.07 | 29 |
+| cuda_plane | 12 | 5138 | 3982 | 190 | 2.99 | 30 |
+| bindings_cli | 20 | 4271 | 2906 | 159 | 2.73 | 49 |
+| bench_tooling | 38 | 7787 | 4728 | 304 | 4.45 | 26 |
+| tests | 58 | 12928 | 9834 | 636 | 1.68 | 12 |
+| all | 209 | 42521 | 30854 | 1794 | - | - |
 
 The five highest-CCN functions across `core_headers` + `engine_impl`, published by name; a curated offender list would be marketing.
 
@@ -26,4 +26,4 @@ The five highest-CCN functions across `core_headers` + `engine_impl`, published 
 
 Surface counts: 43 config parameters, 126 registered dispatch combinations (7 objectives x 6 growers x 3 samplers), and 10 public Python names. Dependencies: 1 Python runtime dependency (numpy) and 3 compiled-in C++ libraries (CLI11, nlohmann_json, tomlplusplus), the rule stated in the protocol.
 
-*Source: [`code-metrics-2026-08.jsonl`](../../../benchmarks/results/code-metrics-2026-08.jsonl). lizard 1.23.0 (`uvx lizard@1.23.0`) at `041bdf32a3ae`, 2026-08-15; regenerate with [scripts/measure_complexity.py](../../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).*
+*Source: [`code-metrics-2026-08.jsonl`](../../../benchmarks/results/code-metrics-2026-08.jsonl). lizard 1.23.0 (`uvx lizard@1.23.0`) at `3afb498684ae`, 2026-08-19; regenerate with [scripts/measure_complexity.py](../../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).*
