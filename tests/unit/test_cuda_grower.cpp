@@ -95,10 +95,11 @@ TEST_CASE("CudaDepthwiseGrower predictions match DepthwiseGrower", "[cuda][growe
     }
 }
 
-// The eval plane's walk has no atomics (each thread owns its row), so device
-// against host is a rounding-level comparison, not the growers' 1e-4 one.
-TEST_CASE("CudaDepthwiseGrower device eval walk matches the host binned walk",
-          "[cuda][grower][eval]")
+// Shared body for the device eval-plane parity cases: grow on the device,
+// then require the device walk to match the host binned walk per row at
+// rounding level (the walk has no atomics, so 1e-6, not the growers' 1e-4),
+// and the device mse loss to match the host objective over the same scores.
+template <typename GrowerT> void check_device_eval_parity(uint8_t max_depth)
 {
     if (!cuda_available())
     {
@@ -108,11 +109,11 @@ TEST_CASE("CudaDepthwiseGrower device eval walk matches the host binned walk",
     auto const &ds       = scenario.built.ds;
 
     TreeConfig cfg;
-    cfg.max_depth        = 5;
+    cfg.max_depth        = max_depth;
     cfg.min_data_in_leaf = 4;
 
-    CudaDepthwiseGrower grower(cfg);
-    auto grown = grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    GrowerT grower(cfg);
+    auto    grown = grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
 
     float const        lr = 0.1F;
     std::vector<float> host_scores(ds.n_rows(), 0.25F);
@@ -144,50 +145,18 @@ TEST_CASE("CudaDepthwiseGrower device eval walk matches the host binned walk",
     REQUIRE_THAT(*dev_loss, Catch::Matchers::WithinAbs(host_loss, 1e-5));
 }
 
+TEST_CASE("CudaDepthwiseGrower device eval walk matches the host binned walk",
+          "[cuda][grower][eval]")
+{
+    check_device_eval_parity<CudaDepthwiseGrower>(5);
+}
+
 // The oblivious flatten synthesizes the perfect-tree numbering; the same
-// rounding-level bound applies, against the host's oblivious binned walk.
+// bound applies against the host's oblivious binned walk.
 TEST_CASE("CudaObliviousGrower device eval walk matches the host binned walk",
           "[cuda][grower][eval]")
 {
-    if (!cuda_available())
-    {
-        SKIP("no usable CUDA device");
-    }
-    auto        scenario = random_scenario();
-    auto const &ds       = scenario.built.ds;
-
-    TreeConfig cfg;
-    cfg.max_depth        = 4;
-    cfg.min_data_in_leaf = 4;
-
-    CudaObliviousGrower grower(cfg);
-    auto grown = grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
-
-    float const        lr = 0.1F;
-    std::vector<float> host_scores(ds.n_rows(), 0.25F);
-    std::vector<float> dev_scores = host_scores;
-
-    std::optional<float> loss;
-    REQUIRE(grower.eval_begin(ds, DeviceObjectiveKind::none, dev_scores));
-    REQUIRE(grower.eval_accumulate(grown.tree, ds, lr, dev_scores, loss));
-    REQUIRE(!loss.has_value());
-
-    auto const sb = internal::split_bins(grown.tree, ds);
-    for (size_t r = 0; r < host_scores.size(); ++r)
-    {
-        host_scores[r] += lr * internal::value_binned(grown.tree, sb, [&](size_t f)
-                                                      { return ds.bin_at(f, r); });
-        REQUIRE_THAT(dev_scores[r], Catch::Matchers::WithinAbs(host_scores[r], 1e-6));
-    }
-
-    std::vector<float> dev_scores2(ds.n_rows(), 0.25F);
-    REQUIRE(grower.eval_begin(ds, DeviceObjectiveKind::mse, dev_scores2));
-    std::optional<float> dev_loss;
-    REQUIRE(grower.eval_accumulate(grown.tree, ds, lr, dev_scores2, dev_loss));
-    REQUIRE(dev_loss.has_value());
-    float const host_loss = MSEObjective::eval(
-        floats_view{host_scores.data(), host_scores.size()}, ds.labels());
-    REQUIRE_THAT(*dev_loss, Catch::Matchers::WithinAbs(host_loss, 1e-5));
+    check_device_eval_parity<CudaObliviousGrower>(4);
 }
 
 // Twelve features: more than one bin tile at the shipping width, so a fit

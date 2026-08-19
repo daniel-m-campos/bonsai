@@ -330,39 +330,20 @@ class LevelStep<EngineT, SplitterT>
     {
         if (engine_.resident_armed())
         {
-            // Synthesize the perfect-tree node numbering (children 2i+1 / 2i+2)
-            // from the per-level splits so the one device route+add kernel
-            // serves both tree shapes; leaves 2^D-1 .. hold leaf_table in
-            // left-to-right order (the oblivious index is exactly that order).
-            size_t const depth      = level_splits.size();
-            size_t const n_internal = (size_t{1} << depth) - 1;
-            size_t const n_leaves   = size_t{1} << depth;
-            std::vector<typename EngineT::ResidentNode> table(n_internal + n_leaves);
-            for (size_t i = 0; i < n_internal; ++i)
-            {
-                size_t lvl = 0;
-                size_t cap = 1;
-                size_t off = i;
-                while (off >= cap)
-                {
-                    off -= cap;
-                    cap <<= 1U;
-                    ++lvl;
-                }
-                typename EngineT::ResidentNode &rn = table[i];
-                rn.feature_id                      = level_splits[lvl].feature_id;
-                rn.split_bin                       = level_bins[lvl];
-                rn.default_left                    = level_splits[lvl].default_left;
-                rn.left  = static_cast<node_id_t>((2 * i) + 1);
-                rn.right = static_cast<node_id_t>((2 * i) + 2);
-            }
-            for (size_t j = 0; j < n_leaves; ++j)
-            {
-                typename EngineT::ResidentNode &rn = table[n_internal + j];
-                rn.is_leaf                         = true;
-                rn.value                           = leaf_table[j];
-            }
-            engine_.resident_finalize(table);
+            // The perfect-tree numbering (grower_detail::perfect_tree_table)
+            // lets the one device route+add kernel serve both tree shapes;
+            // this path's per-level bins are already computed, so its split
+            // accessor just indexes.
+            engine_.resident_finalize(
+                grower_detail::perfect_tree_table<typename EngineT::ResidentNode>(
+                    level_splits.size(),
+                    [&](size_t lvl)
+                    {
+                        return grower_detail::LevelSplitBins{
+                            level_splits[lvl].feature_id, level_bins[lvl],
+                            level_splits[lvl].default_left};
+                    },
+                    leaf_table));
             return;
         }
         std::vector<typename EngineT::LeafStamp> stamps;
