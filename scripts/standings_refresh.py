@@ -81,7 +81,11 @@ REST = "https://rest.runpod.io/v1"
 CATALOG = "https://api.runpod.io/v2/catalog/gpus"
 # cuda12.8: the GPU below is sm_120, past 12.4's --offload-arch=native reach.
 IMAGE = "ghcr.io/daniel-m-campos/bonsai-ci:cuda12.8"
-GPU = "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+# The create ladder, tried in order: the Workstation Edition is the same
+# silicon (runbook), rented only once no Server-Edition instance exists
+# anywhere. The rows tag themselves from nvidia-smi, never from this list.
+GPUS = ("NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "NVIDIA RTX PRO 6000 Blackwell Workstation Edition")
 
 # Never rented, whatever it reports in stock: excluded by policy, not supply.
 BANNED_DATACENTERS = ("EUR-IS-2",)
@@ -159,6 +163,9 @@ def main() -> int:
     m.add_argument("--cpu-vcpu", type=int, default=CPU_VCPU,
                    help="vCPUs to buy when --cpu-plane-host is cpupod; must "
                         "be at least one per thread the specs claim")
+    m.add_argument("--gpu-type", default="",
+                   help="rent exactly this GPU card instead of walking the "
+                        "Server-then-Workstation Edition ladder")
     m.add_argument("--dry-run", action="store_true",
                    help="print the rental plan, the sizing arithmetic, and "
                         "the datacenters the GPU is in stock in, then exit "
@@ -235,8 +242,9 @@ def measure(args: argparse.Namespace) -> int:
                       file=sys.stderr)
                 return 1
     key = os.environ.get("RUNPOD_API_KEY")
+    gpus = (args.gpu_type,) if args.gpu_type else GPUS
     if args.dry_run:
-        _dry_run_datacenters(key, sessions)
+        _dry_run_datacenters(key, sessions, gpus)
         print("--dry-run: nothing rented")
         return 0
     if not key:
@@ -251,7 +259,7 @@ def measure(args: argparse.Namespace) -> int:
     pubkey = (pathlib.Path.home() / ".ssh" / "id_ed25519.pub").read_text().strip()
     for plane, session_axes in sessions:
         _run_session(key, args, plane=plane, axes=session_axes,
-                     out_dir=out_dir, sha=sha, pubkey=pubkey)
+                     out_dir=out_dir, sha=sha, pubkey=pubkey, gpus=gpus)
     quota_fail = out_dir / QUOTA_FAIL
     if quota_fail.exists():
         print("ERROR: a pod's gate failed an axis; its rows were renamed "
@@ -444,8 +452,9 @@ def _refresh_title(axes: list[str]) -> str:
     return f"bench(standings): refresh {len(axes)} axes"
 
 
-def _dry_run_datacenters(key: str | None, sessions: list[tuple[str, list[str]]]):
-    """Print the datacenters a GPU create would try, renting nothing.
+def _dry_run_datacenters(key: str | None, sessions: list[tuple[str, list[str]]],
+                         gpus: tuple[str, ...]):
+    """Print the datacenters each GPU create would try, renting nothing.
 
     This is the only way to exercise the stock reading without buying a
     pod, so it hits the live catalog rather than reporting a plan.
@@ -455,9 +464,10 @@ def _dry_run_datacenters(key: str | None, sessions: list[tuple[str, list[str]]])
     if not key:
         print("--dry-run: RUNPOD_API_KEY unset, skipping the stock reading")
         return
-    stocked = stocked_datacenters(GPU, key)
-    print(f"gpu datacenters in stock, best first: "
-          f"{', '.join(stocked) or 'none; the create would go unpinned'}")
+    for gpu in gpus:
+        stocked = stocked_datacenters(gpu, key)
+        print(f"{gpu}: in stock, best first: "
+              f"{', '.join(stocked) or 'none; the create would go unpinned'}")
 
 
 def _row_host(path: pathlib.Path) -> str:
@@ -501,14 +511,15 @@ def _copy_parity(path: pathlib.Path, axis_file: str | None) -> str | None:
 
 def _run_session(key: str, args: argparse.Namespace, *, plane: str,
                  axes: list[str], out_dir: pathlib.Path, sha: str,
-                 pubkey: str):
+                 pubkey: str, gpus: tuple[str, ...]):
     """One pod, one plane: create, launch the on-pod script, poll, tear down.
 
     Both planes write into the same results directory. Their file names do
     not collide (one dated file per axis), and the GPU session owns the
     parity and A/B rows, which are cuda measurements the CPU pod skips.
     """
-    pod_id = _create_pod(key, pubkey, plane=plane, vcpu=args.cpu_vcpu)
+    pod_id = _create_pod(key, pubkey, plane=plane, vcpu=args.cpu_vcpu,
+                         gpus=gpus)
     print(f"{plane} pod {pod_id} created for {', '.join(axes)}; waiting for ssh")
     # No HOST_TAG on either plane: the driver knows what it asked for, the
     # pod knows what it got, and naming a row after the request is how a
@@ -556,7 +567,8 @@ def _api(url: str, key: str, payload: dict | None = None,
     return json.loads(body) if body.strip() else {}
 
 
-def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int) -> str:
+def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int,
+                gpus: tuple[str, ...]) -> str:
     """Create a standings pod for one plane, with the mandated PUBLIC_KEY env.
 
     A GPU pod is bought by device, and its CPU share is whatever the host
@@ -564,8 +576,10 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int) -> str:
     bought by vCPU, so its ceiling is a line on the invoice; that is the
     ``--cpu-plane-host cpupod`` path, not the host of record.
 
-    The GPU create is tried once per stocked datacenter. The CPU create is
-    unpinned: a cpu flavor is not a device with a per-region stock reading.
+    The GPU create walks the cards in ``gpus`` in order, one create per
+    stocked datacenter then unpinned, so a later card is tried only once
+    the one before it is exhausted everywhere. The CPU create is unpinned:
+    a cpu flavor is not a device with a per-region stock reading.
     """
     name = f"bonsai-standings-{plane}-{time.strftime('%Y%m%d-%H%M')}"
     body = {"name": name, "imageName": IMAGE, "cloudType": "SECURE",
@@ -575,16 +589,21 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int) -> str:
                  "vcpuCount": vcpu, "containerDiskInGb": CPU_DISK_GB}
         bodies = [body]
     else:
-        body |= {"gpuTypeIds": [GPU], "gpuCount": 1,
-                 "containerDiskInGb": GPU_DISK_GB}
         # One datacenter per attempt: a multi-entry dataCenterIds list can
-        # 400 on the create schema. The unpinned body stays last so an
-        # empty or failed stock reading is never worse than not pinning.
-        bodies = [body | {"dataCenterIds": [dc]}
-                  for dc in stocked_datacenters(GPU, key)] + [body]
+        # 400 on the create schema. Per card, the unpinned body stays last
+        # so an empty or failed stock reading is never worse than not
+        # pinning.
+        bodies = []
+        for gpu in gpus:
+            card = body | {"gpuTypeIds": [gpu], "gpuCount": 1,
+                           "containerDiskInGb": GPU_DISK_GB}
+            bodies += [card | {"dataCenterIds": [dc]}
+                       for dc in stocked_datacenters(gpu, key)]
+            bodies.append(card)
     for attempt in (1, 2):
         for candidate in bodies:
             where = ",".join(candidate.get("dataCenterIds", ["unpinned"]))
+            hardware = (candidate.get("gpuTypeIds") or [CPU_FLAVOR])[0]
             try:
                 out = _api(f"{REST}/pods", key, candidate)
                 if out.get("id"):
@@ -593,8 +612,8 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int) -> str:
                 # 500 is that datacenter out of instances; 400 is a
                 # datacenter the stock reading lists but the create
                 # schema's enum rejects (US-MO-2 and US-NC-2 were). Both
-                # mean try the next datacenter, neither is fatal.
-                print(f"create attempt {attempt} ({where}): {e}",
+                # mean try the next candidate, neither is fatal.
+                print(f"create attempt {attempt} ({hardware}, {where}): {e}",
                       file=sys.stderr)
         time.sleep(15)
     raise SystemExit(f"no usable {plane} pod after 2 attempts")
