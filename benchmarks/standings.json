@@ -2,103 +2,93 @@
   "_": "The standings registry, v2 (results-lifecycle policy, decision 92; scenario redesign, decision 103). One entry per published perf/quality axis: the current-standings file (null until the axis has been measured), the single sha its rows were measured at, the release it was refreshed for, and `plane` (cpu or gpu), the source set whose digest decides whether the axis is still current. Every axis also carries hash_set (its plane's digest at refresh time) and refs (reference-library versions measured against), which let scripts/check_standings.py's release gate skip a refresh when neither has moved, and let `--stale` tell the refresh driver which axes a session must actually measure. Gates: scripts/check_standings.py; supersession is in place, git history is the archive.",
   "gpu-tall": {
     "file": "gpu-tall-2026-08.jsonl",
-    "sha": "c266f26",
-    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-08-14",
+    "sha": "bdc2345",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition",
+    "date": "2026-08-19",
     "plane": "gpu",
-    "refreshed_for": "1.8.0",
+    "refreshed_for": "1.9.0",
     "as_of_decision": 104,
     "companion": "parity-2026-08.jsonl",
-    "hash_set": "132360938c3f1eab",
+    "hash_set": "e504879c3371c857",
     "refs": {
-      "xgboost": "3.3.0",
+      "xgboost": "3.2.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
     }
   },
   "gpu-wide": {
     "file": "gpu-wide-2026-08.jsonl",
-    "sha": "c266f26",
-    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-08-14",
+    "sha": "bdc2345",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition",
+    "date": "2026-08-19",
     "plane": "gpu",
-    "refreshed_for": "1.8.0",
+    "refreshed_for": "1.9.0",
     "as_of_decision": 104,
-    "hash_set": "132360938c3f1eab",
+    "hash_set": "e504879c3371c857",
     "refs": {
-      "xgboost": "3.3.0",
+      "xgboost": "3.2.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
     }
   },
   "gpu-extreme": {
     "file": "gpu-extreme-2026-08.jsonl",
-    "sha": "c266f26",
-    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-08-14",
+    "sha": "bdc2345",
+    "host": "workbox",
+    "date": "2026-08-19",
     "plane": "gpu",
-    "refreshed_for": "1.8.0",
+    "refreshed_for": "1.9.0",
     "as_of_decision": 104,
-    "hash_set": "132360938c3f1eab",
+    "hash_set": "e504879c3371c857",
     "refs": {
-      "xgboost": "3.3.0",
+      "xgboost": "3.2.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
     }
   },
   "cpu-tall": {
     "file": "cpu-tall-2026-08.jsonl",
-    "sha": "f2202a4",
-    "host": "pod-NVIDIA-L40S",
-    "date": "2026-08-13",
+    "sha": "bdc2345",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition",
+    "date": "2026-08-19",
     "plane": "cpu",
-    "refreshed_for": "1.7.0",
+    "refreshed_for": "1.9.0",
     "as_of_decision": 104,
-    "hash_set": "aa1b3f32c26381b6",
+    "hash_set": "d8a10899bcce5ac3",
     "refs": {
-      "xgboost": "3.3.0",
+      "xgboost": "3.2.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
     }
   },
   "cpu-wide": {
     "file": "cpu-wide-2026-08.jsonl",
-    "sha": "f2202a4",
-    "host": "pod-NVIDIA-L40S",
-    "date": "2026-08-13",
+    "sha": "bdc2345",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition",
+    "date": "2026-08-19",
     "plane": "cpu",
-    "refreshed_for": "1.7.0",
+    "refreshed_for": "1.9.0",
     "as_of_decision": 104,
-    "hash_set": "aa1b3f32c26381b6",
+    "hash_set": "d8a10899bcce5ac3",
     "refs": {
-      "xgboost": "3.3.0",
+      "xgboost": "3.2.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
     }
   },
   "gpu-early-stop": {
     "file": "gpu-early-stop-2026-08.jsonl",
-    "sha": "c266f26",
-    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-08-14",
+    "sha": "bdc2345",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition",
+    "date": "2026-08-19",
     "plane": "gpu",
-    "refreshed_for": "1.8.0",
+    "refreshed_for": "1.9.0",
     "as_of_decision": 104,
-    "hash_set": "900f8e153ac68679",
+    "hash_set": "e504879c3371c857",
     "refs": {
-      "xgboost": "3.3.0",
+      "xgboost": "3.2.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
-    },
-    "carried_forward": {
-      "measured_at": "c266f26",
-      "stamped_at": "041bdf3",
-      "reason": "eval-path refactor only (PR 376): src/cuda untouched, all 12 host model hashes byte-identical, per-round metric traces byte-equal across 96 fixtures, same-pod A/B measured eval and stop arms flat",
-      "evidence": {
-        "kind": "model-hash",
-        "before": "eaccfd9ee522db69",
-        "after": "eaccfd9ee522db69"
-      }
     }
   },
   "quality-grinsztajn": {
