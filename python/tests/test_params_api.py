@@ -83,6 +83,33 @@ def test_params_repr_shows_only_set_fields():
     assert repr(Params(tree=Tree(max_depth=4))) == "Params(tree=Tree(max_depth=4))"
 
 
+def test_params_from_toml_carries_only_stated_keys():
+    """from_toml is a sparse overrides object: only the file's keys, typed,
+    strict on unknowns — the config= layering, now composable with |."""
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+        f.write("[tree]\nmax_depth = 4\nlambda_l2 = 0.5\n[booster]\nn_iters = 9\n")
+        path = f.name
+    p = Params.from_toml(path)
+    assert p.to_dict() == {"tree.max_depth": 4, "tree.lambda_l2": 0.5,
+                           "booster.n_iters": 9}
+    assert (p | {"booster.n_iters": 3}).booster.n_iters == 3
+
+    with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+        f.write("[tree]\nmax_dept = 4\n")
+        bad = f.name
+    with pytest.raises(Exception, match="max_dept"):
+        Params.from_toml(bad)
+
+
+def test_params_from_model_is_the_resolved_config():
+    X, y = _reg_data(n=500)
+    m = bonsai.train({"tree.max_depth": 3}, bonsai.Dataset(X, y))
+    p = Params.from_model(m)
+    assert p.tree.max_depth == 3
+    assert p.booster.n_iters == 100  # resolved default: every key is set
+
+
 # train wrapper ====================================================================================
 
 

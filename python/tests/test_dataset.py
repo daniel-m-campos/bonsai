@@ -40,15 +40,15 @@ def test_reusable_dataset_bit_identical_and_guard():
 
     # ...and reject a config file that carries a [bin_mapper] section, which
     # would otherwise be silently ignored (binning comes from the Dataset).
-    # The check is structural: even a section that restates the defaults
-    # (max_bin = 255) is an explicit override and must be rejected.
+    # A TOML base arrives as ordinary Params keys (from_toml carries only
+    # what the file states), so even a section restating the defaults
+    # (max_bin = 255) is an explicit override and hits the same rejection.
     for section in ("[bin_mapper]\nmax_bin = 63\n", "[bin_mapper]\nmax_bin = 255\n"):
         with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
             f.write(section)
             bad_cfg = f.name
-        with pytest.raises(Exception) as e:
-            bonsai.train({}, ds, config=bad_cfg)
-            assert "bin_mapper" in str(e.value)
+        with pytest.raises(Exception, match="bin_mapper"):
+            bonsai.train(bonsai.Params.from_toml(bad_cfg), ds)
 
     # a config file with only non-bin params must NOT false-positive, even when
     # the Dataset itself was binned with a non-default max_bin
@@ -56,7 +56,8 @@ def test_reusable_dataset_bit_identical_and_guard():
     with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
         f.write("[tree]\nmax_depth = 4\n")
         ok_cfg = f.name
-    assert np.asarray(bonsai.train({}, ds63, config=ok_cfg).predict(X)).shape == (3000,)
+    p63 = bonsai.Params.from_toml(ok_cfg)
+    assert np.asarray(bonsai.train(p63, ds63).predict(X)).shape == (3000,)
 
 
 def test_dataset_bin_edges_carries_domain_bands_in_the_artifact():

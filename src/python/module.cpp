@@ -799,11 +799,10 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
     return &dataset->loaded().train;
 }
 
-// Precedence: TOML file (when given) provides the base, params override it —
-// the CLI's -c + --set ordering.
+// Overrides over the library defaults; a TOML base composes upstream via
+// Params.from_toml, so this layer knows one input.
 bonsai::Config
-config_from_params(std::vector<std::pair<std::string, std::string>> const &params,
-                   std::optional<std::string> const                       &config_path)
+config_from_params(std::vector<std::pair<std::string, std::string>> const &params)
 {
     std::vector<bonsai::config::Override> overrides;
     overrides.reserve(params.size());
@@ -811,7 +810,7 @@ config_from_params(std::vector<std::pair<std::string, std::string>> const &param
     {
         overrides.push_back({.key = key, .value = value});
     }
-    return bonsai::config::resolve(config_path.value_or(""), overrides);
+    return bonsai::config::resolve("", overrides);
 }
 
 // The annotation the generated dataclass field gets, so it must name the C++
@@ -883,10 +882,9 @@ nb::list params_schema()
 
 Model train(std::vector<std::pair<std::string, std::string>> const &params,
             nb::handle X, nb::handle y, std::optional<EvalSet> const &eval_set,
-            std::optional<std::string> const &init_model,
-            std::optional<std::string> const &config, nb::handle sample_weight)
+            std::optional<std::string> const &init_model, nb::handle sample_weight)
 {
-    bonsai::Config const cfg = config_from_params(params, config);
+    bonsai::Config const cfg = config_from_params(params);
     bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
 
     // Device-resident input places the fit itself: the matrix is already on a
@@ -937,12 +935,12 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
 // Train on a prebuilt Dataset: reuses its binning (skips BinMappers::fit +
 // Dataset::bin) and, on GPU, its resident matrix across calls. Only training
 // hyperparameters vary per call; binning is fixed by the Dataset, so
-// bin_mapper.* overrides are rejected rather than silently ignored — whether
-// they arrive as a param pair or inside the config file.
+// bin_mapper.* overrides are rejected rather than silently ignored; a TOML
+// base arrives through Params.from_toml as ordinary pairs, so this one check
+// covers every route.
 Model train_dataset(std::vector<std::pair<std::string, std::string>> const &params,
                     Dataset const &dataset, std::optional<EvalSet> const &eval_set,
-                    std::optional<std::string> const &init_model,
-                    std::optional<std::string> const &config)
+                    std::optional<std::string> const &init_model)
 {
     for (auto const &[key, value] : params)
     {
@@ -954,19 +952,7 @@ Model train_dataset(std::vector<std::pair<std::string, std::string>> const &para
                 "instead");
         }
     }
-    // The config file can also carry a [bin_mapper] section; it would be
-    // silently ignored (binning comes from the Dataset), so reject it too.
-    // The check is structural (section presence, not values): a file that
-    // explicitly restates the defaults is still an override the user asked
-    // for, and value comparison cannot see it.
-    if (config && bonsai::config::toml_has_section(*config, "bin_mapper"))
-    {
-        throw std::invalid_argument(
-            "the config file sets bin_mapper.*, which is fixed when training from "
-            "a prebuilt Dataset; set max_bin/n_samples/seed/min_data_in_bin at "
-            "Dataset construction instead");
-    }
-    bonsai::Config const cfg = config_from_params(params, config);
+    bonsai::Config const cfg = config_from_params(params);
     // A device-binned Dataset is resident on one device and the fit adopts
     // that matrix in place; placing the fit elsewhere would mean migrating
     // it behind the user's back.
@@ -1258,7 +1244,6 @@ NB_MODULE(_bonsai, m)
     // call that also passes an eval set.
     m.def("train", &train_dataset, nb::arg("params"), nb::arg("dataset"),
           nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
-          nb::arg("config") = nb::none(),
           "Train on a prebuilt Dataset, reusing its binning across calls.\n"
           "\n"
           "Parameters\n"
@@ -1276,8 +1261,6 @@ NB_MODULE(_bonsai, m)
           "once and routed in bin space by every fit.\n"
           "init_model : str, optional\n"
           "    Continue training from this saved model (warm start).\n"
-          "config : str, optional\n"
-          "    TOML file path used as the base config; params override it.\n"
           "\n"
           "Returns\n"
           "-------\n"
@@ -1285,7 +1268,7 @@ NB_MODULE(_bonsai, m)
           "    The trained booster.");
     m.def("train", &train, nb::arg("params"), nb::arg("X"), nb::arg("y"),
           nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
-          nb::arg("config") = nb::none(), nb::arg("sample_weight") = nb::none(),
+          nb::arg("sample_weight") = nb::none(),
           "Train a booster on row-major float32 features.\n"
           "\n"
           "Parameters\n"
@@ -1304,9 +1287,6 @@ NB_MODULE(_bonsai, m)
           "predicts on the host.\n"
           "init_model : str, optional\n"
           "    Continue training from this saved model (warm start).\n"
-          "config : str, optional\n"
-          "    TOML file path used as the base config; params override it "
-          "(the CLI's ``-c`` + ``--set`` ordering).\n"
           "sample_weight : float32 array, shape (n_rows,), optional\n"
           "    Per-row weights; scales each row's gradient and hessian. A "
           "device-resident vector is downloaded once.\n"
@@ -1338,6 +1318,22 @@ NB_MODULE(_bonsai, m)
         "_n_threads", [] { return bonsai::parallel::n_threads(); },
         "Worker count in effect for the process, as the last train or "
         "Dataset call left it (diagnostics).");
+    m.def(
+        "_params_from_toml",
+        [](std::string const &text)
+        {
+            nb::dict out;
+            for (auto const &[key, value] : bonsai::config::typed_overrides(text))
+            {
+                out[nb::str(key.c_str())] =
+                    std::visit([](auto const &v) { return nb::cast(v); }, value);
+            }
+            return out;
+        },
+        nb::arg("text"),
+        "The dotted keys a TOML config text explicitly sets, with typed "
+        "values — only the stated keys, never the resolved whole. Feeds "
+        "Params.from_toml/from_model; not public API.");
     m.def("_params_schema", &params_schema,
           "The config section registry as data: [{'section', 'fields': "
           "[{'name', 'type', 'default'}]}] in registry order. Feeds the "

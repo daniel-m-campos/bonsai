@@ -22,13 +22,14 @@ def train(params, *args, **kwargs):
     Parameters
     ----------
     params : Params, Mapping, or None
-        Overrides over the library defaults (and over ``config=`` when
-        given). A ``bonsai.Params`` or a ``{"tree.max_depth": 8}`` dict;
-        values are rendered to config strings. ``None`` means no overrides.
+        Overrides over the library defaults. A ``bonsai.Params`` or a
+        ``{"tree.max_depth": 8}`` dict; values are rendered to config
+        strings. ``None`` means no overrides. A TOML base composes here
+        too: ``Params.from_toml(path) | overrides``.
     *args, **kwargs
         Passed to the native ``train`` unchanged: ``(X, y)`` arrays or a
-        ``Dataset``, then ``eval_set``, ``init_model``, ``config``, and
-        (array form only) ``sample_weight``.
+        ``Dataset``, then ``eval_set``, ``init_model``, and (array form
+        only) ``sample_weight``.
 
     Returns
     -------

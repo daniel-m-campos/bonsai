@@ -83,9 +83,6 @@ class _BonsaiEstimator:
         Dotted config-key overrides, e.g. ``{"tree.lambda_l1": 0.5}``; the
         power-user escape hatch, applied after the first-class kwargs and
         always wins.
-    config
-        Path to a TOML file used as the base config; keyword arguments and
-        ``params`` always override it.
     """
 
     def __init__(
@@ -103,7 +100,6 @@ class _BonsaiEstimator:
         subsample: float | None = None,
         device: str | None = None,
         params: dict | None = None,
-        config: str | None = None,
     ):
         """Store every argument raw; ``get_params``/``clone`` read them back."""
         self.n_iters = n_iters
@@ -119,7 +115,6 @@ class _BonsaiEstimator:
         self.subsample = subsample
         self.device = device
         self.params = params
-        self.config = config
         self._model: Model | None = None
 
     def __repr__(self) -> str:
@@ -552,11 +547,11 @@ class BonsaiRegressor(_BonsaiEstimator):
     for another library goes through ``bonsai.interop`` first, which is
     where the knob mapping and its caveats live.
 
-    ``config`` names a TOML file used as the base config (the CLI's ``-c``).
-    Keyword arguments and ``params`` always win over the file — including the
-    first-class kwargs at their defaults, which are always emitted. To defer
-    a knob to the file, set it there and leave it out of ``params``, or use
-    ``train()`` directly.
+    A TOML file routes through ``params``
+    (``params=Params.from_toml(path).to_dict()``) and therefore wins over
+    the keyword arguments, the way ``params`` always has. For file-as-base
+    layering below explicit overrides, use ``train()`` with
+    ``Params.from_toml(path) | overrides``.
 
     Parameters
     ----------
@@ -598,9 +593,6 @@ class BonsaiRegressor(_BonsaiEstimator):
     params
         Dotted config-key overrides, the power-user escape hatch, applied
         after the first-class kwargs and always wins.
-    config
-        Path to a TOML file used as the base config; keyword arguments and
-        ``params`` always override it.
     """
 
     _estimator_type = "regressor"
@@ -622,7 +614,6 @@ class BonsaiRegressor(_BonsaiEstimator):
         device: str | None = None,
         quantile_alpha: float | None = None,
         params: dict | None = None,
-        config: str | None = None,
     ):
         """Same storage contract as the base; adds the regression objective."""
         super().__init__(**_shared_args(locals()))
@@ -675,8 +666,7 @@ class BonsaiRegressor(_BonsaiEstimator):
         sw = None if sample_weight is None else _as_f32(sample_weight, 1, "sample_weight")
         Xa = _as_f32(X, 2, "X")
         self._model = train(
-            pairs, Xa, _as_f32(y, 1, "y"), ev, init_model, self.config,
-            sample_weight=sw,
+            pairs, Xa, _as_f32(y, 1, "y"), ev, init_model, sample_weight=sw,
         )
         self.n_features_in_ = Xa.shape[1]
         return self
@@ -779,9 +769,6 @@ class BonsaiClassifier(_BonsaiEstimator):
     params
         Dotted config-key overrides, the power-user escape hatch, applied
         after the first-class kwargs and always wins.
-    config
-        Path to a TOML file used as the base config; keyword arguments and
-        ``params`` always override it.
     """
 
     _estimator_type = "classifier"
@@ -801,7 +788,6 @@ class BonsaiClassifier(_BonsaiEstimator):
         subsample: float | None = None,
         device: str | None = None,
         params: dict | None = None,
-        config: str | None = None,
     ):
         """Same storage contract as the base; the objective is derived from
         the number of classes at fit time, so there is none to store."""
@@ -870,8 +856,7 @@ class BonsaiClassifier(_BonsaiEstimator):
         sw = None if sample_weight is None else _as_f32(sample_weight, 1, "sample_weight")
         Xa = _as_f32(X, 2, "X")
         self._model = train(
-            pairs, Xa, y_enc, ev, init_model, self.config,
-            sample_weight=sw,
+            pairs, Xa, y_enc, ev, init_model, sample_weight=sw,
         )
         self.n_features_in_ = Xa.shape[1]
         return self
