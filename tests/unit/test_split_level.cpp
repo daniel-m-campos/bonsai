@@ -235,3 +235,22 @@ TEST_CASE("HistogramLevelSplitFinder: degenerate prefix_size == 0 returns invali
     CHECK_FALSE(s.valid);
     CHECK(s.gain == 0.0);
 }
+
+TEST_CASE("gain and leaf math survive an empty node side at lambda_l2 = 0",
+          "[split][empty-leaf]")
+{
+    // An oblivious level mints empty children structurally (the level's
+    // shared split applies to a node whose rows all route one way), so
+    // G = H = 0 reaches the leaf math; with lambda_l2 = 0 the denominator
+    // is 0 and the quotient was 0/0. No evidence means 0, not NaN.
+    CHECK(score(0.0, 0.0, 0.0) == 0.0);
+    CHECK(score(0.0, 0.0, 0.0, 0.0) == 0.0);
+    CHECK(bounded_leaf_weight(0.0, 0.0, 0.0, 0.0, -1e30, 1e30) == 0.0);
+
+    // The guard is inert whenever the denominator is positive: identical
+    // quotients, so lambda_l2 > 0 models cannot move (the hash gates hold).
+    CHECK(score(3.0, 2.0, 1.0) == Catch::Approx((3.0 * 3.0) / 3.0));
+    CHECK(bounded_leaf_weight(3.0, 2.0, 0.0, 1.0, -1e30, 1e30) == Catch::Approx(-1.0));
+    // An empty side under a monotone bound still lands inside the bound.
+    CHECK(bounded_leaf_weight(0.0, 0.0, 0.0, 0.0, 0.5, 2.0) == 0.5);
+}

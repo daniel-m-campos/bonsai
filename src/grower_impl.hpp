@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <numeric>
 #include <print>
 #include <random>
@@ -37,8 +38,11 @@ namespace bonsai::grower_detail
 
 inline float leaf_value(double grad, double hess, TreeConfig const &config)
 {
-    return static_cast<float>(-l1_thresholded(grad, config.lambda_l1) /
-                              (hess + config.lambda_l2));
+    // Through the guarded shared math: an empty leaf (G = H = 0) under
+    // lambda_l2 = 0 predicts 0, not 0/0.
+    constexpr double inf = std::numeric_limits<double>::infinity();
+    return static_cast<float>(
+        bounded_leaf_weight(grad, hess, config.lambda_l1, config.lambda_l2, -inf, inf));
 }
 
 // Children inherit the parent's leaf-value bounds; a split on a monotone
