@@ -104,9 +104,17 @@ __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
 {
     // Two sub-histograms split by warp parity spread atomic contention.
     extern __shared__ float sh[];
-    uint32_t const          f    = features[blockIdx.x];
-    uint32_t const          node = blockIdx.y;
-    uint32_t const          nb   = n_bins[f];
+    uint32_t const          f     = features[blockIdx.x];
+    uint32_t const          node  = blockIdx.y;
+    uint32_t const          count = row_counts[node];
+    // Block-uniform: a chunk starting past the node's rows adds nothing and
+    // must not pay the zero+merge fixed cost (grid.z is sized by the level's
+    // largest node, so small nodes see workless chunks).
+    if (blockIdx.z * blockDim.x >= count)
+    {
+        return;
+    }
+    uint32_t const nb = n_bins[f];
     for (uint32_t i = threadIdx.x; i < 4 * nb; i += blockDim.x)
     {
         sh[i] = 0.0F;
@@ -116,7 +124,6 @@ __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
     uint32_t const  offset = row_offsets[node];
     uint32_t const *nrows  = rows + offset;
     float2 const   *ngh    = gh_ordered + offset;
-    uint32_t const  count  = row_counts[node];
     uint32_t const  span   = gridDim.z * blockDim.x;
     for (uint32_t k = (blockIdx.z * blockDim.x) + threadIdx.x; k < count; k += span)
     {
@@ -200,7 +207,15 @@ __global__ void hist_tile_kernel(BinT const *bins, float2 const *gh_ordered,
     {
         return; // this tile holds no selected feature
     }
-    uint32_t const node = blockIdx.y;
+    uint32_t const node  = blockIdx.y;
+    uint32_t const count = row_counts[node];
+    // Block-uniform: a chunk starting past the node's rows adds nothing and
+    // must not pay the tile's zero+merge fixed cost (grid.z is sized by the
+    // level's largest node, so small nodes see workless chunks).
+    if (blockIdx.z * blockDim.x >= count)
+    {
+        return;
+    }
     for (uint32_t i = threadIdx.x; i < wt * stride; i += blockDim.x)
     {
         sh[i] = 0.0F;
@@ -209,7 +224,6 @@ __global__ void hist_tile_kernel(BinT const *bins, float2 const *gh_ordered,
     uint32_t const  offset = row_offsets[node];
     uint32_t const *nrows  = rows + offset;
     float2 const   *ngh    = gh_ordered + offset;
-    uint32_t const  count  = row_counts[node];
     uint32_t const  span   = gridDim.z * blockDim.x;
     BinT const     *tp     = bins + (static_cast<size_t>(n_rows) * t * W);
     for (uint32_t k = (blockIdx.z * blockDim.x) + threadIdx.x; k < count; k += span)
