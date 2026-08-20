@@ -940,27 +940,127 @@ NB_MODULE(_bonsai, m)
     m.doc() = "bonsai gradient-boosted trees (native module)";
 
     nb::class_<Model>(m, "Model")
-        .def("predict", &Model::predict, nb::arg("X"), nb::arg("num_iteration") = 0)
-        .def("predict_proba", &Model::predict_proba, nb::arg("X"))
-        .def("staged_predict", &Model::staged_predict, nb::arg("X"))
+        .def("predict", &Model::predict, nb::arg("X"), nb::arg("num_iteration") = 0,
+             "Predict on the response scale (the objective's link inverse "
+             "applied).\n"
+             "\n"
+             "Parameters\n"
+             "----------\n"
+             "X : float32 array, shape (n_rows, n_features)\n"
+             "    Row-major features.\n"
+             "num_iteration : int, default 0\n"
+             "    Predict with only the first ``num_iteration`` boosting "
+             "rounds; 0 uses all.\n"
+             "\n"
+             "Returns\n"
+             "-------\n"
+             "float32 array, shape (n_rows,)\n"
+             "    One prediction per row.")
+        .def("predict_proba", &Model::predict_proba, nb::arg("X"),
+             "Per-class probabilities for classification models.\n"
+             "\n"
+             "Parameters\n"
+             "----------\n"
+             "X : float32 array, shape (n_rows, n_features)\n"
+             "    Row-major features.\n"
+             "\n"
+             "Returns\n"
+             "-------\n"
+             "float64 array\n"
+             "    Softmax models return ``(n_rows, n_classes)``, a row-wise "
+             "softmax of the class logits; logloss returns ``(n_rows,)`` with "
+             "P(class 1) via the link inverse.\n"
+             "\n"
+             "Raises\n"
+             "------\n"
+             "ValueError\n"
+             "    For non-classification objectives: the mse link inverse is "
+             "the identity, so raw margins would be silently mislabeled as "
+             "probabilities.")
+        .def("staged_predict", &Model::staged_predict, nb::arg("X"),
+             "Predictions after each boosting iteration.\n"
+             "\n"
+             "Parameters\n"
+             "----------\n"
+             "X : float32 array, shape (n_rows, n_features)\n"
+             "    Row-major features.\n"
+             "\n"
+             "Returns\n"
+             "-------\n"
+             "float32 array, shape (n_iters, n_rows)\n"
+             "    Row t is the response-scale prediction using rounds 0..t.")
         .def("predict_leaf", &Model::predict_leaf, nb::arg("X"),
-             "(n_rows, n_trees): the leaf each row lands in, one column per "
-             "tree. Width-1 objectives have one tree per round, so the columns "
-             "are the boosting rounds in order. Softmax models grow one tree "
-             "per class per round and the columns stay in that order, so "
-             "column t is round t // n_classes, class t % n_classes.")
-        .def("dump", &Model::dump)
-        .def("pred_contribs", &Model::pred_contribs, nb::arg("X"))
-        .def("feature_importance", &Model::feature_importance, nb::arg("type") = "gain")
-        .def("save", &Model::save, nb::arg("path"))
-        .def_prop_ro("n_iters", &Model::n_iters)
+             "The leaf each row lands in, one column per tree.\n"
+             "\n"
+             "Width-1 objectives have one tree per round, so the columns are "
+             "the boosting rounds in order. Softmax models grow one tree per "
+             "class per round and the columns stay in that order, so column t "
+             "is round ``t // n_classes``, class ``t % n_classes``.\n"
+             "\n"
+             "Parameters\n"
+             "----------\n"
+             "X : float32 array, shape (n_rows, n_features)\n"
+             "    Row-major features.\n"
+             "\n"
+             "Returns\n"
+             "-------\n"
+             "uint32 array, shape (n_rows, n_trees)\n"
+             "    Leaf node id per (row, tree).")
+        .def("dump", &Model::dump,
+             "The trees as human-readable text, with feature names.\n"
+             "\n"
+             "Returns\n"
+             "-------\n"
+             "str\n"
+             "    One block per tree.")
+        .def("pred_contribs", &Model::pred_contribs, nb::arg("X"),
+             "TreeSHAP feature contributions, last column the bias.\n"
+             "\n"
+             "Each row sums to the raw (pre-link) prediction exactly.\n"
+             "\n"
+             "Parameters\n"
+             "----------\n"
+             "X : float32 array, shape (n_rows, n_features)\n"
+             "    Row-major features.\n"
+             "\n"
+             "Returns\n"
+             "-------\n"
+             "float64 array\n"
+             "    ``(n_rows, n_features + 1)``; multiclass models return "
+             "``(n_rows, n_classes, n_features + 1)``.")
+        .def("feature_importance", &Model::feature_importance, nb::arg("type") = "gain",
+             "Per-feature importance, padded to the trained feature count.\n"
+             "\n"
+             "Parameters\n"
+             "----------\n"
+             "type : {'gain', 'split'}, default 'gain'\n"
+             "    'gain' is total loss reduction; 'split' is split count.\n"
+             "\n"
+             "Returns\n"
+             "-------\n"
+             "float64 array, shape (n_features,)\n"
+             "    Importance per feature; features never split score 0.\n"
+             "\n"
+             "Raises\n"
+             "------\n"
+             "ValueError\n"
+             "    For any other ``type`` string.")
+        .def("save", &Model::save, nb::arg("path"),
+             "Save the model (MessagePack) with its bin mappers and config.\n"
+             "\n"
+             "Parameters\n"
+             "----------\n"
+             "path : str\n"
+             "    Output file; ``bonsai.load(path)`` restores the model.")
+        .def_prop_ro("n_iters", &Model::n_iters, "Boosting rounds this model carries.")
         .def_prop_ro("eval_history", &Model::eval_history,
                      "Per-round valid loss from fit (objective's own eval "
                      "metric); empty without an eval set or after load(). "
                      "Indexed by absolute model round: after an init_model "
                      "warm start the pre-existing rounds appear as NaN "
                      "placeholders.")
-        .def_prop_ro("config_toml", &Model::config_toml)
+        .def_prop_ro("config_toml", &Model::config_toml,
+                     "The resolved training config, rendered as TOML.")
         .def_prop_ro("objective_name", &Model::objective_name,
                      "The objective this model was trained with (e.g. mse, "
                      "logloss, softmax).")
@@ -991,34 +1091,54 @@ NB_MODULE(_bonsai, m)
             nb::arg("device_id")        = k_parallel_defaults.device_id,
             nb::arg("n_threads")        = k_parallel_defaults.n_threads,
             nb::arg("reference").none() = nb::none(),
-            "A pre-binned dataset. Bins X once at construction and is reused "
-            "across train(params, dataset) calls (hyperparameter search / CV), "
-            "skipping the per-fit bin pass. All bin_mapper settings "
-            "(max_bin/n_samples/seed/min_data_in_bin) are fixed here. "
-            "`bin_edges` maps a column index to its explicit interior cut "
-            "points (strictly increasing float32 array; k edges give k+1 "
-            "bins); listed columns skip quantile fitting and the edges "
-            "travel inside the model artifact, so predict/save/load work on "
-            "raw values with no external transform. `device=\"cuda\"` bins on "
-            "the GPU and keeps the matrix resident there, so every cuda_* fit "
-            "adopts it with no upload (a sweep uploads once, not once per "
-            "fit); it raises without a CUDA build and a visible device, and "
-            "a later parallel.device_id that disagrees with `device_id` "
-            "raises rather than migrating. A device-binned Dataset handed to "
-            "a CPU grower materializes host bins once, on first use. "
-            "`device` defaults to where X already is: pass a device-resident "
-            "X (any CUDA array supporting DLPack, such as a cupy or torch "
-            "array) and it is binned on the GPU in place, with no host round "
-            "trip; y and weight may be device-resident too and "
-            "are downloaded once, because bonsai keeps labels on the host. "
-            "`n_threads` sizes the binning pass (0 = auto), the way "
-            "parallel.n_threads sizes a fit. `reference=train_dataset` bins "
-            "with another dataset's cut points instead of fitting its own, "
-            "which is what a validation set needs: the result can be handed "
-            "to train(..., eval_set=valid_dataset) and every fit routes it "
-            "in bin space with no per-fit bin pass. The binning settings are "
-            "inherited from the reference when left unset, and setting one to "
-            "a different value raises, as `bin_edges` does at all.")
+            "A pre-binned dataset: bins X once at construction.\n"
+            "\n"
+            "Reused across ``train(params, dataset)`` calls (hyperparameter "
+            "search / CV), skipping the per-fit bin pass. All bin_mapper "
+            "settings are fixed here.\n"
+            "\n"
+            "Parameters\n"
+            "----------\n"
+            "X : float32 array, shape (n_rows, n_features)\n"
+            "    Row-major features; any DLPack producer. A device-resident X "
+            "(cupy, torch, jax) is binned on the GPU in place, with no host "
+            "round trip.\n"
+            "y : float32 array, shape (n_rows,)\n"
+            "    Labels. May be device-resident; downloaded once, because "
+            "bonsai keeps labels on the host.\n"
+            "weight : float32 array, shape (n_rows,), optional\n"
+            "    Per-row weights; the same device rules as ``y``.\n"
+            "max_bin, n_samples, seed, min_data_in_bin : optional\n"
+            "    Bin-mapper settings, fixed at construction. Unset means the "
+            "library default, or the reference's value in the ``reference=`` "
+            "form.\n"
+            "bin_edges : dict of {int: float32 array}, optional\n"
+            "    Column index to its explicit interior cut points (strictly "
+            "increasing; k edges give k+1 bins). Listed columns skip quantile "
+            "fitting, and the edges travel inside the model artifact, so "
+            "predict/save/load work on raw values with no external "
+            "transform.\n"
+            "device : {'cpu', 'cuda'}, optional\n"
+            "    Defaults to where X already is. ``'cuda'`` bins on the GPU "
+            "and keeps the matrix resident there, so every cuda_* fit adopts "
+            "it with no upload (a sweep uploads once, not once per fit); it "
+            "raises without a CUDA build and a visible device, and a later "
+            "``parallel.device_id`` that disagrees with ``device_id`` raises "
+            "rather than migrating. A device-binned Dataset handed to a CPU "
+            "grower materializes host bins once, on first use.\n"
+            "device_id : int, default 0\n"
+            "    CUDA device the binned matrix lives on.\n"
+            "n_threads : int, default 0\n"
+            "    Sizes the binning pass (0 = auto), the way "
+            "``parallel.n_threads`` sizes a fit.\n"
+            "reference : Dataset, optional\n"
+            "    Bin with this dataset's cut points instead of fitting our "
+            "own, which is what a validation set needs: the result can be "
+            "handed to ``train(..., eval_set=valid_dataset)`` and every fit "
+            "routes it in bin space with no per-fit bin pass. Binning "
+            "settings are inherited from the reference when left unset; "
+            "setting one to a different value raises, as ``bin_edges`` does "
+            "at all.")
         .def("__reduce__",
              [](Dataset const &) -> nb::object
              {
@@ -1031,8 +1151,9 @@ NB_MODULE(_bonsai, m)
         .def_prop_ro("device", &Dataset::device,
                      "Where the binned columns live: \"cuda\" for a "
                      "device-binned dataset, \"cpu\" otherwise.")
-        .def_prop_ro("n_rows", &Dataset::n_rows)
-        .def_prop_ro("n_features", &Dataset::n_features)
+        .def_prop_ro("n_rows", &Dataset::n_rows, "Rows in the binned matrix.")
+        .def_prop_ro("n_features", &Dataset::n_features,
+                     "Feature columns in the binned matrix.")
         .def_prop_ro(
             "shape",
             [](Dataset const &d) { return nb::make_tuple(d.n_rows(), d.n_features()); },
@@ -1053,31 +1174,78 @@ NB_MODULE(_bonsai, m)
     m.def("train", &train_dataset, nb::arg("params"), nb::arg("dataset"),
           nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
           nb::arg("config") = nb::none(),
-          "Train on a prebuilt Dataset, reusing its binning across calls. "
-          "bin_mapper.* overrides are rejected (binning is fixed by the Dataset). "
-          "`eval_set` enables per-iter eval and early stopping, either as "
-          "`(Xv, yv)` arrays the fit bins itself once the rounds it has run "
-          "have paid for the pass, or as a Dataset built with `reference=` "
-          "this one, which is binned once and routed in bin space by every "
-          "fit.");
+          "Train on a prebuilt Dataset, reusing its binning across calls.\n"
+          "\n"
+          "Parameters\n"
+          "----------\n"
+          "params : sequence of (str, str)\n"
+          "    Dotted-key config overrides, e.g. ``('tree.max_depth', '8')``. "
+          "``bin_mapper.*`` overrides are rejected: binning is fixed by the "
+          "Dataset.\n"
+          "dataset : Dataset\n"
+          "    The pre-binned training data.\n"
+          "eval_set : tuple of (Xv, yv), Dataset, or None\n"
+          "    Enables per-iteration eval and early stopping. Arrays are "
+          "binned by the fit itself once the rounds it has run have paid for "
+          "the pass; a Dataset built with ``reference=`` this one is binned "
+          "once and routed in bin space by every fit.\n"
+          "init_model : str, optional\n"
+          "    Continue training from this saved model (warm start).\n"
+          "config : str, optional\n"
+          "    TOML file path used as the base config; params override it.\n"
+          "\n"
+          "Returns\n"
+          "-------\n"
+          "Model\n"
+          "    The trained booster.");
     m.def("train", &train, nb::arg("params"), nb::arg("X"), nb::arg("y"),
           nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
           nb::arg("config") = nb::none(), nb::arg("sample_weight") = nb::none(),
-          "Train a booster on row-major float32 features. `params` is a list "
-          "of (dotted-key, value-string) config overrides, e.g. "
-          "('tree.max_depth', '8'). `config` is a TOML file path used as the "
-          "base config; params override it (the CLI's -c + --set ordering). "
-          "`sample_weight` is an optional float32 per-row weight vector "
-          "(scales each row's gradient and hessian). X, y and sample_weight "
-          "may instead be CUDA arrays supporting DLPack (cupy, torch, jax): "
-          "X is then binned on the GPU in place, with no host round trip, "
-          "and y and the weights are downloaded once. `eval_set` is either "
-          "`(Xv, yv)` host arrays or a Dataset binned with this fit's cut "
-          "points, and stays host-side either way, because the per-iteration "
-          "eval predicts on the host.");
-    m.def("load", &load, nb::arg("path"), "Load a model saved by Model.save.");
+          "Train a booster on row-major float32 features.\n"
+          "\n"
+          "Parameters\n"
+          "----------\n"
+          "params : sequence of (str, str)\n"
+          "    Dotted-key config overrides, e.g. ``('tree.max_depth', '8')``.\n"
+          "X : float32 array, shape (n_rows, n_features)\n"
+          "    Row-major features. May be a CUDA array supporting DLPack "
+          "(cupy, torch, jax): X is then binned on the GPU in place, with no "
+          "host round trip.\n"
+          "y : float32 array, shape (n_rows,)\n"
+          "    Labels; a device-resident y is downloaded once.\n"
+          "eval_set : tuple of (Xv, yv), Dataset, or None\n"
+          "    Host arrays, or a Dataset binned with this fit's cut points. "
+          "Stays host-side either way, because the per-iteration eval "
+          "predicts on the host.\n"
+          "init_model : str, optional\n"
+          "    Continue training from this saved model (warm start).\n"
+          "config : str, optional\n"
+          "    TOML file path used as the base config; params override it "
+          "(the CLI's ``-c`` + ``--set`` ordering).\n"
+          "sample_weight : float32 array, shape (n_rows,), optional\n"
+          "    Per-row weights; scales each row's gradient and hessian. A "
+          "device-resident vector is downloaded once.\n"
+          "\n"
+          "Returns\n"
+          "-------\n"
+          "Model\n"
+          "    The trained booster.");
+    m.def("load", &load, nb::arg("path"),
+          "Load a model saved by ``Model.save``.\n"
+          "\n"
+          "Parameters\n"
+          "----------\n"
+          "path : str\n"
+          "    A ``.msgpack`` model file.\n"
+          "\n"
+          "Returns\n"
+          "-------\n"
+          "Model\n"
+          "    The restored booster, with its bin mappers and config.");
 
-    m.def("default_config_toml", [] { return bonsai::config::dump_toml({}); });
+    m.def(
+        "default_config_toml", [] { return bonsai::config::dump_toml({}); },
+        "The library's default config, rendered as TOML.");
     m.def("cuda_available", &bonsai::cuda_available,
           "True when the binary carries the CUDA backend and a usable device "
           "is present (cuda_* growers can train).");
