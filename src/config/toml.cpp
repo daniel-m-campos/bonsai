@@ -83,46 +83,6 @@ template <typename T> OverrideValue widen(T value)
     }
 }
 
-// Mirrors load_section's strictness (parse every present key through its
-// codec, reject unknowns) but records instead of assigning into a Config.
-template <typename Section>
-void record_section(toml::table const &table, Section const &sec,
-                    std::vector<std::pair<std::string, OverrideValue>> &out)
-{
-    std::unordered_set<std::string> seen;
-    std::apply(
-        [&](auto const &...fields)
-        {
-            (
-                [&]
-                {
-                    using T =
-                        typename std::remove_cvref_t<decltype(fields)>::member_type;
-                    seen.insert(std::string{fields.leaf});
-                    if (auto const *node = table.get(fields.leaf))
-                    {
-                        auto r = internal::FieldCodec<T>::from_toml(*node);
-                        if (!r)
-                        {
-                            internal::key_error(sec.name, fields.leaf, r.error());
-                        }
-                        out.emplace_back(std::string{sec.name} + "." +
-                                             std::string{fields.leaf},
-                                         widen<T>(std::move(*r)));
-                    }
-                }(),
-                ...);
-        },
-        sec.fields);
-    for (auto const &[k, unused] : table)
-    {
-        if (!seen.contains(std::string{k.str()}))
-        {
-            internal::key_error(sec.name, k.str(), "unknown key");
-        }
-    }
-}
-
 } // namespace
 
 std::vector<std::pair<std::string, OverrideValue>>
@@ -155,7 +115,14 @@ typed_overrides(std::string_view text)
                                               std::string{secs.name} +
                                               "] must be a table");
                         }
-                        record_section(*table, secs, out);
+                        internal::visit_section(*table, secs,
+                                                [&](auto const &field, auto value)
+                                                {
+                                                    out.emplace_back(
+                                                        std::string{secs.name} + "." +
+                                                            std::string{field.leaf},
+                                                        widen(std::move(value)));
+                                                });
                     }
                 }(),
                 ...);

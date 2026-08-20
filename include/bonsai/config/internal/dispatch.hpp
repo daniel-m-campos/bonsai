@@ -35,8 +35,12 @@ inline std::pair<std::string_view, std::string_view> split_key(std::string_view 
     return {key.substr(0, dot), key.substr(dot + 1)};
 }
 
-template <typename Section>
-void load_section(toml::table const &table, Config &cfg, Section const &sec)
+// One strict walk of a section's fields against its TOML table: every
+// present key parses through its codec, unknown keys error. The sink decides
+// what a parsed value becomes (assignment into a Config, a recorded
+// override), so strictness is stated once for every consumer.
+template <typename Section, typename Sink>
+void visit_section(toml::table const &table, Section const &sec, Sink &&sink)
 {
     std::unordered_set<std::string> seen;
     std::apply(
@@ -55,7 +59,7 @@ void load_section(toml::table const &table, Config &cfg, Section const &sec)
                         {
                             key_error(sec.name, fields.leaf, r.error());
                         }
-                        (cfg.*(sec.sub)).*(fields.member) = std::move(*r);
+                        sink(fields, std::move(*r));
                     }
                 }(),
                 ...);
@@ -69,6 +73,13 @@ void load_section(toml::table const &table, Config &cfg, Section const &sec)
             key_error(sec.name, k.str(), "unknown key");
         }
     }
+}
+
+template <typename Section>
+void load_section(toml::table const &table, Config &cfg, Section const &sec)
+{
+    visit_section(table, sec, [&](auto const &field, auto value)
+                  { (cfg.*(sec.sub)).*(field.member) = std::move(value); });
 }
 
 template <typename Section>
