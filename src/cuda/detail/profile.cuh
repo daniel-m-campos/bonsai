@@ -31,6 +31,9 @@ struct ProfileCounters
     // millisecond of the round has a name.
     double root_sums_s = 0, adv_memset_s = 0, adv_hist_s = 0, adv_sub_s = 0;
     double root_hist_s = 0, fin_stamp_s = 0, fin_map_s = 0;
+    // Partition-chain decomposition (issue #341): the single gpu_s lap hid
+    // route, scan, and scatter behind one number.
+    double part_route_s = 0, part_scan_s = 0, part_scatter_s = 0;
     // Resident-objective laps: the device gradient kernel that replaces the gh
     // upload, and the fused route+score-update that replaces the finalize D2H.
     double obj_kernel_s = 0, score_kernel_s = 0;
@@ -95,6 +98,10 @@ struct ProfileCounters
                          "fin_stamp={:.2f}s fin_map={:.2f}s",
                          root_sums_s, root_hist_s, adv_memset_s, adv_hist_s, adv_sub_s,
                          fin_stamp_s, fin_map_s);
+            std::println(stderr,
+                         "cuda-part-decomp: route={:.3f}s scan={:.3f}s "
+                         "scatter={:.3f}s",
+                         part_route_s, part_scan_s, part_scatter_s);
             std::println(stderr,
                          "cuda-resident-decomp: obj_kernel={:.2f}s "
                          "score_kernel={:.2f}s eval_kernel={:.2f}s",
