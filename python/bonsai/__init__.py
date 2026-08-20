@@ -3,11 +3,12 @@
 Two API layers, both over the same native module:
 
 - ``train(params, X, y, ...)`` / ``load(path)`` return a ``Model`` — the
-  thin, explicit layer. ``params`` is a list of ``(dotted.key, value)``
-  pairs using exactly the keys the CLI accepts via ``--set`` (see
-  ``default_config_toml()`` for all of them). ``Model`` carries
-  ``predict / staged_predict / predict_leaf / pred_contribs (TreeSHAP) /
-  feature_importance / dump / save``.
+  thin, explicit layer. ``params`` is a ``Params`` (typed overrides, one
+  dataclass per config section: ``bonsai.params``), a ``{"tree.max_depth":
+  8}`` dict, or a list of ``(dotted.key, value)`` pairs — the keys the CLI
+  accepts via ``--set`` (see ``default_config_toml()`` for all of them).
+  ``Model`` carries ``predict / staged_predict / predict_leaf /
+  pred_contribs (TreeSHAP) / feature_importance / dump / save``.
 - ``BonsaiRegressor`` / ``BonsaiClassifier`` — sklearn-style estimators
   wrapping the same booster for pipelines and quick experiments. They speak
   bonsai's parameter names only; ``bonsai.interop`` translates a parameter
@@ -40,10 +41,11 @@ from bonsai._bonsai import (
     cuda_available,
     default_config_toml,
     load,
-    train,
 )
+from bonsai._train import train
 from bonsai.encoding import OrderedTargetEncoder
 from bonsai.estimators import BonsaiClassifier, BonsaiRegressor
+from bonsai.params import Params
 
 try:
     # CMake stamps this from pyproject.toml into the build tree only
@@ -72,6 +74,7 @@ __all__ = [
     "Dataset",
     "Model",
     "OrderedTargetEncoder",
+    "Params",
     "__version__",
     "cuda_available",
     "default_config_toml",

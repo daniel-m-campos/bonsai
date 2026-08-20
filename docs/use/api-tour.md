@@ -90,14 +90,27 @@ Translation is not equivalence, and each mapping documents where its two sides p
 
 ## The explicit layer
 
-`train` takes the dotted keys directly and returns a `Model`:
+`train` takes the overrides in any of three shapes and returns a `Model`. The typed shape is `bonsai.Params`, one generated dataclass per config section, where an unset field means "leave the library default":
 
 ```python
+from bonsai.params import Params, Booster, Dispatch
+
 model = bonsai.train(
-    [("dispatch.grower_name", "levelwise"), ("booster.n_iters", "200")],
+    Params(dispatch=Dispatch(grower_name="levelwise"), booster=Booster(n_iters=200)),
     X, y,
     eval_set=(Xv, yv),
 )
+```
+
+A plain dict of dotted keys (`{"booster.n_iters": 200}`) and the wire-format pairs (`[("booster.n_iters", "200")]`) are accepted the same way; all three render to identical overrides, so the choice never changes the model. A misspelled field raises at `Params` construction with the section's legal names in the message, rather than at fit time.
+
+`Params | dict` merges the way dicts do (right side wins), which is the sweep idiom: a fixed base plus what this trial changes. That composes directly with optuna-style objectives, where the dotted key doubles as the trial's parameter name:
+
+```python
+def objective(trial):
+    depth = trial.suggest_int("tree.max_depth", 3, 12)
+    m = bonsai.train(BASE | {"tree.max_depth": depth}, ds, eval_set=valid)
+    return m.eval_history[-1]
 ```
 
 For hyperparameter searches and cross-validation, bin once and train many times. A `Dataset` runs the binning pass at construction and every subsequent `train` call skips it, bit-identical to training from the arrays:

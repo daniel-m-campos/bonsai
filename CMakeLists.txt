@@ -325,9 +325,26 @@ if(BONSAI_PYTHON)
         PYTHON_PATH ${CMAKE_BINARY_DIR}/python
         DEPENDS _bonsai)
 
+    # Typed Params dataclasses, read out of the BUILT extension the way the
+    # stub is: the generator loads _bonsai straight from its file (the
+    # package __init__ imports the module being generated) and renders one
+    # frozen dataclass per config section. Ordered before bonsai_stub, whose
+    # package import needs the generated file to exist.
+    add_custom_command(
+        OUTPUT ${CMAKE_BINARY_DIR}/python/bonsai/_params.py
+        COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/gen_params_py.py
+                ${CMAKE_BINARY_DIR}/python/bonsai
+                ${CMAKE_BINARY_DIR}/python/bonsai/_params.py
+        DEPENDS _bonsai ${CMAKE_SOURCE_DIR}/scripts/gen_params_py.py
+        COMMENT "Generating bonsai/_params.py from the section registry")
+    add_custom_target(bonsai_params ALL
+        DEPENDS ${CMAKE_BINARY_DIR}/python/bonsai/_params.py)
+    add_dependencies(bonsai_stub bonsai_params)
+
     install(TARGETS _bonsai LIBRARY DESTINATION bonsai)
     install(FILES ${CMAKE_BINARY_DIR}/python/bonsai/_bonsai.pyi
                   ${CMAKE_BINARY_DIR}/python/bonsai/py.typed
+                  ${CMAKE_BINARY_DIR}/python/bonsai/_params.py
             DESTINATION bonsai)
 
     # Stamp __version__ from pyproject.toml into the build tree only, so a

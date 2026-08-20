@@ -125,7 +125,7 @@ python-cuda: build-cuda/build.ninja  ## Build the CUDA-enabled Python extension 
 	@cmake -B build-cuda -DBONSAI_PYTHON=ON -DBONSAI_OPENMP_STATIC=ON \
 	    -DBONSAI_OPENMP_DYNAMIC_FALLBACK_OK=ON \
 	    -DPython_EXECUTABLE=$(abspath $(PYTHON)) >/dev/null
-	@cmake --build build-cuda --target _bonsai -j
+	@cmake --build build-cuda --target _bonsai bonsai_params -j
 	@echo "module at build-cuda/python/bonsai — use PYTHONPATH=build-cuda/python"
 
 fit-benchmark: build $(TOY_SENTINEL)  ## Compare bonsai against reference libraries on California housing.

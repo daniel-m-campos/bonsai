@@ -23,6 +23,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <type_traits>
 #include <vector>
 
 #include "bonsai/bin_mappers.hpp"
@@ -30,6 +32,7 @@
 #include "bonsai/cli/common.hpp"
 #include "bonsai/cli/pipeline.hpp"
 #include "bonsai/config/config.hpp"
+#include "bonsai/config/sections/all.hpp"
 #include "bonsai/config/toml.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/dataset.hpp"
@@ -811,6 +814,73 @@ config_from_params(std::vector<std::pair<std::string, std::string>> const &param
     return bonsai::config::resolve(config_path.value_or(""), overrides);
 }
 
+// The annotation the generated dataclass field gets, so it must name the C++
+// type, not the TOML shape (a float whose default is 0 still annotates float).
+template <typename T> char const *py_type_token()
+{
+    if constexpr (std::is_same_v<T, bool>)
+    {
+        return "bool";
+    }
+    else if constexpr (std::is_same_v<T, std::string>)
+    {
+        return "str";
+    }
+    else if constexpr (std::is_same_v<T, float>)
+    {
+        return "float";
+    }
+    else if constexpr (std::is_same_v<T, std::vector<std::string>>)
+    {
+        return "list[str]";
+    }
+    else if constexpr (std::is_same_v<T, std::vector<int>>)
+    {
+        return "list[int]";
+    }
+    else
+    {
+        static_assert(std::is_integral_v<T>, "unmapped config field type");
+        return "int";
+    }
+}
+
+template <typename Sub, typename T>
+void append_field(nb::list &fields, Sub const &sub,
+                  bonsai::config::internal::Field<Sub, T> const &f)
+{
+    nb::dict d;
+    d["name"]    = std::string{f.leaf};
+    d["type"]    = py_type_token<T>();
+    d["default"] = nb::cast(sub.*(f.member));
+    fields.append(d);
+}
+
+template <typename Sec>
+void append_section(nb::list &sections, bonsai::Config const &defaults, Sec const &sec)
+{
+    nb::list fields;
+    std::apply([&](auto const &...fs)
+               { (..., append_field(fields, defaults.*(sec.sub), fs)); }, sec.fields);
+    nb::dict s;
+    s["section"] = std::string{sec.name};
+    s["fields"]  = fields;
+    sections.append(s);
+}
+
+// The section registry as data, folding the same all_sections tuple dump_toml
+// folds: [{'section', 'fields': [{'name', 'type', 'default'}]}] in registry
+// order. Feeds the build-time bonsai/_params.py generator.
+nb::list params_schema()
+{
+    bonsai::Config const defaults{};
+    nb::list             sections;
+    std::apply([&](auto const &...secs)
+               { (..., append_section(sections, defaults, secs)); },
+               bonsai::config::internal::all_sections);
+    return sections;
+}
+
 Model train(std::vector<std::pair<std::string, std::string>> const &params,
             nb::handle X, nb::handle y, std::optional<EvalSet> const &eval_set,
             std::optional<std::string> const &init_model,
@@ -1268,4 +1338,8 @@ NB_MODULE(_bonsai, m)
         "_n_threads", [] { return bonsai::parallel::n_threads(); },
         "Worker count in effect for the process, as the last train or "
         "Dataset call left it (diagnostics).");
+    m.def("_params_schema", &params_schema,
+          "The config section registry as data: [{'section', 'fields': "
+          "[{'name', 'type', 'default'}]}] in registry order. Feeds the "
+          "build-time bonsai/_params.py generator; not public API.");
 }
