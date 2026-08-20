@@ -80,9 +80,20 @@ class _Knob:
 class _Library:
     """A reference library's whole translation surface.
 
-    ``dropped_foreign`` and ``dropped_native`` name keys that are recognized
-    and deliberately discarded, each with the reason; everything else that
-    is unrecognized is reported by ``strict=True``.
+    Parameters
+    ----------
+    name
+        The reference library's name, e.g. ``"xgboost"``.
+    knobs
+        The parameter mapping table for this library.
+    dropped_foreign
+        Foreign parameter names that are recognized and deliberately
+        discarded, each with the reason; everything else unrecognized is
+        reported by ``strict=True``.
+    dropped_native
+        bonsai dotted config keys that are recognized and deliberately
+        discarded when translating the other direction, each with the
+        reason.
     """
 
     name: str

@@ -46,6 +46,46 @@ class _BonsaiEstimator:
     fitted/tag hooks sklearn's tooling looks for. ``_estimator_type``,
     ``score``, and ``fit``/``predict`` stay per-subclass since binary/
     multiclass/regression targets and outputs genuinely differ.
+
+    Parameters
+    ----------
+    n_iters
+        Number of boosting rounds.
+    learning_rate
+        Shrinkage applied to each tree's contribution.
+    max_depth
+        Maximum tree depth.
+    max_leaves
+        Maximum leaves per tree, the leafwise growth budget.
+    grower
+        Growth strategy name (``"leafwise"``, ``"depthwise"``,
+        ``"levelwise"``, ...); combined with ``device`` to pick the concrete
+        grower.
+    sampler
+        Row sampler name; ``"all_rows"`` trains on every row.
+    early_stopping_rounds
+        Patience in rounds before stopping on eval-set loss; 0 disables
+        early stopping.
+    n_threads
+        Worker thread count; 0 uses every available core.
+    random_seed
+        Seed for the booster's random state.
+    max_bin
+        Histogram bin cap; None leaves the native default.
+    subsample
+        Row-sampling fraction; switches the sampler to ``"bernoulli"`` when
+        ``sampler`` is still at its default. None leaves sampling off.
+    device
+        ``"cpu"`` or ``"cuda"`` (or ``"cuda:N"``); picks the grower that runs
+        the chosen ``grower``'s strategy on that device. None leaves the
+        grower name as given.
+    params
+        Dotted config-key overrides, e.g. ``{"tree.lambda_l1": 0.5}``; the
+        power-user escape hatch, applied after the first-class kwargs and
+        always wins.
+    config
+        Path to a TOML file used as the base config; keyword arguments and
+        ``params`` always override it.
     """
 
     def __init__(
@@ -93,9 +133,21 @@ class _BonsaiEstimator:
         return f"{type(self).__name__}({args})"
 
     def get_params(self, deep: bool = True) -> dict:
-        """sklearn contract: one entry per ``__init__`` parameter, unchanged
-        since construction (``deep`` is accepted for API compatibility;
-        these estimators have no nested estimators to recurse into)."""
+        """Read back every constructor parameter, unchanged since construction.
+
+        Part of the sklearn estimator contract.
+
+        Parameters
+        ----------
+        deep
+            Accepted for API compatibility; these estimators have no nested
+            estimators to recurse into, so it has no effect.
+
+        Returns
+        -------
+        dict
+            One entry per ``__init__`` parameter name.
+        """
         names = [
             p.name
             for p in inspect.signature(self.__init__).parameters.values()
@@ -104,8 +156,26 @@ class _BonsaiEstimator:
         return {name: getattr(self, name) for name in names}
 
     def set_params(self, **params) -> _BonsaiEstimator:
-        """sklearn contract: set constructor attributes in place, return
-        self. Unknown names raise (sklearn's own estimators do the same)."""
+        """Set constructor attributes in place.
+
+        Part of the sklearn estimator contract.
+
+        Parameters
+        ----------
+        **params
+            Constructor parameter names to new values.
+
+        Returns
+        -------
+        _BonsaiEstimator
+            ``self``, for chaining.
+
+        Raises
+        ------
+        ValueError
+            If a name is not a constructor parameter (sklearn's own
+            estimators do the same).
+        """
         valid = self.get_params(deep=False)
         for key, value in params.items():
             if key not in valid:
@@ -117,22 +187,36 @@ class _BonsaiEstimator:
         return self
 
     def __sklearn_is_fitted__(self) -> bool:
-        """sklearn's ``check_is_fitted`` (used by ``Pipeline`` etc.) looks
-        for instance ``__dict__`` attributes ending in ``_``; ``n_iters_``
-        etc. are properties backed by ``_model``, so they never show up
-        there. This makes fitted-state detection exact instead of relying
-        on that naming convention."""
+        """Report fitted state exactly, without relying on attribute naming.
+
+        sklearn's ``check_is_fitted`` (used by ``Pipeline`` etc.) looks for
+        instance ``__dict__`` attributes ending in ``_``; ``n_iters_`` etc.
+        are properties backed by ``_model``, so they never show up there.
+
+        Returns
+        -------
+        bool
+            True once ``fit`` or ``from_file`` has set ``_model``.
+        """
         return self._model is not None
 
     def __sklearn_tags__(self):
-        """Only needed because the installed sklearn (>=1.6) requires
+        """Build the sklearn tag object by hand, without subclassing sklearn.
+
+        Only needed because the installed sklearn (>=1.6) requires
         ``__sklearn_tags__`` on any estimator passed through ``clone``,
         ``Pipeline``, ``cross_val_score``, or ``GridSearchCV`` — even
-        duck-typed ones that never subclass ``BaseEstimator``. Built by hand
-        (mirroring what ``RegressorMixin``/``ClassifierMixin``/
-        ``BaseEstimator`` produce) so sklearn stays import-only-in-tests;
-        empirically verified against the installed sklearn (see test
-        suite). ``_estimator_type`` is what picks the per-type tag."""
+        duck-typed ones that never subclass ``BaseEstimator``. Mirrors what
+        ``RegressorMixin``/``ClassifierMixin``/``BaseEstimator`` produce, so
+        sklearn stays import-only-in-tests; empirically verified against the
+        installed sklearn (see test suite). ``_estimator_type`` is what
+        picks the per-type tag.
+
+        Returns
+        -------
+        sklearn.utils.Tags
+            The tag object sklearn's tooling introspects.
+        """
         from sklearn.utils import (
             ClassifierTags,
             InputTags,
@@ -152,58 +236,137 @@ class _BonsaiEstimator:
         )
 
     def predict(self, X, num_iteration: int = 0) -> np.ndarray:
-        """``num_iteration`` truncates the ensemble to its first ``n``
-        trees, as on ``Model.predict``; 0 uses every tree. A prefix always
-        starts at the head, because a boosted sum has no meaning without
-        it."""
+        """Predict with the fitted model.
+
+        Parameters
+        ----------
+        X
+            Feature matrix.
+        num_iteration
+            Truncates the ensemble to its first ``n`` trees, as on
+            ``Model.predict``; 0 uses every tree. A prefix always starts at
+            the head, because a boosted sum has no meaning without it.
+
+        Returns
+        -------
+        numpy.ndarray
+            Predictions, one per row of ``X``.
+        """
         self._check_fitted("fit() or load first")
         return np.asarray(self._model.predict(_as_f32(X, 2, "X"), num_iteration))
 
     def staged_predict(self, X) -> np.ndarray:
-        """(n_iters, n_rows): predictions after each boosting iteration."""
+        """Predict after each boosting iteration.
+
+        Parameters
+        ----------
+        X
+            Feature matrix.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(n_iters, n_rows)``: predictions after each boosting
+            iteration.
+        """
         self._check_fitted()
         return np.asarray(self._model.staged_predict(_as_f32(X, 2, "X")))
 
     def predict_leaf(self, X) -> np.ndarray:
-        """(n_rows, n_trees): per-tree leaf indices (feature engineering /
-        embedding trick). One column per tree in training order, so a softmax
-        model (one tree per class per round) has ``n_iters * n_classes``
-        columns and column ``t`` is round ``t // n_classes``, class
-        ``t % n_classes``."""
+        """Predict per-tree leaf indices, for feature engineering / embedding.
+
+        Parameters
+        ----------
+        X
+            Feature matrix.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(n_rows, n_trees)``. One column per tree in training
+            order, so a softmax model (one tree per class per round) has
+            ``n_iters * n_classes`` columns and column ``t`` is round
+            ``t // n_classes``, class ``t % n_classes``.
+        """
         self._check_fitted()
         return np.asarray(self._model.predict_leaf(_as_f32(X, 2, "X")))
 
     def dump(self) -> str:
-        """Every tree as indented text."""
+        """Dump the model as text.
+
+        Returns
+        -------
+        str
+            Every tree as indented text.
+        """
         self._check_fitted()
         return self._model.dump()
 
     def pred_contribs(self, X) -> np.ndarray:
-        """(n_rows, n_features + 1) TreeSHAP contributions; last column is
-        the bias. Rows sum to the raw (pre-link) prediction exactly."""
+        """Compute TreeSHAP contributions.
+
+        Parameters
+        ----------
+        X
+            Feature matrix.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(n_rows, n_features + 1)``; the last column is the bias.
+            Rows sum to the raw (pre-link) prediction exactly.
+        """
         self._check_fitted()
         return np.asarray(self._model.pred_contribs(_as_f32(X, 2, "X")))
 
     def importance(self, type: str = "gain") -> np.ndarray:
-        """Raw per-feature importance: total split gain or split count."""
+        """Compute raw per-feature importance.
+
+        Parameters
+        ----------
+        type
+            ``"gain"`` for total split gain, ``"split"`` for split count.
+
+        Returns
+        -------
+        numpy.ndarray
+            One value per feature, unnormalized.
+        """
         self._check_fitted()
         return np.asarray(self._model.feature_importance(type))
 
     @property
     def feature_importances_(self) -> np.ndarray:
-        """Gain importance normalized to sum to 1 (sklearn convention)."""
+        """numpy.ndarray: gain importance normalized to sum to 1 (sklearn convention)."""
         raw = self.importance("gain")
         total = raw.sum()
         return raw / total if total > 0 else raw
 
     def save(self, path: str):
-        """Serialize the fitted model to a ``.msgpack`` file."""
+        """Serialize the fitted model to a ``.msgpack`` file.
+
+        Parameters
+        ----------
+        path
+            Destination file path.
+        """
         self._check_fitted("fit() before save()")
         self._model.save(path)
 
     @classmethod
     def from_file(cls, path: str) -> _BonsaiEstimator:
-        """Fresh estimator wrapping a saved ``.msgpack`` model."""
+        """Load a fitted model from a saved ``.msgpack`` file.
+
+        Parameters
+        ----------
+        path
+            Path to a model saved with ``save``.
+
+        Returns
+        -------
+        _BonsaiEstimator
+            A fresh estimator instance wrapping the loaded model.
+        """
         out = cls()
         out._model = load(path)
         return out
@@ -214,16 +377,23 @@ class _BonsaiEstimator:
         return self._model.n_iters
 
     def evals_result(self) -> dict:
-        """Per-round eval-set loss history:
-        ``{"valid": {objective_name: [...]}}``. The outer key names the eval
-        set, spelled the way the CLI labels its metric column and
-        ``data.valid`` names the file. Requires a fit with an ``eval_set``;
-        empty after loading from a file. The metric is the objective's own
-        loss under its bonsai name and its own units: the ``mse`` objective
-        reports squared error, not its root. After an ``init_model`` warm
-        start only the continuation's measured rounds are reported (the
-        warm-start rounds were never evaluated; ``best_iteration`` still
-        counts absolute rounds)."""
+        """Read back the per-round eval-set loss history.
+
+        Requires a fit with an ``eval_set``; empty after loading from a file.
+        The metric is the objective's own loss under its bonsai name and its
+        own units: the ``mse`` objective reports squared error, not its
+        root. After an ``init_model`` warm start only the continuation's
+        measured rounds are reported (the warm-start rounds were never
+        evaluated; ``best_iteration`` still counts absolute rounds).
+
+        Returns
+        -------
+        dict
+            ``{"valid": {objective_name: [...]}}``. The outer key names the
+            eval set, spelled the way the CLI labels its metric column and
+            ``data.valid`` names the file. Empty if there is no eval-set
+            history.
+        """
         self._check_fitted()
         name = self._model.objective_name
         hist = [float(v) for v in self._model.eval_history]
@@ -237,12 +407,18 @@ class _BonsaiEstimator:
 
     @property
     def best_iteration(self) -> int:
-        """0-based absolute model round with the best eval-set loss, defined
-        only when fit ran with early stopping and an ``eval_set``: it is the
-        round early stopping kept. After an ``init_model`` warm start the
-        index counts the warm-start rounds too, so it lines up with
-        ``n_iters_`` and
-        ``predict(num_iteration=best_iteration + 1)``."""
+        """int: 0-based absolute model round with the best eval-set loss.
+
+        Defined only when fit ran with early stopping and an ``eval_set``: it
+        is the round early stopping kept. After an ``init_model`` warm start
+        the index counts the warm-start rounds too, so it lines up with
+        ``n_iters_`` and ``predict(num_iteration=best_iteration + 1)``.
+
+        Raises
+        ------
+        AttributeError
+            If fit did not run with ``eval_set`` and ``early_stopping_rounds``.
+        """
         self._check_fitted()
         hist = self._model.eval_history
         if not self.early_stopping_rounds or not len(hist):
@@ -255,8 +431,16 @@ class _BonsaiEstimator:
 
     @property
     def best_score(self) -> float:
-        """Eval-set loss at ``best_iteration``, in the objective's own
-        units (the same values ``evals_result`` reports)."""
+        """float: eval-set loss at ``best_iteration``.
+
+        In the objective's own units (the same values ``evals_result``
+        reports).
+
+        Raises
+        ------
+        AttributeError
+            If fit did not run with ``eval_set`` and ``early_stopping_rounds``.
+        """
         self._check_fitted()
         hist = self._model.eval_history
         if not self.early_stopping_rounds or not len(hist):
@@ -368,17 +552,55 @@ class BonsaiRegressor(_BonsaiEstimator):
     for another library goes through ``bonsai.interop`` first, which is
     where the knob mapping and its caveats live.
 
-    ``objective`` is one of bonsai's own: ``mse``, ``mae``, ``huber``,
-    ``quantile`` (with ``quantile_alpha``), or ``poisson``. ``subsample``
-    switches the sampler to ``bernoulli`` when ``sampler`` is at its
-    default. ``device="cuda"`` picks the CUDA grower matching the chosen
-    grower, moving compute without changing the growth strategy.
-
     ``config`` names a TOML file used as the base config (the CLI's ``-c``).
     Keyword arguments and ``params`` always win over the file — including the
     first-class kwargs at their defaults, which are always emitted. To defer
     a knob to the file, set it there and leave it out of ``params``, or use
     ``train()`` directly.
+
+    Parameters
+    ----------
+    n_iters
+        Number of boosting rounds.
+    learning_rate
+        Shrinkage applied to each tree's contribution.
+    max_depth
+        Maximum tree depth.
+    max_leaves
+        Maximum leaves per tree, the leafwise growth budget.
+    grower
+        Growth strategy name (``"leafwise"``, ``"depthwise"``,
+        ``"levelwise"``, ...); combined with ``device`` to pick the concrete
+        grower.
+    sampler
+        Row sampler name; ``"all_rows"`` trains on every row.
+    objective
+        One of bonsai's own: ``"mse"``, ``"mae"``, ``"huber"``,
+        ``"quantile"`` (with ``quantile_alpha``), or ``"poisson"``.
+    early_stopping_rounds
+        Patience in rounds before stopping on eval-set loss; 0 disables
+        early stopping.
+    n_threads
+        Worker thread count; 0 uses every available core.
+    random_seed
+        Seed for the booster's random state.
+    max_bin
+        Histogram bin cap; None leaves the native default.
+    subsample
+        Row-sampling fraction; switches the sampler to ``"bernoulli"`` when
+        ``sampler`` is still at its default. None leaves sampling off.
+    device
+        ``"cpu"`` or ``"cuda"`` (or ``"cuda:N"``); ``"cuda"`` picks the CUDA
+        grower matching the chosen ``grower``, moving compute without
+        changing the growth strategy. None leaves the grower name as given.
+    quantile_alpha
+        The quantile to fit when ``objective="quantile"``.
+    params
+        Dotted config-key overrides, the power-user escape hatch, applied
+        after the first-class kwargs and always wins.
+    config
+        Path to a TOML file used as the base config; keyword arguments and
+        ``params`` always override it.
     """
 
     _estimator_type = "regressor"
@@ -410,14 +632,39 @@ class BonsaiRegressor(_BonsaiEstimator):
     def fit(self, X, y, sample_weight=None,
             eval_set: tuple | Dataset | None = None,
             init_model: str | None = None) -> BonsaiRegressor:
-        """`sample_weight` scales each row's gradient and hessian (sklearn's
-        convention). `eval_set` is one bare `(X, y)` tuple, or a
-        `bonsai.Dataset` built with `reference=` the training dataset, which
-        bins the validation rows once and reuses them across fits; bonsai
-        tracks a single validation set, so a list of them is rejected rather
-        than silently reduced to its last entry. init_model continues
-        training from a saved .msgpack (warm start); binning reuses the
-        loaded model's cut points."""
+        """Fit the regressor to training data.
+
+        Parameters
+        ----------
+        X
+            Feature matrix.
+        y
+            Regression targets.
+        sample_weight
+            Per-row weights that scale each row's gradient and hessian
+            (sklearn's convention). None weights every row equally.
+        eval_set
+            One bare ``(X, y)`` tuple, Dataset, or None. A ``bonsai.Dataset``
+            must be built with ``reference=`` the training dataset, which
+            bins the validation rows once and reuses them across fits.
+            bonsai tracks a single validation set, so a list of them is
+            rejected rather than silently reduced to its last entry.
+        init_model
+            Path to a saved ``.msgpack`` model to continue training from
+            (warm start); binning reuses the loaded model's cut points. None
+            trains from scratch.
+
+        Returns
+        -------
+        BonsaiRegressor
+            ``self``, fitted.
+
+        Raises
+        ------
+        ValueError
+            If ``eval_set`` is a list, or (with ``dart_drop_rate > 0``) if
+            ``eval_set`` is given at all.
+        """
         _reject_eval_set_list(eval_set)
         pairs = self._build_pairs()
         ev = None
@@ -435,8 +682,26 @@ class BonsaiRegressor(_BonsaiEstimator):
         return self
 
     def score(self, X, y, sample_weight=None) -> float:
-        """R² (coefficient of determination), matching sklearn's
-        ``RegressorMixin.score`` — computed by hand, no sklearn import."""
+        """Compute R² (coefficient of determination) on held-out data.
+
+        Matches sklearn's ``RegressorMixin.score`` — computed by hand, no
+        sklearn import.
+
+        Parameters
+        ----------
+        X
+            Feature matrix.
+        y
+            True regression targets.
+        sample_weight
+            Per-row weights for the R² computation. None weights every row
+            equally.
+
+        Returns
+        -------
+        float
+            The R² score.
+        """
         y_true = _as_f32(y, 1, "y").astype(np.float64)
         y_pred = np.asarray(self.predict(X), dtype=np.float64)
         w = (None if sample_weight is None
@@ -478,6 +743,45 @@ class BonsaiClassifier(_BonsaiEstimator):
     ``predict_proba`` covers both cases: binary from the native ``logloss``
     P(class 1), multiclass from the ``softmax`` booster's per-class
     probabilities; see its docstring.
+
+    Parameters
+    ----------
+    n_iters
+        Number of boosting rounds.
+    learning_rate
+        Shrinkage applied to each tree's contribution.
+    max_depth
+        Maximum tree depth.
+    max_leaves
+        Maximum leaves per tree, the leafwise growth budget.
+    grower
+        Growth strategy name (``"leafwise"``, ``"depthwise"``,
+        ``"levelwise"``, ...); combined with ``device`` to pick the concrete
+        grower.
+    sampler
+        Row sampler name; ``"all_rows"`` trains on every row.
+    early_stopping_rounds
+        Patience in rounds before stopping on eval-set loss; 0 disables
+        early stopping.
+    n_threads
+        Worker thread count; 0 uses every available core.
+    random_seed
+        Seed for the booster's random state.
+    max_bin
+        Histogram bin cap; None leaves the native default.
+    subsample
+        Row-sampling fraction; switches the sampler to ``"bernoulli"`` when
+        ``sampler`` is still at its default. None leaves sampling off.
+    device
+        ``"cpu"`` or ``"cuda"`` (or ``"cuda:N"``); ``"cuda"`` picks the CUDA
+        grower matching the chosen ``grower``, moving compute without
+        changing the growth strategy. None leaves the grower name as given.
+    params
+        Dotted config-key overrides, the power-user escape hatch, applied
+        after the first-class kwargs and always wins.
+    config
+        Path to a TOML file used as the base config; keyword arguments and
+        ``params`` always override it.
     """
 
     _estimator_type = "classifier"
@@ -506,12 +810,45 @@ class BonsaiClassifier(_BonsaiEstimator):
     def fit(self, X, y, sample_weight=None,
             eval_set: tuple | Dataset | None = None,
             init_model: str | None = None) -> BonsaiClassifier:
-        """`sample_weight` scales each row's gradient and hessian (sklearn's
-        convention). `eval_set` is one bare `(X, y)` tuple, or a
-        `bonsai.Dataset` built with `reference=` the training dataset and
-        carrying labels already encoded to `0..K-1`; a list of them is
-        rejected. init_model continues training from a saved .msgpack
-        (warm start); binning reuses the loaded model's cut points."""
+        """Fit the classifier to training data.
+
+        ``fit`` picks ``logloss`` for two classes or ``softmax`` (with
+        ``objective.n_classes`` set) for more, based on ``np.unique(y)``.
+
+        Parameters
+        ----------
+        X
+            Feature matrix.
+        y
+            Class labels; any hashable/orderable values (ints, strings,
+            ...). Encoded to ``0..K-1`` internally and decoded back to the
+            original ``classes_`` values by ``predict``.
+        sample_weight
+            Per-row weights that scale each row's gradient and hessian
+            (sklearn's convention). None weights every row equally.
+        eval_set
+            One bare ``(X, y)`` tuple, Dataset, or None. A ``bonsai.Dataset``
+            must be built with ``reference=`` the training dataset and carry
+            labels already encoded to ``0..K-1``. bonsai tracks a single
+            validation set, so a list of them is rejected.
+        init_model
+            Path to a saved ``.msgpack`` model to continue training from
+            (warm start); binning reuses the loaded model's cut points. None
+            trains from scratch.
+
+        Returns
+        -------
+        BonsaiClassifier
+            ``self``, fitted.
+
+        Raises
+        ------
+        ValueError
+            If ``y`` contains NaN, has fewer than 2 classes, or ``eval_set``
+            is a list; also if ``eval_set`` is given with
+            ``dart_drop_rate > 0``, or if an eval-set label was not seen in
+            the training classes.
+        """
         _reject_eval_set_list(eval_set)
         y_arr = np.asarray(y)
         if y_arr.dtype.kind == "f" and np.isnan(y_arr).any():
@@ -540,8 +877,22 @@ class BonsaiClassifier(_BonsaiEstimator):
         return self
 
     def predict(self, X, num_iteration: int = 0) -> np.ndarray:
-        """Original class labels (from ``classes_``), not the encoded
-        ``0..K-1`` ids the native booster works in."""
+        """Predict class labels with the fitted model.
+
+        Parameters
+        ----------
+        X
+            Feature matrix.
+        num_iteration
+            Truncates the ensemble to its first ``n`` trees; 0 uses every
+            tree.
+
+        Returns
+        -------
+        numpy.ndarray
+            Original class labels (from ``classes_``), not the encoded
+            ``0..K-1`` ids the native booster works in.
+        """
         self._check_fitted("fit() or load first")
         raw = np.asarray(self._model.predict(_as_f32(X, 2, "X"), num_iteration))
         if self.n_classes_ == 2:
@@ -551,12 +902,21 @@ class BonsaiClassifier(_BonsaiEstimator):
         return self.classes_[idx]
 
     def predict_proba(self, X) -> np.ndarray:
-        """(n_rows, n_classes) class probabilities, columns in ``classes_``
-        order.
+        """Predict class probabilities with the fitted model.
 
         Binary uses the ``logloss`` objective's P(class 1) directly
         (``[1 - p, p]``); multiclass uses the ``softmax`` booster's per-class
         probabilities (a row-wise softmax of the class logits).
+
+        Parameters
+        ----------
+        X
+            Feature matrix.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(n_rows, n_classes)``, columns in ``classes_`` order.
         """
         self._check_fitted("fit() or load first")
         if self.n_classes_ == 2:
@@ -565,8 +925,31 @@ class BonsaiClassifier(_BonsaiEstimator):
         return np.asarray(self._model.predict_proba(_as_f32(X, 2, "X")), dtype=np.float64)
 
     def score(self, X, y, sample_weight=None) -> float:
-        """Accuracy, matching sklearn's ``ClassifierMixin.score`` — computed
-        by hand, no sklearn import."""
+        """Compute accuracy on held-out data.
+
+        Matches sklearn's ``ClassifierMixin.score`` — computed by hand, no
+        sklearn import.
+
+        Parameters
+        ----------
+        X
+            Feature matrix.
+        y
+            True class labels.
+        sample_weight
+            Per-row weights for the accuracy computation. None weights every
+            row equally.
+
+        Returns
+        -------
+        float
+            The accuracy score.
+
+        Raises
+        ------
+        ValueError
+            If ``sample_weight`` sums to zero.
+        """
         y_true = np.asarray(y)
         y_pred = np.asarray(self.predict(X))
         correct = (y_true == y_pred).astype(np.float64)
@@ -586,6 +969,21 @@ class BonsaiClassifier(_BonsaiEstimator):
         as the encoded ids ``0..K-1``, and ``predict`` returns those ids
         rather than the label values passed to ``fit``. Pickle the estimator
         to preserve original labels.
+
+        Parameters
+        ----------
+        path
+            Path to a model saved with ``save``.
+
+        Returns
+        -------
+        BonsaiClassifier
+            A fresh classifier instance wrapping the loaded model.
+
+        Raises
+        ------
+        ValueError
+            If the saved model's objective is not ``logloss`` or ``softmax``.
         """
         out = super().from_file(path)
         objective = out._model.objective_name
