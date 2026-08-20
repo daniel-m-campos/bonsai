@@ -2,7 +2,7 @@
 
 # Parameters
 
-This page lists every training knob, with its type, default, and effect on the model. Set any parameter three ways: on the CLI with `--set tree.max_depth=8`, under `[tree]` in a TOML config, or in Python with `params=[("tree.max_depth", 8)]`. Run `bonsai params` to print the whole default config as TOML.
+This page lists every training knob, with its type, default, and effect on the model. Set any parameter three ways: on the CLI with `--set tree.max_depth=8`, under `[tree]` in a TOML config, or in Python with `params={"tree.max_depth": 8}`. Run `bonsai params` to print the whole default config as TOML.
 
 The table below is generated from `docs/use/parameters.src.json`, extracted from the default `Config` by `make params-json` (which runs `bonsai params`). CI checks the page against that JSON. Re-run `make params-json` after adding or renaming a knob so the extraction tracks the structs.
 

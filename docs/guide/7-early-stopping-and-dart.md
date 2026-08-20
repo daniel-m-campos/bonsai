@@ -79,11 +79,11 @@ y = (X[:, 0] * 2.0 + X[:, 3] + rng.normal(0, 0.2, 6000)).astype(np.float32)
 train = bonsai.Dataset(X[:5000], y[:5000])
 valid = bonsai.Dataset(X[5000:], y[5000:], reference=train)
 
-for depth in ("4", "6", "8"):
+for depth in (4, 6, 8):
     m = bonsai.train(
-        [("tree.max_depth", depth), ("booster.n_iters", "400"),
-         ("booster.learning_rate", "0.15"),
-         ("booster.early_stopping_rounds", "20")],
+        {"tree.max_depth": depth, "booster.n_iters": 400,
+         "booster.learning_rate": 0.15,
+         "booster.early_stopping_rounds": 20},
         train, eval_set=valid)
     print(f"depth {depth}: stopped at {m.n_iters}, valid mse "
           f"{min(m.eval_history):.4f}")
