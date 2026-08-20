@@ -3,7 +3,7 @@
 bonsai's entire API follows from three facts. Everything else is detail.
 
 1. **There are two layers over one engine.** Scikit-learn-shaped estimators (`BonsaiRegressor`, `BonsaiClassifier`) for pipelines and quick work, and an explicit layer (`train`, `Dataset`, `Model`) when you want full control. Both call the same C++ training path the CLI uses.
-2. **There is one configuration system.** Every knob is a dotted key like `tree.max_depth` or `dispatch.grower_name`. The same keys work as `params` pairs in Python, as `--set` overrides on the CLI, and as sections in a TOML file. `bonsai.default_config_toml()` prints all of them with defaults.
+2. **There is one configuration system.** Every knob is a dotted key like `tree.max_depth` or `dispatch.grower_name`. The same keys work as `params` in Python (a `Params` or a dotted-key dict), as `--set` overrides on the CLI, and as sections in a TOML file. `bonsai.default_config_toml()` prints all of them with defaults.
 3. **There is one model format.** `.msgpack` files round-trip everywhere: a model trained in Python predicts from the CLI, and vice versa. A model trained on CPU is byte-identical across runs, thread counts, and CPU architectures, so that file is a reproducible artifact rather than a snapshot of one machine. GPU training does not carry that guarantee: device histograms accumulate under atomics, so the same fit writes different bytes each run, and what the device plane offers instead is a measured run-to-run spread ([the contract](../design/determinism.md)).
 
 ## Install
@@ -20,9 +20,9 @@ Three call shapes over one engine. The question that picks between them is how m
 
 **Estimators, for scikit-learn interop.** `BonsaiRegressor` and `BonsaiClassifier` are what a `Pipeline`, a `GridSearchCV`, a `cross_val_score`, or a `clone` expects to be handed. Reach for them when something else in your stack holds the model.
 
-**`Dataset` plus `train`, for repeat fits.** `bonsai.Dataset(X, y, device=...)` runs the binning pass once at construction and every later `train(pairs, ds)` skips it, bit-identical to training from the arrays. This is the shape for hyperparameter search, multi-seed ensembling, production refits on a warm dataset, and any serving path where one ingest feeds many fits. On GPU it is also where the matrix uploads once instead of once per fit.
+**`Dataset` plus `train`, for repeat fits.** `bonsai.Dataset(X, y, device=...)` runs the binning pass once at construction and every later `train(params, ds)` skips it, bit-identical to training from the arrays. This is the shape for hyperparameter search, multi-seed ensembling, production refits on a warm dataset, and any serving path where one ingest feeds many fits. On GPU it is also where the matrix uploads once instead of once per fit.
 
-**Fused `train(pairs, X, y)`, for one-shots.** One fit, one array, no object to keep. The binning happens inside the call and goes away with it.
+**Fused `train(params, X, y)`, for one-shots.** One fit, one array, no object to keep. The binning happens inside the call and goes away with it.
 
 The estimator layer is the sklearn-shaped surface, not the primary one. Everything it does, the explicit layer does with less ceremony; what it adds is the contract other libraries call.
 
@@ -62,7 +62,7 @@ bonsai.BonsaiRegressor(params={"tree.lambda_l1": 0.5, "sampler.subsample": 0.8})
 
 ## Bringing a config from another library
 
-`bonsai.interop` translates a parameter dict written for XGBoost, LightGBM, or CatBoost into the pairs `train` and `params` take. It is the only place in the repo that knows those names, so the benchmark harness, the estimators, and these docs cannot drift apart:
+`bonsai.interop` translates a parameter dict written for XGBoost, LightGBM, or CatBoost into the `Params` that `train` takes. It is the only place in the repo that knows those names, so the benchmark harness, the estimators, and these docs cannot drift apart:
 
 ```{.python .run}
 import bonsai
@@ -76,7 +76,7 @@ lgbm_config = {
     "lambda_l2": 1.0,
     "verbose": -1,
 }
-for key, value in sorted(bonsai.interop.from_lightgbm(lgbm_config)):
+for key, value in sorted(bonsai.interop.from_lightgbm(lgbm_config).to_dict().items()):
     print(f"{key} = {value}")
 ```
 
@@ -90,7 +90,7 @@ Translation is not equivalence, and each mapping documents where its two sides p
 
 ## The explicit layer
 
-`train` takes the overrides in any of three shapes and returns a `Model`. The typed shape is `bonsai.Params`, one generated dataclass per config section, where an unset field means "leave the library default":
+`train` takes the overrides in either of two shapes and returns a `Model`. The typed shape is `bonsai.Params`, one generated dataclass per config section, where an unset field means "leave the library default":
 
 ```python
 from bonsai.params import Params, Booster, Dispatch
@@ -102,7 +102,7 @@ model = bonsai.train(
 )
 ```
 
-A plain dict of dotted keys (`{"booster.n_iters": 200}`) and the wire-format pairs (`[("booster.n_iters", "200")]`) are accepted the same way; all three render to identical overrides, so the choice never changes the model. A misspelled field raises at `Params` construction with the section's legal names in the message, rather than at fit time.
+A plain dict of dotted keys (`{"booster.n_iters": 200}`) is accepted the same way; both forms render to identical overrides, so the choice never changes the model. The `(key, value)` pairs list is the internal wire format, not part of `train`'s contract. A misspelled field raises at `Params` construction with the section's legal names in the message, rather than at fit time.
 
 `Params | dict` merges the way dicts do (right side wins), which is the sweep idiom: a fixed base plus what this trial changes. That composes directly with optuna-style objectives, where the dotted key doubles as the trial's parameter name:
 

@@ -72,11 +72,16 @@ def ndcg_at_10(y_true, y_score, groups):
 def learners(Xtr, ytr, gtr, Xte):
     def bonsai_reg():
         import bonsai
-        pairs = [("dispatch.grower_name", "depthwise"), ("dispatch.objective_name", "mse"),
-                 ("booster.n_iters", str(ITERS)), ("booster.learning_rate", str(LR)),
-                 ("booster.random_seed", "42"), ("tree.max_depth", str(DEPTH)),
-                 ("tree.max_leaves", str(1 << DEPTH)), ("tree.min_data_in_leaf", "20"),
-                 ("tree.lambda_l2", "1.0"), ("bin_mapper.max_bin", "255")]
+        pairs = {"dispatch.grower_name": "depthwise",
+                 "dispatch.objective_name": "mse",
+                 "booster.n_iters": str(ITERS),
+                 "booster.learning_rate": str(LR),
+                 "booster.random_seed": "42",
+                 "tree.max_depth": str(DEPTH),
+                 "tree.max_leaves": str(1 << DEPTH),
+                 "tree.min_data_in_leaf": "20",
+                 "tree.lambda_l2": "1.0",
+                 "bin_mapper.max_bin": "255"}
         return np.asarray(bonsai.train(pairs, Xtr, ytr).predict(Xte))
 
     def lgbm_reg():

@@ -19,9 +19,9 @@ import numpy as np
 sys.path.insert(0, "build/python")
 import bonsai
 
-PAIRS = [("dispatch.grower_name", "depthwise"), ("booster.n_iters", "20"),
-         ("booster.learning_rate", "0.1"), ("tree.max_depth", "8"),
-         ("bin_mapper.max_bin", "255"), ("parallel.n_threads", "8")]
+PAIRS = {"dispatch.grower_name": "depthwise", "booster.n_iters": "20",
+         "booster.learning_rate": "0.1", "tree.max_depth": "8",
+         "bin_mapper.max_bin": "255", "parallel.n_threads": "8"}
 
 
 def _sha(a: np.ndarray) -> str:
@@ -39,7 +39,7 @@ def _gen_data() -> tuple[np.ndarray, np.ndarray]:
 
 
 def _model_sha(X: np.ndarray, y: np.ndarray, extra=()) -> str:
-    m = bonsai.train([*PAIRS, *extra], X, y)
+    m = bonsai.train({**PAIRS, **dict(extra)}, X, y)
     with tempfile.NamedTemporaryFile(suffix=".msgpack") as f:
         m.save(f.name)
         return hashlib.sha256(open(f.name, "rb").read()).hexdigest()[:16]
@@ -60,8 +60,7 @@ def main() -> int:
     # the architecture (decisions 59/60). Both lines are asserted equal across
     # arm64/x86-64 by the cross-arch CI gate.
     print("serial_sha256:",
-          _model_sha(X, y, [("bin_mapper.n_samples", "500000"),
-                            ("parallel.n_threads", "1")]))
+          _model_sha(X, y, {"bin_mapper.n_samples": "500000", "parallel.n_threads": "1"}))
     print("sha256:", _model_sha(X, y))
     return 0
 

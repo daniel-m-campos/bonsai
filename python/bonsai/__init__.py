@@ -4,15 +4,15 @@ Two API layers, both over the same native module:
 
 - ``train(params, X, y, ...)`` / ``load(path)`` return a ``Model`` — the
   thin, explicit layer. ``params`` is a ``Params`` (typed overrides, one
-  dataclass per config section: ``bonsai.params``), a ``{"tree.max_depth":
-  8}`` dict, or a list of ``(dotted.key, value)`` pairs — the keys the CLI
-  accepts via ``--set`` (see ``default_config_toml()`` for all of them).
+  dataclass per config section: ``bonsai.params``) or a
+  ``{"tree.max_depth": 8}`` dict — the keys the CLI accepts via ``--set``
+  (see ``default_config_toml()`` for all of them).
   ``Model`` carries ``predict / staged_predict / predict_leaf /
   pred_contribs (TreeSHAP) / feature_importance / dump / save``.
 - ``BonsaiRegressor`` / ``BonsaiClassifier`` — sklearn-style estimators
   wrapping the same booster for pipelines and quick experiments. They speak
   bonsai's parameter names only; ``bonsai.interop`` translates a parameter
-  dict written for XGBoost, LightGBM, or CatBoost into the pairs above.
+  dict written for XGBoost, LightGBM, or CatBoost into a ``Params``.
 
 GPU training: pass ``device="cuda"`` (or pick a grower directly with
 ``dispatch.grower_name = "cuda_leafwise"`` / ``"cuda_depthwise"`` /

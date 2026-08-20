@@ -23,7 +23,7 @@ import pytest
 CUDA_MEMCPY_HOST_TO_DEVICE = 1
 DL_CUDA = 2
 DL_FLOAT = 2
-PAIRS = [("booster.n_iters", "12"), ("tree.max_depth", "5")]
+PAIRS = {"booster.n_iters": "12", "tree.max_depth": "5"}
 
 requires_cuda = pytest.mark.skipif(
     not bonsai.cuda_available(), reason="no CUDA build or no visible device"

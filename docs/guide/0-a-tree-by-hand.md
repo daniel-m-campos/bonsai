@@ -81,10 +81,10 @@ import bonsai
 
 X = np.array([[0.2], [0.5], [0.9], [1.4], [2.1], [2.6], [3.3], [3.8]], dtype=np.float32)
 y = np.array([1.0, 1.2, 0.9, 1.1, 3.0, 3.2, 2.9, 3.1], dtype=np.float32)
-model = bonsai.train([
-    ("booster.n_iters", "20"), ("booster.learning_rate", "0.3"),
-    ("tree.max_depth", "2"), ("tree.min_data_in_leaf", "1"),
-], X, y)
+model = bonsai.train({
+    "booster.n_iters": 20, "booster.learning_rate": 0.3,
+    "tree.max_depth": 2, "tree.min_data_in_leaf": 1,
+}, X, y)
 print(np.asarray(model.predict(X)).round(2))
 print(model.dump())   # the trees, with the split thresholds and gains
 ```

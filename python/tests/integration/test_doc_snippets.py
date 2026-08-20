@@ -39,8 +39,8 @@ def _prelude() -> dict:
         "X_test": X[half:], "Xv": X[half:], "yv": y[half:],
         "w": np.ones(half, dtype=np.float32),
         "grid": [
-            [("booster.n_iters", "5")],
-            [("booster.n_iters", "5"), ("tree.max_depth", "3")],
+            {"booster.n_iters": "5"},
+            {"booster.n_iters": "5", "tree.max_depth": "3"},
         ],
     }
 

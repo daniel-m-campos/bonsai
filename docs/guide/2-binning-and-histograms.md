@@ -137,7 +137,7 @@ y = (band * 2.0 + rng.normal(0, 0.05, n)).astype(np.float32)
 
 # Column 0 bins at the two domain edges; the rest fit as usual.
 ds = bonsai.Dataset(X, y, bin_edges={0: np.array([18.0, 65.0], dtype=np.float32)})
-model = bonsai.train([("booster.n_iters", "30"), ("tree.max_depth", "4")], ds)
+model = bonsai.train({"booster.n_iters": 30, "tree.max_depth": 4}, ds)
 
 # The edges live in the model, so predict reads raw ages.
 probe = np.array([[10.0, 0.5, 0.5], [40.0, 0.5, 0.5], [80.0, 0.5, 0.5]],
