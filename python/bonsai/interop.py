@@ -28,6 +28,7 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Final
 
 from bonsai._coerce import _to_config_str
+from bonsai._params_ops import ParamsOps
 
 __all__ = [
     "from_catboost",
@@ -497,14 +498,15 @@ def from_catboost(params: Mapping[str, Any], *,
     return _from_library(_CATBOOST, params, strict)
 
 
-def to_xgboost(pairs: Iterable[tuple[str, Any]], *,
+def to_xgboost(pairs: ParamsOps | Iterable[tuple[str, Any]], *,
                strict: bool = True) -> dict[str, Any]:
     """Translate bonsai config pairs into an XGBoost parameter dict.
 
     Parameters
     ----------
     pairs
-        ``(dotted.key, value)`` pairs, or a mapping of the same. Values pass
+        ``(dotted.key, value)`` pairs, a mapping of the same, or a
+        ``bonsai.Params``. Values pass
         through with their Python type intact unless the mapping transforms
         them.
     strict
@@ -531,14 +533,15 @@ def to_xgboost(pairs: Iterable[tuple[str, Any]], *,
     return _to_library(_XGBOOST, pairs, strict)
 
 
-def to_lightgbm(pairs: Iterable[tuple[str, Any]], *,
+def to_lightgbm(pairs: ParamsOps | Iterable[tuple[str, Any]], *,
                 strict: bool = True) -> dict[str, Any]:
     """Translate bonsai config pairs into a LightGBM parameter dict.
 
     Parameters
     ----------
     pairs
-        ``(dotted.key, value)`` pairs, or a mapping of the same.
+        ``(dotted.key, value)`` pairs, a mapping of the same, or a
+        ``bonsai.Params``.
     strict
         True raises on any bonsai key with no LightGBM counterpart, naming
         every one. False drops them.
@@ -563,7 +566,7 @@ def to_lightgbm(pairs: Iterable[tuple[str, Any]], *,
     return _to_library(_LIGHTGBM, pairs, strict)
 
 
-def to_catboost(pairs: Iterable[tuple[str, Any]], *,
+def to_catboost(pairs: ParamsOps | Iterable[tuple[str, Any]], *,
                 strict: bool = True) -> dict[str, Any]:
     """Translate bonsai config pairs into a CatBoost parameter dict.
 
@@ -573,7 +576,8 @@ def to_catboost(pairs: Iterable[tuple[str, Any]], *,
     Parameters
     ----------
     pairs
-        ``(dotted.key, value)`` pairs, or a mapping of the same.
+        ``(dotted.key, value)`` pairs, a mapping of the same, or a
+        ``bonsai.Params``.
     strict
         True raises on any bonsai key with no CatBoost counterpart, naming
         every one. False drops them.
@@ -664,13 +668,14 @@ def _from_library(lib: _Library, params: Mapping[str, Any],
     return [(key, _to_config_str(value)) for key, value in merged.items()]
 
 
-def _to_library(lib: _Library, pairs: Iterable[tuple[str, Any]],
+def _to_library(lib: _Library, pairs: ParamsOps | Iterable[tuple[str, Any]],
                 strict: bool) -> dict[str, Any]:
     """bonsai pairs to a foreign dict; the shared engine behind ``to_*``."""
     index = {knob.native: knob for knob in lib.knobs if not knob.alias}
     out: dict[str, Any] = {}
     unmappable = []
-    for key, value in dict(pairs).items():
+    items = pairs.to_dict() if isinstance(pairs, ParamsOps) else dict(pairs)
+    for key, value in items.items():
         if key in lib.dropped_native:
             continue
         knob = index.get(key)

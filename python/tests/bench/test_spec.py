@@ -33,6 +33,10 @@ def test_spec_expansion():
     assert by[("bonsai_depthwise", 128)]["repeats"] == 1  # cpu policy
     with pytest.raises(ValueError):
         spec_mod.cells_of({"cells": [{"cols": 1000}]})
+    # a typo'd knob in the defaults block would ride into every cell silently
+    with pytest.raises(ValueError, match="unknown key"):
+        spec_mod.cells_of({"defaults": {"deph": 8},
+                           "cells": [{"rows": 100, "cols": 10}]})
 
 
 # The redesigned standings axes (decision 103): scenario name -> the cell it
