@@ -346,9 +346,12 @@ struct CudaDeviceContext
     // when the device grants one (both BinT instantiations opted in), else
     // the 48 KiB static budget. Resolved lazily on first use so engine
     // construction never touches the CUDA runtime.
-    size_t shared_limit  = k_max_shared_bytes;
-    bool   shared_probed = false;
-    bool   plane_noted   = false;
+    size_t shared_limit = k_max_shared_bytes;
+    // SMs on the active device (0 when the query fails): sizes the chunk
+    // axis's fill target so shallow levels do not starve a wide card.
+    int  sm_count      = 0;
+    bool shared_probed = false;
+    bool plane_noted   = false;
 
     // The one histogram-capacity predicate: a node's per-feature scratch is
     // 4 * bins floats in shared memory. begin_root refuses a tree that fails
@@ -385,8 +388,9 @@ struct CudaDeviceContext
     void stage_selection(std::span<feature_id_t const> selected, size_t n_feats);
     void note_plane(bool tiled, size_t shared);
     // The one shared-memory histogram launch, depthwise and leaf alike.
+    // max_rows is the largest node's row count; the chunk policy lives here.
     void launch_hist(uint32_t ds_rows, uint32_t ds_feats, uint32_t n_nodes,
-                     uint32_t n_chunks, float2 const *gh, uint32_t const *rows,
+                     uint32_t max_rows, float2 const *gh, uint32_t const *rows,
                      uint32_t const *offsets, uint32_t const *counts, double *out,
                      uint32_t const *slots);
     // Fills lvl.rows with the tree's root row segment and returns its length: a
