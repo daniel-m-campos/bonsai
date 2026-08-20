@@ -846,7 +846,7 @@ void CudaDeviceContext::partition_level(
     {
         check(cudaEventRecord(lvl.part_ev[1]), "part event record");
     }
-    seg_scan_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(32)>>>(
+    seg_scan_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(k_part_block)>>>(
         lvl.block_counts.data(), max_chunks, lvl.nl_dev.device());
     check(cudaGetLastError(), "seg scan launch");
     if (prof.enabled)
@@ -1327,8 +1327,8 @@ CudaDeviceContext::leaf_split(Dataset const & /*ds*/,
                 lvl.block_counts.data());
         });
     check(cudaGetLastError(), "leaf route launch");
-    seg_scan_kernel<<<dim3(1), dim3(32)>>>(lvl.block_counts.data(), max_chunks,
-                                           lvl.nl_dev.device());
+    seg_scan_kernel<<<dim3(1), dim3(k_part_block)>>>(lvl.block_counts.data(),
+                                                     max_chunks, lvl.nl_dev.device());
     check(cudaGetLastError(), "leaf seg scan launch");
     lvl.rows_b.reserve(data.key.n_rows);
     lvl.gh_b.reserve(data.key.n_rows);

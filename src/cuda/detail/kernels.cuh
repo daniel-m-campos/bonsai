@@ -370,22 +370,46 @@ route_count_kernel(BinT const *bins, uint32_t const *n_bins, uint32_t const *row
 }
 
 // Phase 2: exclusive scan of each op's chunk counts; total -> n_left[op].
+// One k_part_block team per op: tiles of counts go through the scatter
+// kernel's Hillis-Steele shape below with a running carry. Integer sums,
+// so the results are exact whatever the team size.
 __global__ void seg_scan_kernel(uint32_t *block_counts, uint32_t max_chunks,
                                 uint32_t *n_left)
 {
-    if (threadIdx.x != 0)
+    __shared__ uint32_t sh[k_part_block + 1];
+    uint32_t *c     = block_counts + (static_cast<size_t>(blockIdx.x) * max_chunks);
+    uint32_t  carry = 0;
+    for (uint32_t base = 0; base < max_chunks; base += k_part_block)
     {
-        return;
+        uint32_t const k    = base + threadIdx.x;
+        sh[threadIdx.x + 1] = k < max_chunks ? c[k] : 0;
+        if (threadIdx.x == 0)
+        {
+            sh[0] = 0;
+        }
+        __syncthreads();
+        for (uint32_t step = 1; step < k_part_block; step *= 2)
+        {
+            uint32_t v = 0;
+            if (threadIdx.x + 1 >= step + 1)
+            {
+                v = sh[threadIdx.x + 1 - step];
+            }
+            __syncthreads();
+            sh[threadIdx.x + 1] += v;
+            __syncthreads();
+        }
+        if (k < max_chunks)
+        {
+            c[k] = carry + sh[threadIdx.x];
+        }
+        carry += sh[k_part_block];
+        __syncthreads();
     }
-    uint32_t *c   = block_counts + (static_cast<size_t>(blockIdx.x) * max_chunks);
-    uint32_t  run = 0;
-    for (uint32_t k = 0; k < max_chunks; ++k)
+    if (threadIdx.x == 0)
     {
-        uint32_t const v = c[k];
-        c[k]             = run;
-        run += v;
+        n_left[blockIdx.x] = carry;
     }
-    n_left[blockIdx.x] = run;
 }
 
 // Phase 3: stable scatter into the other rows/gh buffers. Each thread's
