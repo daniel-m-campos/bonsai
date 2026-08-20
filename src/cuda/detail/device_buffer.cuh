@@ -34,6 +34,9 @@ inline constexpr size_t k_min_gpu_rows = 512;
 // limit (~99 KiB on consumer parts, 227 KiB on sm_90), moving the bin count
 // the device refuses from ~3k to ~6k+ per feature.
 inline constexpr size_t k_max_shared_bytes = 48UL * 1024UL;
+// Resident 256-thread histogram blocks one SM seats at the tiled shared
+// budget; the chunk axis fills the device to sm_count times this.
+inline constexpr uint32_t k_fill_blocks_per_sm = 4;
 
 // --- The device bin plane's layout, in one place ----------------------------
 // Features are grouped into tiles of k_bin_tile_width. Tile t starts at cell

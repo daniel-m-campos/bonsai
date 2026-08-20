@@ -381,6 +381,11 @@ void CudaDeviceContext::init_shared_limit()
     {
         return;
     }
+    if (cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, dev) !=
+        cudaSuccess)
+    {
+        sm_count = 0;
+    }
     int optin = 0;
     if (cudaDeviceGetAttribute(&optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, dev) !=
             cudaSuccess ||
@@ -437,7 +442,7 @@ void CudaDeviceContext::note_plane(bool tiled, size_t shared)
 // time. That second kernel is what keeps the wide-bin envelope the opt-in
 // opened.
 void CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
-                                    uint32_t n_nodes, uint32_t n_chunks,
+                                    uint32_t n_nodes, uint32_t max_rows,
                                     float2 const *gh, uint32_t const *rows,
                                     uint32_t const *offsets, uint32_t const *counts,
                                     double *out, uint32_t const *slots)
@@ -446,9 +451,23 @@ void CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
         static_cast<size_t>(k_bin_tile_width) * lvl.stride * sizeof(float);
     bool const tiled = tiled_shared <= k_max_shared_bytes;
     note_plane(tiled, tiled ? tiled_shared : 2UL * lvl.stride * sizeof(float));
+    // Chunks split rows for balance AND fill the card: a shallow level
+    // launches grid_x * n_nodes blocks, which on a wide device can seat only
+    // a fraction of the SMs, so the chunk axis makes up the difference.
+    // Workless chunks on small nodes exit before their fixed cost
+    // (kernels.cuh), which is what makes overshooting safe.
+    uint32_t const grid_x  = tiled ? tile_count(ds_feats) : lvl.n_selected;
+    uint32_t const by_rows = (max_rows + 32767) / 32768;
+    uint32_t const blocks  = grid_x * n_nodes;
+    uint32_t const fill =
+        sm_count > 0
+            ? ((static_cast<uint32_t>(sm_count) * k_fill_blocks_per_sm) + blocks - 1) /
+                  blocks
+            : 1;
+    uint32_t const n_chunks = std::clamp<uint32_t>(std::max(by_rows, fill), 1, 64);
     if (tiled)
     {
-        dim3 const grid(tile_count(ds_feats), n_nodes, n_chunks);
+        dim3 const grid(grid_x, n_nodes, n_chunks);
         data.dispatch_bins(
             [&](auto const *bins)
             {
@@ -459,7 +478,7 @@ void CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
             });
         return;
     }
-    dim3 const grid(lvl.n_selected, n_nodes, n_chunks);
+    dim3 const grid(grid_x, n_nodes, n_chunks);
     data.dispatch_bins(
         [&](auto const *bins)
         {
@@ -662,14 +681,13 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     }
     lvl.gh_ordered.reserve(n);
     gather(grads.gh.data(), lvl.rows.data(), n, lvl.gh_ordered.data());
-    auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
     if (prof_counters.enabled)
     {
         lvl.prof_record_begin(/*root=*/true);
         check(cudaEventRecord(lvl.prof_ev[1]), "profile event record");
     }
     launch_hist(static_cast<uint32_t>(ds.n_rows()),
-                static_cast<uint32_t>(ds.n_features()), 1, n_chunks,
+                static_cast<uint32_t>(ds.n_features()), 1, static_cast<uint32_t>(n),
                 lvl.gh_ordered.data(), lvl.rows.data(), lvl.row_offsets.device(),
                 lvl.row_counts.device(), lvl.cur().data(), lvl.slots.device());
     check(cudaGetLastError(), "root hist launch");
@@ -884,13 +902,12 @@ void CudaDeviceContext::advance_level(Dataset const                             
     }
     if (!lvl.row_offsets.empty())
     {
-        auto const n_chunks = std::clamp<uint32_t>(
-            (static_cast<uint32_t>(max_rows) + 32767) / 32768, 1, 64);
-        launch_hist(
-            static_cast<uint32_t>(ds.n_rows()), static_cast<uint32_t>(ds.n_features()),
-            static_cast<uint32_t>(lvl.row_offsets.size()), n_chunks,
-            lvl.other_gh().data(), lvl.other_rows().data(), lvl.row_offsets.device(),
-            lvl.row_counts.device(), lvl.other().data(), lvl.slots.device());
+        launch_hist(static_cast<uint32_t>(ds.n_rows()),
+                    static_cast<uint32_t>(ds.n_features()),
+                    static_cast<uint32_t>(lvl.row_offsets.size()),
+                    static_cast<uint32_t>(max_rows), lvl.other_gh().data(),
+                    lvl.other_rows().data(), lvl.row_offsets.device(),
+                    lvl.row_counts.device(), lvl.other().data(), lvl.slots.device());
     }
     data.dispatch_bins(
         [&](auto const *bins)
@@ -1213,11 +1230,11 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
                                                lvl.sum_out.data());
     check(cudaGetLastError(), "leaf root sum pass2 launch");
 
-    auto const n_chunks = std::clamp<uint32_t>((n + 32767) / 32768, 1, 64);
-    launch_hist(
-        static_cast<uint32_t>(ds.n_rows()), static_cast<uint32_t>(ds.n_features()), 1,
-        n_chunks, lvl.gh_ordered.data(), lvl.rows.data(), leaf.build_seg.device(),
-        leaf.build_seg.device() + 1, leaf.pool.data(), leaf.build_seg.device() + 2);
+    launch_hist(static_cast<uint32_t>(ds.n_rows()),
+                static_cast<uint32_t>(ds.n_features()), 1, static_cast<uint32_t>(n),
+                lvl.gh_ordered.data(), lvl.rows.data(), leaf.build_seg.device(),
+                leaf.build_seg.device() + 1, leaf.pool.data(),
+                leaf.build_seg.device() + 2);
     check(cudaGetLastError(), "leaf root hist launch");
     lvl.leaf_by_row.reserve(ds.n_rows());
 
@@ -1343,10 +1360,8 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
     // stage's fixed per-(node, feature) cost dominates the row visits.
     if (small_count >= k_min_gpu_rows)
     {
-        auto const n_chunks =
-            std::clamp<uint32_t>((small_count + 32767) / 32768, 1, 64);
         launch_hist(static_cast<uint32_t>(ds.n_rows()),
-                    static_cast<uint32_t>(ds.n_features()), 1, n_chunks,
+                    static_cast<uint32_t>(ds.n_features()), 1, small_count,
                     lvl.gh_ordered.data(), lvl.rows.data(), leaf.build_seg.device(),
                     leaf.build_seg.device() + 1, leaf.pool.data(),
                     leaf.build_seg.device() + 2);
