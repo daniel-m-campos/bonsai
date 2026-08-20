@@ -966,7 +966,13 @@ NB_MODULE(_bonsai, m)
                      "logloss, softmax).")
         .def_prop_ro("n_classes", &Model::n_classes,
                      "Class count for softmax models; 0 for every other "
-                     "objective (including binary logloss).");
+                     "objective (including binary logloss).")
+        .def("__repr__",
+             [](Model const &mo)
+             {
+                 return "Model(objective='" + mo.objective_name() +
+                        "', n_iters=" + std::to_string(mo.n_iters()) + ")";
+             });
 
     // The binning settings default to none, not to literals: unset means the
     // library default, or the reference's value in the `reference=` form.
@@ -1026,7 +1032,20 @@ NB_MODULE(_bonsai, m)
                      "Where the binned columns live: \"cuda\" for a "
                      "device-binned dataset, \"cpu\" otherwise.")
         .def_prop_ro("n_rows", &Dataset::n_rows)
-        .def_prop_ro("n_features", &Dataset::n_features);
+        .def_prop_ro("n_features", &Dataset::n_features)
+        .def_prop_ro(
+            "shape",
+            [](Dataset const &d) { return nb::make_tuple(d.n_rows(), d.n_features()); },
+            "(n_rows, n_features), the way an array reports it. IDE variable "
+            "explorers read it for their size column.")
+        .def("__len__", [](Dataset const &d) { return d.n_rows(); })
+        .def("__repr__",
+             [](Dataset const &d)
+             {
+                 return "Dataset(n_rows=" + std::to_string(d.n_rows()) +
+                        ", n_features=" + std::to_string(d.n_features()) +
+                        ", device='" + d.device() + "')";
+             });
 
     // Dataset overload first: the array overload takes X and y untyped (a numpy
     // array or any DLPack producer), so it would otherwise shadow a Dataset
