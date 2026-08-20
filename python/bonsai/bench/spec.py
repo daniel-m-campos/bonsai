@@ -56,7 +56,17 @@ def load_spec(path: str | pathlib.Path) -> dict:
 
 
 def make_cell(defaults: dict, **over) -> dict:
-    """One fully-defaulted cell dict; raises ValueError without rows/cols."""
+    """One fully-defaulted cell dict; raises ValueError without rows/cols.
+
+    The defaults block is knob-checked: a typo'd key there would otherwise
+    ride into every cell silently, which is the drift class params.py's
+    docstring documents. Per-cell keys stay open (rows/cols/task/eval
+    knobs are legitimately cell-level).
+    """
+    unknown = set(defaults) - set(_CELL_DEFAULTS)
+    if unknown:
+        raise ValueError(f"unknown key(s) in spec defaults: {sorted(unknown)}; "
+                         f"legal: {sorted(_CELL_DEFAULTS)}")
     c = {**_CELL_DEFAULTS, **defaults, **over}
     if "rows" not in c or "cols" not in c:
         raise ValueError(f"cell needs rows and cols: {c}")

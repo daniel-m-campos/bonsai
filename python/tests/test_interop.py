@@ -141,6 +141,13 @@ def test_to_xgboost_keeps_value_types():
     assert out == {"reg_lambda": 2.0, "n_estimators": 200}
 
 
+def test_to_xgboost_accepts_params():
+    """A Params renders to the same foreign dict as the equivalent pairs."""
+    from bonsai.params import Params
+    pairs = [("tree.lambda_l2", 2.0), ("booster.n_iters", 200)]
+    assert interop.to_xgboost(Params.from_dict(dict(pairs))) == interop.to_xgboost(pairs)
+
+
 def test_to_xgboost_picks_one_spelling_per_key():
     assert interop.to_xgboost([("booster.random_seed", 42)]) == {"seed": 42}
 
