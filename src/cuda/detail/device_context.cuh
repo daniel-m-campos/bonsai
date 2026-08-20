@@ -184,6 +184,10 @@ struct CudaDeviceContext
         bool        prof_ev_ready    = false; // events created
         bool        prof_ev_recorded = false; // a build awaits reading
         bool        prof_ev_root     = false; // recorded span is a root build
+        // Partition-chain events (issue #341): read in partition_level right
+        // after the nl_dev fetch, whose implicit sync makes the reads legal.
+        cudaEvent_t part_ev[4]    = {};
+        bool        part_ev_ready = false;
 
         void prof_record_begin(bool root);
         // Call only after a sync that guarantees the recorded events are past.

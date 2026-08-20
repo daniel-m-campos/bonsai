@@ -216,6 +216,13 @@ CudaDeviceContext::LevelPipeline::~LevelPipeline()
             cudaEventDestroy(e);
         }
     }
+    if (part_ev_ready)
+    {
+        for (auto &e : part_ev)
+        {
+            cudaEventDestroy(e);
+        }
+    }
 }
 
 size_t CudaDeviceContext::LevelPipeline::stage_children(
@@ -812,6 +819,18 @@ void CudaDeviceContext::partition_level(
     lvl.nl_dev.reserve(n);
     lap(prof.part_stage_s);
 
+    if (prof.enabled && !lvl.part_ev_ready)
+    {
+        for (auto &e : lvl.part_ev)
+        {
+            check(cudaEventCreate(&e), "part event create");
+        }
+        lvl.part_ev_ready = true;
+    }
+    if (prof.enabled)
+    {
+        check(cudaEventRecord(lvl.part_ev[0]), "part event record");
+    }
     dim3 const grid(max_chunks, static_cast<uint32_t>(n));
     data.dispatch_bins(
         [&](auto const *bins)
@@ -823,9 +842,17 @@ void CudaDeviceContext::partition_level(
                 lvl.block_counts.data());
         });
     check(cudaGetLastError(), "route launch");
+    if (prof.enabled)
+    {
+        check(cudaEventRecord(lvl.part_ev[1]), "part event record");
+    }
     seg_scan_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(32)>>>(
         lvl.block_counts.data(), max_chunks, lvl.nl_dev.device());
     check(cudaGetLastError(), "seg scan launch");
+    if (prof.enabled)
+    {
+        check(cudaEventRecord(lvl.part_ev[2]), "part event record");
+    }
     lvl.other_rows().reserve(data.key.n_rows);
     lvl.other_gh().reserve(data.key.n_rows);
     scatter_kernel<<<grid, dim3(k_part_block)>>>(
@@ -833,9 +860,25 @@ void CudaDeviceContext::partition_level(
         lvl.part_ops.device(), lvl.block_counts.data(), lvl.nl_dev.device(), max_chunks,
         lvl.other_rows().data(), lvl.other_gh().data());
     check(cudaGetLastError(), "scatter launch");
+    if (prof.enabled)
+    {
+        check(cudaEventRecord(lvl.part_ev[3]), "part event record");
+    }
     lvl.nl_dev.fetch(n); // DtoH, implicit sync
     if (prof.enabled)
     {
+        // The fetch above synchronized the stream, so the elapsed reads are
+        // legal here and the chain's spans land in the same round they ran.
+        float ms = 0.0F;
+        check(cudaEventElapsedTime(&ms, lvl.part_ev[0], lvl.part_ev[1]),
+              "part event route");
+        prof.part_route_s += ms / 1e3;
+        check(cudaEventElapsedTime(&ms, lvl.part_ev[1], lvl.part_ev[2]),
+              "part event scan");
+        prof.part_scan_s += ms / 1e3;
+        check(cudaEventElapsedTime(&ms, lvl.part_ev[2], lvl.part_ev[3]),
+              "part event scatter");
+        prof.part_scatter_s += ms / 1e3;
         ++prof.launches;
     }
     lap(prof.gpu_s);
