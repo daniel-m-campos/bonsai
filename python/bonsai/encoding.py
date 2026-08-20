@@ -32,24 +32,46 @@ def _bucket_missing(col: np.ndarray) -> np.ndarray:
 class OrderedTargetEncoder:
     """Replace categorical code columns with causal running target means.
 
-    Categories must arrive as numeric codes in float cells (``.cat.codes``
-    for pandas users); NaN is treated as one shared "missing" category.
+    Categories must arrive as numeric codes in float cells (``.cat.codes`` for
+    pandas users); NaN is treated as one shared "missing" category.
     ``fit_transform`` encodes the training set causally — each row sees the
     label mean of *earlier* rows only, under a seeded permutation — while
     ``transform`` applies full-training-set statistics, matching what a
-    deployed model sees. ``keep_codes`` appends the raw code columns after
-    the features, giving trees both views (measured worth +0.005 AUC on the
-    amazon benchmark). ``cross=2`` appends an ordered-TS column for every
-    pair of encoded columns (codes must be integers below 2^31; pairs
-    unseen in training resolve to the prior). Output layout:
-    ``[features with TS in place] + [kept codes] + [pair TS columns]``.
-    Binary {0,1} or regression targets.
+    deployed model sees. Targets are binary {0, 1} or regression values.
+
+    Parameters
+    ----------
+    columns
+        Indices of the columns to encode.
+    prior_weight
+        Pseudo-count of prior belief blended into every smoothed mean; larger
+        values pull low-count categories harder toward the global mean.
+    n_permutations
+        Number of seeded permutations averaged into the causal encoding
+        (variance reduction).
+    keep_codes
+        If True, appends the raw code columns after the features, giving
+        trees both views (measured worth +0.005 AUC on the amazon
+        benchmark).
+    seed
+        Base seed for the permutations; permutation ``p`` uses ``seed + p``.
+    cross
+        1 encodes single columns only. 2 additionally appends an ordered-TS
+        column for every pair of encoded columns (codes must be integers
+        below 2^31; pairs unseen in training resolve to the prior). Output
+        layout is always
+        ``[features with TS in place] + [kept codes] + [pair TS columns]``.
+
+    Raises
+    ------
+    ValueError
+        If ``cross`` is not 1 or 2.
     """
 
     def __init__(self, columns, prior_weight: float = 10.0,
                  n_permutations: int = 1, keep_codes: bool = True,
                  seed: int = 0, cross: int = 1):
-        """columns: indices to encode; cross=2 adds all pair-TS columns."""
+        """Validate ``cross`` and store constructor arguments."""
         self.columns = list(columns)
         self.prior_weight = float(prior_weight)
         self.n_permutations = int(n_permutations)
@@ -73,10 +95,22 @@ class OrderedTargetEncoder:
     def fit_transform(self, X, y) -> np.ndarray:
         """Causally encode the train fold and learn full-fold statistics.
 
-        Each row's encoding uses only rows before it in a seeded permutation
-        (the CatBoost ordered-TS trick), so the train encoding leaks no
-        row's own label; the statistics stored for ``transform`` use the
-        whole fold.
+        Each row's encoding uses only rows before it in a seeded permutation (the
+        CatBoost ordered-TS trick), so the train encoding leaks no row's own label.
+        The statistics stored for ``transform`` use the whole fold.
+
+        Parameters
+        ----------
+        X
+            Feature matrix; the columns named in ``self.columns`` hold numeric
+            category codes.
+        y
+            Target values, binary {0, 1} or regression.
+
+        Returns
+        -------
+        numpy.ndarray
+            The encoded matrix, columns in the layout documented on the class.
         """
         X = np.asarray(X, dtype=np.float32)
         y = np.asarray(y, dtype=np.float64).ravel()
@@ -100,7 +134,21 @@ class OrderedTargetEncoder:
     def transform(self, X) -> np.ndarray:
         """Encode new rows with the full-fold statistics learned in fit.
 
-        Raises RuntimeError before ``fit_transform`` has run.
+        Parameters
+        ----------
+        X
+            Feature matrix; the columns named in ``self.columns`` hold numeric
+            category codes.
+
+        Returns
+        -------
+        numpy.ndarray
+            The encoded matrix, columns in the layout documented on the class.
+
+        Raises
+        ------
+        RuntimeError
+            If called before ``fit_transform``.
         """
         if self._stats is None:
             raise RuntimeError("fit_transform must run before transform")
