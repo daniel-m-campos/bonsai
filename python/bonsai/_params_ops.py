@@ -6,8 +6,8 @@ library default"). Everything behavioral lives here, on a mixin the
 generated ``Params`` inherits, so the generator stays a renderer.
 
 Values are kept as the caller gave them; rendering to the dotted-key
-string wire format happens in ``to_pairs``, and range/enum validation
-stays in the C++ config layer, told once.
+string wire format happens in the ``train`` wrapper, and range/enum
+validation stays in the C++ config layer, told once.
 """
 
 from __future__ import annotations
@@ -15,8 +15,6 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Mapping
 from typing import ClassVar
-
-from bonsai._coerce import _to_config_str
 
 
 class SparseRepr:
@@ -38,7 +36,7 @@ class SparseRepr:
 class ParamsOps(SparseRepr):
     """Mixin for the generated ``Params``: round-trips and dict-style merge.
 
-    ``to_pairs``/``to_dict`` walk only the fields that are set, so a
+    ``to_dict`` walks only the fields that are set, so a
     default-constructed ``Params`` renders to no overrides at all.
     ``|`` merges the way dicts do (right side's set leaves win), which is
     the sweep idiom: ``train(BASE | {"tree.max_depth": d}, ds)``.
@@ -46,17 +44,6 @@ class ParamsOps(SparseRepr):
 
     # Supplied by the generated subclass: section name -> section dataclass.
     _SECTION_TYPES: ClassVar[dict[str, type]]
-
-    def to_pairs(self) -> list[tuple[str, str]]:
-        """The set overrides as native ``train()`` pairs.
-
-        Returns
-        -------
-        list of (str, str)
-            ``(dotted.key, value)`` pairs in section-registry order, values
-            rendered the way the dotted-key parser reads them back.
-        """
-        return [(key, _to_config_str(value)) for key, value in self.to_dict().items()]
 
     def to_dict(self) -> dict[str, object]:
         """The set overrides as ``{dotted.key: value}`` with Python types.

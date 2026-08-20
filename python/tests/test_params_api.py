@@ -9,6 +9,7 @@ import bonsai
 import numpy as np
 import pytest
 from bonsai import _bonsai
+from bonsai._train import _as_pairs
 from bonsai.params import Booster, Params, Tree
 
 
@@ -24,8 +25,8 @@ def _reg_data(n=3000, f=8, seed=0):
 
 
 def test_params_default_renders_no_overrides():
-    assert Params().to_pairs() == []
     assert Params().to_dict() == {}
+    assert _as_pairs(Params()) == []
 
 
 def test_params_mirrors_the_section_registry():
@@ -42,14 +43,14 @@ def test_params_mirrors_the_section_registry():
         ]
 
 
-def test_params_to_pairs_renders_types_the_parser_reads():
+def test_params_render_types_the_parser_reads():
     p = Params.from_dict({
         "tree.max_depth": 8,
         "booster.learning_rate": 0.1,
         "metrics.fit": ["rmse", "mae"],
         "data.header": True,
     })
-    assert dict(p.to_pairs()) == {
+    assert dict(_as_pairs(p)) == {
         "tree.max_depth": "8",
         "booster.learning_rate": "0.1",
         "metrics.fit": "rmse,mae",
