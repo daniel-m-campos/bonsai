@@ -379,14 +379,14 @@ __global__ void seg_scan_kernel(uint32_t *block_counts, uint32_t max_chunks,
     __shared__ uint32_t sh[k_part_block + 1];
     uint32_t *c     = block_counts + (static_cast<size_t>(blockIdx.x) * max_chunks);
     uint32_t  carry = 0;
+    if (threadIdx.x == 0)
+    {
+        sh[0] = 0; // the scan writes sh[tid + 1] only, so this holds for all tiles
+    }
     for (uint32_t base = 0; base < max_chunks; base += k_part_block)
     {
         uint32_t const k    = base + threadIdx.x;
         sh[threadIdx.x + 1] = k < max_chunks ? c[k] : 0;
-        if (threadIdx.x == 0)
-        {
-            sh[0] = 0;
-        }
         __syncthreads();
         for (uint32_t step = 1; step < k_part_block; step *= 2)
         {
