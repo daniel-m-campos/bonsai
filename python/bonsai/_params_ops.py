@@ -62,6 +62,32 @@ class ParamsOps(SparseRepr):
         return out
 
     @classmethod
+    def from_toml(cls, path: str) -> ParamsOps:
+        """Build a ``Params`` from the keys a TOML config file explicitly sets.
+
+        The C++ config layer does the parsing (no TOML dependency, any
+        Python), strict like the CLI's ``-c``: unknown sections or keys
+        raise. Only stated keys are carried, so the result stays a sparse
+        overrides object: ``train(Params.from_toml(p) | sweep, ds)`` is the
+        file-base-plus-overrides layering ``config=`` used to express.
+        """
+        from bonsai import _bonsai
+        with open(path, encoding="utf-8") as fh:
+            return cls.from_dict(_bonsai._params_from_toml(fh.read()))
+
+    @classmethod
+    def from_model(cls, model) -> ParamsOps:
+        """The config a trained ``Model`` resolved, as a fully-set ``Params``.
+
+        Every key is set (a model's config is fully determined), so this is
+        for inspection and reproduction, not sparse layering; drop sections
+        with ``dataclasses.replace(p, bin_mapper=None)`` where a consumer
+        rejects them.
+        """
+        from bonsai import _bonsai
+        return cls.from_dict(_bonsai._params_from_toml(model.config_toml))
+
+    @classmethod
     def from_dict(cls, mapping: Mapping[str, object]) -> ParamsOps:
         """Build a ``Params`` from ``{dotted.key: value}``.
 

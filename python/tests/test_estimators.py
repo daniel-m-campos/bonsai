@@ -233,29 +233,31 @@ def test_pred_contribs_efficiency():
     np.testing.assert_allclose(c.sum(axis=1), p, atol=1e-3)
 
 
-def test_toml_config_base_and_precedence():
-    """config= is the base (CLI -c); explicit params override it (--set)."""
+def test_toml_base_and_precedence():
+    """Params.from_toml is the base (CLI -c); | overrides it (--set)."""
     Xtr, ytr = load_csv(TRAIN_CSV)
     with tempfile.TemporaryDirectory() as td:
         toml = pathlib.Path(td) / "cfg.toml"
         toml.write_text("[booster]\nn_iters = 7\n")
 
-        params = {"dispatch.grower_name": "depthwise"}
-        m = bonsai.train(params, Xtr[:200], ytr[:200], config=str(toml))
+        base = bonsai.Params.from_toml(str(toml))
+        m = bonsai.train(base | {"dispatch.grower_name": "depthwise"},
+                         Xtr[:200], ytr[:200])
         assert m.n_iters == 7
 
-        params["booster.n_iters"] = 3
-        m = bonsai.train(params, Xtr[:200], ytr[:200], config=str(toml))
+        m = bonsai.train(base | {"booster.n_iters": 3}, Xtr[:200], ytr[:200])
         assert m.n_iters == 3
 
-        # BonsaiRegressor always emits its kwargs, so they win over the file.
-        r = bonsai.BonsaiRegressor(n_iters=4, config=str(toml)).fit(
+        # An estimator takes the file through params=, which always has the
+        # final word: the file overrides kwargs (config= used to sit below
+        # them; the explicit routing is the louder contract).
+        r = bonsai.BonsaiRegressor(n_iters=4, params=base.to_dict()).fit(
             Xtr[:200], ytr[:200]
         )
-        assert r.n_iters_ == 4
+        assert r.n_iters_ == 7
 
-    with pytest.raises(RuntimeError):
-        bonsai.train({}, Xtr[:200], ytr[:200], config="/nonexistent/cfg.toml")
+    with pytest.raises(FileNotFoundError):
+        bonsai.Params.from_toml("/nonexistent/cfg.toml")
 
 
 def test_cuda_available_reports():

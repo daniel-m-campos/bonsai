@@ -1,7 +1,12 @@
 #include "bonsai/config/toml.hpp"
 
+#include <cstdint>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <unordered_set>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include <toml++/impl/parse_error.hpp>
@@ -55,17 +60,116 @@ Config parse_toml(std::string_view text)
     }
 }
 
-bool toml_has_section(std::string const &path, std::string_view section)
+namespace
 {
+
+// Widen a parsed field value into the codec type universe.
+template <typename T> OverrideValue widen(T value)
+{
+    if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, std::string> ||
+                  std::is_same_v<T, std::vector<std::string>> ||
+                  std::is_same_v<T, std::vector<int>>)
+    {
+        return value;
+    }
+    else if constexpr (std::is_same_v<T, float>)
+    {
+        return static_cast<double>(value);
+    }
+    else
+    {
+        static_assert(std::is_integral_v<T>, "unmapped config field type");
+        return static_cast<int64_t>(value);
+    }
+}
+
+// Mirrors load_section's strictness (parse every present key through its
+// codec, reject unknowns) but records instead of assigning into a Config.
+template <typename Section>
+void record_section(toml::table const &table, Section const &sec,
+                    std::vector<std::pair<std::string, OverrideValue>> &out)
+{
+    std::unordered_set<std::string> seen;
+    std::apply(
+        [&](auto const &...fields)
+        {
+            (
+                [&]
+                {
+                    using T =
+                        typename std::remove_cvref_t<decltype(fields)>::member_type;
+                    seen.insert(std::string{fields.leaf});
+                    if (auto const *node = table.get(fields.leaf))
+                    {
+                        auto r = internal::FieldCodec<T>::from_toml(*node);
+                        if (!r)
+                        {
+                            internal::key_error(sec.name, fields.leaf, r.error());
+                        }
+                        out.emplace_back(std::string{sec.name} + "." +
+                                             std::string{fields.leaf},
+                                         widen<T>(std::move(*r)));
+                    }
+                }(),
+                ...);
+        },
+        sec.fields);
+    for (auto const &[k, unused] : table)
+    {
+        if (!seen.contains(std::string{k.str()}))
+        {
+            internal::key_error(sec.name, k.str(), "unknown key");
+        }
+    }
+}
+
+} // namespace
+
+std::vector<std::pair<std::string, OverrideValue>>
+typed_overrides(std::string_view text)
+{
+    toml::table root;
     try
     {
-        auto const root = toml::parse_file(path);
-        return root.contains(section);
+        root = toml::parse(text);
     }
     catch (toml::parse_error const &e)
     {
         throw ConfigError(std::string{"config: TOML parse error: "} + e.what());
     }
+    std::vector<std::pair<std::string, OverrideValue>> out;
+    std::unordered_set<std::string>                    known;
+    std::apply(
+        [&](auto const &...secs)
+        {
+            (
+                [&]
+                {
+                    known.insert(std::string{secs.name});
+                    if (auto const *node = root.get(secs.name))
+                    {
+                        auto const *table = node->as_table();
+                        if (table == nullptr)
+                        {
+                            throw ConfigError(std::string{"config: ["} +
+                                              std::string{secs.name} +
+                                              "] must be a table");
+                        }
+                        record_section(*table, secs, out);
+                    }
+                }(),
+                ...);
+        },
+        internal::all_sections);
+    for (auto const &[k, unused] : root)
+    {
+        if (!known.contains(std::string{k.str()}))
+        {
+            throw ConfigError(std::string{"config: unknown section ["} +
+                              std::string{k.str()} + "]");
+        }
+    }
+    return out;
 }
 
 void apply_overrides(Config &cfg, std::vector<Override> const &overrides)

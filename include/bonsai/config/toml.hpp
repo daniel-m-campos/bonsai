@@ -1,7 +1,10 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include "bonsai/config/config.hpp"
@@ -23,11 +26,16 @@ Config parse_toml(std::string_view text);
 // `bonsai params`.
 std::string dump_toml(Config const &cfg);
 
-// Whether the TOML file contains the named top-level section, regardless of
-// the values it sets. Value comparison cannot distinguish an absent section
-// from one that explicitly restates the defaults; callers that fix a section
-// elsewhere (a prebuilt Dataset) need the structural answer.
-bool toml_has_section(std::string const &path, std::string_view section);
+// One parsed TOML value, widened to the codec type universe.
+using OverrideValue = std::variant<bool, int64_t, double, std::string,
+                                   std::vector<std::string>, std::vector<int>>;
+
+// The dotted keys a TOML text explicitly sets, with parsed typed values, in
+// registry order. This is what a sparse overrides object (Params.from_toml)
+// needs — only the stated keys, never the resolved whole. Strict like
+// load_toml: unknown sections or keys throw ConfigError.
+std::vector<std::pair<std::string, OverrideValue>>
+typed_overrides(std::string_view text);
 
 // Apply CLI dotted-key overrides like "tree.max_depth=8" to an existing
 // Config (last write wins). Throws ConfigError on unknown key or bad value.

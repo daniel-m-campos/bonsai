@@ -148,7 +148,7 @@ bonsai info    # every (objective, grower, sampler) combo this binary dispatches
 bonsai params  # the default config as TOML
 ```
 
-`-c` supplies a TOML base; `--set` overrides it, exactly like `config=` and `params` in Python. `--dump-config` prints the resolved result and exits, which is the fastest way to check what a run will actually use.
+`-c` supplies a TOML base; `--set` overrides it, exactly like `Params.from_toml(path) | overrides` in Python. `--dump-config` prints the resolved result and exits, which is the fastest way to check what a run will actually use.
 
 ## GPU training
 
