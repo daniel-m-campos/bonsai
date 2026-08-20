@@ -9,8 +9,8 @@ Examples
 --------
 >>> from bonsai.params import Params, Tree, Booster
 >>> base = Params(tree=Tree(max_depth=8), booster=Booster(n_iters=200))
->>> bonsai.train(base, ds)                                # doctest: +SKIP
->>> bonsai.train(base | {"tree.max_depth": 10}, ds)       # doctest: +SKIP
+>>> bonsai.train(base, ds)
+>>> bonsai.train(base | {"tree.max_depth": 10}, ds)
 """
 
 from __future__ import annotations

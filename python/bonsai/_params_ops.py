@@ -13,7 +13,7 @@ stays in the C++ config layer, told once.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, ClassVar
 
 from bonsai._coerce import _to_config_str
@@ -107,14 +107,6 @@ class ParamsOps(SparseRepr):
                     f"unknown params key {key!r}: [{section}] has {sorted(legal)}")
             by_section.setdefault(section, {})[leaf] = value
         return cls(**{s: section_types[s](**kv) for s, kv in by_section.items()})
-
-    @classmethod
-    def from_pairs(cls, pairs: Iterable[tuple[str, object]]) -> Params:
-        """Build a ``Params`` from ``(dotted.key, value)`` pairs.
-
-        Later pairs win on a repeated key, matching pair-list semantics.
-        """
-        return cls.from_dict(dict(pairs))
 
     def __or__(self, other: object) -> Params:
         if isinstance(other, ParamsOps):
