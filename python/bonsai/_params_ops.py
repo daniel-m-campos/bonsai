@@ -14,12 +14,9 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, ClassVar
+from typing import ClassVar
 
 from bonsai._coerce import _to_config_str
-
-if TYPE_CHECKING:
-    from bonsai._params import Params
 
 
 class SparseRepr:
@@ -78,7 +75,7 @@ class ParamsOps(SparseRepr):
         return out
 
     @classmethod
-    def from_dict(cls, mapping: Mapping[str, object]) -> Params:
+    def from_dict(cls, mapping: Mapping[str, object]) -> ParamsOps:
         """Build a ``Params`` from ``{dotted.key: value}``.
 
         Parameters
@@ -108,7 +105,7 @@ class ParamsOps(SparseRepr):
             by_section.setdefault(section, {})[leaf] = value
         return cls(**{s: section_types[s](**kv) for s, kv in by_section.items()})
 
-    def __or__(self, other: object) -> Params:
+    def __or__(self, other: object) -> ParamsOps:
         if isinstance(other, ParamsOps):
             updates = other.to_dict()
         elif isinstance(other, Mapping):
