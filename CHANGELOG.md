@@ -2,6 +2,21 @@
 
 All notable changes to bonsai. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags. Design rationale for anything below lives in [`docs/decisions.md`](docs/decisions.md).
 
+## [1.10.0] - 2026-08-20
+
+The CUDA plane stops starving wide cards at small cells, and the Python surface reads like a library.
+
+### Added
+- **`Dataset` and `Model` answer the interpreter** (PR #395). `repr(ds)` reports rows, features, and device instead of the default object repr; `ds.shape` is the `(n_rows, n_features)` tuple IDE variable explorers read for their size column, and `len(ds)` is the row count. `repr(model)` names the objective and round count. The stub carries all of it, so hovers and explorers pick the members up.
+
+### Changed
+- **The histogram chunk axis fills the card** (decision 106, issue #340, PR #393). The tiled plane's published small-cell trade was occupancy starvation, not per-block fixed cost: tiling divides `grid.x` by the tile width, and a shallow level over small data launches `tiles x nodes` blocks, a fraction of a 142-SM card, while an 8-SM Orin never notices (the three-arm attribution has the tiled kernel winning the regressing cells there). `launch_hist` now owns one chunk policy for its four callers, topping the chunk axis up to `sm_count x 4` blocks when row-splitting leaves the launch narrow, and both hist kernels exit before their shared zero when a chunk starts past the node's rows, which is what makes overshoot free. Same-pod L40S, median train: 262k x 128 falls 30.4% depthwise and 22.0% levelwise, 1M falls 6.3% and 8.1%, leafwise falls 35.3% at 1M and 17.2% at 16M (its per-round single-node builds were the most starved callers of all), and 4M/16M depthwise and levelwise read -0.6% to -0.0%, the no-regression bar met exactly.
+- **The partition chain is on the profile, and its scan is a block scan** (issue #341, PR #394). `BONSAI_CUDA_PROFILE=1` adds `cuda-part-decomp: route/scan/scatter` where one `gpu_s` number hid the chain; the pricing that instrument produced (scan at 0.5ms per round, 0.7% of the round at 16M) closed the issue's rewrite ladder, and the scan kernel still sheds its one-lane serial walk for the scatter kernel's Hillis-Steele shape, 53ms to 7ms per fit at 16M, integer-exact so the models cannot move. No fit-level claim: every cell read inside pod noise, as priced.
+- **Public docstrings are numpy-style** (PR #395). The binding layer and the estimator, encoding, and interop modules move to summary plus Parameters/Returns/Raises; seven previously undocumented `Model` methods (`predict`, `predict_proba`, `staged_predict`, `dump`, `pred_contribs`, `feature_importance`, `save`) are documented from their implementations, and the `Dataset` constructor's prose wall becomes a Parameters section with every contract clause intact.
+
+### Fixed
+- **The release machinery survives its own full refresh** (PR #391, issues #385-#390). The supersede commit title summarizes past 50 characters instead of blowing the hook's cap on a six-axis refresh; the refresh driver verifies a results file landed per requested axis instead of trusting the pod's DONE marker (a RAM-guard SKIP used to vanish); `measure_complexity.py` dates its output by HEAD's commit month instead of a hardcoded one; the GPU create walks a Server-then-Workstation Edition ladder with `--gpu-type` to pin; the extreme axis's RAM-floor comment states the measured catboost host peak instead of a fictional input size; and the release wheel gate rents its validation pod with five attempts spread across the capacity churn cycle instead of two attempts 15 seconds apart.
+
 ## [1.9.0] - 2026-08-19
 
 The validation eval stops being the slow part of early stopping: bin it once, and on the CUDA plane never bring it back to the host.
