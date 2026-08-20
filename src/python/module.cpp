@@ -320,7 +320,10 @@ bonsai::cli::LabeledData make_validation_labeled(array_2d const &X, array_1d con
 // Binning follows the device hint: the host by default, the GPU under
 // device="cuda", where the resident matrix is then adopted by every fit.
 // Device-resident input (DLPack) carries its own answer: the bytes are
-// already there, so it bins there whatever the hint's default.
+// already there, so it bins there whatever the hint's default. A reference
+// answers for an unset hint the same way it answers for unset binning
+// settings: a validation set follows its training set's device unless the
+// caller places it elsewhere explicitly.
 // `reference` binds the new dataset to another one's cuts instead of fitting
 // its own, which is what makes a validation set reusable: a fit can only
 // route rows binned under the cuts its own trees were grown on.
@@ -331,17 +334,24 @@ class Dataset
             std::optional<size_t> n_samples, std::optional<uint64_t> seed,
             std::optional<int>                               min_data_in_bin,
             std::optional<std::map<size_t, array_1d>> const &bin_edges,
-            std::optional<std::string> const &device, uint32_t device_id,
+            std::optional<std::string> const &device, std::optional<uint32_t> device_id,
             uint32_t n_threads, Dataset const *reference)
     {
+        // The reference's residency answers for both unset device arguments,
+        // so a validation set lands beside its training set by default.
+        std::optional<uint32_t> const ref_device =
+            reference != nullptr ? reference->device_id_ : std::nullopt;
+        uint32_t const dev_id =
+            device_id.value_or(ref_device.value_or(bonsai::ParallelConfig{}.device_id));
         auto const [xarg, yarg, warg] =
-            resolve_inputs(X, y, weight, device_id, "weight", "Dataset: ");
+            resolve_inputs(X, y, weight, dev_id, "weight", "Dataset: ");
         // A device hint is an explicit user request, so an absent backend or
         // device is an error here, unlike the engine's own inference from a
         // grower name (which degrades to the host silently). Device-resident
         // input needs no hint: it defaults to the device it is already on.
-        std::string const hint = device.value_or(xarg.on_device() ? "cuda" : "cpu");
-        bool const        on_device = hint == "cuda";
+        std::string const hint = device.value_or(
+            xarg.on_device() || ref_device.has_value() ? "cuda" : "cpu");
+        bool const on_device = hint == "cuda";
         if (!on_device && hint != "cpu")
         {
             throw std::invalid_argument("Dataset: device must be \"cpu\" or \"cuda\"");
@@ -370,7 +380,7 @@ class Dataset
         cfg.bin_mapper.seed            = seed.value_or(base.seed);
         cfg.bin_mapper.min_data_in_bin = min_data_in_bin.value_or(base.min_data_in_bin);
         cfg.parallel.n_threads         = n_threads;
-        cfg.parallel.device_id         = device_id;
+        cfg.parallel.device_id         = dev_id;
         if (reference != nullptr)
         {
             check_reference(*reference, cfg.bin_mapper, bin_edges.has_value(),
@@ -411,7 +421,7 @@ class Dataset
         // fit needs to be placed against.
         if (loaded_.train.dataset.ingest_plane())
         {
-            device_id_ = device_id;
+            device_id_ = dev_id;
         }
         // The host matrix is kept alive because the FeatureBuffer borrows it;
         // a device matrix is not kept at all, since its bins were copied into
@@ -1082,13 +1092,13 @@ NB_MODULE(_bonsai, m)
             nb::init<nb::handle, nb::handle, nb::handle, std::optional<int>,
                      std::optional<size_t>, std::optional<uint64_t>, std::optional<int>,
                      std::optional<std::map<size_t, array_1d>> const &,
-                     std::optional<std::string> const &, uint32_t, uint32_t,
-                     Dataset const *>(),
+                     std::optional<std::string> const &, std::optional<uint32_t>,
+                     uint32_t, Dataset const *>(),
             nb::arg("X"), nb::arg("y"), nb::arg("weight") = nb::none(),
             nb::arg("max_bin") = nb::none(), nb::arg("n_samples") = nb::none(),
             nb::arg("seed") = nb::none(), nb::arg("min_data_in_bin") = nb::none(),
             nb::arg("bin_edges") = nb::none(), nb::arg("device") = nb::none(),
-            nb::arg("device_id")        = k_parallel_defaults.device_id,
+            nb::arg("device_id")        = nb::none(),
             nb::arg("n_threads")        = k_parallel_defaults.n_threads,
             nb::arg("reference").none() = nb::none(),
             "A pre-binned dataset: bins X once at construction.\n"
@@ -1119,15 +1129,18 @@ NB_MODULE(_bonsai, m)
             "predict/save/load work on raw values with no external "
             "transform.\n"
             "device : {'cpu', 'cuda'}, optional\n"
-            "    Defaults to where X already is. ``'cuda'`` bins on the GPU "
+            "    Defaults to where X already is, or to the reference's device "
+            "in the ``reference=`` form (an explicit ``'cpu'`` overrides it). "
+            "``'cuda'`` bins on the GPU "
             "and keeps the matrix resident there, so every cuda_* fit adopts "
             "it with no upload (a sweep uploads once, not once per fit); it "
             "raises without a CUDA build and a visible device, and a later "
             "``parallel.device_id`` that disagrees with ``device_id`` raises "
             "rather than migrating. A device-binned Dataset handed to a CPU "
             "grower materializes host bins once, on first use.\n"
-            "device_id : int, default 0\n"
-            "    CUDA device the binned matrix lives on.\n"
+            "device_id : int, optional\n"
+            "    CUDA device the binned matrix lives on. Unset means the "
+            "reference's device in the ``reference=`` form, else 0.\n"
             "n_threads : int, default 0\n"
             "    Sizes the binning pass (0 = auto), the way "
             "``parallel.n_threads`` sizes a fit.\n"
@@ -1138,7 +1151,9 @@ NB_MODULE(_bonsai, m)
             "routes it in bin space with no per-fit bin pass. Binning "
             "settings are inherited from the reference when left unset; "
             "setting one to a different value raises, as ``bin_edges`` does "
-            "at all.")
+            "at all. ``device`` and ``device_id`` are inherited the same "
+            "way, so a validation set lands beside its training set unless "
+            "placed explicitly.")
         .def("__reduce__",
              [](Dataset const &) -> nb::object
              {

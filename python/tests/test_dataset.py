@@ -349,3 +349,26 @@ def test_device_dataset_rejects_a_device_id_mismatch():
     # a host Dataset carries no residency, so any device placement is fine
     bonsai.train([("booster.n_iters", "2"), ("parallel.device_id", "0")],
                  bonsai.Dataset(X, y))
+
+
+def test_dataset_reference_inherits_the_device():
+    """A validation set follows its training set's device: reference= inherits
+    device and device_id the way it inherits binning settings, so a cuda train
+    set does not silently pair with a host-binned valid set. An explicit
+    device="cpu" still overrides the inheritance."""
+    if not bonsai.cuda_available():
+        pytest.skip("no CUDA build or no visible device")
+    X, y = _reg_data(n=20000)
+    Xt, yt, Xv, yv = X[:16000], y[:16000], X[16000:], y[16000:]
+
+    train_ds = bonsai.Dataset(Xt, yt, device="cuda")
+    valid_ds = bonsai.Dataset(Xv, yv, reference=train_ds)
+    assert valid_ds.device == "cuda"
+    explicit = bonsai.Dataset(Xv, yv, reference=train_ds, device="cpu")
+    assert explicit.device == "cpu"
+
+    # both placements score the same fit; GPU eval is tolerance-equal
+    pairs = [("dispatch.grower_name", "cuda_depthwise"), ("booster.n_iters", "10")]
+    inherited = np.asarray(bonsai.train(pairs, train_ds, eval_set=valid_ds).eval_history)
+    host = np.asarray(bonsai.train(pairs, train_ds, eval_set=explicit).eval_history)
+    np.testing.assert_allclose(inherited, host, rtol=0, atol=1e-4)
