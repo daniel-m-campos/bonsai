@@ -43,7 +43,7 @@ def _as_pairs(params) -> list[tuple[str, str]]:
     if params is None:
         return []
     if isinstance(params, ParamsOps):
-        return params.to_pairs()
+        params = params.to_dict()
     if isinstance(params, Mapping):
         return [(key, _to_config_str(value)) for key, value in params.items()]
     raise TypeError(
