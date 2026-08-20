@@ -99,7 +99,7 @@
     "refreshed_for": "1.7.0",
     "as_of_decision": 92,
     "sha_partial": true,
-    "hash_set": "e504879c3371c857",
+    "hash_set": "dc4933dd4edefc3c",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
@@ -107,8 +107,8 @@
     },
     "carried_forward": {
       "measured_at": "f2202a4",
-      "stamped_at": "3afb498",
-      "reason": "eval-only releases since the 2026-08-14 measurement (bin-space eval route, prebinned eval set, device-resident validation eval): training paths untouched, host models byte-identical at the measured commit and the release commit",
+      "stamped_at": "4e78bad",
+      "reason": "no host-plane source change since the measured sha: cuda-only perf (decisions 106, PR 394), python docstrings and repr (PR 395), release machinery scripts (PR 391)",
       "evidence": {
         "kind": "model-hash",
         "before": "55c6fe308852d9bb",
@@ -118,10 +118,10 @@
   },
   "code": {
     "file": "code-metrics-2026-08.jsonl",
-    "sha": "3afb498684ae33c44b571d7b9c3b31b012f3c0b9",
+    "sha": "4e78badbeb0ae5dc83df63176d96e90353ad7e51",
     "host": null,
     "date": null,
-    "refreshed_for": "1.9.0",
+    "refreshed_for": "1.10.0",
     "as_of_decision": 92,
     "sha_partial": true
   }
