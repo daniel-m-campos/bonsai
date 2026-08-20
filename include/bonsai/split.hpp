@@ -122,9 +122,8 @@ constexpr double l1_thresholded(double g, double l1)
     return 0.0;
 }
 
-// A zero denominator only arises for an empty node side under lambda_l2 = 0
-// (an oblivious level mints empty children structurally); no evidence means
-// no gain, not 0/0.
+// A zero denominator is an empty node side under lambda_l2 = 0 (an oblivious
+// level mints empty children structurally): no evidence means 0, not 0/0.
 constexpr double score(double g, double h, double lambda)
 {
     double const d = h + lambda;
@@ -147,7 +146,6 @@ constexpr double score(double g, double h, double l1, double l2)
 constexpr double bounded_leaf_weight(double g, double h, double l1, double l2,
                                      double lo, double hi)
 {
-    // An empty leaf (G = H = 0) under lambda_l2 = 0 is 0/0; it predicts 0.
     double const d = h + l2;
     double const w = d > 0.0 ? -l1_thresholded(g, l1) / d : 0.0;
     return std::clamp(w, lo, hi);
