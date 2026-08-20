@@ -4,6 +4,7 @@ wrapper's params normalization."""
 from __future__ import annotations
 
 import dataclasses
+import tempfile
 
 import bonsai
 import numpy as np
@@ -86,7 +87,6 @@ def test_params_repr_shows_only_set_fields():
 def test_params_from_toml_carries_only_stated_keys():
     """from_toml is a sparse overrides object: only the file's keys, typed,
     strict on unknowns — the config= layering, now composable with |."""
-    import tempfile
     with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
         f.write("[tree]\nmax_depth = 4\nlambda_l2 = 0.5\n[booster]\nn_iters = 9\n")
         path = f.name
