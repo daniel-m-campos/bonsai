@@ -152,7 +152,7 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
     timed = {}
     if spec.get("fused"):
         with _phase(timed, runlog.Row.FIT_S):
-            model = bonsai.train(pairs, X, y, eval_set=ev)
+            model = bonsai.train(dict(pairs), X, y, eval_set=ev)
     else:
         with _phase(timed, runlog.Row.FIT_S):
             with _phase(timed, runlog.Row.INGEST_S):
@@ -160,8 +160,8 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
                     X, y, max_bin=c["bins"], n_threads=threads,
                     device="cuda" if grower.startswith("cuda") else "cpu")
             with _phase(timed, runlog.Row.TRAIN_S):
-                model = bonsai.train([p for p in pairs
-                                      if not p[0].startswith("bin_mapper.")],
+                model = bonsai.train({k: v for k, v in pairs
+                                      if not k.startswith("bin_mapper.")},
                                      ds, eval_set=ev)
     with _phase(timed, runlog.Row.PREDICT_S):
         pred_te = np.asarray(model.predict(Xte))

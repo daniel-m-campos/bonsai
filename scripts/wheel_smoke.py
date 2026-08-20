@@ -32,7 +32,7 @@ with tempfile.TemporaryDirectory() as td:
     assert restored.predict(X).shape == (2000,)
 
 ds = bonsai.Dataset(X, y)
-bonsai.train([("booster.n_iters", "5")], ds)
+bonsai.train({"booster.n_iters": "5"}, ds)
 
 # bonsai.bench ships in the wheel and must import (numpy-only paths) even
 # without the [bench] extra installed.

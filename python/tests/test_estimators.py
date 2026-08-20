@@ -240,12 +240,12 @@ def test_toml_config_base_and_precedence():
         toml = pathlib.Path(td) / "cfg.toml"
         toml.write_text("[booster]\nn_iters = 7\n")
 
-        pairs = [("dispatch.grower_name", "depthwise")]
-        m = bonsai.train(pairs, Xtr[:200], ytr[:200], config=str(toml))
+        params = {"dispatch.grower_name": "depthwise"}
+        m = bonsai.train(params, Xtr[:200], ytr[:200], config=str(toml))
         assert m.n_iters == 7
 
-        pairs.append(("booster.n_iters", "3"))
-        m = bonsai.train(pairs, Xtr[:200], ytr[:200], config=str(toml))
+        params["booster.n_iters"] = 3
+        m = bonsai.train(params, Xtr[:200], ytr[:200], config=str(toml))
         assert m.n_iters == 3
 
         # BonsaiRegressor always emits its kwargs, so they win over the file.
@@ -255,7 +255,7 @@ def test_toml_config_base_and_precedence():
         assert r.n_iters_ == 4
 
     with pytest.raises(RuntimeError):
-        bonsai.train([], Xtr[:200], ytr[:200], config="/nonexistent/cfg.toml")
+        bonsai.train({}, Xtr[:200], ytr[:200], config="/nonexistent/cfg.toml")
 
 
 def test_cuda_available_reports():
@@ -487,7 +487,7 @@ def test_classifier_too_few_classes_raises():
 
 def test_predict_proba_rejects_regression_objective():
     Xtr, ytr = load_csv(TRAIN_CSV)
-    m = bonsai.train([("booster.n_iters", "5")], Xtr[:500], ytr[:500])
+    m = bonsai.train({"booster.n_iters": "5"}, Xtr[:500], ytr[:500])
     with pytest.raises(Exception) as e:
         m.predict_proba(Xtr[:10])
         assert "classification" in str(e.value) and "mse" in str(e.value)
@@ -589,7 +589,7 @@ def test_model_n_classes_semantics():
     yb = (y > 0).astype(np.float32)
     mb = bonsai.BonsaiClassifier(n_iters=3).fit(X, yb)._model
     assert mb.objective_name == "logloss" and mb.n_classes == 0
-    mr = bonsai.train([("booster.n_iters", "3")], X, y)
+    mr = bonsai.train({"booster.n_iters": "3"}, X, y)
     assert mr.objective_name == "mse" and mr.n_classes == 0
 
 

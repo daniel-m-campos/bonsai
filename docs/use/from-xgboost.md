@@ -30,17 +30,17 @@ xgb_config = {
     "early_stopping_rounds": 20,
     "tree_method": "hist",
 }
-pairs = bonsai.interop.from_xgboost(xgb_config)
-model = bonsai.train(pairs, X_train, y_train, eval_set=(X_valid, y_valid))
+params = bonsai.interop.from_xgboost(xgb_config)
+model = bonsai.train(params, X_train, y_train, eval_set=(X_valid, y_valid))
 print("rounds kept:", model.n_iters)
 print("top feature:", int(np.argmax(model.feature_importance("gain"))))
 ```
 
-The same pairs configure an estimator, if you want the sklearn contract around the fit:
+The same translation configures an estimator, if you want the sklearn contract around the fit:
 
 ```python
 translated = bonsai.interop.from_xgboost({"n_estimators": 200, "reg_lambda": 1.0})
-est = bonsai.BonsaiRegressor(params=dict(translated))
+est = bonsai.BonsaiRegressor(params=translated.to_dict())
 ```
 
 Writing the config in bonsai's own names from the start is one line shorter and needs no translation at all:

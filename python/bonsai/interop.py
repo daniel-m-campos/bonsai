@@ -5,15 +5,15 @@ mapping. One table per library drives both directions, so a rename can never
 drift between the estimator layer, the benchmark harness, and the docs.
 
 ``from_xgboost`` / ``from_lightgbm`` / ``from_catboost`` turn a reference
-library's parameter dict into the ``(key, value)`` string pairs
-``bonsai.train`` takes. ``to_xgboost`` / ``to_lightgbm`` / ``to_catboost``
+library's parameter dict into a ``bonsai.Params``, ready for
+``bonsai.train``. ``to_xgboost`` / ``to_lightgbm`` / ``to_catboost``
 go the other way, returning that library's parameter dict.
 
     >>> import bonsai
-    >>> pairs = bonsai.interop.from_lightgbm(
+    >>> p = bonsai.interop.from_lightgbm(
     ...     {"num_leaves": 63, "max_depth": -1, "learning_rate": 0.05})
-    >>> sorted(pairs)
-    [('booster.learning_rate', '0.05'), ('tree.max_depth', '255'), ('tree.max_leaves', '63')]
+    >>> p
+    Params(tree=Tree(max_depth=255, max_leaves=63), booster=Booster(learning_rate=0.05))
 
 Translation is not equivalence. Every mapping whose two sides mean different
 things carries a note at its table row, and the module-level notes below
@@ -27,8 +27,8 @@ import dataclasses
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Final
 
-from bonsai._coerce import _to_config_str
 from bonsai._params_ops import ParamsOps
+from bonsai.params import Params
 
 __all__ = [
     "from_catboost",
@@ -386,7 +386,7 @@ _CATBOOST: Final = _Library(
 # Public Functions =================================================================================
 
 def from_xgboost(params: Mapping[str, Any], *,
-                 strict: bool = True) -> list[tuple[str, str]]:
+                 strict: bool = True) -> Params:
     """Translate an XGBoost parameter dict into bonsai config pairs.
 
     Parameters
@@ -401,8 +401,9 @@ def from_xgboost(params: Mapping[str, Any], *,
 
     Returns
     -------
-    list[tuple[str, str]]
-        ``(dotted.key, value)`` pairs ready for ``bonsai.train``.
+    Params
+        The translated overrides, ready for ``bonsai.train`` (compose with
+        ``|`` to layer more).
 
     Raises
     ------
@@ -421,7 +422,7 @@ def from_xgboost(params: Mapping[str, Any], *,
 
 
 def from_lightgbm(params: Mapping[str, Any], *,
-                  strict: bool = True) -> list[tuple[str, str]]:
+                  strict: bool = True) -> Params:
     """Translate a LightGBM parameter dict into bonsai config pairs.
 
     ``max_depth=-1`` (LightGBM's uncapped growth) becomes
@@ -440,8 +441,9 @@ def from_lightgbm(params: Mapping[str, Any], *,
 
     Returns
     -------
-    list[tuple[str, str]]
-        ``(dotted.key, value)`` pairs ready for ``bonsai.train``.
+    Params
+        The translated overrides, ready for ``bonsai.train`` (compose with
+        ``|`` to layer more).
 
     Raises
     ------
@@ -460,7 +462,7 @@ def from_lightgbm(params: Mapping[str, Any], *,
 
 
 def from_catboost(params: Mapping[str, Any], *,
-                  strict: bool = True) -> list[tuple[str, str]]:
+                  strict: bool = True) -> Params:
     """Translate a CatBoost parameter dict into bonsai config pairs.
 
     ``border_count`` counts splits where ``bin_mapper.max_bin`` counts bins,
@@ -478,8 +480,9 @@ def from_catboost(params: Mapping[str, Any], *,
 
     Returns
     -------
-    list[tuple[str, str]]
-        ``(dotted.key, value)`` pairs ready for ``bonsai.train``.
+    Params
+        The translated overrides, ready for ``bonsai.train`` (compose with
+        ``|`` to layer more).
 
     Raises
     ------
@@ -648,8 +651,8 @@ def _cpu_grower(value: Any) -> str:
 
 
 def _from_library(lib: _Library, params: Mapping[str, Any],
-                  strict: bool) -> list[tuple[str, str]]:
-    """Foreign dict to bonsai pairs; the shared engine behind ``from_*``."""
+                  strict: bool) -> Params:
+    """Foreign dict to a ``Params``; the shared engine behind ``from_*``."""
     index = {knob.foreign: knob for knob in lib.knobs}
     implied: dict[str, Any] = {}
     mapped: dict[str, Any] = {}
@@ -664,8 +667,7 @@ def _from_library(lib: _Library, params: Mapping[str, Any],
         mapped[knob.native] = value if knob.to_native is None else knob.to_native(value)
         implied.update(knob.implies or {})
     _reject_unmappable(unmappable, strict, lib.name, "bonsai")
-    merged = {**implied, **mapped}
-    return [(key, _to_config_str(value)) for key, value in merged.items()]
+    return Params.from_dict({**implied, **mapped})
 
 
 def _to_library(lib: _Library, pairs: ParamsOps | Iterable[tuple[str, Any]],

@@ -86,18 +86,27 @@ def test_params_repr_shows_only_set_fields():
 
 
 def test_train_params_forms_are_bit_identical():
-    """Params, dict, and pairs render to one wire format, so all three
-    forms (and both data forms) produce the same model bit for bit."""
+    """Params and dict (string or typed values) render to one wire format,
+    so every form (and both data forms) produces the same model bit for
+    bit."""
     X, y = _reg_data()
     ds = bonsai.Dataset(X, y)
     p = Params(booster=Booster(n_iters=15), tree=Tree(max_depth=5))
     ref = np.asarray(bonsai.train(p, ds).predict(X))
-    for params in ([("booster.n_iters", "15"), ("tree.max_depth", "5")],
+    for params in ({"booster.n_iters": "15", "tree.max_depth": "5"},
                    {"booster.n_iters": 15, "tree.max_depth": 5}):
         np.testing.assert_array_equal(
             ref, np.asarray(bonsai.train(params, ds).predict(X)))
     np.testing.assert_array_equal(
         ref, np.asarray(bonsai.train(p, X, y).predict(X)))
+
+
+def test_train_rejects_the_retired_pairs_form():
+    """The (key, value) pairs list is the internal wire format; the public
+    wrapper names the two accepted forms instead of guessing."""
+    X, y = _reg_data(n=500)
+    with pytest.raises(TypeError, match="dict\\(pairs\\)"):
+        bonsai.train([("booster.n_iters", "5")], bonsai.Dataset(X, y))
 
 
 def test_train_accepts_none_params():

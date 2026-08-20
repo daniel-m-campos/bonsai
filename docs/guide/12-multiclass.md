@@ -42,11 +42,11 @@ import bonsai
 rng = np.random.default_rng(0)
 X = rng.normal(size=(5000, 8)).astype(np.float32)
 y = (X[:, 0] + 0.5 * X[:, 1] > 0).astype(np.float32) + (X[:, 2] > 1)
-model = bonsai.train([
-    ("dispatch.objective_name", "softmax"),
-    ("objective.n_classes", "3"),
-    ("booster.n_iters", "50"),
-], X, y)
+model = bonsai.train({
+    "dispatch.objective_name": "softmax",
+    "objective.n_classes": 3,
+    "booster.n_iters": 50,
+}, X, y)
 pred = np.asarray(model.predict(X))
 print("train accuracy:", (pred == y).mean())
 ```
