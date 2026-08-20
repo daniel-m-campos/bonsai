@@ -247,6 +247,14 @@ TEST_CASE("gain and leaf math survive an empty node side at lambda_l2 = 0",
     CHECK(score(0.0, 0.0, 0.0, 0.0) == 0.0);
     CHECK(bounded_leaf_weight(0.0, 0.0, 0.0, 0.0, -1e30, 1e30) == 0.0);
 
+    // lambda_l1 cannot resurrect the quotient: an empty leaf's G = 0 lies
+    // inside every soft-threshold band, so the numerator is 0 for any l1.
+    CHECK(score(0.0, 0.0, 0.5, 0.0) == 0.0);
+    CHECK(bounded_leaf_weight(0.0, 0.0, 0.5, 0.0, -1e30, 1e30) == 0.0);
+    // A populated leaf whose hessians underflowed to zero (saturated
+    // logloss rows) gets 0 rather than the old +-inf step.
+    CHECK(bounded_leaf_weight(3.0, 0.0, 0.0, 0.0, -1e30, 1e30) == 0.0);
+
     // The guard is inert whenever the denominator is positive: identical
     // quotients, so lambda_l2 > 0 models cannot move (the hash gates hold).
     CHECK(score(3.0, 2.0, 1.0) == Catch::Approx((3.0 * 3.0) / 3.0));
