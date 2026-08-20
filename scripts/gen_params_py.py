@@ -49,7 +49,7 @@ PARAMS_DOC = '''    """Typed overrides over the library defaults, one field per 
     Examples
     --------
     >>> p = Params(tree=Tree(max_depth=8), booster=Booster(n_iters=200))
-    >>> bonsai.train(p, ds)                              # doctest: +SKIP
+    >>> bonsai.train(p, ds)
     >>> sweep = p | {"tree.max_depth": 10}               # dict-style merge
     """
 '''
@@ -58,7 +58,7 @@ PARAMS_DOC = '''    """Typed overrides over the library defaults, one field per 
 def _load_extension(package_dir: str):
     """Import the built ``_bonsai`` extension directly from its file."""
     matches = sorted(glob.glob(os.path.join(package_dir, "_bonsai.*")))
-    ext = [p for p in matches if p.endswith((".so", ".pyd")) or ".cpython" in p]
+    ext = [p for p in matches if p.endswith((".so", ".pyd"))]
     if not ext:
         raise SystemExit(f"no built _bonsai extension under {package_dir}")
     spec = importlib.util.spec_from_file_location("_bonsai", ext[0])
