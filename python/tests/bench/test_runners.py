@@ -519,6 +519,44 @@ def test_runners_arm_early_stopping_on_the_stop_arm_only(probe_of, monkeypatch):
     assert p.tail is None or p.tail(), p.variant
 
 
+def test_bonsai_contribs_phase_is_additive():
+    """A contribs cell adds contribs_s and contribs_additivity to the row.
+    mse's link is the identity, so predict()'s output IS the raw (pre-link)
+    score pred_contribs sums to, and the decomposition must be exact up to
+    floating-point noise.
+    """
+    from bonsai.bench import runners
+
+    rng = np.random.default_rng(0)
+    X = rng.random((600, 6), dtype=np.float32)
+    y = X[:, :3].sum(axis=1).astype(np.float32)
+    cell = {"lr": 0.1, "depth": 4, "bins": 63, "seed": 42, "iters": 5,
+            "contribs": True}
+    out = runners.run_bonsai(
+        {"cell": cell, "variant": "bonsai_depthwise", "threads": 1},
+        X[:500], y[:500], X[500:], y[500:])
+    assert set(out) == {"fit_s", "ingest_s", "train_s", "predict_s",
+                        "contribs_s", "contribs_additivity",
+                        "r2_train", "r2_test"}, out
+    assert out["contribs_s"] > 0, out
+    assert out["contribs_additivity"] < 1e-6, out["contribs_additivity"]
+
+
+def test_bonsai_contribs_off_by_default_carries_no_extra_fields():
+    """A cell with no `contribs` key must reproduce the pre-SHAP row exactly
+    (the same additive-schema rule eval_mode already follows)."""
+    from bonsai.bench import runners
+
+    rng = np.random.default_rng(0)
+    X = rng.random((600, 6), dtype=np.float32)
+    y = X[:, :3].sum(axis=1).astype(np.float32)
+    cell = {"lr": 0.1, "depth": 4, "bins": 63, "seed": 42, "iters": 5}
+    out = runners.run_bonsai(
+        {"cell": cell, "variant": "bonsai_depthwise", "threads": 1},
+        X[:500], y[:500], X[500:], y[500:])
+    assert "contribs_s" not in out and "contribs_additivity" not in out
+
+
 def test_legacy_cells_carry_no_eval_fields():
     """A cell without eval_mode must produce the pre-early-stopping row.
 

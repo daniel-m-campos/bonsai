@@ -27,6 +27,17 @@ def test_runlog_roundtrip():
         runlog.emit_row("/tmp/x.jsonl", division="nope", suite="s")
 
 
+def test_row_carries_the_contribs_fields():
+    """The SHAP-phase columns follow predict_s's naming, and are distinct
+    from every other Row constant (a collision would silently overwrite a
+    row field on emit)."""
+    assert runlog.Row.CONTRIBS_S == "contribs_s"
+    assert runlog.Row.CONTRIBS_ROWS_PER_S == "contribs_rows_per_s"
+    assert runlog.Row.CONTRIBS_ADDITIVITY == "contribs_additivity"
+    values = [v for k, v in vars(runlog.Row).items() if not k.startswith("_")]
+    assert len(values) == len(set(values)), "duplicate Row field spelling"
+
+
 def test_detect_host_driver_key():
     host = runlog.detect_host()
     assert "driver" in host

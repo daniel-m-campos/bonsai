@@ -21,7 +21,11 @@ _SPEC_KEYS = {"name", "suite", "defaults", "cells", "variants", "threads",
 _CELL_DEFAULTS = {**{k: params.SCALING[k]
                      for k in ("bins", "depth", "iters", "lr", "seed",
                                "min_data_in_leaf", "lambda_l2")},
-                  "informative": 20}
+                  "informative": 20,
+                  # off by default so only the SHAP suite pays for the
+                  # extra phase; a spec's defaults block or a cell can
+                  # set it true.
+                  "contribs": False}
 
 
 def bundled_specs() -> list[str]:
