@@ -100,3 +100,21 @@ Three arms at the tall cell: `off` fits the round budget blind, `eval` scores a 
 | leafwise | LightGBM | +9.1% | 105.6s | 979 |
 | levelwise | bonsai levelwise | +25.8% | 68.6s | 2000 |
 | levelwise | CatBoost | +8.6% | 117.8s | 1859 |
+
+## TreeSHAP throughput (gpu-shap)
+
+One `pred_contribs` call over the full matrix, seconds, best repeat, bold best per cell. bonsai explains from the resident binned Dataset; XGBoost runs its GPU engine; LightGBM and CatBoost compute SHAP on the CPU whatever the training device, which is why they stand as context arms. The second table is the fidelity column: each arm's additivity residual against its own raw margins (max over rows and repeats, relative).
+
+| cell | bonsai depthwise (GPU) | XGBoost (GPU) | LightGBM (CPU SHAP) | CatBoost (CPU SHAP) |
+|---|---|---|---|---|
+| 1,048,576 x 128, depth 6 | **0.57** | 2.38 | 172.62 | 3.16 |
+| 1,048,576 x 128, depth 8 | **2.46** | 7.46 | - | 4.38 |
+| 1,048,576 x 512, depth 6 | **0.84** | 2.57 | 182.09 | 7.88 |
+| 4,194,304 x 128, depth 6 | **1.34** | 5.61 | 377.82 | 8.18 |
+
+| cell | bonsai depthwise (GPU) | XGBoost (GPU) | LightGBM (CPU SHAP) | CatBoost (CPU SHAP) |
+|---|---|---|---|---|
+| 1,048,576 x 128, depth 6 | 4.7e-06 | 2.8e-06 | 0.0e+00 | 0.0e+00 |
+| 1,048,576 x 128, depth 8 | 6.8e-06 | 5.3e-06 | - | 0.0e+00 |
+| 1,048,576 x 512, depth 6 | 3.5e-06 | 3.2e-06 | 0.0e+00 | 0.0e+00 |
+| 4,194,304 x 128, depth 6 | 5.2e-06 | 4.0e-06 | 0.0e+00 | 0.0e+00 |

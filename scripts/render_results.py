@@ -38,6 +38,7 @@ class Axis:
     CPU_TALL: Final = "cpu-tall"
     CPU_WIDE: Final = "cpu-wide"
     GPU_EARLY_STOP: Final = "gpu-early-stop"
+    GPU_SHAP: Final = "gpu-shap"
     GRINSZTAJN: Final = "quality-grinsztajn"
     CODE: Final = "code"
 
@@ -56,6 +57,8 @@ class K:
     PEAK_RSS_GB: Final = "peak_rss_gb"
     DEV_MEM: Final = "dev_mem"
     GIT_SHA: Final = "git_sha"
+    CONTRIBS_S: Final = "contribs_s"
+    CONTRIBS_ADDITIVITY: Final = "contribs_additivity"
 
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -553,6 +556,50 @@ Three arms at the tall cell: `off` fits the round budget blind, `eval` scores a 
 """
 
 
+def shap_section() -> str:
+    """TreeSHAP throughput as its own axis: one call, four arms, fidelity."""
+    rows = axis_rows(Axis.GPU_SHAP)
+    arms = (("bonsai_cuda_depthwise", "bonsai depthwise (GPU)"),
+            ("xgb_cuda", "XGBoost (GPU)"),
+            ("lgbm_cuda", "LightGBM (CPU SHAP)"),
+            ("catboost_gpu", "CatBoost (CPU SHAP)"))
+
+    def cell_key(r: dict) -> tuple:
+        c = r["cell"]
+        return (c["rows"], c["cols"], c.get("depth"))
+
+    def stat(variant: str, key: tuple, field: str, pick) -> float | None:
+        vals = [r.get(field) for r in rows
+                if r.get(K.VARIANT) == variant and cell_key(r) == key
+                and r.get(K.STATUS) == "ok" and r.get(field) is not None]
+        return pick(vals) if vals else None
+
+    cells = sorted({cell_key(r) for r in rows if r.get(K.STATUS) == "ok"})
+    time_body: list[list[str]] = []
+    fid_body: list[list[str]] = []
+    for key in cells:
+        label = f"{key[0]:,} x {key[1]}, depth {key[2]}"
+        times = [stat(v, key, K.CONTRIBS_S, min) for v, _ in arms]
+        finite = [t for t in times if t is not None]
+        lo = min(finite) if finite else None
+        time_body.append([label] + [
+            "-" if t is None else (f"**{t:.2f}**" if t == lo else f"{t:.2f}")
+            for t in times])
+        fid_body.append([label] + [
+            "-" if (a := stat(v, key, K.CONTRIBS_ADDITIVITY, max)) is None
+            else f"{a:.1e}" for v, _ in arms])
+    headers = ["cell"] + [label for _, label in arms]
+    tables = (md_table(headers, time_body) + "\n\n" +
+              md_table(headers, fid_body)) if rows else PENDING
+    return f"""## TreeSHAP throughput (gpu-shap)
+
+One `pred_contribs` call over the full matrix, seconds, best repeat, bold best per cell. bonsai explains from the resident binned Dataset; XGBoost runs its GPU engine; LightGBM and CatBoost compute SHAP on the CPU whatever the training device, which is why they stand as context arms. The second table is the fidelity column: each arm's additivity residual against its own raw margins (max over rows and repeats, relative).
+
+{tables}
+"""
+
+
+
 # Perf: private panel helpers ======================================================================
 
 
@@ -859,7 +906,8 @@ PAGES: list[tuple[str, str, str, list]] = [
     ("perf.md", "The scenario panels",
      "Every grower against its closest rival, both planes, at the "
      "redesigned scenarios.",
-     [perf_summary_section, perf_panels_section, early_stop_section]),
+     [perf_summary_section, perf_panels_section, early_stop_section,
+      shap_section]),
     ("quality-grinsztajn.md", "Grinsztajn standings",
      "The only citable standings: 55 third-party tasks.",
      [grinsztajn_section]),
