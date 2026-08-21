@@ -638,11 +638,12 @@ TEST_CASE("Leafwise arming refuses a leaf budget the pool cannot hold",
     std::vector<float> scores(data.n_rows, 0.0F);
 
     // The conservative bound is decided once per fit over every feature and the
-    // full leaf budget. This budget prices a pool no device accepts, so leafwise
+    // full leaf budget. This budget prices a pool in the hundreds of GB, beyond
+    // any current device (a 96GB card holds the old 1<<20 budget), so leafwise
     // must not arm — while depthwise, whose gate is the shared-memory budget
     // alone, still does on the very same config.
     Config cfg                 = reg_cfg();
-    cfg.tree_config.max_leaves = 1U << 20U;
+    cfg.tree_config.max_leaves = 1U << 24U;
     {
         CudaLeafwiseGrower leaf{cfg.tree_config};
         REQUIRE_FALSE(leaf.resident_begin(data.built.ds, DeviceObjectiveKind::mse,
