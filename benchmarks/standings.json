@@ -1,143 +1,213 @@
 {
- "_": "The standings registry, v2 (results-lifecycle policy, decision 92; scenario redesign, decision 103). One entry per published perf/quality axis: the current-standings file (null until the axis has been measured), the single sha its rows were measured at, the release it was refreshed for, and `plane` (cpu or gpu), the source set whose digest decides whether the axis is still current. Every axis also carries hash_set (its plane's digest at refresh time) and refs (reference-library versions measured against), which let scripts/check_standings.py's release gate skip a refresh when neither has moved, and let `--stale` tell the refresh driver which axes a session must actually measure. Gates: scripts/check_standings.py; supersession is in place, git history is the archive.",
- "gpu-tall": {
-  "file": "gpu-tall-2026-08.jsonl",
-  "sha": "e2bb3ac",
-  "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-  "date": "2026-08-20",
-  "plane": "gpu",
-  "refreshed_for": "1.10.0",
-  "as_of_decision": 104,
-  "companion": "parity-2026-08.jsonl",
-  "hash_set": "dc4933dd4edefc3c",
-  "refs": {
-   "xgboost": "3.3.0",
-   "lightgbm": "4.6.0",
-   "catboost": "1.2.10"
-  }
- },
- "gpu-wide": {
-  "file": "gpu-wide-2026-08.jsonl",
-  "sha": "e2bb3ac",
-  "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-  "date": "2026-08-20",
-  "plane": "gpu",
-  "refreshed_for": "1.10.0",
-  "as_of_decision": 104,
-  "hash_set": "dc4933dd4edefc3c",
-  "refs": {
-   "xgboost": "3.3.0",
-   "lightgbm": "4.6.0",
-   "catboost": "1.2.10"
-  }
- },
- "gpu-extreme": {
-  "file": "gpu-extreme-2026-08.jsonl",
-  "sha": "e2bb3ac",
-  "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-  "date": "2026-08-20",
-  "plane": "gpu",
-  "refreshed_for": "1.10.0",
-  "as_of_decision": 104,
-  "hash_set": "dc4933dd4edefc3c",
-  "refs": {
-   "xgboost": "3.3.0",
-   "lightgbm": "4.6.0",
-   "catboost": "1.2.10"
-  }
- },
- "cpu-tall": {
-  "file": "cpu-tall-2026-08.jsonl",
-  "sha": "e2bb3ac",
-  "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-  "date": "2026-08-20",
-  "plane": "cpu",
-  "refreshed_for": "1.10.0",
-  "as_of_decision": 104,
-  "hash_set": "25b88b0223a67762",
-  "refs": {
-   "xgboost": "3.3.0",
-   "lightgbm": "4.6.0",
-   "catboost": "1.2.10"
-  }
- },
- "cpu-wide": {
-  "file": "cpu-wide-2026-08.jsonl",
-  "sha": "e2bb3ac",
-  "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-  "date": "2026-08-20",
-  "plane": "cpu",
-  "refreshed_for": "1.10.0",
-  "as_of_decision": 104,
-  "hash_set": "25b88b0223a67762",
-  "refs": {
-   "xgboost": "3.3.0",
-   "lightgbm": "4.6.0",
-   "catboost": "1.2.10"
-  }
- },
- "gpu-early-stop": {
-  "file": "gpu-early-stop-2026-08.jsonl",
-  "sha": "e2bb3ac",
-  "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-  "date": "2026-08-20",
-  "plane": "gpu",
-  "refreshed_for": "1.10.0",
-  "as_of_decision": 104,
-  "hash_set": "dc4933dd4edefc3c",
-  "refs": {
-   "xgboost": "3.3.0",
-   "lightgbm": "4.6.0",
-   "catboost": "1.2.10"
-  }
- },
- "quality-grinsztajn": {
-  "file": "quality-grinsztajn-2026-08.jsonl",
-  "sha": "f2202a4",
-  "host": "MacBook-Air-M2.local",
-  "date": "2026-08-14",
-  "refreshed_for": "1.7.0",
-  "as_of_decision": 92,
-  "sha_partial": true,
-  "hash_set": "dc4933dd4edefc3c",
-  "refs": {
-   "xgboost": "3.3.0",
-   "lightgbm": "4.6.0",
-   "catboost": "1.2.10"
+  "_": "The standings registry, v2 (results-lifecycle policy, decision 92; scenario redesign, decision 103). One entry per published perf/quality axis: the current-standings file (null until the axis has been measured), the single sha its rows were measured at, the release it was refreshed for, and `plane` (cpu or gpu), the source set whose digest decides whether the axis is still current. Every axis also carries hash_set (its plane's digest at refresh time) and refs (reference-library versions measured against), which let scripts/check_standings.py's release gate skip a refresh when neither has moved, and let `--stale` tell the refresh driver which axes a session must actually measure. Gates: scripts/check_standings.py; supersession is in place, git history is the archive.",
+  "gpu-tall": {
+    "file": "gpu-tall-2026-08.jsonl",
+    "sha": "e2bb3ac",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    "date": "2026-08-20",
+    "plane": "gpu",
+    "refreshed_for": "1.10.0",
+    "as_of_decision": 104,
+    "companion": "parity-2026-08.jsonl",
+    "hash_set": "8e220a9eac60839a",
+    "refs": {
+      "xgboost": "3.3.0",
+      "lightgbm": "4.6.0",
+      "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "e2bb3ac",
+      "stamped_at": "0cd5c3b",
+      "reason": "device sources since v1.10.0 are additions only: new predict/SHAP TUs plus a cold profile helper, no fit kernel touched (PR 406); the host fit bytes reproduce",
+      "evidence": {
+        "kind": "model-hash",
+        "before": "55c6fe308852d9bb",
+        "after": "55c6fe308852d9bb"
+      }
+    }
   },
-  "carried_forward": {
-   "measured_at": "f2202a4",
-   "stamped_at": "4e78bad",
-   "reason": "no host-plane source change since the measured sha: cuda-only perf (decisions 106, PR 394), python docstrings and repr (PR 395), release machinery scripts (PR 391)",
-   "evidence": {
-    "kind": "model-hash",
-    "before": "55c6fe308852d9bb",
-    "after": "55c6fe308852d9bb"
-   }
+  "gpu-wide": {
+    "file": "gpu-wide-2026-08.jsonl",
+    "sha": "e2bb3ac",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    "date": "2026-08-20",
+    "plane": "gpu",
+    "refreshed_for": "1.10.0",
+    "as_of_decision": 104,
+    "hash_set": "8e220a9eac60839a",
+    "refs": {
+      "xgboost": "3.3.0",
+      "lightgbm": "4.6.0",
+      "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "e2bb3ac",
+      "stamped_at": "0cd5c3b",
+      "reason": "device sources since v1.10.0 are additions only: new predict/SHAP TUs plus a cold profile helper, no fit kernel touched (PR 406); the host fit bytes reproduce",
+      "evidence": {
+        "kind": "model-hash",
+        "before": "55c6fe308852d9bb",
+        "after": "55c6fe308852d9bb"
+      }
+    }
+  },
+  "gpu-extreme": {
+    "file": "gpu-extreme-2026-08.jsonl",
+    "sha": "e2bb3ac",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    "date": "2026-08-20",
+    "plane": "gpu",
+    "refreshed_for": "1.10.0",
+    "as_of_decision": 104,
+    "hash_set": "8e220a9eac60839a",
+    "refs": {
+      "xgboost": "3.3.0",
+      "lightgbm": "4.6.0",
+      "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "e2bb3ac",
+      "stamped_at": "0cd5c3b",
+      "reason": "device sources since v1.10.0 are additions only: new predict/SHAP TUs plus a cold profile helper, no fit kernel touched (PR 406); the host fit bytes reproduce",
+      "evidence": {
+        "kind": "model-hash",
+        "before": "55c6fe308852d9bb",
+        "after": "55c6fe308852d9bb"
+      }
+    }
+  },
+  "cpu-tall": {
+    "file": "cpu-tall-2026-08.jsonl",
+    "sha": "e2bb3ac",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    "date": "2026-08-20",
+    "plane": "cpu",
+    "refreshed_for": "1.10.0",
+    "as_of_decision": 104,
+    "hash_set": "ebc1ce739df9864d",
+    "refs": {
+      "xgboost": "3.3.0",
+      "lightgbm": "4.6.0",
+      "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "e2bb3ac",
+      "stamped_at": "0cd5c3b",
+      "reason": "the 1.11.0 span is read-side: device predict/SHAP (PR 406) and typed Params over the unchanged pairs wire (PR 402); no per-row fit code changed and the fit bytes reproduce",
+      "evidence": {
+        "kind": "model-hash",
+        "before": "55c6fe308852d9bb",
+        "after": "55c6fe308852d9bb"
+      }
+    }
+  },
+  "cpu-wide": {
+    "file": "cpu-wide-2026-08.jsonl",
+    "sha": "e2bb3ac",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    "date": "2026-08-20",
+    "plane": "cpu",
+    "refreshed_for": "1.10.0",
+    "as_of_decision": 104,
+    "hash_set": "ebc1ce739df9864d",
+    "refs": {
+      "xgboost": "3.3.0",
+      "lightgbm": "4.6.0",
+      "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "e2bb3ac",
+      "stamped_at": "0cd5c3b",
+      "reason": "the 1.11.0 span is read-side: device predict/SHAP (PR 406) and typed Params over the unchanged pairs wire (PR 402); no per-row fit code changed and the fit bytes reproduce",
+      "evidence": {
+        "kind": "model-hash",
+        "before": "55c6fe308852d9bb",
+        "after": "55c6fe308852d9bb"
+      }
+    }
+  },
+  "gpu-early-stop": {
+    "file": "gpu-early-stop-2026-08.jsonl",
+    "sha": "e2bb3ac",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    "date": "2026-08-20",
+    "plane": "gpu",
+    "refreshed_for": "1.10.0",
+    "as_of_decision": 104,
+    "hash_set": "8e220a9eac60839a",
+    "refs": {
+      "xgboost": "3.3.0",
+      "lightgbm": "4.6.0",
+      "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "e2bb3ac",
+      "stamped_at": "0cd5c3b",
+      "reason": "device sources since v1.10.0 are additions only: new predict/SHAP TUs plus a cold profile helper, no fit kernel touched (PR 406); the host fit bytes reproduce",
+      "evidence": {
+        "kind": "model-hash",
+        "before": "55c6fe308852d9bb",
+        "after": "55c6fe308852d9bb"
+      }
+    }
+  },
+  "quality-grinsztajn": {
+    "file": "quality-grinsztajn-2026-08.jsonl",
+    "sha": "f2202a4",
+    "host": "MacBook-Air-M2.local",
+    "date": "2026-08-14",
+    "refreshed_for": "1.7.0",
+    "as_of_decision": 92,
+    "sha_partial": true,
+    "hash_set": "8e220a9eac60839a",
+    "refs": {
+      "xgboost": "3.3.0",
+      "lightgbm": "4.6.0",
+      "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "f2202a4",
+      "stamped_at": "0cd5c3b",
+      "reason": "the only behavior-bearing change since the last carry (the empty-leaf 0/0 guard) alters only fits that previously produced NaN predictions, which no published quality run did; the fit bytes reproduce",
+      "evidence": {
+        "kind": "model-hash",
+        "before": "55c6fe308852d9bb",
+        "after": "55c6fe308852d9bb"
+      }
+    }
+  },
+  "code": {
+    "file": "code-metrics-2026-08.jsonl",
+    "sha": "0cd5c3bb4cdbed3fec3c4276c8f12bdb19025ead",
+    "host": null,
+    "date": null,
+    "refreshed_for": "1.11.0",
+    "as_of_decision": 92,
+    "sha_partial": true
+  },
+  "gpu-shap": {
+    "file": "gpu-shap-2026-08.jsonl",
+    "sha": "ffce72d",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    "date": "2026-08-21",
+    "plane": "gpu",
+    "refreshed_for": "1.10.0",
+    "as_of_decision": 108,
+    "hash_set": "8e220a9eac60839a",
+    "refs": {
+      "xgboost": "3.3.0",
+      "lightgbm": "4.7.0",
+      "catboost": "1.2.10"
+    },
+    "carried_forward": {
+      "measured_at": "ffce72d",
+      "stamped_at": "0cd5c3b",
+      "reason": "since the ffce72d measurement the kernels changed only by the cold profile_on consolidation; the review refactor holds the full parity suites and the fit bytes reproduce",
+      "evidence": {
+        "kind": "model-hash",
+        "before": "55c6fe308852d9bb",
+        "after": "55c6fe308852d9bb"
+      }
+    }
   }
- },
- "code": {
-  "file": "code-metrics-2026-08.jsonl",
-  "sha": "4e78badbeb0ae5dc83df63176d96e90353ad7e51",
-  "host": null,
-  "date": null,
-  "refreshed_for": "1.10.0",
-  "as_of_decision": 92,
-  "sha_partial": true
- },
- "gpu-shap": {
-  "file": "gpu-shap-2026-08.jsonl",
-  "sha": "ffce72d",
-  "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-  "date": "2026-08-21",
-  "plane": "gpu",
-  "refreshed_for": "1.10.0",
-  "as_of_decision": 108,
-  "hash_set": "0f99ff9d1e13c16f",
-  "refs": {
-   "xgboost": "3.3.0",
-   "lightgbm": "4.7.0",
-   "catboost": "1.2.10"
-  }
- }
 }
