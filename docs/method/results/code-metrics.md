@@ -6,13 +6,13 @@ Self-measurement of the bonsai tree, no comparison: line counts and lizard compl
 
 | plane | files | LOC | NLOC | functions | mean CCN | max CCN |
 |---|---|---|---|---|---|---|
-| core_headers | 54 | 5656 | 4070 | 256 | 1.93 | 15 |
-| engine_impl | 27 | 6741 | 5334 | 249 | 3.07 | 29 |
-| cuda_plane | 12 | 5246 | 4065 | 190 | 3.08 | 30 |
-| bindings_cli | 20 | 4915 | 3093 | 159 | 2.73 | 49 |
-| bench_tooling | 38 | 7842 | 4761 | 306 | 4.47 | 33 |
-| tests | 58 | 12928 | 9834 | 636 | 1.68 | 12 |
-| all | 209 | 43328 | 31157 | 1796 | - | - |
+| core_headers | 56 | 6253 | 4467 | 283 | 1.92 | 15 |
+| engine_impl | 28 | 7136 | 5667 | 259 | 3.16 | 29 |
+| cuda_plane | 18 | 6055 | 4665 | 203 | 3.32 | 30 |
+| bindings_cli | 23 | 5550 | 3533 | 186 | 2.74 | 49 |
+| bench_tooling | 39 | 8113 | 4951 | 314 | 4.52 | 33 |
+| tests | 63 | 14671 | 11201 | 706 | 1.77 | 12 |
+| all | 227 | 47778 | 34484 | 1951 | - | - |
 
 The five highest-CCN functions across `core_headers` + `engine_impl`, published by name; a curated offender list would be marketing.
 
@@ -20,10 +20,10 @@ The five highest-CCN functions across `core_headers` + `engine_impl`, published 
 |---|---|---|---|
 | `bonsai::detail::csv::parse` | `src/io/csv.cpp` | 29 | 142 |
 | `bonsai::detail::libsvm::parse` | `src/io/csv.cpp` | 20 | 99 |
-| `bonsai::MulticlassBooster::update_one_iter` | `include/bonsai/multiclass_booster.hpp` | 15 | 84 |
+| `bonsai::MulticlassBooster::update_one_iter` | `include/bonsai/multiclass_booster.hpp` | 15 | 85 |
 | `bonsai::greedy_weighted_cuts` | `src/bin_mapper.cpp` | 15 | 51 |
 | `bonsai::fill_detail::fill_lone` | `src/fill/lone.hpp` | 15 | 105 |
 
-Surface counts: 43 config parameters, 126 registered dispatch combinations (7 objectives x 6 growers x 3 samplers), and 10 public Python names. Dependencies: 1 Python runtime dependency (numpy) and 3 compiled-in C++ libraries (CLI11, nlohmann_json, tomlplusplus), the rule stated in the protocol.
+Surface counts: 43 config parameters, 126 registered dispatch combinations (7 objectives x 6 growers x 3 samplers), and 11 public Python names. Dependencies: 1 Python runtime dependency (numpy) and 3 compiled-in C++ libraries (CLI11, nlohmann_json, tomlplusplus), the rule stated in the protocol.
 
-*Source: [`code-metrics-2026-08.jsonl`](../../../benchmarks/results/code-metrics-2026-08.jsonl). lizard 1.23.0 (`uvx lizard@1.23.0`) at `4e78badbeb0a`, 2026-08-20; regenerate with [scripts/measure_complexity.py](../../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).*
+*Source: [`code-metrics-2026-08.jsonl`](../../../benchmarks/results/code-metrics-2026-08.jsonl). lizard 1.23.0 (`uvx lizard@1.23.0`) at `0cd5c3bb4cdb`, 2026-08-21; regenerate with [scripts/measure_complexity.py](../../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).*
