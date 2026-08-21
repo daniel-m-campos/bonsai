@@ -2,6 +2,14 @@
 
 All notable changes to bonsai. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags. Design rationale for anything below lives in [`docs/decisions.md`](docs/decisions.md).
 
+## [1.12.0] - 2026-08-21
+
+The front door is typed: `train` is the native function with a complete generated signature, and the estimators annotate their arrays.
+
+### Changed
+- **`train` accepts params at the binding** (PR #410). The pure-Python wrapper that rendered `Params`/dict to the pairs wire format is deleted; the nanobind binding takes `params` directly (`to_dict()` duck-typing for `Params`, mapping iteration, `None` for defaults) and renders values through Python's own `str()`, byte-identical to the old path. The legacy pairs list still raises with the `dict(pairs)` escape named. The generated `_bonsai.pyi` now carries the full public signature, `params: Params | Mapping[str, object] | None`, with the numpy-style docstrings intact, so IDEs show the real contract and a type checker sees `Model` instead of `Any` from the most-called function in the library. Model bytes are unchanged.
+- **Estimator signatures are annotated** (PR #410). `X`/`y`/`sample_weight` take `npt.ArrayLike`; the predict family's `X` also accepts a `Dataset` in the annotation, matching the passthrough it already had; `eval_set`'s bare `tuple` names its `(X, y)` shape.
+
 ## [1.11.0] - 2026-08-21
 
 Parameters become a typed, generated surface, and a device-resident `Dataset` is now served by the whole `Model` read side: predict and TreeSHAP run where the bins live, and the SHAP race is a standings category bonsai wins.
