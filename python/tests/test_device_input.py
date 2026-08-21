@@ -294,15 +294,22 @@ def test_dataset_from_device_input_gathers_a_sample(to_device):
 
 
 @requires_cuda
-def test_model_methods_refuse_a_dlpack_dataset(to_device):
-    """A device-resident build kept no host rows, so every raw-row reader
-    names the gap and the remedy instead of segfaulting or guessing."""
+def test_model_methods_serve_a_dlpack_dataset_under_the_models_cuts(to_device):
+    """A device-resident build kept no host rows, but a Dataset carrying the
+    model's own cuts routes in bin space, so every method works without X
+    and equals the raw-array call bit for bit."""
     X, y, _ = _reg_data()
     ds = bonsai.Dataset(_DevicePointer(to_device(X), X.shape), y)
     m = bonsai.train(PAIRS, ds)
     for name in ("predict", "staged_predict", "predict_leaf", "pred_contribs"):
-        with pytest.raises(Exception, match="host matrix"):
-            getattr(m, name)(ds)
+        np.testing.assert_array_equal(
+            np.asarray(getattr(m, name)(X)), np.asarray(getattr(m, name)(ds))
+        )
+
+    # Foreign cuts leave neither route: no bins the model can walk, no rows.
+    foreign = bonsai.Dataset(_DevicePointer(to_device(X), X.shape), y, max_bin=63)
+    with pytest.raises(Exception, match="device-resident"):
+        m.pred_contribs(foreign)
 
 
 @requires_cuda

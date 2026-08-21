@@ -560,12 +560,46 @@ class Model
         return to_numpy(std::move(out), {n});
     }
 
-    // Every X-taking method also accepts a Dataset (issue #399): a host-built
-    // one retained the caller's matrix, so the reader takes those rows as-is.
+    // Every X-taking method also accepts a Dataset. A Dataset carrying the
+    // model's own cuts routes in bin space (bit-identical to the raw walk,
+    // no raw rows needed, so DLPack builds work); foreign cuts fall back to
+    // the retained matrix; a device-resident build under foreign cuts has
+    // nothing either route can read, so it raises with both remedies.
+    bool routes_binned(Dataset const &ds, char const *method) const
+    {
+        if (mappers_.same_cuts(ds.loaded().mappers))
+        {
+            return true;
+        }
+        if (!ds.has_host_matrix())
+        {
+            throw std::invalid_argument(
+                std::string{"this Dataset was binned with different cut points "
+                            "than this model's and was built from device-resident "
+                            "(DLPack) input, so "} +
+                method +
+                " has neither bins it can route nor raw rows to read. Build the "
+                "Dataset with reference= the training dataset, or pass X as a "
+                "host array.");
+        }
+        return false;
+    }
+
     nb::ndarray<nb::numpy, float> predict(Dataset const &ds,
                                           size_t         num_iteration = 0) const
     {
-        return predict(ds.host_matrix("predict"), num_iteration);
+        if (!routes_binned(ds, "predict"))
+        {
+            return predict(ds.host_matrix("predict"), num_iteration);
+        }
+        size_t const n   = ds.n_rows();
+        auto         out = std::make_unique<std::vector<float>>(n, 0.0F);
+        {
+            nb::gil_scoped_release release;
+            booster_->predict_at_binned(ds.loaded().train.dataset, *out, num_iteration);
+            bonsai::apply_link_inverse_by_name(cfg_.dispatch.objective_name, *out);
+        }
+        return to_numpy(std::move(out), {n});
     }
 
     // Per-class probabilities. Softmax models return (n_rows, n_classes) — a
@@ -616,7 +650,46 @@ class Model
 
     nb::ndarray<nb::numpy, double> predict_proba(Dataset const &ds) const
     {
-        return predict_proba(ds.host_matrix("predict_proba"));
+        if (booster_->score_width() == 1 && cfg_.dispatch.objective_name != "logloss")
+        {
+            throw std::invalid_argument(
+                "predict_proba is only defined for classification objectives "
+                "(logloss/softmax); this model was trained with '" +
+                cfg_.dispatch.objective_name + "'");
+        }
+        if (!routes_binned(ds, "predict_proba"))
+        {
+            return predict_proba(ds.host_matrix("predict_proba"));
+        }
+        size_t const n   = ds.n_rows();
+        size_t const w   = booster_->score_width();
+        auto         out = std::make_unique<std::vector<double>>(n * w, 0.0);
+        {
+            nb::gil_scoped_release release;
+            if (w > 1)
+            {
+                booster_->predict_proba_binned(ds.loaded().train.dataset,
+                                               std::span<double>{*out});
+            }
+            else
+            {
+                std::vector<float> margins(n, 0.0F);
+                booster_->predict_at_binned(ds.loaded().train.dataset,
+                                            bonsai::floats_out{margins.data(), n}, 0);
+                bonsai::apply_link_inverse_by_name(
+                    cfg_.dispatch.objective_name,
+                    bonsai::floats_out{margins.data(), n});
+                for (size_t i = 0; i < n; ++i)
+                {
+                    (*out)[i] = margins[i];
+                }
+            }
+        }
+        if (w > 1)
+        {
+            return to_numpy(std::move(out), {n, w});
+        }
+        return to_numpy(std::move(out), {n});
     }
 
     // (n_iters, n_rows): prediction after each boosting iteration.
@@ -641,7 +714,24 @@ class Model
 
     nb::ndarray<nb::numpy, float> staged_predict(Dataset const &ds) const
     {
-        return staged_predict(ds.host_matrix("staged_predict"));
+        if (!routes_binned(ds, "staged_predict"))
+        {
+            return staged_predict(ds.host_matrix("staged_predict"));
+        }
+        size_t const n   = ds.n_rows();
+        size_t const k   = booster_->n_iters();
+        auto         out = std::make_unique<std::vector<float>>(k * n, 0.0F);
+        {
+            nb::gil_scoped_release release;
+            booster_->predict_staged_binned(ds.loaded().train.dataset, *out);
+            for (size_t t = 0; t < k; ++t)
+            {
+                bonsai::apply_link_inverse_by_name(
+                    cfg_.dispatch.objective_name,
+                    bonsai::floats_out{out->data() + (t * n), n});
+            }
+        }
+        return to_numpy(std::move(out), {k, n});
     }
 
     // (n_rows, n_trees): the leaf each row lands in, per tree. The width is
@@ -662,7 +752,19 @@ class Model
 
     nb::ndarray<nb::numpy, uint32_t> predict_leaf(Dataset const &ds) const
     {
-        return predict_leaf(ds.host_matrix("predict_leaf"));
+        if (!routes_binned(ds, "predict_leaf"))
+        {
+            return predict_leaf(ds.host_matrix("predict_leaf"));
+        }
+        size_t const n   = ds.n_rows();
+        size_t const k   = booster_->n_trees();
+        auto         out = std::make_unique<std::vector<bonsai::node_id_t>>(n * k, 0);
+        {
+            nb::gil_scoped_release release;
+            booster_->predict_leaf_binned(ds.loaded().train.dataset,
+                                          std::span<bonsai::node_id_t>{*out});
+        }
+        return to_numpy(std::move(out), {n, k});
     }
 
     std::string dump() const
@@ -694,7 +796,25 @@ class Model
 
     nb::ndarray<nb::numpy, double> pred_contribs(Dataset const &ds) const
     {
-        return pred_contribs(ds.host_matrix("pred_contribs"));
+        if (!routes_binned(ds, "pred_contribs"))
+        {
+            return pred_contribs(ds.host_matrix("pred_contribs"));
+        }
+        size_t const n     = ds.n_rows();
+        size_t const nf    = ds.n_features();
+        size_t const cols  = nf + 1;
+        size_t const width = booster_->score_width();
+        auto         out = std::make_unique<std::vector<double>>(n * width * cols, 0.0);
+        {
+            nb::gil_scoped_release release;
+            booster_->pred_contribs_binned(ds.loaded().train.dataset,
+                                           std::span<double>{*out}, nf);
+        }
+        if (width > 1)
+        {
+            return to_numpy(std::move(out), {n, width, cols});
+        }
+        return to_numpy(std::move(out), {n, cols});
     }
 
     void save(std::string const &path) const
@@ -1060,9 +1180,10 @@ NB_MODULE(_bonsai, m)
              "Parameters\n"
              "----------\n"
              "X : float32 array, shape (n_rows, n_features), or Dataset\n"
-             "    Row-major features. A host-built ``bonsai.Dataset`` reads "
-             "the matrix it retained; a device-resident (DLPack) build kept "
-             "no host rows and raises.\n"
+             "    Row-major features. A Dataset carrying this model's cuts "
+             "routes in bin space (device-resident builds included), "
+             "bit-identical to the raw walk; other Datasets read the matrix "
+             "they retained.\n"
              "num_iteration : int, default 0\n"
              "    Predict with only the first ``num_iteration`` boosting "
              "rounds; 0 uses all.\n"
@@ -1082,8 +1203,8 @@ NB_MODULE(_bonsai, m)
              "Parameters\n"
              "----------\n"
              "X : float32 array, shape (n_rows, n_features), or Dataset\n"
-             "    Row-major features; a host-built Dataset reads the matrix "
-             "it retained.\n"
+             "    Row-major features; a Dataset with this model's cuts "
+             "routes in bin space, others read the matrix they retained.\n"
              "\n"
              "Returns\n"
              "-------\n"
@@ -1109,8 +1230,8 @@ NB_MODULE(_bonsai, m)
              "Parameters\n"
              "----------\n"
              "X : float32 array, shape (n_rows, n_features), or Dataset\n"
-             "    Row-major features; a host-built Dataset reads the matrix "
-             "it retained.\n"
+             "    Row-major features; a Dataset with this model's cuts "
+             "routes in bin space, others read the matrix they retained.\n"
              "\n"
              "Returns\n"
              "-------\n"
@@ -1132,8 +1253,8 @@ NB_MODULE(_bonsai, m)
              "Parameters\n"
              "----------\n"
              "X : float32 array, shape (n_rows, n_features), or Dataset\n"
-             "    Row-major features; a host-built Dataset reads the matrix "
-             "it retained.\n"
+             "    Row-major features; a Dataset with this model's cuts "
+             "routes in bin space, others read the matrix they retained.\n"
              "\n"
              "Returns\n"
              "-------\n"
@@ -1159,8 +1280,8 @@ NB_MODULE(_bonsai, m)
              "Parameters\n"
              "----------\n"
              "X : float32 array, shape (n_rows, n_features), or Dataset\n"
-             "    Row-major features; a host-built Dataset reads the matrix "
-             "it retained.\n"
+             "    Row-major features; a Dataset with this model's cuts "
+             "routes in bin space, others read the matrix they retained.\n"
              "\n"
              "Returns\n"
              "-------\n"
