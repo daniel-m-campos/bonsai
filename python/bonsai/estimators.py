@@ -22,6 +22,7 @@ import numpy as np
 
 from bonsai._bonsai import Dataset, Model, load, train
 from bonsai._coerce import _as_f32, _to_config_str
+from bonsai._params_ops import ParamsOps
 
 __all__ = ["BonsaiClassifier", "BonsaiRegressor"]
 
@@ -80,7 +81,8 @@ class _BonsaiEstimator:
         the chosen ``grower``'s strategy on that device. None leaves the
         grower name as given.
     params
-        Dotted config-key overrides, e.g. ``{"tree.lambda_l1": 0.5}``; the
+        Overrides beyond the first-class kwargs: a ``bonsai.Params`` or a
+        dotted config-key dict, e.g. ``{"tree.lambda_l1": 0.5}``; the
         power-user escape hatch, applied after the first-class kwargs and
         always wins.
     """
@@ -99,7 +101,7 @@ class _BonsaiEstimator:
         max_bin: int | None = None,
         subsample: float | None = None,
         device: str | None = None,
-        params: dict | None = None,
+        params: dict | ParamsOps | None = None,
     ):
         """Store every argument raw; ``get_params``/``clone`` read them back."""
         self.n_iters = n_iters
@@ -236,7 +238,8 @@ class _BonsaiEstimator:
         Parameters
         ----------
         X
-            Feature matrix.
+            Feature matrix, or a host-built ``bonsai.Dataset`` (reads the
+            matrix it retained; device-resident builds kept none and raise).
         num_iteration
             Truncates the ensemble to its first ``n`` trees, as on
             ``Model.predict``; 0 uses every tree. A prefix always starts at
@@ -248,7 +251,7 @@ class _BonsaiEstimator:
             Predictions, one per row of ``X``.
         """
         self._check_fitted("fit() or load first")
-        return np.asarray(self._model.predict(_as_f32(X, 2, "X"), num_iteration))
+        return np.asarray(self._model.predict(_as_x(X), num_iteration))
 
     def staged_predict(self, X) -> np.ndarray:
         """Predict after each boosting iteration.
@@ -256,7 +259,8 @@ class _BonsaiEstimator:
         Parameters
         ----------
         X
-            Feature matrix.
+            Feature matrix, or a host-built ``bonsai.Dataset`` (reads the
+            matrix it retained; device-resident builds kept none and raise).
 
         Returns
         -------
@@ -265,7 +269,7 @@ class _BonsaiEstimator:
             iteration.
         """
         self._check_fitted()
-        return np.asarray(self._model.staged_predict(_as_f32(X, 2, "X")))
+        return np.asarray(self._model.staged_predict(_as_x(X)))
 
     def predict_leaf(self, X) -> np.ndarray:
         """Predict per-tree leaf indices, for feature engineering / embedding.
@@ -273,7 +277,8 @@ class _BonsaiEstimator:
         Parameters
         ----------
         X
-            Feature matrix.
+            Feature matrix, or a host-built ``bonsai.Dataset`` (reads the
+            matrix it retained; device-resident builds kept none and raise).
 
         Returns
         -------
@@ -284,7 +289,7 @@ class _BonsaiEstimator:
             ``t // n_classes``, class ``t % n_classes``.
         """
         self._check_fitted()
-        return np.asarray(self._model.predict_leaf(_as_f32(X, 2, "X")))
+        return np.asarray(self._model.predict_leaf(_as_x(X)))
 
     def dump(self) -> str:
         """Dump the model as text.
@@ -303,7 +308,8 @@ class _BonsaiEstimator:
         Parameters
         ----------
         X
-            Feature matrix.
+            Feature matrix, or a host-built ``bonsai.Dataset`` (reads the
+            matrix it retained; device-resident builds kept none and raise).
 
         Returns
         -------
@@ -312,7 +318,7 @@ class _BonsaiEstimator:
             Rows sum to the raw (pre-link) prediction exactly.
         """
         self._check_fitted()
-        return np.asarray(self._model.pred_contribs(_as_f32(X, 2, "X")))
+        return np.asarray(self._model.pred_contribs(_as_x(X)))
 
     def importance(self, type: str = "gain") -> np.ndarray:
         """Compute raw per-feature importance.
@@ -510,7 +516,9 @@ class _BonsaiEstimator:
             merged["dispatch.grower_name"] = _grower_for_device(
                 str(merged["dispatch.grower_name"]), self.device
             )
-        merged.update(self.params or {})
+        overrides = (self.params.to_dict()
+                     if isinstance(self.params, ParamsOps) else self.params)
+        merged.update(overrides or {})
         return [(k, _to_config_str(v)) for k, v in merged.items()]
 
     @staticmethod
@@ -591,8 +599,9 @@ class BonsaiRegressor(_BonsaiEstimator):
     quantile_alpha
         The quantile to fit when ``objective="quantile"``.
     params
-        Dotted config-key overrides, the power-user escape hatch, applied
-        after the first-class kwargs and always wins.
+        Overrides beyond the first-class kwargs: a ``bonsai.Params`` or a
+        dotted config-key dict; the power-user escape hatch, applied after
+        the first-class kwargs and always wins.
     """
 
     _estimator_type = "regressor"
@@ -613,7 +622,7 @@ class BonsaiRegressor(_BonsaiEstimator):
         subsample: float | None = None,
         device: str | None = None,
         quantile_alpha: float | None = None,
-        params: dict | None = None,
+        params: dict | ParamsOps | None = None,
     ):
         """Same storage contract as the base; adds the regression objective."""
         super().__init__(**_shared_args(locals()))
@@ -767,8 +776,9 @@ class BonsaiClassifier(_BonsaiEstimator):
         grower matching the chosen ``grower``, moving compute without
         changing the growth strategy. None leaves the grower name as given.
     params
-        Dotted config-key overrides, the power-user escape hatch, applied
-        after the first-class kwargs and always wins.
+        Overrides beyond the first-class kwargs: a ``bonsai.Params`` or a
+        dotted config-key dict; the power-user escape hatch, applied after
+        the first-class kwargs and always wins.
     """
 
     _estimator_type = "classifier"
@@ -787,7 +797,7 @@ class BonsaiClassifier(_BonsaiEstimator):
         max_bin: int | None = None,
         subsample: float | None = None,
         device: str | None = None,
-        params: dict | None = None,
+        params: dict | ParamsOps | None = None,
     ):
         """Same storage contract as the base; the objective is derived from
         the number of classes at fit time, so there is none to store."""
@@ -867,7 +877,8 @@ class BonsaiClassifier(_BonsaiEstimator):
         Parameters
         ----------
         X
-            Feature matrix.
+            Feature matrix, or a host-built ``bonsai.Dataset`` (reads the
+            matrix it retained; device-resident builds kept none and raise).
         num_iteration
             Truncates the ensemble to its first ``n`` trees; 0 uses every
             tree.
@@ -879,7 +890,7 @@ class BonsaiClassifier(_BonsaiEstimator):
             ``0..K-1`` ids the native booster works in.
         """
         self._check_fitted("fit() or load first")
-        raw = np.asarray(self._model.predict(_as_f32(X, 2, "X"), num_iteration))
+        raw = np.asarray(self._model.predict(_as_x(X), num_iteration))
         if self.n_classes_ == 2:
             idx = (raw >= 0.5).astype(np.int64)
         else:
@@ -896,7 +907,8 @@ class BonsaiClassifier(_BonsaiEstimator):
         Parameters
         ----------
         X
-            Feature matrix.
+            Feature matrix, or a host-built ``bonsai.Dataset`` (reads the
+            matrix it retained; device-resident builds kept none and raise).
 
         Returns
         -------
@@ -905,9 +917,9 @@ class BonsaiClassifier(_BonsaiEstimator):
         """
         self._check_fitted("fit() or load first")
         if self.n_classes_ == 2:
-            p = np.asarray(self._model.predict(_as_f32(X, 2, "X")), dtype=np.float64)
+            p = np.asarray(self._model.predict(_as_x(X)), dtype=np.float64)
             return np.column_stack([1.0 - p, p])
-        return np.asarray(self._model.predict_proba(_as_f32(X, 2, "X")), dtype=np.float64)
+        return np.asarray(self._model.predict_proba(_as_x(X)), dtype=np.float64)
 
     def score(self, X, y, sample_weight=None) -> float:
         """Compute accuracy on held-out data.
@@ -1032,6 +1044,13 @@ def _shared_args(scope: dict) -> dict:
              inspect.signature(_BonsaiEstimator.__init__).parameters
              if name != "self"]
     return {name: scope[name] for name in names}
+
+
+def _as_x(X):
+    """Predict-family input: a host-built ``Dataset`` passes straight through
+    (the native reader takes the matrix it retained), anything else coerces
+    to a float32 matrix."""
+    return X if isinstance(X, Dataset) else _as_f32(X, 2, "X")
 
 
 def _grower_for_device(grower: str, device: str) -> str:

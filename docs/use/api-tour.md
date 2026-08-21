@@ -54,10 +54,11 @@ model.save("model.msgpack")
 
 Both estimators duck-type the full sklearn contract (`get_params`, `clone`, `Pipeline`, `GridSearchCV`, `cross_val_score`, pickling) without importing sklearn at runtime. Constructor arguments are bonsai's own names and nothing else, so the signature always tells you which vocabulary you are speaking; a parameter dict written for another library goes through `bonsai.interop` first.
 
-Anything without a first-class kwarg goes through `params`, using the dotted keys:
+Anything without a first-class kwarg goes through `params`, as a `bonsai.Params` or a dict of the dotted keys:
 
 ```python
 bonsai.BonsaiRegressor(params={"tree.lambda_l1": 0.5, "sampler.subsample": 0.8})
+bonsai.BonsaiRegressor(params=bonsai.Params(tree=bonsai.params.Tree(lambda_l1=0.5)))
 ```
 
 ## Bringing a config from another library
