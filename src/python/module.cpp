@@ -1163,9 +1163,15 @@ std::string config_str(nb::handle value)
     return nb::cast<std::string>(nb::str(value));
 }
 
-// The public params contract rendered to the wire format: a Params (duck-typed
-// on to_dict), a dotted-key mapping, or None.
-ConfigPairs pairs_from_params(nb::object params)
+// The params contract before rendering: dotted key, Python value. One key can
+// be spelled in a form the config layer does not read (a name-keyed monotone
+// mapping), so the entries are inspected here, between extraction and the
+// string fold.
+using ParamItems = std::vector<std::pair<std::string, nb::object>>;
+
+// The public params contract as entries: a Params (duck-typed on to_dict), a
+// dotted-key mapping, or None.
+ParamItems items_from_params(nb::object params)
 {
     if (params.is_none())
     {
@@ -1188,7 +1194,7 @@ ConfigPairs pairs_from_params(nb::object params)
              ". For legacy (key, value) pairs, pass dict(pairs).")
                 .c_str());
     }
-    ConfigPairs      pairs;
+    ParamItems       out;
     nb::object const items = params.attr("items")();
     for (nb::handle item : items)
     {
@@ -1201,9 +1207,89 @@ ConfigPairs pairs_from_params(nb::object params)
                  nb::cast<std::string>(nb::str(key.type().attr("__name__"))))
                     .c_str());
         }
-        pairs.emplace_back(nb::cast<std::string>(key), config_str(entry[1]));
+        out.emplace_back(nb::cast<std::string>(key), nb::object(entry[1]));
+    }
+    return out;
+}
+
+// The entries folded to the wire format, every value rendered the same way.
+ConfigPairs render_params(ParamItems const &items)
+{
+    ConfigPairs pairs;
+    pairs.reserve(items.size());
+    for (auto const &[key, value] : items)
+    {
+        pairs.emplace_back(key, config_str(value));
     }
     return pairs;
+}
+
+constexpr std::string_view k_monotone_key = "tree.monotone_constraints";
+
+// The name-keyed form of tree.monotone_constraints, lifted out of the entries
+// so the rest can render while the training data is still being resolved.
+// A Mapping is duck-typed on `items` the way params itself is; the positional
+// list and tuple forms are left alone.
+nb::object take_named_monotone(ParamItems &items)
+{
+    for (auto it = items.begin(); it != items.end(); ++it)
+    {
+        if (it->first != k_monotone_key || !nb::hasattr(it->second, "items"))
+        {
+            continue;
+        }
+        nb::object const mapping = it->second;
+        items.erase(it);
+        return mapping;
+    }
+    return nb::none();
+}
+
+// {name: direction} resolved against the training data's feature names.
+// Resolution lives in this wrapper layer only: the core config keeps its
+// positional list, and a feature the mapping does not list stays free (0),
+// which is how xgboost and sklearn read the same form.
+std::vector<int> monotone_from_mapping(nb::handle                   mapping,
+                                       std::span<std::string const> names)
+{
+    std::vector<int>         out(names.size(), 0);
+    std::vector<std::string> unknown;
+    for (nb::handle item : mapping.attr("items")())
+    {
+        nb::object const entry = nb::borrow<nb::object>(item);
+        auto const       name  = nb::cast<std::string>(nb::str(entry[0]));
+        auto const       at    = std::ranges::find(names, name);
+        if (at == names.end())
+        {
+            unknown.push_back(name);
+            continue;
+        }
+        nb::object const value = entry[1];
+        if (!nb::isinstance<nb::int_>(value) || std::abs(nb::cast<int>(value)) > 1)
+        {
+            throw std::invalid_argument(std::string{k_monotone_key} + "['" + name +
+                                        "'] must be the int -1, 0, or 1; got " +
+                                        nb::cast<std::string>(nb::repr(value)));
+        }
+        out[static_cast<size_t>(at - names.begin())] = nb::cast<int>(value);
+    }
+    if (unknown.empty())
+    {
+        return out;
+    }
+    std::string listed;
+    for (size_t i = 0; i < std::min<size_t>(unknown.size(), 5); ++i)
+    {
+        listed += (i == 0 ? "'" : ", '") + unknown[i] + "'";
+    }
+    if (unknown.size() > 5)
+    {
+        listed += " (and " + std::to_string(unknown.size() - 5) + " more)";
+    }
+    throw std::invalid_argument(
+        std::string{k_monotone_key} +
+        " names features the training data does not have: " + listed + ". It carries " +
+        std::to_string(names.size()) + " feature names.");
 }
 
 // Overrides over the library defaults; a TOML base composes upstream via
@@ -1290,7 +1376,13 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
             std::optional<EvalSet> const     &eval_set,
             std::optional<std::string> const &init_model, nb::handle sample_weight)
 {
-    bonsai::Config const cfg = config_from_params(pairs_from_params(params));
+    ParamItems items = items_from_params(params);
+    // A name-keyed monotone entry needs the feature names, which need X, which
+    // cannot be placed until parallel.device_id is read from the other
+    // entries. So that one entry stands aside for the first read and the
+    // config is resolved again once the names are in hand.
+    nb::object const named_monotone = take_named_monotone(items);
+    bonsai::Config   cfg            = config_from_params(render_params(items));
     bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
 
     // Device-resident input places the fit itself: the matrix is already on a
@@ -1307,6 +1399,17 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
 
     std::vector<std::string> names =
         resolve_feature_names(X, xarg.n_features, std::nullopt);
+    if (!named_monotone.is_none())
+    {
+        // A warm start keeps the init model's names, so the constraint is
+        // resolved against the list this fit will actually carry.
+        items.emplace_back(
+            std::string{k_monotone_key},
+            nb::cast(monotone_from_mapping(
+                named_monotone, init ? init->mappers.feature_names()
+                                     : std::span<std::string const>{names})));
+        cfg = config_from_params(render_params(items));
+    }
 
     nb::gil_scoped_release release;
 
@@ -1343,7 +1446,16 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
                     std::optional<EvalSet> const     &eval_set,
                     std::optional<std::string> const &init_model)
 {
-    ConfigPairs const pairs = pairs_from_params(params);
+    ParamItems items = items_from_params(params);
+    // The Dataset already names its columns, so a name-keyed monotone entry
+    // resolves before anything is rendered.
+    if (nb::object const named = take_named_monotone(items); !named.is_none())
+    {
+        items.emplace_back(std::string{k_monotone_key},
+                           nb::cast(monotone_from_mapping(
+                               named, dataset.loaded().mappers.feature_names())));
+    }
+    ConfigPairs const pairs = render_params(items);
     for (auto const &[key, value] : pairs)
     {
         if (key.starts_with("bin_mapper."))
@@ -1709,6 +1821,11 @@ NB_MODULE(_bonsai, m)
           "overrides. A TOML base composes here too, "
           "``Params.from_toml(path) | overrides``. ``bin_mapper.*`` overrides "
           "are rejected: binning is fixed by the Dataset.\n"
+          "\n"
+          "    ``tree.monotone_constraints`` also takes a mapping keyed by "
+          "feature name, ``{'age': 1, 'debt': -1}``, resolved against the "
+          "Dataset's ``feature_names``. Features the mapping leaves out are "
+          "free (0); a name the data does not carry raises.\n"
           "dataset : Dataset\n"
           "    The pre-binned training data.\n"
           "eval_set : tuple of (Xv, yv), Dataset, or None\n"
@@ -1743,6 +1860,11 @@ NB_MODULE(_bonsai, m)
           "``{'tree.max_depth': 8}`` dotted-key mapping, or ``None`` for no "
           "overrides. A TOML base composes here too, "
           "``Params.from_toml(path) | overrides``.\n"
+          "\n"
+          "    ``tree.monotone_constraints`` also takes a mapping keyed by "
+          "feature name, ``{'age': 1, 'debt': -1}``, resolved against this "
+          "data's feature names. Features the mapping leaves out are free "
+          "(0); a name the data does not carry raises.\n"
           "X : float32 array, shape (n_rows, n_features)\n"
           "    Row-major features. May be a CUDA array supporting DLPack "
           "(cupy, torch, jax): X is then binned on the GPU in place, with no "

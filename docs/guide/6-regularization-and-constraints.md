@@ -54,13 +54,7 @@ alone). Prediction becomes a sum of functions over the groups only.
   [`src/grower.cpp`](../../src/grower.cpp): a per-tree sorted draw from a
   grower-owned rng (`tree.feature_seed`); unselected features get
   zero-binned placeholder histograms the finders skip.
-- **Monotone**: two touch points. Rejection: in the candidate loop of
-  [`src/split.cpp`](../../src/split.cpp), skip when
-  $\text{mc} \cdot (w_R - w_L) < 0$, using *bounded* child weights. Propagation: `propagate_monotone_bounds`
-  in `src/grower.cpp` fences children at the midpoint via
-  `SplitInput::lo/hi`; `finalize_as_leaf` clamps into them. Config:
-  `tree.monotone_constraints = [1, 0, -1, ...]` (or `--set
-  tree.monotone_constraints=1,0,-1`).
+- **Monotone**: two touch points. Rejection: in the candidate loop of [`src/split.cpp`](../../src/split.cpp), skip when $\text{mc} \cdot (w_R - w_L) < 0$, using *bounded* child weights. Propagation: `propagate_monotone_bounds` in `src/grower.cpp` fences children at the midpoint via `SplitInput::lo/hi`; `finalize_as_leaf` clamps into them. Config: `tree.monotone_constraints = [1, 0, -1, ...]` (or `--set tree.monotone_constraints=1,0,-1`). From Python the key also takes a mapping keyed by feature name, `{"age": 1, "debt": -1}`. The python layer resolves it against the training data's feature names and hands the core the same positional list. Features the mapping leaves out are free (0). A name the data does not carry raises, listing the offenders.
 - **Interaction**: `SplitInput::allowed/path` carry the permitted set
   down the tree; `allowed_features` / `propagate_interaction_state`
   (`src/grower.cpp`) recompute it per split; the finder masks excluded
@@ -85,12 +79,19 @@ mono = bonsai.BonsaiRegressor(
     n_iters=60, grower="depthwise",
     params={"tree.monotone_constraints": "1,0,0,0,0,0,0,0"}).fit(X, y)
 
+# The same constraint by name. A plain array is named f0..fN; a DataFrame-like
+# X, or a Dataset built with feature_names=, carries the names you gave it.
+named = bonsai.BonsaiRegressor(
+    n_iters=60, grower="depthwise",
+    params={"tree.monotone_constraints": {"f0": 1}}).fit(X, y)
+
 # Interaction: features 0-3 may not mix with 4-7 on any path.
 inter = bonsai.BonsaiRegressor(
     n_iters=60, grower="depthwise",
     params={"tree.interaction_constraints": "0+1+2+3,4+5+6+7"}).fit(X, y)
 
 print("monotone    R2:", round(mono.score(X, y), 4))
+print("by name     R2:", round(named.score(X, y), 4))
 print("interaction R2:", round(inter.score(X, y), 4))
 ```
 

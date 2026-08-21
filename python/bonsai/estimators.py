@@ -486,7 +486,7 @@ class _BonsaiEstimator:
         ``classes_`` at fit time. Overridden per-subclass."""
         raise NotImplementedError
 
-    def _build_overrides(self) -> dict[str, str]:
+    def _build_overrides(self) -> dict[str, object]:
         """Translate the first-class kwargs and ``params`` into the dotted
         config keys the native ``train()`` expects. Kept out of ``__init__``
         so constructor args stay raw attributes (required for
@@ -528,7 +528,7 @@ class _BonsaiEstimator:
         return {k: _to_config_str(v) for k, v in merged.items()}
 
     @staticmethod
-    def _reject_dart_eval_set(overrides: dict[str, str]):
+    def _reject_dart_eval_set(overrides: dict[str, object]):
         """Eval history shares early stopping's incremental valid-loss
         accumulation, which DART's per-round tree rescaling invalidates;
         the native layer would silently record nothing (and
