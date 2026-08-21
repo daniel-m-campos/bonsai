@@ -23,6 +23,7 @@ add_library(bonsai_tree OBJECT
     tree.cpp
     grower.cpp
     shap.cpp
+    shap_paths.cpp
     cuda/grower_cuda.cpp
 )
 

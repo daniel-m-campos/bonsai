@@ -9,6 +9,7 @@ add_executable(bonsai_tests
     unit/test_dense_tree.cpp
     unit/test_oblivious_tree.cpp
     unit/test_shap.cpp
+    unit/test_shap_paths.cpp
     unit/test_predict_binned.cpp
     unit/test_split_node.cpp
     unit/test_split_level.cpp
