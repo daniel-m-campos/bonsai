@@ -27,6 +27,7 @@
 #include <string_view>
 #include <tuple>
 #include <type_traits>
+#include <unordered_set>
 #include <vector>
 
 #include "bonsai/bin_mappers.hpp"
@@ -234,6 +235,61 @@ Inputs resolve_inputs(nb::handle X, nb::handle y, nb::handle weight, uint32_t de
     return in;
 }
 
+// Names index the model: dump() prints them and monotone constraints may be
+// keyed by them, so a wrong count or a repeat is said out loud rather than
+// silently indexing the wrong column.
+void check_feature_names(std::vector<std::string> const &names, size_t n_features)
+{
+    if (names.size() != n_features)
+    {
+        throw std::invalid_argument("feature_names has " +
+                                    std::to_string(names.size()) +
+                                    " entries and X has " + std::to_string(n_features) +
+                                    " columns; one name per column");
+    }
+    std::unordered_set<std::string_view> seen;
+    for (auto const &name : names)
+    {
+        if (!seen.insert(name).second)
+        {
+            throw std::invalid_argument("feature_names must be unique; '" + name +
+                                        "' appears more than once");
+        }
+    }
+}
+
+// The caller's names, a DataFrame-like X's `columns` (duck-typed, so these
+// bindings never import pandas), or synthesized f0..fN. The synthesized names
+// are real names as far as the model is concerned: dump() prints them and
+// monotone constraints resolve against them.
+std::vector<std::string>
+resolve_feature_names(nb::handle X, size_t n_features,
+                      std::optional<std::vector<std::string>> const &supplied)
+{
+    if (supplied)
+    {
+        check_feature_names(*supplied, n_features);
+        return *supplied;
+    }
+    if (nb::hasattr(X, "columns"))
+    {
+        std::vector<std::string> named;
+        for (nb::handle column : X.attr("columns"))
+        {
+            named.push_back(nb::cast<std::string>(nb::str(column)));
+        }
+        check_feature_names(named, n_features);
+        return named;
+    }
+    std::vector<std::string> names;
+    names.reserve(n_features);
+    for (size_t c = 0; c < n_features; ++c)
+    {
+        names.push_back("f" + std::to_string(c));
+    }
+    return names;
+}
+
 // The bin mappers for X. The device arm gathers exactly the rows the host
 // sampler would have drawn and fits on those, so the cuts, and therefore the
 // bins, are bit-identical to the host path's for the same seed.
@@ -342,7 +398,8 @@ class Dataset
             std::optional<int>                               min_data_in_bin,
             std::optional<std::map<size_t, array_1d>> const &bin_edges,
             std::optional<std::string> const &device, std::optional<uint32_t> device_id,
-            uint32_t n_threads, Dataset const *reference)
+            uint32_t n_threads, Dataset const *reference,
+            std::optional<std::vector<std::string>> const &feature_names)
     {
         // The reference's residency answers for both unset device arguments,
         // so a validation set lands beside its training set by default.
@@ -394,13 +451,8 @@ class Dataset
                             xarg.n_features);
         }
 
-        size_t const             f = xarg.n_features;
-        std::vector<std::string> names;
-        names.reserve(f);
-        for (size_t c = 0; c < f; ++c)
-        {
-            names.push_back("f" + std::to_string(c));
-        }
+        std::vector<std::string> names =
+            resolve_feature_names(X, xarg.n_features, feature_names);
         // Copy the edge arrays out while the GIL is held; validation
         // (finite, strictly increasing, in-range column) happens inside
         // BinMappers::fit and surfaces as bonsai::ConfigError.
@@ -460,6 +512,14 @@ class Dataset
     size_t n_features() const
     {
         return n_features_;
+    }
+
+    // The names the columns carry through the model: the caller's, X's own
+    // `columns`, or the synthesized f0..fN.
+    std::vector<std::string> feature_names() const
+    {
+        auto const names = loaded_.mappers.feature_names();
+        return {names.begin(), names.end()};
     }
 
     // Whether the caller's host matrix is still reachable. Device-resident
@@ -1245,15 +1305,10 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
         init.emplace(bonsai::io::load_booster(*init_model));
     }
 
-    nb::gil_scoped_release release;
+    std::vector<std::string> names =
+        resolve_feature_names(X, xarg.n_features, std::nullopt);
 
-    size_t const             f = xarg.n_features;
-    std::vector<std::string> names;
-    names.reserve(f);
-    for (size_t c = 0; c < f; ++c)
-    {
-        names.push_back("f" + std::to_string(c));
-    }
+    nb::gil_scoped_release release;
 
     bonsai::cli::LoadedTrainValidation loaded;
     loaded.mappers =
@@ -1528,7 +1583,8 @@ NB_MODULE(_bonsai, m)
                      std::optional<size_t>, std::optional<uint64_t>, std::optional<int>,
                      std::optional<std::map<size_t, array_1d>> const &,
                      std::optional<std::string> const &, std::optional<uint32_t>,
-                     uint32_t, Dataset const *>(),
+                     uint32_t, Dataset const *,
+                     std::optional<std::vector<std::string>> const &>(),
             nb::arg("X"), nb::arg("y"), nb::arg("weight") = nb::none(),
             nb::arg("max_bin") = nb::none(), nb::arg("n_samples") = nb::none(),
             nb::arg("seed") = nb::none(), nb::arg("min_data_in_bin") = nb::none(),
@@ -1536,6 +1592,7 @@ NB_MODULE(_bonsai, m)
             nb::arg("device_id")        = nb::none(),
             nb::arg("n_threads")        = k_parallel_defaults.n_threads,
             nb::arg("reference").none() = nb::none(),
+            nb::arg("feature_names")    = nb::none(),
             "A pre-binned dataset: bins X once at construction.\n"
             "\n"
             "Reused across ``train(params, dataset)`` calls (hyperparameter "
@@ -1588,7 +1645,14 @@ NB_MODULE(_bonsai, m)
             "setting one to a different value raises, as ``bin_edges`` does "
             "at all. ``device`` and ``device_id`` are inherited the same "
             "way, so a validation set lands beside its training set unless "
-            "placed explicitly.")
+            "placed explicitly.\n"
+            "feature_names : sequence of str, optional\n"
+            "    One name per column, carried into the model: ``dump`` prints "
+            "them and ``tree.monotone_constraints`` may be keyed by them. "
+            "Unset, a DataFrame-like X answers with its ``columns`` "
+            "(duck-typed, so bonsai never imports pandas), and anything else "
+            "gets ``f0``..``fN``. Real names must number the columns exactly "
+            "and be unique.")
         .def("__reduce__",
              [](Dataset const &) -> nb::object
              {
@@ -1604,6 +1668,10 @@ NB_MODULE(_bonsai, m)
         .def_prop_ro("n_rows", &Dataset::n_rows, "Rows in the binned matrix.")
         .def_prop_ro("n_features", &Dataset::n_features,
                      "Feature columns in the binned matrix.")
+        .def_prop_ro("feature_names", &Dataset::feature_names,
+                     "One name per column, in column order: the "
+                     "``feature_names=`` given here, X's own ``columns``, or "
+                     "the synthesized ``f0``..``fN``.")
         .def_prop_ro(
             "shape",
             [](Dataset const &d) { return nb::make_tuple(d.n_rows(), d.n_features()); },
@@ -1678,7 +1746,10 @@ NB_MODULE(_bonsai, m)
           "X : float32 array, shape (n_rows, n_features)\n"
           "    Row-major features. May be a CUDA array supporting DLPack "
           "(cupy, torch, jax): X is then binned on the GPU in place, with no "
-          "host round trip.\n"
+          "host round trip. A DataFrame-like X names its columns through "
+          "``columns`` (duck-typed, so bonsai never imports pandas); anything "
+          "else is named ``f0``..``fN``. For explicit names, build a "
+          "``Dataset(X, y, feature_names=...)`` and train on that.\n"
           "y : float32 array, shape (n_rows,)\n"
           "    Labels; a device-resident y is downloaded once.\n"
           "eval_set : tuple of (Xv, yv), Dataset, or None\n"
