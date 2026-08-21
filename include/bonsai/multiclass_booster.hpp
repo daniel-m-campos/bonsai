@@ -51,14 +51,13 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
 
     void update_one_iter(Dataset const &train) override
     {
-        ++epoch_;
         size_t const n   = train.n_rows();
         size_t const n_k = n_classes_;
         if (scores_.empty())
         {
             grad_.resize(n);
             hess_.resize(n);
-            if (trees_.empty())
+            if (trees_.read().empty())
             {
                 // Log class priors, like lightgbm's boost_from_average. A
                 // warm-started booster keeps the priors it was loaded with —
@@ -84,13 +83,14 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                     scores_[(i * n_k) + k] = init_scores_[k];
                 }
             }
-            if (!trees_.empty())
+            if (!trees_.read().empty())
             {
                 // Warm start: replay every tree's train contribution.
-                for (size_t t = 0; t < trees_.size(); ++t)
+                for (size_t t = 0; t < trees_.read().size(); ++t)
                 {
                     std::vector<float> raw(n, 0.0F);
-                    internal::accumulate_train_contribution(trees_[t], train, raw);
+                    internal::accumulate_train_contribution(trees_.read()[t], train,
+                                                            raw);
                     size_t const k = t % n_k;
                     for (size_t i = 0; i < n; ++i)
                     {
@@ -141,7 +141,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
             parallel::for_each_index(
                 n, [&](size_t i)
                 { scores_[(i * n_k) + k] += config_.learning_rate * leaf_values[i]; });
-            trees_.push_back(std::move(tree));
+            trees_.mutate().push_back(std::move(tree));
             grower_.recycle(std::move(leaf_values), std::move(leaf_ids));
         }
     }
@@ -268,8 +268,9 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     // trees instead of K passes over X, and the per-row add is unchanged.
     void accumulate_last_round(features_view X, floats_out scores) const override
     {
-        assert(trees_.size() >= n_classes_);
-        size_t const first = trees_.size() - n_classes_;
+        auto const &trees = trees_.read();
+        assert(trees.size() >= n_classes_);
+        size_t const first = trees.size() - n_classes_;
         float const  lr    = config_.learning_rate;
         parallel::for_each_index(X.extent(0),
                                  [&](size_t i)
@@ -277,7 +278,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                                      for (size_t k = 0; k < n_classes_; ++k)
                                      {
                                          scores[(i * n_classes_) + k] +=
-                                             lr * trees_[first + k].value_for(
+                                             lr * trees[first + k].value_for(
                                                       X, static_cast<row_id_t>(i));
                                      }
                                  });
@@ -286,17 +287,18 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     void accumulate_last_round_binned(Dataset const &bins,
                                       floats_out     scores) const override
     {
-        assert(trees_.size() >= n_classes_);
+        auto const &trees = trees_.read();
+        assert(trees.size() >= n_classes_);
         assert(bins.n_rows() * n_classes_ == scores.size());
         assert(!bins.row_major_bins().empty());
-        size_t const first = trees_.size() - n_classes_;
+        size_t const first = trees.size() - n_classes_;
         float const  lr    = config_.learning_rate;
         // One SplitBins per class, hoisted out of the row loop.
         std::vector<internal::SplitBins> sb;
         sb.reserve(n_classes_);
         for (size_t k = 0; k < n_classes_; ++k)
         {
-            sb.push_back(internal::split_bins(trees_[first + k], bins));
+            sb.push_back(internal::split_bins(trees[first + k], bins));
         }
         auto const rm = bins.row_major_bins();
         parallel::for_each_index(bins.n_rows(),
@@ -308,7 +310,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                                      {
                                          scores[(i * n_classes_) + k] +=
                                              lr * internal::value_binned(
-                                                      trees_[first + k], sb[k], bin_of);
+                                                      trees[first + k], sb[k], bin_of);
                                      }
                                  });
     }
@@ -321,19 +323,19 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
 
     size_t n_iters() const override
     {
-        return trees_.size() / n_classes_;
+        return trees_.read().size() / n_classes_;
     }
 
     // One tree per class per round.
     size_t n_trees() const override
     {
-        return trees_.size();
+        return trees_.read().size();
     }
 
     std::vector<double> feature_importance(ImportanceType type) const override
     {
         std::vector<double> out;
-        for (auto const &tree : trees_)
+        for (auto const &tree : trees_.read())
         {
             internal::accumulate_importance(tree, type, out);
         }
@@ -360,23 +362,24 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
 
     void predict_leaf(features_view X, std::span<node_id_t> out) const override
     {
-        internal::predict_leaf_over(trees_, X, out);
+        internal::predict_leaf_over(trees_.read(), X, out);
     }
 
     void predict_leaf_binned(Dataset const       &bins,
                              std::span<node_id_t> out) const override
     {
-        internal::predict_leaf_over_binned(trees_, bins, out);
+        internal::predict_leaf_over_binned(trees_.read(), bins, out);
     }
 
     std::string dump(std::span<std::string const> feature_names) const override
     {
         std::string out;
-        for (size_t t = 0; t < trees_.size(); ++t)
+        auto const &trees = trees_.read();
+        for (size_t t = 0; t < trees.size(); ++t)
         {
             out += "tree " + std::to_string(t / n_classes_) + " class " +
                    std::to_string(t % n_classes_) + ":\n";
-            internal::dump_tree(trees_[t], feature_names, out);
+            internal::dump_tree(trees[t], feature_names, out);
         }
         return out;
     }
@@ -390,12 +393,12 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     {
         if constexpr (std::same_as<tree_type, ObliviousTree>)
         {
-            auto const dense = dense_.get(trees_, epoch_);
+            auto const dense = dense_.get(trees_.read(), trees_.epoch());
             contribs_over(*dense, X, out, n_features);
         }
         else
         {
-            contribs_over(trees_, X, out, n_features);
+            contribs_over(trees_.read(), X, out, n_features);
         }
     }
 
@@ -448,12 +451,12 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     {
         if constexpr (std::same_as<tree_type, ObliviousTree>)
         {
-            auto const dense = dense_.get(trees_, epoch_);
+            auto const dense = dense_.get(trees_.read(), trees_.epoch());
             contribs_over_binned(*dense, bins, out, n_features);
         }
         else
         {
-            contribs_over_binned(trees_, bins, out, n_features);
+            contribs_over_binned(trees_.read(), bins, out, n_features);
         }
     }
 
@@ -474,11 +477,10 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     void truncate(size_t n_rounds) override
     {
         size_t const keep = n_rounds * n_classes_;
-        if (keep < trees_.size())
+        if (keep < trees_.read().size())
         {
-            trees_.erase(trees_.begin() + static_cast<std::ptrdiff_t>(keep),
-                         trees_.end());
-            ++epoch_;
+            auto &trees = trees_.mutate();
+            trees.erase(trees.begin() + static_cast<std::ptrdiff_t>(keep), trees.end());
         }
     }
 
@@ -486,7 +488,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     // multiclass envelope needs.
     std::vector<tree_type> const &trees() const
     {
-        return trees_;
+        return trees_.read();
     }
     std::vector<float> const &init_scores() const
     {
@@ -498,9 +500,8 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     }
     void load_state(std::vector<tree_type> trees, std::vector<float> init_scores)
     {
-        trees_       = std::move(trees);
-        init_scores_ = std::move(init_scores);
-        ++epoch_;
+        trees_.mutate() = std::move(trees);
+        init_scores_    = std::move(init_scores);
     }
 
   private:
@@ -569,7 +570,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
             std::ranges::fill(raw, 0.0F);
             for (size_t r = 0; r < rounds; ++r)
             {
-                trees_[(r * n_classes_) + k].predict(X, raw);
+                trees_.read()[(r * n_classes_) + k].predict(X, raw);
             }
             for (size_t i = 0; i < n; ++i)
             {
@@ -595,8 +596,8 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
             std::ranges::fill(raw, 0.0F);
             for (size_t r = 0; r < rounds; ++r)
             {
-                internal::accumulate_train_contribution(trees_[(r * n_classes_) + k],
-                                                        bins, raw);
+                internal::accumulate_train_contribution(
+                    trees_.read()[(r * n_classes_) + k], bins, raw);
             }
             for (size_t i = 0; i < n; ++i)
             {
@@ -609,20 +610,20 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         return scores;
     }
 
-    BoosterConfig          config_;
-    size_t                 n_classes_;
-    grower_type            grower_;
-    sampler_type           sampler_;
-    std::mt19937           rng_;
-    std::vector<tree_type> trees_;
+    BoosterConfig config_;
+    size_t        n_classes_;
+    grower_type   grower_;
+    sampler_type  sampler_;
+    std::mt19937  rng_;
+    // The ensemble and its mutation epoch in one place: reads go through
+    // read(), every write through mutate(), which is what bumps the epoch the
+    // dense SHAP cache and the device plans rebuild on.
+    internal::Versioned<std::vector<tree_type>> trees_;
     std::vector<float>     scores_;      // n_rows x K training accumulator
     std::vector<float>     init_scores_; // per-class log prior
     std::vector<float>     grad_;
     std::vector<float>     hess_;
     std::vector<row_id_t>  row_indices_;
-    // Mutation epoch: bumped whenever trees_ can change, so derived views
-    // (the dense SHAP cache, later device plans) know when to rebuild.
-    uint64_t               epoch_ = 1;
     internal::DensifyCache dense_;
 };
 
