@@ -22,7 +22,7 @@ import numpy as np
 import numpy.typing as npt
 
 from bonsai._bonsai import Dataset, Model, load, train
-from bonsai._coerce import _as_f32, _to_config_str
+from bonsai._coerce import _as_f32
 from bonsai._params_ops import ParamsOps
 
 __all__ = ["BonsaiClassifier", "BonsaiRegressor"]
@@ -525,7 +525,7 @@ class _BonsaiEstimator:
         overrides = (self.params.to_dict()
                      if isinstance(self.params, ParamsOps) else self.params)
         merged.update(overrides or {})
-        return {k: _to_config_str(v) for k, v in merged.items()}
+        return merged
 
     @staticmethod
     def _reject_dart_eval_set(overrides: dict[str, object]):

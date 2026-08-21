@@ -15,20 +15,6 @@ def _reg_data(n=3000, f=6, seed=0):
     return X, y
 
 
-class _Frame:
-    """The slice of a DataFrame bonsai duck-types: `columns` plus DLPack."""
-
-    def __init__(self, values, columns):
-        self._values = values
-        self.columns = columns
-
-    def __dlpack__(self, *args, **kwargs):
-        return self._values.__dlpack__(*args, **kwargs)
-
-    def __dlpack_device__(self):
-        return self._values.__dlpack_device__()
-
-
 def test_feature_names_come_from_the_keyword():
     X, y = _reg_data()
     names = ["age", "income", "tenure", "score", "visits", "spend"]
@@ -37,21 +23,6 @@ def test_feature_names_come_from_the_keyword():
     text = bonsai.train({"booster.n_iters": "5", "tree.max_depth": "4"}, ds).dump()
     assert "income <=" in text
     assert "f1 <=" not in text
-
-
-def test_feature_names_come_from_a_dataframe_columns():
-    """A DataFrame-like X answers with `columns`; no pandas import anywhere."""
-    X, y = _reg_data()
-    names = ["age", "income", "tenure", "score", "visits", "spend"]
-    ds = bonsai.Dataset(_Frame(X, names), y)
-    assert list(ds.feature_names) == names
-    # non-str column labels are named by their str(), the way a dump prints them
-    ints = bonsai.Dataset(_Frame(X, list(range(6))), y)
-    assert list(ints.feature_names) == ["0", "1", "2", "3", "4", "5"]
-    # the fused array train path duck-types the same way
-    text = bonsai.train({"booster.n_iters": "5"}, _Frame(X, names), y).dump()
-    assert "income <=" in text
-    assert "f0 <=" not in text
 
 
 def test_feature_names_default_to_f0_fn():
@@ -65,8 +36,6 @@ def test_feature_names_reject_a_wrong_count_or_a_repeat():
     X, y = _reg_data()
     with pytest.raises(ValueError, match="one name per column"):
         bonsai.Dataset(X, y, feature_names=["a", "b", "c"])
-    with pytest.raises(ValueError, match="one name per column"):
-        bonsai.Dataset(_Frame(X, ["a", "b", "c"]), y)
     with pytest.raises(ValueError, match="must be unique"):
         bonsai.Dataset(X, y, feature_names=["a", "b", "c", "d", "e", "a"])
 
@@ -107,10 +76,9 @@ def test_named_monotone_matches_the_positional_list_on_both_train_paths(tmp_path
         model.save(str(tmp_path / f"{stem}.msgpack"))
     assert (tmp_path / "list.msgpack").read_bytes() == (tmp_path / "named.msgpack").read_bytes()
 
-    # the fused array path names its columns the same way, through X.columns
-    frame = _Frame(X, NAMES)
-    array_list = bonsai.train(_mono(positional), frame, y)
-    array_named = bonsai.train(_mono(named), frame, y)
+    # the fused array path resolves against the names it synthesizes
+    array_list = bonsai.train(_mono(positional), X, y)
+    array_named = bonsai.train(_mono({"f0": 1, "f2": -1}), X, y)
     np.testing.assert_array_equal(
         np.asarray(array_list.predict(X)), np.asarray(array_named.predict(X))
     )
@@ -142,8 +110,8 @@ def test_named_monotone_rejects_unknown_names_and_bad_values():
     ds = bonsai.Dataset(X, y, feature_names=NAMES)
     with pytest.raises(ValueError, match="does not have: 'salary'"):
         bonsai.train(_mono({"age": 1, "salary": -1}), ds)
-    # at most five offenders are listed, then the count of the rest
-    with pytest.raises(ValueError, match=r"and 2 more\).*carries 6 feature names"):
+    # every offender is listed, however many there are
+    with pytest.raises(ValueError, match=r"'nope0'.*'nope6'.*carries 6 feature names"):
         bonsai.train(_mono({f"nope{i}": 1 for i in range(7)}), ds)
     with pytest.raises(ValueError, match="must be the int -1, 0, or 1"):
         bonsai.train(_mono({"age": 2}), ds)
