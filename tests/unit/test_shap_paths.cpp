@@ -32,26 +32,14 @@ using namespace bonsai::test; // NOLINT
 namespace
 {
 
-// Two worst-gap ledgers, reported by the file's last case. Golden trees carry
-// float-exact cover fractions, so their gap is pure summation order. Grower
-// trees do not: the packed element stores the merged fraction in float where
-// Algorithm 2 keeps it in double, and that rounding is the whole of the wider
-// gap. Recorded rather than assumed, because the number is the claim.
-// NOLINTBEGIN(cppcoreguidelines-avoid-non-const-global-variables)
-double g_gap_exact  = 0.0;
-double g_gap_binned = 0.0;
-// NOLINTEND(cppcoreguidelines-avoid-non-const-global-variables)
-
 // Relative gap, floored at one so near-zero elements compare absolutely.
 // Catch's Approx keeps its own relative epsilon (1.2e-5) alongside .margin(),
 // which is far looser than anything claimed here, so the comparison is
 // spelled out.
-void check_close(double &ledger, double got, double want, double tol)
+void check_close(double got, double want, double tol)
 {
     double const scale = std::max({1.0, std::abs(got), std::abs(want)});
-    double const gap   = std::abs(got - want) / scale;
-    ledger             = std::max(ledger, gap);
-    CHECK(gap <= tol);
+    CHECK(std::abs(got - want) / scale <= tol);
 }
 
 // Algorithm 2's arithmetic is double throughout, and so is the closed form's,
@@ -170,7 +158,7 @@ void cross_check(std::span<DenseTree const> trees, size_t n_features)
         auto const got  = packed_phi(paths, trees, bins, n_features);
         for (size_t c = 0; c <= n_features; ++c)
         {
-            check_close(g_gap_exact, got[c], want[c], k_exact_tol);
+            check_close(got[c], want[c], k_exact_tol);
         }
     }
 }
@@ -342,11 +330,15 @@ void check_booster(std::span<DenseTree const> trees, BinMappers const &mappers,
     auto const   paths = pack_shap_paths(trees, mappers, n_classes);
     size_t const cols  = n_features + 1;
     REQUIRE(!paths.heads.empty());
+    std::vector<bin_id_t> row_bins(n_features, 0);
     for (size_t r = 0; r < eval.n_rows(); ++r)
     {
         std::vector<double> phi(n_classes * cols, 0.0);
-        shap_paths_one_row(paths, eval, static_cast<row_id_t>(r), n_features, n_classes,
-                           phi);
+        for (size_t f = 0; f < n_features; ++f)
+        {
+            row_bins[f] = eval.bin_at(f, static_cast<row_id_t>(r));
+        }
+        eval_shap_paths(paths, row_bins, cols, phi);
         for (size_t k = 0; k < n_classes; ++k)
         {
             for (size_t t = k; t < trees.size(); t += n_classes)
@@ -361,8 +353,7 @@ void check_booster(std::span<DenseTree const> trees, BinMappers const &mappers,
         }
         for (size_t c = 0; c < n_classes * cols; ++c)
         {
-            check_close(g_gap_binned, phi[c], contribs[(r * n_classes * cols) + c],
-                        k_binned_tol);
+            check_close(phi[c], contribs[(r * n_classes * cols) + c], k_binned_tol);
         }
     }
 }
@@ -720,14 +711,4 @@ TEST_CASE("Shap paths: the packer refuses what it cannot pack", "[shap][paths]")
                   {},
                   {8.0F, 4.0F, 4.0F}}};
     REQUIRE_THROWS_AS(pack_shap_paths(trees, wide_mappers, 1), std::invalid_argument);
-}
-
-TEST_CASE("Shap paths: the worst gap against Algorithm 2", "[shap][paths]")
-{
-    // The rung's claim as a number. The golden ledger is the algorithm's own
-    // gap; the binned ledger adds the packed cover fraction's float storage.
-    INFO("golden trees, exact cover fractions: " << g_gap_exact);
-    INFO("grower trees, float cover fractions: " << g_gap_binned);
-    CHECK(g_gap_exact < k_exact_tol);
-    CHECK(g_gap_binned < k_binned_tol);
 }

@@ -54,45 +54,13 @@ inline SplitBins split_bins(ObliviousTree const &tree, Dataset const &ds)
     return sb;
 }
 
-// Row r's leaf contribution, routed in bin space. `bin_of(fid)` yields that
-// row's bin for one feature, which is the only thing the two bin layouts
-// disagree on: the training columns answer with Dataset::bin_at, the eval path
-// with the row-major mirror. Routing itself is routes_left either way, because
-// bin(v) <= split_bin exactly when v <= cuts[split_bin] and the missing bin
-// follows default_left.
-template <typename BinOf>
-float value_binned(DenseTree const &tree, SplitBins const &sb, BinOf const &bin_of)
-{
-    auto const &nodes = tree.nodes();
-    node_id_t   idx   = 0;
-    while (!DenseTree::is_leaf(nodes[idx]))
-    {
-        auto const &nd   = nodes[idx];
-        bool const  left = routes_left(bin_of(nd.feature_id), sb.last[idx],
-                                       sb.split[idx], nd.default_left);
-        idx              = left ? nd.left : nd.right;
-    }
-    return nodes[idx].threshold_or_value;
-}
-
-template <typename BinOf>
-float value_binned(ObliviousTree const &tree, SplitBins const &sb, BinOf const &bin_of)
-{
-    auto const &splits = tree.splits();
-    size_t      index  = 0;
-    for (size_t lvl = 0; lvl < splits.size(); ++lvl)
-    {
-        auto const &s   = splits[lvl];
-        bool const left = routes_left(bin_of(s.feature_id), sb.last[lvl], sb.split[lvl],
-                                      s.default_left);
-        index           = (index << 1U) | (left ? 0U : 1U);
-    }
-    return tree.leaf_table()[index];
-}
-
-// The same walk stopping one step earlier: the arrival node id (DenseTree) or
-// leaf-table index (ObliviousTree), which is what leaf_for returns for the
-// raw row.
+// Row r's arrival node id (DenseTree) or leaf-table index (ObliviousTree),
+// routed in bin space, which is what leaf_for returns for the raw row.
+// `bin_of(fid)` yields that row's bin for one feature, which is the only thing
+// the two bin layouts disagree on: the training columns answer with
+// Dataset::bin_at, the eval path with the row-major mirror. Routing itself is
+// routes_left either way, because bin(v) <= split_bin exactly when
+// v <= cuts[split_bin] and the missing bin follows default_left.
 template <typename BinOf>
 node_id_t leaf_binned(DenseTree const &tree, SplitBins const &sb, BinOf const &bin_of)
 {
@@ -122,6 +90,19 @@ node_id_t leaf_binned(ObliviousTree const &tree, SplitBins const &sb,
         index           = (index << 1U) | (left ? 0U : 1U);
     }
     return index;
+}
+
+// The same walk taken one step further: the leaf's contribution.
+template <typename BinOf>
+float value_binned(DenseTree const &tree, SplitBins const &sb, BinOf const &bin_of)
+{
+    return tree.nodes()[leaf_binned(tree, sb, bin_of)].threshold_or_value;
+}
+
+template <typename BinOf>
+float value_binned(ObliviousTree const &tree, SplitBins const &sb, BinOf const &bin_of)
+{
+    return tree.leaf_table()[leaf_binned(tree, sb, bin_of)];
 }
 
 } // namespace bonsai::detail

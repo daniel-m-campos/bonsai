@@ -173,15 +173,15 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
     with _phase(timed, runlog.Row.PREDICT_S):
         pred_te = np.asarray(model.predict(Xte))
     if c.get("contribs"):
+        if task != "reg":
+            raise RuntimeError(
+                "unsupported: contribs additivity is only valid under mse's "
+                "identity link, where pred_te is the raw pre-link margin")
         # reference=ds inherits ds's cut points AND device, so on a cuda
         # arm ds_test routes pred_contribs through the device kernel
         # exactly as reference=ds already routes predict; the fused arm
         # built no train Dataset and falls back to the raw matrix, which
-        # pred_contribs bins on the host. mse's link is the identity, so
-        # pred_te (predict's link-inverse output) IS the raw pre-link
-        # margin pred_contribs sums to; a non-identity-link objective
-        # would need a genuinely raw score, which this call form does
-        # not expose.
+        # pred_contribs bins on the host.
         ds_test = bonsai.Dataset(Xte, yte, reference=ds) if ds is not None else None
         with _phase(timed, runlog.Row.CONTRIBS_S):
             phi = np.asarray(model.pred_contribs(

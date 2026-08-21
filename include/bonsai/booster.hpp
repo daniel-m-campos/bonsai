@@ -343,12 +343,6 @@ inline void accumulate_importance(ObliviousTree const &tree, ImportanceType type
     }
 }
 
-inline void shap_one_row(DenseTree const &tree, features_view X, row_id_t row,
-                         std::span<double> phi, double expected_value)
-{
-    tree_shap(tree, X, row, phi, expected_value);
-}
-
 // The per-tree biases a contribs batch shares across its rows: the expected
 // value is row-independent, so one walk per tree replaces one per (row, tree).
 template <typename Trees> std::vector<double> shap_biases(Trees const &trees)
@@ -435,7 +429,8 @@ inline std::vector<DenseTree> densify(std::vector<ObliviousTree> const &trees)
 // The dense equivalents cached per mutation epoch, so repeated explain calls
 // between fits pay the conversion once. Readers are const and may be
 // concurrent (the bindings release the GIL), hence the lock; a mutation
-// never touches the cache, it just bumps the booster's epoch.
+// never touches the cache, it just bumps the booster's epoch. Booster epochs
+// start at 1, so epoch_ = 0 is the never-filled state and needs no flag.
 class DensifyCache
 {
   public:
@@ -443,7 +438,7 @@ class DensifyCache
     get(std::vector<ObliviousTree> const &trees, uint64_t epoch) const
     {
         std::scoped_lock const lock(mutex_);
-        if (!cache_ || epoch_ != epoch)
+        if (epoch_ != epoch)
         {
             cache_ = std::make_shared<std::vector<DenseTree> const>(densify(trees));
             epoch_ = epoch;
@@ -873,34 +868,45 @@ class Booster final : public IBooster
         }
     }
 
+    // The shape both contribs paths share: per row, zero the slice, walk every
+    // tree into it, scale by the learning rate, and add init_score to the bias
+    // column. `into(t, row, phi)` is the only difference between them.
+    template <typename Trees, typename Into>
+    void contribs_impl(Trees const &trees, size_t n, std::span<double> out,
+                       size_t n_features, Into const &into) const
+    {
+        size_t const cols = n_features + 1;
+        assert(out.size() == n * cols);
+        parallel::for_each_index(n,
+                                 [&](size_t i)
+                                 {
+                                     std::span<double> const phi =
+                                         out.subspan(i * cols, cols);
+                                     std::ranges::fill(phi, 0.0);
+                                     for (size_t t = 0; t < trees.size(); ++t)
+                                     {
+                                         into(t, static_cast<row_id_t>(i), phi);
+                                     }
+                                     for (double &v : phi)
+                                     {
+                                         v *= config_.learning_rate;
+                                     }
+                                     phi[n_features] += init_score_;
+                                 });
+    }
+
     // contribs_over's twin: routing reads the row's bins, the arithmetic that
     // follows is the same walk over the same covers.
     template <typename Trees>
     void contribs_over_binned(Trees const &trees, Dataset const &bins,
                               std::span<double> out, size_t n_features) const
     {
-        size_t const n    = bins.n_rows();
-        size_t const cols = n_features + 1;
-        assert(out.size() == n * cols);
         auto const biases = internal::shap_biases(trees);
         auto const sb     = internal::tree_split_bins(trees, bins);
-        parallel::for_each_index(
-            n,
-            [&](size_t i)
-            {
-                std::span<double> const phi = out.subspan(i * cols, cols);
-                std::ranges::fill(phi, 0.0);
-                for (size_t t = 0; t < trees.size(); ++t)
-                {
-                    tree_shap_binned(trees[t], sb[t], bins, static_cast<row_id_t>(i),
-                                     phi, biases[t]);
-                }
-                for (double &v : phi)
-                {
-                    v *= config_.learning_rate;
-                }
-                phi[n_features] += init_score_;
-            });
+        contribs_impl(
+            trees, bins.n_rows(), out, n_features,
+            [&](size_t t, row_id_t row, std::span<double> phi)
+            { tree_shap_binned(trees[t], sb[t], bins, row, phi, biases[t]); });
     }
 
     std::string dump(std::span<std::string const> feature_names) const override
@@ -932,27 +938,10 @@ class Booster final : public IBooster
     void contribs_over(Trees const &trees, features_view X, std::span<double> out,
                        size_t n_features) const
     {
-        size_t const n    = X.extent(0);
-        size_t const cols = n_features + 1;
-        assert(out.size() == n * cols);
         auto const biases = internal::shap_biases(trees);
-        parallel::for_each_index(
-            n,
-            [&](size_t i)
-            {
-                std::span<double> const phi = out.subspan(i * cols, cols);
-                std::ranges::fill(phi, 0.0);
-                for (size_t t = 0; t < trees.size(); ++t)
-                {
-                    internal::shap_one_row(trees[t], X, static_cast<row_id_t>(i), phi,
-                                           biases[t]);
-                }
-                for (double &v : phi)
-                {
-                    v *= config_.learning_rate;
-                }
-                phi[n_features] += init_score_;
-            });
+        contribs_impl(trees, X.extent(0), out, n_features,
+                      [&](size_t t, row_id_t row, std::span<double> phi)
+                      { tree_shap(trees[t], X, row, phi, biases[t]); });
     }
 
     void seed_validation_scores(features_view X, std::span<float> out,

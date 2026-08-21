@@ -119,12 +119,4 @@ std::vector<double> shap_path_weights(size_t max_len);
 void eval_shap_paths(ShapPaths const &paths, std::span<bin_id_t const> row_bins,
                      size_t cols, std::span<double> phi);
 
-// eval_shap_paths over a row of a Dataset, in pred_contribs' per-row layout
-// (n_classes * (n_features + 1) doubles). Gathers the row's bins first, so it
-// is the convenience form, not the batch form. Accumulates; the caller
-// initializes phi and composes lr, the per-tree expected values, and
-// init_score itself.
-void shap_paths_one_row(ShapPaths const &paths, Dataset const &ds, row_id_t row,
-                        size_t n_features, size_t n_classes, std::span<double> phi);
-
 } // namespace bonsai
