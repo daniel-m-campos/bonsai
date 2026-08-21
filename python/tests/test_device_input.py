@@ -296,15 +296,26 @@ def test_dataset_from_device_input_gathers_a_sample(to_device):
 @requires_cuda
 def test_model_methods_serve_a_dlpack_dataset_under_the_models_cuts(to_device):
     """A device-resident build kept no host rows, but a Dataset carrying the
-    model's own cuts routes in bin space, so every method works without X
-    and equals the raw-array call bit for bit."""
+    model's own cuts routes in bin space, so every method works without X.
+
+    The routing methods equal the raw-array call bit for bit. pred_contribs
+    does not: a Dataset resident on the device runs the fp32 TreeSHAP kernel
+    where X runs the fp64 host walk, so those two agree to a tolerance by
+    design.
+    """
     X, y, _ = _reg_data()
     ds = bonsai.Dataset(_DevicePointer(to_device(X), X.shape), y)
     m = bonsai.train(PAIRS, ds)
-    for name in ("predict", "staged_predict", "predict_leaf", "pred_contribs"):
+    for name in ("predict", "staged_predict", "predict_leaf"):
         np.testing.assert_array_equal(
             np.asarray(getattr(m, name)(X)), np.asarray(getattr(m, name)(ds))
         )
+    np.testing.assert_allclose(
+        np.asarray(m.pred_contribs(X)),
+        np.asarray(m.pred_contribs(ds)),
+        rtol=1e-5,
+        atol=1e-7,
+    )
 
     # Foreign cuts leave neither route: no bins the model can walk, no rows.
     foreign = bonsai.Dataset(_DevicePointer(to_device(X), X.shape), y, max_bin=63)
