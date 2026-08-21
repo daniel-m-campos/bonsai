@@ -416,3 +416,67 @@ TEST_CASE("TreeSHAP: the ice-cream example is tree-shape invariant", "[shap][gui
     CHECK(mean_signed[0] == Catch::Approx(0.0).margin(1e-9));
     CHECK(mean_signed[1] == Catch::Approx(0.0).margin(1e-9));
 }
+
+TEST_CASE("pred_contribs: the dense cache serves repeats and follows mutations",
+          "[shap][oblivious]")
+{
+    detail::ColumnBatch batch = shap_batch();
+    batch.labels              = {1.0F, -1.0F, 2.0F, -2.0F, 0.5F, 3.0F, -0.5F, 1.5F};
+    BinMappers const mappers  = BinMappers::fit(batch, {});
+    Dataset const    train    = Dataset::bin(batch, mappers, {});
+
+    Config cfg;
+    cfg.tree_config.min_data_in_leaf = 0;
+    cfg.tree_config.min_child_hess   = 0.0F;
+    cfg.tree_config.max_depth        = 3;
+
+    Booster<MSEObjective, ObliviousGrower<>, AllRowsSampler> b{cfg};
+    for (int i = 0; i < 6; ++i)
+    {
+        b.update_one_iter(train);
+    }
+
+    std::vector<float> raw(8 * 3);
+    for (size_t r = 0; r < 8; ++r)
+    {
+        for (size_t f = 0; f < 3; ++f)
+        {
+            raw[(r * 3) + f] = batch.features[f][r];
+        }
+    }
+    features_view const X{raw.data(), 8, 3};
+
+    // A cache-served repeat is bit-identical to the call that filled it.
+    std::vector<double> first(8 * 4);
+    b.pred_contribs(X, first, 3);
+    std::vector<double> again(8 * 4);
+    b.pred_contribs(X, again, 3);
+    REQUIRE(first == again);
+
+    // Every mutation route must invalidate: contribs keep explaining the
+    // CURRENT ensemble (efficiency against the current predict), never a
+    // stale dense copy.
+    auto const check_efficiency = [&]
+    {
+        std::vector<double> contribs(8 * 4);
+        b.pred_contribs(X, contribs, 3);
+        std::vector<float> pred(8);
+        b.predict(X, pred);
+        for (size_t r = 0; r < 8; ++r)
+        {
+            double sum = 0.0;
+            for (size_t c = 0; c < 4; ++c)
+            {
+                sum += contribs[(r * 4) + c];
+            }
+            REQUIRE(sum == Catch::Approx(pred[r]).margin(1e-4));
+        }
+        return contribs;
+    };
+
+    b.truncate(3);
+    REQUIRE(check_efficiency() != first);
+
+    b.update_one_iter(train);
+    check_efficiency();
+}

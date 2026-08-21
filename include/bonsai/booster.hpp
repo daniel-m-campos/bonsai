@@ -15,6 +15,8 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdlib>
+#include <memory>
+#include <mutex>
 #include <numeric>
 #include <optional>
 #include <random>
@@ -364,9 +366,22 @@ inline void accumulate_importance(ObliviousTree const &tree, ImportanceType type
 }
 
 inline void shap_one_row(DenseTree const &tree, features_view X, row_id_t row,
-                         std::span<double> phi)
+                         std::span<double> phi, double expected_value)
 {
-    tree_shap(tree, X, row, phi);
+    tree_shap(tree, X, row, phi, expected_value);
+}
+
+// The per-tree biases a contribs batch shares across its rows: the expected
+// value is row-independent, so one walk per tree replaces one per (row, tree).
+template <typename Trees> std::vector<double> shap_biases(Trees const &trees)
+{
+    std::vector<double> biases;
+    biases.reserve(trees.size());
+    for (auto const &tree : trees)
+    {
+        biases.push_back(tree_expected_value(tree));
+    }
+    return biases;
 }
 
 // Per-row, per-tree leaf indices; out is n_rows * trees.size(), row-major by
@@ -403,6 +418,31 @@ inline std::vector<DenseTree> densify(std::vector<ObliviousTree> const &trees)
     return dense;
 }
 
+// The dense equivalents cached per mutation epoch, so repeated explain calls
+// between fits pay the conversion once. Readers are const and may be
+// concurrent (the bindings release the GIL), hence the lock; a mutation
+// never touches the cache, it just bumps the booster's epoch.
+class DensifyCache
+{
+  public:
+    std::shared_ptr<std::vector<DenseTree> const>
+    get(std::vector<ObliviousTree> const &trees, uint64_t epoch) const
+    {
+        std::lock_guard const lock(mutex_);
+        if (!cache_ || epoch_ != epoch)
+        {
+            cache_ = std::make_shared<std::vector<DenseTree> const>(densify(trees));
+            epoch_ = epoch;
+        }
+        return cache_;
+    }
+
+  private:
+    mutable std::mutex                                    mutex_;
+    mutable std::shared_ptr<std::vector<DenseTree> const> cache_;
+    mutable uint64_t                                      epoch_ = 0;
+};
+
 } // namespace internal
 
 template <Objective Obj, TreeGrower Gr, Sampler Sa>
@@ -423,6 +463,7 @@ class Booster final : public IBooster
 
     void update_one_iter(Dataset const &train) override
     {
+        ++epoch_;
         if (scores_.empty())
         {
             grad_.resize(train.n_rows());
@@ -765,7 +806,8 @@ class Booster final : public IBooster
     {
         if constexpr (std::same_as<tree_type, ObliviousTree>)
         {
-            contribs_over(internal::densify(trees_), X, out, n_features);
+            auto const dense = dense_.get(trees_, epoch_);
+            contribs_over(*dense, X, out, n_features);
         }
         else
         {
@@ -780,15 +822,17 @@ class Booster final : public IBooster
         size_t const n    = X.extent(0);
         size_t const cols = n_features + 1;
         assert(out.size() == n * cols);
+        auto const biases = internal::shap_biases(trees);
         parallel::for_each_index(
             n,
             [&](size_t i)
             {
                 std::span<double> const phi = out.subspan(i * cols, cols);
                 std::ranges::fill(phi, 0.0);
-                for (auto const &tree : trees)
+                for (size_t t = 0; t < trees.size(); ++t)
                 {
-                    internal::shap_one_row(tree, X, static_cast<row_id_t>(i), phi);
+                    internal::shap_one_row(trees[t], X, static_cast<row_id_t>(i), phi,
+                                           biases[t]);
                 }
                 for (double &v : phi)
                 {
@@ -870,6 +914,7 @@ class Booster final : public IBooster
             // trees, and truncate only ever shrinks.
             trees_.erase(trees_.begin() + static_cast<std::ptrdiff_t>(n_trees),
                          trees_.end());
+            ++epoch_;
         }
     }
 
@@ -887,6 +932,7 @@ class Booster final : public IBooster
     {
         trees_      = std::move(trees);
         init_score_ = init_score;
+        ++epoch_;
     }
 
   private:
@@ -907,6 +953,10 @@ class Booster final : public IBooster
     // Identity cookie for the Dataset the resident state was armed on:
     // compared by address only, never dereferenced through.
     Dataset const *resident_train_ = nullptr;
+    // Mutation epoch: bumped whenever trees_ can change, so derived views
+    // (the dense SHAP cache, later device plans) know when to rebuild.
+    uint64_t               epoch_ = 1;
+    internal::DensifyCache dense_;
 };
 
 } // namespace bonsai
