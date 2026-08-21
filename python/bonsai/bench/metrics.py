@@ -28,6 +28,16 @@ def acc(y_true: np.ndarray, pred_labels: np.ndarray) -> float:
     return float(np.mean(y_true == pred_labels))
 
 
+def additivity(phi: np.ndarray, margin: np.ndarray) -> float:
+    """Worst per-row TreeSHAP fidelity: max_i |sum_j(phi_ij) - margin_i| /
+    max(1, |margin_i|). phi is (n_rows, n_features + 1) with the bias in the
+    last column; margin is each arm's own raw (pre-link) prediction, the
+    quantity a correct decomposition sums to exactly."""
+    resid = np.abs(np.asarray(phi).sum(axis=-1) - np.asarray(margin))
+    denom = np.maximum(1.0, np.abs(margin))
+    return float(np.max(resid / denom))
+
+
 def auc(y_true: np.ndarray, scores: np.ndarray) -> float:
     """ROC AUC via sklearn when available; exact rank-statistic fallback
     (tie-aware) so the module works without the [bench] extra."""

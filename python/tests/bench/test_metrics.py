@@ -30,3 +30,13 @@ def test_metrics_against_sklearn():
     with mock.patch.dict(sys.modules, {"sklearn.metrics": None, "sklearn": None}):
         fallback = metrics.auc(yb, tied)
     assert abs(fallback - roc_auc_score(yb, tied)) < 1e-12
+
+
+def test_additivity_is_the_worst_row_relative_residual():
+    phi = np.array([[1.0, 2.0, 0.5], [0.1, 0.1, 0.1]])  # rows sum to 3.5, 0.3
+    assert metrics.additivity(phi, np.array([3.5, 0.3])) < 1e-9
+    # row 1's margin moves to 1.0: |0.3 - 1.0| / max(1, |1.0|) = 0.7
+    assert abs(metrics.additivity(phi, np.array([3.5, 1.0])) - 0.7) < 1e-9
+    # the >= 1 floor in the denominator: a tiny margin does not blow up a
+    # tiny absolute residual into a huge relative one
+    assert abs(metrics.additivity(np.array([[1e-9]]), np.array([0.0])) - 1e-9) < 1e-15

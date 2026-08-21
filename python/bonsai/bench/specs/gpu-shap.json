@@ -1,0 +1,15 @@
+{
+  "name": "gpu-shap",
+  "suite": "gpu-shap",
+  "defaults": {"depth": 6, "iters": 500, "lr": 0.1, "bins": 255,
+               "informative": 20, "seed": 42, "contribs": true},
+  "cells": [{"rows": 1048576, "cols": 128},
+            {"rows": 4194304, "cols": 128},
+            {"rows": 1048576, "cols": 512},
+            {"rows": 1048576, "cols": 128, "depth": 8}],
+  "variants": ["bonsai_cuda_depthwise", "xgb_cuda", "lgbm_cuda",
+               "catboost_gpu"],
+  "threads": [16],
+  "repeats": {"default": 2},
+  "timeout_cap": 10800
+}

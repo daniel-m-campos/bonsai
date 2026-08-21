@@ -53,8 +53,8 @@ STANDINGS_AXES = {
 def test_bundled_specs():
     names = spec_mod.bundled_specs()
     assert names == ["cpu-tall", "cpu-wide", "gpu-early-stop", "gpu-extreme",
-                     "gpu-tall", "gpu-wide", "scaling-bins", "scaling-cols",
-                     "scaling-rows", "scaling-threads"]
+                     "gpu-shap", "gpu-tall", "gpu-wide", "scaling-bins",
+                     "scaling-cols", "scaling-rows", "scaling-threads"]
     s = spec_mod.load_spec("gpu-tall")  # bare name, no repo path
     assert s["suite"] == "gpu-tall" and len(spec_mod.expand(s)) == 6
     wide = spec_mod.load_spec("gpu-wide.json")  # suffix tolerated
@@ -84,6 +84,32 @@ def test_gpu_extreme_runs_with_the_memory_gate_off():
     assert s["gates"] == {"mem_gate": "off", "gpu_max_cols": None}
     assert s["timeout_cap"] == 10800
     assert s["repeats"] == {"default": 1}
+
+
+def test_gpu_shap_expansion():
+    """Four cells (three at depth 6, one at depth 8) across the four SHAP
+    arms, each carrying contribs=True so only this suite pays the phase."""
+    s = spec_mod.load_spec("gpu-shap")
+    assert s["suite"] == "gpu-shap"
+    assert s["variants"] == ["bonsai_cuda_depthwise", "xgb_cuda", "lgbm_cuda",
+                             "catboost_gpu"]
+    cells = spec_mod.cells_of(s)
+    assert [(c["rows"], c["cols"], c["depth"]) for c in cells] == [
+        (1_048_576, 128, 6), (4_194_304, 128, 6), (1_048_576, 512, 6),
+        (1_048_576, 128, 8)]
+    assert all(c["contribs"] is True for c in cells)
+    assert all(c["iters"] == 500 for c in cells)
+    jobs = spec_mod.expand(s)
+    assert len(jobs) == 4 * 4
+    assert all(j["cell"]["contribs"] is True for j in jobs)
+    assert all(j["repeats"] == 2 for j in jobs)
+
+
+def test_contribs_defaults_false_outside_the_shap_suite():
+    """A spec that never names contribs must not pay the phase: the flag
+    defaults false so only gpu-shap's cells carry it."""
+    cells = spec_mod.cells_of(spec_mod.load_spec("gpu-tall"))
+    assert all(c["contribs"] is False for c in cells)
 
 
 def test_gpu_early_stop_expansion():

@@ -15,6 +15,12 @@ is what the early-stopping suite sweeps:
 their fit_s ratio is the per-round eval overhead; `stop` measures the wall
 clock to a stopped model. A cell with no `eval_mode` takes the legacy path
 untouched: no carve, no eval set, no extra row fields.
+
+A cell may carry `contribs`, which adds one TreeSHAP phase after predict:
+one call over the whole test matrix, timed as contribs_s, plus
+contribs_additivity, the worst per-row |sum(phi) - margin| relative to that
+arm's own raw prediction. A cell with no `contribs` skips the phase
+entirely: no extra row fields, same as an eval_mode-less cell.
 """
 
 from __future__ import annotations
@@ -30,7 +36,7 @@ import numpy as np
 
 from bonsai.bench import params as rp
 from bonsai.bench import runlog
-from bonsai.bench.metrics import auc, r2
+from bonsai.bench.metrics import additivity, auc, r2
 from bonsai.bench.synth import gen_data
 from bonsai.bench.variants import Device, Lib, resolve
 
@@ -150,6 +156,7 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
         objective="logloss" if task == "binary" else "mse",
         early_stopping_rounds=rounds)
     timed = {}
+    ds = None
     if spec.get("fused"):
         with _phase(timed, runlog.Row.FIT_S):
             model = bonsai.train(dict(pairs), X, y, eval_set=ev)
@@ -165,6 +172,21 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
                                      ds, eval_set=ev)
     with _phase(timed, runlog.Row.PREDICT_S):
         pred_te = np.asarray(model.predict(Xte))
+    if c.get("contribs"):
+        # reference=ds inherits ds's cut points AND device, so on a cuda
+        # arm ds_test routes pred_contribs through the device kernel
+        # exactly as reference=ds already routes predict; the fused arm
+        # built no train Dataset and falls back to the raw matrix, which
+        # pred_contribs bins on the host. mse's link is the identity, so
+        # pred_te (predict's link-inverse output) IS the raw pre-link
+        # margin pred_contribs sums to; a non-identity-link objective
+        # would need a genuinely raw score, which this call form does
+        # not expose.
+        ds_test = bonsai.Dataset(Xte, yte, reference=ds) if ds is not None else None
+        with _phase(timed, runlog.Row.CONTRIBS_S):
+            phi = np.asarray(model.pred_contribs(
+                ds_test if ds_test is not None else Xte))
+        timed[runlog.Row.CONTRIBS_ADDITIVITY] = additivity(phi, pred_te)
     return _score(task, timed, y, yte, pred_te,
                   lambda: np.asarray(model.predict(X)),
                   cell=c, stopped_at=model.n_iters if rounds else None)
@@ -227,6 +249,17 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
     # dependency this bench does not otherwise carry.
     with _phase(timed, runlog.Row.PREDICT_S):
         pred_te = booster.inplace_predict(Xte, iteration_range=span)
+    if c.get("contribs"):
+        # A device="cuda" booster runs this predict on xgboost's GPU SHAP
+        # kernel; DMatrix construction is untimed, same as the predict
+        # phase above times only the call over an already-built matrix.
+        dtest = xgb.DMatrix(Xte)
+        with _phase(timed, runlog.Row.CONTRIBS_S):
+            phi = booster.predict(dtest, pred_contribs=True,
+                                  iteration_range=span)
+        margin = booster.predict(dtest, output_margin=True,
+                                 iteration_range=span)
+        timed[runlog.Row.CONTRIBS_ADDITIVITY] = additivity(phi, margin)
     return _score(task, timed, y, yte, pred_te,
                   lambda: booster.inplace_predict(X, iteration_range=span),
                   cell=c,
@@ -285,6 +318,14 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
                               **fit_kwargs)
     with _phase(timed, runlog.Row.PREDICT_S):
         pred_te = model.predict(Xte)
+    if c.get("contribs"):
+        # lightgbm's SHAP is CPU-only even on a device_type="cuda" arm; the
+        # row still carries it, which is the point of running this suite
+        # on the GPU variants (the results table labels the plane).
+        with _phase(timed, runlog.Row.CONTRIBS_S):
+            phi = model.predict(Xte, pred_contrib=True)
+        margin = model.predict(Xte, raw_score=True)
+        timed[runlog.Row.CONTRIBS_ADDITIVITY] = additivity(phi, margin)
     return _score(task, timed, y, yte, pred_te, lambda: model.predict(X),
                   cell=c, stopped_at=model.best_iteration if rounds else None)
 
@@ -337,6 +378,15 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
     with _phase(timed, runlog.Row.PREDICT_S):
         pred_te = (model.predict_proba(Xte)[:, 1] if task == "binary"
                    else model.predict(Xte))
+    if c.get("contribs"):
+        # CatBoost's SHAP is CPU-only even on a task_type="GPU" arm, same
+        # caveat as lightgbm's. RawFormulaVal is the pre-link score
+        # ShapValues sums to (identity for RMSE, pre-sigmoid for Logloss).
+        pool_te = Pool(Xte)
+        with _phase(timed, runlog.Row.CONTRIBS_S):
+            phi = model.get_feature_importance(type="ShapValues", data=pool_te)
+        margin = model.predict(Xte, prediction_type="RawFormulaVal")
+        timed[runlog.Row.CONTRIBS_ADDITIVITY] = additivity(phi, margin)
     return _score(task, timed, y, yte, pred_te, lambda: model.predict(X),
                   cell=c, stopped_at=model.tree_count_ if rounds else None)
 
@@ -397,9 +447,17 @@ def worker(spec: dict) -> dict:
                              if out[runlog.Row.FIT_S] else None)
     out["predict_rows_per_s"] = (round(c["n_test"] / out[runlog.Row.PREDICT_S])
                                  if out[runlog.Row.PREDICT_S] else None)
+    if runlog.Row.CONTRIBS_S in out:
+        out[runlog.Row.CONTRIBS_ROWS_PER_S] = (
+            round(c["n_test"] / out[runlog.Row.CONTRIBS_S])
+            if out[runlog.Row.CONTRIBS_S] else None)
     for k in (runlog.Row.FIT_S, runlog.Row.INGEST_S, runlog.Row.TRAIN_S,
               runlog.Row.PREDICT_S):
         out[k] = round(out[k], 3) if out[k] is not None else None
+    if runlog.Row.CONTRIBS_S in out:
+        out[runlog.Row.CONTRIBS_S] = round(out[runlog.Row.CONTRIBS_S], 3)
+        out[runlog.Row.CONTRIBS_ADDITIVITY] = round(
+            out[runlog.Row.CONTRIBS_ADDITIVITY], 8)
     for k in (runlog.Row.R2_TRAIN, runlog.Row.R2_TEST):
         out[k] = round(out[k], 4)
     # The child is where the reference library was imported, so only the
@@ -478,11 +536,17 @@ def _score(task: str, timed: dict, y, yte, pred_te, predict_train, *,
     stopped_at is the RETAINED round count in every library's spelling: the
     model the reported metric came from, which is the one comparable number
     across four different best-iteration conventions.
+
+    contribs_s and contribs_additivity appear only for a contribs cell, the
+    same additive rule as eval_mode: a legacy row's key set never changes.
     """
     base = {runlog.Row.FIT_S: timed[runlog.Row.FIT_S],
             runlog.Row.INGEST_S: timed.get(runlog.Row.INGEST_S),
             runlog.Row.TRAIN_S: timed.get(runlog.Row.TRAIN_S),
             runlog.Row.PREDICT_S: timed[runlog.Row.PREDICT_S]}
+    if runlog.Row.CONTRIBS_S in timed:
+        base[runlog.Row.CONTRIBS_S] = timed[runlog.Row.CONTRIBS_S]
+        base[runlog.Row.CONTRIBS_ADDITIVITY] = timed[runlog.Row.CONTRIBS_ADDITIVITY]
     mode = (cell or {}).get(EVAL_MODE)
     if mode is not None:
         base[EVAL_MODE] = mode
