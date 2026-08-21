@@ -2,6 +2,24 @@
 
 All notable changes to bonsai. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags. Design rationale for anything below lives in [`docs/decisions.md`](docs/decisions.md).
 
+## [1.11.0] - 2026-08-21
+
+Parameters become a typed, generated surface, and a device-resident `Dataset` is now served by the whole `Model` read side: predict and TreeSHAP run where the bins live, and the SHAP race is a standings category bonsai wins.
+
+### Added
+- **`bonsai.Params`, typed and generated from the section registry** (decision 107, PR #402). One frozen dataclass per config section, every field defaulting to "leave the library default", rendered at build time from the same `all_sections` tuple the TOML dump folds, so a new C++ knob appears in Python on the next build with its real type and no mirror to drift. Misspelled keys fail at construction with the section's legal names. `Params | {"tree.max_depth": d}` is the sweep idiom, `Params.from_toml(path)` carries only the keys the file states, `Params.from_model(model)` returns the resolved config, and `interop.from_*`/`to_*` round-trip typed values exactly. The estimators' `params=` accepts it.
+- **Every X-taking `Model` method accepts a `Dataset`** (issue #399, decision 108, PR #406). `predict`, `predict_proba`, `staged_predict`, `predict_leaf`, and `pred_contribs` take a `Dataset` wherever they take an array. Under the model's own cuts the call routes in bin space, bit-identical to the raw walk (a stored threshold names a bin exactly under the cuts it came from), which makes device-resident DLPack builds servable with no host rows at all; foreign cuts fall back to the retained host matrix, and a device-resident build under foreign cuts raises naming both remedies.
+- **Prediction and TreeSHAP run on the device the `Dataset` lives on** (decision 108, PR #406, [`docs/architecture/22-device-predict-shap.md`](docs/architecture/22-device-predict-shap.md)). Predict packs the ensemble once into bin-space SoA node tables keyed to the booster's mutation epoch and walks one thread per row over the resident plane, bit-equal to the host binned walk. TreeSHAP packs each tree's leaf paths into 8-byte elements and evaluates the path polynomial in registers with a division-free closed form, fp32 on device with an fp64 host epilogue owning the learning rate and bias, tolerance-equal to the host's fp64 walk (worst element 1.4e-7 relative); passing the raw matrix instead runs the fp64 host walk. Either route declines back to the host walk rather than failing (oblivious and multiclass models, paths past 32 elements, splits past 255 bins). Same-pod against XGBoost 3.3's quadrature GPU SHAP, bonsai's exact path evaluation is 3.0-4.2x faster at every measured cell (`gpu-shap` standings axis); the host walk also drops about 30% from hoisting the row-independent bias out of the per-row loop.
+- **The bench suite races `pred_contribs`** (PR #406). A contribs phase times all four arms with an additivity-residual fidelity column, and the `gpu-shap` spec is the standings suite behind the new axis.
+
+### Removed
+- **The pairs list is gone from the public `train`** (decision 107, PR #402). `train` takes `Params`, a dotted-key dict, or `None`; a pairs list raises with the `dict(pairs)` escape named. The `(str, str)` pairs remain the native wire format under the wrapper, so every model-hash gate holds.
+- **`config=` is gone from `train` and the estimators** (decision 107, PR #402). `Params.from_toml(path) | overrides` expresses the same layering through the one params argument, parsed by the C++ config layer so there is no Python TOML dependency and no 3.11 floor.
+
+### Fixed
+- **An empty leaf at `lambda_l2 = 0` scores 0, not 0/0.** A levelwise level mints empty children structurally, so G = H = 0 reaches the leaf math; the unguarded Newton quotient carried NaN leaves that surfaced as NaN predictions for any row routed there. Inert for `lambda_l2 > 0`: identical quotients, byte-identical models.
+- **A `reference=` `Dataset` inherits the reference's device.** An unset `device` now takes the reference's value the way `max_bin` does, so a cuda train set no longer silently pairs with a host-binned validation set; an explicit `device="cpu"` still overrides.
+
 ## [1.10.0] - 2026-08-20
 
 The CUDA plane stops starving wide cards at small cells, and the Python surface reads like a library.
