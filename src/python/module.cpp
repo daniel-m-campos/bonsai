@@ -1074,10 +1074,81 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
     return &dataset->loaded().train;
 }
 
+// The internal wire format the config layer reads: dotted key, string value.
+using ConfigPairs = std::vector<std::pair<std::string, std::string>>;
+
+// Render one override value the way the dotted-key parser reads it back; bool
+// is tested first because a Python bool is also an int.
+std::string config_str(nb::handle value)
+{
+    if (nb::isinstance<nb::bool_>(value))
+    {
+        return nb::cast<bool>(value) ? "true" : "false";
+    }
+    if (nb::isinstance<nb::list>(value) || nb::isinstance<nb::tuple>(value))
+    {
+        std::string joined;
+        bool        first = true;
+        for (nb::handle item : nb::borrow<nb::object>(value))
+        {
+            if (!first)
+            {
+                joined += ',';
+            }
+            joined += nb::cast<std::string>(nb::str(item));
+            first = false;
+        }
+        return joined;
+    }
+    return nb::cast<std::string>(nb::str(value));
+}
+
+// The public params contract rendered to the wire format: a Params (duck-typed
+// on to_dict), a dotted-key mapping, or None.
+ConfigPairs pairs_from_params(nb::object params)
+{
+    if (params.is_none())
+    {
+        return {};
+    }
+    if (nb::hasattr(params, "to_dict"))
+    {
+        if (nb::object const to_dict = params.attr("to_dict");
+            PyCallable_Check(to_dict.ptr()) != 0)
+        {
+            params = to_dict();
+        }
+    }
+    if (!nb::hasattr(params, "items"))
+    {
+        throw nb::type_error(
+            ("params must be a bonsai.Params, a mapping of dotted keys, or None; "
+             "got " +
+             nb::cast<std::string>(nb::str(params.type().attr("__name__"))) +
+             ". For legacy (key, value) pairs, pass dict(pairs).")
+                .c_str());
+    }
+    ConfigPairs      pairs;
+    nb::object const items = params.attr("items")();
+    for (nb::handle item : items)
+    {
+        nb::object const entry = nb::borrow<nb::object>(item);
+        nb::object const key   = entry[0];
+        if (!nb::isinstance<nb::str>(key))
+        {
+            throw nb::type_error(
+                ("params keys must be dotted config keys (str); got " +
+                 nb::cast<std::string>(nb::str(key.type().attr("__name__"))))
+                    .c_str());
+        }
+        pairs.emplace_back(nb::cast<std::string>(key), config_str(entry[1]));
+    }
+    return pairs;
+}
+
 // Overrides over the library defaults; a TOML base composes upstream via
 // Params.from_toml, so this layer knows one input.
-bonsai::Config
-config_from_params(std::vector<std::pair<std::string, std::string>> const &params)
+bonsai::Config config_from_params(ConfigPairs const &params)
 {
     std::vector<bonsai::config::Override> overrides;
     overrides.reserve(params.size());
@@ -1155,11 +1226,11 @@ nb::list params_schema()
     return sections;
 }
 
-Model train(std::vector<std::pair<std::string, std::string>> const &params,
-            nb::handle X, nb::handle y, std::optional<EvalSet> const &eval_set,
+Model train(nb::object const &params, nb::handle X, nb::handle y,
+            std::optional<EvalSet> const     &eval_set,
             std::optional<std::string> const &init_model, nb::handle sample_weight)
 {
-    bonsai::Config const cfg = config_from_params(params);
+    bonsai::Config const cfg = config_from_params(pairs_from_params(params));
     bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
 
     // Device-resident input places the fit itself: the matrix is already on a
@@ -1213,11 +1284,12 @@ Model train(std::vector<std::pair<std::string, std::string>> const &params,
 // bin_mapper.* overrides are rejected rather than silently ignored; a TOML
 // base arrives through Params.from_toml as ordinary pairs, so this one check
 // covers every route.
-Model train_dataset(std::vector<std::pair<std::string, std::string>> const &params,
-                    Dataset const &dataset, std::optional<EvalSet> const &eval_set,
+Model train_dataset(nb::object const &params, Dataset const &dataset,
+                    std::optional<EvalSet> const     &eval_set,
                     std::optional<std::string> const &init_model)
 {
-    for (auto const &[key, value] : params)
+    ConfigPairs const pairs = pairs_from_params(params);
+    for (auto const &[key, value] : pairs)
     {
         if (key.starts_with("bin_mapper."))
         {
@@ -1227,7 +1299,7 @@ Model train_dataset(std::vector<std::pair<std::string, std::string>> const &para
                 "instead");
         }
     }
-    bonsai::Config const cfg = config_from_params(params);
+    bonsai::Config const cfg = config_from_params(pairs);
     // A device-binned Dataset is resident on one device and the fit adopts
     // that matrix in place; placing the fit elsewhere would mean migrating
     // it behind the user's back.
@@ -1549,16 +1621,26 @@ NB_MODULE(_bonsai, m)
     // Dataset overload first: the array overload takes X and y untyped (a numpy
     // array or any DLPack producer), so it would otherwise shadow a Dataset
     // call that also passes an eval set.
-    m.def("train", &train_dataset, nb::arg("params"), nb::arg("dataset"),
+    m.def("train", &train_dataset, nb::arg("params").none(), nb::arg("dataset"),
           nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
+          nb::sig("def train(params: bonsai.params.Params | "
+                  "collections.abc.Mapping[str, object] | None, dataset: Dataset, "
+                  "eval_set: tuple[Annotated[NDArray[numpy.float32], "
+                  "dict(shape=(None, None), order='C', device='cpu', "
+                  "writable=False)], Annotated[NDArray[numpy.float32], "
+                  "dict(shape=(None,), order='C', device='cpu', writable=False)]] "
+                  "| Dataset | None = None, init_model: str | None = None) -> "
+                  "Model"),
           "Train on a prebuilt Dataset, reusing its binning across calls.\n"
           "\n"
           "Parameters\n"
           "----------\n"
-          "params : sequence of (str, str)\n"
-          "    Dotted-key config overrides, e.g. ``('tree.max_depth', '8')``. "
-          "``bin_mapper.*`` overrides are rejected: binning is fixed by the "
-          "Dataset.\n"
+          "params : Params, Mapping, or None\n"
+          "    Overrides over the library defaults: a ``bonsai.Params``, a "
+          "``{'tree.max_depth': 8}`` dotted-key mapping, or ``None`` for no "
+          "overrides. A TOML base composes here too, "
+          "``Params.from_toml(path) | overrides``. ``bin_mapper.*`` overrides "
+          "are rejected: binning is fixed by the Dataset.\n"
           "dataset : Dataset\n"
           "    The pre-binned training data.\n"
           "eval_set : tuple of (Xv, yv), Dataset, or None\n"
@@ -1573,15 +1655,26 @@ NB_MODULE(_bonsai, m)
           "-------\n"
           "Model\n"
           "    The trained booster.");
-    m.def("train", &train, nb::arg("params"), nb::arg("X"), nb::arg("y"),
+    m.def("train", &train, nb::arg("params").none(), nb::arg("X"), nb::arg("y"),
           nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
           nb::arg("sample_weight") = nb::none(),
+          nb::sig("def train(params: bonsai.params.Params | "
+                  "collections.abc.Mapping[str, object] | None, X: object, "
+                  "y: object, eval_set: tuple[Annotated[NDArray[numpy.float32], "
+                  "dict(shape=(None, None), order='C', device='cpu', "
+                  "writable=False)], Annotated[NDArray[numpy.float32], "
+                  "dict(shape=(None,), order='C', device='cpu', writable=False)]] "
+                  "| Dataset | None = None, init_model: str | None = None, "
+                  "sample_weight: object | None = None) -> Model"),
           "Train a booster on row-major float32 features.\n"
           "\n"
           "Parameters\n"
           "----------\n"
-          "params : sequence of (str, str)\n"
-          "    Dotted-key config overrides, e.g. ``('tree.max_depth', '8')``.\n"
+          "params : Params, Mapping, or None\n"
+          "    Overrides over the library defaults: a ``bonsai.Params``, a "
+          "``{'tree.max_depth': 8}`` dotted-key mapping, or ``None`` for no "
+          "overrides. A TOML base composes here too, "
+          "``Params.from_toml(path) | overrides``.\n"
           "X : float32 array, shape (n_rows, n_features)\n"
           "    Row-major features. May be a CUDA array supporting DLPack "
           "(cupy, torch, jax): X is then binned on the GPU in place, with no "

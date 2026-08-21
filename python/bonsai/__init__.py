@@ -41,8 +41,8 @@ from bonsai._bonsai import (
     cuda_available,
     default_config_toml,
     load,
+    train,
 )
-from bonsai._train import train
 from bonsai.encoding import OrderedTargetEncoder
 from bonsai.estimators import BonsaiClassifier, BonsaiRegressor
 from bonsai.params import Params
