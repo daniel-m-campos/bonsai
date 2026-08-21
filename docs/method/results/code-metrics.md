@@ -9,10 +9,10 @@ Self-measurement of the bonsai tree, no comparison: line counts and lizard compl
 | core_headers | 56 | 6253 | 4467 | 283 | 1.92 | 15 |
 | engine_impl | 28 | 7136 | 5667 | 259 | 3.16 | 29 |
 | cuda_plane | 18 | 6055 | 4665 | 203 | 3.32 | 30 |
-| bindings_cli | 23 | 5550 | 3533 | 186 | 2.74 | 49 |
+| bindings_cli | 22 | 5597 | 3607 | 186 | 2.78 | 49 |
 | bench_tooling | 39 | 8113 | 4951 | 314 | 4.52 | 33 |
-| tests | 63 | 14671 | 11201 | 706 | 1.77 | 12 |
-| all | 227 | 47778 | 34484 | 1951 | - | - |
+| tests | 63 | 14676 | 11201 | 706 | 1.77 | 12 |
+| all | 226 | 47830 | 34558 | 1951 | - | - |
 
 The five highest-CCN functions across `core_headers` + `engine_impl`, published by name; a curated offender list would be marketing.
 
@@ -26,4 +26,4 @@ The five highest-CCN functions across `core_headers` + `engine_impl`, published 
 
 Surface counts: 43 config parameters, 126 registered dispatch combinations (7 objectives x 6 growers x 3 samplers), and 11 public Python names. Dependencies: 1 Python runtime dependency (numpy) and 3 compiled-in C++ libraries (CLI11, nlohmann_json, tomlplusplus), the rule stated in the protocol.
 
-*Source: [`code-metrics-2026-08.jsonl`](../../../benchmarks/results/code-metrics-2026-08.jsonl). lizard 1.23.0 (`uvx lizard@1.23.0`) at `0cd5c3bb4cdb`, 2026-08-21; regenerate with [scripts/measure_complexity.py](../../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).*
+*Source: [`code-metrics-2026-08.jsonl`](../../../benchmarks/results/code-metrics-2026-08.jsonl). lizard 1.23.0 (`uvx lizard@1.23.0`) at `9418f2d9228b`, 2026-08-21; regenerate with [scripts/measure_complexity.py](../../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).*
