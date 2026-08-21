@@ -15,7 +15,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <limits>
@@ -167,12 +166,6 @@ __global__ void shap_walk_kernel(BinT const *bins, uint8_t const *last_bin,
             atomicAdd(&row_out[f], value * (1.0F - z) * sum);
         }
     }
-}
-
-bool profile_on()
-{
-    static bool const on = std::getenv("BONSAI_CUDA_PROFILE") != nullptr;
-    return on;
 }
 
 } // namespace

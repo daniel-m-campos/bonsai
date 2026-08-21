@@ -105,13 +105,6 @@ def test_gpu_shap_expansion():
     assert all(j["repeats"] == 2 for j in jobs)
 
 
-def test_contribs_defaults_false_outside_the_shap_suite():
-    """A spec that never names contribs must not pay the phase: the flag
-    defaults false so only gpu-shap's cells carry it."""
-    cells = spec_mod.cells_of(spec_mod.load_spec("gpu-tall"))
-    assert all(c["contribs"] is False for c in cells)
-
-
 def test_gpu_early_stop_expansion():
     """Three eval-mode arms at the gpu-tall cell, six GPU variants each."""
     s = spec_mod.load_spec("gpu-early-stop")

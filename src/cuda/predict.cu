@@ -13,7 +13,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <limits>
@@ -83,12 +82,6 @@ predict_walk_kernel(BinT const *bins, uint32_t const *last_bin, uint32_t n_rows,
     // one ulp from predict_at_binned's. Prediction is a contract of bit
     // equality with the host walk, so the epilogue spells the rounding out.
     out[r] = __fadd_rn(init, __fmul_rn(lr, acc));
-}
-
-bool profile_on()
-{
-    static bool const on = std::getenv("BONSAI_CUDA_PROFILE") != nullptr;
-    return on;
 }
 
 // The ensemble in bin space, host side: SoA node arrays concatenated over the

@@ -399,16 +399,17 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         }
     }
 
-    // Per-class TreeSHAP over any dense-shaped tree range; trees are flat
-    // round-major, so class k's trees stride by n_classes_.
-    template <typename Trees>
-    void contribs_over(Trees const &trees, features_view X, std::span<double> out,
-                       size_t n_features) const
+    // The shape both contribs paths share: per row and class, zero the slice,
+    // walk that class's trees into it (they are flat round-major, so class k
+    // strides by n_classes_), scale by the learning rate, and add the class's
+    // init score to the bias column. `into(t, row, phi)` is the only
+    // difference between them.
+    template <typename Trees, typename Into>
+    void contribs_impl(Trees const &trees, size_t n, std::span<double> out,
+                       size_t n_features, Into const &into) const
     {
-        size_t const n    = X.extent(0);
         size_t const cols = n_features + 1;
         assert(out.size() == n * n_classes_ * cols);
-        auto const biases = internal::shap_biases(trees);
         parallel::for_each_index(
             n,
             [&](size_t i)
@@ -420,8 +421,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                     std::ranges::fill(phi, 0.0);
                     for (size_t t = k; t < trees.size(); t += n_classes_)
                     {
-                        internal::shap_one_row(trees[t], X, static_cast<row_id_t>(i),
-                                               phi, biases[t]);
+                        into(t, static_cast<row_id_t>(i), phi);
                     }
                     for (double &v : phi)
                     {
@@ -430,6 +430,17 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                     phi[n_features] += init_scores_.empty() ? 0.0F : init_scores_[k];
                 }
             });
+    }
+
+    // Per-class TreeSHAP over any dense-shaped tree range.
+    template <typename Trees>
+    void contribs_over(Trees const &trees, features_view X, std::span<double> out,
+                       size_t n_features) const
+    {
+        auto const biases = internal::shap_biases(trees);
+        contribs_impl(trees, X.extent(0), out, n_features,
+                      [&](size_t t, row_id_t row, std::span<double> phi)
+                      { tree_shap(trees[t], X, row, phi, biases[t]); });
     }
 
     void pred_contribs_binned(Dataset const &bins, std::span<double> out,
@@ -452,32 +463,12 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     void contribs_over_binned(Trees const &trees, Dataset const &bins,
                               std::span<double> out, size_t n_features) const
     {
-        size_t const n    = bins.n_rows();
-        size_t const cols = n_features + 1;
-        assert(out.size() == n * n_classes_ * cols);
         auto const biases = internal::shap_biases(trees);
         auto const sb     = internal::tree_split_bins(trees, bins);
-        parallel::for_each_index(
-            n,
-            [&](size_t i)
-            {
-                for (size_t k = 0; k < n_classes_; ++k)
-                {
-                    std::span<double> const phi =
-                        out.subspan(((i * n_classes_) + k) * cols, cols);
-                    std::ranges::fill(phi, 0.0);
-                    for (size_t t = k; t < trees.size(); t += n_classes_)
-                    {
-                        tree_shap_binned(trees[t], sb[t], bins,
-                                         static_cast<row_id_t>(i), phi, biases[t]);
-                    }
-                    for (double &v : phi)
-                    {
-                        v *= config_.learning_rate;
-                    }
-                    phi[n_features] += init_scores_.empty() ? 0.0F : init_scores_[k];
-                }
-            });
+        contribs_impl(
+            trees, bins.n_rows(), out, n_features,
+            [&](size_t t, row_id_t row, std::span<double> phi)
+            { tree_shap_binned(trees[t], sb[t], bins, row, phi, biases[t]); });
     }
 
     void truncate(size_t n_rounds) override

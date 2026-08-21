@@ -277,21 +277,4 @@ void eval_shap_paths(ShapPaths const &paths, std::span<bin_id_t const> row_bins,
     }
 }
 
-void shap_paths_one_row(ShapPaths const &paths, Dataset const &ds, row_id_t row,
-                        size_t n_features, size_t n_classes, std::span<double> phi)
-{
-    size_t const cols = n_features + 1;
-    if (phi.size() != n_classes * cols)
-    {
-        throw std::invalid_argument(
-            "shap_paths_one_row: phi must hold n_classes * (n_features + 1) doubles");
-    }
-    std::vector<bin_id_t> row_bins(n_features, 0);
-    for (size_t f = 0; f < n_features; ++f)
-    {
-        row_bins[f] = ds.bin_at(f, row);
-    }
-    eval_shap_paths(paths, row_bins, cols, phi);
-}
-
 } // namespace bonsai

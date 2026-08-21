@@ -476,6 +476,12 @@ class Dataset
         return loaded_;
     }
 
+    // The binned columns, which is all most readers want out of loaded().
+    bonsai::Dataset const &bins() const
+    {
+        return loaded_.train.dataset;
+    }
+
     // The raw rows a host-built Dataset retained; the Model raw-row readers
     // (predict and friends) read them directly, no rebinning. Asking a
     // device-resident (DLPack) build is an error with the remedy.
@@ -541,7 +547,7 @@ class DevicePlanCache
 {
   public:
     std::shared_ptr<bonsai::CudaPredictPlan const>
-    predict(bonsai::PredictPlanInput const &in, bonsai::BinMappers const &mappers)
+    predict(bonsai::PredictPlanInput const &in, bonsai::BinMappers const &mappers) const
     {
         std::scoped_lock const lock(mutex_);
         return predict_.get(in.epoch,
@@ -552,8 +558,8 @@ class DevicePlanCache
                             });
     }
 
-    std::shared_ptr<bonsai::CudaShapPlan const> shap(bonsai::PredictPlanInput const &in,
-                                                     bonsai::BinMappers const &mappers)
+    std::shared_ptr<bonsai::CudaShapPlan const>
+    shap(bonsai::PredictPlanInput const &in, bonsai::BinMappers const &mappers) const
     {
         std::scoped_lock const lock(mutex_);
         return shap_.get(in.epoch,
@@ -565,27 +571,27 @@ class DevicePlanCache
     }
 
   private:
+    // Booster epochs start at 1, so epoch = 0 is the never-packed state and
+    // the epoch compare alone is the miss test.
     template <typename Plan> struct Slot
     {
         std::shared_ptr<Plan const> plan;
-        uint64_t                    epoch  = 0;
-        bool                        packed = false;
+        uint64_t                    epoch = 0;
 
         template <typename Pack> std::shared_ptr<Plan const> get(uint64_t at, Pack pack)
         {
-            if (!packed || epoch != at)
+            if (epoch != at)
             {
-                plan   = pack();
-                epoch  = at;
-                packed = true;
+                plan  = pack();
+                epoch = at;
             }
             return plan;
         }
     };
 
-    std::mutex                    mutex_;
-    Slot<bonsai::CudaPredictPlan> predict_;
-    Slot<bonsai::CudaShapPlan>    shap_;
+    mutable std::mutex                    mutex_;
+    mutable Slot<bonsai::CudaPredictPlan> predict_;
+    mutable Slot<bonsai::CudaShapPlan>    shap_;
 };
 
 // A trained model: booster + the bin mappers and config it was fit with.
@@ -659,8 +665,7 @@ class Model
             nb::gil_scoped_release release;
             if (!predict_on_device(ds, *out, num_iteration))
             {
-                booster_->predict_at_binned(ds.loaded().train.dataset, *out,
-                                            num_iteration);
+                booster_->predict_at_binned(ds.bins(), *out, num_iteration);
             }
             bonsai::apply_link_inverse_by_name(cfg_.dispatch.objective_name, *out);
         }
@@ -672,16 +677,7 @@ class Model
     // return (n_rows,) with P(class 1) via the link inverse.
     nb::ndarray<nb::numpy, double> predict_proba(array_2d const &X) const
     {
-        // Only classification objectives define probabilities; the mse link
-        // inverse is the identity, so without this guard a regression model
-        // would return raw margins silently mislabeled as P(class 1).
-        if (booster_->score_width() == 1 && cfg_.dispatch.objective_name != "logloss")
-        {
-            throw std::invalid_argument(
-                "predict_proba is only defined for classification objectives "
-                "(logloss/softmax); this model was trained with '" +
-                cfg_.dispatch.objective_name + "'");
-        }
+        require_proba_objective();
         size_t const n   = X.shape(0);
         size_t const w   = booster_->score_width();
         auto         out = std::make_unique<std::vector<double>>(n * w, 0.0);
@@ -715,13 +711,7 @@ class Model
 
     nb::ndarray<nb::numpy, double> predict_proba(Dataset const &ds) const
     {
-        if (booster_->score_width() == 1 && cfg_.dispatch.objective_name != "logloss")
-        {
-            throw std::invalid_argument(
-                "predict_proba is only defined for classification objectives "
-                "(logloss/softmax); this model was trained with '" +
-                cfg_.dispatch.objective_name + "'");
-        }
+        require_proba_objective();
         if (!routes_binned(ds, "predict_proba"))
         {
             return predict_proba(ds.host_matrix("predict_proba"));
@@ -733,13 +723,12 @@ class Model
             nb::gil_scoped_release release;
             if (w > 1)
             {
-                booster_->predict_proba_binned(ds.loaded().train.dataset,
-                                               std::span<double>{*out});
+                booster_->predict_proba_binned(ds.bins(), std::span<double>{*out});
             }
             else
             {
                 std::vector<float> margins(n, 0.0F);
-                booster_->predict_at_binned(ds.loaded().train.dataset,
+                booster_->predict_at_binned(ds.bins(),
                                             bonsai::floats_out{margins.data(), n}, 0);
                 bonsai::apply_link_inverse_by_name(
                     cfg_.dispatch.objective_name,
@@ -788,7 +777,7 @@ class Model
         auto         out = std::make_unique<std::vector<float>>(k * n, 0.0F);
         {
             nb::gil_scoped_release release;
-            booster_->predict_staged_binned(ds.loaded().train.dataset, *out);
+            booster_->predict_staged_binned(ds.bins(), *out);
             for (size_t t = 0; t < k; ++t)
             {
                 bonsai::apply_link_inverse_by_name(
@@ -826,7 +815,7 @@ class Model
         auto         out = std::make_unique<std::vector<bonsai::node_id_t>>(n * k, 0);
         {
             nb::gil_scoped_release release;
-            booster_->predict_leaf_binned(ds.loaded().train.dataset,
+            booster_->predict_leaf_binned(ds.bins(),
                                           std::span<bonsai::node_id_t>{*out});
         }
         return to_numpy(std::move(out), {n, k});
@@ -874,8 +863,7 @@ class Model
             nb::gil_scoped_release release;
             if (width > 1 || !contribs_on_device(ds, std::span<double>{*out}))
             {
-                booster_->pred_contribs_binned(ds.loaded().train.dataset,
-                                               std::span<double>{*out}, nf);
+                booster_->pred_contribs_binned(ds.bins(), std::span<double>{*out}, nf);
             }
         }
         if (width > 1)
@@ -936,6 +924,20 @@ class Model
     }
 
   private:
+    // Only classification objectives define probabilities; the mse link
+    // inverse is the identity, so without this guard a regression model would
+    // return raw margins silently mislabeled as P(class 1).
+    void require_proba_objective() const
+    {
+        if (booster_->score_width() == 1 && cfg_.dispatch.objective_name != "logloss")
+        {
+            throw std::invalid_argument(
+                "predict_proba is only defined for classification objectives "
+                "(logloss/softmax); this model was trained with '" +
+                cfg_.dispatch.objective_name + "'");
+        }
+    }
+
     // The device walk over a Dataset whose bins are already resident on a
     // device. false means the host bin walk runs instead: the Dataset was
     // binned on the host, the ensemble is not dense (oblivious, multiclass),
@@ -945,7 +947,7 @@ class Model
     bool predict_on_device(Dataset const &ds, std::vector<float> &out,
                            size_t num_iteration) const
     {
-        auto const &bins  = ds.loaded().train.dataset;
+        auto const &bins  = ds.bins();
         auto const  plane = bins.ingest_plane();
         auto const  in    = booster_->predict_plan_input();
         if (!plane || in.trees.empty())
@@ -963,7 +965,7 @@ class Model
     // the host to a tolerance, not bit for bit.
     bool contribs_on_device(Dataset const &ds, std::span<double> out) const
     {
-        auto const &bins  = ds.loaded().train.dataset;
+        auto const &bins  = ds.bins();
         auto const  plane = bins.ingest_plane();
         auto const  in    = booster_->predict_plan_input();
         if (!plane || in.trees.empty())
@@ -1049,7 +1051,7 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
             "against the training data: bonsai.Dataset(X_valid, y_valid, "
             "reference=train_dataset).");
     }
-    if (!dataset->loaded().train.dataset.weights().empty())
+    if (!dataset->bins().weights().empty())
     {
         throw std::invalid_argument(
             "the eval_set Dataset carries sample weights, which the validation "
@@ -1059,8 +1061,7 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
     // The raw walk and the warm-start seed read the caller's rows; a
     // device-resident Dataset kept none, so it can only serve the fits that
     // never look at them (bin space from round 1, no rounds to seed).
-    if (!dataset->has_host_matrix() &&
-        (warm_start || !dataset->loaded().train.dataset.bins_are_u8()))
+    if (!dataset->has_host_matrix() && (warm_start || !dataset->bins().bins_are_u8()))
     {
         throw std::invalid_argument(
             "this eval_set Dataset was built from device-resident (DLPack) input "

@@ -16,6 +16,13 @@ namespace bonsai
 namespace cuda_detail
 {
 
+// Whether BONSAI_CUDA_PROFILE=1 is set, read once per process.
+inline bool profile_on()
+{
+    static bool const on = std::getenv("BONSAI_CUDA_PROFILE") != nullptr;
+    return on;
+}
+
 // BONSAI_CUDA_PROFILE=1 accumulators, printed at engine destruction.
 struct ProfileCounters
 {
