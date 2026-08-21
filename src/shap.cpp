@@ -197,6 +197,12 @@ void recurse(ShapContext const &ctx, node_id_t node_id, std::vector<PathElement>
 void tree_shap(DenseTree const &tree, features_view X, row_id_t row,
                std::span<double> phi)
 {
+    tree_shap(tree, X, row, phi, tree_expected_value(tree));
+}
+
+void tree_shap(DenseTree const &tree, features_view X, row_id_t row,
+               std::span<double> phi, double expected_value)
+{
     auto const &covers = tree.covers();
     if (covers.size() != tree.nodes().size())
     {
@@ -205,7 +211,7 @@ void tree_shap(DenseTree const &tree, features_view X, row_id_t row,
             "format v6 or was hand-built)");
     }
     // Bias: the tree's expected value over the training distribution.
-    phi[phi.size() - 1] += tree_expected_value(tree, X, row, {});
+    phi[phi.size() - 1] += expected_value;
 
     std::vector<PathElement> path(tree.params().depth + 2);
     ShapContext const        ctx{
@@ -246,6 +252,14 @@ double tree_expected_value(DenseTree const &tree, features_view X, row_id_t row,
                            std::span<bool const> in_subset)
 {
     return expected_value_impl(tree, X, row, in_subset, 0);
+}
+
+double tree_expected_value(DenseTree const &tree)
+{
+    // An empty subset never conditions, so the row is never read; the same
+    // recursion keeps the arithmetic (and its rounding) identical to the
+    // conditional form the tests pin.
+    return expected_value_impl(tree, features_view{}, 0, {}, 0);
 }
 
 } // namespace bonsai

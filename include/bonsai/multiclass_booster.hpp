@@ -51,6 +51,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
 
     void update_one_iter(Dataset const &train) override
     {
+        ++epoch_;
         size_t const n   = train.n_rows();
         size_t const n_k = n_classes_;
         if (scores_.empty())
@@ -332,7 +333,8 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     {
         if constexpr (std::same_as<tree_type, ObliviousTree>)
         {
-            contribs_over(internal::densify(trees_), X, out, n_features);
+            auto const dense = dense_.get(trees_, epoch_);
+            contribs_over(*dense, X, out, n_features);
         }
         else
         {
@@ -349,6 +351,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         size_t const n    = X.extent(0);
         size_t const cols = n_features + 1;
         assert(out.size() == n * n_classes_ * cols);
+        auto const biases = internal::shap_biases(trees);
         parallel::for_each_index(
             n,
             [&](size_t i)
@@ -361,7 +364,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                     for (size_t t = k; t < trees.size(); t += n_classes_)
                     {
                         internal::shap_one_row(trees[t], X, static_cast<row_id_t>(i),
-                                               phi);
+                                               phi, biases[t]);
                     }
                     for (double &v : phi)
                     {
@@ -379,6 +382,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         {
             trees_.erase(trees_.begin() + static_cast<std::ptrdiff_t>(keep),
                          trees_.end());
+            ++epoch_;
         }
     }
 
@@ -400,6 +404,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     {
         trees_       = std::move(trees);
         init_scores_ = std::move(init_scores);
+        ++epoch_;
     }
 
   private:
@@ -492,6 +497,10 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     std::vector<float>     grad_;
     std::vector<float>     hess_;
     std::vector<row_id_t>  row_indices_;
+    // Mutation epoch: bumped whenever trees_ can change, so derived views
+    // (the dense SHAP cache, later device plans) know when to rebuild.
+    uint64_t               epoch_ = 1;
+    internal::DensifyCache dense_;
 };
 
 } // namespace bonsai
