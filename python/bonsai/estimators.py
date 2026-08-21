@@ -19,6 +19,7 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+import numpy.typing as npt
 
 from bonsai._bonsai import Dataset, Model, load, train
 from bonsai._coerce import _as_f32, _to_config_str
@@ -232,7 +233,8 @@ class _BonsaiEstimator:
             **per_type,
         )
 
-    def predict(self, X, num_iteration: int = 0) -> np.ndarray:
+    def predict(self, X: npt.ArrayLike | Dataset,
+                num_iteration: int = 0) -> np.ndarray:
         """Predict with the fitted model.
 
         Parameters
@@ -254,7 +256,7 @@ class _BonsaiEstimator:
         self._check_fitted("fit() or load first")
         return np.asarray(self._model.predict(_as_x(X), num_iteration))
 
-    def staged_predict(self, X) -> np.ndarray:
+    def staged_predict(self, X: npt.ArrayLike | Dataset) -> np.ndarray:
         """Predict after each boosting iteration.
 
         Parameters
@@ -273,7 +275,7 @@ class _BonsaiEstimator:
         self._check_fitted()
         return np.asarray(self._model.staged_predict(_as_x(X)))
 
-    def predict_leaf(self, X) -> np.ndarray:
+    def predict_leaf(self, X: npt.ArrayLike | Dataset) -> np.ndarray:
         """Predict per-tree leaf indices, for feature engineering / embedding.
 
         Parameters
@@ -305,7 +307,7 @@ class _BonsaiEstimator:
         self._check_fitted()
         return self._model.dump()
 
-    def pred_contribs(self, X) -> np.ndarray:
+    def pred_contribs(self, X: npt.ArrayLike | Dataset) -> np.ndarray:
         """Compute TreeSHAP contributions.
 
         Parameters
@@ -633,8 +635,9 @@ class BonsaiRegressor(_BonsaiEstimator):
         self.objective = objective
         self.quantile_alpha = quantile_alpha
 
-    def fit(self, X, y, sample_weight=None,
-            eval_set: tuple | Dataset | None = None,
+    def fit(self, X: npt.ArrayLike, y: npt.ArrayLike,
+            sample_weight: npt.ArrayLike | None = None,
+            eval_set: tuple[npt.ArrayLike, npt.ArrayLike] | Dataset | None = None,
             init_model: str | None = None) -> BonsaiRegressor:
         """Fit the regressor to training data.
 
@@ -684,7 +687,8 @@ class BonsaiRegressor(_BonsaiEstimator):
         self.n_features_in_ = Xa.shape[1]
         return self
 
-    def score(self, X, y, sample_weight=None) -> float:
+    def score(self, X: npt.ArrayLike | Dataset, y: npt.ArrayLike,
+              sample_weight: npt.ArrayLike | None = None) -> float:
         """Compute R² (coefficient of determination) on held-out data.
 
         Matches sklearn's ``RegressorMixin.score`` — computed by hand, no
@@ -807,8 +811,9 @@ class BonsaiClassifier(_BonsaiEstimator):
         the number of classes at fit time, so there is none to store."""
         super().__init__(**_shared_args(locals()))
 
-    def fit(self, X, y, sample_weight=None,
-            eval_set: tuple | Dataset | None = None,
+    def fit(self, X: npt.ArrayLike, y: npt.ArrayLike,
+            sample_weight: npt.ArrayLike | None = None,
+            eval_set: tuple[npt.ArrayLike, npt.ArrayLike] | Dataset | None = None,
             init_model: str | None = None) -> BonsaiClassifier:
         """Fit the classifier to training data.
 
@@ -875,7 +880,8 @@ class BonsaiClassifier(_BonsaiEstimator):
         self.n_features_in_ = Xa.shape[1]
         return self
 
-    def predict(self, X, num_iteration: int = 0) -> np.ndarray:
+    def predict(self, X: npt.ArrayLike | Dataset,
+                num_iteration: int = 0) -> np.ndarray:
         """Predict class labels with the fitted model.
 
         Parameters
@@ -902,7 +908,7 @@ class BonsaiClassifier(_BonsaiEstimator):
             idx = raw.astype(np.int64)
         return self.classes_[idx]
 
-    def predict_proba(self, X) -> np.ndarray:
+    def predict_proba(self, X: npt.ArrayLike | Dataset) -> np.ndarray:
         """Predict class probabilities with the fitted model.
 
         Binary uses the ``logloss`` objective's P(class 1) directly
@@ -927,7 +933,8 @@ class BonsaiClassifier(_BonsaiEstimator):
             return np.column_stack([1.0 - p, p])
         return np.asarray(self._model.predict_proba(_as_x(X)), dtype=np.float64)
 
-    def score(self, X, y, sample_weight=None) -> float:
+    def score(self, X: npt.ArrayLike | Dataset, y: npt.ArrayLike,
+              sample_weight: npt.ArrayLike | None = None) -> float:
         """Compute accuracy on held-out data.
 
         Matches sklearn's ``ClassifierMixin.score`` — computed by hand, no
@@ -1052,7 +1059,7 @@ def _shared_args(scope: dict) -> dict:
     return {name: scope[name] for name in names}
 
 
-def _as_x(X):
+def _as_x(X: npt.ArrayLike | Dataset) -> np.ndarray | Dataset:
     """Predict-family input: a host-built ``Dataset`` passes straight through
     (the native reader takes the matrix it retained), anything else coerces
     to a float32 matrix."""

@@ -10,13 +10,32 @@ keep their exact semantics.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import overload
+
+import numpy.typing as npt
 
 from bonsai import _bonsai
+from bonsai._bonsai import Dataset, Model
 from bonsai._coerce import _to_config_str
 from bonsai._params_ops import ParamsOps
 
 
-def train(params, *args, **kwargs):
+@overload
+def train(params: ParamsOps | Mapping[str, object] | None,
+          dataset: Dataset,
+          eval_set: tuple[npt.ArrayLike, npt.ArrayLike] | Dataset | None = ...,
+          init_model: str | None = ...) -> Model: ...
+
+
+@overload
+def train(params: ParamsOps | Mapping[str, object] | None,
+          X: npt.ArrayLike, y: npt.ArrayLike,
+          eval_set: tuple[npt.ArrayLike, npt.ArrayLike] | Dataset | None = ...,
+          init_model: str | None = ...,
+          sample_weight: npt.ArrayLike | None = ...) -> Model: ...
+
+
+def train(params, *args, **kwargs) -> Model:
     """Train a booster; see ``bonsai._bonsai.train`` for the full signature.
 
     Parameters
@@ -39,7 +58,8 @@ def train(params, *args, **kwargs):
     return _bonsai.train(_as_pairs(params), *args, **kwargs)
 
 
-def _as_pairs(params) -> list[tuple[str, str]]:
+def _as_pairs(
+        params: ParamsOps | Mapping[str, object] | None) -> list[tuple[str, str]]:
     """Render an accepted params form to the native pairs wire format."""
     if params is None:
         return []
