@@ -428,7 +428,7 @@ class DensifyCache
     std::shared_ptr<std::vector<DenseTree> const>
     get(std::vector<ObliviousTree> const &trees, uint64_t epoch) const
     {
-        std::lock_guard const lock(mutex_);
+        std::scoped_lock const lock(mutex_);
         if (!cache_ || epoch_ != epoch)
         {
             cache_ = std::make_shared<std::vector<DenseTree> const>(densify(trees));
