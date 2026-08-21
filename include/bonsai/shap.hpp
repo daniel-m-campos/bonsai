@@ -19,11 +19,21 @@ namespace bonsai
 void tree_shap(DenseTree const &tree, features_view X, row_id_t row,
                std::span<double> phi);
 
+// Same walk with the tree's expected value supplied by the caller. The bias
+// is row-independent, so a batch caller computes tree_expected_value(tree)
+// once per tree instead of once per (row, tree).
+void tree_shap(DenseTree const &tree, features_view X, row_id_t row,
+               std::span<double> phi, double expected_value);
+
 // Conditional expectation of the tree given the feature subset S (features
 // present follow x; absent features average children by cover). This is the
 // quantity TreeSHAP attributes; exposed for the brute-force Shapley
 // reference used in tests.
 double tree_expected_value(DenseTree const &tree, features_view X, row_id_t row,
                            std::span<bool const> in_subset);
+
+// The unconditioned expectation (empty subset): the cover-weighted mean of
+// leaf values, a per-tree constant that never reads a row.
+double tree_expected_value(DenseTree const &tree);
 
 } // namespace bonsai
