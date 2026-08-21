@@ -258,28 +258,17 @@ void check_feature_names(std::vector<std::string> const &names, size_t n_feature
     }
 }
 
-// The caller's names, a DataFrame-like X's `columns` (duck-typed, so these
-// bindings never import pandas), or synthesized f0..fN. The synthesized names
+// The caller's names, checked, or synthesized f0..fN. The synthesized names
 // are real names as far as the model is concerned: dump() prints them and
 // monotone constraints resolve against them.
 std::vector<std::string>
-resolve_feature_names(nb::handle X, size_t n_features,
+resolve_feature_names(size_t                                         n_features,
                       std::optional<std::vector<std::string>> const &supplied)
 {
     if (supplied)
     {
         check_feature_names(*supplied, n_features);
         return *supplied;
-    }
-    if (nb::hasattr(X, "columns"))
-    {
-        std::vector<std::string> named;
-        for (nb::handle column : X.attr("columns"))
-        {
-            named.push_back(nb::cast<std::string>(nb::str(column)));
-        }
-        check_feature_names(named, n_features);
-        return named;
     }
     std::vector<std::string> names;
     names.reserve(n_features);
@@ -452,7 +441,7 @@ class Dataset
         }
 
         std::vector<std::string> names =
-            resolve_feature_names(X, xarg.n_features, feature_names);
+            resolve_feature_names(xarg.n_features, feature_names);
         // Copy the edge arrays out while the GIL is held; validation
         // (finite, strictly increasing, in-range column) happens inside
         // BinMappers::fit and surfaces as bonsai::ConfigError.
@@ -1278,18 +1267,28 @@ std::vector<int> monotone_from_mapping(nb::handle                   mapping,
         return out;
     }
     std::string listed;
-    for (size_t i = 0; i < std::min<size_t>(unknown.size(), 5); ++i)
+    for (auto const &name : unknown)
     {
-        listed += (i == 0 ? "'" : ", '") + unknown[i] + "'";
-    }
-    if (unknown.size() > 5)
-    {
-        listed += " (and " + std::to_string(unknown.size() - 5) + " more)";
+        listed += (listed.empty() ? "'" : ", '") + name + "'";
     }
     throw std::invalid_argument(
         std::string{k_monotone_key} +
         " names features the training data does not have: " + listed + ". It carries " +
         std::to_string(names.size()) + " feature names.");
+}
+
+// Places the resolved positional list, or does nothing when there was no
+// name-keyed entry. Returns whether it placed one.
+bool put_monotone(ParamItems &items, nb::handle named,
+                  std::span<std::string const> names)
+{
+    if (named.is_none())
+    {
+        return false;
+    }
+    items.emplace_back(std::string{k_monotone_key},
+                       nb::cast(monotone_from_mapping(named, names)));
+    return true;
 }
 
 // Overrides over the library defaults; a TOML base composes upstream via
@@ -1398,16 +1397,13 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
     }
 
     std::vector<std::string> names =
-        resolve_feature_names(X, xarg.n_features, std::nullopt);
-    if (!named_monotone.is_none())
+        resolve_feature_names(xarg.n_features, std::nullopt);
+    // A warm start keeps the init model's names, so the constraint is resolved
+    // against the list this fit will actually carry.
+    if (put_monotone(items, named_monotone,
+                     init ? init->mappers.feature_names()
+                          : std::span<std::string const>{names}))
     {
-        // A warm start keeps the init model's names, so the constraint is
-        // resolved against the list this fit will actually carry.
-        items.emplace_back(
-            std::string{k_monotone_key},
-            nb::cast(monotone_from_mapping(
-                named_monotone, init ? init->mappers.feature_names()
-                                     : std::span<std::string const>{names})));
         cfg = config_from_params(render_params(items));
     }
 
@@ -1449,12 +1445,8 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
     ParamItems items = items_from_params(params);
     // The Dataset already names its columns, so a name-keyed monotone entry
     // resolves before anything is rendered.
-    if (nb::object const named = take_named_monotone(items); !named.is_none())
-    {
-        items.emplace_back(std::string{k_monotone_key},
-                           nb::cast(monotone_from_mapping(
-                               named, dataset.loaded().mappers.feature_names())));
-    }
+    nb::object const named = take_named_monotone(items);
+    put_monotone(items, named, dataset.loaded().mappers.feature_names());
     ConfigPairs const pairs = render_params(items);
     for (auto const &[key, value] : pairs)
     {
@@ -1761,10 +1753,9 @@ NB_MODULE(_bonsai, m)
             "feature_names : sequence of str, optional\n"
             "    One name per column, carried into the model: ``dump`` prints "
             "them and ``tree.monotone_constraints`` may be keyed by them. "
-            "Unset, a DataFrame-like X answers with its ``columns`` "
-            "(duck-typed, so bonsai never imports pandas), and anything else "
-            "gets ``f0``..``fN``. Real names must number the columns exactly "
-            "and be unique.")
+            "Unset, the columns get ``f0``..``fN``. Names must number the "
+            "columns exactly and be unique. From pandas, "
+            "``Dataset(df.values, y, feature_names=df.columns)``.")
         .def("__reduce__",
              [](Dataset const &) -> nb::object
              {
@@ -1782,8 +1773,8 @@ NB_MODULE(_bonsai, m)
                      "Feature columns in the binned matrix.")
         .def_prop_ro("feature_names", &Dataset::feature_names,
                      "One name per column, in column order: the "
-                     "``feature_names=`` given here, X's own ``columns``, or "
-                     "the synthesized ``f0``..``fN``.")
+                     "``feature_names=`` given here, or the synthesized "
+                     "``f0``..``fN``.")
         .def_prop_ro(
             "shape",
             [](Dataset const &d) { return nb::make_tuple(d.n_rows(), d.n_features()); },
@@ -1868,10 +1859,10 @@ NB_MODULE(_bonsai, m)
           "X : float32 array, shape (n_rows, n_features)\n"
           "    Row-major features. May be a CUDA array supporting DLPack "
           "(cupy, torch, jax): X is then binned on the GPU in place, with no "
-          "host round trip. A DataFrame-like X names its columns through "
-          "``columns`` (duck-typed, so bonsai never imports pandas); anything "
-          "else is named ``f0``..``fN``. For explicit names, build a "
-          "``Dataset(X, y, feature_names=...)`` and train on that.\n"
+          "host round trip. This path always names the columns "
+          "``f0``..``fN``; for explicit names build a "
+          "``Dataset(X, y, feature_names=...)`` and train on that, which from "
+          "pandas reads ``Dataset(df.values, y, feature_names=df.columns)``.\n"
           "y : float32 array, shape (n_rows,)\n"
           "    Labels; a device-resident y is downloaded once.\n"
           "eval_set : tuple of (Xv, yv), Dataset, or None\n"
