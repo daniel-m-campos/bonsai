@@ -214,7 +214,7 @@ def test_train_on_device_input_is_byte_identical_to_host(to_device, grower):
     equal model bytes are equal bin ids: the parity claim for device binning.
     """
     X, y, _ = _reg_data()
-    pairs = [*PAIRS, ("dispatch.grower_name", grower)]
+    pairs = {**PAIRS, "dispatch.grower_name": grower}
     host = bonsai.train(pairs, X, y)
     dev = bonsai.train(pairs, _DevicePointer(to_device(X), X.shape), y)
 
@@ -231,7 +231,7 @@ def test_cuda_grower_on_device_input_matches_host(to_device):
     the CUDA suite holds every GPU-versus-host comparison to.
     """
     X, y, _ = _reg_data()
-    pairs = [*PAIRS, ("dispatch.grower_name", "cuda_depthwise")]
+    pairs = {**PAIRS, "dispatch.grower_name": "cuda_depthwise"}
     host = np.asarray(bonsai.train(pairs, X, y).predict(X))
     dev = np.asarray(
         bonsai.train(pairs, _DevicePointer(to_device(X), X.shape), y).predict(X)
@@ -310,7 +310,7 @@ def test_device_input_refuses_a_disagreeing_device_id(to_device):
     X, y, _ = _reg_data()
     with pytest.raises(Exception, match="device"):
         bonsai.train(
-            [*PAIRS, ("parallel.device_id", "1")],
+            {**PAIRS, "parallel.device_id": "1"},
             _DevicePointer(to_device(X), X.shape),
             y,
         )
