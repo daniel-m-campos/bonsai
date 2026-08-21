@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <utility>
 #include <vector>
@@ -32,7 +33,18 @@ class BinMapper
     // the trusted path for the model loader's own serialized cuts.
     static BinMapper from_edges(std::vector<float> edges);
     bin_id_t         transform(float x) const;
-    size_t           n_bins() const
+    // The bin a stored split threshold came from. The grower records
+    // threshold = cuts()[bin] and cuts are strictly increasing, so lower_bound
+    // recovers that bin exactly. The one inversion of the grower's threshold
+    // step; every route that reconstructs a bin from a threshold (DART, warm
+    // start, the resident device epilogue, the SHAP path packer) goes through
+    // here, most of them via Dataset::bin_of_threshold.
+    bin_id_t bin_of_threshold(float threshold) const
+    {
+        return static_cast<bin_id_t>(std::ranges::lower_bound(cuts_, threshold) -
+                                     cuts_.begin());
+    }
+    size_t n_bins() const
     {
         return cuts_.size();
     }

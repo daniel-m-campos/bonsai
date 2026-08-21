@@ -93,16 +93,10 @@ class Dataset
         return mappers_[f].cuts();
     }
 
-    // The bin a stored split threshold came from. The grower records
-    // threshold = cuts(f)[bin] and cuts are strictly increasing, so
-    // lower_bound recovers that bin exactly. The one inversion of the grower's
-    // threshold step; every route that reconstructs a bin from a threshold
-    // (DART, warm start, the resident device epilogue) goes through here.
+    // Feature f's threshold inversion, on the mapper that owns the cuts.
     bin_id_t bin_of_threshold(feature_id_t f, float threshold) const
     {
-        auto const c = cuts(f);
-        return static_cast<bin_id_t>(std::ranges::lower_bound(c, threshold) -
-                                     c.begin());
+        return mappers_[f].bin_of_threshold(threshold);
     }
 
     // Binned columns store 8-bit when every feature fits 256 bins (the
