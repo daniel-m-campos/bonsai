@@ -357,7 +357,7 @@ class Dataset
         bool const on_device = hint == "cuda";
         if (!on_device && hint != "cpu")
         {
-            throw std::invalid_argument("Dataset: device must be \"cpu\" or \"cuda\"");
+            throw std::invalid_argument(R"(Dataset: device must be "cpu" or "cuda")");
         }
         if (on_device && !bonsai::cuda_available())
         {
@@ -472,6 +472,23 @@ class Dataset
         return loaded_;
     }
 
+    // The raw rows a host-built Dataset retained; the Model raw-row readers
+    // (predict and friends) read them directly, no rebinning. Asking a
+    // device-resident (DLPack) build is an error with the remedy.
+    array_2d const &host_matrix(char const *method) const
+    {
+        if (!x_)
+        {
+            throw std::invalid_argument(
+                std::string{"this Dataset was built from device-resident (DLPack) "
+                            "input and kept no host matrix, but "} +
+                method +
+                " reads raw rows. Pass X as a host array, or build the Dataset "
+                "from one.");
+        }
+        return *x_;
+    }
+
   private:
     // A reference supplies the cuts, so every setting that would have shaped
     // them is inert here: unset inherits, and a disagreeing one is said out
@@ -543,6 +560,14 @@ class Model
         return to_numpy(std::move(out), {n});
     }
 
+    // Every X-taking method also accepts a Dataset (issue #399): a host-built
+    // one retained the caller's matrix, so the reader takes those rows as-is.
+    nb::ndarray<nb::numpy, float> predict(Dataset const &ds,
+                                          size_t         num_iteration = 0) const
+    {
+        return predict(ds.host_matrix("predict"), num_iteration);
+    }
+
     // Per-class probabilities. Softmax models return (n_rows, n_classes) — a
     // row-wise softmax of the class logits; width-1 objectives (logloss)
     // return (n_rows,) with P(class 1) via the link inverse.
@@ -589,6 +614,11 @@ class Model
         return to_numpy(std::move(out), {n});
     }
 
+    nb::ndarray<nb::numpy, double> predict_proba(Dataset const &ds) const
+    {
+        return predict_proba(ds.host_matrix("predict_proba"));
+    }
+
     // (n_iters, n_rows): prediction after each boosting iteration.
     nb::ndarray<nb::numpy, float> staged_predict(array_2d const &X) const
     {
@@ -609,6 +639,11 @@ class Model
         return to_numpy(std::move(out), {k, n});
     }
 
+    nb::ndarray<nb::numpy, float> staged_predict(Dataset const &ds) const
+    {
+        return staged_predict(ds.host_matrix("staged_predict"));
+    }
+
     // (n_rows, n_trees): the leaf each row lands in, per tree. The width is
     // the tree count, not the round count: multiclass grows one tree per
     // class per round and the booster fills a column for each.
@@ -623,6 +658,11 @@ class Model
                                    std::span<bonsai::node_id_t>{*out});
         }
         return to_numpy(std::move(out), {n, k});
+    }
+
+    nb::ndarray<nb::numpy, uint32_t> predict_leaf(Dataset const &ds) const
+    {
+        return predict_leaf(ds.host_matrix("predict_leaf"));
     }
 
     std::string dump() const
@@ -650,6 +690,11 @@ class Model
             return to_numpy(std::move(out), {n, width, cols});
         }
         return to_numpy(std::move(out), {n, cols});
+    }
+
+    nb::ndarray<nb::numpy, double> pred_contribs(Dataset const &ds) const
+    {
+        return pred_contribs(ds.host_matrix("pred_contribs"));
     }
 
     void save(std::string const &path) const
@@ -1006,14 +1051,18 @@ NB_MODULE(_bonsai, m)
     m.doc() = "bonsai gradient-boosted trees (native module)";
 
     nb::class_<Model>(m, "Model")
-        .def("predict", &Model::predict, nb::arg("X"), nb::arg("num_iteration") = 0,
+        .def("predict",
+             nb::overload_cast<array_2d const &, size_t>(&Model::predict, nb::const_),
+             nb::arg("X"), nb::arg("num_iteration") = 0,
              "Predict on the response scale (the objective's link inverse "
              "applied).\n"
              "\n"
              "Parameters\n"
              "----------\n"
-             "X : float32 array, shape (n_rows, n_features)\n"
-             "    Row-major features.\n"
+             "X : float32 array, shape (n_rows, n_features), or Dataset\n"
+             "    Row-major features. A host-built ``bonsai.Dataset`` reads "
+             "the matrix it retained; a device-resident (DLPack) build kept "
+             "no host rows and raises.\n"
              "num_iteration : int, default 0\n"
              "    Predict with only the first ``num_iteration`` boosting "
              "rounds; 0 uses all.\n"
@@ -1022,13 +1071,19 @@ NB_MODULE(_bonsai, m)
              "-------\n"
              "float32 array, shape (n_rows,)\n"
              "    One prediction per row.")
-        .def("predict_proba", &Model::predict_proba, nb::arg("X"),
+        .def("predict",
+             nb::overload_cast<Dataset const &, size_t>(&Model::predict, nb::const_),
+             nb::arg("X"), nb::arg("num_iteration") = 0)
+        .def("predict_proba",
+             nb::overload_cast<array_2d const &>(&Model::predict_proba, nb::const_),
+             nb::arg("X"),
              "Per-class probabilities for classification models.\n"
              "\n"
              "Parameters\n"
              "----------\n"
-             "X : float32 array, shape (n_rows, n_features)\n"
-             "    Row-major features.\n"
+             "X : float32 array, shape (n_rows, n_features), or Dataset\n"
+             "    Row-major features; a host-built Dataset reads the matrix "
+             "it retained.\n"
              "\n"
              "Returns\n"
              "-------\n"
@@ -1043,19 +1098,30 @@ NB_MODULE(_bonsai, m)
              "    For non-classification objectives: the mse link inverse is "
              "the identity, so raw margins would be silently mislabeled as "
              "probabilities.")
-        .def("staged_predict", &Model::staged_predict, nb::arg("X"),
+        .def("predict_proba",
+             nb::overload_cast<Dataset const &>(&Model::predict_proba, nb::const_),
+             nb::arg("X"))
+        .def("staged_predict",
+             nb::overload_cast<array_2d const &>(&Model::staged_predict, nb::const_),
+             nb::arg("X"),
              "Predictions after each boosting iteration.\n"
              "\n"
              "Parameters\n"
              "----------\n"
-             "X : float32 array, shape (n_rows, n_features)\n"
-             "    Row-major features.\n"
+             "X : float32 array, shape (n_rows, n_features), or Dataset\n"
+             "    Row-major features; a host-built Dataset reads the matrix "
+             "it retained.\n"
              "\n"
              "Returns\n"
              "-------\n"
              "float32 array, shape (n_iters, n_rows)\n"
              "    Row t is the response-scale prediction using rounds 0..t.")
-        .def("predict_leaf", &Model::predict_leaf, nb::arg("X"),
+        .def("staged_predict",
+             nb::overload_cast<Dataset const &>(&Model::staged_predict, nb::const_),
+             nb::arg("X"))
+        .def("predict_leaf",
+             nb::overload_cast<array_2d const &>(&Model::predict_leaf, nb::const_),
+             nb::arg("X"),
              "The leaf each row lands in, one column per tree.\n"
              "\n"
              "Width-1 objectives have one tree per round, so the columns are "
@@ -1065,13 +1131,17 @@ NB_MODULE(_bonsai, m)
              "\n"
              "Parameters\n"
              "----------\n"
-             "X : float32 array, shape (n_rows, n_features)\n"
-             "    Row-major features.\n"
+             "X : float32 array, shape (n_rows, n_features), or Dataset\n"
+             "    Row-major features; a host-built Dataset reads the matrix "
+             "it retained.\n"
              "\n"
              "Returns\n"
              "-------\n"
              "uint32 array, shape (n_rows, n_trees)\n"
              "    Leaf node id per (row, tree).")
+        .def("predict_leaf",
+             nb::overload_cast<Dataset const &>(&Model::predict_leaf, nb::const_),
+             nb::arg("X"))
         .def("dump", &Model::dump,
              "The trees as human-readable text, with feature names.\n"
              "\n"
@@ -1079,21 +1149,27 @@ NB_MODULE(_bonsai, m)
              "-------\n"
              "str\n"
              "    One block per tree.")
-        .def("pred_contribs", &Model::pred_contribs, nb::arg("X"),
+        .def("pred_contribs",
+             nb::overload_cast<array_2d const &>(&Model::pred_contribs, nb::const_),
+             nb::arg("X"),
              "TreeSHAP feature contributions, last column the bias.\n"
              "\n"
              "Each row sums to the raw (pre-link) prediction exactly.\n"
              "\n"
              "Parameters\n"
              "----------\n"
-             "X : float32 array, shape (n_rows, n_features)\n"
-             "    Row-major features.\n"
+             "X : float32 array, shape (n_rows, n_features), or Dataset\n"
+             "    Row-major features; a host-built Dataset reads the matrix "
+             "it retained.\n"
              "\n"
              "Returns\n"
              "-------\n"
              "float64 array\n"
              "    ``(n_rows, n_features + 1)``; multiclass models return "
              "``(n_rows, n_classes, n_features + 1)``.")
+        .def("pred_contribs",
+             nb::overload_cast<Dataset const &>(&Model::pred_contribs, nb::const_),
+             nb::arg("X"))
         .def("feature_importance", &Model::feature_importance, nb::arg("type") = "gain",
              "Per-feature importance, padded to the trained feature count.\n"
              "\n"

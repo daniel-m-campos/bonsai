@@ -294,6 +294,18 @@ def test_dataset_from_device_input_gathers_a_sample(to_device):
 
 
 @requires_cuda
+def test_model_methods_refuse_a_dlpack_dataset(to_device):
+    """A device-resident build kept no host rows, so every raw-row reader
+    names the gap and the remedy instead of segfaulting or guessing."""
+    X, y, _ = _reg_data()
+    ds = bonsai.Dataset(_DevicePointer(to_device(X), X.shape), y)
+    m = bonsai.train(PAIRS, ds)
+    for name in ("predict", "staged_predict", "predict_leaf", "pred_contribs"):
+        with pytest.raises(Exception, match="host matrix"):
+            getattr(m, name)(ds)
+
+
+@requires_cuda
 def test_dataset_rejects_a_host_hint_for_device_input(to_device):
     X, y, _ = _reg_data()
     with pytest.raises(Exception, match="device-resident"):

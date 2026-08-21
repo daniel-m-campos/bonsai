@@ -60,6 +60,35 @@ def test_reusable_dataset_bit_identical_and_guard():
     assert np.asarray(bonsai.train(p63, ds63).predict(X)).shape == (3000,)
 
 
+def test_model_methods_accept_a_host_dataset():
+    """Every X-taking Model method also takes a host-built Dataset (#399):
+    the reader takes the retained matrix as-is, so each result is bit-equal
+    to the array call — no rebinning, no copies, no drift."""
+    X, y = _reg_data(n=2000, f=8)
+    ds = bonsai.Dataset(X, y)
+    m = bonsai.train({"booster.n_iters": "20"}, ds)
+
+    for name in ("predict", "staged_predict", "predict_leaf", "pred_contribs"):
+        np.testing.assert_array_equal(
+            np.asarray(getattr(m, name)(X)), np.asarray(getattr(m, name)(ds))
+        )
+    np.testing.assert_array_equal(
+        np.asarray(m.predict(X, 5)), np.asarray(m.predict(ds, 5))
+    )
+
+    # predict_proba is classification-only; the Dataset arm keeps the guard.
+    yc = (y > np.median(y)).astype(np.float32)
+    dc = bonsai.Dataset(X, yc)
+    mc = bonsai.train(
+        {"booster.n_iters": "10", "dispatch.objective_name": "logloss"}, dc
+    )
+    np.testing.assert_array_equal(
+        np.asarray(mc.predict_proba(X)), np.asarray(mc.predict_proba(dc))
+    )
+    with pytest.raises(Exception, match="classification"):
+        m.predict_proba(ds)
+
+
 def test_dataset_bin_edges_carries_domain_bands_in_the_artifact():
     """Doc 18: explicit bin_edges travel inside the model artifact, so predict
     on raw values respects the domain bands with no external transform — the
