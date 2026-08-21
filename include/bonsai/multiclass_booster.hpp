@@ -195,6 +195,48 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                                  });
     }
 
+    void predict_at_binned(Dataset const &bins, floats_out y_hat,
+                           size_t n_rounds) const override
+    {
+        size_t const n = bins.n_rows();
+        assert(y_hat.size() == n);
+        auto const scores = raw_scores_binned(bins, n_rounds);
+        parallel::for_each_index(n,
+                                 [&](size_t i)
+                                 {
+                                     size_t best = 0;
+                                     for (size_t k = 1; k < n_classes_; ++k)
+                                     {
+                                         if (scores[(i * n_classes_) + k] >
+                                             scores[(i * n_classes_) + best])
+                                         {
+                                             best = k;
+                                         }
+                                     }
+                                     y_hat[i] = static_cast<float>(best);
+                                 });
+    }
+
+    void predict_proba_binned(Dataset const &bins, std::span<double> out) const override
+    {
+        size_t const k = n_classes_;
+        size_t const n = bins.n_rows();
+        assert(out.size() == n * k);
+        auto const scores = raw_scores_binned(bins, 0);
+        parallel::for_each_index(n,
+                                 [&](size_t i)
+                                 {
+                                     size_t const base      = i * k;
+                                     auto const [maxv, sum] = row_softmax_exp(
+                                         scores, base, k, [&](size_t c, double e)
+                                         { out[base + c] = e; });
+                                     for (size_t c = 0; c < k; ++c)
+                                     {
+                                         out[base + c] /= sum;
+                                     }
+                                 });
+    }
+
     // Multiclass logloss on raw scores.
     float eval(features_view X, floats_view labels) const override
     {
@@ -307,9 +349,24 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         }
     }
 
+    void predict_staged_binned(Dataset const &bins, floats_out out) const override
+    {
+        size_t const n = bins.n_rows();
+        for (size_t r = 0; r < n_iters(); ++r)
+        {
+            predict_at_binned(bins, floats_out{out.data() + (r * n), n}, r + 1);
+        }
+    }
+
     void predict_leaf(features_view X, std::span<node_id_t> out) const override
     {
         internal::predict_leaf_over(trees_, X, out);
+    }
+
+    void predict_leaf_binned(Dataset const       &bins,
+                             std::span<node_id_t> out) const override
+    {
+        internal::predict_leaf_over_binned(trees_, bins, out);
     }
 
     std::string dump(std::span<std::string const> feature_names) const override
@@ -365,6 +422,54 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                     {
                         internal::shap_one_row(trees[t], X, static_cast<row_id_t>(i),
                                                phi, biases[t]);
+                    }
+                    for (double &v : phi)
+                    {
+                        v *= config_.learning_rate;
+                    }
+                    phi[n_features] += init_scores_.empty() ? 0.0F : init_scores_[k];
+                }
+            });
+    }
+
+    void pred_contribs_binned(Dataset const &bins, std::span<double> out,
+                              size_t n_features) const override
+    {
+        if constexpr (std::same_as<tree_type, ObliviousTree>)
+        {
+            auto const dense = dense_.get(trees_, epoch_);
+            contribs_over_binned(*dense, bins, out, n_features);
+        }
+        else
+        {
+            contribs_over_binned(trees_, bins, out, n_features);
+        }
+    }
+
+    // contribs_over's twin: routing reads the row's bins, the class stride and
+    // the arithmetic that follows are unchanged.
+    template <typename Trees>
+    void contribs_over_binned(Trees const &trees, Dataset const &bins,
+                              std::span<double> out, size_t n_features) const
+    {
+        size_t const n    = bins.n_rows();
+        size_t const cols = n_features + 1;
+        assert(out.size() == n * n_classes_ * cols);
+        auto const biases = internal::shap_biases(trees);
+        auto const sb     = internal::tree_split_bins(trees, bins);
+        parallel::for_each_index(
+            n,
+            [&](size_t i)
+            {
+                for (size_t k = 0; k < n_classes_; ++k)
+                {
+                    std::span<double> const phi =
+                        out.subspan(((i * n_classes_) + k) * cols, cols);
+                    std::ranges::fill(phi, 0.0);
+                    for (size_t t = k; t < trees.size(); t += n_classes_)
+                    {
+                        tree_shap_binned(trees[t], sb[t], bins,
+                                         static_cast<row_id_t>(i), phi, biases[t]);
                     }
                     for (double &v : phi)
                     {
@@ -474,6 +579,33 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
             for (size_t r = 0; r < rounds; ++r)
             {
                 trees_[(r * n_classes_) + k].predict(X, raw);
+            }
+            for (size_t i = 0; i < n; ++i)
+            {
+                scores[(i * n_classes_) + k] =
+                    init_scores_.empty()
+                        ? config_.learning_rate * raw[i]
+                        : init_scores_[k] + (config_.learning_rate * raw[i]);
+            }
+        }
+        return scores;
+    }
+
+    // raw_scores over binned rows: the same per-class accumulation, routed in
+    // bin space.
+    std::vector<float> raw_scores_binned(Dataset const &bins, size_t n_rounds) const
+    {
+        size_t const n      = bins.n_rows();
+        size_t const rounds = n_rounds == 0 ? n_iters() : std::min(n_rounds, n_iters());
+        std::vector<float> scores(n * n_classes_, 0.0F);
+        std::vector<float> raw(n);
+        for (size_t k = 0; k < n_classes_; ++k)
+        {
+            std::ranges::fill(raw, 0.0F);
+            for (size_t r = 0; r < rounds; ++r)
+            {
+                internal::accumulate_train_contribution(trees_[(r * n_classes_) + k],
+                                                        bins, raw);
             }
             for (size_t i = 0; i < n; ++i)
             {

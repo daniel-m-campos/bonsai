@@ -3,6 +3,7 @@
 #include "bonsai/config/booster_config.hpp"
 #include "bonsai/config/config.hpp"
 #include "bonsai/dataset.hpp"
+#include "bonsai/detail/bin_walk.hpp"
 #include "bonsai/detail/perf.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/objective.hpp"
@@ -104,6 +105,30 @@ class IBooster
     virtual void pred_contribs(features_view X, std::span<double> out,
                                size_t n_features) const = 0;
 
+    // --- prediction over a Dataset the caller already binned
+    // Bin-space routing is exact under the model's own cuts, so each of these
+    // is bit-identical to its raw twin above (same outputs, same layouts) at a
+    // quarter the bytes. The Dataset must carry the cuts the model was grown
+    // on; a Dataset binned with other mappers routes to other leaves.
+    virtual void predict_at_binned(Dataset const &bins, floats_out scores,
+                                   size_t n_trees) const = 0;
+
+    virtual void predict_staged_binned(Dataset const &bins, floats_out out) const = 0;
+
+    virtual void predict_leaf_binned(Dataset const       &bins,
+                                     std::span<node_id_t> out) const = 0;
+
+    virtual void predict_proba_binned(Dataset const & /*bins*/,
+                                      std::span<double> /*out*/) const
+    {
+        throw std::logic_error("predict_proba: per-class probabilities are only "
+                               "available for the multiclass (softmax) objective; "
+                               "width-1 objectives expose P via predict()");
+    }
+
+    virtual void pred_contribs_binned(Dataset const &bins, std::span<double> out,
+                                      size_t n_features) const = 0;
+
     // --- the training-loop seam (CLI pipeline only)
     // Incremental prediction support for early stopping, shape-agnostic so
     // multiclass composes: the caller maintains a raw-score matrix of
@@ -161,86 +186,17 @@ class IBooster
 namespace internal
 {
 
-// A tree's splits in bin space, so a routing walk inverts bin_of_threshold
-// once per tree instead of once per row: per split, the bin its threshold came
-// from and its feature's missing bin. Indexed by node id (DenseTree) or by
-// level (ObliviousTree).
-struct SplitBins
-{
-    std::vector<bin_id_t> split;
-    std::vector<bin_id_t> last;
-};
+// The bin-space walk lives in detail/bin_walk.hpp so src/shap.cpp can reach it
+// too; these keep every existing call site spelled internal::.
+using detail::leaf_binned;
+using detail::split_bins;
+using detail::SplitBins;
+using detail::value_binned;
 
-inline SplitBins split_bins(DenseTree const &tree, Dataset const &ds)
-{
-    auto const &nodes = tree.nodes();
-    SplitBins   sb{std::vector<bin_id_t>(nodes.size(), 0),
-                 std::vector<bin_id_t>(nodes.size(), 0)};
-    for (size_t i = 0; i < nodes.size(); ++i)
-    {
-        if (!DenseTree::is_leaf(nodes[i]))
-        {
-            auto const f = nodes[i].feature_id;
-            sb.split[i]  = ds.bin_of_threshold(f, nodes[i].threshold_or_value);
-            sb.last[i]   = static_cast<bin_id_t>(ds.n_bins(f) - 1);
-        }
-    }
-    return sb;
-}
-
-inline SplitBins split_bins(ObliviousTree const &tree, Dataset const &ds)
-{
-    auto const &splits = tree.splits();
-    SplitBins   sb{std::vector<bin_id_t>(splits.size(), 0),
-                 std::vector<bin_id_t>(splits.size(), 0)};
-    for (size_t lvl = 0; lvl < splits.size(); ++lvl)
-    {
-        auto const f  = splits[lvl].feature_id;
-        sb.split[lvl] = ds.bin_of_threshold(f, splits[lvl].threshold);
-        sb.last[lvl]  = static_cast<bin_id_t>(ds.n_bins(f) - 1);
-    }
-    return sb;
-}
-
-// Row r's leaf contribution, routed in bin space. `bin_of(fid)` yields that
-// row's bin for one feature, which is the only thing the two bin layouts
-// disagree on: the training columns answer with Dataset::bin_at, the eval path
-// with the row-major mirror. Routing itself is routes_left either way, because
-// bin(v) <= split_bin exactly when v <= cuts[split_bin] and the missing bin
-// follows default_left.
-template <typename BinOf>
-float value_binned(DenseTree const &tree, SplitBins const &sb, BinOf const &bin_of)
-{
-    auto const &nodes = tree.nodes();
-    node_id_t   idx   = 0;
-    while (!DenseTree::is_leaf(nodes[idx]))
-    {
-        auto const &nd   = nodes[idx];
-        bool const  left = routes_left(bin_of(nd.feature_id), sb.last[idx],
-                                       sb.split[idx], nd.default_left);
-        idx              = left ? nd.left : nd.right;
-    }
-    return nodes[idx].threshold_or_value;
-}
-
-template <typename BinOf>
-float value_binned(ObliviousTree const &tree, SplitBins const &sb, BinOf const &bin_of)
-{
-    auto const &splits = tree.splits();
-    size_t      index  = 0;
-    for (size_t lvl = 0; lvl < splits.size(); ++lvl)
-    {
-        auto const &s   = splits[lvl];
-        bool const left = routes_left(bin_of(s.feature_id), sb.last[lvl], sb.split[lvl],
-                                      s.default_left);
-        index           = (index << 1U) | (left ? 0U : 1U);
-    }
-    return tree.leaf_table()[index];
-}
-
-// Accumulate a tree's (unscaled-by-lr) contribution over the training rows,
-// routing the columns the tree was grown on. Used by DART to subtract dropped
-// trees without caching per-tree train predictions.
+// Accumulate a tree's (unscaled-by-lr) contribution over a binned Dataset's
+// rows, routing the columns the tree was grown on. Used by DART to subtract
+// dropped trees without caching per-tree train predictions, by warm start, and
+// by the binned prediction family.
 template <Tree T>
 void accumulate_train_contribution(T const &tree, Dataset const &ds, floats_out out)
 {
@@ -402,6 +358,42 @@ void predict_leaf_over(Trees const &trees, features_view X, std::span<node_id_t>
                                          trees[t].leaf_for(X, static_cast<row_id_t>(i));
                                  }
                              });
+}
+
+// The per-tree SplitBins a binned batch shares across its rows: the threshold
+// inversion is row-independent, so one walk per tree replaces one per (row,
+// tree). The bias hoist's counterpart for routing.
+template <typename Trees>
+std::vector<SplitBins> tree_split_bins(Trees const &trees, Dataset const &bins)
+{
+    std::vector<SplitBins> sb;
+    sb.reserve(trees.size());
+    for (auto const &tree : trees)
+    {
+        sb.push_back(split_bins(tree, bins));
+    }
+    return sb;
+}
+
+// predict_leaf_over's twin over binned rows, same row-major-by-row output.
+template <typename Trees>
+void predict_leaf_over_binned(Trees const &trees, Dataset const &bins,
+                              std::span<node_id_t> out)
+{
+    size_t const n       = bins.n_rows();
+    size_t const n_trees = trees.size();
+    assert(out.size() == n * n_trees);
+    auto const sb = tree_split_bins(trees, bins);
+    parallel::for_each_index(
+        n,
+        [&](size_t i)
+        {
+            auto const bin_of = [&](size_t f) { return bins.bin_at(f, i); };
+            for (size_t t = 0; t < n_trees; ++t)
+            {
+                out[(i * n_trees) + t] = leaf_binned(trees[t], sb[t], bin_of);
+            }
+        });
 }
 
 // TreeSHAP's cover-weighted walk is written against the dense shape, so an
@@ -788,6 +780,87 @@ class Booster final : public IBooster
     void predict_leaf(features_view X, std::span<node_id_t> out) const override
     {
         internal::predict_leaf_over(trees_, X, out);
+    }
+
+    void predict_at_binned(Dataset const &bins, floats_out scores,
+                           size_t n_trees) const override
+    {
+        assert(bins.n_rows() == scores.size());
+        size_t const k =
+            n_trees == 0 ? trees_.size() : std::min(n_trees, trees_.size());
+        std::fill(scores.begin(), scores.end(), 0.0F);
+        for (size_t t = 0; t < k; ++t)
+        {
+            internal::accumulate_train_contribution(trees_[t], bins, scores);
+        }
+        for (float &score : scores)
+        {
+            score = init_score_ + (score * config_.learning_rate);
+        }
+    }
+
+    void predict_staged_binned(Dataset const &bins, floats_out out) const override
+    {
+        size_t const n = bins.n_rows();
+        assert(out.size() == n * trees_.size());
+        std::vector<float> raw(n, 0.0F);
+        for (size_t t = 0; t < trees_.size(); ++t)
+        {
+            internal::accumulate_train_contribution(trees_[t], bins, raw);
+            parallel::for_each_index(
+                n, [&](size_t i)
+                { out[(t * n) + i] = init_score_ + (raw[i] * config_.learning_rate); });
+        }
+    }
+
+    void predict_leaf_binned(Dataset const       &bins,
+                             std::span<node_id_t> out) const override
+    {
+        internal::predict_leaf_over_binned(trees_, bins, out);
+    }
+
+    void pred_contribs_binned(Dataset const &bins, std::span<double> out,
+                              size_t n_features) const override
+    {
+        if constexpr (std::same_as<tree_type, ObliviousTree>)
+        {
+            auto const dense = dense_.get(trees_, epoch_);
+            contribs_over_binned(*dense, bins, out, n_features);
+        }
+        else
+        {
+            contribs_over_binned(trees_, bins, out, n_features);
+        }
+    }
+
+    // contribs_over's twin: routing reads the row's bins, the arithmetic that
+    // follows is the same walk over the same covers.
+    template <typename Trees>
+    void contribs_over_binned(Trees const &trees, Dataset const &bins,
+                              std::span<double> out, size_t n_features) const
+    {
+        size_t const n    = bins.n_rows();
+        size_t const cols = n_features + 1;
+        assert(out.size() == n * cols);
+        auto const biases = internal::shap_biases(trees);
+        auto const sb     = internal::tree_split_bins(trees, bins);
+        parallel::for_each_index(
+            n,
+            [&](size_t i)
+            {
+                std::span<double> const phi = out.subspan(i * cols, cols);
+                std::ranges::fill(phi, 0.0);
+                for (size_t t = 0; t < trees.size(); ++t)
+                {
+                    tree_shap_binned(trees[t], sb[t], bins, static_cast<row_id_t>(i),
+                                     phi, biases[t]);
+                }
+                for (double &v : phi)
+                {
+                    v *= config_.learning_rate;
+                }
+                phi[n_features] += init_score_;
+            });
     }
 
     std::string dump(std::span<std::string const> feature_names) const override
