@@ -9,7 +9,7 @@
     "refreshed_for": "1.10.0",
     "as_of_decision": 104,
     "companion": "parity-2026-08.jsonl",
-    "hash_set": "8e220a9eac60839a",
+    "hash_set": "52c42be9736fd317",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
@@ -17,8 +17,8 @@
     },
     "carried_forward": {
       "measured_at": "e2bb3ac",
-      "stamped_at": "0cd5c3b",
-      "reason": "device sources since v1.10.0 are additions only: new predict/SHAP TUs plus a cold profile helper, no fit kernel touched (PR 406); the host fit bytes reproduce",
+      "stamped_at": "9418f2d",
+      "reason": "the 1.12.0 span is PR 410 only: params acceptance moved into the Python binding TU plus type annotations; no fit code changed and the fit bytes reproduce",
       "evidence": {
         "kind": "model-hash",
         "before": "55c6fe308852d9bb",
@@ -34,7 +34,7 @@
     "plane": "gpu",
     "refreshed_for": "1.10.0",
     "as_of_decision": 104,
-    "hash_set": "8e220a9eac60839a",
+    "hash_set": "52c42be9736fd317",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
@@ -42,8 +42,8 @@
     },
     "carried_forward": {
       "measured_at": "e2bb3ac",
-      "stamped_at": "0cd5c3b",
-      "reason": "device sources since v1.10.0 are additions only: new predict/SHAP TUs plus a cold profile helper, no fit kernel touched (PR 406); the host fit bytes reproduce",
+      "stamped_at": "9418f2d",
+      "reason": "the 1.12.0 span is PR 410 only: params acceptance moved into the Python binding TU plus type annotations; no fit code changed and the fit bytes reproduce",
       "evidence": {
         "kind": "model-hash",
         "before": "55c6fe308852d9bb",
@@ -59,7 +59,7 @@
     "plane": "gpu",
     "refreshed_for": "1.10.0",
     "as_of_decision": 104,
-    "hash_set": "8e220a9eac60839a",
+    "hash_set": "52c42be9736fd317",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
@@ -67,8 +67,8 @@
     },
     "carried_forward": {
       "measured_at": "e2bb3ac",
-      "stamped_at": "0cd5c3b",
-      "reason": "device sources since v1.10.0 are additions only: new predict/SHAP TUs plus a cold profile helper, no fit kernel touched (PR 406); the host fit bytes reproduce",
+      "stamped_at": "9418f2d",
+      "reason": "the 1.12.0 span is PR 410 only: params acceptance moved into the Python binding TU plus type annotations; no fit code changed and the fit bytes reproduce",
       "evidence": {
         "kind": "model-hash",
         "before": "55c6fe308852d9bb",
@@ -84,7 +84,7 @@
     "plane": "cpu",
     "refreshed_for": "1.10.0",
     "as_of_decision": 104,
-    "hash_set": "ebc1ce739df9864d",
+    "hash_set": "985f215d0cac6809",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
@@ -92,8 +92,8 @@
     },
     "carried_forward": {
       "measured_at": "e2bb3ac",
-      "stamped_at": "0cd5c3b",
-      "reason": "the 1.11.0 span is read-side: device predict/SHAP (PR 406) and typed Params over the unchanged pairs wire (PR 402); no per-row fit code changed and the fit bytes reproduce",
+      "stamped_at": "9418f2d",
+      "reason": "the 1.12.0 span is PR 410 only: params acceptance moved into the Python binding TU plus type annotations; no fit code changed and the fit bytes reproduce",
       "evidence": {
         "kind": "model-hash",
         "before": "55c6fe308852d9bb",
@@ -109,7 +109,7 @@
     "plane": "cpu",
     "refreshed_for": "1.10.0",
     "as_of_decision": 104,
-    "hash_set": "ebc1ce739df9864d",
+    "hash_set": "985f215d0cac6809",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
@@ -117,8 +117,8 @@
     },
     "carried_forward": {
       "measured_at": "e2bb3ac",
-      "stamped_at": "0cd5c3b",
-      "reason": "the 1.11.0 span is read-side: device predict/SHAP (PR 406) and typed Params over the unchanged pairs wire (PR 402); no per-row fit code changed and the fit bytes reproduce",
+      "stamped_at": "9418f2d",
+      "reason": "the 1.12.0 span is PR 410 only: params acceptance moved into the Python binding TU plus type annotations; no fit code changed and the fit bytes reproduce",
       "evidence": {
         "kind": "model-hash",
         "before": "55c6fe308852d9bb",
@@ -134,7 +134,7 @@
     "plane": "gpu",
     "refreshed_for": "1.10.0",
     "as_of_decision": 104,
-    "hash_set": "8e220a9eac60839a",
+    "hash_set": "52c42be9736fd317",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
@@ -142,8 +142,8 @@
     },
     "carried_forward": {
       "measured_at": "e2bb3ac",
-      "stamped_at": "0cd5c3b",
-      "reason": "device sources since v1.10.0 are additions only: new predict/SHAP TUs plus a cold profile helper, no fit kernel touched (PR 406); the host fit bytes reproduce",
+      "stamped_at": "9418f2d",
+      "reason": "the 1.12.0 span is PR 410 only: params acceptance moved into the Python binding TU plus type annotations; no fit code changed and the fit bytes reproduce",
       "evidence": {
         "kind": "model-hash",
         "before": "55c6fe308852d9bb",
@@ -159,7 +159,7 @@
     "refreshed_for": "1.7.0",
     "as_of_decision": 92,
     "sha_partial": true,
-    "hash_set": "8e220a9eac60839a",
+    "hash_set": "52c42be9736fd317",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
@@ -167,8 +167,8 @@
     },
     "carried_forward": {
       "measured_at": "f2202a4",
-      "stamped_at": "0cd5c3b",
-      "reason": "the only behavior-bearing change since the last carry (the empty-leaf 0/0 guard) alters only fits that previously produced NaN predictions, which no published quality run did; the fit bytes reproduce",
+      "stamped_at": "9418f2d",
+      "reason": "the 1.12.0 span is PR 410 only: params acceptance moved into the Python binding TU plus type annotations; no fit code changed and the fit bytes reproduce",
       "evidence": {
         "kind": "model-hash",
         "before": "55c6fe308852d9bb",
@@ -178,10 +178,10 @@
   },
   "code": {
     "file": "code-metrics-2026-08.jsonl",
-    "sha": "0cd5c3bb4cdbed3fec3c4276c8f12bdb19025ead",
+    "sha": "9418f2d9228b7eca9459f8068c6beaea153c9a89",
     "host": null,
     "date": null,
-    "refreshed_for": "1.11.0",
+    "refreshed_for": "1.12.0",
     "as_of_decision": 92,
     "sha_partial": true
   },
@@ -193,7 +193,7 @@
     "plane": "gpu",
     "refreshed_for": "1.10.0",
     "as_of_decision": 108,
-    "hash_set": "8e220a9eac60839a",
+    "hash_set": "52c42be9736fd317",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.7.0",
@@ -201,8 +201,8 @@
     },
     "carried_forward": {
       "measured_at": "ffce72d",
-      "stamped_at": "0cd5c3b",
-      "reason": "since the ffce72d measurement the kernels changed only by the cold profile_on consolidation; the review refactor holds the full parity suites and the fit bytes reproduce",
+      "stamped_at": "9418f2d",
+      "reason": "the 1.12.0 span is PR 410 only: params acceptance moved into the Python binding TU plus type annotations; no fit code changed and the fit bytes reproduce",
       "evidence": {
         "kind": "model-hash",
         "before": "55c6fe308852d9bb",
