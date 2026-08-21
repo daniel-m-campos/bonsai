@@ -34,6 +34,7 @@ if(NOT BONSAI_CUDA)
     target_sources(bonsai_tree PRIVATE
         cuda/histogram_engine_stub.cpp
         cuda/predict_stub.cpp
+        cuda/shap_stub.cpp
     )
 endif()
 

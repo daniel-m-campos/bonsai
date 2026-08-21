@@ -21,6 +21,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -37,6 +38,7 @@
 #include "bonsai/config/toml.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/cuda/predict.hpp"
+#include "bonsai/cuda/shap.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/io/model.hpp"
@@ -529,33 +531,61 @@ class Dataset
     bonsai::BinMapperConfig            bin_cfg_;
 };
 
-// The device predict plan cached per mutation epoch, so a sweep of predicts
-// between fits packs the ensemble once. Readers are const and may be
+// The device plans cached per mutation epoch, so a sweep of predicts or
+// explains between fits packs the ensemble once. Readers are const and may be
 // concurrent (the bindings release the GIL), hence the lock; a refused pack
 // caches too, so a host with no device pays one refusal per epoch, not one
-// per call.
-class PredictPlanCache
+// per call. The two kinds pack independently: leaf paths cost more to pack
+// than the node tables, and a caller that never explains never pays for them.
+class DevicePlanCache
 {
   public:
     std::shared_ptr<bonsai::CudaPredictPlan const>
-    get(bonsai::PredictPlanInput const &in, bonsai::BinMappers const &mappers)
+    predict(bonsai::PredictPlanInput const &in, bonsai::BinMappers const &mappers)
     {
         std::scoped_lock const lock(mutex_);
-        if (!packed_ || epoch_ != in.epoch)
-        {
-            plan_   = bonsai::cuda_predict_plan(in.trees, mappers, in.learning_rate,
-                                                in.init_score);
-            epoch_  = in.epoch;
-            packed_ = true;
-        }
-        return plan_;
+        return predict_.get(in.epoch,
+                            [&]
+                            {
+                                return bonsai::cuda_predict_plan(
+                                    in.trees, mappers, in.learning_rate, in.init_score);
+                            });
+    }
+
+    std::shared_ptr<bonsai::CudaShapPlan const> shap(bonsai::PredictPlanInput const &in,
+                                                     bonsai::BinMappers const &mappers)
+    {
+        std::scoped_lock const lock(mutex_);
+        return shap_.get(in.epoch,
+                         [&]
+                         {
+                             return bonsai::cuda_shap_plan(
+                                 in.trees, mappers, in.learning_rate, in.init_score);
+                         });
     }
 
   private:
-    std::mutex                                     mutex_;
-    std::shared_ptr<bonsai::CudaPredictPlan const> plan_;
-    uint64_t                                       epoch_  = 0;
-    bool                                           packed_ = false;
+    template <typename Plan> struct Slot
+    {
+        std::shared_ptr<Plan const> plan;
+        uint64_t                    epoch  = 0;
+        bool                        packed = false;
+
+        template <typename Pack> std::shared_ptr<Plan const> get(uint64_t at, Pack pack)
+        {
+            if (!packed || epoch != at)
+            {
+                plan   = pack();
+                epoch  = at;
+                packed = true;
+            }
+            return plan;
+        }
+    };
+
+    std::mutex                    mutex_;
+    Slot<bonsai::CudaPredictPlan> predict_;
+    Slot<bonsai::CudaShapPlan>    shap_;
 };
 
 // A trained model: booster + the bin mappers and config it was fit with.
@@ -842,8 +872,11 @@ class Model
         auto         out = std::make_unique<std::vector<double>>(n * width * cols, 0.0);
         {
             nb::gil_scoped_release release;
-            booster_->pred_contribs_binned(ds.loaded().train.dataset,
-                                           std::span<double>{*out}, nf);
+            if (width > 1 || !contribs_on_device(ds, std::span<double>{*out}))
+            {
+                booster_->pred_contribs_binned(ds.loaded().train.dataset,
+                                               std::span<double>{*out}, nf);
+            }
         }
         if (width > 1)
         {
@@ -919,9 +952,27 @@ class Model
         {
             return false;
         }
-        auto const plan = plan_cache_->get(in, mappers_);
+        auto const plan = plan_cache_->predict(in, mappers_);
         return plan && bonsai::cuda_predict(*plan, *plane, bins.n_rows(),
                                             bins.n_features(), num_iteration, out);
+    }
+
+    // predict_on_device's twin for TreeSHAP, declining on the same conditions.
+    // One difference of substance: the device walk builds its path polynomials
+    // in fp32 where the host walk is fp64 throughout, so this route agrees with
+    // the host to a tolerance, not bit for bit.
+    bool contribs_on_device(Dataset const &ds, std::span<double> out) const
+    {
+        auto const &bins  = ds.loaded().train.dataset;
+        auto const  plane = bins.ingest_plane();
+        auto const  in    = booster_->predict_plan_input();
+        if (!plane || in.trees.empty())
+        {
+            return false;
+        }
+        auto const plan = plan_cache_->shap(in, mappers_);
+        return plan && bonsai::cuda_pred_contribs(*plan, *plane, bins.n_rows(),
+                                                  bins.n_features(), out);
     }
 
     std::unique_ptr<bonsai::IBooster> booster_;
@@ -929,8 +980,7 @@ class Model
     bonsai::Config                    cfg_;
     std::vector<float>                eval_history_;
     // Held indirectly so the Model stays movable past the cache's mutex.
-    std::shared_ptr<PredictPlanCache> plan_cache_ =
-        std::make_shared<PredictPlanCache>();
+    std::shared_ptr<DevicePlanCache> plan_cache_ = std::make_shared<DevicePlanCache>();
 };
 
 // The validation set a fit was handed: raw arrays, which the fit bins itself
