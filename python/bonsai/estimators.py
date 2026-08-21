@@ -238,8 +238,9 @@ class _BonsaiEstimator:
         Parameters
         ----------
         X
-            Feature matrix, or a host-built ``bonsai.Dataset`` (reads the
-            matrix it retained; device-resident builds kept none and raise).
+            Feature matrix, or a ``bonsai.Dataset``: one carrying the
+            model's cuts routes in bin space (device-resident builds
+            included), others read the matrix they retained.
         num_iteration
             Truncates the ensemble to its first ``n`` trees, as on
             ``Model.predict``; 0 uses every tree. A prefix always starts at
@@ -259,8 +260,9 @@ class _BonsaiEstimator:
         Parameters
         ----------
         X
-            Feature matrix, or a host-built ``bonsai.Dataset`` (reads the
-            matrix it retained; device-resident builds kept none and raise).
+            Feature matrix, or a ``bonsai.Dataset``: one carrying the
+            model's cuts routes in bin space (device-resident builds
+            included), others read the matrix they retained.
 
         Returns
         -------
@@ -277,8 +279,9 @@ class _BonsaiEstimator:
         Parameters
         ----------
         X
-            Feature matrix, or a host-built ``bonsai.Dataset`` (reads the
-            matrix it retained; device-resident builds kept none and raise).
+            Feature matrix, or a ``bonsai.Dataset``: one carrying the
+            model's cuts routes in bin space (device-resident builds
+            included), others read the matrix they retained.
 
         Returns
         -------
@@ -308,8 +311,9 @@ class _BonsaiEstimator:
         Parameters
         ----------
         X
-            Feature matrix, or a host-built ``bonsai.Dataset`` (reads the
-            matrix it retained; device-resident builds kept none and raise).
+            Feature matrix, or a ``bonsai.Dataset``: one carrying the
+            model's cuts routes in bin space (device-resident builds
+            included), others read the matrix they retained.
 
         Returns
         -------
@@ -877,8 +881,9 @@ class BonsaiClassifier(_BonsaiEstimator):
         Parameters
         ----------
         X
-            Feature matrix, or a host-built ``bonsai.Dataset`` (reads the
-            matrix it retained; device-resident builds kept none and raise).
+            Feature matrix, or a ``bonsai.Dataset``: one carrying the
+            model's cuts routes in bin space (device-resident builds
+            included), others read the matrix they retained.
         num_iteration
             Truncates the ensemble to its first ``n`` trees; 0 uses every
             tree.
@@ -907,8 +912,9 @@ class BonsaiClassifier(_BonsaiEstimator):
         Parameters
         ----------
         X
-            Feature matrix, or a host-built ``bonsai.Dataset`` (reads the
-            matrix it retained; device-resident builds kept none and raise).
+            Feature matrix, or a ``bonsai.Dataset``: one carrying the
+            model's cuts routes in bin space (device-resident builds
+            included), others read the matrix they retained.
 
         Returns
         -------
