@@ -486,7 +486,7 @@ class _BonsaiEstimator:
         ``classes_`` at fit time. Overridden per-subclass."""
         raise NotImplementedError
 
-    def _build_pairs(self) -> list[tuple[str, str]]:
+    def _build_overrides(self) -> dict[str, str]:
         """Translate the first-class kwargs and ``params`` into the dotted
         config keys the native ``train()`` expects. Kept out of ``__init__``
         so constructor args stay raw attributes (required for
@@ -525,16 +525,16 @@ class _BonsaiEstimator:
         overrides = (self.params.to_dict()
                      if isinstance(self.params, ParamsOps) else self.params)
         merged.update(overrides or {})
-        return [(k, _to_config_str(v)) for k, v in merged.items()]
+        return {k: _to_config_str(v) for k, v in merged.items()}
 
     @staticmethod
-    def _reject_dart_eval_set(pairs: list[tuple[str, str]]):
+    def _reject_dart_eval_set(overrides: dict[str, str]):
         """Eval history shares early stopping's incremental valid-loss
         accumulation, which DART's per-round tree rescaling invalidates;
         the native layer would silently record nothing (and
         ``evals_result()`` would come back empty), so fail loudly at fit
         time, mirroring the native early-stopping + DART rejection."""
-        for key, value in pairs:
+        for key, value in overrides.items():
             if key == "booster.dart_drop_rate" and float(value) > 0.0:
                 raise ValueError(
                     "eval_set is unsupported with dart_drop_rate > 0: eval "
@@ -673,16 +673,16 @@ class BonsaiRegressor(_BonsaiEstimator):
             ``eval_set`` is given at all.
         """
         _reject_eval_set_list(eval_set)
-        pairs = self._build_pairs()
+        overrides = self._build_overrides()
         ev = None
         if eval_set is not None:
-            self._reject_dart_eval_set(pairs)
+            self._reject_dart_eval_set(overrides)
             ev = (eval_set if isinstance(eval_set, Dataset)
                   else (_as_f32(eval_set[0], 2, "X"), _as_f32(eval_set[1], 1, "y")))
         sw = None if sample_weight is None else _as_f32(sample_weight, 1, "sample_weight")
         Xa = _as_f32(X, 2, "X")
         self._model = train(
-            pairs, Xa, _as_f32(y, 1, "y"), ev, init_model, sample_weight=sw,
+            overrides, Xa, _as_f32(y, 1, "y"), ev, init_model, sample_weight=sw,
         )
         self.n_features_in_ = Xa.shape[1]
         return self
@@ -867,15 +867,15 @@ class BonsaiClassifier(_BonsaiEstimator):
             )
         y_enc = np.searchsorted(self.classes_, y_arr).astype(np.float32)
 
-        pairs = self._build_pairs()
+        overrides = self._build_overrides()
         ev = None
         if eval_set is not None:
-            self._reject_dart_eval_set(pairs)
+            self._reject_dart_eval_set(overrides)
             ev = self._encode_eval_set(eval_set)
         sw = None if sample_weight is None else _as_f32(sample_weight, 1, "sample_weight")
         Xa = _as_f32(X, 2, "X")
         self._model = train(
-            pairs, Xa, y_enc, ev, init_model, sample_weight=sw,
+            overrides, Xa, y_enc, ev, init_model, sample_weight=sw,
         )
         self.n_features_in_ = Xa.shape[1]
         return self

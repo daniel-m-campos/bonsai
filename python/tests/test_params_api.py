@@ -1,5 +1,5 @@
-"""Tests for bonsai.params (the generated typed overrides) and the train
-wrapper's params normalization."""
+"""Tests for bonsai.params (the generated typed overrides) and the params
+forms the native train binding accepts."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import bonsai
 import numpy as np
 import pytest
 from bonsai import _bonsai
-from bonsai._train import _as_pairs
 from bonsai.params import Booster, Params, Tree
 
 
@@ -26,8 +25,11 @@ def _reg_data(n=3000, f=8, seed=0):
 
 
 def test_params_default_renders_no_overrides():
+    """A default-constructed Params sets nothing, so the fit runs on the
+    library defaults."""
+    X, y = _reg_data(n=500)
     assert Params().to_dict() == {}
-    assert _as_pairs(Params()) == []
+    assert bonsai.train(Params(), bonsai.Dataset(X, y)).n_iters == 100
 
 
 def test_params_mirrors_the_section_registry():
@@ -45,18 +47,21 @@ def test_params_mirrors_the_section_registry():
 
 
 def test_params_render_types_the_parser_reads():
+    """The binding renders each typed value to the string the dotted-key
+    parser reads back, so the round trip through a fit restores the type:
+    ints, floats, string lists, and bools (which are not ints here)."""
+    X, y = _reg_data(n=500)
     p = Params.from_dict({
         "tree.max_depth": 8,
         "booster.learning_rate": 0.1,
         "metrics.fit": ["rmse", "mae"],
         "data.header": True,
     })
-    assert dict(_as_pairs(p)) == {
-        "tree.max_depth": "8",
-        "booster.learning_rate": "0.1",
-        "metrics.fit": "rmse,mae",
-        "data.header": "true",
-    }
+    resolved = Params.from_model(bonsai.train(p, bonsai.Dataset(X, y)))
+    assert resolved.tree.max_depth == 8
+    assert resolved.booster.learning_rate == pytest.approx(0.1)
+    assert resolved.metrics.fit == ["rmse", "mae"]
+    assert resolved.data.header is True
 
 
 def test_params_from_dict_rejects_unknown_keys():
@@ -110,7 +115,7 @@ def test_params_from_model_is_the_resolved_config():
     assert p.booster.n_iters == 100  # resolved default: every key is set
 
 
-# train wrapper ====================================================================================
+# train params ====================================================================================
 
 
 def test_train_params_forms_are_bit_identical():
@@ -130,8 +135,8 @@ def test_train_params_forms_are_bit_identical():
 
 
 def test_train_rejects_the_retired_pairs_form():
-    """The (key, value) pairs list is the internal wire format; the public
-    wrapper names the two accepted forms instead of guessing."""
+    """The (key, value) pairs list is the internal wire format; the binding
+    names the two accepted forms instead of guessing."""
     X, y = _reg_data(n=500)
     with pytest.raises(TypeError, match="dict\\(pairs\\)"):
         bonsai.train([("booster.n_iters", "5")], bonsai.Dataset(X, y))
