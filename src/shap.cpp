@@ -1,5 +1,7 @@
 #include "bonsai/shap.hpp"
 
+#include "bonsai/dataset.hpp"
+#include "bonsai/detail/bin_walk.hpp"
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
 
@@ -105,12 +107,13 @@ double unwound_path_sum(std::vector<PathElement> const &path, size_t length,
     return total;
 }
 
-struct ShapContext
+// `hot` answers which child the instance follows at (node, node_id); the raw
+// and binned walks differ in nothing else.
+template <typename Hot> struct ShapContext
 {
     DenseTree::Nodes const   &nodes;
     std::vector<float> const &covers;
-    features_view             X;
-    row_id_t                  row;
+    Hot const                &hot;
     std::span<double>         phi;
 };
 
@@ -125,9 +128,10 @@ node_id_t hot_child(DenseTree::Node const &n, features_view X, row_id_t row)
 }
 
 // NOLINTNEXTLINE(misc-no-recursion)
-void recurse(ShapContext const &ctx, node_id_t node_id, std::vector<PathElement> &path,
-             size_t length, double parent_zero_fraction, double parent_one_fraction,
-             int parent_feature)
+template <typename Hot>
+void recurse(ShapContext<Hot> const &ctx, node_id_t node_id,
+             std::vector<PathElement> &path, size_t length, double parent_zero_fraction,
+             double parent_one_fraction, int parent_feature)
 {
     // Work on a copy of the parent's path (Algorithm 2 duplicates it).
     extend(path, length, parent_zero_fraction, parent_one_fraction, parent_feature);
@@ -146,7 +150,7 @@ void recurse(ShapContext const &ctx, node_id_t node_id, std::vector<PathElement>
         return;
     }
 
-    node_id_t const hot  = hot_child(n, ctx.X, ctx.row);
+    node_id_t const hot  = ctx.hot(n, node_id);
     node_id_t const cold = hot == n.left ? n.right : n.left;
 
     double const cover     = ctx.covers[node_id];
@@ -192,16 +196,10 @@ void recurse(ShapContext const &ctx, node_id_t node_id, std::vector<PathElement>
     }
 }
 
-} // namespace
-
-void tree_shap(DenseTree const &tree, features_view X, row_id_t row,
-               std::span<double> phi)
-{
-    tree_shap(tree, X, row, phi, tree_expected_value(tree));
-}
-
-void tree_shap(DenseTree const &tree, features_view X, row_id_t row,
-               std::span<double> phi, double expected_value)
+// The whole of tree_shap once the routing question is answered.
+template <typename Hot>
+void shap_walk(DenseTree const &tree, Hot const &hot, std::span<double> phi,
+               double expected_value)
 {
     auto const &covers = tree.covers();
     if (covers.size() != tree.nodes().size())
@@ -214,9 +212,38 @@ void tree_shap(DenseTree const &tree, features_view X, row_id_t row,
     phi[phi.size() - 1] += expected_value;
 
     std::vector<PathElement> path(tree.params().depth + 2);
-    ShapContext const        ctx{
-               .nodes = tree.nodes(), .covers = covers, .X = X, .row = row, .phi = phi};
+    ShapContext<Hot> const   ctx{
+          .nodes = tree.nodes(), .covers = covers, .hot = hot, .phi = phi};
     recurse(ctx, 0, path, 0, 1.0, 1.0, -1);
+}
+
+} // namespace
+
+void tree_shap(DenseTree const &tree, features_view X, row_id_t row,
+               std::span<double> phi)
+{
+    tree_shap(tree, X, row, phi, tree_expected_value(tree));
+}
+
+void tree_shap(DenseTree const &tree, features_view X, row_id_t row,
+               std::span<double> phi, double expected_value)
+{
+    auto const hot = [&](DenseTree::Node const &n, node_id_t)
+    { return hot_child(n, X, row); };
+    shap_walk(tree, hot, phi, expected_value);
+}
+
+void tree_shap_binned(DenseTree const &tree, detail::SplitBins const &sb,
+                      Dataset const &bins, row_id_t row, std::span<double> phi,
+                      double expected_value)
+{
+    auto const hot = [&](DenseTree::Node const &n, node_id_t id)
+    {
+        bool const left = routes_left(bins.bin_at(n.feature_id, row), sb.last[id],
+                                      sb.split[id], n.default_left);
+        return left ? n.left : n.right;
+    };
+    shap_walk(tree, hot, phi, expected_value);
 }
 
 namespace
