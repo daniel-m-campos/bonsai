@@ -260,6 +260,42 @@ def test_toml_base_and_precedence():
         bonsai.Params.from_toml("/nonexistent/cfg.toml")
 
 
+def test_estimator_params_accepts_a_typed_params():
+    """``params=`` takes a ``bonsai.Params`` the same way it takes a dotted
+    dict: same overrides, same model bits, and the sklearn round trip
+    (get_params/clone) carries the object through unchanged."""
+    Xtr, ytr = load_csv(TRAIN_CSV)
+    overrides = {"tree.lambda_l2": 0.5, "booster.n_iters": 30}
+    typed = bonsai.Params.from_dict(overrides)
+
+    as_dict = bonsai.BonsaiRegressor(params=overrides).fit(Xtr, ytr)
+    as_params = bonsai.BonsaiRegressor(params=typed).fit(Xtr, ytr)
+    np.testing.assert_array_equal(as_dict.predict(Xtr), as_params.predict(Xtr))
+
+    est = bonsai.BonsaiRegressor(params=typed)
+    assert est.get_params()["params"] is typed
+    from sklearn.base import clone
+    assert clone(est).params == typed
+
+
+def test_estimator_predict_family_accepts_a_dataset():
+    """The predict family passes a host-built Dataset straight through to the
+    native readers, equal to the array call bit for bit."""
+    Xtr, ytr = load_csv(TRAIN_CSV)
+    est = bonsai.BonsaiRegressor(**CH_PARAMS).fit(Xtr, ytr)
+    ds = bonsai.Dataset(Xtr, ytr)
+    for name in ("predict", "staged_predict", "predict_leaf", "pred_contribs"):
+        np.testing.assert_array_equal(
+            getattr(est, name)(Xtr), getattr(est, name)(ds)
+        )
+
+    Xb, yb = _separable_binary()
+    clf = bonsai.BonsaiClassifier(n_iters=20).fit(Xb, yb)
+    dsb = bonsai.Dataset(Xb, yb.astype(np.float32))
+    np.testing.assert_array_equal(clf.predict(Xb), clf.predict(dsb))
+    np.testing.assert_array_equal(clf.predict_proba(Xb), clf.predict_proba(dsb))
+
+
 def test_cuda_available_reports():
     """False on CPU-only builds; on a make python-cuda build with a device,
     a cuda_* grower must actually train."""
