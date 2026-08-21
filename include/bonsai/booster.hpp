@@ -452,6 +452,33 @@ class DensifyCache
     mutable uint64_t                                      epoch_ = 0;
 };
 
+// A value paired with its mutation counter. Readers take read(); every writer
+// goes through mutate(), which bumps the epoch before handing the value over,
+// so a derived view (the dense SHAP cache, the device plans) can never see a
+// changed value under an unchanged epoch. The counter is monotonic, so several
+// mutations in one round are fine.
+template <typename T> class Versioned
+{
+  public:
+    T const &read() const
+    {
+        return value_;
+    }
+    uint64_t epoch() const
+    {
+        return epoch_;
+    }
+    T &mutate()
+    {
+        ++epoch_;
+        return value_;
+    }
+
+  private:
+    T        value_;
+    uint64_t epoch_ = 1;
+};
+
 } // namespace internal
 
 template <Objective Obj, TreeGrower Gr, Sampler Sa>
@@ -472,12 +499,11 @@ class Booster final : public IBooster
 
     void update_one_iter(Dataset const &train) override
     {
-        ++epoch_;
         if (scores_.empty())
         {
             grad_.resize(train.n_rows());
             hess_.resize(train.n_rows());
-            if (trees_.empty())
+            if (trees_.read().empty())
             {
                 init_score_ = objective_.init_score(train.labels());
                 scores_.assign(train.n_rows(), init_score_);
@@ -488,7 +514,7 @@ class Booster final : public IBooster
                 // training state. Rebuild every row's score by routing the
                 // existing trees over the binned data.
                 std::vector<float> raw(train.n_rows(), 0.0F);
-                for (auto const &t : trees_)
+                for (auto const &t : trees_.read())
                 {
                     internal::accumulate_train_contribution(t, train, raw);
                 }
@@ -558,7 +584,7 @@ class Booster final : public IBooster
         }
         lap(prof.score_s);
 
-        trees_.push_back(std::move(tree));
+        trees_.mutate().push_back(std::move(tree));
         // Hand the output buffers back for the next tree (skips the
         // per-tree zero-init; grower.hpp documents the write-before-read
         // contract).
@@ -646,7 +672,7 @@ class Booster final : public IBooster
         auto res = grower_.grow(train, floats_view{}, floats_view{},
                                 {row_indices_.data(), n_selected});
         lap(prof.grow_s);
-        trees_.push_back(std::move(res.tree));
+        trees_.mutate().push_back(std::move(res.tree));
     }
 
     float eval(features_view X, floats_view labels) const override
@@ -663,12 +689,12 @@ class Booster final : public IBooster
 
     size_t n_iters() const override
     {
-        return trees_.size();
+        return trees_.read().size();
     }
 
     size_t n_trees() const override
     {
-        return trees_.size();
+        return trees_.read().size();
     }
 
     // Group rows by leaf, hand each leaf's residuals to the objective, and
@@ -678,12 +704,12 @@ class Booster final : public IBooster
     void drop_dart_trees(Dataset const &train, std::vector<size_t> &dropped,
                          std::vector<float> &dropped_sum)
     {
-        if (config_.dart_drop_rate <= 0.0F || trees_.empty())
+        if (config_.dart_drop_rate <= 0.0F || trees_.read().empty())
         {
             return;
         }
         std::bernoulli_distribution drop(config_.dart_drop_rate);
-        for (size_t i = 0; i < trees_.size(); ++i)
+        for (size_t i = 0; i < trees_.read().size(); ++i)
         {
             if (drop(rng_))
             {
@@ -697,7 +723,8 @@ class Booster final : public IBooster
         dropped_sum.assign(train.n_rows(), 0.0F);
         for (size_t const i : dropped)
         {
-            internal::accumulate_train_contribution(trees_[i], train, dropped_sum);
+            internal::accumulate_train_contribution(trees_.read()[i], train,
+                                                    dropped_sum);
         }
         parallel::for_each_index(
             scores_.size(),
@@ -719,9 +746,10 @@ class Booster final : public IBooster
         float const new_scale = 1.0F / (k + config_.learning_rate);
         float const old_scale = k / (k + config_.learning_rate);
         tree.scale_leaves(new_scale);
+        auto &trees = trees_.mutate();
         for (size_t const i : dropped)
         {
-            trees_[i].scale_leaves(old_scale);
+            trees[i].scale_leaves(old_scale);
         }
         parallel::for_each_index(scores_.size(),
                                  [&](size_t i)
@@ -757,7 +785,7 @@ class Booster final : public IBooster
     std::vector<double> feature_importance(ImportanceType type) const override
     {
         std::vector<double> out;
-        for (auto const &tree : trees_)
+        for (auto const &tree : trees_.read())
         {
             internal::accumulate_importance(tree, type, out);
         }
@@ -767,12 +795,12 @@ class Booster final : public IBooster
     void predict_at(features_view X, floats_out scores, size_t n_trees) const override
     {
         assert(X.extent(0) == scores.size());
-        size_t const k =
-            n_trees == 0 ? trees_.size() : std::min(n_trees, trees_.size());
+        auto const  &trees = trees_.read();
+        size_t const k = n_trees == 0 ? trees.size() : std::min(n_trees, trees.size());
         std::fill(scores.begin(), scores.end(), 0.0F);
         for (size_t t = 0; t < k; ++t)
         {
-            trees_[t].predict(X, scores);
+            trees[t].predict(X, scores);
         }
         for (float &score : scores)
         {
@@ -782,12 +810,13 @@ class Booster final : public IBooster
 
     void predict_staged(features_view X, floats_out out) const override
     {
-        size_t const n = X.extent(0);
-        assert(out.size() == n * trees_.size());
+        size_t const n     = X.extent(0);
+        auto const  &trees = trees_.read();
+        assert(out.size() == n * trees.size());
         std::vector<float> raw(n, 0.0F);
-        for (size_t t = 0; t < trees_.size(); ++t)
+        for (size_t t = 0; t < trees.size(); ++t)
         {
-            trees_[t].predict(X, raw);
+            trees[t].predict(X, raw);
             parallel::for_each_index(
                 n, [&](size_t i)
                 { out[(t * n) + i] = init_score_ + (raw[i] * config_.learning_rate); });
@@ -796,19 +825,19 @@ class Booster final : public IBooster
 
     void predict_leaf(features_view X, std::span<node_id_t> out) const override
     {
-        internal::predict_leaf_over(trees_, X, out);
+        internal::predict_leaf_over(trees_.read(), X, out);
     }
 
     void predict_at_binned(Dataset const &bins, floats_out scores,
                            size_t n_trees) const override
     {
         assert(bins.n_rows() == scores.size());
-        size_t const k =
-            n_trees == 0 ? trees_.size() : std::min(n_trees, trees_.size());
+        auto const  &trees = trees_.read();
+        size_t const k = n_trees == 0 ? trees.size() : std::min(n_trees, trees.size());
         std::fill(scores.begin(), scores.end(), 0.0F);
         for (size_t t = 0; t < k; ++t)
         {
-            internal::accumulate_train_contribution(trees_[t], bins, scores);
+            internal::accumulate_train_contribution(trees[t], bins, scores);
         }
         for (float &score : scores)
         {
@@ -823,10 +852,10 @@ class Booster final : public IBooster
     {
         if constexpr (std::same_as<tree_type, DenseTree>)
         {
-            return {.trees         = trees_,
+            return {.trees         = trees_.read(),
                     .learning_rate = config_.learning_rate,
                     .init_score    = init_score_,
-                    .epoch         = epoch_};
+                    .epoch         = trees_.epoch()};
         }
         else
         {
@@ -836,12 +865,13 @@ class Booster final : public IBooster
 
     void predict_staged_binned(Dataset const &bins, floats_out out) const override
     {
-        size_t const n = bins.n_rows();
-        assert(out.size() == n * trees_.size());
+        size_t const n     = bins.n_rows();
+        auto const  &trees = trees_.read();
+        assert(out.size() == n * trees.size());
         std::vector<float> raw(n, 0.0F);
-        for (size_t t = 0; t < trees_.size(); ++t)
+        for (size_t t = 0; t < trees.size(); ++t)
         {
-            internal::accumulate_train_contribution(trees_[t], bins, raw);
+            internal::accumulate_train_contribution(trees[t], bins, raw);
             parallel::for_each_index(
                 n, [&](size_t i)
                 { out[(t * n) + i] = init_score_ + (raw[i] * config_.learning_rate); });
@@ -851,7 +881,7 @@ class Booster final : public IBooster
     void predict_leaf_binned(Dataset const       &bins,
                              std::span<node_id_t> out) const override
     {
-        internal::predict_leaf_over_binned(trees_, bins, out);
+        internal::predict_leaf_over_binned(trees_.read(), bins, out);
     }
 
     void pred_contribs_binned(Dataset const &bins, std::span<double> out,
@@ -859,12 +889,12 @@ class Booster final : public IBooster
     {
         if constexpr (std::same_as<tree_type, ObliviousTree>)
         {
-            auto const dense = dense_.get(trees_, epoch_);
+            auto const dense = dense_.get(trees_.read(), trees_.epoch());
             contribs_over_binned(*dense, bins, out, n_features);
         }
         else
         {
-            contribs_over_binned(trees_, bins, out, n_features);
+            contribs_over_binned(trees_.read(), bins, out, n_features);
         }
     }
 
@@ -912,10 +942,11 @@ class Booster final : public IBooster
     std::string dump(std::span<std::string const> feature_names) const override
     {
         std::string out;
-        for (size_t t = 0; t < trees_.size(); ++t)
+        auto const &trees = trees_.read();
+        for (size_t t = 0; t < trees.size(); ++t)
         {
             out += "tree " + std::to_string(t) + ":\n";
-            internal::dump_tree(trees_[t], feature_names, out);
+            internal::dump_tree(trees[t], feature_names, out);
         }
         return out;
     }
@@ -925,12 +956,12 @@ class Booster final : public IBooster
     {
         if constexpr (std::same_as<tree_type, ObliviousTree>)
         {
-            auto const dense = dense_.get(trees_, epoch_);
+            auto const dense = dense_.get(trees_.read(), trees_.epoch());
             contribs_over(*dense, X, out, n_features);
         }
         else
         {
-            contribs_over(trees_, X, out, n_features);
+            contribs_over(trees_.read(), X, out, n_features);
         }
     }
 
@@ -963,9 +994,9 @@ class Booster final : public IBooster
 
     void accumulate_last_round(features_view X, floats_out scores) const override
     {
-        assert(!trees_.empty());
+        assert(!trees_.read().empty());
         assert(X.extent(0) == scores.size());
-        auto const &tree = trees_.back();
+        auto const &tree = trees_.read().back();
         float const lr   = config_.learning_rate;
         // One pass: predict's buffer starts at zero, so lr * value_for is the
         // same product the two-pass form formed.
@@ -983,18 +1014,19 @@ class Booster final : public IBooster
     bool accumulate_last_round_resident(Dataset const &bins, floats_out scores,
                                         std::optional<float> &loss) override
     {
-        assert(!trees_.empty());
-        return grower_.eval_accumulate(trees_.back(), bins, config_.learning_rate,
+        assert(!trees_.read().empty());
+        return grower_.eval_accumulate(trees_.read().back(), bins,
+                                       config_.learning_rate,
                                        {scores.data(), scores.size()}, loss);
     }
 
     void accumulate_last_round_binned(Dataset const &bins,
                                       floats_out     scores) const override
     {
-        assert(!trees_.empty());
+        assert(!trees_.read().empty());
         assert(bins.n_rows() == scores.size());
         assert(!bins.row_major_bins().empty());
-        auto const &tree = trees_.back();
+        auto const &tree = trees_.read().back();
         float const lr   = config_.learning_rate;
         auto const  sb   = internal::split_bins(tree, bins);
         auto const  rm   = bins.row_major_bins();
@@ -1010,13 +1042,13 @@ class Booster final : public IBooster
 
     void truncate(size_t n_trees) override
     {
-        if (n_trees < trees_.size())
+        if (n_trees < trees_.read().size())
         {
             // erase, not resize: growth would require default-constructible
             // trees, and truncate only ever shrinks.
-            trees_.erase(trees_.begin() + static_cast<std::ptrdiff_t>(n_trees),
-                         trees_.end());
-            ++epoch_;
+            auto &trees = trees_.mutate();
+            trees.erase(trees.begin() + static_cast<std::ptrdiff_t>(n_trees),
+                        trees.end());
         }
     }
 
@@ -1024,7 +1056,7 @@ class Booster final : public IBooster
     // can serialize state without befriending the I/O module.
     std::vector<tree_type> const &trees() const
     {
-        return trees_;
+        return trees_.read();
     }
     float init_score() const
     {
@@ -1032,18 +1064,20 @@ class Booster final : public IBooster
     }
     void load_state(std::vector<tree_type> trees, float init_score)
     {
-        trees_      = std::move(trees);
-        init_score_ = init_score;
-        ++epoch_;
+        trees_.mutate() = std::move(trees);
+        init_score_     = init_score;
     }
 
   private:
-    BoosterConfig          config_;
-    objective_type         objective_;
-    grower_type            grower_;
-    sampler_type           sampler_;
-    std::mt19937           rng_;
-    std::vector<tree_type> trees_;
+    BoosterConfig  config_;
+    objective_type objective_;
+    grower_type    grower_;
+    sampler_type   sampler_;
+    std::mt19937   rng_;
+    // The ensemble and its mutation epoch in one place: reads go through
+    // read(), every write through mutate(), which is what bumps the epoch the
+    // dense SHAP cache and the device plans rebuild on.
+    internal::Versioned<std::vector<tree_type>> trees_;
     // Stale while the resident objective is armed (the device copy is
     // authoritative); resident_end syncs it before any host-path read.
     std::vector<float>    scores_;
@@ -1054,10 +1088,7 @@ class Booster final : public IBooster
     bool                  resident_active_ = false;
     // Identity cookie for the Dataset the resident state was armed on:
     // compared by address only, never dereferenced through.
-    Dataset const *resident_train_ = nullptr;
-    // Mutation epoch: bumped whenever trees_ can change, so derived views
-    // (the dense SHAP cache, later device plans) know when to rebuild.
-    uint64_t               epoch_ = 1;
+    Dataset const         *resident_train_ = nullptr;
     internal::DensifyCache dense_;
 };
 
