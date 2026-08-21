@@ -14,6 +14,7 @@
 #include "bonsai/types.hpp"
 #include <algorithm>
 #include <cassert>
+#include <concepts>
 #include <cstddef>
 #include <cstdlib>
 #include <memory>
@@ -38,6 +39,17 @@ enum class ImportanceType : uint8_t
 {
     split,
     gain,
+};
+
+// What a device predict plan needs from a booster: the dense ensemble to pack
+// in bin space, the scale and base every prediction applies to the packed
+// sum, and the mutation epoch that says when a cached plan is stale.
+struct PredictPlanInput
+{
+    std::span<DenseTree const> trees;
+    float                      learning_rate = 0.0F;
+    float                      init_score    = 0.0F;
+    uint64_t                   epoch         = 0;
 };
 
 class IBooster
@@ -128,6 +140,16 @@ class IBooster
 
     virtual void pred_contribs_binned(Dataset const &bins, std::span<double> out,
                                       size_t n_features) const = 0;
+
+    // --- the device predict seam
+    // Everything a device predict plan packs, in one call so the ensemble is
+    // read once. An empty `trees` declines: only a dense ensemble packs, so
+    // oblivious and multiclass models ride the host bin walk. `trees` stays
+    // valid until the booster mutates, which `epoch` reports.
+    virtual PredictPlanInput predict_plan_input() const
+    {
+        return {};
+    }
 
     // --- the training-loop seam (CLI pipeline only)
     // Incremental prediction support for early stopping, shape-agnostic so
@@ -796,6 +818,24 @@ class Booster final : public IBooster
         for (float &score : scores)
         {
             score = init_score_ + (score * config_.learning_rate);
+        }
+    }
+
+    // The device predict seam. Only a dense ensemble packs; an oblivious one
+    // returns the declining default, whose host walk is predict_at_binned
+    // above.
+    PredictPlanInput predict_plan_input() const override
+    {
+        if constexpr (std::same_as<tree_type, DenseTree>)
+        {
+            return {.trees         = trees_,
+                    .learning_rate = config_.learning_rate,
+                    .init_score    = init_score_,
+                    .epoch         = epoch_};
+        }
+        else
+        {
+            return {};
         }
     }
 

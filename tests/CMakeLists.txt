@@ -37,10 +37,12 @@ add_executable(bonsai_tests
     unit/test_ingest_plane.cpp
 )
 
-# Compiled in every build; the cases SKIP at runtime when no usable CUDA
-# device is present (cuda_available()).
+# Compiled in every build; the [cuda] cases SKIP at runtime when no usable
+# CUDA device is present (cuda_available()). test_cuda_predict.cpp also
+# carries the decline cases, which run everywhere else.
 target_sources(bonsai_tests PRIVATE unit/test_cuda_grower.cpp)
 target_sources(bonsai_tests PRIVATE unit/test_cuda_resident.cpp)
+target_sources(bonsai_tests PRIVATE unit/test_cuda_predict.cpp)
 
 target_link_libraries(bonsai_tests PRIVATE
     bonsai_data
