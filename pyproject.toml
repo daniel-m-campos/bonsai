@@ -4,7 +4,9 @@
 # and needs typing_extensions to render annotations below Python 3.11.
 requires = [
     "scikit-build-core>=0.10",
-    "nanobind>=2.0",
+    # nanobind 3 requires Python 3.10 and ships no requires_python metadata,
+    # so an unpinned resolve installs it on 3.9 and fails at CMake time.
+    "nanobind>=2.0,<3",
     "numpy>=1.26",
     "typing_extensions; python_version < '3.11'",
 ]
@@ -12,7 +14,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "bonsai-gbt"
-version = "1.13.0"
+version = "1.13.1"
 description = "Histogram gradient-boosted trees with a C++23 core"
 readme = "README.md"
 requires-python = ">=3.9"
