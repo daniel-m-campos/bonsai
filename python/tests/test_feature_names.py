@@ -125,8 +125,9 @@ def test_named_monotone_rejects_unknown_names_and_bad_values():
 
 def test_named_monotone_flows_through_the_estimator_params():
     """The estimators hand params= to this same binding, so the dict form
-    arrives with no estimator-side code. They coerce X to a numpy array first,
-    so the names it resolves against are the synthesized ones."""
+    arrives with no estimator-side code. A bare array carries no names, so the
+    dict resolves against the synthesized ones; real names come from a named
+    frame or from ``fit(feature_names=...)``."""
     X, y = _reg_data()
 
     def fit(constraints):
@@ -140,3 +141,125 @@ def test_named_monotone_flows_through_the_estimator_params():
     )
     with pytest.raises(ValueError, match="does not have: 'age'"):
         fit({"age": 1})
+
+
+# feature_names on the fused train =================================================================
+
+def test_train_takes_feature_names_for_an_array():
+    X, y = _reg_data()
+    model = bonsai.train(
+        {"booster.n_iters": "5", "tree.max_depth": "4"}, X, y, feature_names=NAMES
+    )
+    text = model.dump()
+    assert "income <=" in text
+    assert "f1 <=" not in text
+
+
+def test_train_feature_names_reject_a_wrong_count_or_a_repeat():
+    X, y = _reg_data()
+    with pytest.raises(ValueError, match="one name per column"):
+        bonsai.train({"booster.n_iters": "5"}, X, y, feature_names=["a", "b"])
+    with pytest.raises(ValueError, match="must be unique"):
+        bonsai.train({"booster.n_iters": "5"}, X, y,
+                     feature_names=["a", "b", "c", "d", "e", "a"])
+
+
+def test_train_named_monotone_resolves_against_the_given_names():
+    X, y = _reg_data()
+    by_name = bonsai.train(_mono({"age": 1, "tenure": -1}), X, y, feature_names=NAMES)
+    by_list = bonsai.train(_mono([1, 0, -1, 0, 0, 0]), X, y, feature_names=NAMES)
+    assert by_name.config_toml == by_list.config_toml
+    np.testing.assert_array_equal(
+        np.asarray(by_name.predict(X)), np.asarray(by_list.predict(X))
+    )
+
+
+def test_train_feature_names_with_init_model_raises(tmp_path):
+    """A warm start carries the loaded model's names, so supplied ones would be
+    a lie rather than an override."""
+    X, y = _reg_data()
+    path = str(tmp_path / "warm.msgpack")
+    bonsai.train({"booster.n_iters": "5"}, X, y, feature_names=NAMES).save(path)
+    with pytest.raises(ValueError, match="feature_names cannot be given with init_model"):
+        bonsai.train({"booster.n_iters": "5"}, X, y, init_model=path, feature_names=NAMES)
+
+
+# The estimator layer ==============================================================================
+
+class _Frame:
+    """The little of a DataFrame the estimator layer reads: column names, and
+    an array to coerce from. pandas is not a test dependency, and no DLPack
+    forwarding is needed because the estimators convert through numpy."""
+
+    def __init__(self, values, columns):
+        self._values = values
+        self.columns = list(columns)
+
+    def __array__(self, dtype=None, copy=None):
+        return self._values if dtype is None else self._values.astype(dtype)
+
+
+def test_estimator_reads_the_frame_columns():
+    X, y = _reg_data()
+    est = bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(_Frame(X, NAMES), y)
+    np.testing.assert_array_equal(est.feature_names_in_, np.asarray(NAMES, dtype=object))
+    assert est.feature_names_in_.dtype == object
+    text = est.dump()
+    assert "income <=" in text
+    assert "f1 <=" not in text
+
+
+def test_estimator_on_a_bare_array_has_no_names():
+    X, y = _reg_data()
+    est = bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(X, y)
+    assert not hasattr(est, "feature_names_in_")
+    assert "f0" in est.dump()
+
+
+def test_estimator_feature_names_kwarg_overrides_the_columns():
+    X, y = _reg_data()
+    other = ["c0", "c1", "c2", "c3", "c4", "c5"]
+    est = bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(
+        _Frame(X, NAMES), y, feature_names=other
+    )
+    np.testing.assert_array_equal(est.feature_names_in_, np.asarray(other, dtype=object))
+    assert "c1 <=" in est.dump()
+
+
+def test_estimator_refit_on_an_array_clears_stale_names():
+    X, y = _reg_data()
+    est = bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(_Frame(X, NAMES), y)
+    assert hasattr(est, "feature_names_in_")
+    est.fit(X, y)
+    assert not hasattr(est, "feature_names_in_")
+    assert "f0" in est.dump()
+
+
+def test_estimator_integer_columns_are_not_names():
+    """sklearn's rule: default integer columns are no names at all, not the
+    names "0" and "1"."""
+    X, y = _reg_data()
+    est = bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(_Frame(X, range(6)), y)
+    assert not hasattr(est, "feature_names_in_")
+    assert "f0" in est.dump()
+
+
+def test_classifier_reads_the_frame_columns():
+    X, _ = _reg_data()
+    labels = (X[:, 0] > 0.5).astype(np.float32)
+    est = bonsai.BonsaiClassifier(n_iters=10, max_depth=4).fit(_Frame(X, NAMES), labels)
+    np.testing.assert_array_equal(est.feature_names_in_, np.asarray(NAMES, dtype=object))
+    assert "age <=" in est.dump()
+
+
+def test_named_monotone_works_through_an_estimator_fit_on_a_frame():
+    X, y = _reg_data()
+    est = bonsai.BonsaiRegressor(
+        n_iters=25, max_depth=5, grower="depthwise",
+        params={"tree.monotone_constraints": {"age": 1, "tenure": -1}},
+    ).fit(_Frame(X, NAMES), y)
+    by_list = bonsai.BonsaiRegressor(
+        n_iters=25, max_depth=5, grower="depthwise",
+        params={"tree.monotone_constraints": [1, 0, -1, 0, 0, 0]},
+    ).fit(_Frame(X, NAMES), y)
+    np.testing.assert_array_equal(est.predict(X), by_list.predict(X))

@@ -1373,8 +1373,17 @@ nb::list params_schema()
 
 Model train(nb::object const &params, nb::handle X, nb::handle y,
             std::optional<EvalSet> const     &eval_set,
-            std::optional<std::string> const &init_model, nb::handle sample_weight)
+            std::optional<std::string> const &init_model, nb::handle sample_weight,
+            std::optional<std::vector<std::string>> const &feature_names)
 {
+    // A warm start carries the loaded model's names, so supplied ones would
+    // never be the fit's own.
+    if (feature_names && init_model)
+    {
+        throw std::invalid_argument(
+            "feature_names cannot be given with init_model: a warm start keeps "
+            "the loaded model's feature names");
+    }
     ParamItems items = items_from_params(params);
     // A name-keyed monotone entry needs the feature names, which need X, which
     // cannot be placed until parallel.device_id is read from the other
@@ -1397,7 +1406,7 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
     }
 
     std::vector<std::string> names =
-        resolve_feature_names(xarg.n_features, std::nullopt);
+        resolve_feature_names(xarg.n_features, feature_names);
     // A warm start keeps the init model's names, so the constraint is resolved
     // against the list this fit will actually carry.
     if (put_monotone(items, named_monotone,
@@ -1833,7 +1842,7 @@ NB_MODULE(_bonsai, m)
           "    The trained booster.");
     m.def("train", &train, nb::arg("params").none(), nb::arg("X"), nb::arg("y"),
           nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
-          nb::arg("sample_weight") = nb::none(),
+          nb::arg("sample_weight") = nb::none(), nb::arg("feature_names") = nb::none(),
           nb::sig("def train(params: bonsai.params.Params | "
                   "collections.abc.Mapping[str, object] | None, X: object, "
                   "y: object, eval_set: tuple[Annotated[NDArray[numpy.float32], "
@@ -1841,7 +1850,8 @@ NB_MODULE(_bonsai, m)
                   "writable=False)], Annotated[NDArray[numpy.float32], "
                   "dict(shape=(None,), order='C', device='cpu', writable=False)]] "
                   "| Dataset | None = None, init_model: str | None = None, "
-                  "sample_weight: object | None = None) -> Model"),
+                  "sample_weight: object | None = None, feature_names: "
+                  "collections.abc.Sequence[str] | None = None) -> Model"),
           "Train a booster on row-major float32 features.\n"
           "\n"
           "Parameters\n"
@@ -1859,10 +1869,8 @@ NB_MODULE(_bonsai, m)
           "X : float32 array, shape (n_rows, n_features)\n"
           "    Row-major features. May be a CUDA array supporting DLPack "
           "(cupy, torch, jax): X is then binned on the GPU in place, with no "
-          "host round trip. This path always names the columns "
-          "``f0``..``fN``; for explicit names build a "
-          "``Dataset(X, y, feature_names=...)`` and train on that, which from "
-          "pandas reads ``Dataset(df.values, y, feature_names=df.columns)``.\n"
+          "host round trip. The columns are named by ``feature_names``, or "
+          "``f0``..``fN`` when it is unset.\n"
           "y : float32 array, shape (n_rows,)\n"
           "    Labels; a device-resident y is downloaded once.\n"
           "eval_set : tuple of (Xv, yv), Dataset, or None\n"
@@ -1874,6 +1882,12 @@ NB_MODULE(_bonsai, m)
           "sample_weight : float32 array, shape (n_rows,), optional\n"
           "    Per-row weights; scales each row's gradient and hessian. A "
           "device-resident vector is downloaded once.\n"
+          "feature_names : sequence of str, optional\n"
+          "    One name per column, carried into the model: ``dump`` prints "
+          "them and ``tree.monotone_constraints`` may be keyed by them. Unset, "
+          "the columns get ``f0``..``fN``. Names must number the columns "
+          "exactly and be unique. Giving them with ``init_model`` raises, "
+          "because a warm start keeps the loaded model's names.\n"
           "\n"
           "Returns\n"
           "-------\n"
