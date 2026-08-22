@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import inspect
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -638,7 +639,8 @@ class BonsaiRegressor(_BonsaiEstimator):
     def fit(self, X: npt.ArrayLike, y: npt.ArrayLike,
             sample_weight: npt.ArrayLike | None = None,
             eval_set: tuple[npt.ArrayLike, npt.ArrayLike] | Dataset | None = None,
-            init_model: str | None = None) -> BonsaiRegressor:
+            init_model: str | None = None,
+            feature_names: Sequence[str] | None = None) -> BonsaiRegressor:
         """Fit the regressor to training data.
 
         Parameters
@@ -660,6 +662,11 @@ class BonsaiRegressor(_BonsaiEstimator):
             Path to a saved ``.msgpack`` model to continue training from
             (warm start); binning reuses the loaded model's cut points. None
             trains from scratch.
+        feature_names
+            One name per column, overriding any string column names X
+            carries. Fitted names land in ``feature_names_in_``, ``dump``
+            prints them, and ``tree.monotone_constraints`` may be keyed by
+            them. None with an unnamed X leaves the columns ``f0``..``fN``.
 
         Returns
         -------
@@ -680,11 +687,19 @@ class BonsaiRegressor(_BonsaiEstimator):
             ev = (eval_set if isinstance(eval_set, Dataset)
                   else (_as_f32(eval_set[0], 2, "X"), _as_f32(eval_set[1], 1, "y")))
         sw = None if sample_weight is None else _as_f32(sample_weight, 1, "sample_weight")
+        # Read before the coercion, which is where X stops being the caller's
+        # object.
+        names = list(feature_names) if feature_names is not None else _feature_names_of(X)
         Xa = _as_f32(X, 2, "X")
         self._model = train(
             overrides, Xa, _as_f32(y, 1, "y"), ev, init_model, sample_weight=sw,
+            feature_names=names,
         )
         self.n_features_in_ = Xa.shape[1]
+        if names is None:
+            self.__dict__.pop("feature_names_in_", None)
+        else:
+            self.feature_names_in_ = np.asarray(names, dtype=object)
         return self
 
     def score(self, X: npt.ArrayLike | Dataset, y: npt.ArrayLike,
@@ -814,7 +829,8 @@ class BonsaiClassifier(_BonsaiEstimator):
     def fit(self, X: npt.ArrayLike, y: npt.ArrayLike,
             sample_weight: npt.ArrayLike | None = None,
             eval_set: tuple[npt.ArrayLike, npt.ArrayLike] | Dataset | None = None,
-            init_model: str | None = None) -> BonsaiClassifier:
+            init_model: str | None = None,
+            feature_names: Sequence[str] | None = None) -> BonsaiClassifier:
         """Fit the classifier to training data.
 
         ``fit`` picks ``logloss`` for two classes or ``softmax`` (with
@@ -840,6 +856,11 @@ class BonsaiClassifier(_BonsaiEstimator):
             Path to a saved ``.msgpack`` model to continue training from
             (warm start); binning reuses the loaded model's cut points. None
             trains from scratch.
+        feature_names
+            One name per column, overriding any string column names X
+            carries. Fitted names land in ``feature_names_in_``, ``dump``
+            prints them, and ``tree.monotone_constraints`` may be keyed by
+            them. None with an unnamed X leaves the columns ``f0``..``fN``.
 
         Returns
         -------
@@ -873,11 +894,19 @@ class BonsaiClassifier(_BonsaiEstimator):
             self._reject_dart_eval_set(overrides)
             ev = self._encode_eval_set(eval_set)
         sw = None if sample_weight is None else _as_f32(sample_weight, 1, "sample_weight")
+        # Read before the coercion, which is where X stops being the caller's
+        # object.
+        names = list(feature_names) if feature_names is not None else _feature_names_of(X)
         Xa = _as_f32(X, 2, "X")
         self._model = train(
             overrides, Xa, y_enc, ev, init_model, sample_weight=sw,
+            feature_names=names,
         )
         self.n_features_in_ = Xa.shape[1]
+        if names is None:
+            self.__dict__.pop("feature_names_in_", None)
+        else:
+            self.feature_names_in_ = np.asarray(names, dtype=object)
         return self
 
     def predict(self, X: npt.ArrayLike | Dataset,
@@ -1057,6 +1086,32 @@ def _shared_args(scope: dict) -> dict:
              inspect.signature(_BonsaiEstimator.__init__).parameters
              if name != "self"]
     return {name: scope[name] for name in names}
+
+
+def _feature_names_of(X: object) -> list[str] | None:
+    """X's column names, when it has string ones.
+
+    A DataFrame with the default integer columns has no names, which is
+    sklearn's rule too.
+
+    Parameters
+    ----------
+    X
+        Any fit input; only a ``.columns`` attribute is read.
+
+    Returns
+    -------
+    list of str or None
+        The column names, or None when X has none or they are not all
+        strings.
+    """
+    columns = getattr(X, "columns", None)
+    if columns is None:
+        return None
+    names = list(columns)
+    if not names or not all(isinstance(name, str) for name in names):
+        return None
+    return names
 
 
 def _as_x(X: npt.ArrayLike | Dataset) -> np.ndarray | Dataset:

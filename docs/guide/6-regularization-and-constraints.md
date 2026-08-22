@@ -80,7 +80,8 @@ mono = bonsai.BonsaiRegressor(
     params={"tree.monotone_constraints": "1,0,0,0,0,0,0,0"}).fit(X, y)
 
 # The same constraint by name. A plain array is named f0..fN; a Dataset built
-# with feature_names= carries the names you gave it.
+# with feature_names=, a fit on a frame with string columns, or fit(X, y,
+# feature_names=...) carries the names you gave it.
 named = bonsai.BonsaiRegressor(
     n_iters=60, grower="depthwise",
     params={"tree.monotone_constraints": {"f0": 1}}).fit(X, y)

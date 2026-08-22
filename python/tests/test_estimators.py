@@ -405,6 +405,17 @@ def test_pickle_round_trip_fitted(cls):
         np.testing.assert_array_equal(restored.classes_, m.classes_)
 
 
+def test_pickle_round_trip_carries_feature_names():
+    X, y = _fit_data(bonsai.BonsaiRegressor)
+    names = [f"col{i}" for i in range(X.shape[1])]
+    m = bonsai.BonsaiRegressor(n_iters=20).fit(X, y, feature_names=names)
+
+    restored = pickle.loads(pickle.dumps(m))
+
+    np.testing.assert_array_equal(restored.feature_names_in_, m.feature_names_in_)
+    assert "col0 <=" in restored.dump()
+
+
 def test_pickle_round_trip_unfitted():
     m = bonsai.BonsaiRegressor(n_iters=20, max_depth=3)
     restored = pickle.loads(pickle.dumps(m))
