@@ -2,6 +2,18 @@
 
 All notable changes to bonsai. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags. Design rationale for anything below lives in [`docs/decisions.md`](docs/decisions.md).
 
+## [1.13.0] - 2026-08-22
+
+Columns have names, and everything downstream uses them: the model prints them, monotone constraints are keyed by them, and the estimators follow scikit-learn's `feature_names_in_` contract on both sides.
+
+### Added
+- **`Dataset` and `Model` carry feature names** (PRs #412, #413). `bonsai.Dataset(X, y, feature_names=[...])` names the columns, `Dataset.feature_names` and `Model.feature_names` read them back, a validation set built with `reference=` inherits them, and `dump()` prints them instead of `f0`..`fN`. Names must number the columns exactly and be unique. The fused `train(params, X, y, ...)` takes the same keyword; unset, columns are named `f0`..`fN`, which the model treats as real names. A pandas user passes `Dataset(df.values, y, feature_names=df.columns)`, since the native layer accepts X only as an ndarray or a DLPack producer.
+- **`tree.monotone_constraints` accepts a mapping keyed by feature name** (PRs #412, #413). `{"age": 1, "debt": -1}` resolves against the training data's names, on both train paths and through the estimators. A feature the mapping leaves out is unconstrained, an unknown name raises listing every offender, and a warm start resolves against the loaded model's names. The mapping is a spelling of the positional list, not an approximation of it: the two produce identical model bytes. Resolution happens in the binding, so the core config still takes a positional `list[int]` and never sees a name, which is where XGBoost and scikit-learn also put it.
+- **The estimators follow scikit-learn's `feature_names_in_` contract** (PR #413). `fit` records the attribute from X's string column names, or from an explicit `fit(..., feature_names=[...])` which overrides them; a frame carrying the default integer columns supplies no names, as in scikit-learn. `predict`, `predict_proba`, `staged_predict`, `predict_leaf`, and `pred_contribs` then check it, warning when names are present on one side only and raising when the columns are reordered, which used to return confident wrong numbers. `from_file` sets `n_features_in_` and `feature_names_in_` from the artifact rather than leaving them unset while `dump()` showed names, and a warm start reports the names its model actually carries.
+
+### Fixed
+- **`Dataset(reference=..., feature_names=[...])` no longer discards the names it just validated** (PR #413). The reference supplies the cuts and the names travel with them, so an explicit list there was silently dropped. It now raises, matching what the fused `train` does when names meet `init_model`.
+
 ## [1.12.0] - 2026-08-21
 
 The front door is typed: `train` is the native function with a complete generated signature, and the estimators annotate their arrays.
