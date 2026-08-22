@@ -48,7 +48,7 @@ jobs:
         with:
           path: build/_deps
           key: deps-build-${{ hashFiles('CMakeLists.txt') }}
-      - run: uv venv .venv && uv pip install --python .venv/bin/python nanobind numpy
+      - run: uv venv .venv && uv pip install --python .venv/bin/python "nanobind<3" numpy
       - run: make python
       - id: hash
         run: |
@@ -74,7 +74,7 @@ jobs:
         with:
           path: build/_deps
           key: deps-build-macos-${{ hashFiles('CMakeLists.txt') }}
-      - run: uv venv .venv && uv pip install --python .venv/bin/python nanobind numpy
+      - run: uv venv .venv && uv pip install --python .venv/bin/python "nanobind<3" numpy
       - run: make python
       - id: hash
         run: |

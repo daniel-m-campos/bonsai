@@ -161,7 +161,7 @@ jobs:
       # lightgbm: test_estimators.py cross-checks feature importances against it.
       # typing_extensions: the extension build generates the IDE stub, and
       # nanobind's stubgen requires it below Python 3.11.
-      - run: uv venv --python ${{ matrix.python }} .venv && uv pip install --python .venv/bin/python nanobind numpy lightgbm scikit-learn pytest typing_extensions
+      - run: uv venv --python ${{ matrix.python }} .venv && uv pip install --python .venv/bin/python "nanobind<3" numpy lightgbm scikit-learn pytest typing_extensions
       # ruff first: a lint finding shouldn't cost a build to discover.
       - run: make lint-python
       # The five doc gates (stdlib only): generated pages in sync (results
