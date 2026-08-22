@@ -437,7 +437,7 @@ class Dataset
         if (reference != nullptr)
         {
             check_reference(*reference, cfg.bin_mapper, bin_edges.has_value(),
-                            xarg.n_features);
+                            feature_names.has_value(), xarg.n_features);
         }
 
         std::vector<std::string> names =
@@ -554,7 +554,8 @@ class Dataset
     // loud rather than ignored.
     static void check_reference(Dataset const                 &reference,
                                 bonsai::BinMapperConfig const &bin_cfg,
-                                bool has_bin_edges, size_t n_features)
+                                bool has_bin_edges, bool has_feature_names,
+                                size_t n_features)
     {
         if (bin_cfg != reference.bin_cfg_)
         {
@@ -568,6 +569,13 @@ class Dataset
             throw std::invalid_argument(
                 "Dataset(reference=...) bins with the reference's cut points, so "
                 "bin_edges belongs on the reference instead");
+        }
+        if (has_feature_names)
+        {
+            throw std::invalid_argument(
+                "feature_names cannot be given with reference=: the reference "
+                "already names these columns, and its mappers carry the names "
+                "through. Name the columns on the reference instead.");
         }
         if (n_features != reference.n_features_)
         {
@@ -970,6 +978,14 @@ class Model
         // The config struct default is 3; surfacing it for non-softmax models
         // would hand callers a plausible-but-meaningless class count.
         return cfg_.dispatch.objective_name == "softmax" ? cfg_.objective.n_classes : 0;
+    }
+
+    // The names the columns carry through the model: the fit's, or the
+    // synthesized f0..fN. The same names `dump` prints.
+    std::vector<std::string> feature_names() const
+    {
+        auto const names = mappers_.feature_names();
+        return {names.begin(), names.end()};
     }
 
   private:
@@ -1680,6 +1696,10 @@ NB_MODULE(_bonsai, m)
         .def_prop_ro("n_classes", &Model::n_classes,
                      "Class count for softmax models; 0 for every other "
                      "objective (including binary logloss).")
+        .def_prop_ro("feature_names", &Model::feature_names,
+                     "One name per feature, in column order: the names the fit "
+                     "was given, or the synthesized ``f0``..``fN``. Survives "
+                     "save/load, and its length is the model's feature count.")
         .def("__repr__",
              [](Model const &mo)
              {
@@ -1755,15 +1775,17 @@ NB_MODULE(_bonsai, m)
             "handed to ``train(..., eval_set=valid_dataset)`` and every fit "
             "routes it in bin space with no per-fit bin pass. Binning "
             "settings are inherited from the reference when left unset; "
-            "setting one to a different value raises, as ``bin_edges`` does "
-            "at all. ``device`` and ``device_id`` are inherited the same "
+            "setting one to a different value raises, as ``bin_edges`` and "
+            "``feature_names`` do at all. ``device`` and ``device_id`` are "
+            "inherited the same "
             "way, so a validation set lands beside its training set unless "
             "placed explicitly.\n"
             "feature_names : sequence of str, optional\n"
             "    One name per column, carried into the model: ``dump`` prints "
             "them and ``tree.monotone_constraints`` may be keyed by them. "
             "Unset, the columns get ``f0``..``fN``. Names must number the "
-            "columns exactly and be unique. From pandas, "
+            "columns exactly and be unique, and cannot be given with "
+            "``reference=``, which already names them. From pandas, "
             "``Dataset(df.values, y, feature_names=df.columns)``.")
         .def("__reduce__",
              [](Dataset const &) -> nb::object
