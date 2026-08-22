@@ -6,6 +6,8 @@ import bonsai
 import numpy as np
 import pytest
 
+NAMES = ["age", "income", "tenure", "score", "visits", "spend"]
+
 
 def _reg_data(n=3000, f=6, seed=0):
     """(X, y) float32 arrays with signal in the first two columns."""
@@ -17,9 +19,8 @@ def _reg_data(n=3000, f=6, seed=0):
 
 def test_feature_names_come_from_the_keyword():
     X, y = _reg_data()
-    names = ["age", "income", "tenure", "score", "visits", "spend"]
-    ds = bonsai.Dataset(X, y, feature_names=names)
-    assert list(ds.feature_names) == names
+    ds = bonsai.Dataset(X, y, feature_names=NAMES)
+    assert list(ds.feature_names) == NAMES
     text = bonsai.train({"booster.n_iters": "5", "tree.max_depth": "4"}, ds).dump()
     assert "income <=" in text
     assert "f1 <=" not in text
@@ -43,15 +44,35 @@ def test_feature_names_reject_a_wrong_count_or_a_repeat():
 def test_feature_names_survive_a_reference_dataset():
     """A reference supplies the cuts, and the names travel with them."""
     X, y = _reg_data()
-    names = ["age", "income", "tenure", "score", "visits", "spend"]
-    train_ds = bonsai.Dataset(X[:2000], y[:2000], feature_names=names)
+    train_ds = bonsai.Dataset(X[:2000], y[:2000], feature_names=NAMES)
     valid_ds = bonsai.Dataset(X[2000:], y[2000:], reference=train_ds)
-    assert list(valid_ds.feature_names) == names
+    assert list(valid_ds.feature_names) == NAMES
+
+
+def test_feature_names_with_a_reference_raise():
+    """The reference already names the columns, so a second set here would be
+    validated and then dropped; say so instead."""
+    X, y = _reg_data()
+    train_ds = bonsai.Dataset(X[:2000], y[:2000], feature_names=NAMES)
+    with pytest.raises(ValueError, match="feature_names cannot be given with reference="):
+        bonsai.Dataset(X[2000:], y[2000:], reference=train_ds, feature_names=NAMES)
+
+
+def test_model_carries_its_feature_names(tmp_path):
+    """The names are the model's own, and they survive save/load."""
+    X, y = _reg_data()
+    model = bonsai.train({"booster.n_iters": "5"}, X, y, feature_names=NAMES)
+    assert list(model.feature_names) == NAMES
+    path = str(tmp_path / "named.msgpack")
+    model.save(path)
+    assert list(bonsai.load(path).feature_names) == NAMES
+    assert list(bonsai.train({"booster.n_iters": "5"}, X, y).feature_names) == [
+        f"f{i}" for i in range(6)
+    ]
 
 
 # Monotone constraints keyed by feature name =======================================================
 
-NAMES = ["age", "income", "tenure", "score", "visits", "spend"]
 MONO_PARAMS = {"dispatch.grower_name": "depthwise", "booster.n_iters": "25", "tree.max_depth": "5"}
 
 
@@ -239,6 +260,8 @@ def test_estimator_warm_start_on_a_frame(tmp_path):
     )
     assert warm.n_iters_ == 20
     assert "income <=" in warm.dump()
+    # the names are the loaded model's, which here agree with the frame's
+    np.testing.assert_array_equal(warm.feature_names_in_, np.asarray(NAMES, dtype=object))
 
     with pytest.raises(ValueError, match="feature_names cannot be given with init_model"):
         bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(
@@ -253,6 +276,25 @@ def test_estimator_integer_columns_are_not_names():
     est = bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(_Frame(X, range(6)), y)
     assert not hasattr(est, "feature_names_in_")
     assert "f0" in est.dump()
+
+
+def test_from_file_reports_the_saved_names(tmp_path):
+    """dump() shows the saved model's names, so the fitted-input attributes
+    have to agree with it."""
+    X, y = _reg_data()
+    named = str(tmp_path / "named.msgpack")
+    bare = str(tmp_path / "bare.msgpack")
+    bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(_Frame(X, NAMES), y).save(named)
+    bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(X, y).save(bare)
+
+    est = bonsai.BonsaiRegressor.from_file(named)
+    assert est.n_features_in_ == 6
+    np.testing.assert_array_equal(est.feature_names_in_, np.asarray(NAMES, dtype=object))
+
+    # synthesized f0..fN are how the artifact spells "unnamed"
+    unnamed = bonsai.BonsaiRegressor.from_file(bare)
+    assert unnamed.n_features_in_ == 6
+    assert not hasattr(unnamed, "feature_names_in_")
 
 
 def test_classifier_reads_the_frame_columns():

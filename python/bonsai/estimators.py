@@ -365,6 +365,9 @@ class _BonsaiEstimator:
     def from_file(cls, path: str) -> _BonsaiEstimator:
         """Load a fitted model from a saved ``.msgpack`` file.
 
+        The loaded model carries its feature count and its column names, so
+        ``n_features_in_`` and ``feature_names_in_`` come back with it.
+
         Parameters
         ----------
         path
@@ -377,6 +380,9 @@ class _BonsaiEstimator:
         """
         out = cls()
         out._model = load(path)
+        names = _model_feature_names(out._model)
+        out.n_features_in_ = len(out._model.feature_names)
+        out._set_feature_names(names)
         return out
 
     @property
@@ -589,8 +595,13 @@ class _BonsaiEstimator:
             )
         return None
 
-    def _record_fit_inputs(self, Xa: np.ndarray, names: list[str] | None):
+    def _record_fit_inputs(self, Xa: np.ndarray):
         """Record what the fit saw, the way sklearn's estimators do.
+
+        The names come back off the fitted model rather than from the fit
+        arguments, so the attribute reports what the model actually carries;
+        that is the only answer a warm start has, since it keeps the loaded
+        model's names.
 
         ``feature_names_in_`` is absent rather than None when the columns are
         unnamed, which is what ``hasattr`` checks (sklearn's own convention)
@@ -600,10 +611,12 @@ class _BonsaiEstimator:
         ----------
         Xa
             The coerced feature matrix the fit ran on.
-        names
-            The names the fit ran under, or None.
         """
         self.n_features_in_ = Xa.shape[1]
+        self._set_feature_names(_model_feature_names(self._model))
+
+    def _set_feature_names(self, names: list[str] | None):
+        """Set ``feature_names_in_``, or remove it when there are no names."""
         if names is None:
             self.__dict__.pop("feature_names_in_", None)
         else:
@@ -755,7 +768,7 @@ class BonsaiRegressor(_BonsaiEstimator):
             overrides, Xa, _as_f32(y, 1, "y"), ev, init_model, sample_weight=sw,
             feature_names=names,
         )
-        self._record_fit_inputs(Xa, names)
+        self._record_fit_inputs(Xa)
         return self
 
     def score(self, X: npt.ArrayLike | Dataset, y: npt.ArrayLike,
@@ -958,7 +971,7 @@ class BonsaiClassifier(_BonsaiEstimator):
             overrides, Xa, y_enc, ev, init_model, sample_weight=sw,
             feature_names=names,
         )
-        self._record_fit_inputs(Xa, names)
+        self._record_fit_inputs(Xa)
         return self
 
     def predict(self, X: npt.ArrayLike | Dataset,
@@ -1138,6 +1151,29 @@ def _shared_args(scope: dict) -> dict:
              inspect.signature(_BonsaiEstimator.__init__).parameters
              if name != "self"]
     return {name: scope[name] for name in names}
+
+
+def _model_feature_names(model: Model | Dataset) -> list[str] | None:
+    """The model's own names, unless they are the synthesized f0..fN.
+
+    Also reads a ``Dataset``, which names its columns the same way.
+
+    Parameters
+    ----------
+    model
+        Anything carrying a ``feature_names`` sequence.
+
+    Returns
+    -------
+    list of str or None
+        The names, or None when they are the synthesized ones.
+    """
+    names = list(model.feature_names)
+    # A caller who really names columns "f0", "f1", ... reads as unnamed here:
+    # nothing in the artifact distinguishes named from synthesized.
+    if names == [f"f{i}" for i in range(len(names))]:
+        return None
+    return names
 
 
 def _feature_names_of(X: object) -> list[str] | None:
