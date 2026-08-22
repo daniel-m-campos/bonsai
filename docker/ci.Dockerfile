@@ -28,7 +28,7 @@ ENV PATH="/root/.local/bin:${PATH}"
 # works inside containers where nvidia-smi's PID namespace does not.
 RUN uv venv --python 3.12 /opt/venv \
     && uv pip install --python /opt/venv/bin/python \
-        cmake ninja numpy nanobind scikit-learn pandas tabulate matplotlib \
+        cmake ninja numpy "nanobind<3" scikit-learn pandas tabulate matplotlib \
         "xgboost>=3.2,<3.4" catboost nvidia-ml-py
 ENV PATH="/opt/venv/bin:${PATH}"
 
