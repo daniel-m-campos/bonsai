@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import inspect
 import tempfile
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -255,6 +256,7 @@ class _BonsaiEstimator:
             Predictions, one per row of ``X``.
         """
         self._check_fitted("fit() or load first")
+        self._check_predict_names(X)
         return np.asarray(self._model.predict(_as_x(X), num_iteration))
 
     def staged_predict(self, X: npt.ArrayLike | Dataset) -> np.ndarray:
@@ -274,6 +276,7 @@ class _BonsaiEstimator:
             iteration.
         """
         self._check_fitted()
+        self._check_predict_names(X)
         return np.asarray(self._model.staged_predict(_as_x(X)))
 
     def predict_leaf(self, X: npt.ArrayLike | Dataset) -> np.ndarray:
@@ -295,6 +298,7 @@ class _BonsaiEstimator:
             ``t // n_classes``, class ``t % n_classes``.
         """
         self._check_fitted()
+        self._check_predict_names(X)
         return np.asarray(self._model.predict_leaf(_as_x(X)))
 
     def dump(self) -> str:
@@ -325,6 +329,7 @@ class _BonsaiEstimator:
             Rows sum to the raw (pre-link) prediction exactly.
         """
         self._check_fitted()
+        self._check_predict_names(X)
         return np.asarray(self._model.pred_contribs(_as_x(X)))
 
     def importance(self, type: str = "gain") -> np.ndarray:
@@ -555,6 +560,56 @@ class _BonsaiEstimator:
         if self._model is None:
             raise RuntimeError(message)
 
+    def _check_predict_names(self, X: object):
+        """Compare the predict input's names with the fitted ones.
+
+        The predict half of sklearn's feature-name contract, matching
+        ``sklearn.utils.validation._check_feature_names(reset=False)``: a
+        disagreement about whether there are names at all is a warning, since
+        the columns may still be in the right order, but two sets of names
+        that differ is an error.
+
+        Parameters
+        ----------
+        X
+            The predict input, before coercion.
+
+        Raises
+        ------
+        ValueError
+            If both the fit and X have names and they differ.
+        """
+        fitted = getattr(self, "feature_names_in_", None)
+        fitted = None if fitted is None else [str(name) for name in fitted]
+        given = _input_feature_names(X)
+        if fitted is None and given is None:
+            return
+        if given is None:
+            warnings.warn(
+                "X does not have valid feature names, but "
+                f"{type(self).__name__} was fitted with feature names",
+                stacklevel=3,
+            )
+            return
+        if fitted is None:
+            warnings.warn(
+                f"X has feature names, but {type(self).__name__} was fitted "
+                "without feature names",
+                stacklevel=3,
+            )
+            return
+        if fitted == given:
+            return
+        unseen = [name for name in given if name not in set(fitted)]
+        missing = [name for name in fitted if name not in set(given)]
+        detail = (f" Unseen at fit time: {unseen}." if unseen else "") + (
+            f" Seen at fit time, now missing: {missing}." if missing else ""
+        )
+        raise ValueError(
+            "The feature names should match those that were passed during "
+            "fit." + (detail or " The same names arrived in a different order.")
+        )
+
     def _fit_names(self, X: object, feature_names: Sequence[str] | None,
                    init_model: str | None) -> list[str] | None:
         """The names to train under, read before X is coerced to an array.
@@ -741,7 +796,9 @@ class BonsaiRegressor(_BonsaiEstimator):
             prints them, and ``tree.monotone_constraints`` may be keyed by
             them. None with an unnamed X leaves the columns ``f0``..``fN``.
             Rejected with ``init_model``: a warm start keeps the loaded
-            model's names.
+            model's names. Predict-time inputs are checked against the
+            fitted names, sklearn's rule: names that go missing or appear
+            warn, names that disagree raise.
 
         Returns
         -------
@@ -931,7 +988,9 @@ class BonsaiClassifier(_BonsaiEstimator):
             prints them, and ``tree.monotone_constraints`` may be keyed by
             them. None with an unnamed X leaves the columns ``f0``..``fN``.
             Rejected with ``init_model``: a warm start keeps the loaded
-            model's names.
+            model's names. Predict-time inputs are checked against the
+            fitted names, sklearn's rule: names that go missing or appear
+            warn, names that disagree raise.
 
         Returns
         -------
@@ -995,6 +1054,7 @@ class BonsaiClassifier(_BonsaiEstimator):
             ``0..K-1`` ids the native booster works in.
         """
         self._check_fitted("fit() or load first")
+        self._check_predict_names(X)
         raw = np.asarray(self._model.predict(_as_x(X), num_iteration))
         if self.n_classes_ == 2:
             idx = (raw >= 0.5).astype(np.int64)
@@ -1022,6 +1082,7 @@ class BonsaiClassifier(_BonsaiEstimator):
             Shape ``(n_rows, n_classes)``, columns in ``classes_`` order.
         """
         self._check_fitted("fit() or load first")
+        self._check_predict_names(X)
         if self.n_classes_ == 2:
             p = np.asarray(self._model.predict(_as_x(X)), dtype=np.float64)
             return np.column_stack([1.0 - p, p])
@@ -1151,6 +1212,28 @@ def _shared_args(scope: dict) -> dict:
              inspect.signature(_BonsaiEstimator.__init__).parameters
              if name != "self"]
     return {name: scope[name] for name in names}
+
+
+def _input_feature_names(X: object) -> list[str] | None:
+    """Names a predict input carries.
+
+    A ``Dataset`` names every column, so its synthesized ``f0``..``fN`` are
+    read as unnamed the way a model's are; anything else is a frame or an
+    array, where only string ``.columns`` count.
+
+    Parameters
+    ----------
+    X
+        Any predict-family input.
+
+    Returns
+    -------
+    list of str or None
+        The names, or None when the input carries none.
+    """
+    if isinstance(X, Dataset):
+        return _model_feature_names(X)
+    return _feature_names_of(X)
 
 
 def _model_feature_names(model: Model | Dataset) -> list[str] | None:

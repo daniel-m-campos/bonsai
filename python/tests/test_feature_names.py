@@ -315,4 +315,66 @@ def test_named_monotone_works_through_an_estimator_fit_on_a_frame():
         n_iters=25, max_depth=5, grower="depthwise",
         params={"tree.monotone_constraints": [1, 0, -1, 0, 0, 0]},
     ).fit(_Frame(X, NAMES), y)
-    np.testing.assert_array_equal(est.predict(X), by_list.predict(X))
+    frame = _Frame(X, NAMES)
+    np.testing.assert_array_equal(est.predict(frame), by_list.predict(frame))
+
+
+# Names at predict time ============================================================================
+
+def test_predict_warns_when_the_names_go_missing():
+    X, y = _reg_data()
+    est = bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(_Frame(X, NAMES), y)
+    with pytest.warns(UserWarning, match="X does not have valid feature names"):
+        est.predict(X)
+    with pytest.warns(UserWarning, match="BonsaiRegressor was fitted with feature names"):
+        est.pred_contribs(X)
+
+
+def test_predict_warns_when_the_names_appear():
+    X, y = _reg_data()
+    est = bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(X, y)
+    with pytest.warns(UserWarning, match="X has feature names, but BonsaiRegressor"):
+        est.predict(_Frame(X, NAMES))
+    with pytest.warns(UserWarning, match="fitted without feature names"):
+        est.staged_predict(_Frame(X, NAMES))
+
+
+def test_predict_rejects_names_that_disagree():
+    X, y = _reg_data()
+    est = bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(_Frame(X, NAMES), y)
+    other = ["age", "income", "tenure", "score", "visits", "salary"]
+    with pytest.raises(ValueError, match="should match those that were passed during fit"):
+        est.predict(_Frame(X, other))
+    with pytest.raises(ValueError, match=r"Unseen at fit time: \['salary'\]"):
+        est.predict_leaf(_Frame(X, other))
+    with pytest.raises(ValueError, match=r"now missing: \['spend'\]"):
+        est.predict(_Frame(X, other))
+    with pytest.raises(ValueError, match="different order"):
+        est.predict(_Frame(X, list(reversed(NAMES))))
+
+
+def test_predict_on_a_dataset_reads_its_names(recwarn):
+    """A Dataset names every column, so it must not read as unnamed; its
+    synthesized f0..fN must not read as named either."""
+    X, y = _reg_data()
+    named = bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(_Frame(X, NAMES), y)
+    named.predict(bonsai.Dataset(X, y, feature_names=NAMES))
+
+    bare = bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(X, y)
+    bare.predict(bonsai.Dataset(X, y))
+    assert [str(w.message) for w in recwarn] == []
+
+    with pytest.raises(ValueError, match="should match those"):
+        named.predict(bonsai.Dataset(X, y, feature_names=[f"c{i}" for i in range(6)]))
+    with pytest.warns(UserWarning, match="X does not have valid feature names"):
+        named.predict(bonsai.Dataset(X, y))
+
+
+def test_classifier_predict_proba_checks_the_names():
+    X, _ = _reg_data()
+    labels = (X[:, 0] > 0.5).astype(np.float32)
+    est = bonsai.BonsaiClassifier(n_iters=10, max_depth=4).fit(_Frame(X, NAMES), labels)
+    with pytest.warns(UserWarning, match="BonsaiClassifier was fitted with feature names"):
+        est.predict_proba(X)
+    with pytest.warns(UserWarning, match="BonsaiClassifier was fitted with feature names"):
+        est.predict(X)
