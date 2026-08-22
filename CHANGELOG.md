@@ -2,6 +2,11 @@
 
 All notable changes to bonsai. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags. Design rationale for anything below lives in [`docs/decisions.md`](docs/decisions.md).
 
+## [1.13.1] - 2026-08-22
+
+### Fixed
+- **The build pins `nanobind<3`, so Python 3.9 wheels build again.** nanobind 3.0.0 dropped Python 3.9 and publishes no `requires_python` metadata, so an unpinned resolve installs it on 3.9 and then fails at CMake time with `ImportError: nanobind does not support Python < 3.10.` Every 3.9 wheel job failed on that, which is why 1.13.0 was tagged but never published to PyPI; install 1.13.1 to get its contents. bonsai targets nanobind 2.x and uses nothing from 3.0, so the pin costs nothing. The Python floor is unchanged at 3.9.
+
 ## [1.13.0] - 2026-08-22
 
 Columns have names, and everything downstream uses them: the model prints them, monotone constraints are keyed by them, and the estimators follow scikit-learn's `feature_names_in_` contract on both sides.
