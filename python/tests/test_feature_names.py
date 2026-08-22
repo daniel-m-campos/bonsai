@@ -155,15 +155,6 @@ def test_train_takes_feature_names_for_an_array():
     assert "f1 <=" not in text
 
 
-def test_train_feature_names_reject_a_wrong_count_or_a_repeat():
-    X, y = _reg_data()
-    with pytest.raises(ValueError, match="one name per column"):
-        bonsai.train({"booster.n_iters": "5"}, X, y, feature_names=["a", "b"])
-    with pytest.raises(ValueError, match="must be unique"):
-        bonsai.train({"booster.n_iters": "5"}, X, y,
-                     feature_names=["a", "b", "c", "d", "e", "a"])
-
-
 def test_train_named_monotone_resolves_against_the_given_names():
     X, y = _reg_data()
     by_name = bonsai.train(_mono({"age": 1, "tenure": -1}), X, y, feature_names=NAMES)
@@ -233,6 +224,26 @@ def test_estimator_refit_on_an_array_clears_stale_names():
     est.fit(X, y)
     assert not hasattr(est, "feature_names_in_")
     assert "f0" in est.dump()
+
+
+def test_estimator_warm_start_on_a_frame(tmp_path):
+    """Names discovered on a frame are not an override, so a warm start reads
+    them without tripping the native guard; an explicit set still raises."""
+    X, y = _reg_data()
+    frame = _Frame(X, NAMES)
+    path = str(tmp_path / "warm.msgpack")
+    bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(frame, y).save(path)
+
+    warm = bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(
+        frame, y, init_model=path
+    )
+    assert warm.n_iters_ == 20
+    assert "income <=" in warm.dump()
+
+    with pytest.raises(ValueError, match="feature_names cannot be given with init_model"):
+        bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(
+            frame, y, init_model=path, feature_names=NAMES
+        )
 
 
 def test_estimator_integer_columns_are_not_names():

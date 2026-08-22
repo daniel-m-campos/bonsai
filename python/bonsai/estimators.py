@@ -549,6 +549,66 @@ class _BonsaiEstimator:
         if self._model is None:
             raise RuntimeError(message)
 
+    def _fit_names(self, X: object, feature_names: Sequence[str] | None,
+                   init_model: str | None) -> list[str] | None:
+        """The names to train under, read before X is coerced to an array.
+
+        A warm start keeps the loaded model's names, so names merely
+        discovered on X are dropped rather than forwarded: they were never an
+        override, and passing them on would trip the native guard against
+        naming a warm start's columns.
+
+        Parameters
+        ----------
+        X
+            The fit input, still the caller's own object.
+        feature_names
+            The ``fit`` keyword, or None.
+        init_model
+            The ``fit`` keyword, or None.
+
+        Returns
+        -------
+        list of str or None
+            Names for ``train``; None leaves the columns unnamed (or, under a
+            warm start, named by the loaded model).
+
+        Raises
+        ------
+        ValueError
+            If names are given explicitly alongside ``init_model``.
+        """
+        explicit = feature_names is not None
+        names = list(feature_names) if explicit else _feature_names_of(X)
+        if init_model is None:
+            return names
+        if explicit:
+            raise ValueError(
+                "feature_names cannot be given with init_model: a warm start "
+                "keeps the loaded model's feature names"
+            )
+        return None
+
+    def _record_fit_inputs(self, Xa: np.ndarray, names: list[str] | None):
+        """Record what the fit saw, the way sklearn's estimators do.
+
+        ``feature_names_in_`` is absent rather than None when the columns are
+        unnamed, which is what ``hasattr`` checks (sklearn's own convention)
+        and what a refit on a bare array has to restore.
+
+        Parameters
+        ----------
+        Xa
+            The coerced feature matrix the fit ran on.
+        names
+            The names the fit ran under, or None.
+        """
+        self.n_features_in_ = Xa.shape[1]
+        if names is None:
+            self.__dict__.pop("feature_names_in_", None)
+        else:
+            self.feature_names_in_ = np.asarray(names, dtype=object)
+
 
 # Regressor ========================================================================================
 
@@ -667,6 +727,8 @@ class BonsaiRegressor(_BonsaiEstimator):
             carries. Fitted names land in ``feature_names_in_``, ``dump``
             prints them, and ``tree.monotone_constraints`` may be keyed by
             them. None with an unnamed X leaves the columns ``f0``..``fN``.
+            Rejected with ``init_model``: a warm start keeps the loaded
+            model's names.
 
         Returns
         -------
@@ -687,19 +749,13 @@ class BonsaiRegressor(_BonsaiEstimator):
             ev = (eval_set if isinstance(eval_set, Dataset)
                   else (_as_f32(eval_set[0], 2, "X"), _as_f32(eval_set[1], 1, "y")))
         sw = None if sample_weight is None else _as_f32(sample_weight, 1, "sample_weight")
-        # Read before the coercion, which is where X stops being the caller's
-        # object.
-        names = list(feature_names) if feature_names is not None else _feature_names_of(X)
+        names = self._fit_names(X, feature_names, init_model)
         Xa = _as_f32(X, 2, "X")
         self._model = train(
             overrides, Xa, _as_f32(y, 1, "y"), ev, init_model, sample_weight=sw,
             feature_names=names,
         )
-        self.n_features_in_ = Xa.shape[1]
-        if names is None:
-            self.__dict__.pop("feature_names_in_", None)
-        else:
-            self.feature_names_in_ = np.asarray(names, dtype=object)
+        self._record_fit_inputs(Xa, names)
         return self
 
     def score(self, X: npt.ArrayLike | Dataset, y: npt.ArrayLike,
@@ -861,6 +917,8 @@ class BonsaiClassifier(_BonsaiEstimator):
             carries. Fitted names land in ``feature_names_in_``, ``dump``
             prints them, and ``tree.monotone_constraints`` may be keyed by
             them. None with an unnamed X leaves the columns ``f0``..``fN``.
+            Rejected with ``init_model``: a warm start keeps the loaded
+            model's names.
 
         Returns
         -------
@@ -894,19 +952,13 @@ class BonsaiClassifier(_BonsaiEstimator):
             self._reject_dart_eval_set(overrides)
             ev = self._encode_eval_set(eval_set)
         sw = None if sample_weight is None else _as_f32(sample_weight, 1, "sample_weight")
-        # Read before the coercion, which is where X stops being the caller's
-        # object.
-        names = list(feature_names) if feature_names is not None else _feature_names_of(X)
+        names = self._fit_names(X, feature_names, init_model)
         Xa = _as_f32(X, 2, "X")
         self._model = train(
             overrides, Xa, y_enc, ev, init_model, sample_weight=sw,
             feature_names=names,
         )
-        self.n_features_in_ = Xa.shape[1]
-        if names is None:
-            self.__dict__.pop("feature_names_in_", None)
-        else:
-            self.feature_names_in_ = np.asarray(names, dtype=object)
+        self._record_fit_inputs(Xa, names)
         return self
 
     def predict(self, X: npt.ArrayLike | Dataset,
@@ -1106,9 +1158,7 @@ def _feature_names_of(X: object) -> list[str] | None:
         strings.
     """
     columns = getattr(X, "columns", None)
-    if columns is None:
-        return None
-    names = list(columns)
+    names = [] if columns is None else list(columns)
     if not names or not all(isinstance(name, str) for name in names):
         return None
     return names
