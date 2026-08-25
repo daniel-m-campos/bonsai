@@ -33,33 +33,17 @@
   },
   "gpu-extreme": {
     "file": "gpu-extreme-2026-08.jsonl",
-    "sha": "e2bb3ac",
+    "sha": "ff3655a",
     "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-08-20",
+    "date": "2026-08-25",
     "plane": "gpu",
-    "refreshed_for": "1.10.0",
+    "refreshed_for": "1.14.0",
     "as_of_decision": 104,
     "hash_set": "443516937b9bd72a",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
-    },
-    "carried_forward": {
-      "measured_at": "e2bb3ac",
-      "stamped_at": "e3917ea",
-      "reason": "the 1.14.0 gpu-plane span is the dataset-views work, whose non-identity row and column paths a single full-dataset fit never enters, and an old-wheel-against-HEAD A/B at this axis's own cell on one pod put the fit-time delta at 0.162s against a 0.607s within-commit floor with r2 identical to six decimals",
-      "evidence": {
-        "kind": "tolerance",
-        "metric": "fit_s, mean of two interleaved reps per arm",
-        "floor_before": 0.607,
-        "floor_after": 0.295,
-        "cross_commit": 0.162,
-        "factor": 2.0,
-        "cell": "16777216 x 1024",
-        "config": "100 iters, depth 8, bins 255, threads 16, cuda_depthwise",
-        "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition"
-      }
     }
   },
   "cpu-tall": {
