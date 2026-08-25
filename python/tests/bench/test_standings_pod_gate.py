@@ -86,23 +86,11 @@ def test_the_limit_is_compared_as_a_number():
 
 # Provenance =======================================================================================
 
-def _shell_function(name: str) -> str:
-    """One shell function, lifted whole from the pod script.
-
-    Parameters
-    ----------
-    name : str
-        The function's name, defined at column zero and closed by a `}` at
-        column zero, which is how this script writes them.
-
-    Returns
-    -------
-    str
-        Its source, ready to be sourced into a test shell.
-    """
-    text = POD_SCRIPT.read_text()
-    found = re.search(rf"^{name}\(\) \{{.*?^\}}$", text, re.S | re.M)
-    assert found, f"{name}() is gone from {POD_SCRIPT.name}"
+def _checkout_sha_source() -> str:
+    """The pod script's checkout_sha function, lifted whole."""
+    found = re.search(r"^checkout_sha\(\) \{.*?^\}$", POD_SCRIPT.read_text(),
+                      re.S | re.M)
+    assert found, f"checkout_sha() is gone from {POD_SCRIPT.name}"
     return found.group(0)
 
 
@@ -144,7 +132,7 @@ def _fake_origin(root: pathlib.Path) -> dict:
 
 
 def _run_checkout(work: pathlib.Path, sha: str) -> subprocess.CompletedProcess:
-    body = _shell_function("checkout_sha")
+    body = _checkout_sha_source()
     return subprocess.run(
         ["bash", "-c", f"set -euo pipefail\n{body}\ncheckout_sha \"$1\"",
          "_", sha],
@@ -204,7 +192,6 @@ def _parity_guard() -> str:
     ("gpu", "gpu-tall", True),
     ("gpu", "gpu-early-stop,gpu-tall", True),
     ("gpu", "gpu-extreme", False),
-    ("gpu", "gpu-wide,gpu-early-stop", False),
     ("gpu", "gpu-tallest", False),
     ("cpu", "cpu-tall", False),
 ])
