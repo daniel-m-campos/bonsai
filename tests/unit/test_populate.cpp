@@ -93,8 +93,9 @@ SplitInput populate_node(Fixture const &fx, std::vector<row_id_t> rows,
                          node_id_t id = 0)
 {
     SplitInput node;
-    node.id   = id;
-    node.rows = std::move(rows);
+    node.id            = id;
+    node.rows          = std::move(rows);
+    node.rows_identity = rows_are_identity(node.rows, fx.ds.n_rows());
     CpuHistogramEngine engine;
     // As a grower drives it: begin_tree drops the cached selection plan, which
     // is keyed by addresses a second fixture in this process may reuse.
@@ -105,7 +106,8 @@ SplitInput populate_node(Fixture const &fx, std::vector<row_id_t> rows,
         return node;
     }
     SplitInput parent;
-    parent.rows = test::iota_rows(fx.ds.n_rows());
+    parent.rows          = test::iota_rows(fx.ds.n_rows());
+    parent.rows_identity = true;
     engine.populate(fx.ds, fx.grad, fx.hess, parent, fx.selected);
     engine.populate_lone(fx.ds, fx.grad, fx.hess, node, fx.selected, parent.hists);
     return node;
@@ -338,6 +340,60 @@ TEST_CASE("the column fill gathers a lone node in serial order", "[populate]")
         }
         parallel::set_n_threads(0);
     }
+}
+
+TEST_CASE("a full-cardinality row list that is not the identity still gathers",
+          "[populate]")
+{
+    // Cardinality does not imply identity. A permutation and a
+    // with-replacement bootstrap both fill n slots without being [0, n), and
+    // a fill that reads bins and grad at the row's POSITION instead of its id
+    // returns the identity's histogram for either one: right by luck for the
+    // permutation (same multiset of rows, wrong summation order), wrong for
+    // the bootstrap (duplicated rows counted once, dropped rows counted at
+    // all).
+    parallel::set_n_threads(4);
+    auto const fx = make_fixture(8192, 3);
+    REQUIRE(fx.ds.bins_are_u8());
+
+    std::mt19937 rng(11);
+    auto         perm = test::iota_rows(fx.ds.n_rows());
+    std::shuffle(perm.begin(), perm.end(), rng);
+
+    std::vector<row_id_t>                   boot(fx.ds.n_rows());
+    std::uniform_int_distribution<row_id_t> pick(
+        0, static_cast<row_id_t>(fx.ds.n_rows() - 1));
+    for (row_id_t &r : boot)
+    {
+        r = pick(rng);
+    }
+
+    for (auto const &rows : {perm, boot})
+    {
+        REQUIRE(rows.size() == fx.ds.n_rows());
+        auto const node = populate_node(fx, rows);
+        auto const ref  = reference_hists(fx, rows);
+        for (size_t s = 0; s < fx.selected.size(); ++s)
+        {
+            auto const cells = node.hists[fx.selected[s]].all_cells();
+            REQUIRE(cells.size() == ref[s].size());
+            for (size_t b = 0; b < cells.size(); ++b)
+            {
+                // Values first: the bootstrap's are wrong by whole rows,
+                // which no rounding tolerance covers.
+                CHECK(cells[b].sum_grad ==
+                      Catch::Approx(ref[s][b].sum_grad).margin(1e-2));
+                CHECK(cells[b].sum_hess ==
+                      Catch::Approx(ref[s][b].sum_hess).margin(1e-2));
+            }
+            // Then the column fill's serial-order contract: one worker owns a
+            // feature and adds the node's rows in list order, so the cells
+            // reproduce the reference byte for byte.
+            CHECK(std::memcmp(cells.data(), ref[s].data(),
+                              cells.size() * sizeof(HistCell)) == 0);
+        }
+    }
+    parallel::set_n_threads(0);
 }
 
 TEST_CASE("populate is reproducible at a fixed thread count", "[populate]")

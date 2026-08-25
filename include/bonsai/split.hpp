@@ -5,18 +5,33 @@
 #include "bonsai/types.hpp"
 #include <algorithm>
 #include <concepts>
+#include <cstddef>
 #include <limits>
+#include <ranges>
 #include <span>
 #include <vector>
 
 namespace bonsai
 {
 
+// Whether a row list is exactly [0, n_rows). Cardinality alone does not say
+// so: a permutation and a with-replacement bootstrap both fill n slots.
+inline bool rows_are_identity(std::span<row_id_t const> rows, size_t n_rows)
+{
+    return rows.size() == n_rows &&
+           std::ranges::equal(
+               rows, std::views::iota(row_id_t{0}, static_cast<row_id_t>(n_rows)));
+}
+
 struct SplitInput
 {
     NodeHistograms        hists;
     std::vector<row_id_t> rows;
-    node_id_t             id = 0;
+    // True only when `rows` is [0, n_rows): the fills then read bins and
+    // grad/hess at the row's position and skip the gather. Root builders set
+    // it; a child's rows are a strict subset, so false is right for them.
+    bool      rows_identity = false;
+    node_id_t id            = 0;
     // Leaf-value bounds inherited down the tree by monotone constraints.
     double lo = -std::numeric_limits<double>::infinity();
     double hi = std::numeric_limits<double>::infinity();

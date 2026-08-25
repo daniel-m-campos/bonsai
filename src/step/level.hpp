@@ -44,6 +44,10 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         SplitInput                       root;
         root.id = 0;
         root.rows.assign(row_indices.begin(), row_indices.end());
+        // Checked once per tree, with an early exit on the first row that is
+        // not its own index, against a fill that walks these rows once per
+        // feature per level.
+        root.rows_identity = rows_are_identity(root.rows, ds_.n_rows());
         engine_.populate(ds_, grad_, hess_, root, selected_);
         root.sums      = root.totals();
         root.row_count = root.rows.size();
@@ -175,8 +179,9 @@ class LevelStep<EngineT, SplitterT>
         root.id = 0;
         // Full-data fits pass the identity by contract (empty rows +
         // row_count): the 64MB host copy and its upload never happen; the
-        // engine builds/caches the identity on device (decision 71).
-        if (row_indices.size() == ds_.n_rows())
+        // engine builds/caches the identity on device. Identity, not
+        // cardinality: any other full-length list takes the general path.
+        if (rows_are_identity(row_indices, ds_.n_rows()))
         {
             root.row_count = row_indices.size();
         }

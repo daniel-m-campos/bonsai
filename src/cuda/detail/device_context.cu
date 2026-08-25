@@ -505,16 +505,20 @@ void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
         receipt && receipt->backend_tag() == cuda_backend_tag())
     {
         auto plane = std::static_pointer_cast<CudaIngestPlane const>(receipt);
-        if (data.adopted == plane)
+        DatasetKey const key{.dataset = &dataset,
+                             .bins0   = plane.get(),
+                             .n_rows  = plane->n_rows,
+                             .n_feats = plane->n_feats};
+        // Two Datasets can share one plane, so the plane alone does not
+        // identify the data: consumers keyed off data.key (the resident label
+        // upload) would keep the first one's.
+        if (data.adopted == plane && data.key == key)
         {
             return;
         }
         data.adopted           = std::move(plane);
         data.bins_are_u8       = data.adopted->bins_are_u8;
-        data.key               = {.dataset = &dataset,
-                                  .bins0   = data.adopted.get(),
-                                  .n_rows  = data.adopted->n_rows,
-                                  .n_feats = data.adopted->n_feats};
+        data.key               = key;
         lvl.root_rows_cached_n = 0;
         return;
     }

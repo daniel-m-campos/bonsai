@@ -713,3 +713,59 @@ TEST_CASE("MAE stays on the host path, the escape hatch is a no-op", "[cuda][res
         fit_predict<MaeBooster<CudaDepthwiseGrower>>(cfg, data, 40, true);
     REQUIRE(max_abs_diff(def, forced) == 0.0F);
 }
+
+TEST_CASE("Resident labels follow the Dataset, not the shared ingest plane",
+          "[cuda][resident][ingest]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident label keying needs a usable CUDA device");
+    }
+    auto const data  = make_regression(8192, 6, 23);
+    auto       plane = cuda_ingest(data.built.batch, data.built.mappers);
+    REQUIRE(plane != nullptr);
+
+    // Two Datasets over ONE plane with negated labels. The plane carries bins
+    // only, so the device's dataset key is what tells the two apart; a key
+    // left stale by the adopted path makes the second fit reuse the first
+    // one's uploaded labels and chase the wrong target.
+    detail::ColumnBatch flipped = data.built.batch;
+    for (float &v : flipped.labels)
+    {
+        v = -v;
+    }
+    Dataset const ds_a = Dataset::bin(data.built.batch, data.built.mappers, {}, plane);
+    Dataset const ds_b = Dataset::bin(flipped, data.built.mappers, {}, plane);
+    REQUIRE(ds_a.ingest_plane() == ds_b.ingest_plane());
+    std::vector<float> const y_b(flipped.labels.begin(), flipped.labels.end());
+
+    auto const cfg = reg_cfg();
+    unsetenv("BONSAI_HOST_OBJECTIVE");
+
+    // Control: ds_b on its own booster, so its key is written on first adopt.
+    MseBooster<CudaDepthwiseGrower> control{cfg};
+    for (size_t i = 0; i < 60; ++i)
+    {
+        control.update_one_iter(ds_b);
+    }
+    std::vector<float> control_pred(data.n_rows);
+    control.predict(data.view(), floats_out{control_pred});
+    REQUIRE(r2_of(control_pred, y_b) > 0.9);
+
+    // One booster is one engine and one device context: the switch to ds_b
+    // re-arms resident mode against a plane the context already adopted.
+    MseBooster<CudaDepthwiseGrower> booster{cfg};
+    booster.update_one_iter(ds_a);
+    for (size_t i = 0; i < 60; ++i)
+    {
+        booster.update_one_iter(ds_b);
+    }
+    std::vector<float> pred(data.n_rows);
+    booster.predict(data.view(), floats_out{pred});
+
+    // Fitting ds_a's labels while ds_b's were asked for drives r2 against
+    // ds_b's target well below zero; a correct key leaves it near the control.
+    INFO("switched r2=" << r2_of(pred, y_b)
+                        << " control r2=" << r2_of(control_pred, y_b));
+    CHECK(r2_of(pred, y_b) > 0.8);
+}

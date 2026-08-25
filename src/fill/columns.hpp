@@ -26,10 +26,11 @@ inline constexpr size_t k_col_ahead = 64;
 
 // One feature's column fill: the thread owning this histogram fills it in the
 // node's row order, so the cell sums are bit-identical at any thread count.
-// visit_bins monomorphizes the fill per bin width. `dense` says the node
-// covers every row, so gh is indexed by row id and no gather happened.
+// visit_bins monomorphizes the fill per bin width. `identity` says the node's
+// rows are [0, n_rows), so bins and gh are both indexed by position and no
+// gather happened.
 inline void fill_column(Dataset const &ds, feature_id_t fid, Histogram &h,
-                        std::span<row_id_t const> rows, bool dense, GhView const &gh)
+                        std::span<row_id_t const> rows, bool identity, GhView const &gh)
 {
     size_t const                 n  = rows.size();
     std::span<float const> const og = gh.g;
@@ -66,11 +67,11 @@ inline void fill_column(Dataset const &ds, feature_id_t fid, Histogram &h,
                               h.add(bins[rows[k]], og[k], hess_of(k));
                           }
                       };
-                      // Density picks the arm; the hessian selector is picked
+                      // Identity picks the arm; the hessian selector is picked
                       // once and rides into whichever arm runs.
                       auto fill = [&](auto hess_of)
                       {
-                          if (dense)
+                          if (identity)
                           {
                               add(hess_of);
                               return;
@@ -93,14 +94,13 @@ inline void fill_column(Dataset const &ds, feature_id_t fid, Histogram &h,
 inline void fill_columns(Dataset const &ds, floats_view grad, floats_view hess,
                          SplitInput &node, std::span<feature_id_t const> selected)
 {
-    bool const   dense = node.rows.size() == ds.n_rows();
-    GhView const gh    = node_gh(ds, node, grad, hess);
+    GhView const gh = node_gh(ds, node, grad, hess);
     parallel::for_each_index(selected.size(),
                              [&](size_t s)
                              {
                                  feature_id_t const fid = selected[s];
-                                 fill_column(ds, fid, node.hists[fid], node.rows, dense,
-                                             gh);
+                                 fill_column(ds, fid, node.hists[fid], node.rows,
+                                             node.rows_identity, gh);
                              });
 }
 
@@ -112,15 +112,15 @@ inline void fill_columns_lone(Dataset const &ds, floats_view grad, floats_view h
                               SplitInput &node, std::span<feature_id_t const> selected,
                               ArenaLayout const &carve, NodeHistograms &sibling)
 {
-    bool const   dense = node.rows.size() == ds.n_rows();
-    GhView const gh    = node_gh(ds, node, grad, hess);
+    GhView const gh = node_gh(ds, node, grad, hess);
     parallel::for_each_index(selected.size(),
                              [&](size_t s)
                              {
                                  node.hists.carve_run(carve, selected, s);
                                  feature_id_t const fid = selected[s];
                                  Histogram         &h   = node.hists[fid];
-                                 fill_column(ds, fid, h, node.rows, dense, gh);
+                                 fill_column(ds, fid, h, node.rows, node.rows_identity,
+                                             gh);
                                  sibling[fid] -= h;
                              });
 }
