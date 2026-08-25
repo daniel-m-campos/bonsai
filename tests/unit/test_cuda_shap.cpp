@@ -31,6 +31,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "test_grower_helpers.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -48,13 +50,8 @@ namespace
 
 using namespace bonsai;
 
-using MseBooster =
-    Booster<MSEObjective, DepthwiseGrower<CpuHistogramEngine>, AllRowsSampler>;
-
-// The levelwise arm reaches the device through the same seam, by way of the
-// dense equivalents its plan input owns.
-using ObliviousMseBooster =
-    Booster<MSEObjective, ObliviousGrower<CpuHistogramEngine>, AllRowsSampler>;
+using test::MseBooster;
+using test::ObliviousMseBooster;
 
 // The fp32 walk against the fp64 host evaluator. Worst measured on a Jetson
 // Orin Nano (sm_87) over the five fixtures below, the levelwise pair included:
@@ -62,35 +59,15 @@ using ObliviousMseBooster =
 // orders inside this pin.
 constexpr double k_tol = 1e-5;
 
-// A NaN column keeps the missing bin populated, so the element's missing_ok
-// arm is exercised beside the ordinary interval test. Column 1 is a coarse
-// staircase of column 0, so the grower splits on both and paths that merge two
-// constraints on one feature appear.
+// Column 1 is a coarse staircase of column 0, so the grower splits on both and
+// paths merging two constraints on one feature appear. Overwritten after the
+// labels are summed, so the label still reflects the drawn value.
 detail::ColumnBatch shap_batch(size_t n, size_t nf)
 {
-    std::mt19937                          rng(23);
-    std::uniform_real_distribution<float> u(0.0F, 1.0F);
-    detail::ColumnBatch                   batch;
-    batch.features.assign(nf, std::vector<float>(n));
-    batch.feature_names.resize(nf);
-    batch.labels.assign(n, 0.0F);
-    for (size_t j = 0; j < nf; ++j)
-    {
-        batch.feature_names[j] = "f" + std::to_string(j);
-    }
+    detail::ColumnBatch batch = test::random_batch(n, nf, 23);
     for (size_t r = 0; r < n; ++r)
     {
-        float s = 0.0F;
-        for (size_t j = 0; j < nf; ++j)
-        {
-            float const v        = u(rng);
-            batch.features[j][r] = (j == nf - 1 && r % 7 == 0)
-                                       ? std::numeric_limits<float>::quiet_NaN()
-                                       : v;
-            s += v * static_cast<float>(j + 1);
-        }
         batch.features[1][r] = std::floor(batch.features[0][r] * 4.0F);
-        batch.labels[r]      = s;
     }
     return batch;
 }

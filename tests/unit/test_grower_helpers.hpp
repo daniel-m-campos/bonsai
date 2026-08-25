@@ -3,21 +3,68 @@
 #include <array>
 #include <concepts>
 #include <cstddef>
+#include <limits>
+#include <random>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "bonsai/bin_mappers.hpp"
+#include "bonsai/booster.hpp"
 #include "bonsai/config/bin_mapper_config.hpp"
 #include "bonsai/cuda/grower.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
+#include "bonsai/grower.hpp"
+#include "bonsai/objective.hpp"
+#include "bonsai/sampler.hpp"
 #include "bonsai/types.hpp"
 
 namespace bonsai::test
 {
+
+// The two width-1 boosters the device suites measure: a dense grower, and the
+// levelwise one that reaches the same kernels through its plan input's dense
+// equivalents.
+using MseBooster =
+    Booster<MSEObjective, DepthwiseGrower<CpuHistogramEngine>, AllRowsSampler>;
+using ObliviousMseBooster =
+    Booster<MSEObjective, ObliviousGrower<CpuHistogramEngine>, AllRowsSampler>;
+
+// Uniform [0, 1) features with a weighted-sum label, and one NaN every 7th row
+// of the last column so the device suites meet a populated missing bin beside
+// the ordinary comparison. The seed is the caller's so two suites drawing the
+// same shape do not train on the same rows.
+inline detail::ColumnBatch random_batch(size_t n, size_t nf, uint32_t seed)
+{
+    std::mt19937                          rng(seed);
+    std::uniform_real_distribution<float> u(0.0F, 1.0F);
+    detail::ColumnBatch                   batch;
+    batch.features.assign(nf, std::vector<float>(n));
+    batch.feature_names.resize(nf);
+    batch.labels.assign(n, 0.0F);
+    for (size_t j = 0; j < nf; ++j)
+    {
+        batch.feature_names[j] = "f" + std::to_string(j);
+    }
+    for (size_t r = 0; r < n; ++r)
+    {
+        float s = 0.0F;
+        for (size_t j = 0; j < nf; ++j)
+        {
+            float const v        = u(rng);
+            batch.features[j][r] = (j == nf - 1 && r % 7 == 0)
+                                       ? std::numeric_limits<float>::quiet_NaN()
+                                       : v;
+            s += v * static_cast<float>(j + 1);
+        }
+        batch.labels[r] = s;
+    }
+    return batch;
+}
 
 // Skips the running test case when the grower under test needs a CUDA
 // device this host (or build) doesn't have. No-op for CPU growers, so
