@@ -553,7 +553,6 @@ def _run_session(key: str, args: argparse.Namespace, *, plane: str,
                         f"GIT_SHA='{sha}' "
                         f"PREV_VERSION='{prev_version}' "
                         f"PLANE='{plane}' "
-                        f"PARITY_AXIS='{PARITY_AXIS}' "
                         "bash /root/standings_refresh_pod.sh "
                         "> /root/refresh.log 2>&1 & echo launched"], check=True)
         _poll_pod_run(ssh, out_dir, ip, port)

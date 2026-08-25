@@ -19,15 +19,14 @@
 # module and runs the cpu axes behind the CPU-cap gate below (issue #355).
 set -euo pipefail
 
-# Spaces are stripped once, here, so the parity guard below and the axis
-# loop at the bottom read the same list.
-AXES=$(echo "${AXES:?comma list of axes}" | tr -d ' ')
+AXES="${AXES:?comma list of axes}"
+# Stripped once so the parity guard and the axis loop read the same list.
+AXES="${AXES// /}"
 GIT_SHA="${GIT_SHA:?commit to measure}"
 PREV_VERSION="${PREV_VERSION:-}"
 PLANE="${PLANE:-gpu}"
-# The axis the parity rows anchor, passed in by the driver so its
-# PARITY_AXIS constant stays the only definition of which axis that is.
-PARITY_AXIS="${PARITY_AXIS:-gpu-tall}"
+# The axis the parity rows anchor; standings_refresh.py's PARITY_AXIS.
+PARITY_AXIS=gpu-tall
 # The tag for the rows this pod writes, derived below from what this
 # container actually resolved rather than from what was requested: a name
 # built out of a purchase is how a 12-thread run got committed under a
@@ -38,7 +37,6 @@ export PATH=/opt/venv/bin:/root/.local/bin:/usr/local/cuda/bin:/usr/local/sbin:/
 mkdir -p /root/standings
 YM=$(date -u +%Y-%m)
 QUOTA_FAIL=/root/standings/quota-fail.txt
-FAILURES=0
 
 if [ ! -d /root/bonsai ]; then
     git clone https://github.com/daniel-m-campos/bonsai.git /root/bonsai
@@ -53,7 +51,7 @@ cd /root/bonsai
 # explicit because a single-branch clone's is not), then assert that HEAD is
 # the commit that was asked for.
 checkout_sha() {  # <commit-ish>; nonzero unless HEAD ends up there
-    git fetch --tags --force --quiet origin \
+    git fetch --tags --quiet origin \
         '+refs/heads/*:refs/remotes/origin/*' || return 1
     git checkout --quiet --force "$1" || return 1
     [ "$(git rev-parse HEAD)" = "$(git rev-parse "$1^{commit}")" ] || return 1
@@ -101,6 +99,7 @@ QUOTA_SPARE_CORES=1
 # bandwidth, and a 16-thread fit on its 13.6-core quota measured 97%
 # throttled (issue #355 step 18). The gate covers both.
 THROTTLED_PCT_MAX=5
+FAILURES=0
 
 # Same-pod A/B: previous release wheel (no PYTHONPATH) vs HEAD build,
 # interleaved per rep so pod thermal/state drift cannot masquerade as a
