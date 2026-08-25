@@ -240,10 +240,19 @@ run_cpu_axis() {
     "${CPU_BENCH[@]}" run --spec "$axis" --variants "$probe" --repeats 1 \
         --out "$out" --run-label "standings-$axis-$YM" --host-name "$HOST_TAG"
     read -r p1 t1 <<< "$(throttle_counters)"
+    # The ternary is parenthesized because `printf fmt, e > x` is redirection
+    # in awk, not comparison: unparenthesized, this wrote the period count to
+    # a file named 0 and left pct empty, and an empty pct compares as a string
+    # and passes, so the gate never fired.
     pct=$(awk -v p="$((p1 - p0))" -v t="$((t1 - t0))" \
-        'BEGIN {printf "%.1f", p > 0 ? 100 * t / p : 0}')
+        'BEGIN {printf "%.1f", (p > 0 ? 100 * t / p : 0)}')
     echo "QUOTA $axis: throttled ${pct}% of $((p1 - p0)) enforcement periods around the first fit"
-    if awk -v pct="$pct" -v max="$THROTTLED_PCT_MAX" 'BEGIN {exit !(pct > max)}'; then
+    case "$pct" in
+        ''|*[!0-9.]*)
+            fail_axis "$axis" "the throttle probe produced no percentage, so nothing was measured to gate on; a gate that cannot read its own counters must not pass the axis"
+            return 0 ;;
+    esac
+    if awk -v pct="$pct" -v max="$THROTTLED_PCT_MAX" 'BEGIN {exit !(pct + 0 > max + 0)}'; then
         fail_axis "$axis" "throttled in ${pct}% of CFS periods at ${spec_threads}t (limit ${THROTTLED_PCT_MAX}%); this host cannot time the cpu plane"
         return 0
     fi
