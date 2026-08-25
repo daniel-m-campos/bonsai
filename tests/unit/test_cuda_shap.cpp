@@ -178,7 +178,7 @@ size_t check_parity(size_t n_rows, size_t n_feats, size_t max_depth, char const 
     REQUIRE(plane2);
     auto const scored = Dataset::bin(held, mappers, DataConfig{}, plane2);
 
-    auto const in = booster.predict_plan_input();
+    auto const in = booster.device_plan_input();
     auto const plan =
         cuda_shap_plan(in.trees, mappers, in.learning_rate, in.init_score);
     REQUIRE(plan);
@@ -249,7 +249,7 @@ TEST_CASE("a densified levelwise model carries dead slots nothing can reach",
     {
         booster.update_one_iter(ds);
     }
-    auto const in = booster.predict_plan_input();
+    auto const in = booster.device_plan_input();
     REQUIRE(!in.trees.empty());
     CHECK(count_dead_leaves(in.trees) > 0);
 
@@ -322,7 +322,7 @@ TEST_CASE("cuda_pred_contribs declines a plane of the wrong shape", "[cuda][shap
 
     MseBooster booster{shap_cfg(5)};
     booster.update_one_iter(ds);
-    auto const in = booster.predict_plan_input();
+    auto const in = booster.device_plan_input();
     auto const plan =
         cuda_shap_plan(in.trees, mappers, in.learning_rate, in.init_score);
     REQUIRE(plan);

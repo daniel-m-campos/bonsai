@@ -45,7 +45,7 @@ enum class ImportanceType : uint8_t
 // What a device predict plan needs from a booster: the dense ensemble to pack
 // in bin space, the scale and base every prediction applies to the packed
 // sum, and the mutation epoch that says when a cached plan is stale.
-struct PredictPlanInput
+struct DevicePlanInput
 {
     std::span<DenseTree const>                    trees;
     float                                         learning_rate = 0.0F;
@@ -147,7 +147,7 @@ class IBooster
     // Everything a device predict plan packs, in one call so the ensemble is
     // read once. An empty `trees` declines. `trees` is valid for as long as
     // the returned value is, never longer.
-    virtual PredictPlanInput predict_plan_input() const
+    virtual DevicePlanInput device_plan_input() const
     {
         return {};
     }
@@ -929,9 +929,9 @@ class Booster final : public IBooster
         }
     }
 
-    PredictPlanInput predict_plan_input() const override
+    DevicePlanInput device_plan_input() const override
     {
-        PredictPlanInput out{};
+        DevicePlanInput out{};
         out.learning_rate = config_.learning_rate;
         out.init_score    = init_score_;
         out.epoch         = trees_.epoch();
