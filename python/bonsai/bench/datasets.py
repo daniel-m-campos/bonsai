@@ -113,7 +113,8 @@ REGISTRY = {
         "friedman1", Tier.PERF_SYNTHETIC, "reg",
         "bonsai.bench.synth.gen_data (generalized Friedman 1991)",
         "project-generated",
-        "deterministic in (seed, rows, cols); see synth.py provenance", ()),
+        "deterministic in (seed, rows, cols, n_test) and in nothing else, "
+        "recipe 2; see synth.py provenance", ()),
 }
 
 

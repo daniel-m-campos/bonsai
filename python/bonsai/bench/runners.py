@@ -37,7 +37,7 @@ import numpy as np
 from bonsai.bench import params as rp
 from bonsai.bench import runlog
 from bonsai.bench.metrics import additivity, auc, r2
-from bonsai.bench.synth import gen_data
+from bonsai.bench.synth import DATA_RECIPE, gen_data
 from bonsai.bench.variants import Device, Lib, resolve
 
 # Row field and cell knob for the eval-mode discriminator, and the modes it
@@ -401,10 +401,12 @@ def cached_gen_data(cell: dict, cache_dir: str):
     gen_data is byte-stable in its arguments (guard-tested), so the key is
     the argument tuple; at 2^31-cell campaigns every regeneration is 8GiB of
     avoidable work per (variant, rep). Writes go through os.replace so a
-    half-written file never satisfies a later cache hit.
+    half-written file never satisfies a later cache hit. The recipe is part
+    of the key because it is part of the bytes: without it, a cache written
+    before decision 112 would silently feed a run measuring after it.
     """
-    key = (f"{cell['rows']}x{cell['cols']}-s{cell['seed']}"
-           f"-i{cell['informative']}-t{cell['n_test']}")
+    key = (f"r{DATA_RECIPE}-{cell['rows']}x{cell['cols']}"
+           f"-s{cell['seed']}-i{cell['informative']}-t{cell['n_test']}")
     root = pathlib.Path(cache_dir)
     root.mkdir(parents=True, exist_ok=True)
     paths = [root / f"{key}-{n}.npy" for n in ("X", "y", "Xte", "yte")]

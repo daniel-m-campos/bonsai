@@ -20,7 +20,7 @@ import subprocess
 import sys
 import threading
 
-from bonsai.bench import runlog
+from bonsai.bench import runlog, synth
 from bonsai.bench.variants import Device, Lib, resolve
 
 # GPU variants skip the widest cells by default: 16k+ cols exhausts consumer
@@ -436,7 +436,8 @@ class _Sink:
         runlog.emit_row(self.out_path, division="perf", suite=self.suite,
                         knobs=self.knobs, host=row_host,
                         timing_mode="in_memory",
-                        dataset="synthetic-friedman1", task="reg", cell=cell,
+                        dataset="synthetic-friedman1",
+                        data_recipe=synth.DATA_RECIPE, task="reg", cell=cell,
                         variant=variant, threads=threads, repeat=repeat,
                         **extra, **payload)
         print(f"  {variant:>24} t={threads:<3} rows={cell['rows']:>8} "
