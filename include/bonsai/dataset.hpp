@@ -11,6 +11,7 @@
 #include "bonsai/bin_mappers.hpp"
 #include "bonsai/config/data_config.hpp"
 #include "bonsai/detail/column_batch.hpp"
+#include "bonsai/row_view.hpp"
 #include "bonsai/types.hpp"
 
 namespace bonsai
@@ -79,8 +80,58 @@ class Dataset
                        std::shared_ptr<IngestPlane const> plane,
                        floats_view                        weights = {});
 
+    // Bins that already exist, adopted as the host columns of a new dataset:
+    // exactly one width is populated, the one `bins_are_u8` names. Nothing is
+    // re-binned and no plane is involved, so the caller owns the pairing of
+    // columns to mappers. The lazily minted caches are this dataset's own,
+    // never the ones a dataset the bins were read out of is sharing.
+    static Dataset from_bins(std::vector<std::vector<uint8_t>>  u8,
+                             std::vector<std::vector<uint16_t>> u16, bool bins_are_u8,
+                             BinMappers mappers, floats_view labels,
+                             floats_view weights = {});
+
+    // The PLANE's rows: the mirror's stride, the device geometry key, and the
+    // range every row id in this dataset is drawn from. A row view narrows
+    // the fit's row list and leaves this alone.
     size_t n_rows() const;
     size_t n_features() const;
+
+    // Which of the plane's rows a fit visits. Every row id is a global id
+    // into this dataset's storage, so grad, hess, labels and the row-major
+    // mirror stay full length whatever the view selects.
+    RowView const &row_view() const
+    {
+        return rows_;
+    }
+
+    // The view's row count, which is what a caller means by "how many rows".
+    size_t view_n_rows() const
+    {
+        return rows_.size();
+    }
+
+    // The same data, visited through `rows`. The plane, the host columns and
+    // the row-major mirror are shared with this dataset rather than copied.
+    Dataset with_rows(RowView rows) const;
+
+    // The same rows under the features `keep` names, in the order it names
+    // them and renumbered densely from zero. A rewrite, not a view: the kept
+    // columns are gathered into a dataset that owns them, so the result
+    // carries no plane and shares no cache with this one.
+    //
+    // Dense renumbering is what makes the rewrite worth its cost. A device
+    // plane groups features into tiles of a fixed width and reads a tile
+    // whole, so scattered survivors leave every tile part-live and part-dead
+    // while the same count renumbered fills the first tiles completely. That
+    // is worth 21-36% of the histogram fill at any keep fraction, and the
+    // rewrite pays for itself within a few boosting iterations.
+    //
+    // Since the rewrite mints a plane either way, a row view on this dataset
+    // is spent here rather than carried: the result holds the view's rows,
+    // renumbered from zero, and views nothing. Selecting rows then columns
+    // therefore trains the same model as columns then rows, materialized on
+    // one path and viewed on the other.
+    Dataset select_features(std::span<feature_id_t const> keep) const;
 
     floats_view       labels() const;
     floats_view       weights() const; // empty if uniform
@@ -122,9 +173,9 @@ class Dataset
         }
         if (bins_are_u8_)
         {
-            return f(std::span<uint8_t const>{features_u8_[fid]});
+            return f(std::span<uint8_t const>{cols_->u8[fid]});
         }
-        return f(std::span<uint16_t const>{features_u16_[fid]});
+        return f(std::span<uint16_t const>{cols_->u16[fid]});
     }
 
     // Single-element read for tree-routing loops (feature varies per step, so
@@ -136,7 +187,7 @@ class Dataset
             auto const &hb = host_bins();
             return bins_are_u8_ ? hb.u8[fid][row] : hb.u16[fid][row];
         }
-        return bins_are_u8_ ? features_u8_[fid][row] : features_u16_[fid][row];
+        return bins_are_u8_ ? cols_->u8[fid][row] : cols_->u16[fid][row];
     }
 
     // The completed ingest transaction, if any; backends recognize and adopt
@@ -213,8 +264,15 @@ class Dataset
         return *lazy_;
     }
 
-    std::vector<std::vector<uint8_t>>  features_u8_;
-    std::vector<std::vector<uint16_t>> features_u16_;
+    // Host-binned columns, exactly one width populated. Heap-allocated so a
+    // row view of this dataset shares the plane instead of duplicating it.
+    struct HostColumns
+    {
+        std::vector<std::vector<uint8_t>>  u8;
+        std::vector<std::vector<uint16_t>> u16;
+    };
+
+    std::shared_ptr<HostColumns>       cols_      = std::make_shared<HostColumns>();
     std::shared_ptr<RowMajor>          row_major_ = std::make_shared<RowMajor>();
     std::shared_ptr<IngestPlane const> plane_;
     std::shared_ptr<HostBins>          lazy_;
@@ -224,6 +282,7 @@ class Dataset
     BinMappers                         mappers_;
     size_t                             n_rows_     = 0;
     size_t                             n_features_ = 0;
+    RowView                            rows_       = RowView::all(0);
 };
 
 // The one host routing truth: which child a row takes at an internal node.

@@ -362,6 +362,113 @@ bonsai::cli::LabeledData make_validation_labeled(array_2d const &X, array_1d con
                                         std::vector<float>(y.data(), y.data() + n)};
 }
 
+// Which form the run-length encoder landed on, as repr says it.
+std::string view_shape_phrase(bonsai::RowView const &view)
+{
+    switch (view.form())
+    {
+    case bonsai::RowView::Form::Range:
+        return "1 range";
+    case bonsai::RowView::Form::Segments:
+        return std::to_string(view.n_runs()) + " segments";
+    case bonsai::RowView::Form::Gather:
+        break;
+    }
+    return std::to_string(view.size()) + " gathered rows";
+}
+
+// Two decimals, truncated: repr is a glance at the density, not a measurement.
+std::string two_decimals(double value)
+{
+    std::string const text = std::to_string(value);
+    size_t const      dot  = text.find('.');
+    return dot == std::string::npos ? text : text.substr(0, dot + 3);
+}
+
+// Raise a Python exception nanobind has no C++ mapping for.
+[[noreturn]] void raise_python(PyObject *type, std::string const &message)
+{
+    PyErr_SetString(type, message.c_str());
+    throw nb::python_error();
+}
+
+// `rows=` as positions into a dataset of `n` rows: a slice, a boolean mask, or
+// an integer array. Positions, not global ids: the caller indexes what it was
+// handed, and a view maps them onto its parent's plane afterwards.
+// Order and duplicates are kept. A node's histogram sums its rows in list
+// order, so the order is part of the answer, and sorting a bootstrap draw's
+// duplicates away would change what it weighs.
+std::vector<bonsai::row_id_t> parse_row_selection(nb::handle rows, size_t n)
+{
+    nb::object const np  = nb::module_::import_("numpy");
+    nb::object       arr = nb::none();
+    if (nb::isinstance<nb::slice>(rows))
+    {
+        auto const [start, stop, step, len] = nb::cast<nb::slice>(rows).compute(n);
+        arr                                 = np.attr("arange")(start, stop, step);
+    }
+    else
+    {
+        arr             = np.attr("asarray")(rows);
+        auto const kind = nb::cast<std::string>(arr.attr("dtype").attr("kind"));
+        if (kind == "b")
+        {
+            if (size_t const given = nb::cast<size_t>(arr.attr("size")); given != n)
+            {
+                raise_python(PyExc_ValueError,
+                             "Dataset.subset(rows=<bool mask>): the mask has " +
+                                 std::to_string(given) +
+                                 " entries and the dataset has " + std::to_string(n) +
+                                 " rows; a mask names one row per entry");
+            }
+            arr = np.attr("flatnonzero")(arr);
+        }
+        else if (kind != "i" && kind != "u")
+        {
+            raise_python(PyExc_TypeError,
+                         "Dataset.subset(rows=...) takes a slice, a boolean mask, or "
+                         "an integer array; got dtype kind '" +
+                             kind + "'");
+        }
+    }
+    arr = np.attr("ascontiguousarray")(arr, np.attr("int64"));
+    if (nb::cast<size_t>(arr.attr("ndim")) != 1)
+    {
+        raise_python(PyExc_ValueError,
+                     "Dataset.subset(rows=...) takes one dimension of row ids");
+    }
+    auto const ids = nb::cast<
+        nb::ndarray<int64_t const, nb::ndim<1>, nb::c_contig, nb::device::cpu>>(arr);
+    std::span<int64_t const> const in{ids.data(), ids.shape(0)};
+    if (in.empty())
+    {
+        raise_python(PyExc_ValueError,
+                     "Dataset.subset(rows=...) selected no rows; an empty training "
+                     "set has no gradients to boost on");
+    }
+    std::vector<bonsai::row_id_t> out;
+    out.reserve(in.size());
+    for (int64_t const id : in)
+    {
+        if (id < 0)
+        {
+            raise_python(PyExc_IndexError,
+                         "Dataset.subset(rows=...) got the negative index " +
+                             std::to_string(id) +
+                             "; row ids index the binned plane and do not wrap");
+        }
+        if (static_cast<size_t>(id) >= n)
+        {
+            raise_python(PyExc_IndexError, "Dataset.subset(rows=...) got row " +
+                                               std::to_string(id) +
+                                               ", out of range for a dataset of " +
+                                               std::to_string(n) + " rows");
+        }
+        out.push_back(static_cast<bonsai::row_id_t>(id));
+    }
+    return out;
+}
+
 // A reusable pre-binned dataset (decision 65): binning runs once at
 // construction, and the SAME bonsai::Dataset is fed to every train() call, so a
 // hyperparameter sweep or CV loop skips the per-fit bin pass. On GPU the
@@ -478,6 +585,68 @@ class Dataset
         n_features_ = xarg.n_features;
     }
 
+    // A row view of `parent`: the same binned plane, fewer rows. The parent's
+    // LoadedTrainValidation is shared rather than copied, so the mappers, the
+    // caller's matrix and the plane are one copy however many views stand on
+    // them; only the LabeledData wrapper is the view's own, because that is
+    // where the descriptor rides into the fit.
+    Dataset(Dataset const &parent, bonsai::RowView rows, nb::object base)
+        : x_(parent.x_), n_features_(parent.n_features_), loaded_(parent.loaded_),
+          view_train_(
+              std::make_shared<bonsai::cli::LabeledData>(bonsai::cli::LabeledData{
+                  .dataset  = parent.bins().with_rows(std::move(rows)),
+                  .features = parent.train_data().features,
+                  .labels   = parent.train_data().labels})),
+          base_(std::move(base)), device_id_(parent.device_id_),
+          bin_cfg_(parent.bin_cfg_)
+    {
+    }
+
+    // Select rows out of this dataset, sharing its plane. Positions are into
+    // THIS dataset's rows, so composing two views composes their selections;
+    // the ids stored are global ids into the root's plane, which is what the
+    // fit indexes bins, grad and the mirror by.
+    Dataset subset(nb::handle self, nb::handle rows, nb::handle columns) const
+    {
+        if (!columns.is_none())
+        {
+            raise_python(PyExc_NotImplementedError,
+                         "Dataset.subset(columns=...) rewrites the plane tile-aligned "
+                         "and is rung 8 of the dataset-views ladder; only rows= is "
+                         "implemented");
+        }
+        if (rows.is_none())
+        {
+            throw std::invalid_argument(
+                "Dataset.subset() needs rows=: a numpy integer array, a slice, or a "
+                "boolean mask");
+        }
+        std::vector<bonsai::row_id_t> ids = parse_row_selection(rows, n_rows());
+        if (is_view())
+        {
+            std::vector<bonsai::row_id_t> const mine = bins().row_view().materialize();
+            for (bonsai::row_id_t &id : ids)
+            {
+                id = mine[id];
+            }
+        }
+        nb::object base = is_view() ? base_ : nb::borrow(self);
+        return {root(), bonsai::RowView::encode(ids, bins().n_rows()), std::move(base)};
+    }
+
+    // Whether this dataset selects rows out of another one's plane.
+    bool is_view() const
+    {
+        return view_train_ != nullptr;
+    }
+
+    // The dataset whose plane backs this one, or None when it owns its own,
+    // which is numpy's convention for ndarray.base.
+    nb::object base() const
+    {
+        return base_;
+    }
+
     // The device the binned columns live on, "cpu" or "cuda". A device
     // request that ingest declined reports "cpu": the columns are on the
     // host and nothing about the fit is constrained.
@@ -494,9 +663,12 @@ class Dataset
         return device_id_;
     }
 
+    // The rows a fit visits, which is what a caller means by "how many rows".
+    // The plane's own row count stays on bonsai::Dataset, where the mirror
+    // stride and the device geometry key read it.
     size_t n_rows() const
     {
-        return loaded_->train.labels.size();
+        return bins().view_n_rows();
     }
     size_t n_features() const
     {
@@ -525,10 +697,40 @@ class Dataset
         return *loaded_;
     }
 
+    // The train side a fit runs on: a view's own, carrying the descriptor.
+    bonsai::cli::LabeledData const &train_data() const
+    {
+        return view_train_ ? *view_train_ : loaded_->train;
+    }
+
     // The binned columns, which is all most readers want out of loaded().
     bonsai::Dataset const &bins() const
     {
-        return loaded_->train.dataset;
+        return train_data().dataset;
+    }
+
+    // The dataset that owns the plane: this one, or the one .base names.
+    Dataset const &root() const
+    {
+        return is_view() ? nb::cast<Dataset const &>(base_) : *this;
+    }
+
+    // The refusal a view earns when a reader can only answer from raw rows:
+    // the rows a view names live in its parent's matrix, so reading that
+    // matrix would answer over the parent's rows and say nothing about it.
+    [[noreturn]] void refuse_view(char const *method, char const *because) const
+    {
+        throw std::invalid_argument(
+            std::string{"this Dataset is a row view (its .base names the plane it "
+                        "selects from), and "} +
+            method + " " + because +
+            ". Materialize the rows with Dataset(X[idx], y[idx], reference=parent).");
+    }
+
+    // The view's row selection, for repr and for the fit.
+    bonsai::RowView const &row_view() const
+    {
+        return bins().row_view();
     }
 
     // The raw rows a host-built Dataset retained; the Model raw-row readers
@@ -594,8 +796,13 @@ class Dataset
     // cache and the mappers identity are keyed on.
     std::shared_ptr<bonsai::cli::LoadedTrainValidation> loaded_ =
         std::make_shared<bonsai::cli::LoadedTrainValidation>();
-    std::optional<uint32_t> device_id_;
-    bonsai::BinMapperConfig bin_cfg_;
+    // Engaged only on a view: the bonsai::Dataset that carries the row
+    // descriptor. Held by shared_ptr so its address is stable across fits,
+    // which is what the device upload-skip cache keys on.
+    std::shared_ptr<bonsai::cli::LabeledData> view_train_;
+    nb::object                                base_ = nb::none();
+    std::optional<uint32_t>                   device_id_;
+    bonsai::BinMapperConfig                   bin_cfg_;
 };
 
 // The device plans cached per mutation epoch, so a sweep of predicts or
@@ -690,14 +897,21 @@ class Model
 
     // Every X-taking method also accepts a Dataset. A Dataset carrying the
     // model's own cuts routes in bin space (bit-identical to the raw walk,
-    // no raw rows needed, so DLPack builds work); foreign cuts fall back to
-    // the retained matrix; a device-resident build under foreign cuts has
-    // nothing either route can read, so it raises with both remedies.
+    // no raw rows needed, so DLPack builds and row views work); foreign cuts
+    // fall back to the retained matrix; a device-resident build under foreign
+    // cuts has nothing either route can read, so it raises with both remedies.
     bool routes_binned(Dataset const &ds, char const *method) const
     {
         if (mappers_.same_cuts(ds.loaded().mappers))
         {
             return true;
+        }
+        if (ds.is_view())
+        {
+            ds.refuse_view(method,
+                           "was binned with different cut points than this model's, "
+                           "so the only route left reads the raw rows its parent "
+                           "retained, which are the parent's rows");
         }
         if (!ds.has_host_matrix())
         {
@@ -1010,16 +1224,17 @@ class Model
     // The device walk over a Dataset whose bins are already resident on a
     // device. false means the host bin walk runs instead: the Dataset was
     // binned on the host, the ensemble is not dense (oblivious, multiclass),
-    // there is no usable device, or the plane declined this call. Only the
-    // width-1 predict rides this; the rest of the prediction family walks on
-    // the host.
+    // there is no usable device, the Dataset is a row view (the kernel reads
+    // the plane's rows, not a row list), or the plane declined this call. Only
+    // the width-1 predict rides this; the rest of the prediction family walks
+    // on the host.
     bool predict_on_device(Dataset const &ds, std::vector<float> &out,
                            size_t num_iteration) const
     {
         auto const &bins  = ds.bins();
         auto const  plane = bins.ingest_plane();
         auto const  in    = booster_->predict_plan_input();
-        if (!plane || in.trees.empty())
+        if (!plane || in.trees.empty() || !bins.row_view().is_identity())
         {
             return false;
         }
@@ -1037,7 +1252,7 @@ class Model
         auto const &bins  = ds.bins();
         auto const  plane = bins.ingest_plane();
         auto const  in    = booster_->predict_plan_input();
-        if (!plane || in.trees.empty())
+        if (!plane || in.trees.empty() || !bins.row_view().is_identity())
         {
             return false;
         }
@@ -1139,8 +1354,30 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
             "mirror). Pass eval_set=(X_valid, y_valid), or build the Dataset "
             "from a host array.");
     }
-    check_eval_labels(dataset->loaded().train.labels, cfg);
-    return &dataset->loaded().train;
+    if (!dataset->is_view())
+    {
+        check_eval_labels(dataset->train_data().labels, cfg);
+        return &dataset->train_data();
+    }
+    // The same seam from the other side: a view's raw rows are its parent's,
+    // so the routes that read them would score rows it does not name.
+    if (warm_start)
+    {
+        dataset->refuse_view("eval_set", "seeds an init_model warm start from raw "
+                                         "rows, which are its parent's");
+    }
+    if (!dataset->bins().bins_are_u8())
+    {
+        dataset->refuse_view("eval_set",
+                             "carries more than 255 bins, which have no row-major "
+                             "mirror for the binned walk to route, leaving only the "
+                             "raw rows its parent retained");
+    }
+    // The domain check reads the rows the loss will score, not the plane's: a
+    // view is free to leave rows its objective could not score behind.
+    check_eval_labels(
+        bonsai::gather_rows(dataset->row_view(), dataset->train_data().labels), cfg);
+    return &dataset->train_data();
 }
 
 // The internal wire format the config layer reads: dotted key, string value.
@@ -1516,15 +1753,15 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
         eval_set, cfg, dataset.loaded().mappers, init.has_value(), owned);
     std::vector<float> history;
     auto               initial = init ? std::move(init->booster) : nullptr;
-    auto const        &loaded  = dataset.loaded();
+    auto const        &train   = dataset.train_data();
 
     auto booster =
         validation != nullptr
-            ? bonsai::cli::train_with_progress(cfg, loaded.train, *validation, {},
+            ? bonsai::cli::train_with_progress(cfg, train, *validation, {},
                                                std::move(initial), std::ref(history))
-            : bonsai::cli::train_with_progress(cfg, loaded.train, {},
-                                               std::move(initial), std::ref(history));
-    return Model{std::move(booster), loaded.mappers, cfg, std::move(history)};
+            : bonsai::cli::train_with_progress(cfg, train, {}, std::move(initial),
+                                               std::ref(history));
+    return Model{std::move(booster), dataset.loaded().mappers, cfg, std::move(history)};
 }
 
 Model load(std::string const &path)
@@ -1803,7 +2040,9 @@ NB_MODULE(_bonsai, m)
         .def_prop_ro("device", &Dataset::device,
                      "Where the binned columns live: \"cuda\" for a "
                      "device-binned dataset, \"cpu\" otherwise.")
-        .def_prop_ro("n_rows", &Dataset::n_rows, "Rows in the binned matrix.")
+        .def_prop_ro("n_rows", &Dataset::n_rows,
+                     "Rows a fit visits: the binned matrix's, or the "
+                     "selection's on a view.")
         .def_prop_ro("n_features", &Dataset::n_features,
                      "Feature columns in the binned matrix.")
         .def_prop_ro("feature_names", &Dataset::feature_names,
@@ -1816,12 +2055,62 @@ NB_MODULE(_bonsai, m)
             "(n_rows, n_features), the way an array reports it. IDE variable "
             "explorers read it for their size column.")
         .def("__len__", [](Dataset const &d) { return d.n_rows(); })
+        .def_prop_ro("base", &Dataset::base,
+                     "The Dataset whose binned plane this one selects rows out "
+                     "of, or None when it owns its own, the way "
+                     "``numpy.ndarray.base`` reads. A chained view names the "
+                     "root, not the view it was taken from.")
+        .def(
+            "subset", [](nb::object self, nb::handle rows, nb::handle columns)
+            { return nb::cast<Dataset const &>(self).subset(self, rows, columns); },
+            nb::arg("rows") = nb::none(), nb::arg("columns") = nb::none(),
+            nb::sig("def subset(self, rows: object | None = None, columns: object | "
+                    "None = None) -> Dataset"),
+            "Select rows out of this Dataset, sharing its binned plane.\n"
+            "\n"
+            "The result is a Dataset that ``train`` fits on the selected rows, "
+            "that ``eval_set`` scores over exactly those rows, and that "
+            "``predict`` and its family answer one row per selected row in the "
+            "selection's order. Nothing is copied: the bins, the cut points "
+            "and the row-major mirror stay with the parent, so k folds cost "
+            "one plane rather than k. Selections compose, and positions are "
+            "always into the Dataset they are given to.\n"
+            "\n"
+            "A fit over a view is about the selected rows and no others. It "
+            "does not carry the rows left out through each finished tree the "
+            "way a subsampled fit carries the rows its draw dropped, since "
+            "those rejoin the next tree and a view's never do. So the rows "
+            "outside the selection keep stale training scores. Nothing the "
+            "view's fit produces reads them, and ``predict`` recomputes from "
+            "the trees regardless.\n"
+            "\n"
+            "Parameters\n"
+            "----------\n"
+            "rows : integer array, slice, or boolean mask\n"
+            "    Which rows to keep. The order is kept as given and duplicates "
+            "count once each, so a bootstrap draw weighs the way the "
+            "materialized copy of it would. Out-of-range and negative indices "
+            "raise: row ids index the binned plane and do not wrap.\n"
+            "columns : not implemented\n"
+            "    Column selection rewrites the plane tile-aligned and is a "
+            "later rung; passing it raises NotImplementedError.\n"
+            "\n"
+            "Returns\n"
+            "-------\n"
+            "Dataset\n"
+            "    A view whose ``base`` is the Dataset that owns the plane.")
         .def("__repr__",
              [](Dataset const &d)
              {
-                 return "Dataset(n_rows=" + std::to_string(d.n_rows()) +
-                        ", n_features=" + std::to_string(d.n_features()) +
-                        ", device='" + d.device() + "')";
+                 std::string out = "Dataset(" + std::to_string(d.n_rows()) + " x " +
+                                   std::to_string(d.n_features()) + ", " + d.device();
+                 if (d.is_view())
+                 {
+                     out += ", view: " + view_shape_phrase(d.row_view()) +
+                            ", density " + two_decimals(d.row_view().density()) +
+                            ", shares parent plane";
+                 }
+                 return out + ")";
              });
 
     // Dataset overload first: the array overload takes X and y untyped (a numpy

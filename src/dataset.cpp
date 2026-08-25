@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -111,6 +113,7 @@ Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers
     Dataset                                       ds;
     ds.n_rows_     = batch.labels.size();
     ds.n_features_ = batch.features.size();
+    ds.rows_       = RowView::all(ds.n_rows_);
     ds.mappers_    = mappers;
     ds.labels_     = batch.labels;
     ds.weights_    = batch.weights;
@@ -122,8 +125,8 @@ Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers
     }
     else
     {
-        fill_binned(ds.features_u8_, ds.features_u16_, ds.bins_are_u8_,
-                    batch.features.size(), ds.n_rows_, mappers,
+        fill_binned(ds.cols_->u8, ds.cols_->u16, ds.bins_are_u8_, batch.features.size(),
+                    ds.n_rows_, mappers,
                     [&](size_t f, size_t r) { return batch.features[f][r]; });
     }
     return ds;
@@ -143,11 +146,12 @@ Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mapp
     Dataset                                       ds;
     ds.n_rows_     = labels.size();
     ds.n_features_ = X.extent(1);
+    ds.rows_       = RowView::all(ds.n_rows_);
     ds.mappers_    = mappers;
     ds.labels_.assign(labels.begin(), labels.end());
     ds.weights_.assign(weights.begin(), weights.end());
-    fill_binned(ds.features_u8_, ds.features_u16_, ds.bins_are_u8_, X.extent(1),
-                ds.n_rows_, mappers, [&](size_t f, size_t r) { return X[r, f]; });
+    fill_binned(ds.cols_->u8, ds.cols_->u16, ds.bins_are_u8_, X.extent(1), ds.n_rows_,
+                mappers, [&](size_t f, size_t r) { return X[r, f]; });
     return ds;
 }
 
@@ -161,6 +165,7 @@ Dataset Dataset::bin(size_t n_rows, size_t n_features, floats_view labels,
     Dataset                                       ds;
     ds.n_rows_     = n_rows;
     ds.n_features_ = n_features;
+    ds.rows_       = RowView::all(ds.n_rows_);
     ds.mappers_    = mappers;
     ds.labels_.assign(labels.begin(), labels.end());
     ds.weights_.assign(weights.begin(), weights.end());
@@ -168,6 +173,137 @@ Dataset Dataset::bin(size_t n_rows, size_t n_features, floats_view labels,
     ds.lazy_        = std::make_shared<HostBins>();
     ds.bins_are_u8_ = all_fit_u8(mappers);
     return ds;
+}
+
+Dataset Dataset::from_bins(std::vector<std::vector<uint8_t>>  u8,
+                           std::vector<std::vector<uint16_t>> u16, bool bins_are_u8,
+                           BinMappers mappers, floats_view labels, floats_view weights)
+{
+    size_t const n_features = bins_are_u8 ? u8.size() : u16.size();
+    if (n_features == 0)
+    {
+        throw std::invalid_argument(
+            "Dataset::from_bins: no binned columns of the declared width");
+    }
+    if (mappers.size() != n_features)
+    {
+        throw std::invalid_argument(
+            "Dataset::from_bins: " + std::to_string(mappers.size()) + " bin mapper" +
+            (mappers.size() == 1 ? "" : "s") + " for " + std::to_string(n_features) +
+            " binned columns");
+    }
+    size_t const n_rows = labels.size();
+    for (size_t f = 0; f < n_features; ++f)
+    {
+        size_t const held = bins_are_u8 ? u8[f].size() : u16[f].size();
+        if (held != n_rows)
+        {
+            throw std::invalid_argument(
+                "Dataset::from_bins: column " + std::to_string(f) + " holds " +
+                std::to_string(held) + " bins and this dataset holds " +
+                std::to_string(n_rows) + " rows");
+        }
+    }
+    // Default-constructed, never copied from the dataset the bins came from:
+    // cols_ and row_major_ are shared across Dataset copies by design, so a
+    // copy here would serve that dataset's bins and its row-major mirror.
+    Dataset ds;
+    ds.n_rows_     = n_rows;
+    ds.n_features_ = n_features;
+    ds.rows_       = RowView::all(n_rows);
+    ds.mappers_    = std::move(mappers);
+    ds.labels_.assign(labels.begin(), labels.end());
+    ds.weights_.assign(weights.begin(), weights.end());
+    ds.bins_are_u8_ = bins_are_u8;
+    ds.cols_->u8    = std::move(u8);
+    ds.cols_->u16   = std::move(u16);
+    return ds;
+}
+
+Dataset Dataset::select_features(std::span<feature_id_t const> keep) const
+{
+    if (keep.empty())
+    {
+        throw std::invalid_argument("Dataset::select_features: no features kept; a "
+                                    "dataset with no columns has nothing to split on");
+    }
+    std::vector<std::vector<uint8_t>>  u8(bins_are_u8_ ? keep.size() : 0);
+    std::vector<std::vector<uint16_t>> u16(bins_are_u8_ ? 0 : keep.size());
+    std::vector<BinMapper>             kept;
+    std::vector<std::string>           names;
+    kept.reserve(keep.size());
+    names.reserve(keep.size());
+    auto const     parent_names = mappers_.feature_names();
+    RowIndex const rows{rows_};
+    for (size_t k = 0; k < keep.size(); ++k)
+    {
+        size_t const f = keep[k];
+        if (f >= n_features_)
+        {
+            throw std::invalid_argument(
+                "Dataset::select_features: feature " + std::to_string(f) +
+                " is past the last of this dataset's " + std::to_string(n_features_) +
+                " features");
+        }
+        // Reads through the plane's lazy host materialization when this
+        // dataset is device-resident, which is the round trip a column
+        // rewrite costs; a row view avoids it because it rewrites nothing.
+        visit_bins(f,
+                   [&](auto col)
+                   {
+                       using T =
+                           std::remove_const_t<typename decltype(col)::element_type>;
+                       auto &dst = [&]() -> auto &
+                       {
+                           if constexpr (std::is_same_v<T, uint8_t>)
+                           {
+                               return u8[k];
+                           }
+                           else
+                           {
+                               return u16[k];
+                           }
+                       }();
+                       dst.resize(rows.size());
+                       for (size_t i = 0; i < rows.size(); ++i)
+                       {
+                           dst[i] = col[rows[i]];
+                       }
+                   });
+        kept.push_back(mappers_[f]);
+        names.emplace_back(parent_names[f]);
+    }
+    // Labels and weights follow the rows the columns were gathered through,
+    // so the result is an ordinary dataset whose row ids number from zero.
+    std::vector<float> const lab = gather_rows(rows_, labels_);
+    std::vector<float> const w =
+        weights_.empty() ? std::vector<float>{} : gather_rows(rows_, weights_);
+    return from_bins(std::move(u8), std::move(u16), bins_are_u8_,
+                     BinMappers::from_mappers(std::move(kept), std::move(names)), lab,
+                     w);
+}
+
+Dataset Dataset::with_rows(RowView rows) const
+{
+    if (rows.parent_rows() != n_rows_)
+    {
+        throw std::invalid_argument("Dataset::with_rows: the row view describes " +
+                                    std::to_string(rows.parent_rows()) +
+                                    " rows and this dataset holds " +
+                                    std::to_string(n_rows_));
+    }
+    // The fill reads a run as a subspan of a column, so a run past the end is
+    // refused here rather than left to land somewhere inside the allocation.
+    if (!rows.fits(n_rows_))
+    {
+        throw std::invalid_argument(
+            "Dataset::with_rows: the row view names a row past the last of this "
+            "dataset's " +
+            std::to_string(n_rows_));
+    }
+    Dataset view = *this;
+    view.rows_   = std::move(rows);
+    return view;
 }
 
 size_t Dataset::n_rows() const
@@ -202,7 +338,7 @@ size_t Dataset::n_bins(size_t fid) const
 
 void Dataset::mint_row_major() const
 {
-    auto const  &cols  = plane_ ? host_bins().u8 : features_u8_;
+    auto const  &cols  = plane_ ? host_bins().u8 : cols_->u8;
     size_t const f     = cols.size();
     size_t const width = mirror_tile_width();
     row_major_->bins.resize(n_rows_ * f);

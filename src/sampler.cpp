@@ -18,10 +18,11 @@ namespace bonsai
 AllRowsSampler::AllRowsSampler(Config const & /*cfg*/) {}
 
 size_t AllRowsSampler::sample(floats_out /*grad*/, floats_out /*hess*/,
-                              std::mt19937 & /*rng*/, row_index_out out_indices)
+                              std::mt19937 & /*rng*/, row_index_view candidates,
+                              row_index_out out)
 {
-    std::iota(out_indices.begin(), out_indices.end(), row_index_out::value_type{0});
-    return out_indices.size();
+    std::ranges::copy(candidates, out.begin());
+    return candidates.size();
 }
 
 BernoulliSampler::BernoulliSampler(Config const &cfg) : p_(cfg.sampler.subsample)
@@ -34,21 +35,22 @@ BernoulliSampler::BernoulliSampler(Config const &cfg) : p_(cfg.sampler.subsample
 }
 
 size_t BernoulliSampler::sample(floats_out /*grad*/, floats_out /*hess*/,
-                                std::mt19937 &rng, row_index_out out_indices) const
+                                std::mt19937 &rng, row_index_view candidates,
+                                row_index_out out) const
 {
     if (p_ >= 1.0F)
     {
-        std::iota(out_indices.begin(), out_indices.end(), row_index_out::value_type{0});
-        return out_indices.size();
+        std::ranges::copy(candidates, out.begin());
+        return candidates.size();
     }
 
     std::bernoulli_distribution keep(p_);
     size_t                      n_selected = 0;
-    for (size_t i = 0; i < out_indices.size(); ++i)
+    for (row_id_t const r : candidates)
     {
         if (keep(rng))
         {
-            out_indices[n_selected++] = static_cast<row_index_out::value_type>(i);
+            out[n_selected++] = r;
         }
     }
     return n_selected;
@@ -71,25 +73,28 @@ GossSampler::GossSampler(Config const &cfg)
 }
 
 size_t GossSampler::sample(floats_out grad, floats_out hess, std::mt19937 &rng,
-                           row_index_out out_indices) const
+                           row_index_view candidates, row_index_out out) const
 {
-    size_t const n = out_indices.size();
+    size_t const n = candidates.size();
     auto const   top_k =
         static_cast<size_t>(std::round(top_rate_ * static_cast<double>(n)));
     auto const other_k =
         static_cast<size_t>(std::round(other_rate_ * static_cast<double>(n)));
     if (top_k == 0 || top_k >= n)
     {
-        std::iota(out_indices.begin(), out_indices.end(), row_index_out::value_type{0});
+        std::ranges::copy(candidates, out.begin());
         return n;
     }
 
-    // Rank rows by |grad|: the top_k largest are kept outright.
+    // Rank candidates by the |grad| of the row each one names: the top_k
+    // largest are kept outright. order holds positions into the candidate
+    // list; the reweighting below turns them back into row ids.
     std::vector<row_id_t> order(n);
     std::iota(order.begin(), order.end(), row_id_t{0});
-    std::nth_element(order.begin(), order.begin() + static_cast<std::ptrdiff_t>(top_k),
-                     order.end(), [&](row_id_t a, row_id_t b)
-                     { return std::abs(grad[a]) > std::abs(grad[b]); });
+    std::nth_element(
+        order.begin(), order.begin() + static_cast<std::ptrdiff_t>(top_k), order.end(),
+        [&](row_id_t a, row_id_t b)
+        { return std::abs(grad[candidates[a]]) > std::abs(grad[candidates[b]]); });
 
     std::vector<char> keep(n, 0);
     for (size_t i = 0; i < top_k; ++i)
@@ -97,28 +102,30 @@ size_t GossSampler::sample(floats_out grad, floats_out hess, std::mt19937 &rng,
         keep[order[i]] = 1;
     }
 
-    // Uniformly sample other_k rows from the rest and amplify them so the
-    // histogram grad/hess sums stay unbiased estimates of the full data.
+    // Uniformly sample other_k candidates from the rest and amplify them so
+    // the histogram grad/hess sums stay unbiased estimates of the full data.
     std::vector<row_id_t> rest(order.begin() + static_cast<std::ptrdiff_t>(top_k),
                                order.end());
     std::vector<row_id_t> picked;
     picked.reserve(other_k);
     std::sample(rest.begin(), rest.end(), std::back_inserter(picked), other_k, rng);
     float const amplify = (1.0F - top_rate_) / other_rate_;
-    for (row_id_t const r : picked)
+    for (row_id_t const position : picked)
     {
-        keep[r] = 1;
+        keep[position]   = 1;
+        row_id_t const r = candidates[position];
         grad[r] *= amplify;
         hess[r] *= amplify;
     }
 
-    // Emit in ascending row order for downstream scan locality.
+    // Emit in candidate order, which the view keeps ascending for the
+    // downstream scan.
     size_t n_selected = 0;
     for (size_t i = 0; i < n; ++i)
     {
         if (keep[i] != 0)
         {
-            out_indices[n_selected++] = static_cast<row_index_out::value_type>(i);
+            out[n_selected++] = candidates[i];
         }
     }
     return n_selected;

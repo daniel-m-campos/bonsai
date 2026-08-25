@@ -18,6 +18,7 @@
 #include "bonsai/types.hpp"
 #include "step/primitives.hpp"
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -43,15 +44,18 @@ template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT> class Leaf
     }
 
     // Opens the tree and seeds the heap: the root node plus its best split.
-    Candidate open_root(row_index_view row_indices)
+    Candidate open_root(row_index_view row_indices, bool rows_identity,
+                        row_run_view row_runs)
     {
         GrowProfiler::Lap lap;
         SplitInput        root;
         root.id = 0;
         root.rows.assign(row_indices.begin(), row_indices.end());
-        // Checked once per tree, with an early exit on the first row that is
-        // not its own index; see LevelStep::make_root.
-        root.rows_identity = rows_are_identity(root.rows, ds_.n_rows());
+        root.rows_identity = rows_identity;
+        // The runs have to describe exactly these rows, or the fill sums a
+        // different set than the node holds.
+        assert(row_runs.empty() || rows_in(row_runs) == row_indices.size());
+        root.row_runs = row_runs;
         engine_.populate(ds_, grad_, hess_, root, selected_);
         root.sums      = root.totals();
         root.row_count = root.rows.size();
@@ -136,14 +140,16 @@ class LeafStep<EngineT, SplitterT>
         engine_.begin_tree(ds_, grad_, hess_);
     }
 
-    Candidate open_root(row_index_view row_indices)
+    // row_runs is a host fill's shortcut (see the level plane's make_root).
+    Candidate open_root(row_index_view row_indices, bool rows_identity,
+                        row_run_view /*row_runs*/)
     {
         GrowProfiler::Lap lap;
         SplitInput        root;
         root.id = 0;
         // Identity contract, as on the level plane: a full-data fit passes
         // empty rows + row_count and the row list never crosses the bus.
-        if (rows_are_identity(row_indices, ds_.n_rows()))
+        if (rows_identity)
         {
             root.row_count = row_indices.size();
         }

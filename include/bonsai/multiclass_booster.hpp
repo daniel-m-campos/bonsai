@@ -6,11 +6,13 @@
 #include "bonsai/dataset.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/parallel.hpp"
+#include "bonsai/row_view.hpp"
 #include "bonsai/sampler.hpp"
 #include "bonsai/types.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <concepts>
 #include <cstddef>
 #include <random>
 #include <span>
@@ -65,14 +67,18 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                 // continued fit.
                 init_scores_.assign(n_k, 0.0F);
                 std::vector<double> counts(n_k, 0.0);
-                for (float const y : train.labels())
+                // The priors are a statistic of the rows this fit visits, so
+                // a view counts its own labels, not the whole plane's.
+                floats_view const labels = train.labels();
+                for (row_id_t const r : train.row_view().materialize())
                 {
-                    counts[class_of(y, n_k)] += 1.0;
+                    counts[class_of(labels[r], n_k)] += 1.0;
                 }
+                auto const n_fit = static_cast<double>(train.view_n_rows());
                 for (size_t k = 0; k < n_k; ++k)
                 {
-                    init_scores_[k] = static_cast<float>(
-                        std::log(std::max(counts[k], 1.0) / static_cast<double>(n)));
+                    init_scores_[k] =
+                        static_cast<float>(std::log(std::max(counts[k], 1.0) / n_fit));
                 }
             }
             scores_.assign(n * n_k, 0.0F);
@@ -115,9 +121,22 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                                      }
                                  });
 
-        if (row_indices_.size() != n)
+        // The fit's candidate rows: the Dataset's view, which is every row
+        // unless the caller subset it.
+        RowView const &view = train.row_view();
+        if (row_indices_.size() != view.size())
         {
-            row_indices_.resize(n);
+            row_indices_.resize(view.size());
+        }
+        if constexpr (std::same_as<sampler_type, AllRowsSampler>)
+        {
+            view.materialize_into(row_indices_);
+        }
+        // A drawing sampler picks out of the view's rows, so it is handed them
+        // as the candidate list and emits ids, not positions.
+        else if (candidates_.size() != view.size())
+        {
+            view.materialize_into(candidates_);
         }
         // Sample weights scale grad/hess, matching the single-output booster;
         // w.empty() multiplies by exactly 1.0F, keeping unweighted fits
@@ -135,9 +154,27 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                     grad_[i]       = (p - y) * wi;
                     hess_[i]       = std::max(p * (1.0F - p), 1e-6F) * wi;
                 });
-            size_t const n_selected = sampler_.sample(grad_, hess_, rng_, row_indices_);
-            auto [tree, leaf_values, leaf_ids] =
-                grower_.grow(train, grad_, hess_, {row_indices_.data(), n_selected});
+            size_t n_selected = 0;
+            bool   identity   = false;
+            // The view's runs describe the row list only when the sampler
+            // copied it verbatim; a drawing sampler's list keeps gathering.
+            row_run_view runs;
+            if constexpr (std::same_as<sampler_type, AllRowsSampler>)
+            {
+                n_selected = row_indices_.size();
+                identity   = view.is_identity();
+                runs       = view.runs();
+            }
+            else
+            {
+                n_selected =
+                    sampler_.sample(grad_, hess_, rng_, candidates_, row_indices_);
+                identity =
+                    view.is_identity() && n_selected == view.size() &&
+                    rows_are_identity({row_indices_.data(), n_selected}, view.size());
+            }
+            auto [tree, leaf_values, leaf_ids] = grower_.grow(
+                train, grad_, hess_, {row_indices_.data(), n_selected}, identity, runs);
             parallel::for_each_index(
                 n, [&](size_t i)
                 { scores_[(i * n_k) + k] += config_.learning_rate * leaf_values[i]; });
@@ -198,7 +235,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     void predict_at_binned(Dataset const &bins, floats_out y_hat,
                            size_t n_rounds) const override
     {
-        size_t const n = bins.n_rows();
+        size_t const n = bins.view_n_rows();
         assert(y_hat.size() == n);
         auto const scores = raw_scores_binned(bins, n_rounds);
         parallel::for_each_index(n,
@@ -220,7 +257,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     void predict_proba_binned(Dataset const &bins, std::span<double> out) const override
     {
         size_t const k = n_classes_;
-        size_t const n = bins.n_rows();
+        size_t const n = bins.view_n_rows();
         assert(out.size() == n * k);
         auto const scores = raw_scores_binned(bins, 0);
         parallel::for_each_index(n,
@@ -289,7 +326,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     {
         auto const &trees = trees_.read();
         assert(trees.size() >= n_classes_);
-        assert(bins.n_rows() * n_classes_ == scores.size());
+        assert(bins.view_n_rows() * n_classes_ == scores.size());
         assert(!bins.row_major_bins().empty());
         size_t const first = trees.size() - n_classes_;
         float const  lr    = config_.learning_rate;
@@ -300,12 +337,14 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         {
             sb.push_back(internal::split_bins(trees[first + k], bins));
         }
-        auto const rm = bins.row_major_bins();
-        parallel::for_each_index(bins.n_rows(),
+        auto const     rm = bins.row_major_bins();
+        RowIndex const rows{bins.row_view()};
+        parallel::for_each_index(rows.size(),
                                  [&](size_t i)
                                  {
-                                     auto const bin_of = [&](size_t f)
-                                     { return rm[bins.mirror_index(i, f)]; };
+                                     row_id_t const r      = rows[i];
+                                     auto const     bin_of = [&](size_t f)
+                                     { return rm[bins.mirror_index(r, f)]; };
                                      for (size_t k = 0; k < n_classes_; ++k)
                                      {
                                          scores[(i * n_classes_) + k] +=
@@ -353,7 +392,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
 
     void predict_staged_binned(Dataset const &bins, floats_out out) const override
     {
-        size_t const n = bins.n_rows();
+        size_t const n = bins.view_n_rows();
         for (size_t r = 0; r < n_iters(); ++r)
         {
             predict_at_binned(bins, floats_out{out.data() + (r * n), n}, r + 1);
@@ -466,12 +505,15 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     void contribs_over_binned(Trees const &trees, Dataset const &bins,
                               std::span<double> out, size_t n_features) const
     {
-        auto const biases = internal::shap_biases(trees);
-        auto const sb     = internal::tree_split_bins(trees, bins);
-        contribs_impl(
-            trees, bins.n_rows(), out, n_features,
-            [&](size_t t, row_id_t row, std::span<double> phi)
-            { tree_shap_binned(trees[t], sb[t], bins, row, phi, biases[t]); });
+        auto const     biases = internal::shap_biases(trees);
+        auto const     sb     = internal::tree_split_bins(trees, bins);
+        RowIndex const rows{bins.row_view()};
+        contribs_impl(trees, rows.size(), out, n_features,
+                      [&](size_t t, row_id_t position, std::span<double> phi)
+                      {
+                          tree_shap_binned(trees[t], sb[t], bins, rows[position], phi,
+                                           biases[t]);
+                      });
     }
 
     void truncate(size_t n_rounds) override
@@ -587,7 +629,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     // bin space.
     std::vector<float> raw_scores_binned(Dataset const &bins, size_t n_rounds) const
     {
-        size_t const n      = bins.n_rows();
+        size_t const n      = bins.view_n_rows();
         size_t const rounds = n_rounds == 0 ? n_iters() : std::min(n_rounds, n_iters());
         std::vector<float> scores(n * n_classes_, 0.0F);
         std::vector<float> raw(n);
@@ -596,7 +638,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
             std::ranges::fill(raw, 0.0F);
             for (size_t r = 0; r < rounds; ++r)
             {
-                internal::accumulate_train_contribution(
+                internal::accumulate_view_contribution(
                     trees_.read()[(r * n_classes_) + k], bins, raw);
             }
             for (size_t i = 0; i < n; ++i)
@@ -619,11 +661,13 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     // read(), every write through mutate(), which is what bumps the epoch the
     // dense SHAP cache and the device plans rebuild on.
     internal::Versioned<std::vector<tree_type>> trees_;
-    std::vector<float>     scores_;      // n_rows x K training accumulator
-    std::vector<float>     init_scores_; // per-class log prior
-    std::vector<float>     grad_;
-    std::vector<float>     hess_;
-    std::vector<row_id_t>  row_indices_;
+    std::vector<float>    scores_;      // n_rows x K training accumulator
+    std::vector<float>    init_scores_; // per-class log prior
+    std::vector<float>    grad_;
+    std::vector<float>    hess_;
+    std::vector<row_id_t> row_indices_;
+    // The rows a drawing sampler may pick from; empty when none draws.
+    std::vector<row_id_t>  candidates_;
     internal::DensifyCache dense_;
 };
 
