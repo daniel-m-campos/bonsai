@@ -51,6 +51,9 @@ struct PredictPlanInput
     float                      learning_rate = 0.0F;
     float                      init_score    = 0.0F;
     uint64_t                   epoch         = 0;
+    // Keeps `trees` alive when the booster lends a converted ensemble rather
+    // than a view of its own; null when the span borrows the booster's trees.
+    std::shared_ptr<std::vector<DenseTree> const> owned;
 };
 
 class IBooster
@@ -929,22 +932,25 @@ class Booster final : public IBooster
         }
     }
 
-    // The device predict seam. Only a dense ensemble packs; an oblivious one
-    // returns the declining default, whose host walk is predict_at_binned
-    // above.
+    // The device predict seam. A dense booster lends a view of its own trees;
+    // an oblivious one attaches the epoch-cached dense equivalent as the
+    // owner, since the packers read the span only while this input is alive.
     PredictPlanInput predict_plan_input() const override
     {
+        PredictPlanInput out{};
+        out.learning_rate = config_.learning_rate;
+        out.init_score    = init_score_;
+        out.epoch         = trees_.epoch();
         if constexpr (std::same_as<tree_type, DenseTree>)
         {
-            return {.trees         = trees_.read(),
-                    .learning_rate = config_.learning_rate,
-                    .init_score    = init_score_,
-                    .epoch         = trees_.epoch()};
+            out.trees = trees_.read();
         }
         else
         {
-            return {};
+            out.owned = dense_.get(trees_.read(), trees_.epoch());
+            out.trees = *out.owned;
         }
+        return out;
     }
 
     void predict_staged_binned(Dataset const &bins, floats_out out) const override

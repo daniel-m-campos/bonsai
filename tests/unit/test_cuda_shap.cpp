@@ -51,6 +51,11 @@ using namespace bonsai;
 using MseBooster =
     Booster<MSEObjective, DepthwiseGrower<CpuHistogramEngine>, AllRowsSampler>;
 
+// The levelwise arm reaches the device through the same seam, by way of the
+// dense equivalents its plan input owns.
+using ObliviousMseBooster =
+    Booster<MSEObjective, ObliviousGrower<CpuHistogramEngine>, AllRowsSampler>;
+
 // The fp32 walk against the fp64 host evaluator. Worst measured on a Jetson
 // Orin Nano (sm_87) over the three fixtures below: element gap 1.4e-7
 // relative, additivity residual 2.2e-7 relative, both two orders inside this
@@ -100,9 +105,25 @@ Config shap_cfg(size_t max_depth)
     return cfg;
 }
 
+// Nodes a densified oblivious tree carries with no training evidence behind
+// them. A levelwise fixture that has none is not testing what it claims to.
+size_t count_zero_cover(std::span<DenseTree const> trees)
+{
+    size_t dead = 0;
+    for (DenseTree const &tree : trees)
+    {
+        dead += static_cast<size_t>(
+            std::count(tree.covers().begin(), tree.covers().end(), 0.0F));
+    }
+    return dead;
+}
+
 // The worst relative element gap and the worst relative additivity residual
 // over one fixture, both reported so the tolerance above stays a measurement.
-void check_parity(size_t n_rows, size_t n_feats, size_t max_depth, char const *what)
+// Returns the zero-cover node count so a levelwise caller can assert the dead
+// slots it means to exercise were really there.
+template <typename BoosterT = MseBooster>
+size_t check_parity(size_t n_rows, size_t n_feats, size_t max_depth, char const *what)
 {
     auto const batch   = shap_batch(n_rows, n_feats);
     auto const mappers = BinMappers::fit(batch, BinMapperConfig{});
@@ -110,7 +131,7 @@ void check_parity(size_t n_rows, size_t n_feats, size_t max_depth, char const *w
     REQUIRE(plane);
     auto const ds = Dataset::bin(batch, mappers, DataConfig{}, plane);
 
-    MseBooster booster{shap_cfg(max_depth)};
+    BoosterT booster{shap_cfg(max_depth)};
     for (size_t i = 0; i < 8; ++i)
     {
         booster.update_one_iter(ds);
@@ -157,6 +178,7 @@ void check_parity(size_t n_rows, size_t n_feats, size_t max_depth, char const *w
                  what, worst_elem, worst_add);
     CHECK(worst_elem <= k_tol);
     CHECK(worst_add <= k_tol);
+    return count_zero_cover(in.trees);
 }
 
 } // namespace
@@ -178,6 +200,28 @@ TEST_CASE("cuda_pred_contribs matches the host binned walk", "[cuda][shap]")
     SECTION("paths of at most 32 elements")
     {
         check_parity(4096, 48, 20, "K=32");
+    }
+}
+
+TEST_CASE("cuda_pred_contribs matches the host binned walk for a levelwise model",
+          "[cuda][shap][oblivious]")
+{
+    if (!cuda_available())
+    {
+        SKIP("device TreeSHAP needs a usable CUDA device");
+    }
+    // Densification mints a perfect tree, so a levelwise model reaches the
+    // kernel carrying nodes no training row ever visited. The host walk skips
+    // those branches and the device closed form multiplies them out instead,
+    // which is the arithmetic this case exists to check; the dead-slot count
+    // is asserted so the fixture cannot quietly stop producing them.
+    SECTION("paths of at most 8 elements")
+    {
+        CHECK(check_parity<ObliviousMseBooster>(2048, 5, 5, "levelwise K=8") > 0);
+    }
+    SECTION("paths of at most 16 elements")
+    {
+        CHECK(check_parity<ObliviousMseBooster>(2048, 24, 12, "levelwise K=16") > 0);
     }
 }
 

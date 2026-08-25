@@ -43,6 +43,11 @@ using namespace bonsai;
 using MseBooster =
     Booster<MSEObjective, DepthwiseGrower<CpuHistogramEngine>, AllRowsSampler>;
 
+// The levelwise arm reaches the device through the same seam, by way of the
+// dense equivalents its plan input owns.
+using ObliviousMseBooster =
+    Booster<MSEObjective, ObliviousGrower<CpuHistogramEngine>, AllRowsSampler>;
+
 // A NaN column keeps the missing bin populated, so the walk's default_left
 // arm is exercised beside the ordinary comparison.
 detail::ColumnBatch predict_batch(size_t n, size_t nf)
@@ -136,6 +141,59 @@ TEST_CASE("cuda_predict matches the host binned walk", "[cuda][predict]")
     SECTION("a plane of the wrong shape declines")
     {
         REQUIRE(!cuda_predict(*plan, *plane, n, ds.n_features() + 1, 0, dev));
+    }
+}
+
+TEST_CASE("cuda_predict matches the host binned walk for a levelwise model",
+          "[cuda][predict][oblivious]")
+{
+    if (!cuda_available())
+    {
+        SKIP("device predict needs a usable CUDA device");
+    }
+    auto const batch   = predict_batch(4096, 5);
+    auto const mappers = BinMappers::fit(batch, BinMapperConfig{});
+    auto const plane   = cuda_ingest(batch, mappers);
+    REQUIRE(plane);
+    auto const ds = Dataset::bin(batch, mappers, DataConfig{}, plane);
+
+    ObliviousMseBooster booster{predict_cfg()};
+    for (size_t i = 0; i < 8; ++i)
+    {
+        booster.update_one_iter(ds);
+    }
+
+    // The trees the device packs are the plan input's dense equivalents, not
+    // the booster's own; the walk they describe must still be the same one.
+    auto const in = booster.predict_plan_input();
+    REQUIRE(in.owned != nullptr);
+    REQUIRE(in.trees.size() == 8);
+    auto const plan =
+        cuda_predict_plan(in.trees, mappers, in.learning_rate, in.init_score);
+    REQUIRE(plan);
+
+    size_t const       n = ds.n_rows();
+    std::vector<float> host(n, 0.0F);
+    std::vector<float> dev(n, 0.0F);
+
+    SECTION("the whole ensemble")
+    {
+        REQUIRE(cuda_predict(*plan, *plane, n, ds.n_features(), 0, dev));
+        booster.predict_at_binned(ds, host, 0);
+        for (size_t r = 0; r < n; ++r)
+        {
+            REQUIRE(dev[r] == host[r]);
+        }
+    }
+
+    SECTION("a truncated ensemble")
+    {
+        REQUIRE(cuda_predict(*plan, *plane, n, ds.n_features(), 3, dev));
+        booster.predict_at_binned(ds, host, 3);
+        for (size_t r = 0; r < n; ++r)
+        {
+            REQUIRE(dev[r] == host[r]);
+        }
     }
 }
 
