@@ -14,6 +14,7 @@
 #include <cmath>
 #include <concepts>
 #include <cstddef>
+#include <mdspan>
 #include <random>
 #include <span>
 #include <stdexcept>
@@ -61,49 +62,10 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
             hess_.resize(n);
             if (trees_.read().empty())
             {
-                // Log class priors, like lightgbm's boost_from_average. A
-                // warm-started booster keeps the priors it was loaded with —
-                // assigning zeros here shifted every class's base under the
-                // continued fit.
-                init_scores_.assign(n_k, 0.0F);
-                std::vector<double> counts(n_k, 0.0);
-                // The priors are a statistic of the rows this fit visits, so
-                // a view counts its own labels, not the whole plane's.
-                floats_view const labels = train.labels();
-                for (row_id_t const r : train.row_view().materialize())
-                {
-                    counts[class_of(labels[r], n_k)] += 1.0;
-                }
-                auto const n_fit = static_cast<double>(train.view_n_rows());
-                for (size_t k = 0; k < n_k; ++k)
-                {
-                    init_scores_[k] =
-                        static_cast<float>(std::log(std::max(counts[k], 1.0) / n_fit));
-                }
+                seed_class_priors(train);
             }
-            scores_.assign(n * n_k, 0.0F);
-            for (size_t i = 0; i < n; ++i)
-            {
-                for (size_t k = 0; k < n_k; ++k)
-                {
-                    scores_[(i * n_k) + k] = init_scores_[k];
-                }
-            }
-            if (!trees_.read().empty())
-            {
-                // Warm start: replay every tree's train contribution.
-                for (size_t t = 0; t < trees_.read().size(); ++t)
-                {
-                    std::vector<float> raw(n, 0.0F);
-                    internal::accumulate_train_contribution(trees_.read()[t], train,
-                                                            raw);
-                    size_t const k = t % n_k;
-                    for (size_t i = 0; i < n; ++i)
-                    {
-                        scores_[(i * n_k) + k] += config_.learning_rate * raw[i];
-                    }
-                }
-            }
+            broadcast_init_scores(n);
+            replay_warm_start(train, n);
         }
 
         // Per-row softmax probabilities feed every class's gradients.
@@ -154,27 +116,26 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
                     grad_[i]       = (p - y) * wi;
                     hess_[i]       = std::max(p * (1.0F - p), 1e-6F) * wi;
                 });
-            size_t n_selected = 0;
-            bool   identity   = false;
-            // The view's runs describe the row list only when the sampler
+            size_t   n_selected = 0;
+            RowShape shape;
+            // The view's shape describes the row list only when the sampler
             // copied it verbatim; a drawing sampler's list keeps gathering.
-            row_run_view runs;
             if constexpr (sampler_traits<sampler_type>::copies_view_verbatim)
             {
                 n_selected = row_indices_.size();
-                identity   = view.is_identity();
-                runs       = view.runs();
+                shape      = {.identity = view.is_identity(), .runs = view.runs()};
             }
             else
             {
                 n_selected =
                     sampler_.sample(grad_, hess_, rng_, candidates_, row_indices_);
-                identity =
+                shape.identity =
                     view.is_identity() && n_selected == view.size() &&
                     rows_are_identity({row_indices_.data(), n_selected}, view.size());
             }
-            auto [tree, leaf_values, leaf_ids] = grower_.grow(
-                train, grad_, hess_, {row_indices_.data(), n_selected}, identity, runs);
+            auto [tree, leaf_values, leaf_ids] =
+                grower_.grow(train, grad_, hess_,
+                             RowSelection{{row_indices_.data(), n_selected}, shape});
             // Over the plane, one slot per (row, class), for the same reason
             // the binary booster gives: a repeated row id must not have its
             // prediction advanced once per occurrence.
@@ -550,6 +511,60 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
     }
 
   private:
+    // Log class priors over the rows this fit visits (a view counts its own
+    // labels), like lightgbm's boost_from_average. Only for a fresh booster:
+    // a warm start keeps the priors it was loaded with.
+    void seed_class_priors(Dataset const &train)
+    {
+        size_t const n_k = n_classes_;
+        init_scores_.assign(n_k, 0.0F);
+        std::vector<double> counts(n_k, 0.0);
+        floats_view const   labels = train.labels();
+        for (row_id_t const r : train.row_view().materialize())
+        {
+            counts[class_of(labels[r], n_k)] += 1.0;
+        }
+        auto const n_fit = static_cast<double>(train.view_n_rows());
+        for (size_t k = 0; k < n_k; ++k)
+        {
+            init_scores_[k] =
+                static_cast<float>(std::log(std::max(counts[k], 1.0) / n_fit));
+        }
+    }
+
+    // Every row starts at its class's init score.
+    void broadcast_init_scores(size_t n)
+    {
+        size_t const n_k = n_classes_;
+        scores_.assign(n * n_k, 0.0F);
+        auto const scores = std::mdspan(scores_.data(), n, n_k);
+        for (size_t i = 0; i < n; ++i)
+        {
+            for (size_t k = 0; k < n_k; ++k)
+            {
+                scores[i, k] = init_scores_[k];
+            }
+        }
+    }
+
+    // Warm start: replay every loaded tree's train contribution into the
+    // scores; a no-op for a fresh booster.
+    void replay_warm_start(Dataset const &train, size_t n)
+    {
+        size_t const n_k = n_classes_;
+        for (size_t t = 0; t < trees_.read().size(); ++t)
+        {
+            std::vector<float> raw(n, 0.0F);
+            internal::accumulate_train_contribution(trees_.read()[t], train, raw);
+            size_t const k      = t % n_k;
+            auto const   scores = std::mdspan(scores_.data(), n, n_k);
+            for (size_t i = 0; i < n; ++i)
+            {
+                scores[i, k] += config_.learning_rate * raw[i];
+            }
+        }
+    }
+
     static size_t class_of(float label, size_t n_k)
     {
         auto const k = std::lround(label);
@@ -613,9 +628,11 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         for (size_t k = 0; k < n_classes_; ++k)
         {
             std::ranges::fill(raw, 0.0F);
+            auto const round_trees =
+                std::mdspan(trees_.read().data(), rounds, n_classes_);
             for (size_t r = 0; r < rounds; ++r)
             {
-                trees_.read()[(r * n_classes_) + k].predict(X, raw);
+                round_trees[r, k].predict(X, raw);
             }
             for (size_t i = 0; i < n; ++i)
             {
@@ -639,10 +656,11 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         for (size_t k = 0; k < n_classes_; ++k)
         {
             std::ranges::fill(raw, 0.0F);
+            auto const round_trees =
+                std::mdspan(trees_.read().data(), rounds, n_classes_);
             for (size_t r = 0; r < rounds; ++r)
             {
-                internal::accumulate_view_contribution(
-                    trees_.read()[(r * n_classes_) + k], bins, raw);
+                internal::accumulate_view_contribution(round_trees[r, k], bins, raw);
             }
             for (size_t i = 0; i < n; ++i)
             {

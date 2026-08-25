@@ -39,20 +39,17 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         engine_.begin_tree(ds_, grad_, hess_);
     }
 
-    SplitInput make_root(row_index_view row_indices, bool rows_identity,
-                         row_run_view row_runs)
+    SplitInput make_root(RowSelection const &sel)
     {
         Phase<&GrowProfiler::populate_s> phase;
         SplitInput                       root;
         root.id = 0;
-        root.rows.assign(row_indices.begin(), row_indices.end());
-        // Decided by the caller from its row descriptor, which knows the
-        // answer without walking the list.
-        root.rows_identity = rows_identity;
-        // The runs have to describe exactly these rows, or the fill sums a
-        // different set than the node holds.
-        assert(row_runs.empty() || rows_in(row_runs) == row_indices.size());
-        root.row_runs = row_runs;
+        root.rows.assign(sel.rows.begin(), sel.rows.end());
+        // The shape is the caller's row descriptor speaking; the runs have
+        // to describe exactly these rows, or the fill sums a different set
+        // than the node holds.
+        assert(sel.shape.runs.empty() || rows_in(sel.shape.runs) == sel.rows.size());
+        root.shape = sel.shape;
         engine_.populate(ds_, grad_, hess_, root, selected_);
         root.sums      = root.totals();
         root.row_count = root.rows.size();
@@ -177,10 +174,9 @@ class LevelStep<EngineT, SplitterT>
         engine_.begin_tree(ds_, grad_, hess_);
     }
 
-    // row_runs is a host fill's shortcut; the device root uploads a row list
-    // or none at all.
-    SplitInput make_root(row_index_view row_indices, bool rows_identity,
-                         row_run_view /*row_runs*/)
+    // The runs are a host fill's shortcut; the device root uploads a row
+    // list or none at all.
+    SplitInput make_root(RowSelection const &sel)
     {
         Phase<&GrowProfiler::populate_s> phase;
         SplitInput                       root;
@@ -189,13 +185,13 @@ class LevelStep<EngineT, SplitterT>
         // row_count): the 64MB host copy and its upload never happen; the
         // engine builds/caches the identity on device. Identity, not
         // cardinality: any other full-length list takes the general path.
-        if (rows_identity)
+        if (sel.shape.identity)
         {
-            root.row_count = row_indices.size();
+            root.row_count = sel.rows.size();
         }
         else
         {
-            root.rows.assign(row_indices.begin(), row_indices.end());
+            root.rows.assign(sel.rows.begin(), sel.rows.end());
         }
         engine_.begin_root(ds_, grad_, hess_, root, selected_);
         return root; // hists/rows stay device-resident; root carries sums

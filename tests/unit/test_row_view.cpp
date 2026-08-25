@@ -136,11 +136,10 @@ TreeConfig fill_config()
 
 // One tree over `rows` of `ds`, with the run list the column fill is handed.
 std::string grown(Dataset const &ds, std::span<float const> grad,
-                  std::span<float const> hess, std::span<row_id_t const> rows,
-                  bool identity, row_run_view runs)
+                  std::span<float const> hess, RowSelection const &sel)
 {
     DepthwiseGrower<> grower{fill_config()};
-    return tree_bytes(grower.grow(ds, grad, hess, rows, identity, runs).tree);
+    return tree_bytes(grower.grow(ds, grad, hess, sel).tree);
 }
 
 } // namespace
@@ -282,7 +281,7 @@ TEST_CASE("a view whose rows leave the dataset is refused, not read")
             static_cast<row_id_t>(n), static_cast<row_id_t>(n + 1)};
         RowView const view = RowView::encode(rows, n);
         CHECK(view.form() == RowView::Form::Range);
-        CHECK_FALSE(view.fits(n));
+        CHECK_FALSE(view.can_fit(n));
         CHECK_THROWS_WITH(plane.ds.with_rows(view),
                           Catch::Matchers::ContainsSubstring("past the last"));
     }
@@ -293,7 +292,7 @@ TEST_CASE("a view whose rows leave the dataset is refused, not read")
         rows.push_back(static_cast<row_id_t>(n + 1));
         RowView const view = RowView::encode(rows, n);
         CHECK(view.form() == RowView::Form::Segments);
-        CHECK_FALSE(view.fits(n));
+        CHECK_FALSE(view.can_fit(n));
         CHECK_THROWS_WITH(plane.ds.with_rows(view),
                           Catch::Matchers::ContainsSubstring("past the last"));
     }
@@ -307,7 +306,7 @@ TEST_CASE("a view whose rows leave the dataset is refused, not read")
     SECTION("a descriptor built against another dataset's row count")
     {
         RowView const view = RowView::encode(iota_rows(0, 10), n + 7);
-        CHECK(view.fits(n));
+        CHECK(view.can_fit(n));
         CHECK_THROWS_WITH(plane.ds.with_rows(view),
                           Catch::Matchers::ContainsSubstring("and this dataset holds"));
     }
@@ -321,15 +320,18 @@ TEST_CASE("a range view fills from subspans and grows the same tree")
     REQUIRE(view.row_view().form() == RowView::Form::Range);
 
     std::string const ranged =
-        grown(view, plane.grad, plane.hess, rows, false, view.row_view().runs());
-    std::string const gathered = grown(view, plane.grad, plane.hess, rows, false, {});
+        grown(view, plane.grad, plane.hess,
+              {rows, {.identity = false, .runs = view.row_view().runs()}});
+    std::string const gathered =
+        grown(view, plane.grad, plane.hess, {rows, {.identity = false, .runs = {}}});
     CHECK(ranged == gathered);
 
     Dataset const            copy = materialize(plane, rows);
     std::vector<float> const g    = narrow(plane.grad, rows);
     std::vector<float> const h    = narrow(plane.hess, rows);
     std::string const        copied =
-        grown(copy, g, h, iota_rows(0, static_cast<row_id_t>(rows.size())), true, {});
+        grown(copy, g, h,
+              {iota_rows(0, static_cast<row_id_t>(rows.size())), {.identity = true}});
     CHECK(ranged == copied);
 }
 
@@ -350,15 +352,18 @@ TEST_CASE("a segmented view fills run by run and grows the same tree")
     REQUIRE(view.row_view().runs().size() == 3);
 
     std::string const ranged =
-        grown(view, plane.grad, plane.hess, rows, false, view.row_view().runs());
-    std::string const gathered = grown(view, plane.grad, plane.hess, rows, false, {});
+        grown(view, plane.grad, plane.hess,
+              {rows, {.identity = false, .runs = view.row_view().runs()}});
+    std::string const gathered =
+        grown(view, plane.grad, plane.hess, {rows, {.identity = false, .runs = {}}});
     CHECK(ranged == gathered);
 
     Dataset const            copy = materialize(plane, rows);
     std::vector<float> const g    = narrow(plane.grad, rows);
     std::vector<float> const h    = narrow(plane.hess, rows);
     std::string const        copied =
-        grown(copy, g, h, iota_rows(0, static_cast<row_id_t>(rows.size())), true, {});
+        grown(copy, g, h,
+              {iota_rows(0, static_cast<row_id_t>(rows.size())), {.identity = true}});
     CHECK(ranged == copied);
 }
 
@@ -368,8 +373,10 @@ TEST_CASE("a unit hessian takes the same subspan arms")
     std::vector<row_id_t> const rows  = iota_rows(64, 320);
     Dataset const     view = plane.ds.with_rows(RowView::encode(rows, k_rows));
     std::string const ranged =
-        grown(view, plane.grad, {}, rows, false, view.row_view().runs());
-    CHECK(ranged == grown(view, plane.grad, {}, rows, false, {}));
+        grown(view, plane.grad, {},
+              {rows, {.identity = false, .runs = view.row_view().runs()}});
+    CHECK(ranged ==
+          grown(view, plane.grad, {}, {rows, {.identity = false, .runs = {}}}));
 }
 
 TEST_CASE("a view of many short runs grows the same tree as a gather")
@@ -390,12 +397,15 @@ TEST_CASE("a view of many short runs grows the same tree as a gather")
     REQUIRE(view.row_view().runs().size() == 50);
 
     std::string const ranged =
-        grown(view, plane.grad, plane.hess, rows, false, view.row_view().runs());
-    CHECK(ranged == grown(view, plane.grad, plane.hess, rows, false, {}));
+        grown(view, plane.grad, plane.hess,
+              {rows, {.identity = false, .runs = view.row_view().runs()}});
+    CHECK(ranged ==
+          grown(view, plane.grad, plane.hess, {rows, {.identity = false, .runs = {}}}));
 
     Dataset const            copy = materialize(plane, rows);
     std::vector<float> const g    = narrow(plane.grad, rows);
     std::vector<float> const h    = narrow(plane.hess, rows);
-    CHECK(ranged == grown(copy, g, h, iota_rows(0, static_cast<row_id_t>(rows.size())),
-                          true, {}));
+    CHECK(ranged == grown(copy, g, h,
+                          {iota_rows(0, static_cast<row_id_t>(rows.size())),
+                           {.identity = true}}));
 }

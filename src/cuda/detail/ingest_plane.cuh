@@ -54,8 +54,7 @@ class CudaIngestPlane final : public IngestPlane
     // the plane instead of being implied by whoever reads it.
     uint32_t tile_w = k_bin_tile_width;
 
-    void materialize(std::vector<std::vector<uint8_t>>  &u8,
-                     std::vector<std::vector<uint16_t>> &u16) const override;
+    void materialize(BinColumns &cols) const override;
 
     std::shared_ptr<IngestPlane const>
     select_columns(std::span<feature_id_t const> keep,

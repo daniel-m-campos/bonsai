@@ -66,7 +66,7 @@ inline GhView ordered_gh(std::span<row_id_t const> rows, floats_view grad,
 inline GhView node_gh(Dataset const & /*ds*/, SplitInput const &node, floats_view grad,
                       floats_view hess)
 {
-    if (node.rows_identity)
+    if (node.shape.identity)
     {
         return {.g = grad, .h = hess};
     }
@@ -74,9 +74,9 @@ inline GhView node_gh(Dataset const & /*ds*/, SplitInput const &node, floats_vie
     // start + k of full-length, globally indexed arrays, so the fill reads a
     // subspan and the gather never runs. Several runs are not contiguous in
     // grad, so they still gather.
-    if (node.row_runs.size() == 1)
+    if (node.shape.runs.size() == 1)
     {
-        RowRun const &run = node.row_runs.front();
+        RowRun const &run = node.shape.runs.front();
         size_t const  at  = run.start;
         return {.g = grad.subspan(at, run.size()),
                 .h = hess.empty() ? hess : hess.subspan(at, run.size())};

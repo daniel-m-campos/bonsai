@@ -17,6 +17,7 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdlib>
+#include <mdspan>
 #include <memory>
 #include <mutex>
 #include <numeric>
@@ -382,12 +383,13 @@ void predict_leaf_over(Trees const &trees, features_view X, std::span<node_id_t>
     size_t const n       = X.extent(0);
     size_t const n_trees = trees.size();
     assert(out.size() == n * n_trees);
+    auto const leaves = std::mdspan(out.data(), n, n_trees);
     parallel::for_each_index(n,
                              [&](size_t i)
                              {
                                  for (size_t t = 0; t < n_trees; ++t)
                                  {
-                                     out[(i * n_trees) + t] =
+                                     leaves[i, t] =
                                          trees[t].leaf_for(X, static_cast<row_id_t>(i));
                                  }
                              });
@@ -417,6 +419,9 @@ void predict_leaf_over_binned(Trees const &trees, Dataset const &bins,
     size_t const   n_trees = trees.size();
     assert(out.size() == rows.size() * n_trees);
     auto const sb = tree_split_bins(trees, bins);
+    // The output is a rows x trees matrix; mdspan states the shape once
+    // instead of re-deriving it in index arithmetic at every write.
+    auto const leaves = std::mdspan(out.data(), rows.size(), n_trees);
     parallel::for_each_index(
         rows.size(),
         [&](size_t k)
@@ -425,7 +430,7 @@ void predict_leaf_over_binned(Trees const &trees, Dataset const &bins,
             auto const     bin_of = [&](size_t f) { return bins.bin_at(f, r); };
             for (size_t t = 0; t < n_trees; ++t)
             {
-                out[(k * n_trees) + t] = leaf_binned(trees[t], sb[t], bin_of);
+                leaves[k, t] = leaf_binned(trees[t], sb[t], bin_of);
             }
         });
 }
@@ -527,11 +532,11 @@ class Booster final : public IBooster
                 // visits, which for a view is a subset of the plane's. On the
                 // identity gather_rows copies, so the full-data path keeps
                 // the labels it already has.
-                RowView const           &view = train.row_view();
-                std::vector<float> const gathered =
-                    view.is_identity() ? std::vector<float>{}
-                                       : gather_rows(view, train.labels());
-                init_score_ = objective_.init_score(
+                RowView const           &view     = train.row_view();
+                std::vector<float> const gathered = view.is_identity()
+                                                        ? std::vector<float>{}
+                                                        : view.gather(train.labels());
+                init_score_                       = objective_.init_score(
                     view.is_identity() ? train.labels() : floats_view{gathered});
                 scores_.assign(train.n_rows(), init_score_);
             }
@@ -585,9 +590,10 @@ class Booster final : public IBooster
         size_t const n_selected = refill_row_indices(train);
         lap(prof.sample_s);
 
-        auto [tree, leaf_values, leaf_ids] = grower_.grow(
-            train, grad_, hess_, {row_indices_.data(), n_selected},
-            selection_is_identity(train, n_selected), selection_runs(train));
+        auto [tree, leaf_values, leaf_ids] =
+            grower_.grow(train, grad_, hess_,
+                         RowSelection{{row_indices_.data(), n_selected},
+                                      selection_shape(train, n_selected)});
         lap(prof.grow_s);
 
         // Leaf renewal (surrogate-hessian objectives): replace each leaf's
@@ -657,40 +663,25 @@ class Booster final : public IBooster
         }
     }
 
-    // Whether this tree's row list is exactly [0, n_rows), which is what lets
-    // the fills index bins and grad by position instead of gathering.
-    // AllRowsSampler copies the view verbatim, so the descriptor answers in
-    // constant time. A drawing sampler builds its own list and is asked the
-    // old way, behind the view's constant-time veto: a view that is not the
-    // whole plane can never yield the identity.
-    bool selection_is_identity(Dataset const &train, size_t n_selected) const
+    // What the fills may assume about this tree's row list, answered from
+    // the view's descriptor in constant time when the sampler copied the
+    // view verbatim. A drawing sampler builds its own list, so its shape is
+    // derived the old way behind the view's constant-time veto: a view that
+    // is not the whole plane can never yield the identity, and the view's
+    // runs cannot speak for a drawn subset.
+    RowShape selection_shape(Dataset const &train, size_t n_selected) const
     {
         RowView const &view = train.row_view();
         if constexpr (sampler_traits<sampler_type>::copies_view_verbatim)
         {
-            return view.is_identity();
+            return {.identity = view.is_identity(), .runs = view.runs()};
         }
         else
         {
-            return view.is_identity() && n_selected == view.size() &&
-                   rows_are_identity({row_indices_.data(), n_selected}, view.size());
-        }
-    }
-
-    // This tree's rows as runs of consecutive plane rows, which is what lets
-    // the column fill read a run's bins as a subspan instead of one indirect
-    // load per element. AllRowsSampler copies the view verbatim, so the view's
-    // own runs describe the list; a drawing sampler builds its own list and
-    // the descriptor cannot speak for it, so those fits keep gathering.
-    row_run_view selection_runs(Dataset const &train) const
-    {
-        if constexpr (sampler_traits<sampler_type>::copies_view_verbatim)
-        {
-            return train.row_view().runs();
-        }
-        else
-        {
-            return {};
+            return {.identity = view.is_identity() && n_selected == view.size() &&
+                                rows_are_identity({row_indices_.data(), n_selected},
+                                                  view.size()),
+                    .runs = {}};
         }
     }
 
@@ -751,9 +742,9 @@ class Booster final : public IBooster
         detail::FitProfiler::Lap lap;
         size_t const             n_selected = refill_row_indices(train);
         lap(prof.sample_s);
-        auto res = grower_.grow(
-            train, floats_view{}, floats_view{}, {row_indices_.data(), n_selected},
-            selection_is_identity(train, n_selected), selection_runs(train));
+        auto res = grower_.grow(train, floats_view{}, floats_view{},
+                                RowSelection{{row_indices_.data(), n_selected},
+                                             selection_shape(train, n_selected)});
         lap(prof.grow_s);
         trees_.mutate().push_back(std::move(res.tree));
     }
@@ -906,12 +897,13 @@ class Booster final : public IBooster
         auto const  &trees = trees_.read();
         assert(out.size() == n * trees.size());
         std::vector<float> raw(n, 0.0F);
+        auto const         stages = std::mdspan(out.data(), trees.size(), n);
         for (size_t t = 0; t < trees.size(); ++t)
         {
             trees[t].predict(X, raw);
             parallel::for_each_index(
                 n, [&](size_t i)
-                { out[(t * n) + i] = init_score_ + (raw[i] * config_.learning_rate); });
+                { stages[t, i] = init_score_ + (raw[i] * config_.learning_rate); });
         }
     }
 
@@ -960,13 +952,14 @@ class Booster final : public IBooster
         size_t const n     = bins.view_n_rows();
         auto const  &trees = trees_.read();
         assert(out.size() == n * trees.size());
+        auto const         stages = std::mdspan(out.data(), trees.size(), n);
         std::vector<float> raw(n, 0.0F);
         for (size_t t = 0; t < trees.size(); ++t)
         {
             internal::accumulate_view_contribution(trees[t], bins, raw);
             parallel::for_each_index(
                 n, [&](size_t i)
-                { out[(t * n) + i] = init_score_ + (raw[i] * config_.learning_rate); });
+                { stages[t, i] = init_score_ + (raw[i] * config_.learning_rate); });
         }
     }
 

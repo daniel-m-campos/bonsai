@@ -28,16 +28,11 @@ struct SplitInput
 {
     NodeHistograms        hists;
     std::vector<row_id_t> rows;
-    // True only when `rows` is [0, n_rows): the fills then read bins and
-    // grad/hess at the row's position and skip the gather. Root builders set
-    // it; a child's rows are a strict subset, so false is right for them.
-    bool rows_identity = false;
-    // `rows` as runs of consecutive plane rows, when the caller knows them: the
-    // column fill then reads each run as a subspan and drops the per-row
-    // indirection. Empty means gather, which is right for every child, since a
-    // split scatters its parent's rows into arbitrary subsets.
-    row_run_view row_runs = {};
-    node_id_t    id       = 0;
+    // What the fills may assume about `rows`. Root builders set it from the
+    // caller's RowSelection; a child's rows are a strict subset, so the
+    // default (no assumptions) is right for them.
+    RowShape  shape = {};
+    node_id_t id    = 0;
     // Leaf-value bounds inherited down the tree by monotone constraints.
     double lo = -std::numeric_limits<double>::infinity();
     double hi = std::numeric_limits<double>::infinity();

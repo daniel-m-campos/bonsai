@@ -156,10 +156,14 @@ class RowView
     // Whether every row id lies inside a dataset of `n` rows. The fill takes
     // subspans off the runs, so a run reaching past a column's end has to be a
     // contract violation rather than a read that lands inside the allocation.
-    bool fits(size_t n) const
+    bool can_fit(size_t n) const
     {
         return size_ == 0 || static_cast<size_t>(last_) < n;
     }
+
+    // The values this view names, in view order: out[k] = values[rows[k]].
+    // Declared here, defined after RowIndex, which does the indexing.
+    std::vector<float> gather(std::span<float const> values) const;
 
     // Whether this view is exactly [0, parent_rows). Answered in constant
     // time, which is the whole reason the descriptor exists: the fills index
@@ -251,13 +255,37 @@ class RowIndex
     size_t                size_ = 0;
 };
 
-// A full-length, globally indexed array read through a view: one value per
-// view row, in the view's order. Labels are the case that needs it, since the
-// loss scores exactly the rows the view names.
-inline std::vector<float> gather_rows(RowView const         &view,
-                                      std::span<float const> values)
+// What a fill may assume about a row list beyond the ids themselves.
+// `identity` is true only when the list is exactly [0, n_rows), which lets
+// the fills read bins and gradients at the row's position and skip the
+// gather. `runs` describes the SAME list as runs of consecutive plane rows
+// when the caller knows them; empty means gather.
+struct RowShape
 {
-    RowIndex const     rows{view};
+    bool         identity = false;
+    row_run_view runs     = {};
+};
+
+// A row list plus its shape: the grow seam's one argument. Converts from a
+// bare span so "just these rows, assume nothing" stays a one-liner.
+struct RowSelection
+{
+    row_index_view rows  = {};
+    RowShape       shape = {};
+
+    RowSelection() = default;
+    // NOLINTBEGIN(google-explicit-constructor): converting from a bare row
+    // list is the point, so "just these rows, assume nothing" stays a
+    // one-liner at every call site.
+    RowSelection(row_index_view r) : rows(r) {}
+    RowSelection(std::vector<row_id_t> const &r) : rows(r) {}
+    // NOLINTEND(google-explicit-constructor)
+    RowSelection(row_index_view r, RowShape s) : rows(r), shape(s) {}
+};
+
+inline std::vector<float> RowView::gather(std::span<float const> values) const
+{
+    RowIndex const     rows{*this};
     std::vector<float> out;
     out.reserve(rows.size());
     for (size_t k = 0; k < rows.size(); ++k)

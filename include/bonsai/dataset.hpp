@@ -58,9 +58,7 @@ class Dataset
     // re-binned and no plane is involved, so the caller owns the pairing of
     // columns to mappers. The lazily minted caches are this dataset's own,
     // never the ones a dataset the bins were read out of is sharing.
-    static Dataset from_bins(std::vector<std::vector<uint8_t>>  u8,
-                             std::vector<std::vector<uint16_t>> u16, bool bins_are_u8,
-                             BinMappers mappers, floats_view labels,
+    static Dataset from_bins(BinColumns cols, BinMappers mappers, floats_view labels,
                              floats_view weights = {});
 
     // The PLANE's rows: the mirror's stride, the device geometry key, and the
@@ -211,14 +209,11 @@ class Dataset
     static LabelsId mint_labels_id();
     static FitId    mint_fit_id();
 
-    // Plain new, not make_shared: this initializer evaluates in Dataset's
-    // context, where the store's private default constructor is reachable
-    // through the friendship; make_shared would construct inside libc++,
-    // which is nobody's friend.
-    std::shared_ptr<BinStore const> store_{new BinStore()};
-    std::shared_ptr<Meta const>     meta_ = std::make_shared<Meta const>();
-    RowView                         rows_ = RowView::all(0);
-    FitId                           id_{};
+    std::shared_ptr<BinStore const> store_ =
+        std::make_shared<BinStore const>(BinStore::Key{});
+    std::shared_ptr<Meta const> meta_ = std::make_shared<Meta const>();
+    RowView                     rows_ = RowView::all(0);
+    FitId                       id_{};
 };
 
 // The one host routing truth: which child a row takes at an internal node.

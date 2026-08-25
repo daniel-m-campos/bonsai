@@ -93,9 +93,9 @@ SplitInput populate_node(Fixture const &fx, std::vector<row_id_t> rows,
                          node_id_t id = 0)
 {
     SplitInput node;
-    node.id            = id;
-    node.rows          = std::move(rows);
-    node.rows_identity = rows_are_identity(node.rows, fx.ds.n_rows());
+    node.id             = id;
+    node.rows           = std::move(rows);
+    node.shape.identity = rows_are_identity(node.rows, fx.ds.n_rows());
     CpuHistogramEngine engine;
     // As a grower drives it: begin_tree drops the cached selection plan, which
     // is keyed by addresses a second fixture in this process may reuse.
@@ -106,8 +106,8 @@ SplitInput populate_node(Fixture const &fx, std::vector<row_id_t> rows,
         return node;
     }
     SplitInput parent;
-    parent.rows          = test::iota_rows(fx.ds.n_rows());
-    parent.rows_identity = true;
+    parent.rows           = test::iota_rows(fx.ds.n_rows());
+    parent.shape.identity = true;
     engine.populate(fx.ds, fx.grad, fx.hess, parent, fx.selected);
     engine.populate_lone(fx.ds, fx.grad, fx.hess, node, fx.selected, parent.hists);
     return node;

@@ -36,7 +36,6 @@ Per-component design docs. Numbered roughly in build order. Source of truth for 
 | 20 | [`20-cuda-leafwise.md`](20-cuda-leafwise.md): device leafwise: a slot-pool plane for best-first growth | admitted, stage 3 closed (decisions 97-98) |
 | 21 | [`21-component-standings.md`](21-component-standings.md): component-timing standings: the DAG constants become the ledger | design (issue #323) |
 | 22 | [`22-device-predict-shap.md`](22-device-predict-shap.md): device predict and device TreeSHAP: serving the resident Dataset | landed for width-1 dense models; pod ledger pending |
-| 23 | [`23-core-type-decomposition.md`](23-core-type-decomposition.md): core type decomposition: the census before the refactor | analysis only, no decision |
 
 ## Cross-cutting concerns
 

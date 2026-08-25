@@ -269,8 +269,7 @@ class DepthwiseGrower
     using Tree   = DenseTree;
     explicit DepthwiseGrower(TreeConfig const &cfg);
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
-                          row_index_view row_indices, bool rows_identity = false,
-                          row_run_view row_runs = {});
+                          RowSelection selection = {});
 
     void recycle(train_leaf_values values, std::vector<node_id_t> leaf_ids)
     {
@@ -327,8 +326,7 @@ class ObliviousGrower
     using Tree   = ObliviousTree;
     explicit ObliviousGrower(TreeConfig const &cfg);
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
-                          row_index_view row_indices, bool rows_identity = false,
-                          row_run_view row_runs = {});
+                          RowSelection selection = {});
 
     void recycle(train_leaf_values values, std::vector<node_id_t> leaf_ids)
     {
@@ -381,8 +379,7 @@ class LeafwiseGrower
     using Tree   = DenseTree;
     explicit LeafwiseGrower(TreeConfig const &cfg);
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
-                          row_index_view row_indices, bool rows_identity = false,
-                          row_run_view row_runs = {});
+                          RowSelection selection = {});
 
     void recycle(train_leaf_values values, std::vector<node_id_t> leaf_ids)
     {
