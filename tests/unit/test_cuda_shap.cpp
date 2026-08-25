@@ -57,9 +57,9 @@ using ObliviousMseBooster =
     Booster<MSEObjective, ObliviousGrower<CpuHistogramEngine>, AllRowsSampler>;
 
 // The fp32 walk against the fp64 host evaluator. Worst measured on a Jetson
-// Orin Nano (sm_87) over the three fixtures below: element gap 1.4e-7
-// relative, additivity residual 2.2e-7 relative, both two orders inside this
-// pin.
+// Orin Nano (sm_87) over the five fixtures below, the levelwise pair included:
+// element gap 1.17e-7 relative, additivity residual 3.22e-7 relative, both two
+// orders inside this pin.
 constexpr double k_tol = 1e-5;
 
 // A NaN column keeps the missing bin populated, so the element's missing_ok

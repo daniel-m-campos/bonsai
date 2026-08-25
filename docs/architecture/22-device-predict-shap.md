@@ -1,6 +1,6 @@
 # 22: Device predict and device TreeSHAP: serving the resident Dataset
 
-> **Status:** landed for every width-1 model, dense and levelwise (decision 111); performance ledger pending the first datacenter pod session, and the levelwise arm's throughput is unmeasured. Correctness is device-verified on a Jetson Orin (sm_87): predict bit-equal to the host walk, SHAP within 1.4e-7 of the fp64 reference.
+> **Status:** landed for every width-1 model, dense and levelwise (decision 111); performance ledger pending the first datacenter pod session, and the levelwise arm's throughput is unmeasured. Correctness is device-verified on a Jetson Orin (sm_87) for both arms: predict bit-equal to the host walk, SHAP worst element gap 1.17e-7 and worst additivity residual 3.22e-7 against the fp64 reference, over five fixtures.
 
 ## The problem this solves
 
