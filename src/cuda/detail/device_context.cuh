@@ -54,11 +54,15 @@ struct CudaDeviceContext
     // matrix re-uploads.
     struct DatasetKey
     {
-        Dataset const *dataset                              = nullptr;
-        void const    *bins0                                = nullptr;
-        size_t         n_rows                               = 0;
-        size_t         n_feats                              = 0;
-        bool           operator==(DatasetKey const &) const = default;
+        // The STORE, not the Dataset: every view shares its parent's store,
+        // so the address is one per binned matrix and lives as long as the
+        // bins do, where a Dataset is now a cheap wrapper a fold loop mints
+        // and drops per fold.
+        BinStore const *store                                = nullptr;
+        void const     *bins0                                = nullptr;
+        size_t          n_rows                               = 0;
+        size_t          n_feats                              = 0;
+        bool            operator==(DatasetKey const &) const = default;
     };
 
     // Dataset-resident plane: the binned matrix and its identity, uploaded once
@@ -308,7 +312,12 @@ struct CudaDeviceContext
         DeviceBuffer<float> labels;
         DeviceBuffer<float> scores;
         DeviceBuffer<float> weights; // uploaded only when the dataset is weighted
-        DatasetKey          labels_key;
+        // Labels are the FIT's, not the store's: keyed by the labels' own
+        // MINTED identity, never an address, so two datasets sharing one
+        // store with different labels can never inherit each other's upload
+        // and a freed-and-reallocated labels block cannot masquerade as its
+        // predecessor. Zero is never minted.
+        LabelsId            labels_key{};
         NodeTable           nodes;
         DeviceObjectiveKind kind          = DeviceObjectiveKind::none;
         bool                weighted      = false;

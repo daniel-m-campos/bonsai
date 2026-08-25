@@ -1,6 +1,6 @@
 # 23: Core type decomposition: the census before the refactor
 
-> **Status:** analysis only, no decision. This is the input to a decomposition pass, written so the pass argues from measured coupling rather than from a class's line count. Nothing here has been applied. The open questions in the last section are the deliverable.
+> **Status:** decided and applied (decision 109). The census below was the input; the four open questions in the last section were answered: no name inversion, cuts with the store, the row view stays on `Dataset`, and the store over the plane is two layers with two jobs. The device cache now keys bins by store and labels by fit identity.
 
 ## Why this exists
 

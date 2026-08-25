@@ -1,6 +1,7 @@
 #pragma once
 
 #include "bonsai/bin_mappers.hpp"
+#include "bonsai/bin_store.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/tree.hpp"
 

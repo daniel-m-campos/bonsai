@@ -6,6 +6,7 @@
 // bonsai::cuda_detail and references no internal-linkage entity, so including
 // it from more than one TU is ODR-clean.
 
+#include "bonsai/bin_store.hpp"
 #include "bonsai/dataset.hpp"
 
 #include <cstddef>

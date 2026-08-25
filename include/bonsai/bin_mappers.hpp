@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -43,6 +44,14 @@ class BinMappers
         out.mappers_       = std::move(mappers);
         out.feature_names_ = std::move(feature_names);
         return out;
+    }
+
+    // Whether every feature's bins fit a byte, which is what decides the
+    // stored bin width everywhere a store is built.
+    bool all_fit_u8() const
+    {
+        return std::ranges::all_of(mappers_, [](BinMapper const &m)
+                                   { return m.n_bins() <= 256; });
     }
 
     BinMapper const             &operator[](size_t fid) const;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bonsai/bin_store.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/objective_traits.hpp"
