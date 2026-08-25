@@ -975,7 +975,7 @@ class DevicePlanCache
 {
   public:
     std::shared_ptr<bonsai::CudaPredictPlan const>
-    predict(bonsai::PredictPlanInput const &in, bonsai::BinMappers const &mappers) const
+    predict(bonsai::DevicePlanInput const &in, bonsai::BinMappers const &mappers) const
     {
         std::scoped_lock const lock(mutex_);
         return predict_.get(in.epoch,
@@ -987,7 +987,7 @@ class DevicePlanCache
     }
 
     std::shared_ptr<bonsai::CudaShapPlan const>
-    shap(bonsai::PredictPlanInput const &in, bonsai::BinMappers const &mappers) const
+    shap(bonsai::DevicePlanInput const &in, bonsai::BinMappers const &mappers) const
     {
         std::scoped_lock const lock(mutex_);
         return shap_.get(in.epoch,
@@ -1423,7 +1423,7 @@ class Model
         {
             return false;
         }
-        auto const in = booster_->predict_plan_input();
+        auto const in = booster_->device_plan_input();
         if (in.trees.empty())
         {
             return false;
@@ -1445,7 +1445,7 @@ class Model
         {
             return false;
         }
-        auto const in = booster_->predict_plan_input();
+        auto const in = booster_->device_plan_input();
         if (in.trees.empty())
         {
             return false;

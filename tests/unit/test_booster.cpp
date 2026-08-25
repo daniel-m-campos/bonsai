@@ -579,12 +579,12 @@ TEST_CASE("MulticlassBooster: separable 3-class data reaches perfect accuracy",
     CHECK(pred2 == pred);
 }
 
-// The device predict seam. Both device routes read PredictPlanInput, and a
+// The device predict seam. Both device routes read DevicePlanInput, and a
 // dense booster can lend a view of its own trees where an oblivious one has
 // to convert first. What follows pins the lifetime contract that makes the
 // oblivious arm safe.
 
-TEST_CASE("predict_plan_input: a dense booster lends a view of its own trees",
+TEST_CASE("device_plan_input: a dense booster lends a view of its own trees",
           "[booster][predict]")
 {
     auto const                                      batch = separable_batch();
@@ -592,7 +592,7 @@ TEST_CASE("predict_plan_input: a dense booster lends a view of its own trees",
     MseBooster<DepthwiseGrower<CpuHistogramEngine>> b{tiny_cfg()};
     b.update_one_iter(train);
 
-    auto const in = b.predict_plan_input();
+    auto const in = b.device_plan_input();
     CHECK(in.keep_alive == nullptr);
     CHECK(in.trees.data() == b.trees().data());
     CHECK(in.trees.size() == b.trees().size());
@@ -600,7 +600,7 @@ TEST_CASE("predict_plan_input: a dense booster lends a view of its own trees",
     CHECK(in.epoch != 0); // 0 is the plan cache's never-packed sentinel
 }
 
-TEST_CASE("predict_plan_input: an oblivious booster lends its dense equivalent",
+TEST_CASE("device_plan_input: an oblivious booster lends its dense equivalent",
           "[booster][predict][oblivious]")
 {
     auto const                                      batch = separable_batch();
@@ -609,7 +609,7 @@ TEST_CASE("predict_plan_input: an oblivious booster lends its dense equivalent",
     b.update_one_iter(train);
     b.update_one_iter(train);
 
-    auto const in = b.predict_plan_input();
+    auto const in = b.device_plan_input();
     REQUIRE(in.keep_alive != nullptr);
     REQUIRE(in.trees.size() == b.trees().size());
     CHECK(in.trees.data() == in.keep_alive->data());
@@ -618,38 +618,38 @@ TEST_CASE("predict_plan_input: an oblivious booster lends its dense equivalent",
     SECTION("a mutation re-converts under a new epoch")
     {
         b.update_one_iter(train);
-        auto const after = b.predict_plan_input();
+        auto const after = b.device_plan_input();
         CHECK(after.epoch > in.epoch);
         CHECK(after.trees.size() == b.trees().size());
         CHECK(after.trees.data() != in.trees.data());
     }
 }
 
-TEST_CASE("predict_plan_input: the trees outlive the booster that lent them",
+TEST_CASE("device_plan_input: the trees outlive the booster that lent them",
           "[booster][predict][oblivious]")
 {
     // The whole reason the input carries an owner. Without it the span points
     // into a cache the booster took with it, and this reads freed memory,
     // which is what the sanitizer build is for.
-    auto const       batch = separable_batch();
-    Dataset const    train = make_dataset(batch);
-    PredictPlanInput in{};
-    float            expected = 0.0F;
+    auto const      batch = separable_batch();
+    Dataset const   train = make_dataset(batch);
+    DevicePlanInput in{};
+    float           expected = 0.0F;
     {
         MseBooster<ObliviousGrower<CpuHistogramEngine>> b{tiny_cfg()};
         b.update_one_iter(train);
-        in       = b.predict_plan_input();
+        in       = b.device_plan_input();
         expected = test::predict_one(in.trees[0], {0.95F});
     }
     REQUIRE(!in.trees.empty());
     CHECK(test::predict_one(in.trees[0], {0.95F}) == expected);
 }
 
-TEST_CASE("predict_plan_input: an untrained booster still declines",
+TEST_CASE("device_plan_input: an untrained booster still declines",
           "[booster][predict][oblivious]")
 {
     // An empty ensemble densifies to an empty vector, so the caller's
     // trees.empty() decline fires without a special case.
     MseBooster<ObliviousGrower<CpuHistogramEngine>> b{tiny_cfg()};
-    CHECK(b.predict_plan_input().trees.empty());
+    CHECK(b.device_plan_input().trees.empty());
 }
