@@ -432,6 +432,26 @@ def worker(spec: dict) -> dict:
         X, y, Xte, yte = gen_data(c["rows"], c["cols"], c["seed"], c["n_test"],
                                   c["informative"])
     v = resolve(spec[runlog.Row.VARIANT])
+    # A cell naming folds is asking the cross-validation question, which is
+    # about reuse across k fits rather than the cost of one; cv.py owns it,
+    # and none of the single-fit rates below apply.
+    if "folds" in c:
+        from bonsai.bench import cv
+        if v.device == Device.CUDA:
+            # The single-fit path below pays an untimed micro-fit so context
+            # creation and the PTX JIT stay out of the number; a fold loop
+            # needs it more, since without it both land inside fold 0 and so
+            # inside loop_s, which is the whole quantity this suite reports.
+            # Sized to what exists: a fold loop builds row ids from the
+            # cell's row count, so a micro cell claiming more rows than it
+            # was handed indexes past the end.
+            n = min(8192, c["rows"])
+            micro = dict(spec, cell=dict(c, rows=n, n_test=1, iters=5, folds=2))
+            cv.run_cv(micro, X[:n], y[:n])
+        out = cv.run_cv(spec, X, y)
+        out[runlog.Row.PEAK_RSS_GB] = runlog.peak_rss_gb()
+        out["libs"] = runlog.lib_versions()
+        return out
     run = RUNNERS[v.lib]
     if v.device == Device.CUDA:
         # Untimed micro-fit absorbs CUDA context creation (and, once per

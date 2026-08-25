@@ -52,15 +52,28 @@ STANDINGS_AXES = {
 
 def test_bundled_specs():
     names = spec_mod.bundled_specs()
-    assert names == ["cpu-tall", "cpu-wide", "gpu-early-stop", "gpu-extreme",
-                     "gpu-shap", "gpu-tall", "gpu-wide", "scaling-bins",
-                     "scaling-cols", "scaling-rows", "scaling-threads"]
+    assert names == ["cpu-tall", "cpu-wide", "cv-folds", "gpu-cv-folds",
+                     "gpu-early-stop", "gpu-extreme", "gpu-shap", "gpu-tall",
+                     "gpu-wide", "scaling-bins", "scaling-cols", "scaling-rows",
+                     "scaling-threads"]
     s = spec_mod.load_spec("gpu-tall")  # bare name, no repo path
     assert s["suite"] == "gpu-tall" and len(spec_mod.expand(s)) == 6
     wide = spec_mod.load_spec("gpu-wide.json")  # suffix tolerated
     assert len(spec_mod.expand(wide)) == 6
     with pytest.raises(FileNotFoundError):
         spec_mod.load_spec("no-such-spec")
+
+
+@pytest.mark.parametrize("name", spec_mod.bundled_specs())
+def test_every_bundled_spec_loads_and_expands(name):
+    """Pinning the name list only proves a file exists. A spec that ships
+    unloadable fails on the pod, after the meter has started, so every
+    bundled spec is parsed and expanded here instead."""
+    jobs = spec_mod.expand(spec_mod.load_spec(name))
+    assert jobs
+    for j in jobs:
+        assert j["cell"]["rows"] > 0 and j["cell"]["cols"] > 0
+        assert j["repeats"] >= 1
 
 
 @pytest.mark.parametrize("name", sorted(STANDINGS_AXES))
