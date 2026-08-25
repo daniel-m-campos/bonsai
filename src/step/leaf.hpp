@@ -49,6 +49,9 @@ template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT> class Leaf
         SplitInput        root;
         root.id = 0;
         root.rows.assign(row_indices.begin(), row_indices.end());
+        // Checked once per tree, with an early exit on the first row that is
+        // not its own index; see LevelStep::make_root.
+        root.rows_identity = rows_are_identity(root.rows, ds_.n_rows());
         engine_.populate(ds_, grad_, hess_, root, selected_);
         root.sums      = root.totals();
         root.row_count = root.rows.size();
@@ -139,8 +142,8 @@ class LeafStep<EngineT, SplitterT>
         SplitInput        root;
         root.id = 0;
         // Identity contract, as on the level plane: a full-data fit passes
-        // empty rows + row_count and the permutation never crosses the bus.
-        if (row_indices.size() == ds_.n_rows())
+        // empty rows + row_count and the row list never crosses the bus.
+        if (rows_are_identity(row_indices, ds_.n_rows()))
         {
             root.row_count = row_indices.size();
         }

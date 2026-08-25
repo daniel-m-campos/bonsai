@@ -58,14 +58,15 @@ inline GhView ordered_gh(std::span<row_id_t const> rows, floats_view grad,
     return {.g = g, .h = h};
 }
 
-// grad and hess as one node's fill reads them: in place when the node covers
-// every row (the root, absent row sampling), gathered into its row order
-// otherwise.
-inline GhView node_gh(Dataset const &ds, SplitInput const &node, floats_view grad,
+// grad and hess as one node's fill reads them: in place when the node's rows
+// are the identity (the root, absent row sampling), gathered into its row
+// order otherwise. In place is indexing by position, so it needs identity,
+// not merely full cardinality.
+inline GhView node_gh(Dataset const & /*ds*/, SplitInput const &node, floats_view grad,
                       floats_view hess)
 {
-    return node.rows.size() == ds.n_rows() ? GhView{.g = grad, .h = hess}
-                                           : ordered_gh(node.rows, grad, hess);
+    return node.rows_identity ? GhView{.g = grad, .h = hess}
+                              : ordered_gh(node.rows, grad, hess);
 }
 
 } // namespace bonsai::fill_detail

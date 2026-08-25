@@ -458,16 +458,16 @@ class Dataset
         bonsai::floats_view const w = warg ? warg->view() : bonsai::floats_view{};
         nb::gil_scoped_release    release;
         bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
-        bin_cfg_        = cfg.bin_mapper;
-        loaded_.mappers = reference != nullptr
-                              ? reference->loaded_.mappers
-                              : fit_mappers(xarg, std::move(names), cfg, edges);
-        loaded_.train =
-            make_labeled(xarg, yarg.view(), loaded_.mappers, cfg, on_device, w);
+        bin_cfg_         = cfg.bin_mapper;
+        loaded_->mappers = reference != nullptr
+                               ? reference->loaded_->mappers
+                               : fit_mappers(xarg, std::move(names), cfg, edges);
+        loaded_->train =
+            make_labeled(xarg, yarg.view(), loaded_->mappers, cfg, on_device, w);
         // Device state is recorded only when a plane was actually minted:
         // an ingest decline leaves an ordinary host dataset, which no later
         // fit needs to be placed against.
-        if (loaded_.train.dataset.ingest_plane())
+        if (loaded_->train.dataset.ingest_plane())
         {
             device_id_ = dev_id;
         }
@@ -496,7 +496,7 @@ class Dataset
 
     size_t n_rows() const
     {
-        return loaded_.train.labels.size();
+        return loaded_->train.labels.size();
     }
     size_t n_features() const
     {
@@ -507,7 +507,7 @@ class Dataset
     // `columns`, or the synthesized f0..fN.
     std::vector<std::string> feature_names() const
     {
-        auto const names = loaded_.mappers.feature_names();
+        auto const names = loaded_->mappers.feature_names();
         return {names.begin(), names.end()};
     }
 
@@ -522,13 +522,13 @@ class Dataset
 
     bonsai::cli::LoadedTrainValidation const &loaded() const
     {
-        return loaded_;
+        return *loaded_;
     }
 
     // The binned columns, which is all most readers want out of loaded().
     bonsai::Dataset const &bins() const
     {
-        return loaded_.train.dataset;
+        return loaded_->train.dataset;
     }
 
     // The raw rows a host-built Dataset retained; the Model raw-row readers
@@ -587,11 +587,15 @@ class Dataset
         }
     }
 
-    std::optional<array_2d>            x_;
-    size_t                             n_features_ = 0;
-    bonsai::cli::LoadedTrainValidation loaded_;
-    std::optional<uint32_t>            device_id_;
-    bonsai::BinMapperConfig            bin_cfg_;
+    std::optional<array_2d> x_;
+    size_t                  n_features_ = 0;
+    // Shared, not held by value: a view of this Dataset backs onto the same
+    // bonsai::Dataset at the same address, which is what the device upload
+    // cache and the mappers identity are keyed on.
+    std::shared_ptr<bonsai::cli::LoadedTrainValidation> loaded_ =
+        std::make_shared<bonsai::cli::LoadedTrainValidation>();
+    std::optional<uint32_t> device_id_;
+    bonsai::BinMapperConfig bin_cfg_;
 };
 
 // The device plans cached per mutation epoch, so a sweep of predicts or
