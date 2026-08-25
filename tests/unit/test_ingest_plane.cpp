@@ -23,10 +23,9 @@ struct FakePlane final : IngestPlane
     std::vector<std::vector<uint8_t>> columns;
     mutable int                       materialized = 0;
 
-    void materialize(std::vector<std::vector<uint8_t>> &u8,
-                     std::vector<std::vector<uint16_t>> & /*u16*/) const override
+    void materialize(BinColumns &cols) const override
     {
-        u8 = columns;
+        std::get<U8Columns>(cols) = columns;
         ++materialized;
     }
 };
@@ -93,10 +92,9 @@ struct GatheringPlane final : IngestPlane
     mutable int                       materialized = 0;
     mutable int                       selected     = 0;
 
-    void materialize(std::vector<std::vector<uint8_t>> &u8,
-                     std::vector<std::vector<uint16_t>> & /*u16*/) const override
+    void materialize(BinColumns &cols) const override
     {
-        u8 = columns;
+        std::get<U8Columns>(cols) = columns;
         ++materialized;
     }
 

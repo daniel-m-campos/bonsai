@@ -1215,7 +1215,7 @@ class Model
             {
                 bonsai::apply_link_inverse_by_name(
                     cfg_.dispatch.objective_name,
-                    bonsai::floats_out{out->data() + (t * n), n});
+                    bonsai::floats_out{std::span{*out}.subspan(t * n, n)});
             }
         }
         return to_numpy(std::move(out), {k, n});
@@ -1237,7 +1237,7 @@ class Model
             {
                 bonsai::apply_link_inverse_by_name(
                     cfg_.dispatch.objective_name,
-                    bonsai::floats_out{out->data() + (t * n), n});
+                    bonsai::floats_out{std::span{*out}.subspan(t * n, n)});
             }
         }
         return to_numpy(std::move(out), {k, n});
@@ -1557,8 +1557,7 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
     }
     // The domain check reads the rows the loss will score, not the plane's: a
     // view is free to leave rows its objective could not score behind.
-    check_eval_labels(
-        bonsai::gather_rows(dataset->row_view(), dataset->train_data().labels), cfg);
+    check_eval_labels(dataset->row_view().gather(dataset->train_data().labels), cfg);
     return &dataset->train_data();
 }
 
@@ -2246,8 +2245,12 @@ NB_MODULE(_bonsai, m)
             "subset", [](nb::object self, nb::handle rows, nb::handle columns)
             { return nb::cast<Dataset const &>(self).subset(self, rows, columns); },
             nb::arg("rows") = nb::none(), nb::arg("columns") = nb::none(),
-            nb::sig("def subset(self, rows: object | None = None, columns: object | "
-                    "None = None) -> Dataset"),
+            nb::sig("def subset(self, "
+                    "rows: slice | collections.abc.Sequence[int] | "
+                    "NDArray[numpy.integer] | NDArray[numpy.bool] | None = None, "
+                    "columns: slice | collections.abc.Sequence[int] | "
+                    "collections.abc.Sequence[str] | NDArray[numpy.integer] | "
+                    "NDArray[numpy.bool] | None = None) -> Dataset"),
             "Select rows and/or columns out of this Dataset.\n"
             "\n"
             "Rows share the parent's binned plane and cost nothing. Columns "
@@ -2299,7 +2302,9 @@ NB_MODULE(_bonsai, m)
             "reorder", [](nb::object self, nb::handle rows)
             { return nb::cast<Dataset const &>(self).reorder(self, rows); },
             nb::arg("rows") = nb::none(),
-            nb::sig("def reorder(self, rows: object | None = None) -> Dataset"),
+            nb::sig("def reorder(self, "
+                    "rows: slice | collections.abc.Sequence[int] | "
+                    "NDArray[numpy.integer] | None = None) -> Dataset"),
             "The same rows in a different order, laid out that way.\n"
             "\n"
             "Unlike ``subset(rows=)``, which describes an order and leaves the "

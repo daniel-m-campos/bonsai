@@ -5,6 +5,7 @@
 #include <memory>
 #include <mutex>
 #include <span>
+#include <variant>
 #include <vector>
 
 #include "bonsai/bin_mappers.hpp"
@@ -13,6 +14,15 @@
 
 namespace bonsai
 {
+
+// The binned columns, at their one width. Which alternative is held IS the
+// width: 8-bit when every feature fits 256 bins, 16-bit otherwise, and no
+// flag exists to disagree with the storage. A plane-backed store holds an
+// empty vector of the right alternative until the columns materialize, so
+// the width is readable without forcing the materialization.
+using U8Columns  = std::vector<std::vector<uint8_t>>;
+using U16Columns = std::vector<std::vector<uint16_t>>;
+using BinColumns = std::variant<U8Columns, U16Columns>;
 
 // Product of a backend's ingest transaction (decision 54, doc 15): the
 // binned columns live wherever the backend put them — Dataset carries the
@@ -38,11 +48,13 @@ class IngestPlane
     IngestPlane &operator=(IngestPlane &&)      = default;
     virtual ~IngestPlane()                      = default;
 
-    // One-time host materialization: fill exactly one of u8/u16 with the
-    // plane's binned columns, feature-major, byte-identical to the host
-    // fill over the same cuts.
-    virtual void materialize(std::vector<std::vector<uint8_t>>  &u8,
-                             std::vector<std::vector<uint16_t>> &u16) const = 0;
+    // One-time host materialization: fill the HELD alternative with the
+    // plane's binned columns, feature-major, byte-identical to the host fill
+    // over the same cuts. The caller constructed `cols` at the plane's own
+    // width; an implementation must fill in place and never reassign the
+    // alternative, which is what lets the width be read concurrently with
+    // the materialization.
+    virtual void materialize(BinColumns &cols) const = 0;
 
     // A plane holding the rows `rows` names under the features `keep` names,
     // renumbered densely from zero, gathered inside this backend's memory. An
@@ -118,44 +130,30 @@ class BinStore
         return mappers_[f].bin_of_threshold(threshold);
     }
 
-    // Binned columns store 8-bit when every feature fits 256 bins (the
-    // max_bin=255 default) — halving the memory traffic of the histogram
-    // fill, the dominant fit stage — and 16-bit otherwise. Readers dispatch
-    // once per column via visit_bins; the callable is monomorphized per
-    // width, so the per-row loop never branches.
+    // 8-bit halves the memory traffic of the histogram fill, the dominant
+    // fit stage. The answer is the variant's own alternative, readable
+    // without materializing a plane-backed store's columns.
     bool bins_are_u8() const
     {
-        return bins_are_u8_;
+        return std::holds_alternative<U8Columns>(declared_columns());
     }
 
+    // Readers dispatch once per column; the callable is monomorphized per
+    // width, so the per-row loop never branches.
     template <typename F> decltype(auto) visit_bins(size_t fid, F &&f) const
     {
-        if (plane_)
-        {
-            auto const &hb = host_bins();
-            if (bins_are_u8_)
-            {
-                return f(std::span<uint8_t const>{hb.u8[fid]});
-            }
-            return f(std::span<uint16_t const>{hb.u16[fid]});
-        }
-        if (bins_are_u8_)
-        {
-            return f(std::span<uint8_t const>{cols_->u8[fid]});
-        }
-        return f(std::span<uint16_t const>{cols_->u16[fid]});
+        return std::visit([&](auto const &cols) -> decltype(auto)
+                          { return f(std::span{std::as_const(cols[fid])}); },
+                          columns());
     }
 
     // Single-element read for tree-routing loops (feature varies per step, so
-    // a per-column visitor buys nothing there); the branch predicts perfectly.
+    // a per-column visitor buys nothing there); the alternative check
+    // predicts as perfectly as the flag it replaced.
     bin_id_t bin_at(size_t fid, size_t row) const
     {
-        if (plane_)
-        {
-            auto const &hb = host_bins();
-            return bins_are_u8_ ? hb.u8[fid][row] : hb.u16[fid][row];
-        }
-        return bins_are_u8_ ? cols_->u8[fid][row] : cols_->u16[fid][row];
+        return std::visit([&](auto const &cols) -> bin_id_t { return cols[fid][row]; },
+                          columns());
     }
 
     // The completed ingest transaction, if any; backends recognize and adopt
@@ -181,65 +179,76 @@ class BinStore
     select_columns(std::span<feature_id_t const> keep,
                    std::span<row_id_t const>     rows) const;
 
-  private:
-    // Only Dataset and the store itself build stores; the constructors are
-    // where the plane/lazy pairing and the exactly-one-width rule live, so
-    // no factory can get them wrong independently.
-    friend class Dataset;
-
-    // Host-binned columns, exactly one width populated.
-    struct HostColumns
+    // Passkey: constructible only by Dataset and the store itself, so
+    // make_shared builds stores in place while "only Dataset builds stores"
+    // stays compiler-checked. The constructors are where the plane/lazy
+    // pairing and the one-width rule live, so no factory can get them wrong
+    // independently.
+    class Key
     {
-        std::vector<std::vector<uint8_t>>  u8;
-        std::vector<std::vector<uint16_t>> u16;
+        Key() = default;
+        friend class Dataset;
+        friend class BinStore;
     };
 
-    BinStore() = default;
+    explicit BinStore(Key) {}
 
-    // Host-columns store: `bins_are_u8` names which member of `cols` is
-    // populated. Explicit rather than derived because from_bins lets the
-    // caller own the pairing of columns to mappers.
-    BinStore(size_t n_rows, BinMappers mappers, HostColumns cols, bool bins_are_u8);
+    // Host-columns store: the width is whichever alternative `cols` holds,
+    // which is how from_bins lets the caller own the pairing of columns to
+    // mappers.
+    BinStore(Key, size_t n_rows, BinMappers mappers, BinColumns cols);
 
     // Plane-backed store: the lazy host cache is minted here and the width
     // follows the mappers, so `plane_ != nullptr` implies `lazy_ != nullptr`
     // by construction and no columns are allocated that will never be read.
-    BinStore(size_t n_rows, BinMappers mappers,
+    BinStore(Key, size_t n_rows, BinMappers mappers,
              std::shared_ptr<IngestPlane const> plane);
 
-    // Lazily materialized host columns of a plane-backed store. The first
-    // host consumer can be a parallel loop (route_unsampled walks bin_at
-    // from every worker), so materialization synchronizes via call_once, the
-    // same reason RowMirror does.
-    struct HostBins
+  private:
+    // Lazily materialized host columns of a plane-backed store, held at the
+    // right (empty) alternative from construction. The first host consumer
+    // can be a parallel loop (route_unsampled walks bin_at from every
+    // worker), so materialization synchronizes via call_once, the same
+    // reason RowMirror does.
+    struct LazyColumns
     {
-        std::vector<std::vector<uint8_t>>  u8;
-        std::vector<std::vector<uint16_t>> u16;
-        std::once_flag                     once;
+        BinColumns     cols;
+        std::once_flag once;
     };
 
     // Fills the mirror's buffer from the host columns; the mirror decides
     // the layout and calls this at most once.
     void mint_into(std::span<uint8_t> out_bins) const;
 
-    HostBins const &host_bins() const
+    // The live columns: materialized on first touch for a plane-backed
+    // store, the host columns otherwise.
+    BinColumns const &columns() const
     {
-        std::call_once(lazy_->once,
-                       [this] { plane_->materialize(lazy_->u8, lazy_->u16); });
-        return *lazy_;
+        if (!plane_)
+        {
+            return *cols_;
+        }
+        std::call_once(lazy_->once, [this] { plane_->materialize(lazy_->cols); });
+        return lazy_->cols;
+    }
+
+    // The columns WITHOUT forcing materialization: right alternative, maybe
+    // empty. What width questions read.
+    BinColumns const &declared_columns() const
+    {
+        return plane_ ? lazy_->cols : *cols_;
     }
 
     // The inner pointers stay non-const pointees so the two lazy caches can
     // mint under a const store; sharing one materialization across every
     // holder is the point of the heap allocation.
-    std::shared_ptr<HostColumns>       cols_      = std::make_shared<HostColumns>();
+    std::shared_ptr<BinColumns>        cols_      = std::make_shared<BinColumns>();
     std::shared_ptr<RowMirror>         row_major_ = std::make_shared<RowMirror>();
     std::shared_ptr<IngestPlane const> plane_;
-    std::shared_ptr<HostBins>          lazy_;
+    std::shared_ptr<LazyColumns>       lazy_;
     BinMappers                         mappers_;
-    bool                               bins_are_u8_ = false;
-    size_t                             n_rows_      = 0;
-    size_t                             n_features_  = 0;
+    size_t                             n_rows_     = 0;
+    size_t                             n_features_ = 0;
 };
 
 } // namespace bonsai

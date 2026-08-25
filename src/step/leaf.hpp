@@ -44,18 +44,16 @@ template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT> class Leaf
     }
 
     // Opens the tree and seeds the heap: the root node plus its best split.
-    Candidate open_root(row_index_view row_indices, bool rows_identity,
-                        row_run_view row_runs)
+    Candidate open_root(RowSelection const &sel)
     {
         GrowProfiler::Lap lap;
         SplitInput        root;
         root.id = 0;
-        root.rows.assign(row_indices.begin(), row_indices.end());
-        root.rows_identity = rows_identity;
+        root.rows.assign(sel.rows.begin(), sel.rows.end());
         // The runs have to describe exactly these rows, or the fill sums a
         // different set than the node holds.
-        assert(row_runs.empty() || rows_in(row_runs) == row_indices.size());
-        root.row_runs = row_runs;
+        assert(sel.shape.runs.empty() || rows_in(sel.shape.runs) == sel.rows.size());
+        root.shape = sel.shape;
         engine_.populate(ds_, grad_, hess_, root, selected_);
         root.sums      = root.totals();
         root.row_count = root.rows.size();
@@ -140,22 +138,21 @@ class LeafStep<EngineT, SplitterT>
         engine_.begin_tree(ds_, grad_, hess_);
     }
 
-    // row_runs is a host fill's shortcut (see the level plane's make_root).
-    Candidate open_root(row_index_view row_indices, bool rows_identity,
-                        row_run_view /*row_runs*/)
+    // The runs are a host fill's shortcut (see the level plane's make_root).
+    Candidate open_root(RowSelection const &sel)
     {
         GrowProfiler::Lap lap;
         SplitInput        root;
         root.id = 0;
         // Identity contract, as on the level plane: a full-data fit passes
         // empty rows + row_count and the row list never crosses the bus.
-        if (rows_identity)
+        if (sel.shape.identity)
         {
-            root.row_count = row_indices.size();
+            root.row_count = sel.rows.size();
         }
         else
         {
-            root.rows.assign(row_indices.begin(), row_indices.end());
+            root.rows.assign(sel.rows.begin(), sel.rows.end());
         }
         engine_.leaf_begin_root(ds_, config_, grad_, hess_, root, selected_);
         lap(GrowProfiler::instance().populate_s);

@@ -391,7 +391,7 @@ std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train
         eval_labels       = valid.labels;
         if (!valid.dataset.row_view().is_identity())
         {
-            narrowed_labels = gather_rows(valid.dataset.row_view(), valid.labels);
+            narrowed_labels = valid.dataset.row_view().gather(valid.labels);
             eval_labels     = narrowed_labels;
         }
     }

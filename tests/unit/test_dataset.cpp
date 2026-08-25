@@ -293,12 +293,12 @@ TEST_CASE("Dataset: from_bins mints its own lazy caches", "[dataset][from_bins]"
         }
     }
     Dataset const child =
-        Dataset::from_bins(shifted.u8, {}, true, mappers, batch.labels);
+        Dataset::from_bins(BinColumns{shifted.u8}, mappers, batch.labels);
     auto const child_mirror = child.mirror().bins();
     REQUIRE(child_mirror.size() == parent_mirror.size());
 
     Bins const    same = bins_of(parent);
-    Dataset const twin = Dataset::from_bins(same.u8, {}, true, mappers, batch.labels);
+    Dataset const twin = Dataset::from_bins(BinColumns{same.u8}, mappers, batch.labels);
     auto const    twin_mirror = twin.mirror().bins();
     REQUIRE(twin_mirror.size() == parent_mirror.size());
 
@@ -327,7 +327,7 @@ TEST_CASE("Dataset: from_bins returns the u8 bins it was handed",
     REQUIRE(parent.bins_are_u8());
 
     Bins const    bins = bins_of(parent);
-    Dataset const ds   = Dataset::from_bins(bins.u8, {}, true, mappers, batch.labels);
+    Dataset const ds   = Dataset::from_bins(BinColumns{bins.u8}, mappers, batch.labels);
 
     CHECK(ds.bins_are_u8());
     CHECK(ds.n_rows() == parent.n_rows());
@@ -354,7 +354,7 @@ TEST_CASE("Dataset: from_bins returns the u16 bins it was handed",
     REQUIRE_FALSE(parent.bins_are_u8());
 
     Bins const    bins = bins_of(parent);
-    Dataset const ds   = Dataset::from_bins({}, bins.u16, false, mappers, batch.labels);
+    Dataset const ds = Dataset::from_bins(BinColumns{bins.u16}, mappers, batch.labels);
 
     CHECK_FALSE(ds.bins_are_u8());
     CHECK(ds.n_rows() == parent.n_rows());
@@ -383,8 +383,8 @@ TEST_CASE("Dataset: from_bins reads its cuts off the mappers it was given",
     Bins const       bins = bins_of(parent);
     BinMappers const kept =
         BinMappers::from_mappers(std::vector<BinMapper>{mappers[1]}, {"b"});
-    Dataset const ds = Dataset::from_bins(std::vector<std::vector<uint8_t>>{bins.u8[1]},
-                                          {}, true, kept, batch.labels);
+    Dataset const ds = Dataset::from_bins(
+        BinColumns{std::vector<std::vector<uint8_t>>{bins.u8[1]}}, kept, batch.labels);
 
     CHECK(ds.n_features() == 1);
     CHECK(ds.n_bins(0) == parent.n_bins(1));
@@ -408,7 +408,7 @@ TEST_CASE("Dataset: from_bins carries labels and weights", "[dataset][from_bins]
     BinMappers const mappers = BinMappers::fit(batch, BinMapperConfig{});
     Bins const       bins    = bins_of(Dataset::bin(batch, mappers, {}));
     Dataset const    ds =
-        Dataset::from_bins(bins.u8, {}, true, mappers, batch.labels, batch.weights);
+        Dataset::from_bins(BinColumns{bins.u8}, mappers, batch.labels, batch.weights);
 
     REQUIRE(ds.labels().size() == 4);
     CHECK(ds.labels()[1] == 1.0F);
@@ -420,7 +420,7 @@ TEST_CASE("Dataset: from_bins carries labels and weights", "[dataset][from_bins]
 
     // No weights is the uniform case, as every other factory reports it.
     Dataset const unweighted =
-        Dataset::from_bins(bins.u8, {}, true, mappers, batch.labels);
+        Dataset::from_bins(BinColumns{bins.u8}, mappers, batch.labels);
     CHECK(unweighted.weights().empty());
 }
 
@@ -435,10 +435,11 @@ TEST_CASE("Dataset: from_bins refuses columns that do not describe its rows",
     {
         auto short_bins = bins.u8;
         short_bins[1].pop_back();
-        CHECK_THROWS_AS(Dataset::from_bins(short_bins, {}, true, mappers, batch.labels),
-                        std::invalid_argument);
+        CHECK_THROWS_AS(
+            Dataset::from_bins(BinColumns{short_bins}, mappers, batch.labels),
+            std::invalid_argument);
         CHECK_THROWS_WITH(
-            Dataset::from_bins(short_bins, {}, true, mappers, batch.labels),
+            Dataset::from_bins(BinColumns{short_bins}, mappers, batch.labels),
             Catch::Matchers::ContainsSubstring("column 1") &&
                 Catch::Matchers::ContainsSubstring("15") &&
                 Catch::Matchers::ContainsSubstring("16 rows"));
@@ -448,24 +449,22 @@ TEST_CASE("Dataset: from_bins refuses columns that do not describe its rows",
     {
         BinMappers const one =
             BinMappers::from_mappers(std::vector<BinMapper>{mappers[0]}, {"a"});
-        CHECK_THROWS_AS(Dataset::from_bins(bins.u8, {}, true, one, batch.labels),
+        CHECK_THROWS_AS(Dataset::from_bins(BinColumns{bins.u8}, one, batch.labels),
                         std::invalid_argument);
-        CHECK_THROWS_WITH(Dataset::from_bins(bins.u8, {}, true, one, batch.labels),
+        CHECK_THROWS_WITH(Dataset::from_bins(BinColumns{bins.u8}, one, batch.labels),
                           Catch::Matchers::ContainsSubstring("1 bin mapper") &&
                               Catch::Matchers::ContainsSubstring("2 binned columns"));
     }
 
-    SECTION("no columns of the declared width")
+    SECTION("no columns at all")
     {
-        CHECK_THROWS_AS(Dataset::from_bins({}, {}, true, mappers, batch.labels),
+        // The old "u16 bins under a u8 declaration" case is gone with the
+        // flag: the variant holds one alternative, so a width disagreeing
+        // with its own storage cannot be expressed, only emptiness can.
+        CHECK_THROWS_AS(Dataset::from_bins(BinColumns{}, mappers, batch.labels),
                         std::invalid_argument);
-        CHECK_THROWS_WITH(Dataset::from_bins({}, {}, true, mappers, batch.labels),
+        CHECK_THROWS_WITH(Dataset::from_bins(BinColumns{}, mappers, batch.labels),
                           Catch::Matchers::ContainsSubstring("no binned columns"));
-        // u16 bins under a u8 declaration are no columns at all.
-        CHECK_THROWS_WITH(
-            Dataset::from_bins({}, bins_of(Dataset::bin(batch, mappers, {})).u16, true,
-                               mappers, batch.labels),
-            Catch::Matchers::ContainsSubstring("no binned columns"));
     }
 }
 
@@ -477,7 +476,7 @@ TEST_CASE("Dataset: a from_bins dataset trains to the same model bytes",
     Dataset const    raw     = Dataset::bin(batch, mappers, {});
     Bins const       bins    = bins_of(raw);
     Dataset const    rebound =
-        Dataset::from_bins(bins.u8, {}, true, mappers, batch.labels);
+        Dataset::from_bins(BinColumns{bins.u8}, mappers, batch.labels);
 
     Config const cfg          = from_bins_cfg();
     auto         from_raw     = make_booster(cfg);

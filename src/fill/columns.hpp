@@ -138,8 +138,8 @@ inline void fill_column_runs(Dataset const &ds, feature_id_t fid, Histogram &h,
 // run length against the prefetch distance, in O(1).
 inline bool runs_beat_gather(SplitInput const &node)
 {
-    return !node.row_runs.empty() &&
-           node.rows.size() >= node.row_runs.size() * k_col_ahead;
+    return !node.shape.runs.empty() &&
+           node.rows.size() >= node.shape.runs.size() * k_col_ahead;
 }
 
 // Which of the two arms a node takes: runs when it has enough of a run to
@@ -148,7 +148,7 @@ inline bool runs_beat_gather(SplitInput const &node)
 // every feature of a node answers it the same way.
 inline bool node_fills_from_runs(SplitInput const &node)
 {
-    return !node.rows_identity && runs_beat_gather(node);
+    return !node.shape.identity && runs_beat_gather(node);
 }
 
 // The column fill, taken by u16 (high max_bin) data and by dense u8 nodes:
@@ -164,7 +164,7 @@ inline void fill_columns(Dataset const &ds, floats_view grad, floats_view hess,
                                  {
                                      feature_id_t const fid = selected[s];
                                      fill_column_runs(ds, fid, node.hists[fid],
-                                                      node.row_runs, gh);
+                                                      node.shape.runs, gh);
                                  });
         return;
     }
@@ -173,7 +173,7 @@ inline void fill_columns(Dataset const &ds, floats_view grad, floats_view hess,
                              {
                                  feature_id_t const fid = selected[s];
                                  fill_column(ds, fid, node.hists[fid], node.rows,
-                                             node.rows_identity, gh);
+                                             node.shape.identity, gh);
                              });
 }
 
@@ -193,7 +193,7 @@ inline void fill_columns_lone(Dataset const &ds, floats_view grad, floats_view h
                                  node.hists.carve_run(carve, selected, s);
                                  feature_id_t const fid = selected[s];
                                  Histogram         &h   = node.hists[fid];
-                                 fill_column(ds, fid, h, node.rows, node.rows_identity,
+                                 fill_column(ds, fid, h, node.rows, node.shape.identity,
                                              gh);
                                  sibling[fid] -= h;
                              });

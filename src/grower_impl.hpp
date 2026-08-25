@@ -522,10 +522,7 @@ DepthwiseGrower<EngineT, SplitterT>::DepthwiseGrower(TreeConfig const &cfg)
 
 template <HistogramEngine EngineT, NodeSplitFinder SplitterT>
 auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view grad,
-                                               floats_view    hess,
-                                               row_index_view row_indices,
-                                               bool           rows_identity,
-                                               row_run_view   row_runs)
+                                               floats_view hess, RowSelection selection)
     -> GrowResult<Tree>
 {
     namespace gd = grower_detail;
@@ -547,7 +544,7 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     gd::LevelOutputs        level_out;
     std::vector<bin_id_t>   split_bins(1, 0);
     std::vector<float>      split_gains(1, 0.0F);
-    std::vector<float>      covers(1, static_cast<float>(row_indices.size()));
+    std::vector<float>      covers(1, static_cast<float>(selection.rows.size()));
     auto const              selected =
         gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
 
@@ -555,7 +552,7 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     // opened per tree so a GPU engine can decline back to the host mid-fit.
     gd::LevelStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
     slap(gd::GrowProfiler::instance().setup_s);
-    current.push_back(step.make_root(row_indices, rows_identity, row_runs));
+    current.push_back(step.make_root(selection));
     nodes.emplace_back(DenseTree::leaf(0.0F));
     uint8_t depth    = 0;
     size_t  n_leaves = 0;
@@ -583,10 +580,11 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     }
     {
         gd::Phase<&gd::GrowProfiler::finalize_s> phase;
-        step.end_tree(current, nodes, n_leaves, values, leaf_ids, row_indices);
+        step.end_tree(current, nodes, n_leaves, values, leaf_ids, selection.rows);
         if (!resident)
         {
-            gd::route_unsampled(ds, nodes, split_bins, row_indices, values, leaf_ids);
+            gd::route_unsampled(ds, nodes, split_bins, selection.rows, values,
+                                leaf_ids);
         }
     }
     gd::GrowProfiler::Lap alap;
@@ -621,10 +619,7 @@ ObliviousGrower<EngineT, SplitterT>::ObliviousGrower(TreeConfig const &cfg)
 
 template <HistogramEngine EngineT, LevelSplitFinder SplitterT>
 auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view grad,
-                                               floats_view    hess,
-                                               row_index_view row_indices,
-                                               bool           rows_identity,
-                                               row_run_view   row_runs)
+                                               floats_view hess, RowSelection selection)
     -> GrowResult<Tree>
 {
     namespace gd                   = grower_detail;
@@ -650,7 +645,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     // per level, broadcast to every frontier node; ObliviousTree bookkeeping).
     gd::LevelStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
     slap(gd::GrowProfiler::instance().setup_s);
-    frontier.push_back(step.make_root(row_indices, rows_identity, row_runs));
+    frontier.push_back(step.make_root(selection));
 
     size_t depth = 0;
     while (depth < config_.max_depth)
@@ -723,7 +718,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     // the 16M CPU decomposition (issue #46) found ~15s of stamping hiding
     // in levelwise's conservation gap because only depthwise lapped it.
     gd::GrowProfiler::Lap flap;
-    step.finalize_leaves(frontier, leaf_table, values, leaf_ids, row_indices,
+    step.finalize_leaves(frontier, leaf_table, values, leaf_ids, selection.rows,
                          std::span<ObliviousTree::LevelSplit const>{level_splits},
                          std::span<bin_id_t const>{level_bins});
 
@@ -733,7 +728,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     if (!resident)
     {
         gd::for_each_unsampled(
-            ds.row_view(), row_indices,
+            ds.row_view(), selection.rows,
             [&](row_id_t r)
             {
                 size_t index = 0;
@@ -768,9 +763,7 @@ LeafwiseGrower<EngineT, SplitterT>::LeafwiseGrower(TreeConfig const &cfg)
 
 template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT>
 auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view grad,
-                                              floats_view    hess,
-                                              row_index_view row_indices,
-                                              bool rows_identity, row_run_view row_runs)
+                                              floats_view hess, RowSelection selection)
     -> GrowResult<Tree>
 {
     namespace gd = grower_detail;
@@ -803,7 +796,7 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     std::vector<gd::Candidate> pending;
     std::vector<bin_id_t>      split_bins(1, 0);
     std::vector<float>         split_gains(1, 0.0F);
-    std::vector<float>         covers(1, static_cast<float>(row_indices.size()));
+    std::vector<float>         covers(1, static_cast<float>(selection.rows.size()));
     std::vector<node_id_t>     leaf_ids = std::move(recycled_.leaf_ids);
     if (!resident)
     {
@@ -819,7 +812,7 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     // device plane) keeps that node's histograms in the tree's slot pool.
     gd::LeafStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
     slap(gd::GrowProfiler::instance().setup_s);
-    gd::Candidate root = step.open_root(row_indices, rows_identity, row_runs);
+    gd::Candidate root = step.open_root(selection);
     nodes.emplace_back(DenseTree::leaf(0.0F));
 
     size_t  n_leaves    = 0;
@@ -874,7 +867,8 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
         step.end_tree(nodes, values, leaf_ids);
         if (!resident)
         {
-            gd::route_unsampled(ds, nodes, split_bins, row_indices, values, leaf_ids);
+            gd::route_unsampled(ds, nodes, split_bins, selection.rows, values,
+                                leaf_ids);
         }
     }
     gd::GrowProfiler::Lap alap;

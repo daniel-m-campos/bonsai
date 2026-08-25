@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "bonsai/bin_mappers.hpp"
@@ -54,31 +55,20 @@ namespace
 // straight column pass reads X[r, f] at n_features x 4B stride — ~25x line
 // amplification at 100 features). The tile size only reorders independent
 // writes; 64 u8 rows = one cache line per column, so tiles never share one.
-template <typename Read>
-void fill_binned(std::vector<std::vector<uint8_t>>  &u8,
-                 std::vector<std::vector<uint16_t>> &u16, bool u8_mode,
-                 size_t n_features, size_t n_rows, BinMappers const &mappers, Read read)
+// Shared bin loop at one width: `read(f, r)` yields the raw float for
+// (row, feature); values are identical either width, so models stay
+// byte-identical. Workers own row tiles and visit every feature within the
+// tile, so a row-major source is pulled into cache once per tile instead of
+// once per feature (a straight column pass reads X[r, f] at n_features x 4B
+// stride — ~25x line amplification at 100 features). The tile size only
+// reorders independent writes; 64 u8 rows = one cache line per column, so
+// tiles never share one.
+template <typename BinT, typename Read>
+void fill_columns(std::vector<std::vector<BinT>> &out, size_t n_features, size_t n_rows,
+                  BinMappers const &mappers, Read read)
 {
-    if (u8_mode)
-    {
-        u8.resize(n_features);
-    }
-    else
-    {
-        u16.resize(n_features);
-    }
-    parallel::for_each_index(n_features,
-                             [&](size_t f)
-                             {
-                                 if (u8_mode)
-                                 {
-                                     u8[f].resize(n_rows);
-                                 }
-                                 else
-                                 {
-                                     u16[f].resize(n_rows);
-                                 }
-                             });
+    out.resize(n_features);
+    parallel::for_each_index(n_features, [&](size_t f) { out[f].resize(n_rows); });
     constexpr size_t tile = 64;
     parallel::for_each_index((n_rows + tile - 1) / tile,
                              [&](size_t block)
@@ -88,25 +78,26 @@ void fill_binned(std::vector<std::vector<uint8_t>>  &u8,
                                  for (size_t f = 0; f < n_features; ++f)
                                  {
                                      auto const &mapper = mappers[f];
-                                     if (u8_mode)
+                                     BinT *const col    = out[f].data();
+                                     for (size_t r = r0; r < r1; ++r)
                                      {
-                                         uint8_t *const out = u8[f].data();
-                                         for (size_t r = r0; r < r1; ++r)
-                                         {
-                                             out[r] = static_cast<uint8_t>(
-                                                 mapper.transform(read(f, r)));
-                                         }
-                                     }
-                                     else
-                                     {
-                                         uint16_t *const out = u16[f].data();
-                                         for (size_t r = r0; r < r1; ++r)
-                                         {
-                                             out[r] = mapper.transform(read(f, r));
-                                         }
+                                         col[r] = static_cast<BinT>(
+                                             mapper.transform(read(f, r)));
                                      }
                                  }
                              });
+}
+
+// The columns for `mappers`, binned from `read` at the width the cuts need.
+template <typename Read>
+BinColumns bin_columns(BinMappers const &mappers, size_t n_features, size_t n_rows,
+                       Read read)
+{
+    BinColumns cols =
+        mappers.all_fit_u8() ? BinColumns{U8Columns{}} : BinColumns{U16Columns{}};
+    std::visit([&](auto &out) { fill_columns(out, n_features, n_rows, mappers, read); },
+               cols);
+    return cols;
 }
 
 } // namespace
@@ -124,17 +115,15 @@ Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers
     std::shared_ptr<BinStore const>               store;
     if (plane)
     {
-        store =
-            std::make_shared<BinStore const>(BinStore{n, mappers, std::move(plane)});
+        store = std::make_shared<BinStore const>(BinStore::Key{}, n, mappers,
+                                                 std::move(plane));
     }
     else
     {
-        BinStore::HostColumns cols;
-        bool const            u8 = mappers.all_fit_u8();
-        fill_binned(cols.u8, cols.u16, u8, batch.features.size(), n, mappers,
-                    [&](size_t f, size_t r) { return batch.features[f][r]; });
-        store =
-            std::make_shared<BinStore const>(BinStore{n, mappers, std::move(cols), u8});
+        store = std::make_shared<BinStore const>(
+            BinStore::Key{}, n, mappers,
+            bin_columns(mappers, batch.features.size(), n,
+                        [&](size_t f, size_t r) { return batch.features[f][r]; }));
     }
     Dataset ds;
     ds.rows_  = RowView::all(n);
@@ -157,19 +146,17 @@ Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mapp
     }
     detail::Phase<&detail::IngestProfiler::bin_s> phase;
     size_t const                                  n = labels.size();
-    BinStore::HostColumns                         cols;
-    bool const                                    u8 = mappers.all_fit_u8();
-    fill_binned(cols.u8, cols.u16, u8, X.extent(1), n, mappers,
-                [&](size_t f, size_t r) { return X[r, f]; });
-    Dataset ds;
-    ds.rows_ = RowView::all(n);
-    ds.store_ =
-        std::make_shared<BinStore const>(BinStore{n, mappers, std::move(cols), u8});
-    ds.id_   = mint_fit_id();
-    ds.meta_ = std::make_shared<Meta const>(
+    Dataset                                       ds;
+    ds.rows_  = RowView::all(n);
+    ds.store_ = std::make_shared<BinStore const>(BinStore::Key{}, n, mappers,
+                                                 bin_columns(mappers, X.extent(1), n,
+                                                             [&](size_t f, size_t r)
+                                                             { return X[r, f]; }));
+    ds.id_    = mint_fit_id();
+    ds.meta_  = std::make_shared<Meta const>(
         Meta{.labels  = std::vector<float>(labels.begin(), labels.end()),
-             .weights = std::vector<float>(weights.begin(), weights.end()),
-             .id      = mint_labels_id()});
+              .weights = std::vector<float>(weights.begin(), weights.end()),
+              .id      = mint_labels_id()});
     return ds;
 }
 
@@ -182,22 +169,21 @@ Dataset Dataset::bin(size_t n_rows, [[maybe_unused]] size_t n_features,
     assert(n_features == mappers.size());
     detail::Phase<&detail::IngestProfiler::bin_s> phase;
     Dataset                                       ds;
-    ds.rows_ = RowView::all(n_rows);
-    ds.store_ =
-        std::make_shared<BinStore const>(BinStore{n_rows, mappers, std::move(plane)});
-    ds.id_   = mint_fit_id();
-    ds.meta_ = std::make_shared<Meta const>(
+    ds.rows_  = RowView::all(n_rows);
+    ds.store_ = std::make_shared<BinStore const>(BinStore::Key{}, n_rows, mappers,
+                                                 std::move(plane));
+    ds.id_    = mint_fit_id();
+    ds.meta_  = std::make_shared<Meta const>(
         Meta{.labels  = std::vector<float>(labels.begin(), labels.end()),
-             .weights = std::vector<float>(weights.begin(), weights.end()),
-             .id      = mint_labels_id()});
+              .weights = std::vector<float>(weights.begin(), weights.end()),
+              .id      = mint_labels_id()});
     return ds;
 }
 
-Dataset Dataset::from_bins(std::vector<std::vector<uint8_t>>  u8,
-                           std::vector<std::vector<uint16_t>> u16, bool bins_are_u8,
-                           BinMappers mappers, floats_view labels, floats_view weights)
+Dataset Dataset::from_bins(BinColumns cols, BinMappers mappers, floats_view labels,
+                           floats_view weights)
 {
-    size_t const n_features = bins_are_u8 ? u8.size() : u16.size();
+    size_t const n_features = std::visit([](auto const &c) { return c.size(); }, cols);
     if (n_features == 0)
     {
         throw std::invalid_argument(
@@ -211,30 +197,32 @@ Dataset Dataset::from_bins(std::vector<std::vector<uint8_t>>  u8,
             " binned columns");
     }
     size_t const n_rows = labels.size();
-    for (size_t f = 0; f < n_features; ++f)
-    {
-        size_t const held = bins_are_u8 ? u8[f].size() : u16[f].size();
-        if (held != n_rows)
+    std::visit(
+        [&](auto const &c)
         {
-            throw std::invalid_argument(
-                "Dataset::from_bins: column " + std::to_string(f) + " holds " +
-                std::to_string(held) + " bins and this dataset holds " +
-                std::to_string(n_rows) + " rows");
-        }
-    }
+            for (size_t f = 0; f < n_features; ++f)
+            {
+                if (c[f].size() != n_rows)
+                {
+                    throw std::invalid_argument(
+                        "Dataset::from_bins: column " + std::to_string(f) + " holds " +
+                        std::to_string(c[f].size()) + " bins and this dataset holds " +
+                        std::to_string(n_rows) + " rows");
+                }
+            }
+        },
+        cols);
     // A fresh store, never the one the bins came from: adopting another
     // dataset's store would serve its caches and its mirror.
     Dataset ds;
     ds.rows_  = RowView::all(n_rows);
-    ds.store_ = std::make_shared<BinStore const>(
-        BinStore{n_rows, std::move(mappers),
-                 BinStore::HostColumns{.u8 = std::move(u8), .u16 = std::move(u16)},
-                 bins_are_u8});
-    ds.id_   = mint_fit_id();
-    ds.meta_ = std::make_shared<Meta const>(
+    ds.store_ = std::make_shared<BinStore const>(BinStore::Key{}, n_rows,
+                                                 std::move(mappers), std::move(cols));
+    ds.id_    = mint_fit_id();
+    ds.meta_  = std::make_shared<Meta const>(
         Meta{.labels  = std::vector<float>(labels.begin(), labels.end()),
-             .weights = std::vector<float>(weights.begin(), weights.end()),
-             .id      = mint_labels_id()});
+              .weights = std::vector<float>(weights.begin(), weights.end()),
+              .id      = mint_labels_id()});
     return ds;
 }
 
@@ -250,9 +238,9 @@ Dataset Dataset::select_features(std::span<feature_id_t const> keep) const
     ds.rows_  = RowView::all(ds.store_->n_rows());
     ds.id_    = mint_fit_id();
     ds.meta_  = std::make_shared<Meta const>(
-        Meta{.labels  = gather_rows(rows_, meta_->labels),
+        Meta{.labels  = rows_.gather(meta_->labels),
               .weights = meta_->weights.empty() ? std::vector<float>{}
-                                                : gather_rows(rows_, meta_->weights),
+                                                : rows_.gather(meta_->weights),
               .id      = mint_labels_id()});
     return ds;
 }
@@ -275,7 +263,7 @@ Dataset Dataset::with_rows(RowView rows) const
     }
     // The fill reads a run as a subspan of a column, so a run past the end is
     // refused here rather than left to land somewhere inside the allocation.
-    if (!rows.fits(store_->n_rows()))
+    if (!rows.can_fit(store_->n_rows()))
     {
         throw std::invalid_argument(
             "Dataset::with_rows: the row view names a row past the last of this "

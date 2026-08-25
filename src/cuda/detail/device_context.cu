@@ -187,15 +187,16 @@ template <typename BinT> void stage_tiled(Dataset const &dataset, BinT *staging)
 
 } // namespace
 
-void CudaIngestPlane::materialize(std::vector<std::vector<uint8_t>>  &u8,
-                                  std::vector<std::vector<uint16_t>> &u16) const
+void CudaIngestPlane::materialize(BinColumns &cols) const
 {
+    // The caller constructed `cols` at this plane's width; fill in place so
+    // the discriminator never changes under a concurrent width read.
     if (bins_are_u8)
     {
-        materialize_tiled(bins8, n_rows, n_feats, u8);
+        materialize_tiled(bins8, n_rows, n_feats, std::get<U8Columns>(cols));
         return;
     }
-    materialize_tiled(bins16, n_rows, n_feats, u16);
+    materialize_tiled(bins16, n_rows, n_feats, std::get<U16Columns>(cols));
 }
 
 std::shared_ptr<IngestPlane const>

@@ -10,6 +10,7 @@
 #include <string>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "bonsai/bin_mappers.hpp"
@@ -20,22 +21,26 @@
 namespace bonsai
 {
 
-BinStore::BinStore(size_t n_rows, BinMappers mappers, HostColumns cols,
-                   bool bins_are_u8)
-    : cols_(std::make_shared<HostColumns>(std::move(cols))),
+BinStore::BinStore(Key /*key*/, size_t n_rows, BinMappers mappers, BinColumns cols)
+    : cols_(std::make_shared<BinColumns>(std::move(cols))),
       row_major_(std::make_shared<RowMirror>(n_rows, mappers.size())),
-      mappers_(std::move(mappers)), bins_are_u8_(bins_are_u8), n_rows_(n_rows),
-      n_features_(mappers_.size())
+      mappers_(std::move(mappers)), n_rows_(n_rows), n_features_(mappers_.size())
 {
 }
 
-BinStore::BinStore(size_t n_rows, BinMappers mappers,
+BinStore::BinStore(Key /*key*/, size_t n_rows, BinMappers mappers,
                    std::shared_ptr<IngestPlane const> plane)
     : row_major_(std::make_shared<RowMirror>(n_rows, mappers.size())),
-      plane_(std::move(plane)), lazy_(std::make_shared<HostBins>()),
-      mappers_(std::move(mappers)), bins_are_u8_(mappers_.all_fit_u8()),
-      n_rows_(n_rows), n_features_(mappers_.size())
+      plane_(std::move(plane)), lazy_(std::make_shared<LazyColumns>()),
+      mappers_(std::move(mappers)), n_rows_(n_rows), n_features_(mappers_.size())
 {
+    // The lazy columns hold the right EMPTY alternative from here on, so the
+    // width is readable before materialization and the discriminator never
+    // changes afterwards.
+    if (!mappers_.all_fit_u8())
+    {
+        lazy_->cols = U16Columns{};
+    }
 }
 
 std::shared_ptr<BinStore const>
@@ -82,56 +87,38 @@ BinStore::select_columns(std::span<feature_id_t const> keep,
     {
         if (auto sub = plane_->select_columns(keep, rows))
         {
-            return std::shared_ptr<BinStore const>(
-                new BinStore(out_rows, std::move(kept_mappers), std::move(sub)));
+            return std::make_shared<BinStore const>(
+                Key{}, out_rows, std::move(kept_mappers), std::move(sub));
         }
     }
 
-    HostColumns out;
-    auto       &u8  = out.u8;
-    auto       &u16 = out.u16;
-    if (bins_are_u8_)
-    {
-        u8.resize(keep.size());
-    }
-    else
-    {
-        u16.resize(keep.size());
-    }
-    for (size_t k = 0; k < keep.size(); ++k)
-    {
-        // Reads through the plane's lazy host materialization when this
-        // store is device-resident and the backend declined above.
-        visit_bins(keep[k],
-                   [&](auto col)
-                   {
-                       using T =
-                           std::remove_const_t<typename decltype(col)::element_type>;
-                       auto &dst = [&]() -> auto &
-                       {
-                           if constexpr (std::is_same_v<T, uint8_t>)
-                           {
-                               return u8[k];
-                           }
-                           else
-                           {
-                               return u16[k];
-                           }
-                       }();
-                       dst.resize(out_rows);
-                       for (size_t i = 0; i < out_rows; ++i)
-                       {
-                           dst[i] = col[rows.empty() ? i : rows[i]];
-                       }
-                   });
-    }
-    return std::shared_ptr<BinStore const>(
-        new BinStore(out_rows, std::move(kept_mappers), std::move(out), bins_are_u8_));
+    // Reads through the plane's lazy host materialization when this store is
+    // device-resident and the backend declined above; the output holds the
+    // same alternative the parent does.
+    BinColumns out = std::visit(
+        [&](auto const &src) -> BinColumns
+        {
+            std::remove_cvref_t<decltype(src)> gathered(keep.size());
+            for (size_t k = 0; k < keep.size(); ++k)
+            {
+                auto const &col = src[keep[k]];
+                auto       &dst = gathered[k];
+                dst.resize(out_rows);
+                for (size_t i = 0; i < out_rows; ++i)
+                {
+                    dst[i] = col[rows.empty() ? i : rows[i]];
+                }
+            }
+            return gathered;
+        },
+        columns());
+    return std::make_shared<BinStore const>(Key{}, out_rows, std::move(kept_mappers),
+                                            std::move(out));
 }
 
 RowMirror const &BinStore::mirror() const
 {
-    if (!bins_are_u8_)
+    if (!bins_are_u8())
     {
         return *row_major_;
     }
@@ -141,7 +128,8 @@ RowMirror const &BinStore::mirror() const
 
 void BinStore::mint_into(std::span<uint8_t> out_bins) const
 {
-    auto const  &cols = plane_ ? host_bins().u8 : cols_->u8;
+    // mirror() gated on the width, so the held alternative is u8 here.
+    auto const  &cols = std::get<U8Columns>(columns());
     size_t const f    = cols.size();
     // The mirror sized the buffer from the shape it was built with; this
     // walks the columns it can see. The constructors make those agree, and
