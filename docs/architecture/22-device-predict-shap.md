@@ -1,6 +1,6 @@
 # 22: Device predict and device TreeSHAP: serving the resident Dataset
 
-> **Status:** landed for width-1 dense-tree models (the campaign PR); performance ledger pending the first datacenter pod session. Correctness is device-verified on a Jetson Orin (sm_87): predict bit-equal to the host walk, SHAP within 1.4e-7 of the fp64 reference.
+> **Status:** landed for every width-1 model, dense and levelwise (decision 111); performance ledger pending the first datacenter pod session, and the levelwise arm's throughput is unmeasured. Correctness is device-verified on a Jetson Orin (sm_87): predict bit-equal to the host walk, SHAP within 1.4e-7 of the fp64 reference.
 
 ## The problem this solves
 
@@ -14,7 +14,9 @@ The bin-space walk lives once in `detail/bin_walk.hpp` and serves the booster's 
 
 ## Device predict
 
-`cuda_predict_plan` packs the whole ensemble into the SoA node form the training epilogue already walks (`route_add_kernel`'s shape), thresholds inverted to bin ids under the model's mappers; `cuda_predict` runs one thread per row, looping trees, accumulating in a register, no atomics. The plan is a receipt cached under the booster's mutation epoch, so a sweep of predict calls uploads the trees once. The seam into the booster is a single virtual, `predict_plan_input()`, returning trees, learning rate, init score, and the epoch; oblivious and multiclass boosters return the empty default and decline to the host walk.
+`cuda_predict_plan` packs the whole ensemble into the SoA node form the training epilogue already walks (`route_add_kernel`'s shape), thresholds inverted to bin ids under the model's mappers; `cuda_predict` runs one thread per row, looping trees, accumulating in a register, no atomics. The plan is a receipt cached under the booster's mutation epoch, so a sweep of predict calls uploads the trees once. The seam into the booster is a single virtual, `predict_plan_input()`, returning trees, learning rate, init score, the epoch, and an optional owner for the trees; multiclass boosters return the empty default and decline to the host walk.
+
+A levelwise model reaches both planes through that owner (decision 111). Its trees are oblivious, so it attaches the epoch-cached dense equivalent the host SHAP path already builds and points the span at that. Nothing else moves: the packers take `DenseTree` either way, and they copy and upload at pack time, so the owner has only to outlive the pack call. What a reader should know is the shape of what arrives, since densification mints a perfect tree: a depth-d levelwise tree packs 2^d paths whatever its live coverage, and the nodes no training row visited pack verbatim with a zero cover fraction rather than being pruned, because a row can route into one and the contributions must still sum to the prediction.
 
 Bit-equality with the host walk holds row for row on device, but only after spelling the final composition as `__fadd_rn(init, __fmul_rn(lr, acc))`: the kernel TU compiles with contraction on, and the naive form fused one multiply-add, drifting 1 ulp on 5 percent of rows. The lesson generalizes: a device walk with no atomics can match the host bit for bit, and when it does not, the cause is a specific rounding, findable and fixable, not noise to tolerate.
 
@@ -38,7 +40,7 @@ A mechanical port of the recursion needs an explicit stack of path copies in loc
 
 ## Decline gates
 
-Every device path declines to the host bin walk, never errors, on capability shortfalls: no CUDA build or device, oblivious or multiclass model (this cut), any feature over 255 bins (the 8-bit interval), merged path length over 32, foreign ingest plane, allocation failure. A missing-covers model stays a host-side error, because that is a model defect, not a capability gap.
+Every device path declines to the host bin walk, never errors, on capability shortfalls: no CUDA build or device, multiclass model (this cut), any feature over 255 bins (the 8-bit interval), merged path length over 32, foreign ingest plane, allocation failure. A missing-covers model stays a host-side error, because that is a model defect, not a capability gap.
 
 ## Pending the pod
 
