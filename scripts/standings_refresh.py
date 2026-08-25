@@ -54,9 +54,10 @@ two-step form still bins where its fused call does, so a parity failure
 stops the supersession instead of shipping a breakdown that describes a
 pipeline no cuda grower runs. A missing parity.jsonl fails the same gate:
 absence means the check never ran (a lost scp, a pod that died before the
-parity phase), not that it does not apply. `supersede --no-parity` accepts
-a results dir with no parity evidence for the hosts where the check truly
-cannot run.
+parity phase), not that it does not apply. The one exception is a session
+whose axes do not include the one those rows anchor, since the pod does not
+take them at all then. `supersede --no-parity` accepts a results dir with no
+parity evidence for the hosts where the check truly cannot run.
 """
 
 from __future__ import annotations
@@ -350,7 +351,15 @@ def supersede(args: argparse.Namespace) -> int:
     src = pathlib.Path(args.results_dir)
     axes = [a.strip() for a in args.axes.split(",")]
     parity_path = src / "parity.jsonl"
-    parity, parity_ok = _parity(parity_path, allow_absent=args.no_parity)
+    # The pod takes parity rows only when the session measures the axis they
+    # anchor, so for any other session absence is the expected state rather
+    # than a lost file. A parity.jsonl that is there anyway is still read.
+    anchored = PARITY_AXIS in axes
+    if not anchored:
+        print("Parity not expected: these axes do not include "
+              f"{PARITY_AXIS}, which the parity rows anchor.")
+    parity, parity_ok = _parity(parity_path,
+                                allow_absent=args.no_parity or not anchored)
     print(parity)
     if not parity_ok:
         if not parity_path.exists():
@@ -515,8 +524,10 @@ def _run_session(key: str, args: argparse.Namespace, *, plane: str,
     """One pod, one plane: create, launch the on-pod script, poll, tear down.
 
     Both planes write into the same results directory. Their file names do
-    not collide (one dated file per axis), and the GPU session owns the
-    parity and A/B rows, which are cuda measurements the CPU pod skips.
+    not collide (one dated file per axis), and the A/B rows are cuda
+    measurements the CPU pod skips. The parity rows are narrower still: the
+    pod takes them only when this session measures the axis they anchor, so
+    they cannot arrive from a host that measured no anchor.
     """
     pod_id = _create_pod(key, pubkey, plane=plane, vcpu=args.cpu_vcpu,
                          gpus=gpus)
@@ -542,6 +553,7 @@ def _run_session(key: str, args: argparse.Namespace, *, plane: str,
                         f"GIT_SHA='{sha}' "
                         f"PREV_VERSION='{prev_version}' "
                         f"PLANE='{plane}' "
+                        f"PARITY_AXIS='{PARITY_AXIS}' "
                         "bash /root/standings_refresh_pod.sh "
                         "> /root/refresh.log 2>&1 & echo launched"], check=True)
         _poll_pod_run(ssh, out_dir, ip, port)

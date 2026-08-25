@@ -19,10 +19,15 @@
 # module and runs the cpu axes behind the CPU-cap gate below (issue #355).
 set -euo pipefail
 
-AXES="${AXES:?comma list of axes}"
+# Spaces are stripped once, here, so the parity guard below and the axis
+# loop at the bottom read the same list.
+AXES=$(echo "${AXES:?comma list of axes}" | tr -d ' ')
 GIT_SHA="${GIT_SHA:?commit to measure}"
 PREV_VERSION="${PREV_VERSION:-}"
 PLANE="${PLANE:-gpu}"
+# The axis the parity rows anchor, passed in by the driver so its
+# PARITY_AXIS constant stays the only definition of which axis that is.
+PARITY_AXIS="${PARITY_AXIS:-gpu-tall}"
 # The tag for the rows this pod writes, derived below from what this
 # container actually resolved rather than from what was requested: a name
 # built out of a purchase is how a 12-thread run got committed under a
@@ -127,7 +132,13 @@ fi
 # interleaved reps keep pod drift out of the comparison. The gpu pod owns
 # this file: a cpu session must not land a skipped-only parity.jsonl on top
 # of the real one when both sessions pull into the same directory.
-if [ "$PLANE" = gpu ]; then
+#
+# Only the session measuring the anchor axis takes these rows, for the same
+# reason and one more. They are committed as that axis's companion, so a
+# session that does not measure it would spend four runs at the anchor cell
+# to produce a second host's parity for the same month, landing on top of
+# the real one with nothing downstream able to tell them apart.
+if [ "$PLANE" = gpu ] && [[ ",$AXES," == *",$PARITY_AXIS,"* ]]; then
     : > /root/standings/parity.jsonl
     for rep in 1 2; do
         for arm in fused two_step; do
@@ -285,7 +296,7 @@ run_cpu_axis() {
 
 IFS=',' read -ra AXIS_LIST <<< "$AXES"
 for axis in "${AXIS_LIST[@]}"; do
-    run_axis "$(echo "$axis" | tr -d ' ')"
+    run_axis "$axis"
 done
 # DONE always prints, even after a quota failure: the driver polls for it,
 # and a run that ends without it looks like a dead pod. The exit status and
