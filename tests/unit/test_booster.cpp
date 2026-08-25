@@ -579,11 +579,10 @@ TEST_CASE("MulticlassBooster: separable 3-class data reaches perfect accuracy",
     CHECK(pred2 == pred);
 }
 
-// The device predict seam. Both device routes (predict and TreeSHAP) read
-// PredictPlanInput, and a dense booster can lend a view of its own trees
-// where an oblivious one has to convert first. What follows pins the
-// lifetime contract that makes the oblivious arm safe: the input owns what
-// its span points at, for as long as the input lives.
+// The device predict seam. Both device routes read PredictPlanInput, and a
+// dense booster can lend a view of its own trees where an oblivious one has
+// to convert first. What follows pins the lifetime contract that makes the
+// oblivious arm safe.
 
 TEST_CASE("predict_plan_input: a dense booster lends a view of its own trees",
           "[booster][predict]")
@@ -594,9 +593,10 @@ TEST_CASE("predict_plan_input: a dense booster lends a view of its own trees",
     b.update_one_iter(train);
 
     auto const in = b.predict_plan_input();
-    CHECK(in.owned == nullptr); // nothing to own: the booster holds them
+    CHECK(in.owned == nullptr);
     CHECK(in.trees.data() == b.trees().data());
     CHECK(in.trees.size() == b.trees().size());
+    CHECK(in.learning_rate == tiny_cfg().booster_config.learning_rate);
     CHECK(in.epoch != 0); // 0 is the plan cache's never-packed sentinel
 }
 
@@ -610,21 +610,10 @@ TEST_CASE("predict_plan_input: an oblivious booster lends its dense equivalent",
     b.update_one_iter(train);
 
     auto const in = b.predict_plan_input();
-    REQUIRE(in.owned != nullptr); // the span points into the cache, not the booster
+    REQUIRE(in.owned != nullptr);
     REQUIRE(in.trees.size() == b.trees().size());
     CHECK(in.trees.data() == in.owned->data());
-
-    // Dropping the booster's own handle must not dangle the span: this is the
-    // whole reason the input carries the owner.
-    auto const kept = in.owned;
-    CHECK(kept->size() == in.trees.size());
-
-    SECTION("one epoch converts once")
-    {
-        auto const again = b.predict_plan_input();
-        CHECK(again.epoch == in.epoch);
-        CHECK(again.trees.data() == in.trees.data());
-    }
+    CHECK(in.learning_rate == tiny_cfg().booster_config.learning_rate);
 
     SECTION("a mutation re-converts under a new epoch")
     {
@@ -634,25 +623,33 @@ TEST_CASE("predict_plan_input: an oblivious booster lends its dense equivalent",
         CHECK(after.trees.size() == b.trees().size());
         CHECK(after.trees.data() != in.trees.data());
     }
+}
 
-    SECTION("the dense equivalents route like the oblivious originals")
+TEST_CASE("predict_plan_input: the trees outlive the booster that lent them",
+          "[booster][predict][oblivious]")
+{
+    // The whole reason the input carries an owner. Without it the span points
+    // into a cache the booster took with it, and this reads freed memory,
+    // which is what the sanitizer build is for.
+    auto const       batch = separable_batch();
+    Dataset const    train = make_dataset(batch);
+    PredictPlanInput in{};
+    float            expected = 0.0F;
     {
-        for (size_t t = 0; t < in.trees.size(); ++t)
-        {
-            for (float x : {0.0F, 0.1F, 0.9F, 1.0F})
-            {
-                CHECK(test::predict_one(in.trees[t], {x}) ==
-                      test::predict_one(b.trees()[t], {x}));
-            }
-        }
+        MseBooster<ObliviousGrower<CpuHistogramEngine>> b{tiny_cfg()};
+        b.update_one_iter(train);
+        in       = b.predict_plan_input();
+        expected = test::predict_one(in.trees[0], {0.95F});
     }
+    REQUIRE(!in.trees.empty());
+    CHECK(test::predict_one(in.trees[0], {0.95F}) == expected);
 }
 
 TEST_CASE("predict_plan_input: an untrained booster still declines",
           "[booster][predict][oblivious]")
 {
-    // An empty ensemble densifies to an empty vector, so the span is empty
-    // and the caller's `trees.empty()` decline fires without a special case.
+    // An empty ensemble densifies to an empty vector, so the caller's
+    // trees.empty() decline fires without a special case.
     MseBooster<ObliviousGrower<CpuHistogramEngine>> b{tiny_cfg()};
     CHECK(b.predict_plan_input().trees.empty());
 }

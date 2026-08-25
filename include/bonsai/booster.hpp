@@ -147,9 +147,12 @@ class IBooster
 
     // --- the device predict seam
     // Everything a device predict plan packs, in one call so the ensemble is
-    // read once. An empty `trees` declines: only a dense ensemble packs, so
-    // oblivious and multiclass models ride the host bin walk. `trees` stays
-    // valid until the booster mutates, which `epoch` reports.
+    // read once. An empty `trees` declines: multiclass models ride the host
+    // bin walk, and so does an ensemble with no trees in it yet. `trees` is
+    // valid for as long as the returned value is, which is the weakest thing
+    // every implementer promises: one lends a view of trees it owns, another
+    // lends a converted ensemble the value itself keeps alive. `epoch` says
+    // when a plan packed from an earlier call has gone stale.
     virtual PredictPlanInput predict_plan_input() const
     {
         return {};
@@ -941,14 +944,16 @@ class Booster final : public IBooster
         out.learning_rate = config_.learning_rate;
         out.init_score    = init_score_;
         out.epoch         = trees_.epoch();
-        if constexpr (std::same_as<tree_type, DenseTree>)
+        // Same polarity as the two pred_contribs arms below, so the file asks
+        // this question one way.
+        if constexpr (std::same_as<tree_type, ObliviousTree>)
         {
-            out.trees = trees_.read();
+            out.owned = dense_.get(trees_.read(), out.epoch);
+            out.trees = *out.owned;
         }
         else
         {
-            out.owned = dense_.get(trees_.read(), trees_.epoch());
-            out.trees = *out.owned;
+            out.trees = trees_.read();
         }
         return out;
     }

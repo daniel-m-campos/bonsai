@@ -95,6 +95,23 @@ detail::ColumnBatch shap_batch(size_t n, size_t nf)
     return batch;
 }
 
+// Rows the model was NOT trained on, and deliberately from a different joint
+// distribution: shap_batch ties column 1 to column 0, so a densified tree's
+// dead slots are exactly the (col0, col1) corners that correlation forbids.
+// Breaking the tie is what lets a scored row reach one. Same mappers, so the
+// bins stay comparable.
+detail::ColumnBatch decorrelated_holdout(size_t n, size_t nf)
+{
+    detail::ColumnBatch                batch = shap_batch(n, nf);
+    std::mt19937                       rng(101);
+    std::uniform_int_distribution<int> step(0, 3);
+    for (size_t r = 0; r < n; ++r)
+    {
+        batch.features[1][r] = static_cast<float>(step(rng));
+    }
+    return batch;
+}
+
 Config shap_cfg(size_t max_depth)
 {
     Config cfg{};
@@ -105,23 +122,62 @@ Config shap_cfg(size_t max_depth)
     return cfg;
 }
 
-// Nodes a densified oblivious tree carries with no training evidence behind
-// them. A levelwise fixture that has none is not testing what it claims to.
-size_t count_zero_cover(std::span<DenseTree const> trees)
+// Row-major copy of a column-major batch, for the raw-feature routing below.
+std::vector<float> to_raw(detail::ColumnBatch const &batch, size_t n, size_t nf)
+{
+    std::vector<float> raw(n * nf);
+    for (size_t f = 0; f < nf; ++f)
+    {
+        for (size_t r = 0; r < n; ++r)
+        {
+            raw[(r * nf) + f] = batch.features[f][r];
+        }
+    }
+    return raw;
+}
+
+// Leaves a densified oblivious tree carries with no training evidence.
+size_t count_dead_leaves(std::span<DenseTree const> trees)
 {
     size_t dead = 0;
     for (DenseTree const &tree : trees)
     {
-        dead += static_cast<size_t>(
-            std::count(tree.covers().begin(), tree.covers().end(), 0.0F));
+        for (size_t i = 0; i < tree.nodes().size(); ++i)
+        {
+            if (DenseTree::is_leaf(tree.nodes()[i]) && tree.covers()[i] == 0.0F)
+            {
+                ++dead;
+            }
+        }
     }
     return dead;
 }
 
+// Scored rows that land on a node no training row reached. Covers are training
+// row counts, so this is zero whenever the scored rows are the trained rows,
+// however many dead nodes the ensemble carries: counting the nodes would say a
+// fixture exercises the zero-cover walk when nothing routes into it.
+size_t count_dead_routes(std::span<DenseTree const> trees, features_view X)
+{
+    size_t hit = 0;
+    for (size_t r = 0; r < X.extent(0); ++r)
+    {
+        for (DenseTree const &tree : trees)
+        {
+            if (tree.covers()[tree.leaf_for(X, r)] == 0.0F)
+            {
+                ++hit;
+                break;
+            }
+        }
+    }
+    return hit;
+}
+
 // The worst relative element gap and the worst relative additivity residual
 // over one fixture, both reported so the tolerance above stays a measurement.
-// Returns the zero-cover node count so a levelwise caller can assert the dead
-// slots it means to exercise were really there.
+// Returns the ensemble's dead-leaf count, so a levelwise caller can assert its
+// fixture still carries the zero-cover paths the kernel is meant to meet.
 template <typename BoosterT = MseBooster>
 size_t check_parity(size_t n_rows, size_t n_feats, size_t max_depth, char const *what)
 {
@@ -137,20 +193,28 @@ size_t check_parity(size_t n_rows, size_t n_feats, size_t max_depth, char const 
         booster.update_one_iter(ds);
     }
 
+    // Scored on held-out rows under the model's own cuts. Covers are training
+    // row counts, so scoring the training set can never route a row into a
+    // zero-cover branch and the interesting half of the walk goes untested.
+    auto const held   = decorrelated_holdout(n_rows, n_feats);
+    auto const plane2 = cuda_ingest(held, mappers);
+    REQUIRE(plane2);
+    auto const scored = Dataset::bin(held, mappers, DataConfig{}, plane2);
+
     auto const in = booster.predict_plan_input();
     auto const plan =
         cuda_shap_plan(in.trees, mappers, in.learning_rate, in.init_score);
     REQUIRE(plan);
 
-    size_t const        n    = ds.n_rows();
+    size_t const        n    = scored.n_rows();
     size_t const        cols = n_feats + 1;
     std::vector<double> host(n * cols, 0.0);
     std::vector<double> dev(n * cols, 0.0);
-    REQUIRE(cuda_pred_contribs(*plan, *plane, n, n_feats, dev));
-    booster.pred_contribs_binned(ds, host, n_feats);
+    REQUIRE(cuda_pred_contribs(*plan, *plane2, n, n_feats, dev));
+    booster.pred_contribs_binned(scored, host, n_feats);
 
     std::vector<float> margin(n, 0.0F);
-    booster.predict_at_binned(ds, margin, 0);
+    booster.predict_at_binned(scored, margin, 0);
 
     double worst_elem = 0.0;
     double worst_add  = 0.0;
@@ -178,10 +242,51 @@ size_t check_parity(size_t n_rows, size_t n_feats, size_t max_depth, char const 
                  what, worst_elem, worst_add);
     CHECK(worst_elem <= k_tol);
     CHECK(worst_add <= k_tol);
-    return count_zero_cover(in.trees);
+    return count_dead_leaves(in.trees);
 }
 
 } // namespace
+
+// Runs everywhere, including in CI, because it pins the premise the device
+// parity cases below rest on, and those only execute on a machine with a GPU.
+//
+// An oblivious tree splits one feature per level and may split the SAME
+// feature at two levels, so its dense expansion contains corners asserting
+// `f <= t_i` and `f > t_j` at once. Those are the dead slots, and they are
+// unreachable by construction rather than merely unvisited: no input routes
+// there, held out or not. What the device walk therefore meets is the
+// unsatisfied case, one zero-cover element somewhere in a path the row does
+// not follow, many times over. If dead leaves ever fell to zero the parity
+// cases would stop exercising it; if a row ever reached one, an invariant of
+// oblivious densification would have changed. Both are worth a failure.
+TEST_CASE("a densified levelwise model carries dead slots nothing can reach",
+          "[shap][oblivious]")
+{
+    size_t const        n       = 2048;
+    size_t const        nf      = 5;
+    auto const          batch   = shap_batch(n, nf);
+    auto const          mappers = BinMappers::fit(batch, BinMapperConfig{});
+    auto const          ds      = Dataset::bin(batch, mappers, DataConfig{});
+    ObliviousMseBooster booster{shap_cfg(5)};
+    for (size_t i = 0; i < 8; ++i)
+    {
+        booster.update_one_iter(ds);
+    }
+    auto const in = booster.predict_plan_input();
+    REQUIRE(!in.trees.empty());
+    CHECK(count_dead_leaves(in.trees) > 0);
+
+    auto const          train_raw = to_raw(batch, n, nf);
+    features_view const train_X{train_raw.data(), n, nf};
+    CHECK(count_dead_routes(in.trees, train_X) == 0);
+
+    // Held out, and drawn off the training joint distribution, so this is not
+    // merely restating that covers count the training rows.
+    auto const          held     = decorrelated_holdout(n, nf);
+    auto const          held_raw = to_raw(held, n, nf);
+    features_view const held_X{held_raw.data(), n, nf};
+    CHECK(count_dead_routes(in.trees, held_X) == 0);
+}
 
 TEST_CASE("cuda_pred_contribs matches the host binned walk", "[cuda][shap]")
 {
@@ -210,11 +315,12 @@ TEST_CASE("cuda_pred_contribs matches the host binned walk for a levelwise model
     {
         SKIP("device TreeSHAP needs a usable CUDA device");
     }
-    // Densification mints a perfect tree, so a levelwise model reaches the
-    // kernel carrying nodes no training row ever visited. The host walk skips
-    // those branches and the device closed form multiplies them out instead,
-    // which is the arithmetic this case exists to check; the dead-slot count
-    // is asserted so the fixture cannot quietly stop producing them.
+    // Densification mints a perfect tree, so these fixtures reach the kernel
+    // carrying paths to leaves no row can route to (the case above pins why).
+    // The host divides by a zero cover fraction and guards those branches off;
+    // the device closed form multiplies by it and needs no guard. That the two
+    // still agree is what this case checks, so it asserts the dead leaves are
+    // there to be met.
     SECTION("paths of at most 8 elements")
     {
         CHECK(check_parity<ObliviousMseBooster>(2048, 5, 5, "levelwise K=8") > 0);
