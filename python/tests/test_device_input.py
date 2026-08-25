@@ -294,7 +294,8 @@ def test_dataset_from_device_input_gathers_a_sample(to_device):
 
 
 @requires_cuda
-def test_model_methods_serve_a_dlpack_dataset_under_the_models_cuts(to_device):
+@pytest.mark.parametrize("grower", ["depthwise", "levelwise"])
+def test_model_methods_serve_a_dlpack_dataset_under_the_models_cuts(to_device, grower):
     """A device-resident build kept no host rows, but a Dataset carrying the
     model's own cuts routes in bin space, so every method works without X.
 
@@ -302,10 +303,14 @@ def test_model_methods_serve_a_dlpack_dataset_under_the_models_cuts(to_device):
     does not: a Dataset resident on the device runs the fp32 TreeSHAP kernel
     where X runs the fp64 host walk, so those two agree to a tolerance by
     design.
+
+    Levelwise rides the same device planes as depthwise: its trees reach the
+    packers as the dense equivalents its plan input owns, so this needs no
+    per-grower branch anywhere above the seam.
     """
     X, y, _ = _reg_data()
     ds = bonsai.Dataset(_DevicePointer(to_device(X), X.shape), y)
-    m = bonsai.train(PAIRS, ds)
+    m = bonsai.train({**PAIRS, "dispatch.grower_name": grower}, ds)
     for name in ("predict", "staged_predict", "predict_leaf"):
         np.testing.assert_array_equal(
             np.asarray(getattr(m, name)(X)), np.asarray(getattr(m, name)(ds))
