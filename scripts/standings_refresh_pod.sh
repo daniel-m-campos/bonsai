@@ -31,12 +31,38 @@ HOST_TAG="${HOST_TAG:-}"
 
 export PATH=/opt/venv/bin:/root/.local/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 mkdir -p /root/standings
+YM=$(date -u +%Y-%m)
+QUOTA_FAIL=/root/standings/quota-fail.txt
+FAILURES=0
 
 if [ ! -d /root/bonsai ]; then
     git clone https://github.com/daniel-m-campos/bonsai.git /root/bonsai
 fi
 cd /root/bonsai
-git fetch origin "$GIT_SHA" && git checkout -f "$GIT_SHA"
+
+# `git fetch origin <sha>` asks the server for a bare object id, which GitHub
+# refuses unless it is a ref tip, and a non-final command in an && list is
+# exempt from set -e. So the old one-liner printed "couldn't find remote ref",
+# never checked anything out, measured whatever the clone had landed on, and
+# still reported failures=0. Fetch every branch and tag (the refspec is
+# explicit because a single-branch clone's is not), then assert that HEAD is
+# the commit that was asked for.
+checkout_sha() {  # <commit-ish>; nonzero unless HEAD ends up there
+    git fetch --tags --force --quiet origin \
+        '+refs/heads/*:refs/remotes/origin/*' || return 1
+    git checkout --quiet --force "$1" || return 1
+    [ "$(git rev-parse HEAD)" = "$(git rev-parse "$1^{commit}")" ] || return 1
+}
+
+if ! checkout_sha "$GIT_SHA"; then
+    # The driver polls for DONE and learns of the end no other way, so the
+    # abort prints one too, carrying the failure that makes it an abort.
+    echo "STANDINGS_REFRESH_FAIL checkout: asked for $GIT_SHA, HEAD is $(git rev-parse --short HEAD); a row measured at an unverified commit is not publishable"
+    echo "checkout: $GIT_SHA was never checked out" >> "$QUOTA_FAIL"
+    echo "STANDINGS_REFRESH_DONE axes=$AXES ym=$YM host=${HOST_TAG:-unknown} failures=1"
+    exit 1
+fi
+echo "MEASURING $(git rev-parse HEAD)"
 
 if [ "$PLANE" = cpu ]; then
     make python PYTHON=/opt/venv/bin/python
@@ -50,7 +76,6 @@ else
     [ -n "$HOST_TAG" ] || HOST_TAG="pod-$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 | tr ' ' '-')"
 fi
 
-YM=$(date -u +%Y-%m)
 BENCH=(env PYTHONPATH="$BUILD" /opt/venv/bin/python -m bonsai.bench)
 # OMP_WAIT_POLICY=passive only on the CPU plane: a spin-wait barrier spends
 # on waiting whatever the cap withholds, and the device planes are measured
@@ -58,7 +83,6 @@ BENCH=(env PYTHONPATH="$BUILD" /opt/venv/bin/python -m bonsai.bench)
 CPU_BENCH=(env OMP_WAIT_POLICY=passive PYTHONPATH="$BUILD" \
     /opt/venv/bin/python -m bonsai.bench)
 SPECS=/root/bonsai/python/bonsai/bench/specs
-QUOTA_FAIL=/root/standings/quota-fail.txt
 # A bandwidth host must leave one core of its quota unclaimed, because a fit
 # at threads == quota sits on the ceiling and the timing describes the
 # container rather than the engine. A larger static margin was tried and
@@ -72,7 +96,6 @@ QUOTA_SPARE_CORES=1
 # bandwidth, and a 16-thread fit on its 13.6-core quota measured 97%
 # throttled (issue #355 step 18). The gate covers both.
 THROTTLED_PCT_MAX=5
-FAILURES=0
 
 # Same-pod A/B: previous release wheel (no PYTHONPATH) vs HEAD build,
 # interleaved per rep so pod thermal/state drift cannot masquerade as a
