@@ -17,6 +17,7 @@
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
 #include "step/primitives.hpp"
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -38,16 +39,20 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         engine_.begin_tree(ds_, grad_, hess_);
     }
 
-    SplitInput make_root(row_index_view row_indices)
+    SplitInput make_root(row_index_view row_indices, bool rows_identity,
+                         row_run_view row_runs)
     {
         Phase<&GrowProfiler::populate_s> phase;
         SplitInput                       root;
         root.id = 0;
         root.rows.assign(row_indices.begin(), row_indices.end());
-        // Checked once per tree, with an early exit on the first row that is
-        // not its own index, against a fill that walks these rows once per
-        // feature per level.
-        root.rows_identity = rows_are_identity(root.rows, ds_.n_rows());
+        // Decided by the caller from its row descriptor, which knows the
+        // answer without walking the list.
+        root.rows_identity = rows_identity;
+        // The runs have to describe exactly these rows, or the fill sums a
+        // different set than the node holds.
+        assert(row_runs.empty() || rows_in(row_runs) == row_indices.size());
+        root.row_runs = row_runs;
         engine_.populate(ds_, grad_, hess_, root, selected_);
         root.sums      = root.totals();
         root.row_count = root.rows.size();
@@ -172,7 +177,10 @@ class LevelStep<EngineT, SplitterT>
         engine_.begin_tree(ds_, grad_, hess_);
     }
 
-    SplitInput make_root(row_index_view row_indices)
+    // row_runs is a host fill's shortcut; the device root uploads a row list
+    // or none at all.
+    SplitInput make_root(row_index_view row_indices, bool rows_identity,
+                         row_run_view /*row_runs*/)
     {
         Phase<&GrowProfiler::populate_s> phase;
         SplitInput                       root;
@@ -181,7 +189,7 @@ class LevelStep<EngineT, SplitterT>
         // row_count): the 64MB host copy and its upload never happen; the
         // engine builds/caches the identity on device. Identity, not
         // cardinality: any other full-length list takes the general path.
-        if (rows_are_identity(row_indices, ds_.n_rows()))
+        if (rows_identity)
         {
             root.row_count = row_indices.size();
         }

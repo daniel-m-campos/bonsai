@@ -210,6 +210,15 @@ bool has_raw_rows(LabeledData const &data)
            !data.features.borrowed.empty();
 }
 
+// The rows an eval set scores: a prebinned set's view, else the raw rows it
+// arrived as. The two differ only for a row view, whose plane carries its
+// parent's rows as well.
+size_t eval_row_count(LabeledData const &data)
+{
+    return data.dataset.n_rows() > 0 ? data.dataset.view_n_rows()
+                                     : data.features.n_rows;
+}
+
 // The one-time bin pass, lapped so its cost shows up beside the per-round
 // buckets it buys.
 Dataset bin_validation(LabeledData const &validation, Dataset const &train,
@@ -320,9 +329,9 @@ std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train
     // History shares the incremental accumulation below; DART's per-round
     // rescaling invalidates it, so no history there (es already throws).
     bool const track_eval = eval_history.has_value() && validation.has_value() &&
-                            validation->get().features.n_rows > 0 &&
+                            eval_row_count(validation->get()) > 0 &&
                             cfg.booster_config.dart_drop_rate == 0.0F;
-    if (es_enabled && validation->get().features.n_rows == 0)
+    if (es_enabled && eval_row_count(validation->get()) == 0)
     {
         // A zero-row validation set makes every loss NaN, and NaN never
         // improves, so patience would fire at the first opportunity and
@@ -351,7 +360,7 @@ std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train
     if (es_enabled || track_eval)
     {
         auto const &valid = validation->get();
-        if (valid.dataset.n_rows() > 0 && valid.dataset.bins_are_u8())
+        if (valid.dataset.view_n_rows() > 0 && valid.dataset.bins_are_u8())
         {
             validation_bins = &valid.dataset;
         }
@@ -365,6 +374,26 @@ std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train
         // The Python binding refuses the rest with a message; this is the
         // seam restating it.
         assert(has_raw_rows(valid) || (validation_bins != nullptr && !warm_start));
+        // A row view narrows no raw rows: the binned walk is the only route
+        // that scores the rows it names, and the binding refuses the rest.
+        assert(valid.dataset.row_view().is_identity() ||
+               (validation_bins != nullptr && !warm_start));
+    }
+
+    // The loss scores exactly the rows the eval set names. A row view's labels
+    // are its parent's, full length and globally indexed, so they are read
+    // through the view once here rather than once per round.
+    std::vector<float> narrowed_labels;
+    floats_view        eval_labels;
+    if (validation)
+    {
+        auto const &valid = validation->get();
+        eval_labels       = valid.labels;
+        if (!valid.dataset.row_view().is_identity())
+        {
+            narrowed_labels = gather_rows(valid.dataset.row_view(), valid.labels);
+            eval_labels     = narrowed_labels;
+        }
     }
 
     std::vector<float> es_scores;
@@ -398,7 +427,7 @@ std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train
                 // Warm start: seed with the pre-existing rounds' raw scores,
                 // excluding the round just added (0 rounds = base scores).
                 es_base = booster->n_iters() - 1;
-                es_scores.resize(valid.features.n_rows * booster->score_width());
+                es_scores.resize(eval_row_count(valid) * booster->score_width());
                 booster->seed_validation_scores(valid.features.view(), es_scores,
                                                 es_base);
                 if (track_eval && es_base > 0)
@@ -418,7 +447,10 @@ std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train
                 defer_binning   = false;
             }
             std::optional<float> device_loss;
+            // The eval plane reads the plane's own rows, so a row view keeps
+            // the host walk.
             if (i == 0 && cuda_grower && validation_bins != nullptr &&
+                validation_bins->row_view().is_identity() &&
                 std::getenv("BONSAI_HOST_EVAL") == nullptr)
             {
                 detail::Phase<&detail::FitProfiler::eval_arm_s> phase;
@@ -447,7 +479,7 @@ std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train
             float const loss =
                 device_loss.has_value()
                     ? *device_loss
-                    : round_validation_loss(*booster, es_scores, valid.labels);
+                    : round_validation_loss(*booster, es_scores, eval_labels);
             if (track_eval)
             {
                 eval_history->get().push_back(loss);

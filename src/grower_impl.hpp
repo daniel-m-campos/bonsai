@@ -435,29 +435,51 @@ inline void queue_children(ChildPair &pair, LessT gain_less,
 // Skipping this desynchronizes training scores from the real model for any
 // sampler that drops rows: gradients go stale and GOSS-style samplers, which
 // re-pick rows by |grad|, diverge outright.
-// Applies fn to every row NOT in `sampled` (which is ascending), in
-// parallel. The complement is materialized once so the parallel loop
-// indexes it directly; no-op when nothing was left out. Shared by the
-// growers' out-of-bag routing (issue #51 — the walk bodies differ per
-// tree shape, the complement never did).
+// Applies fn to every row of `view` NOT in `sampled`, in parallel. The
+// complement is materialized once so the parallel loop indexes it directly;
+// no-op when nothing was left out. Shared by the growers' out-of-bag routing
+// (issue #51 — the walk bodies differ per tree shape, the complement never
+// did).
+//
+// The complement is taken within the view, not within the plane: a fit over a
+// view is about the view's rows, and the rows outside it are owed nothing by a
+// tree that was never asked about them. They keep a stale training score,
+// which nothing the view's fit produces reads. A fit over a whole dataset has
+// the identity view, so a sampled fit still walks every row the draw dropped.
+// `sampled` arrives as a subsequence of the view's rows, which is what lets
+// one scan pair them off.
 template <typename F>
-void for_each_unsampled(size_t n_rows, row_index_view sampled, F &&fn)
+void for_each_unsampled(RowView const &view, row_index_view sampled, F &&fn)
 {
-    if (sampled.size() == n_rows)
+    if (sampled.size() == view.size())
     {
         return;
     }
     std::vector<row_id_t> oob;
-    oob.reserve(n_rows - sampled.size());
-    size_t j = 0;
-    for (row_id_t r = 0; r < n_rows; ++r)
+    oob.reserve(view.size() - sampled.size());
+    size_t j        = 0;
+    auto   consider = [&](row_id_t r)
     {
         if (j < sampled.size() && sampled[j] == r)
         {
             ++j;
-            continue;
+            return;
         }
         oob.push_back(r);
+    };
+    if (view.is_identity())
+    {
+        for (row_id_t r = 0; r < view.size(); ++r)
+        {
+            consider(r);
+        }
+    }
+    else
+    {
+        for (row_id_t const r : view.materialize())
+        {
+            consider(r);
+        }
     }
     parallel::for_each_index(oob.size(), [&](size_t k) { fn(oob[k]); });
 }
@@ -467,7 +489,7 @@ inline void route_unsampled(Dataset const &ds, DenseTree::Nodes const &nodes,
                             row_index_view sampled, train_leaf_values &values,
                             std::vector<node_id_t> &leaf_ids)
 {
-    for_each_unsampled(ds.n_rows(), sampled,
+    for_each_unsampled(ds.row_view(), sampled,
                        [&](row_id_t r)
                        {
                            node_id_t idx = 0;
@@ -501,7 +523,9 @@ DepthwiseGrower<EngineT, SplitterT>::DepthwiseGrower(TreeConfig const &cfg)
 template <HistogramEngine EngineT, NodeSplitFinder SplitterT>
 auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view grad,
                                                floats_view    hess,
-                                               row_index_view row_indices)
+                                               row_index_view row_indices,
+                                               bool           rows_identity,
+                                               row_run_view   row_runs)
     -> GrowResult<Tree>
 {
     namespace gd = grower_detail;
@@ -531,7 +555,7 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     // opened per tree so a GPU engine can decline back to the host mid-fit.
     gd::LevelStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
     slap(gd::GrowProfiler::instance().setup_s);
-    current.push_back(step.make_root(row_indices));
+    current.push_back(step.make_root(row_indices, rows_identity, row_runs));
     nodes.emplace_back(DenseTree::leaf(0.0F));
     uint8_t depth    = 0;
     size_t  n_leaves = 0;
@@ -598,7 +622,9 @@ ObliviousGrower<EngineT, SplitterT>::ObliviousGrower(TreeConfig const &cfg)
 template <HistogramEngine EngineT, LevelSplitFinder SplitterT>
 auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view grad,
                                                floats_view    hess,
-                                               row_index_view row_indices)
+                                               row_index_view row_indices,
+                                               bool           rows_identity,
+                                               row_run_view   row_runs)
     -> GrowResult<Tree>
 {
     namespace gd                   = grower_detail;
@@ -624,7 +650,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     // per level, broadcast to every frontier node; ObliviousTree bookkeeping).
     gd::LevelStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
     slap(gd::GrowProfiler::instance().setup_s);
-    frontier.push_back(step.make_root(row_indices));
+    frontier.push_back(step.make_root(row_indices, rows_identity, row_runs));
 
     size_t depth = 0;
     while (depth < config_.max_depth)
@@ -707,7 +733,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     if (!resident)
     {
         gd::for_each_unsampled(
-            ds.n_rows(), row_indices,
+            ds.row_view(), row_indices,
             [&](row_id_t r)
             {
                 size_t index = 0;
@@ -743,7 +769,8 @@ LeafwiseGrower<EngineT, SplitterT>::LeafwiseGrower(TreeConfig const &cfg)
 template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT>
 auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view grad,
                                               floats_view    hess,
-                                              row_index_view row_indices)
+                                              row_index_view row_indices,
+                                              bool rows_identity, row_run_view row_runs)
     -> GrowResult<Tree>
 {
     namespace gd = grower_detail;
@@ -792,7 +819,7 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     // device plane) keeps that node's histograms in the tree's slot pool.
     gd::LeafStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
     slap(gd::GrowProfiler::instance().setup_s);
-    gd::Candidate root = step.open_root(row_indices);
+    gd::Candidate root = step.open_root(row_indices, rows_identity, row_runs);
     nodes.emplace_back(DenseTree::leaf(0.0F));
 
     size_t  n_leaves    = 0;

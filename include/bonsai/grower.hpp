@@ -4,6 +4,7 @@
 #include "bonsai/dataset.hpp"
 #include "bonsai/histogram.hpp"
 #include "bonsai/objective_traits.hpp"
+#include "bonsai/row_view.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
@@ -258,7 +259,8 @@ class DepthwiseGrower
     using Tree   = DenseTree;
     explicit DepthwiseGrower(TreeConfig const &cfg);
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
-                          row_index_view row_indices);
+                          row_index_view row_indices, bool rows_identity = false,
+                          row_run_view row_runs = {});
 
     void recycle(train_leaf_values values, std::vector<node_id_t> leaf_ids)
     {
@@ -315,7 +317,8 @@ class ObliviousGrower
     using Tree   = ObliviousTree;
     explicit ObliviousGrower(TreeConfig const &cfg);
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
-                          row_index_view row_indices);
+                          row_index_view row_indices, bool rows_identity = false,
+                          row_run_view row_runs = {});
 
     void recycle(train_leaf_values values, std::vector<node_id_t> leaf_ids)
     {
@@ -368,7 +371,8 @@ class LeafwiseGrower
     using Tree   = DenseTree;
     explicit LeafwiseGrower(TreeConfig const &cfg);
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
-                          row_index_view row_indices);
+                          row_index_view row_indices, bool rows_identity = false,
+                          row_run_view row_runs = {});
 
     void recycle(train_leaf_values values, std::vector<node_id_t> leaf_ids)
     {

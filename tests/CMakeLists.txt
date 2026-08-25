@@ -4,6 +4,7 @@ add_executable(bonsai_tests
     unit/test_bin_mapper.cpp
     unit/test_bin_mappers.cpp
     unit/test_dataset.cpp
+    unit/test_row_view.cpp
     unit/test_csv.cpp
     unit/test_histogram.cpp
     unit/test_dense_tree.cpp
@@ -31,6 +32,7 @@ add_executable(bonsai_tests
     unit/test_populate.cpp
     unit/test_partition.cpp
     unit/test_demote.cpp
+    unit/test_unsampled.cpp
     unit/test_make_booster.cpp
     unit/test_toml.cpp
     unit/test_model_io.cpp

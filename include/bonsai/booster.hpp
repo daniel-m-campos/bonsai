@@ -231,6 +231,23 @@ void accumulate_train_contribution(T const &tree, Dataset const &ds, floats_out 
                              });
 }
 
+// accumulate_train_contribution's reader twin: one output per VIEW row, in the
+// view's order, which is the shape every reader over a row view answers in.
+// Identical to the twin above when the dataset is not a view.
+template <Tree T>
+void accumulate_view_contribution(T const &tree, Dataset const &ds, floats_out out)
+{
+    auto const     sb = split_bins(tree, ds);
+    RowIndex const rows{ds.row_view()};
+    parallel::for_each_index(rows.size(),
+                             [&](size_t k)
+                             {
+                                 row_id_t const r = rows[k];
+                                 out[k] += value_binned(tree, sb, [&](size_t f)
+                                                        { return ds.bin_at(f, r); });
+                             });
+}
+
 inline std::string feature_label(std::span<std::string const> names, size_t f)
 {
     return f < names.size() ? names[f] : "f" + std::to_string(f);
@@ -396,18 +413,19 @@ template <typename Trees>
 void predict_leaf_over_binned(Trees const &trees, Dataset const &bins,
                               std::span<node_id_t> out)
 {
-    size_t const n       = bins.n_rows();
-    size_t const n_trees = trees.size();
-    assert(out.size() == n * n_trees);
+    RowIndex const rows{bins.row_view()};
+    size_t const   n_trees = trees.size();
+    assert(out.size() == rows.size() * n_trees);
     auto const sb = tree_split_bins(trees, bins);
     parallel::for_each_index(
-        n,
-        [&](size_t i)
+        rows.size(),
+        [&](size_t k)
         {
-            auto const bin_of = [&](size_t f) { return bins.bin_at(f, i); };
+            row_id_t const r      = rows[k];
+            auto const     bin_of = [&](size_t f) { return bins.bin_at(f, r); };
             for (size_t t = 0; t < n_trees; ++t)
             {
-                out[(i * n_trees) + t] = leaf_binned(trees[t], sb[t], bin_of);
+                out[(k * n_trees) + t] = leaf_binned(trees[t], sb[t], bin_of);
             }
         });
 }
@@ -505,7 +523,7 @@ class Booster final : public IBooster
             hess_.resize(train.n_rows());
             if (trees_.read().empty())
             {
-                init_score_ = objective_.init_score(train.labels());
+                init_score_ = objective_.init_score(view_labels(train));
                 scores_.assign(train.n_rows(), init_score_);
             }
             else
@@ -558,8 +576,9 @@ class Booster final : public IBooster
         size_t const n_selected = refill_row_indices(train);
         lap(prof.sample_s);
 
-        auto [tree, leaf_values, leaf_ids] =
-            grower_.grow(train, grad_, hess_, {row_indices_.data(), n_selected});
+        auto [tree, leaf_values, leaf_ids] = grower_.grow(
+            train, grad_, hess_, {row_indices_.data(), n_selected},
+            selection_is_identity(train, n_selected), selection_runs(train));
         lap(prof.grow_s);
 
         // Leaf renewal (surrogate-hessian objectives): replace each leaf's
@@ -568,7 +587,7 @@ class Booster final : public IBooster
         // DART, the dropped trees) — exactly the state gradients used.
         if constexpr (requires(std::span<float> r) { objective_.renew_leaf(r); })
         {
-            renew_leaves(tree, leaf_ids, leaf_values, train.labels());
+            renew_leaves(tree, leaf_ids, leaf_values, train.labels(), train.row_view());
         }
         lap(prof.renew_s);
 
@@ -591,30 +610,91 @@ class Booster final : public IBooster
         grower_.recycle(std::move(leaf_values), std::move(leaf_ids));
     }
 
-    // Fills row_indices_ for this tree. AllRowsSampler is deterministic
-    // identity, so once row_indices_ holds the full iota only its size need be
-    // checked: the per-tree refill (a measurable membw cost at scale) is
-    // skipped. The content is byte-identical to calling sample() every tree, so
-    // the model is unchanged. Other samplers draw fresh indices each tree.
+    // Fills row_indices_ for this tree from the Dataset's row view, which is
+    // every row of the plane unless the caller subset it. AllRowsSampler is
+    // deterministic, so once row_indices_ holds the view's rows only its size
+    // need be checked: the per-tree refill (a measurable membw cost at scale)
+    // is skipped. The content is byte-identical to materializing every tree,
+    // so the model is unchanged. Other samplers draw fresh indices each tree.
     size_t refill_row_indices(Dataset const &train)
     {
+        RowView const &view = train.row_view();
         if constexpr (std::same_as<sampler_type, AllRowsSampler>)
         {
-            if (row_indices_.size() != train.n_rows())
+            if (row_indices_.size() != view.size())
             {
-                row_indices_.resize(train.n_rows());
-                std::iota(row_indices_.begin(), row_indices_.end(), row_id_t{0});
+                view.materialize_into(row_indices_);
             }
             return row_indices_.size();
         }
         else
         {
-            if (row_indices_.size() != train.n_rows())
+            // The draw's universe is the view's rows, so the ids it emits are
+            // the view's and at most that many land in row_indices_.
+            if (candidates_.size() != view.size())
             {
-                row_indices_.resize(train.n_rows());
+                view.materialize_into(candidates_);
+                row_indices_.resize(view.size());
             }
-            return sampler_.sample(grad_, hess_, rng_, row_indices_);
+            return sampler_.sample(grad_, hess_, rng_, candidates_, row_indices_);
         }
+    }
+
+    // Whether this tree's row list is exactly [0, n_rows), which is what lets
+    // the fills index bins and grad by position instead of gathering.
+    // AllRowsSampler copies the view verbatim, so the descriptor answers in
+    // constant time. A drawing sampler builds its own list and is asked the
+    // old way, behind the view's constant-time veto: a view that is not the
+    // whole plane can never yield the identity.
+    bool selection_is_identity(Dataset const &train, size_t n_selected) const
+    {
+        RowView const &view = train.row_view();
+        if constexpr (std::same_as<sampler_type, AllRowsSampler>)
+        {
+            return view.is_identity();
+        }
+        else
+        {
+            return view.is_identity() && n_selected == view.size() &&
+                   rows_are_identity({row_indices_.data(), n_selected}, view.size());
+        }
+    }
+
+    // This tree's rows as runs of consecutive plane rows, which is what lets
+    // the column fill read a run's bins as a subspan instead of one indirect
+    // load per element. AllRowsSampler copies the view verbatim, so the view's
+    // own runs describe the list; a drawing sampler builds its own list and
+    // the descriptor cannot speak for it, so those fits keep gathering.
+    row_run_view selection_runs(Dataset const &train) const
+    {
+        if constexpr (std::same_as<sampler_type, AllRowsSampler>)
+        {
+            return train.row_view().runs();
+        }
+        else
+        {
+            return {};
+        }
+    }
+
+    // The labels of the rows this fit visits. The init score is a statistic of
+    // those rows, and a view's are a subset of the plane's; a full-data fit
+    // gathers nothing.
+    floats_view view_labels(Dataset const &train)
+    {
+        RowView const &view = train.row_view();
+        if (view.is_identity())
+        {
+            return train.labels();
+        }
+        std::vector<row_id_t> const rows = view.materialize();
+        floats_view const           all  = train.labels();
+        view_labels_.resize(rows.size());
+        for (size_t k = 0; k < rows.size(); ++k)
+        {
+            view_labels_[k] = all[rows[k]];
+        }
+        return view_labels_;
     }
 
     // Device-resident objective: when the grower keeps labels and scores on
@@ -635,7 +715,10 @@ class Booster final : public IBooster
                        std::same_as<sampler_type, BernoulliSampler>) )
         {
             bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;
-            bool const runtime_ok  = config_.dart_drop_rate <= 0.0F && !host_forced;
+            // A view fits a subset of the plane; the resident round derives
+            // gradients and fuses the score update for every row of it.
+            bool const runtime_ok = config_.dart_drop_rate <= 0.0F && !host_forced &&
+                                    train.row_view().is_identity();
             if (resident_active_ && (!runtime_ok || resident_train_ != &train))
             {
                 grower_.resident_end(std::span<float>{scores_});
@@ -669,8 +752,9 @@ class Booster final : public IBooster
         detail::FitProfiler::Lap lap;
         size_t const             n_selected = refill_row_indices(train);
         lap(prof.sample_s);
-        auto res = grower_.grow(train, floats_view{}, floats_view{},
-                                {row_indices_.data(), n_selected});
+        auto res = grower_.grow(
+            train, floats_view{}, floats_view{}, {row_indices_.data(), n_selected},
+            selection_is_identity(train, n_selected), selection_runs(train));
         lap(prof.grow_s);
         trees_.mutate().push_back(std::move(res.tree));
     }
@@ -760,12 +844,20 @@ class Booster final : public IBooster
                                  });
     }
 
+    // Each leaf's value is replaced by the objective's optimum over the
+    // residuals of the rows it covers. The rows are the fit's, which for a
+    // view is the view's: rows outside it were never carried through this tree
+    // and their leaf id names a leaf they do not belong to. The identity view
+    // is every row, so a plain or sampled fit renews exactly as before.
     void renew_leaves(tree_type &tree, std::vector<node_id_t> const &leaf_ids,
-                      train_leaf_values &leaf_values, floats_view labels)
+                      train_leaf_values &leaf_values, floats_view labels,
+                      RowView const &view)
     {
+        RowIndex const                                    rows{view};
         std::unordered_map<node_id_t, std::vector<float>> residuals;
-        for (size_t r = 0; r < leaf_ids.size(); ++r)
+        for (size_t k = 0; k < rows.size(); ++k)
         {
+            row_id_t const r = rows[k];
             residuals[leaf_ids[r]].push_back(labels[r] - scores_[r]);
         }
         std::unordered_map<node_id_t, float> renewed;
@@ -776,9 +868,10 @@ class Booster final : public IBooster
             tree.set_leaf_value(leaf, v);
             renewed.emplace(leaf, v);
         }
-        for (size_t r = 0; r < leaf_ids.size(); ++r)
+        for (size_t k = 0; k < rows.size(); ++k)
         {
-            leaf_values[r] = renewed.at(leaf_ids[r]);
+            row_id_t const r = rows[k];
+            leaf_values[r]   = renewed.at(leaf_ids[r]);
         }
     }
 
@@ -831,13 +924,13 @@ class Booster final : public IBooster
     void predict_at_binned(Dataset const &bins, floats_out scores,
                            size_t n_trees) const override
     {
-        assert(bins.n_rows() == scores.size());
+        assert(bins.view_n_rows() == scores.size());
         auto const  &trees = trees_.read();
         size_t const k = n_trees == 0 ? trees.size() : std::min(n_trees, trees.size());
         std::fill(scores.begin(), scores.end(), 0.0F);
         for (size_t t = 0; t < k; ++t)
         {
-            internal::accumulate_train_contribution(trees[t], bins, scores);
+            internal::accumulate_view_contribution(trees[t], bins, scores);
         }
         for (float &score : scores)
         {
@@ -865,13 +958,13 @@ class Booster final : public IBooster
 
     void predict_staged_binned(Dataset const &bins, floats_out out) const override
     {
-        size_t const n     = bins.n_rows();
+        size_t const n     = bins.view_n_rows();
         auto const  &trees = trees_.read();
         assert(out.size() == n * trees.size());
         std::vector<float> raw(n, 0.0F);
         for (size_t t = 0; t < trees.size(); ++t)
         {
-            internal::accumulate_train_contribution(trees[t], bins, raw);
+            internal::accumulate_view_contribution(trees[t], bins, raw);
             parallel::for_each_index(
                 n, [&](size_t i)
                 { out[(t * n) + i] = init_score_ + (raw[i] * config_.learning_rate); });
@@ -931,12 +1024,15 @@ class Booster final : public IBooster
     void contribs_over_binned(Trees const &trees, Dataset const &bins,
                               std::span<double> out, size_t n_features) const
     {
-        auto const biases = internal::shap_biases(trees);
-        auto const sb     = internal::tree_split_bins(trees, bins);
-        contribs_impl(
-            trees, bins.n_rows(), out, n_features,
-            [&](size_t t, row_id_t row, std::span<double> phi)
-            { tree_shap_binned(trees[t], sb[t], bins, row, phi, biases[t]); });
+        auto const     biases = internal::shap_biases(trees);
+        auto const     sb     = internal::tree_split_bins(trees, bins);
+        RowIndex const rows{bins.row_view()};
+        contribs_impl(trees, rows.size(), out, n_features,
+                      [&](size_t t, row_id_t position, std::span<double> phi)
+                      {
+                          tree_shap_binned(trees[t], sb[t], bins, rows[position], phi,
+                                           biases[t]);
+                      });
     }
 
     std::string dump(std::span<std::string const> feature_names) const override
@@ -1024,17 +1120,19 @@ class Booster final : public IBooster
                                       floats_out     scores) const override
     {
         assert(!trees_.read().empty());
-        assert(bins.n_rows() == scores.size());
+        assert(bins.view_n_rows() == scores.size());
         assert(!bins.row_major_bins().empty());
-        auto const &tree = trees_.read().back();
-        float const lr   = config_.learning_rate;
-        auto const  sb   = internal::split_bins(tree, bins);
-        auto const  rm   = bins.row_major_bins();
+        auto const    &tree = trees_.read().back();
+        float const    lr   = config_.learning_rate;
+        auto const     sb   = internal::split_bins(tree, bins);
+        auto const     rm   = bins.row_major_bins();
+        RowIndex const rows{bins.row_view()};
         parallel::for_each_index(
             scores.size(),
-            [&](size_t r)
+            [&](size_t k)
             {
-                scores[r] += lr * internal::value_binned(
+                row_id_t const r = rows[k];
+                scores[k] += lr * internal::value_binned(
                                       tree, sb, [&](size_t f)
                                       { return rm[bins.mirror_index(r, f)]; });
             });
@@ -1081,9 +1179,12 @@ class Booster final : public IBooster
     // Stale while the resident objective is armed (the device copy is
     // authoritative); resident_end syncs it before any host-path read.
     std::vector<float>    scores_;
+    std::vector<float>    view_labels_;
     std::vector<float>    grad_;
     std::vector<float>    hess_;
     std::vector<row_id_t> row_indices_;
+    // The rows a drawing sampler may pick from; empty when none draws.
+    std::vector<row_id_t> candidates_;
     float                 init_score_      = 0.0F;
     bool                  resident_active_ = false;
     // Identity cookie for the Dataset the resident state was armed on:
