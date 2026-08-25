@@ -715,10 +715,12 @@ class Booster final : public IBooster
                        std::same_as<sampler_type, BernoulliSampler>) )
         {
             bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;
-            // A view fits a subset of the plane; the resident round derives
-            // gradients and fuses the score update for every row of it.
-            bool const runtime_ok = config_.dart_drop_rate <= 0.0F && !host_forced &&
-                                    train.row_view().is_identity();
+            // A view is eligible: the resident epilogue walks the view's rows
+            // and leaves every other score untouched, which is the contract
+            // the host path already keeps by routing only within the view.
+            // Gradients stay full-length and globally indexed, so the rows
+            // outside the view are derived and never read.
+            bool const runtime_ok = config_.dart_drop_rate <= 0.0F && !host_forced;
             if (resident_active_ && (!runtime_ok || resident_train_ != &train))
             {
                 grower_.resident_end(std::span<float>{scores_});

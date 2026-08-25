@@ -47,6 +47,22 @@ class IngestPlane
     virtual void materialize(std::vector<std::vector<uint8_t>>  &u8,
                              std::vector<std::vector<uint16_t>> &u16) const = 0;
 
+    // A plane holding the rows `rows` names under the features `keep` names,
+    // renumbered densely from zero, gathered inside this backend's memory. An
+    // empty `rows` means every row in order. Returns null when the backend has
+    // no such gather, and the caller falls back to materializing on the host
+    // and gathering there.
+    //
+    // This exists because the fallback is the expensive one: a column rewrite
+    // of a device-resident dataset otherwise pulls the whole plane home and
+    // ships the survivors back, once per round of a feature-selection loop.
+    virtual std::shared_ptr<IngestPlane const>
+    select_columns(std::span<feature_id_t const> /*keep*/,
+                   std::span<row_id_t const> /*rows*/) const
+    {
+        return nullptr;
+    }
+
     void const *backend_tag() const
     {
         return backend_tag_;
