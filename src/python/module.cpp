@@ -1405,18 +1405,26 @@ class Model
 
     // The device walk over a Dataset whose bins are already resident on a
     // device. false means the host bin walk runs instead: the Dataset was
-    // binned on the host, the ensemble is not dense (oblivious, multiclass),
-    // there is no usable device, the Dataset is a row view (the kernel reads
-    // the plane's rows, not a row list), or the plane declined this call. Only
-    // the width-1 predict rides this; the rest of the prediction family walks
-    // on the host.
+    // binned on the host, the ensemble is multiclass, there is no usable
+    // device, the Dataset is a row view (the kernel reads the plane's rows,
+    // not a row list), or the plane declined this call. Only the width-1
+    // predict rides this; the rest of the prediction family walks on the host.
+    //
+    // The plan input is fetched last, after the conditions that do not need
+    // it: an oblivious booster builds its dense equivalent to answer, so
+    // asking before the cheap gates would spend a densification on a call
+    // that then declines.
     bool predict_on_device(Dataset const &ds, std::vector<float> &out,
                            size_t num_iteration) const
     {
         auto const &bins  = ds.bins();
         auto const  plane = bins.ingest_plane();
-        auto const  in    = booster_->predict_plan_input();
-        if (!plane || in.trees.empty() || !bins.row_view().is_identity())
+        if (!plane || !bins.row_view().is_identity())
+        {
+            return false;
+        }
+        auto const in = booster_->predict_plan_input();
+        if (in.trees.empty())
         {
             return false;
         }
@@ -1433,8 +1441,12 @@ class Model
     {
         auto const &bins  = ds.bins();
         auto const  plane = bins.ingest_plane();
-        auto const  in    = booster_->predict_plan_input();
-        if (!plane || in.trees.empty() || !bins.row_view().is_identity())
+        if (!plane || !bins.row_view().is_identity())
+        {
+            return false;
+        }
+        auto const in = booster_->predict_plan_input();
+        if (in.trees.empty())
         {
             return false;
         }
