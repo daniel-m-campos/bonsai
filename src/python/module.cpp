@@ -392,6 +392,106 @@ std::string two_decimals(double value)
     throw nb::python_error();
 }
 
+// `columns=` as feature ids into a dataset whose columns are `names`: a slice,
+// a boolean mask, an integer array, or the names themselves. Order and
+// duplicates are kept for the same reason rows keep them, and negative indices
+// are refused for the same reason: a feature id indexes the binned plane.
+std::vector<bonsai::feature_id_t> parse_column_selection(
+    nb::handle columns, std::span<std::string const> names)
+{
+    size_t const     n  = names.size();
+    nb::object const np = nb::module_::import_("numpy");
+    nb::object       arr =
+        nb::isinstance<nb::slice>(columns)
+                  ? [&]
+        {
+            auto const [start, stop, step, len] =
+                nb::cast<nb::slice>(columns).compute(n);
+            return np.attr("arange")(start, stop, step);
+        }()
+                  : np.attr("asarray")(columns);
+    // An empty list arrives as an empty float array, whose dtype would earn
+    // the wrong complaint entirely; the caller's mistake is the emptiness.
+    if (nb::cast<size_t>(arr.attr("size")) == 0)
+    {
+        raise_python(PyExc_ValueError,
+                     "Dataset.subset(columns=...) kept no features; a dataset with no "
+                     "columns has nothing to split on");
+    }
+    auto const kind = nb::cast<std::string>(arr.attr("dtype").attr("kind"));
+    if (kind == "b")
+    {
+        if (size_t const given = nb::cast<size_t>(arr.attr("size")); given != n)
+        {
+            raise_python(PyExc_ValueError,
+                         "Dataset.subset(columns=<bool mask>): the mask has " +
+                             std::to_string(given) + " entries and the dataset has " +
+                             std::to_string(n) +
+                             " features; a mask names one feature per entry");
+        }
+        arr = np.attr("flatnonzero")(arr);
+    }
+    else if (kind == "U" || kind == "S" || kind == "O")
+    {
+        // Names, resolved through the dataset's own list: the same lookup
+        // monotone constraints and feature_names_in_ use, so a typo is a
+        // KeyError here rather than a silent column somewhere else.
+        std::vector<int64_t> ids;
+        for (nb::handle const item : nb::cast<nb::sequence>(np.attr("atleast_1d")(arr)
+                                                                .attr("tolist")()))
+        {
+            auto const  want = nb::cast<std::string>(nb::str(item));
+            auto const  it   = std::ranges::find(names, want);
+            if (it == names.end())
+            {
+                raise_python(PyExc_KeyError,
+                             "Dataset.subset(columns=...) names the feature '" + want +
+                                 "', which this dataset does not have");
+            }
+            ids.push_back(std::distance(names.begin(), it));
+        }
+        arr = np.attr("asarray")(nb::cast(ids));
+    }
+    else if (kind != "i" && kind != "u")
+    {
+        raise_python(PyExc_TypeError,
+                     "Dataset.subset(columns=...) takes a slice, a boolean mask, an "
+                     "integer array, or feature names; got dtype kind '" +
+                         kind + "'");
+    }
+    arr = np.attr("ascontiguousarray")(arr, np.attr("int64"));
+    if (nb::cast<size_t>(arr.attr("ndim")) != 1)
+    {
+        raise_python(PyExc_ValueError,
+                     "Dataset.subset(columns=...) takes one dimension of feature ids");
+    }
+    auto const ids = nb::cast<
+        nb::ndarray<int64_t const, nb::ndim<1>, nb::c_contig, nb::device::cpu>>(arr);
+    std::span<int64_t const> const in{ids.data(), ids.shape(0)};
+    if (in.empty())
+    {
+        raise_python(PyExc_ValueError,
+                     "Dataset.subset(columns=...) kept no features; a dataset with no "
+                     "columns has nothing to split on");
+    }
+    std::vector<bonsai::feature_id_t> out;
+    out.reserve(in.size());
+    for (int64_t const id : in)
+    {
+        if (id < 0 || static_cast<size_t>(id) >= n)
+        {
+            raise_python(PyExc_IndexError,
+                         "Dataset.subset(columns=...) got feature " +
+                             std::to_string(id) + ", out of range for a dataset of " +
+                             std::to_string(n) +
+                             " features; feature ids index the binned plane and do "
+                             "not wrap");
+        }
+        out.push_back(static_cast<bonsai::feature_id_t>(id));
+    }
+    return out;
+}
+
 // `rows=` as positions into a dataset of `n` rows: a slice, a boolean mask, or
 // an integer array. Positions, not global ids: the caller indexes what it was
 // handed, and a view maps them onto its parent's plane afterwards.
@@ -602,24 +702,48 @@ class Dataset
     {
     }
 
-    // Select rows out of this dataset, sharing its plane. Positions are into
-    // THIS dataset's rows, so composing two views composes their selections;
-    // the ids stored are global ids into the root's plane, which is what the
-    // fit indexes bins, grad and the mirror by.
+    // A column rewrite of `parent`: the features it keeps, the rows its view
+    // named, gathered into a plane this Dataset owns outright. Nothing is
+    // shared, so this is nobody's view and its .base is None. The bins land
+    // on the host whatever device the parent's were on, and the next CUDA fit
+    // stages them up; that round trip is what a column rewrite costs and a
+    // row view does not.
+    Dataset(Dataset const &parent, std::span<bonsai::feature_id_t const> keep)
+        : n_features_(keep.size()), bin_cfg_(parent.bin_cfg_)
+    {
+        bonsai::Dataset gathered = parent.bins().select_features(keep);
+        loaded_->mappers         = gathered.mappers();
+        loaded_->train           = bonsai::cli::LabeledData{
+                      .dataset  = std::move(gathered),
+                      .features = {},
+                      .labels   = {},
+        };
+        loaded_->train.labels.assign(loaded_->train.dataset.labels().begin(),
+                                     loaded_->train.dataset.labels().end());
+    }
+
+    // Select rows and/or features out of this dataset. Rows share the plane;
+    // features rewrite it. Row positions are into THIS dataset's rows, so
+    // composing two views composes their selections; the ids stored are global
+    // ids into the root's plane, which is what the fit indexes bins, grad and
+    // the mirror by.
     Dataset subset(nb::handle self, nb::handle rows, nb::handle columns) const
     {
-        if (!columns.is_none())
-        {
-            raise_python(PyExc_NotImplementedError,
-                         "Dataset.subset(columns=...) rewrites the plane tile-aligned "
-                         "and is rung 8 of the dataset-views ladder; only rows= is "
-                         "implemented");
-        }
-        if (rows.is_none())
+        if (rows.is_none() && columns.is_none())
         {
             throw std::invalid_argument(
-                "Dataset.subset() needs rows=: a numpy integer array, a slice, or a "
-                "boolean mask");
+                "Dataset.subset() needs rows= or columns=: a numpy integer array, a "
+                "slice, a boolean mask, or (for columns) feature names");
+        }
+        // Rows first, so the rewrite gathers only the rows that survive and
+        // the intermediate plane is never minted. The other order is the same
+        // dataset, which test_rows_and_columns_commute pins.
+        if (!columns.is_none())
+        {
+            Dataset const narrowed =
+                rows.is_none() ? *this : subset(self, rows, nb::none());
+            auto const names = narrowed.loaded_->mappers.feature_names();
+            return {narrowed, parse_column_selection(columns, names)};
         }
         std::vector<bonsai::row_id_t> ids = parse_row_selection(rows, n_rows());
         if (is_view())
@@ -881,9 +1005,27 @@ class Model
         return eval_history_;
     }
 
+    // A tree splits on feature ids into the row it is handed, so a matrix of
+    // the wrong width reads a different feature at every node, and a narrower
+    // one reads past the end of the row entirely. The model's own mappers say
+    // how wide the rows it was fit on were.
+    void check_width(array_2d const &X, char const *method) const
+    {
+        if (size_t const given = X.shape(1); given != mappers_.size())
+        {
+            throw std::invalid_argument(
+                std::string{"this model was fit on "} +
+                std::to_string(mappers_.size()) + " features and " + method +
+                " was passed a matrix " + std::to_string(given) +
+                " columns wide; a tree routes on feature ids, so the columns must "
+                "be the ones it was fit on, in that order");
+        }
+    }
+
     nb::ndarray<nb::numpy, float> predict(array_2d const &X,
                                           size_t          num_iteration = 0) const
     {
+        check_width(X, "predict");
         size_t const n   = X.shape(0);
         auto         out = std::make_unique<std::vector<float>>(n, 0.0F);
         {
@@ -952,6 +1094,7 @@ class Model
     // return (n_rows,) with P(class 1) via the link inverse.
     nb::ndarray<nb::numpy, double> predict_proba(array_2d const &X) const
     {
+        check_width(X, "predict_proba");
         require_proba_objective();
         size_t const n   = X.shape(0);
         size_t const w   = booster_->score_width();
@@ -1024,6 +1167,7 @@ class Model
     // (n_iters, n_rows): prediction after each boosting iteration.
     nb::ndarray<nb::numpy, float> staged_predict(array_2d const &X) const
     {
+        check_width(X, "staged_predict");
         size_t const n   = X.shape(0);
         size_t const k   = booster_->n_iters();
         auto         out = std::make_unique<std::vector<float>>(k * n, 0.0F);
@@ -1068,6 +1212,7 @@ class Model
     // class per round and the booster fills a column for each.
     nb::ndarray<nb::numpy, uint32_t> predict_leaf(array_2d const &X) const
     {
+        check_width(X, "predict_leaf");
         size_t const n   = X.shape(0);
         size_t const k   = booster_->n_trees();
         auto         out = std::make_unique<std::vector<bonsai::node_id_t>>(n * k, 0);
@@ -1106,6 +1251,7 @@ class Model
     // (n, n_features + 1); multiclass models return (n, K, n_features + 1).
     nb::ndarray<nb::numpy, double> pred_contribs(array_2d const &X) const
     {
+        check_width(X, "pred_contribs");
         size_t const n     = X.shape(0);
         size_t const nf    = X.shape(1);
         size_t const cols  = nf + 1;

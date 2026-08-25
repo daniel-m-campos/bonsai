@@ -378,3 +378,40 @@ def test_classifier_predict_proba_checks_the_names():
         est.predict_proba(X)
     with pytest.warns(UserWarning, match="BonsaiClassifier was fitted with feature names"):
         est.predict(X)
+
+
+# Column count ====================================================================================
+
+
+def _fit_on(n_features, n=400, seed=0):
+    """A model over `n_features` columns, and the matrix it was fit on."""
+    rng = np.random.default_rng(seed)
+    X = rng.integers(0, 20, size=(n, n_features)).astype(np.float32)
+    y = (X[:, 0] * 0.3 - X[:, 1] * 0.2).astype(np.float32)
+    return bonsai.train({"booster.n_iters": "5", "tree.max_depth": "3"}, X, y), X
+
+
+@pytest.mark.parametrize("width", [1, 3, 9])
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda m, X: m.predict(X),
+        lambda m, X: m.staged_predict(X),
+        lambda m, X: m.predict_leaf(X),
+        lambda m, X: m.pred_contribs(X),
+    ],
+)
+def test_a_reader_refuses_a_matrix_of_the_wrong_width(call, width):
+    """A tree splits on feature ids, so a narrower matrix than the model was
+    fit on reads past the end of every row: an out-of-bounds read that used to
+    return a plausible number."""
+    model, X = _fit_on(6)
+    rng = np.random.default_rng(1)
+    wrong = rng.integers(0, 20, size=(len(X), width)).astype(np.float32)
+    with pytest.raises(ValueError, match="6 features"):
+        call(model, wrong)
+
+
+def test_the_right_width_still_reads():
+    model, X = _fit_on(6)
+    assert model.predict(X).shape == (len(X),)
