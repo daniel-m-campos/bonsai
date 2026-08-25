@@ -27,6 +27,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "test_grower_helpers.hpp"
+
 #include <cstddef>
 #include <limits>
 #include <memory>
@@ -40,43 +42,11 @@ namespace
 
 using namespace bonsai;
 
-using MseBooster =
-    Booster<MSEObjective, DepthwiseGrower<CpuHistogramEngine>, AllRowsSampler>;
-
-// The levelwise arm reaches the device through the same seam, by way of the
-// dense equivalents its plan input owns.
-using ObliviousMseBooster =
-    Booster<MSEObjective, ObliviousGrower<CpuHistogramEngine>, AllRowsSampler>;
+using test::MseBooster;
+using test::ObliviousMseBooster;
 
 // A NaN column keeps the missing bin populated, so the walk's default_left
 // arm is exercised beside the ordinary comparison.
-detail::ColumnBatch predict_batch(size_t n, size_t nf)
-{
-    std::mt19937                          rng(19);
-    std::uniform_real_distribution<float> u(0.0F, 1.0F);
-    detail::ColumnBatch                   batch;
-    batch.features.assign(nf, std::vector<float>(n));
-    batch.feature_names.resize(nf);
-    batch.labels.assign(n, 0.0F);
-    for (size_t j = 0; j < nf; ++j)
-    {
-        batch.feature_names[j] = "f" + std::to_string(j);
-    }
-    for (size_t r = 0; r < n; ++r)
-    {
-        float s = 0.0F;
-        for (size_t j = 0; j < nf; ++j)
-        {
-            float const v        = u(rng);
-            batch.features[j][r] = (j == nf - 1 && r % 7 == 0)
-                                       ? std::numeric_limits<float>::quiet_NaN()
-                                       : v;
-            s += v * static_cast<float>(j + 1);
-        }
-        batch.labels[r] = s;
-    }
-    return batch;
-}
 
 Config predict_cfg()
 {
@@ -96,7 +66,7 @@ TEST_CASE("cuda_predict matches the host binned walk", "[cuda][predict]")
     {
         SKIP("device predict needs a usable CUDA device");
     }
-    auto const batch   = predict_batch(4096, 5);
+    auto const batch   = test::random_batch(4096, 5, 19);
     auto const mappers = BinMappers::fit(batch, BinMapperConfig{});
     auto const plane   = cuda_ingest(batch, mappers);
     REQUIRE(plane);
@@ -151,7 +121,7 @@ TEST_CASE("cuda_predict matches the host binned walk for a levelwise model",
     {
         SKIP("device predict needs a usable CUDA device");
     }
-    auto const batch   = predict_batch(4096, 5);
+    auto const batch   = test::random_batch(4096, 5, 19);
     auto const mappers = BinMappers::fit(batch, BinMapperConfig{});
     auto const plane   = cuda_ingest(batch, mappers);
     REQUIRE(plane);
@@ -215,7 +185,7 @@ TEST_CASE("the device predict plan declines without a device", "[predict]")
 
 TEST_CASE("a host-binned Dataset carries no plane for the device walk", "[predict]")
 {
-    auto const batch   = predict_batch(64, 2);
+    auto const batch   = test::random_batch(64, 2, 19);
     auto const mappers = BinMappers::fit(batch, BinMapperConfig{});
     auto const ds      = Dataset::bin(batch, mappers, DataConfig{});
     REQUIRE(ds.ingest_plane() == nullptr);
