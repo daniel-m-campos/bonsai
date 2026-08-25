@@ -1,10 +1,10 @@
-"""Tests for the throttle gate in scripts/standings_refresh_pod.sh.
+"""Tests for the gates in scripts/standings_refresh_pod.sh.
 
-The gate decides whether a pod may time the CPU plane at all, and it only
-ever runs on a rented pod, so nothing here exercised it until a shipped
-version computed no percentage and passed every axis anyway. These tests
-run the script's own awk program rather than a copy of it, so the
-precedence that broke it cannot come back unnoticed.
+These decide whether a pod may publish what it measured: which commit it
+measured it at, and whether the CPU plane was timed under a ceiling. Both run
+only on a rented pod, which is why two shipped versions were wrong for months,
+so every test here lifts the script's own code out and runs it rather than
+restating what it should do.
 
     pytest python/tests/bench/test_standings_pod_gate.py
 """
@@ -81,3 +81,108 @@ def test_the_limit_is_compared_as_a_number():
     under = subprocess.run(["awk", "-v", "pct=0.9", "-v", "max=5",
                             "BEGIN {exit !(pct + 0 > max + 0)}"])
     assert over.returncode == 0 and under.returncode == 1
+
+
+# Provenance =======================================================================================
+
+def _shell_function(name: str) -> str:
+    """One shell function, lifted whole from the pod script.
+
+    Parameters
+    ----------
+    name : str
+        The function's name, defined at column zero and closed by a `}` at
+        column zero, which is how this script writes them.
+
+    Returns
+    -------
+    str
+        Its source, ready to be sourced into a test shell.
+    """
+    text = POD_SCRIPT.read_text()
+    found = re.search(rf"^{name}\(\) \{{.*?^\}}$", text, re.S | re.M)
+    assert found, f"{name}() is gone from {POD_SCRIPT.name}"
+    return found.group(0)
+
+
+def _git(repo: pathlib.Path, *args: str) -> str:
+    done = subprocess.run(["git", *args], cwd=repo, capture_output=True,
+                          text=True, check=True)
+    return done.stdout.strip()
+
+
+def _fake_origin(root: pathlib.Path) -> dict:
+    """An origin with two branches, and a single-branch clone of one of them.
+
+    The clone is single-branch because that is what makes the second branch
+    genuinely absent locally, which is the case the explicit refspec exists
+    for and the case the runbook records hitting three times. It goes over
+    file:// rather than a plain path: a local-path clone hardlinks the whole
+    object store, so every commit would already be here and nothing would be
+    missing to fetch.
+    """
+    origin = root / "origin"
+    origin.mkdir()
+    _git(origin, "init", "-q", "-b", "main", ".")
+    _git(origin, "config", "user.email", "pod@test")
+    _git(origin, "config", "user.name", "pod")
+    (origin / "a").write_text("a\n")
+    _git(origin, "add", "a")
+    _git(origin, "commit", "-qm", "first")
+    _git(origin, "checkout", "-qb", "side")
+    (origin / "b").write_text("b\n")
+    _git(origin, "add", "b")
+    _git(origin, "commit", "-qm", "second")
+    side = _git(origin, "rev-parse", "HEAD")
+    _git(origin, "checkout", "-q", "main")
+    work = root / "work"
+    subprocess.run(["git", "clone", "-q", "--single-branch", "--branch",
+                    "main", origin.as_uri(), str(work)], check=True)
+    return {"work": work, "side": side, "clone_head": _git(work, "rev-parse",
+                                                           "HEAD")}
+
+
+def _run_checkout(work: pathlib.Path, sha: str) -> subprocess.CompletedProcess:
+    body = _shell_function("checkout_sha")
+    return subprocess.run(
+        ["bash", "-c", f"set -euo pipefail\n{body}\ncheckout_sha \"$1\"",
+         "_", sha],
+        cwd=work, capture_output=True, text=True)
+
+
+def test_the_checkout_reaches_a_commit_the_clone_never_fetched(tmp_path):
+    """A single-branch clone has no ref for the requested commit; the explicit
+    refspec is what puts it within reach, and HEAD must land exactly there."""
+    repo = _fake_origin(tmp_path)
+    done = _run_checkout(repo["work"], repo["side"])
+    assert done.returncode == 0, done.stderr
+    assert _git(repo["work"], "rev-parse", "HEAD") == repo["side"]
+
+
+def test_an_unreachable_commit_fails_instead_of_measuring_the_clone(tmp_path):
+    """The 1.14.0 sweep asked for one commit, measured another, and reported
+    failures=0. The old form is run here to show it still would."""
+    repo = _fake_origin(tmp_path)
+    bogus = "0" * 39 + "1"
+    old = subprocess.run(
+        ["bash", "-c", "set -euo pipefail\n"
+                       'git fetch origin "$1" && git checkout -f "$1"\n'
+                       "git rev-parse HEAD\n", "_", bogus],
+        cwd=repo["work"], capture_output=True, text=True)
+    assert old.returncode == 0, "set -e exempts a non-final && list, as shipped"
+    assert old.stdout.strip() == repo["clone_head"], (
+        "the old form leaves HEAD wherever the clone landed")
+
+    done = _run_checkout(repo["work"], bogus)
+    assert done.returncode != 0, "an unreachable commit must abort the sweep"
+    assert _git(repo["work"], "rev-parse", "HEAD") == repo["clone_head"]
+
+
+def test_a_name_that_is_a_path_and_not_a_commit_fails(tmp_path):
+    """`git checkout -f <tracked file>` exits 0 and leaves HEAD where it was,
+    so the exit status alone cannot say a commit was reached. This is the case
+    the HEAD assertion is for."""
+    repo = _fake_origin(tmp_path)
+    done = _run_checkout(repo["work"], "a")
+    assert done.returncode != 0, "a path checkout is not a commit checkout"
+    assert _git(repo["work"], "rev-parse", "HEAD") == repo["clone_head"]
