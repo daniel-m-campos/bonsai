@@ -128,7 +128,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         {
             row_indices_.resize(view.size());
         }
-        if constexpr (std::same_as<sampler_type, AllRowsSampler>)
+        if constexpr (sampler_traits<sampler_type>::copies_view_verbatim)
         {
             view.materialize_into(row_indices_);
         }
@@ -159,7 +159,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
             // The view's runs describe the row list only when the sampler
             // copied it verbatim; a drawing sampler's list keeps gathering.
             row_run_view runs;
-            if constexpr (std::same_as<sampler_type, AllRowsSampler>)
+            if constexpr (sampler_traits<sampler_type>::copies_view_verbatim)
             {
                 n_selected = row_indices_.size();
                 identity   = view.is_identity();
@@ -175,6 +175,9 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
             }
             auto [tree, leaf_values, leaf_ids] = grower_.grow(
                 train, grad_, hess_, {row_indices_.data(), n_selected}, identity, runs);
+            // Over the plane, one slot per (row, class), for the same reason
+            // the binary booster gives: a repeated row id must not have its
+            // prediction advanced once per occurrence.
             parallel::for_each_index(
                 n, [&](size_t i)
                 { scores_[(i * n_k) + k] += config_.learning_rate * leaf_values[i]; });
@@ -327,7 +330,7 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         auto const &trees = trees_.read();
         assert(trees.size() >= n_classes_);
         assert(bins.view_n_rows() * n_classes_ == scores.size());
-        assert(!bins.row_major_bins().empty());
+        assert(!bins.mirror().bins().empty());
         size_t const first = trees.size() - n_classes_;
         float const  lr    = config_.learning_rate;
         // One SplitBins per class, hoisted out of the row loop.
@@ -337,21 +340,21 @@ template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBoo
         {
             sb.push_back(internal::split_bins(trees[first + k], bins));
         }
-        auto const     rm = bins.row_major_bins();
+        auto const    &m  = bins.mirror();
+        auto const     rm = m.bins();
         RowIndex const rows{bins.row_view()};
-        parallel::for_each_index(rows.size(),
-                                 [&](size_t i)
-                                 {
-                                     row_id_t const r      = rows[i];
-                                     auto const     bin_of = [&](size_t f)
-                                     { return rm[bins.mirror_index(r, f)]; };
-                                     for (size_t k = 0; k < n_classes_; ++k)
-                                     {
-                                         scores[(i * n_classes_) + k] +=
-                                             lr * internal::value_binned(
-                                                      trees[first + k], sb[k], bin_of);
-                                     }
-                                 });
+        parallel::for_each_index(
+            rows.size(),
+            [&](size_t i)
+            {
+                row_id_t const r      = rows[i];
+                auto const     bin_of = [&](size_t f) { return rm[m.index(r, f)]; };
+                for (size_t k = 0; k < n_classes_; ++k)
+                {
+                    scores[(i * n_classes_) + k] +=
+                        lr * internal::value_binned(trees[first + k], sb[k], bin_of);
+                }
+            });
     }
 
     float validation_loss(std::span<float const> scores,

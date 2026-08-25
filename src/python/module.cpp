@@ -385,13 +385,6 @@ std::string two_decimals(double value)
     return dot == std::string::npos ? text : text.substr(0, dot + 3);
 }
 
-// Raise a Python exception nanobind has no C++ mapping for.
-[[noreturn]] void raise_python(PyObject *type, std::string const &message)
-{
-    PyErr_SetString(type, message.c_str());
-    throw nb::python_error();
-}
-
 // `columns=` as feature ids into a dataset whose columns are `names`: a slice,
 // a boolean mask, an integer array, or the names themselves. Order and
 // duplicates are kept for the same reason rows keep them, and negative indices
@@ -411,20 +404,20 @@ parse_column_selection(nb::handle columns, std::span<std::string const> names)
     // the wrong complaint entirely; the caller's mistake is the emptiness.
     if (nb::cast<size_t>(arr.attr("size")) == 0)
     {
-        raise_python(PyExc_ValueError,
-                     "Dataset.subset(columns=...) kept no features; a dataset with no "
-                     "columns has nothing to split on");
+        throw nb::value_error(
+            "Dataset.subset(columns=...) kept no features; a dataset with no "
+            "columns has nothing to split on");
     }
     auto const kind = nb::cast<std::string>(arr.attr("dtype").attr("kind"));
     if (kind == "b")
     {
         if (size_t const given = nb::cast<size_t>(arr.attr("size")); given != n)
         {
-            raise_python(PyExc_ValueError,
-                         "Dataset.subset(columns=<bool mask>): the mask has " +
-                             std::to_string(given) + " entries and the dataset has " +
-                             std::to_string(n) +
-                             " features; a mask names one feature per entry");
+            std::string const msg =
+                "Dataset.subset(columns=<bool mask>): the mask has " +
+                std::to_string(given) + " entries and the dataset has " +
+                std::to_string(n) + " features; a mask names one feature per entry";
+            throw nb::value_error(msg.c_str());
         }
         arr = np.attr("flatnonzero")(arr);
     }
@@ -441,9 +434,10 @@ parse_column_selection(nb::handle columns, std::span<std::string const> names)
             auto const it   = std::ranges::find(names, want);
             if (it == names.end())
             {
-                raise_python(PyExc_KeyError,
-                             "Dataset.subset(columns=...) names the feature '" + want +
-                                 "', which this dataset does not have");
+                std::string const msg =
+                    "Dataset.subset(columns=...) names the feature '" + want +
+                    "', which this dataset does not have";
+                throw nb::key_error(msg.c_str());
             }
             ids.push_back(std::distance(names.begin(), it));
         }
@@ -451,25 +445,26 @@ parse_column_selection(nb::handle columns, std::span<std::string const> names)
     }
     else if (kind != "i" && kind != "u")
     {
-        raise_python(PyExc_TypeError,
-                     "Dataset.subset(columns=...) takes a slice, a boolean mask, an "
-                     "integer array, or feature names; got dtype kind '" +
-                         kind + "'");
+        std::string const msg =
+            "Dataset.subset(columns=...) takes a slice, a boolean mask, an "
+            "integer array, or feature names; got dtype kind '" +
+            kind + "'";
+        throw nb::type_error(msg.c_str());
     }
     arr = np.attr("ascontiguousarray")(arr, np.attr("int64"));
     if (nb::cast<size_t>(arr.attr("ndim")) != 1)
     {
-        raise_python(PyExc_ValueError,
-                     "Dataset.subset(columns=...) takes one dimension of feature ids");
+        throw nb::value_error(
+            "Dataset.subset(columns=...) takes one dimension of feature ids");
     }
     auto const ids = nb::cast<
         nb::ndarray<int64_t const, nb::ndim<1>, nb::c_contig, nb::device::cpu>>(arr);
     std::span<int64_t const> const in{ids.data(), ids.shape(0)};
     if (in.empty())
     {
-        raise_python(PyExc_ValueError,
-                     "Dataset.subset(columns=...) kept no features; a dataset with no "
-                     "columns has nothing to split on");
+        throw nb::value_error(
+            "Dataset.subset(columns=...) kept no features; a dataset with no "
+            "columns has nothing to split on");
     }
     std::vector<bonsai::feature_id_t> out;
     out.reserve(in.size());
@@ -477,12 +472,12 @@ parse_column_selection(nb::handle columns, std::span<std::string const> names)
     {
         if (id < 0 || static_cast<size_t>(id) >= n)
         {
-            raise_python(PyExc_IndexError,
-                         "Dataset.subset(columns=...) got feature " +
-                             std::to_string(id) + ", out of range for a dataset of " +
-                             std::to_string(n) +
-                             " features; feature ids index the binned plane and do "
-                             "not wrap");
+            std::string const msg =
+                "Dataset.subset(columns=...) got feature " + std::to_string(id) +
+                ", out of range for a dataset of " + std::to_string(n) +
+                " features; feature ids index the binned plane and do "
+                "not wrap";
+            throw nb::index_error(msg.c_str());
         }
         out.push_back(static_cast<bonsai::feature_id_t>(id));
     }
@@ -512,36 +507,37 @@ std::vector<bonsai::row_id_t> parse_row_selection(nb::handle rows, size_t n)
         {
             if (size_t const given = nb::cast<size_t>(arr.attr("size")); given != n)
             {
-                raise_python(PyExc_ValueError,
-                             "Dataset.subset(rows=<bool mask>): the mask has " +
-                                 std::to_string(given) +
-                                 " entries and the dataset has " + std::to_string(n) +
-                                 " rows; a mask names one row per entry");
+                std::string const msg =
+                    "Dataset.subset(rows=<bool mask>): the mask has " +
+                    std::to_string(given) + " entries and the dataset has " +
+                    std::to_string(n) + " rows; a mask names one row per entry";
+                throw nb::value_error(msg.c_str());
             }
             arr = np.attr("flatnonzero")(arr);
         }
         else if (kind != "i" && kind != "u")
         {
-            raise_python(PyExc_TypeError,
-                         "Dataset.subset(rows=...) takes a slice, a boolean mask, or "
-                         "an integer array; got dtype kind '" +
-                             kind + "'");
+            std::string const msg =
+                "Dataset.subset(rows=...) takes a slice, a boolean mask, or "
+                "an integer array; got dtype kind '" +
+                kind + "'";
+            throw nb::type_error(msg.c_str());
         }
     }
     arr = np.attr("ascontiguousarray")(arr, np.attr("int64"));
     if (nb::cast<size_t>(arr.attr("ndim")) != 1)
     {
-        raise_python(PyExc_ValueError,
-                     "Dataset.subset(rows=...) takes one dimension of row ids");
+        throw nb::value_error(
+            "Dataset.subset(rows=...) takes one dimension of row ids");
     }
     auto const ids = nb::cast<
         nb::ndarray<int64_t const, nb::ndim<1>, nb::c_contig, nb::device::cpu>>(arr);
     std::span<int64_t const> const in{ids.data(), ids.shape(0)};
     if (in.empty())
     {
-        raise_python(PyExc_ValueError,
-                     "Dataset.subset(rows=...) selected no rows; an empty training "
-                     "set has no gradients to boost on");
+        throw nb::value_error(
+            "Dataset.subset(rows=...) selected no rows; an empty training "
+            "set has no gradients to boost on");
     }
     std::vector<bonsai::row_id_t> out;
     out.reserve(in.size());
@@ -549,17 +545,17 @@ std::vector<bonsai::row_id_t> parse_row_selection(nb::handle rows, size_t n)
     {
         if (id < 0)
         {
-            raise_python(PyExc_IndexError,
-                         "Dataset.subset(rows=...) got the negative index " +
-                             std::to_string(id) +
-                             "; row ids index the binned plane and do not wrap");
+            std::string const msg = "Dataset.subset(rows=...) got the negative index " +
+                                    std::to_string(id) +
+                                    "; row ids index the binned plane and do not wrap";
+            throw nb::index_error(msg.c_str());
         }
         if (static_cast<size_t>(id) >= n)
         {
-            raise_python(PyExc_IndexError, "Dataset.subset(rows=...) got row " +
-                                               std::to_string(id) +
-                                               ", out of range for a dataset of " +
-                                               std::to_string(n) + " rows");
+            std::string const msg =
+                "Dataset.subset(rows=...) got row " + std::to_string(id) +
+                ", out of range for a dataset of " + std::to_string(n) + " rows";
+            throw nb::index_error(msg.c_str());
         }
         out.push_back(static_cast<bonsai::row_id_t>(id));
     }
@@ -701,11 +697,17 @@ class Dataset
 
     // A rewrite: bins already gathered into a plane this Dataset owns
     // outright. Nothing is shared with whatever they were gathered out of, so
-    // this is nobody's view and its .base is None. The bins land on the host
-    // whatever device the source's were on, and the next CUDA fit stages them
-    // up; that round trip is what a rewrite costs and a row view does not.
-    Dataset(bonsai::Dataset gathered, bonsai::BinMapperConfig cfg)
-        : n_features_(gathered.n_features()), bin_cfg_(cfg)
+    // this is nobody's view and its .base is None.
+    //
+    // The device id follows the bins. A backend that gathered the rewrite in
+    // its own memory hands back a plane, and reporting that dataset as host
+    // resident would route the next fit through a stage-up that the whole
+    // point of the device gather was to avoid.
+    Dataset(bonsai::Dataset gathered, bonsai::BinMapperConfig cfg,
+            std::optional<uint32_t> device_id)
+        : n_features_(gathered.n_features()),
+          device_id_(gathered.ingest_plane() != nullptr ? device_id : std::nullopt),
+          bin_cfg_(cfg)
     {
         loaded_->mappers = gathered.mappers();
         loaded_->train   = bonsai::cli::LabeledData{
@@ -740,7 +742,7 @@ class Dataset
             auto const names = narrowed.loaded_->mappers.feature_names();
             return {
                 narrowed.bins().select_features(parse_column_selection(columns, names)),
-                narrowed.bin_cfg_};
+                narrowed.bin_cfg_, narrowed.device_id_};
         }
         std::vector<bonsai::row_id_t> ids = parse_row_selection(rows, n_rows());
         if (is_view())
@@ -778,17 +780,18 @@ class Dataset
         {
             if (!whole || seen[id])
             {
-                raise_python(PyExc_ValueError,
-                             "Dataset.reorder(rows=...) takes a permutation of this "
-                             "Dataset's " +
-                                 std::to_string(n_rows()) +
-                                 " rows: every row exactly once. Use subset(rows=...) "
-                                 "to keep only some of them.");
+                std::string const msg =
+                    "Dataset.reorder(rows=...) takes a permutation of this "
+                    "Dataset's " +
+                    std::to_string(n_rows()) +
+                    " rows: every row exactly once. Use subset(rows=...) "
+                    "to keep only some of them.";
+                throw nb::value_error(msg.c_str());
             }
             seen[id] = true;
         }
         Dataset const laid = subset(self, rows, nb::none());
-        return {laid.bins().materialize(), bin_cfg_};
+        return {laid.bins().materialize(), bin_cfg_, laid.device_id_};
     }
 
     // Whether this dataset selects rows out of another one's plane.
@@ -1612,12 +1615,12 @@ ParamItems items_from_params(nb::object params)
     }
     if (!nb::hasattr(params, "items"))
     {
-        throw nb::type_error(
-            ("params must be a bonsai.Params, a mapping of dotted keys, or None; "
-             "got " +
-             nb::cast<std::string>(nb::str(params.type().attr("__name__"))) +
-             ". For legacy (key, value) pairs, pass dict(pairs).")
-                .c_str());
+        std::string const msg =
+            "params must be a bonsai.Params, a mapping of dotted keys, or None; "
+            "got " +
+            nb::cast<std::string>(nb::str(params.type().attr("__name__"))) +
+            ". For legacy (key, value) pairs, pass dict(pairs).";
+        throw nb::type_error(msg.c_str());
     }
     ParamItems       out;
     nb::object const items = params.attr("items")();
@@ -1627,10 +1630,10 @@ ParamItems items_from_params(nb::object params)
         nb::object const key   = entry[0];
         if (!nb::isinstance<nb::str>(key))
         {
-            throw nb::type_error(
-                ("params keys must be dotted config keys (str); got " +
-                 nb::cast<std::string>(nb::str(key.type().attr("__name__"))))
-                    .c_str());
+            std::string const msg =
+                "params keys must be dotted config keys (str); got " +
+                nb::cast<std::string>(nb::str(key.type().attr("__name__")));
+            throw nb::type_error(msg.c_str());
         }
         out.emplace_back(nb::cast<std::string>(key), nb::object(entry[1]));
     }
@@ -2279,10 +2282,12 @@ NB_MODULE(_bonsai, m)
             "columns : integer array, slice, boolean mask, or feature names\n"
             "    Which features to keep, in the order given. Unlike rows this "
             "copies: the bins are gathered into a new plane, so the result "
-            "owns its columns and its ``base`` is None. The copy lands on the "
-            "host whatever device the parent's bins were on, and the next CUDA "
-            "fit stages it up. Out-of-range and negative indices raise, and an "
-            "unknown name raises KeyError.\n"
+            "owns its columns and its ``base`` is None. The gather stays "
+            "wherever the parent's bins were: a device-resident parent is "
+            "rewritten on the device and the result reports that device, so a "
+            "feature-selection loop never round-trips through the host. "
+            "Out-of-range and negative indices raise, and an unknown name "
+            "raises KeyError.\n"
             "\n"
             "Returns\n"
             "-------\n"

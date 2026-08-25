@@ -62,4 +62,36 @@ struct GossSampler
     float other_rate_;
 };
 
+// What the booster needs to know about a sampler without naming one. Two
+// independent questions, both answered at compile time:
+//
+//   copies_view_verbatim  the emitted list IS the dataset's row view, in
+//                         order, so the view's own descriptor already
+//                         describes it: identity is a constant-time read, its
+//                         runs let the column fill take subspans, and the
+//                         per-tree refill can be skipped entirely.
+//   reads_gradients       sample() inspects grad/hess, so a fit that derives
+//                         them on the device cannot leave them there.
+//
+// The primary template answers both conservatively, so a sampler added later
+// gets the correct slow path by default and opts in deliberately rather than
+// by being forgotten in a chain of type comparisons.
+template <typename Sa> struct sampler_traits
+{
+    static constexpr bool copies_view_verbatim = false;
+    static constexpr bool reads_gradients      = true;
+};
+
+template <> struct sampler_traits<AllRowsSampler>
+{
+    static constexpr bool copies_view_verbatim = true;
+    static constexpr bool reads_gradients      = false;
+};
+
+template <> struct sampler_traits<BernoulliSampler>
+{
+    static constexpr bool copies_view_verbatim = false;
+    static constexpr bool reads_gradients      = false;
+};
+
 } // namespace bonsai

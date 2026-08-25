@@ -281,7 +281,7 @@ TEST_CASE("Dataset: from_bins mints its own lazy caches", "[dataset][from_bins]"
 
     // Mint the parent's mirror first: a shared row_major_ would already hold
     // the parent's bins by the time the child asks for its own.
-    auto const parent_mirror = parent.row_major_bins();
+    auto const parent_mirror = parent.mirror().bins();
     REQUIRE(parent_mirror.size() == parent.n_rows() * parent.n_features());
 
     Bins shifted = bins_of(parent);
@@ -294,12 +294,12 @@ TEST_CASE("Dataset: from_bins mints its own lazy caches", "[dataset][from_bins]"
     }
     Dataset const child =
         Dataset::from_bins(shifted.u8, {}, true, mappers, batch.labels);
-    auto const child_mirror = child.row_major_bins();
+    auto const child_mirror = child.mirror().bins();
     REQUIRE(child_mirror.size() == parent_mirror.size());
 
     Bins const    same = bins_of(parent);
     Dataset const twin = Dataset::from_bins(same.u8, {}, true, mappers, batch.labels);
-    auto const    twin_mirror = twin.row_major_bins();
+    auto const    twin_mirror = twin.mirror().bins();
     REQUIRE(twin_mirror.size() == parent_mirror.size());
 
     for (size_t f = 0; f < parent.n_features(); ++f)
@@ -309,11 +309,11 @@ TEST_CASE("Dataset: from_bins mints its own lazy caches", "[dataset][from_bins]"
             auto const want =
                 static_cast<bin_id_t>((parent.bin_at(f, r) + 1) % parent.n_bins(f));
             CHECK(child.bin_at(f, r) == want);
-            CHECK(child_mirror[child.mirror_index(r, f)] == want);
+            CHECK(child_mirror[child.mirror().index(r, f)] == want);
             // The parent keeps its own, and a second child gets its own.
-            CHECK(parent_mirror[parent.mirror_index(r, f)] == parent.bin_at(f, r));
+            CHECK(parent_mirror[parent.mirror().index(r, f)] == parent.bin_at(f, r));
             CHECK(twin.bin_at(f, r) == parent.bin_at(f, r));
-            CHECK(twin_mirror[twin.mirror_index(r, f)] == parent.bin_at(f, r));
+            CHECK(twin_mirror[twin.mirror().index(r, f)] == parent.bin_at(f, r));
         }
     }
 }
@@ -360,7 +360,7 @@ TEST_CASE("Dataset: from_bins returns the u16 bins it was handed",
     CHECK(ds.n_rows() == parent.n_rows());
     CHECK(ds.n_features() == parent.n_features());
     // u16 bins have no row-major mirror, on either dataset.
-    CHECK(ds.row_major_bins().empty());
+    CHECK(ds.mirror().bins().empty());
     for (size_t f = 0; f < ds.n_features(); ++f)
     {
         REQUIRE(ds.visit_bins(f, [](auto col) { return col.size(); }) == ds.n_rows());
@@ -642,11 +642,11 @@ TEST_CASE("Dataset: a column selection serves its own bins, not the parent's",
 
     // The row-major mirror is minted per dataset and must be the subset's
     // own: one feature wide, not the parent's four.
-    auto const mirror = sub.row_major_bins();
+    auto const mirror = sub.mirror().bins();
     REQUIRE(!mirror.empty());
     for (size_t r = 0; r < sub.n_rows(); ++r)
     {
-        CHECK(mirror[sub.mirror_index(r, 0)] == full.bin_at(2, r));
+        CHECK(mirror[sub.mirror().index(r, 0)] == full.bin_at(2, r));
     }
 }
 
@@ -802,13 +802,140 @@ TEST_CASE("Dataset: a materialized view serves its own bins",
     // cols_ and row_major_ are shared across Dataset copies by design; a
     // materialization that copied the parent would serve 64 rows here.
     REQUIRE(done.n_rows() == 4);
-    auto const mirror = done.row_major_bins();
+    auto const mirror = done.mirror().bins();
     REQUIRE(mirror.size() == done.n_rows() * done.n_features());
     for (size_t f = 0; f < done.n_features(); ++f)
     {
         for (size_t i = 0; i < rows.size(); ++i)
         {
-            CHECK(mirror[done.mirror_index(i, f)] == full.bin_at(f, rows[i]));
+            CHECK(mirror[done.mirror().index(i, f)] == full.bin_at(f, rows[i]));
+        }
+    }
+}
+
+TEST_CASE("a view copies nothing, not even its labels", "[dataset][view]")
+{
+    // Pointer identity, not equality: a deep copy would compare equal and
+    // pass a value check while costing 64MB per view at 16M rows, which is
+    // the cost a row view exists to avoid.
+    detail::ColumnBatch batch = four_feature_batch(512);
+    batch.weights.assign(512, 1.5F);
+    auto const    mappers = BinMappers::fit(batch, BinMapperConfig{});
+    Dataset const ds      = Dataset::bin(batch, mappers, DataConfig{});
+
+    std::vector<row_id_t> ids;
+    for (row_id_t r = 0; r < 512; r += 3)
+    {
+        ids.push_back(r);
+    }
+    Dataset const view = ds.with_rows(RowView::encode(ids, ds.n_rows()));
+
+    CHECK(view.labels().data() == ds.labels().data());
+    CHECK(view.weights().data() == ds.weights().data());
+    CHECK(&view.mappers() == &ds.mappers());
+    // The view still reports its own row count while sharing the storage.
+    CHECK(view.view_n_rows() == ids.size());
+    CHECK(view.n_rows() == ds.n_rows());
+}
+
+TEST_CASE("a rewrite owns its labels rather than sharing them", "[dataset][view]")
+{
+    // The other half of the contract: select_features gathers, so the result
+    // must NOT alias the parent, or freeing the parent would strand it.
+    detail::ColumnBatch             batch = four_feature_batch(256);
+    auto const                      maps  = BinMappers::fit(batch, BinMapperConfig{});
+    Dataset const                   ds    = Dataset::bin(batch, maps, DataConfig{});
+    std::vector<feature_id_t> const keep  = {2, 0};
+    Dataset const                   sub   = ds.select_features(keep);
+
+    CHECK(sub.labels().data() != ds.labels().data());
+    CHECK(sub.labels().size() == ds.n_rows());
+}
+
+// The mirror's addressing rule, pinned before it moves anywhere. The
+// single-block case is covered above by every mirror-vs-bin_at check; what
+// was never covered is a SECOND block, which is the only case where the
+// expression does anything but n_rows * fid + row.
+namespace
+{
+
+// A batch just wide enough to cross the mirror's tile width, so block 1
+// exists and is narrower than block 0.
+detail::ColumnBatch two_block_batch(size_t n, size_t n_features)
+{
+    detail::ColumnBatch batch;
+    batch.features.assign(n_features, std::vector<float>(n));
+    batch.feature_names.resize(n_features);
+    for (size_t f = 0; f < n_features; ++f)
+    {
+        batch.feature_names[f] = "f" + std::to_string(f);
+        for (size_t r = 0; r < n; ++r)
+        {
+            // Distinct per (row, feature) within a byte, so a cell read from
+            // the wrong block compares unequal instead of coincidentally
+            // matching a neighbour.
+            batch.features[f][r] = static_cast<float>((r * 7 + f * 13) % 251);
+        }
+    }
+    batch.labels.assign(n, 0.0F);
+    for (size_t r = 0; r < n; ++r)
+    {
+        batch.labels[r] = static_cast<float>(r % 3);
+    }
+    return batch;
+}
+
+} // namespace
+
+TEST_CASE("the mirror addresses a second column block", "[dataset][mirror]")
+{
+    size_t const width  = Dataset::mirror_tile_width();
+    size_t const nf     = width + 5; // one full block, one 5-wide tail
+    size_t const n      = 6;
+    auto const   batch  = two_block_batch(n, nf);
+    auto const   maps   = BinMappers::fit(batch, BinMapperConfig{});
+    auto const   ds     = Dataset::bin(batch, maps, DataConfig{});
+    auto const   mirror = ds.mirror().bins();
+
+    REQUIRE(ds.n_features() == nf);
+    REQUIRE(mirror.size() == n * nf);
+    // Every cell, both blocks, against the column store.
+    for (size_t f = 0; f < nf; ++f)
+    {
+        for (size_t r = 0; r < n; ++r)
+        {
+            CHECK(mirror[ds.mirror().index(r, f)] == ds.bin_at(f, r));
+        }
+    }
+}
+
+TEST_CASE("the mirror's block layout is what it claims", "[dataset][mirror]")
+{
+    size_t const width = Dataset::mirror_tile_width();
+    size_t const nf    = width + 5;
+    size_t const n     = 6;
+    auto const   batch = two_block_batch(n, nf);
+    auto const   maps  = BinMappers::fit(batch, BinMapperConfig{});
+    auto const   ds    = Dataset::bin(batch, maps, DataConfig{});
+
+    // Block 0 is row-major over `width` columns.
+    CHECK(ds.mirror().index(0, 0) == 0);
+    CHECK(ds.mirror().index(0, 1) == 1);
+    CHECK(ds.mirror().index(1, 0) == width);
+    // Block 1 starts after block 0's whole extent and is 5 wide.
+    CHECK(ds.mirror().index(0, width) == n * width);
+    CHECK(ds.mirror().index(1, width) == (n * width) + 5);
+    CHECK(ds.mirror().index(0, width + 4) == (n * width) + 4);
+    // Distinct addresses, no overlap between the blocks.
+    std::vector<bool> seen(n * nf, false);
+    for (size_t f = 0; f < nf; ++f)
+    {
+        for (size_t r = 0; r < n; ++r)
+        {
+            size_t const at = ds.mirror().index(r, f);
+            REQUIRE(at < seen.size());
+            CHECK_FALSE(seen[at]);
+            seen[at] = true;
         }
     }
 }

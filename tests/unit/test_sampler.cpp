@@ -329,3 +329,22 @@ TEST_CASE("GossSampler: invalid rates throw ConfigError", "[sampler][goss][confi
     zero.sampler.other_rate = 0.1F;
     CHECK_THROWS_AS(GossSampler{zero}, ConfigError);
 }
+
+// The traits decide, at compile time, whether the booster may skip the
+// per-tree refill and whether a fit may keep its gradients on the device.
+// Getting either wrong for a new sampler is silent: the fit still runs and
+// the model is simply different, so pin them here rather than trusting the
+// five call sites to be edited together.
+static_assert(sampler_traits<AllRowsSampler>::copies_view_verbatim,
+              "AllRowsSampler emits the view unchanged; the fast descriptor "
+              "paths read the view directly and depend on it");
+static_assert(!sampler_traits<AllRowsSampler>::reads_gradients);
+static_assert(!sampler_traits<BernoulliSampler>::copies_view_verbatim,
+              "a Bernoulli draw is a subset, so the view's runs do not "
+              "describe the row list it emits");
+static_assert(!sampler_traits<BernoulliSampler>::reads_gradients,
+              "the draw is gradient-blind, which is what lets a resident "
+              "objective keep grad/hess on the device under sampling");
+static_assert(sampler_traits<GossSampler>::reads_gradients,
+              "GOSS ranks by |grad|, so the host must have them");
+static_assert(!sampler_traits<GossSampler>::copies_view_verbatim);

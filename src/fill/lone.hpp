@@ -74,7 +74,7 @@ inline void fill_lone(Dataset const &ds, SplitInput &node,
             }
         }
     }
-    std::span<uint8_t const> const rm_all = ds.row_major_bins();
+    std::span<uint8_t const> const rm_all = ds.mirror().bins();
     NodeHistograms                &hists  = node.hists;
     // Capture a view, not the container: naming the thread_local inside the
     // parallel region would resolve to each worker's own (empty) vector.

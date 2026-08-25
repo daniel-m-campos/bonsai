@@ -787,3 +787,27 @@ def test_reorder_outlives_its_parent():
     expected = _model_bytes(_PAIRS, laid)
     del ds
     assert _model_bytes(_PAIRS, laid) == expected
+
+
+@pytest.mark.parametrize(("name", "idx"), [
+    ("contiguous", np.arange(0, 1500)),
+    ("strided", np.arange(0, 4000, 3)),
+])
+def test_a_view_leaves_out_of_view_scores_alone(name, idx):
+    """The contract stated on RecycledOutputs, pinned.
+
+    The score update walks the plane, not the view, because a repeated row id
+    must not be advanced twice. That makes the rows a view omits readable, and
+    they are only harmless because nothing ever writes their slot: they hold
+    zero from the first grow's resize and stay there. If any writer starts
+    touching them, a view's model stops matching the materialized copy of the
+    same rows, which is what this asserts across enough rounds for a drift to
+    compound. Strided as well as contiguous, so a stride bug cannot hide
+    behind the omitted rows being one suffix.
+    """
+    X, y = _blocky_data()
+    ds = bonsai.Dataset(X, y)
+    view = ds.subset(rows=idx)
+    copy = bonsai.Dataset(X[idx], y[idx], reference=ds)
+    pairs = dict(_PAIRS, **{"booster.n_iters": "60"})
+    assert _model_bytes(pairs, view) == _model_bytes(pairs, copy), name

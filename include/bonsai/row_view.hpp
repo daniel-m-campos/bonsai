@@ -85,7 +85,14 @@ class RowView
         }
         view.first_ = *std::ranges::min_element(rows);
         view.last_  = *std::ranges::max_element(rows);
-        RowRun cur{.start = rows[0], .stop = static_cast<row_id_t>(rows[0] + 1)};
+        // The runs arm loses once it needs more than one run per two rows, and
+        // that test only ever goes from false to true as runs accumulate. So
+        // stop at the crossing rather than encoding the whole list first: the
+        // input this discards for is the scattered one, which is exactly where
+        // the abandoned runs vector would be largest.
+        size_t const cap = (rows.size() / 2) + 1;
+        RowRun       cur{.start = rows[0], .stop = static_cast<row_id_t>(rows[0] + 1)};
+        bool         gather = false;
         for (row_id_t const r : rows.subspan(1))
         {
             if (r == cur.stop)
@@ -95,11 +102,20 @@ class RowView
             }
             view.runs_.push_back(cur);
             cur = {.start = r, .stop = static_cast<row_id_t>(r + 1)};
+            if (view.runs_.size() > cap)
+            {
+                gather = true;
+                break;
+            }
         }
-        view.runs_.push_back(cur);
-        if (view.runs_.size() * 2 > rows.size())
+        if (!gather)
+        {
+            view.runs_.push_back(cur);
+        }
+        if (gather || view.runs_.size() * 2 > rows.size())
         {
             view.runs_.clear();
+            view.runs_.shrink_to_fit();
             view.ids_.assign(rows.begin(), rows.end());
             view.form_ = Form::Gather;
             return view;

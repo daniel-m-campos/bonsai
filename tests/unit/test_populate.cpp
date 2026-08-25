@@ -117,7 +117,7 @@ SplitInput populate_node(Fixture const &fx, std::vector<row_id_t> rows,
 // position f % width; one block reproduces the classic row-major layout.
 void check_mirror_layout(Fixture const &fx)
 {
-    auto const   rm    = fx.ds.row_major_bins();
+    auto const   rm    = fx.ds.mirror().bins();
     size_t const width = Dataset::mirror_tile_width();
     REQUIRE(rm.size() == fx.ds.n_rows() * fx.ds.n_features());
     for (size_t r = 0; r < fx.ds.n_rows(); ++r)

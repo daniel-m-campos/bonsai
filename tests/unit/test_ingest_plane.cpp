@@ -75,7 +75,7 @@ TEST_CASE("plane-backed dataset materializes host bins lazily", "[dataset]")
     SECTION("visit_bins and row_major_bins agree with the host fill")
     {
         ds.visit_bins(1, [&](auto bins) { REQUIRE(bins[0] == twin.bin_at(1, 0)); });
-        REQUIRE(ds.row_major_bins().size() == twin.row_major_bins().size());
+        REQUIRE(ds.mirror().bins().size() == twin.mirror().bins().size());
         REQUIRE(plane->materialized == 1);
     }
 }

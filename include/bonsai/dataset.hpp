@@ -11,6 +11,7 @@
 #include "bonsai/bin_mappers.hpp"
 #include "bonsai/config/data_config.hpp"
 #include "bonsai/detail/column_batch.hpp"
+#include "bonsai/row_mirror.hpp"
 #include "bonsai/row_view.hpp"
 #include "bonsai/types.hpp"
 
@@ -126,8 +127,11 @@ class Dataset
         return rows_.size();
     }
 
-    // The same data, visited through `rows`. The plane, the host columns and
-    // the row-major mirror are shared with this dataset rather than copied.
+    // The same data, visited through `rows`. Nothing is copied: the plane,
+    // the host columns, the row-major mirror, and the labels, weights and
+    // cuts are all shared with this dataset. That is what makes k folds cost
+    // one dataset rather than k, and "a view copies nothing, not even its
+    // labels" pins it by pointer identity.
     Dataset with_rows(RowView rows) const;
 
     // The same rows under the features `keep` names, in the order it names
@@ -169,13 +173,13 @@ class Dataset
     // Feature f's strictly increasing bin cut points.
     std::span<float const> cuts(feature_id_t f) const
     {
-        return mappers_[f].cuts();
+        return meta_->mappers[f].cuts();
     }
 
     // Feature f's threshold inversion, on the mapper that owns the cuts.
     bin_id_t bin_of_threshold(feature_id_t f, float threshold) const
     {
-        return mappers_[f].bin_of_threshold(threshold);
+        return meta_->mappers[f].bin_of_threshold(threshold);
     }
 
     // Binned columns store 8-bit when every feature fits 256 bins (the
@@ -236,38 +240,28 @@ class Dataset
     // flag's atomic load and nothing else; the fill's inner loops index the
     // returned span directly.
     //
-    // Layout is column-block-tiled (issue #217): features are grouped into
-    // blocks of mirror_tile_width() and each block is row-major on its own
-    // (block b starts at n_rows * b * width; a row's bins inside it are
-    // width_b bytes). At n_features <= the tile width there is exactly one
-    // block and the layout is the classic n_rows x n_features mirror.
-    std::span<uint8_t const> row_major_bins() const;
+    // The row-major mirror of this dataset's bins, minted on first use and
+    // shared by every copy. Empty when the bins are not u8: the mirror exists
+    // for the byte-wide row walk and a u16 dataset has no such layout.
+    //
+    // RowMirror owns the block layout and its addressing rule; this hands
+    // back the minted one so a caller reads `m.bins()` and `m.index(r, f)`
+    // from the same object instead of pairing two Dataset calls that have to
+    // agree about shape.
+    RowMirror const &mirror() const;
 
-    // Where (row, fid) sits in row_major_bins(). The block layout's one
-    // addressing rule, so tree-routing loops never restate it. One block
-    // (n_features <= the tile width) falls out of the same expression.
-    size_t mirror_index(size_t row, size_t fid) const
-    {
-        size_t const width = mirror_tile_width();
-        size_t const block = fid / width;
-        size_t const wide  = std::min(width, n_features_ - (block * width));
-        return (n_rows_ * block * width) + (row * wide) + (fid - (block * width));
-    }
-
-    // Features per mirror block: sized so one block's full histogram
-    // footprint (width x 256 bins x 8B cells) stays cache-resident during
-    // a tiled row-wise fill.
+    // Features per mirror block, as the layout defines it.
     static constexpr size_t mirror_tile_width()
     {
-        return 2048;
+        return RowMirror::tile_width;
     }
 
   private:
     // Lazily materialized host columns of a plane-backed dataset. The first
     // host consumer can be a parallel loop (route_unsampled walks bin_at
-    // from every worker), so materialization synchronizes via call_once —
-    // the row_major_ single-threaded-first-use assumption does NOT hold
-    // here. Heap-allocated so Dataset copies share one materialization.
+    // from every worker), so materialization synchronizes via call_once, the
+    // same reason RowMirror does. Heap-allocated so Dataset copies share one
+    // materialization.
     struct HostBins
     {
         std::vector<std::vector<uint8_t>>  u8;
@@ -275,15 +269,9 @@ class Dataset
         std::once_flag                     once;
     };
 
-    // The row-major mirror and the flag that mints it exactly once. Heap
-    // -allocated so Dataset copies share one materialization, as HostBins is.
-    struct RowMajor
-    {
-        std::vector<uint8_t> bins;
-        std::once_flag       once;
-    };
-
-    void mint_row_major() const;
+    // Fills the mirror's buffer from the host columns; the mirror decides
+    // the layout and calls this at most once.
+    void mint_into(std::span<uint8_t> out_bins) const;
 
     HostBins const &host_bins() const
     {
@@ -300,17 +288,28 @@ class Dataset
         std::vector<std::vector<uint16_t>> u16;
     };
 
-    std::shared_ptr<HostColumns>       cols_      = std::make_shared<HostColumns>();
-    std::shared_ptr<RowMajor>          row_major_ = std::make_shared<RowMajor>();
+    // Labels, weights and cuts. Fixed when the dataset is binned and never
+    // mutated after, so a row view shares them the way it shares the plane
+    // rather than deep-copying: at 16M rows the labels alone are 64MB, and a
+    // fold loop that copied them per fold would undo what the view is for.
+    struct Meta
+    {
+        std::vector<float> labels;
+        std::vector<float> weights;
+        BinMappers         mappers;
+    };
+
+    std::shared_ptr<HostColumns> cols_ = std::make_shared<HostColumns>();
+    // Heap-allocated so Dataset copies share one materialization, as the
+    // host columns and the lazy plane bins are.
+    std::shared_ptr<RowMirror>         row_major_ = std::make_shared<RowMirror>();
     std::shared_ptr<IngestPlane const> plane_;
     std::shared_ptr<HostBins>          lazy_;
+    std::shared_ptr<Meta const>        meta_        = std::make_shared<Meta const>();
     bool                               bins_are_u8_ = false;
-    std::vector<float>                 labels_;
-    std::vector<float>                 weights_;
-    BinMappers                         mappers_;
-    size_t                             n_rows_     = 0;
-    size_t                             n_features_ = 0;
-    RowView                            rows_       = RowView::all(0);
+    size_t                             n_rows_      = 0;
+    size_t                             n_features_  = 0;
+    RowView                            rows_        = RowView::all(0);
 };
 
 // The one host routing truth: which child a row takes at an internal node.

@@ -150,7 +150,7 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
     ev = (Xev, yev) if Xev is not None else None
     pairs = rp.bonsai_core(
         learning_rate=c["lr"], max_depth=c["depth"],
-        num_leaves=rp.num_leaves_of(c), **_knobs(c),
+        num_leaves=rp.num_leaves_of(c), **rp.knobs_of(c),
         max_bin=c["bins"], seed=c["seed"],
         n_iters=c["iters"], n_threads=threads, grower=grower,
         objective="logloss" if task == "binary" else "mse",
@@ -218,7 +218,7 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
     X, y, Xev, yev = eval_split(c, X, y)
     rounds = patience_of(c)
     params = {**rp.xgb_core(learning_rate=c["lr"], max_depth=c["depth"],
-                            **_knobs(c),
+                            **rp.knobs_of(c),
                             max_bin=c["bins_effective"], seed=c["seed"]),
               "objective": ("binary:logistic" if task == "binary"
                             else "reg:squarederror"),
@@ -292,7 +292,7 @@ def run_lgbm(spec, X, y, Xte, yte) -> dict:
     X, y, Xev, yev = eval_split(c, X, y)
     rounds = patience_of(c)
     params = {**rp.lgbm_core(learning_rate=c["lr"], max_depth=c["depth"],
-                             num_leaves=rp.num_leaves_of(c), **_knobs(c),
+                             num_leaves=rp.num_leaves_of(c), **rp.knobs_of(c),
                              max_bin=c["bins_effective"], seed=c["seed"]),
               "objective": "binary" if task == "binary" else "regression",
               "device_type": device, "num_threads": spec[runlog.Row.THREADS]}
@@ -356,7 +356,7 @@ def run_catboost(spec, X, y, Xte, yte) -> dict:
     cls = CatBoostClassifier if task == "binary" else CatBoostRegressor
     model = cls(
         **rp.catboost_core(learning_rate=c["lr"], max_depth=c["depth"],
-                           lambda_l2=_knobs(c)["lambda_l2"],
+                           lambda_l2=rp.knobs_of(c)["lambda_l2"],
                            max_bin=c["bins_effective"], seed=c["seed"],
                            device=device),
         **rp.catboost_early_stop(rounds, has_eval_set=Xev is not None),
@@ -500,17 +500,6 @@ def _phase(timed: dict, name: str):
     t0 = time.perf_counter()
     yield
     timed[name] = time.perf_counter() - t0
-
-
-def _knobs(c: dict) -> dict:
-    """The cell's shared tree knobs, defaulted to the scaling regime.
-
-    A cell may name min_data_in_leaf and lambda_l2; the suites that predate
-    them do not, and their rows were measured at the SCALING values, so that
-    is what the fallback has to be.
-    """
-    return {k: c.get(k, rp.SCALING[k])
-            for k in ("min_data_in_leaf", "lambda_l2")}
 
 
 def _assert_xgb_trained_on_device(booster, caught_warnings) -> None:

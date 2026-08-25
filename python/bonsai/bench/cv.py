@@ -60,10 +60,8 @@ class Strategy:
     QUANTILE = "quantile"
 
 
-# Which strategies each library actually offers. A cell asking for one a
-# library does not have is a refusal row rather than a duplicate of its only
-# behaviour, so a copy cell reads as "bonsai alone had a choice here" instead
-# of quietly re-running lightgbm's single path under a second label.
+# What each library offers. A cell naming a strategy a library lacks becomes
+# the refusal row described above, not a duplicate of its only behaviour.
 _STRATEGIES = {
     "bonsai": (Strategy.VIEW, Strategy.COPY),
     "lgbm": (Strategy.VIEW,),
@@ -130,9 +128,27 @@ R2_FOLDS = "r2_folds"
 #
 # Each returns (ingest_s, [r2 per fold], fit_s, score_s). The r2 list is not
 # decoration: it is what proves the arms fit the same folds of the same data,
-# without which a faster arm might simply be doing less. Fit and score are
-# split because they answer different questions and a fold loop that reports
-# only their sum can hide one moving inside the other.
+# without which a faster arm might simply be doing less.
+
+
+def _fold_loop(folds, y, fit, predict):
+    """Every arm's fold loop, so all four are timed by the same code.
+
+    Not only to save the repetition: an arm that framed its own timers
+    could measure a different span than its neighbour and the comparison
+    would silently stop being one. `fit` takes the train row ids and
+    returns a model; `predict` takes that model and the test row ids.
+    """
+    scores, t_fit, t_score = [], 0.0, 0.0
+    for tr, te in folds:
+        t = time.perf_counter()
+        model = fit(tr)
+        t_fit += time.perf_counter() - t
+        t = time.perf_counter()
+        pred = predict(model, te)
+        t_score += time.perf_counter() - t
+        scores.append(r2(y[te], pred))
+    return scores, t_fit, t_score
 
 
 def run_bonsai(spec, X, y, folds) -> tuple[float, list[float], float, float]:
@@ -146,7 +162,7 @@ def run_bonsai(spec, X, y, folds) -> tuple[float, list[float], float, float]:
     threads = spec[runlog.Row.THREADS]
     pairs = rp.bonsai_core(
         learning_rate=cell["lr"], max_depth=cell["depth"],
-        num_leaves=rp.num_leaves_of(cell), **_knobs(cell),
+        num_leaves=rp.num_leaves_of(cell), **rp.knobs_of(cell),
         max_bin=cell["bins"], seed=cell["seed"], n_iters=cell["iters"],
         n_threads=threads, grower=grower, objective="mse",
         early_stopping_rounds=0)
@@ -159,28 +175,21 @@ def run_bonsai(spec, X, y, folds) -> tuple[float, list[float], float, float]:
     ingest_s = time.perf_counter() - t0
 
     view = cell.get("strategy", Strategy.VIEW) == Strategy.VIEW
-    scores, t_fit, t_score = [], 0.0, 0.0
-    for tr, te in folds:
-        t = time.perf_counter()
+    def fit(tr):
         if view:
-            train_ds = ds.subset(rows=tr)
-        else:
-            # The materialized baseline: reference= keeps the cuts, so the
-            # only difference from the view arm is that the bins are copied.
-            train_ds = bonsai.Dataset(np.ascontiguousarray(X[tr]), y[tr],
-                                      reference=ds, device=device,
-                                      n_threads=threads)
-        model = bonsai.train(pairs, train_ds)
-        t_fit += time.perf_counter() - t
-        # Both strategies score from the raw test matrix. Scoring the view
-        # arm through ds.subset(rows=te) would send it down the host bin
-        # walk a device-resident view still falls back to, and the arms
-        # would then differ in how they PREDICT rather than in how they
-        # build a fold, which is the question this suite asks.
-        t = time.perf_counter()
-        pred = model.predict(np.ascontiguousarray(X[te]))
-        t_score += time.perf_counter() - t
-        scores.append(r2(y[te], pred))
+            return bonsai.train(pairs, ds.subset(rows=tr))
+        # The materialized baseline: reference= keeps the cuts, so the only
+        # difference from the view arm is that the bins are copied.
+        fold = bonsai.Dataset(np.ascontiguousarray(X[tr]), y[tr], reference=ds,
+                              device=device, n_threads=threads)
+        return bonsai.train(pairs, fold)
+
+    # Both strategies score from the raw test matrix. Scoring the view arm
+    # through ds.subset(rows=te) would send it down the host bin walk a
+    # device-resident view still falls back to, and the arms would then
+    # differ in how they PREDICT rather than in how they build a fold.
+    scores, t_fit, t_score = _fold_loop(
+        folds, y, fit, lambda m, te: m.predict(np.ascontiguousarray(X[te])))
     return ingest_s, scores, t_fit, t_score
 
 
@@ -192,7 +201,7 @@ def run_lgbm(spec, X, y, folds) -> tuple[float, list[float], float, float]:
     # The arm's own device, not a constant: a hard-coded cpu here would put a
     # CPU number in an lgbm_cuda row and nothing downstream could tell.
     p = {**rp.lgbm_core(learning_rate=cell["lr"], max_depth=cell["depth"],
-                        num_leaves=rp.num_leaves_of(cell), **_knobs(cell),
+                        num_leaves=rp.num_leaves_of(cell), **rp.knobs_of(cell),
                         max_bin=cell["bins_effective"], seed=cell["seed"]),
          "objective": "regression",
          "device_type": resolve(spec[runlog.Row.VARIANT]).device,
@@ -203,16 +212,11 @@ def run_lgbm(spec, X, y, folds) -> tuple[float, list[float], float, float]:
     full.construct()
     ingest_s = time.perf_counter() - t0
 
-    scores, t_fit, t_score = [], 0.0, 0.0
-    for tr, te in folds:
-        t = time.perf_counter()
-        sub = full.subset(tr).construct()
-        model = lgb.train(p, sub, num_boost_round=cell["iters"])
-        t_fit += time.perf_counter() - t
-        t = time.perf_counter()
-        pred = model.predict(X[te])
-        t_score += time.perf_counter() - t
-        scores.append(r2(y[te], pred))
+    scores, t_fit, t_score = _fold_loop(
+        folds, y,
+        lambda tr: lgb.train(p, full.subset(tr).construct(),
+                             num_boost_round=cell["iters"]),
+        lambda m, te: m.predict(X[te]))
     return ingest_s, scores, t_fit, t_score
 
 
@@ -228,7 +232,7 @@ def run_xgb(spec, X, y, folds) -> tuple[float, list[float], float, float]:
     cell = spec[runlog.Row.CELL]
     device = resolve(spec[runlog.Row.VARIANT]).device
     p = {**rp.xgb_core(learning_rate=cell["lr"], max_depth=cell["depth"],
-                       **_knobs(cell), max_bin=cell["bins_effective"],
+                       **rp.knobs_of(cell), max_bin=cell["bins_effective"],
                        seed=cell["seed"]),
          "objective": "reg:squarederror", "device": device,
          "nthread": spec[runlog.Row.THREADS]}
@@ -238,21 +242,17 @@ def run_xgb(spec, X, y, folds) -> tuple[float, list[float], float, float]:
             else xgb.DMatrix(X, label=y))
     ingest_s = time.perf_counter() - t0
 
-    scores, t_fit, t_score = [], 0.0, 0.0
-    for tr, te in folds:
-        t = time.perf_counter()
+    def fit(tr):
         try:
             sub = full.slice(tr)
         except Exception as exc:
             raise RuntimeError(
                 f"unsupported: {type(full).__name__}.slice refuses "
                 f"({type(exc).__name__}: {exc})") from exc
-        model = xgb.train(p, sub, num_boost_round=cell["iters"])
-        t_fit += time.perf_counter() - t
-        t = time.perf_counter()
-        pred = model.predict(xgb.DMatrix(X[te]))
-        t_score += time.perf_counter() - t
-        scores.append(r2(y[te], pred))
+        return xgb.train(p, sub, num_boost_round=cell["iters"])
+
+    scores, t_fit, t_score = _fold_loop(
+        folds, y, fit, lambda m, te: m.predict(xgb.DMatrix(X[te])))
     return ingest_s, scores, t_fit, t_score
 
 
@@ -263,7 +263,7 @@ def run_catboost(spec, X, y, folds) -> tuple[float, list[float], float, float]:
     cell = spec[runlog.Row.CELL]
     device = resolve(spec[runlog.Row.VARIANT]).device
     p = dict(rp.catboost_core(learning_rate=cell["lr"], max_depth=cell["depth"],
-                              lambda_l2=_knobs(cell)["lambda_l2"],
+                              lambda_l2=rp.knobs_of(cell)["lambda_l2"],
                               max_bin=cell["bins_effective"], seed=cell["seed"],
                               device=device),
              iterations=cell["iters"], loss_function="RMSE",
@@ -273,23 +273,14 @@ def run_catboost(spec, X, y, folds) -> tuple[float, list[float], float, float]:
     full = Pool(X, label=y)
     ingest_s = time.perf_counter() - t0
 
-    scores, t_fit, t_score = [], 0.0, 0.0
-    for tr, te in folds:
-        t = time.perf_counter()
-        sub = full.slice(tr.tolist())
+    def fit(tr):
         model = CatBoostRegressor(**p)
-        model.fit(sub, verbose=False)
-        t_fit += time.perf_counter() - t
-        t = time.perf_counter()
-        pred = model.predict(X[te])
-        t_score += time.perf_counter() - t
-        scores.append(r2(y[te], pred))
+        model.fit(full.slice(tr.tolist()), verbose=False)
+        return model
+
+    scores, t_fit, t_score = _fold_loop(folds, y, fit,
+                                        lambda m, te: m.predict(X[te]))
     return ingest_s, scores, t_fit, t_score
-
-
-def _knobs(c: dict) -> dict:
-    """The cell's shared tree knobs, defaulted the way every suite does."""
-    return {k: c.get(k, rp.SCALING[k]) for k in ("min_data_in_leaf", "lambda_l2")}
 
 
 _RUNNERS = {

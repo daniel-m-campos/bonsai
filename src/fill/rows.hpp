@@ -271,7 +271,7 @@ inline void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes,
     PartialsView const                view{cells.data(), plan.n_slots, row_cells};
     Partials const                    parts{.cells = view, .used = touched};
     std::span<size_t const> const     off    = sp.offsets;
-    std::span<uint8_t const> const    rm     = ds.row_major_bins().subspan(sl.rm_base);
+    std::span<uint8_t const> const    rm     = ds.mirror().bins().subspan(sl.rm_base);
     std::span<RowChunk const> const   chunks = plan.chunks;
     std::span<ReduceNode const> const rns    = plan.nodes;
     // Where selected feature s starts inside one partial row.
