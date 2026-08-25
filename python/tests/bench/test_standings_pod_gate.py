@@ -1,10 +1,11 @@
 """Tests for the gates in scripts/standings_refresh_pod.sh.
 
 These decide whether a pod may publish what it measured: which commit it
-measured it at, and whether the CPU plane was timed under a ceiling. Both run
-only on a rented pod, which is why two shipped versions were wrong for months,
-so every test here lifts the script's own code out and runs it rather than
-restating what it should do.
+measured it at, whether the CPU plane was timed under a ceiling, and whether
+this session is the one that owns the parity rows. All of them run only on a
+rented pod, which is why two shipped versions were wrong for months, so every
+test here lifts the script's own code out and runs it rather than restating
+what it should do.
 
     pytest python/tests/bench/test_standings_pod_gate.py
 """
@@ -186,3 +187,34 @@ def test_a_name_that_is_a_path_and_not_a_commit_fails(tmp_path):
     done = _run_checkout(repo["work"], "a")
     assert done.returncode != 0, "a path checkout is not a commit checkout"
     assert _git(repo["work"], "rev-parse", "HEAD") == repo["clone_head"]
+
+
+# Parity ownership =================================================================================
+
+def _parity_guard() -> str:
+    """The condition guarding the pod script's parity block."""
+    found = [ln for ln in POD_SCRIPT.read_text().splitlines()
+             if ln.startswith("if ") and "PARITY_AXIS" in ln]
+    assert len(found) == 1, f"expected one parity guard, got {found}"
+    return found[0].removeprefix("if ").removesuffix("; then")
+
+
+@pytest.mark.parametrize("plane,axes,taken", [
+    ("gpu", "gpu-tall,gpu-wide", True),
+    ("gpu", "gpu-tall", True),
+    ("gpu", "gpu-early-stop,gpu-tall", True),
+    ("gpu", "gpu-extreme", False),
+    ("gpu", "gpu-wide,gpu-early-stop", False),
+    ("gpu", "gpu-tallest", False),
+    ("cpu", "cpu-tall", False),
+])
+def test_parity_is_taken_only_by_the_session_that_anchors_it(plane, axes, taken):
+    """Four runs at the anchor cell, and a file committed as that axis's
+    companion, so a session measuring anything else must not produce them: its
+    rows would be another host's, landing on the anchor's for the same month.
+    The gpu-tallest case is why the match is comma-anchored."""
+    done = subprocess.run(
+        ["bash", "-c", f"PLANE={plane}; AXES={axes}; PARITY_AXIS=gpu-tall\n"
+                       f"if {_parity_guard()}; then echo taken; else echo no; fi"],
+        capture_output=True, text=True)
+    assert done.stdout.strip() == ("taken" if taken else "no"), done.stderr
