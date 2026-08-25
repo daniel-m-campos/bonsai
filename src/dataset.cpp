@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <numeric>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -240,10 +241,10 @@ Dataset Dataset::select_features(std::span<feature_id_t const> keep) const
         size_t const f = keep[k];
         if (f >= n_features_)
         {
-            throw std::invalid_argument(
-                "Dataset::select_features: feature " + std::to_string(f) +
-                " is past the last of this dataset's " + std::to_string(n_features_) +
-                " features");
+            throw std::invalid_argument("Dataset::select_features: feature " +
+                                        std::to_string(f) +
+                                        " is past the last of this dataset's " +
+                                        std::to_string(n_features_) + " features");
         }
         // Reads through the plane's lazy host materialization when this
         // dataset is device-resident, which is the round trip a column
@@ -281,6 +282,13 @@ Dataset Dataset::select_features(std::span<feature_id_t const> keep) const
     return from_bins(std::move(u8), std::move(u16), bins_are_u8_,
                      BinMappers::from_mappers(std::move(kept), std::move(names)), lab,
                      w);
+}
+
+Dataset Dataset::materialize() const
+{
+    std::vector<feature_id_t> all(n_features_);
+    std::iota(all.begin(), all.end(), feature_id_t{0});
+    return select_features(all);
 }
 
 Dataset Dataset::with_rows(RowView rows) const

@@ -211,11 +211,148 @@ def test_subset_rejects_abuse():
         ds.subset(rows="everything")
 
 
-def test_subset_columns_is_not_this_rung():
-    X, y = _blocky_data(n=500)
+# Column selection ================================================================================
+
+
+def test_columns_by_name_keeps_them_in_the_order_asked_for():
+    X, y = _blocky_data(n=500, f=6)
     ds = bonsai.Dataset(X, y)
-    with pytest.raises(NotImplementedError, match="rung 8"):
-        ds.subset(columns=["f0", "f1"])
+    sub = ds.subset(columns=["f4", "f1"])
+    assert sub.n_features == 2
+    assert sub.feature_names == ["f4", "f1"]
+    assert sub.n_rows == len(X)
+    # A rewrite owns its plane, so it is nobody's view.
+    assert sub.base is None
+
+
+@pytest.mark.parametrize(
+    "columns",
+    [
+        ["f4", "f1"],
+        np.array([4, 1]),
+        [4, 1],
+    ],
+)
+def test_columns_accepts_names_and_indices(columns):
+    X, y = _blocky_data(n=500, f=6)
+    ds = bonsai.Dataset(X, y)
+    sub = ds.subset(columns=columns)
+    assert sub.feature_names == ["f4", "f1"]
+
+
+def test_columns_accepts_a_slice_and_a_boolean_mask():
+    X, y = _blocky_data(n=500, f=6)
+    ds = bonsai.Dataset(X, y)
+    assert ds.subset(columns=slice(1, 4)).feature_names == ["f1", "f2", "f3"]
+    mask = np.array([False, True, False, False, True, False])
+    assert ds.subset(columns=mask).feature_names == ["f1", "f4"]
+
+
+def test_a_column_selection_fits_like_a_matrix_of_those_columns():
+    """The claim the whole rewrite rests on: gathering bins out of a plane
+    gives the same model as binning a matrix that only ever held those
+    columns, so a selection is a real dataset and not an approximation."""
+    X, y = _blocky_data(n=2000, f=8)
+    keep = [5, 0, 3]
+    ds = bonsai.Dataset(X, y)
+    sub = ds.subset(columns=keep)
+    direct = bonsai.Dataset(
+        np.ascontiguousarray(X[:, keep]), y, feature_names=[f"f{i}" for i in keep]
+    )
+    assert _model_bytes(_PAIRS, sub) == _model_bytes(_PAIRS, direct)
+
+
+def test_keeping_every_column_in_order_is_the_same_fit():
+    X, y = _blocky_data(n=1000, f=6)
+    ds = bonsai.Dataset(X, y)
+    same = ds.subset(columns=list(range(6)))
+    assert _model_bytes(_PAIRS, same) == _model_bytes(_PAIRS, ds)
+
+
+def test_rows_and_columns_commute():
+    """One order materializes the fold and the other views it; the model must
+    not be able to tell which route it came by."""
+    X, y = _blocky_data(n=2000, f=8)
+    rows = np.arange(400, 1500)
+    cols = ["f6", "f2", "f0"]
+    ds = bonsai.Dataset(X, y)
+    rows_first = ds.subset(rows=rows).subset(columns=cols)
+    cols_first = ds.subset(columns=cols).subset(rows=rows)
+    assert rows_first.n_rows == cols_first.n_rows == len(rows)
+    # Only one of them views anything, which is the point of the check.
+    assert rows_first.base is None
+    assert cols_first.base is not None
+    assert _model_bytes(_PAIRS, rows_first) == _model_bytes(_PAIRS, cols_first)
+
+
+def test_rows_and_columns_in_one_call():
+    X, y = _blocky_data(n=2000, f=8)
+    rows = np.arange(400, 1500)
+    cols = ["f6", "f2", "f0"]
+    ds = bonsai.Dataset(X, y)
+    both = ds.subset(rows=rows, columns=cols)
+    assert both.n_rows == len(rows)
+    assert both.feature_names == cols
+    staged = ds.subset(rows=rows).subset(columns=cols)
+    assert _model_bytes(_PAIRS, both) == _model_bytes(_PAIRS, staged)
+
+
+def test_a_column_selection_outlives_its_parent():
+    X, y = _blocky_data(n=1000, f=6)
+    ds = bonsai.Dataset(X, y)
+    sub = ds.subset(columns=["f0", "f3"])
+    expected = _model_bytes(_PAIRS, sub)
+    del ds
+    assert _model_bytes(_PAIRS, sub) == expected
+
+
+def test_a_column_selection_serves_its_own_bins():
+    """cols_ and row_major_ are shared across Dataset copies by design. A
+    selection built by copying the parent would keep serving the parent's
+    columns, and a model trained on two features would split on eight."""
+    X, y = _blocky_data(n=1500, f=8)
+    ds = bonsai.Dataset(X, y)
+    sub = ds.subset(columns=["f7", "f2"])
+    model = bonsai.train(_PAIRS, sub)
+    # Predicting the selection through the model trained on it must agree with
+    # predicting the same two columns passed as a bare matrix. A selection
+    # still serving eight columns would route on the wrong ones and diverge.
+    direct = np.ascontiguousarray(X[:, [7, 2]])
+    np.testing.assert_allclose(model.predict(sub), model.predict(direct), rtol=1e-6)
+
+
+def test_a_column_selection_is_not_picklable():
+    X, y = _blocky_data(n=300, f=4)
+    sub = bonsai.Dataset(X, y).subset(columns=[0, 1])
+    with pytest.raises(Exception, match="not picklable"):
+        pickle.dumps(sub)
+
+
+def test_subset_columns_rejects_abuse():
+    X, y = _blocky_data(n=500, f=6)
+    ds = bonsai.Dataset(X, y)
+    with pytest.raises(Exception, match="no features"):
+        ds.subset(columns=[])
+    with pytest.raises(IndexError):
+        ds.subset(columns=[0, 6])
+    with pytest.raises(IndexError):
+        ds.subset(columns=[-1])  # feature ids do not wrap, same as row ids
+    with pytest.raises(KeyError):
+        ds.subset(columns=["nope"])
+    with pytest.raises(Exception, match="mask"):
+        ds.subset(columns=np.array([True, False]))
+    with pytest.raises(TypeError):
+        ds.subset(columns=3.5)
+
+
+def test_a_model_trained_on_a_selection_refuses_the_parent():
+    """The parent's cuts describe eight columns and the model's describe two;
+    routing the parent through it would read the wrong feature at every node."""
+    X, y = _blocky_data(n=1000, f=8)
+    ds = bonsai.Dataset(X, y)
+    model = bonsai.train(_READ_PAIRS, ds.subset(columns=["f0", "f5"]))
+    with pytest.raises(ValueError, match="fit on 2 features"):
+        model.predict(ds)
 
 
 _BERNOULLI = {"dispatch.sampler_name": "bernoulli", "sampler.subsample": "0.5"}
@@ -547,3 +684,106 @@ def test_a_view_of_a_device_resident_parent_reads_through_the_bin_route():
     )
     assert model.predict_leaf(view).shape[0] == len(idx)
     assert model.pred_contribs(view).shape == (len(idx), X.shape[1] + 1)
+
+
+# Reorder =========================================================================================
+
+
+def test_reorder_lays_the_rows_out_in_the_given_order():
+    X, y = _blocky_data(n=1000, f=6)
+    ds = bonsai.Dataset(X, y)
+    order = np.random.default_rng(3).permutation(len(X))
+    laid = ds.reorder(rows=order)
+    assert laid.n_rows == len(X)
+    assert laid.n_features == 6
+    # A rewrite owns its plane, so it views nothing.
+    assert laid.base is None
+    # Row i of the result is row order[i] of the parent, which is exactly what
+    # a caller who reordered the matrix themselves would have.
+    direct = bonsai.Dataset(np.ascontiguousarray(X[order]), y[order])
+    assert _model_bytes(_PAIRS, laid) == _model_bytes(_PAIRS, direct)
+
+
+def test_reorder_by_the_identity_is_the_same_fit():
+    X, y = _blocky_data(n=800, f=5)
+    ds = bonsai.Dataset(X, y)
+    assert _model_bytes(_PAIRS, ds.reorder(rows=np.arange(len(X)))) == _model_bytes(
+        _PAIRS, ds
+    )
+
+
+def test_a_permutation_moves_the_model_only_by_rounding():
+    """A histogram bin sums its rows in list order and float addition is not
+    associative, so a permutation is not byte-identical. It must still be the
+    same model to float32 rounding, which is the real claim."""
+    X, y = _blocky_data(n=3000, f=8)
+    ds = bonsai.Dataset(X, y)
+    order = np.random.default_rng(5).permutation(len(X))
+    plain = bonsai.train(_PAIRS, ds).predict(X)
+    laid = bonsai.train(_PAIRS, ds.reorder(rows=order)).predict(X)
+    np.testing.assert_allclose(plain, laid, rtol=0, atol=1e-4)
+
+
+def test_reorder_makes_a_scattered_fold_contiguous():
+    """The point of reordering: a fold that was scattered through the parent
+    becomes a range, which the fill reads as a subspan rather than a gather."""
+    X, y = _blocky_data(n=2000, f=6)
+    groups = np.arange(len(X)) % 5
+    order = np.argsort(groups, kind="stable")
+    ds = bonsai.Dataset(X, y).reorder(rows=order)
+    # Group 0 now occupies the first fifth, in one piece.
+    fold = ds.subset(rows=slice(0, 400))
+    assert "range" in repr(fold)
+    assert fold.n_rows == 400
+    # And it is the same 400 rows the scattered selection would have named.
+    scattered = bonsai.Dataset(X, y).subset(rows=np.flatnonzero(groups == 0))
+    assert _model_bytes(_PAIRS, fold) == _model_bytes(_PAIRS, scattered)
+
+
+def test_reorder_composes_with_a_column_selection():
+    X, y = _blocky_data(n=1000, f=6)
+    ds = bonsai.Dataset(X, y)
+    order = np.random.default_rng(7).permutation(len(X))
+    laid = ds.reorder(rows=order).subset(columns=["f3", "f0"])
+    assert laid.feature_names == ["f3", "f0"]
+    assert laid.n_rows == len(X)
+    direct = bonsai.Dataset(
+        np.ascontiguousarray(X[np.ix_(order, [3, 0])]), y[order],
+        feature_names=["f3", "f0"],
+    )
+    assert _model_bytes(_PAIRS, laid) == _model_bytes(_PAIRS, direct)
+
+
+def test_reorder_demands_a_permutation():
+    X, y = _blocky_data(n=500, f=4)
+    ds = bonsai.Dataset(X, y)
+    with pytest.raises(ValueError, match="permutation"):
+        ds.reorder(rows=np.arange(100))  # too few
+    with pytest.raises(ValueError, match="permutation"):
+        ds.reorder(rows=np.zeros(500, dtype=np.int64))  # a row twice
+    with pytest.raises(IndexError):
+        ds.reorder(rows=np.full(500, 500, dtype=np.int64))
+    with pytest.raises(Exception, match="rows="):
+        ds.reorder()
+
+
+def test_reorder_of_a_view_lays_out_only_the_views_rows():
+    X, y = _blocky_data(n=1000, f=5)
+    ds = bonsai.Dataset(X, y)
+    view = ds.subset(rows=np.arange(200, 700))
+    order = np.random.default_rng(9).permutation(500)
+    laid = view.reorder(rows=order)
+    assert laid.n_rows == 500
+    assert laid.base is None
+    picked = np.arange(200, 700)[order]
+    direct = bonsai.Dataset(np.ascontiguousarray(X[picked]), y[picked])
+    assert _model_bytes(_PAIRS, laid) == _model_bytes(_PAIRS, direct)
+
+
+def test_reorder_outlives_its_parent():
+    X, y = _blocky_data(n=600, f=4)
+    ds = bonsai.Dataset(X, y)
+    laid = ds.reorder(rows=np.arange(len(X))[::-1])
+    expected = _model_bytes(_PAIRS, laid)
+    del ds
+    assert _model_bytes(_PAIRS, laid) == expected

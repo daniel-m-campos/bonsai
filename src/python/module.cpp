@@ -396,20 +396,17 @@ std::string two_decimals(double value)
 // a boolean mask, an integer array, or the names themselves. Order and
 // duplicates are kept for the same reason rows keep them, and negative indices
 // are refused for the same reason: a feature id indexes the binned plane.
-std::vector<bonsai::feature_id_t> parse_column_selection(
-    nb::handle columns, std::span<std::string const> names)
+std::vector<bonsai::feature_id_t>
+parse_column_selection(nb::handle columns, std::span<std::string const> names)
 {
-    size_t const     n  = names.size();
-    nb::object const np = nb::module_::import_("numpy");
-    nb::object       arr =
-        nb::isinstance<nb::slice>(columns)
-                  ? [&]
-        {
-            auto const [start, stop, step, len] =
-                nb::cast<nb::slice>(columns).compute(n);
-            return np.attr("arange")(start, stop, step);
-        }()
-                  : np.attr("asarray")(columns);
+    size_t const     n   = names.size();
+    nb::object const np  = nb::module_::import_("numpy");
+    nb::object       arr = nb::isinstance<nb::slice>(columns) ? [&]
+    {
+        auto const [start, stop, step, len] = nb::cast<nb::slice>(columns).compute(n);
+        return np.attr("arange")(start, stop, step);
+    }()
+                                                              : np.attr("asarray")(columns);
     // An empty list arrives as an empty float array, whose dtype would earn
     // the wrong complaint entirely; the caller's mistake is the emptiness.
     if (nb::cast<size_t>(arr.attr("size")) == 0)
@@ -437,11 +434,11 @@ std::vector<bonsai::feature_id_t> parse_column_selection(
         // monotone constraints and feature_names_in_ use, so a typo is a
         // KeyError here rather than a silent column somewhere else.
         std::vector<int64_t> ids;
-        for (nb::handle const item : nb::cast<nb::sequence>(np.attr("atleast_1d")(arr)
-                                                                .attr("tolist")()))
+        for (nb::handle const item :
+             nb::cast<nb::sequence>(np.attr("atleast_1d")(arr).attr("tolist")()))
         {
-            auto const  want = nb::cast<std::string>(nb::str(item));
-            auto const  it   = std::ranges::find(names, want);
+            auto const want = nb::cast<std::string>(nb::str(item));
+            auto const it   = std::ranges::find(names, want);
             if (it == names.end())
             {
                 raise_python(PyExc_KeyError,
@@ -702,21 +699,19 @@ class Dataset
     {
     }
 
-    // A column rewrite of `parent`: the features it keeps, the rows its view
-    // named, gathered into a plane this Dataset owns outright. Nothing is
-    // shared, so this is nobody's view and its .base is None. The bins land
-    // on the host whatever device the parent's were on, and the next CUDA fit
-    // stages them up; that round trip is what a column rewrite costs and a
-    // row view does not.
-    Dataset(Dataset const &parent, std::span<bonsai::feature_id_t const> keep)
-        : n_features_(keep.size()), bin_cfg_(parent.bin_cfg_)
+    // A rewrite: bins already gathered into a plane this Dataset owns
+    // outright. Nothing is shared with whatever they were gathered out of, so
+    // this is nobody's view and its .base is None. The bins land on the host
+    // whatever device the source's were on, and the next CUDA fit stages them
+    // up; that round trip is what a rewrite costs and a row view does not.
+    Dataset(bonsai::Dataset gathered, bonsai::BinMapperConfig cfg)
+        : n_features_(gathered.n_features()), bin_cfg_(cfg)
     {
-        bonsai::Dataset gathered = parent.bins().select_features(keep);
-        loaded_->mappers         = gathered.mappers();
-        loaded_->train           = bonsai::cli::LabeledData{
-                      .dataset  = std::move(gathered),
-                      .features = {},
-                      .labels   = {},
+        loaded_->mappers = gathered.mappers();
+        loaded_->train   = bonsai::cli::LabeledData{
+              .dataset  = std::move(gathered),
+              .features = {},
+              .labels   = {},
         };
         loaded_->train.labels.assign(loaded_->train.dataset.labels().begin(),
                                      loaded_->train.dataset.labels().end());
@@ -743,7 +738,9 @@ class Dataset
             Dataset const narrowed =
                 rows.is_none() ? *this : subset(self, rows, nb::none());
             auto const names = narrowed.loaded_->mappers.feature_names();
-            return {narrowed, parse_column_selection(columns, names)};
+            return {
+                narrowed.bins().select_features(parse_column_selection(columns, names)),
+                narrowed.bin_cfg_};
         }
         std::vector<bonsai::row_id_t> ids = parse_row_selection(rows, n_rows());
         if (is_view())
@@ -756,6 +753,42 @@ class Dataset
         }
         nb::object base = is_view() ? base_ : nb::borrow(self);
         return {root(), bonsai::RowView::encode(ids, bins().n_rows()), std::move(base)};
+    }
+
+    // The same rows in a different order, laid out that way. Unlike subset
+    // this always rewrites: the order is the whole point, and an order a view
+    // only describes still costs a gather on every histogram fill of every
+    // tree. Laid out once, a caller's fold becomes a range.
+    Dataset reorder(nb::handle self, nb::handle rows) const
+    {
+        if (rows.is_none())
+        {
+            throw std::invalid_argument(
+                "Dataset.reorder() needs rows=: a permutation of this Dataset's "
+                "rows, as an integer array or a slice");
+        }
+        std::vector<bonsai::row_id_t> const ids = parse_row_selection(rows, n_rows());
+        // A permutation, not a selection: reorder answers "the same rows,
+        // arranged differently", and anything else is subset's question. The
+        // check is what stops a draw with repeats from arriving here and
+        // quietly weighting some rows twice.
+        std::vector<bool> seen(n_rows(), false);
+        bool const        whole = ids.size() == n_rows();
+        for (bonsai::row_id_t const id : ids)
+        {
+            if (!whole || seen[id])
+            {
+                raise_python(PyExc_ValueError,
+                             "Dataset.reorder(rows=...) takes a permutation of this "
+                             "Dataset's " +
+                                 std::to_string(n_rows()) +
+                                 " rows: every row exactly once. Use subset(rows=...) "
+                                 "to keep only some of them.");
+            }
+            seen[id] = true;
+        }
+        Dataset const laid = subset(self, rows, nb::none());
+        return {laid.bins().materialize(), bin_cfg_};
     }
 
     // Whether this dataset selects rows out of another one's plane.
@@ -2212,7 +2245,13 @@ NB_MODULE(_bonsai, m)
             nb::arg("rows") = nb::none(), nb::arg("columns") = nb::none(),
             nb::sig("def subset(self, rows: object | None = None, columns: object | "
                     "None = None) -> Dataset"),
-            "Select rows out of this Dataset, sharing its binned plane.\n"
+            "Select rows and/or columns out of this Dataset.\n"
+            "\n"
+            "Rows share the parent's binned plane and cost nothing. Columns "
+            "rewrite it: the kept columns are gathered into a plane the result "
+            "owns, renumbered from zero, which is what packs them into full "
+            "device tiles. Ask for both and the rows are applied first, so the "
+            "rewrite gathers only the rows that survive.\n"
             "\n"
             "The result is a Dataset that ``train`` fits on the selected rows, "
             "that ``eval_set`` scores over exactly those rows, and that "
@@ -2237,14 +2276,59 @@ NB_MODULE(_bonsai, m)
             "count once each, so a bootstrap draw weighs the way the "
             "materialized copy of it would. Out-of-range and negative indices "
             "raise: row ids index the binned plane and do not wrap.\n"
-            "columns : not implemented\n"
-            "    Column selection rewrites the plane tile-aligned and is a "
-            "later rung; passing it raises NotImplementedError.\n"
+            "columns : integer array, slice, boolean mask, or feature names\n"
+            "    Which features to keep, in the order given. Unlike rows this "
+            "copies: the bins are gathered into a new plane, so the result "
+            "owns its columns and its ``base`` is None. The copy lands on the "
+            "host whatever device the parent's bins were on, and the next CUDA "
+            "fit stages it up. Out-of-range and negative indices raise, and an "
+            "unknown name raises KeyError.\n"
             "\n"
             "Returns\n"
             "-------\n"
             "Dataset\n"
-            "    A view whose ``base`` is the Dataset that owns the plane.")
+            "    With ``rows=`` alone, a view whose ``base`` is the Dataset "
+            "that owns the plane. With ``columns=``, a Dataset that owns its "
+            "own plane and whose ``base`` is None.")
+        .def(
+            "reorder", [](nb::object self, nb::handle rows)
+            { return nb::cast<Dataset const &>(self).reorder(self, rows); },
+            nb::arg("rows") = nb::none(),
+            nb::sig("def reorder(self, rows: object | None = None) -> Dataset"),
+            "The same rows in a different order, laid out that way.\n"
+            "\n"
+            "Unlike ``subset(rows=)``, which describes an order and leaves the "
+            "bins where they are, this rewrites the plane so the order is the "
+            "storage. That is worth doing when the same selections will be fit "
+            "repeatedly: a scattered fold costs a gather on every histogram "
+            "fill of every tree, while a fold laid out contiguously is a range "
+            "the fill reads as a subspan and the device reads fully "
+            "coalesced.\n"
+            "\n"
+            "The usual arrangement is to sort rows into group order once, "
+            "after which each fold is a slice::\n"
+            "\n"
+            "    order = np.argsort(groups, kind=\"stable\")\n"
+            "    ds = bonsai.Dataset(X, y).reorder(rows=order)\n"
+            "    fold = ds.subset(rows=slice(0, n_first_group))\n"
+            "\n"
+            "The result is an ordinary Dataset in the new order: row i is the "
+            "row ``rows[i]`` named, and labels, predictions and contributions "
+            "all follow that order, the way ``X[order]`` would. Nothing is "
+            "un-permuted behind the caller's back, because the contiguity is "
+            "the thing being bought and hiding it would put it out of "
+            "reach.\n"
+            "\n"
+            "Parameters\n"
+            "----------\n"
+            "rows : integer array or slice\n"
+            "    A permutation of this Dataset's rows: every row exactly once. "
+            "To keep only some of them, use ``subset(rows=...)``.\n"
+            "\n"
+            "Returns\n"
+            "-------\n"
+            "Dataset\n"
+            "    A Dataset that owns its own plane; its ``base`` is None.")
         .def("__repr__",
              [](Dataset const &d)
              {
