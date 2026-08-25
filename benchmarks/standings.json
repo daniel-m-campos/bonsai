@@ -2,53 +2,33 @@
   "_": "The standings registry, v2 (results-lifecycle policy, decision 92; scenario redesign, decision 103). One entry per published perf/quality axis: the current-standings file (null until the axis has been measured), the single sha its rows were measured at, the release it was refreshed for, and `plane` (cpu or gpu), the source set whose digest decides whether the axis is still current. Every axis also carries hash_set (its plane's digest at refresh time) and refs (reference-library versions measured against), which let scripts/check_standings.py's release gate skip a refresh when neither has moved, and let `--stale` tell the refresh driver which axes a session must actually measure. Gates: scripts/check_standings.py; supersession is in place, git history is the archive.",
   "gpu-tall": {
     "file": "gpu-tall-2026-08.jsonl",
-    "sha": "e2bb3ac",
-    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-08-20",
+    "sha": "ff3655a",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition",
+    "date": "2026-08-25",
     "plane": "gpu",
-    "refreshed_for": "1.10.0",
+    "refreshed_for": "1.14.0",
     "as_of_decision": 104,
     "companion": "parity-2026-08.jsonl",
-    "hash_set": "17c24792bba17b34",
+    "hash_set": "443516937b9bd72a",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
-    },
-    "carried_forward": {
-      "measured_at": "e2bb3ac",
-      "stamped_at": "527e5d3",
-      "reason": "the 1.13.0 span touches one source file, src/python/module.cpp (feature names and their checks); no fit code on either plane can be reached from the binding TU and the fit bytes reproduce",
-      "evidence": {
-        "kind": "model-hash",
-        "before": "55c6fe308852d9bb",
-        "after": "55c6fe308852d9bb"
-      }
     }
   },
   "gpu-wide": {
     "file": "gpu-wide-2026-08.jsonl",
-    "sha": "e2bb3ac",
-    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-08-20",
+    "sha": "ff3655a",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition",
+    "date": "2026-08-25",
     "plane": "gpu",
-    "refreshed_for": "1.10.0",
+    "refreshed_for": "1.14.0",
     "as_of_decision": 104,
-    "hash_set": "17c24792bba17b34",
+    "hash_set": "443516937b9bd72a",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
-    },
-    "carried_forward": {
-      "measured_at": "e2bb3ac",
-      "stamped_at": "527e5d3",
-      "reason": "the 1.13.0 span touches one source file, src/python/module.cpp (feature names and their checks); no fit code on either plane can be reached from the binding TU and the fit bytes reproduce",
-      "evidence": {
-        "kind": "model-hash",
-        "before": "55c6fe308852d9bb",
-        "after": "55c6fe308852d9bb"
-      }
     }
   },
   "gpu-extreme": {
@@ -59,7 +39,7 @@
     "plane": "gpu",
     "refreshed_for": "1.10.0",
     "as_of_decision": 104,
-    "hash_set": "17c24792bba17b34",
+    "hash_set": "443516937b9bd72a",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
@@ -67,147 +47,103 @@
     },
     "carried_forward": {
       "measured_at": "e2bb3ac",
-      "stamped_at": "527e5d3",
-      "reason": "the 1.13.0 span touches one source file, src/python/module.cpp (feature names and their checks); no fit code on either plane can be reached from the binding TU and the fit bytes reproduce",
+      "stamped_at": "e3917ea",
+      "reason": "the 1.14.0 gpu-plane span is the dataset-views work, whose non-identity row and column paths a single full-dataset fit never enters, and an old-wheel-against-HEAD A/B at this axis's own cell on one pod put the fit-time delta at 0.162s against a 0.607s within-commit floor with r2 identical to six decimals",
       "evidence": {
-        "kind": "model-hash",
-        "before": "55c6fe308852d9bb",
-        "after": "55c6fe308852d9bb"
+        "kind": "tolerance",
+        "metric": "fit_s, mean of two interleaved reps per arm",
+        "floor_before": 0.607,
+        "floor_after": 0.295,
+        "cross_commit": 0.162,
+        "factor": 2.0,
+        "cell": "16777216 x 1024",
+        "config": "100 iters, depth 8, bins 255, threads 16, cuda_depthwise",
+        "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition"
       }
     }
   },
   "cpu-tall": {
     "file": "cpu-tall-2026-08.jsonl",
-    "sha": "e2bb3ac",
-    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-08-20",
+    "sha": "ff3655a",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition",
+    "date": "2026-08-25",
     "plane": "cpu",
-    "refreshed_for": "1.10.0",
+    "refreshed_for": "1.14.0",
     "as_of_decision": 104,
-    "hash_set": "1cb3c8ce9808b59a",
+    "hash_set": "fb97dcd9bb0d5779",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
-    },
-    "carried_forward": {
-      "measured_at": "e2bb3ac",
-      "stamped_at": "527e5d3",
-      "reason": "the 1.13.0 span touches one source file, src/python/module.cpp (feature names and their checks); no fit code on either plane can be reached from the binding TU and the fit bytes reproduce",
-      "evidence": {
-        "kind": "model-hash",
-        "before": "55c6fe308852d9bb",
-        "after": "55c6fe308852d9bb"
-      }
     }
   },
   "cpu-wide": {
     "file": "cpu-wide-2026-08.jsonl",
-    "sha": "e2bb3ac",
-    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-08-20",
+    "sha": "ff3655a",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition",
+    "date": "2026-08-25",
     "plane": "cpu",
-    "refreshed_for": "1.10.0",
+    "refreshed_for": "1.14.0",
     "as_of_decision": 104,
-    "hash_set": "1cb3c8ce9808b59a",
+    "hash_set": "fb97dcd9bb0d5779",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
-    },
-    "carried_forward": {
-      "measured_at": "e2bb3ac",
-      "stamped_at": "527e5d3",
-      "reason": "the 1.13.0 span touches one source file, src/python/module.cpp (feature names and their checks); no fit code on either plane can be reached from the binding TU and the fit bytes reproduce",
-      "evidence": {
-        "kind": "model-hash",
-        "before": "55c6fe308852d9bb",
-        "after": "55c6fe308852d9bb"
-      }
     }
   },
   "gpu-early-stop": {
     "file": "gpu-early-stop-2026-08.jsonl",
-    "sha": "e2bb3ac",
-    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-08-20",
+    "sha": "ff3655a",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition",
+    "date": "2026-08-25",
     "plane": "gpu",
-    "refreshed_for": "1.10.0",
+    "refreshed_for": "1.14.0",
     "as_of_decision": 104,
-    "hash_set": "17c24792bba17b34",
+    "hash_set": "443516937b9bd72a",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
-    },
-    "carried_forward": {
-      "measured_at": "e2bb3ac",
-      "stamped_at": "527e5d3",
-      "reason": "the 1.13.0 span touches one source file, src/python/module.cpp (feature names and their checks); no fit code on either plane can be reached from the binding TU and the fit bytes reproduce",
-      "evidence": {
-        "kind": "model-hash",
-        "before": "55c6fe308852d9bb",
-        "after": "55c6fe308852d9bb"
-      }
     }
   },
   "quality-grinsztajn": {
     "file": "quality-grinsztajn-2026-08.jsonl",
-    "sha": "f2202a4",
+    "sha": "e3917ea",
     "host": "MacBook-Air-M2.local",
-    "date": "2026-08-14",
-    "refreshed_for": "1.7.0",
+    "date": "2026-08-25",
+    "refreshed_for": "1.14.0",
     "as_of_decision": 92,
     "sha_partial": true,
-    "hash_set": "17c24792bba17b34",
+    "hash_set": "443516937b9bd72a",
     "refs": {
       "xgboost": "3.3.0",
       "lightgbm": "4.6.0",
       "catboost": "1.2.10"
-    },
-    "carried_forward": {
-      "measured_at": "f2202a4",
-      "stamped_at": "527e5d3",
-      "reason": "the 1.13.0 span touches one source file, src/python/module.cpp (feature names and their checks); no fit code on either plane can be reached from the binding TU and the fit bytes reproduce",
-      "evidence": {
-        "kind": "model-hash",
-        "before": "55c6fe308852d9bb",
-        "after": "55c6fe308852d9bb"
-      }
     }
   },
   "code": {
     "file": "code-metrics-2026-08.jsonl",
-    "sha": "87d709aecd54b8ae2f9775860a0dd86eb1ba77ab",
+    "sha": "e3917eabd51f82b3eb44854c077f122a02060b3e",
     "host": null,
     "date": null,
-    "refreshed_for": "1.13.1",
+    "refreshed_for": "1.14.0",
     "as_of_decision": 92,
     "sha_partial": true
   },
   "gpu-shap": {
     "file": "gpu-shap-2026-08.jsonl",
-    "sha": "ffce72d",
-    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
-    "date": "2026-08-21",
+    "sha": "ff3655a",
+    "host": "pod-NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition",
+    "date": "2026-08-25",
     "plane": "gpu",
-    "refreshed_for": "1.10.0",
+    "refreshed_for": "1.14.0",
     "as_of_decision": 108,
-    "hash_set": "17c24792bba17b34",
+    "hash_set": "443516937b9bd72a",
     "refs": {
       "xgboost": "3.3.0",
-      "lightgbm": "4.7.0",
+      "lightgbm": "4.6.0",
       "catboost": "1.2.10"
-    },
-    "carried_forward": {
-      "measured_at": "ffce72d",
-      "stamped_at": "527e5d3",
-      "reason": "the 1.13.0 span touches one source file, src/python/module.cpp (feature names and their checks); no fit code on either plane can be reached from the binding TU and the fit bytes reproduce",
-      "evidence": {
-        "kind": "model-hash",
-        "before": "55c6fe308852d9bb",
-        "after": "55c6fe308852d9bb"
-      }
     }
   }
 }
