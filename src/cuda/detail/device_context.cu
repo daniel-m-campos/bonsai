@@ -618,7 +618,7 @@ void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
         receipt && receipt->backend_tag() == cuda_backend_tag())
     {
         auto plane = std::static_pointer_cast<CudaIngestPlane const>(receipt);
-        DatasetKey const key{.dataset = &dataset,
+        DatasetKey const key{.store   = &dataset.store(),
                              .bins0   = plane.get(),
                              .n_rows  = plane->n_rows,
                              .n_feats = plane->n_feats};
@@ -640,7 +640,7 @@ void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
                             ? dataset.visit_bins(0, [](auto bins) -> void const *
                                                  { return bins.data(); })
                             : nullptr;
-    if (data.key == DatasetKey{.dataset = &dataset,
+    if (data.key == DatasetKey{.store   = &dataset.store(),
                                .bins0   = first,
                                .n_rows  = dataset.n_rows(),
                                .n_feats = dataset.n_features()})
@@ -681,7 +681,7 @@ void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
     }
     data.n_bins.upload(counts.data(), counts.size());
     blap(prof_counters.bins_upload_s);
-    data.key = {.dataset = &dataset,
+    data.key = {.store   = &dataset.store(),
                 .bins0   = first,
                 .n_rows  = dataset.n_rows(),
                 .n_feats = dataset.n_features()};
@@ -1677,14 +1677,14 @@ bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind ki
     {
         return false;
     }
-    if (!(resident.labels_key == data.key))
+    if (resident.labels_key != ds.labels_identity())
     {
         resident.labels.upload(ds.labels().data(), ds.labels().size());
         if (!ds.weights().empty())
         {
             resident.weights.upload(ds.weights().data(), ds.weights().size());
         }
-        resident.labels_key = data.key;
+        resident.labels_key = ds.labels_identity();
     }
     resident.scores.upload(initial_scores.data(), initial_scores.size());
     resident.kind          = kind;

@@ -4,11 +4,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <span>
 #include <vector>
 
 #include "bonsai/bin_mappers.hpp"
+#include "bonsai/bin_store.hpp"
 #include "bonsai/config/data_config.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/row_mirror.hpp"
@@ -18,59 +18,15 @@
 namespace bonsai
 {
 
-// Product of a backend's ingest transaction (decision 54, doc 15): the
-// binned columns live wherever the backend put them — Dataset carries the
-// plane as an opaque receipt and asks it to materialize host columns only
-// when a host consumer needs them. Host-pure: concrete planes are defined
-// by their backend (the CUDA TU); this header never names device types.
-//
-// Deliberate dynamic dispatch, the IBooster precedent: this TU boundary
-// makes compile-time dispatch impossible by construction, and the cost is
-// two indirect calls per fit. The algorithmic narrative stays static.
-class IngestPlane
+// Monotone identity tokens, minted once and never reused, so equality means
+// "the same thing" with no allocator-reuse caveat. Strong enums rather than
+// pointers: they cannot be dereferenced, cannot be built from a stray
+// pointer, and zero is the never-minted sentinel.
+enum class LabelsId : uint64_t
 {
-  public:
-    // backend_tag identifies the minting backend by address (a TU-local
-    // anchor only that backend knows), so an engine can recognize and
-    // adopt its own plane by pointer equality instead of RTTI.
-    explicit IngestPlane(void const *backend_tag = nullptr) : backend_tag_(backend_tag)
-    {
-    }
-    IngestPlane(IngestPlane const &)            = default;
-    IngestPlane &operator=(IngestPlane const &) = default;
-    IngestPlane(IngestPlane &&)                 = default;
-    IngestPlane &operator=(IngestPlane &&)      = default;
-    virtual ~IngestPlane()                      = default;
-
-    // One-time host materialization: fill exactly one of u8/u16 with the
-    // plane's binned columns, feature-major, byte-identical to the host
-    // fill over the same cuts.
-    virtual void materialize(std::vector<std::vector<uint8_t>>  &u8,
-                             std::vector<std::vector<uint16_t>> &u16) const = 0;
-
-    // A plane holding the rows `rows` names under the features `keep` names,
-    // renumbered densely from zero, gathered inside this backend's memory. An
-    // empty `rows` means every row in order. Returns null when the backend has
-    // no such gather, and the caller falls back to materializing on the host
-    // and gathering there.
-    //
-    // This exists because the fallback is the expensive one: a column rewrite
-    // of a device-resident dataset otherwise pulls the whole plane home and
-    // ships the survivors back, once per round of a feature-selection loop.
-    virtual std::shared_ptr<IngestPlane const>
-    select_columns(std::span<feature_id_t const> /*keep*/,
-                   std::span<row_id_t const> /*rows*/) const
-    {
-        return nullptr;
-    }
-
-    void const *backend_tag() const
-    {
-        return backend_tag_;
-    }
-
-  private:
-    void const *backend_tag_ = nullptr;
+};
+enum class FitId : uint64_t
+{
 };
 
 class Dataset
@@ -170,85 +126,69 @@ class Dataset
     BinMappers const &mappers() const;
     size_t            n_bins(size_t fid) const;
 
-    // Feature f's strictly increasing bin cut points.
+    // The store: the binned matrix and its cuts, shared by every view over
+    // it. Exposed because identity matters (the device cache keys uploads
+    // off the store's address); the accessors below forward so the ~150
+    // existing call sites keep reading through the Dataset.
+    BinStore const &store() const
+    {
+        return *store_;
+    }
+
+    // Identity of this dataset's labels and weights: equal exactly when the
+    // labels block is shared, so a view skips the device re-upload and a
+    // different-labels twin can never inherit one. A minted counter, not an
+    // address: a freed Meta's address comes back from the allocator, and a
+    // label cache keyed on it would silently serve the previous fit's labels
+    // to a same-shaped successor.
+    LabelsId labels_identity() const
+    {
+        return meta_->id;
+    }
+
+    // Identity of this fit specification: which labels over which rows.
+    // Distinct for every factory product and every view, shared by copies,
+    // so "is this the dataset the resident state was armed for" is a token
+    // comparison that no address reuse, stack or heap, can answer wrongly.
+    FitId fit_identity() const
+    {
+        return id_;
+    }
+
     std::span<float const> cuts(feature_id_t f) const
     {
-        return meta_->mappers[f].cuts();
+        return store_->cuts(f);
     }
 
-    // Feature f's threshold inversion, on the mapper that owns the cuts.
     bin_id_t bin_of_threshold(feature_id_t f, float threshold) const
     {
-        return meta_->mappers[f].bin_of_threshold(threshold);
+        return store_->bin_of_threshold(f, threshold);
     }
 
-    // Binned columns store 8-bit when every feature fits 256 bins (the
-    // max_bin=255 default) — halving the memory traffic of the histogram
-    // fill, the dominant fit stage — and 16-bit otherwise. Readers dispatch
-    // once per column via visit_bins; the callable is monomorphized per
-    // width, so the per-row loop never branches.
     bool bins_are_u8() const
     {
-        return bins_are_u8_;
+        return store_->bins_are_u8();
     }
 
     template <typename F> decltype(auto) visit_bins(size_t fid, F &&f) const
     {
-        if (plane_)
-        {
-            auto const &hb = host_bins();
-            if (bins_are_u8_)
-            {
-                return f(std::span<uint8_t const>{hb.u8[fid]});
-            }
-            return f(std::span<uint16_t const>{hb.u16[fid]});
-        }
-        if (bins_are_u8_)
-        {
-            return f(std::span<uint8_t const>{cols_->u8[fid]});
-        }
-        return f(std::span<uint16_t const>{cols_->u16[fid]});
+        return store_->visit_bins(fid, std::forward<F>(f));
     }
 
-    // Single-element read for tree-routing loops (feature varies per step, so
-    // a per-column visitor buys nothing there); the branch predicts perfectly.
     bin_id_t bin_at(size_t fid, size_t row) const
     {
-        if (plane_)
-        {
-            auto const &hb = host_bins();
-            return bins_are_u8_ ? hb.u8[fid][row] : hb.u16[fid][row];
-        }
-        return bins_are_u8_ ? cols_->u8[fid][row] : cols_->u16[fid][row];
+        return store_->bin_at(fid, row);
     }
 
-    // The completed ingest transaction, if any; backends recognize and adopt
-    // their own plane instead of re-uploading host columns.
     std::shared_ptr<IngestPlane const> const &ingest_plane() const
     {
-        return plane_;
+        return store_->ingest_plane();
     }
 
-    // Row-major mirror of the u8 columns, built on first use by the
-    // row-wise histogram fill; empty when bins are u16 (that fill stays
-    // feature-parallel). Lazy so CUDA and predict-only workflows never pay
-    // the +n_rows*n_features bytes, and permanent once minted, which a
-    // shared eval-set Dataset carries for the rest of its life. Minting is
-    // guarded because first use is no longer always single-threaded: a
-    // validation Dataset outlives the fit that mints it, so concurrent fits
-    // under a released GIL can reach it at once. A later call pays the once
-    // flag's atomic load and nothing else; the fill's inner loops index the
-    // returned span directly.
-    //
-    // The row-major mirror of this dataset's bins, minted on first use and
-    // shared by every copy. Empty when the bins are not u8: the mirror exists
-    // for the byte-wide row walk and a u16 dataset has no such layout.
-    //
-    // RowMirror owns the block layout and its addressing rule; this hands
-    // back the minted one so a caller reads `m.bins()` and `m.index(r, f)`
-    // from the same object instead of pairing two Dataset calls that have to
-    // agree about shape.
-    RowMirror const &mirror() const;
+    RowMirror const &mirror() const
+    {
+        return store_->mirror();
+    }
 
     // Features per mirror block, as the layout defines it.
     static constexpr size_t mirror_tile_width()
@@ -257,59 +197,28 @@ class Dataset
     }
 
   private:
-    // Lazily materialized host columns of a plane-backed dataset. The first
-    // host consumer can be a parallel loop (route_unsampled walks bin_at
-    // from every worker), so materialization synchronizes via call_once, the
-    // same reason RowMirror does. Heap-allocated so Dataset copies share one
-    // materialization.
-    struct HostBins
-    {
-        std::vector<std::vector<uint8_t>>  u8;
-        std::vector<std::vector<uint16_t>> u16;
-        std::once_flag                     once;
-    };
-
-    // Fills the mirror's buffer from the host columns; the mirror decides
-    // the layout and calls this at most once.
-    void mint_into(std::span<uint8_t> out_bins) const;
-
-    HostBins const &host_bins() const
-    {
-        std::call_once(lazy_->once,
-                       [this] { plane_->materialize(lazy_->u8, lazy_->u16); });
-        return *lazy_;
-    }
-
-    // Host-binned columns, exactly one width populated. Heap-allocated so a
-    // row view of this dataset shares the plane instead of duplicating it.
-    struct HostColumns
-    {
-        std::vector<std::vector<uint8_t>>  u8;
-        std::vector<std::vector<uint16_t>> u16;
-    };
-
-    // Labels, weights and cuts. Fixed when the dataset is binned and never
-    // mutated after, so a row view shares them the way it shares the plane
-    // rather than deep-copying: at 16M rows the labels alone are 64MB, and a
-    // fold loop that copied them per fold would undo what the view is for.
+    // Labels and weights. Fixed at bin time and never mutated, so a row view
+    // shares them the way it shares the store rather than deep-copying: at
+    // 16M rows the labels alone are 64MB, and a fold loop that copied them
+    // per fold would undo what the view is for.
     struct Meta
     {
         std::vector<float> labels;
         std::vector<float> weights;
-        BinMappers         mappers;
+        LabelsId           id{};
     };
 
-    std::shared_ptr<HostColumns> cols_ = std::make_shared<HostColumns>();
-    // Heap-allocated so Dataset copies share one materialization, as the
-    // host columns and the lazy plane bins are.
-    std::shared_ptr<RowMirror>         row_major_ = std::make_shared<RowMirror>();
-    std::shared_ptr<IngestPlane const> plane_;
-    std::shared_ptr<HostBins>          lazy_;
-    std::shared_ptr<Meta const>        meta_        = std::make_shared<Meta const>();
-    bool                               bins_are_u8_ = false;
-    size_t                             n_rows_      = 0;
-    size_t                             n_features_  = 0;
-    RowView                            rows_        = RowView::all(0);
+    static LabelsId mint_labels_id();
+    static FitId    mint_fit_id();
+
+    // Plain new, not make_shared: this initializer evaluates in Dataset's
+    // context, where the store's private default constructor is reachable
+    // through the friendship; make_shared would construct inside libc++,
+    // which is nobody's friend.
+    std::shared_ptr<BinStore const> store_{new BinStore()};
+    std::shared_ptr<Meta const>     meta_ = std::make_shared<Meta const>();
+    RowView                         rows_ = RowView::all(0);
+    FitId                           id_{};
 };
 
 // The one host routing truth: which child a row takes at an internal node.

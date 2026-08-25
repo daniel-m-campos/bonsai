@@ -717,18 +717,19 @@ class Booster final : public IBooster
             // Gradients stay full-length and globally indexed, so the rows
             // outside the view are derived and never read.
             bool const runtime_ok = config_.dart_drop_rate <= 0.0F && !host_forced;
-            if (resident_active_ && (!runtime_ok || resident_train_ != &train))
+            if (resident_active_ &&
+                (!runtime_ok || resident_fit_ != train.fit_identity()))
             {
                 grower_.resident_end(std::span<float>{scores_});
                 resident_active_ = false;
-                resident_train_  = nullptr;
+                resident_fit_    = FitId{};
             }
             if (runtime_ok && !resident_active_)
             {
                 resident_active_ = grower_.resident_begin(
                     train, device_objective_kind<objective_type>,
                     std::span<float const>{scores_}, config_.learning_rate);
-                resident_train_ = resident_active_ ? &train : nullptr;
+                resident_fit_ = resident_active_ ? train.fit_identity() : FitId{};
             }
             if (resident_active_)
             {
@@ -1186,7 +1187,11 @@ class Booster final : public IBooster
     bool                  resident_active_ = false;
     // Identity cookie for the Dataset the resident state was armed on:
     // compared by address only, never dereferenced through.
-    Dataset const         *resident_train_ = nullptr;
+    // The fit the resident state is armed for, as a minted token: a stack
+    // Dataset's address repeats every fold iteration deterministically, so
+    // an address here would skip re-arming for a DIFFERENT fold at the
+    // same depth, leaving the previous fold's labels, scores and rows live.
+    FitId                  resident_fit_{};
     internal::DensifyCache dense_;
 };
 

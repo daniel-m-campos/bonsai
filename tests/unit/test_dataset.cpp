@@ -939,3 +939,76 @@ TEST_CASE("the mirror's block layout is what it claims", "[dataset][mirror]")
         }
     }
 }
+
+TEST_CASE("a view shares its parent's bin store; a rewrite owns one",
+          "[dataset][store]")
+{
+    // The store is the sharing unit: one per binned matrix, shared by every
+    // view over it, owned outright by a rewrite. Pointer identity, because
+    // identity is what the device cache keys its uploads off.
+    detail::ColumnBatch batch   = four_feature_batch(256);
+    auto const          mappers = BinMappers::fit(batch, BinMapperConfig{});
+    Dataset const       ds      = Dataset::bin(batch, mappers, DataConfig{});
+
+    std::vector<row_id_t> ids;
+    for (row_id_t r = 0; r < 256; r += 2)
+    {
+        ids.push_back(r);
+    }
+    Dataset const view = ds.with_rows(RowView::encode(ids, ds.n_rows()));
+    CHECK(&view.store() == &ds.store());
+
+    std::vector<feature_id_t> const keep = {2, 0};
+    Dataset const                   sub  = ds.select_features(keep);
+    CHECK(&sub.store() != &ds.store());
+}
+
+TEST_CASE("identity tokens: minted, shared by copies, distinct per fit",
+          "[dataset][store]")
+{
+    // The caches these feed skip work on equality, so the hazard is tokens
+    // comparing EQUAL for different things. Addresses fail that under
+    // allocator or stack-slot reuse; minted counters cannot.
+    detail::ColumnBatch batch   = four_feature_batch(128);
+    auto const          mappers = BinMappers::fit(batch, BinMapperConfig{});
+    Dataset const       ds      = Dataset::bin(batch, mappers, DataConfig{});
+
+    // A copy is the same fit; a view is a different fit over the same labels.
+    Dataset const copy = ds;
+    CHECK(copy.fit_identity() == ds.fit_identity());
+    CHECK(copy.labels_identity() == ds.labels_identity());
+
+    std::vector<row_id_t> ids;
+    for (row_id_t r = 0; r < 128; r += 2)
+    {
+        ids.push_back(r);
+    }
+    Dataset const view = ds.with_rows(RowView::encode(ids, ds.n_rows()));
+    CHECK(view.fit_identity() != ds.fit_identity());
+    CHECK(view.labels_identity() == ds.labels_identity());
+
+    // A second bin of the same data is a different fit AND different labels,
+    // however the allocator placed it.
+    Dataset const again = Dataset::bin(batch, mappers, DataConfig{});
+    CHECK(again.fit_identity() != ds.fit_identity());
+    CHECK(again.labels_identity() != ds.labels_identity());
+
+    // Zero is the never-minted sentinel, so a default token matches nothing.
+    CHECK(ds.fit_identity() != FitId{});
+    CHECK(ds.labels_identity() != LabelsId{});
+
+    // EVERY factory mints, not just the batch path: the first cut left the
+    // matrix and plane paths at LabelsId{0}, which made every device-built
+    // dataset share one label key, the exact inheritance the token exists
+    // to forbid.
+    std::vector<float> flat(128 * 4);
+    for (size_t i = 0; i < flat.size(); ++i)
+    {
+        flat[i] = batch.features[i % 4][i / 4];
+    }
+    features_view const xv{flat.data(), 128, 4};
+    Dataset const via_matrix = Dataset::bin(xv, ds.labels(), mappers, DataConfig{});
+    CHECK(via_matrix.labels_identity() != LabelsId{});
+    CHECK(via_matrix.fit_identity() != FitId{});
+    CHECK(via_matrix.labels_identity() != ds.labels_identity());
+}

@@ -7,6 +7,7 @@
 add_library(bonsai_data OBJECT
     bin_mapper.cpp
     bin_mappers.cpp
+    bin_store.cpp
     dataset.cpp
 )
 
