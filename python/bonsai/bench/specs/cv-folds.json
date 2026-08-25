@@ -1,0 +1,20 @@
+{
+  "name": "cv-folds",
+  "suite": "cv-folds",
+  "defaults": {"depth": 6, "iters": 50, "lr": 0.1, "bins": 255,
+               "informative": 20, "seed": 42},
+  "cells": [
+    {"axis": "folds", "rows": 500000, "cols": 64, "n_test": 1,
+     "folds": 5, "scheme": "walk_forward"},
+    {"axis": "folds", "rows": 500000, "cols": 64, "n_test": 1,
+     "folds": 5, "scheme": "shuffled"},
+    {"axis": "folds", "rows": 500000, "cols": 64, "n_test": 1,
+     "folds": 5, "scheme": "walk_forward", "strategy": "copy"},
+    {"axis": "folds", "rows": 500000, "cols": 64, "n_test": 1,
+     "folds": 5, "scheme": "shuffled", "strategy": "copy"}
+  ],
+  "variants": ["bonsai_depthwise", "lgbm_cpu", "xgb_hist", "catboost_cpu"],
+  "threads": [8],
+  "repeats": {"default": 3},
+  "timeout_cap": 3600
+}

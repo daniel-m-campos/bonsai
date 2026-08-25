@@ -15,6 +15,7 @@ import json
 import os
 import pathlib
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -205,8 +206,12 @@ def run_one(spec: dict, timeout: int, sampler: bool = False,
                         if ln.startswith("RESULT ")), None)
     if proc.returncode != 0 or result_line is None:
         if proc.returncode < 0:
-            out = {runlog.Row.STATUS: "oom",
-                   runlog.Row.MESSAGE: f"killed by signal {-proc.returncode}"}
+            # SIGKILL is the OOM killer's signature; a segfault is a crash in
+            # the library under test and reads as one, because "arm ran out of
+            # memory" and "arm cannot do this at all" are different findings.
+            sig = -proc.returncode
+            out = {runlog.Row.STATUS: "oom" if sig == signal.SIGKILL else "error",
+                   runlog.Row.MESSAGE: f"killed by signal {sig}"}
         else:
             # Classify from the WHOLE stderr (the OOM keyword rarely sits on
             # the last line); report the last non-noise line as the message.
