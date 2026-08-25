@@ -166,7 +166,7 @@ TEST_CASE("cuda_predict matches the host binned walk for a levelwise model",
     // The trees the device packs are the plan input's dense equivalents, not
     // the booster's own; the walk they describe must still be the same one.
     auto const in = booster.predict_plan_input();
-    REQUIRE(in.owned != nullptr);
+    REQUIRE(in.keep_alive != nullptr);
     REQUIRE(in.trees.size() == 8);
     auto const plan =
         cuda_predict_plan(in.trees, mappers, in.learning_rate, in.init_score);

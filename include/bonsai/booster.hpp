@@ -47,13 +47,11 @@ enum class ImportanceType : uint8_t
 // sum, and the mutation epoch that says when a cached plan is stale.
 struct PredictPlanInput
 {
-    std::span<DenseTree const> trees;
-    float                      learning_rate = 0.0F;
-    float                      init_score    = 0.0F;
-    uint64_t                   epoch         = 0;
-    // Keeps `trees` alive when the booster lends a converted ensemble rather
-    // than a view of its own; null when the span borrows the booster's trees.
-    std::shared_ptr<std::vector<DenseTree> const> owned;
+    std::span<DenseTree const>                    trees;
+    float                                         learning_rate = 0.0F;
+    float                                         init_score    = 0.0F;
+    uint64_t                                      epoch         = 0;
+    std::shared_ptr<std::vector<DenseTree> const> keep_alive;
 };
 
 class IBooster
@@ -147,12 +145,8 @@ class IBooster
 
     // --- the device predict seam
     // Everything a device predict plan packs, in one call so the ensemble is
-    // read once. An empty `trees` declines: multiclass models ride the host
-    // bin walk, and so does an ensemble with no trees in it yet. `trees` is
-    // valid for as long as the returned value is, which is the weakest thing
-    // every implementer promises: one lends a view of trees it owns, another
-    // lends a converted ensemble the value itself keeps alive. `epoch` says
-    // when a plan packed from an earlier call has gone stale.
+    // read once. An empty `trees` declines. `trees` is valid for as long as
+    // the returned value is, never longer.
     virtual PredictPlanInput predict_plan_input() const
     {
         return {};
@@ -935,21 +929,16 @@ class Booster final : public IBooster
         }
     }
 
-    // The device predict seam. A dense booster lends a view of its own trees;
-    // an oblivious one attaches the epoch-cached dense equivalent as the
-    // owner, since the packers read the span only while this input is alive.
     PredictPlanInput predict_plan_input() const override
     {
         PredictPlanInput out{};
         out.learning_rate = config_.learning_rate;
         out.init_score    = init_score_;
         out.epoch         = trees_.epoch();
-        // Same polarity as the two pred_contribs arms below, so the file asks
-        // this question one way.
         if constexpr (std::same_as<tree_type, ObliviousTree>)
         {
-            out.owned = dense_.get(trees_.read(), out.epoch);
-            out.trees = *out.owned;
+            out.keep_alive = dense_.get(trees_.read(), out.epoch);
+            out.trees      = *out.keep_alive;
         }
         else
         {
