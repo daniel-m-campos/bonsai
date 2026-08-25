@@ -2,6 +2,22 @@
 
 All notable changes to bonsai. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags. Design rationale for anything below lives in [`docs/decisions.md`](docs/decisions.md).
 
+## [1.14.0] - 2026-08-25
+
+A binned `Dataset` is now sliceable: row views share the bin plane for free, column selections and row reorders rewrite it once, and a cross-validation loop bins the data once instead of once per fold.
+
+### Added
+- **`Dataset.subset(rows=)` returns a view over the shared bin plane** (PR #416). Pass a slice, mask, or integer array (duplicates allowed, so a bootstrap draw works); the view shares the parent's binned plane, cuts, labels, and weights, so it costs a row descriptor rather than a copy, where the other libraries re-gather or re-bin per fold (xgboost's `DMatrix.slice` copies the raw matrix and discards the cuts; only catboost shares quantized bins at all). Training on a view is bit-identical to training on a materialized `Dataset(X[idx], y[idx])`, held by test across all descriptor shapes, and `predict` and friends answer for the view's rows. A k-fold loop becomes: bin once, then `subset(rows=fold)` per fold.
+- **`Dataset.subset(columns=)` and `Dataset.reorder(rows=)` rewrite the plane** (PR #416). `subset(columns=)` keeps features by slice, mask, integer array, or name, in the order given, renumbered densely from zero, minting a new `Dataset` that owns its bins. `reorder(rows=)` rewrites storage so the given order IS the row order, which is what makes a later contiguous `subset(rows=slice)` cheap; row `i` afterwards is the row named, the way `X[order]` reads. The cost model is the API: views are free, rewrites copy once. A reordered fit agrees with the unpermuted one to float32 rounding rather than byte identity, since bins sum gradients in row order.
+- **A CUDA view runs the device-resident objective** (PR #416). A view used to be refused the resident epilogue and fell back to per-tree host scoring; the epilogue now walks the view's rows on the device. Measured on an L40S, the view fit-loop drops 31% on contiguous folds and 23% on scattered ones, so a view now beats the materialized fold it used to lose to. A column rewrite of a device-resident dataset also gathers on the device with one kernel instead of pulling the plane through the host and shipping the survivors back.
+- **`bench/cv.py` prices the fold loop across libraries** (PR #416). The other suites measure a single fit; this one measures bin-once-then-fit-k-times against lightgbm's `Dataset.subset`, xgboost's `DMatrix.slice`, and catboost's `Pool.slice`, under walk-forward and shuffled fold schemes, with a bonsai materialized-copy arm as the control (`cv-folds` and `gpu-cv-folds` specs). Measured on an L40S at 4M x 128 with 5 folds, bonsai's fold loop runs 2.7-4.6x faster than the other libraries.
+
+### Fixed
+- **A model refuses a raw matrix of a width it was not fit on** (PR #416). A tree routes on feature ids into the row it is handed, so a narrower matrix read past the end of every row and a wrong-width one read a different feature at every node, and nothing checked: a model fit on six features returned a plausible, silently wrong number for a three-column matrix. Every raw-matrix reader (`predict`, `predict_proba`, `staged_predict`, `predict_leaf`, `pred_contribs`) now compares the width against the model's own mappers and raises. If you were predicting on a matrix of the wrong width, those numbers were wrong; the call now fails instead. Name-level agreement stays where it was, on the estimators' `feature_names_in_` contract.
+
+### Changed
+- **`Dataset`'s internals were decomposed for the views work** (PR #416): a `BinStore` owns the binned matrix behind minted identity tokens, closing the shared-plane traps (a second dataset on a shared plane inheriting the first's uploaded device labels, a row-count-for-identity assumption in the CPU fill and the device root contract) by construction. No observable API change; model bytes are identical throughout.
+
 ## [1.13.1] - 2026-08-22
 
 ### Fixed
