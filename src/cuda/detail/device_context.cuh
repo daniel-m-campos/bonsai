@@ -315,6 +315,14 @@ struct CudaDeviceContext
         bool                armed         = false;
         float               learning_rate = 0.0F;
         size_t              n_rows        = 0;
+        // The view being fit, uploaded once per fit rather than per tree. The
+        // epilogue walks these rows; `n_rows` still sizes the score vector,
+        // which stays full-length and globally indexed so gh, labels and
+        // scores need no renumbering. The flag, not a null pointer, decides:
+        // the buffer keeps whatever a previous fit allocated.
+        DeviceBuffer<row_id_t> rows;
+        size_t                 n_view_rows   = 0;
+        bool                   view_identity = true;
     };
 
     // Device-resident validation plane: the binned validation rows (device

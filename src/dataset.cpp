@@ -228,17 +228,19 @@ Dataset Dataset::select_features(std::span<feature_id_t const> keep) const
         throw std::invalid_argument("Dataset::select_features: no features kept; a "
                                     "dataset with no columns has nothing to split on");
     }
-    std::vector<std::vector<uint8_t>>  u8(bins_are_u8_ ? keep.size() : 0);
-    std::vector<std::vector<uint16_t>> u16(bins_are_u8_ ? 0 : keep.size());
-    std::vector<BinMapper>             kept;
-    std::vector<std::string>           names;
+    std::vector<BinMapper>   kept;
+    std::vector<std::string> names;
     kept.reserve(keep.size());
     names.reserve(keep.size());
-    auto const     parent_names = mappers_.feature_names();
+    auto const parent_names = mappers_.feature_names();
+    // Names are optional on a core Dataset (the binding always supplies
+    // f0..fN, a direct BinMappers::fit need not), and an unnamed parent has
+    // an EMPTY span rather than blanks. Carrying that through keeps the child
+    // in the same state as its parent instead of reading past the end.
+    bool const     named = parent_names.size() == n_features_;
     RowIndex const rows{rows_};
-    for (size_t k = 0; k < keep.size(); ++k)
+    for (feature_id_t const f : keep)
     {
-        size_t const f = keep[k];
         if (f >= n_features_)
         {
             throw std::invalid_argument("Dataset::select_features: feature " +
@@ -246,10 +248,43 @@ Dataset Dataset::select_features(std::span<feature_id_t const> keep) const
                                         " is past the last of this dataset's " +
                                         std::to_string(n_features_) + " features");
         }
+        kept.push_back(mappers_[f]);
+        if (named)
+        {
+            names.emplace_back(parent_names[f]);
+        }
+    }
+    // Labels and weights follow the rows the columns were gathered through,
+    // so the result is an ordinary dataset whose row ids number from zero.
+    std::vector<float> const lab = gather_rows(rows_, labels_);
+    std::vector<float> const w =
+        weights_.empty() ? std::vector<float>{} : gather_rows(rows_, weights_);
+    BinMappers kept_mappers =
+        BinMappers::from_mappers(std::move(kept), std::move(names));
+
+    // The backend's own gather first: a device-resident dataset rewrites its
+    // columns without the plane ever coming home, which is the difference
+    // between a feature-selection loop that stays on the card and one that
+    // pays a round trip per round. A backend without one says so and the host
+    // path below runs unchanged.
+    if (plane_)
+    {
+        std::vector<row_id_t> const ids =
+            rows_.is_identity() ? std::vector<row_id_t>{} : rows_.materialize();
+        if (auto sub = plane_->select_columns(keep, ids))
+        {
+            return bin(rows.size(), keep.size(), floats_view{lab}, kept_mappers,
+                       DataConfig{}, std::move(sub), floats_view{w});
+        }
+    }
+
+    std::vector<std::vector<uint8_t>>  u8(bins_are_u8_ ? keep.size() : 0);
+    std::vector<std::vector<uint16_t>> u16(bins_are_u8_ ? 0 : keep.size());
+    for (size_t k = 0; k < keep.size(); ++k)
+    {
         // Reads through the plane's lazy host materialization when this
-        // dataset is device-resident, which is the round trip a column
-        // rewrite costs; a row view avoids it because it rewrites nothing.
-        visit_bins(f,
+        // dataset is device-resident and the backend declined above.
+        visit_bins(keep[k],
                    [&](auto col)
                    {
                        using T =
@@ -271,17 +306,9 @@ Dataset Dataset::select_features(std::span<feature_id_t const> keep) const
                            dst[i] = col[rows[i]];
                        }
                    });
-        kept.push_back(mappers_[f]);
-        names.emplace_back(parent_names[f]);
     }
-    // Labels and weights follow the rows the columns were gathered through,
-    // so the result is an ordinary dataset whose row ids number from zero.
-    std::vector<float> const lab = gather_rows(rows_, labels_);
-    std::vector<float> const w =
-        weights_.empty() ? std::vector<float>{} : gather_rows(rows_, weights_);
     return from_bins(std::move(u8), std::move(u16), bins_are_u8_,
-                     BinMappers::from_mappers(std::move(kept), std::move(names)), lab,
-                     w);
+                     std::move(kept_mappers), lab, w);
 }
 
 Dataset Dataset::materialize() const

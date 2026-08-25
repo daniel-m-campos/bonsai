@@ -1137,20 +1137,26 @@ inline uint32_t eval_loss_pass1(DeviceObjectiveKind kind, float const *scores,
 // out-of-bag rows both land on the same leaf the host path would pick. Node
 // arrays are SoA (feature, split_bin, left, right, default_left, is_leaf,
 // value); the walk starts at node 0.
+//
+// `rows` names the rows to update, or is null for all n of them. Scores stay
+// full-length and globally indexed either way, so a view updates its own rows
+// in place and leaves the rest of the vector alone.
 template <typename BinT>
-__global__ void
-route_add_kernel(BinT const *bins, uint32_t const *n_bins, uint32_t n_rows,
-                 uint32_t n_feats, uint32_t const *feature, uint32_t const *split_bin,
-                 uint32_t const *left, uint32_t const *right,
-                 uint32_t const *default_left, uint32_t const *is_leaf,
-                 float const *value, float lr, float *scores, uint32_t n)
+__global__ void route_add_kernel(BinT const *bins, uint32_t const *n_bins,
+                                 uint32_t n_rows, uint32_t n_feats,
+                                 uint32_t const *feature, uint32_t const *split_bin,
+                                 uint32_t const *left, uint32_t const *right,
+                                 uint32_t const *default_left, uint32_t const *is_leaf,
+                                 float const *value, float lr, float *scores,
+                                 uint32_t n, uint32_t const *rows)
 {
-    uint32_t const r = (blockIdx.x * blockDim.x) + threadIdx.x;
-    if (r >= n)
+    uint32_t const k = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (k >= n)
     {
         return;
     }
-    uint32_t idx = 0;
+    uint32_t const r   = (rows == nullptr) ? k : rows[k];
+    uint32_t       idx = 0;
     while (is_leaf[idx] == 0)
     {
         uint32_t const f    = feature[idx];

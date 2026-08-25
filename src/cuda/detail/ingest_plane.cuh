@@ -55,6 +55,10 @@ class CudaIngestPlane final : public IngestPlane
 
     void materialize(std::vector<std::vector<uint8_t>>  &u8,
                      std::vector<std::vector<uint16_t>> &u16) const override;
+
+    std::shared_ptr<IngestPlane const>
+    select_columns(std::span<feature_id_t const> keep,
+                   std::span<row_id_t const>     rows) const override;
 };
 
 } // namespace cuda_detail

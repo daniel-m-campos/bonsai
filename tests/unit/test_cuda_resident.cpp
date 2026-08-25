@@ -30,7 +30,9 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <numeric>
 #include <random>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -768,4 +770,224 @@ TEST_CASE("Resident labels follow the Dataset, not the shared ingest plane",
     INFO("switched r2=" << r2_of(pred, y_b)
                         << " control r2=" << r2_of(control_pred, y_b));
     CHECK(r2_of(pred, y_b) > 0.8);
+}
+
+// A view fits a subset of the plane. The resident epilogue used to be the
+// reason a view was refused residency outright, which cost it the host
+// values/leaf_ids allocation and the unsampled routing on every tree; the
+// epilogue now walks the view's rows instead of the plane's. These cases are
+// the parity that buys: same rows, same target, resident against host.
+namespace
+{
+
+// A booster fit through `view` rather than over the whole plane, predicted on
+// every row so the caller can score whichever subset it cares about.
+template <typename BoosterT>
+std::vector<float> fit_view(Config const &cfg, RegData const &data, RowView rows,
+                            size_t iters, bool host_forced)
+{
+    if (host_forced)
+    {
+        setenv("BONSAI_HOST_OBJECTIVE", "1", 1);
+    }
+    else
+    {
+        unsetenv("BONSAI_HOST_OBJECTIVE");
+    }
+    Dataset const viewed = data.built.ds.with_rows(std::move(rows));
+    BoosterT      booster{cfg};
+    for (size_t i = 0; i < iters; ++i)
+    {
+        booster.update_one_iter(viewed);
+    }
+    unsetenv("BONSAI_HOST_OBJECTIVE");
+    std::vector<float> pred(data.n_rows);
+    booster.predict(data.view(), floats_out{pred});
+    return pred;
+}
+
+// r2 over just the rows a view covers: a model fit on a subset is only owed
+// accuracy there, and averaging in rows it never saw would hide the signal.
+double r2_over(std::vector<float> const &pred, std::vector<float> const &y,
+               std::span<row_id_t const> rows)
+{
+    double mean = 0.0;
+    for (row_id_t const r : rows)
+    {
+        mean += y[r];
+    }
+    mean /= static_cast<double>(rows.size());
+    double ss_res = 0.0;
+    double ss_tot = 0.0;
+    for (row_id_t const r : rows)
+    {
+        double const d = static_cast<double>(y[r]) - pred[r];
+        ss_res += d * d;
+        double const t = static_cast<double>(y[r]) - mean;
+        ss_tot += t * t;
+    }
+    return 1.0 - (ss_res / ss_tot);
+}
+
+} // namespace
+
+TEST_CASE("Resident MSE matches host-objective GPU on a contiguous view",
+          "[cuda][resident][view]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident views need a usable CUDA device");
+    }
+    auto const            data = make_regression(8192, 6, 29);
+    auto const            cfg  = reg_cfg();
+    std::vector<row_id_t> ids(4096);
+    std::iota(ids.begin(), ids.end(), row_id_t{1024});
+    RowView const rows = RowView::encode(ids, data.n_rows);
+    REQUIRE(rows.is_identity() == false);
+
+    auto const host =
+        fit_view<MseBooster<CudaDepthwiseGrower>>(cfg, data, rows, 40, true);
+    auto const res =
+        fit_view<MseBooster<CudaDepthwiseGrower>>(cfg, data, rows, 40, false);
+    INFO("view r2 host=" << r2_over(host, data.y, ids)
+                         << " resident=" << r2_over(res, data.y, ids));
+    REQUIRE(r2_over(res, data.y, ids) > 0.9);
+    REQUIRE(r2_over(res, data.y, ids) ==
+            Catch::Approx(r2_over(host, data.y, ids)).margin(1e-4));
+}
+
+TEST_CASE("Resident MSE matches host-objective GPU on a scattered view",
+          "[cuda][resident][view]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident views need a usable CUDA device");
+    }
+    auto const            data = make_regression(8192, 6, 31);
+    auto const            cfg  = reg_cfg();
+    std::vector<row_id_t> ids;
+    for (row_id_t r = 0; r < 8192; r += 3)
+    {
+        ids.push_back(r);
+    }
+    RowView const rows = RowView::encode(ids, data.n_rows);
+
+    auto const host =
+        fit_view<MseBooster<CudaDepthwiseGrower>>(cfg, data, rows, 40, true);
+    auto const res =
+        fit_view<MseBooster<CudaDepthwiseGrower>>(cfg, data, rows, 40, false);
+    INFO("view r2 host=" << r2_over(host, data.y, ids)
+                         << " resident=" << r2_over(res, data.y, ids));
+    REQUIRE(r2_over(res, data.y, ids) > 0.9);
+    REQUIRE(r2_over(res, data.y, ids) ==
+            Catch::Approx(r2_over(host, data.y, ids)).margin(1e-4));
+}
+
+TEST_CASE("A resident view leaves the scores of rows outside it alone",
+          "[cuda][resident][view]")
+{
+    if (!cuda_available())
+    {
+        SKIP("resident views need a usable CUDA device");
+    }
+    auto const            data = make_regression(8192, 6, 37);
+    auto const            cfg  = reg_cfg();
+    std::vector<row_id_t> ids(4096);
+    std::iota(ids.begin(), ids.end(), row_id_t{0});
+    RowView const rows = RowView::encode(ids, data.n_rows);
+
+    // The epilogue is the only writer of resident scores. If it walked the
+    // plane rather than the view it would fold this tree into rows the fit
+    // never saw, and the two halves would drift together instead of apart.
+    auto const res =
+        fit_view<MseBooster<CudaDepthwiseGrower>>(cfg, data, rows, 40, false);
+    std::vector<row_id_t> outside(4096);
+    std::iota(outside.begin(), outside.end(), row_id_t{4096});
+    INFO("inside r2=" << r2_over(res, data.y, ids)
+                      << " outside r2=" << r2_over(res, data.y, outside));
+    REQUIRE(r2_over(res, data.y, ids) > 0.9);
+}
+
+// The device column gather, against the host gather it replaces. The seam
+// itself is covered on CPU by a fake plane in test_ingest_plane.cpp; what
+// only real hardware can answer is whether the kernel writes the tiled
+// layout correctly, which is why these compare cell for cell rather than
+// checking an r2.
+namespace
+{
+
+// Every cell of `a` equals the cell the host gather put in `b`.
+void require_same_bins(Dataset const &a, Dataset const &b)
+{
+    REQUIRE(a.n_features() == b.n_features());
+    REQUIRE(a.n_rows() == b.n_rows());
+    for (size_t f = 0; f < a.n_features(); ++f)
+    {
+        for (size_t r = 0; r < a.n_rows(); ++r)
+        {
+            REQUIRE(a.bin_at(f, r) == b.bin_at(f, r));
+        }
+    }
+}
+
+} // namespace
+
+TEST_CASE("A device plane gathers a column selection itself", "[cuda][ingest][view]")
+{
+    if (!cuda_available())
+    {
+        SKIP("the device column gather needs a usable CUDA device");
+    }
+    auto const data  = make_regression(4096, 10, 43);
+    auto       plane = cuda_ingest(data.built.batch, data.built.mappers);
+    REQUIRE(plane != nullptr);
+    Dataset const dev = Dataset::bin(data.built.batch, data.built.mappers, {}, plane);
+
+    // Three of ten: one destination tile, sources drawn from both of the
+    // parent's, and deliberately out of order so a gather that ignored the
+    // keep order would land somewhere visible.
+    std::vector<feature_id_t> const keep = {7, 1, 4};
+    require_same_bins(dev.select_features(keep), data.built.ds.select_features(keep));
+}
+
+TEST_CASE("A device column gather fills a tail tile", "[cuda][ingest][view]")
+{
+    if (!cuda_available())
+    {
+        SKIP("the device column gather needs a usable CUDA device");
+    }
+    auto const data  = make_regression(4096, 10, 47);
+    auto       plane = cuda_ingest(data.built.batch, data.built.mappers);
+    REQUIRE(plane != nullptr);
+    Dataset const dev = Dataset::bin(data.built.batch, data.built.mappers, {}, plane);
+
+    // Nine of ten is one full tile plus a one-wide tail, which is where a
+    // strip width taken from the tile rather than the feature count writes
+    // past its row.
+    std::vector<feature_id_t> const keep = {0, 1, 2, 3, 4, 5, 6, 7, 8};
+    require_same_bins(dev.select_features(keep), data.built.ds.select_features(keep));
+}
+
+TEST_CASE("A device column gather follows the view's rows", "[cuda][ingest][view]")
+{
+    if (!cuda_available())
+    {
+        SKIP("the device column gather needs a usable CUDA device");
+    }
+    auto const data  = make_regression(4096, 10, 53);
+    auto       plane = cuda_ingest(data.built.batch, data.built.mappers);
+    REQUIRE(plane != nullptr);
+    Dataset const dev = Dataset::bin(data.built.batch, data.built.mappers, {}, plane);
+
+    // Scattered rows and reordered columns at once: rows renumber from zero
+    // in the order the view names them, columns in the order keep names them.
+    std::vector<row_id_t> ids;
+    for (row_id_t r = 3; r < 4096; r += 7)
+    {
+        ids.push_back(r);
+    }
+    RowView const                   rows = RowView::encode(ids, data.n_rows);
+    std::vector<feature_id_t> const keep = {9, 2};
+    require_same_bins(dev.with_rows(rows).select_features(keep),
+                      data.built.ds.with_rows(rows).select_features(keep));
 }
