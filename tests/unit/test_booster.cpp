@@ -593,7 +593,7 @@ TEST_CASE("predict_plan_input: a dense booster lends a view of its own trees",
     b.update_one_iter(train);
 
     auto const in = b.predict_plan_input();
-    CHECK(in.owned == nullptr);
+    CHECK(in.keep_alive == nullptr);
     CHECK(in.trees.data() == b.trees().data());
     CHECK(in.trees.size() == b.trees().size());
     CHECK(in.learning_rate == tiny_cfg().booster_config.learning_rate);
@@ -610,9 +610,9 @@ TEST_CASE("predict_plan_input: an oblivious booster lends its dense equivalent",
     b.update_one_iter(train);
 
     auto const in = b.predict_plan_input();
-    REQUIRE(in.owned != nullptr);
+    REQUIRE(in.keep_alive != nullptr);
     REQUIRE(in.trees.size() == b.trees().size());
-    CHECK(in.trees.data() == in.owned->data());
+    CHECK(in.trees.data() == in.keep_alive->data());
     CHECK(in.learning_rate == tiny_cfg().booster_config.learning_rate);
 
     SECTION("a mutation re-converts under a new epoch")
