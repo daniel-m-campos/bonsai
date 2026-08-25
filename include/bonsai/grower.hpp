@@ -26,10 +26,20 @@ using train_leaf_values = std::vector<float>;
 
 // Output-buffer recycling: the booster hands the previous tree's per-row
 // buffers back so the next grow reuses the allocation instead of the per-tree
-// zero-init, 12.8GB of serial memset per 16M x 100 fit. Safe because every
-// element is overwritten before any read (host stamping and route_unsampled
-// cover the row partition, the device epilogue writes all rows). One home for
-// the two buffers so this contract is stated once for all three growers.
+// zero-init, 12.8GB of serial memset per 16M x 100 fit. Every element the
+// fit's ROW LIST names is overwritten before any read: host stamping and
+// route_unsampled cover that partition, and the device epilogue walks the
+// same rows.
+//
+// A view names fewer rows than the plane has, and the booster's score update
+// still walks the plane, because a repeated row id must not be advanced twice.
+// So the slots a view omits are read. They are zero, and stay zero: the first
+// grow of a fit resizes from empty and value-initializes all of them, and no
+// writer ever names them afterwards, so `+= lr * 0` leaves the score at its
+// init value. That is the contract, not an accident of recycling, and
+// test_views_leave_out_of_view_scores_alone pins it. Anything that writes an
+// out-of-view slot breaks it. One home for the two buffers so this is stated
+// once for all three growers.
 struct RecycledOutputs
 {
     train_leaf_values      values;

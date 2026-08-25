@@ -523,7 +523,16 @@ class Booster final : public IBooster
             hess_.resize(train.n_rows());
             if (trees_.read().empty())
             {
-                init_score_ = objective_.init_score(view_labels(train));
+                // The init score is a statistic of the rows this fit
+                // visits, which for a view is a subset of the plane's. On the
+                // identity gather_rows copies, so the full-data path keeps
+                // the labels it already has.
+                RowView const           &view = train.row_view();
+                std::vector<float> const gathered =
+                    view.is_identity() ? std::vector<float>{}
+                                       : gather_rows(view, train.labels());
+                init_score_ = objective_.init_score(
+                    view.is_identity() ? train.labels() : floats_view{gathered});
                 scores_.assign(train.n_rows(), init_score_);
             }
             else
@@ -597,6 +606,14 @@ class Booster final : public IBooster
         }
         else
         {
+            // Over the PLANE, not the view, and that is not an oversight. A
+            // row id may repeat in a view (a with-replacement draw is the
+            // point of allowing it), and scores_ holds one slot per row: the
+            // repeat earns its extra weight by being read twice in the
+            // histogram, not by having its prediction advanced twice. Walking
+            // the view here would do exactly that and desynchronize the row's
+            // score from the model. Rows the view omits are safe for a
+            // different reason, stated on RecycledOutputs.
             parallel::for_each_index(
                 scores_.size(), [&](size_t i)
                 { scores_[i] += config_.learning_rate * leaf_values[i]; });
@@ -619,7 +636,7 @@ class Booster final : public IBooster
     size_t refill_row_indices(Dataset const &train)
     {
         RowView const &view = train.row_view();
-        if constexpr (std::same_as<sampler_type, AllRowsSampler>)
+        if constexpr (sampler_traits<sampler_type>::copies_view_verbatim)
         {
             if (row_indices_.size() != view.size())
             {
@@ -649,7 +666,7 @@ class Booster final : public IBooster
     bool selection_is_identity(Dataset const &train, size_t n_selected) const
     {
         RowView const &view = train.row_view();
-        if constexpr (std::same_as<sampler_type, AllRowsSampler>)
+        if constexpr (sampler_traits<sampler_type>::copies_view_verbatim)
         {
             return view.is_identity();
         }
@@ -667,7 +684,7 @@ class Booster final : public IBooster
     // the descriptor cannot speak for it, so those fits keep gathering.
     row_run_view selection_runs(Dataset const &train) const
     {
-        if constexpr (std::same_as<sampler_type, AllRowsSampler>)
+        if constexpr (sampler_traits<sampler_type>::copies_view_verbatim)
         {
             return train.row_view().runs();
         }
@@ -675,26 +692,6 @@ class Booster final : public IBooster
         {
             return {};
         }
-    }
-
-    // The labels of the rows this fit visits. The init score is a statistic of
-    // those rows, and a view's are a subset of the plane's; a full-data fit
-    // gathers nothing.
-    floats_view view_labels(Dataset const &train)
-    {
-        RowView const &view = train.row_view();
-        if (view.is_identity())
-        {
-            return train.labels();
-        }
-        std::vector<row_id_t> const rows = view.materialize();
-        floats_view const           all  = train.labels();
-        view_labels_.resize(rows.size());
-        for (size_t k = 0; k < rows.size(); ++k)
-        {
-            view_labels_[k] = all[rows[k]];
-        }
-        return view_labels_;
     }
 
     // Device-resident objective: when the grower keeps labels and scores on
@@ -711,8 +708,7 @@ class Booster final : public IBooster
     {
         if constexpr (device_objective_kind<objective_type> !=
                           DeviceObjectiveKind::none &&
-                      (std::same_as<sampler_type, AllRowsSampler> ||
-                       std::same_as<sampler_type, BernoulliSampler>) )
+                      !sampler_traits<sampler_type>::reads_gradients)
         {
             bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;
             // A view is eligible: the resident epilogue walks the view's rows
@@ -1123,20 +1119,20 @@ class Booster final : public IBooster
     {
         assert(!trees_.read().empty());
         assert(bins.view_n_rows() == scores.size());
-        assert(!bins.row_major_bins().empty());
+        assert(!bins.mirror().bins().empty());
         auto const    &tree = trees_.read().back();
         float const    lr   = config_.learning_rate;
         auto const     sb   = internal::split_bins(tree, bins);
-        auto const     rm   = bins.row_major_bins();
+        auto const    &m    = bins.mirror();
+        auto const     rm   = m.bins();
         RowIndex const rows{bins.row_view()};
         parallel::for_each_index(
             scores.size(),
             [&](size_t k)
             {
                 row_id_t const r = rows[k];
-                scores[k] += lr * internal::value_binned(
-                                      tree, sb, [&](size_t f)
-                                      { return rm[bins.mirror_index(r, f)]; });
+                scores[k] += lr * internal::value_binned(tree, sb, [&](size_t f)
+                                                         { return rm[m.index(r, f)]; });
             });
     }
 
@@ -1181,7 +1177,6 @@ class Booster final : public IBooster
     // Stale while the resident objective is armed (the device copy is
     // authoritative); resident_end syncs it before any host-path read.
     std::vector<float>    scores_;
-    std::vector<float>    view_labels_;
     std::vector<float>    grad_;
     std::vector<float>    hess_;
     std::vector<row_id_t> row_indices_;

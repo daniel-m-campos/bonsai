@@ -89,10 +89,8 @@ def test_a_cell_naming_folds_reaches_the_cv_suite():
 
 
 def test_a_cell_without_folds_still_takes_the_single_fit_path():
-    cell = _cell()
-    del cell["folds"]
-    spec = {runlog.Row.VARIANT: "bonsai_depthwise", runlog.Row.THREADS: 2,
-            runlog.Row.REPEAT: 0, runlog.Row.CELL: cell}
+    spec = _spec()
+    del spec[runlog.Row.CELL]["folds"]
     out = runners.worker(spec)
     assert cv.LOOP_S not in out
     assert "fit_rows_per_s" in out

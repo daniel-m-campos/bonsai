@@ -115,9 +115,9 @@ Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers
     ds.n_rows_     = batch.labels.size();
     ds.n_features_ = batch.features.size();
     ds.rows_       = RowView::all(ds.n_rows_);
-    ds.mappers_    = mappers;
-    ds.labels_     = batch.labels;
-    ds.weights_    = batch.weights;
+    ds.row_major_  = std::make_shared<RowMirror>(ds.n_rows_, ds.n_features_);
+    ds.meta_       = std::make_shared<Meta const>(
+        Meta{.labels = batch.labels, .weights = batch.weights, .mappers = mappers});
     if (plane)
     {
         ds.plane_       = std::move(plane);
@@ -148,9 +148,11 @@ Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mapp
     ds.n_rows_     = labels.size();
     ds.n_features_ = X.extent(1);
     ds.rows_       = RowView::all(ds.n_rows_);
-    ds.mappers_    = mappers;
-    ds.labels_.assign(labels.begin(), labels.end());
-    ds.weights_.assign(weights.begin(), weights.end());
+    ds.row_major_  = std::make_shared<RowMirror>(ds.n_rows_, ds.n_features_);
+    ds.meta_       = std::make_shared<Meta const>(
+        Meta{.labels  = std::vector<float>(labels.begin(), labels.end()),
+                   .weights = std::vector<float>(weights.begin(), weights.end()),
+                   .mappers = mappers});
     fill_binned(ds.cols_->u8, ds.cols_->u16, ds.bins_are_u8_, X.extent(1), ds.n_rows_,
                 mappers, [&](size_t f, size_t r) { return X[r, f]; });
     return ds;
@@ -167,9 +169,11 @@ Dataset Dataset::bin(size_t n_rows, size_t n_features, floats_view labels,
     ds.n_rows_     = n_rows;
     ds.n_features_ = n_features;
     ds.rows_       = RowView::all(ds.n_rows_);
-    ds.mappers_    = mappers;
-    ds.labels_.assign(labels.begin(), labels.end());
-    ds.weights_.assign(weights.begin(), weights.end());
+    ds.row_major_  = std::make_shared<RowMirror>(ds.n_rows_, ds.n_features_);
+    ds.meta_       = std::make_shared<Meta const>(
+        Meta{.labels  = std::vector<float>(labels.begin(), labels.end()),
+                   .weights = std::vector<float>(weights.begin(), weights.end()),
+                   .mappers = mappers});
     ds.plane_       = std::move(plane);
     ds.lazy_        = std::make_shared<HostBins>();
     ds.bins_are_u8_ = all_fit_u8(mappers);
@@ -212,9 +216,11 @@ Dataset Dataset::from_bins(std::vector<std::vector<uint8_t>>  u8,
     ds.n_rows_     = n_rows;
     ds.n_features_ = n_features;
     ds.rows_       = RowView::all(n_rows);
-    ds.mappers_    = std::move(mappers);
-    ds.labels_.assign(labels.begin(), labels.end());
-    ds.weights_.assign(weights.begin(), weights.end());
+    ds.row_major_  = std::make_shared<RowMirror>(n_rows, n_features);
+    ds.meta_       = std::make_shared<Meta const>(
+        Meta{.labels  = std::vector<float>(labels.begin(), labels.end()),
+                   .weights = std::vector<float>(weights.begin(), weights.end()),
+                   .mappers = std::move(mappers)});
     ds.bins_are_u8_ = bins_are_u8;
     ds.cols_->u8    = std::move(u8);
     ds.cols_->u16   = std::move(u16);
@@ -232,7 +238,7 @@ Dataset Dataset::select_features(std::span<feature_id_t const> keep) const
     std::vector<std::string> names;
     kept.reserve(keep.size());
     names.reserve(keep.size());
-    auto const parent_names = mappers_.feature_names();
+    auto const parent_names = meta_->mappers.feature_names();
     // Names are optional on a core Dataset (the binding always supplies
     // f0..fN, a direct BinMappers::fit need not), and an unnamed parent has
     // an EMPTY span rather than blanks. Carrying that through keeps the child
@@ -248,7 +254,7 @@ Dataset Dataset::select_features(std::span<feature_id_t const> keep) const
                                         " is past the last of this dataset's " +
                                         std::to_string(n_features_) + " features");
         }
-        kept.push_back(mappers_[f]);
+        kept.push_back(meta_->mappers[f]);
         if (named)
         {
             names.emplace_back(parent_names[f]);
@@ -256,10 +262,11 @@ Dataset Dataset::select_features(std::span<feature_id_t const> keep) const
     }
     // Labels and weights follow the rows the columns were gathered through,
     // so the result is an ordinary dataset whose row ids number from zero.
-    std::vector<float> const lab = gather_rows(rows_, labels_);
-    std::vector<float> const w =
-        weights_.empty() ? std::vector<float>{} : gather_rows(rows_, weights_);
-    BinMappers kept_mappers =
+    std::vector<float> const lab = gather_rows(rows_, meta_->labels);
+    std::vector<float> const w   = meta_->weights.empty()
+                                       ? std::vector<float>{}
+                                       : gather_rows(rows_, meta_->weights);
+    BinMappers               kept_mappers =
         BinMappers::from_mappers(std::move(kept), std::move(names));
 
     // The backend's own gather first: a device-resident dataset rewrites its
@@ -353,31 +360,45 @@ size_t Dataset::n_features() const
 
 floats_view Dataset::labels() const
 {
-    return labels_;
+    return meta_->labels;
 }
 
 floats_view Dataset::weights() const
 {
-    return weights_;
+    return meta_->weights;
 }
 
 BinMappers const &Dataset::mappers() const
 {
-    return mappers_;
+    return meta_->mappers;
 }
 
 size_t Dataset::n_bins(size_t fid) const
 {
-    return mappers_[fid].n_bins();
+    return meta_->mappers[fid].n_bins();
 }
 
-void Dataset::mint_row_major() const
+RowMirror const &Dataset::mirror() const
 {
-    auto const  &cols  = plane_ ? host_bins().u8 : cols_->u8;
-    size_t const f     = cols.size();
+    if (!bins_are_u8_)
+    {
+        return *row_major_;
+    }
+    row_major_->mint_once([this](std::span<uint8_t> out_bins) { mint_into(out_bins); });
+    return *row_major_;
+}
+
+void Dataset::mint_into(std::span<uint8_t> out_bins) const
+{
+    auto const  &cols = plane_ ? host_bins().u8 : cols_->u8;
+    size_t const f    = cols.size();
+    // The mirror sized the buffer from the shape it was built with; this
+    // walks the columns it can see. Every factory makes those agree, and if
+    // one ever stops, it must fail here rather than write past the end.
+    assert(f == n_features_);
+    assert(out_bins.size() == n_rows_ * f);
     size_t const width = mirror_tile_width();
-    row_major_->bins.resize(n_rows_ * f);
-    uint8_t *out = row_major_->bins.data();
+    uint8_t     *out   = out_bins.data();
     // Tiled column-to-row transpose into the block layout: each worker
     // owns a row block, so writes never overlap and the mirror is
     // byte-identical at any thread count. Feature c lands in mirror
@@ -408,16 +429,6 @@ void Dataset::mint_row_major() const
                                      }
                                  }
                              });
-}
-
-std::span<uint8_t const> Dataset::row_major_bins() const
-{
-    if (!bins_are_u8_)
-    {
-        return {};
-    }
-    std::call_once(row_major_->once, [this] { mint_row_major(); });
-    return row_major_->bins;
 }
 
 } // namespace bonsai

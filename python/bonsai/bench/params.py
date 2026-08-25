@@ -64,6 +64,17 @@ def num_leaves_of(cell: dict) -> int:
     return cell.get("num_leaves") or num_leaves_full(cell["depth"])
 
 
+def knobs_of(cell: dict) -> dict:
+    """A cell's shared tree knobs, defaulted to the scaling regime.
+
+    A cell may name min_data_in_leaf and lambda_l2; the suites that predate
+    them do not, and their rows were measured at the SCALING values, so that
+    is what the fallback has to be.
+    """
+    return {k: cell.get(k, SCALING[k])
+            for k in ("min_data_in_leaf", "lambda_l2")}
+
+
 def bonsai_core(*, learning_rate, max_depth, num_leaves, min_data_in_leaf,
                 lambda_l2, max_bin, seed, n_iters, n_threads, grower,
                 objective="mse",
