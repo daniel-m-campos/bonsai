@@ -133,6 +133,18 @@ class Dataset
     // one path and viewed on the other.
     Dataset select_features(std::span<feature_id_t const> keep) const;
 
+    // This dataset's rows, in this dataset's order, gathered into a plane it
+    // owns: a view spent rather than followed. On a dataset that is not a
+    // view this is a deep copy with caches of its own.
+    //
+    // What it buys is contiguity. A view's rows are wherever the parent put
+    // them, so a scattered selection pays the gather on every histogram fill,
+    // for every tree; materialized once, the same rows are a range, which the
+    // fill reads as a subspan and the device reads at full coalescing. Worth
+    // it when the same selection is fit repeatedly, which is what a caller
+    // reordering rows into fold order is arranging for.
+    Dataset materialize() const;
+
     floats_view       labels() const;
     floats_view       weights() const; // empty if uniform
     BinMappers const &mappers() const;

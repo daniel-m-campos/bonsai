@@ -513,8 +513,8 @@ detail::ColumnBatch four_feature_batch(size_t n)
     {
         auto const x = static_cast<float>(i);
         labels.push_back(static_cast<float>(i % 5));
-        down.push_back(-x);                                 // reversed order
-        saw.push_back(static_cast<float>(i % 7));           // repeats, 7 levels
+        down.push_back(-x);                       // reversed order
+        saw.push_back(static_cast<float>(i % 7)); // repeats, 7 levels
         fold.push_back(std::abs(x - (static_cast<float>(n) / 2.0F))); // v-shaped
     }
     return detail::ColumnBatch{
@@ -606,7 +606,7 @@ TEST_CASE("Dataset: keeping every feature in order is the same dataset",
     auto const       batch   = four_feature_batch(96);
     BinMappers const mappers = BinMappers::fit(batch, BinMapperConfig{});
     Dataset const    full    = Dataset::bin(batch, mappers, {});
-    Dataset const    same    = full.select_features(std::vector<feature_id_t>{0, 1, 2, 3});
+    Dataset const    same = full.select_features(std::vector<feature_id_t>{0, 1, 2, 3});
 
     Config const cfg       = from_bins_cfg();
     auto         from_full = make_booster(cfg);
@@ -691,9 +691,9 @@ TEST_CASE("Dataset: a column rewrite spends the row view instead of carrying it"
 
     BinMappers const kept = BinMappers::from_mappers(
         std::vector<BinMapper>{mappers[1], mappers[3]}, {"b", "d"});
-    Config const cfg      = from_bins_cfg();
-    auto         from_rf  = make_booster(cfg);
-    auto         from_cf  = make_booster(cfg);
+    Config const cfg     = from_bins_cfg();
+    auto         from_rf = make_booster(cfg);
+    auto         from_cf = make_booster(cfg);
     for (int i = 0; i < 5; ++i)
     {
         from_rf->update_one_iter(rows_first);
@@ -725,5 +725,90 @@ TEST_CASE("Dataset: select_features refuses a selection it cannot serve",
         CHECK_THROWS_WITH(full.select_features(std::vector<feature_id_t>{0, 4}),
                           Catch::Matchers::ContainsSubstring("feature 4") &&
                               Catch::Matchers::ContainsSubstring("4 features"));
+    }
+}
+
+TEST_CASE("Dataset: materialize gathers a view's rows into a plane of its own",
+          "[dataset][materialize]")
+{
+    auto const       batch   = four_feature_batch(64);
+    BinMappers const mappers = BinMappers::fit(batch, BinMapperConfig{});
+    Dataset const    full    = Dataset::bin(batch, mappers, {});
+
+    // Descending, so the result cannot coincide with the parent's layout.
+    std::vector<row_id_t> rows;
+    for (size_t i = 0; i < 20; ++i)
+    {
+        rows.push_back(static_cast<row_id_t>(60 - (i * 3)));
+    }
+    Dataset const done =
+        full.with_rows(RowView::encode(rows, full.n_rows())).materialize();
+
+    REQUIRE(done.n_rows() == rows.size());
+    CHECK(done.n_features() == full.n_features());
+    // The rows a scattered view had to gather are now a range, which is what
+    // materializing is for.
+    CHECK(done.row_view().is_identity());
+    for (size_t f = 0; f < full.n_features(); ++f)
+    {
+        for (size_t i = 0; i < rows.size(); ++i)
+        {
+            CHECK(done.bin_at(f, i) == full.bin_at(f, rows[i]));
+        }
+    }
+    for (size_t i = 0; i < rows.size(); ++i)
+    {
+        CHECK(done.labels()[i] == full.labels()[rows[i]]);
+    }
+    CHECK(std::ranges::equal(done.mappers().feature_names(),
+                             full.mappers().feature_names()));
+}
+
+TEST_CASE("Dataset: materializing a whole dataset in order changes nothing",
+          "[dataset][materialize]")
+{
+    auto const       batch   = four_feature_batch(96);
+    BinMappers const mappers = BinMappers::fit(batch, BinMapperConfig{});
+    Dataset const    full    = Dataset::bin(batch, mappers, {});
+    Dataset const    copy    = full.materialize();
+
+    // The identity view gathers every row in order, so the bins are the same
+    // bins and the fit takes the same path: byte identity holds here, which it
+    // does not for a permutation (a bin sums its rows in list order and float
+    // addition is not associative).
+    Config const cfg       = from_bins_cfg();
+    auto         from_full = make_booster(cfg);
+    auto         from_copy = make_booster(cfg);
+    for (int i = 0; i < 5; ++i)
+    {
+        from_full->update_one_iter(full);
+        from_copy->update_one_iter(copy);
+    }
+    CHECK(saved_bytes(*from_full, mappers, cfg, "bonsai_mat_full.msgpack") ==
+          saved_bytes(*from_copy, mappers, cfg, "bonsai_mat_copy.msgpack"));
+}
+
+TEST_CASE("Dataset: a materialized view serves its own bins",
+          "[dataset][materialize][aliasing]")
+{
+    auto const       batch   = four_feature_batch(64);
+    BinMappers const mappers = BinMappers::fit(batch, BinMapperConfig{});
+    Dataset const    full    = Dataset::bin(batch, mappers, {});
+
+    std::vector<row_id_t> const rows{5, 6, 7, 8};
+    Dataset const               done =
+        full.with_rows(RowView::encode(rows, full.n_rows())).materialize();
+
+    // cols_ and row_major_ are shared across Dataset copies by design; a
+    // materialization that copied the parent would serve 64 rows here.
+    REQUIRE(done.n_rows() == 4);
+    auto const mirror = done.row_major_bins();
+    REQUIRE(mirror.size() == done.n_rows() * done.n_features());
+    for (size_t f = 0; f < done.n_features(); ++f)
+    {
+        for (size_t i = 0; i < rows.size(); ++i)
+        {
+            CHECK(mirror[done.mirror_index(i, f)] == full.bin_at(f, rows[i]));
+        }
     }
 }
