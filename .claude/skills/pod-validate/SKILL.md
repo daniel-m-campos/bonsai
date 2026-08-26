@@ -26,7 +26,7 @@ The human-readable version with every failure mode explained is `docs/ops/runpod
 - Create errors decoded: "machine does not have the resources" means shrink `containerDiskInGb` (40 suffices, data lives in RAM) and retry; "no instances available" means retry on a ~10-minute timer, capacity churns.
 - Prefer data centers with a warm image cache (cold pulls take minutes, warm seconds); pass `dataCenterIds` when a prior session proved one. EUR-IS-2 failed to boot this image twice.
 - **Host RAM is the cgroup limit, not what `free` shows**: read `/sys/fs/cgroup/memory.max` (v1 fallback `/sys/fs/cgroup/memory/memory.limit_in_bytes`, whose near-2^63 sentinel means unlimited). `free` and `/proc/meminfo` report the machine even inside a 4GB container, so a memory guard reading them cannot fail (BLACKWELL_96 pods cap at 188GB against 1.5TB physical). Size host-side data generation to ~60% of the cap; `killed by signal 9` on the worker is the symptom of ignoring this.
-- Reference-arm sanity before measuring: xgboost is pinned `>=3.2,<3.4` (a CUDA-13 wheel on a CUDA-12 driver silently falls back to CPU, issue #333); `uv pip install` the pin if the image predates it, pre-flight a tiny `device="cuda"` fit, and check `save_config()` reports cuda. The #334 runner guard is the in-band backstop.
+- Reference-arm sanity before measuring: XGBoost is pinned `>=3.2,<3.4` (a CUDA-13 wheel on a CUDA-12 driver silently falls back to CPU, issue #333); `uv pip install` the pin if the image predates it, pre-flight a tiny `device="cuda"` fit, and check `save_config()` reports cuda. The #334 runner guard is the in-band backstop.
 
 ## The loop
 
