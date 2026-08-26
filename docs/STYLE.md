@@ -2,6 +2,27 @@
 
 Rules for writing and reviewing anything under `docs/`.
 
+## Where things live
+
+The routing table. Every piece of written content has exactly one normative home; everywhere else cites it. This table is the policy, adopted by the footprint decision in [decisions.md](decisions.md); [CLAUDE.md](../CLAUDE.md) points here rather than restating it.
+
+| content | home | kept true by |
+|---|---|---|
+| conventions and the never-do list | `CLAUDE.md` | loaded every agent session |
+| single-file constraints: what breaks if you change this | a comment at the definition site | the diff that breaks it touches the same file |
+| cross-file contracts | [invariants.md](invariants.md) | the invariants lint in `docs-check` |
+| rationale, measurements, rejected alternatives | [decisions.md](decisions.md), cited by number | append-only; corrections are status banners |
+| pedagogy | `guide/` and `learn/` | docs CI runs the examples |
+| adopter reference | `use/` and `method/`, generated where possible | generators re-render in `docs-check` |
+| procedures | `ops/` and `.claude/skills/` | exercised by the rituals that use them |
+
+Two tests route a claim:
+
+- Falsifiable by reading one source file? It is a comment on that file, not a doc.
+- Do several sites have to change together when it changes? It is an [invariants.md](invariants.md) entry, and the other sites link to it.
+
+A claim that fails both tests is either rationale (decisions.md) or teaching (guide/, learn/). There is no home for prose descriptions of code structure; the code is that home.
+
 ## Audience and goal
 
 Three readers, in rough order of arrival volume:

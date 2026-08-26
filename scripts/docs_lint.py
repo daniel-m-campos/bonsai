@@ -31,6 +31,15 @@ HARD (exit 1, one message per offending line):
      tokens like rung0 never match (no word boundary), and code spans and
      link targets are masked, so cited filenames stay legal.
 
+HARD, invariants (docs/invariants.md only):
+  e. Every "- code:" line must resolve: it names a backticked path and a
+     backticked symbol, the path exists in the tree, and the symbol string
+     greps in that file. An entry whose
+     evidence stopped resolving is a contract the code has outrun, which is
+     the exact failure this file exists to catch (the "grep the claim"
+     lesson, mechanized). A diff that renames the symbol updates the entry
+     in the same PR or fails docs-check.
+
 SOFT (reported, exit 0): sentences over 25 words. Table rows, headings, and
 link-dense lines are skipped. The top offenders print with file:line so a
 later editing pass can chip at them.
@@ -145,6 +154,43 @@ def word_count(sentence: str) -> int:
 
 # ---- rules -------------------------------------------------------------------
 
+INVARIANTS = REPO / "docs" / "invariants.md"
+CODE_REF_RE = re.compile(r"^- code: `([^`]+)` : `([^`]+)`\s*$")
+
+
+def lint_invariants(hard: list[tuple]) -> None:
+    """Rule (e): every code reference in invariants.md resolves.
+
+    A reference is one `- code:` line naming a path and a symbol. The path
+    must exist and the symbol must appear in the file verbatim (plain
+    substring, so a phrase or an error-message fragment anchors as well as
+    an identifier). Malformed `- code:` lines are findings too: a typo'd
+    line would otherwise pass by never being checked.
+    """
+    if not INVARIANTS.exists():
+        return
+    rel = INVARIANTS.relative_to(REPO).as_posix()
+    for lineno, line in enumerate(INVARIANTS.read_text().splitlines(), 1):
+        if not line.startswith("- code:"):
+            continue
+        m = CODE_REF_RE.match(line)
+        if not m:
+            hard.append((rel, lineno, "invariant-ref",
+                         "malformed code reference; write"
+                         " - code: `path` : `symbol`"))
+            continue
+        path_s, symbol = m.groups()
+        target = REPO / path_s
+        if not target.is_file():
+            hard.append((rel, lineno, "invariant-ref",
+                         f"path does not exist: {path_s}"))
+            continue
+        if symbol not in target.read_text(errors="replace"):
+            hard.append((rel, lineno, "invariant-ref",
+                         f'"{symbol}" not found in {path_s}; the code has'
+                         " outrun this entry, update it in the same PR"))
+
+
 def lint_file(path: pathlib.Path, hard: list[tuple], soft: list[tuple]) -> None:
     """Every finding for one file."""
     rel = path.relative_to(REPO).as_posix()
@@ -209,6 +255,7 @@ def main() -> int:
     files = corpus_files()
     for path in files:
         lint_file(path, hard, soft)
+    lint_invariants(hard)
 
     hard.sort(key=lambda h: (h[0], h[1], h[2]))
     for rel, lineno, code, msg in hard:

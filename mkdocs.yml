@@ -137,6 +137,7 @@ nav:
       - What to use when: method/what-to-use-when.md
   - Design:
       - The system map: design/system-map.md
+      - Invariants: invariants.md
       - Concepts to types: design/api-tour-concepts.md
       - The HPC tension: design/the-hpc-tension.md
       - Determinism as a contract: design/determinism.md
