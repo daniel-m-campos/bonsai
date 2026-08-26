@@ -57,7 +57,7 @@ for sampler in ("all_rows", "goss"):
     print(f"{sampler:9s}  R2={m.score(X, y):.4f}")
 ```
 
-Measured on YearPredictionMSD (feature_gap.md §2): GOSS *improved*
+Measured on YearPredictionMSD (the feature-gap record §2): GOSS *improved*
 leafwise RMSE (9.0871 → 9.0757) while cutting fit time, the same
 direction and magnitude as LightGBM's own GOSS delta.
 

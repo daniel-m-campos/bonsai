@@ -53,7 +53,7 @@ of configuration, never of scheduling.
   over that quota is left alone and warns once on stderr, because the
   resolved count is part of the model's identity and a clamp would change
   the model bytes a container produces. Design notes in
-  [architecture/7-parallel.md](../architecture/7-parallel.md).
+  [the invariants](../invariants.md).
 - Histogram fill ([`src/grower.cpp`](../../src/grower.cpp)): the routing
   is per node, not per bin width. u16 bins keep the feature-parallel
   shape (`fill_columns`): each feature's histogram owned by one

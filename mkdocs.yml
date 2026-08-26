@@ -46,9 +46,7 @@ exclude_docs: |
   ops/
   reviews/
   hooks/
-  feature_gap.md
-  proposal.md
-  context.md
+  invariants.src.md
 
 hooks:
   - docs/hooks/repo_links.py
@@ -116,12 +114,15 @@ nav:
           - E4. The resident objective: learn/engine/4-the-resident-objective.md
           - E5. The ceiling: learn/engine/5-the-ceiling.md
           - E6. The wide-data wall: learn/engine/6-the-wide-data-wall.md
+      - Determinism as a contract: learn/determinism-as-a-contract.md
+      - The HPC tension: learn/the-hpc-tension.md
       - How we got here: learn/timeline.md
   - Use:
       - Install: use/install.md
       - The API in one read: use/api-tour.md
       - Parameters: use/parameters.md
       - Switching from XGBoost: use/from-xgboost.md
+      - What to use when: use/what-to-use-when.md
       - Running the benchmarks: use/benchmarks.md
       - Building from source: use/building.md
       - Make targets: use/make-map.md
@@ -133,13 +134,7 @@ nav:
       - The code division: method/results/code-metrics.md
       - The archive: method/results/archive.md
       - The benchmark protocol: method/benchmark-protocol.md
-      - How we decide: method/how-we-decide.md
-      - What to use when: method/what-to-use-when.md
   - Design:
-      - The system map: design/system-map.md
-      - Concepts to types: design/api-tour-concepts.md
-      - The HPC tension: design/the-hpc-tension.md
-      - Determinism as a contract: design/determinism.md
+      - Invariants: invariants.md
       - Archive:
-          - architecture/README.md
           - Decisions log: decisions.md

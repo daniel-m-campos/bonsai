@@ -40,6 +40,35 @@ NaNs-right) and keeps the better (`default_left` on the split). That is
 XGBoost's "learned default direction": the data decides where missing
 belongs, per split.
 
+### A worked example
+
+Six rows at one node, one feature with 4 bins (0 to 2 real, 3 missing):
+
+| row | bin | $g$ | $h$ |
+|-----|-----|------|-----|
+| 0 | 1 | +0.3 | 1.0 |
+| 1 | 0 | -0.5 | 1.0 |
+| 2 | 2 | +0.1 | 1.0 |
+| 3 | 0 | -0.4 | 1.0 |
+| 4 | 3 | +0.2 | 1.0 |
+| 5 | 1 | +0.6 | 1.0 |
+
+The build pass produces one cell per bin:
+
+| bin | sum_grad | sum_hess | |
+|-----|----------|----------|---|
+| 0 | -0.9 | 2.0 | |
+| 1 | +0.9 | 2.0 | |
+| 2 | +0.1 | 1.0 | |
+| 3 | +0.2 | 1.0 | missing |
+
+Totals over the real bins: $G = +0.1$, $H = 5.0$. The scan sweeps the two interior cuts, putting bins $0..b-1$ on the left:
+
+- cut at 0|1: $G_L = -0.9,\ H_L = 2.0$; right side by subtraction, $G_R = +1.0,\ H_R = 3.0$
+- cut at 1|2: $G_L = 0.0,\ H_L = 4.0$; $G_R = +0.1,\ H_R = 1.0$
+
+Score each with the gain formula above and keep the larger. The missing bin's $(+0.2, 1.0)$ never enters the prefix; the splitter folds it into one side per routing and keeps the better score. That is the whole inner game; everything else in this chapter is making it fast, parallel, and deterministic.
+
 ## In bonsai
 
 All of it is [`src/split.cpp`](../../src/split.cpp):

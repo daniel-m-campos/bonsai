@@ -6,7 +6,7 @@ A tree splits on `x <= threshold`, so a feature's values need an order, and cate
 
 The industry offers three answers: one-hot expansion (explodes width), native set splits in the split scan (LightGBM: the tree learns *subsets* of categories), and target statistics (CatBoost: replace each category with a number summarizing its relationship to the label, which *gives* it an order).
 
-bonsai's answer is the third, deliberately outside the core: an encoder in the Python package, not a node type in the engine (decision 58). We measured the alternatives before choosing: the section at the end has the table, and [architecture doc 17](../architecture/17-categorical-splits.md) preserves the full native-split design we priced and declined.
+bonsai's answer is the third, deliberately outside the core: an encoder in the Python package, not a node type in the engine (decision 58). We measured the alternatives before choosing: the section at the end has the table, and [decision 58](../decisions.md) records the full native-split design we priced and declined (the drafted design lives in git history).
 
 ## The math
 
@@ -99,6 +99,26 @@ Measured on the repo's amazon split, with CatBoost's own cross-toggle as the con
 
 Two readings: the crosses *are* CatBoost's whole remaining edge (its no-cross line falls below our singles), and pair-TS closes the gap to 0.002, chance-band at this test size. Pairs grow as $\binom{k}{2}$: fine at nine columns, a decision at ninety.
 
+## The Fisher sort: what a native split engine would do
+
+The declined engine feature (decision 58) would split a node on an arbitrary *subset* of categories. Scanning all $2^{K-1}$ subsets looks exponential, but it is not, and the reduction is worth knowing.
+
+A split assigns each category $k$ with sums $(G_k, H_k)$ to the left or right child. The second-order objective for child weights $w_L, w_R$ is separable per category:
+
+```math
+\mathcal{L} = \sum_{k \in L} \left( G_k w_L + \tfrac{1}{2} H_k w_L^2 \right) + \sum_{k \in R} \left( G_k w_R + \tfrac{1}{2} H_k w_R^2 \right) + \tfrac{\lambda}{2}(w_L^2 + w_R^2)
+```
+
+For any fixed pair $w_L < w_R$, category $k$ prefers the left child exactly when
+
+```math
+\frac{G_k}{H_k} \le -\tfrac{1}{2}(w_L + w_R)
+```
+
+which is a threshold on $G_k/H_k$. So the optimal partition is *contiguous* in $G_k/H_k$ order (Fisher 1958's grouping result), and the $2^{K-1}$ subsets collapse to $K-1$ prefixes of one sorted order.
+
+With leaf-level L2 the argument is exact only at $\lambda = 0$; LightGBM sorts by $G_k / (H_k + \text{cat\_smooth})$, where the smoothing also guards against low-count categories dominating the order. Near-optimal in practice, exact where the proof applies.
+
 ## Inside CatBoost, for comparison: the engine we didn't need
 
 Per tree, CatBoost draws from a pool of random permutations and recomputes its categorical statistics ("CTRs") **online** (every split candidate's statistic reflects the current permutation, quantized against CTR-specific borders), and as a tree grows it **greedily builds combinations**: the categoricals along the current path get crossed with each remaining categorical, up to `max_ctr_complexity` (default effectively pairs-and-beyond), each cross getting its own online TS.
@@ -111,7 +131,7 @@ What CatBoost pays for the engine version and bonsai does not: encoding work on 
 
 ## Gotchas & war stories
 
-- **Never encode with plain (greedy) target statistics.** The single-appearance pathology above is not theoretical: it is why CatBoost exists. The stage-1 study ([feature_gap §18](https://github.com/daniel-m-campos/bonsai/blob/main/docs/feature_gap.md)) measured plain K-fold encoding at 0.8462 on amazon vs 0.8590 ordered: causality is the load-bearing part.
+- **Never encode with plain (greedy) target statistics.** The single-appearance pathology above is not theoretical: it is why CatBoost exists. The stage-1 study ([the feature-gap record §18](https://github.com/daniel-m-campos/bonsai/blob/main/benchmarks/feature-gap-2026-07.md)) measured plain K-fold encoding at 0.8462 on amazon vs 0.8590 ordered: causality is the load-bearing part.
 - **TS is not free on every dataset.** On kick (18 noisy mixed-cardinality columns) it costs 0.003 AUC, and every library's native machinery loses there too, LightGBM by 0.018. Measure per dataset; the encoder being outside the core is what makes skipping it a one-line decision.
 - **Regression targets work unchanged** (the math never assumes $y \in \{0,1\}$); multiclass needs one TS column per class (one-vs-rest) and is not built in yet.
 - **The codes themselves stay meaningful.** With `keep_codes` the original columns ride along NaN-intact: bonsai routes missing values natively (chapter 2), so don't impute them away before encoding.

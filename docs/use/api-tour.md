@@ -4,7 +4,7 @@ bonsai's entire API follows from three facts. Everything else is detail.
 
 1. **There are two layers over one engine.** Scikit-learn-shaped estimators (`BonsaiRegressor`, `BonsaiClassifier`) for pipelines and quick work, and an explicit layer (`train`, `Dataset`, `Model`) when you want full control. Both call the same C++ training path the CLI uses.
 2. **There is one configuration system.** Every knob is a dotted key like `tree.max_depth` or `dispatch.grower_name`. The same keys work as `params` in Python (a `Params` or a dotted-key dict), as `--set` overrides on the CLI, and as sections in a TOML file. `bonsai.default_config_toml()` prints all of them with defaults.
-3. **There is one model format.** `.msgpack` files round-trip everywhere: a model trained in Python predicts from the CLI, and vice versa. A model trained on CPU is byte-identical across runs, thread counts, and CPU architectures, so that file is a reproducible artifact rather than a snapshot of one machine. GPU training does not carry that guarantee: device histograms accumulate under atomics, so the same fit writes different bytes each run, and what the device plane offers instead is a measured run-to-run spread ([the contract](../design/determinism.md)).
+3. **There is one model format.** `.msgpack` files round-trip everywhere: a model trained in Python predicts from the CLI, and vice versa. A model trained on CPU is byte-identical across runs, thread counts, and CPU architectures, so that file is a reproducible artifact rather than a snapshot of one machine. GPU training does not carry that guarantee: device histograms accumulate under atomics, so the same fit writes different bytes each run, and what the device plane offers instead is a measured run-to-run spread ([the contract](../learn/determinism-as-a-contract.md)).
 
 ## Install
 
@@ -169,4 +169,4 @@ The linux x86_64 wheel carries the CUDA backend, so nothing but a driver is need
 
 The [guide](../guide/README.md) explains what every knob actually does, mechanism first: growers in [chapter 4](../guide/4-growing-trees.md), sampling in [chapter 5](../guide/5-sampling.md), regularization and constraints in [chapter 6](../guide/6-regularization-and-constraints.md), early stopping and DART in [chapter 7](../guide/7-early-stopping-and-dart.md).
 
-This page is the surface you call. To extend the engine, read [Concepts to types](../design/api-tour-concepts.md). It is this page's mirror image: the concepts you satisfy to add an objective, a grower, or a compute backend.
+This page is the surface you call. To extend the engine, read the concepts in [`include/bonsai/grower.hpp`](../../include/bonsai/grower.hpp) and [`include/bonsai/objective.hpp`](../../include/bonsai/objective.hpp): each carries the contract a new implementation must honour.

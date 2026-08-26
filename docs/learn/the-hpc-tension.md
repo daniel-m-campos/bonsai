@@ -1,13 +1,13 @@
 # The HPC tension
 
-The seams in [the system map](system-map.md) are concepts, one type per backend.
+bonsai's backend seams are concepts, one type per backend.
 This page is where those seams meet performance: the GPU.
 The honest story is that a concept can only check so much.
 The rest is held by tests, and by rules the code refuses to break.
 
 ## The concept is only a syntactic floor
 
-[Concepts to types](api-tour-concepts.md) quotes both engine concepts and says why they are shaped that way: `HistogramEngine` requires two methods, `GPULevelEngine` refines it with the whole device vocabulary as one concept rather than seven, because the device data plane works whole or not at all.
+The engine concepts in `include/bonsai/grower.hpp` carry their own contracts: `HistogramEngine` requires two methods, `GPULevelEngine` refines it with the whole device vocabulary as one concept rather than seven, because the device data plane works whole or not at all.
 What that page hands to this one is the part no requires-clause can hold: `populate` must accumulate the node's rows into the bins the mappers define, in "an order that is a pure function of configuration," with missing values in the last bin ([`grower.hpp`](../../include/bonsai/grower.hpp)).
 A type can satisfy every signature and bend all of it, and the comment names the consequence: it "trains silently wrong models."
 The compiler cannot see this, but the `[cuda]` parity suite can.
@@ -28,7 +28,7 @@ The device context splits its resident memory into five planes, each with its ow
 
 Dividing by lifetime is what keeps an edge honest: an upload done once per fit must never be redone per tree.
 Naming the planes also makes the boundary crossings countable.
-That is how the [compute DAG](../architecture/16-compute-dag.md) prices a move before it is played.
+That is how the compute-DAG model (`scripts/dag_model.py`) prices a move before it is played.
 
 ## The resident objective deleted a boundary instead of optimizing across it
 
@@ -41,10 +41,10 @@ The resident model proved bit-identical to the host-objective model on a Jetson.
 
 ## What stays host-side on purpose
 
-The control plane stays on the host by design ([grower-backend doc](../architecture/12-grower-backend.md)).
+The control plane stays on the host by design ([decision 41](../decisions.md)).
 Split decisions cross the bus down every level, because the grow loop must observe each level's outputs before opening the next.
 That pins one small device-to-host sync per level, the irreducible floor of about 800 syncs per fit.
-On a healthy host each costs 10 to 20 microseconds ([compute DAG](../architecture/16-compute-dag.md)).
+On a healthy host each costs 10 to 20 microseconds (measured in `scripts/dag_model.py`'s constants).
 Mapper-fit stays host-side too: its cut points come from a seeded RNG stream.
 Reproducing that stream on the device would risk the determinism identity for no gain.
 
@@ -59,8 +59,8 @@ There are no cross-plane shortcuts: a placement move must not change accumulatio
 What that bought:
 
 - The parity suite: one contract, checked at `1e-4`, that any engine must meet.
-- Bit-identical CPU models across architectures and thread counts, checked per commit ([determinism](determinism.md)).
-- The `1e-4` GPU convention: `cuda_*` models are tolerance-equal, not tree-equal, because atomic add order differs. The tests assert prediction tolerance, never tree equality ([GPU-resident doc](../architecture/11-gpu-resident.md)).
+- Bit-identical CPU models across architectures and thread counts, checked per commit ([determinism](determinism-as-a-contract.md)).
+- The `1e-4` GPU convention: `cuda_*` models are tolerance-equal, not tree-equal, because atomic add order differs. The tests assert prediction tolerance, never tree equality ([invariants](../invariants.md)).
 
 The trade is stated plainly.
 The device cannot cut through the seams.
