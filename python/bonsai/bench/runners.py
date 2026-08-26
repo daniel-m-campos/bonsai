@@ -395,16 +395,55 @@ RUNNERS = {Lib.BONSAI: run_bonsai, Lib.XGB: run_xgb, Lib.LGBM: run_lgbm,
            Lib.CATBOOST: run_catboost}
 
 
+def cache_fits(cell: dict, headroom: float = 0.6) -> bool:
+    """Whether a cell can be cached without crowding the fit out of memory.
+
+    A cached cell is resident twice while it loads: once in the cache
+    directory, which is a ram disk on a pod, and once in the arrays the fit
+    reads. The extreme cell is ~71GB of float32 input, so on a 188GB
+    container that pair leaves too little for the libraries that copy it.
+
+    Parameters
+    ----------
+    cell : dict
+        Needs rows, cols and n_test.
+    headroom : float, optional
+        Share of the container's RAM the pair may occupy.
+
+    Returns
+    -------
+    bool
+        False when the caller should generate fresh instead.
+    """
+    both = 2 * (cell["rows"] + cell["n_test"]) * cell["cols"] * 4 / 2**30
+    return both <= headroom * runlog.usable_ram_gb()
+
+
 def cached_gen_data(cell: dict, cache_dir: str):
-    """gen_data memoized to .npy files, loaded back as read-only memmaps.
+    """gen_data memoized to .npy files, loaded back as ordinary arrays.
 
     gen_data is byte-stable in its arguments (guard-tested), so the key is
-    the argument tuple; at 2^31-cell campaigns every regeneration is 8GiB of
-    avoidable work per (variant, rep). Writes go through os.replace so a
+    the argument tuple; every regeneration a cache hit removes is the whole
+    cell drawn again per (variant, rep). Writes go through os.replace so a
     half-written file never satisfies a later cache hit. The recipe is part
     of the key because it is part of the bytes: without it, a cache written
     before decision 112 would silently feed a run measuring after it.
+
+    The load is a full read, NOT a memmap, and the difference is the whole
+    reason this is usable at all. A memmapped array defers its page faults
+    into fit(), which is inside the timed phase and unequally so, since only
+    some libraries re-touch the raw arrays after ingest; that is what made
+    an earlier caching attempt read 12% slow for bonsai leafwise at 16M and
+    kept the pod script from exporting a cache directory. A full read
+    completes before worker() opens its first timer and hands fit() memory
+    indistinguishable from freshly drawn arrays. Decision 113.
+
+    A cell too large to hold twice declines to the generator: the cache is
+    an optimization and never a reason to run out of memory.
     """
+    if not cache_fits(cell):
+        return gen_data(cell["rows"], cell["cols"], cell["seed"],
+                        cell["n_test"], cell["informative"])
     key = (f"r{DATA_RECIPE}-{cell['rows']}x{cell['cols']}"
            f"-s{cell['seed']}-i{cell['informative']}-t{cell['n_test']}")
     root = pathlib.Path(cache_dir)
@@ -417,7 +456,7 @@ def cached_gen_data(cell: dict, cache_dir: str):
             tmp = p.with_name(p.name + ".tmp.npy")
             np.save(tmp, a)
             os.replace(tmp, p)
-    return tuple(np.load(p, mmap_mode="r") for p in paths)
+    return tuple(np.load(p) for p in paths)
 
 
 def worker(spec: dict) -> dict:

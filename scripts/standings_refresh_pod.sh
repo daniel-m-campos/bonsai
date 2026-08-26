@@ -8,11 +8,13 @@
 # One axis, one bundled spec of the same name, one dated output file
 # (<axis>-YYYY-MM.jsonl): the scenario matrix of decision 103.
 #
-# BONSAI_BENCH_DATA_CACHE is not exported here: its memmap reads happen
-# inside fit(), not just data generation, so it changes measured fit_s
-# rather than only speeding up regeneration (12% slower for bonsai
-# leafwise at 16M, and non-uniformly across libraries since only some of
-# them re-touch the raw arrays after ingest).
+# BONSAI_BENCH_DATA_CACHE is exported to a ram disk, which it was not while
+# the cache handed back memmaps: those fault pages inside fit(), so they moved
+# measured fit_s rather than only saving regeneration (12% for bonsai leafwise
+# at 16M, unequally across libraries since only some re-touch the raw arrays
+# after ingest). It now loads whole, before worker() opens a timer, and a cell
+# too large to hold twice declines to the generator (decision 113). One draw
+# per cell instead of one per variant and repeat.
 #
 # PLANE picks which half of the matrix this pod measures. A gpu pod builds
 # python-cuda and runs the device axes; a cpu pod builds the plain python
@@ -79,12 +81,15 @@ else
     [ -n "$HOST_TAG" ] || HOST_TAG="pod-$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 | tr ' ' '-')"
 fi
 
-BENCH=(env PYTHONPATH="$BUILD" /opt/venv/bin/python -m bonsai.bench)
+DATA_CACHE=/dev/shm/bonsai-bench-data
+mkdir -p "$DATA_CACHE"
+BENCH=(env PYTHONPATH="$BUILD" BONSAI_BENCH_DATA_CACHE="$DATA_CACHE" \
+    /opt/venv/bin/python -m bonsai.bench)
 # OMP_WAIT_POLICY=passive only on the CPU plane: a spin-wait barrier spends
 # on waiting whatever the cap withholds, and the device planes are measured
 # without it, so the flag never silently crosses into a gpu axis.
 CPU_BENCH=(env OMP_WAIT_POLICY=passive PYTHONPATH="$BUILD" \
-    /opt/venv/bin/python -m bonsai.bench)
+    BONSAI_BENCH_DATA_CACHE="$DATA_CACHE" /opt/venv/bin/python -m bonsai.bench)
 SPECS=/root/bonsai/python/bonsai/bench/specs
 # A bandwidth host must leave one core of its quota unclaimed, because a fit
 # at threads == quota sits on the ceiling and the timing describes the
@@ -151,11 +156,14 @@ if [ "$PLANE" = gpu ] && [[ ",$AXES," == *",$PARITY_AXIS,"* ]]; then
     done
 fi
 
-# The extreme axis input is 2^34 f32 cells (~64GiB); what sizes this floor
-# is catboost, whose ingest copies peak near 196GB host RSS on that input,
-# measured. A pod without the headroom must say so instead of dying halfway
-# through a three-hour sweep.
-EXTREME_RAM_GB=320
+# The extreme axis input is 2^34 f32 cells (~71GB). This floor is bonsai's
+# requirement plus room to generate, not the fleet's: bonsai peaked at 66.7GB
+# there, so a single 188GB card clears it. catboost wants 196.3GB and now
+# publishes an OOM instead, which is a result rather than a gap, and the row
+# carries the container size it OOMed at (decision 113). Sizing this floor to
+# a competitor's appetite is what used to force a two-GPU draw at twice the
+# rate. A pod under the floor still says so rather than dying halfway.
+EXTREME_RAM_GB=150
 
 # The RAM this container may use, in whole GB. runlog.usable_ram_gb() is the
 # one implementation of the cgroup-limit-or-machine rule, including the v1
@@ -214,7 +222,7 @@ run_axis() {
         gpu-extreme)
             ram_gb=$(container_ram_gb)
             if [ "$ram_gb" -lt "$EXTREME_RAM_GB" ]; then
-                echo "SKIP gpu-extreme: this container may use ${ram_gb}GB RAM, below the ${EXTREME_RAM_GB}GB floor (catboost ingest peaks near 196GB host on the 2^34-cell input)"
+                echo "SKIP gpu-extreme: this container may use ${ram_gb}GB RAM, below the ${EXTREME_RAM_GB}GB floor (bonsai peaks near 66.7GB host on the 2^34-cell input, plus room to generate it)"
                 return 0
             fi
             run_spec gpu-extreme ;;

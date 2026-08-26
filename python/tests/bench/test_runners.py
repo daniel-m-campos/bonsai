@@ -14,6 +14,31 @@ import pytest
 from bonsai.bench import synth
 
 
+def test_a_cell_too_large_to_hold_twice_declines_to_the_generator(monkeypatch):
+    """The cache is an optimization, never a reason to run out of memory: it
+    is resident twice while it loads, once on the ram disk and once in the
+    arrays the fit reads."""
+    from bonsai.bench import runners
+
+    extreme = {"rows": 16_777_216, "cols": 1024, "seed": 42,
+               "n_test": 500_000, "informative": 20}
+    small = {"rows": 3000, "cols": 12, "seed": 7, "n_test": 500,
+             "informative": 5}
+    monkeypatch.setattr(runners.runlog, "usable_ram_gb", lambda: 188)
+    assert not runners.cache_fits(extreme)   # ~142GB of a 188GB container
+    assert runners.cache_fits(small)
+
+    # ... and declining means no cache files are written at all.
+    monkeypatch.setattr(runners.runlog, "usable_ram_gb", lambda: 0)
+    with tempfile.TemporaryDirectory() as td:
+        got = runners.cached_gen_data(small, td)
+        assert not list(pathlib.Path(td).iterdir())
+        direct = synth.gen_data(small["rows"], small["cols"], small["seed"],
+                                small["n_test"], small["informative"])
+        for a, b in zip(got, direct):
+            np.testing.assert_array_equal(a, b)
+
+
 def test_data_cache():
     from bonsai.bench import runners
 
@@ -28,7 +53,12 @@ def test_data_cache():
         second = runners.cached_gen_data(cell, td)
         for d, a, b in zip(direct, first, second):
             assert np.array_equal(d, a) and np.array_equal(d, b)
-        assert isinstance(second[0], np.memmap)
+        # Owned memory, NOT a memmap: a memmap defers its page faults into
+        # fit(), which is inside the timed phase and unequally so across
+        # libraries, which is what kept the pod script from exporting a cache
+        # at all. A full read completes before worker() opens a timer.
+        assert not isinstance(second[0], np.memmap)
+        assert second[0].flags["C_CONTIGUOUS"]
         assert second[0].dtype == np.float32
 
 
