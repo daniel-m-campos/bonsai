@@ -236,8 +236,15 @@ size_t check_parity(size_t n_rows, size_t n_feats, size_t max_depth, char const 
 // not follow, many times over. If dead leaves ever fell to zero the parity
 // cases would stop exercising it; if a row ever reached one, an invariant of
 // oblivious densification would have changed. Both are worth a failure.
+// INVARIANT: zero-cover-branches-are-real
+// Oblivious trees densify into a perfect shape, so a trained model really does
+// carry leaves no training row reached. TreeSHAP's zero-cover guard therefore
+// protects against an input that occurs, not a theoretical one. The second
+// half matters as much: held-out rows drawn off the training joint
+// distribution still do not route into a dead leaf, so the guard is about
+// weighting those branches at zero rather than about rows landing there.
 TEST_CASE("a densified levelwise model carries dead slots nothing can reach",
-          "[shap][oblivious]")
+          "[shap][oblivious][invariant]")
 {
     size_t const        n       = 2048;
     size_t const        nf      = 5;

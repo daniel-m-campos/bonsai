@@ -646,7 +646,15 @@ TEST_CASE("CudaDepthwiseGrower matches CPU past the 48KiB shared-memory budget",
     }
 }
 
-TEST_CASE("A max_bin past the shared-memory ceiling is refused", "[cuda][grower]")
+// INVARIANT: device-oversized-tree-refuses-not-falls-back
+// A tree the device cannot hold is refused, never quietly moved to the host.
+// All three device planes gate on the same histogram budget and throw
+// ConfigError naming the limit; the host plane trains the same dataset without
+// complaint, so the refusal is a device-capacity fact rather than a rejected
+// dataset. Falling back instead would turn a configuration error into a silent
+// performance cliff.
+TEST_CASE("A max_bin past the shared-memory ceiling is refused",
+          "[cuda][grower][invariant]")
 {
     if (!cuda_available())
     {
@@ -707,7 +715,15 @@ TEST_CASE("A max_bin past the shared-memory ceiling is refused", "[cuda][grower]
 
 // ---- The ingest transaction (decision 54) ------------------------------------
 
-TEST_CASE("cuda_ingest bins bit-identically to the host fill", "[cuda][ingest]")
+// INVARIANT: device-bin-width-criterion-matches-host
+// The u8-vs-u16 storage decision uses the same bin-count criterion on both
+// sides, so a device-binned Dataset and a host-binned one hold the same width
+// as well as the same values. Disagreeing would read a plane at the wrong
+// stride, which is a memory-safety fault rather than a wrong number. The u16
+// section is the load-bearing half: it pushes max_bin past 256 and asserts the
+// widths match, that the width really did switch, and that every cell agrees.
+TEST_CASE("cuda_ingest bins bit-identically to the host fill",
+          "[cuda][ingest][invariant]")
 {
     if (!cuda_available())
     {

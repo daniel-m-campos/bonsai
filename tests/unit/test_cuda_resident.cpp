@@ -282,7 +282,15 @@ template <typename G> using MaeBooster = Booster<MAEObjective, G, AllRowsSampler
 
 } // namespace
 
-TEST_CASE("Resident MSE matches host-objective GPU (depthwise)", "[cuda][resident]")
+// INVARIANT: device-objective-formula-matches-host
+// The device gradient and hessian kernels must stay numerically identical to
+// src/objective.cpp's host formulas. Device-resident training reads them every
+// round with no host cross-check, so a divergence shows up only as a quality
+// difference. This suite is the cross-check: MSE, LogLoss and Poisson, on both
+// the depthwise and levelwise planes, against the same fit with the host
+// objective forced.
+TEST_CASE("Resident MSE matches host-objective GPU (depthwise)",
+          "[cuda][resident][invariant]")
 {
     if (!cuda_available())
     {

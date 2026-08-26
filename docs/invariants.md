@@ -20,6 +20,24 @@ DART and early stopping are incompatible by construction and the combination thr
 
 - enforced by: [`train_with_progress: DART and early stopping refuse to combine`](../tests/unit/test_cli_pipeline.cpp)
 
+### device-bin-width-criterion-matches-host
+
+The u8-vs-u16 storage decision uses the same bin-count criterion on both sides, so a device-binned Dataset and a host-binned one hold the same width as well as the same values. Disagreeing would read a plane at the wrong stride, which is a memory-safety fault rather than a wrong number. The u16 section is the load-bearing half: it pushes max_bin past 256 and asserts the widths match, that the width really did switch, and that every cell agrees.
+
+- enforced by: [`cuda_ingest bins bit-identically to the host fill`](../tests/unit/test_cuda_grower.cpp)
+
+### device-objective-formula-matches-host
+
+The device gradient and hessian kernels must stay numerically identical to src/objective.cpp's host formulas. Device-resident training reads them every round with no host cross-check, so a divergence shows up only as a quality difference. This suite is the cross-check: MSE, LogLoss and Poisson, on both the depthwise and levelwise planes, against the same fit with the host objective forced.
+
+- enforced by: [`Resident MSE matches host-objective GPU (depthwise)`](../tests/unit/test_cuda_resident.cpp)
+
+### device-oversized-tree-refuses-not-falls-back
+
+A tree the device cannot hold is refused, never quietly moved to the host. All three device planes gate on the same histogram budget and throw ConfigError naming the limit; the host plane trains the same dataset without complaint, so the refusal is a device-capacity fact rather than a rejected dataset. Falling back instead would turn a configuration error into a silent performance cliff.
+
+- enforced by: [`A max_bin past the shared-memory ceiling is refused`](../tests/unit/test_cuda_grower.cpp)
+
 ### fit-id-gates-resident-reuse
 
 A row-narrowed view mints a FitId distinct from its parent's, and a copy shares one. Anything caching against a Dataset keys on these tokens, so an equal token means "the same fit" with no allocator caveat: the device resident state is armed for ONE FitId, and a token that compared equal across two different fits would leave the previous fit's labels, scores and rows live under the next one.
@@ -55,6 +73,12 @@ A row sitting exactly on a cut routes the same at train time and at predict time
 A row view narrows which rows a fit visits and leaves the plane alone: view_n_rows() is the selection, plane_n_rows() stays the storage. Every row id remains a global id into the plane, which is why grad, hess, labels and the row-major mirror stay full length whatever the view selects.
 
 - enforced by: [`Dataset: a view narrows its rows and leaves the plane alone`](../tests/unit/test_dataset.cpp)
+
+### zero-cover-branches-are-real
+
+Oblivious trees densify into a perfect shape, so a trained model really does carry leaves no training row reached. TreeSHAP's zero-cover guard therefore protects against an input that occurs, not a theoretical one. The second half matters as much: held-out rows drawn off the training joint distribution still do not route into a dead leaf, so the guard is about weighting those branches at zero rather than about rows landing there.
+
+- enforced by: [`a densified levelwise model carries dead slots nothing can reach`](../tests/unit/test_cuda_shap.cpp)
 
 ## Asserted in prose
 
