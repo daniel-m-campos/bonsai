@@ -27,7 +27,7 @@ Working agreement for agents in this repository. Where content lives is governed
 
 - Never run bare `git stash` or `git stash pop`. The stash stack is shared across all worktrees and other sessions may push or pop concurrently. Prefer a temporary WIP commit; if you must stash, use a tagged `git stash push -u -m` and `apply` by SHA.
 - Never `git add -A` or `git add -u`. Stage by explicit path. Long-lived uncommitted probe hunks may be present in the working tree and must never reach a commit.
-- Never hand-edit generated files. They are produced by `make docs-check` renderers and the build: `docs/invariants.md`, `docs/use/parameters.md`, `docs/use/make-map.md`, `docs/learn/timeline.md`, `docs/method/results/*`, the README standings block, and `python/bonsai/_params.py`. Edit the source or the generator, then re-render.
+- Never hand-edit generated files. They are produced by `make docs-check` renderers and the build: `docs/invariants.md`, `docs/use/parameters.md`, `docs/learn/timeline.md`, `docs/method/results/*`, the README standings block, and `python/bonsai/_params.py`. Edit the source or the generator, then re-render.
 - Never document a contract in prose when a test can hold it. A contract is worth writing down only if something fails when it breaks, so an invariant is a test carrying an `// INVARIANT: <id>` marker, and `docs/invariants.md` is generated from those markers. Only genuinely untestable contracts (build flags, packaging, nondeterminism claims, decisions) are hand-written, in `docs/invariants.src.md`, where they render as asserted rather than enforced. Full rules: [docs/STYLE.md](docs/STYLE.md), "Writing an invariant".
 - Never hand-edit provenance: `benchmarks/standings.json` stamps, measured shas, and results rows are written by `scripts/update_standings.py` and the refresh machinery only. A row whose provenance is wrong is re-measured, not corrected in place.
 - Never quote cross-pod absolute timings; only same-pod interleaved comparisons are valid. See the benchmark protocol.
@@ -47,8 +47,10 @@ Working agreement for agents in this repository. Where content lives is governed
 - `include/bonsai/` public headers; `src/` implementation; `src/cuda/` the device backend; `src/python/` the nanobind module; `src/cli/` the CLI.
 - `python/bonsai/` the Python package; `python/bonsai/bench/` the benchmark harness; `python/tests/` pytest.
 - `tests/` Catch2 C++ suites; `scripts/` tooling and generators; `benchmarks/` results ledger and evidence records; `configs/` dataset TOMLs.
-- Build: `make python` builds the extension into `build/python` (tests read it via `PYTHONPATH=build/python`). `make docs-check`, `make lint`, `make lint-python`, `make format-check` are the local gates; run them before any PR.
+- Build: `make python` builds the extension into `build/python` (tests read it via `PYTHONPATH=build/python`). `make ci` runs the gates.
 
 ## Verification floor
 
-Before opening a PR: format-check, lint (read all output), lint-python, docs-check, the C++ tests via ctest, and pytest. A change touching training or serialization must not move `scripts/model_hash.py` unless that is its stated purpose; wire identity is the gate.
+Run `make ci` before opening a PR (`ARGS=--fast` skips clang-tidy). It runs every gate this host can run and NAMES the ones it cannot, because a gate you forgot and a gate that passed look identical in a checklist. The three it cannot run on a laptop (sanitizers, the race gate, the CUDA compile) run in CI and on a GPU host.
+
+A change touching training or serialization must not move `scripts/model_hash.py` unless that is its stated purpose; wire identity is the gate.

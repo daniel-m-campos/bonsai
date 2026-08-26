@@ -183,7 +183,6 @@ help:  ## List the common make targets.
 docs-check:  ## Verify generated docs and lint prose (the five CI doc gates).
 	@python3 scripts/render_results.py --check
 	@python3 scripts/render_params.py --check
-	@python3 scripts/render_make_map.py --check
 	@python3 scripts/render_timeline.py --check
 	@python3 scripts/render_invariants.py --check
 	@python3 scripts/docs_lint.py
