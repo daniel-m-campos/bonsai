@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <numeric>
 #include <random>
 #include <string>
@@ -34,6 +35,17 @@ BernoulliSampler::BernoulliSampler(Config const &cfg) : p_(cfg.sampler.subsample
     }
 }
 
+// PROBE ONLY, never ship: BONSAI_PROBE_SEGMENTS=k makes this sampler emit the
+// same row count as p_ would, laid out as k evenly spaced contiguous runs
+// instead of a random draw. k=1 is a walk-forward prefix. This isolates index
+// locality from row count: every other code path sees an identical ascending
+// list of identical length.
+static int probe_segments()
+{
+    char const *raw = std::getenv("BONSAI_PROBE_SEGMENTS");
+    return raw != nullptr ? std::atoi(raw) : 0;
+}
+
 size_t BernoulliSampler::sample(floats_out /*grad*/, floats_out /*hess*/,
                                 std::mt19937 &rng, row_index_view candidates,
                                 row_index_out out) const
@@ -42,6 +54,25 @@ size_t BernoulliSampler::sample(floats_out /*grad*/, floats_out /*hess*/,
     {
         std::ranges::copy(candidates, out.begin());
         return candidates.size();
+    }
+
+    if (int const k = probe_segments(); k > 0)
+    {
+        size_t const n     = candidates.size();
+        size_t const want  = static_cast<size_t>(static_cast<double>(n) * p_);
+        size_t const per   = std::max<size_t>(1, want / static_cast<size_t>(k));
+        size_t const strid = n / static_cast<size_t>(k);
+        size_t       n_out = 0;
+        for (size_t s = 0; s < static_cast<size_t>(k) && n_out < want; ++s)
+        {
+            size_t const begin = s * strid;
+            size_t const end   = std::min(begin + per, n);
+            for (size_t r = begin; r < end && n_out < want; ++r)
+            {
+                out[n_out++] = candidates[r];
+            }
+        }
+        return n_out;
     }
 
     std::bernoulli_distribution keep(p_);

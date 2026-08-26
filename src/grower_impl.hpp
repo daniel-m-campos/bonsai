@@ -173,6 +173,17 @@ inline std::vector<feature_id_t> sample_features(size_t n_features, float fracti
     }
     auto const k = std::max<size_t>(
         1, static_cast<size_t>(std::ceil(fraction * static_cast<float>(n_features))));
+    // PROBE ONLY, never ship: BONSAI_PROBE_FEATCONTIG=1 takes the first k
+    // features instead of a spread draw. The device plane is tile-blocked at
+    // width 8, so a contiguous selection empties whole tiles (which the kernel
+    // skips) while a spread selection of the same size touches every tile.
+    // Same k either way: this isolates tile occupancy from feature count.
+    if (char const *raw = std::getenv("BONSAI_PROBE_FEATCONTIG");
+        raw != nullptr && *raw == '1')
+    {
+        all.resize(k);
+        return all;
+    }
     std::vector<feature_id_t> selected;
     selected.reserve(k);
     std::sample(all.begin(), all.end(), std::back_inserter(selected), k, rng);
