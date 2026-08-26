@@ -83,13 +83,19 @@ fi
 
 DATA_CACHE=/dev/shm/bonsai-bench-data
 mkdir -p "$DATA_CACHE"
+# BONSAI_BENCH_GIT_SHA states the commit rather than letting the runner infer
+# it: runlog.git_sha() shells out to `git rev-parse` in the CURRENT directory,
+# so a runner launched from anywhere but the checkout records "unknown" and the
+# row cannot be attributed. This script already asserted HEAD is GIT_SHA above.
 BENCH=(env PYTHONPATH="$BUILD" BONSAI_BENCH_DATA_CACHE="$DATA_CACHE" \
+    BONSAI_BENCH_GIT_SHA="$GIT_SHA" \
     /opt/venv/bin/python -m bonsai.bench)
 # OMP_WAIT_POLICY=passive only on the CPU plane: a spin-wait barrier spends
 # on waiting whatever the cap withholds, and the device planes are measured
 # without it, so the flag never silently crosses into a gpu axis.
 CPU_BENCH=(env OMP_WAIT_POLICY=passive PYTHONPATH="$BUILD" \
-    BONSAI_BENCH_DATA_CACHE="$DATA_CACHE" /opt/venv/bin/python -m bonsai.bench)
+    BONSAI_BENCH_DATA_CACHE="$DATA_CACHE" BONSAI_BENCH_GIT_SHA="$GIT_SHA" \
+    /opt/venv/bin/python -m bonsai.bench)
 SPECS=/root/bonsai/python/bonsai/bench/specs
 # A bandwidth host must leave one core of its quota unclaimed, because a fit
 # at threads == quota sits on the ceiling and the timing describes the
@@ -228,11 +234,26 @@ run_axis() {
             run_spec gpu-extreme ;;
         cpu-tall|cpu-wide)
             run_cpu_axis "$1" ;;
-        gpu-tall|gpu-wide|gpu-early-stop)
+        gpu-tall|gpu-wide|gpu-early-stop|gpu-shap)
             run_spec "$1" ;;
+        quality-grinsztajn)
+            run_grinsztajn ;;
         *)
-            echo "unknown axis: $1" >&2; exit 2 ;;
+            fail_axis "$1" "no branch measures this axis; the driver asked for something this script cannot run"
+            return 0 ;;
     esac
+}
+
+# The quality division has no spec: it fits a fixed dataset suite rather than
+# a cell grid, so it takes its own module and an output path instead of
+# run_spec's --spec/--out pair. Same env as BENCH, spelled out rather than
+# suffixed onto it, because the array-suffix idiom that would reuse it reads
+# as a typo.
+run_grinsztajn() {
+    env PYTHONPATH="$BUILD" BONSAI_BENCH_DATA_CACHE="$DATA_CACHE" \
+        BONSAI_BENCH_GIT_SHA="$GIT_SHA" \
+        /opt/venv/bin/python -m bonsai.bench.grinsztajn \
+        "/root/standings/quality-grinsztajn-$YM.jsonl"
 }
 
 run_spec() {

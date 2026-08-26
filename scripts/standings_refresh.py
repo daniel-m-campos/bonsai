@@ -117,9 +117,16 @@ CPU_PLANE_HOSTS = (PLANE_GPU, "cpupod")
 PARITY_BAND_PCT = 5
 
 # Every axis is the stem of its dated results file AND the name of the
-# bundled spec the pod script runs to produce it.
+# branch the pod script runs to produce it.
 AXES = ("gpu-tall", "gpu-wide", "gpu-extreme", "cpu-tall", "cpu-wide",
-        "gpu-early-stop")
+        "gpu-early-stop", "gpu-shap", "quality-grinsztajn")
+
+# Measured on this machine, not the pod: the code division reads the tree
+# rather than running it, so a rental would only rent a checkout. Named here
+# so the registry-agreement check below can tell "deliberately local" from
+# "silently unreachable", which is the drift that let a release ship two axes
+# the driver could not refresh (issue #433).
+LOCAL_AXES = ("code",)
 
 # The axis the parity rows anchor: same cell, same pod, same session.
 PARITY_AXIS = "gpu-tall"
@@ -218,6 +225,9 @@ def measure(args: argparse.Namespace) -> int:
         specs, ``RUNPOD_API_KEY`` is not set, a pod's gate failed an axis,
         or a pod finished without delivering rows for a requested axis.
     """
+    if drift := registry_drift():
+        print(drift, file=sys.stderr)
+        return 1
     axes = [a.strip() for a in args.axes.split(",") if a.strip()]
     if args.only_stale:
         stale = stale_axes()
@@ -451,6 +461,42 @@ def supersede(args: argparse.Namespace) -> int:
     subprocess.run(["gh", "pr", "create", "--base", "main", "--title",
                     title, "--body", body], check=True, cwd=REPO)
     return 0
+
+
+def registry_drift() -> str:
+    """Why this driver cannot service the registry, or "" when it can.
+
+    The registry decides what a release gate demands; this module decides
+    what a rental measures. When the two disagree the failure is silent in
+    the worst direction: `measure` refreshes a subset and reports success,
+    and the missing axes are noticed only if someone reads the registry.
+    1.15.0 shipped that way, with `gpu-shap` and `quality-grinsztajn`
+    reachable by no branch of the pod script (issue #433).
+
+    Returns
+    -------
+    str
+        An error naming both directions of the disagreement, or "".
+    """
+    known = set(AXES) | set(LOCAL_AXES)
+    # Read rather than import: scripts/ is not a package, and check_standings
+    # is already reached by subprocess everywhere else in this module.
+    registry = json.loads((REPO / "benchmarks" / "standings.json").read_text())
+    registry.pop("_", None)  # the schema comment key, as load_registry drops it
+    registered = set(registry)
+    if known == registered:
+        return ""
+    lines = ["ERROR: the driver and benchmarks/standings.json disagree "
+             "about which axes exist"]
+    if missing := sorted(registered - known):
+        lines.append(f"  in the registry, measured by nothing: "
+                     f"{', '.join(missing)}")
+    if extra := sorted(known - registered):
+        lines.append(f"  measured here, in no registry entry: "
+                     f"{', '.join(extra)}")
+    lines.append("  add the branch to standings_refresh_pod.sh and the name "
+                 "to AXES, or to LOCAL_AXES if it is measured off-pod")
+    return "\n".join(lines)
 
 
 def stale_axes() -> set[str]:

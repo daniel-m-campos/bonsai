@@ -25,11 +25,13 @@ ENV PATH="/root/.local/bin:${PATH}"
 # xgboost bounded below 3.4: its 3.4.0 wheel ships a CUDA 13 runtime that
 # silently falls back to CPU on this image's r550-and-older driver hosts.
 # nvidia-ml-py gives the bench VRAM sampler per-pid attribution via NVML, which
-# works inside containers where nvidia-smi's PID namespace does not.
+# works inside containers where nvidia-smi's PID namespace does not. openml
+# fetches the quality division's dataset suite; without it the
+# quality-grinsztajn axis dies on import partway through a rental.
 RUN uv venv --python 3.12 /opt/venv \
     && uv pip install --python /opt/venv/bin/python \
         cmake ninja numpy "nanobind<3" scikit-learn pandas tabulate matplotlib \
-        "xgboost>=3.2,<3.4" catboost nvidia-ml-py
+        "xgboost>=3.2,<3.4" catboost nvidia-ml-py openml
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # lightgbm from source with the CUDA backend: the PyPI wheel is CPU-only,

@@ -57,7 +57,21 @@ class Row:
 
 
 def git_sha() -> str:
-    """The short HEAD sha, or "unknown" outside a git checkout."""
+    """The commit these rows describe, or "unknown" if nothing states it.
+
+    `BONSAI_BENCH_GIT_SHA` wins when set, because the fallback asks git about
+    the *current directory*: a runner launched from anywhere but the checkout
+    records "unknown" and the rows become unattributable, which is what the
+    pod script's checkout assertion exists to prevent.
+
+    Returns
+    -------
+    str
+        The stated sha, the short HEAD sha, or "unknown".
+    """
+    stated = os.environ.get("BONSAI_BENCH_GIT_SHA", "").strip()
+    if stated:
+        return stated
     try:
         out = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
                              capture_output=True, text=True, timeout=10)
