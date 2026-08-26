@@ -1,6 +1,5 @@
 // CUDA histogram backend: clang CUDA C++, same libc++/C++23 as the rest of
-// the build. Design, batching, and precision scheme:
-// docs/invariants.md.
+// the build.
 
 #include "bonsai/config/errors.hpp"
 #include "bonsai/config/tree_config.hpp"

@@ -3,7 +3,7 @@
 // Owning device allocation and the host/device staging pair it backs, plus the
 // small POD types and tuning constants that cross the host/device boundary.
 // Shared by the CUDA translation units (the single-GPU histogram_engine.cu and
-// the device-context implementation TU; docs/invariants.md):
+// the device-context implementation TU):
 // everything here has external linkage in namespace bonsai::cuda_detail and
 // references no internal-linkage entity, so including it from more than one TU
 // is ODR-clean. These are kernel-free RAII/utility templates and PODs; the

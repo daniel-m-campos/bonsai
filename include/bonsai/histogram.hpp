@@ -41,7 +41,7 @@ using cell_view_t = std::span<HistCell const>;
 // block pool, and a Histogram must not outlive its arena. Cells store float
 // sums; every reduction over them runs in double, and node totals are
 // computed at split time rather than accumulated in the fill, which is what
-// keeps the subtraction trick exact (docs/invariants.md). The last cell per
+// keeps the subtraction trick exact (invariants: subtraction-trick). The
 // feature is the missing bin: honest data, outside the split sweep.
 class Histogram
 {
@@ -262,7 +262,7 @@ class ArenaLayout
 // One node's per-feature histograms and the single arena their cells live
 // in. The two are one type because they are one lifetime: the histograms
 // view the arena, and both move together whenever a node's histograms do
-// (docs/invariants.md).
+// together.
 class NodeHistograms
 {
   public:

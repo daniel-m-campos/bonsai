@@ -161,7 +161,7 @@ inline int n_threads()
 // OUTPUTS are bit-identical at any thread count; sites whose work
 // DECOMPOSITION consults n_threads() (the fill plan) key the model bits to
 // the configured count, the fixed-N contract
-// (docs/invariants.md). Dynamic scheduling keeps asymmetric
+// (invariants: host-determinism). Dynamic scheduling keeps asymmetric
 // cores (e.g. P/E) busy; the chunk size scales with n so per-chunk overhead
 // stays negligible for big loops while small loops still spread one index
 // per thread. A team of one runs the loop inline, entering no region.

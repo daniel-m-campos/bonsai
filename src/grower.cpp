@@ -27,7 +27,7 @@ namespace
 
 // Density cutoff: a node holding rows >= n_rows / den routes to the column
 // fill, sparser ones to the row-chunk fill; measured, not tunable
-// (docs/invariants.md).
+// by measurement.
 constexpr size_t k_col_fill_den = 4;
 
 } // namespace
@@ -89,7 +89,7 @@ bool CpuHistogramEngine::populate_lone(Dataset const &ds, floats_view grad,
 // over the row-major mirror — cache-friendly at any node sparsity, with
 // sums reproducible at a fixed thread count; single-chunk nodes and the u16
 // feature-parallel path stay bit-identical at any thread count
-// (docs/invariants.md).
+// (invariants: host-determinism).
 void CpuHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
                                        floats_view hess, split_input_refs nodes,
                                        std::span<feature_id_t const> selected)

@@ -1,5 +1,5 @@
 // Out-of-line bodies for CudaDeviceContext and CudaIngestPlane, compiled once
-// as CUDA C++ (docs/invariants.md). The header carries the
+// as CUDA C++. The header carries the
 // declarations; every kernel launch and cuda_runtime call lives here, where
 // the anonymous-namespace kernels in kernels.cuh stay private to this TU. This
 // is a move-only split of the former header-only implementation: no logic,
@@ -1244,7 +1244,7 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
     lap(prof.unpack_s);
 }
 
-// --- Leaf plane (docs/invariants.md) ----------------------
+// --- Leaf plane -------------------------------------------
 
 bool CudaDeviceContext::leaf_pool_ok(size_t bytes) const
 {

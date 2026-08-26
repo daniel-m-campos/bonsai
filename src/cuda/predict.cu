@@ -1,6 +1,6 @@
 // Device predict: the packed ensemble and the whole-ensemble bin-space walk
 // over a resident ingest plane. Clang CUDA C++, same libc++/C++23 as the rest
-// of the build. Design: docs/invariants.md.
+// of the build.
 
 #include "bonsai/bin_mappers.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
@@ -35,7 +35,7 @@ using namespace cuda_detail;
 
 // The node tables are flat SoA arrays offset by hand, and the kernel's
 // same-typed pointer parameters are the shape every kernel in this backend
-// has (docs/invariants.md).
+// has.
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters,readability-identifier-naming)
 
 namespace

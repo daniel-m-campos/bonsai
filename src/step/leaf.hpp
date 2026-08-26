@@ -122,7 +122,7 @@ template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT> class Leaf
 };
 
 // ---------------------------------------------------------------------------
-// GPU leaf plane (docs/invariants.md): one histogram slot
+// GPU leaf plane: one histogram slot
 // pool per tree and one partition per heap pop. Every tree runs on the device:
 // leaf_begin_root refuses a tree whose histograms or slot pool the device
 // cannot hold rather than moving it to the host plane.

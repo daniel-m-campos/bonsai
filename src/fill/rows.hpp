@@ -78,7 +78,7 @@ inline void fill_rows(SplitInput const &node, size_t first, size_t last,
     std::span<row_id_t const> const     rows    = node.rows;
     // Prefetch distance: the row loop is DRAM-latency-bound at depth, and the
     // lookahead reads the node's row list rather than this chunk's, so a chunk
-    // boundary costs no dead zone (docs/invariants.md). Reads
+    // boundary costs no dead zone. Reads
     // only, so results are bit-identical.
     constexpr size_t k_ahead = 16;
     // The node's last rows go unprefetched, peeled out so the hot loop
@@ -199,7 +199,7 @@ struct ReducePlan
 // Uniform static partition: node-major fixed-grain row chunks split into
 // contiguous per-thread ranges, which keeps a thread's live scatter target to
 // one node histogram, bounds the partials at n_threads - 1, and fixes the
-// summation order (docs/invariants.md).
+// summation order (invariants: host-determinism).
 inline ReducePlan const &plan_reduce(split_input_refs nodes, size_t grain)
 {
     static thread_local ReducePlan plan;
@@ -344,7 +344,7 @@ inline void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes,
 }
 
 // Rows per chunk in the partition; measured, not tunable
-// (docs/invariants.md).
+// by measurement.
 inline constexpr size_t k_reduce_grain = 1024;
 
 // A level's fill routes each node either to the dense column fill or to this

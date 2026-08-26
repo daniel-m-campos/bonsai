@@ -1,7 +1,7 @@
 // Device TreeSHAP: the packed leaf paths and the closed-form walk that
 // evaluates them against a resident ingest plane. Clang CUDA C++, same
-// libc++/C++23 as the rest of the build. Design: docs/invariants.md,
-// and include/bonsai/shap_paths.hpp for the closed form itself.
+// libc++/C++23 as the rest of the build. The closed form itself is in
+// include/bonsai/shap_paths.hpp.
 
 #include "bonsai/bin_mappers.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
@@ -37,7 +37,7 @@ using namespace cuda_detail;
 
 // The packed tables are flat arrays offset by hand, and the kernel's
 // same-typed pointer parameters are the shape every kernel in this backend
-// has (docs/invariants.md).
+// has.
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters,readability-identifier-naming,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
 namespace

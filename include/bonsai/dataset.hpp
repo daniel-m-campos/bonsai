@@ -36,7 +36,7 @@ enum class FitId : uint64_t
 // inferred: FitId/LabelsId tokens say when two Datasets share a plane or
 // labels, and anything caching against a Dataset (device upload, resident
 // labels) must key on a token, not an address. Row identity is the wire
-// contract: what a row id means never changes across views (decision 103),
+// contract: what a row id means never changes across views,
 // so a reordered fit is a rewrite, not a remap.
 class Dataset
 {
