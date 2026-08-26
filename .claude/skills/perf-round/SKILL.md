@@ -7,20 +7,9 @@ description: >
   exists because every shortcut in it has already failed once.
 ---
 
-Why this exists: profilers lie in exactly the places that matter. Case E1 is
-the round instrumentation cancelled, where the largest line in the GPU grow
-profile turned out to be the previous level's histograms draining at the
-profiler's own sync, and a multi-hour kernel rewrite was called off before any
-kernel code was written (decision 62). Run the other way, the same ledger
-predicted the one-line prefetch that closed the largest CPU loss on any chart
-(decision 61). Isolated measurements mislead in the same shape: a
-microbenchmark inherits the bottleneck structure of the isolation, not of the
-system, which is why an accumulator split that looked like a win on
-cache-resident arrays was flat in the real streaming loop (decision 49). Price
-a change in the real loop or not at all.
+Why this exists: profilers lie in exactly the places that matter. Case E1 is the round instrumentation cancelled, where the largest line in the GPU grow profile turned out to be the previous level's histograms draining at the profiler's own sync, and a multi-hour kernel rewrite was called off before any kernel code was written (decision 62). Run the other way, the same ledger predicted the one-line prefetch that closed the largest CPU loss on any chart (decision 61). Isolated measurements mislead in the same shape: a microbenchmark inherits the bottleneck structure of the isolation, not of the system, which is why an accumulator split that looked like a win on cache-resident arrays was flat in the real streaming loop (decision 49). Price a change in the real loop or not at all.
 
-Rationale and case studies as a story: `docs/guide/11-performance-engineering.md`.
-`scripts/dag_model.py` is the living evaluator. The sequence:
+Rationale and case studies as a story: `docs/guide/11-performance-engineering.md`. `scripts/dag_model.py` is the living evaluator. The sequence:
 
 ## 1. Decompose before designing
 
