@@ -47,6 +47,7 @@ exclude_docs: |
   reviews/
   hooks/
   feature_gap.md
+  invariants.src.md
 
 hooks:
   - docs/hooks/repo_links.py

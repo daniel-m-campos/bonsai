@@ -10,7 +10,7 @@ The routing table. Every piece of written content has exactly one normative home
 |---|---|---|
 | conventions and the never-do list | `CLAUDE.md` | loaded every agent session |
 | single-file constraints: what breaks if you change this | a comment at the definition site | the diff that breaks it touches the same file |
-| cross-file contracts | [invariants.md](invariants.md) | the invariants lint in `docs-check` |
+| cross-file contracts | a test, indexed into [invariants.md](invariants.md) | the test fails when the behavior changes |
 | rationale, measurements, rejected alternatives | [decisions.md](decisions.md), cited by number | append-only; corrections are status banners |
 | pedagogy | `guide/` and `learn/` | docs CI runs the examples |
 | adopter reference | `use/` and `method/`, generated where possible | generators re-render in `docs-check` |
@@ -19,9 +19,26 @@ The routing table. Every piece of written content has exactly one normative home
 Two tests route a claim:
 
 - Falsifiable by reading one source file? It is a comment on that file, not a doc.
-- Do several sites have to change together when it changes? It is an [invariants.md](invariants.md) entry, and the other sites link to it.
+- Do several sites have to change together when it changes? It is an invariant, and the other sites link to it.
 
 A claim that fails both tests is either rationale (decisions.md) or teaching (guide/, learn/). There is no home for prose descriptions of code structure; the code is that home.
+
+### Writing an invariant
+
+**A contract is worth writing down only if something fails when it breaks.** Prose cannot fail, so the enforced half of `invariants.md` is generated from the tests that prove each contract. Adding one means writing the test, not writing a paragraph:
+
+```cpp
+// INVARIANT: levelwise-rejects-constraints
+// The levelwise grower rejects monotone and interaction constraints at
+// construction rather than silently ignoring them.
+TEST_CASE("ObliviousGrower: rejects constraints it cannot honour", "[...][invariant]")
+```
+
+The marker names the contract, the comment states it, the assertions hold it true, and `scripts/render_invariants.py` collects all three. Python tests use `# INVARIANT: <id>` above the `def`.
+
+Some contracts genuinely cannot be tested: build flags, packaging matrices, claims about nondeterminism, and decisions. Those are hand-written in `docs/invariants.src.md` and render into a section labelled as asserted, so nobody mistakes a stated promise for a guarded one. That section is also the backlog: a testable claim sitting there is one test away from being enforced.
+
+Never edit `docs/invariants.md`. It is generated, and `docs-check` fails on drift.
 
 ## Audience and goal
 

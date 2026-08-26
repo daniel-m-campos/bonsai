@@ -31,14 +31,15 @@ HARD (exit 1, one message per offending line):
      tokens like rung0 never match (no word boundary), and code spans and
      link targets are masked, so cited filenames stay legal.
 
-HARD, invariants (docs/invariants.md only):
+HARD, invariants (docs/invariants.src.md only):
   e. Every "- code:" line must resolve: it names a backticked path and a
      backticked symbol, the path exists in the tree, and the symbol string
-     greps in that file. An entry whose
-     evidence stopped resolving is a contract the code has outrun, which is
-     the exact failure this file exists to catch (the "grep the claim"
-     lesson, mechanized). A diff that renames the symbol updates the entry
-     in the same PR or fails docs-check.
+     greps in that file. This is a LINK CHECK, not a proof. It catches a
+     rename or a deletion; it cannot catch semantic drift, because a
+     function that starts throwing where it used to decline still contains
+     its own name. That is exactly why the enforced half of the page is
+     generated from tests instead: a test fails when the behavior changes,
+     and this rule only fails when the reference rots.
 
 SOFT (reported, exit 0): sentences over 25 words. Table rows, headings, and
 link-dense lines are skipped. The top offenders print with file:line so a
@@ -154,7 +155,7 @@ def word_count(sentence: str) -> int:
 
 # ---- rules -------------------------------------------------------------------
 
-INVARIANTS = REPO / "docs" / "invariants.md"
+INVARIANTS = REPO / "docs" / "invariants.src.md"
 CODE_REF_RE = re.compile(r"^- code: `([^`]+)` : `([^`]+)`\s*$")
 
 
