@@ -3,6 +3,12 @@
 mkdocs.yml's `exclude_docs:` block is the single source of truth for what
 publishes; both consumers must agree with it, so the parser lives once here,
 and `corpus_files` builds the lint's file list on top of it.
+
+The corpus also covers `.claude/skills/*/SKILL.md`. Those never reach the
+site, but they are prose an agent loads and acts on, so the style rules that
+matter for prose matter for them: a hard-wrapped paragraph and a stray
+em-dash slipped into a skill unnoticed precisely because they sat outside
+this list.
 """
 
 from __future__ import annotations
@@ -16,7 +22,8 @@ DOCS = REPO / "docs"
 # The frozen historical record: first-class for agents and deep divers, but
 # out of the main line, so the prose lint leaves it as written.
 FROZEN_PAGE = "decisions.md"
-FROZEN_TREES = ("architecture/",)
+
+SKILLS = REPO / ".claude" / "skills"
 
 
 def excluded_patterns(mkdocs_text: str) -> list[str]:
@@ -49,14 +56,18 @@ def is_excluded(rel: str, pats: list[str]) -> bool:
 
 
 def corpus_files() -> list[pathlib.Path]:
-    """The published prose files the lint covers: README plus every docs page
-    mkdocs publishes, minus the frozen historical record."""
+    """The prose files the lint covers.
+
+    README, every docs page mkdocs publishes minus the frozen historical
+    record, and every skill definition. Skills are not published, but an
+    agent reads them the way a person reads a guide chapter.
+    """
     pats = excluded_patterns((REPO / "mkdocs.yml").read_text())
     files = [REPO / "README.md"]
     for path in sorted(DOCS.rglob("*.md")):
         rel = path.relative_to(DOCS).as_posix()
-        if (is_excluded(rel, pats) or rel == FROZEN_PAGE
-                or rel.startswith(FROZEN_TREES)):
+        if is_excluded(rel, pats) or rel == FROZEN_PAGE:
             continue
         files.append(path)
+    files.extend(sorted(SKILLS.glob("*/SKILL.md")))
     return files
