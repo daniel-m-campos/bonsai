@@ -34,9 +34,6 @@ BinStore::BinStore(Key /*key*/, size_t n_rows, BinMappers mappers,
       plane_(std::move(plane)), lazy_(std::make_shared<LazyColumns>()),
       mappers_(std::move(mappers)), n_rows_(n_rows), n_features_(mappers_.size())
 {
-    // The lazy columns hold the right EMPTY alternative from here on, so the
-    // width is readable before materialization and the discriminator never
-    // changes afterwards.
     if (!mappers_.all_fit_u8())
     {
         lazy_->cols = U16Columns{};
@@ -57,10 +54,7 @@ BinStore::select_columns(std::span<feature_id_t const> keep,
     kept.reserve(keep.size());
     names.reserve(keep.size());
     auto const parent_names = mappers_.feature_names();
-    // Names are optional (the binding always supplies f0..fN, a direct
-    // BinMappers::fit need not), and an unnamed parent has an EMPTY span
-    // rather than blanks; the child stays in its parent's state.
-    bool const named = parent_names.size() == n_features_;
+    bool const named        = parent_names.size() == n_features_;
     for (feature_id_t const f : keep)
     {
         if (f >= n_features_)
@@ -80,9 +74,6 @@ BinStore::select_columns(std::span<feature_id_t const> keep,
         BinMappers::from_mappers(std::move(kept), std::move(names));
     size_t const out_rows = rows.empty() ? n_rows_ : rows.size();
 
-    // The backend's own gather first: a device-resident store rewrites its
-    // columns without the plane ever coming home. A backend without one
-    // declines and the host gather below produces the identical store.
     if (plane_)
     {
         if (auto sub = plane_->select_columns(keep, rows))
@@ -92,9 +83,6 @@ BinStore::select_columns(std::span<feature_id_t const> keep,
         }
     }
 
-    // Reads through the plane's lazy host materialization when this store is
-    // device-resident and the backend declined above; the output holds the
-    // same alternative the parent does.
     BinColumns out = std::visit(
         [&](auto const &src) -> BinColumns
         {
@@ -128,22 +116,16 @@ RowMirror const &BinStore::mirror() const
 
 void BinStore::mint_into(std::span<uint8_t> out_bins) const
 {
-    // mirror() gated on the width, so the held alternative is u8 here.
     auto const  &cols = std::get<U8Columns>(columns());
     size_t const f    = cols.size();
-    // The mirror sized the buffer from the shape it was built with; this
-    // walks the columns it can see. The constructors make those agree, and
-    // if one ever stops, it must fail here rather than write past the end.
     assert(f == n_features_);
     assert(out_bins.size() == n_rows_ * f);
-    size_t const width = RowMirror::tile_width;
-    uint8_t     *out   = out_bins.data();
-    // Tiled column-to-row transpose into the block layout: each worker
-    // owns a row block, so writes never overlap and the mirror is
-    // byte-identical at any thread count. Feature c lands in mirror
-    // block c/width at column position c%width; one block reproduces
-    // the classic layout exactly.
-    constexpr size_t tile = 64;
+    // sync: each worker owns a row block in the parallel::for_each_index
+    // below, so writes never overlap; overlapping them races and breaks
+    // the byte-identity model_hash pins.
+    size_t const     width = RowMirror::tile_width;
+    uint8_t         *out   = out_bins.data();
+    constexpr size_t tile  = 64;
     parallel::for_each_index((n_rows_ + tile - 1) / tile,
                              [&](size_t block)
                              {

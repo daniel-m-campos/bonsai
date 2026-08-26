@@ -1,6 +1,3 @@
-// CUDA-less stand-in for the device predict plan (BONSAI_CUDA=OFF builds):
-// the plan declines and every caller runs the host bin walk, as it does on a
-// CUDA build with no device.
 
 #include "bonsai/bin_mappers.hpp"
 #include "bonsai/cuda/predict.hpp"

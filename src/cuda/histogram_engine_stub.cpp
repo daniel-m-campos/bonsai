@@ -1,5 +1,3 @@
-// CUDA-less stand-in for CudaHistogramEngine (BONSAI_CUDA=OFF builds):
-// construction succeeds so load/predict work, training throws.
 
 #include "bonsai/config/errors.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
@@ -32,8 +30,6 @@ bool cuda_available()
 
 void cuda_select_device(uint32_t device_id)
 {
-    // 0 is the ambient default everywhere; a nonzero id in a CUDA-less
-    // build is a misconfiguration and must be loud (decision 60's rule).
     if (device_id != 0)
     {
         throw ConfigError("parallel.device_id " + std::to_string(device_id) +
@@ -120,9 +116,6 @@ std::shared_ptr<IngestPlane const> cuda_ingest(features_view /*X*/,
     return nullptr;
 }
 
-// The device-input arm has no host fallback to degrade into: reaching it in a
-// CUDA-less build means the caller handed us a pointer we cannot read, and the
-// Python layer refuses that before calling. These stubs keep the link.
 void cuda_download(float const * /*src*/, size_t /*n*/, float * /*dst*/)
 {
     throw_unavailable();

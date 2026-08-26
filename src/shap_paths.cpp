@@ -18,12 +18,8 @@ namespace bonsai
 namespace
 {
 
-// lo/hi are 8-bit, so a split feature's bins must fit a byte.
 constexpr size_t k_max_bins = 256;
 
-// An element of the path currently being walked, before it is packed. The
-// interval is kept in int so an empty intersection can go negative without
-// wrapping.
 struct Active
 {
     feature_id_t feature    = 0;
@@ -39,7 +35,7 @@ ShapPathElem pack_one(Active const &a)
     int hi = a.hi;
     if (hi < lo)
     {
-        lo = 1; // canonical empty interval
+        lo = 1;
         hi = 0;
     }
     auto feature = static_cast<uint16_t>(a.feature);
@@ -94,8 +90,6 @@ void walk(DenseTree const &tree, BinMappers const &mappers, uint16_t klass,
     auto const   frac   = [&](node_id_t child)
     { return cover > 0.0 ? covers[child] / cover : 0.0; };
 
-    // The element this split merges into, appended if the feature is new.
-    // An index, not an iterator: the recursion below grows `active`.
     auto const   found = std::ranges::find(active, f, &Active::feature);
     bool const   fresh = found == active.end();
     size_t const idx =
@@ -106,8 +100,6 @@ void walk(DenseTree const &tree, BinMappers const &mappers, uint16_t klass,
     }
     Active const saved = active[idx];
 
-    // Left: finite bins at or below the split, and the missing bin only when
-    // it routes left. Right is the complement, same rule.
     active[idx].hi         = std::min(saved.hi, split);
     active[idx].missing_ok = saved.missing_ok && n.default_left;
     active[idx].zero       = saved.zero * frac(n.left);
@@ -138,8 +130,6 @@ ShapPaths pack_shap_paths(std::span<DenseTree const> trees, BinMappers const &ma
     out.last_bin.resize(mappers.size(), 0);
     for (size_t f = 0; f < mappers.size(); ++f)
     {
-        // Clamped for features too wide to pack; a split on one throws below,
-        // and one never split is never read.
         size_t const n_bins = std::clamp(mappers[f].n_bins(), size_t{1}, k_max_bins);
         out.last_bin[f]     = static_cast<uint8_t>(n_bins - 1);
     }
@@ -169,8 +159,6 @@ std::vector<double> shap_path_weights(size_t max_len)
     {
         return weights;
     }
-    // Pascal's triangle in place: before row n's weights, `binom` holds
-    // C(n - 1, .). Exact in double while the entries stay under 2^53.
     std::vector<double> binom(max_len, 0.0);
     binom[0] = 1.0;
     for (size_t n = 1; n <= max_len; ++n)
@@ -201,8 +189,6 @@ void eval_shap_paths(ShapPaths const &paths, std::span<bin_id_t const> row_bins,
     {
         return;
     }
-    // Table and scratch are per call: this is the host reference, and a batch
-    // caller that cares hoists them the way shap_biases hoists its own.
     auto const          weights = shap_path_weights(max_n);
     std::vector<double> poly(max_n + 1, 0.0);
     std::vector<double> deflated(max_n, 0.0);
@@ -213,11 +199,10 @@ void eval_shap_paths(ShapPaths const &paths, std::span<bin_id_t const> row_bins,
         size_t const n = head.n_elems;
         if (n == 0)
         {
-            continue; // a root leaf attributes nothing
+            continue;
         }
         auto const elems = std::span{paths.elems}.subspan(head.first, n);
 
-        // P(t) = prod_j (z_j + o_j t), built by convolution in double.
         poly[0] = 1.0;
         for (size_t j = 0; j < n; ++j)
         {
@@ -240,10 +225,6 @@ void eval_shap_paths(ShapPaths const &paths, std::span<bin_id_t const> row_bins,
 
         double const *w = weights.data() + ((n - 1) * n / 2);
 
-        // Deflating an unsatisfied element divides P by the scalar z_k, and
-        // the (o_k - z_k) prefactor multiplies it straight back, so every
-        // unsatisfied element on this path shares one weighted sum. The
-        // coefficient of t^n is zero whenever such an element exists.
         double unsatisfied_sum = 0.0;
         for (size_t i = 0; i < n; ++i)
         {
@@ -260,7 +241,6 @@ void eval_shap_paths(ShapPaths const &paths, std::span<bin_id_t const> row_bins,
                 out -= value * unsatisfied_sum;
                 continue;
             }
-            // Synthetic division by the monic factor (t + z_k).
             double const z  = elems[k].zero_fraction;
             deflated[n - 1] = poly[n];
             for (size_t i = n - 1; i-- > 0;)

@@ -16,24 +16,24 @@ namespace bonsai
 
 // True when this build carries the CUDA backend AND a usable device is
 // present. cuda_depthwise is registered in every build; only training
-// needs this to be true. See docs/architecture/10-cuda.md.
+// needs this to be true (invariants: stub-trains-nothing-predicts-anywhere).
 bool cuda_available();
 
 // Select the CUDA device for subsequent device work on the CALLING thread
-// (parallel.device_id, issue #158). 0 selects the default device when one
+// (parallel.device_id). 0 selects the default device when one
 // exists and is a no-op otherwise, so the config default changes nothing on
 // GPU-less hosts (graceful degradation intact); a nonzero id is validated
 // against the visible device count, and out-of-range or a CUDA-less build
 // throws ConfigError. Placement only: model bits are unaffected.
 void cuda_select_device(uint32_t device_id);
 
-// The CUDA ingest transaction (decision 54, docs 15/16): bins raw features
+// The CUDA ingest transaction: bins raw features
 // on the device against host-fitted cuts and returns the resident plane for
 // Dataset::bin to carry. Returns nullptr — leaving the caller on the host
 // fill — when the build has no backend, no usable device is present, or the
 // dataset's total bins exceed the resident path's shared-memory ceiling
-// (grow would refuse such a dataset on the device anyway). Bin ids are
-// bit-identical to the host fill over the same mappers.
+// (grow would refuse such a dataset on the device anyway). Bin ids match
+// the host fill (invariants: device-binning-byte-identity).
 std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const &batch,
                                                BinMappers const          &mappers);
 std::shared_ptr<IngestPlane const> cuda_ingest(features_view     X,
@@ -61,8 +61,8 @@ void cuda_gather_rows(DeviceMatrix const &X, std::span<uint32_t const> rows,
                       std::span<float> out);
 
 // Bins a device-resident matrix in place: the same kernel over the same cuts
-// as cuda_ingest, with no host-to-device copy, so bin ids are bit-identical to
-// both the host fill and cuda_ingest. Unlike cuda_ingest this never declines
+// as cuda_ingest, with no host-to-device copy (invariants:
+// device-binning-byte-identity). Unlike cuda_ingest this never declines
 // on bin count: there is no host copy of the matrix to bin instead, and a
 // host grower materializes host bins from the plane.
 std::shared_ptr<IngestPlane const> cuda_ingest_device(DeviceMatrix const &X,
@@ -72,7 +72,7 @@ std::shared_ptr<IngestPlane const> cuda_ingest_device(DeviceMatrix const &X,
 // (src/cuda/histogram_engine.cu; a throwing stub backs it when built
 // without BONSAI_CUDA). GPU cells match the CPU engine to tolerance, not
 // bit-exactly: atomics accumulate in arbitrary order. Design and precision
-// scheme: docs/architecture/10-cuda.md.
+// scheme below (invariants: cuda-training-tolerance).
 class CudaHistogramEngine
 {
   public:
@@ -92,8 +92,8 @@ class CudaHistogramEngine
     void populate(Dataset const &ds, floats_view grad, floats_view hess,
                   SplitInput &split_input, std::span<feature_id_t const> selected);
 
-    // --- GPULevelEngine (optional, phase 3,
-    // docs/architecture/11-gpu-resident.md). Level histograms stay on the device, keyed
+    // --- GPULevelEngine (optional, phase 3). Level histograms stay on the
+    // device, keyed
     // by the node's index in the grower's frontier ("slot"); splits are found on the
     // device and only decisions and child sums cross the bus. The depthwise grower
     // gates this whole cluster on the GPULevelEngine concept.
@@ -127,7 +127,7 @@ class CudaHistogramEngine
     };
 
     // One flattened tree node the device-resident epilogue walks in bin space
-    // to fuse the per-row score update (docs/architecture/10-cuda.md). Internal
+    // to fuse the per-row score update. Internal
     // nodes carry the split (feature, bin, missing routing, children); leaves
     // carry the contribution. Dense trees map their nodes one-to-one; oblivious
     // trees synthesize the perfect-tree numbering (children 2i+1 / 2i+2).
@@ -162,7 +162,7 @@ class CudaHistogramEngine
     // Last level of a tree: children are leaves, their histograms unread;
     // performs only the segment-layout flip that stamping depends on.
     void advance_layout_only();
-    // Tree epilogue, engine-owned (decision 53 step 3): maps the resident
+    // Tree epilogue, engine-owned: maps the resident
     // per-row leaf assignment through node_values on device and downloads
     // values and leaf ids in two bulk copies — replacing the per-tree
     // host stamping loop over every row.
@@ -183,14 +183,10 @@ class CudaHistogramEngine
                           std::span<SplitInput const> level, std::span<SplitOutput> out,
                           std::span<HistCell> child_sums);
 
-    // --- GPULeafEngine (docs/architecture/20-cuda-leafwise.md). Best-first
-    // growth expands one leaf at a time, so this plane keeps a per-tree
-    // histogram slot pool instead of the level plane's ping-pong: the root
-    // takes slot 0, every split builds the smaller child into the next free
-    // slot and derives the larger in place in the parent's, which it inherits.
-    // The host keeps the gain heap and every decision; per split only a
-    // partition op goes up and two child counts, two splits, and their child
-    // sums come down.
+    // --- GPULeafEngine. Best-first growth expands one leaf at a time, so this
+    // plane keeps a per-tree histogram slot pool instead of the level plane's
+    // ping-pong. The host keeps the gain heap and every decision; per split
+    // only a partition op goes up and the counts, splits and sums come down.
 
     // One heap pop's routing: partition the popped leaf's row segment in
     // place, so no sibling's rows move and no buffer flips.
@@ -208,8 +204,8 @@ class CudaHistogramEngine
     // back to a leaf, and the parent keeps its slot and segment). The smaller
     // child, and its segment, are derivable from the counts and slot_offsets/
     // slot_counts, so leaf_build takes them directly instead of through this
-    // struct (LeafStep::find_children derives them, matching leaf_split's
-    // device-side tie rule: equal counts favor the left child).
+    // struct. Equal counts favor the left child, host and device alike; the
+    // [cuda] parity suite fails if they diverge.
     struct LeafRound
     {
         uint32_t left_slot   = 0;
@@ -242,17 +238,11 @@ class CudaHistogramEngine
     // stamp them all at once.
     void leaf_stamp(std::span<LeafStamp const> stamps);
 
-    // --- Device-resident objective (docs/architecture/10-cuda.md). Labels and
-    // the per-row score vector live on the device for the whole fit. Per tree
-    // the engine derives grad/hess from them on device (no host objective, no
-    // gh upload); the resident finalize walks the finished tree in bin space
-    // and fuses scores[r] += lr * value on device (no values/leaf_ids D2H).
-    // resident_begin uploads labels and, when the dataset is weighted, the row
-    // weights (both keyed by dataset identity) plus the initial scores once, and
-    // returns false when the objective is unsupported or the
-    // capacity that lets every tree stay device-resident does not hold: the
-    // caller then trains on the host path unchanged. resident_end downloads the
-    // scores so the host copy is authoritative again.
+    // --- Device-resident objective, under resident-objective-eligibility.
+    // resident_begin uploads labels, weights and seed scores once and returns
+    // false when the objective or the capacity does not hold, leaving the
+    // caller on the host path. resident_end downloads the scores so the host
+    // copy is authoritative again.
     bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
                         std::span<float const> initial_scores, float learning_rate);
     // The leaf plane's arming: the level plane's gate plus the leaf plane's

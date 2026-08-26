@@ -18,7 +18,6 @@ namespace
 
 bool trains_here(std::string_view grower_name)
 {
-    // Registry convention: cuda-prefixed growers train only with a device.
     return !grower_name.starts_with("cuda") || cuda_available();
 }
 

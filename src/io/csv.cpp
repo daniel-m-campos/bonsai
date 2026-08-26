@@ -56,10 +56,6 @@ bool is_nan_literal(std::string_view s)
            (s[1] == 'a' || s[1] == 'A') && (s[2] == 'n' || s[2] == 'N');
 }
 
-// Missing is written as the literal `nan`. An empty field is not a spelling of
-// it: the reader cannot tell an intended gap from a truncated line, so it says
-// where the hole is instead of guessing. Row and column are 1-based over the
-// data rows, header excluded.
 float parse_field(std::string_view raw, size_t row, size_t col)
 {
     auto const s = trim(raw);
@@ -142,7 +138,6 @@ std::vector<size_t> resolve_feature_cols(size_t n_cols, DataConfig const &cfg)
     return out;
 }
 
-// Where each CSV column's parsed value lands in the ColumnBatch.
 struct ColDest
 {
     enum class Kind : uint8_t
@@ -153,16 +148,13 @@ struct ColDest
         ignore
     };
     Kind   kind = Kind::ignore;
-    size_t idx  = 0; // feature slot when kind == feature
+    size_t idx  = 0;
 };
 
 } // namespace
 
 ColumnBatch parse(std::string const &path, DataConfig const &cfg)
 {
-    // Read the whole file once, index the data lines, then parse rows in
-    // parallel straight into column-major storage. Each row writes only
-    // its own slots, so the result is identical at any thread count.
     auto               &prof = IngestProfiler::instance();
     IngestProfiler::Lap lap;
 
@@ -250,8 +242,6 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
         batch.feature_names.push_back(all_names[fc]);
     }
 
-    // Parses every field (including ignored columns, so bad data still
-    // fails) and stores by destination. Throws on malformed rows.
     auto parse_line_into = [&](size_t r)
     {
         auto const line  = lines[r];
@@ -265,7 +255,7 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
             }
             if (c >= n_cols)
             {
-                break; // too many fields; reported below
+                break;
             }
             float const v = parse_field(line.substr(start, i - start), r, c);
             switch (dest[c].kind)
@@ -292,8 +282,6 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
         }
     };
 
-    // Exceptions must not escape a worker thread: record the first bad row,
-    // then re-parse it serially so the original error propagates.
     std::atomic<size_t> first_bad{std::numeric_limits<size_t>::max()};
     parallel::for_each_index(n_rows,
                              [&](size_t r)
@@ -313,7 +301,7 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
                              });
     if (size_t const bad = first_bad.load(); bad != std::numeric_limits<size_t>::max())
     {
-        parse_line_into(bad); // throws with the field-level message
+        parse_line_into(bad);
         throw std::runtime_error("csv::parse: malformed row in '" + path + "'");
     }
     lap(prof.parse_s);
@@ -344,9 +332,6 @@ BinMappers fit_from_csv(std::string const &path, Config const &cfg)
 namespace bonsai::detail::libsvm
 {
 
-// LIBSVM sparse text: `label idx:val idx:val ...` per line, 1-based feature
-// indices. Materialized DENSE (absent entries are 0.0f) — bonsai's engine is
-// dense; this is input-format support, not sparse compute.
 ColumnBatch parse(std::string const &path, DataConfig const &cfg)
 {
     std::ifstream in(path, std::ios::binary);
@@ -388,7 +373,6 @@ ColumnBatch parse(std::string const &path, DataConfig const &cfg)
         size_t const sp = line.find(' ');
         float        label{};
         auto const   lend = sp == std::string_view::npos ? line.size() : sp;
-        // Explicit end pointer bounds the read; no null terminator needed.
         std::from_chars(
             line.data(), // NOLINT(bugprone-suspicious-stringview-data-usage)
             line.data() + lend, label);

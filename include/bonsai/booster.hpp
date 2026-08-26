@@ -45,6 +45,15 @@ enum class ImportanceType : uint8_t
 // What a device predict plan needs from a booster: the dense ensemble to pack
 // in bin space, the scale and base every prediction applies to the packed
 // sum, and the mutation epoch that says when a cached plan is stale.
+//
+// The lifetime contract is the reason keep_alive exists: `trees` is valid
+// while this struct is alive, not until the booster mutates. A dense booster
+// lends a view of its own ensemble and leaves keep_alive null; an oblivious
+// one attaches its epoch-cached dense equivalent, which nothing else owns.
+// Safe because both device packers copy and upload at pack time and retain
+// nothing, so ownership only has to outlive the pack call. Dropping
+// keep_alive segfaults the levelwise arm; the booster-destruction test in
+// test_booster.cpp pins it.
 struct DevicePlanInput
 {
     std::span<DenseTree const>                    trees;
@@ -58,12 +67,6 @@ class IBooster
 {
   public:
     virtual ~IBooster() = default;
-
-    // The one type-erased boundary (with IngestPlane) in the system: three
-    // client groups share it deliberately rather than splitting into three
-    // interfaces — grouped below as training / prediction / introspection /
-    // the training-loop seam. If a third training-loop client ever appears,
-    // split that group into its own view (design review 2026-07-12).
 
     // --- training
     virtual void  update_one_iter(Dataset const &train)           = 0;
@@ -113,9 +116,8 @@ class IBooster
     virtual std::string dump(std::span<std::string const> feature_names) const = 0;
 
     // TreeSHAP contributions: out is n_rows * (n_features + 1), row-major,
-    // last column = bias (init score + expected tree values). Rows sum to
-    // the raw prediction exactly. Throws for models without covers (saved
-    // before covers were recorded); multiclass fills one slice per class.
+    // last column = bias, one slice per class for multiclass. Exact by
+    // shap-additivity-exact; throws under gain-and-cover-stamped-at-grow.
     virtual void pred_contribs(features_view X, std::span<double> out,
                                size_t n_features) const = 0;
 
@@ -153,18 +155,10 @@ class IBooster
     }
 
     // --- the training-loop seam (CLI pipeline only)
-    // Incremental prediction support for early stopping, shape-agnostic so
-    // multiclass composes: the caller maintains a raw-score matrix of
-    // n_rows x score_width() (row-major, width 1 except softmax).
-    // seed_validation_scores fills it as of n_rounds boosting rounds (0 =
-    // base scores only, the warm-start seam); accumulate_last_round adds the
-    // newest round's tree(s) by routing the raw float rows, and
-    // accumulate_last_round_binned routes the same rows in bin space for a
-    // caller that has binned them (identical routing, a quarter the bytes);
-    // validation_loss scores the matrix with the booster's own configured
-    // objective.
-    // What `bins` owes accumulate_last_round_binned is the caller's to
-    // supply, and each implementation's asserts spell it out.
+    // The caller maintains a raw-score matrix of n_rows x score_width(),
+    // row-major, and these advance it a round at a time so early stopping
+    // never re-predicts the whole ensemble. The binned overload routes the
+    // same rows at a quarter the bytes.
     virtual size_t score_width() const
     {
         return 1;
@@ -224,7 +218,7 @@ template <Tree T>
 void accumulate_train_contribution(T const &tree, Dataset const &ds, floats_out out)
 {
     auto const sb = split_bins(tree, ds);
-    parallel::for_each_index(ds.n_rows(),
+    parallel::for_each_index(ds.plane_n_rows(),
                              [&](size_t r)
                              {
                                  out[r] += value_binned(tree, sb, [&](size_t f)
@@ -504,6 +498,15 @@ template <typename T> class Versioned
 
 } // namespace internal
 
+// One boosting round in update_one_iter runs in a fixed order that several
+// features depend on: DART drop/rescale first (it rewrites earlier trees'
+// contributions), then gradients, then sampling (so a gradient-reading
+// sampler like GOSS sees this round's values), then grow, then leaf renewal
+// for surrogate-hessian objectives, then the score update. The device-
+// resident objective short-circuits the gradient/score legs onto the device
+// when eligible (see docs/invariants.md, resident-objective-eligibility);
+// reordering any leg breaks either DART or renewal, and the round's
+// bit-identity across runs is what the cross-arch hash gate checks.
 template <Objective Obj, TreeGrower Gr, Sampler Sa>
 class Booster final : public IBooster
 {
@@ -524,8 +527,8 @@ class Booster final : public IBooster
     {
         if (scores_.empty())
         {
-            grad_.resize(train.n_rows());
-            hess_.resize(train.n_rows());
+            grad_.resize(train.plane_n_rows());
+            hess_.resize(train.plane_n_rows());
             if (trees_.read().empty())
             {
                 // The init score is a statistic of the rows this fit
@@ -538,21 +541,21 @@ class Booster final : public IBooster
                                                         : view.gather(train.labels());
                 init_score_                       = objective_.init_score(
                     view.is_identity() ? train.labels() : floats_view{gathered});
-                scores_.assign(train.n_rows(), init_score_);
+                scores_.assign(train.plane_n_rows(), init_score_);
             }
             else
             {
                 // Warm start: the booster was loaded with trees but no
                 // training state. Rebuild every row's score by routing the
                 // existing trees over the binned data.
-                std::vector<float> raw(train.n_rows(), 0.0F);
+                std::vector<float> raw(train.plane_n_rows(), 0.0F);
                 for (auto const &t : trees_.read())
                 {
                     internal::accumulate_train_contribution(t, train, raw);
                 }
-                scores_.resize(train.n_rows());
+                scores_.resize(train.plane_n_rows());
                 parallel::for_each_index(
-                    train.n_rows(), [&](size_t i)
+                    train.plane_n_rows(), [&](size_t i)
                     { scores_[i] = init_score_ + (config_.learning_rate * raw[i]); });
             }
         }
@@ -663,12 +666,9 @@ class Booster final : public IBooster
         }
     }
 
-    // What the fills may assume about this tree's row list, answered from
-    // the view's descriptor in constant time when the sampler copied the
-    // view verbatim. A drawing sampler builds its own list, so its shape is
-    // derived the old way behind the view's constant-time veto: a view that
-    // is not the whole plane can never yield the identity, and the view's
-    // runs cannot speak for a drawn subset.
+    // What the fills may assume about this tree's row list. Constant time
+    // when the sampler copied the view verbatim; a drawing sampler builds its
+    // own list, so its shape is derived behind the view's veto.
     RowShape selection_shape(Dataset const &train, size_t n_selected) const
     {
         RowView const &view = train.row_view();
@@ -685,16 +685,9 @@ class Booster final : public IBooster
         }
     }
 
-    // Device-resident objective: when the grower keeps labels and scores on
-    // the GPU and derives grad/hess there, the whole host objective / score
-    // round-trip is skipped and this returns true. Gated at compile time on
-    // the objective (must have a device gradient) and the sampler (must not
-    // read gradients), and at run time on no DART and the escape hatch. Sample
-    // weights are handled device-side (the gradient kernel scales grad/hess by
-    // the resident weight), so a weighted fit stays eligible. The resident
-    // state is armed for ONE Dataset: a different one (or a runtime gate
-    // flipping) syncs scores home and disarms, so the host path always resumes
-    // with the same state it would have had.
+    // True when the round ran on the device instead of the host objective,
+    // under resident-objective-eligibility. Disarming syncs scores home, so
+    // the host path always resumes with the state it would have had.
     bool try_resident_round(Dataset const &train)
     {
         if constexpr (device_objective_kind<objective_type> !=
@@ -702,11 +695,9 @@ class Booster final : public IBooster
                       !sampler_traits<sampler_type>::reads_gradients)
         {
             bool const host_forced = std::getenv("BONSAI_HOST_OBJECTIVE") != nullptr;
-            // A view is eligible: the resident epilogue walks the view's rows
-            // and leaves every other score untouched, which is the contract
-            // the host path already keeps by routing only within the view.
-            // Gradients stay full-length and globally indexed, so the rows
-            // outside the view are derived and never read.
+            // A view is eligible: the resident epilogue walks the view's
+            // rows and leaves every other score untouched, the same contract
+            // the host path keeps.
             bool const runtime_ok = config_.dart_drop_rate <= 0.0F && !host_forced;
             if (resident_active_ &&
                 (!runtime_ok || resident_fit_ != train.fit_identity()))
@@ -731,11 +722,9 @@ class Booster final : public IBooster
         return false;
     }
 
-    // One boosting round with the resident objective armed: no host objective,
-    // no weights loop, no leaf renewal (the eligible objectives have none), no
-    // host score update. The sampler still runs (Bernoulli needs its indices;
-    // AllRows is the freebie above) and grow returns an empty per-row output:
-    // the device already derived the gradients and fused the score update.
+    // One boosting round with the resident objective armed. The sampler still
+    // runs, and grow returns an empty per-row output: the device derived the
+    // gradients and fused the score update.
     void resident_round(Dataset const &train)
     {
         auto                    &prof = detail::FitProfiler::instance();
@@ -794,7 +783,7 @@ class Booster final : public IBooster
         {
             return;
         }
-        dropped_sum.assign(train.n_rows(), 0.0F);
+        dropped_sum.assign(train.plane_n_rows(), 0.0F);
         for (size_t const i : dropped)
         {
             internal::accumulate_train_contribution(trees_.read()[i], train,
@@ -1178,12 +1167,11 @@ class Booster final : public IBooster
     std::vector<row_id_t> candidates_;
     float                 init_score_      = 0.0F;
     bool                  resident_active_ = false;
-    // Identity cookie for the Dataset the resident state was armed on:
-    // compared by address only, never dereferenced through.
-    // The fit the resident state is armed for, as a minted token: a stack
-    // Dataset's address repeats every fold iteration deterministically, so
-    // an address here would skip re-arming for a DIFFERENT fold at the
-    // same depth, leaving the previous fold's labels, scores and rows live.
+    // The fit the resident state is armed for. A minted token, not an
+    // address: a stack Dataset's address repeats every fold iteration
+    // deterministically, so an address here would skip re-arming for a
+    // DIFFERENT fold at the same depth, leaving the previous fold's labels,
+    // scores and rows live.
     FitId                  resident_fit_{};
     internal::DensifyCache dense_;
 };

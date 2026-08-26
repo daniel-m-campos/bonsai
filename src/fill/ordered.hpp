@@ -1,11 +1,5 @@
 #pragma once
 
-// grad and hess in one node's row order: the gather every fill of a
-// node reads from.
-//
-// Included into src/grower.cpp only: the fill's pieces stay in one
-// translation unit, so nothing here crosses a call the optimizer cannot see.
-
 #include "bonsai/dataset.hpp"
 #include "bonsai/parallel.hpp"
 #include "bonsai/row_view.hpp"
@@ -18,18 +12,12 @@
 namespace bonsai::fill_detail
 {
 
-// grad and hess in one node's row order. A fill that walks the node once per
-// feature reads them sequentially from here instead of re-walking the full
-// arrays with scattered indices (n_features x full-array traffic otherwise).
-// An empty hess view is the unit hessian: the fills add the literal 1.0F.
 struct GhView
 {
     std::span<float const> g;
     std::span<float const> h;
 };
 
-// Below this the gather runs serially: one pass over a node this small costs
-// less than the parallel region that would spread it.
 inline constexpr size_t k_gather_region_rows = 1 << 14;
 
 inline GhView ordered_gh(std::span<row_id_t const> rows, floats_view grad,
@@ -41,12 +29,8 @@ inline GhView ordered_gh(std::span<row_id_t const> rows, floats_view grad,
     bool const                             unit = hess.empty();
     ordered_grad.resize(n);
     ordered_hess.resize(unit ? 0 : n);
-    // Capture views over the thread_local storage: naming the vectors inside
-    // the parallel region would resolve to each worker's own (empty) one.
     std::span<float> const g{ordered_grad};
     std::span<float> const h{ordered_hess};
-    // A team of one runs the loop inline and enters no region, which is what
-    // a node below the threshold wants.
     parallel::for_each_index_on(n < k_gather_region_rows ? 1 : parallel::n_threads(), n,
                                 [&, g, h, rows, unit](size_t k)
                                 {
@@ -59,10 +43,6 @@ inline GhView ordered_gh(std::span<row_id_t const> rows, floats_view grad,
     return {.g = g, .h = h};
 }
 
-// grad and hess as one node's fill reads them: in place when the node's rows
-// are the identity (the root, absent row sampling), gathered into its row
-// order otherwise. In place is indexing by position, so it needs identity,
-// not merely full cardinality.
 inline GhView node_gh(Dataset const & /*ds*/, SplitInput const &node, floats_view grad,
                       floats_view hess)
 {
@@ -70,10 +50,6 @@ inline GhView node_gh(Dataset const & /*ds*/, SplitInput const &node, floats_vie
     {
         return {.g = grad, .h = hess};
     }
-    // One run of consecutive rows already sits in order: position k is row
-    // start + k of full-length, globally indexed arrays, so the fill reads a
-    // subspan and the gather never runs. Several runs are not contiguous in
-    // grad, so they still gather.
     if (node.shape.runs.size() == 1)
     {
         RowRun const &run = node.shape.runs.front();

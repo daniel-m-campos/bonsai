@@ -1,6 +1,3 @@
-// CUDA histogram backend: clang CUDA C++, same libc++/C++23 as the rest of
-// the build. Design, batching, and precision scheme:
-// docs/architecture/10-cuda.md.
 
 #include "bonsai/config/errors.hpp"
 #include "bonsai/config/tree_config.hpp"
@@ -35,14 +32,9 @@
 namespace bonsai
 {
 
-// The device buffers, ingest plane, and CudaDeviceContext now live in
 // namespace bonsai::cuda_detail (external linkage, shared with the
-// device-context TU); name them unqualified throughout this TU.
 using namespace cuda_detail;
 
-// Flat device/host buffers throughout this file are offset by hand (docs/
-// architecture/10-cuda.md); grad/hess travel as an adjacent pair everywhere
-// in this API, matching the gradient-boosting literature's convention.
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)
 
 bool cuda_available()
@@ -51,6 +43,9 @@ bool cuda_available()
     return cudaGetDeviceCount(&n) == cudaSuccess && n > 0;
 }
 
+// sync: cudaSetDevice binds the calling thread only, so every entry that
+// precedes device work selects again; ingest and training can run on
+// different threads under the Python Dataset flow.
 void cuda_select_device(uint32_t device_id)
 {
     int n = 0;
@@ -60,9 +55,6 @@ void cuda_select_device(uint32_t device_id)
     }
     if (device_id == 0)
     {
-        // The default device: set it when one exists, stay a no-op on
-        // GPU-less hosts, where the first device call is what reports the
-        // absence.
         if (n > 0)
         {
             cudaSetDevice(0);
@@ -82,8 +74,6 @@ void cuda_select_device(uint32_t device_id)
     }
 }
 
-// The device-resident state: the engine forwards every method to it. There is
-// no host plane behind this engine, so there is nothing else to hold.
 struct CudaHistogramEngine::Impl
 {
     CudaDeviceContext ctx;
@@ -101,9 +91,6 @@ void CudaHistogramEngine::begin_tree(Dataset const &ds, floats_view grad,
     impl_->ctx.begin_tree(ds, grad, hess);
 }
 
-// The HistogramEngine concept's per-node fill, which this engine does not
-// implement: its nodes are built by begin_root / advance_level / leaf_build
-// on the device, and a tree the device cannot hold is refused there.
 void CudaHistogramEngine::populate(Dataset const & /*ds*/, floats_view /*grad*/,
                                    floats_view /*hess*/, SplitInput & /*split_input*/,
                                    std::span<feature_id_t const> /*selected*/)
@@ -243,19 +230,15 @@ CudaHistogramEngine::eval_accumulate(std::span<ResidentNode const> nodes, float 
     return impl_->ctx.eval_accumulate(nodes, lr, scores_out);
 }
 
-// ---- The ingest transaction (decision 54) -----------------------------------
-
 namespace
 {
 
-// Concatenated per-feature cut tables + offsets (n_feats + 1), device-side.
 struct CutsTable
 {
     DeviceBuffer<float>    cuts;
     DeviceBuffer<uint32_t> ofs;
 };
 
-// Out-param: DeviceBuffer is deliberately pinned in place (no copy/move).
 void upload_cuts(BinMappers const &mappers, CutsTable &t)
 {
     std::vector<uint32_t> ofs(mappers.size() + 1, 0);
@@ -270,11 +253,6 @@ void upload_cuts(BinMappers const &mappers, CutsTable &t)
     t.ofs.upload(ofs.data(), ofs.size());
 }
 
-// Mirror of begin_root's capacity gate with every feature selected (the hist
-// kernel's shared budget holds ONE feature's histogram, so the gate is the max
-// single-feature bins, not the sum): a dataset grow would refuse on the device
-// has no use for device-resident bins, so ingest declines and the host fill
-// runs. Training with a cuda_* grower then raises begin_root's error.
 bool ingest_would_decline(BinMappers const &mappers)
 {
     size_t max_bins = 0;
@@ -322,7 +300,7 @@ std::shared_ptr<CudaIngestPlane> make_ingest_plane(BinMappers const &mappers,
     return plane;
 }
 
-// Raw chunks stream through one device buffer, ~64MB a piece; each chunk is
+// perf: Raw chunks stream through one device buffer, ~64MB a piece; each chunk is
 // copied then binned before the next (the copy dominates and already runs
 // at bus rate — dbin in ingest-profile says whether overlap is ever worth
 // the staging machinery).
@@ -460,8 +438,6 @@ void cuda_gather_rows(DeviceMatrix const &X, std::span<uint32_t const> rows,
     DeviceBuffer<float> gathered;
     gathered.reserve(out.size());
 
-    // Chunked only to keep the launch's cell count inside uint32; each chunk
-    // offsets into the sample's row ids and into the gathered block.
     size_t const rows_per_chunk =
         std::max<size_t>(1, k_ingest_chunk_bytes / (X.n_feats * sizeof(float)));
     for (size_t row0 = 0; row0 < rows.size(); row0 += rows_per_chunk)
@@ -489,8 +465,6 @@ std::shared_ptr<IngestPlane const> cuda_ingest_device(DeviceMatrix const &X,
     CutsTable                   table;
     upload_cuts(mappers, table);
 
-    // Chunked only to keep the launch's cell count inside uint32; no copy
-    // happens, each chunk is a pointer offset into the caller's matrix.
     size_t const rows_per_chunk =
         std::max<size_t>(1, k_ingest_chunk_bytes / (n_feats * sizeof(float)));
     for (size_t row0 = 0; row0 < n_rows; row0 += rows_per_chunk)

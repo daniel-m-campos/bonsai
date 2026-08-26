@@ -17,8 +17,8 @@ namespace bonsai
 {
 
 // float cells: gradients/hessians arrive as float, per-cell sums are bounded
-// by node size, and halving the cell halves the fill's memory traffic — the
-// dominant fit stage (decision 50). Reductions ACROSS cells (totals, prefix
+// by node size, and halving the cell halves the fill's memory traffic in
+// the dominant fit stage. Reductions ACROSS cells (totals, prefix
 // scans, split running sums) accumulate in double and convert once at the
 // store, so only per-cell storage carries float rounding.
 struct HistCell
@@ -36,6 +36,13 @@ struct HistCell
 
 using cell_view_t = std::span<HistCell const>;
 
+// One node's per-feature cells, viewing memory it never owns: histograms are
+// carved from a level's arena (NodeHistograms::carve) or leased from the
+// block pool, and a Histogram must not outlive its arena. Cells store float
+// sums; every reduction over them runs in double, and node totals are
+// computed at split time rather than accumulated in the fill, which is what
+// keeps the subtraction trick exact (invariants: subtraction-trick). The
+// feature is the missing bin: honest data, outside the split sweep.
 class Histogram
 {
   public:
@@ -255,7 +262,7 @@ class ArenaLayout
 // One node's per-feature histograms and the single arena their cells live
 // in. The two are one type because they are one lifetime: the histograms
 // view the arena, and both move together whenever a node's histograms do
-// (docs/architecture/2-histogram.md).
+// together.
 class NodeHistograms
 {
   public:

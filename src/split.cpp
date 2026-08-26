@@ -17,19 +17,12 @@ namespace
 
 struct SplitSums
 {
-    double gL; // left  grad with missing routed by default_left
-    double hL; // left  hess
-    double gR; // right grad
-    double hR; // right hess
+    double gL;
+    double hL;
+    double gR;
+    double hR;
 };
 
-// Decompose a candidate cut at `left_prefix` (cumulative sum over
-// cut_cells up to and including bin b) into per-side sums for gain
-// scoring. `real_grad` / `real_hess` are the node's totals
-// EXCLUDING the missing bin (= parent_totals - missing); the caller
-// hoists that subtraction once per feature/parent so the inner loop
-// doesn't recompute it per bin/default_left. Single source of truth
-// for missing-routing semantics; shared by node and level finders.
 inline SplitSums split_sums_at(double left_grad, double left_hess,
                                HistCell const &missing, double real_grad,
                                double real_hess, bool default_left)
@@ -44,12 +37,6 @@ inline SplitSums split_sums_at(double left_grad, double left_hess,
     };
 }
 
-// The per-candidate core shared by the node and level scans (issue #50):
-// child sums via split_sums_at, the min_child_hess feasibility gate, and
-// the two-child score — computed in exactly this operation order so both
-// finders make bit-identical decisions from identical histograms. Monotone
-// rejection stays node-only (the levelwise grower refuses constraints at
-// construction); the level scan adds cross-parent summation on top.
 struct CandidateScore
 {
     SplitSums s;
@@ -74,17 +61,11 @@ inline CandidateScore score_candidate(double left_grad, double left_hess,
             .feasible = true};
 }
 
-// A missing cell holding no gradient mass. Zero sums add nothing on either
-// routing, so the two default_left candidates coincide; ±0.0 is safe here
-// because every consumer of the sums (score's square, the min_child_hess
-// compare, the monotone weight difference) is blind to zero's sign.
 inline bool missing_empty(HistCell const &missing)
 {
     return missing.sum_grad == 0.0F && missing.sum_hess == 0.0F;
 }
 
-// Strict > keeps the earliest (bin, default_left) candidate on exact gain
-// ties in both scans, matching the serial order.
 inline void update_best(SplitOutput &best, double gain, feature_id_t fid, bin_id_t bin,
                         bool default_left, TreeConfig const &config)
 {
@@ -106,11 +87,11 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
     auto const &hist = input.hists[fid];
     if (hist.size() == 0)
     {
-        return; // unselected under feature_fraction < 1
+        return;
     }
     if (!input.allowed.empty() && input.allowed[fid] == 0)
     {
-        return; // interaction constraints exclude this feature here
+        return;
     }
     auto const  &missing_cell = hist.missing();
     double const node_score   = score(node_totals.sum_grad, node_totals.sum_hess,
@@ -120,13 +101,8 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
 
     int const mc = monotone_constraint_of(config, fid);
 
-    // An empty missing cell routes nothing either way, so both directions
-    // give the same sums and gain and strict > keeps the first: scanning
-    // default_left = false again is pure cost.
     size_t const n_dirs = missing_empty(missing_cell) ? 1 : 2;
 
-    // Running left-side sums stay double: the scan crosses every cell, so
-    // float storage rounding must not compound across bins.
     double   left_grad = 0.0;
     double   left_hess = 0.0;
     bin_id_t b         = 0;
@@ -151,7 +127,7 @@ inline void update_best_for_feature_for_node(SplitInput const &input, feature_id
                     bounded_leaf_weight(c.s.gR, c.s.hR, config, input.lo, input.hi);
                 if (static_cast<double>(mc) * (w_right - w_left) < 0.0)
                 {
-                    continue; // would break monotonicity in feature fid
+                    continue;
                 }
             }
             update_best(best, c.children_score - node_score, fid, b, default_left,
@@ -173,10 +149,6 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
         return;
     }
 
-    // Per-worker scratch reused across features and levels: a fresh
-    // n_parents x n_bins vector per call page-faults its whole footprint at
-    // high bin counts. fill_prefix overwrites every slot, so stale contents
-    // are never read.
     static thread_local std::vector<HistCell> prefix_storage;
     static thread_local std::vector<double>   real_grad;
     static thread_local std::vector<double>   real_hess;
@@ -202,8 +174,6 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
         real_hess[p]      = node_totals[p].sum_hess - missing.sum_hess;
         all_missing_empty = all_missing_empty && missing_empty(missing);
     }
-    // Every parent's missing cell empty makes the two routings identical for
-    // each parent, so their summed scores match and strict > keeps the first.
     size_t const n_dirs = all_missing_empty ? 1 : 2;
 
     for (size_t b = 0; b < n_bins; ++b)
@@ -219,8 +189,8 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
                 auto const      c =
                     score_candidate(lp.sum_grad, lp.sum_hess, hist.missing(),
                                     real_grad[p], real_hess[p], default_left, config);
-                // A node whose children would fall under min_child_hess no
-                // longer vetoes the whole candidate (issue #60: at depth >= 5
+                // perf: A node whose children would fall under min_child_hess no
+                // longer vetoes the whole candidate (at depth >= 5
                 // some frontier node is always near-empty, so every good cut
                 // was rejected and levelwise trailed catboost by 3-26%). It
                 // contributes its parent score instead — zero gain — and the
@@ -234,9 +204,6 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
     }
 }
 
-// Merge candidates produced in ascending feature order, one per feature or one
-// per feature range: strict > keeps the lowest feature id on gain ties,
-// matching the serial scan exactly.
 SplitOutput reduce_in_feature_order(std::span<SplitOutput const> per_feature)
 {
     SplitOutput best;
@@ -250,16 +217,12 @@ SplitOutput reduce_in_feature_order(std::span<SplitOutput const> per_feature)
     return best;
 }
 
-// A node the scan can skip: no histograms, or too few rows to leave two
-// children above min_data_in_leaf.
 bool cannot_split(SplitInput const &input, TreeConfig const &config)
 {
     return input.hists.empty() ||
            input.rows.size() < 2 * size_t{config.min_data_in_leaf};
 }
 
-// Feature ranges one node's scan splits into: enough to spread across
-// workers, few enough that the ordered merge stays a handful of compares.
 size_t scan_ranges(size_t n_features)
 {
     size_t const units = static_cast<size_t>(parallel::n_threads()) * 4;
@@ -277,13 +240,7 @@ SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
     }
     feature_id_t const n_features  = input.hists.size();
     HistCell const     node_totals = input.totals();
-    // Serial by design: the scan costs n_features x n_bins cells whatever the
-    // node's row count, and a nested region plus a per-call output vector cost
-    // more. A depthwise level runs one worker per node above this call
-    // (LevelStep::open_level); the root and the leafwise pair are serial here
-    // because there is one node and two to walk. The feature-order walk with
-    // strict > keeps the same tie-break as the parallel reduce it replaces.
-    SplitOutput best;
+    SplitOutput        best;
     for (feature_id_t fid = 0; fid < n_features; ++fid)
     {
         SplitOutput cand;
@@ -300,8 +257,6 @@ void HistogramNodeSplitFinder::find_parallel(std::span<SplitInput const> nodes,
                                              TreeConfig const           &config,
                                              std::span<SplitOutput>      out)
 {
-    // Per-node scratch reused across splits: a fresh vector per call would
-    // page-fault its footprint on every heap pop.
     static thread_local std::vector<HistCell>    totals;
     static thread_local std::vector<SplitOutput> partials;
     size_t const                                 n = nodes.size();
@@ -315,8 +270,6 @@ void HistogramNodeSplitFinder::find_parallel(std::span<SplitInput const> nodes,
             totals[i] = nodes[i].totals();
         }
     }
-    // Capture raw pointers: naming a thread_local inside the parallel region
-    // would resolve to each worker's own (empty) vector.
     HistCell const *const tot_ptr  = totals.data();
     SplitOutput *const    part_ptr = partials.data();
     parallel::for_each_index(
@@ -330,8 +283,6 @@ void HistogramNodeSplitFinder::find_parallel(std::span<SplitInput const> nodes,
             }
             size_t const nf = input.hists.size();
             size_t const r  = u % ranges;
-            // A range keeps one running best over ascending features, which
-            // is find's serial scan restricted to the range.
             for (size_t fid = r * nf / ranges; fid < (r + 1) * nf / ranges; ++fid)
             {
                 update_best_for_feature_for_node(input, static_cast<feature_id_t>(fid),
@@ -341,8 +292,6 @@ void HistogramNodeSplitFinder::find_parallel(std::span<SplitInput const> nodes,
         });
     for (size_t i = 0; i < n; ++i)
     {
-        // The ranges are ascending in feature order, so the same merge the
-        // per-feature bests take gives find's tie-break here.
         out[i] = reduce_in_feature_order({part_ptr + (i * ranges), ranges});
     }
 }

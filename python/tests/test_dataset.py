@@ -332,7 +332,7 @@ def test_dataset_honors_n_threads():
 def test_device_dataset_matches_the_fused_path():
     """A device-binned Dataset reaches the same device ingest the fused
     train(pairs, X, y) call takes; GPU histogram atomics make the comparison
-    tolerance-equal, not bit-equal (docs/architecture/11)."""
+    tolerance-equal, not bit-equal (cuda-training-tolerance)."""
     if not bonsai.cuda_available():
         pytest.skip("no CUDA build or no visible device")
     X, y = _reg_data(n=20000)

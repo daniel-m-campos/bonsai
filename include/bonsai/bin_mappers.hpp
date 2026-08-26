@@ -16,7 +16,7 @@
 namespace bonsai
 {
 
-// Explicit interior cut points for select columns (doc 18): column index to
+// Explicit interior cut points for select columns: column index to
 // strictly increasing finite edges. Listed columns skip sampling and fitting
 // entirely (BinMapper::from_edges); unlisted columns fit as usual, so the
 // default {} is bit-identical to no overrides.

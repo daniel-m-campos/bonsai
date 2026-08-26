@@ -1,11 +1,5 @@
 #pragma once
 
-// The CUDA ingest plane: the tile-blocked binned matrix a device-side ingest
-// produces, plus the backend tag that proves its concrete type. Shared by the
-// CUDA translation units: everything here has external linkage in namespace
-// bonsai::cuda_detail and references no internal-linkage entity, so including
-// it from more than one TU is ODR-clean.
-
 #include "bonsai/bin_store.hpp"
 #include "bonsai/dataset.hpp"
 
@@ -20,19 +14,6 @@ namespace bonsai
 namespace cuda_detail
 {
 
-// The CUDA ingest transaction's product: the tile-blocked binned matrix,
-// resident from birth (layout in device_buffer.cuh). Dataset carries it as an opaque
-// receipt; ensure_dataset adopts it instead of uploading host columns; materialize()
-// pulls host columns home once for the host consumers (a CPU grower over a
-// device-ingested dataset, route_unsampled under row sampling). The problem this
-// solves: ensure_dataset receives a shared_ptr<IngestPlane> (the base type) and must
-// prove it is really a CudaIngestPlane before downcasting, without RTTI. Every plane
-// carries an opaque tag pointer, and this function is the only source of this backend's
-// tag (the address of a function-local static, unique process-wide), so tag
-// equality proves the concrete type and makes the static_cast sound. The
-// inline function's local static is guaranteed to be one object across every
-// translation unit that calls it, so the identity holds process-wide even when
-// two TUs link against this header.
 inline void const *cuda_backend_tag()
 {
     static char const anchor = 0;
@@ -46,13 +27,11 @@ class CudaIngestPlane final : public IngestPlane
 
     DeviceBuffer<uint8_t>  bins8;
     DeviceBuffer<uint16_t> bins16;
-    DeviceBuffer<uint32_t> n_bins; // per-feature bin counts
+    DeviceBuffer<uint32_t> n_bins;
     bool                   bins_are_u8 = false;
     size_t                 n_rows      = 0;
     size_t                 n_feats     = 0;
-    // The tile width the matrix was written with, so the layout travels with
-    // the plane instead of being implied by whoever reads it.
-    uint32_t tile_w = k_bin_tile_width;
+    uint32_t               tile_w      = k_bin_tile_width;
 
     void materialize(BinColumns &cols) const override;
 

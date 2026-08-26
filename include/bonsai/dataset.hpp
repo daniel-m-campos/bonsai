@@ -19,9 +19,11 @@ namespace bonsai
 {
 
 // Monotone identity tokens, minted once and never reused, so equality means
-// "the same thing" with no allocator-reuse caveat. Strong enums rather than
-// pointers: they cannot be dereferenced, cannot be built from a stray
-// pointer, and zero is the never-minted sentinel.
+// "the same thing". An address will not do: a freed block's address comes back
+// from the allocator, and a cache keyed on it would serve the previous fit's
+// data to a same-shaped successor. Strong enums so a token cannot be
+// dereferenced or built from a stray pointer; zero is the never-minted
+// sentinel.
 enum class LabelsId : uint64_t
 {
 };
@@ -29,6 +31,13 @@ enum class FitId : uint64_t
 {
 };
 
+// The binned training matrix plus everything a fit reads beside it: labels,
+// weights, cuts, names, and the row view. Copying a Dataset copies pointers,
+// not bins: the plane lives in a shared BinStore, which is what makes a
+// subset(rows=) view cost a row descriptor instead of a matrix, pinned by "a
+// view copies nothing, not even its labels". Anything caching against a
+// Dataset keys on a FitId or LabelsId, never an address. What a row id means
+// never changes across views, so a reordered fit is a rewrite, not a remap.
 class Dataset
 {
   public:
@@ -61,21 +70,16 @@ class Dataset
     static Dataset from_bins(BinColumns cols, BinMappers mappers, floats_view labels,
                              floats_view weights = {});
 
-    // The PLANE's rows: the mirror's stride, the device geometry key, and the
-    // range every row id in this dataset is drawn from. A row view narrows
-    // the fit's row list and leaves this alone.
-    size_t n_rows() const;
+    size_t plane_n_rows() const;
     size_t n_features() const;
 
-    // Which of the plane's rows a fit visits. Every row id is a global id
-    // into this dataset's storage, so grad, hess, labels and the row-major
-    // mirror stay full length whatever the view selects.
+    // Every row id is a global id into the plane, so grad, hess, labels and
+    // the row-major mirror stay full length whatever the view selects.
     RowView const &row_view() const
     {
         return rows_;
     }
 
-    // The view's row count, which is what a caller means by "how many rows".
     size_t view_n_rows() const
     {
         return rows_.size();
@@ -89,34 +93,19 @@ class Dataset
     Dataset with_rows(RowView rows) const;
 
     // The same rows under the features `keep` names, in the order it names
-    // them and renumbered densely from zero. A rewrite, not a view: the kept
-    // columns are gathered into a dataset that owns them, so the result
-    // carries no plane and shares no cache with this one.
+    // them and renumbered densely from zero. A rewrite, not a view: the result
+    // owns its columns, carries no plane, and spends any row view it was given.
     //
-    // Dense renumbering is what makes the rewrite worth its cost. A device
-    // plane groups features into tiles of a fixed width and reads a tile
-    // whole, so scattered survivors leave every tile part-live and part-dead
-    // while the same count renumbered fills the first tiles completely. That
-    // is worth 21-36% of the histogram fill at any keep fraction, and the
-    // rewrite pays for itself within a few boosting iterations.
-    //
-    // Since the rewrite mints a plane either way, a row view on this dataset
-    // is spent here rather than carried: the result holds the view's rows,
-    // renumbered from zero, and views nothing. Selecting rows then columns
-    // therefore trains the same model as columns then rows, materialized on
-    // one path and viewed on the other.
+    // Dense renumbering is what pays for the rewrite. A device plane reads
+    // feature tiles whole, so scattered survivors leave every tile part-dead
+    // while the same count renumbered fills the first tiles completely: worth
+    // 21-36% of the histogram fill at any keep fraction.
     Dataset select_features(std::span<feature_id_t const> keep) const;
 
     // This dataset's rows, in this dataset's order, gathered into a plane it
-    // owns: a view spent rather than followed. On a dataset that is not a
-    // view this is a deep copy with caches of its own.
-    //
-    // What it buys is contiguity. A view's rows are wherever the parent put
-    // them, so a scattered selection pays the gather on every histogram fill,
-    // for every tree; materialized once, the same rows are a range, which the
-    // fill reads as a subspan and the device reads at full coalescing. Worth
-    // it when the same selection is fit repeatedly, which is what a caller
-    // reordering rows into fold order is arranging for.
+    // owns: a view spent rather than followed. What it buys is contiguity, so
+    // the fill reads a subspan instead of paying a gather per tree, which is
+    // worth it when the same selection is fit repeatedly.
     Dataset materialize() const;
 
     floats_view       labels() const;
@@ -124,30 +113,23 @@ class Dataset
     BinMappers const &mappers() const;
     size_t            n_bins(size_t fid) const;
 
-    // The store: the binned matrix and its cuts, shared by every view over
-    // it. Exposed because identity matters (the device cache keys uploads
-    // off the store's address); the accessors below forward so the ~150
-    // existing call sites keep reading through the Dataset.
+    // Exposed because identity matters: the device cache keys uploads off the
+    // store's address. The accessors below forward, so a call site reads
+    // through the Dataset.
     BinStore const &store() const
     {
         return *store_;
     }
 
-    // Identity of this dataset's labels and weights: equal exactly when the
-    // labels block is shared, so a view skips the device re-upload and a
-    // different-labels twin can never inherit one. A minted counter, not an
-    // address: a freed Meta's address comes back from the allocator, and a
-    // label cache keyed on it would silently serve the previous fit's labels
-    // to a same-shaped successor.
+    // Equal exactly when the labels block is shared, so a view skips the
+    // device re-upload and a different-labels twin cannot inherit one.
     LabelsId labels_identity() const
     {
         return meta_->id;
     }
 
-    // Identity of this fit specification: which labels over which rows.
-    // Distinct for every factory product and every view, shared by copies,
-    // so "is this the dataset the resident state was armed for" is a token
-    // comparison that no address reuse, stack or heap, can answer wrongly.
+    // Which labels over which rows: distinct for every factory product and
+    // every view, shared by copies.
     FitId fit_identity() const
     {
         return id_;
@@ -218,9 +200,8 @@ class Dataset
 
 // The one host routing truth: which child a row takes at an internal node.
 // The last bin holds missing values and follows default_left; every other bin
-// routes left iff it is at or below the split bin. The device kernels
-// (goes_left_dev and route_add_kernel's walk in kernels.cuh) mirror this and
-// the [cuda] parity suite enforces lockstep.
+// routes left iff it is at or below the split bin (invariants:
+// routing-rule-one-source).
 inline bool routes_left(bin_id_t bin, bin_id_t last_bin, bin_id_t split_bin,
                         bool default_left)
 {

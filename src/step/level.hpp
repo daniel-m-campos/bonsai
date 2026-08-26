@@ -1,12 +1,5 @@
 #pragma once
 
-// LevelStep: the data plane for level-batched growth (depthwise and
-// levelwise), host plane and device plane.
-//
-// Included into src/level_step.hpp, which is the only include of this
-// header: the data plane stays in one translation unit so nothing here
-// crosses a call the optimizer cannot see.
-
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/perf.hpp"
@@ -26,8 +19,6 @@
 namespace bonsai::grower_detail
 {
 
-// Host data plane: serves every HistogramEngine. Branch-free: no GPU concept
-// appears below.
 template <HistogramEngine EngineT, typename SplitterT> class LevelStep
 {
   public:
@@ -45,9 +36,6 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         SplitInput                       root;
         root.id = 0;
         root.rows.assign(sel.rows.begin(), sel.rows.end());
-        // The shape is the caller's row descriptor speaking; the runs have
-        // to describe exactly these rows, or the fill sums a different set
-        // than the node holds.
         assert(sel.shape.runs.empty() || rows_in(sel.shape.runs) == sel.rows.size());
         root.shape = sel.shape;
         engine_.populate(ds_, grad_, hess_, root, selected_);
@@ -56,11 +44,6 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         return root;
     }
 
-    // Per-node splitter, or one level-wide find broadcast to every node when
-    // the splitter is level-granular (the levelwise growth shape).
-    // Level transaction, phase 1: split decisions for the whole frontier
-    // (decision 53). The frontier is the transaction's input; outputs are
-    // caller-owned and reused across levels.
     void open_level(std::vector<SplitInput> const &frontier, LevelOutputs &out)
     {
         Phase<&GrowProfiler::find_s> phase;
@@ -73,10 +56,6 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         }
         else
         {
-            // One worker per node: the finder's inner feature loops nest
-            // serial and its scratch is thread_local, so per-node results
-            // are identical to the serial walk. A region per level replaces
-            // a region per node.
             out.splits.resize(frontier.size());
             SplitInput const *cur = frontier.data();
             SplitOutput      *op  = out.splits.data();
@@ -85,17 +64,12 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         }
     }
 
-    // Routes every split parent's rows into its children, one node per worker
-    // (each partition touches only its own parent's rows: bit-identical to
-    // serial at any thread count).
     void apply_level(LevelPlan &plan)
     {
         Phase<&GrowProfiler::partition_s> phase;
         host_partition(ds_, plan);
     }
 
-    // Fills every smaller child's histograms in one engine call; the larger
-    // sibling derives by subtraction.
     void build_children(LevelPlan &plan, bool /*last*/ = false)
     {
         Phase<&GrowProfiler::populate_s>                phase;
@@ -112,8 +86,6 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         }
     }
 
-    // End of tree: the surviving frontier becomes leaves. Values and the
-    // node table are serial (tiny); the row stamping takes one region.
     void end_tree(std::vector<SplitInput> const &current, DenseTree::Nodes &nodes,
                   size_t &n_leaves, train_leaf_values &values,
                   std::vector<node_id_t> &leaf_ids, row_index_view /*row_indices*/)
@@ -125,10 +97,6 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
         stamp_leaf_rows(nodes, current, values, leaf_ids);
     }
 
-    // Levelwise leaf finalize, host plane: each frontier node is a leaf,
-    // indexed by position into leaf_table; stamp its rows directly. The level
-    // split/bin spans feed only the GPU resident finalize; the host ignores
-    // them.
     void finalize_leaves(std::vector<SplitInput> const &frontier,
                          std::vector<float> const      &leaf_table,
                          train_leaf_values &values, std::vector<node_id_t> &leaf_ids,
@@ -136,8 +104,6 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
                          std::span<ObliviousTree::LevelSplit const> /*level_splits*/,
                          std::span<bin_id_t const> /*level_bins*/)
     {
-        // Leaf-parallel: leaves partition the sampled rows, so writes never
-        // collide; dynamic scheduling absorbs the uneven leaf sizes.
         parallel::for_each_index(frontier.size(),
                                  [&](size_t li)
                                  {
@@ -158,10 +124,6 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
     feature_view      selected_;
 };
 
-// GPU data plane: histograms live in device slot buffers and rows in device
-// segments; only decisions, child sums, and counts cross the bus. Every tree
-// runs there: begin_root refuses a tree the device cannot hold rather than
-// moving it to the host plane, so this step has no runtime fork.
 template <GPULevelEngine EngineT, typename SplitterT>
 class LevelStep<EngineT, SplitterT>
 {
@@ -174,14 +136,12 @@ class LevelStep<EngineT, SplitterT>
         engine_.begin_tree(ds_, grad_, hess_);
     }
 
-    // The runs are a host fill's shortcut; the device root uploads a row
-    // list or none at all.
     SplitInput make_root(RowSelection const &sel)
     {
         Phase<&GrowProfiler::populate_s> phase;
         SplitInput                       root;
         root.id = 0;
-        // Full-data fits pass the identity by contract (empty rows +
+        // perf: Full-data fits pass the identity by contract (empty rows +
         // row_count): the 64MB host copy and its upload never happen; the
         // engine builds/caches the identity on device. Identity, not
         // cardinality: any other full-length list takes the general path.
@@ -194,7 +154,7 @@ class LevelStep<EngineT, SplitterT>
             root.rows.assign(sel.rows.begin(), sel.rows.end());
         }
         engine_.begin_root(ds_, grad_, hess_, root, selected_);
-        return root; // hists/rows stay device-resident; root carries sums
+        return root;
     }
 
     void open_level(std::vector<SplitInput> const &frontier, LevelOutputs &lout)
@@ -207,10 +167,6 @@ class LevelStep<EngineT, SplitterT>
         child_sums.clear();
         out.resize(current.size());
         child_sums.resize(2 * current.size());
-        // Levelwise (LevelSplitFinder) picks one split for the whole frontier;
-        // depthwise/leafwise pick one per node. The engine kernels hardcode
-        // histogram-gain scoring, so only the histogram finders may select
-        // this plane.
         static_assert(std::same_as<SplitterT, HistogramLevelSplitFinder> ||
                       std::same_as<SplitterT, HistogramNodeSplitFinder>);
         if constexpr (LevelSplitFinder<SplitterT>)
@@ -223,9 +179,6 @@ class LevelStep<EngineT, SplitterT>
         }
     }
 
-    // Leaves stamp their device segments, splits partition on the device
-    // (only child counts return), and each child's ids/sums/row_count fill in
-    // from the counts — SplitInput degrades to node metadata on this plane.
     void apply_level(LevelPlan &plan)
     {
         Phase<&GrowProfiler::partition_s>        phase;
@@ -259,17 +212,11 @@ class LevelStep<EngineT, SplitterT>
         }
     }
 
-    // Smaller children build from their device row segments; the larger
-    // derive on-device as parent minus smaller, then the child level becomes
-    // current.
     void build_children(LevelPlan &plan, bool last = false)
     {
         Phase<&GrowProfiler::populate_s> phase;
         if (last)
         {
-            // The last level's children are leaves: their histograms are never
-            // read, so skip the build and keep the layout flip stamping
-            // depends on (decision 71).
             engine_.advance_layout_only();
             return;
         }
@@ -277,21 +224,14 @@ class LevelStep<EngineT, SplitterT>
         ops.reserve(plan.splits.size());
         for (uint32_t k = 0; k < plan.splits.size(); ++k)
         {
-            DeferredSplit const &d = plan.splits[k];
-            // Size tie: left wins (smaller_child).
-            bool const left_small = d.p.left.row_count <= d.p.right.row_count;
+            DeferredSplit const &d          = plan.splits[k];
+            bool const           left_small = d.p.left.row_count <= d.p.right.row_count;
             ops.push_back({d.parent_slot, (2 * k) + (left_small ? 0U : 1U),
                            (2 * k) + (left_small ? 1U : 0U)});
         }
         engine_.advance_level(ds_, ops);
     }
 
-    // End of tree: stamp the surviving frontier's device segments, then hand
-    // the node value table to the engine, which maps every resident row to
-    // its leaf value on device and returns values/leaf_ids in two bulk copies
-    // (host finalize_as_leaf writes the nodes; its row loop no-ops on empty
-    // device-mode rows). Rows outside the sampled set get placeholder stamps
-    // here and are overwritten by route_unsampled.
     void end_tree(std::vector<SplitInput> const &current, DenseTree::Nodes &nodes,
                   size_t &n_leaves, train_leaf_values &values,
                   std::vector<node_id_t> &leaf_ids, row_index_view /*row_indices*/)
@@ -313,8 +253,6 @@ class LevelStep<EngineT, SplitterT>
         }
         if (resident)
         {
-            // The finished dense tree routes every row on device; no stamp, no
-            // values/leaf_ids D2H.
             engine_.resident_finalize(
                 resident_node_table<typename EngineT::ResidentNode>(nodes, ds_));
             return;
@@ -327,9 +265,6 @@ class LevelStep<EngineT, SplitterT>
         engine_.finalize_tree(node_vals, values, leaf_ids);
     }
 
-    // Levelwise leaf finalize: the frontier nodes are the leaves, indexed by
-    // position into leaf_table. The rows are device-resident, so stamp each
-    // final slot with its leaf index and download the per-row assignment.
     void finalize_leaves(std::vector<SplitInput> const &frontier,
                          std::vector<float> const      &leaf_table,
                          train_leaf_values &values, std::vector<node_id_t> &leaf_ids,
@@ -339,10 +274,6 @@ class LevelStep<EngineT, SplitterT>
     {
         if (engine_.resident_armed())
         {
-            // The perfect-tree numbering (grower_detail::perfect_tree_table)
-            // lets the one device route+add kernel serve both tree shapes;
-            // this path's per-level bins are already computed, so its split
-            // accessor just indexes.
             engine_.resident_finalize(
                 grower_detail::perfect_tree_table<typename EngineT::ResidentNode>(
                     level_splits.size(),

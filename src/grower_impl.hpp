@@ -1,9 +1,5 @@
 #pragma once
 
-// Template definitions for the three growers, shared by every explicit
-// instantiation TU: grower.cpp instantiates the CPU-engine variants and
-// cuda/grower_cuda.cpp the CUDA one. Only src/ TUs include this header.
-
 #include "bonsai/config/errors.hpp"
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/dataset.hpp"
@@ -38,15 +34,11 @@ namespace bonsai::grower_detail
 
 inline float leaf_value(double grad, double hess, TreeConfig const &config)
 {
-    // Through the guarded shared math: an empty leaf predicts 0 (see score()).
     constexpr double inf = std::numeric_limits<double>::infinity();
     return static_cast<float>(
         bounded_leaf_weight(grad, hess, config.lambda_l1, config.lambda_l2, -inf, inf));
 }
 
-// Children inherit the parent's leaf-value bounds; a split on a monotone
-// feature additionally fences both sides at the midpoint of the child
-// weights (xgboost's scheme), so descendant leaves can't cross.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 inline void propagate_monotone_bounds(double parent_lo, double parent_hi,
                                       SplitOutput const &s, TreeConfig const &config,
@@ -80,7 +72,6 @@ inline void propagate_monotone_bounds(double parent_lo, double parent_hi,
 
 using interaction_groups = std::vector<std::vector<feature_id_t>>;
 
-// Parses TreeConfig::interaction_constraints ("0,1" or "0+1" per entry).
 inline interaction_groups parse_interaction_groups(TreeConfig const &config)
 {
     interaction_groups groups;
@@ -108,10 +99,6 @@ inline interaction_groups parse_interaction_groups(TreeConfig const &config)
     return groups;
 }
 
-// The features a node may split on, given the distinct features already on
-// its path: every group that contains the whole path contributes its
-// members, and a feature may always continue splitting alone. Empty result
-// vector means "all allowed" (path empty or no constraints).
 inline std::vector<char> allowed_features(interaction_groups const        &groups,
                                           std::vector<feature_id_t> const &path,
                                           size_t                           n_features)
@@ -134,12 +121,11 @@ inline std::vector<char> allowed_features(interaction_groups const        &group
     }
     if (path.size() == 1)
     {
-        allowed[path.front()] = 1; // any feature may keep splitting alone
+        allowed[path.front()] = 1;
     }
     return allowed;
 }
 
-// Sets both children's interaction state after a split on `fid`.
 inline void propagate_interaction_state(interaction_groups const        &groups,
                                         std::vector<feature_id_t> const &parent_path,
                                         feature_id_t fid, size_t n_features,
@@ -160,8 +146,6 @@ inline void propagate_interaction_state(interaction_groups const        &groups,
     right.path    = std::move(path);
 }
 
-// Per-tree feature subsample: a sorted draw of ceil(fraction * n) distinct
-// feature ids. fraction >= 1 selects everything.
 inline std::vector<feature_id_t> sample_features(size_t n_features, float fraction,
                                                  std::mt19937 &rng)
 {
@@ -176,15 +160,9 @@ inline std::vector<feature_id_t> sample_features(size_t n_features, float fracti
     std::vector<feature_id_t> selected;
     selected.reserve(k);
     std::sample(all.begin(), all.end(), std::back_inserter(selected), k, rng);
-    return selected; // std::sample preserves order -> sorted
+    return selected;
 }
 
-// Commits one split into the dense node table: appends the two child leaf
-// placeholders, records the parent's split bin and gain, grows the per-node
-// arrays in lockstep, and rewrites parent node `id` as the internal split.
-// covers is only resized here; the caller fills covers[left]/covers[right]
-// once row counts are known. Returns the freshly allocated (left_id,
-// right_id). Shared by the depthwise plan and the leafwise heap loop.
 inline std::pair<node_id_t, node_id_t>
 commit_split_node(DenseTree::Nodes &nodes, std::vector<bin_id_t> &split_bins,
                   std::vector<float> &split_gains, std::vector<float> &covers,
@@ -205,10 +183,6 @@ commit_split_node(DenseTree::Nodes &nodes, std::vector<bin_id_t> &split_bins,
     return {left_id, right_id};
 }
 
-// Control plane, first half of a level: serial tree bookkeeping. Decides
-// leaf-vs-split per frontier node, writes the tree's internal nodes and
-// per-node stats, and defers the data-plane work (partition + histograms)
-// into a LevelPlan the LevelStep executes level-wide.
 inline LevelPlan
 plan_level(Dataset const &ds, TreeConfig const &config,
            std::vector<SplitInput> &current, std::vector<SplitOutput> const &splits,
@@ -224,7 +198,7 @@ plan_level(Dataset const &ds, TreeConfig const &config,
     {
         auto       &node  = current[i];
         auto const &split = splits[i];
-        if (!split.valid) // assume valid incorporates all cfg parameter logic
+        if (!split.valid)
         {
             plan.leaves.push_back({static_cast<uint32_t>(i), node.id});
             finalize_as_leaf(nodes, node, config, n_leaves, values, leaf_ids);
@@ -254,12 +228,6 @@ plan_level(Dataset const &ds, TreeConfig const &config,
     return plan;
 }
 
-// Control plane, between partition and populate: a split whose partition
-// left one child empty is demoted back to a leaf. Float histogram cells put
-// subtraction noise well above the gain gate's reach (decision 50), so a
-// degenerate cut can score as a tiny positive gain; the partition's row
-// counts are ground truth. The pre-allocated child nodes remain as
-// unreachable placeholders — predict and SHAP both walk from the root.
 inline void demote_empty_splits(TreeConfig const &config, LevelPlan &plan,
                                 DenseTree::Nodes &nodes, size_t &n_leaves,
                                 train_leaf_values      &values,
@@ -269,13 +237,6 @@ inline void demote_empty_splits(TreeConfig const &config, LevelPlan &plan,
     std::erase_if(plan.splits,
                   [&](DeferredSplit &d)
                   {
-                      // Host plane only: device-partitioned children carry row_count
-                      // with empty rows, and the device has already scattered the
-                      // parent's rows into the child slots — demoting here would
-                      // orphan those rows' leaf stamps (leaf_by_row keeps garbage and
-                      // downstream per-row reads index off the node table). A 0-row
-                      // device child is safe as an empty leaf: the next level's find
-                      // marks it ineligible and it is stamped like any other leaf.
                       if (d.p.left.rows.empty() && d.p.right.rows.empty())
                       {
                           return false;
@@ -296,9 +257,6 @@ inline void demote_empty_splits(TreeConfig const &config, LevelPlan &plan,
                   });
 }
 
-// Control plane, second half of a level: record covers, propagate the
-// monotone bounds and interaction state both children need, and hand the
-// children off as the next frontier in original node order.
 inline void commit_children(Dataset const &ds, TreeConfig const &config,
                             interaction_groups const &groups, LevelPlan &plan,
                             std::vector<float>      &covers,
@@ -307,9 +265,8 @@ inline void commit_children(Dataset const &ds, TreeConfig const &config,
 {
     for (auto &d : plan.splits)
     {
-        SplitInput &left  = d.p.left;
-        SplitInput &right = d.p.right;
-        // Host children carry rows; device-resident children carry row_count.
+        SplitInput &left   = d.p.left;
+        SplitInput &right  = d.p.right;
         covers[d.left_id]  = static_cast<float>(row_count_of(left));
         covers[d.right_id] = static_cast<float>(row_count_of(right));
         propagate_monotone_bounds(d.parent_lo, d.parent_hi, d.split, config, left,
@@ -323,9 +280,6 @@ inline void commit_children(Dataset const &ds, TreeConfig const &config,
     next.clear();
 }
 
-// One heap pop, ready for the data plane: the popped candidate, the child
-// ids the tree just allocated for it, and the parent state its children
-// inherit (the candidate's own copy is moved out by the commit).
 struct PoppedSplit
 {
     Candidate                 c;
@@ -336,8 +290,6 @@ struct PoppedSplit
     std::vector<feature_id_t> parent_path;
 };
 
-// Control plane, first half of a heap pop: take the best candidate and write
-// its split into the tree. The leaf plane's counterpart to plan_level.
 template <typename LessT>
 inline PoppedSplit
 pop_split(std::vector<Candidate> &heap, LessT gain_less, DenseTree::Nodes &nodes,
@@ -361,11 +313,6 @@ pop_split(std::vector<Candidate> &heap, LessT gain_less, DenseTree::Nodes &nodes
             .parent_path = std::move(parent_path)};
 }
 
-// Control plane, between the partition and the children's find: record the
-// two children, or demote the split back to a leaf when the partition left
-// one of them empty (the same ground-truth guard as the depthwise plan,
-// decision 50; the pre-allocated children stay as unreachable placeholders).
-// Returns whether the split stands.
 // NOLINTNEXTLINE(readability-function-size)
 template <typename StepT>
 inline bool commit_pop(StepT &step, Dataset const &ds, TreeConfig const &config,
@@ -387,7 +334,6 @@ inline bool commit_pop(StepT &step, Dataset const &ds, TreeConfig const &config,
         split_gains[ps.c.node.id] = 0.0F;
         return false;
     }
-    // Host children carry rows; device-resident children carry row_count.
     covers[ps.left_id]  = static_cast<float>(row_count_of(left));
     covers[ps.right_id] = static_cast<float>(row_count_of(right));
     propagate_monotone_bounds(ps.parent_lo, ps.parent_hi, ps.c.split, config, left,
@@ -399,8 +345,6 @@ inline bool commit_pop(StepT &step, Dataset const &ds, TreeConfig const &config,
     return true;
 }
 
-// Control plane, after the children's find: a child with a valid split
-// re-enters the gain heap, one without is set aside for the tree epilogue.
 template <typename LessT>
 inline void queue_children(ChildPair &pair, LessT gain_less,
                            std::vector<Candidate> &heap,
@@ -427,27 +371,6 @@ inline void queue_children(ChildPair &pair, LessT gain_less,
     }
 }
 
-// Rows not in `sampled` (sorted) never reach a leaf during growth, so
-// finalize_as_leaf can't stamp their train values — yet the booster's score
-// accumulator covers every row. Route them through the finished tree in bin
-// space (split_bins[i] is node i's split bin; bin <= split_bin routes left,
-// exactly matching the float-threshold predict path) and fill their values.
-// Skipping this desynchronizes training scores from the real model for any
-// sampler that drops rows: gradients go stale and GOSS-style samplers, which
-// re-pick rows by |grad|, diverge outright.
-// Applies fn to every row of `view` NOT in `sampled`, in parallel. The
-// complement is materialized once so the parallel loop indexes it directly;
-// no-op when nothing was left out. Shared by the growers' out-of-bag routing
-// (issue #51 — the walk bodies differ per tree shape, the complement never
-// did).
-//
-// The complement is taken within the view, not within the plane: a fit over a
-// view is about the view's rows, and the rows outside it are owed nothing by a
-// tree that was never asked about them. They keep a stale training score,
-// which nothing the view's fit produces reads. A fit over a whole dataset has
-// the identity view, so a sampled fit still walks every row the draw dropped.
-// `sampled` arrives as a subsequence of the view's rows, which is what lets
-// one scan pair them off.
 template <typename F>
 void for_each_unsampled(RowView const &view, row_index_view sampled, F &&fn)
 {
@@ -525,10 +448,7 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
                                                floats_view hess, RowSelection selection)
     -> GrowResult<Tree>
 {
-    namespace gd = grower_detail;
-    // Resident mode: the device derives gradients and fuses the score update,
-    // so grow produces no per-row values/leaf_ids and skips the out-of-bag
-    // routing the host score loop would consume.
+    namespace gd                    = grower_detail;
     bool const             resident = this->resident();
     gd::GrowProfiler::Lap  slap;
     Tree::Nodes            nodes;
@@ -536,9 +456,9 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     std::vector<node_id_t> leaf_ids = std::move(recycled_.leaf_ids);
     if (!resident)
     {
-        values.resize(ds.n_rows(), 0.0F); // no-op when recycled: write-before-read
-        leaf_ids.resize(ds.n_rows(), 0);
-    }
+        values.resize(ds.plane_n_rows(), 0.0F);
+        leaf_ids.resize(ds.plane_n_rows(), 0);
+    } // namespace gd
     std::vector<SplitInput> current;
     std::vector<SplitInput> next;
     gd::LevelOutputs        level_out;
@@ -548,8 +468,6 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     auto const              selected =
         gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
 
-    // The LevelStep is the tree's data plane: host or GPU by engine type,
-    // opened per tree so a GPU engine can decline back to the host mid-fit.
     gd::LevelStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
     slap(gd::GrowProfiler::instance().setup_s);
     current.push_back(step.make_root(selection));
@@ -630,8 +548,8 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     train_leaf_values     values = std::move(recycled_.values);
     if (!resident)
     {
-        values.resize(ds.n_rows(), 0.0F); // no-op when recycled: write-before-read
-    }
+        values.resize(ds.plane_n_rows(), 0.0F);
+    } // namespace gd
 
     std::vector<SplitInput> frontier;
     std::vector<SplitInput> next;
@@ -641,8 +559,6 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     auto const              selected =
         gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
 
-    // Same data plane as depthwise; only the control plane differs (one split
-    // per level, broadcast to every frontier node; ObliviousTree bookkeeping).
     gd::LevelStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
     slap(gd::GrowProfiler::instance().setup_s);
     frontier.push_back(step.make_root(selection));
@@ -700,7 +616,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     std::vector<node_id_t> leaf_ids = std::move(recycled_.leaf_ids);
     if (!resident)
     {
-        leaf_ids.resize(ds.n_rows(), 0);
+        leaf_ids.resize(ds.plane_n_rows(), 0);
     }
     leaf_table.reserve(frontier.size());
     std::vector<float> leaf_covers;
@@ -710,21 +626,17 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
         auto const &leaf = frontier[li];
         float const v = gd::leaf_value(leaf.total_grad(), leaf.total_hess(), config_);
         leaf_table.push_back(v);
-        // Device-plane rows are resident (rows empty, row_count set).
         leaf_covers.push_back(static_cast<float>(gd::row_count_of(leaf)));
     }
-    // Host plane stamps each leaf's rows; device plane stamps the resident
+    // perf: Host plane stamps each leaf's rows; device plane stamps the resident
     // segments and downloads the per-row assignment. Lapped as finalize:
-    // the 16M CPU decomposition (issue #46) found ~15s of stamping hiding
-    // in levelwise's conservation gap because only depthwise lapped it.
+    // a 16M CPU decomposition found ~15s of stamping hiding in levelwise's
+    // conservation gap because only depthwise lapped it.
     gd::GrowProfiler::Lap flap;
     step.finalize_leaves(frontier, leaf_table, values, leaf_ids, selection.rows,
                          std::span<ObliviousTree::LevelSplit const>{level_splits},
                          std::span<bin_id_t const>{level_bins});
 
-    // Same stale-score hazard as route_unsampled: rows the sampler dropped
-    // still need this tree's contribution in their train values. In resident
-    // mode the device route+add already scored every row, sampled or not.
     if (!resident)
     {
         gd::for_each_unsampled(
@@ -766,20 +678,16 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
                                               floats_view hess, RowSelection selection)
     -> GrowResult<Tree>
 {
-    namespace gd = grower_detail;
-    // Resident mode: the device derives gradients and fuses the score update,
-    // so grow produces no per-row values/leaf_ids and skips the out-of-bag
-    // routing the host score loop would consume.
+    namespace gd                   = grower_detail;
     bool const            resident = this->resident();
     gd::GrowProfiler::Lap slap;
     Tree::Nodes           nodes;
     train_leaf_values     values = std::move(recycled_.values);
     if (!resident)
     {
-        values.resize(ds.n_rows(), 0.0F); // no-op when recycled: write-before-read
-    }
+        values.resize(ds.plane_n_rows(), 0.0F);
+    } // namespace gd
 
-    // Max-heap on gain; ties broken by lower node id so growth is deterministic.
     auto gain_less = [](gd::Candidate const &a, gd::Candidate const &b)
     {
         if (a.split.gain != b.split.gain)
@@ -790,9 +698,6 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     };
 
     std::vector<gd::Candidate> heap;
-    // Leaves awaiting the tree epilogue: nodes whose split is invalid or
-    // depth-capped. Candidates rather than bare nodes because a device-plane
-    // leaf is stamped by the pool slot it carries.
     std::vector<gd::Candidate> pending;
     std::vector<bin_id_t>      split_bins(1, 0);
     std::vector<float>         split_gains(1, 0.0F);
@@ -800,16 +705,12 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     std::vector<node_id_t>     leaf_ids = std::move(recycled_.leaf_ids);
     if (!resident)
     {
-        leaf_ids.resize(ds.n_rows(), 0);
+        leaf_ids.resize(ds.plane_n_rows(), 0);
     }
 
     auto const selected =
         gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
 
-    // Leafwise shares the data plane's primitives but not its level batching:
-    // the gain heap expands one node at a time, so there is no level to batch
-    // — the LeafStep opens the tree, splits one node per round, and (on the
-    // device plane) keeps that node's histograms in the tree's slot pool.
     gd::LeafStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
     slap(gd::GrowProfiler::instance().setup_s);
     gd::Candidate root = step.open_root(selection);
@@ -846,9 +747,6 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
         gd::queue_children(pair, gain_less, heap, pending);
     }
 
-    // Both survivors are leaves: what is still in the heap when the budget
-    // runs out, and what was set aside as unsplittable. Heap first, then
-    // pending, is the order leaf ids are assigned in.
     {
         gd::Phase<&gd::GrowProfiler::finalize_s> phase;
         heap.insert(heap.end(), std::make_move_iterator(pending.begin()),
@@ -860,10 +758,6 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
         }
         gd::stamp_leaf_rows(nodes, heap | std::views::transform(&gd::Candidate::node),
                             values, leaf_ids);
-        // Device plane: every leaf's segment is stamped and the per-row values
-        // download here, so the out-of-bag routing below still has the last
-        // word. In resident mode the device route+add already scored every row,
-        // sampled or not, and there are no host values to route into.
         step.end_tree(nodes, values, leaf_ids);
         if (!resident)
         {
@@ -882,9 +776,6 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
             .leaf_ids = std::move(leaf_ids)};
 }
 
-// The device eval walk shared by the growers. The flatten runs inside the
-// capability branch because the engine's node type only exists on device
-// engines, so the table builder is a generic lambda that branch instantiates.
 template <typename EngineT, typename TableFn>
 bool eval_walk(EngineT &engine, bool armed, TableFn &&table, float lr,
                std::span<float> scores_out, std::optional<float> &loss)

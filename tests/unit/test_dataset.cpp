@@ -133,11 +133,12 @@ TEST_CASE(
     Dataset const    ds      = Dataset::bin(batch, mappers, {});
 
     REQUIRE(ds.n_features() == 2);
-    REQUIRE(ds.n_rows() == 4);
+    REQUIRE(ds.plane_n_rows() == 4);
     for (size_t f = 0; f < ds.n_features(); ++f)
     {
-        REQUIRE(ds.visit_bins(f, [](auto bins) { return bins.size(); }) == ds.n_rows());
-        for (size_t r = 0; r < ds.n_rows(); ++r)
+        REQUIRE(ds.visit_bins(f, [](auto bins) { return bins.size(); }) ==
+                ds.plane_n_rows());
+        for (size_t r = 0; r < ds.plane_n_rows(); ++r)
         {
             CHECK(ds.bin_at(f, r) == ds.mappers()[f].transform(batch.features[f][r]));
         }
@@ -155,7 +156,7 @@ TEST_CASE("Dataset: n_rows / n_features / n_bins accessors", "[dataset][accessor
     BinMappers const mappers = BinMappers::fit(batch, BinMapperConfig{});
     Dataset const    ds      = Dataset::bin(batch, mappers, {});
 
-    CHECK(ds.n_rows() == 8);
+    CHECK(ds.plane_n_rows() == 8);
     CHECK(ds.n_features() == 2);
     for (size_t f = 0; f < ds.n_features(); ++f)
     {
@@ -261,11 +262,11 @@ TEST_CASE("row-major fit and bin match the ColumnBatch overloads exactly", "[dat
     DataConfig dc;
     auto const da = Dataset::bin(batch, a, dc);
     auto const db = Dataset::bin(view, labels, a, dc);
-    REQUIRE(da.n_rows() == db.n_rows());
+    REQUIRE(da.plane_n_rows() == db.plane_n_rows());
     for (size_t c = 0; c < f; ++c)
     {
         REQUIRE(da.bins_are_u8() == db.bins_are_u8());
-        for (size_t r = 0; r < da.n_rows(); ++r)
+        for (size_t r = 0; r < da.plane_n_rows(); ++r)
         {
             REQUIRE(da.bin_at(c, r) == db.bin_at(c, r));
         }
@@ -282,7 +283,7 @@ TEST_CASE("Dataset: from_bins mints its own lazy caches", "[dataset][from_bins]"
     // Mint the parent's mirror first: a shared row_major_ would already hold
     // the parent's bins by the time the child asks for its own.
     auto const parent_mirror = parent.mirror().bins();
-    REQUIRE(parent_mirror.size() == parent.n_rows() * parent.n_features());
+    REQUIRE(parent_mirror.size() == parent.plane_n_rows() * parent.n_features());
 
     Bins shifted = bins_of(parent);
     for (size_t f = 0; f < parent.n_features(); ++f)
@@ -304,7 +305,7 @@ TEST_CASE("Dataset: from_bins mints its own lazy caches", "[dataset][from_bins]"
 
     for (size_t f = 0; f < parent.n_features(); ++f)
     {
-        for (size_t r = 0; r < parent.n_rows(); ++r)
+        for (size_t r = 0; r < parent.plane_n_rows(); ++r)
         {
             auto const want =
                 static_cast<bin_id_t>((parent.bin_at(f, r) + 1) % parent.n_bins(f));
@@ -330,13 +331,14 @@ TEST_CASE("Dataset: from_bins returns the u8 bins it was handed",
     Dataset const ds   = Dataset::from_bins(BinColumns{bins.u8}, mappers, batch.labels);
 
     CHECK(ds.bins_are_u8());
-    CHECK(ds.n_rows() == parent.n_rows());
+    CHECK(ds.plane_n_rows() == parent.plane_n_rows());
     CHECK(ds.n_features() == parent.n_features());
-    CHECK(ds.view_n_rows() == parent.n_rows());
+    CHECK(ds.view_n_rows() == parent.plane_n_rows());
     for (size_t f = 0; f < ds.n_features(); ++f)
     {
-        REQUIRE(ds.visit_bins(f, [](auto col) { return col.size(); }) == ds.n_rows());
-        for (size_t r = 0; r < ds.n_rows(); ++r)
+        REQUIRE(ds.visit_bins(f, [](auto col) { return col.size(); }) ==
+                ds.plane_n_rows());
+        for (size_t r = 0; r < ds.plane_n_rows(); ++r)
         {
             REQUIRE(ds.bin_at(f, r) == parent.bin_at(f, r));
             REQUIRE(ds.visit_bins(f, [r](auto col) { return bin_id_t{col[r]}; }) ==
@@ -357,14 +359,15 @@ TEST_CASE("Dataset: from_bins returns the u16 bins it was handed",
     Dataset const ds = Dataset::from_bins(BinColumns{bins.u16}, mappers, batch.labels);
 
     CHECK_FALSE(ds.bins_are_u8());
-    CHECK(ds.n_rows() == parent.n_rows());
+    CHECK(ds.plane_n_rows() == parent.plane_n_rows());
     CHECK(ds.n_features() == parent.n_features());
     // u16 bins have no row-major mirror, on either dataset.
     CHECK(ds.mirror().bins().empty());
     for (size_t f = 0; f < ds.n_features(); ++f)
     {
-        REQUIRE(ds.visit_bins(f, [](auto col) { return col.size(); }) == ds.n_rows());
-        for (size_t r = 0; r < ds.n_rows(); ++r)
+        REQUIRE(ds.visit_bins(f, [](auto col) { return col.size(); }) ==
+                ds.plane_n_rows());
+        for (size_t r = 0; r < ds.plane_n_rows(); ++r)
         {
             REQUIRE(ds.bin_at(f, r) == parent.bin_at(f, r));
             REQUIRE(ds.visit_bins(f, [r](auto col) { return bin_id_t{col[r]}; }) ==
@@ -415,7 +418,7 @@ TEST_CASE("Dataset: from_bins carries labels and weights", "[dataset][from_bins]
     REQUIRE(ds.weights().size() == 4);
     CHECK(ds.weights()[0] == 0.5F);
     CHECK(ds.weights()[3] == 1.5F);
-    CHECK(ds.n_rows() == 4);
+    CHECK(ds.plane_n_rows() == 4);
     CHECK(ds.n_features() == 1);
 
     // No weights is the uniform case, as every other factory reports it.
@@ -538,8 +541,8 @@ TEST_CASE("Dataset: select_features gathers the kept columns, renumbered",
     Dataset const                   sub = full.select_features(keep);
 
     REQUIRE(sub.n_features() == 2);
-    CHECK(sub.n_rows() == full.n_rows());
-    CHECK(sub.view_n_rows() == full.n_rows());
+    CHECK(sub.plane_n_rows() == full.plane_n_rows());
+    CHECK(sub.view_n_rows() == full.plane_n_rows());
     // Names travel with the columns and land in the order asked for.
     REQUIRE(sub.mappers().feature_names().size() == 2);
     CHECK(sub.mappers().feature_names()[0] == "c");
@@ -547,7 +550,7 @@ TEST_CASE("Dataset: select_features gathers the kept columns, renumbered",
     // Feature k of the subset holds the bins of feature keep[k] of the parent.
     for (size_t k = 0; k < keep.size(); ++k)
     {
-        for (size_t r = 0; r < full.n_rows(); ++r)
+        for (size_t r = 0; r < full.plane_n_rows(); ++r)
         {
             CHECK(sub.bin_at(k, r) == full.bin_at(keep[k], r));
         }
@@ -557,7 +560,7 @@ TEST_CASE("Dataset: select_features gathers the kept columns, renumbered",
     // claim about which column landed where and not about all columns
     // happening to bin alike.
     bool differs = false;
-    for (size_t r = 0; r < sub.n_rows(); ++r)
+    for (size_t r = 0; r < sub.plane_n_rows(); ++r)
     {
         differs |= sub.bin_at(0, r) != sub.bin_at(1, r);
     }
@@ -632,7 +635,7 @@ TEST_CASE("Dataset: a column selection serves its own bins, not the parent's",
     // the parent's four columns here, and feature 0 would read "a" not "c".
     REQUIRE(sub.n_features() == 1);
     bool differs = false;
-    for (size_t r = 0; r < full.n_rows(); ++r)
+    for (size_t r = 0; r < full.plane_n_rows(); ++r)
     {
         CHECK(sub.bin_at(0, r) == full.bin_at(2, r));
         differs |= full.bin_at(0, r) != full.bin_at(2, r);
@@ -643,7 +646,7 @@ TEST_CASE("Dataset: a column selection serves its own bins, not the parent's",
     // own: one feature wide, not the parent's four.
     auto const mirror = sub.mirror().bins();
     REQUIRE(!mirror.empty());
-    for (size_t r = 0; r < sub.n_rows(); ++r)
+    for (size_t r = 0; r < sub.plane_n_rows(); ++r)
     {
         CHECK(mirror[sub.mirror().index(r, 0)] == full.bin_at(2, r));
     }
@@ -658,13 +661,13 @@ TEST_CASE("Dataset: a column rewrite spends the row view instead of carrying it"
 
     std::vector<row_id_t> const     rows{10, 21, 22, 23, 40, 55};
     std::vector<feature_id_t> const keep{1, 3};
-    Dataset const view = full.with_rows(RowView::encode(rows, full.n_rows()));
+    Dataset const view = full.with_rows(RowView::encode(rows, full.plane_n_rows()));
 
     // The rewrite mints a plane whatever the rows are, so it gathers only the
     // ones the view names: the result holds them numbered from zero and views
     // nothing.
     Dataset const rows_first = view.select_features(keep);
-    REQUIRE(rows_first.n_rows() == rows.size());
+    REQUIRE(rows_first.plane_n_rows() == rows.size());
     CHECK(rows_first.view_n_rows() == rows.size());
     CHECK(rows_first.row_view().is_identity());
     for (size_t k = 0; k < keep.size(); ++k)
@@ -683,10 +686,11 @@ TEST_CASE("Dataset: a column rewrite spends the row view instead of carrying it"
 
     // The other order views the rewrite instead of materializing, and the two
     // must train the same model: same rows, same columns, same bins.
-    Dataset const cols_first =
-        full.select_features(keep).with_rows(RowView::encode(rows, full.n_rows()));
+    Dataset const cols_first = full.select_features(keep).with_rows(
+        RowView::encode(rows, full.plane_n_rows()));
     CHECK(cols_first.view_n_rows() == rows.size());
-    CHECK(cols_first.n_rows() == full.n_rows()); // a view keeps the plane whole
+    CHECK(cols_first.plane_n_rows() ==
+          full.plane_n_rows()); // a view keeps the plane whole
 
     BinMappers const kept = BinMappers::from_mappers(
         std::vector<BinMapper>{mappers[1], mappers[3]}, {"b", "d"});
@@ -741,9 +745,9 @@ TEST_CASE("Dataset: materialize gathers a view's rows into a plane of its own",
         rows.push_back(static_cast<row_id_t>(60 - (i * 3)));
     }
     Dataset const done =
-        full.with_rows(RowView::encode(rows, full.n_rows())).materialize();
+        full.with_rows(RowView::encode(rows, full.plane_n_rows())).materialize();
 
-    REQUIRE(done.n_rows() == rows.size());
+    REQUIRE(done.plane_n_rows() == rows.size());
     CHECK(done.n_features() == full.n_features());
     // The rows a scattered view had to gather are now a range, which is what
     // materializing is for.
@@ -796,13 +800,13 @@ TEST_CASE("Dataset: a materialized view serves its own bins",
 
     std::vector<row_id_t> const rows{5, 6, 7, 8};
     Dataset const               done =
-        full.with_rows(RowView::encode(rows, full.n_rows())).materialize();
+        full.with_rows(RowView::encode(rows, full.plane_n_rows())).materialize();
 
     // cols_ and row_major_ are shared across Dataset copies by design; a
     // materialization that copied the parent would serve 64 rows here.
-    REQUIRE(done.n_rows() == 4);
+    REQUIRE(done.plane_n_rows() == 4);
     auto const mirror = done.mirror().bins();
-    REQUIRE(mirror.size() == done.n_rows() * done.n_features());
+    REQUIRE(mirror.size() == done.plane_n_rows() * done.n_features());
     for (size_t f = 0; f < done.n_features(); ++f)
     {
         for (size_t i = 0; i < rows.size(); ++i)
@@ -810,6 +814,30 @@ TEST_CASE("Dataset: a materialized view serves its own bins",
             CHECK(mirror[done.mirror().index(i, f)] == full.bin_at(f, rows[i]));
         }
     }
+}
+
+// INVARIANT: view-narrows-rows-not-plane
+// A row view narrows which rows a fit visits and leaves the plane alone:
+// view_n_rows() is the selection, plane_n_rows() stays the storage. Every row
+// id remains a global id into the plane, which is why grad, hess, labels and
+// the row-major mirror stay full length whatever the view selects.
+TEST_CASE("Dataset: a view narrows its rows and leaves the plane alone",
+          "[dataset][view][invariant]")
+{
+    detail::ColumnBatch batch   = four_feature_batch(512);
+    auto const          mappers = BinMappers::fit(batch, BinMapperConfig{});
+    Dataset const       ds      = Dataset::bin(batch, mappers, DataConfig{});
+
+    std::vector<row_id_t> ids;
+    for (row_id_t r = 0; r < 512; r += 3)
+    {
+        ids.push_back(r);
+    }
+    Dataset const view = ds.with_rows(RowView::encode(ids, ds.plane_n_rows()));
+
+    CHECK(view.view_n_rows() == ids.size());
+    CHECK(view.plane_n_rows() == ds.plane_n_rows());
+    CHECK(view.labels().size() == ds.plane_n_rows());
 }
 
 TEST_CASE("a view copies nothing, not even its labels", "[dataset][view]")
@@ -827,14 +855,11 @@ TEST_CASE("a view copies nothing, not even its labels", "[dataset][view]")
     {
         ids.push_back(r);
     }
-    Dataset const view = ds.with_rows(RowView::encode(ids, ds.n_rows()));
+    Dataset const view = ds.with_rows(RowView::encode(ids, ds.plane_n_rows()));
 
     CHECK(view.labels().data() == ds.labels().data());
     CHECK(view.weights().data() == ds.weights().data());
     CHECK(&view.mappers() == &ds.mappers());
-    // The view still reports its own row count while sharing the storage.
-    CHECK(view.view_n_rows() == ids.size());
-    CHECK(view.n_rows() == ds.n_rows());
 }
 
 TEST_CASE("a rewrite owns its labels rather than sharing them", "[dataset][view]")
@@ -848,7 +873,7 @@ TEST_CASE("a rewrite owns its labels rather than sharing them", "[dataset][view]
     Dataset const                   sub   = ds.select_features(keep);
 
     CHECK(sub.labels().data() != ds.labels().data());
-    CHECK(sub.labels().size() == ds.n_rows());
+    CHECK(sub.labels().size() == ds.plane_n_rows());
 }
 
 // The mirror's addressing rule, pinned before it moves anywhere. The
@@ -954,7 +979,7 @@ TEST_CASE("a view shares its parent's bin store; a rewrite owns one",
     {
         ids.push_back(r);
     }
-    Dataset const view = ds.with_rows(RowView::encode(ids, ds.n_rows()));
+    Dataset const view = ds.with_rows(RowView::encode(ids, ds.plane_n_rows()));
     CHECK(&view.store() == &ds.store());
 
     std::vector<feature_id_t> const keep = {2, 0};
@@ -982,7 +1007,7 @@ TEST_CASE("identity tokens: minted, shared by copies, distinct per fit",
     {
         ids.push_back(r);
     }
-    Dataset const view = ds.with_rows(RowView::encode(ids, ds.n_rows()));
+    Dataset const view = ds.with_rows(RowView::encode(ids, ds.plane_n_rows()));
     CHECK(view.fit_identity() != ds.fit_identity());
     CHECK(view.labels_identity() == ds.labels_identity());
 

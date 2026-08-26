@@ -95,7 +95,7 @@ SplitInput populate_node(Fixture const &fx, std::vector<row_id_t> rows,
     SplitInput node;
     node.id             = id;
     node.rows           = std::move(rows);
-    node.shape.identity = rows_are_identity(node.rows, fx.ds.n_rows());
+    node.shape.identity = rows_are_identity(node.rows, fx.ds.plane_n_rows());
     CpuHistogramEngine engine;
     // As a grower drives it: begin_tree drops the cached selection plan, which
     // is keyed by addresses a second fixture in this process may reuse.
@@ -106,7 +106,7 @@ SplitInput populate_node(Fixture const &fx, std::vector<row_id_t> rows,
         return node;
     }
     SplitInput parent;
-    parent.rows           = test::iota_rows(fx.ds.n_rows());
+    parent.rows           = test::iota_rows(fx.ds.plane_n_rows());
     parent.shape.identity = true;
     engine.populate(fx.ds, fx.grad, fx.hess, parent, fx.selected);
     engine.populate_lone(fx.ds, fx.grad, fx.hess, node, fx.selected, parent.hists);
@@ -119,15 +119,15 @@ void check_mirror_layout(Fixture const &fx)
 {
     auto const   rm    = fx.ds.mirror().bins();
     size_t const width = Dataset::mirror_tile_width();
-    REQUIRE(rm.size() == fx.ds.n_rows() * fx.ds.n_features());
-    for (size_t r = 0; r < fx.ds.n_rows(); ++r)
+    REQUIRE(rm.size() == fx.ds.plane_n_rows() * fx.ds.n_features());
+    for (size_t r = 0; r < fx.ds.plane_n_rows(); ++r)
     {
         for (size_t f = 0; f < fx.ds.n_features(); ++f)
         {
             size_t const mb      = f / width;
             size_t const width_b = std::min(width, fx.ds.n_features() - (mb * width));
-            size_t const idx =
-                (fx.ds.n_rows() * mb * width) + (r * width_b) + (f - (mb * width));
+            size_t const idx     = (fx.ds.plane_n_rows() * mb * width) + (r * width_b) +
+                               (f - (mb * width));
             REQUIRE(rm[idx] == fx.ds.bin_at(f, r));
         }
     }
@@ -142,8 +142,8 @@ TEST_CASE("row-wise multi-block fill matches serial sums within tolerance",
     auto const fx = make_fixture(40960, 3);
     REQUIRE(fx.ds.bins_are_u8());
 
-    auto const node = populate_node(fx, test::iota_rows(fx.ds.n_rows()));
-    auto const ref  = reference_hists(fx, test::iota_rows(fx.ds.n_rows()));
+    auto const node = populate_node(fx, test::iota_rows(fx.ds.plane_n_rows()));
+    auto const ref  = reference_hists(fx, test::iota_rows(fx.ds.plane_n_rows()));
     for (size_t s = 0; s < fx.selected.size(); ++s)
     {
         auto const cells = node.hists[fx.selected[s]].all_cells();
@@ -168,7 +168,7 @@ TEST_CASE("row-wise single-block fill is bit-identical to the serial order",
 
     // A sparse, non-contiguous subset small enough for one block.
     std::vector<row_id_t> rows;
-    for (row_id_t r = 1; r < fx.ds.n_rows(); r += 17)
+    for (row_id_t r = 1; r < fx.ds.plane_n_rows(); r += 17)
     {
         rows.push_back(r);
     }
@@ -193,12 +193,12 @@ TEST_CASE("sparse fill sums its per-thread partials into the node arena", "[popu
     REQUIRE(fx.ds.bins_are_u8());
 
     std::vector<row_id_t> rows;
-    for (row_id_t r = 0; r < fx.ds.n_rows(); r += 5)
+    for (row_id_t r = 0; r < fx.ds.plane_n_rows(); r += 5)
     {
         rows.push_back(r);
     }
     REQUIRE(rows.size() == 8192);
-    REQUIRE(rows.size() * 4 < fx.ds.n_rows());
+    REQUIRE(rows.size() * 4 < fx.ds.plane_n_rows());
 
     parallel::set_n_threads(1);
     auto const serial = populate_node(fx, rows); // one chunk range, no partials
@@ -234,11 +234,11 @@ TEST_CASE("a lone node fills feature-major in serial order in one row block",
     REQUIRE(fx.ds.bins_are_u8());
 
     std::vector<row_id_t> rows;
-    for (row_id_t r = 0; r < fx.ds.n_rows(); r += 5)
+    for (row_id_t r = 0; r < fx.ds.plane_n_rows(); r += 5)
     {
         rows.push_back(r);
     }
-    REQUIRE(rows.size() * 4 < fx.ds.n_rows());
+    REQUIRE(rows.size() * 4 < fx.ds.plane_n_rows());
 
     parallel::set_n_threads(1);
     auto const one = populate_node(fx, rows, 1);
@@ -273,11 +273,11 @@ TEST_CASE("a lone node cut into row blocks is reproducible and serial at one "
     REQUIRE(fx.ds.bins_are_u8());
 
     std::vector<row_id_t> rows;
-    for (row_id_t r = 0; r < fx.ds.n_rows(); r += 8)
+    for (row_id_t r = 0; r < fx.ds.plane_n_rows(); r += 8)
     {
         rows.push_back(r);
     }
-    REQUIRE(rows.size() * 4 < fx.ds.n_rows());
+    REQUIRE(rows.size() * 4 < fx.ds.plane_n_rows());
 
     parallel::set_n_threads(1);
     auto const one = populate_node(fx, rows, 1);
@@ -318,12 +318,12 @@ TEST_CASE("the column fill gathers a lone node in serial order", "[populate]")
         REQUIRE(fx.ds.bins_are_u8());
 
         std::vector<row_id_t> rows;
-        for (row_id_t r = 1; r < fx.ds.n_rows(); r += stride)
+        for (row_id_t r = 1; r < fx.ds.plane_n_rows(); r += stride)
         {
             rows.push_back(r);
         }
-        REQUIRE(rows.size() * 4 >= fx.ds.n_rows()); // routes to the column fill
-        REQUIRE(rows.size() < fx.ds.n_rows());      // and gathers, not in place
+        REQUIRE(rows.size() * 4 >= fx.ds.plane_n_rows()); // routes to the column fill
+        REQUIRE(rows.size() < fx.ds.plane_n_rows());      // and gathers, not in place
 
         auto const ref = reference_hists(fx, rows);
         for (int const threads : {1, 4})
@@ -357,12 +357,12 @@ TEST_CASE("a full-cardinality row list that is not the identity still gathers",
     REQUIRE(fx.ds.bins_are_u8());
 
     std::mt19937 rng(11);
-    auto         perm = test::iota_rows(fx.ds.n_rows());
+    auto         perm = test::iota_rows(fx.ds.plane_n_rows());
     std::shuffle(perm.begin(), perm.end(), rng);
 
-    std::vector<row_id_t>                   boot(fx.ds.n_rows());
+    std::vector<row_id_t>                   boot(fx.ds.plane_n_rows());
     std::uniform_int_distribution<row_id_t> pick(
-        0, static_cast<row_id_t>(fx.ds.n_rows() - 1));
+        0, static_cast<row_id_t>(fx.ds.plane_n_rows() - 1));
     for (row_id_t &r : boot)
     {
         r = pick(rng);
@@ -370,7 +370,7 @@ TEST_CASE("a full-cardinality row list that is not the identity still gathers",
 
     for (auto const &rows : {perm, boot})
     {
-        REQUIRE(rows.size() == fx.ds.n_rows());
+        REQUIRE(rows.size() == fx.ds.plane_n_rows());
         auto const node = populate_node(fx, rows);
         auto const ref  = reference_hists(fx, rows);
         for (size_t s = 0; s < fx.selected.size(); ++s)
@@ -401,8 +401,8 @@ TEST_CASE("populate is reproducible at a fixed thread count", "[populate]")
     parallel::set_n_threads(3);
     auto const fx = make_fixture(40960, 3);
 
-    auto const a = populate_node(fx, test::iota_rows(fx.ds.n_rows()));
-    auto const b = populate_node(fx, test::iota_rows(fx.ds.n_rows()));
+    auto const a = populate_node(fx, test::iota_rows(fx.ds.plane_n_rows()));
+    auto const b = populate_node(fx, test::iota_rows(fx.ds.plane_n_rows()));
     for (feature_id_t const fid : fx.selected)
     {
         auto const ca = a.hists[fid].all_cells();
@@ -418,8 +418,8 @@ TEST_CASE("u16 fallback fill is bit-identical to the serial order", "[populate]"
     auto const fx = make_fixture(8192, 3, BinMapperConfig{.max_bin = 2048});
     REQUIRE(!fx.ds.bins_are_u8());
 
-    auto const node = populate_node(fx, test::iota_rows(fx.ds.n_rows()));
-    auto const ref  = reference_hists(fx, test::iota_rows(fx.ds.n_rows()));
+    auto const node = populate_node(fx, test::iota_rows(fx.ds.plane_n_rows()));
+    auto const ref  = reference_hists(fx, test::iota_rows(fx.ds.plane_n_rows()));
     for (size_t s = 0; s < fx.selected.size(); ++s)
     {
         auto const cells = node.hists[fx.selected[s]].all_cells();
@@ -455,8 +455,8 @@ TEST_CASE("wide multi-slice fill matches serial sums within tolerance", "[popula
     REQUIRE(fx.ds.bins_are_u8());
     REQUIRE(fx.ds.n_features() > Dataset::mirror_tile_width());
 
-    auto const node = populate_node(fx, test::iota_rows(fx.ds.n_rows()));
-    auto const ref  = reference_hists(fx, test::iota_rows(fx.ds.n_rows()));
+    auto const node = populate_node(fx, test::iota_rows(fx.ds.plane_n_rows()));
+    auto const ref  = reference_hists(fx, test::iota_rows(fx.ds.plane_n_rows()));
     // Probe features from both blocks, straddling the boundary.
     for (size_t const s : {0UL, 1024UL, 2046UL, 2047UL, 2048UL, 2049UL, 2111UL})
     {
@@ -490,7 +490,7 @@ TEST_CASE("wide single-block fill with a selection spanning the block boundary "
 
     // A sparse row subset small enough for one block per slice.
     std::vector<row_id_t> rows;
-    for (row_id_t r = 1; r < fx.ds.n_rows(); r += 17)
+    for (row_id_t r = 1; r < fx.ds.plane_n_rows(); r += 17)
     {
         rows.push_back(r);
     }

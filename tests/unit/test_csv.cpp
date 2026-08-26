@@ -110,7 +110,7 @@ TEST_CASE("Csv: read_csv pipes through fit_from_csv to a usable Dataset",
     auto const mappers = bonsai::io::fit_from_csv(tiny_csv(), cfg);
     auto const dataset = bonsai::io::read_csv(tiny_csv(), cfg.data, mappers);
 
-    REQUIRE(dataset.n_rows() == 4);
+    REQUIRE(dataset.plane_n_rows() == 4);
     REQUIRE(dataset.n_features() == 3);
     REQUIRE(dataset.labels().size() == 4);
     REQUIRE(mappers.size() == 3);

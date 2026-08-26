@@ -22,7 +22,6 @@ namespace bonsai::config
 namespace
 {
 
-// Insert one field's value into a per-section toml::table.
 template <typename T>
 void insert_field(toml::table &tbl, std::string_view leaf, T const &value)
 {

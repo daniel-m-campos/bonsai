@@ -331,7 +331,7 @@ void check_booster(std::span<DenseTree const> trees, BinMappers const &mappers,
     size_t const cols  = n_features + 1;
     REQUIRE(!paths.heads.empty());
     std::vector<bin_id_t> row_bins(n_features, 0);
-    for (size_t r = 0; r < eval.n_rows(); ++r)
+    for (size_t r = 0; r < eval.plane_n_rows(); ++r)
     {
         std::vector<double> phi(n_classes * cols, 0.0);
         for (size_t f = 0; f < n_features; ++f)
@@ -596,7 +596,7 @@ TEST_CASE("Shap paths: leafwise dense booster matches pred_contribs_binned",
         b.update_one_iter(train);
     }
 
-    std::vector<double> contribs(eval.n_rows() * 4);
+    std::vector<double> contribs(eval.plane_n_rows() * 4);
     b.pred_contribs_binned(eval, contribs, 3);
     std::array<float, 1> const init{b.init_score()};
     check_booster(b.trees(), mappers, eval, contribs, 3, 1,
@@ -622,7 +622,7 @@ TEST_CASE("Shap paths: oblivious densified booster matches pred_contribs_binned"
         b.update_one_iter(train);
     }
 
-    std::vector<double> contribs(eval.n_rows() * 4);
+    std::vector<double> contribs(eval.plane_n_rows() * 4);
     b.pred_contribs_binned(eval, contribs, 3);
     auto const                 dense = internal::densify(b.trees());
     std::array<float, 1> const init{b.init_score()};
@@ -715,7 +715,7 @@ TEST_CASE("Shap paths: multiclass paths carry their class id", "[shap][paths][bo
     CHECK(per_class[1] > 0);
     CHECK(per_class[2] > 0);
 
-    std::vector<double> contribs(eval.n_rows() * 3 * 2);
+    std::vector<double> contribs(eval.plane_n_rows() * 3 * 2);
     b.pred_contribs_binned(eval, contribs, 1);
     check_booster(b.trees(), mappers, eval, contribs, 1, 3,
                   cfg.booster_config.learning_rate, b.init_scores());

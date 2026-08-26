@@ -1,6 +1,3 @@
-// Python bindings: a thin nanobind layer over the same seams the CLI uses
-// (config::apply_overrides, cli::train_with_progress, io::save/load_booster).
-// No training or prediction logic lives here.
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
@@ -61,9 +58,6 @@ bonsai::features_view as_view(array_2d const &X)
     return bonsai::features_view{X.data(), X.shape(0), X.shape(1)};
 }
 
-// Hand an owning vector to numpy: the capsule takes the vector, the array
-// takes the capsule, and the buffer is never copied. The unique_ptr is
-// consumed, so a throw before this call still frees.
 template <typename T>
 nb::ndarray<nb::numpy, T> to_numpy(std::unique_ptr<std::vector<T>> out,
                                    std::initializer_list<size_t>   shape)
@@ -74,18 +68,9 @@ nb::ndarray<nb::numpy, T> to_numpy(std::unique_ptr<std::vector<T>> out,
     return {raw->data(), shape, owner};
 }
 
-// --- device-resident input (DLPack)
-
-// Placement for device-resident input: the buffer decides where the work
-// happens, so an array whose device disagrees with parallel.device_id is
-// refused rather than migrated behind the caller's back. Stream ordering is
-// the producer's job under DLPack, which synchronizes at export; ingest reads
-// on the default stream.
 template <typename Array>
 void place_device_array(Array const &arr, uint32_t device_id, char const *what)
 {
-    // The import validates dtype, rank, and contiguity; a null pointer or a
-    // zero-size axis is all it leaves for bonsai to refuse.
     if (arr.data() == nullptr || arr.size() == 0)
     {
         throw std::invalid_argument(std::string{what} + " is an empty device array");
@@ -110,10 +95,6 @@ void place_device_array(Array const &arr, uint32_t device_id, char const *what)
     }
 }
 
-// The feature matrix as bonsai received it: a host numpy array, or a device
-// buffer bonsai bins where it already lies. The device pointer is borrowed for
-// the duration of the call that consumes it and never retained: ingest mints a
-// plane that owns its own device bins, so nothing outlives this struct.
 struct MatrixArg
 {
     std::optional<array_2d> host;
@@ -159,10 +140,6 @@ MatrixArg resolve_matrix(nb::handle X, uint32_t device_id)
     return out;
 }
 
-// Labels and weights stay on the host whichever device the features are on:
-// the objective, the eval loop, and the device-resident uploader all read them
-// from host memory, so a device vector is downloaded once here rather than
-// plumbed through as a second device pointer.
 struct VectorArg
 {
     std::optional<array_1d> host;
@@ -201,10 +178,6 @@ VectorArg resolve_vector(nb::handle v, uint32_t device_id, char const *what)
     return out;
 }
 
-// X, y and an optional weight vector resolved together with the two length
-// checks every entry point owes its caller. `weight_name` is the keyword the
-// caller spells the weights as, so the message names the user's own argument;
-// `where` prefixes the entry point when it is not the free train function.
 struct Inputs
 {
     MatrixArg                xarg;
@@ -235,9 +208,6 @@ Inputs resolve_inputs(nb::handle X, nb::handle y, nb::handle weight, uint32_t de
     return in;
 }
 
-// Names index the model: dump() prints them and monotone constraints may be
-// keyed by them, so a wrong count or a repeat is said out loud rather than
-// silently indexing the wrong column.
 void check_feature_names(std::vector<std::string> const &names, size_t n_features)
 {
     if (names.size() != n_features)
@@ -258,9 +228,6 @@ void check_feature_names(std::vector<std::string> const &names, size_t n_feature
     }
 }
 
-// The caller's names, checked, or synthesized f0..fN. The synthesized names
-// are real names as far as the model is concerned: dump() prints them and
-// monotone constraints resolve against them.
 std::vector<std::string>
 resolve_feature_names(size_t                                         n_features,
                       std::optional<std::vector<std::string>> const &supplied)
@@ -279,9 +246,6 @@ resolve_feature_names(size_t                                         n_features,
     return names;
 }
 
-// The bin mappers for X. The device arm gathers exactly the rows the host
-// sampler would have drawn and fits on those, so the cuts, and therefore the
-// bins, are bit-identical to the host path's for the same seed.
 bonsai::BinMappers fit_mappers(MatrixArg const &X, std::vector<std::string> names,
                                bonsai::Config const   &cfg,
                                bonsai::BinEdges const &edges = {})
@@ -300,9 +264,6 @@ bonsai::BinMappers fit_mappers(MatrixArg const &X, std::vector<std::string> name
         cfg.bin_mapper, edges);
 }
 
-// Bins straight from the row-major numpy matrix (no column-major float
-// materialization); the FeatureBuffer borrows the same buffer, which is
-// alive for the duration of the train call.
 bonsai::cli::LabeledData make_labeled(MatrixArg const &X, bonsai::floats_view y,
                                       bonsai::BinMappers const &mappers,
                                       bonsai::Config const &cfg, bool on_device,
@@ -312,10 +273,6 @@ bonsai::cli::LabeledData make_labeled(MatrixArg const &X, bonsai::floats_view y,
     buf.n_rows     = X.n_rows;
     buf.n_features = X.n_features;
 
-    // Device-resident input: the plane is the only copy of the columns, so
-    // ingest never declines here and the FeatureBuffer stays empty. Nothing
-    // reads it — the raw matrix is a progress-tick predict input, and these
-    // bindings pass no tick callback.
     if (X.on_device())
     {
         return bonsai::cli::LabeledData{
@@ -327,11 +284,6 @@ bonsai::cli::LabeledData make_labeled(MatrixArg const &X, bonsai::floats_view y,
     }
     buf.borrowed = std::span{X.host->data(), X.n_rows * X.n_features};
 
-    // The ingest transaction (decision 54): the device arm bins on the GPU;
-    // cuda_ingest declines (nullptr) when the dataset's bins exceed the
-    // resident ceiling, keeping the host fill. Device placement first
-    // (issue #158): cudaSetDevice is thread-local and this thread is about
-    // to mint the device plane.
     if (on_device)
     {
         bonsai::cuda_select_device(cfg.parallel.device_id);
@@ -344,10 +296,6 @@ bonsai::cli::LabeledData make_labeled(MatrixArg const &X, bonsai::floats_view y,
         .labels   = std::vector<float>(y.begin(), y.end())};
 }
 
-// Validation-only LabeledData: train_with_progress takes the features and
-// labels and bins them itself, once the rounds it has run have paid for the
-// pass, so binning here would charge every fit for it and, under cuda
-// growers, add a wasted GPU upload per call.
 bonsai::cli::LabeledData make_validation_labeled(array_2d const &X, array_1d const &y)
 {
     size_t const n = X.shape(0);
@@ -362,7 +310,6 @@ bonsai::cli::LabeledData make_validation_labeled(array_2d const &X, array_1d con
                                         std::vector<float>(y.data(), y.data() + n)};
 }
 
-// Which form the run-length encoder landed on, as repr says it.
 std::string view_shape_phrase(bonsai::RowView const &view)
 {
     switch (view.form())
@@ -377,7 +324,6 @@ std::string view_shape_phrase(bonsai::RowView const &view)
     return std::to_string(view.size()) + " gathered rows";
 }
 
-// Two decimals, truncated: repr is a glance at the density, not a measurement.
 std::string two_decimals(double value)
 {
     std::string const text = std::to_string(value);
@@ -385,10 +331,6 @@ std::string two_decimals(double value)
     return dot == std::string::npos ? text : text.substr(0, dot + 3);
 }
 
-// `columns=` as feature ids into a dataset whose columns are `names`: a slice,
-// a boolean mask, an integer array, or the names themselves. Order and
-// duplicates are kept for the same reason rows keep them, and negative indices
-// are refused for the same reason: a feature id indexes the binned plane.
 std::vector<bonsai::feature_id_t>
 parse_column_selection(nb::handle columns, std::span<std::string const> names)
 {
@@ -400,8 +342,6 @@ parse_column_selection(nb::handle columns, std::span<std::string const> names)
         return np.attr("arange")(start, stop, step);
     }()
                                                               : np.attr("asarray")(columns);
-    // An empty list arrives as an empty float array, whose dtype would earn
-    // the wrong complaint entirely; the caller's mistake is the emptiness.
     if (nb::cast<size_t>(arr.attr("size")) == 0)
     {
         throw nb::value_error(
@@ -423,9 +363,6 @@ parse_column_selection(nb::handle columns, std::span<std::string const> names)
     }
     else if (kind == "U" || kind == "S" || kind == "O")
     {
-        // Names, resolved through the dataset's own list: the same lookup
-        // monotone constraints and feature_names_in_ use, so a typo is a
-        // KeyError here rather than a silent column somewhere else.
         std::vector<int64_t> ids;
         for (nb::handle const item :
              nb::cast<nb::sequence>(np.attr("atleast_1d")(arr).attr("tolist")()))
@@ -484,12 +421,6 @@ parse_column_selection(nb::handle columns, std::span<std::string const> names)
     return out;
 }
 
-// `rows=` as positions into a dataset of `n` rows: a slice, a boolean mask, or
-// an integer array. Positions, not global ids: the caller indexes what it was
-// handed, and a view maps them onto its parent's plane afterwards.
-// Order and duplicates are kept. A node's histogram sums its rows in list
-// order, so the order is part of the answer, and sorting a bootstrap draw's
-// duplicates away would change what it weighs.
 std::vector<bonsai::row_id_t> parse_row_selection(nb::handle rows, size_t n)
 {
     nb::object const np  = nb::module_::import_("numpy");
@@ -562,23 +493,6 @@ std::vector<bonsai::row_id_t> parse_row_selection(nb::handle rows, size_t n)
     return out;
 }
 
-// A reusable pre-binned dataset (decision 65): binning runs once at
-// construction, and the SAME bonsai::Dataset is fed to every train() call, so a
-// hyperparameter sweep or CV loop skips the per-fit bin pass. On GPU the
-// resident-matrix upload-skip cache (ensure_dataset) fires because the object
-// address is stable across fits. Holds the numpy X alive because the
-// FeatureBuffer borrows the row-major matrix; y and weight are copied out by
-// Dataset::bin during construction and are not retained.
-// Binning follows the device hint: the host by default, the GPU under
-// device="cuda", where the resident matrix is then adopted by every fit.
-// Device-resident input (DLPack) carries its own answer: the bytes are
-// already there, so it bins there whatever the hint's default. A reference
-// answers for an unset hint the same way it answers for unset binning
-// settings: a validation set follows its training set's device unless the
-// caller places it elsewhere explicitly.
-// `reference` binds the new dataset to another one's cuts instead of fitting
-// its own, which is what makes a validation set reusable: a fit can only
-// route rows binned under the cuts its own trees were grown on.
 class Dataset
 {
   public:
@@ -590,18 +504,12 @@ class Dataset
             uint32_t n_threads, Dataset const *reference,
             std::optional<std::vector<std::string>> const &feature_names)
     {
-        // The reference's residency answers for both unset device arguments,
-        // so a validation set lands beside its training set by default.
         std::optional<uint32_t> const ref_device =
             reference != nullptr ? reference->device_id_ : std::nullopt;
         uint32_t const dev_id =
             device_id.value_or(ref_device.value_or(bonsai::ParallelConfig{}.device_id));
         auto const [xarg, yarg, warg] =
             resolve_inputs(X, y, weight, dev_id, "weight", "Dataset: ");
-        // A device hint is an explicit user request, so an absent backend or
-        // device is an error here, unlike the engine's own inference from a
-        // grower name (which degrades to the host silently). Device-resident
-        // input needs no hint: it defaults to the device it is already on.
         std::string const hint = device.value_or(
             xarg.on_device() || ref_device.has_value() ? "cuda" : "cpu");
         bool const on_device = hint == "cuda";
@@ -622,9 +530,6 @@ class Dataset
                 "copy it back to the host. Drop the device argument to bin it "
                 "where it already lives, or pass a host array.");
         }
-        // A reference already decided the binning, so an unset setting takes
-        // its value rather than the library default; only an explicit one
-        // that disagrees is an error (check_reference).
         bonsai::BinMapperConfig const base =
             reference != nullptr ? reference->bin_cfg_ : bonsai::BinMapperConfig{};
         bonsai::Config cfg;
@@ -642,9 +547,6 @@ class Dataset
 
         std::vector<std::string> names =
             resolve_feature_names(xarg.n_features, feature_names);
-        // Copy the edge arrays out while the GIL is held; validation
-        // (finite, strictly increasing, in-range column) happens inside
-        // BinMappers::fit and surfaces as bonsai::ConfigError.
         bonsai::BinEdges edges;
         if (bin_edges)
         {
@@ -664,25 +566,14 @@ class Dataset
                                : fit_mappers(xarg, std::move(names), cfg, edges);
         loaded_->train =
             make_labeled(xarg, yarg.view(), loaded_->mappers, cfg, on_device, w);
-        // Device state is recorded only when a plane was actually minted:
-        // an ingest decline leaves an ordinary host dataset, which no later
-        // fit needs to be placed against.
         if (loaded_->train.dataset.ingest_plane())
         {
             device_id_ = dev_id;
         }
-        // The host matrix is kept alive because the FeatureBuffer borrows it;
-        // a device matrix is not kept at all, since its bins were copied into
-        // the plane and nothing else refers to the caller's buffer.
         x_          = xarg.host;
         n_features_ = xarg.n_features;
     }
 
-    // A row view of `parent`: the same binned plane, fewer rows. The parent's
-    // LoadedTrainValidation is shared rather than copied, so the mappers, the
-    // caller's matrix and the plane are one copy however many views stand on
-    // them; only the LabeledData wrapper is the view's own, because that is
-    // where the descriptor rides into the fit.
     Dataset(Dataset const &parent, bonsai::RowView rows, nb::object base)
         : x_(parent.x_), n_features_(parent.n_features_), loaded_(parent.loaded_),
           view_train_(
@@ -695,14 +586,6 @@ class Dataset
     {
     }
 
-    // A rewrite: bins already gathered into a plane this Dataset owns
-    // outright. Nothing is shared with whatever they were gathered out of, so
-    // this is nobody's view and its .base is None.
-    //
-    // The device id follows the bins. A backend that gathered the rewrite in
-    // its own memory hands back a plane, and reporting that dataset as host
-    // resident would route the next fit through a stage-up that the whole
-    // point of the device gather was to avoid.
     Dataset(bonsai::Dataset gathered, bonsai::BinMapperConfig cfg,
             std::optional<uint32_t> device_id)
         : n_features_(gathered.n_features()),
@@ -719,11 +602,6 @@ class Dataset
                                      loaded_->train.dataset.labels().end());
     }
 
-    // Select rows and/or features out of this dataset. Rows share the plane;
-    // features rewrite it. Row positions are into THIS dataset's rows, so
-    // composing two views composes their selections; the ids stored are global
-    // ids into the root's plane, which is what the fit indexes bins, grad and
-    // the mirror by.
     Dataset subset(nb::handle self, nb::handle rows, nb::handle columns) const
     {
         if (rows.is_none() && columns.is_none())
@@ -732,9 +610,6 @@ class Dataset
                 "Dataset.subset() needs rows= or columns=: a numpy integer array, a "
                 "slice, a boolean mask, or (for columns) feature names");
         }
-        // Rows first, so the rewrite gathers only the rows that survive and
-        // the intermediate plane is never minted. The other order is the same
-        // dataset, which test_rows_and_columns_commute pins.
         if (!columns.is_none())
         {
             Dataset const narrowed =
@@ -754,13 +629,10 @@ class Dataset
             }
         }
         nb::object base = is_view() ? base_ : nb::borrow(self);
-        return {root(), bonsai::RowView::encode(ids, bins().n_rows()), std::move(base)};
+        return {root(), bonsai::RowView::encode(ids, bins().plane_n_rows()),
+                std::move(base)};
     }
 
-    // The same rows in a different order, laid out that way. Unlike subset
-    // this always rewrites: the order is the whole point, and an order a view
-    // only describes still costs a gather on every histogram fill of every
-    // tree. Laid out once, a caller's fold becomes a range.
     Dataset reorder(nb::handle self, nb::handle rows) const
     {
         if (rows.is_none())
@@ -770,12 +642,8 @@ class Dataset
                 "rows, as an integer array or a slice");
         }
         std::vector<bonsai::row_id_t> const ids = parse_row_selection(rows, n_rows());
-        // A permutation, not a selection: reorder answers "the same rows,
-        // arranged differently", and anything else is subset's question. The
-        // check is what stops a draw with repeats from arriving here and
-        // quietly weighting some rows twice.
-        std::vector<bool> seen(n_rows(), false);
-        bool const        whole = ids.size() == n_rows();
+        std::vector<bool>                   seen(n_rows(), false);
+        bool const                          whole = ids.size() == n_rows();
         for (bonsai::row_id_t const id : ids)
         {
             if (!whole || seen[id])
@@ -794,38 +662,26 @@ class Dataset
         return {laid.bins().materialize(), bin_cfg_, laid.device_id_};
     }
 
-    // Whether this dataset selects rows out of another one's plane.
     bool is_view() const
     {
         return view_train_ != nullptr;
     }
 
-    // The dataset whose plane backs this one, or None when it owns its own,
-    // which is numpy's convention for ndarray.base.
     nb::object base() const
     {
         return base_;
     }
 
-    // The device the binned columns live on, "cpu" or "cuda". A device
-    // request that ingest declined reports "cpu": the columns are on the
-    // host and nothing about the fit is constrained.
     std::string device() const
     {
         return device_id_ ? "cuda" : "cpu";
     }
 
-    // The device a device-binned dataset is resident on; empty for host
-    // datasets. A fit placed on a different device would have to migrate the
-    // matrix, so train() rejects the mismatch instead.
     std::optional<uint32_t> device_id() const
     {
         return device_id_;
     }
 
-    // The rows a fit visits, which is what a caller means by "how many rows".
-    // The plane's own row count stays on bonsai::Dataset, where the mirror
-    // stride and the device geometry key read it.
     size_t n_rows() const
     {
         return bins().view_n_rows();
@@ -835,18 +691,12 @@ class Dataset
         return n_features_;
     }
 
-    // The names the columns carry through the model: the caller's, X's own
-    // `columns`, or the synthesized f0..fN.
     std::vector<std::string> feature_names() const
     {
         auto const names = loaded_->mappers.feature_names();
         return {names.begin(), names.end()};
     }
 
-    // Whether the caller's host matrix is still reachable. Device-resident
-    // (DLPack) input leaves no host copy, and the raw-row readers on the
-    // eval path (the warm-start seam, the walk before it switches to bin
-    // space) have nothing to read without one.
     bool has_host_matrix() const
     {
         return x_.has_value();
@@ -857,27 +707,21 @@ class Dataset
         return *loaded_;
     }
 
-    // The train side a fit runs on: a view's own, carrying the descriptor.
     bonsai::cli::LabeledData const &train_data() const
     {
         return view_train_ ? *view_train_ : loaded_->train;
     }
 
-    // The binned columns, which is all most readers want out of loaded().
     bonsai::Dataset const &bins() const
     {
         return train_data().dataset;
     }
 
-    // The dataset that owns the plane: this one, or the one .base names.
     Dataset const &root() const
     {
         return is_view() ? nb::cast<Dataset const &>(base_) : *this;
     }
 
-    // The refusal a view earns when a reader can only answer from raw rows:
-    // the rows a view names live in its parent's matrix, so reading that
-    // matrix would answer over the parent's rows and say nothing about it.
     [[noreturn]] void refuse_view(char const *method, char const *because) const
     {
         throw std::invalid_argument(
@@ -887,15 +731,11 @@ class Dataset
             ". Materialize the rows with Dataset(X[idx], y[idx], reference=parent).");
     }
 
-    // The view's row selection, for repr and for the fit.
     bonsai::RowView const &row_view() const
     {
         return bins().row_view();
     }
 
-    // The raw rows a host-built Dataset retained; the Model raw-row readers
-    // (predict and friends) read them directly, no rebinning. Asking a
-    // device-resident (DLPack) build is an error with the remedy.
     array_2d const &host_matrix(char const *method) const
     {
         if (!x_)
@@ -911,9 +751,6 @@ class Dataset
     }
 
   private:
-    // A reference supplies the cuts, so every setting that would have shaped
-    // them is inert here: unset inherits, and a disagreeing one is said out
-    // loud rather than ignored.
     static void check_reference(Dataset const                 &reference,
                                 bonsai::BinMapperConfig const &bin_cfg,
                                 bool has_bin_edges, bool has_feature_names,
@@ -949,28 +786,19 @@ class Dataset
         }
     }
 
-    std::optional<array_2d> x_;
-    size_t                  n_features_ = 0;
-    // Shared, not held by value: a view of this Dataset backs onto the same
-    // bonsai::Dataset at the same address, which is what the device upload
-    // cache and the mappers identity are keyed on.
+    std::optional<array_2d>                             x_;
+    size_t                                              n_features_ = 0;
     std::shared_ptr<bonsai::cli::LoadedTrainValidation> loaded_ =
         std::make_shared<bonsai::cli::LoadedTrainValidation>();
-    // Engaged only on a view: the bonsai::Dataset that carries the row
-    // descriptor. Held by shared_ptr so its address is stable across fits,
-    // which is what the device upload-skip cache keys on.
     std::shared_ptr<bonsai::cli::LabeledData> view_train_;
     nb::object                                base_ = nb::none();
     std::optional<uint32_t>                   device_id_;
     bonsai::BinMapperConfig                   bin_cfg_;
 };
 
-// The device plans cached per mutation epoch, so a sweep of predicts or
-// explains between fits packs the ensemble once. Readers are const and may be
-// concurrent (the bindings release the GIL), hence the lock; a refused pack
-// caches too, so a host with no device pays one refusal per epoch, not one
-// per call. The two kinds pack independently: leaf paths cost more to pack
-// than the node tables, and a caller that never explains never pays for them.
+// sync: readers are const and may run concurrently because the bindings
+// release the gil, so the cache takes a lock. A refused pack caches too, so a
+// host with no device pays one refusal per epoch rather than one per call.
 class DevicePlanCache
 {
   public:
@@ -999,8 +827,6 @@ class DevicePlanCache
     }
 
   private:
-    // Booster epochs start at 1, so epoch = 0 is the never-packed state and
-    // the epoch compare alone is the miss test.
     template <typename Plan> struct Slot
     {
         std::shared_ptr<Plan const> plan;
@@ -1022,7 +848,6 @@ class DevicePlanCache
     mutable Slot<bonsai::CudaShapPlan>    shap_;
 };
 
-// A trained model: booster + the bin mappers and config it was fit with.
 class Model
 {
   public:
@@ -1033,18 +858,11 @@ class Model
     {
     }
 
-    // Per-round valid loss from fit (objective's own eval metric); empty when
-    // no eval set was given or the model was loaded from a file. In-memory
-    // only: the model format does not carry it.
     std::vector<float> const &eval_history() const
     {
         return eval_history_;
     }
 
-    // A tree splits on feature ids into the row it is handed, so a matrix of
-    // the wrong width reads a different feature at every node, and a narrower
-    // one reads past the end of the row entirely. The model's own mappers say
-    // how wide the rows it was fit on were.
     void check_width(array_2d const &X, char const *method) const
     {
         if (size_t const given = X.shape(1); given != mappers_.size())
@@ -1073,11 +891,6 @@ class Model
         return to_numpy(std::move(out), {n});
     }
 
-    // Every X-taking method also accepts a Dataset. A Dataset carrying the
-    // model's own cuts routes in bin space (bit-identical to the raw walk,
-    // no raw rows needed, so DLPack builds and row views work); foreign cuts
-    // fall back to the retained matrix; a device-resident build under foreign
-    // cuts has nothing either route can read, so it raises with both remedies.
     bool routes_binned(Dataset const &ds, char const *method) const
     {
         if (mappers_.same_cuts(ds.loaded().mappers))
@@ -1125,9 +938,6 @@ class Model
         return to_numpy(std::move(out), {n});
     }
 
-    // Per-class probabilities. Softmax models return (n_rows, n_classes) — a
-    // row-wise softmax of the class logits; width-1 objectives (logloss)
-    // return (n_rows,) with P(class 1) via the link inverse.
     nb::ndarray<nb::numpy, double> predict_proba(array_2d const &X) const
     {
         check_width(X, "predict_proba");
@@ -1200,7 +1010,6 @@ class Model
         return to_numpy(std::move(out), {n});
     }
 
-    // (n_iters, n_rows): prediction after each boosting iteration.
     nb::ndarray<nb::numpy, float> staged_predict(array_2d const &X) const
     {
         check_width(X, "staged_predict");
@@ -1243,9 +1052,6 @@ class Model
         return to_numpy(std::move(out), {k, n});
     }
 
-    // (n_rows, n_trees): the leaf each row lands in, per tree. The width is
-    // the tree count, not the round count: multiclass grows one tree per
-    // class per round and the booster fills a column for each.
     nb::ndarray<nb::numpy, uint32_t> predict_leaf(array_2d const &X) const
     {
         check_width(X, "predict_leaf");
@@ -1282,9 +1088,6 @@ class Model
         return booster_->dump(mappers_.feature_names());
     }
 
-    // (n_rows, n_features + 1): TreeSHAP contributions, last column = bias.
-    // Rows sum to the raw (pre-link) prediction exactly.
-    // (n, n_features + 1); multiclass models return (n, K, n_features + 1).
     nb::ndarray<nb::numpy, double> pred_contribs(array_2d const &X) const
     {
         check_width(X, "pred_contribs");
@@ -1335,8 +1138,6 @@ class Model
         bonsai::io::save_booster(*booster_, path, mappers_, cfg_);
     }
 
-    // type: "gain" (total loss reduction) or "split" (split count),
-    // padded to the trained feature count.
     nb::ndarray<nb::numpy, double> feature_importance(std::string const &type) const
     {
         bonsai::ImportanceType const t = [&]
@@ -1375,13 +1176,9 @@ class Model
 
     size_t n_classes() const
     {
-        // The config struct default is 3; surfacing it for non-softmax models
-        // would hand callers a plausible-but-meaningless class count.
         return cfg_.dispatch.objective_name == "softmax" ? cfg_.objective.n_classes : 0;
     }
 
-    // The names the columns carry through the model: the fit's, or the
-    // synthesized f0..fN. The same names `dump` prints.
     std::vector<std::string> feature_names() const
     {
         auto const names = mappers_.feature_names();
@@ -1389,9 +1186,6 @@ class Model
     }
 
   private:
-    // Only classification objectives define probabilities; the mse link
-    // inverse is the identity, so without this guard a regression model would
-    // return raw margins silently mislabeled as P(class 1).
     void require_proba_objective() const
     {
         if (booster_->score_width() == 1 && cfg_.dispatch.objective_name != "logloss")
@@ -1403,17 +1197,6 @@ class Model
         }
     }
 
-    // The device walk over a Dataset whose bins are already resident on a
-    // device. false means the host bin walk runs instead: the Dataset was
-    // binned on the host, the ensemble is multiclass, there is no usable
-    // device, the Dataset is a row view (the kernel reads the plane's rows,
-    // not a row list), or the plane declined this call. Only the width-1
-    // predict rides this; the rest of the prediction family walks on the host.
-    //
-    // The plan input is fetched last, after the conditions that do not need
-    // it: an oblivious booster builds its dense equivalent to answer, so
-    // asking before the cheap gates would spend a densification on a call
-    // that then declines.
     bool predict_on_device(Dataset const &ds, std::vector<float> &out,
                            size_t num_iteration) const
     {
@@ -1429,14 +1212,10 @@ class Model
             return false;
         }
         auto const plan = plan_cache_->predict(in, mappers_);
-        return plan && bonsai::cuda_predict(*plan, *plane, bins.n_rows(),
+        return plan && bonsai::cuda_predict(*plan, *plane, bins.plane_n_rows(),
                                             bins.n_features(), num_iteration, out);
     }
 
-    // predict_on_device's twin for TreeSHAP, declining on the same conditions.
-    // One difference of substance: the device walk builds its path polynomials
-    // in fp32 where the host walk is fp64 throughout, so this route agrees with
-    // the host to a tolerance, not bit for bit.
     bool contribs_on_device(Dataset const &ds, std::span<double> out) const
     {
         auto const &bins  = ds.bins();
@@ -1451,7 +1230,7 @@ class Model
             return false;
         }
         auto const plan = plan_cache_->shap(in, mappers_);
-        return plan && bonsai::cuda_pred_contribs(*plan, *plane, bins.n_rows(),
+        return plan && bonsai::cuda_pred_contribs(*plan, *plane, bins.plane_n_rows(),
                                                   bins.n_features(), out);
     }
 
@@ -1459,20 +1238,11 @@ class Model
     bonsai::BinMappers                mappers_;
     bonsai::Config                    cfg_;
     std::vector<float>                eval_history_;
-    // Held indirectly so the Model stays movable past the cache's mutex.
-    std::shared_ptr<DevicePlanCache> plan_cache_ = std::make_shared<DevicePlanCache>();
+    std::shared_ptr<DevicePlanCache>  plan_cache_ = std::make_shared<DevicePlanCache>();
 };
 
-// The validation set a fit was handed: raw arrays, which the fit bins itself
-// once the rounds it has run have paid for the pass, or a Dataset the caller
-// binned once, which routes in bin space from the first round and charges the
-// fit nothing. The Dataset arm is borrowed, so one validation Dataset serves
-// a whole sweep.
 using EvalSet = std::variant<std::pair<array_2d, array_1d>, Dataset const *>;
 
-// A classification fit scores against the encoded ids 0..K-1, so labels
-// carrying anything else would be measured as the wrong class and steer early
-// stopping from there. Regression has no domain to check.
 void check_eval_labels(std::vector<float> const &labels, bonsai::Config const &cfg)
 {
     auto const kind = bonsai::task_kind_by_name(cfg.dispatch.objective_name);
@@ -1499,11 +1269,6 @@ void check_eval_labels(std::vector<float> const &labels, bonsai::Config const &c
     }
 }
 
-// A prebinned eval set must carry the fit's own cuts: the walk inverts each
-// stored threshold into a bin id, which names the same cut only under the
-// mappers the trees were grown on. The C++ side asserts that contract; this
-// is where a Python caller is told how to satisfy it. The raw-array arm lands
-// in `owned`; the Dataset arm is borrowed and outlives the call.
 bonsai::cli::LabeledData const *
 resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &cfg,
                  bonsai::BinMappers const &mappers, bool warm_start,
@@ -1536,9 +1301,6 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
             "loss does not apply: it is the unweighted metric. Drop the weight "
             "argument from the eval-set Dataset rather than have it ignored.");
     }
-    // The raw walk and the warm-start seed read the caller's rows; a
-    // device-resident Dataset kept none, so it can only serve the fits that
-    // never look at them (bin space from round 1, no rounds to seed).
     if (!dataset->has_host_matrix() && (warm_start || !dataset->bins().bins_are_u8()))
     {
         throw std::invalid_argument(
@@ -1553,8 +1315,6 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
         check_eval_labels(dataset->train_data().labels, cfg);
         return &dataset->train_data();
     }
-    // The same seam from the other side: a view's raw rows are its parent's,
-    // so the routes that read them would score rows it does not name.
     if (warm_start)
     {
         dataset->refuse_view("eval_set", "seeds an init_model warm start from raw "
@@ -1567,17 +1327,12 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
                              "mirror for the binned walk to route, leaving only the "
                              "raw rows its parent retained");
     }
-    // The domain check reads the rows the loss will score, not the plane's: a
-    // view is free to leave rows its objective could not score behind.
     check_eval_labels(dataset->row_view().gather(dataset->train_data().labels), cfg);
     return &dataset->train_data();
 }
 
-// The internal wire format the config layer reads: dotted key, string value.
 using ConfigPairs = std::vector<std::pair<std::string, std::string>>;
 
-// Render one override value the way the dotted-key parser reads it back; bool
-// is tested first because a Python bool is also an int.
 std::string config_str(nb::handle value)
 {
     if (nb::isinstance<nb::bool_>(value))
@@ -1602,14 +1357,8 @@ std::string config_str(nb::handle value)
     return nb::cast<std::string>(nb::str(value));
 }
 
-// The params contract before rendering: dotted key, Python value. One key can
-// be spelled in a form the config layer does not read (a name-keyed monotone
-// mapping), so the entries are inspected here, between extraction and the
-// string fold.
 using ParamItems = std::vector<std::pair<std::string, nb::object>>;
 
-// The public params contract as entries: a Params (duck-typed on to_dict), a
-// dotted-key mapping, or None.
 ParamItems items_from_params(nb::object params)
 {
     if (params.is_none())
@@ -1651,7 +1400,6 @@ ParamItems items_from_params(nb::object params)
     return out;
 }
 
-// The entries folded to the wire format, every value rendered the same way.
 ConfigPairs render_params(ParamItems const &items)
 {
     ConfigPairs pairs;
@@ -1665,10 +1413,6 @@ ConfigPairs render_params(ParamItems const &items)
 
 constexpr std::string_view k_monotone_key = "tree.monotone_constraints";
 
-// The name-keyed form of tree.monotone_constraints, lifted out of the entries
-// so the rest can render while the training data is still being resolved.
-// A Mapping is duck-typed on `items` the way params itself is; the positional
-// list and tuple forms are left alone.
 nb::object take_named_monotone(ParamItems &items)
 {
     for (auto it = items.begin(); it != items.end(); ++it)
@@ -1684,10 +1428,6 @@ nb::object take_named_monotone(ParamItems &items)
     return nb::none();
 }
 
-// {name: direction} resolved against the training data's feature names.
-// Resolution lives in this wrapper layer only: the core config keeps its
-// positional list, and a feature the mapping does not list stays free (0),
-// which is how xgboost and sklearn read the same form.
 std::vector<int> monotone_from_mapping(nb::handle                   mapping,
                                        std::span<std::string const> names)
 {
@@ -1727,8 +1467,6 @@ std::vector<int> monotone_from_mapping(nb::handle                   mapping,
         std::to_string(names.size()) + " feature names.");
 }
 
-// Places the resolved positional list, or does nothing when there was no
-// name-keyed entry. Returns whether it placed one.
 bool put_monotone(ParamItems &items, nb::handle named,
                   std::span<std::string const> names)
 {
@@ -1741,8 +1479,6 @@ bool put_monotone(ParamItems &items, nb::handle named,
     return true;
 }
 
-// Overrides over the library defaults; a TOML base composes upstream via
-// Params.from_toml, so this layer knows one input.
 bonsai::Config config_from_params(ConfigPairs const &params)
 {
     std::vector<bonsai::config::Override> overrides;
@@ -1754,8 +1490,6 @@ bonsai::Config config_from_params(ConfigPairs const &params)
     return bonsai::config::resolve("", overrides);
 }
 
-// The annotation the generated dataclass field gets, so it must name the C++
-// type, not the TOML shape (a float whose default is 0 still annotates float).
 template <typename T> char const *py_type_token()
 {
     if constexpr (std::is_same_v<T, bool>)
@@ -1808,9 +1542,6 @@ void append_section(nb::list &sections, bonsai::Config const &defaults, Sec cons
     sections.append(s);
 }
 
-// The section registry as data, folding the same all_sections tuple dump_toml
-// folds: [{'section', 'fields': [{'name', 'type', 'default'}]}] in registry
-// order. Feeds the build-time bonsai/_params.py generator.
 nb::list params_schema()
 {
     bonsai::Config const defaults{};
@@ -1826,26 +1557,17 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
             std::optional<std::string> const &init_model, nb::handle sample_weight,
             std::optional<std::vector<std::string>> const &feature_names)
 {
-    // A warm start carries the loaded model's names, so supplied ones would
-    // never be the fit's own.
     if (feature_names && init_model)
     {
         throw std::invalid_argument(
             "feature_names cannot be given with init_model: a warm start keeps "
             "the loaded model's feature names");
     }
-    ParamItems items = items_from_params(params);
-    // A name-keyed monotone entry needs the feature names, which need X, which
-    // cannot be placed until parallel.device_id is read from the other
-    // entries. So that one entry stands aside for the first read and the
-    // config is resolved again once the names are in hand.
+    ParamItems       items          = items_from_params(params);
     nb::object const named_monotone = take_named_monotone(items);
     bonsai::Config   cfg            = config_from_params(render_params(items));
     bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
 
-    // Device-resident input places the fit itself: the matrix is already on a
-    // device, so it bins there whatever grower was named, and a CPU grower
-    // materializes host bins from the plane on first use.
     auto const [xarg, yarg, warg] = resolve_inputs(
         X, y, sample_weight, cfg.parallel.device_id, "sample_weight", "");
 
@@ -1857,8 +1579,6 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
 
     std::vector<std::string> names =
         resolve_feature_names(xarg.n_features, feature_names);
-    // A warm start keeps the init model's names, so the constraint is resolved
-    // against the list this fit will actually carry.
     if (put_monotone(items, named_monotone,
                      init ? init->mappers.feature_names()
                           : std::span<std::string const>{names}))
@@ -1880,30 +1600,21 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
 
     std::vector<float> history;
     auto               initial = init ? std::move(init->booster) : nullptr;
-    // The eval set is optional at this boundary; the fit takes one or none.
-    auto booster =
+    auto               booster =
         validation != nullptr
-            ? bonsai::cli::train_with_progress(cfg, loaded.train, *validation, {},
-                                               std::move(initial), std::ref(history))
-            : bonsai::cli::train_with_progress(cfg, loaded.train, {},
-                                               std::move(initial), std::ref(history));
+                          ? bonsai::cli::train_with_progress(cfg, loaded.train, *validation, {},
+                                                             std::move(initial), std::ref(history))
+                          : bonsai::cli::train_with_progress(cfg, loaded.train, {},
+                                                             std::move(initial), std::ref(history));
     return Model{std::move(booster), std::move(loaded.mappers), cfg,
                  std::move(history)};
 }
 
-// Train on a prebuilt Dataset: reuses its binning (skips BinMappers::fit +
-// Dataset::bin) and, on GPU, its resident matrix across calls. Only training
-// hyperparameters vary per call; binning is fixed by the Dataset, so
-// bin_mapper.* overrides are rejected rather than silently ignored; a TOML
-// base arrives through Params.from_toml as ordinary pairs, so this one check
-// covers every route.
 Model train_dataset(nb::object const &params, Dataset const &dataset,
                     std::optional<EvalSet> const     &eval_set,
                     std::optional<std::string> const &init_model)
 {
-    ParamItems items = items_from_params(params);
-    // The Dataset already names its columns, so a name-keyed monotone entry
-    // resolves before anything is rendered.
+    ParamItems       items = items_from_params(params);
     nb::object const named = take_named_monotone(items);
     put_monotone(items, named, dataset.loaded().mappers.feature_names());
     ConfigPairs const pairs = render_params(items);
@@ -1918,9 +1629,6 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
         }
     }
     bonsai::Config const cfg = config_from_params(pairs);
-    // A device-binned Dataset is resident on one device and the fit adopts
-    // that matrix in place; placing the fit elsewhere would mean migrating
-    // it behind the user's back.
     if (auto const resident = dataset.device_id();
         resident && *resident != cfg.parallel.device_id)
     {
@@ -1937,10 +1645,7 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
     {
         init.emplace(bonsai::io::load_booster(*init_model));
     }
-    nb::gil_scoped_release release;
-    // The validation set is per-call state; the train side stays the Dataset's
-    // own LabeledData (no copy: a copy would also change the address that keys
-    // the GPU upload-skip cache).
+    nb::gil_scoped_release                  release;
     std::optional<bonsai::cli::LabeledData> owned;
     auto const *const                       validation = resolve_eval_set(
         eval_set, cfg, dataset.loaded().mappers, init.has_value(), owned);
@@ -2141,8 +1846,6 @@ NB_MODULE(_bonsai, m)
                         "', n_iters=" + std::to_string(mo.n_iters()) + ")";
              });
 
-    // The binning settings default to none, not to literals: unset means the
-    // library default, or the reference's value in the `reference=` form.
     constexpr bonsai::ParallelConfig k_parallel_defaults{};
     nb::class_<Dataset>(m, "Dataset")
         .def(
@@ -2365,9 +2068,6 @@ NB_MODULE(_bonsai, m)
                  return out + ")";
              });
 
-    // Dataset overload first: the array overload takes X and y untyped (a numpy
-    // array or any DLPack producer), so it would otherwise shadow a Dataset
-    // call that also passes an eval set.
     m.def("train", &train_dataset, nb::arg("params").none(), nb::arg("dataset"),
           nb::arg("eval_set") = nb::none(), nb::arg("init_model") = nb::none(),
           nb::sig("def train(params: bonsai.params.Params | "
@@ -2503,4 +2203,4 @@ NB_MODULE(_bonsai, m)
           "The config section registry as data: [{'section', 'fields': "
           "[{'name', 'type', 'default'}]}] in registry order. Feeds the "
           "build-time bonsai/_params.py generator; not public API.");
-}
+} // namespace nb

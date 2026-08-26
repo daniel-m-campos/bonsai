@@ -183,7 +183,7 @@ size_t check_parity(size_t n_rows, size_t n_feats, size_t max_depth, char const 
         cuda_shap_plan(in.trees, mappers, in.learning_rate, in.init_score);
     REQUIRE(plan);
 
-    size_t const        n    = scored.n_rows();
+    size_t const        n    = scored.plane_n_rows();
     size_t const        cols = n_feats + 1;
     std::vector<double> host(n * cols, 0.0);
     std::vector<double> dev(n * cols, 0.0);
@@ -327,7 +327,7 @@ TEST_CASE("cuda_pred_contribs declines a plane of the wrong shape", "[cuda][shap
         cuda_shap_plan(in.trees, mappers, in.learning_rate, in.init_score);
     REQUIRE(plan);
 
-    size_t const        n = ds.n_rows();
+    size_t const        n = ds.plane_n_rows();
     std::vector<double> dev(n * (ds.n_features() + 2), 0.0);
     REQUIRE(!cuda_pred_contribs(*plan, *plane, n, ds.n_features() + 1, dev));
 }

@@ -24,8 +24,6 @@
 namespace bonsai
 {
 
-// One counter serves both id spaces: the types keep them incomparable, and
-// a shared counter cannot hand the same value to two different mints.
 namespace
 {
 std::atomic<uint64_t> &identity_counter()
@@ -48,21 +46,11 @@ FitId Dataset::mint_fit_id()
 namespace
 {
 
-// Shared bin loop: `read(f, r)` yields the raw float for (row, feature);
-// values are identical either width, so models stay byte-identical. Workers
-// own row tiles and visit every feature within the tile, so a row-major
-// source is pulled into cache once per tile instead of once per feature (a
-// straight column pass reads X[r, f] at n_features x 4B stride — ~25x line
-// amplification at 100 features). The tile size only reorders independent
-// writes; 64 u8 rows = one cache line per column, so tiles never share one.
-// Shared bin loop at one width: `read(f, r)` yields the raw float for
-// (row, feature); values are identical either width, so models stay
-// byte-identical. Workers own row tiles and visit every feature within the
-// tile, so a row-major source is pulled into cache once per tile instead of
-// once per feature (a straight column pass reads X[r, f] at n_features x 4B
-// stride — ~25x line amplification at 100 features). The tile size only
-// reorders independent writes; 64 u8 rows = one cache line per column, so
-// tiles never share one.
+// perf: workers own row tiles and visit every feature within the tile, so a
+// row-major source is pulled into cache once per tile instead of once per
+// feature (a straight column pass reads X[r, f] at n_features x 4B stride,
+// ~25x line amplification at 100 features). 64 u8 rows = one cache line per
+// column, so tiles never share one.
 template <typename BinT, typename Read>
 void fill_columns(std::vector<std::vector<BinT>> &out, size_t n_features, size_t n_rows,
                   BinMappers const &mappers, Read read)
@@ -88,7 +76,6 @@ void fill_columns(std::vector<std::vector<BinT>> &out, size_t n_features, size_t
                              });
 }
 
-// The columns for `mappers`, binned from `read` at the width the cuts need.
 template <typename Read>
 BinColumns bin_columns(BinMappers const &mappers, size_t n_features, size_t n_rows,
                        Read read)
@@ -102,9 +89,6 @@ BinColumns bin_columns(BinMappers const &mappers, size_t n_features, size_t n_ro
 
 } // namespace
 
-// DataConfig is unused here: NaN is the missing marker on every path, and the
-// columns already carry it whether they came from a reader or from a caller's
-// matrix.
 Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers,
                      DataConfig const & /*cfg*/,
                      std::shared_ptr<IngestPlane const> plane)
@@ -212,8 +196,6 @@ Dataset Dataset::from_bins(BinColumns cols, BinMappers mappers, floats_view labe
             }
         },
         cols);
-    // A fresh store, never the one the bins came from: adopting another
-    // dataset's store would serve its caches and its mirror.
     Dataset ds;
     ds.rows_  = RowView::all(n_rows);
     ds.store_ = std::make_shared<BinStore const>(BinStore::Key{}, n_rows,
@@ -228,9 +210,6 @@ Dataset Dataset::from_bins(BinColumns cols, BinMappers mappers, floats_view labe
 
 Dataset Dataset::select_features(std::span<feature_id_t const> keep) const
 {
-    // The store gathers its own columns; what is Dataset's here is the fit:
-    // spending the row view, gathering the labels and weights it names, and
-    // minting the result's identities.
     std::vector<row_id_t> const ids =
         rows_.is_identity() ? std::vector<row_id_t>{} : rows_.materialize();
     Dataset ds;
@@ -261,8 +240,6 @@ Dataset Dataset::with_rows(RowView rows) const
                                     " rows and this dataset holds " +
                                     std::to_string(store_->n_rows()));
     }
-    // The fill reads a run as a subspan of a column, so a run past the end is
-    // refused here rather than left to land somewhere inside the allocation.
     if (!rows.can_fit(store_->n_rows()))
     {
         throw std::invalid_argument(
@@ -272,14 +249,11 @@ Dataset Dataset::with_rows(RowView rows) const
     }
     Dataset view = *this;
     view.rows_   = std::move(rows);
-    // A new fit: same labels, different rows. The copy above kept this
-    // dataset's id, and a view must not be mistaken for its parent when the
-    // resident state asks whether it is still armed for the right fit.
-    view.id_ = mint_fit_id();
+    view.id_     = mint_fit_id();
     return view;
 }
 
-size_t Dataset::n_rows() const
+size_t Dataset::plane_n_rows() const
 {
     return store_->n_rows();
 }

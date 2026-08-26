@@ -1,16 +1,5 @@
 #pragma once
 
-// The level/find/partition device kernels, extracted from histogram_engine.cu
-// for readability (docs/architecture/10-cuda.md). Included by the
-// device-context TU that launches them; the ingest arm's kernels live in
-// ingest_kernels.cuh so each TU includes only the kernels it uses. The kernels
-// stay anonymous and private to each including TU. The host/device shared PODs
-// and tuning constants they exchange (FeatBest, PartOpDev, k_min_gpu_rows,
-// k_max_shared_bytes) live in device_buffer.cuh with external linkage, so the
-// device-context header can name them as data-member types without pulling
-// these kernels into a second TU. The scan math (score, bounded_leaf_weight)
-// comes from split.hpp and is constexpr, hence device-callable.
-
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -28,22 +17,15 @@ namespace bonsai
 namespace
 {
 
-// k_min_gpu_rows, k_max_shared_bytes, FeatBest, and PartOpDev live in
-// device_buffer.cuh (external, shared across the CUDA TUs); this directive
-// makes them nameable here unqualified.
 using namespace cuda_detail;
 
 // NOLINTBEGIN(bugprone-easily-swappable-parameters,cppcoreguidelines-avoid-c-arrays,cppcoreguidelines-pro-bounds-pointer-arithmetic,modernize-avoid-c-arrays,cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-bounds-array-to-pointer-decay,readability-function-cognitive-complexity,readability-identifier-naming)
 
-// Widened index of the first (grad) slot of pair i in a flat [grad0, hess0,
-// grad1, hess1, ...] array; the hess slot is pair_off(i) + 1.
 constexpr __device__ size_t pair_off(uint32_t i)
 {
     return 2 * static_cast<size_t>(i);
 }
 
-// Interleaves the raw grad/hess uploads into float2 pairs on the device,
-// replacing the serial per-tree host pack.
 __global__ void interleave_kernel(float const *grad, float const *hess, uint32_t n,
                                   float2 *gh)
 {
@@ -54,11 +36,6 @@ __global__ void interleave_kernel(float const *grad, float const *hess, uint32_t
     }
 }
 
-// A 1-D "one thread per element" launch: grid covers n elements in 256-thread
-// blocks, capped so tiny inputs don't over-subscribe. The two wrappers below
-// borrow thrust's free-function names (interleave ~ transform, gather) so call
-// sites read as algorithms; they are just the launch boilerplate for the
-// kernels above kept in one place instead of re-spelled per call site.
 inline void interleave(float const *grad, float const *hess, uint32_t n, float2 *gh)
 {
     interleave_kernel<<<dim3(std::clamp<uint32_t>(n / 256, 1, 1024)), dim3(256)>>>(
@@ -66,8 +43,6 @@ inline void interleave(float const *grad, float const *hess, uint32_t n, float2 
     check(cudaGetLastError(), "interleave launch");
 }
 
-// Reorders (grad, hess) into level order once, so hist_kernel reads them
-// sequentially instead of re-gathering per feature.
 __global__ void gather_gh_kernel(float2 const *gh, uint32_t const *rows,
                                  uint32_t total_rows, float2 *gh_ordered)
 {
@@ -79,7 +54,6 @@ __global__ void gather_gh_kernel(float2 const *gh, uint32_t const *rows,
     }
 }
 
-// gh_ordered[k] = gh[rows[k]] for k in [0, n) — a device gather.
 inline void gather(float2 const *gh, uint32_t const *rows, uint32_t n,
                    float2 *gh_ordered)
 {
@@ -88,12 +62,6 @@ inline void gather(float2 const *gh, uint32_t const *rows, uint32_t n,
     check(cudaGetLastError(), "gather launch");
 }
 
-// Grid is (feature, node, row-chunk). Shared accumulation is float
-// (native atomics; double atomics CAS-loop), cross-chunk merge is double —
-// rounding stays bounded per <= 32k-row chunk. One feature per block reads
-// the tiled plane one cell at a time, so it collects none of the layout's
-// sector win; it is the fallback for bin counts whose tile misses the static
-// shared budget, where it costs the same traffic the feature-major plane did.
 template <typename BinT>
 __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
                             uint32_t const *rows, uint32_t const *row_offsets,
@@ -102,14 +70,10 @@ __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
                             uint32_t n_sel, double *out, uint32_t stride,
                             uint32_t const *out_slot)
 {
-    // Two sub-histograms split by warp parity spread atomic contention.
     extern __shared__ float sh[];
     uint32_t const          f     = features[blockIdx.x];
     uint32_t const          node  = blockIdx.y;
     uint32_t const          count = row_counts[node];
-    // Block-uniform: a chunk starting past the node's rows adds nothing and
-    // must not pay the zero+merge fixed cost (grid.z is sized by the level's
-    // largest node, so small nodes see workless chunks).
     if (blockIdx.z * blockDim.x >= count)
     {
         return;
@@ -145,10 +109,6 @@ __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
     }
 }
 
-// One row's strip of a full tile. At 4, 8, or 16 bytes it is a single
-// aligned vector load: a tile base is a multiple of the width in cells and a
-// row starts at r * width, so the strip address carries the strip's own
-// alignment. This load is the layout's whole point in mechanical form.
 template <uint32_t W, typename BinT>
 inline __device__ void load_strip(BinT const *sp, BinT *strip)
 {
@@ -175,14 +135,6 @@ inline __device__ void load_strip(BinT const *sp, BinT *strip)
     }
 }
 
-// The tiled histogram build. Grid is (tile, node, row-chunk): one block owns
-// one tile of the plane, so a row's bin ids for the tile's features arrive in
-// one strip load and the row id and its gradient pair are read once per tile
-// instead of once per feature. One sub-histogram per tile lane and no warp
-// parity duplication, so the block asks W * stride floats; the caller applies
-// the shared budget. sel_slot[f] is the feature's index in this tree's
-// selected list, or k_not_selected, which is how a subsampled selection rides
-// a layout that groups every feature.
 template <uint32_t W, typename BinT>
 __global__ void hist_tile_kernel(BinT const *bins, float2 const *gh_ordered,
                                  uint32_t const *rows, uint32_t const *row_offsets,
@@ -205,13 +157,10 @@ __global__ void hist_tile_kernel(BinT const *bins, float2 const *gh_ordered,
     }
     if (!any)
     {
-        return; // this tile holds no selected feature
+        return;
     }
     uint32_t const node  = blockIdx.y;
     uint32_t const count = row_counts[node];
-    // Block-uniform: a chunk starting past the node's rows adds nothing and
-    // must not pay the tile's zero+merge fixed cost (grid.z is sized by the
-    // level's largest node, so small nodes see workless chunks).
     if (blockIdx.z * blockDim.x >= count)
     {
         return;
@@ -276,7 +225,7 @@ __global__ void hist_tile_kernel(BinT const *bins, float2 const *gh_ordered,
     }
 }
 
-// Small nodes skip the shared-memory stage: below ~512 rows the fixed
+// perf: Small nodes skip the shared-memory stage: below ~512 rows the fixed
 // per-(node,feature) zero+merge cost dominates, so one block per node
 // accumulates row visits straight into the node's global slot in double.
 template <typename BinT>
@@ -304,20 +253,10 @@ __global__ void hist_small_kernel(BinT const *bins, float2 const *gh_ordered,
     }
 }
 
-// --- Device row partitioning (docs/architecture/11-gpu-resident.md).
-// Rows live in ping-pong segment buffers; each split routes its parent
-// segment into stable left/right child segments via count -> scan -> scatter
-// (hand-rolled: no CUB, the TU stays self-contained). CHUNK rows per block,
-// each thread owning ROWS_PER_THREAD consecutive rows keeps the scatter
-// stable and the scans tiny.
 constexpr uint32_t k_part_rows_per_thread = 16;
 constexpr uint32_t k_part_block           = 256;
 constexpr uint32_t k_part_chunk           = k_part_block * k_part_rows_per_thread;
 
-// PartOpDev (device-side view of one PartitionOp plus its parent segment)
-// lives in device_buffer.cuh.
-
-// Mirrors routes_left in dataset.hpp; the [cuda] parity suite enforces lockstep.
 inline __device__ bool goes_left_dev(uint32_t b, uint32_t last_bin, uint32_t bin,
                                      uint32_t dl)
 {
@@ -328,7 +267,6 @@ inline __device__ bool goes_left_dev(uint32_t b, uint32_t last_bin, uint32_t bin
     return b <= bin;
 }
 
-// Phase 1: per-(op, chunk) left-count; flags cached for the scatter pass.
 template <typename BinT>
 __global__ void
 route_count_kernel(BinT const *bins, uint32_t const *n_bins, uint32_t const *rows,
@@ -369,10 +307,6 @@ route_count_kernel(BinT const *bins, uint32_t const *n_bins, uint32_t const *row
     }
 }
 
-// Phase 2: exclusive scan of each op's chunk counts; total -> n_left[op].
-// One k_part_block team per op: tiles of counts go through the scatter
-// kernel's Hillis-Steele shape below with a running carry. Integer sums,
-// so the results are exact whatever the team size.
 __global__ void seg_scan_kernel(uint32_t *block_counts, uint32_t max_chunks,
                                 uint32_t *n_left)
 {
@@ -381,7 +315,7 @@ __global__ void seg_scan_kernel(uint32_t *block_counts, uint32_t max_chunks,
     uint32_t  carry = 0;
     if (threadIdx.x == 0)
     {
-        sh[0] = 0; // the scan writes sh[tid + 1] only, so this holds for all tiles
+        sh[0] = 0;
     }
     for (uint32_t base = 0; base < max_chunks; base += k_part_block)
     {
@@ -412,9 +346,6 @@ __global__ void seg_scan_kernel(uint32_t *block_counts, uint32_t max_chunks,
     }
 }
 
-// Phase 3: stable scatter into the other rows/gh buffers. Each thread's
-// consecutive rows write in order; block and thread bases come from the
-// scanned counts, so left keeps ascending order, then right.
 __global__ void scatter_kernel(uint32_t const *rows_in, float2 const *gh_in,
                                uint8_t const *flags, PartOpDev const *ops,
                                uint32_t const *block_counts, uint32_t const *n_left,
@@ -436,7 +367,6 @@ __global__ void scatter_kernel(uint32_t const *rows_in, float2 const *gh_in,
         sh[0] = 0;
     }
     __syncthreads();
-    // Hillis-Steele inclusive scan over thread counts -> exclusive bases.
     for (uint32_t step = 1; step < k_part_block; step *= 2)
     {
         uint32_t v = 0;
@@ -475,7 +405,6 @@ __global__ void scatter_kernel(uint32_t const *rows_in, float2 const *gh_in,
     }
 }
 
-// Records each segment row's final leaf id (persistent per-row array).
 __global__ void stamp_kernel(uint32_t const *rows, PartOpDev const *segs,
                              uint32_t const *node_ids, uint32_t *leaf_by_row)
 {
@@ -487,8 +416,6 @@ __global__ void stamp_kernel(uint32_t const *rows, PartOpDev const *segs,
     }
 }
 
-// Leaf plane: parent and children share one pool buffer, so the larger child
-// derives in place in the parent's slot, which it then inherits.
 __global__ void subtract_inplace_kernel(double *pool, uint32_t large_slot,
                                         uint32_t small_slot, uint32_t slot_doubles)
 {
@@ -502,8 +429,6 @@ __global__ void subtract_inplace_kernel(double *pool, uint32_t large_slot,
     }
 }
 
-// Larger children derive on-device: child[large] = parent - child[small].
-// Slot triples are (parent, small, large); slot_doubles is one slot's span.
 __global__ void subtract_kernel(double const *parents, double *children,
                                 uint32_t const *triples, uint32_t slot_doubles)
 {
@@ -519,13 +444,6 @@ __global__ void subtract_kernel(double const *parents, double *children,
     }
 }
 
-// FeatBest (per-(node, feature) best split; dl encodes default_left) lives in
-// device_buffer.cuh.
-
-// The (left, right) grad/hess of a cut, given the inclusive prefix through
-// its bin and the missing cell routed by default_left. Device mirror of
-// split_sums_at in src/split.cpp — the single source of truth for
-// missing-routing semantics; every find/child-sums kernel calls this.
 struct SplitSumsDev
 {
     double gL, hL, gR, hR;
@@ -550,19 +468,16 @@ inline __device__ double warp_sum(double v)
     return __shfl_sync(0xffffffffU, v, 0);
 }
 
-// True when candidate a beats b under the serial scan's tie-break: higher
-// gain, then lower bin, then default_left first (dl 1 before 0). Ties never
-// replace in the serial `gain > best` loop, so equal gains keep the earlier.
 inline __device__ bool feat_better(double ga, int ba, int da, int va, double gb, int bb,
                                    int db, int vb)
 {
     if (va != vb)
     {
-        return va > vb; // a valid, b not -> a wins
+        return va > vb;
     }
     if (va == 0)
     {
-        return false; // both invalid
+        return false;
     }
     if (ga != gb)
     {
@@ -575,14 +490,6 @@ inline __device__ bool feat_better(double ga, int ba, int da, int va, double gb,
     return da > db;
 }
 
-// One warp per (node, feature). The 32 lanes cooperate on the <= 254-bin cut
-// scan: a warp-tiled inclusive prefix sum builds each bin's left grad/hess,
-// every lane scores its own bins, and a warp reduce picks the winner with the
-// same (max gain, then lowest bin, then default_left) tie-break as the serial
-// CPU scan. The tiled summation order differs, so results are tolerance-equal
-// (docs/architecture/11-gpu-resident.md), not bit-equal. hist_slot names each
-// node's histogram slot, mirroring hist_kernel's out_slot: the level plane
-// leaves it null (slot == node), the leaf plane's pool needs the indirection.
 __global__ void find_kernel(double const *hists, uint32_t const *features,
                             uint32_t const *n_bins, double const *node_sums,
                             double const *node_bounds, char const *allowed,
@@ -592,7 +499,7 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
 {
     uint32_t const node = blockIdx.y;
     uint32_t const sel  = blockIdx.x;
-    uint32_t const lane = threadIdx.x; // 0..31
+    uint32_t const lane = threadIdx.x;
     if (sel >= n_sel)
     {
         return;
@@ -610,7 +517,7 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
     uint32_t const nb = n_bins[f];
     if (nb < 2)
     {
-        return; // no cut cells (degenerate feature)
+        return;
     }
     size_t const hidx =
         ((static_cast<size_t>(hist_slot != nullptr ? hist_slot[node] : node) * n_sel) +
@@ -626,28 +533,23 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
     double const   lo         = node_bounds[pair_off(node)];
     double const   hi         = node_bounds[pair_off(node) + 1];
     int const      mc         = monotone[f];
-    uint32_t const n_cut      = nb - 2; // cut cells are bins [0, nb-2)
+    uint32_t const n_cut      = nb - 2;
 
-    // An empty missing cell routes nothing either way, so both directions give
-    // the same sums and gain and feat_better keeps the first: scanning dl = 0
-    // again is pure cost. Warp-uniform, so no divergence inside the warp.
     int const n_dirs = (miss_g == 0.0 && miss_h == 0.0) ? 1 : 2;
 
     double  best_gain = 0.0;
     int32_t best_bin = 0, best_dl = 0, best_valid = 0;
     double  bgL = 0, bhL = 0, bgR = 0, bhR = 0;
 
-    // Running inclusive prefix carried across 32-bin tiles.
     double carry_g = 0.0;
     double carry_h = 0.0;
     for (uint32_t base = 0; base < n_cut; base += 32)
     {
-        uint32_t const b  = base + lane;
-        double         vg = (b < n_cut) ? cells[pair_off(b)] : 0.0;
-        double         vh = (b < n_cut) ? cells[pair_off(b) + 1] : 0.0;
-        // Warp inclusive scan (shuffle-up) of this tile's grad/hess.
-        double sg  = vg;
-        double sh_ = vh;
+        uint32_t const b   = base + lane;
+        double         vg  = (b < n_cut) ? cells[pair_off(b)] : 0.0;
+        double         vh  = (b < n_cut) ? cells[pair_off(b) + 1] : 0.0;
+        double         sg  = vg;
+        double         sh_ = vh;
         for (int off = 1; off < 32; off <<= 1)
         {
             double ng = __shfl_up_sync(0xffffffffU, sg, off);
@@ -658,7 +560,7 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
                 sh_ += nh;
             }
         }
-        double const pg = carry_g + sg; // inclusive prefix through bin b
+        double const pg = carry_g + sg;
         double const ph = carry_h + sh_;
         carry_g += __shfl_sync(0xffffffffU, sg, 31);
         carry_h += __shfl_sync(0xffffffffU, sh_, 31);
@@ -667,7 +569,7 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
         {
             for (int d = 0; d < n_dirs; ++d)
             {
-                int const  dl = 1 - d; // dl = 1 first, as the serial scan orders it
+                int const  dl = 1 - d;
                 auto const s =
                     split_sums_dev(pg, ph, miss_g, miss_h, real_grad, real_hess, dl);
                 if (s.hL < min_child_hess || s.hR < min_child_hess)
@@ -685,8 +587,6 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
                 }
                 double const gain =
                     score(s.gL, s.hL, l1, l2) + score(s.gR, s.hR, l1, l2) - node_score;
-                // gain > 0.0 mirrors the CPU's strict `gain > best` with a
-                // zero-initialized best: zero-gain cuts never become valid.
                 if (gain > 0.0 && gain >= min_gain &&
                     feat_better(gain, static_cast<int>(b), dl, 1, best_gain, best_bin,
                                 best_dl, best_valid))
@@ -701,7 +601,6 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
         }
     }
 
-    // Warp reduce to the winning candidate under the same tie-break.
     for (int off = 16; off > 0; off >>= 1)
     {
         double const og  = __shfl_down_sync(0xffffffffU, best_gain, off);
@@ -732,8 +631,6 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
     }
 }
 
-// Per-node winner in ascending selected-feature order with strict >,
-// matching reduce_in_feature_order's lowest-feature-id tie-break.
 __global__ void reduce_kernel(FeatBest const *per_feat, uint32_t n_sel, FeatBest *out)
 {
     if (threadIdx.x != 0)
@@ -753,15 +650,6 @@ __global__ void reduce_kernel(FeatBest const *per_feat, uint32_t n_sel, FeatBest
     out[node] = best;
 }
 
-// Levelwise level-find: one split for the whole frontier. For feature f, the
-// gain of a cut (bin, default_left) is the sum over ALL frontier nodes of
-// score(left) + score(right) minus the sum of node scores. A node whose cut is
-// infeasible (min_child_hess) contributes its parent score instead of a child
-// score (zero gain, no veto). One warp per feature: nodes are
-// processed in chunks of 32 (one per lane), each chunk's per-bin child scores
-// warp-reduce into per-feature scratch accumulators, so any frontier width
-// works. A final lane-0 scan picks the best (bin, dl). Mirrors
-// update_best_for_feature_for_level in split.cpp (tolerance-equal).
 __global__ void level_find_kernel(double const *hists, uint32_t const *features,
                                   uint32_t const *n_bins, double const *node_sums,
                                   uint32_t n_sel, uint32_t n_nodes, uint32_t stride,
@@ -769,9 +657,7 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
                                   double min_gain, double *score_scratch,
                                   FeatBest *out_feat)
 {
-    // Per-feature scratch slice [2][max_cut]: bin width can exceed any shared
-    // budget on the u16-bin path, and this warp is the slice's only writer.
-    uint32_t const max_cut    = stride / 2; // >= n_cut for every feature
+    uint32_t const max_cut    = stride / 2;
     uint32_t const f          = blockIdx.x;
     uint32_t const lane       = threadIdx.x;
     uint32_t const fid        = features[f];
@@ -788,12 +674,8 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
     {
         return;
     }
-    uint32_t const n_cut = nb - 2; // cut cells are bins [0, nb-2)
+    uint32_t const n_cut = nb - 2;
 
-    // Every parent's missing cell empty makes the two routings identical for
-    // each parent, so their summed scores match and the lane-0 scan's strict >
-    // keeps the first. One warp-wide pass over the frontier decides it; the
-    // reduce makes n_dirs warp-uniform, so the scan below stays convergent.
     bool all_missing_empty = true;
     for (uint32_t base = 0; base < n_nodes; base += 32)
     {
@@ -846,10 +728,10 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
             }
             for (int d = 0; d < n_dirs; ++d)
             {
-                int const  dl = 1 - d; // dl = 1 first, as the serial scan orders it
+                int const  dl = 1 - d;
                 auto const s =
                     split_sums_dev(pg, ph, miss_g, miss_h, real_g, real_h, dl);
-                // Ported from the CPU level find (split.cpp): an infeasible
+                // perf: Ported from the CPU level find (split.cpp): an infeasible
                 // node does NOT veto the whole level candidate. It contributes
                 // its parent score (zero gain) and the broadcast split still
                 // applies to it. At depth >= 5 some frontier node is always
@@ -898,11 +780,6 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
     }
 }
 
-// Given the winning levelwise level split (read from the reduced FeatBest so
-// no host round-trip is needed), each thread computes one node's (left,
-// right) child sums from its device histogram — 4 doubles per node
-// [gL, hL, gR, hR] — so the host can fill the children's SplitInput.sums
-// (device histograms aren't host-scannable). Writes zeros when no split won.
 __global__ void level_child_sums_kernel(double const *hists, double const *node_sums,
                                         FeatBest const *winner,
                                         uint32_t const *features,
@@ -943,12 +820,6 @@ __global__ void level_child_sums_kernel(double const *hists, double const *node_
     out4[(4 * p) + 3] = s.hR;
 }
 
-// transform_bin, bin_rows_kernel, and bin_col_kernel (the ingest arm) live in
-// ingest_kernels.cuh so the ingest TU includes only the kernels it launches.
-
-// Tree epilogue: map each row's resident leaf assignment to its value.
-// Guarded: rows outside the sampled set can carry unstamped assignments;
-// their outputs are overwritten by route_unsampled on the host.
 __global__ void map_leaf_values_kernel(uint32_t const *leaf_by_row,
                                        float const *node_values, uint32_t n_values,
                                        float *values, uint32_t n)
@@ -962,13 +833,6 @@ __global__ void map_leaf_values_kernel(uint32_t const *leaf_by_row,
     values[r]           = leaf < n_values ? node_values[leaf] : 0.0F;
 }
 
-// Device-resident objective gradient: per row derive (grad, hess) from the
-// resident score and label and write them interleaved straight into the gh
-// pair buffer, replacing the host objective pass plus the per-tree grad/hess
-// upload and interleave. The per-row formulas mirror src/objective.cpp exactly
-// in float (expf, no fast-math intrinsics, so the transcendental matches the
-// host's std::exp to ulp). Weighted rows scale both grad and hess by w[r],
-// the same host multiply the resident path skips.
 template <DeviceObjectiveKind Kind, bool Weighted>
 __global__ void gh_from_scores_kernel(float const *scores, float const *labels,
                                       float const *weights, uint32_t n, float2 *gh)
@@ -1025,8 +889,6 @@ inline void gh_from_scores_weighted(bool weighted, float const *scores,
     }
 }
 
-// Runtime dispatch on the resident objective kind to the matching compile-time
-// instantiation. `none` never reaches here (resident_begin rejects it).
 inline void gh_from_scores(DeviceObjectiveKind kind, bool weighted, float const *scores,
                            float const *labels, float const *weights, uint32_t n,
                            float2 *gh)
@@ -1053,11 +915,6 @@ inline void gh_from_scores(DeviceObjectiveKind kind, bool weighted, float const 
     check(cudaGetLastError(), "gh_from_scores launch");
 }
 
-// Device validation loss: per-row loss mirroring src/objective.cpp's eval
-// formulas, reduced deterministically (fixed grid, fixed in-block order, no
-// atomics) into per-block partials; the caller finishes the sum on the host
-// in block order, so at most 1024 doubles cross the bus per round instead of
-// the whole score vector.
 template <DeviceObjectiveKind Kind>
 __global__ void eval_loss_pass1_kernel(float const *scores, float const *labels,
                                        uint32_t n, double *partial)
@@ -1102,8 +959,6 @@ __global__ void eval_loss_pass1_kernel(float const *scores, float const *labels,
     }
 }
 
-// Runtime dispatch, gh_from_scores' shape. Returns the grid size so the
-// caller knows how many block partials to fetch and sum on the host.
 inline uint32_t eval_loss_pass1(DeviceObjectiveKind kind, float const *scores,
                                 float const *labels, uint32_t n, double *partial)
 {
@@ -1130,17 +985,6 @@ inline uint32_t eval_loss_pass1(DeviceObjectiveKind kind, float const *scores,
     return grid.x;
 }
 
-// Resident tree epilogue: walk the finished tree in bin space for every row
-// and fuse scores[r] += lr * leaf_value on device. The routing mirrors
-// routes_left in dataset.hpp (bin == last -> default_left, else bin <=
-// split_bin) and the [cuda] parity suite enforces lockstep, so sampled and
-// out-of-bag rows both land on the same leaf the host path would pick. Node
-// arrays are SoA (feature, split_bin, left, right, default_left, is_leaf,
-// value); the walk starts at node 0.
-//
-// `rows` names the rows to update, or is null for all n of them. Scores stay
-// full-length and globally indexed either way, so a view updates its own rows
-// in place and leaves the rest of the vector alone.
 template <typename BinT>
 __global__ void route_add_kernel(BinT const *bins, uint32_t const *n_bins,
                                  uint32_t n_rows, uint32_t n_feats,
@@ -1168,7 +1012,7 @@ __global__ void route_add_kernel(BinT const *bins, uint32_t const *n_bins,
     scores[r] += lr * value[idx];
 }
 
-// Identity row list built on device: full-data fits
+// perf: Identity row list built on device: full-data fits
 // never ship the 64MB identity permutation over the bus or build it on host.
 __global__ void iota_kernel(uint32_t *out, uint32_t n)
 {
@@ -1179,9 +1023,6 @@ __global__ void iota_kernel(uint32_t *out, uint32_t n)
     }
 }
 
-// Deterministic two-pass grad/hess totals over the interleaved gh buffer:
-// fixed grid, fixed in-block reduction order, single-block second pass, so
-// run-to-run bits never depend on scheduling (no atomics).
 __global__ void sum_gh_pass1_kernel(float2 const *gh, uint32_t n, double2 *partial)
 {
     __shared__ double sg[256];

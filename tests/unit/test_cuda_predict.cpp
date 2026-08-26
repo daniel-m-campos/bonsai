@@ -84,7 +84,7 @@ TEST_CASE("cuda_predict matches the host binned walk", "[cuda][predict]")
         cuda_predict_plan(in.trees, mappers, in.learning_rate, in.init_score);
     REQUIRE(plan);
 
-    size_t const       n = ds.n_rows();
+    size_t const       n = ds.plane_n_rows();
     std::vector<float> host(n, 0.0F);
     std::vector<float> dev(n, 0.0F);
 
@@ -142,7 +142,7 @@ TEST_CASE("cuda_predict matches the host binned walk for a levelwise model",
         cuda_predict_plan(in.trees, mappers, in.learning_rate, in.init_score);
     REQUIRE(plan);
 
-    size_t const       n = ds.n_rows();
+    size_t const       n = ds.plane_n_rows();
     std::vector<float> host(n, 0.0F);
     std::vector<float> dev(n, 0.0F);
 

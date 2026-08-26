@@ -17,9 +17,6 @@ namespace bonsai
 namespace
 {
 
-// Value at the given quantile (0.5 = median), nearest-rank on
-// alpha * (n - 1) so float noise in alpha can't shift the index.
-// Reorders `v` in place.
 float quantile_in_place(std::span<float> v, float alpha)
 {
     assert(!v.empty());
@@ -31,7 +28,6 @@ float quantile_in_place(std::span<float> v, float alpha)
     return v[k];
 }
 
-// Copying wrapper for one-shot init_score paths over immutable labels.
 float quantile_of(floats_view values, float alpha)
 {
     std::vector<float> v(values.begin(), values.end());
@@ -110,8 +106,6 @@ float LogLossObjective::eval(floats_view scores, floats_view labels)
         scores.begin(), scores.end(), labels.begin(), 0.0F, std::plus<>(),
         [](auto const score, auto const y)
         {
-            // BCE from raw score: softplus(score) - y*score.
-            // Stable form: max(0, score) + log1p(exp(-|score|)).
             float const ax = std::abs(score);
             return std::max(0.0F, score) + std::log1p(std::exp(-ax)) - (y * score);
         });
@@ -250,12 +244,6 @@ float QuantileObjective::renew_leaf(std::span<float> residuals) const
     return quantile_in_place(residuals, alpha_);
 }
 
-// Poisson NLL with a log link: L(F) = exp(F) - y*F (up to a y-only
-// constant), so grad = exp(F) - y and hess = exp(F). Raw scores clamp to
-// +-k_poisson_max_log before exp so a runaway leaf can't overflow to inf and
-// poison every later gradient, the guard role xgboost's max_delta_step plays.
-// The clamp constant lives in objective.hpp so the device gradient kernel
-// shares it.
 namespace
 {
 float clamped_exp(float raw)
@@ -303,12 +291,9 @@ float PoissonObjective::init_score(floats_view targets)
         sum += y;
     }
     double const mean = sum / static_cast<double>(std::max<size_t>(targets.size(), 1));
-    // log link; the epsilon keeps all-zero labels finite (log-rate floor).
     return static_cast<float>(std::log(std::max(mean, 1e-9)));
 }
 
-// SoftmaxObjective: registry-thunk stubs (see the header note). The real
-// math lives in MulticlassBooster.
 void SoftmaxObjective::compute(floats_view /*preds*/, floats_view /*targets*/,
                                floats_out /*grad*/, floats_out /*hess*/)
 {

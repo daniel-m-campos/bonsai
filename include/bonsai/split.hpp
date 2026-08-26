@@ -156,9 +156,8 @@ constexpr double score(double g, double h, double l1, double l2)
 }
 
 // Newton leaf weight for the given sums, clamped to the node's monotone
-// bounds. Shared by the split finders (constraint checks), growers
-// (leaf finalization / bound propagation), and the CUDA find kernel
-// (scalar overload; TreeConfig holds vectors and cannot cross to device).
+// bounds. The scalar overload exists because TreeConfig holds vectors and
+// cannot cross to the device.
 constexpr double bounded_leaf_weight(double g, double h, double l1, double l2,
                                      double lo, double hi)
 {
