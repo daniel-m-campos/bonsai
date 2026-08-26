@@ -78,7 +78,9 @@ benchmarks/results/*.json
 benchmarks/results/*.md
 
 # Claude Code: ignore everything under .claude/, except the committed
-# project-owned skills listed below.
+# project-owned skills listed below. A skill left off this list is invisible
+# to CI and to every other checkout, and `git add .claude/skills/` skips it
+# without saying so, so add the line in the same commit as the skill.
 .claude/*
 !.claude/skills/
 .claude/skills/*
@@ -86,6 +88,7 @@ benchmarks/results/*.md
 !.claude/skills/pod-validate/
 !.claude/skills/perf-round/
 !.claude/skills/feature-admission/
+!.claude/skills/comment-audit/
 tests/data/*.libsvm
 tests/data/.amazon-fetched
 # Parsed-array caches beside the (already-ignored) CSVs
