@@ -2,6 +2,16 @@
 
 All notable changes to bonsai. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions are git tags. Design rationale for anything below lives in [`docs/decisions.md`](docs/decisions.md).
 
+## [1.15.0] - 2026-08-25
+
+Levelwise models reach the device. A model grown with `grower="levelwise"` used to decline the CUDA predict and TreeSHAP paths and fall back to a host walk; it now rides both, and on TreeSHAP it is the faster of the two growers.
+
+### Added
+- **Levelwise (oblivious) models use the device predict and TreeSHAP planes** (PR #425). Previously only depthwise models did, so a levelwise model serving from a device-resident `Dataset` fell back to the host bin walk for `predict` and `pred_contribs`. Nothing about the kernels changed: an oblivious tree already had a dense equivalent, and the blocker was that the plan seam lent a borrowed view its owner could not promise to keep alive. The seam now carries ownership, so the epoch-cached dense expansion can be lent safely. Measured on an L40S at 1M x 128, 200 trees, against the 1.14.0 wheel where this declines: **22.0x, 50.8x, 75.2x, and 83.4x** faster at depths 4, 6, 8, and 10, the ratio growing with depth. From depth 6 up it also beats depthwise on the device (5.40s against 10.24s at depth 10), because a TreeSHAP path merges one element per distinct feature and an oblivious tree repeats features across levels: it packs more paths and pays less for each. Multiclass models still decline on both growers.
+
+### Fixed
+- **The device predict and TreeSHAP plans decline on allocation failure instead of raising** (PR #428). Both plans build a host-side packed copy of the ensemble before uploading it. A `std::bad_alloc` there escaped as a `MemoryError` out of `predict` or `pred_contribs`, where the documented behavior is to decline to the host walk. Both now decline. This is worth doing rather than merely documented, because the host fallback is genuinely cheaper: it walks the trees in place or recurses per row, and never builds anything the size of a packed ensemble. Deep levelwise models are the likeliest to hit it, since a densified tree packs a path per expansion slot rather than per surviving leaf.
+
 ## [1.14.0] - 2026-08-25
 
 A binned `Dataset` is now sliceable: row views share the bin plane for free, column selections and row reorders rewrite it once, and a cross-validation loop bins the data once instead of once per fold.
