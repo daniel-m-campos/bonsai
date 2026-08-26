@@ -13,6 +13,8 @@ Every make target you run day to day, generated from the `##` comments in the [M
 | `make test-cuda` | Build the CUDA variant and run ctest against it. |
 | `make build-asan` | Build the ASan + UBSan variant (build-asan/). |
 | `make test-asan` | Build the ASan + UBSan variant and run ctest (CI-only on macOS). |
+| `make build-tsan` | Build the ThreadSanitizer variant (build-tsan/). |
+| `make test-tsan` | Run the suite under ThreadSanitizer (Linux only). |
 | `make clean` | Remove build/, build-cuda/, and build-asan/. |
 | `make format` | clang-format in place over src/, include/, tests/, benchmarks/. |
 | `make format-check` | Check formatting with clang-format --dry-run --Werror (CI gate). |
