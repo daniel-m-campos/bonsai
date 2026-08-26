@@ -131,7 +131,7 @@ inline void set_n_threads(uint32_t n)
 
 // Auto (n_threads = 0) caps the worker count: per-level parallel sections
 // are short, so on many-core hosts OpenMP barrier spin-wait dominates
-// useful work (issue #2: 60 vCPU ran 10x slower than 16). Auto also clamps
+// useful work: 60 vCPU measured 10x slower than 16. Auto also clamps
 // to the cgroup CPU bandwidth quota when one is set: OpenMP sizes its pool
 // from the affinity mask, which a quota-limited container leaves at the
 // host's core count, so an unclamped pool burns its quota early and the

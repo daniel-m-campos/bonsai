@@ -177,7 +177,7 @@ void recurse(ShapContext<Hot> const &ctx, node_id_t node_id,
     // any background mass flows down that branch, every pweight below it is
     // zero, and unwinding such an element divides 0/0. Zero-cover branches
     // exist — device-partitioned empty children pass through as kept leaves
-    // (PR #29), and oblivious trees expand with dead slots — so skip them
+    // and oblivious trees expand with dead slots, so skip them
     // instead of assuming them away. The hot branch still recurses whenever
     // the instance follows it (one > 0), which is what makes sum(phi)
     // reproduce f(x) even when x routes into a dead branch.

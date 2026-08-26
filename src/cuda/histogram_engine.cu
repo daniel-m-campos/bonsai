@@ -242,7 +242,7 @@ CudaHistogramEngine::eval_accumulate(std::span<ResidentNode const> nodes, float 
     return impl_->ctx.eval_accumulate(nodes, lr, scores_out);
 }
 
-// ---- The ingest transaction (decision 54) -----------------------------------
+// ---- The ingest transaction ------------------------------------------------
 
 namespace
 {

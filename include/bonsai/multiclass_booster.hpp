@@ -29,7 +29,7 @@ namespace bonsai
 // softmax gradients (grad_k = p_k - 1[y == k], hess_k = p_k (1 - p_k) —
 // the true diagonal Hessian; the factor-2 'xgboost convention' halves
 // every Newton step and cost 2x the iterations to match lightgbm at the
-// same learning rate, issue #62). trees_ is flat, round-major: tree for class k of
+// same learning rate). trees_ is flat, round-major: tree for class k of
 // round r sits at index r * K + k. predict() emits argmax class ids;
 // eval() is the multiclass logloss. The 1-D Objective concept can't
 // express the K-output shape, which is why this is its own IBooster

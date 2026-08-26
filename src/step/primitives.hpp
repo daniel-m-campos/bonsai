@@ -58,7 +58,7 @@ inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
     // Row-parallel: each row is written exactly once with the same value,
     // so the order is immaterial (byte-identical at any thread count). The
     // stamping loops were ~17s of the 16M CPU fit on dual-EPYC hosts
-    // (issue #46's decomposition) — scattered writes that want bandwidth.
+    // scattered writes that want bandwidth.
     parallel::for_each_index(node.rows.size(),
                              [&](size_t k)
                              {
@@ -475,7 +475,7 @@ inline uint32_t row_count_of(SplitInput const &node)
     return static_cast<uint32_t>(node.rows.empty() ? node.row_count : node.rows.size());
 }
 
-// The level-transaction vocabulary (decision 53): the same narrative on
+// The level-transaction vocabulary: the same narrative on
 // both planes, with the backend an implementation detail. Step 1 of the
 // migration introduces the types and speaks them from the grow loops;
 // buffers stay caller-owned and reused across levels exactly as before.

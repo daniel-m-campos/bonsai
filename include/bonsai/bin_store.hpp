@@ -24,7 +24,7 @@ using U8Columns  = std::vector<std::vector<uint8_t>>;
 using U16Columns = std::vector<std::vector<uint16_t>>;
 using BinColumns = std::variant<U8Columns, U16Columns>;
 
-// Product of a backend's ingest transaction (decision 54, doc 15): the
+// Product of a backend's ingest transaction: the
 // binned columns live wherever the backend put them — Dataset carries the
 // plane as an opaque receipt and asks it to materialize host columns only
 // when a host consumer needs them. Host-pure: concrete planes are defined

@@ -51,7 +51,7 @@ inline void fill_column(Dataset const &ds, feature_id_t fid, Histogram &h,
                       // Below the root a node's rows are an ascending SUBSET, so
                       // this column's bytes sit at irregular strides the hardware
                       // prefetcher cannot follow and the gather runs
-                      // DRAM-latency-bound (#367). Pull the byte a fixed distance
+                      // DRAM-latency-bound. Pull the byte a fixed distance
                       // ahead; reads only, so the sums are untouched. The node's
                       // last rows go unprefetched, peeled out so the hot loop
                       // carries no per-row bound test.

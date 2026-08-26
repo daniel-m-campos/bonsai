@@ -87,7 +87,7 @@ concept TreeGrower = requires(T g, Dataset const &ds, floats_view grad,
 // for is wider and enforced by the parity suite (design review 2026-07-12):
 // populate must accumulate exactly the node's rows' (grad, hess) into the
 // bins the Dataset's mappers define, cell sums summed in an order that is
-// a pure function of configuration (decision 49's determinism contract),
+// a pure function of configuration,
 // missing values in the last bin, and hists[f] sized n_bins(f) for every
 // selected f. A type satisfying the syntax while bending any of these
 // trains silently wrong models — see docs/guide/2 for what each clause is

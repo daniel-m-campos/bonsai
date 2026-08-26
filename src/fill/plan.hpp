@@ -42,7 +42,7 @@ inline std::span<HistCell> partials_storage(size_t n_cells)
 // (tiles outer, rows inner), so the live scatter target is one tile's
 // histograms, cache-resident by construction, while every read stays
 // sequential inside the tile. Per-feature accumulation order is unchanged
-// from the untiled fill, so models are bit-identical (#217).
+// from the untiled fill, so models are bit-identical.
 struct MirrorSlice
 {
     size_t s0, s1;
@@ -101,7 +101,7 @@ inline std::vector<size_t> selected_bins(Dataset const                &ds,
 // selection: the arena packing, each selected feature's cell offset, and the
 // mirror-tile slices. Identical for every node of the tree, and O(n_features)
 // to build, so the leafwise grower's one-node fills would otherwise rebuild it
-// once per split instead of once per level (#367).
+// once per split instead of once per level.
 struct SelectionPlan
 {
     SelectionPlan(Dataset const &ds, std::span<feature_id_t const> selected)

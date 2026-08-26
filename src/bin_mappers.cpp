@@ -23,7 +23,7 @@
 namespace bonsai
 {
 
-// One shared row sample for the whole matrix (decision 64): every feature's
+// One shared row sample for the whole matrix: every feature's
 // cuts come from the same rows, so the O(n) selection pass runs once instead of
 // once per feature (mapper-fit was ~5-8s of a 16M fit). Empty result means
 // "n_rows <= n_samples, use every row" — the whole-column path, unchanged and

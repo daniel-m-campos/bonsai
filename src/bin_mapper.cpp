@@ -49,7 +49,7 @@ std::vector<float> create_subsample(floats_view column, BinMapperConfig const &c
 }
 
 // Count-weighted greedy allocation for columns where some value is heavier
-// than a mean-sized bin (issue #63, decision 57; lightgbm's GreedyFindBin):
+// than a mean-sized bin (LightGBM's GreedyFindBin):
 // heavy values get a bin to themselves, the rest fill toward the running
 // mean, and cuts land at the midpoint BETWEEN adjacent distinct values so
 // no value straddles a boundary — the equal-frequency stride let a heavy
@@ -120,7 +120,7 @@ std::vector<float> greedy_weighted_cuts(std::vector<float> const  &vals,
 // std::midpoint agrees on either. Small inputs keep std::sort: four
 // counting passes only pay past ~2k elements.
 // Motivation: the mapper fit is sort-bound at wide shapes (11.5s of a
-// 54.9s GPU fit at 131k x 16384, decision 90's price list).
+// 54.9s GPU fit at 131k x 16384).
 void sort_floats(std::vector<float> &v)
 {
     constexpr size_t k_radix_min = 2048;
@@ -169,14 +169,14 @@ void sort_floats(std::vector<float> &v)
 // Sort once, run-length encode into (distinct value, count) pairs, then
 // place at most `cut_budget` cuts by the lightest rule that is exact for
 // the column's shape. Distinct values within the budget: one right-inclusive
-// cut per value — binning is exact (issue #61). Above the budget with every
+// cut per value, so binning is exact. Above the budget with every
 // value lighter than a mean bin: the quantile stride, which IS the
 // count-weighted allocation when no value can overflow a bin (ceiling stride
-// per decision 51). Only heavy-value columns pay the greedy walk (issue #63)
-// — the rule is per column, so all-continuous datasets are untouched by it.
+// budget). Only heavy-value columns pay the greedy walk; the rule is per
+// column, so all-continuous datasets are untouched by it.
 // Every path ends with the FLT_MAX closer + the +inf sentinel, so the
-// sentinel bin is missing-only BY CONSTRUCTION on all paths (decision 74;
-// previously only the distinct path within the sample guaranteed it).
+// sentinel bin is missing-only BY CONSTRUCTION on all paths, where
+// previously only the distinct path within the sample guaranteed it.
 std::vector<float> create_cuts(std::vector<float> &subsample, size_t cut_budget)
 {
     sort_floats(subsample);
@@ -217,7 +217,7 @@ std::vector<float> create_cuts(std::vector<float> &subsample, size_t cut_budget)
             }
         }
     }
-    // The FLT_MAX top-band closer (issue #155, decision 74): every finite
+    // The FLT_MAX top-band closer: every finite
     // value above the last placed cut gets a real, splittable bin instead of
     // leaking into the NaN sentinel, which also removes a train/predict
     // routing skew (leaked rows trained by default_left but predict by raw
@@ -246,7 +246,7 @@ BinMapper BinMapper::from_sample(std::vector<float> sample, BinMapperConfig cons
     // column collapses to one group and the cuts degenerate to {NaN, +inf}.
     assert(std::ranges::none_of(sample, [](float x) { return std::isnan(x); }));
     // The two reserved slots are the FLT_MAX closer and the +inf missing
-    // sentinel that create_cuts appends (decision 74).
+    // sentinel that create_cuts appends.
     size_t const cut_budget = cfg.max_bin - 2;
     auto         cuts       = create_cuts(sample, cut_budget);
     return BinMapper{std::move(cuts)};

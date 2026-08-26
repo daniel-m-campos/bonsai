@@ -59,7 +59,7 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
     // Per-node splitter, or one level-wide find broadcast to every node when
     // the splitter is level-granular (the levelwise growth shape).
     // Level transaction, phase 1: split decisions for the whole frontier
-    // (decision 53). The frontier is the transaction's input; outputs are
+    // The frontier is the transaction's input; outputs are
     // caller-owned and reused across levels.
     void open_level(std::vector<SplitInput> const &frontier, LevelOutputs &out)
     {
@@ -269,7 +269,7 @@ class LevelStep<EngineT, SplitterT>
         {
             // The last level's children are leaves: their histograms are never
             // read, so skip the build and keep the layout flip stamping
-            // depends on (decision 71).
+            // depends on.
             engine_.advance_layout_only();
             return;
         }

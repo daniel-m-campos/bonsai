@@ -33,7 +33,7 @@ bool cuda_available()
 void cuda_select_device(uint32_t device_id)
 {
     // 0 is the ambient default everywhere; a nonzero id in a CUDA-less
-    // build is a misconfiguration and must be loud (decision 60's rule).
+    // build is a misconfiguration and must be loud.
     if (device_id != 0)
     {
         throw ConfigError("parallel.device_id " + std::to_string(device_id) +

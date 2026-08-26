@@ -38,7 +38,7 @@ struct ProfileCounters
     // millisecond of the round has a name.
     double root_sums_s = 0, adv_memset_s = 0, adv_hist_s = 0, adv_sub_s = 0;
     double root_hist_s = 0, fin_stamp_s = 0, fin_map_s = 0;
-    // Partition-chain decomposition (issue #341): the single gpu_s lap hid
+    // Partition-chain decomposition: the single gpu_s lap hid
     // route, scan, and scatter behind one number.
     double part_route_s = 0, part_scan_s = 0, part_scatter_s = 0;
     // Resident-objective laps: the device gradient kernel that replaces the gh

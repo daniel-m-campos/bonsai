@@ -20,14 +20,14 @@ namespace bonsai
 bool cuda_available();
 
 // Select the CUDA device for subsequent device work on the CALLING thread
-// (parallel.device_id, issue #158). 0 selects the default device when one
+// (parallel.device_id). 0 selects the default device when one
 // exists and is a no-op otherwise, so the config default changes nothing on
 // GPU-less hosts (graceful degradation intact); a nonzero id is validated
 // against the visible device count, and out-of-range or a CUDA-less build
 // throws ConfigError. Placement only: model bits are unaffected.
 void cuda_select_device(uint32_t device_id);
 
-// The CUDA ingest transaction (decision 54, docs 15/16): bins raw features
+// The CUDA ingest transaction: bins raw features
 // on the device against host-fitted cuts and returns the resident plane for
 // Dataset::bin to carry. Returns nullptr — leaving the caller on the host
 // fill — when the build has no backend, no usable device is present, or the
@@ -162,7 +162,7 @@ class CudaHistogramEngine
     // Last level of a tree: children are leaves, their histograms unread;
     // performs only the segment-layout flip that stamping depends on.
     void advance_layout_only();
-    // Tree epilogue, engine-owned (decision 53 step 3): maps the resident
+    // Tree epilogue, engine-owned: maps the resident
     // per-row leaf assignment through node_values on device and downloads
     // values and leaf ids in two bulk copies — replacing the per-tree
     // host stamping loop over every row.

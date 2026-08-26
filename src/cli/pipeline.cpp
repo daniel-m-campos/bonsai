@@ -38,7 +38,7 @@ namespace bonsai::cli
 namespace
 {
 
-// Device placement (parallel.device_id, issue #158) happens at every entry
+// Device placement (parallel.device_id) happens at every entry
 // that precedes device work, because cudaSetDevice is thread-local: ingest
 // and training may run on different threads (the Python Dataset flow). CPU
 // growers never touch it.
@@ -56,7 +56,7 @@ LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path)
 {
     auto const batch   = detail::parse_input(path, cfg.data);
     auto       mappers = BinMappers::fit(batch, cfg.bin_mapper);
-    // The ingest transaction (decision 54): cuda growers bin on the device;
+    // The ingest transaction: cuda growers bin on the device;
     // cuda_ingest declines (nullptr) without a backend/device.
     select_device_for(cfg);
     auto plane = cfg.dispatch.grower_name.starts_with("cuda")

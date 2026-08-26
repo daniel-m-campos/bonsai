@@ -17,8 +17,8 @@ namespace bonsai
 {
 
 // float cells: gradients/hessians arrive as float, per-cell sums are bounded
-// by node size, and halving the cell halves the fill's memory traffic — the
-// dominant fit stage (decision 50). Reductions ACROSS cells (totals, prefix
+// by node size, and halving the cell halves the fill's memory traffic in
+// the dominant fit stage. Reductions ACROSS cells (totals, prefix
 // scans, split running sums) accumulate in double and convert once at the
 // store, so only per-cell storage carries float rounding.
 struct HistCell

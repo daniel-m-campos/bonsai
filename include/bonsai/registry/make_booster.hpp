@@ -18,7 +18,8 @@ class UnknownImplError : public std::runtime_error
 };
 
 // Look up (objective_name, grower_name, sampler_name) in the compile-time
-// dispatch table and return a monomorphized Booster<O,G,Sa> as IBooster.
+// dispatch table and return the combo's booster as IBooster; softmax
+// combos build a MulticlassBooster, every other combo a Booster.
 // Throws UnknownImplError if the triple is not in the table.
 std::unique_ptr<IBooster> make_booster(Config const &config);
 

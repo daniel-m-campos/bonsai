@@ -44,7 +44,7 @@ inline SplitSums split_sums_at(double left_grad, double left_hess,
     };
 }
 
-// The per-candidate core shared by the node and level scans (issue #50):
+// The per-candidate core shared by the node and level scans:
 // child sums via split_sums_at, the min_child_hess feasibility gate, and
 // the two-child score — computed in exactly this operation order so both
 // finders make bit-identical decisions from identical histograms. Monotone
@@ -220,7 +220,7 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
                     score_candidate(lp.sum_grad, lp.sum_hess, hist.missing(),
                                     real_grad[p], real_hess[p], default_left, config);
                 // A node whose children would fall under min_child_hess no
-                // longer vetoes the whole candidate (issue #60: at depth >= 5
+                // longer vetoes the whole candidate (at depth >= 5
                 // some frontier node is always near-empty, so every good cut
                 // was rejected and levelwise trailed catboost by 3-26%). It
                 // contributes its parent score instead — zero gain — and the

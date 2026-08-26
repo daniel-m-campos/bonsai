@@ -1,6 +1,6 @@
 #pragma once
 
-// The ingest-arm device kernels (decision 54), split from kernels.cuh so the
+// The ingest-arm device kernels, split from kernels.cuh so the
 // ingest TU (histogram_engine.cu) includes only the kernels it launches: once
 // the level/find/partition kernels moved to the device-context TU, a shared
 // all-kernels header left each TU with unreferenced anonymous kernels, which
@@ -21,7 +21,7 @@ namespace
 
 // NOLINTBEGIN(bugprone-easily-swappable-parameters,cppcoreguidelines-pro-bounds-pointer-arithmetic)
 
-// Device twin of BinMapper::transform (decision 54): NaN -> last bin, else
+// Device twin of BinMapper::transform: NaN -> last bin, else
 // the count of cuts strictly below x (std::lower_bound). Same comparisons
 // over the same host-fitted cuts => bit-identical bin ids to the host fill.
 template <typename BinT>

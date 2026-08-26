@@ -327,10 +327,10 @@ bonsai::cli::LabeledData make_labeled(MatrixArg const &X, bonsai::floats_view y,
     }
     buf.borrowed = std::span{X.host->data(), X.n_rows * X.n_features};
 
-    // The ingest transaction (decision 54): the device arm bins on the GPU;
+    // The ingest transaction: the device arm bins on the GPU;
     // cuda_ingest declines (nullptr) when the dataset's bins exceed the
     // resident ceiling, keeping the host fill. Device placement first
-    // (issue #158): cudaSetDevice is thread-local and this thread is about
+    // cudaSetDevice is thread-local and this thread is about
     // to mint the device plane.
     if (on_device)
     {
@@ -562,7 +562,7 @@ std::vector<bonsai::row_id_t> parse_row_selection(nb::handle rows, size_t n)
     return out;
 }
 
-// A reusable pre-binned dataset (decision 65): binning runs once at
+// A reusable pre-binned dataset: binning runs once at
 // construction, and the SAME bonsai::Dataset is fed to every train() call, so a
 // hyperparameter sweep or CV loop skips the per-fit bin pass. On GPU the
 // resident-matrix upload-skip cache (ensure_dataset) fires because the object
