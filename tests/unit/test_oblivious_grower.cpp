@@ -2,9 +2,11 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
 #include <limits>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include "bonsai/config/errors.hpp"
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/grower.hpp"
@@ -184,4 +186,32 @@ TEST_CASE("ObliviousGrower: level with no gain stops growth before max_depth",
 
     CHECK(tree.params().depth == 1);
     CHECK(tree.params().n_leaves == 2);
+}
+
+// INVARIANT: levelwise-rejects-constraints
+// The levelwise (oblivious) grower rejects monotone and interaction
+// constraints at construction rather than silently ignoring them, on both
+// the CPU and CUDA engines: the throw is in the shared template, so an
+// engine cannot opt out of it.
+TEST_CASE("ObliviousGrower: rejects constraints it cannot honour at construction",
+          "[grower][oblivious][ctor][invariant]")
+{
+    SECTION("a monotone direction throws")
+    {
+        TreeConfig cfg{};
+        cfg.monotone_constraints = {0, 1, 0};
+        CHECK_THROWS_AS(ObliviousGrower<>{cfg}, ConfigError);
+    }
+    SECTION("an all-zero monotone list is not a constraint")
+    {
+        TreeConfig cfg{};
+        cfg.monotone_constraints = {0, 0, 0};
+        CHECK_NOTHROW(ObliviousGrower<>{cfg});
+    }
+    SECTION("an interaction group throws")
+    {
+        TreeConfig cfg{};
+        cfg.interaction_constraints = {"0,1"};
+        CHECK_THROWS_AS(ObliviousGrower<>{cfg}, ConfigError);
+    }
 }

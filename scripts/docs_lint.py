@@ -7,10 +7,10 @@ review. Stdlib only, like the other doc generators; no build required.
 Scope: the published pages only. `exclude_docs` in mkdocs.yml lists what
 never reaches the site (STYLE.md itself, ops/, reviews/, and the loose
 working notes); `_docs_corpus.corpus_files` parses that block and skips the
-same files. It ADDITIONALLY exempts the frozen archive, docs/decisions.md and
-docs/architecture/**: that material is a historical record, first-class
-for agents and deep divers but deliberately out of the main line, and
-rewriting it to today's style would falsify the record.
+same files. It ADDITIONALLY exempts the frozen archive, docs/decisions.md:
+that material is a historical record, first-class for agents and deep
+divers but deliberately out of the main line, and rewriting it to today's
+style would falsify the record.
 README.md is linted too (it is the repo's front page).
 
 Two tiers of rule:
@@ -30,6 +30,16 @@ HARD (exit 1, one message per offending line):
      Currently "rung"/"rungs" (write budget, step, or stage). Identifier
      tokens like rung0 never match (no word boundary), and code spans and
      link targets are masked, so cited filenames stay legal.
+
+HARD, invariants (docs/invariants.src.md only):
+  e. Every "- code:" line must resolve: it names a backticked path and a
+     backticked symbol, the path exists in the tree, and the symbol string
+     greps in that file. This is a LINK CHECK, not a proof. It catches a
+     rename or a deletion; it cannot catch semantic drift, because a
+     function that starts throwing where it used to decline still contains
+     its own name. That is exactly why the enforced half of the page is
+     generated from tests instead: a test fails when the behavior changes,
+     and this rule only fails when the reference rots.
 
 SOFT (reported, exit 0): sentences over 25 words. Table rows, headings, and
 link-dense lines are skipped. The top offenders print with file:line so a
@@ -145,6 +155,54 @@ def word_count(sentence: str) -> int:
 
 # ---- rules -------------------------------------------------------------------
 
+INVARIANTS = REPO / "docs" / "invariants.src.md"
+CODE_REF_RE = re.compile(r"^- code: `([^`]+)` : `([^`]+)`\s*$")
+
+
+def lint_invariants(hard: list[tuple]) -> None:
+    """Rule (e): every code reference in invariants.md resolves.
+
+    A reference is one `- code:` line naming a path and a symbol. The path
+    must exist and the symbol must appear on a line of that file that is not
+    purely a comment. Both halves matter. An anchor containing whitespace is
+    a phrase, and a phrase can live in prose: `subtraction-trick` was once
+    anchored to words that existed only inside a comment, so deleting the
+    comment broke an entry that was supposed to be pinned to code. Malformed
+    `- code:` lines are findings too, since a typo'd line would otherwise
+    pass by never being checked.
+    """
+    if not INVARIANTS.exists():
+        return
+    rel = INVARIANTS.relative_to(REPO).as_posix()
+    for lineno, line in enumerate(INVARIANTS.read_text().splitlines(), 1):
+        if not line.startswith("- code:"):
+            continue
+        m = CODE_REF_RE.match(line)
+        if not m:
+            hard.append((rel, lineno, "invariant-ref",
+                         "malformed code reference; write"
+                         " - code: `path` : `symbol`"))
+            continue
+        path_s, symbol = m.groups()
+        target = REPO / path_s
+        if not target.is_file():
+            hard.append((rel, lineno, "invariant-ref",
+                         f"path does not exist: {path_s}"))
+            continue
+        if " " in symbol:
+            hard.append((rel, lineno, "invariant-ref",
+                         f'"{symbol}" is a phrase, not a symbol; anchor the'
+                         " entry to an identifier so prose cannot hold it"))
+            continue
+        body = [ln for ln in target.read_text(errors="replace").splitlines()
+                if not ln.strip().startswith("//")]
+        if symbol not in "\n".join(body):
+            hard.append((rel, lineno, "invariant-ref",
+                         f'"{symbol}" not found in the code of {path_s}; the'
+                         " code has outrun this entry, update it in the same"
+                         " PR"))
+
+
 def lint_file(path: pathlib.Path, hard: list[tuple], soft: list[tuple]) -> None:
     """Every finding for one file."""
     rel = path.relative_to(REPO).as_posix()
@@ -209,6 +267,7 @@ def main() -> int:
     files = corpus_files()
     for path in files:
         lint_file(path, hard, soft)
+    lint_invariants(hard)
 
     hard.sort(key=lambda h: (h[0], h[1], h[2]))
     for rel, lineno, code, msg in hard:
