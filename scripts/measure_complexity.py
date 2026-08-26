@@ -13,7 +13,7 @@ one plane; an unmapped code file is a hard error so tree drift fails loudly):
     cuda_plane     src/cuda/**, include/bonsai/cuda/**
     bindings_cli   src/python/**, src/cli/**, include/bonsai/cli/**,
                    python/bonsai/** except bench/
-    bench_tooling  python/bonsai/bench/**, scripts/*.py, benchmarks/*.cpp
+    bench_tooling  python/bonsai/bench/**, scripts/*.py
     tests          tests/**, python/tests/**
 
 Complexity comes from lizard, pinned via uvx exactly like ruff in the
@@ -58,7 +58,7 @@ class Planes:
 # Adjustments to the prescribed map, forced by the tree (flagged in review):
 # include/bonsai/{detail,io}/ and src/{config,io,registry}/ exist and belong
 # to the core planes; include/bonsai/cli/ pairs with src/cli/; python/tests/
-# holds the binding tests; benchmarks/*.cpp are Catch2 micro-benchmarks.
+# holds the binding tests.
 PLANE_MAP = {
     Planes.CORE_HEADERS: ["include/bonsai/*.hpp", "include/bonsai/config/**",
                      "include/bonsai/registry/**", "include/bonsai/detail/**",
@@ -68,8 +68,7 @@ PLANE_MAP = {
     Planes.CUDA_PLANE: ["src/cuda/**", "include/bonsai/cuda/**"],
     Planes.BINDINGS_CLI: ["src/python/**", "src/cli/**", "include/bonsai/cli/**",
                      "python/bonsai/** except bench/"],
-    Planes.BENCH_TOOLING: ["python/bonsai/bench/**", "scripts/*.py",
-                      "benchmarks/*.cpp"],
+    Planes.BENCH_TOOLING: ["python/bonsai/bench/**", "scripts/*.py"],
     Planes.TESTS: ["tests/**", "python/tests/**"],
 }
 
