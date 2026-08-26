@@ -115,6 +115,8 @@ nav:
           - E4. The resident objective: learn/engine/4-the-resident-objective.md
           - E5. The ceiling: learn/engine/5-the-ceiling.md
           - E6. The wide-data wall: learn/engine/6-the-wide-data-wall.md
+      - Determinism as a contract: learn/determinism-as-a-contract.md
+      - The HPC tension: learn/the-hpc-tension.md
       - How we got here: learn/timeline.md
   - Use:
       - Install: use/install.md
@@ -135,10 +137,6 @@ nav:
       - How we decide: method/how-we-decide.md
       - What to use when: method/what-to-use-when.md
   - Design:
-      - The system map: design/system-map.md
       - Invariants: invariants.md
-      - Concepts to types: design/api-tour-concepts.md
-      - The HPC tension: design/the-hpc-tension.md
-      - Determinism as a contract: design/determinism.md
       - Archive:
           - Decisions log: decisions.md

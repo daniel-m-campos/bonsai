@@ -48,11 +48,11 @@ One property none of the reference libraries offer: models are bit-identical acr
 
     Every speed and accuracy claim as a committed run on named hardware. [The results ledger](method/results.md) opens with the division summaries and links one generated page per study; the rules are [the benchmark protocol](method/benchmark-protocol.md).
 
--   **[Design](design/system-map.md)**
+-   **[Design](invariants.md)**
 
     ---
 
-    [The system map](design/system-map.md), [concepts to types](design/api-tour-concepts.md), [the HPC tension](design/the-hpc-tension.md), and [determinism as a contract](design/determinism.md). The archive holds the [decisions log](decisions.md); [how we got here](learn/timeline.md) traces the lineage of the ideas.
+    [The invariants](invariants.md), the contracts the engine holds, generated from the tests that prove them. The archive holds the [decisions log](decisions.md); [how we got here](learn/timeline.md) traces the lineage of the ideas.
 
 </div>
 

@@ -1,6 +1,6 @@
 # Decisions
 
-This log is the historical engineering record, kept for reference and for agents working in the codebase. The curated design pages live in the [Design](design/determinism.md) section.
+This log is the historical engineering record, kept for reference and for agents working in the codebase. The curated design pages live in the [Design](learn/determinism-as-a-contract.md) section.
 
 Append-only log. Order = decision order. Caveman style. New entries at bottom.
 
@@ -798,7 +798,7 @@ of a hope.
 
 ## 49. Row-wise histogram fill over a row-major u8 mirror; determinism relaxes to fixed thread count
 
-*Status 2026-08-26: `Dataset::row_major_bins` was renamed; the mirror is reached as `Dataset::mirror()` (`include/bonsai/dataset.hpp`). The canonical determinism statement moved to [invariants.md](invariants.md) and [design/determinism.md](design/determinism.md).*
+*Status 2026-08-26: `Dataset::row_major_bins` was renamed; the mirror is reached as `Dataset::mirror()` (`include/bonsai/dataset.hpp`). The canonical determinism statement moved to [invariants.md](invariants.md) and [learn/determinism-as-a-contract.md](learn/determinism-as-a-contract.md).*
 
 
 **Decision.** The scaling study's flat 2.5–4× CPU fit gap vs LightGBM was populate-bound (50–85% of fit) and, on deep small nodes, gather-bound: the feature-parallel fill reads one binned column per feature with `bins[rows[k]]` scatter, so a sparse node's every access misses cache, measured at ~0.7G adds/s against ~3.3G adds/s for large dense nodes (M2, adds counted by the profiler). `CpuHistogramEngine::populate_many` now fills u8 (max_bin ≤ 255) data row-wise over a lazily built row-major mirror (`Dataset::row_major_bins`, +n_rows×n_features bytes, never built by CUDA or predict-only paths): a level's nodes become row-block work units; each reads its rows' bins as contiguous 1×n_features strips regardless of node sparsity, streams grad/hess once total instead of once per feature, and accumulates into private per-block partial histograms merged in fixed block order. Nodes below a work threshold (fill ≥ ~16× the partial zero+merge cost) run as one block writing the node's cells directly (byte-identical to the old order), and the whole level shares one parallel section, so 128 deep nodes are 128 units instead of 128 serial parallel-section spawns. Base cell (1M×100×255, M2, 8 threads): fit 26.7→16.9s, populate 20.1→9.6s; 4M rows 43.0→25.3s; 1M×512 35.9→21.8s; identical R². LightGBM's same-cell fit on the M2 is 18.0s: first cell where bonsai CPU leads it.

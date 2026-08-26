@@ -30,7 +30,7 @@ bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library a
 
 - **Compile-time dispatch, concept-checked components.** The runtime TOML config resolves once to a monomorphized `Booster<Objective, Grower, Splitter, Sampler>`; no virtual calls in the hot path, and contract violations fail at compile time. Adding a component is a [short recipe](https://daniel-m-campos.github.io/bonsai/use/building/#extending-bonsai).
 - **Six growers, one engine.** `depthwise` (XGBoost-style), `leafwise` (LightGBM-style), `levelwise` (CatBoost-style), and their CUDA twins `cuda_depthwise` / `cuda_leafwise` / `cuda_levelwise`; with 7 objectives and 3 samplers the dispatch space is 126 statically-typed combinations, selectable per run from config.
-- **Deterministic parallelism.** Models are bit-identical across runs, thread counts, and even CPU architectures (arm64 == x86-64), a property no reference library offers, enforced per-commit in CI ([the contract](https://daniel-m-campos.github.io/bonsai/design/determinism/)).
+- **Deterministic parallelism.** Models are bit-identical across runs, thread counts, and even CPU architectures (arm64 == x86-64), a property no reference library offers, enforced per-commit in CI ([the contract](https://daniel-m-campos.github.io/bonsai/learn/determinism-as-a-contract/)).
 - **A guide, not just docs.** [The guide](https://daniel-m-campos.github.io/bonsai/guide/) explains gradient boosting chapter by chapter: concept, math, then the ~50 real lines that implement it here, then an experiment against the reference libraries.
 
 ## Install
@@ -103,7 +103,7 @@ The home is **[daniel-m-campos.github.io/bonsai](https://daniel-m-campos.github.
 - **[Learn](https://daniel-m-campos.github.io/bonsai/guide/)**: gradient boosting from intuition to the shipping code, one concept per chapter, each with an experiment against the reference libraries.
 - **[Use](https://daniel-m-campos.github.io/bonsai/use/install/)**: [install](https://daniel-m-campos.github.io/bonsai/use/install/), [the API in one read](https://daniel-m-campos.github.io/bonsai/use/api-tour/), [parameters](https://daniel-m-campos.github.io/bonsai/use/parameters/), [building from source](https://daniel-m-campos.github.io/bonsai/use/building/).
 - **[Results](https://daniel-m-campos.github.io/bonsai/method/)**: the measurement discipline; its rules in the [benchmark charter](https://daniel-m-campos.github.io/bonsai/method/benchmark-protocol/), its evidence in [the results ledger](https://daniel-m-campos.github.io/bonsai/method/results/).
-- **[Design](https://daniel-m-campos.github.io/bonsai/design/system-map/)**: the system map, the concept-to-type tour, determinism as a contract, and the archive ([decisions log](https://daniel-m-campos.github.io/bonsai/decisions/)).
+- **[Invariants](https://daniel-m-campos.github.io/bonsai/invariants/)**: the contracts the engine holds, generated from the tests that prove them, beside the archive ([decisions log](https://daniel-m-campos.github.io/bonsai/decisions/)).
 
 The early planning records (proposal, context briefing, MVP retrospective) have been retired; git history holds them.
 

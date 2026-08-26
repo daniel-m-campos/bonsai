@@ -209,7 +209,7 @@
       "link": null,
       "adopters": ["bonsai"],
       "bonsai_status": "origin",
-      "bonsai_link": "../design/determinism.md"
+      "bonsai_link": "determinism-as-a-contract.md"
     },
     {
       "year": 2026,

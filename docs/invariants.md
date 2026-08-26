@@ -56,7 +56,7 @@ Device predict is bit-equal to the host binned walk, row for row; the epilogue s
 The cuda growers' training determinism contract is tolerance-equal, never bit-exact, and not bit-equal to itself run to run: device atomics accumulate in arbitrary order. The host plane's fixed-thread bit-identity contract does not extend to the device.
 
 - code: `include/bonsai/cuda/histogram_engine.hpp` : `CudaHistogramEngine`
-- elaboration: decisions 60 and the determinism note in [design/determinism.md](design/determinism.md).
+- elaboration: decisions 60 and the determinism note in [learn/determinism-as-a-contract.md](learn/determinism-as-a-contract.md).
 
 ### stub-trains-nothing-predicts-anywhere
 
@@ -121,7 +121,7 @@ Model bytes are identical across runs, across thread counts (outside one documen
 
 - code: `include/bonsai/parallel.hpp` : `for_each_index`
 - code: `scripts/model_hash.py` : `sha256`
-- elaboration: [design/determinism.md](design/determinism.md); decisions 59 and 60.
+- elaboration: [learn/determinism-as-a-contract.md](learn/determinism-as-a-contract.md); decisions 59 and 60.
 
 ### device-binning-byte-identity
 
