@@ -1,6 +1,6 @@
 # Feature gap: bonsai vs xgboost / lightgbm / catboost
 
-> **Frozen record.** The parity tracker as it stood when the last of its rows closed, kept because decisions 34, 35, and 38 cite its A/B tables as their evidence. It is no longer a live tracker: the datasets it measures on (California Housing, Year Prediction MSD) are retired, and several result files it names have been deleted. Current feature status is [decisions.md](decisions.md); current numbers are [the results ledger](method/results.md).
+> **Frozen record.** The parity tracker as it stood when the last of its rows closed, kept because decisions 34, 35, and 38 cite its A/B tables as their evidence. It is no longer a live tracker: the datasets it measures on (California Housing, Year Prediction MSD) are retired, and several result files it names have been deleted. Current feature status is [decisions.md](../docs/decisions.md); current numbers are [the results ledger](../docs/method/results.md).
 
 Features the reference libraries have and bonsai lacks, sorted by expected
 fit/predict impact on the benchmark datasets (California Housing, Year
@@ -30,7 +30,7 @@ one can "enable" in the reference libraries for an A/B.
 | 15 | TreeSHAP (`pred_contribs`) | yes | yes | yes | Modern attribution standard; real algorithm, sized as its own project | **landed** |
 | 16 | Multi-class / softmax objective | yes | yes | yes | K-output leaves touch Objective, Booster, and Tree — largest structural change | **landed** |
 | 17 | Sparse-input handling / EFB | yes | yes (EFB) | yes | Needs a sparse dataset in the harness to enable or measure anything | **landed** (input format; sparse *compute* stays engine work) |
-| 18 | Ranking objectives | `rank:ndcg` / `rank:pairwise` | `lambdarank` | `YetiRank` | MQ2008 gate (`scripts/probe_ranking.py --real`): a stable ~+0.015 NDCG@10 gap to xgboost's *listwise* loss only; pairwise lambdarank showed no edge over bonsai regression | **open** (issue #58 reframed listwise-first by the gate) |
+| 18 | Ranking objectives | `rank:ndcg` / `rank:pairwise` | `lambdarank` | `YetiRank` | MQ2008 gate (probe script retired to git history; evidence in `benchmarks/ranking-tradeoff-2026-07.md`): a stable ~+0.015 NDCG@10 gap to xgboost's *listwise* loss only; pairwise lambdarank showed no edge over bonsai regression | **open** (issue #58 reframed listwise-first by the gate) |
 | 19 | Per-feature bin budgets / manual bin edges | — | `max_bin_by_feature`, forced bin edges | `per_float_feature_quantization` | Auto per-feature budgets priced at max_bin 255 and declined: importance/inverse/headroom policies all landed inside the chance band (`benchmarks/binning-tradeoff-2026-07.md`); explicit user-supplied edges shipped as a `Dataset` capability, spec and as-built notes in architecture doc 18 | **declined** (auto budgets, decision 67) / **landed** (manual edges, decision 73) |
 
 Measurement protocol, per implemented feature: enable the equivalent knob in
@@ -373,7 +373,7 @@ Before building native categorical splits, measure what they buy.
 Amazon employee access (OpenML 4135; 32,769 rows, 9 integer-ID
 features, RESOURCE 7,518 distinct / MGR\_ID 4,243; binary ACTION,
 ~94% positive) via `scripts/fetch_amazon.py` +
-`scripts/bench_categorical.py`. 300 iters, lr 0.1, depth 8 / 63
+`bench_categorical.py` (retired to git history). 300 iters, lr 0.1, depth 8 / 63
 leaves. bonsai gets its two practical options today; the references
 get their native modes. The lightgbm native-vs-numeric pair isolates
 the value of native handling from library differences.

@@ -18,7 +18,7 @@ Once the first spine was designed and working, I brought in agentic workflows wi
 
 After that, things escalated. The concept-based design made each extension straightforward, though rarely easy. Milestones meant to be the finish line kept falling: CPU parity, then GPU parity, then GPU leads.
 
-GPU support was the biggest swing, taken when a promotional window with Anthropic's newest model made the attempt affordable. I learned to rent GPU nodes from RunPod and wired the rental API into the agent's tools. From then on the agent could run tight measure-fix-measure loops on real hardware, priced by the discipline on [how we decide](method/how-we-decide.md).
+GPU support was the biggest swing, taken when a promotional window with Anthropic's newest model made the attempt affordable. I learned to rent GPU nodes from RunPod and wired the rental API into the agent's tools. From then on the agent could run tight measure-fix-measure loops on real hardware, priced by the discipline the perf-round and feature-admission skills carry.
 
 The ambition grew with the milestones: assimilate the defining ideas of XGBoost, LightGBM, and CatBoost into one library, match or beat their performance, and keep the code readable enough that reading it is still the point.
 
@@ -48,11 +48,11 @@ One property none of the reference libraries offer: models are bit-identical acr
 
     Every speed and accuracy claim as a committed run on named hardware. [The results ledger](method/results.md) opens with the division summaries and links one generated page per study; the rules are [the benchmark protocol](method/benchmark-protocol.md).
 
--   **[Design](design/system-map.md)**
+-   **[Design](invariants.md)**
 
     ---
 
-    [The system map](design/system-map.md), [concepts to types](design/api-tour-concepts.md), [the HPC tension](design/the-hpc-tension.md), and [determinism as a contract](design/determinism.md). The archive holds the [architecture notes](architecture/README.md) and the [decisions log](decisions.md); [how we got here](learn/timeline.md) traces the lineage of the ideas.
+    [The invariants](invariants.md), the contracts the engine holds, generated from the tests that prove them. The archive holds the [decisions log](decisions.md); [how we got here](learn/timeline.md) traces the lineage of the ideas.
 
 </div>
 

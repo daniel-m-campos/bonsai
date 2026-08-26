@@ -4,7 +4,7 @@
 
 Chapter 10 showed *where* the GPU boundary sits. This chapter is about **how you find out where it should sit**: the method behind the July 2026 campaign that took the 16M-row fit from ~43s to 26.9s and past XGBoost-GPU, told through its real moves and, more instructively, its real refutations.
 
-The reframing that made the campaign systematic: training is a small **compute DAG**. Nodes are the algorithmic steps (bin, gradients, per level: build/find/partition, epilogue, score update); each node has a measured cost per feasible placement (host or device); edges carry data, and an edge crossing the placement boundary costs `bytes / bandwidth(direction)`. Choosing an implementation *is* choosing a placement plus a schedule. General DAG placement is NP-hard; this DAG has ~10 node types and at most six with free placement, so **exhaustive enumeration is trivial**: the entire difficulty is honest constants. ([architecture/16](../architecture/16-compute-dag.md) is the reference; `scripts/dag_model.py` is the living evaluator.)
+The reframing that made the campaign systematic: training is a small **compute DAG**. Nodes are the algorithmic steps (bin, gradients, per level: build/find/partition, epilogue, score update); each node has a measured cost per feasible placement (host or device); edges carry data, and an edge crossing the placement boundary costs `bytes / bandwidth(direction)`. Choosing an implementation *is* choosing a placement plus a schedule. General DAG placement is NP-hard; this DAG has ~10 node types and at most six with free placement, so **exhaustive enumeration is trivial**: the entire difficulty is honest constants. (`scripts/dag_model.py` is the living evaluator; the perf-round skill states the sequence.)
 
 Three rules fall out, each purchased with a real mistake:
 
@@ -72,6 +72,16 @@ BONSAI_GROW_PROFILE=1 BONSAI_CUDA_PROFILE=1 BONSAI_FIT_PROFILE=1 BONSAI_INGEST_P
 ```
 
 Then check conservation: does `fit-profile`'s total explain the wall clock? Does `grow` equal the sum of `grow-profile`'s buckets? If not, you have found the next chapter of this story.
+
+## Case study: reading a competitor's implementation
+
+Before building the device leafwise plane, we read LightGBM's CUDA tree learner end to end and sorted what we found into adopt and refuse lists. The exercise generalizes: a competitor's shipped code is a free experiment log, and the discipline is deciding which of their choices answer *your* constraints.
+
+Adopted, with their source sites: the flat histogram **slot pool** with in-place subtraction (`cuda_histogram_constructor.cu`, `SubtractHistogramKernel`), which removes the ping-pong memset instead of working around it; recomputing **only the two new children** per round, which bonsai gets free by keeping the split heap on the host; the **fat split record** (~120 B) that spares a second reduction; and adaptive accumulator width as a future lever, off by default even there.
+
+Refused, because they answer constraints bonsai does not have: a minimum grid floor, device-wide syncs as ordering (8 per round where bonsai's round needs 2), 4-thread bookkeeping kernel launches (bonsai keeps node bookkeeping on the host), and a second device copy of the binned matrix in a different major order.
+
+One finding worth more than the design notes: LightGBM's CUDA learner ignores `max_depth` entirely; its train loop never calls the one site that enforces depth, and `max_depth` appears nowhere under `src/treelearner/cuda/`. We found it by measurement first (a depth-capped comparison that refused to cap) and confirmed it in their source. Reading the competitor's code did not just donate design ideas, it explained a benchmark anomaly that would otherwise have cost a rerun.
 
 ## Gotchas & war stories
 

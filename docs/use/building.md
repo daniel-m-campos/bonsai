@@ -66,7 +66,7 @@ The CUDA backend needs a CUDA 12.x toolkit at build time only (clang cannot targ
 | `BONSAI_CUDA_PTX_ARCH` | embed PTX for this single arch only (forward-JIT floor) | clang's per-arch default |
 | `BONSAI_CUDA_STATIC_RUNTIME` | link cudart statically (what release wheels do) | `OFF` |
 
-How the backend works (device-resident training, the one kernel TU compiled by the project's own clang) is [guide chapter 10](../guide/10-gpu-training.md) and [the architecture note](../architecture/11-gpu-resident.md); running the scaling suite against a CUDA build is [Running the benchmarks](benchmarks.md).
+How the backend works (device-resident training, the one kernel TU compiled by the project's own clang) is [guide chapter 10](../guide/10-gpu-training.md); running the scaling suite against a CUDA build is [Running the benchmarks](benchmarks.md).
 
 ## When the build fails
 
@@ -86,4 +86,4 @@ A stateless grower or sampler is **two edits**: add the type to the registry typ
 
 A new objective is about **six file touches**: the typelist entry, the name, three trait specializations that static assertions demand by name (link function, task kind, default metrics), the implementation itself, and a config field if it carries parameters (plus its TOML section). The parametric tests then cover every `(objective, grower, sampler)` combination without new test code.
 
-Stateful components implement the same concepts as classes constructed from `Config`; a new tree *type* (beyond `DenseTree`/`ObliviousTree`) is the one extension that ripples, since model IO versioning is involved. The machinery that makes all this work is [the dispatch note](../architecture/6-dispatch.md).
+Stateful components implement the same concepts as classes constructed from `Config`; a new tree *type* (beyond `DenseTree`/`ObliviousTree`) is the one extension that ripples, since model IO versioning is involved. The machinery that makes all this work is the typelist registry, [decision 26](../decisions.md).
