@@ -61,8 +61,8 @@ LoadedTrainValidation load_train_and_validation_with_mappers(Config const &cfg,
                                                              BinMappers    mappers);
 
 // Progress callback: receives (iter_one_based, total_iters) after each
-// boosting iteration. The helper calls it every iteration; the caller throttles
-// (e.g. `fit`'s "every 10" check lives in the callback body).
+// boosting iteration. The helper calls it every iteration; a caller that
+// wants less does its own throttling in the callback body.
 using ProgressFn = std::function<void(size_t, size_t)>;
 
 // Step 2 of training: build a booster from cfg via the registry and run
@@ -111,7 +111,7 @@ std::unique_ptr<IBooster> train_with_progress(Config const                &cfg,
 // LoadedTrainValidation. Lets a caller pair a long-lived pre-binned train set
 // with a per-call validation set without copying the train LabeledData (the
 // copy would also change the Dataset address that keys the GPU upload-skip
-// cache, decision 54).
+// cache).
 // Train alone: no validation set, so no early stopping and no eval history
 // (`eval_history` is left as the caller passed it).
 std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,

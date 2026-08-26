@@ -54,14 +54,15 @@ int run_bench(BenchOpts const &opts)
     auto const t_predict = seconds_since(t2);
 
     auto const rows_per_sec =
-        static_cast<double>(loaded.train.n_rows() * cfg.booster_config.n_iters) / t_fit;
+        static_cast<double>(loaded.train.plane_n_rows() * cfg.booster_config.n_iters) /
+        t_fit;
 
     std::println("bench:");
     std::println("  load_seconds={}", t_load);
     std::println("  fit_seconds={}", t_fit);
     std::println("  predict_seconds={}", t_predict);
     std::println("  rows_per_sec={}", rows_per_sec);
-    std::println("  n_train_rows={}", loaded.train.n_rows());
+    std::println("  n_train_rows={}", loaded.train.plane_n_rows());
     std::println("  n_predict_rows={}", scored.raw_scores.size());
     std::println("  n_iters={}", cfg.booster_config.n_iters);
 

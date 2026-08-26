@@ -13,7 +13,7 @@ namespace bonsai
 // The row-major mirror of a binned plane: the bins laid out row-major in
 // column blocks, plus the one rule for addressing them.
 //
-// Layout is column-block-tiled (issue #217): features are grouped into blocks
+// Layout is column-block-tiled: features are grouped into blocks
 // of tile_width and each block is row-major on its own (block b starts at
 // n_rows * b * tile_width; a row's bins inside it are width_b bytes). At
 // n_features <= tile_width there is exactly one block and the layout is the

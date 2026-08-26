@@ -159,7 +159,9 @@ docs-check:  ## Verify generated docs and lint prose (the five CI doc gates).
 	@python3 scripts/render_params.py --check
 	@python3 scripts/render_make_map.py --check
 	@python3 scripts/render_timeline.py --check
+	@python3 scripts/render_invariants.py --check
 	@python3 scripts/docs_lint.py
+	@python3 scripts/comment_lint.py
 	@python3 scripts/check_standings.py --decisions
 
 install-hooks:  ## Point core.hooksPath at the versioned hooks (commit-msg format gate).

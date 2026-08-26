@@ -116,7 +116,7 @@ template <typename GrowerT> void check_device_eval_parity(uint8_t max_depth)
     auto    grown = grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
 
     float const        lr = 0.1F;
-    std::vector<float> host_scores(ds.n_rows(), 0.25F);
+    std::vector<float> host_scores(ds.plane_n_rows(), 0.25F);
     std::vector<float> dev_scores = host_scores;
 
     std::optional<float> loss;
@@ -135,7 +135,7 @@ template <typename GrowerT> void check_device_eval_parity(uint8_t max_depth)
     // With a device-capable kind the loss reduces on device and the scores
     // stay there; the value must match the host objective over the same
     // walked scores.
-    std::vector<float> dev_scores2(ds.n_rows(), 0.25F);
+    std::vector<float> dev_scores2(ds.plane_n_rows(), 0.25F);
     REQUIRE(grower.eval_begin(ds, DeviceObjectiveKind::mse, dev_scores2));
     std::optional<float> dev_loss;
     REQUIRE(grower.eval_accumulate(grown.tree, ds, lr, dev_scores2, dev_loss));
@@ -344,7 +344,7 @@ TEST_CASE("CudaObliviousGrower matches CPU when deep nodes go infeasible (issue 
     }
 }
 
-// ---- The leaf plane (docs/architecture/20-cuda-leafwise.md) ------------------
+// ---- The leaf plane (docs/invariants.md) ------------------
 
 // Every leafwise parity case asserts the same contract as the level plane's:
 // tolerance-equal predictions, never tree equality.
@@ -504,7 +504,7 @@ TEST_CASE("CudaLeafwiseGrower handles consecutive trees and datasets",
     // A second dataset re-uploads the binned matrix and resizes the pool.
     auto const other = grower.grow(scenario_b.built.ds, scenario_b.grad,
                                    scenario_b.hess, scenario_b.rows);
-    REQUIRE(other.values.size() == scenario_b.built.ds.n_rows());
+    REQUIRE(other.values.size() == scenario_b.built.ds.plane_n_rows());
 }
 
 TEST_CASE("CudaLeafwiseGrower matches CPU on a deep unconstrained tree",
@@ -587,7 +587,7 @@ TEST_CASE("CudaDepthwiseGrower handles consecutive trees and datasets",
 
     auto const other = grower.grow(scenario_b.built.ds, scenario_b.grad,
                                    scenario_b.hess, scenario_b.rows);
-    REQUIRE(other.values.size() == scenario_b.built.ds.n_rows());
+    REQUIRE(other.values.size() == scenario_b.built.ds.plane_n_rows());
 }
 
 } // namespace

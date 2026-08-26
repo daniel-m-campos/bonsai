@@ -1,9 +1,3 @@
-// Out-of-line bodies for CudaDeviceContext and CudaIngestPlane, compiled once
-// as CUDA C++ (docs/architecture/19-multi-gpu.md). The header carries the
-// declarations; every kernel launch and cuda_runtime call lives here, where
-// the anonymous-namespace kernels in kernels.cuh stay private to this TU. This
-// is a move-only split of the former header-only implementation: no logic,
-// ordering, or launch changes.
 
 #include "bonsai/config/errors.hpp"
 #include "bonsai/config/tree_config.hpp"
@@ -39,24 +33,13 @@ namespace bonsai
 namespace cuda_detail
 {
 
-// Root-sum device reduce launch width: pass 1 runs this many blocks to produce
-// partial gh sums, pass 2 folds them to the single total. Shared by the
-// identity and resident-subset root paths so both launch the same grid.
 constexpr uint32_t k_sum_blocks = 64;
 
-// Flat device/host buffers throughout this file are offset by hand (docs/
-// architecture/10-cuda.md); grad/hess travel as an adjacent pair everywhere
-// in this API, matching the gradient-boosting literature's convention.
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)
 
 namespace
 {
 
-// What a tree the device cannot hold is answered with. The device plane has no
-// host fallback: a configuration the kernels cannot serve is a configuration
-// error, named where it is decided, the way the reference GPU trainers answer
-// it (silently hopping to the host trained a wrong model once, cd4e726, and
-// hid a large slowdown the rest of the time).
 [[noreturn]] void refuse_hist_budget(size_t max_bins, size_t limit)
 {
     throw ConfigError(
@@ -86,12 +69,6 @@ namespace
                       "(device=\"cpu\").");
 }
 
-// One destination row's strip of one destination tile, gathered from wherever
-// those cells live in the source plane. A thread owns a whole strip so the
-// WRITES are the contiguous side: adjacent threads are adjacent destination
-// rows, which is adjacent memory in the tiled layout. The reads scatter by
-// construction (arbitrary features of arbitrary rows) and there is no layout
-// that would make them not.
 template <typename BinT>
 __global__ void gather_cols_kernel(BinT const *src, BinT *dst, uint32_t const *keep,
                                    uint32_t const *rows, uint32_t n_rows_src,
@@ -114,10 +91,6 @@ __global__ void gather_cols_kernel(BinT const *src, BinT *dst, uint32_t const *k
     }
 }
 
-// Host columns out of the tiled plane: a column is one strip position, so the
-// copy comes home a tile at a time in row chunks and the strips scatter into
-// their columns here. The host store is per-feature columns (Dataset builds
-// its own mirror from those, at its own width), so this direction un-tiles.
 template <typename BinT>
 void materialize_tiled(DeviceBuffer<BinT> const &bins, size_t n_rows, size_t n_feats,
                        std::vector<std::vector<BinT>> &out)
@@ -152,12 +125,9 @@ void materialize_tiled(DeviceBuffer<BinT> const &bins, size_t n_rows, size_t n_f
     }
 }
 
-// The staging fill for a host-binned dataset: the pinned block is written in
-// the plane's tiled order, parallel over row blocks so two workers never
-// share a strip. Same transpose the host mirror does, at the device's width.
 template <typename BinT> void stage_tiled(Dataset const &dataset, BinT *staging)
 {
-    size_t const     n_rows  = dataset.n_rows();
+    size_t const     n_rows  = dataset.plane_n_rows();
     auto const       n_feats = static_cast<uint32_t>(dataset.n_features());
     constexpr size_t block   = 8192;
     parallel::for_each_index(
@@ -189,8 +159,6 @@ template <typename BinT> void stage_tiled(Dataset const &dataset, BinT *staging)
 
 void CudaIngestPlane::materialize(BinColumns &cols) const
 {
-    // The caller constructed `cols` at this plane's width; fill in place so
-    // the discriminator never changes under a concurrent width read.
     if (bins_are_u8)
     {
         materialize_tiled(bins8, n_rows, n_feats, std::get<U8Columns>(cols));
@@ -220,8 +188,6 @@ CudaIngestPlane::select_columns(std::span<feature_id_t const> keep,
         return nullptr;
     }
 
-    // Per-feature bin counts come home and go back out in the kept order: a
-    // few KB either way, against a plane the whole point is not to move.
     std::vector<uint32_t> counts(n_feats);
     check(cudaMemcpy(counts.data(), n_bins.data(), n_feats * sizeof(uint32_t),
                      cudaMemcpyDeviceToHost),
@@ -233,11 +199,6 @@ CudaIngestPlane::select_columns(std::span<feature_id_t const> keep,
         kept_counts[k] = counts[keep[k]];
         u8             = u8 && kept_counts[k] <= 256;
     }
-    // The child's width follows its own mappers, which is the rule
-    // Dataset::bin applies to the mappers it is handed; a plane that
-    // disagreed with its dataset would be read at the wrong stride. A
-    // narrower child than its parent means dropping every wide feature, and
-    // that gather cannot run as a same-width copy.
     if (u8 != bins_are_u8)
     {
         return nullptr;
@@ -297,7 +258,7 @@ void CudaDeviceContext::LevelPipeline::prof_record_begin(bool root)
     prof_ev_root = root;
     if (!root)
     {
-        check(cudaEventRecord(prof_ev[0]), "profile event record");
+        check(cudaEventRecord(prof_ev[ev_before_memset]), "profile event record");
     }
 }
 
@@ -309,15 +270,19 @@ void CudaDeviceContext::LevelPipeline::prof_read(ProfileCounters &prof)
     }
     prof_ev_recorded = false;
     float ms         = 0.0F;
-    check(cudaEventElapsedTime(&ms, prof_ev[1], prof_ev[2]), "profile event hist");
+    check(cudaEventElapsedTime(&ms, prof_ev[ev_after_memset], prof_ev[ev_after_hist]),
+          "profile event hist");
     (prof_ev_root ? prof.root_hist_s : prof.adv_hist_s) += ms / 1e3;
     if (prof_ev_root)
     {
         return;
     }
-    check(cudaEventElapsedTime(&ms, prof_ev[0], prof_ev[1]), "profile event memset");
+    check(
+        cudaEventElapsedTime(&ms, prof_ev[ev_before_memset], prof_ev[ev_after_memset]),
+        "profile event memset");
     prof.adv_memset_s += ms / 1e3;
-    check(cudaEventElapsedTime(&ms, prof_ev[2], prof_ev[3]), "profile event subtract");
+    check(cudaEventElapsedTime(&ms, prof_ev[ev_after_hist], prof_ev[ev_after_subtract]),
+          "profile event subtract");
     prof.adv_sub_s += ms / 1e3;
 }
 
@@ -523,7 +488,7 @@ void CudaDeviceContext::init_shared_limit()
     {
         shared_limit = static_cast<size_t>(optin);
     }
-    cudaGetLastError(); // clear any sticky attribute error
+    cudaGetLastError();
 }
 
 void CudaDeviceContext::stage_selection(std::span<feature_id_t const> selected,
@@ -531,8 +496,6 @@ void CudaDeviceContext::stage_selection(std::span<feature_id_t const> selected,
 {
     lvl.features.host.assign(selected.begin(), selected.end());
     lvl.features.sync();
-    // The tiled build walks tiles, not the selected list, so it needs the
-    // inverse map: where feature f's histogram goes, or that it is unselected.
     lvl.sel_slot.host.assign(n_feats, k_not_selected);
     for (uint32_t i = 0; i < selected.size(); ++i)
     {
@@ -541,8 +504,6 @@ void CudaDeviceContext::stage_selection(std::span<feature_id_t const> selected,
     lvl.sel_slot.sync();
 }
 
-// Says once per context what layout the plane has and which build reads it,
-// so a profiled session documents its own memory order.
 void CudaDeviceContext::note_plane(bool tiled, size_t shared)
 {
     if (plane_noted || !prof_counters.enabled)
@@ -557,11 +518,6 @@ void CudaDeviceContext::note_plane(bool tiled, size_t shared)
                  tiled ? "tiled" : "one feature per block", shared);
 }
 
-// Every shared-memory histogram build goes through here, depthwise and leaf
-// alike: the tiled kernel when one tile's sub-histograms fit the static
-// budget, else one feature per block, which reads the same plane a cell at a
-// time. That second kernel is what keeps the wide-bin envelope the opt-in
-// opened.
 void CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
                                     uint32_t n_nodes, uint32_t max_rows,
                                     float2 const *gh, uint32_t const *rows,
@@ -572,11 +528,6 @@ void CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
         static_cast<size_t>(k_bin_tile_width) * lvl.stride * sizeof(float);
     bool const tiled = tiled_shared <= k_max_shared_bytes;
     note_plane(tiled, tiled ? tiled_shared : 2UL * lvl.stride * sizeof(float));
-    // Chunks split rows for balance AND fill the card: a shallow level
-    // launches grid_x * n_nodes blocks, which on a wide device can seat only
-    // a fraction of the SMs, so the chunk axis makes up the difference.
-    // Workless chunks on small nodes exit before their fixed cost
-    // (kernels.cuh), which is what makes overshooting safe.
     uint32_t const grid_x  = tiled ? tile_count(ds_feats) : lvl.n_selected;
     uint32_t const by_rows = (max_rows + 32767) / 32768;
     uint32_t const blocks  = grid_x * n_nodes;
@@ -612,9 +563,6 @@ void CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
 
 void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
 {
-    // Device-binned dataset: adopt its plane — the matrix is already
-    // resident; nothing crosses the bus. The plane pointer is the
-    // identity; the backend tag proves the concrete type without RTTI.
     if (auto const &receipt = dataset.ingest_plane();
         receipt && receipt->backend_tag() == cuda_backend_tag())
     {
@@ -623,9 +571,6 @@ void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
                              .bins0   = plane.get(),
                              .n_rows  = plane->n_rows,
                              .n_feats = plane->n_feats};
-        // Two Datasets can share one plane, so the plane alone does not
-        // identify the data: consumers keyed off data.key (the resident label
-        // upload) would keep the first one's.
         if (data.adopted == plane && data.key == key)
         {
             return;
@@ -643,7 +588,7 @@ void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
                             : nullptr;
     if (data.key == DatasetKey{.store   = &dataset.store(),
                                .bins0   = first,
-                               .n_rows  = dataset.n_rows(),
+                               .n_rows  = dataset.plane_n_rows(),
                                .n_feats = dataset.n_features()})
     {
         return;
@@ -654,14 +599,9 @@ void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
     {
         counts[f] = static_cast<uint32_t>(dataset.n_bins(f));
     }
-    // The Dataset stores u8 exactly when every feature fits 256 bins,
-    // the same criterion the kernels dispatch on — no narrowing pass.
     data.bins_are_u8       = dataset.bins_are_u8();
     lvl.root_rows_cached_n = 0;
-    // One pinned staging buffer + one memcpy per matrix: pageable
-    // per-feature copies serialize on GeForce drivers, and pinned
-    // transfers run at full PCIe rate.
-    size_t const cells = dataset.n_features() * dataset.n_rows();
+    size_t const cells     = dataset.n_features() * dataset.plane_n_rows();
     if (data.bins_are_u8)
     {
         data.bins8.reserve(cells);
@@ -684,7 +624,7 @@ void CudaDeviceContext::ensure_dataset(Dataset const &dataset)
     blap(prof_counters.bins_upload_s);
     data.key = {.store   = &dataset.store(),
                 .bins0   = first,
-                .n_rows  = dataset.n_rows(),
+                .n_rows  = dataset.plane_n_rows(),
                 .n_feats = dataset.n_features()};
 }
 
@@ -694,8 +634,6 @@ void CudaDeviceContext::begin_tree(Dataset const &ds, floats_view grad,
     ensure_dataset(ds);
     if (resident.armed)
     {
-        // Resident mode: grad/hess arrive empty; derive them on device from the
-        // resident scores and labels straight into the gh pair buffer.
         auto       lap = prof_counters.lap();
         auto const n   = static_cast<uint32_t>(resident.n_rows);
         grads.gh.reserve(resident.n_rows);
@@ -771,9 +709,6 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     lvl.stride     = static_cast<uint32_t>(2 * max_sel_bins);
     stage_selection(selected, ds.n_features());
 
-    // Identity contract: a full-data fit passes empty rows + row_count ==
-    // n_rows; the identity never touches the host or the bus (built by
-    // iota_kernel once, cached, restored D2D per tree).
     bool const identity = root.rows.empty() && root.row_count == data.key.n_rows;
     auto const n = static_cast<uint32_t>(identity ? root.row_count : root.rows.size());
 
@@ -792,9 +727,6 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     root_lap(prof_counters.root_stage_s);
     if (identity)
     {
-        // Deterministic two-pass device reduce over the uploaded gh buffer
-        // replaces the 16M-row host loop; queued before the histogram build
-        // so the later 16B fetch drains only these two small kernels.
         lvl.sum_partial.reserve(k_sum_blocks);
         lvl.sum_out.reserve(1);
         sum_gh_pass1_kernel<<<dim3(k_sum_blocks), dim3(256)>>>(grads.gh.data(), n,
@@ -809,28 +741,28 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     if (prof_counters.enabled)
     {
         lvl.prof_record_begin(/*root=*/true);
-        check(cudaEventRecord(lvl.prof_ev[1]), "profile event record");
+        check(cudaEventRecord(lvl.prof_ev[LevelPipeline::ev_after_memset]),
+              "profile event record");
     }
-    launch_hist(static_cast<uint32_t>(ds.n_rows()),
+    launch_hist(static_cast<uint32_t>(ds.plane_n_rows()),
                 static_cast<uint32_t>(ds.n_features()), 1, static_cast<uint32_t>(n),
                 lvl.gh_ordered.data(), lvl.rows.data(), lvl.row_offsets.device(),
                 lvl.row_counts.device(), lvl.cur().data(), lvl.slots.device());
     check(cudaGetLastError(), "root hist launch");
     if (prof_counters.enabled)
     {
-        check(cudaEventRecord(lvl.prof_ev[2]), "profile event record");
+        check(cudaEventRecord(lvl.prof_ev[LevelPipeline::ev_after_hist]),
+              "profile event record");
         lvl.prof_ev_recorded = true;
     }
 
     lvl.slot_offsets.assign(1, 0);
     lvl.slot_counts.assign(1, n);
-    lvl.leaf_by_row.reserve(ds.n_rows());
+    lvl.leaf_by_row.reserve(ds.plane_n_rows());
 
     auto sums_lap = prof_counters.lap();
     if (identity)
     {
-        // The sum kernels were queued ahead of the root histogram build, so
-        // this 16B fetch waits only on them, not on the hist kernel.
         double2 sums{};
         check(cudaMemcpy(&sums, lvl.sum_out.data(), sizeof(double2),
                          cudaMemcpyDeviceToHost),
@@ -841,8 +773,6 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     }
     else if (resident.armed)
     {
-        // Resident mode with a row subset (Bernoulli): grad/hess are empty on
-        // the host, so reduce the gathered subset's gh on device instead.
         lvl.sum_partial.reserve(k_sum_blocks);
         lvl.sum_out.reserve(1);
         sum_gh_pass1_kernel<<<dim3(k_sum_blocks), dim3(256)>>>(lvl.gh_ordered.data(), n,
@@ -977,11 +907,9 @@ void CudaDeviceContext::partition_level(
         lvl.other_rows().data(), lvl.other_gh().data());
     check(cudaGetLastError(), "scatter launch");
     mark(3);
-    lvl.nl_dev.fetch(n); // DtoH, implicit sync
+    lvl.nl_dev.fetch(n);
     if (prof.enabled)
     {
-        // The fetch above synchronized the stream, so the elapsed reads are
-        // legal here and the chain's spans land in the same round they ran.
         double *const spans[3] = {&prof.part_route_s, &prof.part_scan_s,
                                   &prof.part_scatter_s};
         for (int i = 0; i < 3; ++i)
@@ -1038,7 +966,6 @@ void CudaDeviceContext::advance_level(Dataset const                             
     auto &prof = prof_counters;
     auto  lap  = prof.lap();
 
-    // Rows are already device-resident; only the per-child layout stages here.
     size_t const max_rows = lvl.stage_children(ops);
     lap(prof.adv_stage_s);
 
@@ -1053,11 +980,12 @@ void CudaDeviceContext::advance_level(Dataset const                             
           "zero level");
     if (prof.enabled)
     {
-        check(cudaEventRecord(lvl.prof_ev[1]), "profile event record");
+        check(cudaEventRecord(lvl.prof_ev[LevelPipeline::ev_after_memset]),
+              "profile event record");
     }
     if (!lvl.row_offsets.empty())
     {
-        launch_hist(static_cast<uint32_t>(ds.n_rows()),
+        launch_hist(static_cast<uint32_t>(ds.plane_n_rows()),
                     static_cast<uint32_t>(ds.n_features()),
                     static_cast<uint32_t>(lvl.row_offsets.size()),
                     static_cast<uint32_t>(max_rows), lvl.other_gh().data(),
@@ -1073,7 +1001,7 @@ void CudaDeviceContext::advance_level(Dataset const                             
                     dim3(static_cast<uint32_t>(lvl.small_offsets.size())), dim3(128)>>>(
                     bins, lvl.other_gh().data(), lvl.other_rows().data(),
                     lvl.small_offsets.device(), lvl.small_counts.device(),
-                    lvl.features.device(), static_cast<uint32_t>(ds.n_rows()),
+                    lvl.features.device(), static_cast<uint32_t>(ds.plane_n_rows()),
                     static_cast<uint32_t>(ds.n_features()), lvl.n_selected,
                     lvl.other().data(), lvl.stride, lvl.small_slots.device());
             }
@@ -1081,7 +1009,8 @@ void CudaDeviceContext::advance_level(Dataset const                             
     check(cudaGetLastError(), "level hist launch");
     if (prof.enabled)
     {
-        check(cudaEventRecord(lvl.prof_ev[2]), "profile event record");
+        check(cudaEventRecord(lvl.prof_ev[LevelPipeline::ev_after_hist]),
+              "profile event record");
     }
     auto const sd = static_cast<uint32_t>(lvl.slot_doubles());
     subtract_kernel<<<dim3(std::clamp<uint32_t>((sd + 255) / 256, 1, 256),
@@ -1091,7 +1020,8 @@ void CudaDeviceContext::advance_level(Dataset const                             
     check(cudaGetLastError(), "subtract launch");
     if (prof.enabled)
     {
-        check(cudaEventRecord(lvl.prof_ev[3]), "profile event record");
+        check(cudaEventRecord(lvl.prof_ev[LevelPipeline::ev_after_subtract]),
+              "profile event record");
         lvl.prof_ev_recorded = true;
     }
     lvl.cur_is_a     = !lvl.cur_is_a;
@@ -1123,9 +1053,6 @@ void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &co
 
     if (prof.enabled)
     {
-        // Separate awaited async kernel time from true staging cost: the
-        // first Staged sync below otherwise absorbs the previous level's
-        // in-flight kernels into find_stage.
         check(cudaDeviceSynchronize(), "profile wait");
         lap(prof.gpu_wait_s);
         lvl.prof_read(prof);
@@ -1148,12 +1075,10 @@ void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &co
     check(cudaGetLastError(), "reduce launch");
     if (prof.enabled)
     {
-        // Peel the awaited kernel+reduce compute from the node_best D2H so a
-        // slow find lap can be attributed to FP64 scan time vs transfer.
         check(cudaDeviceSynchronize(), "find kernel wait");
         lap(prof.find_kern_s);
     }
-    lvl.node_best.fetch(n); // DtoH, implicit sync
+    lvl.node_best.fetch(n);
     if (prof.enabled)
     {
         ++prof.launches;
@@ -1177,9 +1102,6 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
 
     if (prof.enabled)
     {
-        // Same peel as find_splits_many: without it, the first Staged sync
-        // below absorbs the previous level's in-flight histogram kernels
-        // into lfind_stage, misattributing device compute as staging.
         check(cudaDeviceSynchronize(), "profile wait");
         lap(prof.gpu_wait_s);
         lvl.prof_read(prof);
@@ -1187,8 +1109,6 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
     lvl.stage_level_sums(level);
     lap(prof.lfind_stage_s);
 
-    // find -> reduce -> child-sums queue back to back (the child kernel reads
-    // the reduced winner on-device), so the level pays one sync at the fetch.
     size_t const scratch = static_cast<size_t>(lvl.n_selected) * 2 * (lvl.stride / 2);
     lvl.level_score.reserve(scratch);
     lvl.feat_best.reserve(lvl.n_selected);
@@ -1209,7 +1129,7 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
         lvl.features.device(), data.n_bins_ptr(), static_cast<uint32_t>(n),
         lvl.n_selected, lvl.stride, lvl.level_child.device());
     check(cudaGetLastError(), "level child sums launch");
-    lvl.node_best.fetch(1); // DtoH, implicit sync
+    lvl.node_best.fetch(1);
     lvl.level_child.fetch(4 * n);
     if (prof.enabled)
     {
@@ -1217,9 +1137,6 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
     }
     lap(prof.gpu_s);
 
-    // One split for the whole frontier, broadcast to every node; each node's
-    // (left, right) sums seed the children's SplitInput.sums for the next
-    // level's find (their device histograms are not host-scannable).
     FeatBest const &b = lvl.node_best.host[0];
     SplitOutput     split{};
     if (b.valid != 0)
@@ -1244,8 +1161,6 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
     lap(prof.unpack_s);
 }
 
-// --- Leaf plane (docs/architecture/20-cuda-leafwise.md) ----------------------
-
 bool CudaDeviceContext::leaf_pool_ok(size_t bytes) const
 {
     size_t free_bytes = 0;
@@ -1254,18 +1169,12 @@ bool CudaDeviceContext::leaf_pool_ok(size_t bytes) const
     {
         return false;
     }
-    // A quarter, not a half: the pool buffer is grow-only and doubles on
-    // reallocation, and the level plane's row and gradient buffers still need
-    // room beside it.
     return bytes <= free_bytes / 4;
 }
 
 namespace
 {
 
-// Slots one tree can demand: the root plus one per split, which is exactly the
-// leaf budget. An unbounded budget falls back to the depth cap's 2^depth; a cap
-// too deep to bound names a pool no device accepts, so the plane declines.
 size_t leaf_max_slots(TreeConfig const &config)
 {
     if (config.max_leaves != 0)
@@ -1276,8 +1185,6 @@ size_t leaf_max_slots(TreeConfig const &config)
                                  : static_cast<size_t>(-1);
 }
 
-// The widest single feature, which is what every per-fit capacity test bounds:
-// a tree's selection can only be narrower.
 size_t widest_bins(Dataset const &ds)
 {
     size_t max_bins = 0;
@@ -1298,7 +1205,7 @@ bool CudaDeviceContext::leaf_budget_ok(TreeConfig const &config, size_t n_select
         return false;
     }
     size_t const max_slots    = leaf_max_slots(config);
-    size_t const slot_doubles = n_selected * 2 * max_bins; // stride = 2 * max_bins
+    size_t const slot_doubles = n_selected * 2 * max_bins;
     if (max_slots > static_cast<size_t>(-1) / std::max<size_t>(1, slot_doubles))
     {
         return false;
@@ -1318,9 +1225,6 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     }
     init_shared_limit();
     size_t const max_slots = leaf_max_slots(config);
-    // Resident mode decided this once per fit, over every feature and the same
-    // leaf budget, and the pool it then allocated is gone from the free memory
-    // a per-tree test would measure: once armed, the fit's capacity is settled.
     if (!resident.armed)
     {
         if (selected.empty())
@@ -1346,12 +1250,10 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     }
     leaf.monotone.sync();
 
-    auto root_lap = prof_counters.lap();
-    // The leaf plane never flips the row buffers: rows_b is scratch the
-    // partition scatters into and copies back from, one segment at a time.
+    auto root_lap  = prof_counters.lap();
     lvl.cur_is_a   = true;
     leaf.max_slots = static_cast<uint32_t>(max_slots);
-    leaf.next_slot = 1; // the root holds slot 0
+    leaf.next_slot = 1;
     leaf.slot_offsets.assign(max_slots, 0);
     leaf.slot_counts.assign(max_slots, 0);
     leaf.pool.reserve(max_slots * lvl.slot_doubles());
@@ -1362,8 +1264,6 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     bool const     identity = root.rows.empty() && root.row_count == data.key.n_rows;
     uint32_t const n        = stage_root_rows(root, identity);
     leaf.slot_counts[0]     = n;
-    // The hist kernels read (offset, count, slot) through three pointers; one
-    // packed upload serves all three, here and in every round's leaf_build.
     leaf.build_seg.reserve(3);
     leaf.build_seg.host()[0] = 0;
     leaf.build_seg.host()[1] = n;
@@ -1373,9 +1273,6 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
 
     lvl.gh_ordered.reserve(n);
     gather(grads.gh.data(), lvl.rows.data(), n, lvl.gh_ordered.data());
-    // Deterministic two-pass device reduce over the gathered segment. The 16B
-    // fetch below waits behind everything queued on the stream, root histogram
-    // included, so its host lap carries the root build's runtime.
     lvl.sum_partial.reserve(k_sum_blocks);
     lvl.sum_out.reserve(1);
     sum_gh_pass1_kernel<<<dim3(k_sum_blocks), dim3(256)>>>(lvl.gh_ordered.data(), n,
@@ -1385,13 +1282,13 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
                                                lvl.sum_out.data());
     check(cudaGetLastError(), "leaf root sum pass2 launch");
 
-    launch_hist(static_cast<uint32_t>(ds.n_rows()),
+    launch_hist(static_cast<uint32_t>(ds.plane_n_rows()),
                 static_cast<uint32_t>(ds.n_features()), 1, static_cast<uint32_t>(n),
                 lvl.gh_ordered.data(), lvl.rows.data(), leaf.build_seg.device(),
                 leaf.build_seg.device() + 1, leaf.pool.data(),
                 leaf.build_seg.device() + 2);
     check(cudaGetLastError(), "leaf root hist launch");
-    lvl.leaf_by_row.reserve(ds.n_rows());
+    lvl.leaf_by_row.reserve(ds.plane_n_rows());
 
     auto    sums_lap = prof_counters.lap();
     double2 sums{};
@@ -1449,8 +1346,6 @@ CudaDeviceContext::leaf_split(Dataset const & /*ds*/,
         lvl.block_counts.data(), lvl.nl_dev.device(), max_chunks, lvl.rows_b.data(),
         lvl.gh_b.data());
     check(cudaGetLastError(), "leaf scatter launch");
-    // Non-swapping advance: only this segment's range travels back into the
-    // primary buffers, so every other leaf's rows stay exactly where they are.
     check(cudaMemcpyAsync(lvl.rows.data() + offset, lvl.rows_b.data() + offset,
                           static_cast<size_t>(count) * sizeof(uint32_t),
                           cudaMemcpyDeviceToDevice),
@@ -1459,7 +1354,7 @@ CudaDeviceContext::leaf_split(Dataset const & /*ds*/,
                           static_cast<size_t>(count) * sizeof(float2),
                           cudaMemcpyDeviceToDevice),
           "leaf gh copy-back");
-    lvl.nl_dev.fetch(1); // DtoH, implicit sync
+    lvl.nl_dev.fetch(1);
     if (prof.enabled)
     {
         ++prof.launches;
@@ -1472,20 +1367,16 @@ CudaDeviceContext::leaf_split(Dataset const & /*ds*/,
     round.right_count = count - nl;
     if (nl == 0 || nl == count)
     {
-        return round; // one side empty: the caller demotes, no slot is taken
+        return round;
     }
     if (leaf.next_slot >= leaf.max_slots)
     {
         throw std::runtime_error("cuda: leaf histogram pool exhausted");
     }
-    // Tie goes to the left child: LeafStep::find_children reproduces this
-    // choice on the host from left_count/right_count alone.
-    bool const     left_small = round.left_count <= round.right_count;
-    uint32_t const fresh      = leaf.next_slot++;
-    round.left_slot           = left_small ? fresh : op.parent_slot;
-    round.right_slot          = left_small ? op.parent_slot : fresh;
-    // The segment map is persistent and per slot: one split rewrites exactly
-    // one range into two adjacent subranges.
+    bool const     left_small           = round.left_count <= round.right_count;
+    uint32_t const fresh                = leaf.next_slot++;
+    round.left_slot                     = left_small ? fresh : op.parent_slot;
+    round.right_slot                    = left_small ? op.parent_slot : fresh;
     leaf.slot_offsets[round.left_slot]  = offset;
     leaf.slot_counts[round.left_slot]   = round.left_count;
     leaf.slot_offsets[round.right_slot] = offset + nl;
@@ -1499,8 +1390,6 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
     auto &prof = prof_counters;
     auto  lap  = prof.lap();
 
-    // The smaller child's segment: leaf_split wrote it into the persistent
-    // map, keyed by the slot it assigned (round.left_slot or right_slot).
     uint32_t const small_offset = leaf.slot_offsets[small_slot];
     uint32_t const small_count  = leaf.slot_counts[small_slot];
 
@@ -1511,11 +1400,9 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
     leaf.build_seg.sync(3);
     lap(prof.adv_stage_s);
 
-    // Same <512-row policy as the level plane: below the cutoff the shared
-    // stage's fixed per-(node, feature) cost dominates the row visits.
     if (small_count >= k_min_gpu_rows)
     {
-        launch_hist(static_cast<uint32_t>(ds.n_rows()),
+        launch_hist(static_cast<uint32_t>(ds.plane_n_rows()),
                     static_cast<uint32_t>(ds.n_features()), 1, small_count,
                     lvl.gh_ordered.data(), lvl.rows.data(), leaf.build_seg.device(),
                     leaf.build_seg.device() + 1, leaf.pool.data(),
@@ -1529,7 +1416,7 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
                 hist_small_kernel<<<dim3(1), dim3(128)>>>(
                     bins, lvl.gh_ordered.data(), lvl.rows.data(),
                     leaf.build_seg.device(), leaf.build_seg.device() + 1,
-                    lvl.features.device(), static_cast<uint32_t>(ds.n_rows()),
+                    lvl.features.device(), static_cast<uint32_t>(ds.plane_n_rows()),
                     static_cast<uint32_t>(ds.n_features()), lvl.n_selected,
                     leaf.pool.data(), lvl.stride, leaf.build_seg.device() + 2);
             }
@@ -1569,8 +1456,6 @@ bool CudaDeviceContext::leaf_stage_find(std::span<SplitInput const> nodes,
     leaf.find_slots.sync(n);
     if (any_mask)
     {
-        // Interaction constraints only: a per-node mask cannot be hoisted out
-        // of the round, and the plane pays the pageable copy where it lands.
         lvl.allowed.host.resize(n * lvl.n_selected);
         for (size_t i = 0; i < n; ++i)
         {
@@ -1598,9 +1483,6 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
 
     if (prof.enabled)
     {
-        // Same peel as find_splits_many and find_level_split: without it, the
-        // find's own device lap absorbs leaf_build's in-flight histogram and
-        // subtract kernels, charging one round's build to the next find.
         check(cudaDeviceSynchronize(), "profile wait");
         lap(prof.gpu_wait_s);
     }
@@ -1620,7 +1502,7 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
     reduce_kernel<<<dim3(n), dim3(32)>>>(lvl.feat_best.data(), lvl.n_selected,
                                          lvl.node_best.device());
     check(cudaGetLastError(), "leaf reduce launch");
-    lvl.node_best.fetch(n); // DtoH, implicit sync
+    lvl.node_best.fetch(n);
     if (prof.enabled)
     {
         ++prof.launches;
@@ -1667,13 +1549,7 @@ bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind ki
     }
     ensure_dataset(ds);
     init_shared_limit();
-    // Capacity must be decidable once per fit: arming leaves grad/hess empty
-    // on the host, so a tree that then failed begin_root's test would refuse a
-    // fit that was already under way. Feature subsampling only ever narrows
-    // the selected set, so the worst case is the single widest feature; if
-    // that fits the shared budget (hist_budget_ok, the same predicate
-    // begin_root applies), no tree can fail it.
-    if (ds.n_features() == 0 || initial_scores.size() != ds.n_rows() ||
+    if (ds.n_features() == 0 || initial_scores.size() != ds.plane_n_rows() ||
         !hist_budget_ok(widest_bins(ds)))
     {
         return false;
@@ -1690,10 +1566,8 @@ bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind ki
     resident.scores.upload(initial_scores.data(), initial_scores.size());
     resident.kind          = kind;
     resident.weighted      = !ds.weights().empty();
-    resident.n_rows        = ds.n_rows();
+    resident.n_rows        = ds.plane_n_rows();
     resident.learning_rate = learning_rate;
-    // The view is fixed for the fit, so its rows ship once here rather than
-    // once per tree. An identity view keeps the un-indexed epilogue.
     RowView const &view    = ds.row_view();
     resident.n_view_rows   = view.size();
     resident.view_identity = view.is_identity();
@@ -1713,10 +1587,6 @@ bool CudaDeviceContext::resident_begin_leaf(Dataset const &ds, TreeConfig const 
 {
     ensure_dataset(ds);
     init_shared_limit();
-    // The conservative bound: every feature selected and the widest one sizing
-    // the stride, so the pool this test prices is the largest any tree can ask
-    // for. Feature subsampling only narrows it. A config that would fit only
-    // some trees never arms, and the fit runs non-resident.
     if (ds.n_features() == 0 ||
         !leaf_budget_ok(config, ds.n_features(), widest_bins(ds)))
     {
@@ -1762,9 +1632,6 @@ void CudaDeviceContext::resident_finalize(
     auto lap = prof_counters.lap();
     resident.nodes.stage(nodes);
 
-    // The view's rows, not the plane's: a view leaves the scores of rows it
-    // does not cover exactly as it found them, which is the same contract the
-    // host path keeps by routing only within the view.
     auto const n = static_cast<uint32_t>(resident.n_view_rows);
     dim3 const grid((n + 255) / 256);
     data.dispatch_bins(
@@ -1798,25 +1665,23 @@ void CudaDeviceContext::resident_end(std::span<float> scores_out)
 bool CudaDeviceContext::eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
                                    std::span<float const> initial_scores)
 {
-    // Disarm first: a refused re-arm must not leave a stale plane behind.
     veval.armed = false;
     if (!valid.bins_are_u8() || valid.n_features() == 0 ||
-        initial_scores.size() != valid.n_rows())
+        initial_scores.size() != valid.plane_n_rows())
     {
         return false;
     }
-    // The device loss needs the labels beside the scores; a kind without a
-    // device formula walks on device and leaves the loss to the host.
-    veval.kind =
-        valid.labels().size() == valid.n_rows() ? kind : DeviceObjectiveKind::none;
+    veval.kind = valid.labels().size() == valid.plane_n_rows()
+                     ? kind
+                     : DeviceObjectiveKind::none;
     if (veval.kind != DeviceObjectiveKind::none)
     {
         veval.labels.upload(valid.labels().data(), valid.labels().size());
         veval.loss_partial.reserve(1024);
     }
-    size_t const n_rows  = valid.n_rows();
+    size_t const n_rows  = valid.plane_n_rows();
     size_t const n_feats = valid.n_features();
-    // Rearrange the host bins into the device plane's tile order once; the
+    // perf: Rearrange the host bins into the device plane's tile order once; the
     // per-round walk then reads the same addressing as the training plane.
     // Parallel over rows: serial, this pass costs more than the walks it
     // enables (0.5s per 134M cells measured on an EPYC draw).
@@ -1862,8 +1727,6 @@ std::optional<float> CudaDeviceContext::eval_accumulate(
     auto const       n = static_cast<uint32_t>(veval.n_rows);
     dim3 const       grid((n + 255) / 256);
     NodeTable const &t = veval.nodes;
-    // The validation plane is its own copy of exactly the rows it holds, so
-    // every row is in scope and no row list is needed.
     route_add_kernel<<<grid, dim3(256)>>>(
         veval.bins.data(), veval.n_bins.data(), n, static_cast<uint32_t>(veval.n_feats),
         t.feature.device(), t.split_bin.device(), t.left.device(), t.right.device(),
@@ -1875,8 +1738,6 @@ std::optional<float> CudaDeviceContext::eval_accumulate(
         uint32_t const blocks =
             eval_loss_pass1(veval.kind, veval.scores.data(), veval.labels.data(), n,
                             veval.loss_partial.device());
-        // The second pass is a host sum in block order: at most 1024 doubles
-        // cross the bus, and the fixed order keeps the loss run-to-run stable.
         veval.loss_partial.fetch(blocks);
         double total = 0.0;
         for (uint32_t b = 0; b < blocks; ++b)

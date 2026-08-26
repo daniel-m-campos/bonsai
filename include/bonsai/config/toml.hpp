@@ -12,9 +12,9 @@
 namespace bonsai::config
 {
 
-// Load a Config from a TOML file. Recognized sections: [data],
-// [bin_mapper], [tree], [booster], [dispatch]. Throws ConfigError with a
-// key path on unknown keys, type mismatches, or bad values.
+// Load a Config from a TOML file; the recognized sections are the ones
+// config/sections/ registers. Throws ConfigError with a key path on
+// unknown keys, type mismatches, or bad values.
 Config load_toml(std::string const &path);
 
 // Parse from an in-memory TOML string. Used by tests.

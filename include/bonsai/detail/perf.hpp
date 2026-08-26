@@ -156,7 +156,7 @@ struct GrowProfiler : Profiler<GrowProfiler>
     static constexpr char const *prefix = "grow-profile";
 
     double find_s = 0, bookkeep_s = 0, partition_s = 0, populate_s = 0, finalize_s = 0;
-    // Conservation buckets (doc 16): everything grow spends outside the
+    // Conservation buckets: everything grow spends outside the
     // phase laps above. setup = per-tree output allocs + feature sampling +
     // the LevelStep ctor (begin_tree: gh upload, dataset residency);
     // commit = demote + commit_children between the engine phases;

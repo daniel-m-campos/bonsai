@@ -63,7 +63,6 @@ Config parse_toml(std::string_view text)
 namespace
 {
 
-// Widen a parsed field value into the codec type universe.
 template <typename T> OverrideValue widen(T value)
 {
     if constexpr (std::is_same_v<T, bool> || std::is_same_v<T, std::string> ||

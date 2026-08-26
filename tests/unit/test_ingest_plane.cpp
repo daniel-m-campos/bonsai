@@ -56,7 +56,7 @@ TEST_CASE("plane-backed dataset materializes host bins lazily", "[dataset]")
     auto const ds = Dataset::bin(batch, mappers, DataConfig{}, plane);
     REQUIRE(ds.ingest_plane() == plane);
     REQUIRE(ds.n_features() == 2);
-    REQUIRE(ds.n_rows() == 4);
+    REQUIRE(ds.plane_n_rows() == 4);
     REQUIRE(plane->materialized == 0); // metadata reads stay lazy
 
     SECTION("bin_at triggers one materialization and matches the host fill")
@@ -164,7 +164,7 @@ TEST_CASE("a plane that gathers its own columns is never brought home", "[datase
     // materialization, which is the round trip the device path exists to skip.
     CHECK(plane->materialized == 0);
     REQUIRE(sub.n_features() == 2);
-    REQUIRE(sub.n_rows() == 4);
+    REQUIRE(sub.plane_n_rows() == 4);
     for (size_t r = 0; r < 4; ++r)
     {
         CHECK(sub.bin_at(0, r) == twin.bin_at(2, r));
@@ -182,12 +182,12 @@ TEST_CASE("a gathering plane is handed the view's rows, not the plane's", "[data
 
     auto const                  ds  = Dataset::bin(batch, mappers, DataConfig{}, plane);
     std::vector<row_id_t> const ids = {3, 1};
-    auto const                viewed = ds.with_rows(RowView::encode(ids, ds.n_rows()));
-    std::vector<feature_id_t> keep   = {1};
-    auto const                sub    = viewed.select_features(keep);
+    auto const viewed = ds.with_rows(RowView::encode(ids, ds.plane_n_rows()));
+    std::vector<feature_id_t> keep = {1};
+    auto const                sub  = viewed.select_features(keep);
 
     CHECK(plane->materialized == 0);
-    REQUIRE(sub.n_rows() == 2);
+    REQUIRE(sub.plane_n_rows() == 2);
     REQUIRE(sub.n_features() == 1);
     // Rows renumber from zero in the order the view names them.
     CHECK(sub.bin_at(0, 0) == twin.bin_at(1, 3));

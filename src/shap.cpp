@@ -18,9 +18,6 @@ namespace bonsai
 namespace
 {
 
-// One entry of the "unique path" of Algorithm 2: the fractions of subsets
-// that flow down this branch with the feature blocked (zero) or active
-// (one), and the permutation weight accumulated so far.
 struct PathElement
 {
     int    feature       = -1;
@@ -29,7 +26,6 @@ struct PathElement
     double pweight       = 0.0;
 };
 
-// Extend the path with a new (zero, one, feature) split condition.
 void extend(std::vector<PathElement> &path, size_t length, double zero_fraction,
             double one_fraction, int feature)
 {
@@ -48,7 +44,6 @@ void extend(std::vector<PathElement> &path, size_t length, double zero_fraction,
     }
 }
 
-// Undo an extend at position `index` (feature reappears on the path).
 void unwind(std::vector<PathElement> &path, size_t length, size_t index)
 {
     double const one_fraction  = path[index].one_fraction;
@@ -79,7 +74,6 @@ void unwind(std::vector<PathElement> &path, size_t length, size_t index)
     }
 }
 
-// Sum of pweights if the element at `index` were unwound, without mutating.
 double unwound_path_sum(std::vector<PathElement> const &path, size_t length,
                         size_t index)
 {
@@ -107,8 +101,6 @@ double unwound_path_sum(std::vector<PathElement> const &path, size_t length,
     return total;
 }
 
-// `hot` answers which child the instance follows at (node, node_id); the raw
-// and binned walks differ in nothing else.
 template <typename Hot> struct ShapContext
 {
     DenseTree::Nodes const   &nodes;
@@ -117,7 +109,6 @@ template <typename Hot> struct ShapContext
     std::span<double>         phi;
 };
 
-// Which child does the instance follow at an internal node?
 node_id_t hot_child(DenseTree::Node const &n, features_view X, row_id_t row)
 {
     float const v      = X[row, n.feature_id];
@@ -133,7 +124,6 @@ void recurse(ShapContext<Hot> const &ctx, node_id_t node_id,
              std::vector<PathElement> &path, size_t length, double parent_zero_fraction,
              double parent_one_fraction, int parent_feature)
 {
-    // Work on a copy of the parent's path (Algorithm 2 duplicates it).
     extend(path, length, parent_zero_fraction, parent_one_fraction, parent_feature);
     ++length;
 
@@ -157,8 +147,6 @@ void recurse(ShapContext<Hot> const &ctx, node_id_t node_id,
     double const hot_frac  = cover > 0.0 ? ctx.covers[hot] / cover : 0.0;
     double const cold_frac = cover > 0.0 ? ctx.covers[cold] / cover : 0.0;
 
-    // If this feature already conditioned the path, undo that entry and
-    // fold its fractions into the new one (a feature contributes once).
     double incoming_zero = 1.0;
     double incoming_one  = 1.0;
     for (size_t i = 1; i < length; ++i)
@@ -173,20 +161,12 @@ void recurse(ShapContext<Hot> const &ctx, node_id_t node_id,
         }
     }
 
-    // A (zero=0, one=0) extension carries nothing: neither the instance nor
-    // any background mass flows down that branch, every pweight below it is
-    // zero, and unwinding such an element divides 0/0. Zero-cover branches
-    // exist — device-partitioned empty children pass through as kept leaves
-    // (PR #29), and oblivious trees expand with dead slots — so skip them
-    // instead of assuming them away. The hot branch still recurses whenever
-    // the instance follows it (one > 0), which is what makes sum(phi)
-    // reproduce f(x) even when x routes into a dead branch.
     auto const   feature   = static_cast<int>(n.feature_id);
     double const hot_zero  = incoming_zero * hot_frac;
     double const cold_zero = incoming_zero * cold_frac;
     if (hot_zero > 0.0 || incoming_one > 0.0)
     {
-        auto hot_path = path; // Algorithm 2 duplicates the path per branch
+        auto hot_path = path;
         recurse(ctx, hot, hot_path, length, hot_zero, incoming_one, feature);
     }
     if (cold_zero > 0.0)
@@ -196,7 +176,6 @@ void recurse(ShapContext<Hot> const &ctx, node_id_t node_id,
     }
 }
 
-// The whole of tree_shap once the routing question is answered.
 template <typename Hot>
 void shap_walk(DenseTree const &tree, Hot const &hot, std::span<double> phi,
                double expected_value)
@@ -208,7 +187,6 @@ void shap_walk(DenseTree const &tree, Hot const &hot, std::span<double> phi,
             "tree_shap: tree carries no per-node covers (model predates "
             "format v6 or was hand-built)");
     }
-    // Bias: the tree's expected value over the training distribution.
     phi[phi.size() - 1] += expected_value;
 
     std::vector<PathElement> path(tree.params().depth + 2);
@@ -283,9 +261,6 @@ double tree_expected_value(DenseTree const &tree, features_view X, row_id_t row,
 
 double tree_expected_value(DenseTree const &tree)
 {
-    // An empty subset never conditions, so the row is never read; the same
-    // recursion keeps the arithmetic (and its rounding) identical to the
-    // conditional form the tests pin.
     return expected_value_impl(tree, features_view{}, 0, {}, 0);
 }
 

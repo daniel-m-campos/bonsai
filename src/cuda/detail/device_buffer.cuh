@@ -1,14 +1,5 @@
 #pragma once
 
-// Owning device allocation and the host/device staging pair it backs, plus the
-// small POD types and tuning constants that cross the host/device boundary.
-// Shared by the CUDA translation units (the single-GPU histogram_engine.cu and
-// the device-context implementation TU; docs/architecture/19-multi-gpu.md):
-// everything here has external linkage in namespace bonsai::cuda_detail and
-// references no internal-linkage entity, so including it from more than one TU
-// is ODR-clean. These are kernel-free RAII/utility templates and PODs; the
-// kernels that consume them stay anonymous in kernels.cuh, private per TU.
-
 #include <cuda.h>
 
 #include <cassert>
@@ -24,38 +15,23 @@ namespace bonsai
 namespace cuda_detail
 {
 
-// Nodes with fewer rows than this build on the CPU: the kernel launch +
+// perf: Nodes with fewer rows than this build on the CPU: the kernel launch +
 // synchronous copy-back round trip outweighs the histogram work itself
 // below roughly this size (knee measured on Jetson Orin Nano).
 inline constexpr size_t k_min_gpu_rows = 512;
 
-// Default shared-memory histogram footprint cap (stride floats, 48 KiB
+// perf: Default shared-memory histogram footprint cap (stride floats, 48 KiB
 // static budget). The engine raises it at runtime to the device's opt-in
 // limit (~99 KiB on consumer parts, 227 KiB on sm_90), moving the bin count
 // the device refuses from ~3k to ~6k+ per feature.
-inline constexpr size_t k_max_shared_bytes = 48UL * 1024UL;
-// Resident 256-thread histogram blocks one SM seats at the tiled shared
-// budget; the chunk axis fills the device to sm_count times this.
+inline constexpr size_t   k_max_shared_bytes   = 48UL * 1024UL;
 inline constexpr uint32_t k_fill_blocks_per_sm = 4;
 
-// --- The device bin plane's layout, in one place ----------------------------
-// Features are grouped into tiles of k_bin_tile_width. Tile t starts at cell
-// n_rows * t * k_bin_tile_width, and one row's strip inside it is
-// tile_strip(t) cells wide, so the tile's bin ids for a row are adjacent and
-// one memory sector serves 32 / strip rows of a node instead of one. Same
-// scheme the host mirror uses (Dataset::row_major_bins), at the width shared
-// memory allows. Every reader and writer of the plane goes through
-// tiled_cell; nothing else may assume an index expression.
-// 8, not the width the depthwise build alone would pick: one plane serves
-// both growers, and at 16 a leafwise round, which histograms one node, runs a
-// grid too narrow to fill the device and loses more than depthwise gains.
 inline constexpr uint32_t k_bin_tile_width = 8;
 static_assert((k_bin_tile_width & (k_bin_tile_width - 1)) == 0,
               "the tile width must be a power of two: the index arithmetic divides by "
               "it on every bin read");
 
-// The tail-aware strip width of tile t: the last tile is narrow when the
-// feature count is not a multiple of the width.
 inline __host__ __device__ uint32_t tile_strip(uint32_t t, uint32_t n_feats)
 {
     uint32_t const tail = n_feats - (t * k_bin_tile_width);
@@ -67,7 +43,6 @@ inline __host__ __device__ uint32_t tile_count(uint32_t n_feats)
     return (n_feats + k_bin_tile_width - 1) / k_bin_tile_width;
 }
 
-// The cell holding feature f of row r.
 inline __host__ __device__ size_t tiled_cell(uint32_t f, uint32_t r, uint32_t n_rows,
                                              uint32_t n_feats)
 {
@@ -76,18 +51,14 @@ inline __host__ __device__ size_t tiled_cell(uint32_t f, uint32_t r, uint32_t n_
            (static_cast<size_t>(r) * tile_strip(t, n_feats)) + (f % k_bin_tile_width);
 }
 
-// Marks a feature the current tree did not select, in the per-feature slot
-// map the tiled histogram kernel reads.
 inline constexpr uint32_t k_not_selected = 0xFFFFFFFFU;
 
-// Per-(node, feature) best split. 56-byte POD; dl encodes default_left.
 struct FeatBest
 {
     double  gain, gL, hL, gR, hR;
     int32_t bin, dl, valid, sel;
 };
 
-// Device-side view of one PartitionOp plus its parent segment.
 struct PartOpDev
 {
     uint32_t offset, count, fid, bin, dl;
@@ -102,7 +73,7 @@ inline void check(cudaError_t rc, char const *what)
     }
 }
 
-// Stream-ordered allocation with the device mempool told to keep freed
+// perf: Stream-ordered allocation with the device mempool told to keep freed
 // memory: the default release threshold of 0 returns every free to the OS
 // at the next sync, and on GeForce drivers the resulting cudaMalloc/cudaFree
 // churn synchronizes the whole process (the 5090's ~11-14s per-fit
@@ -169,10 +140,6 @@ inline void free_device(void *p)
     }
 }
 
-// Owning device allocation, shaped after thrust::device_vector's capacity API
-// (data/reserve) but deliberately grow-only: capacity never shrinks and
-// contents are dropped on reallocation (callers re-upload per use), so no
-// resize-time device memset is ever paid.
 template <typename T> class DeviceBuffer
 {
   public:
@@ -220,8 +187,6 @@ template <typename T> class DeviceBuffer
     size_t capacity_ = 0;
 };
 
-// Page-locked host staging: pinned transfers run at full PCIe rate and never
-// bounce through the driver's internal staging copy.
 template <typename T> class PinnedBuffer
 {
   public:
@@ -245,6 +210,9 @@ template <typename T> class PinnedBuffer
     T *ptr_ = nullptr;
 };
 
+// sync: Page-locked staging paired with its device mirror. The upload is a
+// cudaMemcpyAsync, so the host side stays live until the copy lands and a
+// caller may only rewrite it after the fetch that fenced the previous one.
 // Page-locked staging paired with its device mirror: the host-to-device half of
 // Staged, with the two properties a per-round staging path needs. The host side
 // is pinned and the upload is asynchronous, so it never stream-syncs the way a
@@ -295,7 +263,6 @@ template <typename T> class PinnedStaged
         capacity_ = n;
     }
 
-    // Host -> device, asynchronous on the null stream. reserve(n) first.
     void sync(size_t n) const
     {
         assert_fenced();
@@ -313,10 +280,6 @@ template <typename T> class PinnedStaged
     }
 
   private:
-    // Debug-only: the aliasing contract above (host_ may only be rewritten
-    // once the prior upload has fenced) is checked, never enforced in
-    // release. assert() discards its argument under NDEBUG, so fence_ (also
-    // debug-only) is never referenced by a release build.
     void assert_fenced() const
     {
         assert((fence_ == nullptr || cudaEventQuery(fence_) == cudaSuccess) &&
@@ -332,23 +295,15 @@ template <typename T> class PinnedStaged
 #endif
 };
 
-// A host staging vector paired with its device mirror — the shape that recurs
-// throughout the engine's Impl. `host` is filled (or received) on the CPU;
-// sync() pushes it to the device, fetch() pulls a device result back. Mirrors
-// thrust's host_vector/device_vector duo without the dependency (the backend
-// stays one self-contained TU).
 template <typename T> struct Staged
 {
     std::vector<T>  host;
     DeviceBuffer<T> dev;
 
-    // Host -> device: grow the mirror and upload the whole staging vector.
     void sync()
     {
         dev.upload(host.data(), host.size());
     }
-    // Device -> host: size the staging vector to n and copy the result back
-    // (implicitly synchronizes, like every DtoH copy in this backend).
     void fetch(size_t n)
     {
         host.resize(n);

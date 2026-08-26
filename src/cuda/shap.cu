@@ -1,7 +1,3 @@
-// Device TreeSHAP: the packed leaf paths and the closed-form walk that
-// evaluates them against a resident ingest plane. Clang CUDA C++, same
-// libc++/C++23 as the rest of the build. Design: docs/architecture/10-cuda.md,
-// and include/bonsai/shap_paths.hpp for the closed form itself.
 
 #include "bonsai/bin_mappers.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
@@ -35,31 +31,13 @@ namespace bonsai
 
 using namespace cuda_detail;
 
-// The packed tables are flat arrays offset by hand, and the kernel's
-// same-typed pointer parameters are the shape every kernel in this backend
-// has (docs/architecture/10-cuda.md).
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters,readability-identifier-naming,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
 namespace
 {
 
-// The widest merged path the kernel walks. Both coefficient arrays are sized
-// by the template parameter and must live in registers, so the length is a
-// compile-time constant and a longer path declines at plan time.
 constexpr size_t k_max_path = 32;
 
-// One thread per (row, path), grid-stride over row-major tasks. The thread
-// reads its row's bin for each of the path's merged elements, builds
-// P(t) = prod_j (z_j + o_j t) in registers, and settles the path's elements:
-// every unsatisfied element shares one weighted sum of P, and each satisfied
-// element deflates P by its monic factor first. Contributions land with
-// atomicAdd because paths of one row share features.
-//
-// Every index into the coefficient arrays comes from a fully unrolled loop, so
-// both stay in registers. The build step is written to be an identity when the
-// step is past the path's length (z = 1, o = 0), which keeps the guard out of
-// the index arithmetic. The weighted sums run i ascending, the order the host
-// evaluator uses, so only fp32 rounding separates the two.
 template <typename BinT, uint32_t K>
 __global__ void shap_walk_kernel(BinT const *bins, uint8_t const *last_bin,
                                  uint32_t n_rows, uint32_t n_feats,
@@ -77,7 +55,7 @@ __global__ void shap_walk_kernel(BinT const *bins, uint8_t const *last_bin,
         uint32_t const     n    = head.n_elems;
         if (n == 0)
         {
-            continue; // a root leaf attributes nothing
+            continue;
         }
 
         float poly[K + 1];
@@ -116,9 +94,6 @@ __global__ void shap_walk_kernel(BinT const *bins, uint8_t const *last_bin,
 
         float const *w = weights + (static_cast<size_t>(n - 1) * n / 2);
 
-        // Deflating an unsatisfied element divides P by the scalar z_k, and
-        // the (o_k - z_k) prefactor multiplies it straight back, so every
-        // unsatisfied element on this path shares one weighted sum.
         float unsatisfied_sum = 0.0F;
 #pragma unroll
         for (uint32_t i = 0; i < K; ++i)
@@ -141,11 +116,6 @@ __global__ void shap_walk_kernel(BinT const *bins, uint8_t const *last_bin,
                 atomicAdd(&row_out[f], -value * unsatisfied_sum);
                 continue;
             }
-            // Synthetic division by the monic factor (t + z_k). Started from
-            // K rather than n, which costs the same identity steps the build
-            // pays and keeps every array index a constant: the coefficients
-            // above degree n are zero, so the recursion reaches the same
-            // deflated[n - 1] = poly[n].
             float const z = e.zero_fraction;
             float       deflated[K];
             float       d = 0.0F;
@@ -171,34 +141,26 @@ __global__ void shap_walk_kernel(BinT const *bins, uint8_t const *last_bin,
 
 } // namespace
 
-// The packed leaf paths, device-resident for as long as the ensemble they were
-// packed from is unchanged. Buffers free on the default stream with every
-// other DeviceBuffer.
 class CudaShapPlan
 {
   public:
     DeviceBuffer<ShapPathElem> elems;
     DeviceBuffer<ShapPathHead> heads;
-    DeviceBuffer<uint8_t>      last_bin; // per feature: n_bins - 1, the missing bin
-    DeviceBuffer<float>        weights;  // Algorithm 2's permutation weights, flattened
+    DeviceBuffer<uint8_t>      last_bin;
+    DeviceBuffer<float>        weights;
 
     size_t   n_paths       = 0;
     size_t   n_feats       = 0;
     uint32_t max_path_len  = 0;
     float    learning_rate = 0.0F;
     float    init_score    = 0.0F;
-    // The per-tree expected values summed once, in tree order and in double,
-    // exactly as the host walk accumulates them into the bias column.
-    double bias_total = 0.0;
-    // Profile-only: the build's own laps, reported beside the walk's.
-    double pack_s = 0.0, upload_s = 0.0;
+    double   bias_total    = 0.0;
+    double   pack_s = 0.0, upload_s = 0.0;
 };
 
 namespace
 {
 
-// The K dispatch, kept beside the plan so the launch site names the kernel
-// once. The bin type is the plane's, the path length the plan's.
 template <uint32_t K, typename BinT>
 void launch_walk(BinT const *bins, CudaShapPlan const &plan, uint32_t n_rows,
                  uint32_t n_feats, uint32_t n_paths, dim3 grid, dim3 block, float *out)
@@ -224,8 +186,6 @@ std::shared_ptr<CudaShapPlan const> cuda_shap_plan(std::span<DenseTree const> tr
     double               bias_total = 0.0;
     try
     {
-        // Single-output ensembles only, matching the device predict rung: a
-        // multiclass model rides the host walk, so the class stride is 1.
         paths = pack_shap_paths(trees, mappers, 1);
         for (DenseTree const &tree : trees)
         {
@@ -234,12 +194,10 @@ std::shared_ptr<CudaShapPlan const> cuda_shap_plan(std::span<DenseTree const> tr
     }
     catch (std::invalid_argument const &)
     {
-        return nullptr; // no covers, a split feature wider than the 8-bit interval
+        return nullptr;
     }
     catch (std::bad_alloc const &)
     {
-        // Declining is worth the wasted pack: the host walk this falls back to
-        // is the per-row recursion, which allocates nothing of this size.
         return nullptr;
     }
     if (paths.max_path_len > k_max_path ||
@@ -248,10 +206,6 @@ std::shared_ptr<CudaShapPlan const> cuda_shap_plan(std::span<DenseTree const> tr
     {
         return nullptr;
     }
-    // w_i^(n) for every n the kernel may walk, built in double and stored in
-    // float beside the fp32 coefficients that consume it. 528 floats at the
-    // widest, so it rides a DeviceBuffer rather than the constant bank, which
-    // is a scarcer resource this backend spends on nothing yet.
     auto const         wide = shap_path_weights(k_max_path);
     std::vector<float> weights(wide.size(), 0.0F);
     std::ranges::transform(wide, weights.begin(),
@@ -284,8 +238,6 @@ bool cuda_pred_contribs(CudaShapPlan const &plan, IngestPlane const &plane,
                         size_t n_rows, size_t n_features, std::span<double> out)
 {
     size_t const cols = n_features + 1;
-    // The backend tag proves the concrete type without RTTI, exactly as
-    // ensure_dataset's adoption does.
     if (plane.backend_tag() != cuda_backend_tag() || out.size() != n_rows * cols ||
         n_rows == 0 || n_rows > std::numeric_limits<uint32_t>::max())
     {
@@ -309,11 +261,9 @@ bool cuda_pred_contribs(CudaShapPlan const &plan, IngestPlane const &plane,
               "shap contribs clear");
         uint64_t const total = static_cast<uint64_t>(n) * p;
         dim3 const     block(256);
-        // Capped so a wide ensemble over many rows launches a grid the device
-        // can retire in one wave per SM rather than one block per task.
-        dim3 const grid(static_cast<uint32_t>(
+        dim3 const     grid(static_cast<uint32_t>(
             std::min<uint64_t>((total + block.x - 1) / block.x, 65535)));
-        auto const launch = [&](auto const *bins)
+        auto const     launch = [&](auto const *bins)
         {
             if (plan.max_path_len <= 8)
             {
@@ -352,12 +302,6 @@ bool cuda_pred_contribs(CudaShapPlan const &plan, IngestPlane const &plane,
                          cudaMemcpyDeviceToHost),
               "shap contribs fetch");
         lap(d2h_s);
-        // The composition the host walk performs after its per-tree
-        // accumulation, reproduced term for term: contributions accumulate
-        // raw, then the whole row scales by the learning rate, then the bias
-        // column takes init_score. The packed heads carry raw leaf values and
-        // the kernel never touches the bias column, so the only thing left
-        // here is the scale and the base.
         auto const   lr = static_cast<double>(plan.learning_rate);
         double const bias =
             (plan.bias_total * lr) + static_cast<double>(plan.init_score);

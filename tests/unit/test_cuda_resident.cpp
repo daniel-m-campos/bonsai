@@ -588,7 +588,7 @@ TEST_CASE("Resident weighted LogLoss under Bernoulli sampling matches host",
     REQUIRE(max_abs_diff(host, res) < 0.35F);
 }
 
-// ---- The leaf plane (docs/architecture/20-cuda-leafwise.md) ------------------
+// ---- The leaf plane (docs/invariants.md) ------------------
 
 TEST_CASE("Resident MSE matches host-objective GPU (leafwise)", "[cuda][resident]")
 {
@@ -920,10 +920,10 @@ namespace
 void require_same_bins(Dataset const &a, Dataset const &b)
 {
     REQUIRE(a.n_features() == b.n_features());
-    REQUIRE(a.n_rows() == b.n_rows());
+    REQUIRE(a.plane_n_rows() == b.plane_n_rows());
     for (size_t f = 0; f < a.n_features(); ++f)
     {
-        for (size_t r = 0; r < a.n_rows(); ++r)
+        for (size_t r = 0; r < a.plane_n_rows(); ++r)
         {
             REQUIRE(a.bin_at(f, r) == b.bin_at(f, r));
         }

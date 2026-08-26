@@ -54,18 +54,11 @@ float compute_r2(floats_view preds, floats_view labels)
     }
     if (ss_tot == 0.0)
     {
-        // Constant labels: r2 undefined. Return NaN (honest signal that the
-        // input is degenerate); sklearn's 0.0 default is more forgiving but
-        // hides data issues.
         return std::numeric_limits<float>::quiet_NaN();
     }
     return static_cast<float>(1.0 - (ss_res / ss_tot));
 }
 
-// Single source of truth with the training loop: the objective's
-// softplus-stable BCE over raw scores (design review 2026-07-12 — the old
-// probability-domain copy clamped at 1e-7 and disagreed with early
-// stopping's numbers on confident models).
 float compute_logloss(floats_view raw_scores, floats_view labels)
 {
     return LogLossObjective::eval(raw_scores, labels);
@@ -90,8 +83,6 @@ float compute_accuracy(floats_view probs, floats_view labels)
                               static_cast<double>(probs.size()));
 }
 
-// AUC via the rank-sum (Mann-Whitney) identity: sort by score ascending,
-// sum the positives' ranks, tie groups get their average rank.
 float compute_auc(floats_view probs, floats_view labels)
 {
     assert(probs.size() == labels.size());
@@ -112,7 +103,6 @@ float compute_auc(floats_view probs, floats_view labels)
         {
             ++j;
         }
-        // average 1-based rank of the tie group [i, j)
         double const avg_rank = 0.5 * (static_cast<double>(i + 1 + j));
         for (size_t k = i; k < j; ++k)
         {
@@ -127,7 +117,7 @@ float compute_auc(floats_view probs, floats_view labels)
     size_t const n_neg = n - n_pos;
     if (n_pos == 0 || n_neg == 0)
     {
-        return 1.0F; // degenerate: one class only
+        return 1.0F;
     }
     double const u = rank_sum_pos - (static_cast<double>(n_pos) *
                                      static_cast<double>(n_pos + 1) / 2.0);
@@ -150,8 +140,6 @@ float compute_mc_accuracy(floats_view class_ids, floats_view labels)
 namespace
 {
 
-// Tiny hand-written registry. No for_each_type machinery -- five entries.
-// Adding a metric is one line below + matching free function above.
 inline constexpr auto all_metrics = std::array<Metric, 7>{{
     metric_rmse,
     metric_mae,

@@ -86,9 +86,6 @@ size_t GossSampler::sample(floats_out grad, floats_out hess, std::mt19937 &rng,
         return n;
     }
 
-    // Rank candidates by the |grad| of the row each one names: the top_k
-    // largest are kept outright. order holds positions into the candidate
-    // list; the reweighting below turns them back into row ids.
     std::vector<row_id_t> order(n);
     std::iota(order.begin(), order.end(), row_id_t{0});
     std::nth_element(
@@ -102,8 +99,6 @@ size_t GossSampler::sample(floats_out grad, floats_out hess, std::mt19937 &rng,
         keep[order[i]] = 1;
     }
 
-    // Uniformly sample other_k candidates from the rest and amplify them so
-    // the histogram grad/hess sums stay unbiased estimates of the full data.
     std::vector<row_id_t> rest(order.begin() + static_cast<std::ptrdiff_t>(top_k),
                                order.end());
     std::vector<row_id_t> picked;
@@ -118,8 +113,6 @@ size_t GossSampler::sample(floats_out grad, floats_out hess, std::mt19937 &rng,
         hess[r] *= amplify;
     }
 
-    // Emit in candidate order, which the view keeps ascending for the
-    // downstream scan.
     size_t n_selected = 0;
     for (size_t i = 0; i < n; ++i)
     {

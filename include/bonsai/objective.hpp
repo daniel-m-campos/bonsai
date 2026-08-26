@@ -61,10 +61,8 @@ struct PoissonObjective
     static float init_score(floats_view targets);
 };
 
-// L1 loss: grad = sign(residual), hess = 1 (constant-hessian objective, so
-// min_child_hess acts as a row count). Leaf values are gradient means, not
-// residual medians — no leaf-renewal pass yet (LightGBM/XGBoost renew;
-// expect an accuracy gap on MAE-scored comparisons).
+// L1 loss: grad = sign(residual), hess = 1, so min_child_hess acts as a
+// row count. renew_leaf replaces each leaf with its residual median.
 struct MAEObjective
 {
     MAEObjective() = default;

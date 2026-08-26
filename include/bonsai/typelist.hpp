@@ -132,7 +132,7 @@ template <typename L, typename F> constexpr void for_each_type(F &&f)
 // make_table<L, Entry>(fn): one constexpr array entry per type in the list,
 // where fn.template operator()<T>() builds T's entry — the registry table
 // pattern (dispatch factories, per-objective trait tables) written once
-// instead of per table (issue #51).
+// instead of per table.
 template <typename L, typename Entry, typename F>
 constexpr std::array<Entry, size_v<L>> make_table(F &&fn)
 {

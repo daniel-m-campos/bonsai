@@ -62,6 +62,12 @@ template <typename TreeT> struct GrowResult
     std::vector<node_id_t> leaf_ids;
 };
 
+// The one growth contract all three strategies satisfy. grow() returns the
+// finished tree WITH per-row leaf values and leaf ids, so the booster never
+// re-walks rows it just routed; a grower that only returned the tree would
+// silently reintroduce the per-tree re-predict this shape deleted. Engines
+// plug in below (HistogramEngine, and the GPU concepts beside it); the
+// grower owns every per-node decision, the engine every per-row loop.
 template <typename T>
 concept TreeGrower = requires(T g, Dataset const &ds, floats_view grad,
                               floats_view hess, row_index_view row_indices) {
@@ -81,7 +87,7 @@ concept TreeGrower = requires(T g, Dataset const &ds, floats_view grad,
 // for is wider and enforced by the parity suite (design review 2026-07-12):
 // populate must accumulate exactly the node's rows' (grad, hess) into the
 // bins the Dataset's mappers define, cell sums summed in an order that is
-// a pure function of configuration (decision 49's determinism contract),
+// a pure function of configuration,
 // missing values in the last bin, and hists[f] sized n_bins(f) for every
 // selected f. A type satisfying the syntax while bending any of these
 // trains silently wrong models — see docs/guide/2 for what each clause is
@@ -95,7 +101,7 @@ concept HistogramEngine =
     };
 
 // The GPU data plane: histograms and rows stay device-resident, so only
-// decisions and counts cross the bus (docs/architecture/12-grower-backend.md).
+// decisions and counts cross the bus.
 // The LevelStep drives this whole cluster or none of it, so it is one concept
 // and not seven. begin_root opens the tree on the device or throws: there is
 // no host fallback, so the step has no per-tree mode to carry.
@@ -135,7 +141,7 @@ concept GPULevelEngine =
 
 // The GPU leaf plane: best-first growth expands one leaf at a time, so the
 // histograms live in a per-tree slot pool instead of the level plane's
-// ping-pong (docs/architecture/20-cuda-leafwise.md). A second concept beside
+// ping-pong. A second concept beside
 // GPULevelEngine, not a change to it: the depthwise and levelwise paths are
 // untouched. Same rule as begin_root: leaf_begin_root opens the tree on the
 // device or throws.
@@ -189,7 +195,7 @@ struct CpuHistogramEngine
                        NodeHistograms &sibling);
     // Level-batched fill: all of a level's nodes in one call, so row-wise
     // work units from many small nodes share one parallel section
-    // (docs/architecture/7-parallel.md). populate() is the one-node case.
+    // in one parallel section. populate() is the one-node case.
     void populate_many(Dataset const &ds, floats_view grad, floats_view hess,
                        split_input_refs nodes, std::span<feature_id_t const> selected);
 };

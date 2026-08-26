@@ -1,6 +1,3 @@
-// Device predict: the packed ensemble and the whole-ensemble bin-space walk
-// over a resident ingest plane. Clang CUDA C++, same libc++/C++23 as the rest
-// of the build. Design: docs/architecture/10-cuda.md.
 
 #include "bonsai/bin_mappers.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
@@ -33,21 +30,11 @@ namespace bonsai
 
 using namespace cuda_detail;
 
-// The node tables are flat SoA arrays offset by hand, and the kernel's
-// same-typed pointer parameters are the shape every kernel in this backend
-// has (docs/architecture/10-cuda.md).
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters,readability-identifier-naming)
 
 namespace
 {
 
-// One thread per row, every tree in one pass: the row routes through tree t
-// from roots[t], accumulates the leaf value in a register, and writes
-// init + lr * sum once. Node ids are local to their tree, so a step adds the
-// tree's base. The routing mirrors routes_left in dataset.hpp (bin == last ->
-// default_left, else bin <= split_bin), the same rule route_add_kernel walks,
-// and last_bin is the plan's own per-feature table so the walk never depends
-// on the plane's bin counts. No atomics: rows are disjoint.
 template <typename BinT>
 __global__ void
 predict_walk_kernel(BinT const *bins, uint32_t const *last_bin, uint32_t n_rows,
@@ -78,17 +65,9 @@ predict_walk_kernel(BinT const *bins, uint32_t const *last_bin, uint32_t n_rows,
         }
         acc += value[idx];
     }
-    // Unfused, round-to-nearest: this TU compiles with -ffp-contract=fast and
-    // the host plane with off, so the plain expression fuses here and lands
-    // one ulp from predict_at_binned's. Prediction is a contract of bit
-    // equality with the host walk, so the epilogue spells the rounding out.
     out[r] = __fadd_rn(init, __fmul_rn(lr, acc));
 }
 
-// The ensemble in bin space, host side: SoA node arrays concatenated over the
-// trees, with each tree's base recorded. Leaves carry their value and keep
-// zero in the split slots, so the kernel never reads a leaf's feature id
-// (DenseTree::k_leaf_flag would index past the mappers).
 struct PackedTrees
 {
     std::vector<uint32_t> roots, feature, split_bin, left, right, default_left, is_leaf;
@@ -121,14 +100,11 @@ PackedTrees pack(std::span<DenseTree const> trees, BinMappers const &mappers)
 
 } // namespace
 
-// The packed ensemble, device-resident for as long as the ensemble it was
-// packed from is unchanged. Buffers free on the default stream with every
-// other DeviceBuffer.
 class CudaPredictPlan
 {
   public:
-    DeviceBuffer<uint32_t> last_bin; // per feature: n_bins - 1
-    DeviceBuffer<uint32_t> roots;    // per tree: its base in the node arrays
+    DeviceBuffer<uint32_t> last_bin;
+    DeviceBuffer<uint32_t> roots;
     DeviceBuffer<uint32_t> feature;
     DeviceBuffer<uint32_t> split_bin;
     DeviceBuffer<uint32_t> left;
@@ -141,7 +117,6 @@ class CudaPredictPlan
     size_t n_feats       = 0;
     float  learning_rate = 0.0F;
     float  init_score    = 0.0F;
-    // Profile-only: the build's own laps, reported beside the walk's.
     double pack_s = 0.0, upload_s = 0.0;
 };
 
@@ -153,8 +128,6 @@ cuda_predict_plan(std::span<DenseTree const> trees, BinMappers const &mappers,
     {
         return nullptr;
     }
-    // The walk compares a bin id read from a u8/u16 plane against the
-    // feature's last bin; a wider feature has no bin id this plane can hold.
     std::vector<uint32_t> last(mappers.size());
     for (size_t f = 0; f < mappers.size(); ++f)
     {
@@ -172,8 +145,6 @@ cuda_predict_plan(std::span<DenseTree const> trees, BinMappers const &mappers,
     }
     catch (std::bad_alloc const &)
     {
-        // Declining is worth the wasted pack: the host walk this falls back to
-        // reads the ensemble in place and allocates nothing of this size.
         return nullptr;
     }
     if (p.feature.size() > std::numeric_limits<uint32_t>::max())
@@ -209,8 +180,6 @@ cuda_predict_plan(std::span<DenseTree const> trees, BinMappers const &mappers,
 bool cuda_predict(CudaPredictPlan const &plan, IngestPlane const &plane, size_t n_rows,
                   size_t n_features, size_t n_trees, std::span<float> out)
 {
-    // The backend tag proves the concrete type without RTTI, exactly as
-    // ensure_dataset's adoption does.
     if (plane.backend_tag() != cuda_backend_tag() || out.size() != n_rows ||
         n_rows == 0 || n_rows > std::numeric_limits<uint32_t>::max())
     {

@@ -131,7 +131,7 @@ inline void set_n_threads(uint32_t n)
 
 // Auto (n_threads = 0) caps the worker count: per-level parallel sections
 // are short, so on many-core hosts OpenMP barrier spin-wait dominates
-// useful work (issue #2: 60 vCPU ran 10x slower than 16). Auto also clamps
+// useful work: 60 vCPU measured 10x slower than 16. Auto also clamps
 // to the cgroup CPU bandwidth quota when one is set: OpenMP sizes its pool
 // from the affinity mask, which a quota-limited container leaves at the
 // host's core count, so an unclamped pool burns its quota early and the
@@ -161,7 +161,7 @@ inline int n_threads()
 // OUTPUTS are bit-identical at any thread count; sites whose work
 // DECOMPOSITION consults n_threads() (the fill plan) key the model bits to
 // the configured count, the fixed-N contract
-// (docs/architecture/7-parallel.md). Dynamic scheduling keeps asymmetric
+// (invariants: host-determinism). Dynamic scheduling keeps asymmetric
 // cores (e.g. P/E) busy; the chunk size scales with n so per-chunk overhead
 // stays negligible for big loops while small loops still spread one index
 // per thread. A team of one runs the loop inline, entering no region.

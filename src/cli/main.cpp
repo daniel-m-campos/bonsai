@@ -1,3 +1,4 @@
+
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -153,10 +154,6 @@ try
 
     using namespace bonsai::cli; // NOLINT(google-build-using-namespace)
 
-    // Each subcommand's callback fires after CLI11 finishes parsing its
-    // tokens. The closure captures the local *Opts struct by reference, runs
-    // the corresponding handler, and stashes its return code in `rc`. `main`
-    // returns that value below.
     int rc = EXIT_SUCCESS;
 
     FitOpts                  fit;
@@ -194,8 +191,6 @@ try
 
     return rc;
 }
-// C stdio in the handlers: std::println can itself throw, which would
-// escape main.
 catch (std::exception const &e)
 {
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,modernize-use-std-print)

@@ -12,7 +12,7 @@ namespace bonsai::detail
 // Size-class free-list for histogram cell blocks. populate() allocates a
 // fresh n_bins block per (node, feature) and drops it when the node leaves
 // the frontier; at high bin counts the first-touch page faults of those
-// fresh blocks dominate the fit (bins-axis exponent, decision 47). Recycling
+// fresh blocks dominate the fit. Recycling
 // keeps the pages warm. Mutex'd: allocations are per-node, not per-row.
 class HistBlockPool
 {

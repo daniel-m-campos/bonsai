@@ -72,9 +72,6 @@ inline constexpr auto defaults_table = make_table<Objectives, DefaultsEntry>(
         return DefaultsEntry{impl_name<O>::value, &defaults_thunk<O>};
     });
 
-// The one scan every by-name lookup shares: tables are a handful of entries
-// built at compile time, so linear is the right shape; what must not be
-// repeated per lookup is the not-found message.
 template <typename Table>
 auto const &lookup(Table const &table, std::string_view name, char const *what)
 {

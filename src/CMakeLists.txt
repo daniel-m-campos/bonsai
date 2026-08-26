@@ -1,6 +1,6 @@
 # OBJECT libraries per component family. Avoids static-archive dead-code
 # stripping; lets tests link against component pieces without rebuilding.
-# See docs/architecture/README.md and decisions.md for rationale.
+# See docs/decisions.md for rationale.
 
 # ---- bonsai_data: Dataset, BinMapper, BinMappers ----------------------------
 

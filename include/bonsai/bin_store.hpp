@@ -24,15 +24,13 @@ using U8Columns  = std::vector<std::vector<uint8_t>>;
 using U16Columns = std::vector<std::vector<uint16_t>>;
 using BinColumns = std::variant<U8Columns, U16Columns>;
 
-// Product of a backend's ingest transaction (decision 54, doc 15): the
-// binned columns live wherever the backend put them — Dataset carries the
-// plane as an opaque receipt and asks it to materialize host columns only
-// when a host consumer needs them. Host-pure: concrete planes are defined
-// by their backend (the CUDA TU); this header never names device types.
+// Product of a backend's ingest transaction. Dataset carries the plane as an
+// opaque receipt and asks it to materialize host columns only when a host
+// consumer needs them; concrete planes are defined by their backend, so this
+// header never names device types.
 //
-// Deliberate dynamic dispatch, the IBooster precedent: this TU boundary
-// makes compile-time dispatch impossible by construction, and the cost is
-// two indirect calls per fit. The algorithmic narrative stays static.
+// Dynamic dispatch is deliberate: the TU boundary rules out compile-time
+// dispatch, and the cost is two indirect calls per fit.
 class IngestPlane
 {
   public:
@@ -86,15 +84,10 @@ class IngestPlane
 // This is the sharing unit: one store per binned matrix, held by shared_ptr
 // from every Dataset over it, so a row view costs a pointer and the device
 // cache can key uploads off an address that lives as long as the bins do.
-// A Dataset is a fit specification over a store: which rows, which labels,
-// which weights. The store neither knows nor cares which fit reads it.
 //
-// The cuts live here and not with the labels because bins are unreadable
-// without them: a plane plus its mappers is the binned matrix, while labels
-// are only ever needed by a fit. Everything inside is fixed once built; the
-// two lazy caches (host columns of a plane, the row-major mirror) mutate
-// under call_once through shared state, so a const store stays shareable
-// across threads.
+// Everything inside is fixed once built. The two lazy caches (host columns of
+// a plane, the row-major mirror) mutate under call_once through shared state,
+// so a const store stays shareable across threads.
 class BinStore
 {
   public:

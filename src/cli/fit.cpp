@@ -60,14 +60,13 @@ int run_fit(FitOpts const &opts)
         init.booster
             ? load_train_and_validation_with_mappers(cfg, std::move(init.mappers))
             : load_train_and_validation_from_csv(cfg);
-    std::println("fit: {} rows x {} features", loaded.train.dataset.n_rows(),
+    std::println("fit: {} rows x {} features", loaded.train.dataset.plane_n_rows(),
                  loaded.train.dataset.n_features());
 
     auto const &obj_name = cfg.dispatch.objective_name;
     auto const  task     = task_kind_by_name(obj_name);
     auto const  names    = choose_metric_names(cfg.metrics.fit, obj_name);
 
-    // Resolve names to Metric values up front so a bad name fails fast.
     std::vector<Metric> metrics;
     metrics.reserve(names.size());
     for (auto const name : names)
@@ -81,9 +80,6 @@ int run_fit(FitOpts const &opts)
 
     auto const on_tick = [&](FitTick const &tick)
     {
-        // Metrics see raw scores (from_raw, e.g. logloss) or transformed
-        // predictions; keep the raw copy before the in-place link inverse.
-        // Buffers are owned by train_with_progress and overwritten next tick.
         std::vector<float> const raw_train(tick.train_preds.begin(),
                                            tick.train_preds.end());
         apply_link_inverse_by_name(obj_name, tick.train_preds);
@@ -97,7 +93,6 @@ int run_fit(FitOpts const &opts)
             std::vector<float> const raw_validation(tick.validation_preds.begin(),
                                                     tick.validation_preds.end());
             apply_link_inverse_by_name(obj_name, tick.validation_preds);
-            // " | valid" is the printed column header, a user-facing name.
             print_metric_row(" | valid", raw_validation, tick.validation_preds,
                              tick.validation_labels, metrics);
         }

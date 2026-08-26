@@ -1,10 +1,5 @@
 #pragma once
 
-// BONSAI_CUDA_PROFILE=1 timing accumulators and the running-stopwatch helper
-// they pair with. Shared by the CUDA translation units: everything here has
-// external linkage in namespace bonsai::cuda_detail and references no
-// internal-linkage entity, so including it from more than one TU is ODR-clean.
-
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
@@ -16,14 +11,12 @@ namespace bonsai
 namespace cuda_detail
 {
 
-// Whether BONSAI_CUDA_PROFILE=1 is set, read once per process.
 inline bool profile_on()
 {
     static bool const on = std::getenv("BONSAI_CUDA_PROFILE") != nullptr;
     return on;
 }
 
-// BONSAI_CUDA_PROFILE=1 accumulators, printed at engine destruction.
 struct ProfileCounters
 {
     using clock     = std::chrono::steady_clock;
@@ -33,18 +26,12 @@ struct ProfileCounters
     double gh_upload_s = 0, root_stage_s = 0, gpu_wait_s = 0;
     double bins_upload_s = 0, fin_wait_s = 0, fin_d2h_s = 0;
     double find_kern_s = 0, find_d2h_s = 0;
-    // Marginal-round decomposition: device-side spans from event pairs read at
-    // the next profile sync, plus the begin_root host reduction, so every
-    // millisecond of the round has a name.
     double root_sums_s = 0, adv_memset_s = 0, adv_hist_s = 0, adv_sub_s = 0;
     double root_hist_s = 0, fin_stamp_s = 0, fin_map_s = 0;
-    // Partition-chain decomposition (issue #341): the single gpu_s lap hid
+    // perf: Partition-chain decomposition: the single gpu_s lap hid
     // route, scan, and scatter behind one number.
     double part_route_s = 0, part_scan_s = 0, part_scatter_s = 0;
-    // Resident-objective laps: the device gradient kernel that replaces the gh
-    // upload, and the fused route+score-update that replaces the finalize D2H.
     double obj_kernel_s = 0, score_kernel_s = 0;
-    // Validation-plane lap: the per-round eval walk plus its scores fetch.
     double eval_kernel_s = 0;
     size_t launches = 0, gpu_nodes = 0;
 
@@ -54,9 +41,6 @@ struct ProfileCounters
     ProfileCounters(ProfileCounters &&) noexcept            = delete;
     ProfileCounters &operator=(ProfileCounters &&) noexcept = delete;
 
-    // Running stopwatch: lap(sink) adds the time since the previous lap into
-    // sink, a no-op when profiling is off. One per method call marks off its
-    // upload / gpu / unpack phases against the shared accumulators.
     struct Lap
     {
         bool              enabled;

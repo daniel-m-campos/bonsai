@@ -57,7 +57,7 @@ TEST_CASE("the blocked partition is the serial order at every decomposition",
 {
     parallel::set_n_threads(4);
     Dataset const ds   = make_dataset(5000, 2);
-    auto const    rows = test::iota_rows(ds.n_rows());
+    auto const    rows = test::iota_rows(ds.plane_n_rows());
     SplitOutput   s;
     s.feature_id   = 0;
     s.bin_id       = static_cast<bin_id_t>(ds.n_bins(0) / 2);

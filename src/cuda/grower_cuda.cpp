@@ -1,9 +1,3 @@
-// Explicit instantiation of the CUDA-backed growers (the CudaDepthwiseGrower,
-// CudaObliviousGrower, and CudaLeafwiseGrower aliases). Lives in its own TU so
-// grower.cpp never
-// depends on the CUDA backend; only compiled when BONSAI_CUDA is enabled.
-// The class-template form is spelled out here because explicit instantiation
-// cannot name a type alias.
 
 #include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/grower.hpp"
