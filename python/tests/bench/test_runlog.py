@@ -27,6 +27,31 @@ def test_runlog_roundtrip():
         runlog.emit_row("/tmp/x.jsonl", division="nope", suite="s")
 
 
+def test_a_stated_sha_beats_the_working_directory(monkeypatch):
+    """The pod states the commit it asserted; the runner must not re-derive
+    it. Deriving it from the cwd is what recorded "unknown" on two 1.15.0
+    axes run from outside the checkout (issue #433)."""
+    monkeypatch.setenv("BONSAI_BENCH_GIT_SHA", "deadbeef")
+    assert runlog.git_sha() == "deadbeef"
+
+
+def test_a_blank_stated_sha_falls_back_rather_than_recording_empty(monkeypatch):
+    """An exported-but-empty variable is the shape a shell produces from an
+    unset value, and it must not become the recorded provenance."""
+    monkeypatch.setenv("BONSAI_BENCH_GIT_SHA", "   ")
+    assert runlog.git_sha() != ""
+    assert runlog.git_sha().strip() == runlog.git_sha()
+
+
+def test_outside_a_checkout_with_nothing_stated_the_sha_is_unknown(
+        monkeypatch, tmp_path):
+    """The failure this guards: no statement plus no checkout means the rows
+    cannot be attributed, and update_standings refuses them."""
+    monkeypatch.delenv("BONSAI_BENCH_GIT_SHA", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert runlog.git_sha() == "unknown"
+
+
 def test_row_field_spellings_are_distinct():
     """Every Row constant names a different column: a collision would
     silently overwrite a row field on emit."""

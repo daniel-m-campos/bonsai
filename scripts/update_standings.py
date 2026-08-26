@@ -166,6 +166,15 @@ def supersede(args: argparse.Namespace, reg: dict) -> int:
         print(f"ERROR: {args.file} carries shas {sorted(shas)}; a standings "
               "file must be single-sha", file=sys.stderr)
         return 1
+    # "unknown" is what runlog records when nothing states the commit and the
+    # cwd is not a checkout. It is truthy, so every downstream check passes
+    # while the row stays unattributable; the registry would claim provenance
+    # it does not have. Set BONSAI_BENCH_GIT_SHA and re-run.
+    if shas == {"unknown"}:
+        print(f"ERROR: {args.file} carries git_sha \"unknown\", so nothing "
+              "ties these rows to a commit; re-run with BONSAI_BENCH_GIT_SHA "
+              "set (the pod script sets it from GIT_SHA)", file=sys.stderr)
+        return 1
     hosts = {(r["host"].get("name") if isinstance(r.get("host"), dict)
               else r.get("host")) for r in rows if r.get("host")}
     dates = sorted({r["ts"][:10] for r in rows if r.get("ts")})
