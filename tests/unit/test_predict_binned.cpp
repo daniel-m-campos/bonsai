@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <cmath>
 #include <cstddef>
 #include <limits>
 #include <span>
@@ -115,8 +116,75 @@ void check_parity(B const &b, Dataset const &ds, features_view X, size_t n_featu
 
 } // namespace
 
+// INVARIANT: train-predict-bin-boundary-parity
+// A row sitting exactly on a cut routes the same at train time and at predict
+// time. The grower routes on `bin <= split_bin` while the predict walk routes
+// on the stored raw `threshold`, and the two agree only because the binner is
+// right-inclusive (bin b holds v in (cuts[b-1], cuts[b]]) and the FLT_MAX
+// top-band closer keeps every finite value above the last cut out of the NaN
+// sentinel. Cut values are the witness: they are the only inputs where a
+// one-ulp disagreement between the two rules changes the leaf.
+TEST_CASE("Binned prediction: a value on a cut routes the same both ways",
+          "[predict][binned][invariant]")
+{
+    detail::ColumnBatch const batch   = binned_batch();
+    BinMappers const          mappers = BinMappers::fit(batch, {});
+    Dataset const             ds      = Dataset::bin(batch, mappers, {});
+
+    Booster<MSEObjective, DepthwiseGrower<>, AllRowsSampler> b{small_config()};
+    for (int i = 0; i < 8; ++i)
+    {
+        b.update_one_iter(ds);
+    }
+
+    // Every cut of every feature, and one ulp either side of it, broadcast
+    // across all three features so each column is probed at its own edges.
+    std::vector<float> probes;
+    for (size_t f = 0; f < 3; ++f)
+    {
+        for (float const c : mappers[f].cuts())
+        {
+            // The cut list ends with the FLT_MAX top-band closer and the
+            // +inf missing sentinel. Probing those is not the claim: one ulp
+            // above FLT_MAX is infinity, which no fitted domain contains.
+            if (c >= std::numeric_limits<float>::max())
+            {
+                continue;
+            }
+            probes.push_back(c);
+            probes.push_back(
+                std::nextafter(c, -std::numeric_limits<float>::infinity()));
+            probes.push_back(std::nextafter(c, std::numeric_limits<float>::infinity()));
+        }
+    }
+    REQUIRE(probes.size() > 3);
+
+    size_t const       n = probes.size();
+    std::vector<float> raw(n * 3);
+    for (size_t r = 0; r < n; ++r)
+    {
+        for (size_t f = 0; f < 3; ++f)
+        {
+            raw[(r * 3) + f] = probes[r];
+        }
+    }
+    features_view const X{raw.data(), n, 3};
+
+    std::vector<float> const labels(n, 0.0F);
+    Dataset const            probe_ds =
+        Dataset::bin(X, floats_view{labels.data(), n}, mappers, {});
+
+    check_parity(b, probe_ds, X, 3, 1);
+}
+
+// INVARIANT: binned-walk-bit-identical-to-raw-walk
+// Predicting through a Dataset carrying the model's own cuts is bit-identical
+// to predicting through the raw matrix, across the whole family: predict,
+// staged, leaf indices and SHAP contributions. This is a documented escape
+// hatch ("pass a Dataset instead of X"), so a divergence would silently change
+// answers for a caller who took the advice.
 TEST_CASE("Binned prediction: depthwise booster matches the raw walk bit for bit",
-          "[predict][binned]")
+          "[predict][binned][invariant]")
 {
     detail::ColumnBatch const batch   = binned_batch();
     BinMappers const          mappers = BinMappers::fit(batch, {});

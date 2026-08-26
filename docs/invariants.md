@@ -8,6 +8,12 @@ The cross-file contracts. Each is stated once here and nowhere else; every other
 
 Breaking one of these fails the suite.
 
+### binned-walk-bit-identical-to-raw-walk
+
+Predicting through a Dataset carrying the model's own cuts is bit-identical to predicting through the raw matrix, across the whole family: predict, staged, leaf indices and SHAP contributions. This is a documented escape hatch ("pass a Dataset instead of X"), so a divergence would silently change answers for a caller who took the advice.
+
+- enforced by: [`Binned prediction: depthwise booster matches the raw walk bit for bit`](../tests/unit/test_predict_binned.cpp)
+
 ### dart-excludes-early-stopping
 
 DART and early stopping are incompatible by construction and the combination throws rather than silently producing wrong validation numbers: DART rescales earlier trees every round, which invalidates the incrementally accumulated validation scores early stopping reads.
@@ -19,6 +25,18 @@ DART and early stopping are incompatible by construction and the combination thr
 The levelwise (oblivious) grower rejects monotone and interaction constraints at construction rather than silently ignoring them, on both the CPU and CUDA engines: the throw is in the shared template, so an engine cannot opt out of it.
 
 - enforced by: [`ObliviousGrower: rejects constraints it cannot honour at construction`](../tests/unit/test_oblivious_grower.cpp)
+
+### perfect-tree-numbering-one-scheme
+
+The flattened node table and ObliviousTree::leaf_for agree on one numbering. The table gives internal node i the children 2i+1 and 2i+2 and appends the leaves after the internals in leaf_table order; leaf_for builds its index by shifting a bit per level, left as 0. Those two must name the same leaf for every root-to-leaf path, or the device epilogue and the host walk read different values out of the same tree. Four sites share the scheme, which is past the count where a normal change reliably updates all of them.
+
+- enforced by: [`ObliviousTree: the flattened table numbers leaves as leaf_for does`](../tests/unit/test_oblivious_tree.cpp)
+
+### train-predict-bin-boundary-parity
+
+A row sitting exactly on a cut routes the same at train time and at predict time. The grower routes on `bin <= split_bin` while the predict walk routes on the stored raw `threshold`, and the two agree only because the binner is right-inclusive (bin b holds v in (cuts[b-1], cuts[b]]) and the FLT_MAX top-band closer keeps every finite value above the last cut out of the NaN sentinel. Cut values are the witness: they are the only inputs where a one-ulp disagreement between the two rules changes the leaf.
+
+- enforced by: [`Binned prediction: a value on a cut routes the same both ways`](../tests/unit/test_predict_binned.cpp)
 
 ### view-narrows-rows-not-plane
 
