@@ -10,6 +10,7 @@
 
 #include "bonsai/cli/pipeline.hpp"
 #include "bonsai/config/config.hpp"
+#include "bonsai/config/errors.hpp"
 #include "bonsai/io/model.hpp"
 
 using namespace bonsai;      // NOLINT
@@ -38,7 +39,7 @@ TEST_CASE("load_train_from_csv: tiny.csv yields N rows and non-empty mappers",
     auto const cfg    = make_tiny_config();
     auto const loaded = load_train_from_csv(cfg, cfg.data.train);
 
-    CHECK(loaded.train.n_rows() == 4);
+    CHECK(loaded.train.plane_n_rows() == 4);
     CHECK(loaded.train.n_features() > 0);
     CHECK(loaded.mappers.size() > 0);
 }
@@ -352,4 +353,30 @@ TEST_CASE("multiclass warm start keeps the loaded class priors",
     float const seeded_loss =
         continued->validation_loss(seeded, floats_view{loaded_a.train.labels});
     CHECK(seeded_loss == Catch::Approx(loaded_loss).margin(1e-5));
+}
+
+// INVARIANT: dart-excludes-early-stopping
+// DART and early stopping are incompatible by construction and the
+// combination throws rather than silently producing wrong validation
+// numbers: DART rescales earlier trees every round, which invalidates the
+// incrementally accumulated validation scores early stopping reads.
+TEST_CASE("train_with_progress: DART and early stopping refuse to combine",
+          "[cli_pipeline][train][ctor][invariant]")
+{
+    auto cfg          = make_tiny_config();
+    cfg.data.valid    = {k_tiny_path};
+    auto const loaded = load_train_and_validation_from_csv(cfg);
+    REQUIRE(loaded.validation.has_value());
+
+    cfg.booster_config.dart_drop_rate        = 0.1F;
+    cfg.booster_config.early_stopping_rounds = 2;
+    CHECK_THROWS_AS(train_with_progress(cfg, loaded.train, loaded.validation.value()),
+                    ConfigError);
+
+    SECTION("DART alone, with no early stopping, trains")
+    {
+        cfg.booster_config.early_stopping_rounds = 0;
+        CHECK_NOTHROW(
+            train_with_progress(cfg, loaded.train, loaded.validation.value()));
+    }
 }
