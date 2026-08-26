@@ -11,6 +11,13 @@
 namespace bonsai
 {
 
+// One feature's value-to-bin map: right-edge cuts, the last cut a +inf
+// sentinel, NaN routed to the reserved final bin. transform() is the one
+// binning rule in the system: the CUDA ingest kernel mirrors it bit for bit
+// (docs/invariants.md, device-binning-byte-identity) and predict inverts it
+// through bin_of_threshold, so an edit here is a wire-format change even
+// though no byte layout moves. Three constructors, one invariant: cuts are
+// strictly increasing and bin(v) <= split_bin iff v <= cuts[split_bin].
 class BinMapper
 {
   public:

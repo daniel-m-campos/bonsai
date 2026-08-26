@@ -9,7 +9,7 @@
 // `std::meta::nonstatic_data_members_of(^SubConfig)`, and the
 // `field<MemPtr>()` helper retires in favor of `meta::identifier_of(member)`.
 // The Field/Section/FieldCodec/dispatch layers below this seam stay
-// unchanged. See docs/architecture or `internal/field_name.hpp` for the
+// unchanged. See `internal/field_name.hpp` for the
 // stand-in mechanism.
 
 #include <tuple>

@@ -36,6 +36,13 @@ struct HistCell
 
 using cell_view_t = std::span<HistCell const>;
 
+// One node's per-feature cells, viewing memory it never owns: histograms are
+// carved from a level's arena (NodeHistograms::carve) or leased from the
+// block pool, and a Histogram must not outlive its arena. Cells store float
+// sums; every reduction over them runs in double, and node totals are
+// computed at split time rather than accumulated in the fill, which is what
+// keeps the subtraction trick exact (docs/invariants.md). The last cell per
+// feature is the missing bin: honest data, outside the split sweep.
 class Histogram
 {
   public:
@@ -255,7 +262,7 @@ class ArenaLayout
 // One node's per-feature histograms and the single arena their cells live
 // in. The two are one type because they are one lifetime: the histograms
 // view the arena, and both move together whenever a node's histograms do
-// (docs/architecture/2-histogram.md).
+// (docs/invariants.md).
 class NodeHistograms
 {
   public:

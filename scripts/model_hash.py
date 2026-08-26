@@ -56,7 +56,7 @@ def main() -> int:
     # kills accumulation drift. Whichever tier first diverges names the layer.
     # Two hashes, one contract at two thread counts: model bits depend only on
     # the input, the config, and the CONFIGURED thread count (the fill plan
-    # scales block counts with it — docs/architecture/7-parallel.md), never on
+    # scales block counts with it — docs/invariants.md), never on
     # the architecture (decisions 59/60). Both lines are asserted equal across
     # arm64/x86-64 by the cross-arch CI gate.
     print("serial_sha256:",

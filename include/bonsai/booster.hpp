@@ -45,6 +45,15 @@ enum class ImportanceType : uint8_t
 // What a device predict plan needs from a booster: the dense ensemble to pack
 // in bin space, the scale and base every prediction applies to the packed
 // sum, and the mutation epoch that says when a cached plan is stale.
+//
+// The lifetime contract is the reason keep_alive exists: `trees` is valid
+// while this struct is alive, not until the booster mutates. A dense booster
+// lends a view of its own ensemble and leaves keep_alive null; an oblivious
+// one attaches its epoch-cached dense equivalent, which nothing else owns.
+// Safe because both device packers copy and upload at pack time and retain
+// nothing, so ownership only has to outlive the pack call. Dropping
+// keep_alive segfaults the levelwise arm; the booster-destruction test in
+// test_booster.cpp pins it.
 struct DevicePlanInput
 {
     std::span<DenseTree const>                    trees;
@@ -504,6 +513,15 @@ template <typename T> class Versioned
 
 } // namespace internal
 
+// One boosting round in update_one_iter runs in a fixed order that several
+// features depend on: DART drop/rescale first (it rewrites earlier trees'
+// contributions), then gradients, then sampling (so a gradient-reading
+// sampler like GOSS sees this round's values), then grow, then leaf renewal
+// for surrogate-hessian objectives, then the score update. The device-
+// resident objective short-circuits the gradient/score legs onto the device
+// when eligible (see docs/invariants.md, resident-objective-eligibility);
+// reordering any leg breaks either DART or renewal, and the round's
+// bit-identity across runs is what the cross-arch hash gate checks.
 template <Objective Obj, TreeGrower Gr, Sampler Sa>
 class Booster final : public IBooster
 {

@@ -258,7 +258,7 @@ struct CudaDeviceContext
         void stage_level_sums(std::span<SplitInput const> level);
     };
 
-    // Per-tree leaf pipeline (docs/architecture/20-cuda-leafwise.md): best-first
+    // Per-tree leaf pipeline (docs/invariants.md): best-first
     // growth expands one leaf at a time, so histograms live in a slot pool
     // zeroed once per tree instead of the level plane's ping-pong. The root
     // takes slot 0, every split builds the smaller child into the next free
@@ -444,7 +444,7 @@ struct CudaDeviceContext
                           std::span<SplitInput const> level, std::span<SplitOutput> out,
                           std::span<HistCell> child_sums);
 
-    // --- Leaf plane (docs/architecture/20-cuda-leafwise.md) -------------------
+    // --- Leaf plane (docs/invariants.md) -------------------
     // Opens the tree's slot pool, seeds the root segment, and builds slot 0.
     // Throws ConfigError when the histogram or the pool budget cannot hold
     // this tree; there is no host fallback.

@@ -16,7 +16,7 @@ namespace bonsai
 
 // True when this build carries the CUDA backend AND a usable device is
 // present. cuda_depthwise is registered in every build; only training
-// needs this to be true. See docs/architecture/10-cuda.md.
+// needs this to be true. See docs/invariants.md.
 bool cuda_available();
 
 // Select the CUDA device for subsequent device work on the CALLING thread
@@ -72,7 +72,7 @@ std::shared_ptr<IngestPlane const> cuda_ingest_device(DeviceMatrix const &X,
 // (src/cuda/histogram_engine.cu; a throwing stub backs it when built
 // without BONSAI_CUDA). GPU cells match the CPU engine to tolerance, not
 // bit-exactly: atomics accumulate in arbitrary order. Design and precision
-// scheme: docs/architecture/10-cuda.md.
+// scheme: docs/invariants.md.
 class CudaHistogramEngine
 {
   public:
@@ -93,7 +93,7 @@ class CudaHistogramEngine
                   SplitInput &split_input, std::span<feature_id_t const> selected);
 
     // --- GPULevelEngine (optional, phase 3,
-    // docs/architecture/11-gpu-resident.md). Level histograms stay on the device, keyed
+    // docs/invariants.md). Level histograms stay on the device, keyed
     // by the node's index in the grower's frontier ("slot"); splits are found on the
     // device and only decisions and child sums cross the bus. The depthwise grower
     // gates this whole cluster on the GPULevelEngine concept.
@@ -127,7 +127,7 @@ class CudaHistogramEngine
     };
 
     // One flattened tree node the device-resident epilogue walks in bin space
-    // to fuse the per-row score update (docs/architecture/10-cuda.md). Internal
+    // to fuse the per-row score update (docs/invariants.md). Internal
     // nodes carry the split (feature, bin, missing routing, children); leaves
     // carry the contribution. Dense trees map their nodes one-to-one; oblivious
     // trees synthesize the perfect-tree numbering (children 2i+1 / 2i+2).
@@ -183,7 +183,7 @@ class CudaHistogramEngine
                           std::span<SplitInput const> level, std::span<SplitOutput> out,
                           std::span<HistCell> child_sums);
 
-    // --- GPULeafEngine (docs/architecture/20-cuda-leafwise.md). Best-first
+    // --- GPULeafEngine (docs/invariants.md). Best-first
     // growth expands one leaf at a time, so this plane keeps a per-tree
     // histogram slot pool instead of the level plane's ping-pong: the root
     // takes slot 0, every split builds the smaller child into the next free
@@ -242,7 +242,7 @@ class CudaHistogramEngine
     // stamp them all at once.
     void leaf_stamp(std::span<LeafStamp const> stamps);
 
-    // --- Device-resident objective (docs/architecture/10-cuda.md). Labels and
+    // --- Device-resident objective (docs/invariants.md). Labels and
     // the per-row score vector live on the device for the whole fit. Per tree
     // the engine derives grad/hess from them on device (no host objective, no
     // gh upload); the resident finalize walks the finished tree in bin space

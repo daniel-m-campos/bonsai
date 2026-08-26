@@ -1,3 +1,11 @@
+// The CLI wires eight subcommands: fit, predict, eval, bench, dump,
+// importance, info, params. Every handler resolves config the same way
+// (TOML file, then --set overrides, strict unknown-key errors), `info`
+// reads the registry dispatch reads so it cannot drift from what a build
+// constructs, and predict applies the model's link inverse unless
+// --raw-scores opts out. Exit codes: 0 ok, 1 runtime failure, 2 usage or
+// config error, matching what the handlers throw.
+
 #include <cstdio>
 #include <cstdlib>
 #include <exception>

@@ -588,7 +588,7 @@ TEST_CASE("Resident weighted LogLoss under Bernoulli sampling matches host",
     REQUIRE(max_abs_diff(host, res) < 0.35F);
 }
 
-// ---- The leaf plane (docs/architecture/20-cuda-leafwise.md) ------------------
+// ---- The leaf plane (docs/invariants.md) ------------------
 
 TEST_CASE("Resident MSE matches host-objective GPU (leafwise)", "[cuda][resident]")
 {

@@ -29,6 +29,15 @@ enum class FitId : uint64_t
 {
 };
 
+// The binned training matrix plus everything a fit reads beside it: labels,
+// weights, cuts, names, and the row view. Copying a Dataset copies pointers,
+// not bins: the plane lives in a shared BinStore, which is how subset(rows=)
+// views cost a row descriptor instead of a matrix. Identity is minted, never
+// inferred: FitId/LabelsId tokens say when two Datasets share a plane or
+// labels, and anything caching against a Dataset (device upload, resident
+// labels) must key on a token, not an address. Row identity is the wire
+// contract: what a row id means never changes across views (decision 103),
+// so a reordered fit is a rewrite, not a remap.
 class Dataset
 {
   public:

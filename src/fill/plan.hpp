@@ -25,7 +25,7 @@ namespace bonsai::fill_detail
 
 // Grow-only storage for the fill's partials: kept at its high-water mark for
 // the whole fit, so its zero fill is paid a handful of times per process
-// (docs/architecture/7-parallel.md).
+// (docs/invariants.md).
 inline std::span<HistCell> partials_storage(size_t n_cells)
 {
     static thread_local std::vector<HistCell> cells;

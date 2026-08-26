@@ -22,7 +22,7 @@ namespace bonsai::fill_detail
 // Prefetch distance for the column fill's gathered arm, in rows: the loop
 // carries one L1-resident add per row, so the lookahead has to cover a DRAM
 // latency in row iterations rather than the mirror fill's 16
-// (docs/architecture/7-parallel.md).
+// (docs/invariants.md).
 inline constexpr size_t k_col_ahead = 64;
 
 // One feature's column fill: the thread owning this histogram fills it in the

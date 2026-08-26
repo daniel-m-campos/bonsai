@@ -1,7 +1,7 @@
 #pragma once
 
 // The level/find/partition device kernels, extracted from histogram_engine.cu
-// for readability (docs/architecture/10-cuda.md). Included by the
+// for readability (docs/invariants.md). Included by the
 // device-context TU that launches them; the ingest arm's kernels live in
 // ingest_kernels.cuh so each TU includes only the kernels it uses. The kernels
 // stay anonymous and private to each including TU. The host/device shared PODs
@@ -304,7 +304,7 @@ __global__ void hist_small_kernel(BinT const *bins, float2 const *gh_ordered,
     }
 }
 
-// --- Device row partitioning (docs/architecture/11-gpu-resident.md).
+// --- Device row partitioning (docs/invariants.md).
 // Rows live in ping-pong segment buffers; each split routes its parent
 // segment into stable left/right child segments via count -> scan -> scatter
 // (hand-rolled: no CUB, the TU stays self-contained). CHUNK rows per block,
@@ -580,7 +580,7 @@ inline __device__ bool feat_better(double ga, int ba, int da, int va, double gb,
 // every lane scores its own bins, and a warp reduce picks the winner with the
 // same (max gain, then lowest bin, then default_left) tie-break as the serial
 // CPU scan. The tiled summation order differs, so results are tolerance-equal
-// (docs/architecture/11-gpu-resident.md), not bit-equal. hist_slot names each
+// (docs/invariants.md), not bit-equal. hist_slot names each
 // node's histogram slot, mirroring hist_kernel's out_slot: the level plane
 // leaves it null (slot == node), the leaf plane's pool needs the indirection.
 __global__ void find_kernel(double const *hists, uint32_t const *features,

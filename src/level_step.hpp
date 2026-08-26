@@ -1,11 +1,9 @@
 #pragma once
 
-// The grower's data plane (docs/architecture/12-grower-backend.md, decision
-// 41; transaction vocabulary from docs/architecture/14-engine-narrative.md,
-// decision 53). LevelStep groups the per-tree data-plane steps — root setup,
-// open_level (split finding), apply_level (row partitioning), child
-// histogram construction, end_tree (leaf finalize) — behind one interface,
-// selected by engine type: the primary template is the host plane and the
+// The grower's data plane (decisions 41 and 53). LevelStep groups the per-tree
+// data-plane steps — root setup, open_level (split finding), apply_level (row
+// partitioning), child histogram construction, end_tree (leaf finalize) — behind one
+// interface, selected by engine type: the primary template is the host plane and the
 // GPULevelEngine specialization is the device plane. Neither carries a runtime
 // fork: a tree the device cannot hold is refused, not moved. The grow loops
 // stay the control plane: every decision (leaf-vs-split, smaller-child

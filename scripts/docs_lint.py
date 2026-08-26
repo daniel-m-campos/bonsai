@@ -7,10 +7,10 @@ review. Stdlib only, like the other doc generators; no build required.
 Scope: the published pages only. `exclude_docs` in mkdocs.yml lists what
 never reaches the site (STYLE.md itself, ops/, reviews/, and the loose
 working notes); `_docs_corpus.corpus_files` parses that block and skips the
-same files. It ADDITIONALLY exempts the frozen archive, docs/decisions.md and
-docs/architecture/**: that material is a historical record, first-class
-for agents and deep divers but deliberately out of the main line, and
-rewriting it to today's style would falsify the record.
+same files. It ADDITIONALLY exempts the frozen archive, docs/decisions.md:
+that material is a historical record, first-class for agents and deep
+divers but deliberately out of the main line, and rewriting it to today's
+style would falsify the record.
 README.md is linted too (it is the repo's front page).
 
 Two tiers of rule:

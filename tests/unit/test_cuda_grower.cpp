@@ -344,7 +344,7 @@ TEST_CASE("CudaObliviousGrower matches CPU when deep nodes go infeasible (issue 
     }
 }
 
-// ---- The leaf plane (docs/architecture/20-cuda-leafwise.md) ------------------
+// ---- The leaf plane (docs/invariants.md) ------------------
 
 // Every leafwise parity case asserts the same contract as the level plane's:
 // tolerance-equal predictions, never tree equality.
