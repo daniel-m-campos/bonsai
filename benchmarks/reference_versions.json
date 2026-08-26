@@ -1,6 +1,6 @@
 {
   "_": "Latest known version of each bench-extra reference library (pyproject.toml's [bench] extra is unpinned, so there is no lockfile to read statically). scripts/check_standings.py compares a quality axis's recorded refs against this ledger, major-only, when the installed package cannot be detected in the checking environment. update_standings.py refreshes it from the installed environment whenever a quality axis is superseded; bump it by hand the moment a reference library ships a new major even without a full refresh, so the hash-unchanged skip cannot hide behind a stale ledger.",
-  "xgboost": "3.3.0",
+  "xgboost": "3.2.0",
   "lightgbm": "4.6.0",
   "catboost": "1.2.10"
 }

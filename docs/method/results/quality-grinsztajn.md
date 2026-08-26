@@ -10,19 +10,19 @@ The [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) at t
 
 | library | mean rank | outright wins |
 |---|---|---|
-| bonsai | 1.47 | 36 |
+| bonsai | 1.49 | 35 |
 | lgbm | 2.40 | 6 |
 | xgb | 2.93 | 5 |
-| catboost | 3.20 | 8 |
+| catboost | 3.18 | 9 |
 
 Per-suite mean rank:
 
 | library | cat_clf | cat_reg | num_clf | num_reg |
 |---|---|---|---|---|
-| bonsai | 1.43 | 1.46 | 1.73 | 1.30 |
+| bonsai | 1.43 | 1.46 | 1.80 | 1.30 |
 | lgbm | 2.00 | 2.69 | 2.53 | 2.25 |
-| xgb | 3.71 | 2.62 | 2.80 | 2.95 |
-| catboost | 2.86 | 3.23 | 2.93 | 3.50 |
+| xgb | 3.86 | 2.62 | 2.73 | 2.95 |
+| catboost | 2.71 | 3.23 | 2.93 | 3.50 |
 
 XGBoost's campaign mapping sets `min_child_weight=20` (hessian-weighted, the knob-translation bracket recorded in decision 68). The other end of that bracket, the same suite with XGBoost at `min_child_weight=1`, was measured: bonsai keeps the lead at mean rank 1.78 and XGBoost rises to second. Those rows are closed evidence now, listed in the archive.
 

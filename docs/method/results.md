@@ -6,7 +6,7 @@ Every results file behind a published claim is rendered across the pages below, 
 
 ## Perf division
 
-On GPU at the tall scenario, fit totals run depthwise 4.3s vs XGBoost 15.2s; leafwise 5.5s vs LightGBM 20.0s; levelwise 4.2s vs CatBoost 13.5s. On CPU at the tall scenario: depthwise 11.2s vs XGBoost 7.7s; leafwise 10.6s vs LightGBM 11.0s (tie); levelwise 10.4s vs CatBoost 8.6s. The wide and extreme scenarios, the host and device memory columns, and the early-stopping axis are on the panels page.
+On GPU at the tall scenario, fit totals run depthwise 4.8s vs XGBoost 31.1s; leafwise 7.1s vs LightGBM 24.3s; levelwise 4.7s vs CatBoost 16.7s. On CPU at the tall scenario: depthwise 10.9s vs XGBoost 9.9s; leafwise 11.2s vs LightGBM 11.7s; levelwise 10.8s vs CatBoost 9.3s. The wide and extreme scenarios, the host and device memory columns, and the early-stopping axis are on the panels page.
 
 | page | what it holds |
 |---|---|
@@ -14,7 +14,7 @@ On GPU at the tall scenario, fit totals run depthwise 4.3s vs XGBoost 15.2s; lea
 
 ## Quality division
 
-bonsai leads the 55-task Grinsztajn standings at mean rank 1.47 with 36 outright wins, and keeps the lead under either reading of the one knob that translates ambiguously between libraries. Every feature declined by measurement is recorded in the archive.
+bonsai leads the 55-task Grinsztajn standings at mean rank 1.49 with 35 outright wins, and keeps the lead under either reading of the one knob that translates ambiguously between libraries. Every feature declined by measurement is recorded in the archive.
 
 | page | what it holds |
 |---|---|
