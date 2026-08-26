@@ -131,6 +131,21 @@ SPECS = REPO / "python" / "bonsai" / "bench" / "specs"
 # the throttle bracket catches material throttling, pulled back with results.
 QUOTA_FAIL = "quota-fail.txt"
 
+# How long `measure` waits for the pod's DONE marker before tearing it down,
+# roughly twice the observed run: a nine-axis release refresh lands near three
+# hours. Sized per axis because a one-axis re-measure should not inherit a
+# nine-axis deadline. POLL_MAX_MISSES ends a wait on a pod that stopped
+# answering at all, which a deadline alone would sit through (issue #423).
+POLL_BASE_S = 45 * 60
+POLL_PER_AXIS_S = 45 * 60
+POLL_MAX_MISSES = 20
+
+# The create ladder is walked until this deadline: multi-GPU stock churns on
+# roughly ten-minute timers, and one refresh needed 14 refused creates across
+# six regions before a draw succeeded about forty minutes in.
+CREATE_DEADLINE_S = 45 * 60
+CREATE_BACKOFF_S = 90
+
 SSH_OPTS = ["-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=15"]
 
@@ -555,7 +570,7 @@ def _run_session(key: str, args: argparse.Namespace, *, plane: str,
                         f"PLANE='{plane}' "
                         "bash /root/standings_refresh_pod.sh "
                         "> /root/refresh.log 2>&1 & echo launched"], check=True)
-        _poll_pod_run(ssh, out_dir, ip, port)
+        _poll_pod_run(ssh, out_dir, ip, port, axes)
     finally:
         if args.keep_pod:
             print(f"pod {pod_id} KEPT per --keep-pod; delete it yourself")
@@ -611,7 +626,10 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int,
             bodies += [card | {"dataCenterIds": [dc]}
                        for dc in stocked_datacenters(gpu, key)]
             bodies.append(card)
-    for attempt in (1, 2):
+    deadline = time.time() + CREATE_DEADLINE_S
+    attempt = 0
+    while True:
+        attempt += 1
         for candidate in bodies:
             where = ",".join(candidate.get("dataCenterIds", ["unpinned"]))
             hardware = (candidate.get("gpuTypeIds") or [CPU_FLAVOR])[0]
@@ -626,8 +644,14 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int,
                 # mean try the next candidate, neither is fatal.
                 print(f"create attempt {attempt} ({hardware}, {where}): {e}",
                       file=sys.stderr)
-        time.sleep(15)
-    raise SystemExit(f"no usable {plane} pod after 2 attempts")
+        if time.time() > deadline:
+            raise SystemExit(
+                f"no usable {plane} pod after {attempt} passes over "
+                f"{len(bodies)} candidates in "
+                f"{CREATE_DEADLINE_S // 60} minutes")
+        print(f"  every candidate refused; retrying in "
+              f"{CREATE_BACKOFF_S}s (stock churns)", flush=True)
+        time.sleep(CREATE_BACKOFF_S)
 
 
 def _wait_ssh(key: str, pod_id: str) -> tuple[str, int]:
@@ -667,30 +691,58 @@ def _wait_ssh(key: str, pod_id: str) -> tuple[str, int]:
     return ip, port
 
 
-def _poll_pod_run(ssh: list[str], out_dir: pathlib.Path, ip: str, port: int):
+def _poll_pod_run(ssh: list[str], out_dir: pathlib.Path, ip: str, port: int,
+                  axes: list[str]):
     """Poll the detached run; pull the session directory incrementally.
 
     Pulling every poll (not just at the end) means a pod that dies late
     still leaves the finished axes on this machine. The whole directory
     comes over, not just *.jsonl, because the quota gate's marker file is
     the evidence that some of those axes must not be published.
+
+    Two limits end the wait, because the pod script prints DONE on every
+    exit path including its aborts: absence past a deadline means the pod is
+    not coming back, and the `finally` above deletes it. Without them a pod
+    that lost its network billed until someone looked (issue #423). Both
+    raise, so partial results still reach this machine, since every poll
+    already pulled them.
+
+    Parameters
+    ----------
+    axes : list[str]
+        What this session measures, which sizes the deadline: a one-axis
+        sweep and a nine-axis release refresh are hours apart, and a cap
+        sized for the second is no cap at all for the first.
     """
     scp_base = ["scp", "-i", str(pathlib.Path.home() / ".ssh" / "id_ed25519"),
                 *SSH_OPTS, "-P", str(port)]
+    deadline = time.time() + POLL_BASE_S + POLL_PER_AXIS_S * max(1, len(axes))
+    misses = 0
     while True:
         time.sleep(120)
         subprocess.run([*scp_base, f"root@{ip}:/root/standings/*",
                         str(out_dir) + "/"], capture_output=True)
         tail = subprocess.run([*ssh, "tail -2 /root/refresh.log"],
                               capture_output=True, text=True)
+        left = (deadline - time.time()) / 60
         last = tail.stdout.strip().splitlines()[-1:] or [""]
-        print(f"  pod: {last[0][:110]}", flush=True)
+        print(f"  pod ({left:.0f}m left): {last[0][:100]}", flush=True)
         if "STANDINGS_REFRESH_DONE" in tail.stdout:
             subprocess.run([*scp_base, f"root@{ip}:/root/standings/*",
                             str(out_dir) + "/"], check=True)
             return
+        misses = misses + 1 if tail.returncode != 0 else 0
         if tail.returncode != 0:
-            print("  ssh poll failed; retrying", flush=True)
+            print(f"  ssh poll failed ({misses}/{POLL_MAX_MISSES})", flush=True)
+        if misses >= POLL_MAX_MISSES:
+            raise SystemExit(
+                f"pod unreachable for {misses} consecutive polls; tearing it "
+                "down. Whatever it had measured is in the results directory.")
+        if time.time() > deadline:
+            raise SystemExit(
+                f"no STANDINGS_REFRESH_DONE within the deadline for "
+                f"{len(axes)} axes; tearing the pod down. Whatever it had "
+                "measured is in the results directory.")
 
 
 def _delete_pod(key: str, pod_id: str):
