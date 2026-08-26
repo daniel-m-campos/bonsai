@@ -64,6 +64,26 @@ build-asan: build-asan/build.ninja  ## Build the ASan + UBSan variant (build-asa
 test-asan: build-asan $(TOY_SENTINEL)  ## Build the ASan + UBSan variant and run ctest (CI-only on macOS).
 	@ctest --test-dir build-asan
 
+build-tsan/build.ninja:
+	@cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+	-DCMAKE_CXX_COMPILER=$(LLVM_BIN)/clang++ \
+	-DBONSAI_TSAN=ON \
+	-G Ninja -S . -B build-tsan
+
+build-tsan: build-tsan/build.ninja  ## Build the ThreadSanitizer variant (build-tsan/).
+	@cmake --build build-tsan -j
+
+# libarcher teaches TSan the OpenMP happens-before edges. Without it every
+# disjoint-index parallel loop reads as a race: 1,756 findings on one suite
+# against 16 with it. libomp itself is uninstrumented, which is what tsan.supp
+# covers and why the suppression is scoped to that library alone.
+ARCHER_LIB ?= $(LLVM_BIN)/../lib/libarcher.so
+
+test-tsan: build-tsan $(TOY_SENTINEL)  ## Run the suite under ThreadSanitizer (Linux only).
+	@LD_PRELOAD=$(ARCHER_LIB) \
+	    TSAN_OPTIONS="suppressions=$(CURDIR)/tsan.supp halt_on_error=1" \
+	    ./build-tsan/tests/bonsai_tests
+
 clean:  ## Remove build/, build-cuda/, and build-asan/.
 	@rm -rf build build-cuda build-asan
 

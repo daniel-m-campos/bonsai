@@ -66,6 +66,19 @@ if(BONSAI_SANITIZE)
     add_link_options(-fsanitize=address,undefined)
 endif()
 
+option(BONSAI_TSAN "Build with ThreadSanitizer (CI race gate)" OFF)
+
+if(BONSAI_TSAN)
+    if(BONSAI_SANITIZE OR BONSAI_CUDA)
+        message(FATAL_ERROR "BONSAI_TSAN composes with neither BONSAI_SANITIZE "
+                            "nor the CUDA kernel TU; race-check CPU builds "
+                            "on their own.")
+    endif()
+    # Global, like the ASan profile: Catch2 gets the same instrumentation.
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=thread)
+endif()
+
 # Shared-module builds (the Python extension) need PIC everywhere; the cost
 # on the static targets is negligible.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)

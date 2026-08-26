@@ -29,6 +29,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      parallel: ${{ steps.filter.outputs.parallel }}
       snippets: ${{ steps.filter.outputs.snippets }}
     steps:
       - uses: actions/checkout@v4
@@ -44,6 +45,20 @@ jobs:
               - "**"
               - "!docs/**"
               - "!README.md"
+            # The race gate is cheap but its findings are only attributable
+            # when they follow a change to parallel code; firing it on every
+            # push makes the noise uncorrelated with what the author touched.
+            parallel:
+              - "src/fill/**"
+              - "src/step/**"
+              - "src/grower*"
+              - "src/bin_mappers.cpp"
+              - "src/bin_store.cpp"
+              - "src/dataset.cpp"
+              - "include/bonsai/parallel.hpp"
+              - "CMakeLists.txt"
+              - "tsan.supp"
+              - ".github/workflows/ci.yml"
               - "!CHANGELOG.md"
               - "!mkdocs.yml"
 
@@ -103,6 +118,29 @@ jobs:
       - run: make test-asan
         env:
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+
+  race:
+    needs: changes
+    if: needs.changes.outputs.parallel == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-llvm
+      - uses: astral-sh/setup-uv@v5
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: tsan
+      - uses: actions/cache@v4
+        with:
+          path: build-tsan/_deps
+          key: deps-tsan-${{ hashFiles('CMakeLists.txt') }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            tests/data/.toy-fetched
+            tests/data/california_housing_*.csv
+          key: toy-data-v2-${{ hashFiles('scripts/fetch_toy.py') }}
+      - run: make test-tsan
 
   format:
     needs: changes

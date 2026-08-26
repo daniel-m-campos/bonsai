@@ -1,0 +1,11 @@
+# libomp is not built with ThreadSanitizer, so its internal allocator
+# (__kmp_allocate and __kmp_free recycling per-thread team and task blocks)
+# and its own mutex bookkeeping read as races. libarcher annotates the
+# OpenMP happens-before edges around user code; it cannot annotate the
+# runtime private state.
+#
+# This is narrow on purpose. Every access it suppresses is inside libomp:
+# a full-suite run on 2026-08-26 reported 3,626 races, and all 7,252 racing
+# accesses sat at five libomp offsets with no bonsai frame among them.
+# Anything in bonsai code still fails the build.
+called_from_lib:libomp.so
