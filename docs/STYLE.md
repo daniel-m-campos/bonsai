@@ -42,15 +42,28 @@ Never edit `docs/invariants.md`. It is generated, and `docs-check` fails on drif
 
 ## Audience and goal
 
-Three readers, in rough order of arrival volume:
+Four readers, in rough order of arrival volume:
 
 1. **ML practitioners**: know gradient boosting, evaluating whether to switch. Want capability, benchmarks, and API surface. Skim.
 2. **Developers**: may not know GBTs deeply, need to integrate the library into a system. Want install, contracts, determinism guarantees, failure modes.
 3. **GBT newcomers**: here to learn the algorithm. Want motivation before mechanism, and permission to go slowly.
+4. **Agents**: writing most of the code in this repository. Want contracts, operational knowledge, and settled rationale. Arrive by grep, not by navigation.
 
-**The key design fact: these audiences do not want different prose. They want different entry points into the same prose.** All three read faster with short sentences, plain vocabulary, and concrete numbers. What differs is how much scaffolding precedes the technical content, and scaffolding is a structural choice, not a stylistic one.
+**The key design fact: these audiences do not want different prose. They want different entry points into the same prose.** All four read faster with short sentences, plain vocabulary, and concrete numbers. What differs is how much scaffolding precedes the technical content, and scaffolding is a structural choice, not a stylistic one.
 
 So: the style rules below are near-uniform across the site. Information architecture does the audience-splitting work.
+
+### What the fourth reader changes
+
+An agent reads differently in three ways, and each one shaped the routing table above.
+
+**It arrives by searching for a claim, not by browsing.** Nav position buys nothing; a greppable statement with the source beside it buys everything. That is why contracts live in one indexed file rather than wherever the topic happens to fit.
+
+**It pays for what it reads and cannot skim.** A person scans a long page in seconds and discards the irrelevant. An agent either loads the page, spending context, or greps it, missing the surrounding argument. Length is a real cost, so a page earns its size or gets cut.
+
+**Stale prose is worse than no prose.** A human reading that a rejected design was rejected, when it shipped, is briefly confused and checks the code. An agent may act on it: write against the wrong model, then discover the error late. Absent documentation costs a lookup; wrong documentation costs the work built on it. This is the strongest argument in the style guide for deleting anything nothing keeps true.
+
+None of this asks for different sentences. It asks that every claim be findable, sized, and provably current, which is what the routing table enforces.
 
 ## The rules
 
