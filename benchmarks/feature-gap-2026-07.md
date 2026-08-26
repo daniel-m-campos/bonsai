@@ -1,6 +1,6 @@
 # Feature gap: bonsai vs xgboost / lightgbm / catboost
 
-> **Frozen record.** The parity tracker as it stood when the last of its rows closed, kept because decisions 34, 35, and 38 cite its A/B tables as their evidence. It is no longer a live tracker: the datasets it measures on (California Housing, Year Prediction MSD) are retired, and several result files it names have been deleted. Current feature status is [decisions.md](decisions.md); current numbers are [the results ledger](method/results.md).
+> **Frozen record.** The parity tracker as it stood when the last of its rows closed, kept because decisions 34, 35, and 38 cite its A/B tables as their evidence. It is no longer a live tracker: the datasets it measures on (California Housing, Year Prediction MSD) are retired, and several result files it names have been deleted. Current feature status is [decisions.md](../docs/decisions.md); current numbers are [the results ledger](../docs/method/results.md).
 
 Features the reference libraries have and bonsai lacks, sorted by expected
 fit/predict impact on the benchmark datasets (California Housing, Year

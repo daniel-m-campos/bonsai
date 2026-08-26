@@ -51,7 +51,7 @@ print("stopped at iteration:", m.n_iters_)
 print("valid R2:", round(m.score(Xv, yv), 4))
 ```
 
-Measured (feature_gap §3): with everyone stopping on the same 90/10 split,
+Measured (the feature-gap record §3): with everyone stopping on the same 90/10 split,
 all five libraries converge to RMSE 8.96–9.00, and bonsai leafwise lands
 *between* XGBoost and LightGBM, erasing the gap a fixed 200-iteration
 budget showed.
@@ -163,7 +163,7 @@ print("plain R2:", round(plain.score(X, y), 4))
 print("dart  R2:", round(dart.score(X, y), 4))
 ```
 
-Measured (feature_gap §8): DART regularizes: everyone lands *above* their
+Measured (the feature-gap record §8): DART regularizes: everyone lands *above* their
 plain-GBDT RMSE at a fixed 200-round budget, and bonsai's implementation
 degrades least (0.593 vs XGBoost 0.626, LightGBM 0.702).
 

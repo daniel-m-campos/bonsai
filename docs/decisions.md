@@ -551,7 +551,7 @@ CSV load: whole-file read + line index + row-parallel `from_chars` parse straigh
 
 Four reference-library features landed in one pass, each benchmarked A/B on
 Year Prediction MSD with the equivalent knob enabled in xgboost / lightgbm /
-catboost (protocol + tables in [feature_gap.md](https://github.com/daniel-m-campos/bonsai/blob/main/docs/feature_gap.md)):
+catboost (protocol + tables in [the feature-gap record](https://github.com/daniel-m-campos/bonsai/blob/main/benchmarks/feature-gap-2026-07.md)):
 
 - **`tree.feature_fraction`**: per-tree feature subsample drawn from a
   grower-owned rng (`tree.feature_seed`), histograms built for selected
@@ -588,7 +588,7 @@ test the day the first subsampler landed.
 ## 35. Remaining-gap round: objectives, monotone, interaction, DART
 
 Second feature-parity pass (protocol and A/B tables in
-[feature_gap.md](https://github.com/daniel-m-campos/bonsai/blob/main/docs/feature_gap.md)); sparse/EFB explicitly stays out of scope
+[the feature-gap record](https://github.com/daniel-m-campos/bonsai/blob/main/benchmarks/feature-gap-2026-07.md)); sparse/EFB explicitly stays out of scope
 until the harness has a sparse dataset to measure against.
 
 - **Objectives became Config-constructed instances** (like `Sampler`) so
@@ -671,7 +671,7 @@ milestones are now git-tagged (the MVP submission tag, `v0.2.0`–`v0.5.0`).
 
 ## 38. Completing the non-categorical gap: rows 10-17 in one push
 
-Every remaining non-categorical row of [feature_gap.md](https://github.com/daniel-m-campos/bonsai/blob/main/docs/feature_gap.md)
+Every remaining non-categorical row of [the feature-gap record](https://github.com/daniel-m-campos/bonsai/blob/main/benchmarks/feature-gap-2026-07.md)
 landed (tables and datasets per row in that doc):
 
 - **Leaf renewal** (10): `GrowResult::leaf_ids` + an objective `renew_leaf`

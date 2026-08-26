@@ -131,7 +131,7 @@ What CatBoost pays for the engine version and bonsai does not: encoding work on 
 
 ## Gotchas & war stories
 
-- **Never encode with plain (greedy) target statistics.** The single-appearance pathology above is not theoretical: it is why CatBoost exists. The stage-1 study ([feature_gap §18](https://github.com/daniel-m-campos/bonsai/blob/main/docs/feature_gap.md)) measured plain K-fold encoding at 0.8462 on amazon vs 0.8590 ordered: causality is the load-bearing part.
+- **Never encode with plain (greedy) target statistics.** The single-appearance pathology above is not theoretical: it is why CatBoost exists. The stage-1 study ([the feature-gap record §18](https://github.com/daniel-m-campos/bonsai/blob/main/benchmarks/feature-gap-2026-07.md)) measured plain K-fold encoding at 0.8462 on amazon vs 0.8590 ordered: causality is the load-bearing part.
 - **TS is not free on every dataset.** On kick (18 noisy mixed-cardinality columns) it costs 0.003 AUC, and every library's native machinery loses there too, LightGBM by 0.018. Measure per dataset; the encoder being outside the core is what makes skipping it a one-line decision.
 - **Regression targets work unchanged** (the math never assumes $y \in \{0,1\}$); multiclass needs one TS column per class (one-vs-rest) and is not built in yet.
 - **The codes themselves stay meaningful.** With `keep_codes` the original columns ride along NaN-intact: bonsai routes missing values natively (chapter 2), so don't impute them away before encoding.

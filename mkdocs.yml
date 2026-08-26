@@ -46,7 +46,6 @@ exclude_docs: |
   ops/
   reviews/
   hooks/
-  feature_gap.md
   invariants.src.md
 
 hooks:
