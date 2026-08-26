@@ -70,7 +70,7 @@ Each box, one sentence, and where it lives:
 The core is one class template, `Booster<Objective, TreeGrower, Sampler>`, and the config boundary must turn runtime strings into one instantiation.
 bonsai enumerates the whole space at compile time: 7 objectives times 6 growers times 3 samplers is 126 cells in one factory table.
 That table is `Configurations`, a `cartesian_product_t` ([`include/bonsai/registry/configurations.hpp`](../../include/bonsai/registry/configurations.hpp)), and `make_booster` does the one string-to-type lookup ([`src/registry/make_booster.cpp`](../../src/registry/make_booster.cpp)).
-Softmax is the one objective whose K-output shape does not fit `Booster`, so it routes to `MulticlassBooster` (decision 26, [dispatch](../architecture/6-dispatch.md)).
+Softmax is the one objective whose K-output shape does not fit `Booster`, so it routes to `MulticlassBooster` ([decision 26](../decisions.md)).
 
 ```mermaid
 flowchart LR
@@ -83,8 +83,8 @@ flowchart LR
 ```
 
 The budget on that table is about 200 combinations.
-The [dispatch doc](../architecture/6-dispatch.md) records how it is held: prune void combinations first, gate expensive families second, erase a seam only last.
+Decision 26 records how it is held: prune void combinations first, gate expensive families second, erase a seam only last.
 
 ## Where to go next
 
-Read [Concepts to types](api-tour-concepts.md) next: it turns the seams above into an implementer's surface, with the requires-clauses. The rest of the Design section follows it in the nav, and the full historical record is the [architecture notes](../architecture/README.md) and the [decisions log](../decisions.md).
+Read [Concepts to types](api-tour-concepts.md) next: it turns the seams above into an implementer's surface, with the requires-clauses. The rest of the Design section follows it in the nav, and the full historical record is the [decisions log](../decisions.md).

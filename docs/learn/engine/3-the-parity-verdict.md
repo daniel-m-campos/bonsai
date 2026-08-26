@@ -77,5 +77,5 @@ The reopener is a device-resident objective, where each GPU derives its shard's 
 ## The record
 
 - Decisions: [76](../../decisions.md) (built, measured to parity, parked as an experiment).
-- Design: [architecture doc 19](https://github.com/daniel-m-campos/bonsai/blob/main/docs/architecture/19-multi-gpu.md), the priced multi-GPU plan with its validation hardware.
+- Design: [decision 76](https://github.com/daniel-m-campos/bonsai/blob/main/docs/decisions.md), the priced multi-GPU plan and its withdrawal record.
 - Reopener: [decision 77](../../decisions.md) pursued the device-resident objective single-GPU first, told as case [E4](4-the-resident-objective.md).

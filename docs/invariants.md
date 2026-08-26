@@ -1,6 +1,6 @@
 # Invariants
 
-The cross-file contracts. Each entry is the single normative statement of one claim; every other doc that mentions it links here instead of restating it. The `code:` lines name the source facts that prove the claim, and `make docs-check` fails if any stops resolving. Routing rules: [STYLE.md](STYLE.md), section "Where things live".
+The cross-file contracts. Each entry is the single normative statement of one claim; every other doc that mentions it links here instead of restating it. The `code:` lines name the source facts that prove the claim, and `make docs-check` fails if any stops resolving. Routing rules: [STYLE.md](https://github.com/daniel-m-campos/bonsai/blob/main/docs/STYLE.md), section "Where things live".
 
 An entry changes only when the code changes, in the same PR. If your diff falsifies a claim, this file is part of your diff.
 
@@ -108,6 +108,22 @@ Multiclass softmax uses the true diagonal Hessian p(1-p), not the factor-2 conve
 - elaboration: the multiclass entry in decisions.md; [guide/12-multiclass.md](guide/12-multiclass.md) teaches it.
 
 ## Data plane
+
+### host-determinism
+
+Model bytes are identical across runs, across thread counts (outside one documented relaxation), and across CPU architectures; CI trains on arm64 and x86-64 and compares file hashes per commit. Host builds compile with contraction off, which is what makes the claim hold across compilers.
+
+- code: `include/bonsai/parallel.hpp` : `for_each_index`
+- code: `scripts/model_hash.py` : `sha256`
+- elaboration: [design/determinism.md](design/determinism.md); decisions 59 and 60.
+
+### device-binning-byte-identity
+
+Device ingest produces bins byte-identical to the host mapper's transform: the kernel runs the same binary search over the same cuts, so a device-binned Dataset and a host-binned one are the same object to everything downstream.
+
+- code: `src/cuda/detail/ingest_kernels.cuh` : `transform_bin`
+- code: `src/bin_mapper.cpp` : `BinMapper::transform`
+- elaboration: decision 99.
 
 ### max-bin-default
 

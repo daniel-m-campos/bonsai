@@ -4,7 +4,7 @@ Two rules govern every change to bonsai. Price a change before you build it. Adm
 
 ## Price before you build
 
-No optimization begins until instrumentation has decomposed and priced the cost it attacks. None ships without a measurement showing the predicted win arrived. The full cycle is decompose, price, implement, validate, record ([architecture doc 16](https://github.com/daniel-m-campos/bonsai/blob/main/docs/architecture/16-compute-dag.md) is the canonical statement; [guide chapter 11](../guide/11-performance-engineering.md) tells it as a story).
+No optimization begins until instrumentation has decomposed and priced the cost it attacks. None ships without a measurement showing the predicted win arrived. The full cycle is decompose, price, implement, validate, record ([guide chapter 11](../guide/11-performance-engineering.md) tells it as a story; `scripts/dag_model.py` is the living evaluator).
 
 The rule exists because profilers lie in exactly the places that matter. [Case E1](../learn/engine/1-the-marginal-round.md) is the round instrumentation cancelled: the largest line in the GPU grow profile turned out to be the previous level's histograms draining at the profiler's own sync, and a multi-hour kernel rewrite was called off before any kernel code was written ([decision 62](../decisions.md)). Run the other way, the same ledger predicted the one-line prefetch that closed the largest CPU loss on any chart ([decision 61](../decisions.md)).
 
@@ -22,7 +22,7 @@ Native categorical splits were the most-requested structural feature, present in
 
 The measurements settled it. LightGBM's native toggle hurts on one of the three datasets (kick, -0.018 AUC against plain ordinals). bonsai plus the preprocessing beats LightGBM-native on the hardest one (amazon, 0.8590 against 0.8572). CatBoost-native keeps a real lead that traces to machinery that is engine-side by nature.
 
-The verdict wrote itself. The invasive C++ design, already fully drafted, was declined. The 40-line encoder shipped as `OrderedTargetEncoder`, and the engine core stayed untouched ([decision 58](../decisions.md), [the trade-off study](https://github.com/daniel-m-campos/bonsai/blob/main/benchmarks/categorical-tradeoff-2026-07.md)). The declined design is preserved in [architecture doc 17](https://github.com/daniel-m-campos/bonsai/blob/main/docs/architecture/17-categorical-splits.md) with the measurements that would reopen it.
+The verdict wrote itself. The invasive C++ design, already fully drafted, was declined. The 40-line encoder shipped as `OrderedTargetEncoder`, and the engine core stayed untouched ([decision 58](../decisions.md), [the trade-off study](https://github.com/daniel-m-campos/bonsai/blob/main/benchmarks/categorical-tradeoff-2026-07.md)). The declined design and the measurements that would reopen it are recorded in decisions 58 and 80; the drafted design lives in git history.
 
 ### Ordered boosting: a hypothesis killed for free
 

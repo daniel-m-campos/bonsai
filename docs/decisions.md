@@ -133,7 +133,7 @@ Test contract:
 
 Knock-on:
 - `ParallelBackend` does not need to expose "ordered reduction" as a primitive. `parallel_for` + thread-local accumulators is enough.
-- The histogram's parallel-build description in [`architecture/2-histogram.md`](architecture/2-histogram.md) §"Parallel construction" reflects this: no fixed-tid-order requirement.
+- The histogram's parallel-build description in [`architecture/2-histogram.md`](https://github.com/daniel-m-campos/bonsai/blob/06fab232a3b156a7c9f155fbbdf41fe14d45f1af/docs/architecture/2-histogram.md) §"Parallel construction" reflects this: no fixed-tid-order requirement.
 - Atomic FP adds remain forbidden, but for the bit-stability-at-fixed-N reason, not the cross-N reason.
 
 ---
@@ -296,7 +296,7 @@ Rejected: histogram pool with slot-id indirection (xgb's `hist` updater). Recycl
 
 ## 19. Subtraction trick from day one, both growers
 
-Build smaller child by row-scan; derive larger by `larger_hist = parent_hist - smaller_hist`. Halves histogram-build work across the tree (per [`2-histogram.md`](architecture/2-histogram.md) §"Why subtraction halves it"). Implemented from day one because retrofitting means restructuring the grower's per-node memory.
+Build smaller child by row-scan; derive larger by `larger_hist = parent_hist - smaller_hist`. Halves histogram-build work across the tree (per [`2-histogram.md`](https://github.com/daniel-m-campos/bonsai/blob/06fab232a3b156a7c9f155fbbdf41fe14d45f1af/docs/architecture/2-histogram.md) §"Why subtraction halves it"). Implemented from day one because retrofitting means restructuring the grower's per-node memory.
 
 Per-parent protocol:
 1. Splitter scores `parent.hists`; commit candidate.
@@ -506,7 +506,7 @@ Infrastructure that is independently valid (does not assume the broken impl):
 
 ### Outstanding
 
-Decision 8's Phase-1 commitment (depth-wise + oblivious) is not honored. The design-review drift flag at [`reviews/2026-05-19-design-review.md`](https://github.com/daniel-m-campos/bonsai/blob/main/docs/reviews/2026-05-19-design-review.md) §"DenseTree / ObliviousTree" remains accurate. The correct algorithm is documented as a design target in [`architecture/3-tree.md` §"Oblivious grow loop"](architecture/3-tree.md); implementation pending in Phase 2.5 (user-authored).
+Decision 8's Phase-1 commitment (depth-wise + oblivious) is not honored. The design-review drift flag at [`reviews/2026-05-19-design-review.md`](https://github.com/daniel-m-campos/bonsai/blob/main/docs/reviews/2026-05-19-design-review.md) §"DenseTree / ObliviousTree" remains accurate. The correct algorithm is documented as a design target in [`architecture/3-tree.md` §"Oblivious grow loop"](https://github.com/daniel-m-campos/bonsai/blob/06fab232a3b156a7c9f155fbbdf41fe14d45f1af/docs/architecture/3-tree.md); implementation pending in Phase 2.5 (user-authored).
 
 ### Lesson
 
@@ -724,7 +724,7 @@ of a hope.
 
 ## 40. GPU-resident growing: widen the builder seam to an optional level backend
 
-**Decision.** Phase 3 (device-resident partitioning and split finding, design in [architecture/11-gpu-resident.md](architecture/11-gpu-resident.md)) extends the builder policy with three *optional* hooks (`find_splits_many`, `partition_many`, `finalize_rows`) detected via `if constexpr` + `requires`, the same idiom as phase 2's `populate_many`. The host grow loop remains the single algorithm narrative and the decision-maker (leaf-vs-split, smaller-child pairing, constraint propagation); the device executes the data plane. `SplitInput` gains `sums` and `row_count` so it degrades to node metadata when histograms and rows stay device-resident.
+**Decision.** Phase 3 (device-resident partitioning and split finding, design in [architecture/11-gpu-resident.md](https://github.com/daniel-m-campos/bonsai/blob/06fab232a3b156a7c9f155fbbdf41fe14d45f1af/docs/architecture/11-gpu-resident.md)) extends the builder policy with three *optional* hooks (`find_splits_many`, `partition_many`, `finalize_rows`) detected via `if constexpr` + `requires`, the same idiom as phase 2's `populate_many`. The host grow loop remains the single algorithm narrative and the decision-maker (leaf-vs-split, smaller-child pairing, constraint propagation); the device executes the data plane. `SplitInput` gains `sums` and `row_count` so it degrades to node metadata when histograms and rows stay device-resident.
 
 **Rejected.** A device splitter as a fourth typelist dimension: there is one device implementation and it is coupled to the CUDA builder's state, so a registry axis buys combinations nobody can instantiate (the same restraint as decision 32 for threading). A `row_to_node` map (xgboost's shape): decision 17's reasons hold on the device too: per-node segments pair naturally with the subtraction trick and stable per-node row order. CUB/Thrust for the partition scan: a hand-rolled three-kernel scan keeps the backend a single self-contained TU with no new dependency.
 
@@ -734,7 +734,7 @@ of a hope.
 
 ## 41. Grower data-plane as the `LevelStep` strategy; retire the copy-back ladder
 
-**Decision.** Reframe decision 40's "escalating optional hooks" as a single compile-time Strategy: a `LevelStep<SplitterT, Engine>` (primary template = host data plane; partial specialization for `GPULevelEngine` = device data plane) selected by engine type, so `grow()` reads as one control-plane narrative with the host/device fork localized to one specialization instead of smeared across six `if constexpr`/`if (resident())` sites. `resident()` is removed: the per-tree mode is captured once from `begin_root`'s bool into the `LevelStep`. The concept ladder collapses to two, renamed to shed the GoF-`Builder` connotation (the type is the pluggable compute substrate, and the CUDA one supplies the whole device data plane): `HistogramEngine` (host, from `HistogramBuilder`) and `GPULevelEngine` (the device-resident vocabulary, from `ResidentHistogramBuilder`). The `populate` → `populate_many` → resident progression was a dev-research ladder (phases 1–3, preserved in git and doc 11's measured stages); only device-resident is kept: `populate_many`, `BatchHistogramBuilder`, and the GPU **copy-back** histogram path are retired, and the rare decline (oversized `max_bin`, or level buffers that won't fit) falls back to **CPU** histogram building via the engine's existing `cpu` member. Design in [architecture/12-grower-backend.md](architecture/12-grower-backend.md). Refines, not overturns, decision 40: host-owns-decisions, one-grow-loop, no-new-typelist-dimension, and the all-or-nothing device coupling all carry forward.
+**Decision.** Reframe decision 40's "escalating optional hooks" as a single compile-time Strategy: a `LevelStep<SplitterT, Engine>` (primary template = host data plane; partial specialization for `GPULevelEngine` = device data plane) selected by engine type, so `grow()` reads as one control-plane narrative with the host/device fork localized to one specialization instead of smeared across six `if constexpr`/`if (resident())` sites. `resident()` is removed: the per-tree mode is captured once from `begin_root`'s bool into the `LevelStep`. The concept ladder collapses to two, renamed to shed the GoF-`Builder` connotation (the type is the pluggable compute substrate, and the CUDA one supplies the whole device data plane): `HistogramEngine` (host, from `HistogramBuilder`) and `GPULevelEngine` (the device-resident vocabulary, from `ResidentHistogramBuilder`). The `populate` → `populate_many` → resident progression was a dev-research ladder (phases 1–3, preserved in git and doc 11's measured stages); only device-resident is kept: `populate_many`, `BatchHistogramBuilder`, and the GPU **copy-back** histogram path are retired, and the rare decline (oversized `max_bin`, or level buffers that won't fit) falls back to **CPU** histogram building via the engine's existing `cpu` member. Design in [architecture/12-grower-backend.md](https://github.com/daniel-m-campos/bonsai/blob/06fab232a3b156a7c9f155fbbdf41fe14d45f1af/docs/architecture/12-grower-backend.md). Refines, not overturns, decision 40: host-owns-decisions, one-grow-loop, no-new-typelist-dimension, and the all-or-nothing device coupling all carry forward.
 
 **Rejected.** Runtime strategy objects (a `unique_ptr<LevelPlane>` or `std::variant` handed to the loop): the dynamic-dispatch shape decisions 14/26/32 explicitly chose against: it would need a benchmark to *prove* zero-cost rather than guarantee it, add type erasure the grow loop avoids, and thread into every grower. Keeping the three-tier concept ladder: `populate_many` is a host-plane batch optimization, not a device peer, so the middle tier documented a distinction that no longer earns its name. Keeping GPU copy-back as the decline fallback: it keeps a whole kernel path alive for a rare case (default `max_bin=255` always goes resident); the CPU fallback trades a slice of that rare path's throughput for a materially smaller CUDA backend.
 
@@ -1207,7 +1207,7 @@ Standings: rows, width, frontier, airline
 
 ## 97. `cuda_leafwise` admitted by measurement (adopted)
 
-**Decision.** The device leafwise plane of [`20-cuda-leafwise.md`](architecture/20-cuda-leafwise.md) keeps its registration. Issue #268's kill criterion was pre-registered and is met: on one pod (L40S, US-NC-1, 2026-08-01, `leafwise-ladder-2026-08.jsonl`, sha `2a23f33`) `cuda_leafwise` fits 16M x 100 in 30.8s against lgbm_cuda's 32.4s. The secondary bar is met with room: it beats same-pod CPU `leafwise` 4.6x to 7.1x at every cell. Four arms, best of two reps, interleaved, SCALING knobs at 100 iters and 256 leaves.
+**Decision.** The device leafwise plane of [`20-cuda-leafwise.md`](https://github.com/daniel-m-campos/bonsai/blob/06fab232a3b156a7c9f155fbbdf41fe14d45f1af/docs/architecture/20-cuda-leafwise.md) keeps its registration. Issue #268's kill criterion was pre-registered and is met: on one pod (L40S, US-NC-1, 2026-08-01, `leafwise-ladder-2026-08.jsonl`, sha `2a23f33`) `cuda_leafwise` fits 16M x 100 in 30.8s against lgbm_cuda's 32.4s. The secondary bar is met with room: it beats same-pod CPU `leafwise` 4.6x to 7.1x at every cell. Four arms, best of two reps, interleaved, SCALING knobs at 100 iters and 256 leaves.
 
 | rows | cuda leafwise | lgbm cuda | leafwise (cpu) | cuda dw (anchor) |
 |---|--:|--:|--:|--:|

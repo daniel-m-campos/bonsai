@@ -17,7 +17,7 @@ static Dataset bin(detail::ColumnBatch const &batch, BinMappers const &mappers,
                    std::shared_ptr<IngestPlane const> plane = nullptr);
 ```
 
-Why this shape: column-major `u8`/`u16` storage keeps the histogram scan cache-friendly (decision 4, [dataset doc](../architecture/1-dataset.md)).
+Why this shape: column-major `u8`/`u16` storage keeps the histogram scan cache-friendly ([decision 4](../decisions.md)).
 The optional `IngestPlane` lets a backend hand back binned columns it already produced on the device (decision 54).
 Host columns then materialize only on first host read.
 What a caller must honor: bin train, validation, and test through the same `BinMappers`.
@@ -40,7 +40,7 @@ concept Objective = std::constructible_from<T, Config const &> &&
 ```
 
 Why constructible from `Config`: parameterized losses (Huber delta, quantile alpha) carry state.
-Parameter-free objectives keep static methods, which still satisfy the instance call ([objective doc](../architecture/4-objective.md)).
+Parameter-free objectives keep static methods, which still satisfy the instance call ([decision 25](../decisions.md)).
 The `renew_leaf` extension serves surrogate-hessian objectives (MAE, Huber, Quantile), where `h = 1` stands in for a second derivative that is zero or discontinuous. Their Newton step is a heuristic, so the booster replaces each leaf with the loss-optimal value over its residuals. MSE also has a constant hessian, exactly 1, but needs no renewal: its Newton step is the residual mean, already the exact minimizer of squared error.
 They replace the Newton leaf value with the loss-optimal one.
 The booster detects the method with `if constexpr (requires(std::span<float> r) { objective_.renew_leaf(r); })`, and skips the pass otherwise.
@@ -66,7 +66,7 @@ concept TreeGrower = requires(T g, Dataset const &ds, floats_view grad,
 The three strategies are three class templates: `DepthwiseGrower`, `ObliviousGrower`, and `LeafwiseGrower`.
 Each is parameterized on its `HistogramEngine` and split finder.
 Why this shape: growth is the outer loop, and compute location and find granularity fall out of it.
-So a grower injects two policies and derives the rest ([grower-backend doc](../architecture/12-grower-backend.md)).
+So a grower injects two policies and derives the rest ([decision 41](../decisions.md)).
 What a new grower must honor: expose a `Tree` type and return a `GrowResult`.
 The booster owns sampling and scoring; the grower owns only the tree.
 Lives in [`include/bonsai/grower.hpp`](../../include/bonsai/grower.hpp).
@@ -99,7 +99,7 @@ Lives in [`include/bonsai/grower.hpp`](../../include/bonsai/grower.hpp).
 When histograms, rows, and split finding all stay on the GPU, only decisions and counts cross the bus.
 `GPULevelEngine` refines `HistogramEngine` with the whole device vocabulary: `begin_root`, `find_splits_many`, `partition_level`, `advance_level`, `stamp_leaves`, `finalize_tree`, and the resident-objective seam.
 Why one concept and not seven: the device data plane works whole or not at all.
-So `begin_root` returns a single `bool` that the grow loop captures once as the per-tree mode ([grower-backend doc](../architecture/12-grower-backend.md)).
+So `begin_root` returns a single `bool` that the grow loop captures once as the per-tree mode ([decision 41](../decisions.md)).
 What a new device backend must honor: satisfy the floor `HistogramEngine` too, because the decline path falls back to the exact host operations.
 Lives in [`include/bonsai/grower.hpp`](../../include/bonsai/grower.hpp).
 
@@ -110,7 +110,7 @@ Lives in [`include/bonsai/grower.hpp`](../../include/bonsai/grower.hpp).
 Why a second concept and not an extension of the first: the two planes trade different bus traffic per round (one node's partition, histogram, and find, instead of a whole level's), so the vocabulary itself differs, not just the cadence.
 `leaf_begin_root` returns the same single per-tree `bool` `GPULevelEngine::begin_root` does, captured once by the grow loop.
 What a new device backend must honor: the same decline-to-host contract, plus the pool-budget bound (`num_leaves * n_selected * stride`) that `leaf_begin_root` checks before arming.
-Lives in [`include/bonsai/grower.hpp`](../../include/bonsai/grower.hpp); design in [`20-cuda-leafwise.md`](../architecture/20-cuda-leafwise.md).
+Lives in [`include/bonsai/grower.hpp`](../../include/bonsai/grower.hpp); design record in decisions 95 to 98.
 
 ## IBooster: the one type-erased boundary
 

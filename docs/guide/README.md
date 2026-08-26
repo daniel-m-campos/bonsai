@@ -58,5 +58,5 @@ training, then performance. Chapters 12 to 15 put the core to work:
 multiclass, categorical features, feature selection, then explaining
 predictions.
 For design *rationale* (why this data layout, why this dispatch mechanism)
-see the [architecture notes](../architecture/README.md); for the audit trail
+see [the invariants](../invariants.md); for the audit trail
 of every non-trivial choice, [decisions.md](../decisions.md).

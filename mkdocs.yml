@@ -47,8 +47,6 @@ exclude_docs: |
   reviews/
   hooks/
   feature_gap.md
-  proposal.md
-  context.md
 
 hooks:
   - docs/hooks/repo_links.py
@@ -142,5 +140,4 @@ nav:
       - The HPC tension: design/the-hpc-tension.md
       - Determinism as a contract: design/determinism.md
       - Archive:
-          - architecture/README.md
           - Decisions log: decisions.md

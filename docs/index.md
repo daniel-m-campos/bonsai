@@ -52,7 +52,7 @@ One property none of the reference libraries offer: models are bit-identical acr
 
     ---
 
-    [The system map](design/system-map.md), [concepts to types](design/api-tour-concepts.md), [the HPC tension](design/the-hpc-tension.md), and [determinism as a contract](design/determinism.md). The archive holds the [architecture notes](architecture/README.md) and the [decisions log](decisions.md); [how we got here](learn/timeline.md) traces the lineage of the ideas.
+    [The system map](design/system-map.md), [concepts to types](design/api-tour-concepts.md), [the HPC tension](design/the-hpc-tension.md), and [determinism as a contract](design/determinism.md). The archive holds the [decisions log](decisions.md); [how we got here](learn/timeline.md) traces the lineage of the ideas.
 
 </div>
 

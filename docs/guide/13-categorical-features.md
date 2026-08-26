@@ -6,7 +6,7 @@ A tree splits on `x <= threshold`, so a feature's values need an order, and cate
 
 The industry offers three answers: one-hot expansion (explodes width), native set splits in the split scan (LightGBM: the tree learns *subsets* of categories), and target statistics (CatBoost: replace each category with a number summarizing its relationship to the label, which *gives* it an order).
 
-bonsai's answer is the third, deliberately outside the core: an encoder in the Python package, not a node type in the engine (decision 58). We measured the alternatives before choosing: the section at the end has the table, and [architecture doc 17](../architecture/17-categorical-splits.md) preserves the full native-split design we priced and declined.
+bonsai's answer is the third, deliberately outside the core: an encoder in the Python package, not a node type in the engine (decision 58). We measured the alternatives before choosing: the section at the end has the table, and [decision 58](../decisions.md) records the full native-split design we priced and declined (the drafted design lives in git history).
 
 ## The math
 
