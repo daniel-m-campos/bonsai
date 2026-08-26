@@ -987,8 +987,15 @@ TEST_CASE("a view shares its parent's bin store; a rewrite owns one",
     CHECK(&sub.store() != &ds.store());
 }
 
+// INVARIANT: fit-id-gates-resident-reuse
+// A row-narrowed view mints a FitId distinct from its parent's, and a copy
+// shares one. Anything caching against a Dataset keys on these tokens, so an
+// equal token means "the same fit" with no allocator caveat: the device
+// resident state is armed for ONE FitId, and a token that compared equal
+// across two different fits would leave the previous fit's labels, scores and
+// rows live under the next one.
 TEST_CASE("identity tokens: minted, shared by copies, distinct per fit",
-          "[dataset][store]")
+          "[dataset][store][invariant]")
 {
     // The caches these feed skip work on equality, so the hazard is tokens
     // comparing EQUAL for different things. Addresses fail that under

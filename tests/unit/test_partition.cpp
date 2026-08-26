@@ -10,6 +10,7 @@
 #include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
 #include "level_step.hpp"
+#include "step/primitives.hpp"
 #include "test_grower_helpers.hpp"
 
 using namespace bonsai; // NOLINT
@@ -95,4 +96,25 @@ TEST_CASE("a parent partitions on the whole team or on none of it", "[partition]
     REQUIRE(gd::partition_workers(1000 * floor_rows, 12) == 12);
     REQUIRE(gd::partition_workers(8 * floor_rows, 8) == 8);
     REQUIRE(gd::partition_workers(1000 * floor_rows, 1) == 1);
+}
+
+// INVARIANT: smaller-child-tie-break-agrees
+// On equal child row counts the fresh histogram slot goes to the LEFT child.
+// The larger sibling derives by subtracting the smaller from the parent, so
+// host and device must pick the same side or a subtraction reads the wrong
+// sibling's histogram and the tree silently changes. The device mirrors this
+// in leaf_split, where `left_small` is the same `<=` comparison.
+TEST_CASE("partition: an equal-count split gives the fresh slot to the left",
+          "[partition][invariant]")
+{
+    grower_detail::PendingSplit p;
+    p.left.rows.assign(4, row_id_t{0});
+    p.right.rows.assign(4, row_id_t{0});
+    CHECK(&grower_detail::smaller_child(p) == &p.left);
+
+    p.right.rows.assign(3, row_id_t{0});
+    CHECK(&grower_detail::smaller_child(p) == &p.right);
+
+    p.right.rows.assign(5, row_id_t{0});
+    CHECK(&grower_detail::smaller_child(p) == &p.left);
 }

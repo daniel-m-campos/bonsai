@@ -20,6 +20,12 @@ DART and early stopping are incompatible by construction and the combination thr
 
 - enforced by: [`train_with_progress: DART and early stopping refuse to combine`](../tests/unit/test_cli_pipeline.cpp)
 
+### fit-id-gates-resident-reuse
+
+A row-narrowed view mints a FitId distinct from its parent's, and a copy shares one. Anything caching against a Dataset keys on these tokens, so an equal token means "the same fit" with no allocator caveat: the device resident state is armed for ONE FitId, and a token that compared equal across two different fits would leave the previous fit's labels, scores and rows live under the next one.
+
+- enforced by: [`identity tokens: minted, shared by copies, distinct per fit`](../tests/unit/test_dataset.cpp)
+
 ### levelwise-rejects-constraints
 
 The levelwise (oblivious) grower rejects monotone and interaction constraints at construction rather than silently ignoring them, on both the CPU and CUDA engines: the throw is in the shared template, so an engine cannot opt out of it.
@@ -31,6 +37,12 @@ The levelwise (oblivious) grower rejects monotone and interaction constraints at
 The flattened node table and ObliviousTree::leaf_for agree on one numbering. The table gives internal node i the children 2i+1 and 2i+2 and appends the leaves after the internals in leaf_table order; leaf_for builds its index by shifting a bit per level, left as 0. Those two must name the same leaf for every root-to-leaf path, or the device epilogue and the host walk read different values out of the same tree. Four sites share the scheme, which is past the count where a normal change reliably updates all of them.
 
 - enforced by: [`ObliviousTree: the flattened table numbers leaves as leaf_for does`](../tests/unit/test_oblivious_tree.cpp)
+
+### smaller-child-tie-break-agrees
+
+On equal child row counts the fresh histogram slot goes to the LEFT child. The larger sibling derives by subtracting the smaller from the parent, so host and device must pick the same side or a subtraction reads the wrong sibling's histogram and the tree silently changes. The device mirrors this in leaf_split, where `left_small` is the same `<=` comparison.
+
+- enforced by: [`partition: an equal-count split gives the fresh slot to the left`](../tests/unit/test_partition.cpp)
 
 ### train-predict-bin-boundary-parity
 
