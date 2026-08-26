@@ -1,9 +1,13 @@
 #include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
+#include <cstdint>
+#include <vector>
 
+#include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
+#include "step/primitives.hpp"
 #include "test_tree_constants.hpp"
 
 using namespace bonsai;       // NOLINT
@@ -211,4 +215,53 @@ TEST_CASE("ObliviousTree: batch predict produces same results as single-row pred
     CHECK(out[1] == default_right_leaf);
     CHECK(out[2] == default_left_leaf);
     CHECK(out[3] == default_left_leaf);
+}
+
+// INVARIANT: perfect-tree-numbering-one-scheme
+// The flattened node table and ObliviousTree::leaf_for agree on one numbering.
+// The table gives internal node i the children 2i+1 and 2i+2 and appends the
+// leaves after the internals in leaf_table order; leaf_for builds its index by
+// shifting a bit per level, left as 0. Those two must name the same leaf for
+// every root-to-leaf path, or the device epilogue and the host walk read
+// different values out of the same tree. Four sites share the scheme, which is
+// past the count where a normal change reliably updates all of them.
+TEST_CASE("ObliviousTree: the flattened table numbers leaves as leaf_for does",
+          "[oblivious_tree][invariant]")
+{
+    constexpr size_t   depth    = 3;
+    constexpr size_t   n_leaves = size_t{1} << depth;
+    std::vector<float> leaves(n_leaves);
+    for (size_t j = 0; j < n_leaves; ++j)
+    {
+        leaves[j] = static_cast<float>(j) + 0.5F;
+    }
+
+    auto const table =
+        grower_detail::perfect_tree_table<CudaHistogramEngine::ResidentNode>(
+            depth,
+            [](size_t lvl)
+            {
+                return grower_detail::LevelSplitBins{static_cast<feature_id_t>(lvl),
+                                                     bin_id_t{7}, false};
+            },
+            leaves);
+
+    size_t const n_internal = (size_t{1} << depth) - 1;
+    REQUIRE(table.size() == n_internal + n_leaves);
+
+    for (uint32_t path = 0; path < n_leaves; ++path)
+    {
+        size_t   node  = 0;
+        uint32_t index = 0;
+        for (size_t lvl = 0; lvl < depth; ++lvl)
+        {
+            bool const go_right = ((path >> (depth - 1 - lvl)) & 1U) != 0U;
+            REQUIRE_FALSE(table[node].is_leaf);
+            node  = go_right ? table[node].right : table[node].left;
+            index = (index << 1U) | (go_right ? 1U : 0U);
+        }
+        REQUIRE(node == n_internal + index);
+        REQUIRE(table[node].is_leaf);
+        REQUIRE(table[node].value == leaves[index]);
+    }
 }
