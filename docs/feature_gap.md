@@ -30,7 +30,7 @@ one can "enable" in the reference libraries for an A/B.
 | 15 | TreeSHAP (`pred_contribs`) | yes | yes | yes | Modern attribution standard; real algorithm, sized as its own project | **landed** |
 | 16 | Multi-class / softmax objective | yes | yes | yes | K-output leaves touch Objective, Booster, and Tree — largest structural change | **landed** |
 | 17 | Sparse-input handling / EFB | yes | yes (EFB) | yes | Needs a sparse dataset in the harness to enable or measure anything | **landed** (input format; sparse *compute* stays engine work) |
-| 18 | Ranking objectives | `rank:ndcg` / `rank:pairwise` | `lambdarank` | `YetiRank` | MQ2008 gate (`scripts/probe_ranking.py --real`): a stable ~+0.015 NDCG@10 gap to xgboost's *listwise* loss only; pairwise lambdarank showed no edge over bonsai regression | **open** (issue #58 reframed listwise-first by the gate) |
+| 18 | Ranking objectives | `rank:ndcg` / `rank:pairwise` | `lambdarank` | `YetiRank` | MQ2008 gate (probe script retired to git history; evidence in `benchmarks/ranking-tradeoff-2026-07.md`): a stable ~+0.015 NDCG@10 gap to xgboost's *listwise* loss only; pairwise lambdarank showed no edge over bonsai regression | **open** (issue #58 reframed listwise-first by the gate) |
 | 19 | Per-feature bin budgets / manual bin edges | — | `max_bin_by_feature`, forced bin edges | `per_float_feature_quantization` | Auto per-feature budgets priced at max_bin 255 and declined: importance/inverse/headroom policies all landed inside the chance band (`benchmarks/binning-tradeoff-2026-07.md`); explicit user-supplied edges shipped as a `Dataset` capability, spec and as-built notes in architecture doc 18 | **declined** (auto budgets, decision 67) / **landed** (manual edges, decision 73) |
 
 Measurement protocol, per implemented feature: enable the equivalent knob in
@@ -373,7 +373,7 @@ Before building native categorical splits, measure what they buy.
 Amazon employee access (OpenML 4135; 32,769 rows, 9 integer-ID
 features, RESOURCE 7,518 distinct / MGR\_ID 4,243; binary ACTION,
 ~94% positive) via `scripts/fetch_amazon.py` +
-`scripts/bench_categorical.py`. 300 iters, lr 0.1, depth 8 / 63
+`bench_categorical.py` (retired to git history). 300 iters, lr 0.1, depth 8 / 63
 leaves. bonsai gets its two practical options today; the references
 get their native modes. The lightgbm native-vs-numeric pair isolates
 the value of native handling from library differences.
