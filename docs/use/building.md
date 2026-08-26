@@ -38,7 +38,7 @@ The Makefile finds the toolchain at `/usr/lib/llvm-21/bin` (Linux) or homebrew's
 
 ## The make-target map
 
-Every make target, generated from the Makefile so it never drifts, is on the [Make targets](make-map.md) page. `make help` prints the common ones in the terminal.
+`make help` lists every target with a one-line description, straight from the Makefile.
 
 ## OpenMP is required, loudly
 

@@ -125,7 +125,6 @@ nav:
       - What to use when: use/what-to-use-when.md
       - Running the benchmarks: use/benchmarks.md
       - Building from source: use/building.md
-      - Make targets: use/make-map.md
   - Results:
       - method/README.md
       - The results ledger: method/results.md
