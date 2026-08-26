@@ -10,6 +10,7 @@ Working agreement for agents in this repository. Where content lives is governed
 - Prose style (docs, PR bodies, issues): no em-dashes; commas, colons, or parentheses instead. One line per paragraph in Markdown, the site soft-wraps. Plain nouns over coined metaphors.
 - Code comments are sparse, single-line constraint statements. The exception is a contract-bearing type, which carries a full contract comment: what it guarantees, what breaks it, and the test that pins it. `RecycledOutputs` in [include/bonsai/grower.hpp](include/bonsai/grower.hpp) is the house exemplar. No PR, issue, or decision references in code comments; cite those in docs and commit messages.
 - Python follows the repo Python standards skill (3.9 floor, `from __future__ import annotations`, numpy-style docstrings on the public surface).
+- Catch2 test names read `"<Component>: <behavior under condition>"`: PascalCase component, colon, present-tense behavioral phrase. One `TEST_CASE` per behavior, `SECTION` for variations. Tags stack the component with behavioral tags from the fixed set (`[fit]`, `[transform]`, `[ctor]`, `[edge]`, `[nan]`, `[perf]`, `[smoke]`).
 
 ## Never
 

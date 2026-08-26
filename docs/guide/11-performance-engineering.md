@@ -73,6 +73,16 @@ BONSAI_GROW_PROFILE=1 BONSAI_CUDA_PROFILE=1 BONSAI_FIT_PROFILE=1 BONSAI_INGEST_P
 
 Then check conservation: does `fit-profile`'s total explain the wall clock? Does `grow` equal the sum of `grow-profile`'s buckets? If not, you have found the next chapter of this story.
 
+## Case study: reading a competitor's implementation
+
+Before building the device leafwise plane, we read LightGBM's CUDA tree learner end to end and sorted what we found into adopt and refuse lists. The exercise generalizes: a competitor's shipped code is a free experiment log, and the discipline is deciding which of their choices answer *your* constraints.
+
+Adopted, with their source sites: the flat histogram **slot pool** with in-place subtraction (`cuda_histogram_constructor.cu`, `SubtractHistogramKernel`), which removes the ping-pong memset instead of working around it; recomputing **only the two new children** per round, which bonsai gets free by keeping the split heap on the host; the **fat split record** (~120 B) that spares a second reduction; and adaptive accumulator width as a future lever, off by default even there.
+
+Refused, because they answer constraints bonsai does not have: a minimum grid floor, device-wide syncs as ordering (8 per round where bonsai's round needs 2), 4-thread bookkeeping kernel launches (bonsai keeps node bookkeeping on the host), and a second device copy of the binned matrix in a different major order.
+
+One finding worth more than the design notes: LightGBM's CUDA learner ignores `max_depth` entirely; its train loop never calls the one site that enforces depth, and `max_depth` appears nowhere under `src/treelearner/cuda/`. We found it by measurement first (a depth-capped comparison that refused to cap) and confirmed it in their source. Reading the competitor's code did not just donate design ideas, it explained a benchmark anomaly that would otherwise have cost a rerun.
+
 ## Gotchas & war stories
 
 - **Fleet variance is not noise you can average away.** 39.5s vs 49.0s for identical code on two same-model pods. Every claim in this chapter is a same-pod delta; any cross-machine absolute in a benchmark table should make you reach for the raw jsonl.

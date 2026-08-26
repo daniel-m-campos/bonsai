@@ -55,23 +55,7 @@ flowchart LR
 
 The histogram fill, `HistCell` layout, and the subtraction trick are untouched; a categorical feature is just a feature whose bin ids happen to carry no order.
 
-## The Fisher sort: why scanning one order suffices
-
-A split assigns each category (bin) `k` with sums `(G_k, H_k)` to the left or right child; the second-order objective for child weights `w_L, w_R` is separable per category:
-
-```math
-\mathcal{L} = \sum_{k \in L} \left( G_k w_L + \tfrac{1}{2} H_k w_L^2 \right) + \sum_{k \in R} \left( G_k w_R + \tfrac{1}{2} H_k w_R^2 \right) + \tfrac{\lambda}{2}(w_L^2 + w_R^2)
-```
-
-For any fixed pair `w_L < w_R`, category `k` prefers left iff `G_k w_L + ½H_k w_L² ≤ G_k w_R + ½H_k w_R²`, i.e. iff
-
-```math
-\frac{G_k}{H_k} \le -\tfrac{1}{2}(w_L + w_R)
-```
-
-, a threshold on `G_k/H_k`, so the optimal partition at the optimum is *contiguous* in `G_k/H_k` order (Fisher 1958's grouping result), and scanning the `2^{K-1}` partitions reduces to scanning `K-1` prefixes of the sorted order.
-
-With leaf-level L2 the per-category argument is exact only for `λ = 0`; following lightgbm we sort by `G_k / (H_k + \text{cat\_smooth})`, where `cat_smooth` doubles as regularization against low-count categories dominating the order, near-optimal in practice, and the test plan checks exactness at `λ₂ = 0` by brute force.
+The Fisher-sort reduction moved to [the categorical features chapter](../guide/13-categorical-features.md).
 
 ## Split scan changes
 

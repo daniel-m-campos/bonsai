@@ -99,6 +99,26 @@ Measured on the repo's amazon split, with CatBoost's own cross-toggle as the con
 
 Two readings: the crosses *are* CatBoost's whole remaining edge (its no-cross line falls below our singles), and pair-TS closes the gap to 0.002, chance-band at this test size. Pairs grow as $\binom{k}{2}$: fine at nine columns, a decision at ninety.
 
+## The Fisher sort: what a native split engine would do
+
+The declined engine feature (decision 58) would split a node on an arbitrary *subset* of categories. Scanning all $2^{K-1}$ subsets looks exponential, but it is not, and the reduction is worth knowing.
+
+A split assigns each category $k$ with sums $(G_k, H_k)$ to the left or right child. The second-order objective for child weights $w_L, w_R$ is separable per category:
+
+```math
+\mathcal{L} = \sum_{k \in L} \left( G_k w_L + \tfrac{1}{2} H_k w_L^2 \right) + \sum_{k \in R} \left( G_k w_R + \tfrac{1}{2} H_k w_R^2 \right) + \tfrac{\lambda}{2}(w_L^2 + w_R^2)
+```
+
+For any fixed pair $w_L < w_R$, category $k$ prefers the left child exactly when
+
+```math
+\frac{G_k}{H_k} \le -\tfrac{1}{2}(w_L + w_R)
+```
+
+which is a threshold on $G_k/H_k$. So the optimal partition is *contiguous* in $G_k/H_k$ order (Fisher 1958's grouping result), and the $2^{K-1}$ subsets collapse to $K-1$ prefixes of one sorted order.
+
+With leaf-level L2 the argument is exact only at $\lambda = 0$; LightGBM sorts by $G_k / (H_k + \text{cat\_smooth})$, where the smoothing also guards against low-count categories dominating the order. Near-optimal in practice, exact where the proof applies.
+
 ## Inside CatBoost, for comparison: the engine we didn't need
 
 Per tree, CatBoost draws from a pool of random permutations and recomputes its categorical statistics ("CTRs") **online** (every split candidate's statistic reflects the current permutation, quantized against CTR-specific borders), and as a tree grows it **greedily builds combinations**: the categoricals along the current path get crossed with each remaining categorical, up to `max_ctr_complexity` (default effectively pairs-and-beyond), each cross getting its own online TS.
