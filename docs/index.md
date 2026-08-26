@@ -18,7 +18,7 @@ Once the first spine was designed and working, I brought in agentic workflows wi
 
 After that, things escalated. The concept-based design made each extension straightforward, though rarely easy. Milestones meant to be the finish line kept falling: CPU parity, then GPU parity, then GPU leads.
 
-GPU support was the biggest swing, taken when a promotional window with Anthropic's newest model made the attempt affordable. I learned to rent GPU nodes from RunPod and wired the rental API into the agent's tools. From then on the agent could run tight measure-fix-measure loops on real hardware, priced by the discipline on [how we decide](method/how-we-decide.md).
+GPU support was the biggest swing, taken when a promotional window with Anthropic's newest model made the attempt affordable. I learned to rent GPU nodes from RunPod and wired the rental API into the agent's tools. From then on the agent could run tight measure-fix-measure loops on real hardware, priced by the discipline the perf-round and feature-admission skills carry.
 
 The ambition grew with the milestones: assimilate the defining ideas of XGBoost, LightGBM, and CatBoost into one library, match or beat their performance, and keep the code readable enough that reading it is still the point.
 

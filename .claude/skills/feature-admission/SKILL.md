@@ -8,7 +8,38 @@ description: >
   pitch is "the other libraries have it". Invoke via /feature-admission.
 ---
 
-A feature is admitted by measurement, not by ecosystem envy. The burden of proof is on the feature; the default answer is "not in the core". Worked example: decision 58 + `benchmarks/categorical-tradeoff-2026-07.md` (the probe script itself is closed evidence and lives in git history), where this method killed a fully-designed engine feature (architecture doc 17) and shipped a 100-line encoder that beat it.
+A feature is admitted by measurement, not by ecosystem envy. The burden of proof is on the feature; the default answer is "not in the core". Worked example: decision 58 + `benchmarks/categorical-tradeoff-2026-07.md` (the probe script itself is closed evidence and lives in git history), where this method killed a fully-designed engine feature (drafted in full, then declined; the draft lives in git history) and shipped a 100-line encoder that beat it.
+
+Three tests decide it. The benefit is shown by the cheapest possible
+prototype, at zero cost to the core. The benefit moves standings on a fixed
+evaluation suite, not a hand-picked example. The kill criteria were written
+down before the experiment ran.
+
+Two worked gates, both cheap, both decisive:
+
+- **Categoricals.** The most-requested structural feature, present in all
+  three reference libraries. The cheapest prototype was not C++: toggle
+  LightGBM's own categorical support on and off, and feed bonsai a 40-line
+  ordered-target-statistics preprocessing step, across three real datasets.
+  LightGBM's native toggle HURT on one of the three (kick, -0.018 AUC against
+  plain ordinals); bonsai plus preprocessing beat LightGBM-native on the
+  hardest (amazon, 0.8590 against 0.8572). The drafted C++ design was
+  declined and the encoder shipped (decision 58).
+- **Ordered boosting.** The hypothesis that CatBoost's accuracy at scale came
+  from ordered boosting was killed without implementing anything: benchmark
+  CatBoost against itself, `Ordered` against `Plain`, same data and budget.
+  Identical accuracy at roughly 7x the cost, and CatBoost defaults it off
+  past ~50k rows anyway.
+
+That is the gate's cheapest form: when the feature exists in a reference
+implementation, the reference IS the prototype. Measure it there before
+building it here.
+
+The output worth the most is the decline: a recorded, measured "no" with the
+conditions that would reopen it, which converts a recurring debate into a
+lookup. Price on named axes before anyone writes C++: core lines of code, new
+configuration knobs, whether existing behavior stays bit-identical, and
+whether the documentation story survives.
 
 ## Step 1 — prototype the benefit at zero core cost
 

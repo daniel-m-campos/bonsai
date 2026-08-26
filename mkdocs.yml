@@ -123,6 +123,7 @@ nav:
       - The API in one read: use/api-tour.md
       - Parameters: use/parameters.md
       - Switching from XGBoost: use/from-xgboost.md
+      - What to use when: use/what-to-use-when.md
       - Running the benchmarks: use/benchmarks.md
       - Building from source: use/building.md
       - Make targets: use/make-map.md
@@ -134,8 +135,6 @@ nav:
       - The code division: method/results/code-metrics.md
       - The archive: method/results/archive.md
       - The benchmark protocol: method/benchmark-protocol.md
-      - How we decide: method/how-we-decide.md
-      - What to use when: method/what-to-use-when.md
   - Design:
       - Invariants: invariants.md
       - Archive:
