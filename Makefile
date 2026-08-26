@@ -168,6 +168,12 @@ $(AMAZON_SENTINEL):
 	@uv run scripts/fetch_amazon.py
 	@touch $@
 
+# The verification floor, executed rather than remembered. Runs every CI gate
+# this host can run and NAMES the ones it cannot, because a silently skipped
+# check is indistinguishable from a passing one.
+ci:  ## Run every CI gate this host can run (ARGS=--fast skips clang-tidy).
+	@python3 scripts/run_local_ci.py $(ARGS)
+
 help:  ## List the common make targets.
 	@echo "Targets:"
 	@grep -hE '^[a-zA-Z0-9_-]+:.*  ## ' $(MAKEFILE_LIST) \

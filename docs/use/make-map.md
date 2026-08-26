@@ -27,6 +27,7 @@ Every make target you run day to day, generated from the `##` comments in the [M
 | `make python-cuda` | Build the CUDA-enabled Python extension into build-cuda/python/. |
 | `make fit-benchmark` | Compare bonsai against reference libraries on California housing. |
 | `make bench-scaling` | Run a synthetic scaling spec (ARGS='run --spec scaling-rows'). |
+| `make ci` | Run every CI gate this host can run (ARGS=--fast skips clang-tidy). |
 | `make help` | List the common make targets. |
 | `make docs-check` | Verify generated docs and lint prose (the five CI doc gates). |
 | `make install-hooks` | Point core.hooksPath at the versioned hooks (commit-msg format gate). |
