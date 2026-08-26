@@ -630,6 +630,45 @@ TEST_CASE("Shap paths: oblivious densified booster matches pred_contribs_binned"
                   cfg.booster_config.learning_rate, init);
 }
 
+// The device pack is sized by this count, so it is the growth law behind
+// cuda_shap_plan's allocation decline: a densified oblivious tree emits a head
+// per expansion slot, not per slot carrying evidence.
+TEST_CASE("Shap paths: a densified oblivious tree packs a head per slot",
+          "[shap][paths][booster]")
+{
+    auto const       batch   = shap_batch();
+    BinMappers const mappers = BinMappers::fit(batch, {});
+    Dataset const    train   = Dataset::bin(batch, mappers, {});
+
+    Config cfg;
+    cfg.tree_config.min_data_in_leaf = 0;
+    cfg.tree_config.min_child_hess   = 0.0F;
+    cfg.tree_config.max_depth        = 3;
+
+    Booster<MSEObjective, ObliviousGrower<>, AllRowsSampler> b{cfg};
+    for (int i = 0; i < 6; ++i)
+    {
+        b.update_one_iter(train);
+    }
+
+    auto const dense = internal::densify(b.trees());
+    auto const paths = pack_shap_paths(dense, mappers, 1);
+
+    size_t leaves = 0;
+    for (DenseTree const &tree : dense)
+    {
+        size_t const here = static_cast<size_t>(
+            std::ranges::count_if(tree.nodes(), [](DenseTree::Node const &n)
+                                  { return DenseTree::is_leaf(n); }));
+        // Perfect by construction: every level splits, so the expansion is full
+        // and holds corners no row can reach.
+        CHECK(here == (size_t{1} << cfg.tree_config.max_depth));
+        CHECK(tree.nodes().size() == (2 * here) - 1);
+        leaves += here;
+    }
+    CHECK(paths.heads.size() == leaves);
+}
+
 TEST_CASE("Shap paths: multiclass paths carry their class id", "[shap][paths][booster]")
 {
     detail::ColumnBatch batch;

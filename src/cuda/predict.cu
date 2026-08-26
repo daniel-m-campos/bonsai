@@ -17,6 +17,7 @@
 #include <driver_types.h>
 #include <limits>
 #include <memory>
+#include <new>
 #include <print>
 #include <span>
 #include <stdexcept>
@@ -164,7 +165,17 @@ cuda_predict_plan(std::span<DenseTree const> trees, BinMappers const &mappers,
         last[f] = static_cast<uint32_t>(mappers[f].n_bins() - 1);
     }
     ProfileCounters::Lap lap{.enabled = profile_on()};
-    PackedTrees const    p = pack(trees, mappers);
+    PackedTrees          p;
+    try
+    {
+        p = pack(trees, mappers);
+    }
+    catch (std::bad_alloc const &)
+    {
+        // Declining is worth the wasted pack: the host walk this falls back to
+        // reads the ensemble in place and allocates nothing of this size.
+        return nullptr;
+    }
     if (p.feature.size() > std::numeric_limits<uint32_t>::max())
     {
         return nullptr;

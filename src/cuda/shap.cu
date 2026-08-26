@@ -19,6 +19,7 @@
 #include <driver_types.h>
 #include <limits>
 #include <memory>
+#include <new>
 #include <print>
 #include <span>
 #include <stdexcept>
@@ -234,6 +235,12 @@ std::shared_ptr<CudaShapPlan const> cuda_shap_plan(std::span<DenseTree const> tr
     catch (std::invalid_argument const &)
     {
         return nullptr; // no covers, a split feature wider than the 8-bit interval
+    }
+    catch (std::bad_alloc const &)
+    {
+        // Declining is worth the wasted pack: the host walk this falls back to
+        // is the per-row recursion, which allocates nothing of this size.
+        return nullptr;
     }
     if (paths.max_path_len > k_max_path ||
         paths.heads.size() > std::numeric_limits<uint32_t>::max() ||
