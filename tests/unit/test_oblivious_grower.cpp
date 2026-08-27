@@ -188,19 +188,22 @@ TEST_CASE("ObliviousGrower: level with no gain stops growth before max_depth",
     CHECK(tree.params().n_leaves == 2);
 }
 
-// INVARIANT: levelwise-rejects-constraints
-// The levelwise (oblivious) grower rejects monotone and interaction
-// constraints at construction rather than silently ignoring them, on both
-// the CPU and CUDA engines: the throw is in the shared template, so an
-// engine cannot opt out of it.
+// INVARIANT: levelwise-rejects-interaction-constraints
+// The levelwise (oblivious) grower rejects interaction constraints at
+// construction rather than silently ignoring them, on both the CPU and CUDA
+// engines: the throw is in the shared template, so an engine cannot opt out
+// of it. Monotone constraints are honoured rather than rejected, by
+// project_monotone; interaction constraints have no equivalent projection,
+// because they constrain which features may share a path rather than how
+// leaf values are ordered.
 TEST_CASE("ObliviousGrower: rejects constraints it cannot honour at construction",
           "[grower][oblivious][ctor][invariant]")
 {
-    SECTION("a monotone direction throws")
+    SECTION("a monotone direction is accepted")
     {
         TreeConfig cfg{};
         cfg.monotone_constraints = {0, 1, 0};
-        CHECK_THROWS_AS(ObliviousGrower<>{cfg}, ConfigError);
+        CHECK_NOTHROW(ObliviousGrower<>{cfg});
     }
     SECTION("an all-zero monotone list is not a constraint")
     {
@@ -213,5 +216,104 @@ TEST_CASE("ObliviousGrower: rejects constraints it cannot honour at construction
         TreeConfig cfg{};
         cfg.interaction_constraints = {"0,1"};
         CHECK_THROWS_AS(ObliviousGrower<>{cfg}, ConfigError);
+    }
+}
+
+// INVARIANT: levelwise-monotone-holds
+// A levelwise fit under a monotone constraint produces predictions ordered by
+// that feature, on both the CPU and CUDA engines. The mechanism is a
+// projection of the finished leaf table onto the monotone cone
+// (project_monotone), not a veto during growth, so the tree's structure is
+// whatever the unconstrained search would have chosen.
+TEST_CASE("ObliviousGrower: monotone +1 forces non-decreasing predictions",
+          "[grower][oblivious][monotone][invariant]")
+{
+    // Same gradients as the depthwise case: group means swing down then up,
+    // so the unconstrained tree is genuinely non-monotone in the feature.
+    detail::ColumnBatch batch{
+        .features      = {{0.0F, 0.1F, 0.2F, 1.0F, 1.1F, 1.2F, 2.0F, 2.1F, 2.2F}},
+        .labels        = std::vector<float>(9, 0.0F),
+        .weights       = {},
+        .feature_names = {"a"},
+    };
+    auto               built = build(std::move(batch));
+    std::vector<float> grad{-1.0F, -1.0F, -1.0F, +2.0F, +2.0F,
+                            +2.0F, -2.0F, -2.0F, -2.0F};
+    std::vector<float> hess(9, 1.0F);
+    auto               rows = iota_rows(9);
+
+    TreeConfig unconstrained{.min_child_hess   = 0.0F,
+                             .lambda_l2        = 1.0F,
+                             .max_depth        = 3,
+                             .min_data_in_leaf = 0};
+    TreeConfig constrained           = unconstrained;
+    constrained.monotone_constraints = {+1};
+
+    auto curve_of = [&](ObliviousTree const &tree)
+    {
+        std::vector<float> out;
+        for (float x : {0.0F, 1.05F, 2.1F})
+        {
+            out.push_back(predict_one(tree, std::vector<float>{x}));
+        }
+        return out;
+    };
+
+    ObliviousGrower<> free_grower{unconstrained};
+    auto [free_tree, free_values, free_lids] =
+        free_grower.grow(built.ds, grad, hess, rows);
+    auto const free_curve = curve_of(free_tree);
+    CHECK((free_curve[1] < free_curve[0] || free_curve[2] < free_curve[1]));
+
+    ObliviousGrower<> mono_grower{constrained};
+    auto [mono_tree, mono_values, mono_lids] =
+        mono_grower.grow(built.ds, grad, hess, rows);
+    auto const curve = curve_of(mono_tree);
+    CHECK(curve[0] <= curve[1]);
+    CHECK(curve[1] <= curve[2]);
+
+    SECTION("the structure is the unconstrained one, only the values move")
+    {
+        REQUIRE(free_tree.splits().size() == mono_tree.splits().size());
+        for (size_t lvl = 0; lvl < free_tree.splits().size(); ++lvl)
+        {
+            CHECK(free_tree.splits()[lvl].feature_id ==
+                  mono_tree.splits()[lvl].feature_id);
+            CHECK(free_tree.splits()[lvl].threshold ==
+                  mono_tree.splits()[lvl].threshold);
+        }
+    }
+}
+
+TEST_CASE("ObliviousGrower: monotone -1 forces non-increasing predictions",
+          "[grower][oblivious][monotone]")
+{
+    detail::ColumnBatch batch{
+        .features      = {{0.0F, 0.1F, 0.2F, 1.0F, 1.1F, 1.2F, 2.0F, 2.1F, 2.2F}},
+        .labels        = std::vector<float>(9, 0.0F),
+        .weights       = {},
+        .feature_names = {"a"},
+    };
+    auto               built = build(std::move(batch));
+    std::vector<float> grad{-1.0F, -1.0F, -1.0F, +2.0F, +2.0F,
+                            +2.0F, -2.0F, -2.0F, -2.0F};
+    std::vector<float> hess(9, 1.0F);
+    auto               rows = iota_rows(9);
+
+    TreeConfig cfg{.min_child_hess   = 0.0F,
+                   .lambda_l2        = 1.0F,
+                   .max_depth        = 3,
+                   .min_data_in_leaf = 0};
+    cfg.monotone_constraints = {-1};
+
+    ObliviousGrower<> grower{cfg};
+    auto [tree, values, lids] = grower.grow(built.ds, grad, hess, rows);
+
+    float previous = predict_one(tree, std::vector<float>{0.0F});
+    for (float x : {1.05F, 2.1F})
+    {
+        float const next = predict_one(tree, std::vector<float>{x});
+        CHECK(next <= previous);
+        previous = next;
     }
 }
