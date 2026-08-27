@@ -67,6 +67,11 @@ catboost_info/
 .venv/
 __pycache__/
 
+# One per standings refresh: scripts/standings_refresh.py defaults its
+# --out-dir to standings-<date>-<time>/ at the repo root. The rows it
+# produces are committed under benchmarks/results/; these are the logs.
+standings-*/
+
 # Datasets pulled by scripts/fetch_*.py — regenerate, don't commit.
 # (tiny.csv is a small fixture tracked by hand for unit tests.)
 tests/data/*.csv
