@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -378,8 +377,7 @@ std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train
             }
             std::optional<float> device_loss;
             if (i == 0 && cuda_grower && validation_bins != nullptr &&
-                validation_bins->row_view().is_identity() &&
-                std::getenv("BONSAI_HOST_EVAL") == nullptr)
+                validation_bins->row_view().is_identity())
             {
                 detail::Phase<&detail::FitProfiler::eval_arm_s> phase;
                 device_eval = booster->begin_resident_validation(
