@@ -145,7 +145,7 @@ def run(out_path):
                 for v in VARIANTS:
                     if (sname, name, v, seed) in done:
                         continue
-                    t0 = time.time()
+                    t0 = time.perf_counter()
                     try:
                         pred = fit_predict(v, X[tr], y[tr], X[te], kind)
                         fn = metrics.auc if kind == "auc" else metrics.r2
@@ -158,7 +158,7 @@ def run(out_path):
                         seed=seed, kind=kind, metric=kind, value=value,
                         status=status, n_train=len(tr),
                         n_features=int(X.shape[1]),
-                        fit_s=round(time.time() - t0, 2))
+                        fit_s=round(time.perf_counter() - t0, 2))
                     shown = value if value is None else round(value, 4)
                     print(f"{sname:8s} {name[:28]:28s} {v:11s} s{seed} "
                           f"{shown}", flush=True)
