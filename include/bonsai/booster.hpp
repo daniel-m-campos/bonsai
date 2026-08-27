@@ -611,6 +611,24 @@ class Booster final : public ITrainableBooster
                                       selection_shape(train, n_selected)});
         lap(prof.grow_s);
 
+        finish_round(train, tree, leaf_values, leaf_ids, dropped, dropped_sum);
+    }
+
+    // Everything a round does to the tree after the grower returns it, in the
+    // order that IS the contract: renewal first, because it overwrites every
+    // leaf value with a residual statistic; the monotone reprojection second,
+    // restoring the constraint over what renewal wrote; the score update
+    // last, reading the final values. Encoding this as statement order inside
+    // update_one_iter is how a violation went unnoticed, so the sequence has
+    // one name and one home.
+    void finish_round(Dataset const &train, tree_type &tree,
+                      train_leaf_values &leaf_values, std::vector<node_id_t> &leaf_ids,
+                      std::vector<size_t> const &dropped,
+                      std::vector<float> const  &dropped_sum)
+    {
+        auto                    &prof = detail::FitProfiler::instance();
+        detail::FitProfiler::Lap lap;
+
         // Leaf renewal (surrogate-hessian objectives): replace each leaf's
         // Newton step with the objective's optimal value over the residuals
         // of the rows it covers. scores_ still exclude this tree (and, under
@@ -618,10 +636,7 @@ class Booster final : public ITrainableBooster
         if constexpr (requires(std::span<float> r) { objective_.renew_leaf(r); })
         {
             renew_leaves(tree, leaf_ids, leaf_values, train.labels(), train.row_view());
-            if constexpr (requires(tree_type &t) {
-                              t.splits();
-                              t.leaf_covers();
-                          })
+            if constexpr (std::same_as<tree_type, ObliviousTree>)
             {
                 reproject_monotone(tree, leaf_ids, leaf_values, train.row_view());
             }
