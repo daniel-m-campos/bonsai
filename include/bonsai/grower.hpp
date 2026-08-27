@@ -266,6 +266,69 @@ bool engine_eval_begin(EngineT &engine, Dataset const &valid, DeviceObjectiveKin
     }
 }
 
+// The grower's device state, one home for all three growers: the engine and
+// the two arming flags the resident-objective and validation seams set. The
+// flags answer "did the device accept this fit", so grow() can skip the
+// host-side per-row output the resident finalize replaces, and the booster
+// can route the eval walk. begin() and begin_leaf() differ only in that
+// best-first growth sizes its histogram pool from the tree config, a
+// capacity decided once per fit; a CPU engine compiles both to `false`
+// through the engine_* shims above. eval_armed() is read by the growers'
+// eval_accumulate definitions, which stay per-grower because each tree shape
+// flattens to a device node table its own way.
+template <typename EngineT> class DeviceSeam
+{
+  public:
+    EngineT &engine()
+    {
+        return engine_;
+    }
+
+    bool begin(Dataset const &ds, DeviceObjectiveKind kind,
+               std::span<float const> scores, float learning_rate)
+    {
+        resident_ = engine_resident_begin(engine_, ds, kind, scores, learning_rate);
+        return resident_;
+    }
+
+    bool begin_leaf(Dataset const &ds, TreeConfig const &config,
+                    DeviceObjectiveKind kind, std::span<float const> scores,
+                    float learning_rate)
+    {
+        resident_ = engine_resident_begin_leaf(engine_, ds, config, kind, scores,
+                                               learning_rate);
+        return resident_;
+    }
+
+    void end(std::span<float> scores)
+    {
+        engine_resident_end(engine_, scores);
+        resident_ = false;
+    }
+
+    bool armed() const
+    {
+        return resident_;
+    }
+
+    bool eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
+                    std::span<float const> scores)
+    {
+        eval_ = engine_eval_begin(engine_, valid, kind, scores);
+        return eval_;
+    }
+
+    bool eval_armed() const
+    {
+        return eval_;
+    }
+
+  private:
+    EngineT engine_;
+    bool    resident_ = false;
+    bool    eval_     = false;
+};
+
 template <HistogramEngine EngineT   = CpuHistogramEngine,
           NodeSplitFinder SplitterT = HistogramNodeSplitFinder>
 class DepthwiseGrower
@@ -282,33 +345,26 @@ class DepthwiseGrower
         recycled_.set(std::move(values), std::move(leaf_ids));
     }
 
-    // Remembers whether the engine armed, so grow() can skip the host-side
-    // per-row output the resident finalize replaces.
+    // The device seam, forwarded (see DeviceSeam). eval_accumulate flattens
+    // the tree grower-side, where the node-table helper lives; loss carries
+    // the device-reduced metric when the kind has one.
     bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
                         std::span<float const> scores, float learning_rate)
     {
-        resident_ = engine_resident_begin(engine_, ds, kind, scores, learning_rate);
-        return resident_;
+        return seam_.begin(ds, kind, scores, learning_rate);
     }
     void resident_end(std::span<float> scores)
     {
-        engine_resident_end(engine_, scores);
-        resident_ = false;
+        seam_.end(scores);
     }
     bool resident() const
     {
-        return resident_;
+        return seam_.armed();
     }
-
-    // Device validation seam: mirrors the resident seam for the per-round
-    // eval walk. eval_accumulate flattens the tree grower-side, where the
-    // node-table helper lives; loss carries the device-reduced metric when
-    // the kind has one. eval_ remembers the arming (the resident_ pattern).
     bool eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
                     std::span<float const> scores)
     {
-        eval_ = engine_eval_begin(engine_, valid, kind, scores);
-        return eval_;
+        return seam_.eval_begin(valid, kind, scores);
     }
     bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
                          std::span<float> scores_out, std::optional<float> &loss);
@@ -317,10 +373,8 @@ class DepthwiseGrower
     TreeConfig                             config_;
     std::mt19937                           feature_rng_;
     std::vector<std::vector<feature_id_t>> interaction_groups_;
-    EngineT                                engine_;
+    DeviceSeam<EngineT>                    seam_;
     RecycledOutputs                        recycled_;
-    bool                                   resident_ = false;
-    bool                                   eval_     = false;
 };
 
 template <HistogramEngine  EngineT   = CpuHistogramEngine,
@@ -339,41 +393,34 @@ class ObliviousGrower
         recycled_.set(std::move(values), std::move(leaf_ids));
     }
 
-    // Device-resident objective seam (see DepthwiseGrower::resident_begin).
+    // The device seam, forwarded (see DeviceSeam). The oblivious eval flatten
+    // synthesizes the perfect-tree numbering from the level splits.
     bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
                         std::span<float const> scores, float learning_rate)
     {
-        resident_ = engine_resident_begin(engine_, ds, kind, scores, learning_rate);
-        return resident_;
+        return seam_.begin(ds, kind, scores, learning_rate);
     }
     void resident_end(std::span<float> scores)
     {
-        engine_resident_end(engine_, scores);
-        resident_ = false;
+        seam_.end(scores);
     }
     bool resident() const
     {
-        return resident_;
+        return seam_.armed();
     }
-
-    // Device validation seam (see DepthwiseGrower::eval_begin). The oblivious
-    // flatten synthesizes the perfect-tree numbering from the level splits.
     bool eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
                     std::span<float const> scores)
     {
-        eval_ = engine_eval_begin(engine_, valid, kind, scores);
-        return eval_;
+        return seam_.eval_begin(valid, kind, scores);
     }
     bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
                          std::span<float> scores_out, std::optional<float> &loss);
 
   private:
-    TreeConfig      config_;
-    std::mt19937    feature_rng_;
-    EngineT         engine_;
-    RecycledOutputs recycled_;
-    bool            resident_ = false;
-    bool            eval_     = false;
+    TreeConfig          config_;
+    std::mt19937        feature_rng_;
+    DeviceSeam<EngineT> seam_;
+    RecycledOutputs     recycled_;
 };
 
 template <HistogramEngine         EngineT   = CpuHistogramEngine,
@@ -392,34 +439,27 @@ class LeafwiseGrower
         recycled_.set(std::move(values), std::move(leaf_ids));
     }
 
-    // Device-resident objective seam (see DepthwiseGrower::resident_begin).
-    // The leaf plane's arming carries the tree config: its histogram pool is
-    // sized from the leaf budget, and that capacity must be decided once per
-    // fit rather than per tree.
+    // The device seam, forwarded (see DeviceSeam). This grower arms through
+    // begin_leaf: best-first growth sizes its histogram pool from the tree
+    // config, a capacity decided once per fit rather than per tree. The eval
+    // walk is plane-independent, so no leaf variant of it exists.
     bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
                         std::span<float const> scores, float learning_rate)
     {
-        resident_ = engine_resident_begin_leaf(engine_, ds, config_, kind, scores,
-                                               learning_rate);
-        return resident_;
+        return seam_.begin_leaf(ds, config_, kind, scores, learning_rate);
     }
     void resident_end(std::span<float> scores)
     {
-        engine_resident_end(engine_, scores);
-        resident_ = false;
+        seam_.end(scores);
     }
     bool resident() const
     {
-        return resident_;
+        return seam_.armed();
     }
-
-    // Device validation seam (see DepthwiseGrower::eval_begin). The eval walk
-    // is plane-independent, so no leaf variant exists.
     bool eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
                     std::span<float const> scores)
     {
-        eval_ = engine_eval_begin(engine_, valid, kind, scores);
-        return eval_;
+        return seam_.eval_begin(valid, kind, scores);
     }
     bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
                          std::span<float> scores_out, std::optional<float> &loss);
@@ -428,10 +468,8 @@ class LeafwiseGrower
     TreeConfig                             config_;
     std::mt19937                           feature_rng_;
     std::vector<std::vector<feature_id_t>> interaction_groups_;
-    EngineT                                engine_;
+    DeviceSeam<EngineT>                    seam_;
     RecycledOutputs                        recycled_;
-    bool                                   resident_ = false;
-    bool                                   eval_     = false;
 };
 
 } // namespace bonsai
