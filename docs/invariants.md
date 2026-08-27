@@ -44,9 +44,15 @@ A row-narrowed view mints a FitId distinct from its parent's, and a copy shares 
 
 - enforced by: [`identity tokens: minted, shared by copies, distinct per fit`](../tests/unit/test_dataset.cpp)
 
-### levelwise-rejects-constraints
+### levelwise-monotone-holds
 
-The levelwise (oblivious) grower rejects monotone and interaction constraints at construction rather than silently ignoring them, on both the CPU and CUDA engines: the throw is in the shared template, so an engine cannot opt out of it.
+A levelwise fit under a monotone constraint produces predictions ordered by that feature, on both the CPU and CUDA engines. The mechanism is a projection of the finished leaf table onto the monotone cone (project_monotone), not a veto during growth, so the tree's structure is whatever the unconstrained search would have chosen.
+
+- enforced by: [`ObliviousGrower: monotone +1 forces non-decreasing predictions`](../tests/unit/test_oblivious_grower.cpp)
+
+### levelwise-rejects-interaction-constraints
+
+The levelwise (oblivious) grower rejects interaction constraints at construction rather than silently ignoring them, on both the CPU and CUDA engines: the throw is in the shared template, so an engine cannot opt out of it. Monotone constraints are honoured rather than rejected, by project_monotone; interaction constraints have no equivalent projection, because they constrain which features may share a path rather than how leaf values are ordered.
 
 - enforced by: [`ObliviousGrower: rejects constraints it cannot honour at construction`](../tests/unit/test_oblivious_grower.cpp)
 

@@ -28,9 +28,9 @@ A claim that fails both tests is either rationale (decisions.md) or teaching (gu
 **A contract is worth writing down only if something fails when it breaks.** Prose cannot fail, so the enforced half of `invariants.md` is generated from the tests that prove each contract. Adding one means writing the test, not writing a paragraph:
 
 ```cpp
-// INVARIANT: levelwise-rejects-constraints
-// The levelwise grower rejects monotone and interaction constraints at
-// construction rather than silently ignoring them.
+// INVARIANT: levelwise-rejects-interaction-constraints
+// The levelwise grower rejects interaction constraints at construction
+// rather than silently ignoring them.
 TEST_CASE("ObliviousGrower: rejects constraints it cannot honour", "[...][invariant]")
 ```
 

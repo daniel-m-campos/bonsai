@@ -78,7 +78,7 @@ EFFECTS = {
     "tree.max_leaves": "Leaf cap for leafwise growth. 0 is unbounded (depth-capped). Fewer leaves regularize; more leaves fit finer structure.",
     "tree.feature_fraction": "Fraction of features sampled per tree. Below 1 decorrelates trees and speeds training, often improving generalization.",
     "tree.feature_seed": "Seeds the per-tree feature_fraction draws. Fixing it keeps feature subsampling reproducible across runs.",
-    "tree.monotone_constraints": "Per-feature monotone direction: +1 increasing, -1 decreasing, 0 free. Forces predictions to respect known monotonic relationships. Node-splitting growers only.",
+    "tree.monotone_constraints": "Per-feature monotone direction: +1 increasing, -1 decreasing, 0 free. Forces predictions to respect known monotonic relationships. Honoured by every grower.",
     "tree.interaction_constraints": "Feature groups allowed to interact on one tree path. Restricts which features co-split, encoding domain structure and limiting interactions.",
     # sampler
     "sampler.subsample": "bernoulli sampler: fraction of rows drawn per tree. Below 1 adds randomness and speed, trading accuracy for less overfitting.",

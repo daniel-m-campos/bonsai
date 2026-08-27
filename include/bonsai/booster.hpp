@@ -862,10 +862,7 @@ class Booster final : public IBooster
         }
     }
 
-    // Renewal replaces every leaf value with a robust residual statistic,
-    // which has no reason to respect the ordering the grower's projection
-    // established, so the projection runs again over the renewed table. The
-    // weights are row counts rather than hessians: a renewed value is not a
+    // Weights are row counts rather than hessians: a renewed value is not a
     // Newton step, so the second-order weighting no longer describes it.
     void reproject_monotone(tree_type &tree, std::vector<node_id_t> const &leaf_ids,
                             train_leaf_values &leaf_values, RowView const &view)
