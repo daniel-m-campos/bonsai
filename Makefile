@@ -168,11 +168,28 @@ $(AMAZON_SENTINEL):
 	@uv run scripts/fetch_amazon.py
 	@touch $@
 
-# The verification floor, executed rather than remembered. Runs every CI gate
-# this host can run and NAMES the ones it cannot, because a silently skipped
-# check is indistinguishable from a passing one.
-ci:  ## Run every CI gate this host can run (ARGS=--fast skips clang-tidy).
-	@python3 scripts/run_local_ci.py $(ARGS)
+# The verification floor, executed rather than remembered. Runs every gate this
+# host can run and NAMES the ones it cannot: a silently skipped check and a
+# passing one look identical, which is how a stale generated page reaches CI.
+# Fall back to python3 when the repo venv is absent, so a fresh checkout
+# runs the gates instead of failing on the interpreter.
+CI_PYTHON := $(if $(wildcard $(PYTHON)),$(PYTHON),$(shell command -v python3))
+
+ci:  ## Run every CI gate this host can run (FAST=1 skips clang-tidy).
+	@fail=0; log=$$(mktemp); \
+	gates="format-check lint-python docs-check test python-test$(if $(FAST),, lint)"; \
+	[ "$$(uname -s)" = Linux ] && gates="$$gates test-asan test-tsan"; \
+	command -v nvcc >/dev/null 2>&1 && gates="$$gates build-cuda"; \
+	for g in $$gates; do \
+	    printf '  %-14s ' "$$g"; \
+	    if $(MAKE) -s $$g PYTHON=$(CI_PYTHON) >"$$log" 2>&1; then echo pass; \
+	    else echo FAIL; sed 's/^/      /' "$$log" | tail -20; fail=1; fi; \
+	done; \
+	[ "$$(uname -s)" = Linux ] || \
+	    echo "  NOT CHECKED HERE  test-asan test-tsan (need Linux; CI runs them)"; \
+	command -v nvcc >/dev/null 2>&1 || \
+	    echo "  NOT CHECKED HERE  build-cuda (no nvcc; CI and a GPU host run it)"; \
+	rm -f "$$log"; exit $$fail
 
 help:  ## List the common make targets.
 	@echo "Targets:"
