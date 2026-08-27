@@ -529,7 +529,8 @@ class Booster final : public ITrainableBooster
     using tree_type      = typename Gr::Tree;
 
     explicit Booster(Config const &config)
-        : config_(config.booster_config), tree_config_(config.tree_config),
+        : config_(config.booster_config),
+          monotone_constraints_(config.tree_config.monotone_constraints),
           objective_(config), grower_(config.tree_config), sampler_(config),
           rng_(config.booster_config.random_seed)
     {
@@ -893,12 +894,12 @@ class Booster final : public ITrainableBooster
     void reproject_monotone(tree_type &tree, std::vector<node_id_t> const &leaf_ids,
                             train_leaf_values &leaf_values, RowView const &view)
     {
-        if (!has_monotone_constraint(tree_config_))
+        if (!has_monotone_constraint(monotone_constraints_))
         {
             return;
         }
         std::vector<float> table(tree.leaf_table().begin(), tree.leaf_table().end());
-        project_monotone(monotone_levels(tree.splits(), tree_config_),
+        project_monotone(monotone_levels(tree.splits(), monotone_constraints_),
                          tree.leaf_covers(), table);
         for (size_t li = 0; li < table.size(); ++li)
         {
@@ -1206,12 +1207,15 @@ class Booster final : public ITrainableBooster
     }
 
   private:
-    BoosterConfig  config_;
-    TreeConfig     tree_config_;
-    objective_type objective_;
-    grower_type    grower_;
-    sampler_type   sampler_;
-    std::mt19937   rng_;
+    BoosterConfig config_;
+    // The one tree-section value the booster reads after the grower returns:
+    // renewal reprojection needs the constraint directions, and the grower's
+    // own TreeConfig copy is deliberately private.
+    std::vector<int> monotone_constraints_;
+    objective_type   objective_;
+    grower_type      grower_;
+    sampler_type     sampler_;
+    std::mt19937     rng_;
     // The ensemble and its mutation epoch in one place: reads go through
     // read(), every write through mutate(), which is what bumps the epoch the
     // dense SHAP cache and the device plans rebuild on.
