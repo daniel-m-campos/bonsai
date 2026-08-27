@@ -64,13 +64,15 @@ struct DevicePlanInput
     std::shared_ptr<std::vector<DenseTree> const> keep_alive;
 };
 
+// The prediction and introspection surface of a trained model: what a holder
+// that never trains (the Python Model) depends on. Training lives on
+// ITrainableBooster below, so a predict-side client is not coupled to the
+// seven-method early-stopping seam only the CLI pipeline drives.
 class IBooster
 {
   public:
     virtual ~IBooster() = default;
 
-    // --- training
-    virtual void  update_one_iter(Dataset const &train)           = 0;
     virtual float eval(features_view X, floats_view labels) const = 0;
     // --- prediction
     virtual void   predict(features_view X, floats_out y_hat) const = 0;
@@ -155,15 +157,24 @@ class IBooster
         return {};
     }
 
-    // --- the training-loop seam (CLI pipeline only)
-    // The caller maintains a raw-score matrix of n_rows x score_width(),
-    // row-major, and these advance it a round at a time so early stopping
-    // never re-predicts the whole ensemble. The binned overload routes the
-    // same rows at a quarter the bytes.
+    // Rows per prediction: 1 for width-1 objectives, n_classes for softmax.
+    // On the base interface because both clients size buffers from it.
     virtual size_t score_width() const
     {
         return 1;
     }
+};
+
+// What training adds to a model: the boosting step plus the early-stopping
+// seam. The seam's caller maintains a raw-score matrix of n_rows x
+// score_width(), row-major, and these advance it a round at a time so early
+// stopping never re-predicts the whole ensemble; the binned overload routes
+// the same rows at a quarter the bytes. One client drives this interface,
+// the CLI pipeline; the Python module holds the base and trains through it.
+class ITrainableBooster : public IBooster
+{
+  public:
+    virtual void update_one_iter(Dataset const &train) = 0;
 
     virtual void seed_validation_scores(features_view X, std::span<float> out,
                                         size_t n_rounds) const = 0;
@@ -509,7 +520,7 @@ template <typename T> class Versioned
 // reordering any leg breaks either DART or renewal, and the round's
 // bit-identity across runs is what the cross-arch hash gate checks.
 template <Objective Obj, TreeGrower Gr, Sampler Sa>
-class Booster final : public IBooster
+class Booster final : public ITrainableBooster
 {
   public:
     using objective_type = Obj;

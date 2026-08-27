@@ -67,8 +67,9 @@ using ProgressFn = std::function<void(size_t, size_t)>;
 
 // Step 2 of training: build a booster from cfg via the registry and run
 // `cfg.booster_config.n_iters` iterations of `update_one_iter` on `train`.
-std::unique_ptr<IBooster> train_in_memory(Config const &cfg, Dataset const &train,
-                                          ProgressFn const &on_progress = {});
+std::unique_ptr<ITrainableBooster> train_in_memory(Config const     &cfg,
+                                                   Dataset const    &train,
+                                                   ProgressFn const &on_progress = {});
 
 // Per-tick snapshot of model performance during fit. Predictions are RAW
 // scores (link not applied yet); the printer decides whether to invert and
@@ -101,11 +102,11 @@ using FitTickFn = std::function<void(FitTick const &)>;
 // no ownership): std::ref(vec) to opt in, default {} to opt out.
 using EvalHistoryRef = std::optional<std::reference_wrapper<std::vector<float>>>;
 
-std::unique_ptr<IBooster> train_with_progress(Config const                &cfg,
-                                              LoadedTrainValidation const &loaded,
-                                              FitTickFn const             &on_tick = {},
-                                              std::unique_ptr<IBooster>    initial = {},
-                                              EvalHistoryRef eval_history = {});
+std::unique_ptr<ITrainableBooster>
+train_with_progress(Config const &cfg, LoadedTrainValidation const &loaded,
+                    FitTickFn const                   &on_tick      = {},
+                    std::unique_ptr<ITrainableBooster> initial      = {},
+                    EvalHistoryRef                     eval_history = {});
 
 // Same, but the sets arrive separately instead of inside a
 // LoadedTrainValidation. Lets a caller pair a long-lived pre-binned train set
@@ -114,11 +115,9 @@ std::unique_ptr<IBooster> train_with_progress(Config const                &cfg,
 // cache).
 // Train alone: no validation set, so no early stopping and no eval history
 // (`eval_history` is left as the caller passed it).
-std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
-                                              LabeledData const        &train,
-                                              FitTickFn const          &on_tick = {},
-                                              std::unique_ptr<IBooster> initial = {},
-                                              EvalHistoryRef eval_history       = {});
+std::unique_ptr<ITrainableBooster> train_with_progress(
+    Config const &cfg, LabeledData const &train, FitTickFn const &on_tick = {},
+    std::unique_ptr<ITrainableBooster> initial = {}, EvalHistoryRef eval_history = {});
 
 // With a validation set: `eval_history`, when engaged, receives the validation
 // loss after every boosting round (the objective's own eval metric), whether
@@ -127,12 +126,11 @@ std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
 // Indices are absolute model rounds: a warm start (`initial`) prefixes one
 // quiet-NaN entry per pre-existing round, so argmin over the vector lines up
 // with n_iters()/truncate()/predict-at-round counting.
-std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
-                                              LabeledData const        &train,
-                                              LabeledData const        &validation,
-                                              FitTickFn const          &on_tick = {},
-                                              std::unique_ptr<IBooster> initial = {},
-                                              EvalHistoryRef eval_history       = {});
+std::unique_ptr<ITrainableBooster>
+train_with_progress(Config const &cfg, LabeledData const &train,
+                    LabeledData const &validation, FitTickFn const &on_tick = {},
+                    std::unique_ptr<ITrainableBooster> initial      = {},
+                    EvalHistoryRef                     eval_history = {});
 
 struct ScoredBatch
 {

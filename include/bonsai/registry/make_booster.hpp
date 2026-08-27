@@ -18,10 +18,11 @@ class UnknownImplError : public std::runtime_error
 };
 
 // Look up (objective_name, grower_name, sampler_name) in the compile-time
-// dispatch table and return the combo's booster as IBooster; softmax
-// combos build a MulticlassBooster, every other combo a Booster.
+// dispatch table and return the combo's booster; softmax combos build a
+// MulticlassBooster, every other combo a Booster. The trainable interface
+// comes back because every caller of this factory goes on to train.
 // Throws UnknownImplError if the triple is not in the table.
-std::unique_ptr<IBooster> make_booster(Config const &config);
+std::unique_ptr<ITrainableBooster> make_booster(Config const &config);
 
 struct AvailableCombo
 {

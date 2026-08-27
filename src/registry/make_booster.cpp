@@ -24,10 +24,11 @@ struct Entry
     std::string_view objective_name;
     std::string_view grower_name;
     std::string_view sampler_name;
-    std::unique_ptr<IBooster> (*factory)(Config const &);
+    std::unique_ptr<ITrainableBooster> (*factory)(Config const &);
 };
 
-template <typename Combo> std::unique_ptr<IBooster> factory_for(Config const &cfg)
+template <typename Combo>
+std::unique_ptr<ITrainableBooster> factory_for(Config const &cfg)
 {
     return std::make_unique<BoosterFor<Combo>>(cfg);
 }
@@ -48,7 +49,7 @@ inline constexpr auto configurations = make_table<Configurations, Entry>(
 
 } // namespace
 
-std::unique_ptr<IBooster> make_booster(Config const &config)
+std::unique_ptr<ITrainableBooster> make_booster(Config const &config)
 {
     std::string_view const obj = config.dispatch.objective_name;
     std::string_view const gr  = config.dispatch.grower_name;
