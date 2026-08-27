@@ -18,7 +18,7 @@ namespace bonsai
 //
 // What it guarantees. `leaf_table` holds 2^D leaves indexed by the bit vector
 // of level outcomes, level 0 the most significant bit and 0 meaning the left
-// (below-threshold) child, which is the numbering finalize_leaves stamps.
+// (below-threshold) child (INVARIANT perfect-tree-numbering-one-scheme).
 // `level_directions[lvl]` is +1, -1 or 0 for the feature that level cut. On
 // return every pair of leaves differing only in a constrained level's bit is
 // ordered by that level's sign. Because monotone functions are closed under

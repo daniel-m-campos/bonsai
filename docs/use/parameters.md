@@ -45,7 +45,7 @@ Per-tree shape and regularization, the primary overfitting controls.
 | `min_child_hess` | float | `1.0` | Minimum hessian each child of a split must hold, or the candidate is rejected. Under squared error a row weighs 1, so this counts rows. |
 | `min_data_in_leaf` | integer | `20` | Rows a node needs to split at all, twice this value. It gates the node, not the child: min_child_hess is the per-child floor. |
 | `min_gain_to_split` | float | `0.0` | Minimum loss reduction to accept a split. Raising it prunes low-value splits and shrinks trees, curbing overfitting. |
-| `monotone_constraints` | list | `[]` | Per-feature monotone direction: +1 increasing, -1 decreasing, 0 free. Forces predictions to respect known monotonic relationships. Node-splitting growers only. |
+| `monotone_constraints` | list | `[]` | Per-feature monotone direction: +1 increasing, -1 decreasing, 0 free. Forces predictions to respect known monotonic relationships. Honoured by every grower. |
 
 ## sampler
 

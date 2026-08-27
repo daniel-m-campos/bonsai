@@ -54,7 +54,7 @@ alone). Prediction becomes a sum of functions over the groups only.
   [`src/grower.cpp`](../../src/grower.cpp): a per-tree sorted draw from a
   grower-owned rng (`tree.feature_seed`); unselected features get
   zero-binned placeholder histograms the finders skip.
-- **Monotone**: two touch points. Rejection: in the candidate loop of [`src/split.cpp`](../../src/split.cpp), skip when $\text{mc} \cdot (w_R - w_L) < 0$, using *bounded* child weights. Propagation: `propagate_monotone_bounds` in `src/grower.cpp` fences children at the midpoint via `SplitInput::lo/hi`; `finalize_as_leaf` clamps into them. Config: `tree.monotone_constraints = [1, 0, -1, ...]` (or `--set tree.monotone_constraints=1,0,-1`). From Python the key also takes a mapping keyed by feature name, `{"age": 1, "debt": -1}`. The python layer resolves it against the training data's feature names and hands the core the same positional list. Features the mapping leaves out are free (0). A name the data does not carry raises, listing the offenders.
+- **Monotone**: two touch points on the node-splitting growers (depthwise, leafwise). Rejection: in the candidate loop of [`src/split.cpp`](../../src/split.cpp), skip when $\text{mc} \cdot (w_R - w_L) < 0$, using *bounded* child weights. Propagation: `propagate_monotone_bounds` in `src/grower.cpp` fences children at the midpoint via `SplitInput::lo/hi`; `finalize_as_leaf` clamps into them. Levelwise takes a different route entirely, described below. Config: `tree.monotone_constraints = [1, 0, -1, ...]` (or `--set tree.monotone_constraints=1,0,-1`). From Python the key also takes a mapping keyed by feature name, `{"age": 1, "debt": -1}`. The python layer resolves it against the training data's feature names and hands the core the same positional list. Features the mapping leaves out are free (0). A name the data does not carry raises, listing the offenders.
 - **Interaction**: `SplitInput::allowed/path` carry the permitted set
   down the tree; `allowed_features` / `propagate_interaction_state`
   (`src/grower.cpp`) recompute it per split; the finder masks excluded
@@ -101,6 +101,20 @@ non-monotone dataset yields a provably monotone prediction curve;
 `[grower][interaction]` walks every root-to-leaf path and asserts groups
 never mix ([tests/unit/test_grower.cpp](../../tests/unit/test_grower.cpp)).
 
+## Levelwise gets there a different way
+
+The scheme above needs a per-node bound to inherit, which a levelwise (oblivious) tree has nowhere to put: every node at a level shares one split, so there is no per-node state to fence. For a long time that is why levelwise rejected the constraint outright.
+
+The shared split turns out to be the thing that makes it easy. A levelwise leaf index *is* the bit vector of level outcomes, so the leaves form a perfect lattice: bits from constrained features induce a partial order over leaves, and bits from free features cut the leaves into groups that are independent of each other. Ordering the leaves within a group and running weighted isotonic regression along that order gives the nearest leaf table that satisfies every constraint. The structure of the tree never changes; only the values at the bottom move.
+
+That is [`src/monotone.cpp`](../../src/monotone.cpp), called once per tree between building the leaf table and stamping rows, with the leaves' hessians as weights, because weighted isotonic regression on the Newton step is the constrained minimiser of the same second-order objective the splits were chosen under. It costs nothing on the GPU plane either: the leaf table is built on the host in both planes, so the projection lands before the table is uploaded.
+
+Per-tree is enough for the whole model. Monotone functions are closed under addition and multiplication by a positive number, and a boosted model is `init + lr * sum(trees)` with `lr > 0`, so every tree monotone implies the ensemble monotone. The end-to-end violation is exactly zero, not merely small.
+
+Two honest caveats. With two or more constrained features the leaves form a partial order rather than a chain, and the projection runs along one linear extension of it: every constraint holds, but the result is not quite the L2-nearest monotone table (a single constrained feature is exact). And interaction constraints are still rejected on levelwise, because they constrain which features may share a path rather than how leaf values are ordered, and no projection can express that.
+
+CatBoost supports monotone constraints on its `SymmetricTree` policy and *only* there, which is the mirror image of where bonsai stood before this: the same lattice argument, reached from the other side.
+
 ## Gotchas & war stories
 
 - **Rejecting the split isn't enough for monotonicity.** A split on an
@@ -109,6 +123,7 @@ never mix ([tests/unit/test_grower.cpp](../../tests/unit/test_grower.cpp)).
   `lo/hi` bounds prevent. Basic-mode implementations that skip
   propagation produce trees that are monotone split-by-split and
   non-monotone end-to-end.
+- **Leaf renewal can undo a monotone constraint.** MAE, Huber and Quantile replace every leaf value with a robust statistic of its residuals *after* the tree is grown, and that statistic has no reason to respect an ordering the growth-time machinery established. Levelwise handles it by projecting a second time, over the renewed table, with row counts as weights, since a renewed value is not a Newton step. The node-splitting growers have no equivalent second pass and do still violate under those three objectives, by around 1e-2 on a feature whose true relationship is monotone.
 - **L1's scale is data-scale.** `lambda_l1=100` was needed on
   YearPredictionMSD (leaf gradient sums in the thousands) to move RMSE at
   all; the same value on California Housing would zero half the leaves.
