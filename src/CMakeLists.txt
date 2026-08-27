@@ -53,6 +53,7 @@ target_link_libraries(bonsai_tree PUBLIC bonsai_data bonsai_split bonsai_paralle
 
 add_library(bonsai_split OBJECT
     split.cpp
+    monotone.cpp
 )
 
 target_include_directories(bonsai_split PUBLIC
