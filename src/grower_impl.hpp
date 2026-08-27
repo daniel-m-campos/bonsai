@@ -77,7 +77,7 @@ void project_monotone_leaves(std::vector<SplitInputT> const   &frontier,
                              ObliviousTree::LevelSplits const &level_splits,
                              ObliviousTree::LeafTable         &leaf_table)
 {
-    if (!has_monotone_constraint(config))
+    if (!has_monotone_constraint(config.monotone_constraints))
     {
         return;
     }
@@ -87,7 +87,8 @@ void project_monotone_leaves(std::vector<SplitInputT> const   &frontier,
     {
         hessians.push_back(static_cast<float>(leaf.total_hess()));
     }
-    project_monotone(monotone_levels(level_splits, config), hessians, leaf_table);
+    project_monotone(monotone_levels(level_splits, config.monotone_constraints),
+                     hessians, leaf_table);
 }
 
 using interaction_groups = std::vector<std::vector<feature_id_t>>;

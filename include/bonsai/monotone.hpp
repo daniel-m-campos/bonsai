@@ -4,8 +4,6 @@
 #include <span>
 #include <vector>
 
-#include "bonsai/config/tree_config.hpp"
-#include "bonsai/split.hpp"
 #include "bonsai/tree.hpp"
 
 namespace bonsai
@@ -45,22 +43,25 @@ namespace bonsai
 void project_monotone(std::span<int const>   level_directions,
                       std::span<float const> weights, std::span<float> leaf_table);
 
+// `constraints` is tree.monotone_constraints as configured: per-feature
+// directions, features beyond the list unconstrained.
 inline std::vector<int>
 monotone_levels(std::span<ObliviousTree::LevelSplit const> splits,
-                TreeConfig const                          &config)
+                std::span<int const>                       constraints)
 {
     std::vector<int> directions;
     directions.reserve(splits.size());
     for (auto const &split : splits)
     {
-        directions.push_back(monotone_constraint_of(config, split.feature_id));
+        directions.push_back(
+            split.feature_id < constraints.size() ? constraints[split.feature_id] : 0);
     }
     return directions;
 }
 
-inline bool has_monotone_constraint(TreeConfig const &config)
+inline bool has_monotone_constraint(std::span<int const> constraints)
 {
-    return std::ranges::any_of(config.monotone_constraints,
+    return std::ranges::any_of(constraints,
                                [](int direction) { return direction != 0; });
 }
 
