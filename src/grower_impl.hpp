@@ -488,7 +488,8 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     auto const              selected =
         gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
 
-    gd::LevelStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
+    gd::LevelStep<EngineT, SplitterT> step(seam_.engine(), ds, config_, grad, hess,
+                                           selected);
     slap(gd::GrowProfiler::instance().setup_s);
     current.push_back(step.make_root(selection));
     nodes.emplace_back(DenseTree::leaf(0.0F));
@@ -571,7 +572,8 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     auto const              selected =
         gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
 
-    gd::LevelStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
+    gd::LevelStep<EngineT, SplitterT> step(seam_.engine(), ds, config_, grad, hess,
+                                           selected);
     slap(gd::GrowProfiler::instance().setup_s);
     frontier.push_back(step.make_root(selection));
 
@@ -724,7 +726,8 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     auto const selected =
         gd::sample_features(ds.n_features(), config_.feature_fraction, feature_rng_);
 
-    gd::LeafStep<EngineT, SplitterT> step(engine_, ds, config_, grad, hess, selected);
+    gd::LeafStep<EngineT, SplitterT> step(seam_.engine(), ds, config_, grad, hess,
+                                          selected);
     slap(gd::GrowProfiler::instance().setup_s);
     gd::Candidate root = step.open_root(selection);
     nodes.emplace_back(DenseTree::leaf(0.0F));
@@ -818,7 +821,7 @@ bool DepthwiseGrower<EngineT, SplitterT>::eval_accumulate(Tree const      &tree,
                                                           std::optional<float> &loss)
 {
     return eval_walk(
-        engine_, eval_, [&]<typename NodeT>()
+        seam_.engine(), seam_.eval_armed(), [&]<typename NodeT>()
         { return grower_detail::resident_node_table<NodeT>(tree.nodes(), valid); }, lr,
         scores_out, loss);
 }
@@ -831,7 +834,7 @@ bool ObliviousGrower<EngineT, SplitterT>::eval_accumulate(Tree const      &tree,
                                                           std::optional<float> &loss)
 {
     return eval_walk(
-        engine_, eval_, [&]<typename NodeT>()
+        seam_.engine(), seam_.eval_armed(), [&]<typename NodeT>()
         { return grower_detail::oblivious_node_table<NodeT>(tree, valid); }, lr,
         scores_out, loss);
 }
@@ -843,7 +846,7 @@ bool LeafwiseGrower<EngineT, SplitterT>::eval_accumulate(Tree const    &tree,
                                                          std::optional<float> &loss)
 {
     return eval_walk(
-        engine_, eval_, [&]<typename NodeT>()
+        seam_.engine(), seam_.eval_armed(), [&]<typename NodeT>()
         { return grower_detail::resident_node_table<NodeT>(tree.nodes(), valid); }, lr,
         scores_out, loss);
 }
