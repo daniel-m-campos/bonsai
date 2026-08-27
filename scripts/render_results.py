@@ -924,7 +924,6 @@ HAND_WRITTEN_PAGES: Final = ("archive.md",)
 # gain one step. Replacement order matters: the two-step rule cannot touch
 # ../guide/ and runs first.
 _REROOT = [("](../../", "](../../../"), ("](../guide/", "](../../guide/"),
-           ("](../architecture/", "](../../architecture/"),
            ("](../decisions.md", "](../../decisions.md"),
            ("](assets/", "](../assets/"), ("](benchmark-protocol.md", "](../benchmark-protocol.md")]
 
