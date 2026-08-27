@@ -5,6 +5,7 @@
 #include "bonsai/dataset.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/histogram.hpp"
+#include "bonsai/monotone.hpp"
 #include "bonsai/parallel.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/tree.hpp"
@@ -68,6 +69,25 @@ inline void propagate_monotone_bounds(double parent_lo, double parent_hi,
         left.lo  = std::max(left.lo, mid);
         right.hi = std::min(right.hi, mid);
     }
+}
+
+template <typename SplitInputT>
+void project_monotone_leaves(std::vector<SplitInputT> const   &frontier,
+                             TreeConfig const                 &config,
+                             ObliviousTree::LevelSplits const &level_splits,
+                             ObliviousTree::LeafTable         &leaf_table)
+{
+    if (!has_monotone_constraint(config))
+    {
+        return;
+    }
+    std::vector<float> hessians;
+    hessians.reserve(frontier.size());
+    for (auto const &leaf : frontier)
+    {
+        hessians.push_back(static_cast<float>(leaf.total_hess()));
+    }
+    project_monotone(monotone_levels(level_splits, config), hessians, leaf_table);
 }
 
 using interaction_groups = std::vector<std::vector<feature_id_t>>;
@@ -520,14 +540,6 @@ template <HistogramEngine EngineT, LevelSplitFinder SplitterT>
 ObliviousGrower<EngineT, SplitterT>::ObliviousGrower(TreeConfig const &cfg)
     : config_(cfg), feature_rng_(cfg.feature_seed)
 {
-    for (int const mc : cfg.monotone_constraints)
-    {
-        if (mc != 0)
-        {
-            throw ConfigError(
-                "monotone_constraints are not supported by the levelwise grower");
-        }
-    }
     if (!cfg.interaction_constraints.empty())
     {
         throw ConfigError(
@@ -628,6 +640,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
         leaf_table.push_back(v);
         leaf_covers.push_back(static_cast<float>(gd::row_count_of(leaf)));
     }
+    gd::project_monotone_leaves(frontier, config_, level_splits, leaf_table);
     // perf: Host plane stamps each leaf's rows; device plane stamps the resident
     // segments and downloads the per-row assignment. Lapped as finalize:
     // a 16M CPU decomposition found ~15s of stamping hiding in levelwise's

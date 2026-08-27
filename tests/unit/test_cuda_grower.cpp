@@ -976,18 +976,87 @@ TEST_CASE("CudaDepthwiseGrower: interaction constraints keep groups on separate 
 }
 
 TEST_CASE("CudaObliviousGrower rejects constraints at construction",
-          "[cuda][grower][monotone]")
+          "[cuda][grower][ctor]")
 {
     // Construction-time contract (shared with the CPU levelwise grower); the
     // engine allocates lazily, so this pins the ConfigError on every build,
-    // device or not — no SKIP.
+    // device or not — no SKIP. Monotone constraints are honoured on this
+    // grower, so only interaction constraints throw.
     TreeConfig mono;
     mono.monotone_constraints = {+1};
-    REQUIRE_THROWS_AS(CudaObliviousGrower(mono), ConfigError);
+    REQUIRE_NOTHROW(CudaObliviousGrower(mono));
 
     TreeConfig inter;
     inter.interaction_constraints = {"0", "1"};
     REQUIRE_THROWS_AS(CudaObliviousGrower(inter), ConfigError);
+}
+
+TEST_CASE("CudaObliviousGrower: monotone +1 forces non-decreasing predictions",
+          "[cuda][grower][monotone]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    // The device half of INVARIANT levelwise-monotone-holds. The projection
+    // runs on the host leaf table in both planes, so the constrained device
+    // tree must equal the constrained CPU tree leaf for leaf, not merely
+    // satisfy the ordering on its own.
+    std::mt19937                          rng(17);
+    std::uniform_real_distribution<float> jitter(0.0F, 0.8F);
+    size_t const                          n = 4096;
+
+    detail::ColumnBatch batch;
+    batch.features.resize(1, std::vector<float>(n));
+    batch.feature_names = {"a"};
+    batch.labels.assign(n, 0.0F);
+    std::vector<float>         grad(n);
+    std::vector<float>         hess(n, 1.0F);
+    std::array<float, 3> const group_grad{-1.0F, +2.0F, -2.0F};
+    for (size_t r = 0; r < n; ++r)
+    {
+        size_t const g       = r % 3;
+        batch.features[0][r] = static_cast<float>(g) + jitter(rng);
+        grad[r]              = group_grad[g];
+    }
+    auto built = test::build(std::move(batch));
+    auto rows  = test::iota_rows(n);
+
+    TreeConfig unconstrained;
+    unconstrained.max_depth          = 4;
+    unconstrained.min_data_in_leaf   = 4;
+    TreeConfig constrained           = unconstrained;
+    constrained.monotone_constraints = {+1};
+
+    auto predict_curve = [&](ObliviousTree const &tree)
+    {
+        std::vector<float> out;
+        for (float x : {0.4F, 1.4F, 2.4F})
+        {
+            out.push_back(test::predict_one(tree, std::vector<float>{x}));
+        }
+        return out;
+    };
+
+    CudaObliviousGrower free_grower(unconstrained);
+    auto                free_out   = free_grower.grow(built.ds, grad, hess, rows);
+    auto const          free_curve = predict_curve(free_out.tree);
+    REQUIRE((free_curve[1] < free_curve[0] || free_curve[2] < free_curve[1]));
+
+    CudaObliviousGrower gpu_grower(constrained);
+    auto                gpu   = gpu_grower.grow(built.ds, grad, hess, rows);
+    auto const          curve = predict_curve(gpu.tree);
+    CHECK(curve[0] <= curve[1]);
+    CHECK(curve[1] <= curve[2]);
+
+    ObliviousGrower<> cpu_grower(constrained);
+    auto              cpu = cpu_grower.grow(built.ds, grad, hess, rows);
+    REQUIRE(gpu.tree.leaf_table().size() == cpu.tree.leaf_table().size());
+    for (size_t li = 0; li < cpu.tree.leaf_table().size(); ++li)
+    {
+        REQUIRE_THAT(gpu.tree.leaf_table()[li],
+                     Catch::Matchers::WithinAbs(cpu.tree.leaf_table()[li], 1e-4));
+    }
 }
 
 TEST_CASE("cuda_select_device: rejects an out-of-range device id", "[cuda][edge]")

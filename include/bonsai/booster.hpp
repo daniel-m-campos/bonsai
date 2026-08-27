@@ -6,6 +6,7 @@
 #include "bonsai/detail/bin_walk.hpp"
 #include "bonsai/detail/perf.hpp"
 #include "bonsai/grower.hpp"
+#include "bonsai/monotone.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/objective_traits.hpp"
 #include "bonsai/parallel.hpp"
@@ -517,8 +518,8 @@ class Booster final : public IBooster
     using tree_type      = typename Gr::Tree;
 
     explicit Booster(Config const &config)
-        : config_(config.booster_config), objective_(config),
-          grower_(config.tree_config), sampler_(config),
+        : config_(config.booster_config), tree_config_(config.tree_config),
+          objective_(config), grower_(config.tree_config), sampler_(config),
           rng_(config.booster_config.random_seed)
     {
     }
@@ -606,6 +607,13 @@ class Booster final : public IBooster
         if constexpr (requires(std::span<float> r) { objective_.renew_leaf(r); })
         {
             renew_leaves(tree, leaf_ids, leaf_values, train.labels(), train.row_view());
+            if constexpr (requires(tree_type &t) {
+                              t.splits();
+                              t.leaf_covers();
+                          })
+            {
+                reproject_monotone(tree, leaf_ids, leaf_values, train.row_view());
+            }
         }
         lap(prof.renew_s);
 
@@ -851,6 +859,33 @@ class Booster final : public IBooster
         {
             row_id_t const r = rows[k];
             leaf_values[r]   = renewed.at(leaf_ids[r]);
+        }
+    }
+
+    // Renewal replaces every leaf value with a robust residual statistic,
+    // which has no reason to respect the ordering the grower's projection
+    // established, so the projection runs again over the renewed table. The
+    // weights are row counts rather than hessians: a renewed value is not a
+    // Newton step, so the second-order weighting no longer describes it.
+    void reproject_monotone(tree_type &tree, std::vector<node_id_t> const &leaf_ids,
+                            train_leaf_values &leaf_values, RowView const &view)
+    {
+        if (!has_monotone_constraint(tree_config_))
+        {
+            return;
+        }
+        std::vector<float> table(tree.leaf_table().begin(), tree.leaf_table().end());
+        project_monotone(monotone_levels(tree.splits(), tree_config_),
+                         tree.leaf_covers(), table);
+        for (size_t li = 0; li < table.size(); ++li)
+        {
+            tree.set_leaf_value(li, table[li]);
+        }
+        RowIndex const rows{view};
+        for (size_t k = 0; k < rows.size(); ++k)
+        {
+            row_id_t const r = rows[k];
+            leaf_values[r]   = table[leaf_ids[r]];
         }
     }
 
@@ -1149,6 +1184,7 @@ class Booster final : public IBooster
 
   private:
     BoosterConfig  config_;
+    TreeConfig     tree_config_;
     objective_type objective_;
     grower_type    grower_;
     sampler_type   sampler_;
