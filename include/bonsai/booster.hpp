@@ -1207,10 +1207,7 @@ class Booster final : public ITrainableBooster
     }
 
   private:
-    BoosterConfig config_;
-    // The one tree-section value the booster reads after the grower returns:
-    // renewal reprojection needs the constraint directions, and the grower's
-    // own TreeConfig copy is deliberately private.
+    BoosterConfig    config_;
     std::vector<int> monotone_constraints_;
     objective_type   objective_;
     grower_type      grower_;

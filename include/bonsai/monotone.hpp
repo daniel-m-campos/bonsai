@@ -43,8 +43,6 @@ namespace bonsai
 void project_monotone(std::span<int const>   level_directions,
                       std::span<float const> weights, std::span<float> leaf_table);
 
-// `constraints` is tree.monotone_constraints as configured: per-feature
-// directions, features beyond the list unconstrained.
 inline std::vector<int>
 monotone_levels(std::span<ObliviousTree::LevelSplit const> splits,
                 std::span<int const>                       constraints)
