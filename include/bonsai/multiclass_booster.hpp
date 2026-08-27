@@ -34,7 +34,8 @@ namespace bonsai
 // eval() is the multiclass logloss. The 1-D Objective concept can't
 // express the K-output shape, which is why this is its own IBooster
 // implementation dispatched via BoosterFor<{softmax, G, Sa}>.
-template <TreeGrower Gr, Sampler Sa> class MulticlassBooster final : public IBooster
+template <TreeGrower Gr, Sampler Sa>
+class MulticlassBooster final : public ITrainableBooster
 {
   public:
     using grower_type  = Gr;

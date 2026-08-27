@@ -19,9 +19,9 @@ void save_booster(IBooster const &booster, std::string const &path,
 
 struct LoadedBooster
 {
-    std::unique_ptr<IBooster> booster;
-    BinMappers                mappers;
-    Config                    cfg;
+    std::unique_ptr<ITrainableBooster> booster;
+    BinMappers                         mappers;
+    Config                             cfg;
 };
 
 // Read back what save_booster wrote. Reconstructs the booster type from

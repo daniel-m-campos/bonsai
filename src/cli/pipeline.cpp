@@ -59,8 +59,8 @@ LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path)
     return LoadedTrain{.mappers = std::move(mappers), .train = std::move(train)};
 }
 
-std::unique_ptr<IBooster> train_in_memory(Config const &cfg, Dataset const &train,
-                                          ProgressFn const &on_progress)
+std::unique_ptr<ITrainableBooster>
+train_in_memory(Config const &cfg, Dataset const &train, ProgressFn const &on_progress)
 {
     select_device_for(cfg);
     auto       booster = make_booster(cfg);
@@ -158,11 +158,9 @@ LoadedTrainValidation load_train_and_validation_from_csv(Config const &cfg)
                                  .validation = std::move(validation)};
 }
 
-std::unique_ptr<IBooster> train_with_progress(Config const                &cfg,
-                                              LoadedTrainValidation const &loaded,
-                                              FitTickFn const             &on_tick,
-                                              std::unique_ptr<IBooster>    initial,
-                                              EvalHistoryRef               eval_history)
+std::unique_ptr<ITrainableBooster> train_with_progress(
+    Config const &cfg, LoadedTrainValidation const &loaded, FitTickFn const &on_tick,
+    std::unique_ptr<ITrainableBooster> initial, EvalHistoryRef eval_history)
 {
     if (loaded.validation)
     {
@@ -205,28 +203,29 @@ Dataset bin_validation(LabeledData const &validation, Dataset const &train,
                         data_cfg);
 }
 
-void route_last_round(IBooster const &booster, features_view X, floats_out scores)
+void route_last_round(ITrainableBooster const &booster, features_view X,
+                      floats_out scores)
 {
     detail::Phase<&detail::FitProfiler::eval_route_s> phase;
     booster.accumulate_last_round(X, scores);
 }
 
-void route_last_round_binned(IBooster const &booster, Dataset const &bins,
+void route_last_round_binned(ITrainableBooster const &booster, Dataset const &bins,
                              floats_out scores)
 {
     detail::Phase<&detail::FitProfiler::eval_route_s> phase;
     booster.accumulate_last_round_binned(bins, scores);
 }
 
-bool route_last_round_resident(IBooster &booster, Dataset const &bins,
+bool route_last_round_resident(ITrainableBooster &booster, Dataset const &bins,
                                floats_out scores, std::optional<float> &loss)
 {
     detail::Phase<&detail::FitProfiler::eval_route_s> phase;
     return booster.accumulate_last_round_resident(bins, scores, loss);
 }
 
-float round_validation_loss(IBooster const &booster, std::span<float const> scores,
-                            floats_view labels)
+float round_validation_loss(ITrainableBooster const &booster,
+                            std::span<float const> scores, floats_view labels)
 {
     detail::Phase<&detail::FitProfiler::eval_loss_s> phase;
     return booster.validation_loss(scores, labels);
@@ -234,10 +233,10 @@ float round_validation_loss(IBooster const &booster, std::span<float const> scor
 
 using ValidationRef = std::optional<std::reference_wrapper<LabeledData const>>;
 
-std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train,
-                                     ValidationRef validation, FitTickFn const &on_tick,
-                                     std::unique_ptr<IBooster> initial,
-                                     EvalHistoryRef            eval_history)
+std::unique_ptr<ITrainableBooster>
+train_impl(Config const &cfg, LabeledData const &train, ValidationRef validation,
+           FitTickFn const &on_tick, std::unique_ptr<ITrainableBooster> initial,
+           EvalHistoryRef eval_history)
 {
     select_device_for(cfg);
     [[maybe_unused]] bool const warm_start = initial != nullptr;
@@ -436,19 +435,18 @@ std::unique_ptr<IBooster> train_impl(Config const &cfg, LabeledData const &train
 
 } // namespace
 
-std::unique_ptr<IBooster> train_with_progress(Config const             &cfg,
-                                              LabeledData const        &train,
-                                              FitTickFn const          &on_tick,
-                                              std::unique_ptr<IBooster> initial,
-                                              EvalHistoryRef            eval_history)
+std::unique_ptr<ITrainableBooster> train_with_progress(
+    Config const &cfg, LabeledData const &train, FitTickFn const &on_tick,
+    std::unique_ptr<ITrainableBooster> initial, EvalHistoryRef eval_history)
 {
     return train_impl(cfg, train, {}, on_tick, std::move(initial), eval_history);
 }
 
-std::unique_ptr<IBooster>
+std::unique_ptr<ITrainableBooster>
 train_with_progress(Config const &cfg, LabeledData const &train,
                     LabeledData const &validation, FitTickFn const &on_tick,
-                    std::unique_ptr<IBooster> initial, EvalHistoryRef eval_history)
+                    std::unique_ptr<ITrainableBooster> initial,
+                    EvalHistoryRef                     eval_history)
 {
     return train_impl(cfg, train, std::ref(validation), on_tick, std::move(initial),
                       eval_history);
