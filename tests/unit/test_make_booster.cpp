@@ -193,7 +193,7 @@ TEST_CASE("make_booster: the retired oblivious grower names are unknown",
 TEMPLATE_LIST_TEST_CASE("make_booster: parity with direct instantiation",
                         "[registry][make_booster][parity]", DispatchCombos)
 {
-    test::skip_without_cuda<type_at_t<1, TestType>>();
+    test::skip_without_device<type_at_t<1, TestType>>();
     using O                 = type_at_t<0, TestType>;
     using G                 = type_at_t<1, TestType>;
     using S                 = type_at_t<2, TestType>;

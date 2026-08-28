@@ -19,6 +19,8 @@
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/grower.hpp"
+#include "bonsai/metal/grower.hpp"
+#include "bonsai/metal/histogram_engine.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/sampler.hpp"
 #include "bonsai/types.hpp"
@@ -66,16 +68,25 @@ inline detail::ColumnBatch random_batch(size_t n, size_t nf, uint32_t seed)
     return batch;
 }
 
-// Skips the running test case when the grower under test needs a CUDA
-// device this host (or build) doesn't have. No-op for CPU growers, so
-// TEMPLATE_LIST cases over the full registry stay unconditional.
-template <typename GrowerT> void skip_without_cuda()
+// Skips the running test case when the grower under test needs a device
+// this host (or build) doesn't have. No-op for CPU growers, so
+// TEMPLATE_LIST cases over the full registry stay unconditional. Every
+// device engine in the registry needs an arm here, or its entry fails
+// instead of skipping wherever that device is absent.
+template <typename GrowerT> void skip_without_device()
 {
     if constexpr (std::same_as<typename GrowerT::Engine, CudaHistogramEngine>)
     {
         if (!cuda_available())
         {
             SKIP("cuda grower needs a usable CUDA device");
+        }
+    }
+    else if constexpr (std::same_as<typename GrowerT::Engine, MetalHistogramEngine>)
+    {
+        if (!metal_available())
+        {
+            SKIP("metal grower needs a usable Metal device");
         }
     }
 }
