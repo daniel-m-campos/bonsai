@@ -15,3 +15,22 @@ AlignConsecutiveDeclarations: true
 ReflowComments: true
 QualifierAlignment: Custom
 QualifierOrder: ["inline", "static", "constexpr", "type", "const", "volatile"]
+---
+# ObjC++ (.mm): same style as Cpp. src/ is implementation whatever the
+# extension says, so the format gate must not key on extension either.
+Language: ObjC
+BasedOnStyle: LLVM
+IndentWidth: 4
+UseTab: Never
+ColumnLimit: 88
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+BreakBeforeBraces: Allman
+SpaceAfterCStyleCast: true
+SpaceBeforeAssignmentOperators: true
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: true
+ReflowComments: true
+QualifierAlignment: Custom
+QualifierOrder: ["inline", "static", "constexpr", "type", "const", "volatile"]

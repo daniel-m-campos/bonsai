@@ -1,7 +1,14 @@
-SOURCES      := $(shell find src include tests benchmarks -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.cu' -o -name '*.cuh' \) 2>/dev/null)
+# .metal is deliberately absent: clang-format has no MSL language mode, so it
+# reads the address-space qualifiers (device, threadgroup, constant) as
+# identifiers and misaligns every kernel signature. comment_lint.py does cover
+# .metal, since the comment policy is language-agnostic.
+SOURCES      := $(shell find src include tests benchmarks -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.cu' -o -name '*.cuh' -o -name '*.mm' \) 2>/dev/null)
 # src/python is excluded: the nanobind NB_MODULE macro and capsule-deleter
 # FFI patterns trip cppcoreguidelines checks that don't apply to boundary code.
-LINT_SOURCES := $(shell find src -type f -name '*.cpp' -not -path 'src/python/*' 2>/dev/null)
+# The metal engine TU is excluded like the .cu kernels are: it includes
+# Metal.hpp, which only exists on an Apple host, and the linux tidy job's
+# compile database never contains it (BONSAI_METAL=OFF there).
+LINT_SOURCES := $(shell find src -type f -name '*.cpp' -not -path 'src/python/*' -not -path 'src/metal/histogram_engine.cpp' 2>/dev/null)
 TOY_SENTINEL := tests/data/.toy-fetched
 AMAZON_SENTINEL := tests/data/.amazon-fetched
 

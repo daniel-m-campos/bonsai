@@ -173,7 +173,7 @@ using DispatchCombos = cartesian_product_t<Objectives, Growers, Samplers>;
 TEMPLATE_LIST_TEST_CASE("ModelIo: save -> load -> predict reproduces predictions",
                         "[model_io][smoke]", DispatchCombos)
 {
-    test::skip_without_cuda<type_at_t<1, TestType>>();
+    test::skip_without_device<type_at_t<1, TestType>>();
     using O                   = type_at_t<0, TestType>;
     using G                   = type_at_t<1, TestType>;
     using S                   = type_at_t<2, TestType>;

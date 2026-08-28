@@ -42,7 +42,7 @@ import sys
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 SRC = REPO / "src"
-EXTENSIONS = {".cpp", ".cu", ".hpp", ".cuh"}
+EXTENSIONS = {".cpp", ".cu", ".hpp", ".cuh", ".mm", ".metal"}
 
 STRUCTURAL = re.compile(r"NOLINT|clang-format (on|off)|^//\s*namespace\b")
 PERF = re.compile(r"^// perf:")

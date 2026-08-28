@@ -26,6 +26,7 @@ add_library(bonsai_tree OBJECT
     shap.cpp
     shap_paths.cpp
     cuda/grower_cuda.cpp
+    metal/grower_metal.cpp
 )
 
 # The CUDA grower instantiation above is plain C++ against the pimpl'd
@@ -37,6 +38,20 @@ if(NOT BONSAI_CUDA)
         cuda/predict_stub.cpp
         cuda/shap_stub.cpp
     )
+endif()
+
+# Same pattern for Metal: the grower instantiation compiles everywhere, the
+# engine behind it is a plain C++ TU against Apple's metal-cpp bindings on
+# BONSAI_METAL builds and the throwing stub otherwise. SYSTEM keeps the
+# warnings target out of Apple's headers.
+if(BONSAI_METAL)
+    target_sources(bonsai_tree PRIVATE metal/histogram_engine.cpp)
+    target_include_directories(bonsai_tree SYSTEM PRIVATE ${metal_cpp_SOURCE_DIR})
+    target_include_directories(bonsai_tree PRIVATE ${CMAKE_BINARY_DIR}/generated)
+    target_link_libraries(bonsai_tree PUBLIC
+        "-framework Metal" "-framework Foundation")
+else()
+    target_sources(bonsai_tree PRIVATE metal/histogram_engine_stub.cpp)
 endif()
 
 target_include_directories(bonsai_tree PUBLIC
