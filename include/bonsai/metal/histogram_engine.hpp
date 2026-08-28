@@ -46,6 +46,15 @@ bool metal_available();
 // 32KB threadgroup ceiling (4 * n_bins * 4 bytes) is refused at begin_tree
 // with ConfigError rather than silently moved to the host.
 //
+// The kernel stays MSL source compiled at runtime, which metal-cpp does not
+// change: those are the host bindings, and a shader is either source or a
+// prebuilt .metallib either way. Source keeps the shader toolchain out of
+// the build (Command Line Tools suffice, no Xcode) and keeps a binary
+// artifact out of the wheel, and it costs nothing measurable because Metal
+// caches compiled shaders on disk by source: 225ms the first time a machine
+// ever builds this kernel, 1ms per process after that, 0ms per additional
+// engine. A .metallib would trade that for a hard build dependency.
+//
 // Pinned by tests/unit/test_metal_engine.cpp (cell parity vs the CPU
 // engine, both bin widths, subset rows, empty hessian).
 class MetalHistogramEngine
