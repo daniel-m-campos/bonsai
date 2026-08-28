@@ -327,7 +327,7 @@ void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         level_rows += node.shape.identity && node.rows.empty() ? m.plane_rows
                                                                : node.rows.size();
     }
-    if (level_rows < min_device_rows())
+    if (level_rows / nodes.size() < min_device_rows())
     {
         m.host.populate_many(ds, grad, hess, nodes, selected);
         return;
