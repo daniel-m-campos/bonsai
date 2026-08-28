@@ -1,5 +1,6 @@
-#import <Foundation/Foundation.h>
-#import <Metal/Metal.h>
+#define NS_PRIVATE_IMPLEMENTATION
+#define MTL_PRIVATE_IMPLEMENTATION
+#include <Metal/Metal.hpp>
 
 #include "bonsai/config/errors.hpp"
 #include "bonsai/histogram.hpp"
@@ -120,40 +121,66 @@ struct NodeParams
     float    scale;
 };
 
-id<MTLDevice> shared_device()
+struct AutoreleaseScope
 {
-    static id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+    NS::AutoreleasePool *pool                  = NS::AutoreleasePool::alloc()->init();
+    AutoreleaseScope()                         = default;
+    AutoreleaseScope(AutoreleaseScope const &) = delete;
+    AutoreleaseScope &operator=(AutoreleaseScope const &) = delete;
+    ~AutoreleaseScope()
+    {
+        pool->release();
+    }
+};
+
+template <typename T> void release_and_clear(T *&object)
+{
+    if (object != nullptr)
+    {
+        object->release();
+        object = nullptr;
+    }
+}
+
+MTL::Device *shared_device()
+{
+    static MTL::Device *const device = MTL::CreateSystemDefaultDevice();
     return device;
 }
 
-id<MTLComputePipelineState> compile_fill(id<MTLDevice> device, char const *bin_type)
+MTL::ComputePipelineState *compile_fill(MTL::Device *device, char const *bin_type)
 {
-    NSString *src =
-        [NSString stringWithFormat:@"#define BIN_T %s\n%s", bin_type, k_kernel_source];
-    NSError       *error = nil;
-    id<MTLLibrary> lib   = [device newLibraryWithSource:src options:nil error:&error];
-    if (lib == nil)
+    AutoreleaseScope const scope;
+    std::string const      prefixed =
+        std::string("#define BIN_T ") + bin_type + "\n" + k_kernel_source;
+    NS::String *src =
+        NS::String::string(prefixed.c_str(), NS::StringEncoding::UTF8StringEncoding);
+    NS::Error    *error = nullptr;
+    MTL::Library *lib   = device->newLibrary(src, nullptr, &error);
+    if (lib == nullptr)
     {
         throw std::runtime_error(std::string("metal shader compile failed: ") +
-                                 [[error localizedDescription] UTF8String]);
+                                 error->localizedDescription()->utf8String());
     }
-    id<MTLComputePipelineState> pso = [device
-        newComputePipelineStateWithFunction:[lib newFunctionWithName:@"hist_fill"]
-                                      error:&error];
-    if (pso == nil)
+    MTL::Function *fn = lib->newFunction(
+        NS::String::string("hist_fill", NS::StringEncoding::UTF8StringEncoding));
+    MTL::ComputePipelineState *pso = device->newComputePipelineState(fn, &error);
+    fn->release();
+    lib->release();
+    if (pso == nullptr)
     {
         throw std::runtime_error("metal pipeline creation failed");
     }
     return pso;
 }
 
-id<MTLBuffer> ensure_capacity(id<MTLDevice> device, id<MTLBuffer> __strong &buffer,
-                              size_t bytes)
+MTL::Buffer *ensure_capacity(MTL::Device *device, MTL::Buffer *&buffer, size_t bytes)
 {
-    if (buffer == nil || [buffer length] < bytes)
+    if (buffer == nullptr || buffer->length() < bytes)
     {
-        buffer = [device newBufferWithLength:std::max(bytes, size_t{64})
-                                     options:MTLResourceStorageModeShared];
+        release_and_clear(buffer);
+        buffer = device->newBuffer(std::max(bytes, size_t{64}),
+                                   MTL::ResourceStorageModeShared);
     }
     return buffer;
 }
@@ -176,18 +203,18 @@ float scale_for(size_t count, uint32_t n_chunks, float max_abs)
 
 struct MetalHistogramEngine::Impl
 {
-    id<MTLDevice>               device  = nil;
-    id<MTLCommandQueue>         queue   = nil;
-    id<MTLComputePipelineState> pso_u8  = nil;
-    id<MTLComputePipelineState> pso_u16 = nil;
+    MTL::Device               *device  = nullptr;
+    MTL::CommandQueue         *queue   = nullptr;
+    MTL::ComputePipelineState *pso_u8  = nullptr;
+    MTL::ComputePipelineState *pso_u16 = nullptr;
 
-    id<MTLBuffer> bins  = nil;
-    id<MTLBuffer> grad  = nil;
-    id<MTLBuffer> hess  = nil;
-    id<MTLBuffer> sel   = nil;
-    id<MTLBuffer> nbins = nil;
-    id<MTLBuffer> rows  = nil;
-    id<MTLBuffer> out   = nil;
+    MTL::Buffer *bins  = nullptr;
+    MTL::Buffer *grad  = nullptr;
+    MTL::Buffer *hess  = nullptr;
+    MTL::Buffer *sel   = nullptr;
+    MTL::Buffer *nbins = nullptr;
+    MTL::Buffer *rows  = nullptr;
+    MTL::Buffer *out   = nullptr;
 
     void const         *bins_key   = nullptr;
     bool                bins_u8    = true;
@@ -198,19 +225,37 @@ struct MetalHistogramEngine::Impl
     std::vector<size_t> bin_counts;
     CpuHistogramEngine  host;
 
+    Impl()                        = default;
+    Impl(Impl const &)            = delete;
+    Impl &operator=(Impl const &) = delete;
+
+    ~Impl()
+    {
+        release_and_clear(out);
+        release_and_clear(rows);
+        release_and_clear(nbins);
+        release_and_clear(sel);
+        release_and_clear(hess);
+        release_and_clear(grad);
+        release_and_clear(bins);
+        release_and_clear(pso_u16);
+        release_and_clear(pso_u8);
+        release_and_clear(queue);
+    }
+
     void ensure_pipeline()
     {
-        if (queue != nil)
+        if (queue != nullptr)
         {
             return;
         }
         device = shared_device();
-        if (device == nil)
+        if (device == nullptr)
         {
             throw std::runtime_error("metal_depthwise requires an Apple GPU; "
                                      "no Metal device is present");
         }
-        queue   = [device newCommandQueue];
+        queue   = device->newCommandQueue();
         pso_u8  = compile_fill(device, "uchar");
         pso_u16 = compile_fill(device, "ushort");
     }
@@ -241,9 +286,10 @@ struct MetalHistogramEngine::Impl
                 "lower data.max_bins or use a cpu grower");
         }
         size_t const width = bins_u8 ? 1 : 2;
-        bins               = [device newBufferWithLength:plane_rows * n_features * width
-                                   options:MTLResourceStorageModeShared];
-        auto *base         = static_cast<uint8_t *>([bins contents]);
+        release_and_clear(bins);
+        bins       = device->newBuffer(plane_rows * n_features * width,
+                                       MTL::ResourceStorageModeShared);
+        auto *base = static_cast<uint8_t *>(bins->contents());
         for (size_t f = 0; f < n_features; ++f)
         {
             ds.visit_bins(f,
@@ -254,7 +300,7 @@ struct MetalHistogramEngine::Impl
                           });
         }
         auto *slots = static_cast<uint32_t *>(
-            [ensure_capacity(device, nbins, n_features * sizeof(uint32_t)) contents]);
+            ensure_capacity(device, nbins, n_features * sizeof(uint32_t))->contents());
         for (size_t f = 0; f < n_features; ++f)
         {
             slots[f] = static_cast<uint32_t>(bin_counts[f]);
@@ -264,12 +310,12 @@ struct MetalHistogramEngine::Impl
 
     void stage_gradients(floats_view grad_in, floats_view hess_in)
     {
-        std::memcpy([ensure_capacity(device, grad, grad_in.size_bytes()) contents],
+        std::memcpy(ensure_capacity(device, grad, grad_in.size_bytes())->contents(),
                     grad_in.data(), grad_in.size_bytes());
         has_hess = !hess_in.empty();
         if (has_hess)
         {
-            std::memcpy([ensure_capacity(device, hess, hess_in.size_bytes()) contents],
+            std::memcpy(ensure_capacity(device, hess, hess_in.size_bytes())->contents(),
                         hess_in.data(), hess_in.size_bytes());
         }
         float top = has_hess ? 0.0F : 1.0F;
@@ -287,7 +333,7 @@ struct MetalHistogramEngine::Impl
 
 bool metal_available()
 {
-    return shared_device() != nil;
+    return shared_device() != nullptr;
 }
 
 MetalHistogramEngine::MetalHistogramEngine() : impl_(std::make_unique<Impl>()) {}
@@ -344,7 +390,7 @@ void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
 
     uint32_t const n_sel     = static_cast<uint32_t>(selected.size());
     auto          *sel_slots = static_cast<uint32_t *>(
-        [ensure_capacity(m.device, m.sel, n_sel * sizeof(uint32_t)) contents]);
+        ensure_capacity(m.device, m.sel, n_sel * sizeof(uint32_t))->contents());
     uint32_t stride = 0;
     for (uint32_t j = 0; j < n_sel; ++j)
     {
@@ -364,7 +410,7 @@ void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         }
     }
     auto *row_base = static_cast<uint32_t *>(
-        [ensure_capacity(m.device, m.rows, gathered * sizeof(uint32_t)) contents]);
+        ensure_capacity(m.device, m.rows, gathered * sizeof(uint32_t))->contents());
     size_t const node_floats = static_cast<size_t>(n_sel) * 2 * stride;
     auto        *out_buffer =
         ensure_capacity(m.device, m.out, nodes.size() * node_floats * sizeof(float));
@@ -382,58 +428,62 @@ void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
             }
         });
 
-    id<MTLCommandBuffer>      command = [m.queue commandBuffer];
-    id<MTLBlitCommandEncoder> blit    = [command blitCommandEncoder];
-    [blit fillBuffer:out_buffer
-               range:NSMakeRange(0, nodes.size() * node_floats * sizeof(float))
-               value:0];
-    [blit endEncoding];
-
-    id<MTLComputeCommandEncoder> enc = [command computeCommandEncoder];
-    [enc setComputePipelineState:m.bins_u8 ? m.pso_u8 : m.pso_u16];
-    [enc setBuffer:m.bins offset:0 atIndex:0];
-    [enc setBuffer:m.grad offset:0 atIndex:1];
-    [enc setBuffer:m.has_hess ? m.hess : m.grad offset:0 atIndex:2];
-    [enc setBuffer:m.sel offset:0 atIndex:4];
-    [enc setBuffer:m.nbins offset:0 atIndex:5];
-    [enc setThreadgroupMemoryLength:4UL * stride * sizeof(float) atIndex:0];
-
-    for (size_t n = 0; n < nodes.size(); ++n)
     {
-        SplitInput const &node = nodes[n].get();
-        size_t const      count =
-            node.shape.identity && node.rows.empty() ? m.plane_rows : node.rows.size();
-        if (count == 0)
+        AutoreleaseScope const   scope;
+        MTL::CommandBuffer      *command = m.queue->commandBuffer();
+        MTL::BlitCommandEncoder *blit    = command->blitCommandEncoder();
+        blit->fillBuffer(out_buffer,
+                         NS::Range::Make(0, nodes.size() * node_floats * sizeof(float)),
+                         0);
+        blit->endEncoding();
+
+        MTL::ComputeCommandEncoder *enc = command->computeCommandEncoder();
+        enc->setComputePipelineState(m.bins_u8 ? m.pso_u8 : m.pso_u16);
+        enc->setBuffer(m.bins, 0, 0);
+        enc->setBuffer(m.grad, 0, 1);
+        enc->setBuffer(m.has_hess ? m.hess : m.grad, 0, 2);
+        enc->setBuffer(m.sel, 0, 4);
+        enc->setBuffer(m.nbins, 0, 5);
+        enc->setThreadgroupMemoryLength(4UL * stride * sizeof(float), 0);
+
+        for (size_t n = 0; n < nodes.size(); ++n)
         {
-            continue;
+            SplitInput const &node  = nodes[n].get();
+            size_t const      count = node.shape.identity && node.rows.empty()
+                                          ? m.plane_rows
+                                          : node.rows.size();
+            if (count == 0)
+            {
+                continue;
+            }
+            bool const       use_rows = !node.shape.identity;
+            uint32_t const   n_chunks = chunks_for(count);
+            NodeParams const params{
+                .count      = static_cast<uint32_t>(count),
+                .n_chunks   = n_chunks,
+                .use_rows   = use_rows ? 1U : 0U,
+                .has_hess   = m.has_hess ? 1U : 0U,
+                .plane_rows = static_cast<uint32_t>(m.plane_rows),
+                .stride     = stride,
+                .scale      = scale_for(count, n_chunks, m.max_abs),
+            };
+            enc->setBuffer(m.rows, row_starts[n] * sizeof(uint32_t), 3);
+            enc->setBuffer(out_buffer, n * node_floats * sizeof(float), 6);
+            enc->setBytes(&params, sizeof(params), 7);
+            enc->dispatchThreadgroups(MTL::Size::Make(n_sel, n_chunks, 1),
+                                      MTL::Size::Make(k_threads_per_group, 1, 1));
         }
-        bool const       use_rows = !node.shape.identity;
-        uint32_t const   n_chunks = chunks_for(count);
-        NodeParams const params{
-            .count      = static_cast<uint32_t>(count),
-            .n_chunks   = n_chunks,
-            .use_rows   = use_rows ? 1U : 0U,
-            .has_hess   = m.has_hess ? 1U : 0U,
-            .plane_rows = static_cast<uint32_t>(m.plane_rows),
-            .stride     = stride,
-            .scale      = scale_for(count, n_chunks, m.max_abs),
-        };
-        [enc setBuffer:m.rows offset:row_starts[n] * sizeof(uint32_t) atIndex:3];
-        [enc setBuffer:out_buffer offset:n * node_floats * sizeof(float) atIndex:6];
-        [enc setBytes:&params length:sizeof(params) atIndex:7];
-        [enc dispatchThreadgroups:MTLSizeMake(n_sel, n_chunks, 1)
-            threadsPerThreadgroup:MTLSizeMake(k_threads_per_group, 1, 1)];
-    }
-    [enc endEncoding];
-    [command commit];
-    [command waitUntilCompleted];
-    if ([command status] == MTLCommandBufferStatusError)
-    {
-        throw std::runtime_error("metal histogram dispatch failed");
+        enc->endEncoding();
+        command->commit();
+        command->waitUntilCompleted();
+        if (command->status() == MTL::CommandBufferStatusError)
+        {
+            throw std::runtime_error("metal histogram dispatch failed");
+        }
     }
 
     static_assert(sizeof(HistCell) == 2 * sizeof(float));
-    auto const *result = static_cast<float const *>([out_buffer contents]);
+    auto const *result = static_cast<float const *>(out_buffer->contents());
     parallel::for_each_index(
         nodes.size(),
         [&](size_t n)

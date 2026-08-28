@@ -41,12 +41,12 @@ if(NOT BONSAI_CUDA)
 endif()
 
 # Same pattern for Metal: the grower instantiation compiles everywhere, the
-# engine behind it is the runtime-compiling Objective-C++ TU on BONSAI_METAL
-# builds and the throwing stub otherwise.
+# engine behind it is a plain C++ TU against Apple's metal-cpp bindings on
+# BONSAI_METAL builds and the throwing stub otherwise. SYSTEM keeps the
+# warnings target out of Apple's headers.
 if(BONSAI_METAL)
-    target_sources(bonsai_tree PRIVATE metal/histogram_engine.mm)
-    set_source_files_properties(metal/histogram_engine.mm PROPERTIES
-        COMPILE_OPTIONS "-fobjc-arc")
+    target_sources(bonsai_tree PRIVATE metal/histogram_engine.cpp)
+    target_include_directories(bonsai_tree SYSTEM PRIVATE ${metal_cpp_SOURCE_DIR})
     target_link_libraries(bonsai_tree PUBLIC
         "-framework Metal" "-framework Foundation")
 else()

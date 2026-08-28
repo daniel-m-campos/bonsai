@@ -247,6 +247,16 @@ if(BONSAI_TESTS)
     FetchContent_MakeAvailable(Catch2)
 endif()
 
+if(BONSAI_METAL)
+    # Apple's official header-only C++ bindings; the engine TU is plain C++
+    # against them, so every extension-keyed gate applies to it unamended.
+    FetchContent_Declare(metal_cpp
+        GIT_REPOSITORY https://github.com/apple/metal-cpp.git
+        GIT_TAG        release/metal-cpp_macOS26_iOS26
+    )
+    FetchContent_MakeAvailable(metal_cpp)
+endif()
+
 # CLI parsing, header-only.
 FetchContent_Declare(CLI11
     GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
