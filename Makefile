@@ -1,4 +1,4 @@
-SOURCES      := $(shell find src include tests benchmarks -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.cu' -o -name '*.cuh' \) 2>/dev/null)
+SOURCES      := $(shell find src include tests benchmarks -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.cu' -o -name '*.cuh' -o -name '*.mm' \) 2>/dev/null)
 # src/python is excluded: the nanobind NB_MODULE macro and capsule-deleter
 # FFI patterns trip cppcoreguidelines checks that don't apply to boundary code.
 LINT_SOURCES := $(shell find src -type f -name '*.cpp' -not -path 'src/python/*' 2>/dev/null)

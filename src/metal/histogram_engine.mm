@@ -128,19 +128,18 @@ id<MTLDevice> shared_device()
 
 id<MTLComputePipelineState> compile_fill(id<MTLDevice> device, char const *bin_type)
 {
-    NSString *src = [NSString
-        stringWithFormat:@"#define BIN_T %s\n%s", bin_type, k_kernel_source];
+    NSString *src =
+        [NSString stringWithFormat:@"#define BIN_T %s\n%s", bin_type, k_kernel_source];
     NSError       *error = nil;
     id<MTLLibrary> lib   = [device newLibraryWithSource:src options:nil error:&error];
     if (lib == nil)
     {
-        throw std::runtime_error(
-            std::string("metal shader compile failed: ") +
-            [[error localizedDescription] UTF8String]);
+        throw std::runtime_error(std::string("metal shader compile failed: ") +
+                                 [[error localizedDescription] UTF8String]);
     }
-    id<MTLComputePipelineState> pso =
-        [device newComputePipelineStateWithFunction:[lib newFunctionWithName:@"hist_fill"]
-                                              error:&error];
+    id<MTLComputePipelineState> pso = [device
+        newComputePipelineStateWithFunction:[lib newFunctionWithName:@"hist_fill"]
+                                      error:&error];
     if (pso == nil)
     {
         throw std::runtime_error("metal pipeline creation failed");
@@ -242,9 +241,9 @@ struct MetalHistogramEngine::Impl
                 "lower data.max_bins or use a cpu grower");
         }
         size_t const width = bins_u8 ? 1 : 2;
-        bins = [device newBufferWithLength:plane_rows * n_features * width
+        bins               = [device newBufferWithLength:plane_rows * n_features * width
                                    options:MTLResourceStorageModeShared];
-        auto *base = static_cast<uint8_t *>([bins contents]);
+        auto *base         = static_cast<uint8_t *>([bins contents]);
         for (size_t f = 0; f < n_features; ++f)
         {
             ds.visit_bins(f,
@@ -324,8 +323,8 @@ void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     for (auto const &node_ref : nodes)
     {
         SplitInput const &node = node_ref.get();
-        level_rows += node.shape.identity && node.rows.empty() ? m.plane_rows
-                                                               : node.rows.size();
+        level_rows +=
+            node.shape.identity && node.rows.empty() ? m.plane_rows : node.rows.size();
     }
     if (level_rows / nodes.size() < min_device_rows())
     {
@@ -343,8 +342,8 @@ void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
         return;
     }
 
-    uint32_t const n_sel = static_cast<uint32_t>(selected.size());
-    auto *sel_slots      = static_cast<uint32_t *>(
+    uint32_t const n_sel     = static_cast<uint32_t>(selected.size());
+    auto          *sel_slots = static_cast<uint32_t *>(
         [ensure_capacity(m.device, m.sel, n_sel * sizeof(uint32_t)) contents]);
     uint32_t stride = 0;
     for (uint32_t j = 0; j < n_sel; ++j)
@@ -357,7 +356,7 @@ void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     size_t              gathered = 0;
     for (size_t n = 0; n < nodes.size(); ++n)
     {
-        row_starts[n] = gathered;
+        row_starts[n]          = gathered;
         SplitInput const &node = nodes[n].get();
         if (!node.shape.identity)
         {
@@ -367,22 +366,21 @@ void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
     auto *row_base = static_cast<uint32_t *>(
         [ensure_capacity(m.device, m.rows, gathered * sizeof(uint32_t)) contents]);
     size_t const node_floats = static_cast<size_t>(n_sel) * 2 * stride;
-    auto *out_buffer =
+    auto        *out_buffer =
         ensure_capacity(m.device, m.out, nodes.size() * node_floats * sizeof(float));
 
-    parallel::for_each_index(nodes.size(),
-                             [&](size_t n)
-                             {
-                                 SplitInput &node = nodes[n].get();
-                                 node.hists.carve(layout, selected, ds.n_features(),
-                                                  nodes.size() == 1);
-                                 if (!node.shape.identity)
-                                 {
-                                     std::memcpy(row_base + row_starts[n],
-                                                 node.rows.data(),
-                                                 node.rows.size() * sizeof(uint32_t));
-                                 }
-                             });
+    parallel::for_each_index(
+        nodes.size(),
+        [&](size_t n)
+        {
+            SplitInput &node = nodes[n].get();
+            node.hists.carve(layout, selected, ds.n_features(), nodes.size() == 1);
+            if (!node.shape.identity)
+            {
+                std::memcpy(row_base + row_starts[n], node.rows.data(),
+                            node.rows.size() * sizeof(uint32_t));
+            }
+        });
 
     id<MTLCommandBuffer>      command = [m.queue commandBuffer];
     id<MTLBlitCommandEncoder> blit    = [command blitCommandEncoder];
@@ -402,10 +400,9 @@ void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
 
     for (size_t n = 0; n < nodes.size(); ++n)
     {
-        SplitInput const &node  = nodes[n].get();
-        size_t const      count = node.shape.identity && node.rows.empty()
-                                      ? m.plane_rows
-                                      : node.rows.size();
+        SplitInput const &node = nodes[n].get();
+        size_t const      count =
+            node.shape.identity && node.rows.empty() ? m.plane_rows : node.rows.size();
         if (count == 0)
         {
             continue;
@@ -446,8 +443,7 @@ void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
             for (uint32_t j = 0; j < n_sel; ++j)
             {
                 std::span<HistCell> const cells = node.hists[selected[j]].cells();
-                std::memcpy(cells.data(),
-                            base + (static_cast<size_t>(j) * 2 * stride),
+                std::memcpy(cells.data(), base + (static_cast<size_t>(j) * 2 * stride),
                             cells.size() * sizeof(HistCell));
             }
         });
