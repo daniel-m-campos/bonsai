@@ -113,8 +113,8 @@ double max_relative_cell_error(Fixture const &fx, SplitInput const &got,
     double worst = 0.0;
     for (feature_id_t const fid : fx.selected)
     {
-        auto const g     = got.hists[fid].all_cells();
-        auto const w     = want.hists[fid].all_cells();
+        auto const g = got.hists[fid].all_cells();
+        auto const w = want.hists[fid].all_cells();
         REQUIRE(g.size() == w.size());
         double scale_g = 0.0, scale_h = 0.0, err_g = 0.0, err_h = 0.0;
         for (size_t b = 0; b < w.size(); ++b)
@@ -215,9 +215,9 @@ TEST_CASE("MetalEngine: populate_many fills a level of nodes in one dispatch",
     SplitInput const want_right = cpu_reference(fx, right, false);
 
     SplitInput got_left, got_right;
-    got_left.rows  = left;
-    got_right.rows = right;
-    std::array nodes = {std::ref(got_left), std::ref(got_right)};
+    got_left.rows              = left;
+    got_right.rows             = right;
+    std::array           nodes = {std::ref(got_left), std::ref(got_right)};
     MetalHistogramEngine engine;
     engine.begin_tree(fx.ds, fx.grad, fx.hess);
     engine.populate_many(fx.ds, fx.grad, fx.hess, nodes, fx.selected);
