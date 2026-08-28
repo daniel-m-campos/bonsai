@@ -255,6 +255,20 @@ if(BONSAI_METAL)
         GIT_TAG        release/metal-cpp_macOS26_iOS26
     )
     FetchContent_MakeAvailable(metal_cpp)
+
+    # The kernel is real MSL in its own file, embedded as a string at build
+    # time rather than compiled: nothing here needs Apple's shader compiler,
+    # so Command Line Tools still suffice and no .metallib reaches a wheel.
+    # The engine compiles the embedded source at runtime (contract in
+    # include/bonsai/metal/histogram_engine.hpp).
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        ${CMAKE_SOURCE_DIR}/src/metal/hist_fill.metal)
+    file(READ ${CMAKE_SOURCE_DIR}/src/metal/hist_fill.metal
+        BONSAI_METAL_HIST_FILL_MSL)
+    configure_file(
+        ${CMAKE_SOURCE_DIR}/src/metal/hist_fill_msl.hpp.in
+        ${CMAKE_BINARY_DIR}/generated/bonsai/metal/hist_fill_msl.hpp
+        @ONLY)
 endif()
 
 # CLI parsing, header-only.

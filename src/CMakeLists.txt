@@ -47,6 +47,7 @@ endif()
 if(BONSAI_METAL)
     target_sources(bonsai_tree PRIVATE metal/histogram_engine.cpp)
     target_include_directories(bonsai_tree SYSTEM PRIVATE ${metal_cpp_SOURCE_DIR})
+    target_include_directories(bonsai_tree PRIVATE ${CMAKE_BINARY_DIR}/generated)
     target_link_libraries(bonsai_tree PUBLIC
         "-framework Metal" "-framework Foundation")
 else()

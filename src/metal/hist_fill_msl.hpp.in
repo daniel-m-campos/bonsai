@@ -1,0 +1,16 @@
+#pragma once
+
+// Generated from src/metal/hist_fill.metal by the BONSAI_METAL branch of the
+// top-level CMakeLists. Edit the .metal file, never this template's output.
+//
+// BIN_T is left undefined here: the engine prepends a #define per bin width
+// so one kernel serves both the u8 and u16 planes.
+
+namespace bonsai::detail
+{
+
+constexpr char const *k_hist_fill_msl = R"MSL(
+@BONSAI_METAL_HIST_FILL_MSL@
+)MSL";
+
+} // namespace bonsai::detail

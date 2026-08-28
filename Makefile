@@ -1,3 +1,7 @@
+# .metal is deliberately absent: clang-format has no MSL language mode, so it
+# reads the address-space qualifiers (device, threadgroup, constant) as
+# identifiers and misaligns every kernel signature. comment_lint.py does cover
+# .metal, since the comment policy is language-agnostic.
 SOURCES      := $(shell find src include tests benchmarks -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' -o -name '*.cu' -o -name '*.cuh' -o -name '*.mm' \) 2>/dev/null)
 # src/python is excluded: the nanobind NB_MODULE macro and capsule-deleter
 # FFI patterns trip cppcoreguidelines checks that don't apply to boundary code.
