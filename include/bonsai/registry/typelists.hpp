@@ -4,6 +4,7 @@
 
 #include "bonsai/cuda/grower.hpp"
 #include "bonsai/grower.hpp"
+#include "bonsai/metal/grower.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/registry/names.hpp"
 #include "bonsai/sampler.hpp"
@@ -19,7 +20,7 @@ using Objectives =
 using Growers =
     TypeList<DepthwiseGrower<CpuHistogramEngine>, ObliviousGrower<CpuHistogramEngine>,
              LeafwiseGrower<CpuHistogramEngine>, CudaDepthwiseGrower,
-             CudaObliviousGrower, CudaLeafwiseGrower>;
+             CudaObliviousGrower, CudaLeafwiseGrower, MetalDepthwiseGrower>;
 using Samplers = TypeList<AllRowsSampler, BernoulliSampler, GossSampler>;
 
 namespace detail

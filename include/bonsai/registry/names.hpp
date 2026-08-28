@@ -5,6 +5,7 @@
 
 #include "bonsai/cuda/grower.hpp"
 #include "bonsai/grower.hpp"
+#include "bonsai/metal/grower.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/sampler.hpp"
 #include "bonsai/split.hpp"
@@ -91,6 +92,11 @@ template <> struct impl_name<CudaObliviousGrower>
 template <> struct impl_name<CudaLeafwiseGrower>
 {
     static constexpr std::string_view value = "cuda_leafwise";
+};
+
+template <> struct impl_name<MetalDepthwiseGrower>
+{
+    static constexpr std::string_view value = "metal_depthwise";
 };
 
 template <> struct impl_name<AllRowsSampler>
