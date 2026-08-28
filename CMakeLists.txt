@@ -222,6 +222,19 @@ if(BONSAI_CUDA)
     endif()
 endif()
 
+# ---- Metal (optional, experimental) -----------------------------------------
+# Host-steered backend: only the histogram fill runs on the Apple GPU, so
+# metal_depthwise is the CPU depthwise grower with the fill swapped. The MSL
+# kernel compiles at runtime through Metal.framework, so no shader toolchain
+# is required; OFF (or any non-Apple host) compiles the throwing stub.
+if(APPLE)
+    set(bonsai_metal_default ON)
+else()
+    set(bonsai_metal_default OFF)
+endif()
+option(BONSAI_METAL "Enable the Metal histogram backend (metal_depthwise grower)"
+       ${bonsai_metal_default})
+
 # ---- Dependencies via FetchContent ------------------------------------------
 
 include(FetchContent)
