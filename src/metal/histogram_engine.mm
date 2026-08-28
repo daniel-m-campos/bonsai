@@ -4,10 +4,12 @@
 #include "bonsai/config/errors.hpp"
 #include "bonsai/histogram.hpp"
 #include "bonsai/metal/histogram_engine.hpp"
+#include "bonsai/parallel.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <span>
 #include <stdexcept>
@@ -25,6 +27,18 @@ constexpr uint32_t k_threads_per_group         = 256;
 constexpr uint32_t k_rows_per_chunk_target     = 4096;
 constexpr uint32_t k_max_chunks                = 4096;
 constexpr double   k_scale_headroom            = static_cast<double>(1U << 30);
+constexpr size_t   k_min_device_rows_default   = size_t{1} << 21;
+
+size_t min_device_rows()
+{
+    static size_t const value = []
+    {
+        char const *env = std::getenv("BONSAI_METAL_MIN_ROWS");
+        return env != nullptr ? static_cast<size_t>(std::strtoull(env, nullptr, 10))
+                              : k_min_device_rows_default;
+    }();
+    return value;
+}
 
 constexpr char const *k_kernel_source = R"MSL(
 #include <metal_stdlib>
@@ -183,6 +197,7 @@ struct MetalHistogramEngine::Impl
     bool                has_hess   = false;
     float               max_abs    = 0.0F;
     std::vector<size_t> bin_counts;
+    CpuHistogramEngine  host;
 
     void ensure_pipeline()
     {
@@ -288,6 +303,7 @@ void MetalHistogramEngine::begin_tree(Dataset const &ds, floats_view grad,
     impl_->ensure_pipeline();
     impl_->stage_bins(ds);
     impl_->stage_gradients(grad, hess);
+    impl_->host.begin_tree(ds, grad, hess);
 }
 
 void MetalHistogramEngine::populate(Dataset const &ds, floats_view grad,
@@ -298,20 +314,32 @@ void MetalHistogramEngine::populate(Dataset const &ds, floats_view grad,
     populate_many(ds, grad, hess, one, selected);
 }
 
-void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view /*grad*/,
-                                         floats_view /*hess*/, split_input_refs nodes,
+void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view grad,
+                                         floats_view hess, split_input_refs nodes,
                                          std::span<feature_id_t const> selected)
 {
     Impl &m = *impl_;
 
-    ArenaLayout const layout{m.bin_counts, m.bins_u8};
+    size_t level_rows = 0;
     for (auto const &node_ref : nodes)
     {
-        node_ref.get().hists.carve(layout, selected, ds.n_features(),
-                                   nodes.size() == 1);
+        SplitInput const &node = node_ref.get();
+        level_rows += node.shape.identity && node.rows.empty() ? m.plane_rows
+                                                               : node.rows.size();
     }
+    if (level_rows < min_device_rows())
+    {
+        m.host.populate_many(ds, grad, hess, nodes, selected);
+        return;
+    }
+
+    ArenaLayout const layout{m.bin_counts, m.bins_u8};
     if (selected.empty())
     {
+        for (auto const &node_ref : nodes)
+        {
+            node_ref.get().hists.carve(layout, selected, ds.n_features(), true);
+        }
         return;
     }
 
@@ -325,10 +353,12 @@ void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view /*grad*/
         stride = std::max(stride, static_cast<uint32_t>(m.bin_counts[selected[j]]));
     }
 
-    size_t gathered = 0;
-    for (auto const &node_ref : nodes)
+    std::vector<size_t> row_starts(nodes.size(), 0);
+    size_t              gathered = 0;
+    for (size_t n = 0; n < nodes.size(); ++n)
     {
-        SplitInput const &node = node_ref.get();
+        row_starts[n] = gathered;
+        SplitInput const &node = nodes[n].get();
         if (!node.shape.identity)
         {
             gathered += node.rows.size();
@@ -339,6 +369,20 @@ void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view /*grad*/
     size_t const node_floats = static_cast<size_t>(n_sel) * 2 * stride;
     auto *out_buffer =
         ensure_capacity(m.device, m.out, nodes.size() * node_floats * sizeof(float));
+
+    parallel::for_each_index(nodes.size(),
+                             [&](size_t n)
+                             {
+                                 SplitInput &node = nodes[n].get();
+                                 node.hists.carve(layout, selected, ds.n_features(),
+                                                  nodes.size() == 1);
+                                 if (!node.shape.identity)
+                                 {
+                                     std::memcpy(row_base + row_starts[n],
+                                                 node.rows.data(),
+                                                 node.rows.size() * sizeof(uint32_t));
+                                 }
+                             });
 
     id<MTLCommandBuffer>      command = [m.queue commandBuffer];
     id<MTLBlitCommandEncoder> blit    = [command blitCommandEncoder];
@@ -356,7 +400,6 @@ void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view /*grad*/
     [enc setBuffer:m.nbins offset:0 atIndex:5];
     [enc setThreadgroupMemoryLength:4UL * stride * sizeof(float) atIndex:0];
 
-    size_t row_offset = 0;
     for (size_t n = 0; n < nodes.size(); ++n)
     {
         SplitInput const &node  = nodes[n].get();
@@ -367,12 +410,7 @@ void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view /*grad*/
         {
             continue;
         }
-        bool const use_rows = !node.shape.identity;
-        if (use_rows)
-        {
-            std::memcpy(row_base + row_offset, node.rows.data(),
-                        node.rows.size() * sizeof(uint32_t));
-        }
+        bool const       use_rows = !node.shape.identity;
         uint32_t const   n_chunks = chunks_for(count);
         NodeParams const params{
             .count      = static_cast<uint32_t>(count),
@@ -383,15 +421,11 @@ void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view /*grad*/
             .stride     = stride,
             .scale      = scale_for(count, n_chunks, m.max_abs),
         };
-        [enc setBuffer:m.rows offset:row_offset * sizeof(uint32_t) atIndex:3];
+        [enc setBuffer:m.rows offset:row_starts[n] * sizeof(uint32_t) atIndex:3];
         [enc setBuffer:out_buffer offset:n * node_floats * sizeof(float) atIndex:6];
         [enc setBytes:&params length:sizeof(params) atIndex:7];
         [enc dispatchThreadgroups:MTLSizeMake(n_sel, n_chunks, 1)
             threadsPerThreadgroup:MTLSizeMake(k_threads_per_group, 1, 1)];
-        if (use_rows)
-        {
-            row_offset += node.rows.size();
-        }
     }
     [enc endEncoding];
     [command commit];
@@ -401,22 +435,22 @@ void MetalHistogramEngine::populate_many(Dataset const &ds, floats_view /*grad*/
         throw std::runtime_error("metal histogram dispatch failed");
     }
 
+    static_assert(sizeof(HistCell) == 2 * sizeof(float));
     auto const *result = static_cast<float const *>([out_buffer contents]);
-    for (size_t n = 0; n < nodes.size(); ++n)
-    {
-        SplitInput  &node = nodes[n].get();
-        float const *base = result + (n * node_floats);
-        for (uint32_t j = 0; j < n_sel; ++j)
+    parallel::for_each_index(
+        nodes.size(),
+        [&](size_t n)
         {
-            std::span<HistCell> const cells = node.hists[selected[j]].cells();
-            float const *src = base + (static_cast<size_t>(j) * 2 * stride);
-            for (size_t b = 0; b < cells.size(); ++b)
+            SplitInput  &node = nodes[n].get();
+            float const *base = result + (n * node_floats);
+            for (uint32_t j = 0; j < n_sel; ++j)
             {
-                cells[b].sum_grad = src[2 * b];
-                cells[b].sum_hess = src[(2 * b) + 1];
+                std::span<HistCell> const cells = node.hists[selected[j]].cells();
+                std::memcpy(cells.data(),
+                            base + (static_cast<size_t>(j) * 2 * stride),
+                            cells.size() * sizeof(HistCell));
             }
-        }
-    }
+        });
 }
 
 } // namespace bonsai

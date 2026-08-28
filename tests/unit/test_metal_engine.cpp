@@ -25,6 +25,18 @@ using namespace bonsai; // NOLINT
 namespace
 {
 
+// The engine routes small levels to its host fill; these cases exist to pin
+// the DEVICE path, so force it before the first engine call caches the
+// threshold.
+struct ForceDevicePath
+{
+    ForceDevicePath()
+    {
+        setenv("BONSAI_METAL_MIN_ROWS", "1", 1);
+    }
+};
+ForceDevicePath const force_device_path{};
+
 constexpr double k_cell_tolerance = 1e-3;
 
 struct Fixture

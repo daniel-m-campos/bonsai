@@ -23,6 +23,13 @@ bool metal_available();
 // host-path feature (monotone constraints, interaction constraints,
 // sampling, leaf renewal) works unchanged because only the fill moved.
 //
+// The fill is routed per level by total row count: levels below the
+// threshold (BONSAI_METAL_MIN_ROWS, default 2M) run on an owned
+// CpuHistogramEngine, because a level of many small nodes pays the device's
+// per-threadgroup init and merge for a handful of useful rows per thread.
+// The device takes the shallow, row-heavy levels it is fastest at; the host
+// keeps the deep ones it is fastest at.
+//
 // What it guarantees: populate/populate_many produce cells equal to the CPU
 // engine's to tolerance, not bit-exactly. Threadgroup accumulation is
 // fixed-point on 32-bit integer atomics (Apple8 has no threadgroup float
