@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
@@ -177,6 +178,10 @@ void validate_dense_tree(DenseTree::Nodes const &nodes, DenseTree::Params const 
         {
             throw std::runtime_error("split names a feature the model lacks");
         }
+        if (std::isnan(n.threshold_or_value))
+        {
+            throw std::runtime_error("split threshold is not a number");
+        }
         if (n.left <= i || n.right <= i || n.left >= nodes.size() ||
             n.right >= nodes.size())
         {
@@ -192,9 +197,9 @@ void validate_dense_tree(DenseTree::Nodes const &nodes, DenseTree::Params const 
             depth[i] = 1 + std::max(depth[n.left], depth[n.right]);
         }
     }
-    if (p.depth < depth[0])
+    if (p.depth != depth[0])
     {
-        throw std::runtime_error("stated depth understates the tree");
+        throw std::runtime_error("stated depth disagrees with the stored structure");
     }
 }
 
@@ -203,8 +208,13 @@ template <> DenseTree tree_from_json<DenseTree>(json const &j, size_t n_features
     auto       nodes  = j.at("nodes").get<DenseTree::Nodes>();
     auto const params = j.get<DenseTree::Params>();
     validate_dense_tree(nodes, params, n_features);
+    auto covers = j.at("covers").get<std::vector<float>>();
+    if (!covers.empty() && covers.size() != nodes.size())
+    {
+        throw std::runtime_error("covers length disagrees with the node count");
+    }
     return DenseTree{std::move(nodes), params, j.at("gains").get<std::vector<float>>(),
-                     j.at("covers").get<std::vector<float>>()};
+                     std::move(covers)};
 }
 
 json tree_to_json(ObliviousTree const &t)
@@ -235,6 +245,10 @@ ObliviousTree tree_from_json<ObliviousTree>(json const &j, size_t n_features)
         if (sp.feature_id >= n_features)
         {
             throw std::runtime_error("split names a feature the model lacks");
+        }
+        if (std::isnan(sp.threshold))
+        {
+            throw std::runtime_error("split threshold is not a number");
         }
     }
     return ObliviousTree{

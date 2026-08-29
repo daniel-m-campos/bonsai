@@ -14,6 +14,7 @@
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include <limits>
 #include <nlohmann/json.hpp>
 
 #include "bonsai/bin_mappers.hpp"
@@ -367,14 +368,42 @@ TEST_CASE("ModelIo: corrupt tree shapes refuse to load", "[model_io][edge]")
                             Catch::Matchers::ContainsSubstring("node count"));
     }
 
-    SECTION("understated depth is refused, not silently under-walked")
+    SECTION("a depth disagreeing with the stored structure is refused")
     {
         TempPath const tmp;
         io::save_booster(booster, tmp.str(), mappers, cfg);
         rewrite_corrupted(tmp.str(),
                           [](nlohmann::json &root) { root["trees"][0]["depth"] = 0; });
         REQUIRE_THROWS_WITH(io::load_booster(tmp.str()),
-                            Catch::Matchers::ContainsSubstring("understates"));
+                            Catch::Matchers::ContainsSubstring("disagrees"));
+    }
+
+    SECTION("a NaN threshold is refused")
+    {
+        TempPath const tmp;
+        io::save_booster(booster, tmp.str(), mappers, cfg);
+        rewrite_corrupted(tmp.str(),
+                          [](nlohmann::json &root)
+                          {
+                              auto &node         = root["trees"][0]["nodes"][0];
+                              node["feature_id"] = 0;
+                              node["left"]       = 1;
+                              node["right"]      = 2;
+                              node["threshold_or_value"] =
+                                  std::numeric_limits<double>::quiet_NaN();
+                          });
+        REQUIRE_THROWS_WITH(io::load_booster(tmp.str()),
+                            Catch::Matchers::ContainsSubstring("not a number"));
+    }
+
+    SECTION("a covers array shorter than the nodes is refused")
+    {
+        TempPath const tmp;
+        io::save_booster(booster, tmp.str(), mappers, cfg);
+        rewrite_corrupted(tmp.str(), [](nlohmann::json &root)
+                          { root["trees"][0]["covers"] = {1.0, 2.0}; });
+        REQUIRE_THROWS_WITH(io::load_booster(tmp.str()),
+                            Catch::Matchers::ContainsSubstring("covers length"));
     }
 
     SECTION("a backward link cannot smuggle a cycle")
