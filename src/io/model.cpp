@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <fstream>
 #include <ios>
 #include <iterator>
@@ -445,27 +446,19 @@ std::vector<uint8_t> save_booster_bytes(IBooster const   &booster,
 
 LoadedBooster load_booster(std::string const &path)
 {
-    try
-    {
-        return load_booster_bytes(read_file(path));
-    }
-    catch (std::runtime_error const &e)
-    {
-        if (std::string_view{e.what()} == "model: bad magic")
-        {
-            throw std::runtime_error("model: bad magic in '" + path + "'");
-        }
-        throw;
-    }
+    return load_booster_bytes(read_file(path), path);
 }
 
-LoadedBooster load_booster_bytes(std::vector<uint8_t> const &bytes)
+LoadedBooster load_booster_bytes(std::vector<uint8_t> const &bytes,
+                                 std::string_view            source)
 {
     auto const root = json::from_msgpack(bytes);
 
     if (root.at("magic").get<std::string>() != k_magic)
     {
-        throw std::runtime_error("model: bad magic");
+        throw std::runtime_error(source.empty()
+                                     ? std::string{"model: bad magic"}
+                                     : std::format("model: bad magic in '{}'", source));
     }
     if (root.at("version").get<uint32_t>() != k_format_version)
     {

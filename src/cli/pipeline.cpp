@@ -68,32 +68,25 @@ namespace
 
 void check_label_domain(Config const &cfg, floats_view labels, std::string_view which)
 {
-    auto const &name = cfg.dispatch.objective_name;
+    auto const &name   = cfg.dispatch.objective_name;
+    auto const  refuse = [&](auto in_domain, std::string const &rule)
+    {
+        auto const bad = std::ranges::find_if_not(labels, in_domain);
+        if (bad != labels.end())
+        {
+            throw std::invalid_argument(std::format(
+                "{} labels must be {}; {} labels include {}", name, rule, which, *bad));
+        }
+    };
     if (name == "logloss")
     {
-        for (float const v : labels)
-        {
-            if (v != 0.0F && v != 1.0F)
-            {
-                throw std::invalid_argument(std::format(
-                    "logloss labels must be 0 or 1; {} labels include {}", which, v));
-            }
-        }
-        return;
+        refuse([](float v) { return v == 0.0F || v == 1.0F; }, "0 or 1");
     }
-    if (name == "softmax")
+    else if (name == "softmax")
     {
         auto const k = static_cast<float>(cfg.objective.n_classes);
-        for (float const v : labels)
-        {
-            if (!(v >= 0.0F) || v >= k || v != std::floor(v))
-            {
-                throw std::invalid_argument(
-                    std::format("softmax labels must be integers in [0, {}); {} labels "
-                                "include {}",
-                                cfg.objective.n_classes, which, v));
-            }
-        }
+        refuse([k](float v) { return v >= 0.0F && v < k && v == std::floor(v); },
+               std::format("integers in [0, {})", cfg.objective.n_classes));
     }
 }
 

@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <functional>
 #include <initializer_list>
 #include <map>
@@ -849,6 +850,18 @@ class DevicePlanCache
     mutable Slot<bonsai::CudaShapPlan>    shap_;
 };
 
+void require_columns(size_t given, size_t expected, std::string_view what)
+{
+    if (given != expected)
+    {
+        throw std::invalid_argument(std::format(
+            "this model was fit on {} features and the matrix passed to {} is {} "
+            "columns wide; a tree routes on feature ids, so the columns must "
+            "match, in the order it was fit on",
+            expected, what, given));
+    }
+}
+
 class Model
 {
   public:
@@ -866,15 +879,7 @@ class Model
 
     void check_width(array_2d const &X, char const *method) const
     {
-        if (size_t const given = X.shape(1); given != mappers_.size())
-        {
-            throw std::invalid_argument(
-                std::string{"this model was fit on "} +
-                std::to_string(mappers_.size()) + " features and " + method +
-                " was passed a matrix " + std::to_string(given) +
-                " columns wide; a tree routes on feature ids, so the columns must "
-                "be the ones it was fit on, in that order");
-        }
+        require_columns(X.shape(1), mappers_.size(), method);
     }
 
     nb::ndarray<nb::numpy, float> predict(array_2d const &X,
@@ -1287,14 +1292,7 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
     if (auto const *const arrays =
             std::get_if<std::pair<array_2d, array_1d>>(&*eval_set))
     {
-        if (size_t const given = arrays->first.shape(1); given != mappers.size())
-        {
-            throw std::invalid_argument(
-                "this model was fit on " + std::to_string(mappers.size()) +
-                " features and eval_set X is " + std::to_string(given) +
-                " columns wide; a tree routes on feature ids, so the columns "
-                "must match");
-        }
+        require_columns(arrays->first.shape(1), mappers.size(), "eval_set");
         owned = make_validation_labeled(arrays->first, arrays->second);
         check_eval_labels(owned->labels, cfg);
         return &*owned;
@@ -1623,13 +1621,9 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
     bonsai::cli::LoadedTrainValidation loaded;
     loaded.mappers =
         init ? std::move(init->mappers) : fit_mappers(xarg, std::move(names), cfg);
-    if (init && xarg.n_features != loaded.mappers.size())
+    if (init)
     {
-        throw std::invalid_argument(
-            "init_model was fit on " + std::to_string(loaded.mappers.size()) +
-            " features and X is " + std::to_string(xarg.n_features) +
-            " columns wide; a warm start reuses the model's cuts, so the "
-            "columns must match");
+        require_columns(xarg.n_features, loaded.mappers.size(), "fit(init_model=...)");
     }
     bonsai::floats_view const wview = warg ? warg->view() : bonsai::floats_view{};
     loaded.train = make_labeled(xarg, yarg.view(), loaded.mappers, cfg,

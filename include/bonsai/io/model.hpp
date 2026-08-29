@@ -35,6 +35,9 @@ LoadedBooster load_booster(std::string const &path);
 // carries the eval history, which is a training artifact).
 std::vector<uint8_t> save_booster_bytes(IBooster const   &booster,
                                         BinMappers const &mappers, Config const &cfg);
-LoadedBooster        load_booster_bytes(std::vector<uint8_t> const &bytes);
+// `source` names the file in the bad-magic message; empty for pickle bytes,
+// which have no path to name.
+LoadedBooster load_booster_bytes(std::vector<uint8_t> const &bytes,
+                                 std::string_view            source = {});
 
 } // namespace bonsai::io
