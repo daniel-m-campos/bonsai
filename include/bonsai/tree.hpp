@@ -3,7 +3,9 @@
 #include <cassert>
 #include <concepts>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <span>
 #include <vector>
 
 #include "bonsai/types.hpp"
@@ -226,5 +228,54 @@ class ObliviousTree
 // aggregated bottom-up from the leaf covers) so TreeSHAP's cover-weighted
 // walk applies unchanged. Throws std::invalid_argument without leaf covers.
 DenseTree dense_equivalent(ObliviousTree const &tree);
+
+// The oblivious ensemble's predict pack: every tree's level splits laid out
+// SoA and every leaf table concatenated, so accumulate() inverts the
+// ensemble loop (rows outer in one parallel section, trees inner over
+// cache-resident arrays) instead of opening a parallel region per tree over
+// each tree's own split vector.
+//
+// What it guarantees: accumulate adds each row's tree-order leaf sum into
+// out, with the same per-row float fold as calling tree.predict per tree,
+// so results are bit-identical to the per-tree walk (the eval baseline pin
+// never moves), NaN routing through default_left included. Trees of unequal
+// depth pack per-tree ranges, so early-stopped levelwise models walk
+// unchanged.
+//
+// What breaks it: the pack snapshots the trees it was built from; a booster
+// mutation invalidates it, which the booster's epoch-keyed cache enforces
+// (the DensifyCache pattern). Nothing else may hold one across a mutation.
+//
+// perf: measured on M2 (1 thread, 64 cols, depth 8, 100 trees) the
+// inversion takes single-row predict 1053 -> 610ns and batch 716 -> 505
+// ns/row with full NaN routing. A baked-constant codegen ceiling probe
+// measured 293ns, so layout carries most of what codegen could and this is
+// not a code generator; the residual is the per-level default_left select
+// (~0.2ns per level step) plus the per-call cache acquisition.
+//
+// Pinned by tests/unit/test_predict_walk.cpp.
+class ObliviousWalk
+{
+  public:
+    explicit ObliviousWalk(std::span<ObliviousTree const> trees);
+
+    // Adds the first n_trees trees' leaf values to out, row-parallel above
+    // a small-batch floor and serial below it so single-row callers never
+    // pay a parallel-region entry.
+    void accumulate(features_view X, size_t n_trees, floats_out out) const;
+
+    size_t n_trees() const
+    {
+        return split_off_.size() - 1;
+    }
+
+  private:
+    std::vector<feature_id_t> feat_;
+    std::vector<float>        thr_;
+    std::vector<uint8_t>      deft_;
+    std::vector<uint32_t>     split_off_;
+    std::vector<uint32_t>     leaf_off_;
+    std::vector<float>        leaf_;
+};
 
 } // namespace bonsai

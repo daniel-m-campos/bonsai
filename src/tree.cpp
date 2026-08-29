@@ -131,4 +131,62 @@ void ObliviousTree::predict(features_view X, floats_out out) const
                              { out[i] += value_for(X, static_cast<row_id_t>(i)); });
 }
 
+namespace
+{
+constexpr size_t k_walk_parallel_floor = 512;
+}
+
+ObliviousWalk::ObliviousWalk(std::span<ObliviousTree const> trees)
+{
+    split_off_.reserve(trees.size() + 1);
+    leaf_off_.reserve(trees.size() + 1);
+    split_off_.push_back(0);
+    leaf_off_.push_back(0);
+    for (auto const &tree : trees)
+    {
+        for (auto const &s : tree.splits())
+        {
+            feat_.push_back(s.feature_id);
+            thr_.push_back(s.threshold);
+            deft_.push_back(s.default_left ? 1 : 0);
+        }
+        for (float const v : tree.leaf_table())
+        {
+            leaf_.push_back(v);
+        }
+        split_off_.push_back(static_cast<uint32_t>(feat_.size()));
+        leaf_off_.push_back(static_cast<uint32_t>(leaf_.size()));
+    }
+}
+
+void ObliviousWalk::accumulate(features_view X, size_t n_trees, floats_out out) const
+{
+    assert(X.extent(0) == out.size());
+    assert(n_trees < split_off_.size());
+    size_t const n_cols = X.extent(1);
+    int const workers = out.size() < k_walk_parallel_floor ? 1 : parallel::n_threads();
+    parallel::for_each_index_on(
+        workers, out.size(),
+        [&](size_t i)
+        {
+            float const *row = X.data_handle() + (i * n_cols);
+            float        sum = 0.0F;
+            for (size_t t = 0; t < n_trees; ++t)
+            {
+                uint32_t idx = 0;
+                for (uint32_t l = split_off_[t]; l < split_off_[t + 1]; ++l)
+                {
+                    float const v        = row[feat_[l]];
+                    bool const  gt       = v > thr_[l];
+                    bool const  not_le   = !(v <= thr_[l]);
+                    bool const  go_right = deft_[l] != 0 ? gt : not_le;
+                    // NOLINTNEXTLINE(readability-implicit-bool-conversion)
+                    idx = (idx << 1) | static_cast<uint32_t>(go_right);
+                }
+                sum += leaf_[leaf_off_[t] + idx];
+            }
+            out[i] += sum;
+        });
+}
+
 } // namespace bonsai
