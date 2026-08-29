@@ -673,3 +673,13 @@ def test_warm_start_refuses_a_width_mismatch(tmp_path):
         bonsai.BonsaiRegressor(n_iters=2).fit(
             x[:, :7].copy(), y, init_model=path
         )
+
+
+def test_zero_round_multiclass_round_trips(tmp_path):
+    """A zero-round classifier saves empty init_scores; loading must accept it."""
+    rng = np.random.default_rng(5)
+    x = rng.standard_normal((60, 4)).astype(np.float32)
+    y = rng.integers(0, 3, 60)
+    m = bonsai.BonsaiClassifier(n_iters=0).fit(x, y)
+    again = pickle.loads(pickle.dumps(m))
+    np.testing.assert_array_equal(m.predict(x), again.predict(x))
