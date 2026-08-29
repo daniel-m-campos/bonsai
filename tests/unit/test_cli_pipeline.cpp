@@ -103,6 +103,22 @@ TEST_CASE("score_and_label_csv: labels match the CSV's label column",
     CHECK(sl.labels[3] == Catch::Approx(3.5F));
 }
 
+TEST_CASE("fit: a validation CSV of the wrong width is refused before eval",
+          "[cli_pipeline][load][edge]")
+{
+    auto const narrow = std::string{BONSAI_TESTS_DATA_DIR} + "/_narrow_valid_tmp.csv";
+    {
+        std::ofstream out{narrow};
+        out << "f0,label\n0.1,1.0\n0.2,0.0\n";
+    }
+    auto cfg       = make_tiny_config();
+    cfg.data.valid = {narrow};
+
+    REQUIRE_THROWS_WITH(load_train_and_validation_from_csv(cfg),
+                        Catch::Matchers::ContainsSubstring("columns must match"));
+    std::remove(narrow.c_str());
+}
+
 TEST_CASE("train_with_progress: early stopping truncates to the best iteration",
           "[cli_pipeline][early_stop]")
 {

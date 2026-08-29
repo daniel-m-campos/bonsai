@@ -120,6 +120,22 @@ LabeledData load_validation_labeled(std::string const &path, DataConfig const &d
 
 } // namespace
 
+namespace
+{
+
+void check_csv_width(size_t given, size_t expected, std::string const &path)
+{
+    if (given != expected)
+    {
+        throw std::runtime_error(
+            "this model was fit on " + std::to_string(expected) + " features and '" +
+            path + "' parsed to " + std::to_string(given) +
+            " columns; a tree routes on feature ids, so the columns must match");
+    }
+}
+
+} // namespace
+
 LoadedTrainValidation load_train_and_validation_with_mappers(Config const &cfg,
                                                              BinMappers    mappers)
 {
@@ -128,6 +144,8 @@ LoadedTrainValidation load_train_and_validation_with_mappers(Config const &cfg,
     if (!cfg.data.valid.empty())
     {
         validation = load_validation_labeled(cfg.data.valid[0], cfg.data);
+        check_csv_width(validation->features.n_features, mappers.size(),
+                        cfg.data.valid[0]);
     }
     return LoadedTrainValidation{.mappers    = std::move(mappers),
                                  .train      = std::move(train),
@@ -151,6 +169,8 @@ LoadedTrainValidation load_train_and_validation_from_csv(Config const &cfg)
                          cfg.data.valid.size());
         }
         validation = load_validation_labeled(cfg.data.valid[0], cfg.data);
+        check_csv_width(validation->features.n_features, mappers.size(),
+                        cfg.data.valid[0]);
     }
 
     return LoadedTrainValidation{.mappers    = std::move(mappers),
@@ -451,22 +471,6 @@ train_with_progress(Config const &cfg, LabeledData const &train,
     return train_impl(cfg, train, std::ref(validation), on_tick, std::move(initial),
                       eval_history);
 }
-
-namespace
-{
-
-void check_csv_width(size_t given, size_t expected, std::string const &path)
-{
-    if (given != expected)
-    {
-        throw std::runtime_error(
-            "this model was fit on " + std::to_string(expected) + " features and '" +
-            path + "' parsed to " + std::to_string(given) +
-            " columns; a tree routes on feature ids, so the columns must match");
-    }
-}
-
-} // namespace
 
 ScoredBatch score_csv(IBooster const &booster, std::string const &path,
                       DataConfig const &data_cfg, size_t n_features, size_t n_trees)

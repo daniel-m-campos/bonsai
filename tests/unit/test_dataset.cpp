@@ -1043,3 +1043,20 @@ TEST_CASE("identity tokens: minted, shared by copies, distinct per fit",
     CHECK(via_matrix.fit_identity() != FitId{});
     CHECK(via_matrix.labels_identity() != ds.labels_identity());
 }
+
+TEST_CASE("Dataset: binning refuses a width the mappers do not describe",
+          "[Dataset][edge]")
+{
+    detail::ColumnBatch batch;
+    batch.features = {{0.0F, 1.0F}, {2.0F, 3.0F}};
+    batch.labels   = {0.0F, 1.0F};
+    batch.feature_names.assign(2, "f");
+    BinMappers const mappers = BinMappers::fit(batch, {});
+
+    detail::ColumnBatch narrow;
+    narrow.features = {{0.0F, 1.0F}};
+    narrow.labels   = {0.0F, 1.0F};
+    narrow.feature_names.assign(1, "f");
+    REQUIRE_THROWS_WITH(Dataset::bin(narrow, mappers, {}),
+                        Catch::Matchers::ContainsSubstring("one set of cuts"));
+}
