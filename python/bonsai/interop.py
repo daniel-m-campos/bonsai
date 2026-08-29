@@ -681,6 +681,11 @@ def _to_library(lib: _Library, pairs: ParamsOps | Iterable[tuple[str, Any]],
     out: dict[str, Any] = {}
     unmappable = []
     items = pairs.to_dict() if isinstance(pairs, ParamsOps) else dict(pairs)
+    if items.get("dispatch.objective_name") != "softmax":
+        # Every objective carries the registry default n_classes=3 in a full
+        # config dump; only softmax consumes it, and the reference libraries
+        # reject a class count on non-multiclass objectives.
+        items.pop("objective.n_classes", None)
     for key, value in items.items():
         if key in lib.dropped_native:
             continue

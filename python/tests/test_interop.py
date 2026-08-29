@@ -237,3 +237,11 @@ def test_multiclass_class_counts_translate_in_both_directions():
     p = interop.from_catboost({"loss_function": "MultiClass", "classes_count": 4})
     assert p.to_dict()["objective.n_classes"] == 4
     assert interop.to_catboost(p)["classes_count"] == 4
+
+
+def test_non_multiclass_exports_carry_no_class_count():
+    """The registry default n_classes=3 must not leak into regression dicts."""
+    pairs = [("dispatch.objective_name", "mse"), ("objective.n_classes", 3)]
+    assert "num_class" not in interop.to_lightgbm(pairs, strict=False)
+    assert "num_class" not in interop.to_xgboost(pairs, strict=False)
+    assert "classes_count" not in interop.to_catboost(pairs, strict=False)
