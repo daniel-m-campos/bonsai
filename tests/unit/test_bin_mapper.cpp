@@ -349,7 +349,7 @@ TEST_CASE("BinMapper: transform routes values to half-open right-inclusive bins"
     CHECK(mapper.transform(2.5F) == 2);   // between cuts
     CHECK(mapper.transform(5.0F) == 4);   // exactly last observed cut
     CHECK(mapper.transform(100.0F) == 5); // above the observed max: the closer band
-    CHECK(mapper.transform(f_inf) == 6);  // non-finite joins NaN in the sentinel
+    CHECK(mapper.transform(f_inf) == 5);  // +inf joins the closer band, not missing
 }
 
 TEST_CASE("BinMapper: transform routes NaN to the missing bin",

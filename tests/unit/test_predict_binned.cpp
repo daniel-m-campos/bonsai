@@ -144,13 +144,9 @@ TEST_CASE("Binned prediction: a value on a cut routes the same both ways",
     {
         for (float const c : mappers[f].cuts())
         {
-            // The cut list ends with the FLT_MAX top-band closer and the
-            // +inf missing sentinel. Probing those is not the claim: one ulp
-            // above FLT_MAX is infinity, which no fitted domain contains.
-            if (c >= std::numeric_limits<float>::max())
-            {
-                continue;
-            }
+            // The closer and the sentinel are probed too: one ulp above
+            // FLT_MAX is infinity, which both walks route right of every
+            // threshold, so it is part of the claim rather than an exclusion.
             probes.push_back(c);
             probes.push_back(
                 std::nextafter(c, -std::numeric_limits<float>::infinity()));
