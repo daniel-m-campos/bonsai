@@ -321,12 +321,13 @@ class DenseWalk
 // booster's epoch-keyed cache is the only legitimate holder across a
 // mutation.
 //
-// perf: measured on M2 (1 thread, 64 cols, depth 8, 100 trees) the
-// inversion takes single-row predict 1053 -> 610ns and batch 716 -> 505
-// ns/row with full NaN routing. A baked-constant codegen ceiling probe
-// measured 293ns, so layout carries most of what codegen could and this is
-// not a code generator; the residual is the per-level default_left select
-// (~0.2ns per level step) plus the per-call cache acquisition.
+// perf: measured at 1 thread (64 cols, depth 8, 100 trees): single-row
+// 1053 -> 610ns on M2, and the blocked batch walk reaches 181 ns/row on
+// M2 and 179 on EPYC 9654 (from 505 and 874 scalar), against catboost's
+// same-pod 784. The two hosts converging says the block walk is memory
+// bound, not ISA bound. A scalar baked-constant codegen probe measured
+// 293, so row blocking beats that ceiling along the dimension the probe
+// did not price, and this is still not a code generator.
 //
 // Pinned by tests/unit/test_predict_walk.cpp (exact-equality parity vs the
 // per-tree walk, NaN injection included).

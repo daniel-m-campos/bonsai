@@ -129,13 +129,19 @@ void ObliviousTree::predict(features_view X, floats_out out) const
 
 namespace
 {
-// perf: measured crossover on M2 (8 threads, 64 cols, depth 8, 100
-// trees): at 128 rows the parallel walk beats serial for both packs
-// (427 vs 519 ns/row levelwise, 507 vs 1015 depthwise) and at 64 rows
-// serial still wins both (679 vs 510; 808 vs ~1015 within noise).
+// perf: DenseWalk's crossover at 8 threads (64 cols, depth 8, 100
+// trees): parallel wins from 128 rows on both M2 (507 vs 1015 ns/row)
+// and EPYC 9654 (902 vs 1326); serial wins at 64 on both.
 constexpr size_t k_walk_parallel_floor = 128;
-constexpr size_t k_dense_walk_width    = 8;
-constexpr size_t k_row_block           = 64;
+// perf: the blocked oblivious walk has its own crossover, because a
+// serial block is ~5x a serial row and a small predict is only a few
+// blocks across a team: at 128 rows parallel LOSES on both hosts (258
+// vs 190 M2, 476 vs 200 EPYC 9654) and 512 is the first clear M2 win
+// (115 vs 183), with the EPYC near break-even between its 256 loss and
+// its 1024 win.
+constexpr size_t k_blocked_parallel_floor = 512;
+constexpr size_t k_dense_walk_width       = 8;
+constexpr size_t k_row_block              = 64;
 
 } // namespace
 
@@ -319,7 +325,7 @@ void ObliviousWalk::accumulate(features_view X, size_t n_trees, floats_out out) 
     size_t const n_rows   = out.size();
     size_t const n_blocks = n_rows / k_row_block;
     size_t const tail     = n_rows - (n_blocks * k_row_block);
-    int const    workers  = n_rows < k_walk_parallel_floor ? 1 : parallel::n_threads();
+    int const workers = n_rows < k_blocked_parallel_floor ? 1 : parallel::n_threads();
     parallel::for_each_index_on(workers, n_blocks,
                                 [&](size_t b)
                                 {
