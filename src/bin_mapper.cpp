@@ -244,11 +244,15 @@ BinMapper BinMapper::from_edges(std::vector<float> edges)
 
 bin_id_t BinMapper::transform(float x) const
 {
+    auto const missing_bin = static_cast<bin_id_t>(n_bins() - 1);
     if (std::isnan(x))
     {
-        return n_bins() - 1;
+        return missing_bin;
     }
-    return std::ranges::lower_bound(cuts_, x) - cuts_.begin();
+    auto const top_band_bin = static_cast<bin_id_t>(missing_bin - 1);
+    auto const bin =
+        static_cast<bin_id_t>(std::ranges::lower_bound(cuts_, x) - cuts_.begin());
+    return std::min(bin, top_band_bin);
 }
 
 } // namespace bonsai

@@ -39,7 +39,13 @@ class BinMapper
     // domain edges and every edge is a live split candidate. from_cuts stays
     // the trusted path for the model loader's own serialized cuts.
     static BinMapper from_edges(std::vector<float> edges);
-    bin_id_t         transform(float x) const;
+    // The bin a value belongs to. NaN, and only NaN, bins as missing: +inf
+    // equals the sentinel cut, so lower_bound alone would route it there and
+    // the raw walk would route it right of every threshold, the same
+    // train/predict skew the FLT_MAX closer removed for finite values. It
+    // bins into the top band instead. Pinned by the binned-walk-bit-identical
+    // -to-raw-walk invariant, which probes the closer and the sentinel.
+    bin_id_t transform(float x) const;
     // The bin a stored split threshold came from. The grower records
     // threshold = cuts()[bin] and cuts are strictly increasing, so lower_bound
     // recovers that bin exactly. The one inversion of the grower's threshold
