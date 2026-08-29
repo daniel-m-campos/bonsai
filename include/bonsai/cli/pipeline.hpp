@@ -104,19 +104,18 @@ using EvalHistoryRef = std::optional<std::reference_wrapper<std::vector<float>>>
 
 // A warm start continues the loaded booster, whose objective and dispatch
 // were fixed when it was first fit; the user config cannot change them, only
-// disagree with them. Returns cfg with the loaded model's dispatch and
-// objective sections inherited when cfg's are default-valued, and throws when
-// cfg carries a non-default section that disagrees: the mismatch would train
-// through the loaded objective but predict, save, and report metrics through
-// the stated one (silent wrong probabilities, then a failed save after the
-// run). Restating the model's own values passes. The explicit flags say the
-// user named keys in that section (a passed param or a --set): the default
-// triple is indistinguishable from silence by value alone, so an explicitly
-// requested default that disagrees refuses only when its flag is set. Pinned
-// by "reconcile_warm_start: ..." in test_cli_pipeline.
+// disagree with them. Reconciles field by field: a field the user named (its
+// dotted key appears in explicit_keys) must equal the loaded model's value or
+// training refuses up front, because the mismatch would train through the
+// loaded objective but predict, save, and report metrics through the stated
+// one (silent wrong probabilities, then a failed save after the run). An
+// unnamed field inherits the loaded value when it sits at its config default
+// and refuses when it does not (a config file can set fields without naming
+// them in an override list, and a silent override of a file's choice would
+// be the same bug one layer up). Restating the model's own values always
+// passes. Pinned by "reconcile_warm_start: ..." in test_cli_pipeline.
 Config reconcile_warm_start(Config cfg, Config const &loaded_cfg,
-                            bool dispatch_explicit  = false,
-                            bool objective_explicit = false);
+                            std::vector<std::string> const &explicit_keys = {});
 
 std::unique_ptr<ITrainableBooster>
 train_with_progress(Config const &cfg, LoadedTrainValidation const &loaded,

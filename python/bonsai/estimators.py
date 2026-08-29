@@ -124,9 +124,7 @@ class _BonsaiEstimator:
 
     def __repr__(self) -> str:
         """sklearn-style: class name plus the non-default parameters."""
-        sig = inspect.signature(type(self).__init__)
-        defaults = {name: prm.default for name, prm in sig.parameters.items()
-                    if name != "self"}
+        defaults = _init_defaults(type(self))
         shown = {k: v for k, v in self.get_params().items()
                  if v != defaults.get(k)}
         args = ", ".join(f"{k}={v!r}" for k, v in shown.items())
@@ -539,6 +537,35 @@ class _BonsaiEstimator:
         merged.update(overrides or {})
         return merged
 
+    def _warm_start_overrides(self) -> dict[str, object]:
+        """Overrides for a warm start: dispatch and objective keys whose
+        values are still the constructor defaults are dropped, so the
+        loaded model's own values are inherited instead of refused (the
+        native reconcile treats any named key as user-chosen). Keys set
+        through ``params``, values derived from the data, and explicitly
+        passed kwargs always survive."""
+        overrides = self._build_overrides()
+        explicit = (self.params.to_dict()
+                    if isinstance(self.params, ParamsOps) else self.params) or {}
+        defaults = _init_defaults(type(self))
+        if (self.grower == defaults["grower"] and self.device is None
+                and "dispatch.grower_name" not in explicit):
+            overrides.pop("dispatch.grower_name", None)
+        if (self.sampler == defaults["sampler"] and self.subsample is None
+                and "dispatch.sampler_name" not in explicit):
+            overrides.pop("dispatch.sampler_name", None)
+        for key in self._warm_start_droppable_objective_keys(explicit, defaults):
+            overrides.pop(key, None)
+        return overrides
+
+    def _warm_start_droppable_objective_keys(
+            self, explicit: dict[str, object],
+            defaults: dict[str, object]) -> tuple[str, ...]:
+        """Objective keys a warm start may inherit; per-subclass. The base
+        keeps everything (``BonsaiClassifier`` derives its objective from
+        the data, which the warm start should still be checked against)."""
+        return ()
+
     @staticmethod
     def _reject_dart_eval_set(overrides: dict[str, object]):
         """Eval history shares early stopping's incremental valid-loss
@@ -680,6 +707,13 @@ class _BonsaiEstimator:
 
 # Regressor ========================================================================================
 
+def _init_defaults(cls) -> dict[str, object]:
+    """Constructor-signature defaults, keyed by parameter name."""
+    sig = inspect.signature(cls.__init__)
+    return {name: prm.default for name, prm in sig.parameters.items()
+            if name != "self"}
+
+
 class BonsaiRegressor(_BonsaiEstimator):
     """sklearn-style wrapper around the native booster.
 
@@ -812,7 +846,8 @@ class BonsaiRegressor(_BonsaiEstimator):
             ``eval_set`` is given at all.
         """
         _reject_eval_set_list(eval_set)
-        overrides = self._build_overrides()
+        overrides = (self._warm_start_overrides() if init_model is not None
+                     else self._build_overrides())
         ev = None
         if eval_set is not None:
             self._reject_dart_eval_set(overrides)
@@ -873,6 +908,17 @@ class BonsaiRegressor(_BonsaiEstimator):
         if self.quantile_alpha is not None:
             pairs["objective.quantile_alpha"] = self.quantile_alpha
         return pairs
+
+    def _warm_start_droppable_objective_keys(
+            self, explicit: dict[str, object],
+            defaults: dict[str, object]) -> tuple[str, ...]:
+        if self.objective != defaults["objective"]:
+            return ()
+        if self.quantile_alpha is not None:
+            return ()
+        if "dispatch.objective_name" in explicit:
+            return ()
+        return ("dispatch.objective_name",)
 
 
 # Classifier =======================================================================================
@@ -1018,7 +1064,8 @@ class BonsaiClassifier(_BonsaiEstimator):
             )
         y_enc = np.searchsorted(self.classes_, y_arr).astype(np.float32)
 
-        overrides = self._build_overrides()
+        overrides = (self._warm_start_overrides() if init_model is not None
+                     else self._build_overrides())
         ev = None
         if eval_set is not None:
             self._reject_dart_eval_set(overrides)

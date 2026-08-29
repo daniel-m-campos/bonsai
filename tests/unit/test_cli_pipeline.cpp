@@ -111,7 +111,7 @@ TEST_CASE("reconcile_warm_start: inherits the loaded dispatch, refuses a "
     loaded.dispatch.objective_name = "softmax";
     loaded.objective.n_classes     = 5;
 
-    SECTION("default sections inherit the loaded model's")
+    SECTION("default fields inherit the loaded model's")
     {
         auto const merged = reconcile_warm_start(Config{}, loaded);
         CHECK(merged.dispatch == loaded.dispatch);
@@ -122,10 +122,11 @@ TEST_CASE("reconcile_warm_start: inherits the loaded dispatch, refuses a "
         Config restated;
         restated.dispatch.objective_name = "softmax";
         restated.objective.n_classes     = 5;
-        auto const merged                = reconcile_warm_start(restated, loaded);
+        auto const merged =
+            reconcile_warm_start(restated, loaded, {"dispatch.objective_name"});
         CHECK(merged.dispatch == loaded.dispatch);
     }
-    SECTION("an explicit disagreeing dispatch refuses")
+    SECTION("an unnamed non-default field refuses")
     {
         Config wrong;
         wrong.dispatch.objective_name = "logloss";
@@ -133,20 +134,28 @@ TEST_CASE("reconcile_warm_start: inherits the loaded dispatch, refuses a "
             reconcile_warm_start(wrong, loaded),
             Catch::Matchers::ContainsSubstring("a warm start continues"));
     }
+    SECTION("an explicitly named default that disagrees refuses too")
+    {
+        REQUIRE_THROWS_WITH(
+            reconcile_warm_start(Config{}, loaded, {"dispatch.objective_name"}),
+            Catch::Matchers::ContainsSubstring("dispatch.objective_name"));
+    }
+    SECTION("a named field that agrees leaves unnamed fields free to inherit")
+    {
+        Config partial;
+        partial.dispatch.objective_name = "softmax";
+        auto const merged =
+            reconcile_warm_start(partial, loaded, {"dispatch.objective_name"});
+        CHECK(merged.objective.n_classes == 5);
+    }
     SECTION("an explicit disagreeing objective refuses")
     {
         Config wrong;
         wrong.dispatch.objective_name = "softmax";
         wrong.objective.n_classes     = 7;
         REQUIRE_THROWS_WITH(
-            reconcile_warm_start(wrong, loaded),
-            Catch::Matchers::ContainsSubstring("objective.* disagrees"));
-    }
-    SECTION("an explicitly named default that disagrees refuses too")
-    {
-        REQUIRE_THROWS_WITH(
-            reconcile_warm_start(Config{}, loaded, true, false),
-            Catch::Matchers::ContainsSubstring("a warm start continues"));
+            reconcile_warm_start(wrong, loaded, {"objective.n_classes"}),
+            Catch::Matchers::ContainsSubstring("objective.n_classes"));
     }
 }
 

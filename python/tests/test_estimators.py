@@ -716,3 +716,29 @@ def test_warm_start_refuses_a_disagreeing_objective(tmp_path):
             y,
             init_model=path,
         )
+
+
+def test_default_estimator_warm_starts_a_depthwise_model(tmp_path):
+    """A default-constructed estimator inherits the loaded model's dispatch."""
+    rng = np.random.default_rng(13)
+    x = rng.standard_normal((200, 4)).astype(np.float32)
+    y = (x[:, 0] * 2).astype(np.float32)
+    path = str(tmp_path / "m.bonsai")
+    bonsai.train({"booster.n_iters": 5}, x, y).save(path)
+
+    est = bonsai.BonsaiRegressor(n_iters=3).fit(x, y, init_model=path)
+    assert est.n_iters_ == 8
+
+
+def test_empty_int_list_params_round_trip():
+    """An empty list for a vector<int> key crosses the params wire format."""
+    rng = np.random.default_rng(14)
+    x = rng.standard_normal((60, 3)).astype(np.float32)
+    y = x[:, 0].copy()
+    m = bonsai.train(
+        {"data.ignore_columns": [], "tree.monotone_constraints": [],
+         "booster.n_iters": 1},
+        x,
+        y,
+    )
+    assert m.predict(x).shape == (60,)
