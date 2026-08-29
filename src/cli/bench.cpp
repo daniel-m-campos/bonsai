@@ -50,7 +50,7 @@ int run_bench(BenchOpts const &opts)
 
     auto const t2        = clk::now();
     auto const eval_path = cfg.data.test.empty() ? cfg.data.train : cfg.data.test;
-    auto       scored    = score_csv(*booster, eval_path, cfg.data);
+    auto       scored = score_csv(*booster, eval_path, cfg.data, loaded.mappers.size());
     auto const t_predict = seconds_since(t2);
 
     auto const rows_per_sec =

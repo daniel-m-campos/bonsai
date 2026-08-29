@@ -37,7 +37,8 @@ int run_eval(EvalOpts const &opts)
         return 2;
     }
 
-    auto sl    = score_and_label_csv(*loaded.booster, path, data_cfg);
+    auto sl =
+        score_and_label_csv(*loaded.booster, path, data_cfg, loaded.mappers.size());
     auto preds = sl.raw_scores;
     apply_link_inverse_by_name(loaded.cfg.dispatch.objective_name, preds);
 

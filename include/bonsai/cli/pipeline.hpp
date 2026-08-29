@@ -140,8 +140,13 @@ struct ScoredBatch
 
 // Parse CSV at `path`, build a row-major feature buffer, predict raw scores.
 // No link inverse applied — caller decides via apply_link_inverse_by_name.
+// n_features is the model's own feature count (the mappers' size); a CSV
+// parsing to any other width is refused before predict, because a tree
+// routes on feature ids and an unchecked narrow matrix is an out-of-bounds
+// read on the C++ path (the Python bindings carry the same check).
 ScoredBatch score_csv(IBooster const &booster, std::string const &path,
-                      DataConfig const &data_cfg, size_t n_trees = 0);
+                      DataConfig const &data_cfg, size_t n_features,
+                      size_t n_trees = 0);
 
 struct ScoredAndLabeled
 {
@@ -152,7 +157,7 @@ struct ScoredAndLabeled
 
 // Like score_csv but also extracts the label column for downstream eval.
 ScoredAndLabeled score_and_label_csv(IBooster const &booster, std::string const &path,
-                                     DataConfig const &data_cfg);
+                                     DataConfig const &data_cfg, size_t n_features);
 
 // Writes a single-column predictions CSV (header "prediction").
 void write_predictions(std::FILE *out, std::vector<float> const &y_hat);
