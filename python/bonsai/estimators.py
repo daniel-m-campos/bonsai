@@ -490,6 +490,13 @@ class _BonsaiEstimator:
         else:
             self._model = None
 
+    # Every dispatch or objective key a constructor argument writes, with all
+    # the arguments that write it: `device` rewrites the grower for a device,
+    # `subsample` turns the sampler on. A warm start may inherit the model's
+    # value for a key only when all of them are still at their defaults.
+    _WARM_START_KNOBS = (("dispatch.grower_name", ("grower", "device")),
+                         ("dispatch.sampler_name", ("sampler", "subsample")))
+
     def _objective_pairs(self) -> dict[str, str]:
         """Config keys the objective needs. ``BonsaiRegressor`` exposes a
         fixed ``objective`` kwarg; ``BonsaiClassifier`` derives it from
@@ -538,33 +545,26 @@ class _BonsaiEstimator:
         return merged
 
     def _warm_start_overrides(self) -> dict[str, object]:
-        """Overrides for a warm start: dispatch and objective keys whose
-        values are still the constructor defaults are dropped, so the
-        loaded model's own values are inherited instead of refused (the
-        native reconcile treats any named key as user-chosen). Keys set
-        through ``params``, values derived from the data, and explicitly
-        passed kwargs always survive."""
+        """Overrides for a warm start, with the untouched knobs dropped.
+
+        The native reconcile reads any key it is handed as user-chosen, so
+        a key still carrying its constructor default has to be withheld for
+        the loaded model's own value to be inherited rather than refused.
+        A key survives when any constructor argument that writes it was
+        passed, when ``params`` names it, or when the value comes from the
+        data (``BonsaiClassifier`` derives its objective from ``y``, which
+        a warm start should still be checked against).
+        """
         overrides = self._build_overrides()
         explicit = (self.params.to_dict()
                     if isinstance(self.params, ParamsOps) else self.params) or {}
         defaults = _init_defaults(type(self))
-        if (self.grower == defaults["grower"] and self.device is None
-                and "dispatch.grower_name" not in explicit):
-            overrides.pop("dispatch.grower_name", None)
-        if (self.sampler == defaults["sampler"] and self.subsample is None
-                and "dispatch.sampler_name" not in explicit):
-            overrides.pop("dispatch.sampler_name", None)
-        for key in self._warm_start_droppable_objective_keys(explicit, defaults):
-            overrides.pop(key, None)
+        for key, args in self._WARM_START_KNOBS:
+            if key in explicit:
+                continue
+            if all(getattr(self, a) == defaults[a] for a in args):
+                overrides.pop(key, None)
         return overrides
-
-    def _warm_start_droppable_objective_keys(
-            self, explicit: dict[str, object],
-            defaults: dict[str, object]) -> tuple[str, ...]:
-        """Objective keys a warm start may inherit; per-subclass. The base
-        keeps everything (``BonsaiClassifier`` derives its objective from
-        the data, which the warm start should still be checked against)."""
-        return ()
 
     @staticmethod
     def _reject_dart_eval_set(overrides: dict[str, object]):
@@ -903,22 +903,16 @@ class BonsaiRegressor(_BonsaiEstimator):
             return 1.0 if ss_res == 0 else 0.0
         return float(1.0 - ss_res / ss_tot)
 
+    _WARM_START_KNOBS = (
+        *_BonsaiEstimator._WARM_START_KNOBS,
+        ("dispatch.objective_name", ("objective", "quantile_alpha")),
+    )
+
     def _objective_pairs(self) -> dict[str, str]:
         pairs = {"dispatch.objective_name": self.objective}
         if self.quantile_alpha is not None:
             pairs["objective.quantile_alpha"] = self.quantile_alpha
         return pairs
-
-    def _warm_start_droppable_objective_keys(
-            self, explicit: dict[str, object],
-            defaults: dict[str, object]) -> tuple[str, ...]:
-        if self.objective != defaults["objective"]:
-            return ()
-        if self.quantile_alpha is not None:
-            return ()
-        if "dispatch.objective_name" in explicit:
-            return ()
-        return ("dispatch.objective_name",)
 
 
 # Classifier =======================================================================================
