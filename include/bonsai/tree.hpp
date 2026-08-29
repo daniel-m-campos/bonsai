@@ -259,14 +259,16 @@ DenseTree dense_equivalent(ObliviousTree const &tree);
 // group.
 //
 // What it guarantees: accumulate adds each row's tree-order value sum into
-// out, bit-identical to calling tree.predict per tree (the depthwise eval
+// out; from a zero-filled out (as predict_at provides) the result is
+// bit-identical to calling tree.predict per tree (the depthwise eval
 // baseline pin never moves), NaN routing per routes_right included.
 //
 // What breaks it: the pack snapshots the trees it was built from; a booster
 // mutation invalidates it, which the booster's epoch-keyed cache enforces.
 // Nothing else may hold one across a mutation. Tree depth is trusted from
-// Params::depth, which every construction site stamps from the grown
-// structure.
+// Params::depth: every grower stamps it from the grown structure, and the
+// model load path refuses a file whose stated depth understates the stored
+// one (src/io), so an under-walk cannot enter here.
 //
 // perf: measured on M2 (1 thread, 64 cols, depth 8, 100 trees) 2206 ->
 // 1004 ns/row at batch against xgboost inplace_predict at 1015.
@@ -313,8 +315,9 @@ class DenseWalk
 //
 // What it guarantees: accumulate adds each row's tree-order leaf sum into
 // out, with the same per-row float fold as calling tree.predict per tree,
-// so results are bit-identical to the per-tree walk, NaN routing per
-// routes_right included. Trees of unequal depth pack per-tree ranges, so
+// so from a zero-filled out (as predict_at provides) results are
+// bit-identical to the per-tree walk, NaN routing per routes_right
+// included. Trees of unequal depth pack per-tree ranges, so
 // early-stopped levelwise models walk unchanged.
 //
 // What breaks it: same staleness contract as DenseWalk above; the
@@ -342,11 +345,6 @@ class ObliviousWalk
     void accumulate(features_view X, size_t n_trees, floats_out out) const;
 
   private:
-    void walk_rows(features_view X, size_t n_trees, size_t row0, size_t count,
-                   floats_out out) const;
-    void walk_block(features_view X, size_t n_trees, size_t row0, float *scratch,
-                    floats_out out) const;
-
     std::vector<feature_id_t> feat_;
     std::vector<float>        thr_;
     std::vector<uint8_t>      default_left_;
