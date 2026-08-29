@@ -52,4 +52,12 @@ void apply_overrides(Config &cfg, std::vector<Override> const &overrides);
 // thread pool (the CLI) additionally apply cfg.parallel afterwards.
 Config resolve(std::string const &toml_path, std::vector<Override> const &overrides);
 
+// The dotted keys that same invocation states, from both sources: a value
+// written in the TOML file states its key exactly as an override does, so a
+// warm start refuses a disagreeing file value instead of silently inheriting
+// over it. Order follows resolve's precedence (file, then overrides).
+// Pinned by "stated_keys: ..." in test_config.
+std::vector<std::string> stated_keys(std::string const           &toml_path,
+                                     std::vector<Override> const &overrides);
+
 } // namespace bonsai::config

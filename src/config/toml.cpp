@@ -1,6 +1,8 @@
 #include "bonsai/config/toml.hpp"
 
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -144,6 +146,27 @@ void apply_overrides(Config &cfg, std::vector<Override> const &overrides)
     {
         internal::apply_override(cfg, ov.key, ov.value, internal::all_sections);
     }
+}
+
+std::vector<std::string> stated_keys(std::string const           &toml_path,
+                                     std::vector<Override> const &overrides)
+{
+    std::vector<std::string> keys;
+    if (!toml_path.empty())
+    {
+        std::ifstream     in{toml_path};
+        std::string const text{std::istreambuf_iterator<char>(in),
+                               std::istreambuf_iterator<char>()};
+        for (auto const &[key, value] : typed_overrides(text))
+        {
+            keys.push_back(key);
+        }
+    }
+    for (auto const &ov : overrides)
+    {
+        keys.push_back(ov.key);
+    }
+    return keys;
 }
 
 Config resolve(std::string const &toml_path, std::vector<Override> const &overrides)
