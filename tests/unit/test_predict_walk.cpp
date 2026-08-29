@@ -104,7 +104,7 @@ TEST_CASE("ObliviousWalk: the block seam and sub-block tail stay bit-exact",
           "[ObliviousWalk][transform][edge]")
 {
     auto const trees = make_trees();
-    for (size_t n : {size_t{63}, size_t{64}, size_t{65}, size_t{129}})
+    for (size_t n : {size_t{63}, size_t{64}, size_t{65}, size_t{129}, size_t{1025}})
     {
         auto const          x = make_rows(n);
         features_view const xv{x.data(), n, k_cols};
