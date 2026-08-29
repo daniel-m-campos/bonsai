@@ -26,13 +26,10 @@ node_id_t DenseTree::leaf_for(features_view X, row_id_t i) const
     Node const *node  = &nodes_[index];
     while (node->feature_id != k_leaf_flag)
     {
-        float v      = X[i, node->feature_id];
-        bool  is_nan = std::isnan(v);
-        bool  less   = !is_nan && (v <= node->threshold_or_value);
-        // NOLINTNEXTLINE(readability-implicit-bool-conversion)
-        bool go_left = less | (is_nan & node->default_left);
-        index        = go_left ? node->left : node->right;
-        node         = &nodes_[index];
+        bool const right = routes_right(X[i, node->feature_id],
+                                        node->threshold_or_value, node->default_left);
+        index            = right ? node->right : node->left;
+        node             = &nodes_[index];
     }
     return index;
 }
@@ -111,12 +108,9 @@ node_id_t ObliviousTree::leaf_for(features_view X, row_id_t i) const
     node_id_t index = 0;
     for (auto const &s : splits_)
     {
-        float v      = X[i, s.feature_id];
-        bool  is_nan = std::isnan(v);
-        bool  less   = !is_nan && (v <= s.threshold);
-        // NOLINTNEXTLINE(readability-implicit-bool-conversion)
-        bool go_left = less | (is_nan & s.default_left);
-        index        = (index << 1) | (go_left ? 0U : 1U);
+        bool const right =
+            routes_right(X[i, s.feature_id], s.threshold, s.default_left);
+        index = (index << 1) | static_cast<node_id_t>(right);
     }
     return index;
 }
@@ -135,19 +129,13 @@ void ObliviousTree::predict(features_view X, floats_out out) const
 
 namespace
 {
-constexpr size_t k_walk_parallel_floor = 512;
+// perf: measured crossover on M2 (8 threads, 64 cols, depth 8, 100
+// trees): at 128 rows the parallel walk beats serial for both packs
+// (427 vs 519 ns/row levelwise, 507 vs 1015 depthwise) and at 64 rows
+// serial still wins both (679 vs 510; 808 vs ~1015 within noise).
+constexpr size_t k_walk_parallel_floor = 128;
 constexpr size_t k_dense_walk_width    = 8;
 
-size_t structural_depth(DenseTree::Nodes const &nodes, node_id_t id)
-{
-    DenseTree::Node const &n = nodes[id];
-    if (n.feature_id == DenseTree::k_leaf_flag)
-    {
-        return 0;
-    }
-    return 1 +
-           std::max(structural_depth(nodes, n.left), structural_depth(nodes, n.right));
-}
 } // namespace
 
 DenseWalk::DenseWalk(std::span<DenseTree const> trees)
@@ -158,17 +146,16 @@ DenseWalk::DenseWalk(std::span<DenseTree const> trees)
     {
         auto const base = static_cast<uint32_t>(nodes_.size());
         roots_.push_back(base);
-        depths.push_back(structural_depth(tree.nodes(), 0));
+        depths.push_back(tree.params().depth);
         for (auto const &n : tree.nodes())
         {
             bool const leaf = n.feature_id == DenseTree::k_leaf_flag;
             auto const self = static_cast<uint32_t>(nodes_.size());
-            nodes_.push_back({.threshold = leaf ? 0.0F : n.threshold_or_value,
+            nodes_.push_back({.threshold = n.threshold_or_value,
                               .feature   = leaf ? 0 : n.feature_id,
                               .left      = leaf ? self : base + n.left,
                               .right     = leaf ? self : base + n.right});
-            values_.push_back(leaf ? n.threshold_or_value : 0.0F);
-            deft_.push_back(n.default_left ? 1 : 0);
+            default_left_.push_back(n.default_left ? 1 : 0);
         }
     }
     for (size_t g = 0; g * k_dense_walk_width < trees.size(); ++g)
@@ -210,15 +197,14 @@ void DenseWalk::accumulate(features_view X, size_t n_trees, floats_out out) cons
                     for (size_t w = 0; w < k_dense_walk_width; ++w)
                     {
                         PackedNode const &n = nodes_[idx[w]];
-                        float const       v = row[n.feature];
-                        bool const        go_right =
-                            deft_[idx[w]] != 0 ? v > n.threshold : !(v <= n.threshold);
-                        idx[w] = go_right ? n.right : n.left;
+                        bool const right    = routes_right(row[n.feature], n.threshold,
+                                                           default_left_[idx[w]] != 0);
+                        idx[w]              = right ? n.right : n.left;
                     }
                 }
                 for (size_t w = 0; w < k_dense_walk_width; ++w)
                 {
-                    sum += values_[idx[w]];
+                    sum += nodes_[idx[w]].threshold;
                 }
             }
             for (; t < n_trees; ++t)
@@ -227,13 +213,12 @@ void DenseWalk::accumulate(features_view X, size_t n_trees, floats_out out) cons
                 uint32_t const depth = group_depth_[t / k_dense_walk_width];
                 for (uint32_t d = 0; d < depth; ++d)
                 {
-                    PackedNode const &n = nodes_[idx];
-                    float const       v = row[n.feature];
-                    bool const        go_right =
-                        deft_[idx] != 0 ? v > n.threshold : !(v <= n.threshold);
-                    idx = go_right ? n.right : n.left;
+                    PackedNode const &n     = nodes_[idx];
+                    bool const        right = routes_right(row[n.feature], n.threshold,
+                                                           default_left_[idx] != 0);
+                    idx                     = right ? n.right : n.left;
                 }
-                sum += values_[idx];
+                sum += nodes_[idx].threshold;
             }
             out[i] += sum;
         });
@@ -251,7 +236,7 @@ ObliviousWalk::ObliviousWalk(std::span<ObliviousTree const> trees)
         {
             feat_.push_back(s.feature_id);
             thr_.push_back(s.threshold);
-            deft_.push_back(s.default_left ? 1 : 0);
+            default_left_.push_back(s.default_left ? 1 : 0);
         }
         for (float const v : tree.leaf_table())
         {
@@ -279,12 +264,9 @@ void ObliviousWalk::accumulate(features_view X, size_t n_trees, floats_out out) 
                 uint32_t idx = 0;
                 for (uint32_t l = split_off_[t]; l < split_off_[t + 1]; ++l)
                 {
-                    float const v        = row[feat_[l]];
-                    bool const  gt       = v > thr_[l];
-                    bool const  not_le   = !(v <= thr_[l]);
-                    bool const  go_right = deft_[l] != 0 ? gt : not_le;
-                    // NOLINTNEXTLINE(readability-implicit-bool-conversion)
-                    idx = (idx << 1) | static_cast<uint32_t>(go_right);
+                    bool const right =
+                        routes_right(row[feat_[l]], thr_[l], default_left_[l] != 0);
+                    idx = (idx << 1) | static_cast<uint32_t>(right);
                 }
                 sum += leaf_[leaf_off_[t] + idx];
             }
