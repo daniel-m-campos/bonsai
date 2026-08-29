@@ -89,11 +89,27 @@ BinColumns bin_columns(BinMappers const &mappers, size_t n_features, size_t n_ro
 
 } // namespace
 
+namespace
+{
+
+void require_width(size_t given, size_t expected)
+{
+    if (given != expected)
+    {
+        throw std::invalid_argument(
+            "Dataset::bin: the mappers describe " + std::to_string(expected) +
+            " features and the input has " + std::to_string(given) +
+            "; one set of cuts describes one set of columns");
+    }
+}
+
+} // namespace
+
 Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers,
                      DataConfig const & /*cfg*/,
                      std::shared_ptr<IngestPlane const> plane)
 {
-    assert(batch.features.size() == mappers.size());
+    require_width(batch.features.size(), mappers.size());
     detail::Phase<&detail::IngestProfiler::bin_s> phase;
     size_t const                                  n = batch.labels.size();
     std::shared_ptr<BinStore const>               store;
@@ -122,7 +138,7 @@ Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mapp
                      DataConfig const &cfg, std::shared_ptr<IngestPlane const> plane,
                      floats_view weights)
 {
-    assert(X.extent(1) == mappers.size());
+    require_width(X.extent(1), mappers.size());
     if (plane)
     {
         return bin(labels.size(), X.extent(1), labels, mappers, cfg, std::move(plane),
@@ -150,7 +166,7 @@ Dataset Dataset::bin(size_t n_rows, [[maybe_unused]] size_t n_features,
                      std::shared_ptr<IngestPlane const> plane, floats_view weights)
 {
     assert(plane != nullptr);
-    assert(n_features == mappers.size());
+    require_width(n_features, mappers.size());
     detail::Phase<&detail::IngestProfiler::bin_s> phase;
     Dataset                                       ds;
     ds.rows_  = RowView::all(n_rows);
