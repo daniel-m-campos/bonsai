@@ -332,6 +332,23 @@ void rewrite_corrupted(std::string const &path, CorruptF const &corrupt)
 
 } // namespace
 
+TEST_CASE("ModelIo: a multiclass tree count off the class grid refuses to load",
+          "[model_io][edge]")
+{
+    auto const src = std::string{BONSAI_TESTS_DATA_DIR} + "/fixture_v7_softmax.bonsai";
+    auto const bytes = read_file_bytes(src);
+    TempPath const tmp;
+    {
+        std::ofstream out(tmp.str(), std::ios::binary);
+        out.write(reinterpret_cast<char const *>(bytes.data()),
+                  static_cast<std::streamsize>(bytes.size()));
+    }
+    rewrite_corrupted(tmp.str(), [](nlohmann::json &root)
+                      { root["trees"].push_back(root["trees"].back()); });
+    REQUIRE_THROWS_WITH(io::load_booster(tmp.str()),
+                        Catch::Matchers::ContainsSubstring("multiple of n_classes"));
+}
+
 TEST_CASE("ModelIo: corrupt tree shapes refuse to load", "[model_io][edge]")
 {
     auto const       batch   = batch_for<MSEObjective>();
