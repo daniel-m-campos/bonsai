@@ -136,6 +136,36 @@ void check_csv_width(size_t given, size_t expected, std::string const &path)
 
 } // namespace
 
+Config reconcile_warm_start(Config cfg, Config const &loaded_cfg,
+                            bool const dispatch_explicit, bool const objective_explicit)
+{
+    if (cfg.dispatch != loaded_cfg.dispatch)
+    {
+        if (dispatch_explicit || cfg.dispatch != DispatchConfig{})
+        {
+            throw std::invalid_argument(
+                "a warm start continues the loaded (" +
+                loaded_cfg.dispatch.objective_name + ", " +
+                loaded_cfg.dispatch.grower_name + ", " +
+                loaded_cfg.dispatch.sampler_name +
+                ") model; drop the disagreeing dispatch.* keys or restate "
+                "the model's own");
+        }
+        cfg.dispatch = loaded_cfg.dispatch;
+    }
+    if (cfg.objective != loaded_cfg.objective)
+    {
+        if (objective_explicit || cfg.objective != ObjectiveConfig{})
+        {
+            throw std::invalid_argument(
+                "objective.* disagrees with the loaded model; a warm start "
+                "keeps the objective the model was fit with");
+        }
+        cfg.objective = loaded_cfg.objective;
+    }
+    return cfg;
+}
+
 LoadedTrainValidation load_train_and_validation_with_mappers(Config const &cfg,
                                                              BinMappers    mappers)
 {

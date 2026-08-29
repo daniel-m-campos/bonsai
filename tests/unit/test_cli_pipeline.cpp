@@ -103,6 +103,53 @@ TEST_CASE("score_and_label_csv: labels match the CSV's label column",
     CHECK(sl.labels[3] == Catch::Approx(3.5F));
 }
 
+TEST_CASE("reconcile_warm_start: inherits the loaded dispatch, refuses a "
+          "disagreement",
+          "[cli_pipeline][ctor][edge]")
+{
+    Config loaded;
+    loaded.dispatch.objective_name = "softmax";
+    loaded.objective.n_classes     = 5;
+
+    SECTION("default sections inherit the loaded model's")
+    {
+        auto const merged = reconcile_warm_start(Config{}, loaded);
+        CHECK(merged.dispatch == loaded.dispatch);
+        CHECK(merged.objective == loaded.objective);
+    }
+    SECTION("restating the model's own values passes")
+    {
+        Config restated;
+        restated.dispatch.objective_name = "softmax";
+        restated.objective.n_classes     = 5;
+        auto const merged                = reconcile_warm_start(restated, loaded);
+        CHECK(merged.dispatch == loaded.dispatch);
+    }
+    SECTION("an explicit disagreeing dispatch refuses")
+    {
+        Config wrong;
+        wrong.dispatch.objective_name = "logloss";
+        REQUIRE_THROWS_WITH(
+            reconcile_warm_start(wrong, loaded),
+            Catch::Matchers::ContainsSubstring("a warm start continues"));
+    }
+    SECTION("an explicit disagreeing objective refuses")
+    {
+        Config wrong;
+        wrong.dispatch.objective_name = "softmax";
+        wrong.objective.n_classes     = 7;
+        REQUIRE_THROWS_WITH(
+            reconcile_warm_start(wrong, loaded),
+            Catch::Matchers::ContainsSubstring("objective.* disagrees"));
+    }
+    SECTION("an explicitly named default that disagrees refuses too")
+    {
+        REQUIRE_THROWS_WITH(
+            reconcile_warm_start(Config{}, loaded, true, false),
+            Catch::Matchers::ContainsSubstring("a warm start continues"));
+    }
+}
+
 TEST_CASE("fit: a validation CSV of the wrong width is refused before eval",
           "[cli_pipeline][load][edge]")
 {
