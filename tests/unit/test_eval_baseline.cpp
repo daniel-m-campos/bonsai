@@ -1,6 +1,8 @@
-// Phase 1 parity-guarantee net. Pins the exact MSE eval output we want
-// preserved through the Phase 2 metric refactor: California Housing,
-// 20 iterations, default seed -> rmse=0.7157657.
+// Parity-guarantee net. Pins the exact MSE eval output: California
+// Housing, 20 iterations, default seed -> rmse=0.715300083. The title,
+// this header, and the assertion carry the same value on purpose; when
+// the pin legitimately moves, move all three and extend the lineage
+// below.
 //
 // Same recipe as the CLI smoke documented in the plan:
 //   bonsai fit -c configs/california_housing.toml --set booster.n_iters=20
@@ -54,7 +56,7 @@ Config make_california_housing_config()
 
 } // namespace
 
-TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7157605",
+TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7153001",
           "[eval_baseline][mse]")
 {
     auto const cfg     = make_california_housing_config();
@@ -80,8 +82,10 @@ TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7157605",
     // (-ffp-contract=off on the host plane, -> 0.71725 on EVERY
     // architecture — this pin is now platform-independent by construction),
     // decision 74 (FLT_MAX top-band closer: the sentinel bin is NaN-only on
-    // every fitting path, -> 0.7153: -0.27% here, inside the chance band;
-    // the leak synthetics in scripts/probe_missing_bin.py are the real
-    // motivation).
-    CHECK(rmse == Catch::Approx(0.7153F).margin(1e-6));
+    // every fitting path, -> 0.715300083: -0.27% here, inside the chance
+    // band; the leak synthetics in scripts/probe_missing_bin.py are the
+    // real motivation). The former margin(1e-6) tolerance was ~16 ULP of
+    // slack under a comment claiming bit-exactness; measured deterministic
+    // across runs, so the pin is now the exact float.
+    CHECK(rmse == 0.715300083F);
 }
