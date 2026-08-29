@@ -43,15 +43,9 @@ int run_fit(FitOpts const &opts)
     if (!opts.init_model_path.empty())
     {
         init = io::load_booster(opts.init_model_path);
-        std::vector<std::string> keys;
-        for (auto const &o : opts.common.overrides)
-        {
-            if (o.key.starts_with("dispatch.") || o.key.starts_with("objective."))
-            {
-                keys.push_back(o.key);
-            }
-        }
-        cfg = reconcile_warm_start(std::move(cfg), init.cfg, keys);
+        cfg  = reconcile_warm_start(
+            std::move(cfg), init.cfg,
+            config::stated_keys(opts.common.config_path, opts.common.overrides));
     }
     if (opts.common.dump_config)
     {

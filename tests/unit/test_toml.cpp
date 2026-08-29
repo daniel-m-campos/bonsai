@@ -1,4 +1,8 @@
+#include <algorithm>
+#include <cstdio>
+#include <fstream>
 #include <string>
+#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -285,4 +289,27 @@ TEST_CASE("Overrides: parallel.device_id parses to ParallelConfig", "[overrides]
     bonsai::config::apply_overrides(cfg, ovs);
     REQUIRE(cfg.parallel.device_id == 3);
     REQUIRE(bonsai::Config{}.parallel.device_id == 0);
+}
+
+TEST_CASE("stated_keys: names the keys both sources state, values untouched",
+          "[toml][overrides]")
+{
+    auto const path = std::string{BONSAI_TESTS_DATA_DIR} + "/_stated_keys_tmp.toml";
+    {
+        std::ofstream out{path};
+        out << "[objective]\nquantile_alpha = 0.5\n\n[tree]\nmax_depth = 4\n";
+    }
+    std::vector<bonsai::config::Override> const overrides{
+        {"dispatch.objective_name", "quantile"}, {"tree.max_depth", "9"}};
+
+    auto const keys = bonsai::config::stated_keys(path, overrides);
+
+    CHECK(std::ranges::find(keys, "objective.quantile_alpha") != keys.end());
+    CHECK(std::ranges::find(keys, "dispatch.objective_name") != keys.end());
+
+    // Precedence is resolve's, not stated_keys': the file states max_depth and
+    // so does the override, and the override still wins the value.
+    auto const cfg = bonsai::config::resolve(path, overrides);
+    CHECK(cfg.tree_config.max_depth == 9);
+    std::remove(path.c_str());
 }
