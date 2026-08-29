@@ -24,6 +24,7 @@ add_executable(bonsai_tests
     unit/test_objective_traits.cpp
     unit/test_objective_dispatch.cpp
     unit/test_booster.cpp
+    unit/test_predict_walk.cpp
     unit/test_cli_pipeline.cpp
     unit/test_eval_baseline.cpp
     unit/test_task.cpp
