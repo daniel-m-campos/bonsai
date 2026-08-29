@@ -18,6 +18,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -1408,6 +1409,12 @@ ParamItems items_from_params(nb::object params)
     return out;
 }
 
+bool names_section(ParamItems const &items, std::string_view prefix)
+{
+    return std::ranges::any_of(items, [&](auto const &kv)
+                               { return kv.first.starts_with(prefix); });
+}
+
 ConfigPairs render_params(ParamItems const &items)
 {
     ConfigPairs pairs;
@@ -1593,6 +1600,12 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
     {
         cfg = config_from_params(render_params(items));
     }
+    if (init)
+    {
+        cfg = bonsai::cli::reconcile_warm_start(std::move(cfg), init->cfg,
+                                                names_section(items, "dispatch."),
+                                                names_section(items, "objective."));
+    }
 
     nb::gil_scoped_release release;
 
@@ -1644,7 +1657,7 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
                 "instead");
         }
     }
-    bonsai::Config const cfg = config_from_params(pairs);
+    bonsai::Config cfg = config_from_params(pairs);
     if (auto const resident = dataset.device_id();
         resident && *resident != cfg.parallel.device_id)
     {
@@ -1667,6 +1680,9 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
                 "cuts describes one set of columns, so a warm start needs the "
                 "dataset binned with the model's own cuts");
         }
+        cfg = bonsai::cli::reconcile_warm_start(std::move(cfg), init->cfg,
+                                                names_section(items, "dispatch."),
+                                                names_section(items, "objective."));
     }
     nb::gil_scoped_release                  release;
     std::optional<bonsai::cli::LabeledData> owned;

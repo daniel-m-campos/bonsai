@@ -683,3 +683,36 @@ def test_zero_round_multiclass_round_trips(tmp_path):
     m = bonsai.BonsaiClassifier(n_iters=0).fit(x, y)
     again = pickle.loads(pickle.dumps(m))
     np.testing.assert_array_equal(m.predict(x), again.predict(x))
+
+
+def test_warm_start_inherits_the_loaded_objective(tmp_path):
+    """Continuing a classifier without restating params keeps its objective."""
+    rng = np.random.default_rng(11)
+    x = rng.standard_normal((120, 5)).astype(np.float32)
+    y = (x[:, 0] > 0).astype(np.int64)
+    path = str(tmp_path / "logi.bonsai")
+    first = bonsai.train(
+        {"dispatch.objective_name": "logloss", "booster.n_iters": 4}, x, y
+    )
+    first.save(path)
+
+    again = bonsai.train({"booster.n_iters": 2}, x, y, init_model=path)
+    preds = again.predict(x)
+    assert preds.min() >= 0.0 and preds.max() <= 1.0
+    again.save(str(tmp_path / "logi2.bonsai"))
+
+
+def test_warm_start_refuses_a_disagreeing_objective(tmp_path):
+    rng = np.random.default_rng(12)
+    x = rng.standard_normal((60, 3)).astype(np.float32)
+    y = (x[:, 0] > 0).astype(np.int64)
+    path = str(tmp_path / "logi.bonsai")
+    bonsai.train({"dispatch.objective_name": "logloss", "booster.n_iters": 2}, x, y).save(path)
+
+    with pytest.raises(ValueError, match="warm start continues"):
+        bonsai.train(
+            {"dispatch.objective_name": "mse", "booster.n_iters": 2},
+            x,
+            y,
+            init_model=path,
+        )

@@ -2,10 +2,12 @@
 #include "bonsai/cli/handlers.hpp"
 #include "bonsai/cli/pipeline.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <print>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -53,7 +55,15 @@ int run_fit(FitOpts const &opts)
     if (!opts.init_model_path.empty())
     {
         std::println("fit: continuing from {}", opts.init_model_path);
-        init = io::load_booster(opts.init_model_path);
+        init                     = io::load_booster(opts.init_model_path);
+        auto const names_section = [&](std::string_view prefix)
+        {
+            return std::ranges::any_of(opts.common.overrides,
+                                       [&](config::Override const &o)
+                                       { return o.key.starts_with(prefix); });
+        };
+        cfg = reconcile_warm_start(std::move(cfg), init.cfg, names_section("dispatch."),
+                                   names_section("objective."));
     }
     std::println("fit: fitting bin mappers from {}", cfg.data.train);
     auto loaded =
