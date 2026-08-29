@@ -63,9 +63,46 @@ LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path)
     return LoadedTrain{.mappers = std::move(mappers), .train = std::move(train)};
 }
 
+namespace
+{
+
+void check_label_domain(Config const &cfg, floats_view labels, std::string_view which)
+{
+    auto const &name = cfg.dispatch.objective_name;
+    if (name == "logloss")
+    {
+        for (float const v : labels)
+        {
+            if (v != 0.0F && v != 1.0F)
+            {
+                throw std::invalid_argument(std::format(
+                    "logloss labels must be 0 or 1; {} labels include {}", which, v));
+            }
+        }
+        return;
+    }
+    if (name == "softmax")
+    {
+        auto const k = static_cast<float>(cfg.objective.n_classes);
+        for (float const v : labels)
+        {
+            if (!(v >= 0.0F) || v >= k || v != std::floor(v))
+            {
+                throw std::invalid_argument(
+                    std::format("softmax labels must be integers in [0, {}); {} labels "
+                                "include {}",
+                                cfg.objective.n_classes, which, v));
+            }
+        }
+    }
+}
+
+} // namespace
+
 std::unique_ptr<ITrainableBooster>
 train_in_memory(Config const &cfg, Dataset const &train, ProgressFn const &on_progress)
 {
+    check_label_domain(cfg, train.labels(), "train");
     select_device_for(cfg);
     auto       booster = make_booster(cfg);
     auto const n_iters = cfg.booster_config.n_iters;
@@ -294,38 +331,6 @@ float round_validation_loss(ITrainableBooster const &booster,
 }
 
 using ValidationRef = std::optional<std::reference_wrapper<LabeledData const>>;
-
-void check_label_domain(Config const &cfg, std::vector<float> const &labels,
-                        std::string_view which)
-{
-    auto const &name = cfg.dispatch.objective_name;
-    if (name == "logloss")
-    {
-        for (float const v : labels)
-        {
-            if (v != 0.0F && v != 1.0F)
-            {
-                throw std::invalid_argument(std::format(
-                    "logloss labels must be 0 or 1; {} labels include {}", which, v));
-            }
-        }
-        return;
-    }
-    if (name == "softmax")
-    {
-        auto const k = static_cast<float>(cfg.objective.n_classes);
-        for (float const v : labels)
-        {
-            if (!(v >= 0.0F) || v >= k || v != std::floor(v))
-            {
-                throw std::invalid_argument(
-                    std::format("softmax labels must be integers in [0, {}); {} labels "
-                                "include {}",
-                                cfg.objective.n_classes, which, v));
-            }
-        }
-    }
-}
 
 std::unique_ptr<ITrainableBooster>
 train_impl(Config const &cfg, LabeledData const &train, ValidationRef validation,
