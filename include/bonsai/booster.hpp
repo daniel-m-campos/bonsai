@@ -485,10 +485,14 @@ template <typename ValueT> class EpochCache
 };
 
 // A value paired with its mutation counter. Readers take read(); every writer
-// goes through mutate(), which bumps the epoch before handing the value over,
-// so a derived view (the dense SHAP cache, the device plans) can never see a
-// changed value under an unchanged epoch. The counter is monotonic, so several
-// mutations in one round are fine.
+// goes through mutate(), which bumps the epoch before handing the value over.
+// Mutation is never concurrent with reads (the GIL-released concurrency is
+// predict-only), and that contract is load-bearing: bump-first means a
+// reader racing a mutation could cache a stale value under the final epoch,
+// where it would never heal. Epoch-keyed readers therefore sample epoch()
+// BEFORE read(), so a torn interleaving rebuilds on the next call instead
+// of poisoning the cache. The counter is monotonic, so several mutations in
+// one round are fine.
 template <typename T> class Versioned
 {
   public:
@@ -934,13 +938,14 @@ class Booster final : public ITrainableBooster
     void predict_at(features_view X, floats_out scores, size_t n_trees) const override
     {
         assert(X.extent(0) == scores.size());
-        auto const  &trees = trees_.read();
+        uint64_t const epoch = trees_.epoch();
+        auto const    &trees = trees_.read();
         size_t const k = n_trees == 0 ? trees.size() : std::min(n_trees, trees.size());
         std::fill(scores.begin(), scores.end(), 0.0F);
         if (k > 0)
         {
             auto const walk =
-                walk_.get(trees_.epoch(), [&] { return walk_type{std::span{trees}}; });
+                walk_.get(epoch, [&] { return walk_type{std::span{trees}}; });
             walk->accumulate(X, k, scores);
         }
         for (float &score : scores)
