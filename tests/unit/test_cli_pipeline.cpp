@@ -185,6 +185,14 @@ TEST_CASE("train_with_progress: labels outside the objective's domain are "
             train_with_progress(cfg, train),
             Catch::Matchers::ContainsSubstring("softmax labels must be integers"));
     }
+    SECTION("bench's in-memory trainer is checked too")
+    {
+        cfg.dispatch.objective_name = "logloss";
+        auto const in_memory        = load_train_from_csv(cfg, cfg.data.train);
+        REQUIRE_THROWS_WITH(
+            train_in_memory(cfg, in_memory.train),
+            Catch::Matchers::ContainsSubstring("logloss labels must be 0 or 1"));
+    }
     SECTION("softmax refuses a fractional label")
     {
         cfg.dispatch.objective_name = "softmax";
