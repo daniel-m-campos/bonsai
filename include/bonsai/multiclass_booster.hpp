@@ -397,7 +397,8 @@ class MulticlassBooster final : public ITrainableBooster
     {
         if constexpr (std::same_as<tree_type, ObliviousTree>)
         {
-            auto const dense = dense_.get(trees_.read(), trees_.epoch());
+            auto const dense = dense_.get(trees_.epoch(), [&]
+                                          { return internal::densify(trees_.read()); });
             contribs_over(*dense, X, out, n_features);
         }
         else
@@ -455,7 +456,8 @@ class MulticlassBooster final : public ITrainableBooster
     {
         if constexpr (std::same_as<tree_type, ObliviousTree>)
         {
-            auto const dense = dense_.get(trees_.read(), trees_.epoch());
+            auto const dense = dense_.get(trees_.epoch(), [&]
+                                          { return internal::densify(trees_.read()); });
             contribs_over_binned(*dense, bins, out, n_features);
         }
         else
@@ -689,8 +691,8 @@ class MulticlassBooster final : public ITrainableBooster
     std::vector<float>    hess_;
     std::vector<row_id_t> row_indices_;
     // The rows a drawing sampler may pick from; empty when none draws.
-    std::vector<row_id_t>  candidates_;
-    internal::DensifyCache dense_;
+    std::vector<row_id_t>                        candidates_;
+    internal::EpochCache<std::vector<DenseTree>> dense_;
 };
 
 } // namespace bonsai

@@ -13,6 +13,21 @@
 namespace bonsai
 {
 
+class DenseWalk;
+class ObliviousWalk;
+
+// The one NaN-routing rule, shared by every tree walk and both predict
+// packs: v > t and !(v <= t) are the same predicate on non-NaN values and
+// disagree exactly on NaN (the first sends it left, the second right), so
+// default_left selects the comparison form and no isnan test is needed.
+// Equivalence requires IEEE comparison semantics: -ffinite-math-only would
+// let a compiler collapse the two forms and silently break NaN routing
+// (no such flag is set; -ffp-contract=off is, see the top-level CMake).
+inline bool routes_right(float v, float threshold, bool default_left)
+{
+    return default_left ? v > threshold : !(v <= threshold);
+}
+
 template <typename T>
 concept Tree = requires(T const t, features_view X, floats_out out, row_id_t i) {
     { t.params() } -> std::same_as<typename T::Params const &>;
@@ -46,7 +61,8 @@ class DenseTree
         bool         default_left       = false;
     };
 
-    using Nodes = std::vector<Node>;
+    using Nodes     = std::vector<Node>;
+    using walk_type = DenseWalk;
 
     struct Params
     {
@@ -149,6 +165,7 @@ class ObliviousTree
 
     using LevelSplits = std::vector<LevelSplit>;
     using LeafTable   = std::vector<float>;
+    using walk_type   = ObliviousWalk;
 
     struct Params
     {
@@ -229,52 +246,30 @@ class ObliviousTree
 // walk applies unchanged. Throws std::invalid_argument without leaf covers.
 DenseTree dense_equivalent(ObliviousTree const &tree);
 
-// The oblivious ensemble's predict pack: every tree's level splits laid out
-// SoA and every leaf table concatenated, so accumulate() inverts the
-// ensemble loop (rows outer in one parallel section, trees inner over
-// cache-resident arrays) instead of opening a parallel region per tree over
-// each tree's own split vector.
-//
-// What it guarantees: accumulate adds each row's tree-order leaf sum into
-// out, with the same per-row float fold as calling tree.predict per tree,
-// so results are bit-identical to the per-tree walk (the eval baseline pin
-// never moves), NaN routing through default_left included. Trees of unequal
-// depth pack per-tree ranges, so early-stopped levelwise models walk
-// unchanged.
-//
-// What breaks it: the pack snapshots the trees it was built from; a booster
-// mutation invalidates it, which the booster's epoch-keyed cache enforces
-// (the DensifyCache pattern). Nothing else may hold one across a mutation.
-//
-// perf: measured on M2 (1 thread, 64 cols, depth 8, 100 trees) the
-// inversion takes single-row predict 1053 -> 610ns and batch 716 -> 505
-// ns/row with full NaN routing. A baked-constant codegen ceiling probe
-// measured 293ns, so layout carries most of what codegen could and this is
-// not a code generator; the residual is the per-level default_left select
-// (~0.2ns per level step) plus the per-call cache acquisition.
-//
-// Pinned by tests/unit/test_predict_walk.cpp.
-// The dense-tree twin of ObliviousWalk below, for the depthwise and
-// leafwise ensembles. Rows-outer inversion alone buys a dense tree nothing,
-// because its cost is the chain of data-dependent node loads, not the loop
-// shape; the lever here is walking eight trees per row in lockstep so the
-// core always has independent load chains in flight. Leaves point to
-// themselves, so a walk padded to its group's deepest tree is a harmless
-// self-loop for the trees that finished early; groups are bounded by their
-// own deepest member, so leafwise's ragged best-first trees do not tax the
-// shallow ones.
+// The dense-tree predict pack, for the depthwise and leafwise ensembles.
+// Rows-outer inversion alone buys a dense tree nothing, because its cost is
+// the chain of data-dependent node loads, not the loop shape (measured 2231
+// vs 2206 ns/row); the lever is walking eight trees per row in lockstep so
+// the core always has independent load chains in flight. Leaves point to
+// themselves and a leaf's threshold slot holds its value, so a walk padded
+// to its group's deepest tree self-loops harmlessly and the sum reads the
+// node the walk ends on; the padding tax is bounded by the group's deepest
+// member (a shallow tree still steps that many times), and groups bound
+// their own depth so leafwise's ragged best-first trees tax only their own
+// group.
 //
 // What it guarantees: accumulate adds each row's tree-order value sum into
-// out, bit-identical to calling tree.predict per tree, NaN routing through
-// default_left included (the same comparison-direction fold as
-// ObliviousWalk).
+// out, bit-identical to calling tree.predict per tree (the depthwise eval
+// baseline pin never moves), NaN routing per routes_right included.
 //
-// What breaks it: same staleness contract as ObliviousWalk; the booster's
-// epoch-keyed cache is the only legitimate holder across mutations.
+// What breaks it: the pack snapshots the trees it was built from; a booster
+// mutation invalidates it, which the booster's epoch-keyed cache enforces.
+// Nothing else may hold one across a mutation. Tree depth is trusted from
+// Params::depth, which every construction site stamps from the grown
+// structure.
 //
 // perf: measured on M2 (1 thread, 64 cols, depth 8, 100 trees) 2206 ->
-// ~1000 ns/row at batch; rows-outer without interleave measured 2231, the
-// null result that makes the 8-wide lockstep the whole design.
+// 1004 ns/row at batch against xgboost inplace_predict at 1015.
 //
 // Pinned by tests/unit/test_predict_walk.cpp.
 class DenseWalk
@@ -282,12 +277,10 @@ class DenseWalk
   public:
     explicit DenseWalk(std::span<DenseTree const> trees);
 
+    // Adds the first n_trees trees' values to out, row-parallel above a
+    // small-batch floor and serial below it so single-row callers never
+    // pay a parallel-region entry.
     void accumulate(features_view X, size_t n_trees, floats_out out) const;
-
-    size_t n_trees() const
-    {
-        return roots_.size();
-    }
 
   private:
     struct PackedNode
@@ -299,12 +292,36 @@ class DenseWalk
     };
 
     std::vector<PackedNode> nodes_;
-    std::vector<float>      values_;
-    std::vector<uint8_t>    deft_;
+    std::vector<uint8_t>    default_left_;
     std::vector<uint32_t>   roots_;
     std::vector<uint32_t>   group_depth_;
 };
 
+// The oblivious ensemble's predict pack: every tree's level splits packed
+// contiguous and every leaf table concatenated, so accumulate() inverts the
+// ensemble loop (rows outer in one parallel section, trees inner over
+// cache-resident arrays) instead of opening a parallel region per tree over
+// each tree's own split vector.
+//
+// What it guarantees: accumulate adds each row's tree-order leaf sum into
+// out, with the same per-row float fold as calling tree.predict per tree,
+// so results are bit-identical to the per-tree walk, NaN routing per
+// routes_right included. Trees of unequal depth pack per-tree ranges, so
+// early-stopped levelwise models walk unchanged.
+//
+// What breaks it: same staleness contract as DenseWalk above; the
+// booster's epoch-keyed cache is the only legitimate holder across a
+// mutation.
+//
+// perf: measured on M2 (1 thread, 64 cols, depth 8, 100 trees) the
+// inversion takes single-row predict 1053 -> 610ns and batch 716 -> 505
+// ns/row with full NaN routing. A baked-constant codegen ceiling probe
+// measured 293ns, so layout carries most of what codegen could and this is
+// not a code generator; the residual is the per-level default_left select
+// (~0.2ns per level step) plus the per-call cache acquisition.
+//
+// Pinned by tests/unit/test_predict_walk.cpp (exact-equality parity vs the
+// per-tree walk, NaN injection included).
 class ObliviousWalk
 {
   public:
@@ -315,15 +332,10 @@ class ObliviousWalk
     // pay a parallel-region entry.
     void accumulate(features_view X, size_t n_trees, floats_out out) const;
 
-    size_t n_trees() const
-    {
-        return split_off_.size() - 1;
-    }
-
   private:
     std::vector<feature_id_t> feat_;
     std::vector<float>        thr_;
-    std::vector<uint8_t>      deft_;
+    std::vector<uint8_t>      default_left_;
     std::vector<uint32_t>     split_off_;
     std::vector<uint32_t>     leaf_off_;
     std::vector<float>        leaf_;

@@ -455,55 +455,33 @@ inline std::vector<DenseTree> densify(std::vector<ObliviousTree> const &trees)
     return dense;
 }
 
-// The dense equivalents cached per mutation epoch, so repeated explain calls
-// between fits pay the conversion once. Readers are const and may be
-// concurrent (the bindings release the GIL), hence the lock; a mutation
-// never touches the cache, it just bumps the booster's epoch. Booster epochs
-// start at 1, so epoch_ = 0 is the never-filled state and needs no flag.
-class DensifyCache
+// Epoch-keyed derived-value cache: one home for every pack a booster mints
+// from its trees (the dense SHAP equivalents, the predict walk packs).
+// Concurrent readers are why the lock exists (the bindings release the
+// GIL); a mutation never touches the cache, it just bumps the booster's
+// epoch. Booster epochs start at 1, so epoch_ = 0 is the never-filled
+// state and needs no flag. The build callable runs under the lock, so at
+// most one thread rebuilds per stale epoch; the returned shared_ptr keeps
+// a superseded value alive for any reader still walking it.
+template <typename ValueT> class EpochCache
 {
   public:
-    std::shared_ptr<std::vector<DenseTree> const>
-    get(std::vector<ObliviousTree> const &trees, uint64_t epoch) const
+    template <typename BuildF>
+    std::shared_ptr<ValueT const> get(uint64_t epoch, BuildF &&build) const
     {
         std::scoped_lock const lock(mutex_);
         if (epoch_ != epoch)
         {
-            cache_ = std::make_shared<std::vector<DenseTree> const>(densify(trees));
+            cache_ = std::make_shared<ValueT const>(build());
             epoch_ = epoch;
         }
         return cache_;
     }
 
   private:
-    mutable std::mutex                                    mutex_;
-    mutable std::shared_ptr<std::vector<DenseTree> const> cache_;
-    mutable uint64_t                                      epoch_ = 0;
-};
-
-// The predict-path sibling of DensifyCache: the walk pack the predict fast
-// path reads (ObliviousWalk or DenseWalk, whichever the booster's tree
-// shape packs to), epoch-keyed the same way for the same reason
-// (concurrent predicts under a released GIL, mutations bump the epoch).
-template <typename WalkT, typename TreeT> class WalkCache
-{
-  public:
-    std::shared_ptr<WalkT const> get(std::vector<TreeT> const &trees,
-                                     uint64_t                  epoch) const
-    {
-        std::scoped_lock const lock(mutex_);
-        if (epoch_ != epoch)
-        {
-            cache_ = std::make_shared<WalkT const>(std::span<TreeT const>{trees});
-            epoch_ = epoch;
-        }
-        return cache_;
-    }
-
-  private:
-    mutable std::mutex                   mutex_;
-    mutable std::shared_ptr<WalkT const> cache_;
-    mutable uint64_t                     epoch_ = 0;
+    mutable std::mutex                    mutex_;
+    mutable std::shared_ptr<ValueT const> cache_;
+    mutable uint64_t                      epoch_ = 0;
 };
 
 // A value paired with its mutation counter. Readers take read(); every writer
@@ -552,6 +530,9 @@ class Booster final : public ITrainableBooster
     using grower_type    = Gr;
     using sampler_type   = Sa;
     using tree_type      = typename Gr::Tree;
+    // The tree names its own pack (tree.hpp), so a new tree shape without
+    // one is a compile error instead of a silently wrong walk.
+    using walk_type = typename tree_type::walk_type;
 
     explicit Booster(Config const &config)
         : config_(config.booster_config),
@@ -958,7 +939,9 @@ class Booster final : public ITrainableBooster
         std::fill(scores.begin(), scores.end(), 0.0F);
         if (k > 0)
         {
-            walk_.get(trees, trees_.epoch())->accumulate(X, k, scores);
+            auto const walk =
+                walk_.get(trees_.epoch(), [&] { return walk_type{std::span{trees}}; });
+            walk->accumulate(X, k, scores);
         }
         for (float &score : scores)
         {
@@ -1012,8 +995,9 @@ class Booster final : public ITrainableBooster
         out.epoch         = trees_.epoch();
         if constexpr (std::same_as<tree_type, ObliviousTree>)
         {
-            out.keep_alive = dense_.get(trees_.read(), out.epoch);
-            out.trees      = *out.keep_alive;
+            out.keep_alive =
+                dense_.get(out.epoch, [&] { return internal::densify(trees_.read()); });
+            out.trees = *out.keep_alive;
         }
         else
         {
@@ -1049,7 +1033,8 @@ class Booster final : public ITrainableBooster
     {
         if constexpr (std::same_as<tree_type, ObliviousTree>)
         {
-            auto const dense = dense_.get(trees_.read(), trees_.epoch());
+            auto const dense = dense_.get(trees_.epoch(), [&]
+                                          { return internal::densify(trees_.read()); });
             contribs_over_binned(*dense, bins, out, n_features);
         }
         else
@@ -1119,7 +1104,8 @@ class Booster final : public ITrainableBooster
     {
         if constexpr (std::same_as<tree_type, ObliviousTree>)
         {
-            auto const dense = dense_.get(trees_.read(), trees_.epoch());
+            auto const dense = dense_.get(trees_.epoch(), [&]
+                                          { return internal::densify(trees_.read()); });
             contribs_over(*dense, X, out, n_features);
         }
         else
@@ -1259,12 +1245,9 @@ class Booster final : public ITrainableBooster
     // deterministically, so an address here would skip re-arming for a
     // DIFFERENT fold at the same depth, leaving the previous fold's labels,
     // scores and rows live.
-    FitId resident_fit_{};
-    using walk_type = std::conditional_t<std::same_as<tree_type, ObliviousTree>,
-                                         ObliviousWalk, DenseWalk>;
-
-    internal::DensifyCache                    dense_;
-    internal::WalkCache<walk_type, tree_type> walk_;
+    FitId                                        resident_fit_{};
+    internal::EpochCache<std::vector<DenseTree>> dense_;
+    internal::EpochCache<walk_type>              walk_;
 };
 
 } // namespace bonsai

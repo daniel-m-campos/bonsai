@@ -1,6 +1,8 @@
-// The ObliviousWalk pack must be indistinguishable from the per-tree walk
-// bit for bit: predict is the serving surface and the eval baseline pins
-// its output exactly, so "close" is not a passing grade here.
+// Both walk packs must be indistinguishable from the per-tree walk bit for
+// bit: predict is the serving surface and the eval baseline pins its output
+// exactly, so "close" is not a passing grade here. Row counts in the two
+// headline parity cases sit above the walks' serial floor so the parallel
+// path is the one being pinned.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -78,7 +80,7 @@ TEST_CASE("ObliviousWalk: accumulate matches the per-tree walk bit for bit",
           "[ObliviousWalk][transform][nan]")
 {
     auto const          trees = make_trees();
-    size_t const        n     = 257;
+    size_t const        n     = 1024;
     auto const          x     = make_rows(n);
     features_view const xv{x.data(), n, k_cols};
 
@@ -167,7 +169,7 @@ TEST_CASE("DenseWalk: accumulate matches the per-tree walk bit for bit",
           "[DenseWalk][transform][nan]")
 {
     auto const          trees = make_dense_trees();
-    size_t const        n     = 257;
+    size_t const        n     = 1024;
     auto const          x     = make_rows(n);
     features_view const xv{x.data(), n, k_cols};
 
@@ -325,5 +327,33 @@ TEST_CASE("Booster: oblivious predict is unchanged by the walk pack",
     for (size_t i = 0; i < n; ++i)
     {
         REQUIRE(got[i] == want[i]);
+    }
+}
+
+TEST_CASE("DenseWalk: an empty ensemble and a root-leaf stump walk exactly",
+          "[DenseWalk][transform][edge]")
+{
+    size_t const        n = 16;
+    auto const          x = make_rows(n);
+    features_view const xv{x.data(), n, k_cols};
+
+    std::vector<DenseTree> none;
+    DenseWalk const        empty{std::span<DenseTree const>{none}};
+    std::vector<float>     got(n, 0.5F);
+    empty.accumulate(xv, 0, floats_out{got});
+    for (size_t i = 0; i < n; ++i)
+    {
+        REQUIRE(got[i] == 0.5F);
+    }
+
+    std::vector<DenseTree> stumps;
+    stumps.emplace_back(DenseTree::Nodes{DenseTree::leaf(0.25F)},
+                        DenseTree::Params{.depth = 0, .n_leaves = 1});
+    DenseWalk const    walk{std::span<DenseTree const>{stumps}};
+    std::vector<float> out(n, 0.0F);
+    walk.accumulate(xv, 1, floats_out{out});
+    for (size_t i = 0; i < n; ++i)
+    {
+        REQUIRE(out[i] == 0.25F);
     }
 }
