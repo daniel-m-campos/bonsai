@@ -1,5 +1,8 @@
 #include "bonsai/cli/pipeline.hpp"
 
+#include <format>
+#include <ranges>
+
 #include "bonsai/cuda/histogram_engine.hpp"
 
 #include <algorithm>
@@ -137,32 +140,40 @@ void check_csv_width(size_t given, size_t expected, std::string const &path)
 } // namespace
 
 Config reconcile_warm_start(Config cfg, Config const &loaded_cfg,
-                            bool const dispatch_explicit, bool const objective_explicit)
+                            std::vector<std::string> const &explicit_keys)
 {
-    if (cfg.dispatch != loaded_cfg.dispatch)
+    auto const named = [&](std::string_view key)
+    { return std::ranges::find(explicit_keys, key) != explicit_keys.end(); };
+    auto const field = [&](std::string_view key, auto &value, auto const &loaded_value,
+                           auto const &default_value)
     {
-        if (dispatch_explicit || cfg.dispatch != DispatchConfig{})
+        if (value == loaded_value)
         {
-            throw std::invalid_argument(
-                "a warm start continues the loaded (" +
-                loaded_cfg.dispatch.objective_name + ", " +
-                loaded_cfg.dispatch.grower_name + ", " +
-                loaded_cfg.dispatch.sampler_name +
-                ") model; drop the disagreeing dispatch.* keys or restate "
-                "the model's own");
+            return;
         }
-        cfg.dispatch = loaded_cfg.dispatch;
-    }
-    if (cfg.objective != loaded_cfg.objective)
-    {
-        if (objective_explicit || cfg.objective != ObjectiveConfig{})
+        if (named(key) || value != default_value)
         {
-            throw std::invalid_argument(
-                "objective.* disagrees with the loaded model; a warm start "
-                "keeps the objective the model was fit with");
+            throw std::invalid_argument(std::format(
+                "a warm start continues the loaded model, and {}={} disagrees "
+                "with the model's {}; drop the key or restate the model's own",
+                key, value, loaded_value));
         }
-        cfg.objective = loaded_cfg.objective;
-    }
+        value = loaded_value;
+    };
+    DispatchConfig const  dd;
+    ObjectiveConfig const od;
+    field("dispatch.objective_name", cfg.dispatch.objective_name,
+          loaded_cfg.dispatch.objective_name, dd.objective_name);
+    field("dispatch.grower_name", cfg.dispatch.grower_name,
+          loaded_cfg.dispatch.grower_name, dd.grower_name);
+    field("dispatch.sampler_name", cfg.dispatch.sampler_name,
+          loaded_cfg.dispatch.sampler_name, dd.sampler_name);
+    field("objective.huber_delta", cfg.objective.huber_delta,
+          loaded_cfg.objective.huber_delta, od.huber_delta);
+    field("objective.quantile_alpha", cfg.objective.quantile_alpha,
+          loaded_cfg.objective.quantile_alpha, od.quantile_alpha);
+    field("objective.n_classes", cfg.objective.n_classes,
+          loaded_cfg.objective.n_classes, od.n_classes);
     return cfg;
 }
 

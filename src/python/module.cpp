@@ -1409,10 +1409,17 @@ ParamItems items_from_params(nb::object params)
     return out;
 }
 
-bool names_section(ParamItems const &items, std::string_view prefix)
+std::vector<std::string> reconcile_keys(ParamItems const &items)
 {
-    return std::ranges::any_of(items, [&](auto const &kv)
-                               { return kv.first.starts_with(prefix); });
+    std::vector<std::string> keys;
+    for (auto const &[key, value] : items)
+    {
+        if (key.starts_with("dispatch.") || key.starts_with("objective."))
+        {
+            keys.push_back(key);
+        }
+    }
+    return keys;
 }
 
 ConfigPairs render_params(ParamItems const &items)
@@ -1603,8 +1610,7 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
     if (init)
     {
         cfg = bonsai::cli::reconcile_warm_start(std::move(cfg), init->cfg,
-                                                names_section(items, "dispatch."),
-                                                names_section(items, "objective."));
+                                                reconcile_keys(items));
     }
 
     nb::gil_scoped_release release;
@@ -1681,8 +1687,7 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
                 "dataset binned with the model's own cuts");
         }
         cfg = bonsai::cli::reconcile_warm_start(std::move(cfg), init->cfg,
-                                                names_section(items, "dispatch."),
-                                                names_section(items, "objective."));
+                                                reconcile_keys(items));
     }
     nb::gil_scoped_release                  release;
     std::optional<bonsai::cli::LabeledData> owned;

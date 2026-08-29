@@ -2,12 +2,10 @@
 #include "bonsai/cli/handlers.hpp"
 #include "bonsai/cli/pipeline.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <print>
-#include <ranges>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -40,6 +38,21 @@ void print_metric_row(std::string_view label, floats_view raw, floats_view preds
 int run_fit(FitOpts const &opts)
 {
     auto cfg = resolve_config(opts.common);
+
+    io::LoadedBooster init;
+    if (!opts.init_model_path.empty())
+    {
+        init = io::load_booster(opts.init_model_path);
+        std::vector<std::string> keys;
+        for (auto const &o : opts.common.overrides)
+        {
+            if (o.key.starts_with("dispatch.") || o.key.starts_with("objective."))
+            {
+                keys.push_back(o.key);
+            }
+        }
+        cfg = reconcile_warm_start(std::move(cfg), init.cfg, keys);
+    }
     if (opts.common.dump_config)
     {
         std::println("{}", config::dump_toml(cfg));
@@ -50,20 +63,9 @@ int run_fit(FitOpts const &opts)
         std::println(stderr, "fit: data.train is required");
         return 2;
     }
-
-    io::LoadedBooster init;
-    if (!opts.init_model_path.empty())
+    if (init.booster)
     {
         std::println("fit: continuing from {}", opts.init_model_path);
-        init                     = io::load_booster(opts.init_model_path);
-        auto const names_section = [&](std::string_view prefix)
-        {
-            return std::ranges::any_of(opts.common.overrides,
-                                       [&](config::Override const &o)
-                                       { return o.key.starts_with(prefix); });
-        };
-        cfg = reconcile_warm_start(std::move(cfg), init.cfg, names_section("dispatch."),
-                                   names_section("objective."));
     }
     std::println("fit: fitting bin mappers from {}", cfg.data.train);
     auto loaded =
