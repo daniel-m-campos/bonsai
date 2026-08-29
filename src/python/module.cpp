@@ -1281,6 +1281,14 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
     if (auto const *const arrays =
             std::get_if<std::pair<array_2d, array_1d>>(&*eval_set))
     {
+        if (size_t const given = arrays->first.shape(1); given != mappers.size())
+        {
+            throw std::invalid_argument(
+                "this model was fit on " + std::to_string(mappers.size()) +
+                " features and eval_set X is " + std::to_string(given) +
+                " columns wide; a tree routes on feature ids, so the columns "
+                "must match");
+        }
         owned = make_validation_labeled(arrays->first, arrays->second);
         check_eval_labels(owned->labels, cfg);
         return &*owned;
@@ -1591,6 +1599,14 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
     bonsai::cli::LoadedTrainValidation loaded;
     loaded.mappers =
         init ? std::move(init->mappers) : fit_mappers(xarg, std::move(names), cfg);
+    if (init && xarg.n_features != loaded.mappers.size())
+    {
+        throw std::invalid_argument(
+            "init_model was fit on " + std::to_string(loaded.mappers.size()) +
+            " features and X is " + std::to_string(xarg.n_features) +
+            " columns wide; a warm start reuses the model's cuts, so the "
+            "columns must match");
+    }
     bonsai::floats_view const wview = warg ? warg->view() : bonsai::floats_view{};
     loaded.train = make_labeled(xarg, yarg.view(), loaded.mappers, cfg,
                                 cfg.dispatch.grower_name.starts_with("cuda"), wview);
@@ -1644,6 +1660,13 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
     if (init_model)
     {
         init.emplace(bonsai::io::load_booster(*init_model));
+        if (!init->mappers.same_cuts(dataset.loaded().mappers))
+        {
+            throw std::invalid_argument(
+                "init_model's cuts disagree with the dataset's; one set of "
+                "cuts describes one set of columns, so a warm start needs the "
+                "dataset binned with the model's own cuts");
+        }
     }
     nb::gil_scoped_release                  release;
     std::optional<bonsai::cli::LabeledData> owned;

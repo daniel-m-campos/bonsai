@@ -396,6 +396,51 @@ TEST_CASE("ModelIo: corrupt tree shapes refuse to load", "[model_io][edge]")
                             Catch::Matchers::ContainsSubstring("not a number"));
     }
 
+    SECTION("an empty covers array loads but pred_contribs refuses")
+    {
+        TempPath const tmp;
+        io::save_booster(booster, tmp.str(), mappers, cfg);
+        rewrite_corrupted(tmp.str(), [](nlohmann::json &root)
+                          { root["trees"][0]["covers"] = nlohmann::json::array(); });
+        auto const          loaded = io::load_booster(tmp.str());
+        std::vector<float>  x(loaded.mappers.size(), 0.5F);
+        std::vector<double> contribs(loaded.mappers.size() + 1);
+        REQUIRE_THROWS_WITH(
+            loaded.booster->pred_contribs(features_view{x.data(), 1, x.size()},
+                                          contribs, loaded.mappers.size()),
+            Catch::Matchers::ContainsSubstring("covers"));
+    }
+
+    SECTION("a DAG smuggled through forward links is refused")
+    {
+        TempPath const tmp;
+        io::save_booster(booster, tmp.str(), mappers, cfg);
+        rewrite_corrupted(tmp.str(),
+                          [](nlohmann::json &root)
+                          {
+                              auto &nodes = root["trees"][0]["nodes"];
+                              if (nodes.size() >= 3)
+                              {
+                                  nodes[0]["feature_id"] = 0;
+                                  nodes[0]["left"]       = 1;
+                                  nodes[0]["right"]      = 1;
+                              }
+                          });
+        REQUIRE_THROWS_WITH(io::load_booster(tmp.str()),
+                            Catch::Matchers::ContainsSubstring("form a tree"));
+    }
+
+    SECTION("empty mapper cuts are refused")
+    {
+        TempPath const tmp;
+        io::save_booster(booster, tmp.str(), mappers, cfg);
+        rewrite_corrupted(
+            tmp.str(), [](nlohmann::json &root)
+            { root["bin_mappers"][0]["cuts"] = nlohmann::json::array(); });
+        REQUIRE_THROWS_WITH(io::load_booster(tmp.str()),
+                            Catch::Matchers::ContainsSubstring("cuts"));
+    }
+
     SECTION("a covers array shorter than the nodes is refused")
     {
         TempPath const tmp;
