@@ -303,6 +303,14 @@ class DenseWalk
 // cache-resident arrays) instead of opening a parallel region per tree over
 // each tree's own split vector.
 //
+// Full 64-row blocks additionally walk transposed: the block is flipped
+// into feature-major scratch once, so every level step is one broadcast
+// compare over 64 contiguous floats, which vectorizes at baseline SIMD
+// widths with no gathers. Row-wise blocking is the one vectorization the
+// bit-identity contract permits: each row's accumulator remains its own
+// tree-order fold, the lanes just answer each level's question together.
+// The sub-block tail walks the scalar path.
+//
 // What it guarantees: accumulate adds each row's tree-order leaf sum into
 // out, with the same per-row float fold as calling tree.predict per tree,
 // so results are bit-identical to the per-tree walk, NaN routing per
@@ -333,6 +341,11 @@ class ObliviousWalk
     void accumulate(features_view X, size_t n_trees, floats_out out) const;
 
   private:
+    void walk_rows(features_view X, size_t n_trees, size_t row0, size_t count,
+                   floats_out out) const;
+    void walk_block(features_view X, size_t n_trees, size_t row0, float *scratch,
+                    floats_out out) const;
+
     std::vector<feature_id_t> feat_;
     std::vector<float>        thr_;
     std::vector<uint8_t>      default_left_;

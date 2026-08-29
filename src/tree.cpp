@@ -135,6 +135,7 @@ namespace
 // serial still wins both (679 vs 510; 808 vs ~1015 within noise).
 constexpr size_t k_walk_parallel_floor = 128;
 constexpr size_t k_dense_walk_width    = 8;
+constexpr size_t k_row_block           = 64;
 
 } // namespace
 
@@ -247,31 +248,89 @@ ObliviousWalk::ObliviousWalk(std::span<ObliviousTree const> trees)
     }
 }
 
+void ObliviousWalk::walk_rows(features_view X, size_t n_trees, size_t row0,
+                              size_t count, floats_out out) const
+{
+    size_t const n_cols = X.extent(1);
+    for (size_t i = row0; i < row0 + count; ++i)
+    {
+        float const *row = X.data_handle() + (i * n_cols);
+        float        sum = 0.0F;
+        for (size_t t = 0; t < n_trees; ++t)
+        {
+            uint32_t idx = 0;
+            for (uint32_t l = split_off_[t]; l < split_off_[t + 1]; ++l)
+            {
+                bool const right =
+                    routes_right(row[feat_[l]], thr_[l], default_left_[l] != 0);
+                idx = (idx << 1) | static_cast<uint32_t>(right);
+            }
+            sum += leaf_[leaf_off_[t] + idx];
+        }
+        out[i] += sum;
+    }
+}
+
+void ObliviousWalk::walk_block(features_view X, size_t n_trees, size_t row0,
+                               float *scratch, floats_out out) const
+{
+    size_t const n_cols = X.extent(1);
+    for (size_t w = 0; w < k_row_block; ++w)
+    {
+        float const *row = X.data_handle() + ((row0 + w) * n_cols);
+        for (size_t c = 0; c < n_cols; ++c)
+        {
+            scratch[(c * k_row_block) + w] = row[c];
+        }
+    }
+    std::array<float, k_row_block>    sum{};
+    std::array<uint32_t, k_row_block> idx;
+    for (size_t t = 0; t < n_trees; ++t)
+    {
+        idx.fill(0);
+        for (uint32_t l = split_off_[t]; l < split_off_[t + 1]; ++l)
+        {
+            float const *col  = scratch + (size_t{feat_[l]} * k_row_block);
+            float const  thr  = thr_[l];
+            bool const   deft = default_left_[l] != 0;
+            for (size_t w = 0; w < k_row_block; ++w)
+            {
+                idx[w] = (idx[w] << 1) |
+                         static_cast<uint32_t>(routes_right(col[w], thr, deft));
+            }
+        }
+        float const *leaves = leaf_.data() + leaf_off_[t];
+        for (size_t w = 0; w < k_row_block; ++w)
+        {
+            sum[w] += leaves[idx[w]];
+        }
+    }
+    for (size_t w = 0; w < k_row_block; ++w)
+    {
+        out[row0 + w] += sum[w];
+    }
+}
+
 void ObliviousWalk::accumulate(features_view X, size_t n_trees, floats_out out) const
 {
     assert(X.extent(0) == out.size());
     assert(n_trees < split_off_.size());
-    size_t const n_cols = X.extent(1);
-    int const workers = out.size() < k_walk_parallel_floor ? 1 : parallel::n_threads();
-    parallel::for_each_index_on(
-        workers, out.size(),
-        [&](size_t i)
-        {
-            float const *row = X.data_handle() + (i * n_cols);
-            float        sum = 0.0F;
-            for (size_t t = 0; t < n_trees; ++t)
-            {
-                uint32_t idx = 0;
-                for (uint32_t l = split_off_[t]; l < split_off_[t + 1]; ++l)
-                {
-                    bool const right =
-                        routes_right(row[feat_[l]], thr_[l], default_left_[l] != 0);
-                    idx = (idx << 1) | static_cast<uint32_t>(right);
-                }
-                sum += leaf_[leaf_off_[t] + idx];
-            }
-            out[i] += sum;
-        });
+    size_t const n_cols   = X.extent(1);
+    size_t const n_rows   = out.size();
+    size_t const n_blocks = n_rows / k_row_block;
+    size_t const tail     = n_rows - (n_blocks * k_row_block);
+    int const    workers  = n_rows < k_walk_parallel_floor ? 1 : parallel::n_threads();
+    parallel::for_each_index_on(workers, n_blocks,
+                                [&](size_t b)
+                                {
+                                    std::vector<float> scratch(n_cols * k_row_block);
+                                    walk_block(X, n_trees, b * k_row_block,
+                                               scratch.data(), out);
+                                });
+    if (tail > 0)
+    {
+        walk_rows(X, n_trees, n_blocks * k_row_block, tail, out);
+    }
 }
 
 } // namespace bonsai

@@ -100,6 +100,29 @@ TEST_CASE("ObliviousWalk: accumulate matches the per-tree walk bit for bit",
     }
 }
 
+TEST_CASE("ObliviousWalk: the block seam and sub-block tail stay bit-exact",
+          "[ObliviousWalk][transform][edge]")
+{
+    auto const trees = make_trees();
+    for (size_t n : {size_t{63}, size_t{64}, size_t{65}, size_t{129}})
+    {
+        auto const          x = make_rows(n);
+        features_view const xv{x.data(), n, k_cols};
+        std::vector<float>  want(n, 0.0F);
+        for (auto const &t : trees)
+        {
+            t.predict(xv, floats_out{want});
+        }
+        ObliviousWalk const walk{std::span<ObliviousTree const>{trees}};
+        std::vector<float>  got(n, 0.0F);
+        walk.accumulate(xv, trees.size(), floats_out{got});
+        for (size_t i = 0; i < n; ++i)
+        {
+            REQUIRE(got[i] == want[i]);
+        }
+    }
+}
+
 TEST_CASE("ObliviousWalk: a tree-count prefix stops where predict_at stops",
           "[ObliviousWalk][transform]")
 {
