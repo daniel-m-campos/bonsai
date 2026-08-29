@@ -1139,6 +1139,11 @@ class Model
         bonsai::io::save_booster(*booster_, path, mappers_, cfg_);
     }
 
+    std::vector<uint8_t> save_bytes() const
+    {
+        return bonsai::io::save_booster_bytes(*booster_, mappers_, cfg_);
+    }
+
     nb::ndarray<nb::numpy, double> feature_importance(std::string const &type) const
     {
         bonsai::ImportanceType const t = [&]
@@ -1864,6 +1869,27 @@ NB_MODULE(_bonsai, m)
              "----------\n"
              "path : str\n"
              "    Output file; ``bonsai.load(path)`` restores the model.")
+        .def(
+            "__getstate__",
+            [](Model const &m)
+            {
+                auto const bytes = m.save_bytes();
+                return nb::bytes(reinterpret_cast<char const *>(bytes.data()),
+                                 bytes.size());
+            },
+            "Pickle support: the same bytes ``save`` writes, so a pickled\n"
+            "Model and a saved file restore identically (neither carries\n"
+            "the eval history).")
+        .def("__setstate__",
+             [](Model &m, nb::bytes const &state)
+             {
+                 auto const *const first =
+                     reinterpret_cast<uint8_t const *>(state.c_str());
+                 std::vector<uint8_t> const bytes(first, first + state.size());
+                 auto loaded = bonsai::io::load_booster_bytes(bytes);
+                 new (&m) Model{std::move(loaded.booster), std::move(loaded.mappers),
+                                std::move(loaded.cfg)};
+             })
         .def_prop_ro("n_iters", &Model::n_iters, "Boosting rounds this model carries.")
         .def_prop_ro("eval_history", &Model::eval_history,
                      "Per-round valid loss from fit (objective's own eval "

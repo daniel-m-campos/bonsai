@@ -761,3 +761,15 @@ def test_train_refuses_labels_outside_the_objective_domain():
             x,
             y3,
         )
+
+
+def test_model_pickles_like_its_saved_file(tmp_path):
+    """A pickled Model restores identically to save/load."""
+    rng = np.random.default_rng(16)
+    x = rng.standard_normal((80, 4)).astype(np.float32)
+    y = (x[:, 0] * 2).astype(np.float32)
+    m = bonsai.train({"booster.n_iters": 4}, x, y)
+    again = pickle.loads(pickle.dumps(m))
+    np.testing.assert_array_equal(m.predict(x), again.predict(x))
+    assert again.n_iters == m.n_iters
+    assert again.config_toml == m.config_toml
