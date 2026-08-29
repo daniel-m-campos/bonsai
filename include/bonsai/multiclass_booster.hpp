@@ -514,6 +514,11 @@ class MulticlassBooster final : public ITrainableBooster
             throw std::invalid_argument(
                 "load_state: init_scores length disagrees with n_classes");
         }
+        if (trees.size() % n_classes_ != 0)
+        {
+            throw std::invalid_argument(
+                "load_state: tree count is not a multiple of n_classes");
+        }
         trees_.mutate() = std::move(trees);
         init_scores_    = std::move(init_scores);
     }
