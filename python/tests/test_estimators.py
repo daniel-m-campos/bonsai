@@ -742,3 +742,22 @@ def test_empty_int_list_params_round_trip():
         y,
     )
     assert m.predict(x).shape == (60,)
+
+
+def test_train_refuses_labels_outside_the_objective_domain():
+    """logloss and softmax refuse labels their gradients cannot represent."""
+    rng = np.random.default_rng(15)
+    x = rng.standard_normal((60, 3)).astype(np.float32)
+    y3 = rng.integers(0, 3, 60).astype(np.float32)
+
+    with pytest.raises(ValueError, match="logloss labels"):
+        bonsai.train(
+            {"dispatch.objective_name": "logloss", "booster.n_iters": 1}, x, y3
+        )
+    with pytest.raises(ValueError, match="softmax labels"):
+        bonsai.train(
+            {"dispatch.objective_name": "softmax", "objective.n_classes": 2,
+             "booster.n_iters": 1},
+            x,
+            y3,
+        )

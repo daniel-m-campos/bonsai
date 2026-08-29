@@ -159,6 +159,44 @@ TEST_CASE("reconcile_warm_start: inherits the loaded dispatch, refuses a "
     }
 }
 
+TEST_CASE("train_with_progress: labels outside the objective's domain are "
+          "refused",
+          "[cli_pipeline][fit][edge]")
+{
+    auto       cfg    = make_tiny_config();
+    auto const loaded = load_train_and_validation_from_csv(cfg);
+
+    SECTION("logloss refuses a label that is neither 0 nor 1")
+    {
+        cfg.dispatch.objective_name = "logloss";
+        auto train                  = loaded.train;
+        train.labels                = {0.0F, 1.0F, 2.0F, 1.0F};
+        REQUIRE_THROWS_WITH(
+            train_with_progress(cfg, train),
+            Catch::Matchers::ContainsSubstring("logloss labels must be 0 or 1"));
+    }
+    SECTION("softmax refuses a label at or past n_classes")
+    {
+        cfg.dispatch.objective_name = "softmax";
+        cfg.objective.n_classes     = 3;
+        auto train                  = loaded.train;
+        train.labels                = {0.0F, 1.0F, 2.0F, 3.0F};
+        REQUIRE_THROWS_WITH(
+            train_with_progress(cfg, train),
+            Catch::Matchers::ContainsSubstring("softmax labels must be integers"));
+    }
+    SECTION("softmax refuses a fractional label")
+    {
+        cfg.dispatch.objective_name = "softmax";
+        cfg.objective.n_classes     = 3;
+        auto train                  = loaded.train;
+        train.labels                = {0.0F, 1.0F, 2.0F, 1.5F};
+        REQUIRE_THROWS_WITH(
+            train_with_progress(cfg, train),
+            Catch::Matchers::ContainsSubstring("softmax labels must be integers"));
+    }
+}
+
 TEST_CASE("fit: a validation CSV of the wrong width is refused before eval",
           "[cli_pipeline][load][edge]")
 {
