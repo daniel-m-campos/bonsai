@@ -14,6 +14,8 @@
 
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
+#include <nlohmann/json.hpp>
 
 #include "bonsai/bin_mappers.hpp"
 #include "bonsai/booster.hpp"
@@ -307,4 +309,79 @@ TEST_CASE("ModelIo: bad magic throws", "[model_io][edge]")
         std::fclose(fp);
     }
     REQUIRE_THROWS(io::load_booster(tmp.str()));
+}
+
+namespace
+{
+
+// Round-trips the saved file through msgpack, hands the JSON root to
+// `corrupt`, and rewrites it: the shape of every load-validation case.
+void rewrite_corrupted(std::string const                           &path,
+                       std::function<void(nlohmann::json &)> const &corrupt)
+{
+    std::ifstream              in(path, std::ios::binary);
+    std::vector<uint8_t> const bytes{std::istreambuf_iterator<char>(in),
+                                     std::istreambuf_iterator<char>()};
+    auto                       root = nlohmann::json::from_msgpack(bytes);
+    corrupt(root);
+    auto const    out = nlohmann::json::to_msgpack(root);
+    std::ofstream o(path, std::ios::binary);
+    o.write(reinterpret_cast<char const *>(out.data()),
+            static_cast<std::streamsize>(out.size()));
+}
+
+} // namespace
+
+TEST_CASE("ModelIo: corrupt tree shapes refuse to load", "[model_io][edge]")
+{
+    auto const       batch   = batch_for<MSEObjective>();
+    BinMappers const mappers = BinMappers::fit(batch, {});
+    Dataset const    train   = Dataset::bin(batch, mappers, {});
+    Config const     cfg     = tiny_cfg();
+
+    Booster<MSEObjective, DepthwiseGrower<CpuHistogramEngine>, AllRowsSampler> booster{
+        cfg};
+    booster.update_one_iter(train);
+
+    SECTION("dense node link out of range")
+    {
+        TempPath const tmp;
+        io::save_booster(booster, tmp.str(), mappers, cfg);
+        rewrite_corrupted(tmp.str(),
+                          [](nlohmann::json &root)
+                          {
+                              auto &node         = root["trees"][0]["nodes"][0];
+                              node["feature_id"] = 0;
+                              node["left"]       = 1U << 20;
+                          });
+        REQUIRE_THROWS_WITH(io::load_booster(tmp.str()),
+                            Catch::Matchers::ContainsSubstring("node link"));
+    }
+
+    SECTION("dense depth beyond the node count")
+    {
+        TempPath const tmp;
+        io::save_booster(booster, tmp.str(), mappers, cfg);
+        rewrite_corrupted(tmp.str(), [](nlohmann::json &root)
+                          { root["trees"][0]["depth"] = 1U << 20; });
+        REQUIRE_THROWS_WITH(io::load_booster(tmp.str()),
+                            Catch::Matchers::ContainsSubstring("shape"));
+    }
+
+    SECTION("oblivious leaf table disagrees with its depth")
+    {
+        Config lvl_cfg               = cfg;
+        lvl_cfg.dispatch.grower_name = "levelwise";
+        Booster<MSEObjective,
+                ObliviousGrower<CpuHistogramEngine, HistogramLevelSplitFinder>,
+                AllRowsSampler>
+            oblivious{lvl_cfg};
+        oblivious.update_one_iter(train);
+        TempPath const tmp;
+        io::save_booster(oblivious, tmp.str(), mappers, lvl_cfg);
+        rewrite_corrupted(tmp.str(), [](nlohmann::json &root)
+                          { root["trees"][0]["leaves"].erase(0); });
+        REQUIRE_THROWS_WITH(io::load_booster(tmp.str()),
+                            Catch::Matchers::ContainsSubstring("shape"));
+    }
 }
