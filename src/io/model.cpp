@@ -188,6 +188,20 @@ void validate_dense_tree(DenseTree::Nodes const &nodes, DenseTree::Params const 
             throw std::runtime_error("node links must point forward");
         }
     }
+    std::vector<uint8_t> reached(nodes.size(), 0);
+    for (DenseTree::Node const &n : nodes)
+    {
+        if (n.feature_id == DenseTree::k_leaf_flag)
+        {
+            continue;
+        }
+        if (n.left == n.right || reached[n.left] != 0 || reached[n.right] != 0)
+        {
+            throw std::runtime_error("node links must form a tree");
+        }
+        reached[n.left]  = 1;
+        reached[n.right] = 1;
+    }
     std::vector<size_t> depth(nodes.size(), 0);
     for (size_t i = nodes.size(); i-- > 0;)
     {
@@ -291,6 +305,11 @@ BinMappers mappers_from_json(json const &j)
         for (auto const &c : m.at("cuts"))
         {
             cuts.push_back(c.get<float>());
+        }
+        if (cuts.empty() || !std::is_sorted(cuts.begin(), cuts.end()))
+        {
+            throw std::runtime_error(
+                "model: bin mapper cuts must be a non-empty sorted array");
         }
         mappers.push_back(BinMapper::from_cuts(std::move(cuts)));
         names.push_back(m.at("name").get<std::string>());

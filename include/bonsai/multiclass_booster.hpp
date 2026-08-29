@@ -509,6 +509,11 @@ class MulticlassBooster final : public ITrainableBooster
     }
     void load_state(std::vector<tree_type> trees, std::vector<float> init_scores)
     {
+        if (init_scores.size() != n_classes_)
+        {
+            throw std::invalid_argument(
+                "load_state: init_scores length disagrees with n_classes");
+        }
         trees_.mutate() = std::move(trees);
         init_scores_    = std::move(init_scores);
     }

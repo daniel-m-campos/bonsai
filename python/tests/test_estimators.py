@@ -649,3 +649,27 @@ def test_classifier_nan_labels_raise():
     with pytest.raises(ValueError) as e:
         bonsai.BonsaiClassifier(n_iters=5).fit(X, y)
         assert "NaN" in str(e.value)
+
+
+def test_eval_set_of_the_wrong_width_is_refused():
+    """A narrow eval_set X would send the per-round eval out of bounds."""
+    rng = np.random.default_rng(3)
+    x = rng.standard_normal((200, 8)).astype(np.float32)
+    y = rng.standard_normal(200).astype(np.float32)
+    with pytest.raises(ValueError, match="columns must match"):
+        bonsai.BonsaiRegressor(n_iters=3).fit(
+            x, y, eval_set=(x[:, :7].copy(), y)
+        )
+
+
+def test_warm_start_refuses_a_width_mismatch(tmp_path):
+    """A warm start reuses the model's cuts, so X must match its width."""
+    rng = np.random.default_rng(4)
+    x = rng.standard_normal((200, 8)).astype(np.float32)
+    y = rng.standard_normal(200).astype(np.float32)
+    path = str(tmp_path / "m.bonsai")
+    bonsai.BonsaiRegressor(n_iters=2).fit(x, y).save(path)
+    with pytest.raises(ValueError, match="columns must match"):
+        bonsai.BonsaiRegressor(n_iters=2).fit(
+            x[:, :7].copy(), y, init_model=path
+        )
