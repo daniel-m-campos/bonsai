@@ -28,4 +28,13 @@ struct LoadedBooster
 // the on-disk dispatch triple by going through the same registry.
 LoadedBooster load_booster(std::string const &path);
 
+// The same serialization without the file: save_booster is
+// save_booster_bytes plus a write, load_booster is a read plus
+// load_booster_bytes. Model.__getstate__/__setstate__ pickle through these,
+// so a pickled Model and a saved file carry identical content (and neither
+// carries the eval history, which is a training artifact).
+std::vector<uint8_t> save_booster_bytes(IBooster const   &booster,
+                                        BinMappers const &mappers, Config const &cfg);
+LoadedBooster        load_booster_bytes(std::vector<uint8_t> const &bytes);
+
 } // namespace bonsai::io

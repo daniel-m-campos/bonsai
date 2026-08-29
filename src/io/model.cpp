@@ -421,6 +421,12 @@ void write_file(std::string const &path, std::span<uint8_t const> bytes)
 void save_booster(IBooster const &booster, std::string const &path,
                   BinMappers const &mappers, Config const &cfg)
 {
+    write_file(path, save_booster_bytes(booster, mappers, cfg));
+}
+
+std::vector<uint8_t> save_booster_bytes(IBooster const   &booster,
+                                        BinMappers const &mappers, Config const &cfg)
+{
     json root;
     root["magic"]       = std::string{k_magic};
     root["version"]     = k_format_version;
@@ -434,18 +440,32 @@ void save_booster(IBooster const &booster, std::string const &path,
             cfg.dispatch.grower_name + ", " + cfg.dispatch.sampler_name + ")");
     }
 
-    auto const bytes = json::to_msgpack(root);
-    write_file(path, bytes);
+    return json::to_msgpack(root);
 }
 
 LoadedBooster load_booster(std::string const &path)
 {
-    auto const bytes = read_file(path);
-    auto const root  = json::from_msgpack(bytes);
+    try
+    {
+        return load_booster_bytes(read_file(path));
+    }
+    catch (std::runtime_error const &e)
+    {
+        if (std::string_view{e.what()} == "model: bad magic")
+        {
+            throw std::runtime_error("model: bad magic in '" + path + "'");
+        }
+        throw;
+    }
+}
+
+LoadedBooster load_booster_bytes(std::vector<uint8_t> const &bytes)
+{
+    auto const root = json::from_msgpack(bytes);
 
     if (root.at("magic").get<std::string>() != k_magic)
     {
-        throw std::runtime_error("model: bad magic in '" + path + "'");
+        throw std::runtime_error("model: bad magic");
     }
     if (root.at("version").get<uint32_t>() != k_format_version)
     {
