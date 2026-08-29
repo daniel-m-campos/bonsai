@@ -170,6 +170,7 @@ _XGBOOST: Final = _Library(
         _Knob("objective", "dispatch.objective_name",
               to_native=lambda v: _lookup(_XGB_OBJECTIVES, v, "objective"),
               to_foreign=lambda v: _lookup(_XGB_OBJECTIVES_REV, v, "objective")),
+        _Knob("num_class", "objective.n_classes"),
         _Knob("quantile_alpha", "objective.quantile_alpha"),
         # XGBoost has no symmetric-tree policy, so bonsai's levelwise grower
         # is reported as unmappable rather than flattened to depthwise.
@@ -271,6 +272,8 @@ _LIGHTGBM: Final = _Library(
               to_foreign=lambda v: _lookup(_LGBM_OBJECTIVES_REV, v, "objective")),
         _Knob("application", "dispatch.objective_name", alias=True,
               to_native=lambda v: _lookup(_LGBM_OBJECTIVES, v, "objective")),
+        _Knob("num_class", "objective.n_classes"),
+        _Knob("num_classes", "objective.n_classes", alias=True),
         _Knob("drop_rate", "booster.dart_drop_rate"),
         _Knob("monotone_constraints", "tree.monotone_constraints"),
         _Knob("interaction_constraints", "tree.interaction_constraints"),
@@ -360,6 +363,7 @@ _CATBOOST: Final = _Library(
                                            "loss_function")),
         _Knob("objective", "dispatch.objective_name", alias=True,
               to_native=lambda v: _lookup(_CATBOOST_OBJECTIVES, v, "objective")),
+        _Knob("classes_count", "objective.n_classes"),
         _Knob("grow_policy", "dispatch.grower_name",
               to_native=lambda v: _lookup(_CATBOOST_GROW_POLICY, v, "grow_policy"),
               to_foreign=lambda v: _lookup(_CATBOOST_GROW_POLICY_REV,

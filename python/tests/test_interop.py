@@ -223,3 +223,17 @@ def test_every_native_key_is_reachable_from_the_reverse_index():
     for library in (interop._XGBOOST, interop._LIGHTGBM, interop._CATBOOST):
         canonical = [knob.native for knob in library.knobs if not knob.alias]
         assert len(canonical) == len(set(canonical)), library.name
+
+
+def test_multiclass_class_counts_translate_in_both_directions():
+    """num_class / classes_count map to objective.n_classes and back."""
+    p = interop.from_lightgbm({"objective": "multiclass", "num_class": 4})
+    assert p.to_dict()["objective.n_classes"] == 4
+    assert interop.to_lightgbm(p) == {"objective": "multiclass", "num_class": 4}
+
+    p = interop.from_xgboost({"objective": "multi:softprob", "num_class": 4})
+    assert p.to_dict()["objective.n_classes"] == 4
+
+    p = interop.from_catboost({"loss_function": "MultiClass", "classes_count": 4})
+    assert p.to_dict()["objective.n_classes"] == 4
+    assert interop.to_catboost(p)["classes_count"] == 4
