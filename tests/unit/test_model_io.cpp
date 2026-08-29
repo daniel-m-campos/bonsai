@@ -3,7 +3,6 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
-#include <functional>
 #include <ios>
 #include <iterator>
 #include <optional>
@@ -316,8 +315,8 @@ namespace
 
 // Round-trips the saved file through msgpack, hands the JSON root to
 // `corrupt`, and rewrites it: the shape of every load-validation case.
-void rewrite_corrupted(std::string const                           &path,
-                       std::function<void(nlohmann::json &)> const &corrupt)
+template <typename CorruptF>
+void rewrite_corrupted(std::string const &path, CorruptF const &corrupt)
 {
     std::ifstream              in(path, std::ios::binary);
     std::vector<uint8_t> const bytes{std::istreambuf_iterator<char>(in),
@@ -355,7 +354,7 @@ TEST_CASE("ModelIo: corrupt tree shapes refuse to load", "[model_io][edge]")
                               node["left"]       = 1U << 20;
                           });
         REQUIRE_THROWS_WITH(io::load_booster(tmp.str()),
-                            Catch::Matchers::ContainsSubstring("node link"));
+                            Catch::Matchers::ContainsSubstring("point forward"));
     }
 
     SECTION("dense depth beyond the node count")
@@ -365,7 +364,49 @@ TEST_CASE("ModelIo: corrupt tree shapes refuse to load", "[model_io][edge]")
         rewrite_corrupted(tmp.str(), [](nlohmann::json &root)
                           { root["trees"][0]["depth"] = 1U << 20; });
         REQUIRE_THROWS_WITH(io::load_booster(tmp.str()),
-                            Catch::Matchers::ContainsSubstring("shape"));
+                            Catch::Matchers::ContainsSubstring("node count"));
+    }
+
+    SECTION("understated depth is refused, not silently under-walked")
+    {
+        TempPath const tmp;
+        io::save_booster(booster, tmp.str(), mappers, cfg);
+        rewrite_corrupted(tmp.str(),
+                          [](nlohmann::json &root) { root["trees"][0]["depth"] = 0; });
+        REQUIRE_THROWS_WITH(io::load_booster(tmp.str()),
+                            Catch::Matchers::ContainsSubstring("understates"));
+    }
+
+    SECTION("a backward link cannot smuggle a cycle")
+    {
+        TempPath const tmp;
+        io::save_booster(booster, tmp.str(), mappers, cfg);
+        rewrite_corrupted(tmp.str(),
+                          [](nlohmann::json &root)
+                          {
+                              auto &node         = root["trees"][0]["nodes"][0];
+                              node["feature_id"] = 0;
+                              node["left"]       = 0;
+                          });
+        REQUIRE_THROWS_WITH(io::load_booster(tmp.str()),
+                            Catch::Matchers::ContainsSubstring("point forward"));
+    }
+
+    SECTION("a split naming a missing feature is refused")
+    {
+        TempPath const tmp;
+        io::save_booster(booster, tmp.str(), mappers, cfg);
+        rewrite_corrupted(tmp.str(),
+                          [](nlohmann::json &root)
+                          {
+                              auto &node         = root["trees"][0]["nodes"][0];
+                              node["feature_id"] = 400000000;
+                              node["left"]       = 1;
+                              node["right"]      = 2;
+                          });
+        REQUIRE_THROWS_WITH(
+            io::load_booster(tmp.str()),
+            Catch::Matchers::ContainsSubstring("feature the model lacks"));
     }
 
     SECTION("oblivious leaf table disagrees with its depth")
@@ -382,6 +423,6 @@ TEST_CASE("ModelIo: corrupt tree shapes refuse to load", "[model_io][edge]")
         rewrite_corrupted(tmp.str(), [](nlohmann::json &root)
                           { root["trees"][0]["leaves"].erase(0); });
         REQUIRE_THROWS_WITH(io::load_booster(tmp.str()),
-                            Catch::Matchers::ContainsSubstring("shape"));
+                            Catch::Matchers::ContainsSubstring("disagrees"));
     }
 }

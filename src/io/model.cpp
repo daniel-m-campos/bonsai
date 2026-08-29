@@ -151,29 +151,58 @@ json tree_to_json(DenseTree const &t)
     return out;
 }
 
-template <typename TreeT> TreeT tree_from_json(json const &j);
+template <typename TreeT> TreeT tree_from_json(json const &j, size_t n_features);
 
-void validate_dense_tree(DenseTree::Nodes const &nodes, DenseTree::Params const &p)
+constexpr size_t k_max_oblivious_depth = 31;
+
+void validate_dense_tree(DenseTree::Nodes const &nodes, DenseTree::Params const &p,
+                         size_t n_features)
 {
-    if (nodes.empty() || p.depth > nodes.size())
+    if (nodes.empty())
     {
-        throw std::runtime_error("model: dense tree shape out of range");
+        throw std::runtime_error("dense tree has no nodes");
     }
-    for (auto const &n : nodes)
+    if (p.depth > nodes.size())
     {
-        if (n.feature_id != DenseTree::k_leaf_flag &&
-            (n.left >= nodes.size() || n.right >= nodes.size()))
+        throw std::runtime_error("dense tree depth exceeds its node count");
+    }
+    for (size_t i = 0; i < nodes.size(); ++i)
+    {
+        DenseTree::Node const &n = nodes[i];
+        if (n.feature_id == DenseTree::k_leaf_flag)
         {
-            throw std::runtime_error("model: dense tree node link out of range");
+            continue;
         }
+        if (n.feature_id >= n_features)
+        {
+            throw std::runtime_error("split names a feature the model lacks");
+        }
+        if (n.left <= i || n.right <= i || n.left >= nodes.size() ||
+            n.right >= nodes.size())
+        {
+            throw std::runtime_error("node links must point forward");
+        }
+    }
+    std::vector<size_t> depth(nodes.size(), 0);
+    for (size_t i = nodes.size(); i-- > 0;)
+    {
+        DenseTree::Node const &n = nodes[i];
+        if (n.feature_id != DenseTree::k_leaf_flag)
+        {
+            depth[i] = 1 + std::max(depth[n.left], depth[n.right]);
+        }
+    }
+    if (p.depth < depth[0])
+    {
+        throw std::runtime_error("stated depth understates the tree");
     }
 }
 
-template <> DenseTree tree_from_json<DenseTree>(json const &j)
+template <> DenseTree tree_from_json<DenseTree>(json const &j, size_t n_features)
 {
     auto       nodes  = j.at("nodes").get<DenseTree::Nodes>();
     auto const params = j.get<DenseTree::Params>();
-    validate_dense_tree(nodes, params);
+    validate_dense_tree(nodes, params, n_features);
     return DenseTree{std::move(nodes), params, j.at("gains").get<std::vector<float>>(),
                      j.at("covers").get<std::vector<float>>()};
 }
@@ -188,13 +217,25 @@ json tree_to_json(ObliviousTree const &t)
     return out;
 }
 
-template <> ObliviousTree tree_from_json<ObliviousTree>(json const &j)
+template <>
+ObliviousTree tree_from_json<ObliviousTree>(json const &j, size_t n_features)
 {
     auto splits = j.at("splits").get<ObliviousTree::LevelSplits>();
     auto leaves = j.at("leaves").get<ObliviousTree::LeafTable>();
-    if (splits.size() >= 32 || leaves.size() != (size_t{1} << splits.size()))
+    if (splits.size() > k_max_oblivious_depth)
     {
-        throw std::runtime_error("model: oblivious tree shape out of range");
+        throw std::runtime_error("oblivious depth exceeds the leaf-table cap");
+    }
+    if (leaves.size() != (size_t{1} << splits.size()))
+    {
+        throw std::runtime_error("leaf table disagrees with the split count");
+    }
+    for (auto const &sp : splits)
+    {
+        if (sp.feature_id >= n_features)
+        {
+            throw std::runtime_error("split names a feature the model lacks");
+        }
     }
     return ObliviousTree{
         std::move(splits),
@@ -267,7 +308,8 @@ template <typename B> bool try_save_as(IBooster const &booster, json &out)
     return true;
 }
 
-template <typename B> bool try_load_into(IBooster &booster, json const &j)
+template <typename B>
+bool try_load_into(IBooster &booster, json const &j, size_t n_features)
 {
     auto *concrete = dynamic_cast<B *>(&booster);
     if (concrete == nullptr)
@@ -276,10 +318,19 @@ template <typename B> bool try_load_into(IBooster &booster, json const &j)
     }
     using TreeT = typename B::tree_type;
     std::vector<TreeT> trees;
-    trees.reserve(j.at("trees").size());
-    for (auto const &tj : j.at("trees"))
+    auto const        &tree_array = j.at("trees");
+    trees.reserve(tree_array.size());
+    for (size_t ti = 0; ti < tree_array.size(); ++ti)
     {
-        trees.push_back(tree_from_json<TreeT>(tj));
+        try
+        {
+            trees.push_back(tree_from_json<TreeT>(tree_array[ti], n_features));
+        }
+        catch (std::runtime_error const &e)
+        {
+            throw std::runtime_error("model: tree " + std::to_string(ti) + ": " +
+                                     e.what());
+        }
     }
     if constexpr (requires(std::vector<float> v) {
                       concrete->load_state(std::move(trees), std::move(v));
@@ -302,11 +353,12 @@ bool save_dispatch(IBooster const &booster, DispatchConfig const &disp, json &ou
         [&]<typename Combo>() { return try_save_as<BoosterFor<Combo>>(booster, out); });
 }
 
-bool load_dispatch(IBooster &booster, DispatchConfig const &disp, json const &j)
+bool load_dispatch(IBooster &booster, DispatchConfig const &disp, json const &j,
+                   size_t n_features)
 {
     return with_combo_matching(
-        disp,
-        [&]<typename Combo>() { return try_load_into<BoosterFor<Combo>>(booster, j); });
+        disp, [&]<typename Combo>()
+        { return try_load_into<BoosterFor<Combo>>(booster, j, n_features); });
 }
 
 std::vector<uint8_t> read_file(std::string const &path)
@@ -372,7 +424,7 @@ LoadedBooster load_booster(std::string const &path)
     out.mappers = mappers_from_json(root.at("bin_mappers"));
     out.booster = make_booster(out.cfg);
 
-    if (!load_dispatch(*out.booster, out.cfg.dispatch, root))
+    if (!load_dispatch(*out.booster, out.cfg.dispatch, root, out.mappers.size()))
     {
         throw std::runtime_error(
             "model: load_booster: dispatch triple unknown after make_booster");
