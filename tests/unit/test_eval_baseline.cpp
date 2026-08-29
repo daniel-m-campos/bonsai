@@ -1,8 +1,10 @@
 // Parity-guarantee net. Pins the exact MSE eval output: California
-// Housing, 20 iterations, default seed -> rmse=0.715300083. The title,
-// this header, and the assertion carry the same value on purpose; when
-// the pin legitimately moves, move all three and extend the lineage
-// below.
+// Housing, 20 iterations, default seed, n_threads=4 -> rmse=0.715300083.
+// The title, this header, and the assertion carry the same value on
+// purpose; when the pin legitimately moves, move all three and extend the
+// lineage below. The thread count is part of the pin: host-determinism
+// makes model bits a pure function of (input, config, thread count), so
+// the test fixes N itself instead of inheriting whatever the runner has.
 //
 // Same recipe as the CLI smoke documented in the plan:
 //   bonsai fit -c configs/california_housing.toml --set booster.n_iters=20
@@ -18,6 +20,7 @@
 #include "bonsai/cli/pipeline.hpp"
 #include "bonsai/config/config.hpp"
 #include "bonsai/objective.hpp"
+#include "bonsai/parallel.hpp"
 
 using namespace bonsai;      // NOLINT
 using namespace bonsai::cli; // NOLINT
@@ -59,6 +62,7 @@ Config make_california_housing_config()
 TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7153001",
           "[eval_baseline][mse]")
 {
+    parallel::set_n_threads(4);
     auto const cfg     = make_california_housing_config();
     auto const loaded  = load_train_from_csv(cfg, cfg.data.train);
     auto const booster = train_in_memory(cfg, loaded.train);
@@ -84,8 +88,9 @@ TEST_CASE("Eval baseline: California Housing, MSE, 20 iters -> rmse=0.7153001",
     // decision 74 (FLT_MAX top-band closer: the sentinel bin is NaN-only on
     // every fitting path, -> 0.715300083: -0.27% here, inside the chance
     // band; the leak synthetics in scripts/probe_missing_bin.py are the
-    // real motivation). The former margin(1e-6) tolerance was ~16 ULP of
-    // slack under a comment claiming bit-exactness; measured deterministic
-    // across runs, so the pin is now the exact float.
+    // real motivation). The pin is the exact float at n_threads=4; other
+    // thread counts legally produce other bits (host-determinism), which
+    // is the slack the former margin(1e-6) was silently absorbing.
     CHECK(rmse == 0.715300083F);
+    parallel::set_n_threads(0);
 }
