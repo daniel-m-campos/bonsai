@@ -481,29 +481,29 @@ class DensifyCache
     mutable uint64_t                                      epoch_ = 0;
 };
 
-// The predict-path sibling of DensifyCache: the SoA walk pack the oblivious
-// predict fast path reads, epoch-keyed the same way for the same reason
+// The predict-path sibling of DensifyCache: the walk pack the predict fast
+// path reads (ObliviousWalk or DenseWalk, whichever the booster's tree
+// shape packs to), epoch-keyed the same way for the same reason
 // (concurrent predicts under a released GIL, mutations bump the epoch).
-class WalkCache
+template <typename WalkT, typename TreeT> class WalkCache
 {
   public:
-    std::shared_ptr<ObliviousWalk const> get(std::vector<ObliviousTree> const &trees,
-                                             uint64_t epoch) const
+    std::shared_ptr<WalkT const> get(std::vector<TreeT> const &trees,
+                                     uint64_t                  epoch) const
     {
         std::scoped_lock const lock(mutex_);
         if (epoch_ != epoch)
         {
-            cache_ = std::make_shared<ObliviousWalk const>(
-                std::span<ObliviousTree const>{trees});
+            cache_ = std::make_shared<WalkT const>(std::span<TreeT const>{trees});
             epoch_ = epoch;
         }
         return cache_;
     }
 
   private:
-    mutable std::mutex                           mutex_;
-    mutable std::shared_ptr<ObliviousWalk const> cache_;
-    mutable uint64_t                             epoch_ = 0;
+    mutable std::mutex                   mutex_;
+    mutable std::shared_ptr<WalkT const> cache_;
+    mutable uint64_t                     epoch_ = 0;
 };
 
 // A value paired with its mutation counter. Readers take read(); every writer
@@ -948,28 +948,17 @@ class Booster final : public ITrainableBooster
         return out;
     }
 
-    // The oblivious arm routes through the ObliviousWalk pack (bit-identical
-    // to the per-tree loop, see the pack's contract in tree.hpp); every other
-    // tree shape keeps the per-tree walk.
+    // Both tree shapes route through their walk pack (ObliviousWalk or
+    // DenseWalk, bit-identical to the per-tree loop; contracts in tree.hpp).
     void predict_at(features_view X, floats_out scores, size_t n_trees) const override
     {
         assert(X.extent(0) == scores.size());
         auto const  &trees = trees_.read();
         size_t const k = n_trees == 0 ? trees.size() : std::min(n_trees, trees.size());
         std::fill(scores.begin(), scores.end(), 0.0F);
-        if constexpr (std::same_as<tree_type, ObliviousTree>)
+        if (k > 0)
         {
-            if (k > 0)
-            {
-                walk_.get(trees, trees_.epoch())->accumulate(X, k, scores);
-            }
-        }
-        else
-        {
-            for (size_t t = 0; t < k; ++t)
-            {
-                trees[t].predict(X, scores);
-            }
+            walk_.get(trees, trees_.epoch())->accumulate(X, k, scores);
         }
         for (float &score : scores)
         {
@@ -1270,9 +1259,12 @@ class Booster final : public ITrainableBooster
     // deterministically, so an address here would skip re-arming for a
     // DIFFERENT fold at the same depth, leaving the previous fold's labels,
     // scores and rows live.
-    FitId                  resident_fit_{};
-    internal::DensifyCache dense_;
-    internal::WalkCache    walk_;
+    FitId resident_fit_{};
+    using walk_type = std::conditional_t<std::same_as<tree_type, ObliviousTree>,
+                                         ObliviousWalk, DenseWalk>;
+
+    internal::DensifyCache                    dense_;
+    internal::WalkCache<walk_type, tree_type> walk_;
 };
 
 } // namespace bonsai
