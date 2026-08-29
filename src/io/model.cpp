@@ -153,10 +153,28 @@ json tree_to_json(DenseTree const &t)
 
 template <typename TreeT> TreeT tree_from_json(json const &j);
 
+void validate_dense_tree(DenseTree::Nodes const &nodes, DenseTree::Params const &p)
+{
+    if (nodes.empty() || p.depth > nodes.size())
+    {
+        throw std::runtime_error("model: dense tree shape out of range");
+    }
+    for (auto const &n : nodes)
+    {
+        if (n.feature_id != DenseTree::k_leaf_flag &&
+            (n.left >= nodes.size() || n.right >= nodes.size()))
+        {
+            throw std::runtime_error("model: dense tree node link out of range");
+        }
+    }
+}
+
 template <> DenseTree tree_from_json<DenseTree>(json const &j)
 {
-    return DenseTree{j.at("nodes").get<DenseTree::Nodes>(), j.get<DenseTree::Params>(),
-                     j.at("gains").get<std::vector<float>>(),
+    auto       nodes  = j.at("nodes").get<DenseTree::Nodes>();
+    auto const params = j.get<DenseTree::Params>();
+    validate_dense_tree(nodes, params);
+    return DenseTree{std::move(nodes), params, j.at("gains").get<std::vector<float>>(),
                      j.at("covers").get<std::vector<float>>()};
 }
 
@@ -172,9 +190,15 @@ json tree_to_json(ObliviousTree const &t)
 
 template <> ObliviousTree tree_from_json<ObliviousTree>(json const &j)
 {
+    auto splits = j.at("splits").get<ObliviousTree::LevelSplits>();
+    auto leaves = j.at("leaves").get<ObliviousTree::LeafTable>();
+    if (splits.size() >= 32 || leaves.size() != (size_t{1} << splits.size()))
+    {
+        throw std::runtime_error("model: oblivious tree shape out of range");
+    }
     return ObliviousTree{
-        j.at("splits").get<ObliviousTree::LevelSplits>(),
-        j.at("leaves").get<ObliviousTree::LeafTable>(),
+        std::move(splits),
+        std::move(leaves),
         j.at("gains").get<std::vector<float>>(),
         j.value("covers", std::vector<float>{}),
     };
