@@ -254,6 +254,57 @@ DenseTree dense_equivalent(ObliviousTree const &tree);
 // (~0.2ns per level step) plus the per-call cache acquisition.
 //
 // Pinned by tests/unit/test_predict_walk.cpp.
+// The dense-tree twin of ObliviousWalk below, for the depthwise and
+// leafwise ensembles. Rows-outer inversion alone buys a dense tree nothing,
+// because its cost is the chain of data-dependent node loads, not the loop
+// shape; the lever here is walking eight trees per row in lockstep so the
+// core always has independent load chains in flight. Leaves point to
+// themselves, so a walk padded to its group's deepest tree is a harmless
+// self-loop for the trees that finished early; groups are bounded by their
+// own deepest member, so leafwise's ragged best-first trees do not tax the
+// shallow ones.
+//
+// What it guarantees: accumulate adds each row's tree-order value sum into
+// out, bit-identical to calling tree.predict per tree, NaN routing through
+// default_left included (the same comparison-direction fold as
+// ObliviousWalk).
+//
+// What breaks it: same staleness contract as ObliviousWalk; the booster's
+// epoch-keyed cache is the only legitimate holder across mutations.
+//
+// perf: measured on M2 (1 thread, 64 cols, depth 8, 100 trees) 2206 ->
+// ~1000 ns/row at batch; rows-outer without interleave measured 2231, the
+// null result that makes the 8-wide lockstep the whole design.
+//
+// Pinned by tests/unit/test_predict_walk.cpp.
+class DenseWalk
+{
+  public:
+    explicit DenseWalk(std::span<DenseTree const> trees);
+
+    void accumulate(features_view X, size_t n_trees, floats_out out) const;
+
+    size_t n_trees() const
+    {
+        return roots_.size();
+    }
+
+  private:
+    struct PackedNode
+    {
+        float        threshold;
+        feature_id_t feature;
+        uint32_t     left;
+        uint32_t     right;
+    };
+
+    std::vector<PackedNode> nodes_;
+    std::vector<float>      values_;
+    std::vector<uint8_t>    deft_;
+    std::vector<uint32_t>   roots_;
+    std::vector<uint32_t>   group_depth_;
+};
+
 class ObliviousWalk
 {
   public:
