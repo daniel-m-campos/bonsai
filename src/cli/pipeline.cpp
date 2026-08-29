@@ -452,19 +452,37 @@ train_with_progress(Config const &cfg, LabeledData const &train,
                       eval_history);
 }
 
-ScoredBatch score_csv(IBooster const &booster, std::string const &path,
-                      DataConfig const &data_cfg, size_t n_trees)
+namespace
 {
-    auto               pf = parse_and_buffer(path, data_cfg);
+
+void check_csv_width(size_t given, size_t expected, std::string const &path)
+{
+    if (given != expected)
+    {
+        throw std::runtime_error(
+            "this model was fit on " + std::to_string(expected) + " features and '" +
+            path + "' parsed to " + std::to_string(given) +
+            " columns; a tree routes on feature ids, so the columns must match");
+    }
+}
+
+} // namespace
+
+ScoredBatch score_csv(IBooster const &booster, std::string const &path,
+                      DataConfig const &data_cfg, size_t n_features, size_t n_trees)
+{
+    auto pf = parse_and_buffer(path, data_cfg);
+    check_csv_width(pf.buf.n_features, n_features, path);
     std::vector<float> raw(pf.buf.n_rows);
     booster.predict_at(pf.buf.view(), raw, n_trees);
     return ScoredBatch{.features = std::move(pf.buf), .raw_scores = std::move(raw)};
 }
 
 ScoredAndLabeled score_and_label_csv(IBooster const &booster, std::string const &path,
-                                     DataConfig const &data_cfg)
+                                     DataConfig const &data_cfg, size_t n_features)
 {
-    auto               pf = parse_and_buffer(path, data_cfg);
+    auto pf = parse_and_buffer(path, data_cfg);
+    check_csv_width(pf.buf.n_features, n_features, path);
     std::vector<float> raw(pf.buf.n_rows);
     booster.predict(pf.buf.view(), raw);
     std::vector<float> labels(pf.batch.labels.begin(), pf.batch.labels.end());

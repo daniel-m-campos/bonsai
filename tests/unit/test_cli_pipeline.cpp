@@ -1,5 +1,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include <cstddef>
 #include <cstdio>
 #include <filesystem>
@@ -68,8 +69,21 @@ TEST_CASE("score_csv: returns one raw score per row", "[cli_pipeline][score]")
     auto const loaded  = load_train_from_csv(cfg, cfg.data.train);
     auto const booster = train_in_memory(cfg, loaded.train);
 
-    auto const scored = score_csv(*booster, cfg.data.train, cfg.data);
+    auto const scored =
+        score_csv(*booster, cfg.data.train, cfg.data, loaded.mappers.size());
     CHECK(scored.raw_scores.size() == 4);
+}
+
+TEST_CASE("score_csv: a CSV of the wrong width is refused before predict",
+          "[cli_pipeline][score][edge]")
+{
+    auto const cfg     = make_tiny_config();
+    auto const loaded  = load_train_from_csv(cfg, cfg.data.train);
+    auto const booster = train_in_memory(cfg, loaded.train);
+
+    REQUIRE_THROWS_WITH(
+        score_csv(*booster, cfg.data.train, cfg.data, loaded.mappers.size() + 1),
+        Catch::Matchers::ContainsSubstring("columns must match"));
 }
 
 TEST_CASE("score_and_label_csv: labels match the CSV's label column",
@@ -79,7 +93,8 @@ TEST_CASE("score_and_label_csv: labels match the CSV's label column",
     auto const loaded  = load_train_from_csv(cfg, cfg.data.train);
     auto const booster = train_in_memory(cfg, loaded.train);
 
-    auto const sl = score_and_label_csv(*booster, cfg.data.train, cfg.data);
+    auto const sl =
+        score_and_label_csv(*booster, cfg.data.train, cfg.data, loaded.mappers.size());
     REQUIRE(sl.raw_scores.size() == 4);
     REQUIRE(sl.labels.size() == 4);
     CHECK(sl.labels[0] == Catch::Approx(0.5F));
