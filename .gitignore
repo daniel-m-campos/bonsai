@@ -95,6 +95,7 @@ benchmarks/results/*.md
 !.claude/skills/feature-admission/
 !.claude/skills/comment-audit/
 !.claude/skills/review-round/
+!.claude/skills/design-ratchet/
 tests/data/*.libsvm
 tests/data/.amazon-fetched
 # Parsed-array caches beside the (already-ignored) CSVs

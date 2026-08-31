@@ -34,6 +34,13 @@ Tracked but not gated:
     measure and the noisier one: a table of bindings or knobs repeats a
     shape on purpose, and gating it would fail a change for adding one
     legitimate row. It is reported so the trend is visible.
+``hardware_leaks``
+    Hardware vocabulary (cuda, warp, pinned, occupancy) on code lines above
+    the engine seam: everything under include/bonsai and src outside the
+    cuda, metal, and registry directories. Above the seam the narrative is
+    statistical or layout; a caller asking ``starts_with("cuda")`` is
+    guessing at the machine below it, and the seam should answer instead.
+    Tracked because each one is a placement decision rather than a slip.
 
 None of these is a quality score. Each is a direction, and the ratchet
 turns a preference the reviewer would have to re-argue every round into a
@@ -78,6 +85,8 @@ KEYWORDS: Final = frozenset(
     def import from as in not and or is None True False lambda with pass raise yield
     break continue self cls""".split()
 )
+BELOW_SEAM: Final = frozenset({"cuda", "metal", "registry"})
+HARDWARE_WORDS: Final = re.compile(r"\b(?:cuda\w*|warp\w*|pinned|occupancy|nvml\w*)\b", re.I)
 DECLARATION: Final = re.compile(
     r"\b(?:class|struct|enum(?: class)?|using)\s+([A-Za-z_]\w*)"
     r"|^\s*(?:[\w:<>,\s\*&]+?)\s+([a-z_]\w*)\s*\("
@@ -113,6 +122,7 @@ def measure(root: pathlib.Path) -> dict[str, Reading]:
         "vocabulary_singletons": _vocabulary_singletons(headers),
         "contract_prose_lines": _comment_lines(headers, root),
         "binding_prose_lines": _string_literal_lines(root / "src/python/module.cpp", root),
+        "hardware_leaks": _hardware_leaks(files, root),
     }
 
 
@@ -229,6 +239,22 @@ def _comment_lines(headers: list[pathlib.Path], root: pathlib.Path) -> Reading:
         n = sum(1 for l in _lines(f) if l.strip().startswith("//"))
         if n:
             per_file[str(f.relative_to(root))] = n
+    return Reading(sum(per_file.values()), per_file.most_common())
+
+
+def _hardware_leaks(files: list[pathlib.Path], root: pathlib.Path) -> Reading:
+    per_file: collections.Counter[str] = collections.Counter()
+    for f in files:
+        rel = str(f.relative_to(root))
+        if any(part in BELOW_SEAM for part in f.parts) or not rel.startswith(("include", "src")):
+            continue
+        n = sum(
+            len(HARDWARE_WORDS.findall(l))
+            for l in _lines(f)
+            if not l.strip().startswith(("//", "#include"))
+        )
+        if n:
+            per_file[rel] = n
     return Reading(sum(per_file.values()), per_file.most_common())
 
 
