@@ -39,7 +39,7 @@ Working agreement for agents in this repository. Where content lives is governed
 - Routing policy (what content goes where): [docs/STYLE.md](docs/STYLE.md), section "Where things live".
 - Cross-file contracts and invariants: [docs/invariants.md](docs/invariants.md). Linted by `make docs-check`; cite entries instead of restating them.
 - Design rationale, measurements, rejected alternatives: [docs/decisions.md](docs/decisions.md), append-only, cited by number. Corrections are italic status banners, never body edits.
-- Procedures: [docs/ops/runpod-runbook.md](docs/ops/runpod-runbook.md) for pod work, `.claude/skills/` for the repo rituals (quality gates, pod validation, perf rounds, feature admission, review rounds).
+- Procedures: [docs/ops/runpod-runbook.md](docs/ops/runpod-runbook.md) for pod work, `.claude/skills/` for the repo rituals (quality gates, pod validation, perf rounds, feature admission, review rounds, design ratchet).
 - Reader-facing docs: `docs/guide/` and `docs/learn/` teach; `docs/use/` and `docs/method/` are reference, generated where possible.
 
 ## Layout
