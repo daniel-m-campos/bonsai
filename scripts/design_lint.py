@@ -177,7 +177,7 @@ def _production_files(root: pathlib.Path) -> list[pathlib.Path]:
 
 
 def _lines(f: pathlib.Path) -> list[str]:
-    return [l for l in f.read_text(errors="replace").splitlines() if l.strip()]
+    return [line for line in f.read_text(errors="replace").splitlines() if line.strip()]
 
 
 def _normalize(line: str, blind_to_identifiers: bool) -> str:
@@ -197,8 +197,8 @@ def _clone_windows(
 ) -> Reading:
     windows: dict[str, list[pathlib.Path]] = collections.defaultdict(list)
     for f in files:
-        raw = [l for l in _lines(f) if not _is_bare_literal(l)]
-        normalized = [_normalize(l, blind_to_identifiers) for l in raw]
+        raw = [line for line in _lines(f) if not _is_bare_literal(line)]
+        normalized = [_normalize(line, blind_to_identifiers) for line in raw]
         for i in range(len(raw) - WINDOW + 1):
             text = "".join(raw[i : i + WINDOW])
             if len(text) < MIN_WINDOW_CHARS or text.count("}") >= 4:
@@ -236,7 +236,7 @@ def _vocabulary_singletons(headers: list[pathlib.Path]) -> Reading:
 def _comment_lines(headers: list[pathlib.Path], root: pathlib.Path) -> Reading:
     per_file: collections.Counter[str] = collections.Counter()
     for f in headers:
-        n = sum(1 for l in _lines(f) if l.strip().startswith("//"))
+        n = sum(1 for line in _lines(f) if line.strip().startswith("//"))
         if n:
             per_file[str(f.relative_to(root))] = n
     return Reading(sum(per_file.values()), per_file.most_common())
@@ -249,9 +249,9 @@ def _hardware_leaks(files: list[pathlib.Path], root: pathlib.Path) -> Reading:
         if any(part in BELOW_SEAM for part in f.parts) or not rel.startswith(("include", "src")):
             continue
         n = sum(
-            len(HARDWARE_WORDS.findall(l))
-            for l in _lines(f)
-            if not l.strip().startswith(("//", "#include"))
+            len(HARDWARE_WORDS.findall(line))
+            for line in _lines(f)
+            if not line.strip().startswith(("//", "#include"))
         )
         if n:
             per_file[rel] = n
@@ -265,7 +265,7 @@ def _is_bare_literal(line: str) -> bool:
 def _string_literal_lines(module: pathlib.Path, root: pathlib.Path) -> Reading:
     if not module.exists():
         return Reading(0, [])
-    n = sum(1 for l in _lines(module) if _is_bare_literal(l))
+    n = sum(1 for line in _lines(module) if _is_bare_literal(line))
     return Reading(n, [(str(module.relative_to(root)), n)])
 
 
