@@ -478,7 +478,7 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     {
         values.resize(ds.plane_n_rows(), 0.0F);
         leaf_ids.resize(ds.plane_n_rows(), 0);
-    } // namespace gd
+    }
     std::vector<SplitInput> current;
     std::vector<SplitInput> next;
     gd::LevelOutputs        level_out;
@@ -561,7 +561,7 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     if (!resident)
     {
         values.resize(ds.plane_n_rows(), 0.0F);
-    } // namespace gd
+    }
 
     std::vector<SplitInput> frontier;
     std::vector<SplitInput> next;
@@ -699,7 +699,7 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     if (!resident)
     {
         values.resize(ds.plane_n_rows(), 0.0F);
-    } // namespace gd
+    }
 
     auto gain_less = [](gd::Candidate const &a, gd::Candidate const &b)
     {
