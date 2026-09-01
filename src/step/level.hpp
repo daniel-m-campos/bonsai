@@ -130,6 +130,7 @@ class LevelStep<EngineT, SplitterT> : public TreeStep<EngineT>
         Phase<&GrowProfiler::populate_s> phase;
         SplitInput                       root = device_root(sel);
         engine_.begin_root(ds_, grad_, hess_, root, selected_);
+        release_staged_rows(root);
         return root;
     }
 

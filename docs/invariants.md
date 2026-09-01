@@ -44,6 +44,12 @@ A tree the device cannot hold is refused, never quietly moved to the host. All t
 
 - enforced by: [`A max_bin past the shared-memory ceiling is refused`](../tests/unit/test_cuda_grower.cpp)
 
+### device-root-spends-its-host-rows
+
+A device root carries a host row list only until the engine stages it; from begin_root on it is a count and sums, the shape the identity root has from the start. A tree that ends at the root therefore stamps nothing on the host, which matters in resident mode: the per-row outputs are empty there, and a stamp over the staged rows writes past them.
+
+- enforced by: [`Resident: a one-leaf tree on a view matches the host path`](../tests/unit/test_cuda_resident.cpp)
+
 ### fit-id-gates-resident-reuse
 
 A row-narrowed view mints a FitId distinct from its parent's, and a copy shares one. Anything caching against a Dataset keys on these tokens, so an equal token means "the same fit" with no allocator caveat: the device resident state is armed for ONE FitId, and a token that compared equal across two different fits would leave the previous fit's labels, scores and rows live under the next one.
@@ -72,7 +78,7 @@ The flattened node table and ObliviousTree::leaf_for agree on one numbering. The
 
 The row list a round trains on belongs to the fit it was materialized for, keyed on the fit's minted token and never on its size: a second fit on a same-sized view of different rows grows the tree those rows grow, not the previous view's.
 
-- enforced by: `../tests/unit/test_booster.cpp`
+- enforced by: [`Booster: a same-sized view of other rows refills the row list`](../tests/unit/test_booster.cpp)
 
 ### smaller-child-tie-break-agrees
 

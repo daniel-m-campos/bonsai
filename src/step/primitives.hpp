@@ -194,6 +194,11 @@ inline SplitInput device_root(RowSelection const &sel)
     return root;
 }
 
+inline void release_staged_rows(SplitInput &root)
+{
+    root.rows = {};
+}
+
 template <typename StampT, typename IdOfFn>
 inline std::vector<StampT> leaf_stamps(size_t n, IdOfFn &&id_of)
 {
