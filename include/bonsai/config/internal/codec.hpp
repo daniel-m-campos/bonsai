@@ -201,6 +201,35 @@ template <> struct FieldCodec<std::string>
     }
 };
 
+// The list form every `--set section.key=a,b,c` shares: a bare empty string
+// is the empty list, and an empty piece ("a,,b", a trailing comma) is an
+// error rather than an empty element.
+inline ParseResult<std::vector<std::string_view>> split_list(std::string_view value)
+{
+    std::vector<std::string_view> out;
+    if (value.empty())
+    {
+        return out;
+    }
+    size_t start = 0;
+    while (start <= value.size())
+    {
+        auto const comma = value.find(',', start);
+        auto const piece = value.substr(start, comma - start);
+        if (piece.empty())
+        {
+            return std::unexpected("empty value in comma-separated list");
+        }
+        out.push_back(piece);
+        if (comma == std::string_view::npos)
+        {
+            break;
+        }
+        start = comma + 1;
+    }
+    return out;
+}
+
 // -------------------- std::vector<std::string> -------------------------------
 
 template <> struct FieldCodec<std::vector<std::string>>
@@ -227,30 +256,12 @@ template <> struct FieldCodec<std::vector<std::string>>
     }
     static ParseResult<std::vector<std::string>> from_string(std::string_view value)
     {
-        // Comma-separated; empty token rejected (e.g. "a,,b" or trailing ",").
-        // Lets `--set metrics.fit=rmse,mae` work; bare empty string -> empty vec.
-        std::vector<std::string> out;
-        if (value.empty())
+        auto const pieces = split_list(value);
+        if (!pieces)
         {
-            return out;
+            return std::unexpected(pieces.error());
         }
-        size_t start = 0;
-        while (start <= value.size())
-        {
-            auto const comma = value.find(',', start);
-            auto const piece = value.substr(start, comma - start);
-            if (piece.empty())
-            {
-                return std::unexpected("empty value in comma-separated list");
-            }
-            out.emplace_back(piece);
-            if (comma == std::string_view::npos)
-            {
-                break;
-            }
-            start = comma + 1;
-        }
-        return out;
+        return std::vector<std::string>(pieces->begin(), pieces->end());
     }
     static toml::array to_toml(std::vector<std::string> const &v)
     {
@@ -287,31 +298,23 @@ template <> struct FieldCodec<std::vector<int>>
         }
         return out;
     }
-    // Comma-separated: --set section.key=1,0,-1; bare empty string -> empty vec.
     static ParseResult<std::vector<int>> from_string(std::string_view value)
     {
-        std::vector<int> out;
-        if (value.empty())
+        auto const pieces = split_list(value);
+        if (!pieces)
         {
-            return out;
+            return std::unexpected(pieces.error());
         }
-        size_t start = 0;
-        while (start <= value.size())
+        std::vector<int> out;
+        out.reserve(pieces->size());
+        for (auto const piece : *pieces)
         {
-            size_t const comma = value.find(',', start);
-            size_t const end   = comma == std::string_view::npos ? value.size() : comma;
-            auto const   item  = value.substr(start, end - start);
-            auto         r     = read_int_from_string(item);
+            auto const r = read_int_from_string(piece);
             if (!r)
             {
                 return std::unexpected(r.error());
             }
-            out.push_back(static_cast<int>(*r));
-            if (comma == std::string_view::npos)
-            {
-                break;
-            }
-            start = comma + 1;
+            out.push_back(*r);
         }
         return out;
     }

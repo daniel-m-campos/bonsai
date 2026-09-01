@@ -152,29 +152,26 @@ LabeledData load_validation_labeled(std::string const &path, DataConfig const &d
         .dataset = {}, .features = std::move(features), .labels = std::move(labels)};
 }
 
-} // namespace
-
-namespace
+std::optional<LabeledData> load_validation_checked(Config const     &cfg,
+                                                   BinMappers const &mappers)
 {
-
-void check_csv_width(size_t given, size_t expected, std::string const &path)
-{
-    if (given != expected)
+    if (cfg.data.valid.empty())
     {
-        throw std::runtime_error(
-            "this model was fit on " + std::to_string(expected) + " features and '" +
-            path + "' parsed to " + std::to_string(given) +
-            " columns; a tree routes on feature ids, so the columns must match");
+        return std::nullopt;
     }
+    auto validation = load_validation_labeled(cfg.data.valid[0], cfg.data);
+    require_n_features(validation.features.n_features, mappers.size(),
+                       "'" + cfg.data.valid[0] + "'");
+    return validation;
 }
 
 } // namespace
 
 Config reconcile_warm_start(Config cfg, Config const &loaded_cfg,
-                            std::vector<std::string> const &explicit_keys)
+                            std::vector<std::string> const &stated_keys)
 {
     auto const named = [&](std::string_view key)
-    { return std::ranges::find(explicit_keys, key) != explicit_keys.end(); };
+    { return std::ranges::find(stated_keys, key) != stated_keys.end(); };
     auto const field = [&](std::string_view key, auto &value, auto const &loaded_value,
                            auto const &default_value)
     {
@@ -211,14 +208,8 @@ Config reconcile_warm_start(Config cfg, Config const &loaded_cfg,
 LoadedTrainValidation load_train_and_validation_with_mappers(Config const &cfg,
                                                              BinMappers    mappers)
 {
-    auto                       train = load_labeled(cfg.data.train, cfg.data, mappers);
-    std::optional<LabeledData> validation;
-    if (!cfg.data.valid.empty())
-    {
-        validation = load_validation_labeled(cfg.data.valid[0], cfg.data);
-        check_csv_width(validation->features.n_features, mappers.size(),
-                        cfg.data.valid[0]);
-    }
+    auto train      = load_labeled(cfg.data.train, cfg.data, mappers);
+    auto validation = load_validation_checked(cfg, mappers);
     return LoadedTrainValidation{.mappers    = std::move(mappers),
                                  .train      = std::move(train),
                                  .validation = std::move(validation)};
@@ -230,20 +221,14 @@ LoadedTrainValidation load_train_and_validation_from_csv(Config const &cfg)
     auto       mappers     = BinMappers::fit(train_batch, cfg.bin_mapper);
     auto       train       = make_labeled(train_batch, cfg.data, mappers);
 
-    std::optional<LabeledData> validation;
-    if (!cfg.data.valid.empty())
+    if (cfg.data.valid.size() > 1)
     {
-        if (cfg.data.valid.size() > 1)
-        {
-            std::println(stderr,
-                         "fit: data.valid has {} entries; only the first is used "
-                         "for per-iter eval metrics",
-                         cfg.data.valid.size());
-        }
-        validation = load_validation_labeled(cfg.data.valid[0], cfg.data);
-        check_csv_width(validation->features.n_features, mappers.size(),
-                        cfg.data.valid[0]);
+        std::println(stderr,
+                     "fit: data.valid has {} entries; only the first is used "
+                     "for per-iter eval metrics",
+                     cfg.data.valid.size());
     }
+    auto validation = load_validation_checked(cfg, mappers);
 
     return LoadedTrainValidation{.mappers    = std::move(mappers),
                                  .train      = std::move(train),
@@ -553,7 +538,7 @@ ScoredBatch score_csv(IBooster const &booster, std::string const &path,
                       DataConfig const &data_cfg, size_t n_features, size_t n_trees)
 {
     auto pf = parse_and_buffer(path, data_cfg);
-    check_csv_width(pf.buf.n_features, n_features, path);
+    require_n_features(pf.buf.n_features, n_features, "'" + path + "'");
     std::vector<float> raw(pf.buf.n_rows);
     booster.predict_at(pf.buf.view(), raw, n_trees);
     return ScoredBatch{.features = std::move(pf.buf), .raw_scores = std::move(raw)};
@@ -563,7 +548,7 @@ ScoredAndLabeled score_and_label_csv(IBooster const &booster, std::string const 
                                      DataConfig const &data_cfg, size_t n_features)
 {
     auto pf = parse_and_buffer(path, data_cfg);
-    check_csv_width(pf.buf.n_features, n_features, path);
+    require_n_features(pf.buf.n_features, n_features, "'" + path + "'");
     std::vector<float> raw(pf.buf.n_rows);
     booster.predict(pf.buf.view(), raw);
     std::vector<float> labels(pf.batch.labels.begin(), pf.batch.labels.end());

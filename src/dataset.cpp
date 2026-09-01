@@ -89,27 +89,24 @@ BinColumns bin_columns(BinMappers const &mappers, size_t n_features, size_t n_ro
 
 } // namespace
 
-namespace
-{
-
-void require_width(size_t given, size_t expected)
+void require_n_features(size_t given, size_t expected, std::string_view what)
 {
     if (given != expected)
     {
         throw std::invalid_argument(
-            "Dataset::bin: the mappers describe " + std::to_string(expected) +
-            " features and the input has " + std::to_string(given) +
-            "; one set of cuts describes one set of columns");
+            std::string(what) + " has " + std::to_string(given) +
+            " columns and the cuts describe " + std::to_string(expected) +
+            " features; a tree routes on feature ids, so the columns must match, "
+            "in the order they were fit on");
     }
 }
-
-} // namespace
 
 Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers,
                      DataConfig const & /*cfg*/,
                      std::shared_ptr<IngestPlane const> plane)
 {
-    require_width(batch.features.size(), mappers.size());
+    require_n_features(batch.features.size(), mappers.size(),
+                       "the input to Dataset::bin");
     detail::Phase<&detail::IngestProfiler::bin_s> phase;
     size_t const                                  n = batch.labels.size();
     std::shared_ptr<BinStore const>               store;
@@ -138,7 +135,7 @@ Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mapp
                      DataConfig const &cfg, std::shared_ptr<IngestPlane const> plane,
                      floats_view weights)
 {
-    require_width(X.extent(1), mappers.size());
+    require_n_features(X.extent(1), mappers.size(), "the input to Dataset::bin");
     if (plane)
     {
         return bin(labels.size(), X.extent(1), labels, mappers, cfg, std::move(plane),
@@ -166,7 +163,7 @@ Dataset Dataset::bin(size_t n_rows, [[maybe_unused]] size_t n_features,
                      std::shared_ptr<IngestPlane const> plane, floats_view weights)
 {
     assert(plane != nullptr);
-    require_width(n_features, mappers.size());
+    require_n_features(n_features, mappers.size(), "the input to Dataset::bin");
     detail::Phase<&detail::IngestProfiler::bin_s> phase;
     Dataset                                       ds;
     ds.rows_  = RowView::all(n_rows);

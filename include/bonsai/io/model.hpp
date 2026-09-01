@@ -29,10 +29,9 @@ struct LoadedBooster
 LoadedBooster load_booster(std::string const &path);
 
 // The same serialization without the file: save_booster is
-// save_booster_bytes plus a write, load_booster is a read plus
-// load_booster_bytes. Model.__getstate__/__setstate__ pickle through these,
-// so a pickled Model and a saved file carry identical content (and neither
-// carries the eval history, which is a training artifact).
+// save_booster_bytes plus a write, load_booster a read plus
+// load_booster_bytes, so bytes and file carry identical content (neither
+// carries the eval history, a training artifact).
 std::vector<uint8_t> save_booster_bytes(IBooster const   &booster,
                                         BinMappers const &mappers, Config const &cfg);
 // `source` names the file in the bad-magic message; empty for pickle bytes,

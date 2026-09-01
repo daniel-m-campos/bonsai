@@ -103,19 +103,15 @@ using FitTickFn = std::function<void(FitTick const &)>;
 using EvalHistoryRef = std::optional<std::reference_wrapper<std::vector<float>>>;
 
 // A warm start continues the loaded booster, whose objective and dispatch
-// were fixed when it was first fit; the user config cannot change them, only
-// disagree with them. Reconciles field by field: a field the user named (its
-// dotted key appears in explicit_keys) must equal the loaded model's value or
-// training refuses up front, because the mismatch would train through the
-// loaded objective but predict, save, and report metrics through the stated
-// one (silent wrong probabilities, then a failed save after the run). An
-// unnamed field inherits the loaded value when it sits at its config default
-// and refuses when it does not (a config file can set fields without naming
-// them in an override list, and a silent override of a file's choice would
-// be the same bug one layer up). Restating the model's own values always
-// passes. Pinned by "reconcile_warm_start: ..." in test_cli_pipeline.
+// were fixed when it was first fit. Field by field: a key the invocation
+// stated (config::stated_keys) must equal the loaded value; an unstated
+// field inherits the loaded value when it sits at its config default and
+// refuses otherwise; restating the model's own values always passes. What a
+// mismatch would break: training through the loaded objective while
+// predict, save, and metrics use the stated one. Pinned by
+// "reconcile_warm_start: ..." in test_cli_pipeline.
 Config reconcile_warm_start(Config cfg, Config const &loaded_cfg,
-                            std::vector<std::string> const &explicit_keys = {});
+                            std::vector<std::string> const &stated_keys = {});
 
 std::unique_ptr<ITrainableBooster>
 train_with_progress(Config const &cfg, LoadedTrainValidation const &loaded,
@@ -155,10 +151,8 @@ struct ScoredBatch
 
 // Parse CSV at `path`, build a row-major feature buffer, predict raw scores.
 // No link inverse applied — caller decides via apply_link_inverse_by_name.
-// n_features is the model's own feature count (the mappers' size); a CSV
-// parsing to any other width is refused before predict, because a tree
-// routes on feature ids and an unchecked narrow matrix is an out-of-bounds
-// read on the C++ path (the Python bindings carry the same check).
+// n_features is the model's own feature count (the mappers' size); a CSV of
+// any other width is refused before predict (require_n_features).
 ScoredBatch score_csv(IBooster const &booster, std::string const &path,
                       DataConfig const &data_cfg, size_t n_features,
                       size_t n_trees = 0);

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string_view>
 #include <vector>
 
 #include "bonsai/bin_mappers.hpp"
@@ -17,6 +18,14 @@
 
 namespace bonsai
 {
+
+// The one width rule, for every place a matrix meets a set of cuts: a tree
+// routes on feature ids, so `given` columns must equal the `expected`
+// features the cuts describe, in the order they were fit on, or the call is
+// refused with std::invalid_argument before any read. `what` names the
+// offending input in the message. Pinned by the "columns must match" cases
+// in test_dataset, test_cli_pipeline, and python/tests/test_estimators.
+void require_n_features(size_t given, size_t expected, std::string_view what);
 
 // Monotone identity tokens, minted once and never reused, so equality means
 // "the same thing". An address will not do: a freed block's address comes back

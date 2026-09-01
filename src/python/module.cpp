@@ -850,18 +850,6 @@ class DevicePlanCache
     mutable Slot<bonsai::CudaShapPlan>    shap_;
 };
 
-void require_columns(size_t given, size_t expected, std::string_view what)
-{
-    if (given != expected)
-    {
-        throw std::invalid_argument(std::format(
-            "this model was fit on {} features and the matrix passed to {} is {} "
-            "columns wide; a tree routes on feature ids, so the columns must "
-            "match, in the order it was fit on",
-            expected, what, given));
-    }
-}
-
 class Model
 {
   public:
@@ -879,7 +867,8 @@ class Model
 
     void check_width(array_2d const &X, char const *method) const
     {
-        require_columns(X.shape(1), mappers_.size(), method);
+        bonsai::require_n_features(X.shape(1), mappers_.size(),
+                                   std::format("the matrix passed to {}", method));
     }
 
     nb::ndarray<nb::numpy, float> predict(array_2d const &X,
@@ -1292,7 +1281,8 @@ resolve_eval_set(std::optional<EvalSet> const &eval_set, bonsai::Config const &c
     if (auto const *const arrays =
             std::get_if<std::pair<array_2d, array_1d>>(&*eval_set))
     {
-        require_columns(arrays->first.shape(1), mappers.size(), "eval_set");
+        bonsai::require_n_features(arrays->first.shape(1), mappers.size(),
+                                   "the matrix passed as eval_set");
         owned = make_validation_labeled(arrays->first, arrays->second);
         check_eval_labels(owned->labels, cfg);
         return &*owned;
@@ -1412,7 +1402,7 @@ ParamItems items_from_params(nb::object params)
     return out;
 }
 
-std::vector<std::string> reconcile_keys(ParamItems const &items)
+std::vector<std::string> stated_keys(ParamItems const &items)
 {
     std::vector<std::string> keys;
     for (auto const &[key, value] : items)
@@ -1613,7 +1603,7 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
     if (init)
     {
         cfg = bonsai::cli::reconcile_warm_start(std::move(cfg), init->cfg,
-                                                reconcile_keys(items));
+                                                stated_keys(items));
     }
 
     nb::gil_scoped_release release;
@@ -1623,7 +1613,8 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
         init ? std::move(init->mappers) : fit_mappers(xarg, std::move(names), cfg);
     if (init)
     {
-        require_columns(xarg.n_features, loaded.mappers.size(), "fit(init_model=...)");
+        bonsai::require_n_features(xarg.n_features, loaded.mappers.size(),
+                                   "the matrix passed to fit(init_model=...)");
     }
     bonsai::floats_view const wview = warg ? warg->view() : bonsai::floats_view{};
     loaded.train = make_labeled(xarg, yarg.view(), loaded.mappers, cfg,
@@ -1686,7 +1677,7 @@ Model train_dataset(nb::object const &params, Dataset const &dataset,
                 "dataset binned with the model's own cuts");
         }
         cfg = bonsai::cli::reconcile_warm_start(std::move(cfg), init->cfg,
-                                                reconcile_keys(items));
+                                                stated_keys(items));
     }
     nb::gil_scoped_release                  release;
     std::optional<bonsai::cli::LabeledData> owned;

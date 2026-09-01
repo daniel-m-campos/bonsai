@@ -351,7 +351,7 @@ def test_a_model_trained_on_a_selection_refuses_the_parent():
     X, y = _blocky_data(n=1000, f=8)
     ds = bonsai.Dataset(X, y)
     model = bonsai.train(_READ_PAIRS, ds.subset(columns=["f0", "f5"]))
-    with pytest.raises(ValueError, match="fit on 2 features"):
+    with pytest.raises(ValueError, match="columns must match"):
         model.predict(ds)
 
 
