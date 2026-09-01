@@ -84,7 +84,7 @@ concept TreeGrower = requires(T g, Dataset const &ds, floats_view grad,
 // selected features and leaves zero-binned placeholders the finders skip.
 //
 // The concept can only check the two signatures; the CONTRACT it stands
-// for is wider and enforced by the parity suite (design review 2026-07-12):
+// for is wider and enforced by the parity suite:
 // populate must accumulate exactly the node's rows' (grad, hess) into the
 // bins the Dataset's mappers define, cell sums summed in an order that is
 // a pure function of configuration,
@@ -103,8 +103,9 @@ concept HistogramEngine =
 // The GPU data plane: histograms and rows stay device-resident, so only
 // decisions and counts cross the bus.
 // The LevelStep drives this whole cluster or none of it, so it is one concept
-// and not seven. begin_root opens the tree on the device or throws: there is
-// no host fallback, so the step has no per-tree mode to carry.
+// and not seven. begin_root opens the tree on the device or throws
+// (device-oversized-tree-refuses-not-falls-back), so the step has no per-tree
+// mode to carry.
 template <typename T>
 concept GPULevelEngine =
     HistogramEngine<T> &&

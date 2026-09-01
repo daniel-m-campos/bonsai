@@ -125,10 +125,9 @@ class IBooster
                                size_t n_features) const = 0;
 
     // --- prediction over a Dataset the caller already binned
-    // Bin-space routing is exact under the model's own cuts, so each of these
-    // is bit-identical to its raw twin above (same outputs, same layouts) at a
-    // quarter the bytes. The Dataset must carry the cuts the model was grown
-    // on; a Dataset binned with other mappers routes to other leaves.
+    // Each of these is bit-identical to its raw twin above at a quarter the
+    // bytes (binned-walk-bit-identical-to-raw-walk). The Dataset must carry
+    // the cuts the model was grown on; other mappers route to other leaves.
     virtual void predict_at_binned(Dataset const &bins, floats_out scores,
                                    size_t n_trees) const = 0;
 
@@ -225,8 +224,7 @@ using detail::value_binned;
 
 // Accumulate a tree's (unscaled-by-lr) contribution over a binned Dataset's
 // rows, routing the columns the tree was grown on. Used by DART to subtract
-// dropped trees without caching per-tree train predictions, by warm start, and
-// by the binned prediction family.
+// dropped trees without caching per-tree train predictions, and by warm start.
 template <Tree T>
 void accumulate_train_contribution(T const &tree, Dataset const &ds, floats_out out)
 {
@@ -425,9 +423,7 @@ void predict_leaf_over_binned(Trees const &trees, Dataset const &bins,
     RowIndex const rows{bins.row_view()};
     size_t const   n_trees = trees.size();
     assert(out.size() == rows.size() * n_trees);
-    auto const sb = tree_split_bins(trees, bins);
-    // The output is a rows x trees matrix; mdspan states the shape once
-    // instead of re-deriving it in index arithmetic at every write.
+    auto const sb     = tree_split_bins(trees, bins);
     auto const leaves = std::mdspan(out.data(), rows.size(), n_trees);
     parallel::for_each_index(
         rows.size(),
@@ -736,6 +732,11 @@ template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
     }
     void set_init_scores(std::vector<float> per_output)
     {
+        if (!per_output.empty() && per_output.size() != n_outputs_)
+        {
+            throw std::invalid_argument(
+                "init_scores length disagrees with the ensemble's output count");
+        }
         init_scores_ = std::move(per_output);
     }
 
@@ -921,33 +922,12 @@ class Booster final : public Ensemble<Gr, Sa>
             hess().resize(train.plane_n_rows());
             if (trees().empty())
             {
-                // The init score is a statistic of the rows this fit
-                // visits, which for a view is a subset of the plane's. On the
-                // identity gather_rows copies, so the full-data path keeps
-                // the labels it already has.
-                RowView const           &view     = train.row_view();
-                std::vector<float> const gathered = view.is_identity()
-                                                        ? std::vector<float>{}
-                                                        : view.gather(train.labels());
-                this->set_init_scores({objective_.init_score(
-                    view.is_identity() ? train.labels() : floats_view{gathered})});
+                this->set_init_scores({init_score_over(train)});
                 scores_.assign(train.plane_n_rows(), init_score());
             }
             else
             {
-                // Warm start: the booster was loaded with trees but no
-                // training state. Rebuild every row's score by routing the
-                // existing trees over the binned data.
-                std::vector<float> raw(train.plane_n_rows(), 0.0F);
-                for (auto const &t : trees())
-                {
-                    internal::accumulate_train_contribution(t, train, raw);
-                }
-                float const init = init_score();
-                scores_.resize(train.plane_n_rows());
-                parallel::for_each_index(
-                    train.plane_n_rows(), [&](size_t i)
-                    { scores_[i] = init + (config().learning_rate * raw[i]); });
+                seed_train_scores(train);
             }
         }
 
@@ -1049,6 +1029,31 @@ class Booster final : public Ensemble<Gr, Sa>
     // True when the round ran on the device instead of the host objective,
     // under resident-objective-eligibility. Disarming syncs scores home, so
     // the host path always resumes with the state it would have had.
+    float init_score_over(Dataset const &train) const
+    {
+        RowView const &view = train.row_view();
+        if (view.is_identity())
+        {
+            return objective_.init_score(train.labels());
+        }
+        std::vector<float> const visited = view.gather(train.labels());
+        return objective_.init_score(floats_view{visited});
+    }
+
+    void seed_train_scores(Dataset const &train)
+    {
+        std::vector<float> raw(train.plane_n_rows(), 0.0F);
+        for (auto const &t : trees())
+        {
+            internal::accumulate_train_contribution(t, train, raw);
+        }
+        float const init = init_score();
+        scores_.resize(train.plane_n_rows());
+        parallel::for_each_index(
+            train.plane_n_rows(),
+            [&](size_t i) { scores_[i] = init + (config().learning_rate * raw[i]); });
+    }
+
     bool try_resident_round(Dataset const &train)
     {
         if constexpr (device_objective_kind<objective_type> !=

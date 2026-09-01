@@ -30,9 +30,9 @@ void cuda_select_device(uint32_t device_id);
 // The CUDA ingest transaction: bins raw features
 // on the device against host-fitted cuts and returns the resident plane for
 // Dataset::bin to carry. Returns nullptr — leaving the caller on the host
-// fill — when the build has no backend, no usable device is present, or the
-// dataset's total bins exceed the resident path's shared-memory ceiling
-// (grow would refuse such a dataset on the device anyway). Bin ids match
+// fill — when the build has no backend, no usable device is present, or a
+// feature's bins exceed the resident path's shared-memory ceiling (grow
+// would refuse such a dataset on the device anyway). Bin ids match
 // the host fill (invariants: device-binning-byte-identity).
 std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const &batch,
                                                BinMappers const          &mappers);
@@ -93,10 +93,10 @@ class CudaHistogramEngine
                   SplitInput &split_input, std::span<feature_id_t const> selected);
 
     // --- GPULevelEngine (optional, phase 3). Level histograms stay on the
-    // device, keyed
-    // by the node's index in the grower's frontier ("slot"); splits are found on the
-    // device and only decisions and child sums cross the bus. The depthwise grower
-    // gates this whole cluster on the GPULevelEngine concept.
+    // device, keyed by the node's index in the grower's frontier ("slot");
+    // splits are found on the device and only decisions and child sums cross
+    // the bus. The depthwise and levelwise growers gate this whole cluster on
+    // the GPULevelEngine concept.
 
     // One child-level derivation: the smaller child's histogram builds from
     // its device row segment; the larger derives on-device as parent minus
@@ -204,8 +204,8 @@ class CudaHistogramEngine
     // back to a leaf, and the parent keeps its slot and segment). The smaller
     // child, and its segment, are derivable from the counts and slot_offsets/
     // slot_counts, so leaf_build takes them directly instead of through this
-    // struct. Equal counts favor the left child, host and device alike; the
-    // [cuda] parity suite fails if they diverge.
+    // struct. Equal counts favor the left child, host and device alike
+    // (smaller-child-tie-break-agrees).
     struct LeafRound
     {
         uint32_t left_slot   = 0;
@@ -262,7 +262,7 @@ class CudaHistogramEngine
     // the labels when the kind has a device loss, and the seed scores once
     // per fit; false when the mirror is not u8 (and any prior arming is
     // dropped). eval_accumulate walks the finished tree there; with a device
-    // loss it returns the round's loss and moves at most a KiB, otherwise it
+    // loss it returns the round's loss and moves at most 8 KiB, otherwise it
     // returns the scores through scores_out for the host loss pass.
     bool                 eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
                                     std::span<float const> initial_scores);

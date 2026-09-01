@@ -203,18 +203,13 @@ class MulticlassBooster final : public Ensemble<Gr, Sa>
     }
     void load_state(std::vector<tree_type> trees, std::vector<float> init_scores)
     {
-        if (!init_scores.empty() && init_scores.size() != n_outputs())
-        {
-            throw std::invalid_argument(
-                "load_state: init_scores length disagrees with n_classes");
-        }
         if (trees.size() % n_outputs() != 0)
         {
             throw std::invalid_argument(
                 "load_state: tree count is not a multiple of n_classes");
         }
-        mutable_trees() = std::move(trees);
         this->set_init_scores(std::move(init_scores));
+        mutable_trees() = std::move(trees);
     }
 
   private:
