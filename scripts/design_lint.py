@@ -93,10 +93,13 @@ KEYWORDS: Final = frozenset(
 )
 BELOW_SEAM: Final = frozenset({"cuda", "metal", "registry"})
 HARDWARE_WORDS: Final = re.compile(r"\b(?:cuda\w*|warp\w*|pinned|occupancy|nvml\w*)\b", re.I)
-DECLARATION: Final = re.compile(
-    r"\b(?:class|struct|enum(?: class)?|using)\s+([A-Za-z_]\w*)"
-    r"|^\s*(?:[\w:<>,\s\*&]+?)\s+([a-z_]\w*)\s*\("
+TYPE_DECLARATION: Final = re.compile(
+    r"\b(?:class|struct|enum(?: class)?|using)\s+([A-Za-z_]\w*)\b(?!::)"
 )
+FUNCTION_DECLARATION: Final = re.compile(r"^\s*((?:[\w:<>,\*&]+\s+)+)([a-z_]\w*)\s*\(")
+NOT_A_NAME: Final = KEYWORDS | {"decltype", "requires", "noexcept", "alignof", "static_assert"}
+CALL_LEADERS: Final = frozenset({"return", "throw", "co_return"})
+MIN_ALIAS_CHARS: Final = 3
 
 
 @dataclass(frozen=True)
@@ -247,20 +250,27 @@ def _split_words(name: str) -> list[str]:
 
 
 def _vocabulary_singletons(headers: list[pathlib.Path]) -> Reading:
-    names: set[str] = set()
-    for f in headers:
-        for line in _lines(f):
-            match = DECLARATION.search(line)
-            if not match:
-                continue
-            name = match.group(1) or match.group(2)
-            if name and name not in SKIP_WORDS:
-                names.add(name)
+    names = {
+        name for f in headers for line in _lines(f) if (name := _declared_name(line))
+    }
     counts: collections.Counter[str] = collections.Counter()
     for name in names:
         counts.update(_split_words(name))
     singles = sorted(w for w, c in counts.items() if c == 1)
     return Reading(len(singles), [(w, 1) for w in singles])
+
+
+def _declared_name(line: str) -> str | None:
+    code = line.split("//", 1)[0]
+    if typed := TYPE_DECLARATION.search(code):
+        name = typed.group(1)
+        local_alias = code.lstrip().startswith("using") and len(name) < MIN_ALIAS_CHARS
+        return None if name in NOT_A_NAME or local_alias else name
+    called = FUNCTION_DECLARATION.match(code)
+    if not called or called.group(1).split()[0] in CALL_LEADERS:
+        return None
+    name = called.group(2)
+    return None if name in NOT_A_NAME or name in SKIP_WORDS else name
 
 
 def _comment_lines(headers: list[pathlib.Path], root: pathlib.Path) -> Reading:
