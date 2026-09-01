@@ -108,6 +108,7 @@ class LeafStep<EngineT, SplitterT> : public TreeStep<EngineT>
         GrowProfiler::Lap lap;
         SplitInput        root = device_root(sel);
         engine_.leaf_begin_root(ds_, config_, grad_, hess_, root, selected_);
+        release_staged_rows(root);
         lap(GrowProfiler::instance().populate_s);
         std::array<uint32_t, 1> const slots{0};
         std::array<SplitOutput, 1>    out{};

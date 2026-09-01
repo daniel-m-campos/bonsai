@@ -23,6 +23,7 @@
 #include "test_grower_helpers.hpp"
 
 #include <catch2/catch_approx.hpp>
+#include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -914,6 +915,36 @@ TEST_CASE("A resident view leaves the scores of rows outside it alone",
     INFO("inside r2=" << r2_over(res, data.y, ids)
                       << " outside r2=" << r2_over(res, data.y, outside));
     REQUIRE(r2_over(res, data.y, ids) > 0.9);
+}
+
+// INVARIANT: device-root-spends-its-host-rows
+// A device root carries a host row list only until the engine stages it; from
+// begin_root on it is a count and sums, the shape the identity root has from
+// the start. A tree that ends at the root therefore stamps nothing on the
+// host, which matters in resident mode: the per-row outputs are empty there,
+// and a stamp over the staged rows writes past them.
+TEMPLATE_TEST_CASE("Resident: a one-leaf tree on a view matches the host path",
+                   "[cuda][resident][view][edge]", CudaDepthwiseGrower,
+                   CudaObliviousGrower, CudaLeafwiseGrower)
+{
+    if (!cuda_available())
+    {
+        SKIP("resident views need a usable CUDA device");
+    }
+    auto const data           = make_regression(4096, 6, 71);
+    Config     cfg            = leaf_cfg();
+    cfg.tree_config.max_depth = 0;
+    std::vector<row_id_t> ids;
+    for (row_id_t r = 0; r < 4096; r += 2)
+    {
+        ids.push_back(r);
+    }
+    RowView const rows = RowView::encode(ids, data.n_rows);
+    REQUIRE(rows.is_identity() == false);
+
+    auto const host = fit_view<MseBooster<TestType>>(cfg, data, rows, 3, true);
+    auto const res  = fit_view<MseBooster<TestType>>(cfg, data, rows, 3, false);
+    REQUIRE(max_abs_diff(host, res) < 1e-4F);
 }
 
 // The device column gather, against the host gather it replaces. The seam

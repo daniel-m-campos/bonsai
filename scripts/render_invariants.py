@@ -40,7 +40,7 @@ TEST_DIRS = ("tests", "python/tests")
 
 MARKER = re.compile(r"^\s*(?://|#)\s*INVARIANT:\s*(\S+)\s*$")
 COMMENT = re.compile(r"^\s*(?://|#)\s?(.*)$")
-CPP_CASE = re.compile(r'^\s*TEST_CASE\(\s*"([^"]+)"')
+CPP_CASE = re.compile(r'^\s*(?:TEMPLATE_(?:LIST_)?)?TEST_CASE\(\s*"([^"]+)"')
 PY_DEF = re.compile(r"^\s*def\s+(test_\w+)")
 
 
