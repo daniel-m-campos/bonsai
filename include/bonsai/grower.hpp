@@ -329,25 +329,20 @@ template <typename EngineT> class DeviceSeam
     bool    eval_     = false;
 };
 
-template <HistogramEngine EngineT   = CpuHistogramEngine,
-          NodeSplitFinder SplitterT = HistogramNodeSplitFinder>
-class DepthwiseGrower
+// What the three growers share: the tree config, the feature sampler's rng,
+// the device seam, and the recycled outputs, with the seam forwarded under
+// the names Booster calls. A grower adds its grow loop and its eval flatten
+// (see DeviceSeam); the leafwise grower arms through begin_leaf instead.
+template <HistogramEngine EngineT> class GrowerHost
 {
   public:
     using Engine = EngineT;
-    using Tree   = DenseTree;
-    explicit DepthwiseGrower(TreeConfig const &cfg);
-    GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
-                          RowSelection selection = {});
 
     void recycle(train_leaf_values values, std::vector<node_id_t> leaf_ids)
     {
         recycled_.set(std::move(values), std::move(leaf_ids));
     }
 
-    // The device seam, forwarded (see DeviceSeam). eval_accumulate flattens
-    // the tree grower-side, where the node-table helper lives; loss carries
-    // the device-reduced metric when the kind has one.
     bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
                         std::span<float const> scores, float learning_rate)
     {
@@ -366,55 +361,28 @@ class DepthwiseGrower
     {
         return seam_.eval_begin(valid, kind, scores);
     }
-    bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
-                         std::span<float> scores_out, std::optional<float> &loss);
 
-  private:
-    TreeConfig                             config_;
-    std::mt19937                           feature_rng_;
-    std::vector<std::vector<feature_id_t>> interaction_groups_;
-    DeviceSeam<EngineT>                    seam_;
-    RecycledOutputs                        recycled_;
-};
-
-template <HistogramEngine  EngineT   = CpuHistogramEngine,
-          LevelSplitFinder SplitterT = HistogramLevelSplitFinder>
-class ObliviousGrower
-{
-  public:
-    using Engine = EngineT;
-    using Tree   = ObliviousTree;
-    explicit ObliviousGrower(TreeConfig const &cfg);
-    GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
-                          RowSelection selection = {});
-
-    void recycle(train_leaf_values values, std::vector<node_id_t> leaf_ids)
+  protected:
+    explicit GrowerHost(TreeConfig const &cfg)
+        : config_(cfg), feature_rng_(cfg.feature_seed)
     {
-        recycled_.set(std::move(values), std::move(leaf_ids));
     }
-
-    // The device seam, forwarded (see DeviceSeam). The oblivious eval flatten
-    // synthesizes the perfect-tree numbering from the level splits.
-    bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
-                        std::span<float const> scores, float learning_rate)
+    TreeConfig const &config() const
     {
-        return seam_.begin(ds, kind, scores, learning_rate);
+        return config_;
     }
-    void resident_end(std::span<float> scores)
+    std::mt19937 &feature_rng()
     {
-        seam_.end(scores);
+        return feature_rng_;
     }
-    bool resident() const
+    DeviceSeam<EngineT> &seam()
     {
-        return seam_.armed();
+        return seam_;
     }
-    bool eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
-                    std::span<float const> scores)
+    RecycledOutputs &recycled()
     {
-        return seam_.eval_begin(valid, kind, scores);
+        return recycled_;
     }
-    bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
-                         std::span<float> scores_out, std::optional<float> &loss);
 
   private:
     TreeConfig          config_;
@@ -423,53 +391,71 @@ class ObliviousGrower
     RecycledOutputs     recycled_;
 };
 
-template <HistogramEngine         EngineT   = CpuHistogramEngine,
-          ParallelNodeSplitFinder SplitterT = HistogramNodeSplitFinder>
-class LeafwiseGrower
+template <HistogramEngine EngineT   = CpuHistogramEngine,
+          NodeSplitFinder SplitterT = HistogramNodeSplitFinder>
+class DepthwiseGrower : public GrowerHost<EngineT>
 {
   public:
-    using Engine = EngineT;
-    using Tree   = DenseTree;
+    using Host = GrowerHost<EngineT>;
+    using Tree = DenseTree;
+    explicit DepthwiseGrower(TreeConfig const &cfg);
+    GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
+                          RowSelection selection = {});
+    bool             eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
+                                     std::span<float> scores_out, std::optional<float> &loss);
+
+  private:
+    using Host::config;
+    using Host::feature_rng;
+    using Host::recycled;
+    using Host::seam;
+    std::vector<std::vector<feature_id_t>> interaction_groups_;
+};
+
+template <HistogramEngine  EngineT   = CpuHistogramEngine,
+          LevelSplitFinder SplitterT = HistogramLevelSplitFinder>
+class ObliviousGrower : public GrowerHost<EngineT>
+{
+  public:
+    using Host = GrowerHost<EngineT>;
+    using Tree = ObliviousTree;
+    explicit ObliviousGrower(TreeConfig const &cfg);
+    GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
+                          RowSelection selection = {});
+    bool             eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
+                                     std::span<float> scores_out, std::optional<float> &loss);
+
+  private:
+    using Host::config;
+    using Host::feature_rng;
+    using Host::recycled;
+    using Host::seam;
+};
+
+template <HistogramEngine         EngineT   = CpuHistogramEngine,
+          ParallelNodeSplitFinder SplitterT = HistogramNodeSplitFinder>
+class LeafwiseGrower : public GrowerHost<EngineT>
+{
+  public:
+    using Host = GrowerHost<EngineT>;
+    using Tree = DenseTree;
     explicit LeafwiseGrower(TreeConfig const &cfg);
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
                           RowSelection selection = {});
-
-    void recycle(train_leaf_values values, std::vector<node_id_t> leaf_ids)
+    bool             resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
+                                    std::span<float const> scores, float learning_rate)
     {
-        recycled_.set(std::move(values), std::move(leaf_ids));
-    }
-
-    // The device seam, forwarded (see DeviceSeam). This grower arms through
-    // begin_leaf: best-first growth sizes its histogram pool from the tree
-    // config, a capacity decided once per fit rather than per tree. The eval
-    // walk is plane-independent, so no leaf variant of it exists.
-    bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
-                        std::span<float const> scores, float learning_rate)
-    {
-        return seam_.begin_leaf(ds, config_, kind, scores, learning_rate);
-    }
-    void resident_end(std::span<float> scores)
-    {
-        seam_.end(scores);
-    }
-    bool resident() const
-    {
-        return seam_.armed();
-    }
-    bool eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
-                    std::span<float const> scores)
-    {
-        return seam_.eval_begin(valid, kind, scores);
+        return seam().begin_leaf(ds, config(), kind, scores, learning_rate);
     }
     bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
                          std::span<float> scores_out, std::optional<float> &loss);
 
   private:
-    TreeConfig                             config_;
-    std::mt19937                           feature_rng_;
+    using Host::config;
+    using Host::feature_rng;
+    using Host::recycled;
+    using Host::seam;
     std::vector<std::vector<feature_id_t>> interaction_groups_;
-    DeviceSeam<EngineT>                    seam_;
-    RecycledOutputs                        recycled_;
 };
 
 } // namespace bonsai
