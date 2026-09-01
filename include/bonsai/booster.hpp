@@ -455,14 +455,13 @@ inline std::vector<DenseTree> densify(std::vector<ObliviousTree> const &trees)
     return dense;
 }
 
-// Epoch-keyed derived-value cache: one home for every pack a booster mints
+// Epoch-keyed derived-value cache, one home for every pack a booster mints
 // from its trees (the dense SHAP equivalents, the predict walk packs).
-// Concurrent readers are why the lock exists (the bindings release the
-// GIL); a mutation never touches the cache, it just bumps the booster's
-// epoch. Booster epochs start at 1, so epoch_ = 0 is the never-filled
-// state and needs no flag. The build callable runs under the lock, so at
-// most one thread rebuilds per stale epoch; the returned shared_ptr keeps
-// a superseded value alive for any reader still walking it.
+// Readers are concurrent (the bindings release the GIL); a mutation only
+// bumps the booster's epoch and never touches the cache. Epochs start at 1,
+// so epoch_ = 0 is the never-filled state. The build callable runs under
+// the lock, so one thread rebuilds per stale epoch, and the returned
+// shared_ptr keeps a superseded value alive for a reader still walking it.
 template <typename ValueT> class EpochCache
 {
   public:
@@ -487,11 +486,10 @@ template <typename ValueT> class EpochCache
 // A value paired with its mutation counter. Readers take read(); every writer
 // goes through mutate(), which bumps the epoch before handing the value over.
 // Mutation is never concurrent with reads (the GIL-released concurrency is
-// predict-only), and that contract is load-bearing: bump-first means a
-// reader racing a mutation could cache a stale value under the final epoch,
-// where it would never heal. Epoch-keyed readers therefore sample epoch()
-// BEFORE read(), so a torn interleaving rebuilds on the next call instead
-// of poisoning the cache. The counter is monotonic, so several mutations in
+// predict-only). An epoch-keyed reader samples epoch() before read(), which
+// get(trees.epoch(), build) does by argument order, so even a torn
+// interleaving rebuilds on the next call instead of caching a stale value
+// under the final epoch. The counter is monotonic, so several mutations in
 // one round are fine.
 template <typename T> class Versioned
 {
@@ -514,6 +512,24 @@ template <typename T> class Versioned
     T        value_;
     uint64_t epoch_ = 1;
 };
+
+// TreeSHAP walks DenseTree; an oblivious ensemble hands over its cached dense
+// equivalents and a dense ensemble hands over its own trees.
+template <typename TreeT, typename Fn>
+void with_dense_trees(EpochCache<std::vector<DenseTree>> const &dense,
+                      Versioned<std::vector<TreeT>> const &trees, Fn &&fn)
+{
+    if constexpr (std::same_as<TreeT, ObliviousTree>)
+    {
+        auto const held =
+            dense.get(trees.epoch(), [&] { return densify(trees.read()); });
+        std::forward<Fn>(fn)(*held);
+    }
+    else
+    {
+        std::forward<Fn>(fn)(trees.read());
+    }
+}
 
 } // namespace internal
 
@@ -1036,16 +1052,9 @@ class Booster final : public ITrainableBooster
     void pred_contribs_binned(Dataset const &bins, std::span<double> out,
                               size_t n_features) const override
     {
-        if constexpr (std::same_as<tree_type, ObliviousTree>)
-        {
-            auto const dense = dense_.get(trees_.epoch(), [&]
-                                          { return internal::densify(trees_.read()); });
-            contribs_over_binned(*dense, bins, out, n_features);
-        }
-        else
-        {
-            contribs_over_binned(trees_.read(), bins, out, n_features);
-        }
+        internal::with_dense_trees(
+            dense_, trees_, [&](auto const &trees)
+            { contribs_over_binned(trees, bins, out, n_features); });
     }
 
     // The shape both contribs paths share: per row, zero the slice, walk every
@@ -1107,16 +1116,8 @@ class Booster final : public ITrainableBooster
     void pred_contribs(features_view X, std::span<double> out,
                        size_t n_features) const override
     {
-        if constexpr (std::same_as<tree_type, ObliviousTree>)
-        {
-            auto const dense = dense_.get(trees_.epoch(), [&]
-                                          { return internal::densify(trees_.read()); });
-            contribs_over(*dense, X, out, n_features);
-        }
-        else
-        {
-            contribs_over(trees_.read(), X, out, n_features);
-        }
+        internal::with_dense_trees(dense_, trees_, [&](auto const &trees)
+                                   { contribs_over(trees, X, out, n_features); });
     }
 
     template <typename Trees>

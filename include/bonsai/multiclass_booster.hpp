@@ -395,16 +395,8 @@ class MulticlassBooster final : public ITrainableBooster
     void pred_contribs(features_view X, std::span<double> out,
                        size_t n_features) const override
     {
-        if constexpr (std::same_as<tree_type, ObliviousTree>)
-        {
-            auto const dense = dense_.get(trees_.epoch(), [&]
-                                          { return internal::densify(trees_.read()); });
-            contribs_over(*dense, X, out, n_features);
-        }
-        else
-        {
-            contribs_over(trees_.read(), X, out, n_features);
-        }
+        internal::with_dense_trees(dense_, trees_, [&](auto const &trees)
+                                   { contribs_over(trees, X, out, n_features); });
     }
 
     // The shape both contribs paths share: per row and class, zero the slice,
@@ -454,16 +446,9 @@ class MulticlassBooster final : public ITrainableBooster
     void pred_contribs_binned(Dataset const &bins, std::span<double> out,
                               size_t n_features) const override
     {
-        if constexpr (std::same_as<tree_type, ObliviousTree>)
-        {
-            auto const dense = dense_.get(trees_.epoch(), [&]
-                                          { return internal::densify(trees_.read()); });
-            contribs_over_binned(*dense, bins, out, n_features);
-        }
-        else
-        {
-            contribs_over_binned(trees_.read(), bins, out, n_features);
-        }
+        internal::with_dense_trees(
+            dense_, trees_, [&](auto const &trees)
+            { contribs_over_binned(trees, bins, out, n_features); });
     }
 
     // contribs_over's twin: routing reads the row's bins, the class stride and

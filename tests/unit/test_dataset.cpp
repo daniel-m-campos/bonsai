@@ -1058,5 +1058,5 @@ TEST_CASE("Dataset: binning refuses a width the mappers do not describe",
     narrow.labels   = {0.0F, 1.0F};
     narrow.feature_names.assign(1, "f");
     REQUIRE_THROWS_WITH(Dataset::bin(narrow, mappers, {}),
-                        Catch::Matchers::ContainsSubstring("one set of cuts"));
+                        Catch::Matchers::ContainsSubstring("columns must match"));
 }

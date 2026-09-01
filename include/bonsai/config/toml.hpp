@@ -56,7 +56,7 @@ Config resolve(std::string const &toml_path, std::vector<Override> const &overri
 // written in the TOML file states its key exactly as an override does, so a
 // warm start refuses a disagreeing file value instead of silently inheriting
 // over it. Order follows resolve's precedence (file, then overrides).
-// Pinned by "stated_keys: ..." in test_config.
+// Pinned by "stated_keys: ..." in test_toml.
 std::vector<std::string> stated_keys(std::string const           &toml_path,
                                      std::vector<Override> const &overrides);
 

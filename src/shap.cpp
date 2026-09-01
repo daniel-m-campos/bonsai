@@ -251,28 +251,28 @@ double expected_value_impl(DenseTree const &tree, features_view X, row_id_t row,
            cover;
 }
 
+void require_covers(DenseTree const &tree)
+{
+    if (tree.covers().size() != tree.nodes().size())
+    {
+        throw std::invalid_argument(
+            "tree_shap: tree carries no per-node covers (model predates "
+            "format v6 or was hand-built)");
+    }
+}
+
 } // namespace
 
 double tree_expected_value(DenseTree const &tree, features_view X, row_id_t row,
                            std::span<bool const> in_subset)
 {
-    if (tree.covers().size() != tree.nodes().size())
-    {
-        throw std::invalid_argument(
-            "tree_shap: tree carries no per-node covers (model predates "
-            "format v6 or was hand-built)");
-    }
+    require_covers(tree);
     return expected_value_impl(tree, X, row, in_subset, 0);
 }
 
 double tree_expected_value(DenseTree const &tree)
 {
-    if (tree.covers().size() != tree.nodes().size())
-    {
-        throw std::invalid_argument(
-            "tree_shap: tree carries no per-node covers (model predates "
-            "format v6 or was hand-built)");
-    }
+    require_covers(tree);
     return expected_value_impl(tree, features_view{}, 0, {}, 0);
 }
 

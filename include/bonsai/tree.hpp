@@ -17,12 +17,13 @@ class DenseWalk;
 class ObliviousWalk;
 
 // The one NaN-routing rule, shared by every tree walk and both predict
-// packs: v > t and !(v <= t) are the same predicate on non-NaN values and
-// disagree exactly on NaN (the first sends it left, the second right), so
-// default_left selects the comparison form and no isnan test is needed.
-// Equivalence requires IEEE comparison semantics: -ffinite-math-only would
-// let a compiler collapse the two forms and silently break NaN routing
-// (no such flag is set; -ffp-contract=off is, see the top-level CMake).
+// packs: v > t and !(v <= t) agree on non-NaN values and disagree exactly
+// on NaN (the first sends it left, the second right), so default_left
+// selects the comparison form and no isnan test is needed. Pinned by the
+// NaN injection in tests/unit/test_predict_walk.cpp.
+#if defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__
+#error "routes_right needs IEEE NaN comparisons; build without -ffinite-math-only"
+#endif
 inline bool routes_right(float v, float threshold, bool default_left)
 {
     return default_left ? v > threshold : !(v <= threshold);
@@ -246,29 +247,21 @@ class ObliviousTree
 // walk applies unchanged. Throws std::invalid_argument without leaf covers.
 DenseTree dense_equivalent(ObliviousTree const &tree);
 
-// The dense-tree predict pack, for the depthwise and leafwise ensembles.
-// Rows-outer inversion alone buys a dense tree nothing, because its cost is
-// the chain of data-dependent node loads, not the loop shape (measured 2231
-// vs 2206 ns/row); the lever is walking eight trees per row in lockstep so
-// the core always has independent load chains in flight. Leaves point to
-// themselves and a leaf's threshold slot holds its value, so a walk padded
-// to its group's deepest tree self-loops harmlessly and the sum reads the
-// node the walk ends on; the padding tax is bounded by the group's deepest
-// member (a shallow tree still steps that many times), and groups bound
-// their own depth so leafwise's ragged best-first trees tax only their own
-// group.
+// The dense-tree predict pack for the depthwise and leafwise ensembles:
+// eight trees walked per row in lockstep so the core always has independent
+// load chains in flight, leaves self-looping so a walk padded to its group's
+// deepest tree reads the node it ends on. The measurements behind that shape
+// live in the decisions ledger.
 //
 // What it guarantees: accumulate adds each row's tree-order value sum into
 // out; from a zero-filled out (as predict_at provides) the result is
-// bit-identical to calling tree.predict per tree (the depthwise eval
-// baseline pin never moves), NaN routing per routes_right included.
+// bit-identical to calling tree.predict per tree, NaN routing per
+// routes_right included.
 //
-// What breaks it: the pack snapshots the trees it was built from; a booster
-// mutation invalidates it, which the booster's epoch-keyed cache enforces.
-// Nothing else may hold one across a mutation. Tree depth is trusted from
-// Params::depth: every grower stamps it from the grown structure, and the
-// model load path refuses a file whose stated depth understates the stored
-// one (src/io), so an under-walk cannot enter here.
+// What breaks it: the pack snapshots the trees it was built from, so only
+// the booster's epoch-keyed cache may hold one across a mutation. Tree depth
+// is trusted from Params::depth, which every grower stamps from the grown
+// structure and the model load path checks against the stored nodes.
 //
 // perf: measured on M2 (1 thread, 64 cols, depth 8, 100 trees) 2206 ->
 // 1004 ns/row at batch against xgboost inplace_predict at 1015.
@@ -279,9 +272,6 @@ class DenseWalk
   public:
     explicit DenseWalk(std::span<DenseTree const> trees);
 
-    // Adds the first n_trees trees' values to out, row-parallel above a
-    // small-batch floor and serial below it so single-row callers never
-    // pay a parallel-region entry.
     void accumulate(features_view X, size_t n_trees, floats_out out) const;
 
   private:
@@ -300,37 +290,25 @@ class DenseWalk
 };
 
 // The oblivious ensemble's predict pack: every tree's level splits packed
-// contiguous and every leaf table concatenated, so accumulate() inverts the
-// ensemble loop (rows outer in one parallel section, trees inner over
-// cache-resident arrays) instead of opening a parallel region per tree over
-// each tree's own split vector.
-//
-// Full 64-row blocks additionally walk transposed: the block is flipped
-// into feature-major scratch once, so every level step is one broadcast
-// compare over 64 contiguous floats, which vectorizes at baseline SIMD
-// widths with no gathers. Row-wise blocking is the one vectorization the
-// bit-identity contract permits: each row's accumulator remains its own
-// tree-order fold, the lanes just answer each level's question together.
-// The sub-block tail walks the scalar path.
+// contiguous and every leaf table concatenated, walked rows-outer in one
+// parallel section. Full 64-row blocks walk transposed, one broadcast
+// compare per level over 64 contiguous floats, and the tail walks scalar.
+// Row-wise blocking is the one vectorization the bit-identity contract
+// permits: each row's accumulator remains its own tree-order fold, the
+// lanes just answer each level's question together.
 //
 // What it guarantees: accumulate adds each row's tree-order leaf sum into
-// out, with the same per-row float fold as calling tree.predict per tree,
-// so from a zero-filled out (as predict_at provides) results are
+// out; from a zero-filled out (as predict_at provides) the result is
 // bit-identical to the per-tree walk, NaN routing per routes_right
-// included. Trees of unequal depth pack per-tree ranges, so
-// early-stopped levelwise models walk unchanged.
+// included. Trees of unequal depth pack per-tree ranges, so early-stopped
+// levelwise models walk unchanged.
 //
-// What breaks it: same staleness contract as DenseWalk above; the
-// booster's epoch-keyed cache is the only legitimate holder across a
-// mutation.
+// What breaks it: the staleness contract of DenseWalk above.
 //
 // perf: measured at 1 thread (64 cols, depth 8, 100 trees): single-row
-// 1053 -> 610ns on M2, and the blocked batch walk reaches 181 ns/row on
-// M2 and 179 on EPYC 9654 (from 505 and 874 scalar), against catboost's
-// same-pod 784. The two hosts converging says the block walk is memory
-// bound, not ISA bound. A scalar baked-constant codegen probe measured
-// 293, so row blocking beats that ceiling along the dimension the probe
-// did not price, and this is still not a code generator.
+// 1053 -> 610 ns on M2; the blocked batch walk reaches 181 ns/row on M2
+// and 179 on EPYC 9654 (from 505 and 874 scalar), against catboost's
+// same-pod 784 and a scalar baked-constant codegen probe's 293.
 //
 // Pinned by tests/unit/test_predict_walk.cpp (exact-equality parity vs the
 // per-tree walk, NaN injection included).
@@ -339,9 +317,6 @@ class ObliviousWalk
   public:
     explicit ObliviousWalk(std::span<ObliviousTree const> trees);
 
-    // Adds the first n_trees trees' leaf values to out, row-parallel above
-    // a small-batch floor and serial below it so single-row callers never
-    // pay a parallel-region entry.
     void accumulate(features_view X, size_t n_trees, floats_out out) const;
 
   private:
