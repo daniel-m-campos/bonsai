@@ -38,25 +38,12 @@
 namespace bonsai::cli
 {
 
-namespace
-{
-
-void select_device_for(Config const &cfg)
-{
-    if (cfg.dispatch.grower_name.starts_with("cuda"))
-    {
-        cuda_select_device(cfg.parallel.device_id);
-    }
-}
-
-} // namespace
-
 LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path)
 {
     auto const batch   = detail::parse_input(path, cfg.data);
     auto       mappers = BinMappers::fit(batch, cfg.bin_mapper);
     select_device_for(cfg);
-    auto plane = cfg.dispatch.grower_name.starts_with("cuda")
+    auto plane = grower_runs_on_device(cfg.dispatch.grower_name)
                      ? cuda_ingest(batch, mappers)
                      : nullptr;
     auto train = Dataset::bin(batch, mappers, cfg.data, std::move(plane));
@@ -414,11 +401,11 @@ train_impl(Config const &cfg, LabeledData const &train, ValidationRef validation
     }
 
     std::vector<float> es_scores;
-    float              best_loss   = 0.0F;
-    uint32_t           best_iter   = 0;
-    size_t             es_base     = 0;
-    bool const         cuda_grower = cfg.dispatch.grower_name.starts_with("cuda");
-    bool               device_eval = false;
+    float              best_loss     = 0.0F;
+    uint32_t           best_iter     = 0;
+    size_t             es_base       = 0;
+    bool const         device_grower = grower_runs_on_device(cfg.dispatch.grower_name);
+    bool               device_eval   = false;
 
     for (uint32_t i = 0; i < n_iters; ++i)
     {
@@ -449,15 +436,15 @@ train_impl(Config const &cfg, LabeledData const &train, ValidationRef validation
                 }
             }
             if (defer_binning &&
-                (cuda_grower || bin_validation_pays(valid.features.n_features,
-                                                    cfg.tree_config.max_depth, i)))
+                (device_grower || bin_validation_pays(valid.features.n_features,
+                                                      cfg.tree_config.max_depth, i)))
             {
                 binned_here     = bin_validation(valid, train.dataset, cfg.data);
                 validation_bins = &*binned_here;
                 defer_binning   = false;
             }
             std::optional<float> device_loss;
-            if (i == 0 && cuda_grower && validation_bins != nullptr &&
+            if (i == 0 && device_grower && validation_bins != nullptr &&
                 validation_bins->row_view().is_identity())
             {
                 detail::Phase<&detail::FitProfiler::eval_arm_s> phase;

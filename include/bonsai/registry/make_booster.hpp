@@ -35,4 +35,11 @@ struct AvailableCombo
 // table. Used by `bonsai info` and the Python sidecar for sanity.
 std::vector<AvailableCombo> available_combos();
 
+// Answered from the grower's engine type, never from the spelling of its
+// name (invariants: device-grower-by-engine-type).
+bool grower_runs_on_device(std::string_view grower_name);
+
+// A no-op for a grower that runs on the host, so every trainer calls it.
+void select_device_for(Config const &config);
+
 } // namespace bonsai

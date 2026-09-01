@@ -9,6 +9,8 @@
 
 #include "bonsai/booster.hpp"
 #include "bonsai/config/config.hpp"
+#include "bonsai/cuda/histogram_engine.hpp"
+#include "bonsai/grower.hpp"
 #include "bonsai/registry/configurations.hpp"
 #include "bonsai/registry/names.hpp"
 #include "bonsai/typelist.hpp"
@@ -47,6 +49,16 @@ inline constexpr auto configurations = make_table<Configurations, Entry>(
         };
     });
 
+struct GrowerEntry
+{
+    std::string_view name;
+    bool             on_device;
+};
+
+inline constexpr auto growers = make_table<Growers, GrowerEntry>(
+    []<typename G>()
+    { return GrowerEntry{impl_name<G>::value, GPULevelEngine<typename G::Engine>}; });
+
 } // namespace
 
 std::unique_ptr<ITrainableBooster> make_booster(Config const &config)
@@ -76,6 +88,26 @@ std::vector<AvailableCombo> available_combos()
         out.push_back({e.objective_name, e.grower_name, e.sampler_name});
     }
     return out;
+}
+
+bool grower_runs_on_device(std::string_view grower_name)
+{
+    for (GrowerEntry const &g : growers)
+    {
+        if (g.name == grower_name)
+        {
+            return g.on_device;
+        }
+    }
+    return false;
+}
+
+void select_device_for(Config const &config)
+{
+    if (grower_runs_on_device(config.dispatch.grower_name))
+    {
+        cuda_select_device(config.parallel.device_id);
+    }
 }
 
 } // namespace bonsai

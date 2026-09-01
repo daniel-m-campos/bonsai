@@ -43,6 +43,7 @@
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/io/model.hpp"
 #include "bonsai/parallel.hpp"
+#include "bonsai/registry/make_booster.hpp"
 #include "bonsai/registry/objective_dispatch.hpp"
 
 namespace nb = nanobind;
@@ -1617,8 +1618,9 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
                                    "the matrix passed to fit(init_model=...)");
     }
     bonsai::floats_view const wview = warg ? warg->view() : bonsai::floats_view{};
-    loaded.train = make_labeled(xarg, yarg.view(), loaded.mappers, cfg,
-                                cfg.dispatch.grower_name.starts_with("cuda"), wview);
+    loaded.train =
+        make_labeled(xarg, yarg.view(), loaded.mappers, cfg,
+                     bonsai::grower_runs_on_device(cfg.dispatch.grower_name), wview);
     std::optional<bonsai::cli::LabeledData> owned;
     auto const *const                       validation =
         resolve_eval_set(eval_set, cfg, loaded.mappers, init.has_value(), owned);

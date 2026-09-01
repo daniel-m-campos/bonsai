@@ -26,6 +26,12 @@ The u8-vs-u16 storage decision uses the same bin-count criterion on both sides, 
 
 - enforced by: [`cuda_ingest bins bit-identically to the host fill`](../tests/unit/test_cuda_grower.cpp)
 
+### device-grower-by-engine-type
+
+Whether a grower runs on a device is answered by its engine type through the registry, never by a caller inspecting the name. The registered spellings still say cuda_ for every device grower, so the predicate agrees with the prefix on every name the table holds; a name outside the table is not a device grower however it is spelled.
+
+- enforced by: [`make_booster: grower_runs_on_device answers from the engine type`](../tests/unit/test_make_booster.cpp)
+
 ### device-objective-formula-matches-host
 
 The device gradient and hessian kernels must stay numerically identical to src/objective.cpp's host formulas. Device-resident training reads them every round with no host cross-check, so a divergence shows up only as a quality difference. This suite is the cross-check: MSE, LogLoss and Poisson, on both the depthwise and levelwise planes, against the same fit with the host objective forced.
