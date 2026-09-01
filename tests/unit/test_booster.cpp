@@ -16,6 +16,7 @@
 #include "bonsai/multiclass_booster.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/registry/typelists.hpp"
+#include "bonsai/row_view.hpp"
 #include "bonsai/sampler.hpp"
 #include "bonsai/types.hpp"
 #include "test_grower_helpers.hpp"
@@ -529,6 +530,46 @@ TEST_CASE("MulticlassBooster: predict_leaf fills one column per tree",
             CHECK(DenseTree::is_leaf(b.trees()[t].nodes()[id]));
         }
     }
+}
+
+// INVARIANT: row-list-follows-the-fit
+// The row list a round trains on belongs to the fit it was materialized for,
+// keyed on the fit's minted token and never on its size: a second fit on a
+// same-sized view of different rows grows the tree those rows grow, not the
+// previous view's.
+TEMPLATE_LIST_TEST_CASE("Booster: a same-sized view of other rows refills the row list",
+                        "[booster][view][invariant]", Growers)
+{
+    test::skip_without_cuda<TestType>();
+    detail::ColumnBatch const batch{
+        .features      = {{0.5F, 0.5F, 0.5F, 0.5F, 0.0F, 0.1F, 0.9F, 1.0F}},
+        .labels        = {0.0F, 0.0F, 0.0F, 0.0F, -1.0F, -1.0F, 1.0F, 1.0F},
+        .weights       = {},
+        .feature_names = {"a"},
+    };
+    Dataset const               full = make_dataset(batch);
+    std::vector<row_id_t> const flat{0, 1, 2, 3};
+    std::vector<row_id_t> const separable{4, 5, 6, 7};
+    Dataset const               flat_view =
+        full.with_rows(RowView::encode(flat, batch.labels.size()));
+    Dataset const separable_view =
+        full.with_rows(RowView::encode(separable, batch.labels.size()));
+    Config const cfg = tiny_cfg();
+
+    MseBooster<TestType> continued{cfg};
+    continued.update_one_iter(flat_view);
+    continued.update_one_iter(separable_view);
+    MseBooster<TestType> fresh{cfg};
+    fresh.update_one_iter(separable_view);
+
+    REQUIRE(continued.n_trees() == 2);
+    RawFeatures const  raw = to_raw(batch);
+    std::vector<float> second(raw.n_rows);
+    std::vector<float> first(raw.n_rows);
+    continued.trees()[1].predict(raw.view(), second);
+    fresh.trees()[0].predict(raw.view(), first);
+    CHECK(second == first);
+    CHECK(second[4] != second[7]);
 }
 
 TEST_CASE("MulticlassBooster: separable 3-class data reaches perfect accuracy",

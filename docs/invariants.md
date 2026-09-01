@@ -68,6 +68,12 @@ The flattened node table and ObliviousTree::leaf_for agree on one numbering. The
 
 - enforced by: [`ObliviousTree: the flattened table numbers leaves as leaf_for does`](../tests/unit/test_oblivious_tree.cpp)
 
+### row-list-follows-the-fit
+
+The row list a round trains on belongs to the fit it was materialized for, keyed on the fit's minted token and never on its size: a second fit on a same-sized view of different rows grows the tree those rows grow, not the previous view's.
+
+- enforced by: `../tests/unit/test_booster.cpp`
+
 ### smaller-child-tie-break-agrees
 
 On equal child row counts the fresh histogram slot goes to the LEFT child. The larger sibling derives by subtracting the smaller from the parent, so host and device must pick the same side or a subtraction reads the wrong sibling's histogram and the tree silently changes. The device mirrors this in leaf_split, where `left_small` is the same `<=` comparison.

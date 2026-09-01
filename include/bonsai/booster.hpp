@@ -699,16 +699,19 @@ class Booster final : public ITrainableBooster
 
     // Fills row_indices_ for this tree from the Dataset's row view, which is
     // every row of the plane unless the caller subset it. AllRowsSampler is
-    // deterministic, so once row_indices_ holds the view's rows only its size
-    // need be checked: the per-tree refill (a measurable membw cost at scale)
-    // is skipped. The content is byte-identical to materializing every tree,
-    // so the model is unchanged. Other samplers draw fresh indices each tree.
+    // deterministic, so once row_indices_ holds this fit's rows (known by its
+    // minted token, pinned by row-list-follows-the-fit) the per-tree refill,
+    // a measurable membw cost at scale, is skipped; the content is
+    // byte-identical to materializing every tree, so the model is unchanged.
+    // Other samplers draw fresh indices each tree out of the same list.
     size_t refill_row_indices(Dataset const &train)
     {
-        RowView const &view = train.row_view();
+        RowView const &view     = train.row_view();
+        bool const     same_fit = rows_fit_ == train.fit_identity();
+        rows_fit_               = train.fit_identity();
         if constexpr (sampler_traits<sampler_type>::copies_view_verbatim)
         {
-            if (row_indices_.size() != view.size())
+            if (!same_fit)
             {
                 view.materialize_into(row_indices_);
             }
@@ -716,9 +719,7 @@ class Booster final : public ITrainableBooster
         }
         else
         {
-            // The draw's universe is the view's rows, so the ids it emits are
-            // the view's and at most that many land in row_indices_.
-            if (candidates_.size() != view.size())
+            if (!same_fit)
             {
                 view.materialize_into(candidates_);
                 row_indices_.resize(view.size());
@@ -1252,6 +1253,7 @@ class Booster final : public ITrainableBooster
     // DIFFERENT fold at the same depth, leaving the previous fold's labels,
     // scores and rows live.
     FitId                                        resident_fit_{};
+    FitId                                        rows_fit_{};
     internal::EpochCache<std::vector<DenseTree>> dense_;
     internal::EpochCache<walk_type>              walk_;
 };
