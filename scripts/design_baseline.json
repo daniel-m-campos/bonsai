@@ -1,8 +1,8 @@
 {
-  "clone_windows": 431,
-  "shape_clone_windows": 962,
+  "clone_windows": 417,
+  "shape_clone_windows": 949,
   "vocabulary_singletons": 170,
-  "contract_prose_lines": 1507,
-  "binding_prose_lines": 429,
+  "contract_prose_lines": 1596,
+  "binding_prose_lines": 434,
   "hardware_leaks": 59
 }
