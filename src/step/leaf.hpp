@@ -10,8 +10,8 @@
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
 #include "step/primitives.hpp"
+#include "step/tree.hpp"
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -21,28 +21,24 @@
 namespace bonsai::grower_detail
 {
 
-template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT> class LeafStep
+template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT>
+class LeafStep : public TreeStep<EngineT>
 {
+    using Step = TreeStep<EngineT>;
+    using Step::config_;
+    using Step::ds_;
+    using Step::engine_;
+    using Step::grad_;
+    using Step::hess_;
+    using Step::selected_;
+
   public:
-    LeafStep(EngineT &engine, Dataset const &ds, TreeConfig const &config,
-             floats_view grad, floats_view hess, feature_view selected)
-        : engine_(engine), ds_(ds), config_(config), grad_(grad), hess_(hess),
-          selected_(selected)
-    {
-        engine_.begin_tree(ds_, grad_, hess_);
-    }
+    using Step::Step;
 
     Candidate open_root(RowSelection const &sel)
     {
         GrowProfiler::Lap lap;
-        SplitInput        root;
-        root.id = 0;
-        root.rows.assign(sel.rows.begin(), sel.rows.end());
-        assert(sel.shape.runs.empty() || rows_in(sel.shape.runs) == sel.rows.size());
-        root.shape = sel.shape;
-        engine_.populate(ds_, grad_, hess_, root, selected_);
-        root.sums      = root.totals();
-        root.row_count = root.rows.size();
+        SplitInput root = populated_root(ds_, grad_, hess_, sel, selected_, engine_);
         lap(GrowProfiler::instance().populate_s);
         std::array<SplitOutput, 1> split{};
         SplitterT::find_parallel({&root, 1}, config_, split);
@@ -86,41 +82,31 @@ template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT> class Leaf
                   std::vector<node_id_t> & /*leaf_ids*/)
     {
     }
-
-  protected:
-    EngineT          &engine_;
-    Dataset const    &ds_;
-    TreeConfig const &config_;
-    floats_view       grad_;
-    floats_view       hess_;
-    feature_view      selected_;
 };
 
 template <GPULeafEngine EngineT, ParallelNodeSplitFinder SplitterT>
-class LeafStep<EngineT, SplitterT>
+class LeafStep<EngineT, SplitterT> : public TreeStep<EngineT>
 {
+    using Step = TreeStep<EngineT>;
+    using Step::config_;
+    using Step::ds_;
+    using Step::engine_;
+    using Step::grad_;
+    using Step::hess_;
+    using Step::selected_;
+
   public:
     LeafStep(EngineT &engine, Dataset const &ds, TreeConfig const &config,
              floats_view grad, floats_view hess, feature_view selected)
-        : engine_(engine), ds_(ds), config_(config), grad_(grad), hess_(hess),
-          selected_(selected), resident_(engine_.resident_armed())
+        : Step(engine, ds, config, grad, hess, selected),
+          resident_(engine_.resident_armed())
     {
-        engine_.begin_tree(ds_, grad_, hess_);
     }
 
     Candidate open_root(RowSelection const &sel)
     {
         GrowProfiler::Lap lap;
-        SplitInput        root;
-        root.id = 0;
-        if (sel.shape.identity)
-        {
-            root.row_count = sel.rows.size();
-        }
-        else
-        {
-            root.rows.assign(sel.rows.begin(), sel.rows.end());
-        }
+        SplitInput        root = device_root(sel);
         engine_.leaf_begin_root(ds_, config_, grad_, hess_, root, selected_);
         lap(GrowProfiler::instance().populate_s);
         std::array<uint32_t, 1> const slots{0};
@@ -198,21 +184,10 @@ class LeafStep<EngineT, SplitterT>
         }
         engine_.leaf_stamp(stamps_);
         stamps_.clear();
-        std::vector<float> node_vals(nodes.size());
-        for (size_t i = 0; i < nodes.size(); ++i)
-        {
-            node_vals[i] = nodes[i].threshold_or_value;
-        }
-        engine_.finalize_tree(node_vals, values, leaf_ids);
+        engine_.finalize_tree(node_values(nodes), values, leaf_ids);
     }
 
   private:
-    EngineT                                 &engine_;
-    Dataset const                           &ds_;
-    TreeConfig const                        &config_;
-    floats_view                              grad_;
-    floats_view                              hess_;
-    feature_view                             selected_;
     std::vector<typename EngineT::LeafStamp> stamps_;
     bool                                     resident_;
 };

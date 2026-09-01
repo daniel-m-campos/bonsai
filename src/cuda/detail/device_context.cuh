@@ -284,7 +284,11 @@ struct CudaDeviceContext
 
     void     init_shared_limit();
     void     ensure_dataset(Dataset const &dataset);
-    void     stage_selection(std::span<feature_id_t const> selected, size_t n_feats);
+    size_t   stage_selection(Dataset const &ds, std::span<feature_id_t const> selected);
+    void     require_hist_fits(size_t max_sel_bins) const;
+    void     launch_root_sums(float2 const *gh, uint32_t n);
+    HistCell fetch_root_sums();
+    void     wait_for_profile(ProfileCounters::Lap &lap);
     void     note_plane(bool tiled, size_t shared);
     void     launch_hist(uint32_t ds_rows, uint32_t ds_feats, uint32_t n_nodes,
                          uint32_t max_rows, float2 const *gh, uint32_t const *rows,

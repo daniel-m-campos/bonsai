@@ -11,6 +11,7 @@
 #include "bonsai/types.hpp"
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -158,6 +159,61 @@ inline void populate_nodes(Dataset const &ds, floats_view grad, floats_view hess
             engine.populate(ds, grad, hess, node, selected);
         }
     }
+}
+
+template <HistogramEngine EngineT>
+inline SplitInput populated_root(Dataset const &ds, floats_view grad, floats_view hess,
+                                 RowSelection const &sel, feature_view selected,
+                                 EngineT &engine)
+{
+    SplitInput root;
+    root.rows.assign(sel.rows.begin(), sel.rows.end());
+    assert(sel.shape.runs.empty() || rows_in(sel.shape.runs) == sel.rows.size());
+    root.shape = sel.shape;
+    engine.populate(ds, grad, hess, root, selected);
+    root.sums      = root.totals();
+    root.row_count = root.rows.size();
+    return root;
+}
+
+// perf: Full-data fits pass the identity by contract (empty rows +
+// row_count): the 64MB host copy and its upload never happen; the
+// engine builds/caches the identity on device. Identity, not
+// cardinality: any other full-length list takes the general path.
+inline SplitInput device_root(RowSelection const &sel)
+{
+    SplitInput root;
+    if (sel.shape.identity)
+    {
+        root.row_count = sel.rows.size();
+    }
+    else
+    {
+        root.rows.assign(sel.rows.begin(), sel.rows.end());
+    }
+    return root;
+}
+
+template <typename StampT, typename IdOfFn>
+inline std::vector<StampT> leaf_stamps(size_t n, IdOfFn &&id_of)
+{
+    std::vector<StampT> stamps;
+    stamps.reserve(n);
+    for (uint32_t i = 0; i < n; ++i)
+    {
+        stamps.push_back({i, id_of(i)});
+    }
+    return stamps;
+}
+
+inline std::vector<float> node_values(DenseTree::Nodes const &nodes)
+{
+    std::vector<float> out(nodes.size());
+    for (size_t i = 0; i < nodes.size(); ++i)
+    {
+        out[i] = nodes[i].threshold_or_value;
+    }
+    return out;
 }
 
 struct DeferredSplit
