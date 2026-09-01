@@ -208,8 +208,9 @@ class ITrainableBooster : public IBooster
         return false;
     }
 
-    // Drop trees beyond the first n_trees (keep the best iteration's model).
-    virtual void truncate(size_t n_trees) = 0;
+    // Drop the trees beyond the first n_rounds rounds (keep the best
+    // iteration's model); a round is score_width() trees.
+    virtual void truncate(size_t n_rounds) = 0;
 };
 
 namespace internal
@@ -533,6 +534,299 @@ void with_dense_trees(EpochCache<std::vector<DenseTree>> const &dense,
 
 } // namespace internal
 
+// The trees a model answers queries from, K outputs wide. trees_ is flat and
+// round-major: the tree for output k of round r sits at index r * K + k, so a
+// query that reads the ensemble (leaf ids, importance, SHAP, the dump, the
+// early-stopping accumulation of the newest round) is answered here once
+// for any K, and K = 1 is the single-output model. A booster derives from
+// this and owns the round: how gradients are formed, which tree grows, how
+// the scores advance.
+template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
+{
+  public:
+    using grower_type  = Gr;
+    using sampler_type = Sa;
+    using tree_type    = typename Gr::Tree;
+
+    size_t n_iters() const override
+    {
+        return trees_.read().size() / n_outputs_;
+    }
+
+    size_t n_trees() const override
+    {
+        return trees_.read().size();
+    }
+
+    size_t n_outputs() const
+    {
+        return n_outputs_;
+    }
+
+    std::vector<tree_type> const &trees() const
+    {
+        return trees_.read();
+    }
+
+    std::vector<double> feature_importance(ImportanceType type) const override
+    {
+        std::vector<double> out;
+        for (auto const &tree : trees_.read())
+        {
+            internal::accumulate_importance(tree, type, out);
+        }
+        return out;
+    }
+
+    void predict_leaf(features_view X, std::span<node_id_t> out) const override
+    {
+        internal::predict_leaf_over(trees_.read(), X, out);
+    }
+
+    void predict_leaf_binned(Dataset const       &bins,
+                             std::span<node_id_t> out) const override
+    {
+        internal::predict_leaf_over_binned(trees_.read(), bins, out);
+    }
+
+    std::string dump(std::span<std::string const> feature_names) const override
+    {
+        std::string out;
+        auto const &trees = trees_.read();
+        for (size_t t = 0; t < trees.size(); ++t)
+        {
+            out += "tree " + std::to_string(t / n_outputs_);
+            if (n_outputs_ > 1)
+            {
+                out += " class " + std::to_string(t % n_outputs_);
+            }
+            out += ":\n";
+            internal::dump_tree(trees[t], feature_names, out);
+        }
+        return out;
+    }
+
+    // TreeSHAP per output: out is (n_rows x K x (n_features + 1)), row-major,
+    // so output k's contributions for row i start at (i * K + k) *
+    // (n_features + 1) and each slice sums to that output's raw score.
+    void pred_contribs(features_view X, std::span<double> out,
+                       size_t n_features) const override
+    {
+        internal::with_dense_trees(dense_, trees_, [&](auto const &trees)
+                                   { contribs_over(trees, X, out, n_features); });
+    }
+
+    void pred_contribs_binned(Dataset const &bins, std::span<double> out,
+                              size_t n_features) const override
+    {
+        internal::with_dense_trees(
+            dense_, trees_, [&](auto const &trees)
+            { contribs_over_binned(trees, bins, out, n_features); });
+    }
+
+    // Row-major over outputs: each row's features are read once for the K
+    // trees of the newest round instead of K passes over X.
+    void accumulate_last_round(features_view X, floats_out scores) const override
+    {
+        auto const &trees = trees_.read();
+        assert(trees.size() >= n_outputs_);
+        assert(X.extent(0) * n_outputs_ == scores.size());
+        size_t const first = trees.size() - n_outputs_;
+        float const  lr    = config_.learning_rate;
+        parallel::for_each_index(X.extent(0),
+                                 [&](size_t i)
+                                 {
+                                     for (size_t k = 0; k < n_outputs_; ++k)
+                                     {
+                                         scores[(i * n_outputs_) + k] +=
+                                             lr * trees[first + k].value_for(
+                                                      X, static_cast<row_id_t>(i));
+                                     }
+                                 });
+    }
+
+    void accumulate_last_round_binned(Dataset const &bins,
+                                      floats_out     scores) const override
+    {
+        auto const &trees = trees_.read();
+        assert(trees.size() >= n_outputs_);
+        assert(bins.view_n_rows() * n_outputs_ == scores.size());
+        assert(!bins.mirror().bins().empty());
+        size_t const first = trees.size() - n_outputs_;
+        float const  lr    = config_.learning_rate;
+        auto const   sb =
+            internal::tree_split_bins(std::span{trees}.subspan(first), bins);
+        auto const    &m  = bins.mirror();
+        auto const     rm = m.bins();
+        RowIndex const rows{bins.row_view()};
+        parallel::for_each_index(
+            rows.size(),
+            [&](size_t i)
+            {
+                row_id_t const r      = rows[i];
+                auto const     bin_of = [&](size_t f) { return rm[m.index(r, f)]; };
+                for (size_t k = 0; k < n_outputs_; ++k)
+                {
+                    scores[(i * n_outputs_) + k] +=
+                        lr * internal::value_binned(trees[first + k], sb[k], bin_of);
+                }
+            });
+    }
+
+    void truncate(size_t n_rounds) override
+    {
+        size_t const keep = n_rounds * n_outputs_;
+        if (keep < trees_.read().size())
+        {
+            auto &trees = trees_.mutate();
+            trees.erase(trees.begin() + static_cast<std::ptrdiff_t>(keep), trees.end());
+        }
+    }
+
+  protected:
+    Ensemble(Config const &config, size_t n_outputs)
+        : config_(config.booster_config), n_outputs_(n_outputs),
+          grower_(config.tree_config), sampler_(config),
+          rng_(config.booster_config.random_seed)
+    {
+    }
+
+    // Output k's base score; a model loaded without one starts at zero.
+    float init_score_at(size_t k) const
+    {
+        return init_scores_.empty() ? 0.0F : init_scores_[k];
+    }
+
+    // Fills row_indices_ for this tree from the Dataset's row view, which is
+    // every row of the plane unless the caller subset it. AllRowsSampler is
+    // deterministic, so once row_indices_ holds this fit's rows (known by its
+    // minted token, pinned by row-list-follows-the-fit) the per-tree refill,
+    // a measurable membw cost at scale, is skipped; the content is
+    // byte-identical to materializing every tree, so the model is unchanged.
+    // Other samplers draw fresh indices each tree out of the same list.
+    size_t refill_row_indices(Dataset const &train)
+    {
+        RowView const &view     = train.row_view();
+        bool const     same_fit = rows_fit_ == train.fit_identity();
+        rows_fit_               = train.fit_identity();
+        if constexpr (sampler_traits<sampler_type>::copies_view_verbatim)
+        {
+            if (!same_fit)
+            {
+                view.materialize_into(row_indices_);
+            }
+            return row_indices_.size();
+        }
+        else
+        {
+            if (!same_fit)
+            {
+                view.materialize_into(candidates_);
+                row_indices_.resize(view.size());
+            }
+            return sampler_.sample(grad_, hess_, rng_, candidates_, row_indices_);
+        }
+    }
+
+    // What the fills may assume about this tree's row list. Constant time
+    // when the sampler copied the view verbatim; a drawing sampler builds its
+    // own list, so its shape is derived behind the view's veto.
+    RowShape selection_shape(Dataset const &train, size_t n_selected) const
+    {
+        RowView const &view = train.row_view();
+        if constexpr (sampler_traits<sampler_type>::copies_view_verbatim)
+        {
+            return {.identity = view.is_identity(), .runs = view.runs()};
+        }
+        else
+        {
+            return {.identity = view.is_identity() && n_selected == view.size() &&
+                                rows_are_identity({row_indices_.data(), n_selected},
+                                                  view.size()),
+                    .runs = {}};
+        }
+    }
+
+    // The shape both contribs paths share: per row and output, zero the
+    // slice, walk that output's trees into it (round-major, so output k
+    // strides by K), scale by the learning rate, and add the output's bias to
+    // the bias column. `into(t, row, phi)` is the only difference between
+    // them.
+    template <typename Trees, typename Into>
+    void contribs_impl(Trees const &trees, size_t n, std::span<double> out,
+                       size_t n_features, Into const &into) const
+    {
+        size_t const cols = n_features + 1;
+        assert(out.size() == n * n_outputs_ * cols);
+        parallel::for_each_index(
+            n,
+            [&](size_t i)
+            {
+                for (size_t k = 0; k < n_outputs_; ++k)
+                {
+                    std::span<double> const phi =
+                        out.subspan(((i * n_outputs_) + k) * cols, cols);
+                    std::ranges::fill(phi, 0.0);
+                    for (size_t t = k; t < trees.size(); t += n_outputs_)
+                    {
+                        into(t, static_cast<row_id_t>(i), phi);
+                    }
+                    for (double &v : phi)
+                    {
+                        v *= config_.learning_rate;
+                    }
+                    phi[n_features] += init_score_at(k);
+                }
+            });
+    }
+
+    template <typename Trees>
+    void contribs_over(Trees const &trees, features_view X, std::span<double> out,
+                       size_t n_features) const
+    {
+        auto const biases = internal::shap_biases(trees);
+        contribs_impl(trees, X.extent(0), out, n_features,
+                      [&](size_t t, row_id_t row, std::span<double> phi)
+                      { tree_shap(trees[t], X, row, phi, biases[t]); });
+    }
+
+    // contribs_over's twin: routing reads the row's bins, the arithmetic that
+    // follows is the same walk over the same covers.
+    template <typename Trees>
+    void contribs_over_binned(Trees const &trees, Dataset const &bins,
+                              std::span<double> out, size_t n_features) const
+    {
+        auto const     biases = internal::shap_biases(trees);
+        auto const     sb     = internal::tree_split_bins(trees, bins);
+        RowIndex const rows{bins.row_view()};
+        contribs_impl(trees, rows.size(), out, n_features,
+                      [&](size_t t, row_id_t position, std::span<double> phi)
+                      {
+                          tree_shap_binned(trees[t], sb[t], bins, rows[position], phi,
+                                           biases[t]);
+                      });
+    }
+
+    BoosterConfig config_;
+    size_t        n_outputs_;
+    grower_type   grower_;
+    sampler_type  sampler_;
+    std::mt19937  rng_;
+    // The ensemble and its mutation epoch in one place: reads go through
+    // read(), every write through mutate(), which is what bumps the epoch the
+    // dense SHAP cache and the device plans rebuild on.
+    internal::Versioned<std::vector<tree_type>> trees_;
+    // One base score per output; empty until the first round or a load.
+    std::vector<float>    init_scores_;
+    std::vector<float>    grad_;
+    std::vector<float>    hess_;
+    std::vector<row_id_t> row_indices_;
+    // The rows a drawing sampler may pick from; empty when none draws.
+    std::vector<row_id_t>                        candidates_;
+    FitId                                        rows_fit_{};
+    internal::EpochCache<std::vector<DenseTree>> dense_;
+};
+
 // One boosting round in update_one_iter runs in a fixed order that several
 // features depend on: DART drop/rescale first (it rewrites earlier trees'
 // contributions), then gradients, then sampling (so a gradient-reading
@@ -543,8 +837,20 @@ void with_dense_trees(EpochCache<std::vector<DenseTree>> const &dense,
 // reordering any leg breaks either DART or renewal, and the round's
 // bit-identity across runs is what the cross-arch hash gate checks.
 template <Objective Obj, TreeGrower Gr, Sampler Sa>
-class Booster final : public ITrainableBooster
+class Booster final : public Ensemble<Gr, Sa>
 {
+    using Ensemble<Gr, Sa>::config_;
+    using Ensemble<Gr, Sa>::dense_;
+    using Ensemble<Gr, Sa>::grad_;
+    using Ensemble<Gr, Sa>::grower_;
+    using Ensemble<Gr, Sa>::hess_;
+    using Ensemble<Gr, Sa>::init_scores_;
+    using Ensemble<Gr, Sa>::refill_row_indices;
+    using Ensemble<Gr, Sa>::rng_;
+    using Ensemble<Gr, Sa>::row_indices_;
+    using Ensemble<Gr, Sa>::selection_shape;
+    using Ensemble<Gr, Sa>::trees_;
+
   public:
     using objective_type = Obj;
     using grower_type    = Gr;
@@ -555,10 +861,9 @@ class Booster final : public ITrainableBooster
     using walk_type = typename tree_type::walk_type;
 
     explicit Booster(Config const &config)
-        : config_(config.booster_config),
+        : Ensemble<Gr, Sa>(config, 1),
           monotone_constraints_(config.tree_config.monotone_constraints),
-          objective_(config), grower_(config.tree_config), sampler_(config),
-          rng_(config.booster_config.random_seed)
+          objective_(config)
     {
     }
 
@@ -578,9 +883,10 @@ class Booster final : public ITrainableBooster
                 std::vector<float> const gathered = view.is_identity()
                                                         ? std::vector<float>{}
                                                         : view.gather(train.labels());
-                init_score_                       = objective_.init_score(
-                    view.is_identity() ? train.labels() : floats_view{gathered});
-                scores_.assign(train.plane_n_rows(), init_score_);
+                init_scores_.assign(1, objective_.init_score(
+                                           view.is_identity() ? train.labels()
+                                                              : floats_view{gathered}));
+                scores_.assign(train.plane_n_rows(), init_score());
             }
             else
             {
@@ -592,10 +898,11 @@ class Booster final : public ITrainableBooster
                 {
                     internal::accumulate_train_contribution(t, train, raw);
                 }
+                float const init = init_score();
                 scores_.resize(train.plane_n_rows());
                 parallel::for_each_index(
                     train.plane_n_rows(), [&](size_t i)
-                    { scores_[i] = init_score_ + (config_.learning_rate * raw[i]); });
+                    { scores_[i] = init + (config_.learning_rate * raw[i]); });
             }
         }
 
@@ -697,56 +1004,6 @@ class Booster final : public ITrainableBooster
         grower_.recycle(std::move(leaf_values), std::move(leaf_ids));
     }
 
-    // Fills row_indices_ for this tree from the Dataset's row view, which is
-    // every row of the plane unless the caller subset it. AllRowsSampler is
-    // deterministic, so once row_indices_ holds this fit's rows (known by its
-    // minted token, pinned by row-list-follows-the-fit) the per-tree refill,
-    // a measurable membw cost at scale, is skipped; the content is
-    // byte-identical to materializing every tree, so the model is unchanged.
-    // Other samplers draw fresh indices each tree out of the same list.
-    size_t refill_row_indices(Dataset const &train)
-    {
-        RowView const &view     = train.row_view();
-        bool const     same_fit = rows_fit_ == train.fit_identity();
-        rows_fit_               = train.fit_identity();
-        if constexpr (sampler_traits<sampler_type>::copies_view_verbatim)
-        {
-            if (!same_fit)
-            {
-                view.materialize_into(row_indices_);
-            }
-            return row_indices_.size();
-        }
-        else
-        {
-            if (!same_fit)
-            {
-                view.materialize_into(candidates_);
-                row_indices_.resize(view.size());
-            }
-            return sampler_.sample(grad_, hess_, rng_, candidates_, row_indices_);
-        }
-    }
-
-    // What the fills may assume about this tree's row list. Constant time
-    // when the sampler copied the view verbatim; a drawing sampler builds its
-    // own list, so its shape is derived behind the view's veto.
-    RowShape selection_shape(Dataset const &train, size_t n_selected) const
-    {
-        RowView const &view = train.row_view();
-        if constexpr (sampler_traits<sampler_type>::copies_view_verbatim)
-        {
-            return {.identity = view.is_identity(), .runs = view.runs()};
-        }
-        else
-        {
-            return {.identity = view.is_identity() && n_selected == view.size() &&
-                                rows_are_identity({row_indices_.data(), n_selected},
-                                                  view.size()),
-                    .runs = {}};
-        }
-    }
-
     // True when the round ran on the device instead of the host objective,
     // under resident-objective-eligibility. Disarming syncs scores home, so
     // the host path always resumes with the state it would have had.
@@ -812,18 +1069,6 @@ class Booster final : public ITrainableBooster
         predict_at(X, scores, 0);
     }
 
-    size_t n_iters() const override
-    {
-        return trees_.read().size();
-    }
-
-    size_t n_trees() const override
-    {
-        return trees_.read().size();
-    }
-
-    // Group rows by leaf, hand each leaf's residuals to the objective, and
-    // overwrite both the tree's leaf values and the per-row training values.
     // DART pre-grow half: pick this round's dropped trees and remove their
     // contribution from scores_, so gradients see the model without them.
     void drop_dart_trees(Dataset const &train, std::vector<size_t> &dropped,
@@ -940,16 +1185,6 @@ class Booster final : public ITrainableBooster
         }
     }
 
-    std::vector<double> feature_importance(ImportanceType type) const override
-    {
-        std::vector<double> out;
-        for (auto const &tree : trees_.read())
-        {
-            internal::accumulate_importance(tree, type, out);
-        }
-        return out;
-    }
-
     // Both tree shapes route through their walk pack (ObliviousWalk or
     // DenseWalk, bit-identical to the per-tree loop; contracts in tree.hpp).
     void predict_at(features_view X, floats_out scores, size_t n_trees) const override
@@ -965,9 +1200,10 @@ class Booster final : public ITrainableBooster
                 walk_.get(epoch, [&] { return walk_type{std::span{trees}}; });
             walk->accumulate(X, k, scores);
         }
+        float const init = init_score();
         for (float &score : scores)
         {
-            score = init_score_ + (score * config_.learning_rate);
+            score = init + (score * config_.learning_rate);
         }
     }
 
@@ -978,18 +1214,14 @@ class Booster final : public ITrainableBooster
         assert(out.size() == n * trees.size());
         std::vector<float> raw(n, 0.0F);
         auto const         stages = std::mdspan(out.data(), trees.size(), n);
+        float const        init   = init_score();
         for (size_t t = 0; t < trees.size(); ++t)
         {
             trees[t].predict(X, raw);
             parallel::for_each_index(
                 n, [&](size_t i)
-                { stages[t, i] = init_score_ + (raw[i] * config_.learning_rate); });
+                { stages[t, i] = init + (raw[i] * config_.learning_rate); });
         }
-    }
-
-    void predict_leaf(features_view X, std::span<node_id_t> out) const override
-    {
-        internal::predict_leaf_over(trees_.read(), X, out);
     }
 
     void predict_at_binned(Dataset const &bins, floats_out scores,
@@ -1003,9 +1235,10 @@ class Booster final : public ITrainableBooster
         {
             internal::accumulate_view_contribution(trees[t], bins, scores);
         }
+        float const init = init_score();
         for (float &score : scores)
         {
-            score = init_score_ + (score * config_.learning_rate);
+            score = init + (score * config_.learning_rate);
         }
     }
 
@@ -1013,7 +1246,7 @@ class Booster final : public ITrainableBooster
     {
         DevicePlanInput out{};
         out.learning_rate = config_.learning_rate;
-        out.init_score    = init_score_;
+        out.init_score    = init_score();
         out.epoch         = trees_.epoch();
         if constexpr (std::same_as<tree_type, ObliviousTree>)
         {
@@ -1035,100 +1268,14 @@ class Booster final : public ITrainableBooster
         assert(out.size() == n * trees.size());
         auto const         stages = std::mdspan(out.data(), trees.size(), n);
         std::vector<float> raw(n, 0.0F);
+        float const        init = init_score();
         for (size_t t = 0; t < trees.size(); ++t)
         {
             internal::accumulate_view_contribution(trees[t], bins, raw);
             parallel::for_each_index(
                 n, [&](size_t i)
-                { stages[t, i] = init_score_ + (raw[i] * config_.learning_rate); });
+                { stages[t, i] = init + (raw[i] * config_.learning_rate); });
         }
-    }
-
-    void predict_leaf_binned(Dataset const       &bins,
-                             std::span<node_id_t> out) const override
-    {
-        internal::predict_leaf_over_binned(trees_.read(), bins, out);
-    }
-
-    void pred_contribs_binned(Dataset const &bins, std::span<double> out,
-                              size_t n_features) const override
-    {
-        internal::with_dense_trees(
-            dense_, trees_, [&](auto const &trees)
-            { contribs_over_binned(trees, bins, out, n_features); });
-    }
-
-    // The shape both contribs paths share: per row, zero the slice, walk every
-    // tree into it, scale by the learning rate, and add init_score to the bias
-    // column. `into(t, row, phi)` is the only difference between them.
-    template <typename Trees, typename Into>
-    void contribs_impl(Trees const &trees, size_t n, std::span<double> out,
-                       size_t n_features, Into const &into) const
-    {
-        size_t const cols = n_features + 1;
-        assert(out.size() == n * cols);
-        parallel::for_each_index(n,
-                                 [&](size_t i)
-                                 {
-                                     std::span<double> const phi =
-                                         out.subspan(i * cols, cols);
-                                     std::ranges::fill(phi, 0.0);
-                                     for (size_t t = 0; t < trees.size(); ++t)
-                                     {
-                                         into(t, static_cast<row_id_t>(i), phi);
-                                     }
-                                     for (double &v : phi)
-                                     {
-                                         v *= config_.learning_rate;
-                                     }
-                                     phi[n_features] += init_score_;
-                                 });
-    }
-
-    // contribs_over's twin: routing reads the row's bins, the arithmetic that
-    // follows is the same walk over the same covers.
-    template <typename Trees>
-    void contribs_over_binned(Trees const &trees, Dataset const &bins,
-                              std::span<double> out, size_t n_features) const
-    {
-        auto const     biases = internal::shap_biases(trees);
-        auto const     sb     = internal::tree_split_bins(trees, bins);
-        RowIndex const rows{bins.row_view()};
-        contribs_impl(trees, rows.size(), out, n_features,
-                      [&](size_t t, row_id_t position, std::span<double> phi)
-                      {
-                          tree_shap_binned(trees[t], sb[t], bins, rows[position], phi,
-                                           biases[t]);
-                      });
-    }
-
-    std::string dump(std::span<std::string const> feature_names) const override
-    {
-        std::string out;
-        auto const &trees = trees_.read();
-        for (size_t t = 0; t < trees.size(); ++t)
-        {
-            out += "tree " + std::to_string(t) + ":\n";
-            internal::dump_tree(trees[t], feature_names, out);
-        }
-        return out;
-    }
-
-    void pred_contribs(features_view X, std::span<double> out,
-                       size_t n_features) const override
-    {
-        internal::with_dense_trees(dense_, trees_, [&](auto const &trees)
-                                   { contribs_over(trees, X, out, n_features); });
-    }
-
-    template <typename Trees>
-    void contribs_over(Trees const &trees, features_view X, std::span<double> out,
-                       size_t n_features) const
-    {
-        auto const biases = internal::shap_biases(trees);
-        contribs_impl(trees, X.extent(0), out, n_features,
-                      [&](size_t t, row_id_t row, std::span<double> phi)
-                      { tree_shap(trees[t], X, row, phi, biases[t]); });
     }
 
     void seed_validation_scores(features_view X, std::span<float> out,
@@ -1139,26 +1286,13 @@ class Booster final : public ITrainableBooster
             predict_at(X, floats_out{out.data(), out.size()}, n_rounds);
             return;
         }
-        std::ranges::fill(out, init_score_);
+        std::ranges::fill(out, init_score());
     }
 
     float validation_loss(std::span<float const> scores,
                           floats_view            labels) const override
     {
         return objective_.eval(floats_view{scores.data(), scores.size()}, labels);
-    }
-
-    void accumulate_last_round(features_view X, floats_out scores) const override
-    {
-        assert(!trees_.read().empty());
-        assert(X.extent(0) == scores.size());
-        auto const &tree = trees_.read().back();
-        float const lr   = config_.learning_rate;
-        // One pass: predict's buffer starts at zero, so lr * value_for is the
-        // same product the two-pass form formed.
-        parallel::for_each_index(
-            scores.size(), [&](size_t i)
-            { scores[i] += lr * tree.value_for(X, static_cast<row_id_t>(i)); });
     }
 
     bool begin_resident_validation(Dataset const         &bins,
@@ -1176,86 +1310,32 @@ class Booster final : public ITrainableBooster
                                        {scores.data(), scores.size()}, loss);
     }
 
-    void accumulate_last_round_binned(Dataset const &bins,
-                                      floats_out     scores) const override
-    {
-        assert(!trees_.read().empty());
-        assert(bins.view_n_rows() == scores.size());
-        assert(!bins.mirror().bins().empty());
-        auto const    &tree = trees_.read().back();
-        float const    lr   = config_.learning_rate;
-        auto const     sb   = internal::split_bins(tree, bins);
-        auto const    &m    = bins.mirror();
-        auto const     rm   = m.bins();
-        RowIndex const rows{bins.row_view()};
-        parallel::for_each_index(
-            scores.size(),
-            [&](size_t k)
-            {
-                row_id_t const r = rows[k];
-                scores[k] += lr * internal::value_binned(tree, sb, [&](size_t f)
-                                                         { return rm[m.index(r, f)]; });
-            });
-    }
-
-    void truncate(size_t n_trees) override
-    {
-        if (n_trees < trees_.read().size())
-        {
-            // erase, not resize: growth would require default-constructible
-            // trees, and truncate only ever shrinks.
-            auto &trees = trees_.mutate();
-            trees.erase(trees.begin() + static_cast<std::ptrdiff_t>(n_trees),
-                        trees.end());
-        }
-    }
-
     // Save/load accessors. Public so io::save_booster / io::load_booster
     // can serialize state without befriending the I/O module.
-    std::vector<tree_type> const &trees() const
-    {
-        return trees_.read();
-    }
     float init_score() const
     {
-        return init_score_;
+        return this->init_score_at(0);
     }
     void load_state(std::vector<tree_type> trees, float init_score)
     {
         trees_.mutate() = std::move(trees);
-        init_score_     = init_score;
+        init_scores_.assign(1, init_score);
     }
 
   private:
-    BoosterConfig    config_;
     std::vector<int> monotone_constraints_;
     objective_type   objective_;
-    grower_type      grower_;
-    sampler_type     sampler_;
-    std::mt19937     rng_;
-    // The ensemble and its mutation epoch in one place: reads go through
-    // read(), every write through mutate(), which is what bumps the epoch the
-    // dense SHAP cache and the device plans rebuild on.
-    internal::Versioned<std::vector<tree_type>> trees_;
     // Stale while the resident objective is armed (the device copy is
     // authoritative); resident_end syncs it before any host-path read.
-    std::vector<float>    scores_;
-    std::vector<float>    grad_;
-    std::vector<float>    hess_;
-    std::vector<row_id_t> row_indices_;
-    // The rows a drawing sampler may pick from; empty when none draws.
-    std::vector<row_id_t> candidates_;
-    float                 init_score_      = 0.0F;
-    bool                  resident_active_ = false;
+    std::vector<float> scores_;
+    bool               resident_active_ = false;
     // The fit the resident state is armed for. A minted token, not an
     // address: a stack Dataset's address repeats every fold iteration
     // deterministically, so an address here would skip re-arming for a
     // DIFFERENT fold at the same depth, leaving the previous fold's labels,
     // scores and rows live.
-    FitId                                        resident_fit_{};
-    FitId                                        rows_fit_{};
-    internal::EpochCache<std::vector<DenseTree>> dense_;
-    internal::EpochCache<walk_type>              walk_;
+    FitId                           resident_fit_{};
+    internal::EpochCache<walk_type> walk_;
 };
 
 } // namespace bonsai
