@@ -18,7 +18,7 @@ namespace
 
 bool trains_here(std::string_view grower_name)
 {
-    return !grower_name.starts_with("cuda") || cuda_available();
+    return !grower_runs_on_device(grower_name) || cuda_available();
 }
 
 } // namespace

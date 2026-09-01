@@ -190,6 +190,25 @@ TEST_CASE("make_booster: the retired oblivious grower names are unknown",
     }
 }
 
+// INVARIANT: device-grower-by-engine-type
+// Whether a grower runs on a device is answered by its engine type through
+// the registry, never by a caller inspecting the name. The registered
+// spellings still say cuda_ for every device grower, so the predicate agrees
+// with the prefix on every name the table holds; a name outside the table is
+// not a device grower however it is spelled.
+TEST_CASE("make_booster: grower_runs_on_device answers from the engine type",
+          "[registry][make_booster][invariant]")
+{
+    for (AvailableCombo const &combo : available_combos())
+    {
+        CAPTURE(combo.grower_name);
+        CHECK(grower_runs_on_device(combo.grower_name) ==
+              combo.grower_name.starts_with("cuda_"));
+    }
+    CHECK_FALSE(grower_runs_on_device("cuda_oblivious"));
+    CHECK_FALSE(grower_runs_on_device("no_such_grower"));
+}
+
 TEMPLATE_LIST_TEST_CASE("make_booster: parity with direct instantiation",
                         "[registry][make_booster][parity]", DispatchCombos)
 {
