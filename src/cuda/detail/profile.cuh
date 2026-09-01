@@ -60,6 +60,14 @@ struct ProfileCounters
     {
         return Lap{.enabled = enabled};
     }
+    void node_launched()
+    {
+        if (enabled)
+        {
+            ++launches;
+            ++gpu_nodes;
+        }
+    }
 
     ~ProfileCounters()
     {

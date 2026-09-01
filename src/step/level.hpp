@@ -10,7 +10,7 @@
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
 #include "step/primitives.hpp"
-#include <cassert>
+#include "step/tree.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -19,29 +19,24 @@
 namespace bonsai::grower_detail
 {
 
-template <HistogramEngine EngineT, typename SplitterT> class LevelStep
+template <HistogramEngine EngineT, typename SplitterT>
+class LevelStep : public TreeStep<EngineT>
 {
+    using Step = TreeStep<EngineT>;
+    using Step::config_;
+    using Step::ds_;
+    using Step::engine_;
+    using Step::grad_;
+    using Step::hess_;
+    using Step::selected_;
+
   public:
-    LevelStep(EngineT &engine, Dataset const &ds, TreeConfig const &config,
-              floats_view grad, floats_view hess, feature_view selected)
-        : engine_(engine), ds_(ds), config_(config), grad_(grad), hess_(hess),
-          selected_(selected)
-    {
-        engine_.begin_tree(ds_, grad_, hess_);
-    }
+    using Step::Step;
 
     SplitInput make_root(RowSelection const &sel)
     {
         Phase<&GrowProfiler::populate_s> phase;
-        SplitInput                       root;
-        root.id = 0;
-        root.rows.assign(sel.rows.begin(), sel.rows.end());
-        assert(sel.shape.runs.empty() || rows_in(sel.shape.runs) == sel.rows.size());
-        root.shape = sel.shape;
-        engine_.populate(ds_, grad_, hess_, root, selected_);
-        root.sums      = root.totals();
-        root.row_count = root.rows.size();
-        return root;
+        return populated_root(ds_, grad_, hess_, sel, selected_, engine_);
     }
 
     void open_level(std::vector<SplitInput> const &frontier, LevelOutputs &out)
@@ -114,45 +109,26 @@ template <HistogramEngine EngineT, typename SplitterT> class LevelStep
                                      }
                                  });
     }
-
-  protected:
-    EngineT          &engine_;
-    Dataset const    &ds_;
-    TreeConfig const &config_;
-    floats_view       grad_;
-    floats_view       hess_;
-    feature_view      selected_;
 };
 
 template <GPULevelEngine EngineT, typename SplitterT>
-class LevelStep<EngineT, SplitterT>
+class LevelStep<EngineT, SplitterT> : public TreeStep<EngineT>
 {
+    using Step = TreeStep<EngineT>;
+    using Step::config_;
+    using Step::ds_;
+    using Step::engine_;
+    using Step::grad_;
+    using Step::hess_;
+    using Step::selected_;
+
   public:
-    LevelStep(EngineT &engine, Dataset const &ds, TreeConfig const &config,
-              floats_view grad, floats_view hess, feature_view selected)
-        : engine_(engine), ds_(ds), config_(config), grad_(grad), hess_(hess),
-          selected_(selected)
-    {
-        engine_.begin_tree(ds_, grad_, hess_);
-    }
+    using Step::Step;
 
     SplitInput make_root(RowSelection const &sel)
     {
         Phase<&GrowProfiler::populate_s> phase;
-        SplitInput                       root;
-        root.id = 0;
-        // perf: Full-data fits pass the identity by contract (empty rows +
-        // row_count): the 64MB host copy and its upload never happen; the
-        // engine builds/caches the identity on device. Identity, not
-        // cardinality: any other full-length list takes the general path.
-        if (sel.shape.identity)
-        {
-            root.row_count = sel.rows.size();
-        }
-        else
-        {
-            root.rows.assign(sel.rows.begin(), sel.rows.end());
-        }
+        SplitInput                       root = device_root(sel);
         engine_.begin_root(ds_, grad_, hess_, root, selected_);
         return root;
     }
@@ -239,13 +215,8 @@ class LevelStep<EngineT, SplitterT>
         bool const resident = engine_.resident_armed();
         if (!resident)
         {
-            std::vector<typename EngineT::LeafStamp> stamps;
-            stamps.reserve(current.size());
-            for (uint32_t i = 0; i < current.size(); ++i)
-            {
-                stamps.push_back({i, current[i].id});
-            }
-            engine_.stamp_leaves(stamps);
+            engine_.stamp_leaves(leaf_stamps<typename EngineT::LeafStamp>(
+                current.size(), [&](uint32_t i) { return current[i].id; }));
         }
         for (auto const &input : current)
         {
@@ -257,12 +228,7 @@ class LevelStep<EngineT, SplitterT>
                 resident_node_table<typename EngineT::ResidentNode>(nodes, ds_));
             return;
         }
-        std::vector<float> node_vals(nodes.size());
-        for (size_t i = 0; i < nodes.size(); ++i)
-        {
-            node_vals[i] = nodes[i].threshold_or_value;
-        }
-        engine_.finalize_tree(node_vals, values, leaf_ids);
+        engine_.finalize_tree(node_values(nodes), values, leaf_ids);
     }
 
     void finalize_leaves(std::vector<SplitInput> const &frontier,
@@ -286,23 +252,10 @@ class LevelStep<EngineT, SplitterT>
                     leaf_table));
             return;
         }
-        std::vector<typename EngineT::LeafStamp> stamps;
-        stamps.reserve(frontier.size());
-        for (uint32_t i = 0; i < frontier.size(); ++i)
-        {
-            stamps.push_back({i, static_cast<node_id_t>(i)});
-        }
-        engine_.stamp_leaves(stamps);
+        engine_.stamp_leaves(leaf_stamps<typename EngineT::LeafStamp>(
+            frontier.size(), [](uint32_t i) { return static_cast<node_id_t>(i); }));
         engine_.finalize_tree(leaf_table, values, leaf_ids);
     }
-
-  private:
-    EngineT          &engine_;
-    Dataset const    &ds_;
-    TreeConfig const &config_;
-    floats_view       grad_;
-    floats_view       hess_;
-    feature_view      selected_;
 };
 
 } // namespace bonsai::grower_detail

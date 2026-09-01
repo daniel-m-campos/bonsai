@@ -491,17 +491,70 @@ void CudaDeviceContext::init_shared_limit()
     cudaGetLastError();
 }
 
-void CudaDeviceContext::stage_selection(std::span<feature_id_t const> selected,
-                                        size_t                        n_feats)
+size_t CudaDeviceContext::stage_selection(Dataset const                &ds,
+                                          std::span<feature_id_t const> selected)
 {
+    size_t max_sel_bins = 0;
+    for (feature_id_t const fid : selected)
+    {
+        max_sel_bins = std::max(max_sel_bins, ds.n_bins(fid));
+    }
+    lvl.n_selected = static_cast<uint32_t>(selected.size());
+    lvl.stride     = static_cast<uint32_t>(2 * max_sel_bins);
     lvl.features.host.assign(selected.begin(), selected.end());
     lvl.features.sync();
-    lvl.sel_slot.host.assign(n_feats, k_not_selected);
+    lvl.sel_slot.host.assign(ds.n_features(), k_not_selected);
     for (uint32_t i = 0; i < selected.size(); ++i)
     {
         lvl.sel_slot.host[selected[i]] = i;
     }
     lvl.sel_slot.sync();
+    return max_sel_bins;
+}
+
+void CudaDeviceContext::require_hist_fits(size_t max_sel_bins) const
+{
+    if (lvl.n_selected == 0)
+    {
+        refuse_empty_selection();
+    }
+    if (!hist_budget_ok(max_sel_bins))
+    {
+        refuse_hist_budget(max_sel_bins, shared_limit);
+    }
+}
+
+void CudaDeviceContext::launch_root_sums(float2 const *gh, uint32_t n)
+{
+    lvl.sum_partial.reserve(k_sum_blocks);
+    lvl.sum_out.reserve(1);
+    sum_gh_pass1_kernel<<<dim3(k_sum_blocks), dim3(256)>>>(gh, n,
+                                                           lvl.sum_partial.data());
+    check(cudaGetLastError(), "root sum pass1 launch");
+    sum_gh_pass2_kernel<<<dim3(1), dim3(32)>>>(lvl.sum_partial.data(), k_sum_blocks,
+                                               lvl.sum_out.data());
+    check(cudaGetLastError(), "root sum pass2 launch");
+}
+
+HistCell CudaDeviceContext::fetch_root_sums()
+{
+    double2 sums{};
+    check(
+        cudaMemcpy(&sums, lvl.sum_out.data(), sizeof(double2), cudaMemcpyDeviceToHost),
+        "root sums fetch");
+    return {.sum_grad = static_cast<float>(sums.x),
+            .sum_hess = static_cast<float>(sums.y)};
+}
+
+void CudaDeviceContext::wait_for_profile(ProfileCounters::Lap &lap)
+{
+    if (!prof_counters.enabled)
+    {
+        return;
+    }
+    check(cudaDeviceSynchronize(), "profile wait");
+    lap(prof_counters.gpu_wait_s);
+    lvl.prof_read(prof_counters);
 }
 
 void CudaDeviceContext::note_plane(bool tiled, size_t shared)
@@ -691,23 +744,8 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
                                    floats_view hess, SplitInput &root,
                                    std::span<feature_id_t const> selected)
 {
-    size_t max_sel_bins = 0;
-    for (feature_id_t const fid : selected)
-    {
-        max_sel_bins = std::max(max_sel_bins, ds.n_bins(fid));
-    }
     init_shared_limit();
-    if (selected.empty())
-    {
-        refuse_empty_selection();
-    }
-    if (!hist_budget_ok(max_sel_bins))
-    {
-        refuse_hist_budget(max_sel_bins, shared_limit);
-    }
-    lvl.n_selected = static_cast<uint32_t>(selected.size());
-    lvl.stride     = static_cast<uint32_t>(2 * max_sel_bins);
-    stage_selection(selected, ds.n_features());
+    require_hist_fits(stage_selection(ds, selected));
 
     bool const identity = root.rows.empty() && root.row_count == data.key.n_rows;
     auto const n = static_cast<uint32_t>(identity ? root.row_count : root.rows.size());
@@ -727,14 +765,7 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     root_lap(prof_counters.root_stage_s);
     if (identity)
     {
-        lvl.sum_partial.reserve(k_sum_blocks);
-        lvl.sum_out.reserve(1);
-        sum_gh_pass1_kernel<<<dim3(k_sum_blocks), dim3(256)>>>(grads.gh.data(), n,
-                                                               lvl.sum_partial.data());
-        check(cudaGetLastError(), "root sum pass1 launch");
-        sum_gh_pass2_kernel<<<dim3(1), dim3(32)>>>(lvl.sum_partial.data(), k_sum_blocks,
-                                                   lvl.sum_out.data());
-        check(cudaGetLastError(), "root sum pass2 launch");
+        launch_root_sums(grads.gh.data(), n);
     }
     lvl.gh_ordered.reserve(n);
     gather(grads.gh.data(), lvl.rows.data(), n, lvl.gh_ordered.data());
@@ -763,30 +794,13 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     auto sums_lap = prof_counters.lap();
     if (identity)
     {
-        double2 sums{};
-        check(cudaMemcpy(&sums, lvl.sum_out.data(), sizeof(double2),
-                         cudaMemcpyDeviceToHost),
-              "root sums fetch");
-        root.sums      = {.sum_grad = static_cast<float>(sums.x),
-                          .sum_hess = static_cast<float>(sums.y)};
+        root.sums      = fetch_root_sums();
         root.row_count = n;
     }
     else if (resident.armed)
     {
-        lvl.sum_partial.reserve(k_sum_blocks);
-        lvl.sum_out.reserve(1);
-        sum_gh_pass1_kernel<<<dim3(k_sum_blocks), dim3(256)>>>(lvl.gh_ordered.data(), n,
-                                                               lvl.sum_partial.data());
-        check(cudaGetLastError(), "resident root sum pass1 launch");
-        sum_gh_pass2_kernel<<<dim3(1), dim3(32)>>>(lvl.sum_partial.data(), k_sum_blocks,
-                                                   lvl.sum_out.data());
-        check(cudaGetLastError(), "resident root sum pass2 launch");
-        double2 sums{};
-        check(cudaMemcpy(&sums, lvl.sum_out.data(), sizeof(double2),
-                         cudaMemcpyDeviceToHost),
-              "resident root sums fetch");
-        root.sums      = {.sum_grad = static_cast<float>(sums.x),
-                          .sum_hess = static_cast<float>(sums.y)};
+        launch_root_sums(lvl.gh_ordered.data(), n);
+        root.sums      = fetch_root_sums();
         root.row_count = n;
     }
     else
@@ -803,11 +817,7 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
         root.row_count = root.rows.size();
     }
     sums_lap(prof_counters.root_sums_s);
-    if (prof_counters.enabled)
-    {
-        ++prof_counters.launches;
-        ++prof_counters.gpu_nodes;
-    }
+    prof_counters.node_launched();
 }
 
 void CudaDeviceContext::stamp_leaves(
@@ -1051,12 +1061,7 @@ void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &co
     auto        &prof = prof_counters;
     auto         lap  = prof.lap();
 
-    if (prof.enabled)
-    {
-        check(cudaDeviceSynchronize(), "profile wait");
-        lap(prof.gpu_wait_s);
-        lvl.prof_read(prof);
-    }
+    wait_for_profile(lap);
     bool const any_mask = lvl.stage_find_inputs(level, config, ds);
     lap(prof.find_stage_s);
 
@@ -1100,12 +1105,7 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
     auto        &prof = prof_counters;
     auto         lap  = prof.lap();
 
-    if (prof.enabled)
-    {
-        check(cudaDeviceSynchronize(), "profile wait");
-        lap(prof.gpu_wait_s);
-        lvl.prof_read(prof);
-    }
+    wait_for_profile(lap);
     lvl.stage_level_sums(level);
     lap(prof.lfind_stage_s);
 
@@ -1218,31 +1218,17 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
                                         SplitInput                   &root,
                                         std::span<feature_id_t const> selected)
 {
-    size_t max_sel_bins = 0;
-    for (feature_id_t const fid : selected)
-    {
-        max_sel_bins = std::max(max_sel_bins, ds.n_bins(fid));
-    }
     init_shared_limit();
-    size_t const max_slots = leaf_max_slots(config);
+    size_t const max_slots    = leaf_max_slots(config);
+    size_t const max_sel_bins = stage_selection(ds, selected);
     if (!resident.armed)
     {
-        if (selected.empty())
-        {
-            refuse_empty_selection();
-        }
-        if (!hist_budget_ok(max_sel_bins))
-        {
-            refuse_hist_budget(max_sel_bins, shared_limit);
-        }
+        require_hist_fits(max_sel_bins);
         if (!leaf_budget_ok(config, selected.size(), max_sel_bins))
         {
             refuse_leaf_pool(max_slots, selected.size(), max_sel_bins);
         }
     }
-    lvl.n_selected = static_cast<uint32_t>(selected.size());
-    lvl.stride     = static_cast<uint32_t>(2 * max_sel_bins);
-    stage_selection(selected, ds.n_features());
     leaf.monotone.host.resize(ds.n_features());
     for (feature_id_t f = 0; f < ds.n_features(); ++f)
     {
@@ -1273,14 +1259,7 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
 
     lvl.gh_ordered.reserve(n);
     gather(grads.gh.data(), lvl.rows.data(), n, lvl.gh_ordered.data());
-    lvl.sum_partial.reserve(k_sum_blocks);
-    lvl.sum_out.reserve(1);
-    sum_gh_pass1_kernel<<<dim3(k_sum_blocks), dim3(256)>>>(lvl.gh_ordered.data(), n,
-                                                           lvl.sum_partial.data());
-    check(cudaGetLastError(), "leaf root sum pass1 launch");
-    sum_gh_pass2_kernel<<<dim3(1), dim3(32)>>>(lvl.sum_partial.data(), k_sum_blocks,
-                                               lvl.sum_out.data());
-    check(cudaGetLastError(), "leaf root sum pass2 launch");
+    launch_root_sums(lvl.gh_ordered.data(), n);
 
     launch_hist(static_cast<uint32_t>(ds.plane_n_rows()),
                 static_cast<uint32_t>(ds.n_features()), 1, static_cast<uint32_t>(n),
@@ -1290,20 +1269,11 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     check(cudaGetLastError(), "leaf root hist launch");
     lvl.leaf_by_row.reserve(ds.plane_n_rows());
 
-    auto    sums_lap = prof_counters.lap();
-    double2 sums{};
-    check(
-        cudaMemcpy(&sums, lvl.sum_out.data(), sizeof(double2), cudaMemcpyDeviceToHost),
-        "leaf root sums fetch");
-    root.sums      = {.sum_grad = static_cast<float>(sums.x),
-                      .sum_hess = static_cast<float>(sums.y)};
+    auto sums_lap  = prof_counters.lap();
+    root.sums      = fetch_root_sums();
     root.row_count = n;
     sums_lap(prof_counters.root_sums_s);
-    if (prof_counters.enabled)
-    {
-        ++prof_counters.launches;
-        ++prof_counters.gpu_nodes;
-    }
+    prof_counters.node_launched();
 }
 
 CudaHistogramEngine::LeafRound
@@ -1481,11 +1451,7 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
     auto      &prof = prof_counters;
     auto       lap  = prof.lap();
 
-    if (prof.enabled)
-    {
-        check(cudaDeviceSynchronize(), "profile wait");
-        lap(prof.gpu_wait_s);
-    }
+    wait_for_profile(lap);
     bool const any_mask = leaf_stage_find(nodes, slots);
     lap(prof.find_stage_s);
 
