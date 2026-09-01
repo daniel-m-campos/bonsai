@@ -221,7 +221,7 @@ def test_every_native_key_is_reachable_from_the_reverse_index():
     order.
     """
     for library in (interop._XGBOOST, interop._LIGHTGBM, interop._CATBOOST):
-        canonical = [knob.native for knob in library.knobs if not knob.alias]
+        canonical = [knob.native for knob in library.knobs]
         assert len(canonical) == len(set(canonical)), library.name
 
 
