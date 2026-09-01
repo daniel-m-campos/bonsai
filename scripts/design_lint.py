@@ -12,7 +12,9 @@ Gated numbers, each standing for one sentence of the house style:
 ``clone_windows``
     Redundant copies of six-line windows with literals normalized. One
     concept has one home; the second copy is the one that gets fixed
-    without the first.
+    without the first. Include and import blocks and bare string literals
+    are outside any narrative and are skipped; they were 38% of the count
+    before they were.
 ``vocabulary_singletons``
     Words that appear in exactly one public name under include/. The
     conceptual model is a small shared vocabulary; a word used once is
@@ -44,11 +46,15 @@ Tracked but not gated:
 
 None of these is a quality score. Each is a direction, and the ratchet
 turns a preference the reviewer would have to re-argue every round into a
-gate the change has to pass.
+gate the change has to pass. A total can hide a swap (six words admitted
+and six retired reads as +0) and a fall can be a divergence rather than a
+consolidation (a fourth copy drifting away from three), so ``--against``
+prints the sites and words that moved, not only the sums.
 
 Example
 -------
     $ python3 scripts/design_lint.py
+    $ python3 scripts/design_lint.py --against /tmp/main-export
     $ python3 scripts/design_lint.py --update-baseline
 """
 
@@ -146,12 +152,33 @@ def compare(readings: dict[str, Reading], baseline: dict[str, int]) -> bool:
     return ok
 
 
+def churn(before: dict[str, Reading], after: dict[str, Reading]):
+    """Print, per metric, every site or word whose count moved between two trees."""
+    for name, reading in after.items():
+        was = dict(before[name].top_sites)
+        now = dict(reading.top_sites)
+        moved = {k: now.get(k, 0) - was.get(k, 0) for k in was.keys() | now.keys()}
+        moved = {k: d for k, d in moved.items() if d}
+        if not moved:
+            continue
+        print(f"{name} {reading.value - before[name].value:+d}")
+        if name == "vocabulary_singletons":
+            print("    admitted: " + ", ".join(sorted(k for k, d in moved.items() if d > 0)))
+            print("    retired:  " + ", ".join(sorted(k for k, d in moved.items() if d < 0)))
+            continue
+        for site, d in sorted(moved.items(), key=lambda kv: -abs(kv[1])):
+            print(f"    {d:+5d}  {site}")
+
+
 def main() -> int:
     """Entry point; exit 1 on a regression against the baseline."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--update-baseline", action="store_true",
                         help="pin the current values as the new baseline")
     parser.add_argument("--root", type=pathlib.Path, default=ROOT)
+    parser.add_argument("--against", type=pathlib.Path,
+                        help="a second tree (an export of origin/main) whose readings "
+                             "to diff site by site")
     args = parser.parse_args()
 
     readings = measure(args.root)
@@ -163,6 +190,9 @@ def main() -> int:
         return 0
     baseline = json.loads(BASELINE.read_text()) if BASELINE.exists() else {}
     ok = compare(readings, baseline)
+    if args.against:
+        print(f"churn against {args.against}")
+        churn(measure(args.against), readings)
     print("design-lint: ok" if ok else "design-lint: a gated metric moved the wrong way")
     return 0 if ok else 1
 
@@ -197,7 +227,7 @@ def _clone_windows(
 ) -> Reading:
     windows: dict[str, list[pathlib.Path]] = collections.defaultdict(list)
     for f in files:
-        raw = [line for line in _lines(f) if not _is_bare_literal(line)]
+        raw = [line for line in _lines(f) if not _is_outside_the_narrative(line)]
         normalized = [_normalize(line, blind_to_identifiers) for line in raw]
         for i in range(len(raw) - WINDOW + 1):
             text = "".join(raw[i : i + WINDOW])
@@ -260,6 +290,10 @@ def _hardware_leaks(files: list[pathlib.Path], root: pathlib.Path) -> Reading:
 
 def _is_bare_literal(line: str) -> bool:
     return re.match(r'\s*"[^"]*"\s*[,)]?\s*$', line) is not None
+
+
+def _is_outside_the_narrative(line: str) -> bool:
+    return _is_bare_literal(line) or line.lstrip().startswith(("#include", "import ", "from "))
 
 
 def _string_literal_lines(module: pathlib.Path, root: pathlib.Path) -> Reading:

@@ -14,7 +14,9 @@ A style preference is enforceable once it has a number and a direction. `scripts
 
 ## Run it
 
-`python3 scripts/design_lint.py` prints one row per metric against `scripts/design_baseline.json`. On a branch, run it once on `origin/main` (export with `git archive origin/main | tar -x -C <tmp>` and pass `--root <tmp>`, never a checkout that could touch the working tree) and once on the branch head; the deltas between the two are the review, not the absolute values. `REGRESSED` marks a gated row that rose; `tracked` rows never fail but their deltas are read the same way.
+`python3 scripts/design_lint.py` prints one row per metric against `scripts/design_baseline.json`. On a branch, export `origin/main` (`git archive origin/main | tar -x -C <tmp>`, never a checkout that could touch the working tree) and run `python3 scripts/design_lint.py --against <tmp>`: the scoreboard is the tree against the pinned baseline, and the churn block under it is the review, every file and word whose count moved between main and the branch. `REGRESSED` marks a gated row that rose; `tracked` rows never fail but their deltas are read the same way.
+
+Read the churn, not the totals. A total hides a swap: the hunt admitted six words and retired six, and the row read +0. A fall can be a divergence rather than a consolidation: `fit.cpp` lost two clone windows because its prologue drifted away from the three commands it used to match, and that is a fourth copy, not one fewer. A retired word is usually the ratchet working (a concept gained its second home); an admitted one faces the test below.
 
 ## Read a regression as a question
 
@@ -42,4 +44,10 @@ A lower number re-pins freely: run `--update-baseline` in the commit that improv
 
 ## Output contract
 
-The scoreboard, then one line per rising row: `<metric> +N: <the question above, answered>. FIX: <the name, home, or seam method> | PIN: <why the rise is the design>`. End with `PROMOTE: <n>/3` counting the reviews so far in which a number changed the outcome without a false positive; at 3, add `@python3 scripts/design_lint.py` back to `docs-check` and this skill becomes the gate's explanation.
+The scoreboard, then one line per rising row: `<metric> +N: <the question above, answered>. FIX: <the name, home, or seam method> | PIN: <why the rise is the design>`. Then the findings the numbers could not see, if any: the same rule written under different words is invisible to both clone measures when each copy is shorter than a window, and the vocabulary churn is where it shows. End with `PROMOTE: <n>/3` and append the review to the ledger below; at 3, add `@python3 scripts/design_lint.py` back to `docs-check` and this skill becomes the gate's explanation.
+
+## Promotion ledger
+
+Reviews in which a number changed the outcome, with no false positive among the gated rows.
+
+1. PR #447, 2026-09-01. Found: the width rule written three times with three messages, three names for the keys an invocation states, a stale test citation, four clone pairs, and 24 lines of decision-grade rationale in a header. Applied in one commit: `clone_windows` from +6 to -13, `contract_prose_lines` from +121 to +89 with the rest pinned as new contracts. Instrument lessons: include blocks were 38% of the clone count and are now skipped; `--against` exists because the totals hid the swap and the divergence.
