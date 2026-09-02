@@ -26,7 +26,7 @@ namespace bonsai
 // perf: One shared row sample for the whole matrix: every feature's
 // cuts come from the same rows, so the O(n) selection pass runs once instead of
 // once per feature (mapper-fit was ~5-8s of a 16M fit). Empty result means
-// "n_rows <= n_samples, use every row" — the whole-column path, unchanged and
+// "n_rows <= n_samples, use every row": the whole-column path, unchanged and
 // bit-identical for datasets that fit the sample.
 std::vector<uint32_t> bin_sample_rows(size_t n_rows, BinMapperConfig const &cfg)
 {

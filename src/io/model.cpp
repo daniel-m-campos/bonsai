@@ -34,7 +34,6 @@
 
 namespace bonsai
 {
-// namespace bonsai so ADL finds them on the nested types. Member order
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DenseTree::Node, feature_id, threshold_or_value,
                                    left, right, default_left)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(DenseTree::Params, depth, n_leaves)

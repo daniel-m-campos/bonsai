@@ -14,7 +14,7 @@ namespace bonsai
 // here because the registry needs a homogeneous std::array<Metric, N>; static
 // polymorphism would produce N different types. The "avoid raw pointers" rule
 // is about ownership/lifetime -- function pointers point at code, don't own,
-// don't have a lifetime to manage. Same idiom as LinkFn in objective_dispatch.
+// don't have a lifetime to manage.
 using MetricFn = float (*)(floats_view preds, floats_view labels);
 
 // A metric is a named eval-time scalar function for a specific TaskKind.
@@ -27,14 +27,14 @@ struct Metric
     MetricFn         compute;
     // Computed from raw (pre-link) scores rather than transformed
     // predictions: the logloss metric delegates to the objective's
-    // softplus-stable eval, which needs the logits — the float32 sigmoid
+    // softplus-stable eval, which needs the logits: the float32 sigmoid
     // saturates first, and an epsilon clamp on probabilities put a floor
     // under the reported loss that the early-stopping path (which always
     // evaluated raw) never had. One number per model, both paths.
     bool from_raw = false;
 };
 
-// Compute functions for the five built-ins. Free functions so Metric values
+// Compute functions for the built-ins. Free functions so Metric values
 // can refer to them at compile time via &compute_*.
 float compute_rmse(floats_view preds, floats_view labels);
 float compute_mae(floats_view preds, floats_view labels);

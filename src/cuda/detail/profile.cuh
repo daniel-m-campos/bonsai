@@ -28,8 +28,6 @@ struct ProfileCounters
     double find_kern_s = 0, find_d2h_s = 0;
     double root_sums_s = 0, adv_memset_s = 0, adv_hist_s = 0, adv_sub_s = 0;
     double root_hist_s = 0, fin_stamp_s = 0, fin_map_s = 0;
-    // perf: Partition-chain decomposition: the single gpu_s lap hid
-    // route, scan, and scatter behind one number.
     double part_route_s = 0, part_scan_s = 0, part_scatter_s = 0;
     double obj_kernel_s = 0, score_kernel_s = 0;
     double eval_kernel_s = 0;

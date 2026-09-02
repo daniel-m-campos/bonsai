@@ -177,9 +177,9 @@ inline SplitInput populated_root(Dataset const &ds, floats_view grad, floats_vie
 }
 
 // perf: Full-data fits pass the identity by contract (empty rows +
-// row_count): the 64MB host copy and its upload never happen; the
-// engine builds/caches the identity on device. Identity, not
-// cardinality: any other full-length list takes the general path.
+// row_count): the 64MB host copy and its upload never happen (invariants:
+// device-root-spends-its-host-rows). Identity, not cardinality: any other
+// full-length list takes the general path.
 inline SplitInput device_root(RowSelection const &sel)
 {
     SplitInput root;

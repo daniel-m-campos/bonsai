@@ -33,8 +33,8 @@ cuda_predict_plan(std::span<DenseTree const> trees, BinMappers const &mappers,
 
 // Walks every tree (or the first n_trees when nonzero) for every row of the
 // plane and writes init + lr * sum per row, one D2H into out. false declines at
-// run time — the plane belongs to another backend, its shape disagrees with the
-// plan's, or a device allocation failed — and the caller runs the host bin walk.
+// run time (the plane belongs to another backend, its shape disagrees with the
+// plan's, or a device allocation failed) and the caller runs the host bin walk.
 bool cuda_predict(CudaPredictPlan const &plan, IngestPlane const &plane, size_t n_rows,
                   size_t n_features, size_t n_trees, std::span<float> out);
 

@@ -11,7 +11,7 @@ struct ParallelConfig
     uint32_t n_threads = 0;
     // CUDA device for cuda_* growers. 0 = the default device; ignored by
     // CPU growers. Placement only: model bits are unaffected, and
-    // the knob is deliberately NOT persisted in the model artifact.
+    // io::k_persist_skip keeps it out of the model artifact.
     uint32_t device_id = 0;
 
     bool operator==(ParallelConfig const &) const = default;

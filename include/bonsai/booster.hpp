@@ -35,8 +35,8 @@ namespace bonsai
 {
 
 // How to score a feature's contribution across the ensemble:
-//   split — number of times the feature is chosen for a split
-//   gain  — total loss reduction from those splits (usually what you want)
+//   split: number of times the feature is chosen for a split
+//   gain:  total loss reduction from those splits (usually what you want)
 enum class ImportanceType : uint8_t
 {
     split,
@@ -99,7 +99,7 @@ class IBooster
     virtual void predict_staged(features_view X, floats_out out) const = 0;
 
     // Per-class probabilities: out is n_rows * score_width(), row-major. Only
-    // the multiclass (softmax) booster implements it — a row-wise softmax of
+    // the multiclass (softmax) booster implements it, a row-wise softmax of
     // the class logits. Width-1 objectives expose P(class 1) via predict(),
     // so the default throws.
     virtual void predict_proba(features_view /*X*/, std::span<double> /*out*/) const
@@ -797,11 +797,8 @@ template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
         }
     }
 
-    // The shape both contribs paths share: per row and output, zero the
-    // slice, walk that output's trees into it (round-major, so output k
-    // strides by K), scale by the learning rate, and add the output's bias to
-    // the bias column. `into(t, row, phi)` is the only difference between
-    // them.
+    // The shape both contribs paths share; `into(t, row, phi)` is the only
+    // difference between them.
     template <typename Trees, typename Into>
     void contribs_impl(Trees const &trees, size_t n, std::span<double> out,
                        size_t n_features, Into const &into) const
@@ -883,9 +880,9 @@ template <TreeGrower Gr, Sampler Sa> class Ensemble : public ITrainableBooster
 // sampler like GOSS sees this round's values), then grow, then leaf renewal
 // for surrogate-hessian objectives, then the score update. The device-
 // resident objective short-circuits the gradient/score legs onto the device
-// when eligible (see docs/invariants.md, resident-objective-eligibility);
-// reordering any leg breaks either DART or renewal, and the round's
-// bit-identity across runs is what the cross-arch hash gate checks.
+// when eligible (invariants: resident-objective-eligibility); reordering any
+// leg breaks either DART or renewal, and the round's bit-identity across
+// runs is the contract (invariants: host-determinism).
 template <Objective Obj, TreeGrower Gr, Sampler Sa>
 class Booster final : public Ensemble<Gr, Sa>
 {
@@ -988,7 +985,7 @@ class Booster final : public Ensemble<Gr, Sa>
         // Leaf renewal (surrogate-hessian objectives): replace each leaf's
         // Newton step with the objective's optimal value over the residuals
         // of the rows it covers. scores_ still exclude this tree (and, under
-        // DART, the dropped trees) — exactly the state gradients used.
+        // DART, the dropped trees), exactly the state gradients used.
         if constexpr (requires(std::span<float> r) { objective_.renew_leaf(r); })
         {
             renew_leaves(tree, leaf_ids, leaf_values, train.labels(), train.row_view());
@@ -1026,9 +1023,6 @@ class Booster final : public Ensemble<Gr, Sa>
         grower().recycle(std::move(leaf_values), std::move(leaf_ids));
     }
 
-    // True when the round ran on the device instead of the host objective,
-    // under resident-objective-eligibility. Disarming syncs scores home, so
-    // the host path always resumes with the state it would have had.
     float init_score_over(Dataset const &train) const
     {
         RowView const &view = train.row_view();
@@ -1054,6 +1048,9 @@ class Booster final : public Ensemble<Gr, Sa>
             [&](size_t i) { scores_[i] = init + (config().learning_rate * raw[i]); });
     }
 
+    // True when the round ran on the device instead of the host objective
+    // (invariants: resident-objective-eligibility). Disarming syncs scores
+    // home, so the host path always resumes with the state it would have had.
     bool try_resident_round(Dataset const &train)
     {
         if constexpr (device_objective_kind<objective_type> !=
@@ -1146,8 +1143,8 @@ class Booster final : public Ensemble<Gr, Sa>
     }
 
     // DART post-grow half, xgboost's normalize_type="tree" factors: the new
-    // tree lands with weight lr/(k+lr) — comparable to a plain shrinkage
-    // step — and each dropped tree shrinks by k/(k+lr). (The original DART
+    // tree lands with weight lr/(k+lr) (comparable to a plain shrinkage
+    // step) and each dropped tree shrinks by k/(k+lr). (The original DART
     // paper's 1/(k+1) assumes unshrunk trees and starves the new tree by
     // ~1/lr when combined with a learning rate.) scores_ currently exclude
     // the dropped trees entirely; add back their rescaled contribution plus

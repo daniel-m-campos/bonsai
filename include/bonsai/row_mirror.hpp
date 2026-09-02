@@ -48,6 +48,8 @@ class RowMirror
                (fid - (block * tile_width));
     }
 
+    // Empty until mint_once has run; indexing it before that reads past the
+    // end of nothing.
     std::span<uint8_t const> bins() const
     {
         return bins_;

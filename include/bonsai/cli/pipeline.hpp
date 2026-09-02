@@ -25,8 +25,8 @@ struct LoadedTrain
     Dataset    train;
 };
 
-// Step 1 of training (minimal): fit bin mappers from `path`, then bin the same
-// file. Used by tests that don't need a row-major feature buffer.
+// Fit bin mappers from `path`, then bin the same file. No row-major feature
+// buffer, so the result cannot predict.
 LoadedTrain load_train_from_csv(Config const &cfg, std::string const &path);
 
 // One side of a train/validation pair. Carries both the binned Dataset (for
@@ -65,8 +65,8 @@ LoadedTrainValidation load_train_and_validation_with_mappers(Config const &cfg,
 // wants less does its own throttling in the callback body.
 using ProgressFn = std::function<void(size_t, size_t)>;
 
-// Step 2 of training: build a booster from cfg via the registry and run
-// `cfg.booster_config.n_iters` iterations of `update_one_iter` on `train`.
+// Build a booster from cfg via the registry and run `cfg.booster_config.n_iters`
+// iterations of `update_one_iter` on `train`.
 std::unique_ptr<ITrainableBooster> train_in_memory(Config const     &cfg,
                                                    Dataset const    &train,
                                                    ProgressFn const &on_progress = {});
@@ -88,16 +88,6 @@ struct FitTick
 
 using FitTickFn = std::function<void(FitTick const &)>;
 
-// Full training entry point used by `bonsai fit`. Runs n_iters of
-// update_one_iter on train; when log_intervals > 0, invokes on_tick at iter 0
-// (init_score baseline), every floor(n_iters/log_intervals) iters, and at the
-// final iter. Predictions live in scratch buffers owned by this function;
-// callbacks must not retain references past the call.
-// `initial` continues training an existing booster (warm start) instead of
-// constructing a fresh one from cfg; cfg still drives n_iters / ticks /
-// early stopping for the continuation.
-// on_tick doubles as the consent to write to stdout: a call without it prints
-// nothing at all, including the early-stop notice.
 // An optional reference to a caller-owned history vector (no raw pointer,
 // no ownership): std::ref(vec) to opt in, default {} to opt out.
 using EvalHistoryRef = std::optional<std::reference_wrapper<std::vector<float>>>;
@@ -113,6 +103,16 @@ using EvalHistoryRef = std::optional<std::reference_wrapper<std::vector<float>>>
 Config reconcile_warm_start(Config cfg, Config const &loaded_cfg,
                             std::vector<std::string> const &stated_keys = {});
 
+// Full training entry point used by `bonsai fit`. Runs n_iters of
+// update_one_iter on train; when log_intervals > 0, invokes on_tick at iter 0
+// (init_score baseline), every floor(n_iters/log_intervals) iters, and at the
+// final iter. Predictions live in scratch buffers owned by this function;
+// callbacks must not retain references past the call.
+// `initial` continues training an existing booster (warm start) instead of
+// constructing a fresh one from cfg; cfg still drives n_iters / ticks /
+// early stopping for the continuation.
+// on_tick doubles as the consent to write to stdout: a call without it prints
+// nothing at all, including the early-stop notice.
 std::unique_ptr<ITrainableBooster>
 train_with_progress(Config const &cfg, LoadedTrainValidation const &loaded,
                     FitTickFn const                   &on_tick      = {},
@@ -122,8 +122,8 @@ train_with_progress(Config const &cfg, LoadedTrainValidation const &loaded,
 // Same, but the sets arrive separately instead of inside a
 // LoadedTrainValidation. Lets a caller pair a long-lived pre-binned train set
 // with a per-call validation set without copying the train LabeledData (the
-// copy would also change the Dataset address that keys the GPU upload-skip
-// cache).
+// copy would also give the bin store a new address, which the device ingest
+// cache keys on).
 // Train alone: no validation set, so no early stopping and no eval history
 // (`eval_history` is left as the caller passed it).
 std::unique_ptr<ITrainableBooster> train_with_progress(
@@ -132,8 +132,8 @@ std::unique_ptr<ITrainableBooster> train_with_progress(
 
 // With a validation set: `eval_history`, when engaged, receives the validation
 // loss after every boosting round (the objective's own eval metric), whether
-// or not early stopping is on; DART skips it (per-round rescaling invalidates
-// the incremental accumulation the history shares with early stopping).
+// or not early stopping is on; DART skips it (invariants:
+// dart-excludes-early-stopping).
 // Indices are absolute model rounds: a warm start (`initial`) prefixes one
 // quiet-NaN entry per pre-existing round, so argmin over the vector lines up
 // with n_iters()/truncate()/predict-at-round counting.
@@ -150,7 +150,7 @@ struct ScoredBatch
 };
 
 // Parse CSV at `path`, build a row-major feature buffer, predict raw scores.
-// No link inverse applied — caller decides via apply_link_inverse_by_name.
+// No link inverse applied: the caller decides via apply_link_inverse_by_name.
 // n_features is the model's own feature count (the mappers' size); a CSV of
 // any other width is refused before predict (require_n_features).
 ScoredBatch score_csv(IBooster const &booster, std::string const &path,

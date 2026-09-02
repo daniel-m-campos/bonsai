@@ -2254,7 +2254,7 @@ NB_MODULE(_bonsai, m)
         },
         nb::arg("text"),
         "The dotted keys a TOML config text explicitly sets, with typed "
-        "values — only the stated keys, never the resolved whole. Feeds "
+        "values: only the stated keys, never the resolved whole. Feeds "
         "Params.from_toml/from_model; not public API.");
     m.def("_params_schema", &params_schema,
           "The config section registry as data: [{'section', 'fields': "

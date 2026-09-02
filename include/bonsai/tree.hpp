@@ -44,9 +44,7 @@ concept Tree = requires(T const t, features_view X, floats_out out, row_id_t i) 
 //   - Leaf:     feature_id == k_leaf_flag; threshold_or_value is the leaf
 //     contribution; left/right/default_left are unused.
 //
-// 20-byte node (vs the prior 24-byte std::variant<InternalNode, LeafNode>).
-// The smaller footprint and the absence of a variant tag check shrink the
-// predict-path hot loop.
+// A 20-byte node with no tag check keeps the predict-path hot loop small.
 class DenseTree
 {
   public:
@@ -74,7 +72,7 @@ class DenseTree
     // split_gains: per-node split gain, indexed by node id (0 for leaves).
     // covers: per-node training row count. Both optional so hand-built test
     // trees stay terse; empty means "unknown" (importance reports 0, SHAP
-    // refuses).
+    // refuses; invariants: gain-and-cover-stamped-at-grow).
     DenseTree(Nodes nodes, Params params, std::vector<float> split_gains = {},
               std::vector<float> covers = {});
 
@@ -98,7 +96,6 @@ class DenseTree
         return n.feature_id == k_leaf_flag;
     }
 
-    // DART normalization: multiply every leaf contribution by `factor`.
     void scale_leaves(float factor)
     {
         for (auto &n : nodes_)
@@ -110,7 +107,6 @@ class DenseTree
         }
     }
 
-    // Leaf renewal: overwrite one leaf's contribution in place.
     void set_leaf_value(node_id_t id, float value)
     {
         assert(is_leaf(nodes_[id]));
@@ -154,6 +150,10 @@ class DenseTree
     std::vector<float> covers_;
 };
 
+// One split per level, so a row's leaf is the bit string of its routing
+// decisions, level 0 the most significant bit, right = 1. leaf_table_ and
+// leaf_covers_ are indexed by that number and nothing else (invariants:
+// perfect-tree-numbering-one-scheme).
 class ObliviousTree
 {
   public:
@@ -175,15 +175,15 @@ class ObliviousTree
     };
 
     // level_gains: split gain per level; leaf_covers: training rows per
-    // leaf slot (2^depth entries). Both optional, empty = unknown (see
-    // DenseTree) — leaf covers exist so TreeSHAP has its background
-    // distribution; models saved before they were recorded load with
-    // covers empty and pred_contribs explains why it can't run.
+    // leaf slot (2^depth entries). Both optional, empty = unknown as for
+    // DenseTree (invariants: gain-and-cover-stamped-at-grow). Leaf covers are
+    // TreeSHAP's background distribution, so a model saved before they were
+    // recorded loads with covers empty and pred_contribs explains why it
+    // cannot run.
     ObliviousTree(LevelSplits splits, LeafTable values,
                   std::vector<float> level_gains = {},
                   std::vector<float> leaf_covers = {});
 
-    // DART normalization: multiply every leaf contribution by `factor`.
     void scale_leaves(float factor)
     {
         for (auto &v : leaf_table_)
@@ -192,7 +192,6 @@ class ObliviousTree
         }
     }
 
-    // Leaf renewal: overwrite one leaf-table entry in place.
     void set_leaf_value(size_t index, float value)
     {
         leaf_table_[index] = value;
@@ -250,8 +249,7 @@ DenseTree dense_equivalent(ObliviousTree const &tree);
 // The dense-tree predict pack for the depthwise and leafwise ensembles:
 // eight trees walked per row in lockstep so the core always has independent
 // load chains in flight, leaves self-looping so a walk padded to its group's
-// deepest tree reads the node it ends on. The measurements behind that shape
-// live in the decisions ledger.
+// deepest tree reads the node it ends on.
 //
 // What it guarantees: accumulate adds each row's tree-order value sum into
 // out; from a zero-filled out (as predict_at provides) the result is

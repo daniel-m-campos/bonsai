@@ -27,11 +27,11 @@ namespace bonsai
 
 // K-class softmax boosting: each round grows one tree per class on the
 // softmax gradients (grad_k = p_k - 1[y == k], hess_k = p_k (1 - p_k), the
-// true diagonal Hessian; the factor-2 'xgboost convention' halves every
-// Newton step and cost 2x the iterations to match lightgbm at the same
-// learning rate). The Ensemble holds the K-wide trees and answers every
-// query over them; this class owns the round. predict() emits argmax class
-// ids and eval() is the multiclass logloss. The 1-D Objective concept can't
+// true diagonal Hessian, not the factor-2 convention that halves every
+// Newton step; invariants: softmax-true-hessian). The Ensemble holds the
+// K-wide trees and answers every query over them; this class owns the round.
+// predict() emits argmax class ids and eval() is the multiclass logloss. The
+// 1-D Objective concept can't
 // express the K-output shape, which is why this is its own booster
 // dispatched via BoosterFor<{softmax, G, Sa}>.
 template <TreeGrower Gr, Sampler Sa>
@@ -78,7 +78,6 @@ class MulticlassBooster final : public Ensemble<Gr, Sa>
             replay_warm_start(train, n);
         }
 
-        // Per-row softmax probabilities feed every class's gradients.
         std::vector<float> probs(n * n_k);
         softmax_rows(scores_, n, n_k, probs);
 
@@ -234,7 +233,6 @@ class MulticlassBooster final : public Ensemble<Gr, Sa>
         this->set_init_scores(std::move(priors));
     }
 
-    // Every row starts at its class's init score.
     void broadcast_init_scores(size_t n)
     {
         size_t const n_k = n_outputs();

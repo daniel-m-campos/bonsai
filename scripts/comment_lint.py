@@ -44,7 +44,7 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 SRC = REPO / "src"
 EXTENSIONS = {".cpp", ".cu", ".hpp", ".cuh"}
 
-STRUCTURAL = re.compile(r"NOLINT|clang-format (on|off)|^//\s*namespace\b")
+STRUCTURAL = re.compile(r"NOLINT|clang-format (on|off)|^//\s*namespace(\s+[\w:]+)?\s*$")
 PERF = re.compile(r"^// perf:")
 SYNC = re.compile(r"^// sync:")
 FFI = re.compile(r"^// ffi:")

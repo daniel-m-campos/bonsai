@@ -20,8 +20,6 @@ template <typename T> using ParseResult = std::expected<T, std::string>;
 
 template <typename T> struct FieldCodec;
 
-// -------------------- helpers -----------------------------------------------
-
 template <typename U> ParseResult<U> read_uint_from_toml(toml::node const &node)
 {
     auto opt = node.value<int64_t>();
@@ -81,8 +79,6 @@ inline ParseResult<float> read_float_from_string(std::string_view value)
     return v;
 }
 
-// -------------------- bool ---------------------------------------------------
-
 template <> struct FieldCodec<bool>
 {
     static ParseResult<bool> from_toml(toml::node const &node)
@@ -112,8 +108,6 @@ template <> struct FieldCodec<bool>
     }
 };
 
-// -------------------- int ----------------------------------------------------
-
 template <> struct FieldCodec<int>
 {
     static ParseResult<int> from_toml(toml::node const &node)
@@ -135,8 +129,6 @@ template <> struct FieldCodec<int>
     }
 };
 
-// -------------------- unsigned ints (uint8_t / uint32_t / uint64_t / size_t) -
-
 template <typename U>
     requires std::is_unsigned_v<U> && (!std::is_same_v<U, bool>)
 struct FieldCodec<U>
@@ -154,8 +146,6 @@ struct FieldCodec<U>
         return toml::value{static_cast<int64_t>(v)};
     }
 };
-
-// -------------------- float --------------------------------------------------
 
 template <> struct FieldCodec<float>
 {
@@ -177,8 +167,6 @@ template <> struct FieldCodec<float>
         return toml::value{static_cast<double>(v)};
     }
 };
-
-// -------------------- std::string --------------------------------------------
 
 template <> struct FieldCodec<std::string>
 {
@@ -230,8 +218,6 @@ inline ParseResult<std::vector<std::string_view>> split_list(std::string_view va
     return out;
 }
 
-// -------------------- std::vector<std::string> -------------------------------
-
 template <> struct FieldCodec<std::vector<std::string>>
 {
     static ParseResult<std::vector<std::string>> from_toml(toml::node const &node)
@@ -273,8 +259,6 @@ template <> struct FieldCodec<std::vector<std::string>>
         return a;
     }
 };
-
-// -------------------- std::vector<int> ---------------------------------------
 
 template <> struct FieldCodec<std::vector<int>>
 {

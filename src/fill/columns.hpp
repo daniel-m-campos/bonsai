@@ -15,8 +15,7 @@ namespace bonsai::fill_detail
 
 // perf: Prefetch distance for the column fill's gathered arm, in rows: the loop
 // carries one L1-resident add per row, so the lookahead has to cover a DRAM
-// latency in row iterations rather than the mirror fill's 16
-// of 16.
+// latency in row iterations rather than the mirror fill's 16 rows.
 inline constexpr size_t k_col_ahead = 64;
 
 inline void fill_column(Dataset const &ds, feature_id_t fid, Histogram &h,

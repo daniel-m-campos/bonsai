@@ -19,8 +19,8 @@ using Configurations = cartesian_product_t<Objectives, Growers, Samplers>;
 namespace detail
 {
 // Default: the uniform single-output booster. Softmax routes to the
-// K-output MulticlassBooster — the one objective whose shape doesn't fit
-// Booster<O,G,Sa> (see multiclass_booster.hpp).
+// K-output MulticlassBooster, the one objective whose shape doesn't fit
+// Booster<O,G,Sa>.
 template <typename Combo> struct booster_for
 {
     using type = Booster<type_at_t<0, Combo>, type_at_t<1, Combo>, type_at_t<2, Combo>>;

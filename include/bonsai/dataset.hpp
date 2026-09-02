@@ -83,7 +83,8 @@ class Dataset
     size_t n_features() const;
 
     // Every row id is a global id into the plane, so grad, hess, labels and
-    // the row-major mirror stay full length whatever the view selects.
+    // the row-major mirror stay full length whatever the view selects
+    // (invariants: view-narrows-rows-not-plane).
     RowView const &row_view() const
     {
         return rows_;

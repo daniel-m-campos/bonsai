@@ -2,8 +2,7 @@
 
 // Phase profilers, all in one place: each attributes a pipeline's wall-clock
 // across named phases, gated by an env var and printed once at process exit.
-// The CUDA engine's ProfileCounters stay device-side in
-// src/cuda/histogram_engine.cu — they lap GPU streams, not host phases.
+// The CUDA engine's own counters lap GPU streams, not host phases.
 
 #include <array>
 #include <chrono>
@@ -148,19 +147,15 @@ struct FitProfiler : Profiler<FitProfiler>
     };
 };
 
-// Grow-loop phases (BONSAI_GROW_PROFILE=1), host-side counterpart of the
-// CUDA engine's ProfileCounters.
+// Grow-loop phases (BONSAI_GROW_PROFILE=1).
 struct GrowProfiler : Profiler<GrowProfiler>
 {
     static constexpr char const *env    = "BONSAI_GROW_PROFILE";
     static constexpr char const *prefix = "grow-profile";
 
     double find_s = 0, bookkeep_s = 0, partition_s = 0, populate_s = 0, finalize_s = 0;
-    // Conservation buckets: everything grow spends outside the
-    // phase laps above. setup = per-tree output allocs + feature sampling +
-    // the LevelStep ctor (begin_tree: gh upload, dataset residency);
-    // commit = demote + commit_children between the engine phases;
-    // assemble = gains/covers resize + Tree construction + result move-out.
+    // Conservation buckets: everything grow spends outside the phase laps
+    // above, so the laps and these three sum to grow's wall clock.
     double setup_s = 0, commit_s = 0, assemble_s = 0;
 
     static constexpr std::array fields = {

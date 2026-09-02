@@ -9,11 +9,11 @@
 namespace bonsai::detail
 {
 
-// Size-class free-list for histogram cell blocks. populate() allocates a
-// fresh n_bins block per (node, feature) and drops it when the node leaves
-// the frontier; at high bin counts the first-touch page faults of those
-// fresh blocks dominate the fit. Recycling
-// keeps the pages warm. Mutex'd: allocations are per-node, not per-row.
+// Size-class free-list for histogram cell blocks. A level fill carves one
+// arena per node and drops it when the node leaves the frontier; at high
+// bin counts the first-touch page faults of those fresh blocks dominate the
+// fit. Recycling keeps the pages warm. Mutex'd: allocations are per-node,
+// not per-row.
 class HistBlockPool
 {
   public:
@@ -49,6 +49,8 @@ class HistBlockPool
         return ::operator new(bytes);
     }
 
+    // Returns a block to its size class. `bytes` must be the count take()
+    // handed it out under, or the block is recycled at the wrong size.
     void give(void *p, size_t bytes)
     {
         auto &local = local_free()[bytes];

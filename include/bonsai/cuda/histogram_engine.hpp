@@ -29,8 +29,8 @@ void cuda_select_device(uint32_t device_id);
 
 // The CUDA ingest transaction: bins raw features
 // on the device against host-fitted cuts and returns the resident plane for
-// Dataset::bin to carry. Returns nullptr — leaving the caller on the host
-// fill — when the build has no backend, no usable device is present, or a
+// Dataset::bin to carry. Returns nullptr, leaving the caller on the host
+// fill, when the build has no backend, no usable device is present, or a
 // feature's bins exceed the resident path's shared-memory ceiling (grow
 // would refuse such a dataset on the device anyway). Bin ids match
 // the host fill (invariants: device-binning-byte-identity).
@@ -55,7 +55,7 @@ struct DeviceMatrix
 void cuda_download(float const *src, size_t n, float *dst);
 
 // Gathers the named rows of a device-resident matrix into a host row-major
-// (rows.size() x n_feats) buffer — the sample BinMappers::fit cuts on. An
+// (rows.size() x n_feats) buffer, the sample BinMappers::fit cuts on. An
 // empty rows span copies every row, matching bin_sample_rows.
 void cuda_gather_rows(DeviceMatrix const &X, std::span<uint32_t const> rows,
                       std::span<float> out);
@@ -71,8 +71,8 @@ std::shared_ptr<IngestPlane const> cuda_ingest_device(DeviceMatrix const &X,
 // HistogramEngine that offloads histogram construction to the GPU
 // (src/cuda/histogram_engine.cu; a throwing stub backs it when built
 // without BONSAI_CUDA). GPU cells match the CPU engine to tolerance, not
-// bit-exactly: atomics accumulate in arbitrary order. Design and precision
-// scheme below (invariants: cuda-training-tolerance).
+// bit-exactly: atomics accumulate in arbitrary order (invariants:
+// cuda-training-tolerance).
 class CudaHistogramEngine
 {
   public:
@@ -85,18 +85,18 @@ class CudaHistogramEngine
 
     // --- HistogramEngine concept (required): begin_tree stages the per-tree
     // gradient upload. populate is the concept's per-node fill, which this
-    // engine does not implement and which nothing calls: its nodes are built
-    // on the device, and a tree the device cannot hold is refused by
-    // begin_root rather than moved to the host.
+    // engine does not implement: its nodes are built on the device, and a
+    // tree the device cannot hold is refused rather than moved to the host
+    // (invariants: device-oversized-tree-refuses-not-falls-back).
     void begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
     void populate(Dataset const &ds, floats_view grad, floats_view hess,
                   SplitInput &split_input, std::span<feature_id_t const> selected);
 
-    // --- GPULevelEngine (optional, phase 3). Level histograms stay on the
-    // device, keyed by the node's index in the grower's frontier ("slot");
-    // splits are found on the device and only decisions and child sums cross
-    // the bus. The depthwise and levelwise growers gate this whole cluster on
-    // the GPULevelEngine concept.
+    // --- GPULevelEngine (optional). Level histograms stay on the device,
+    // keyed by the node's index in the grower's frontier ("slot"); splits are
+    // found on the device and only decisions and child sums cross the bus.
+    // Growers gate on the concept, not on the engine's name (invariants:
+    // device-grower-by-engine-type).
 
     // One child-level derivation: the smaller child's histogram builds from
     // its device row segment; the larger derives on-device as parent minus
@@ -130,7 +130,8 @@ class CudaHistogramEngine
     // to fuse the per-row score update. Internal
     // nodes carry the split (feature, bin, missing routing, children); leaves
     // carry the contribution. Dense trees map their nodes one-to-one; oblivious
-    // trees synthesize the perfect-tree numbering (children 2i+1 / 2i+2).
+    // trees synthesize the perfect-tree numbering, children 2i+1 / 2i+2
+    // (invariants: perfect-tree-numbering-one-scheme).
     struct ResidentNode
     {
         feature_id_t feature_id   = 0;
@@ -152,7 +153,7 @@ class CudaHistogramEngine
     // segments (call before the level advances past them).
     void stamp_leaves(std::span<LeafStamp const> stamps);
     // Routes every split slot's rows into its children on the device;
-    // child_counts receives (n_left, n_right) per op — the only partition
+    // child_counts receives (n_left, n_right) per op, the only partition
     // data that returns to the host.
     void partition_level(Dataset const &ds, std::span<PartitionOp const> ops,
                          std::span<uint32_t> child_counts);
@@ -164,8 +165,7 @@ class CudaHistogramEngine
     void advance_layout_only();
     // Tree epilogue, engine-owned: maps the resident
     // per-row leaf assignment through node_values on device and downloads
-    // values and leaf ids in two bulk copies — replacing the per-tree
-    // host stamping loop over every row.
+    // values and leaf ids in two bulk copies.
     void finalize_tree(std::span<float const> node_values, std::span<float> values,
                        std::span<node_id_t> leaf_ids);
     // Best split per frontier node from the current level's device
@@ -177,7 +177,7 @@ class CudaHistogramEngine
     // Levelwise: ONE split for the whole frontier, chosen to maximize the gain
     // summed across all nodes and feasible for every node. out is filled with
     // that split for every slot, and child_sums with each node's (left, right)
-    // totals at that cut — they seed the children's SplitInput.sums, which the
+    // totals at that cut; they seed the children's SplitInput.sums, which the
     // next level's find reads. Enables ObliviousGrower<CudaHistogramEngine>.
     void find_level_split(Dataset const &ds, TreeConfig const &config,
                           std::span<SplitInput const> level, std::span<SplitOutput> out,
