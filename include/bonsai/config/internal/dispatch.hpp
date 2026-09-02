@@ -113,9 +113,8 @@ bool apply_leaf(Config &cfg, Section const &section, std::string_view leaf,
 }
 
 template <typename Sections>
-void load_from_table(toml::table const &root, Config &cfg, Sections const &sections)
+void require_known_sections(toml::table const &root, Sections const &sections)
 {
-    // 1. Reject unknown top-level sections.
     std::apply(
         [&](auto const &...sections)
         {
@@ -132,8 +131,12 @@ void load_from_table(toml::table const &root, Config &cfg, Sections const &secti
             }
         },
         sections);
+}
 
-    // 2. Dispatch each present section to load_section.
+template <typename Sections>
+void load_stated_sections(toml::table const &root, Config &cfg,
+                          Sections const &sections)
+{
     std::apply(
         [&](auto const &...sections)
         {
@@ -148,6 +151,13 @@ void load_from_table(toml::table const &root, Config &cfg, Sections const &secti
                 ...);
         },
         sections);
+}
+
+template <typename Sections>
+void load_from_table(toml::table const &root, Config &cfg, Sections const &sections)
+{
+    require_known_sections(root, sections);
+    load_stated_sections(root, cfg, sections);
 }
 
 template <typename Sections>

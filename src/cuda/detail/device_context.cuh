@@ -113,7 +113,7 @@ struct CudaDeviceContext
         // perf: Pristine root row list for full-data fits: partitioning ping-pongs
         // the working rows buffer, so the identity permutation is cached once
         // and restored device-to-device per tree instead of re-uploaded.
-        // 0 = invalid; only ever the identity permutation (invariants:
+        // Only ever the identity permutation (invariants:
         // device-root-spends-its-host-rows).
         DeviceBuffer<uint32_t> root_rows;
         size_t                 root_rows_cached_n = 0;
@@ -125,6 +125,11 @@ struct CudaDeviceContext
         std::vector<uint32_t>  slot_counts;
         std::vector<uint32_t>  next_offsets;
         std::vector<uint32_t>  next_counts;
+
+        bool root_rows_cached(size_t n_rows) const
+        {
+            return root_rows_cached_n == n_rows;
+        }
 
         enum : int
         {
