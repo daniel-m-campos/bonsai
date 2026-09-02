@@ -711,7 +711,7 @@ uint32_t CudaDeviceContext::stage_root_rows(SplitInput const &root, bool identit
     auto const n = static_cast<uint32_t>(identity ? root.row_count : root.rows.size());
     lvl.rows.reserve(n);
     if (static_cast<size_t>(n) == data.key.n_rows &&
-        lvl.root_rows_cached_n == data.key.n_rows)
+        lvl.root_rows_cached(data.key.n_rows))
     {
         check(cudaMemcpy(lvl.rows.data(), lvl.root_rows.data(),
                          static_cast<size_t>(n) * sizeof(uint32_t),

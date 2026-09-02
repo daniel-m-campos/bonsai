@@ -43,10 +43,14 @@ consteval std::string_view parse_member_identifier(std::string_view fn)
     return fn.substr(start, end - start);
 }
 
+template <auto MemPtr> consteval std::string_view raw_member_name()
+{
+    return std::source_location::current().function_name();
+}
+
 template <auto MemPtr> consteval std::string_view field_name()
 {
-    constexpr std::string_view fn   = std::source_location::current().function_name();
-    constexpr auto             name = parse_member_identifier(fn);
+    constexpr auto name = parse_member_identifier(raw_member_name<MemPtr>());
     static_assert(!name.empty(),
                   "field_name(): could not extract identifier from "
                   "function signature - toolchain format may have changed");
