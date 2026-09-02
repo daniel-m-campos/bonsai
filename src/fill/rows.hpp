@@ -281,8 +281,7 @@ inline void run_fill_reduce(ReducePlan const &plan, split_input_refs nodes,
         });
 }
 
-// perf: Rows per chunk in the partition; measured, not tunable
-// by measurement.
+// perf: Rows per chunk in the partition; measured, not tunable.
 inline constexpr size_t k_reduce_grain = 1024;
 
 inline void fill_sparse(Dataset const &ds, floats_view grad, floats_view hess,

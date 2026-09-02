@@ -121,8 +121,8 @@ void BinStore::mint_into(std::span<uint8_t> out_bins) const
     assert(f == n_features_);
     assert(out_bins.size() == n_rows_ * f);
     // sync: each worker owns a row block in the parallel::for_each_index
-    // below, so writes never overlap; overlapping them races and breaks
-    // the byte-identity model_hash pins.
+    // below, so writes never overlap; overlapping them races (invariants:
+    // host-determinism).
     size_t const     width = RowMirror::tile_width;
     uint8_t         *out   = out_bins.data();
     constexpr size_t tile  = 64;

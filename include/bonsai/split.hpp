@@ -77,6 +77,8 @@ struct SplitInput
     }
 };
 
+// A split proposal. Only `valid` says the other fields mean anything: an
+// invalid output carries zeroed defaults, not a split at bin 0.
 struct SplitOutput
 {
     double       gain         = 0.0;
@@ -121,8 +123,7 @@ struct HistogramLevelSplitFinder
     static SplitOutput find(FrontierInput frontier, TreeConfig const &config);
 };
 
-// Soft-threshold on the gradient sum: XGBoost's L1 treatment. Zero when
-// |g| <= l1, else shrinks toward zero by l1.
+// Soft-threshold on the gradient sum: XGBoost's L1 treatment.
 // constexpr: callable from CUDA device code (clang treats constexpr as
 // implicitly host+device), keeping one definition of the gain math.
 constexpr double l1_thresholded(double g, double l1)

@@ -16,7 +16,8 @@ struct BoosterConfig
     // for this many iterations.
     uint32_t early_stopping_rounds = 0;
     // DART: probability of dropping each existing tree per iteration.
-    // 0 = plain gradient boosting. Incompatible with early stopping.
+    // 0 = plain gradient boosting. Incompatible with early stopping
+    // (invariants: dart-excludes-early-stopping).
     float dart_drop_rate = 0.0F;
 
     bool operator==(BoosterConfig const &) const = default;

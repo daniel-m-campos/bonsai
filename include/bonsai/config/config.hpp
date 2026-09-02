@@ -24,9 +24,7 @@ struct Config
     MetricsConfig   metrics;
     ParallelConfig  parallel;
     ObjectiveConfig objective;
-    // IOConfig — added as components are designed.
-
-    bool operator==(Config const &) const = default;
+    bool            operator==(Config const &) const = default;
 };
 
 } // namespace bonsai

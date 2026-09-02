@@ -193,9 +193,9 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
                 // longer vetoes the whole candidate (at depth >= 5
                 // some frontier node is always near-empty, so every good cut
                 // was rejected and levelwise trailed catboost by 3-26%). It
-                // contributes its parent score instead — zero gain — and the
+                // contributes its parent score instead (zero gain) and the
                 // broadcast split still applies to it; empty children are
-                // first-class (zero cover, SHAP-safe).
+                // first-class (invariants: zero-cover-branches-are-real).
                 sum_children_score += c.feasible ? c.children_score : parent_score[p];
             }
             update_best(best, sum_children_score - sum_parent_score, fid,

@@ -26,8 +26,7 @@ namespace
 {
 
 // perf: Density cutoff: a node holding rows >= n_rows / den routes to the column
-// fill, sparser ones to the row-chunk fill; measured, not tunable
-// by measurement.
+// fill, sparser ones to the row-chunk fill; measured, not tunable.
 constexpr size_t k_col_fill_den = 4;
 
 } // namespace

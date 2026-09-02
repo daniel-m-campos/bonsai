@@ -10,7 +10,7 @@ namespace bonsai
 
 // Objectives are instances constructed from Config so parameterized losses
 // (huber_delta, quantile_alpha) can carry state. Parameter-free objectives
-// keep static methods — statics satisfy instance-call syntax.
+// keep static methods: statics satisfy instance-call syntax.
 template <typename T>
 concept Objective = std::constructible_from<T, Config const &> &&
                     requires(T const &o, floats_view preds, floats_view targets,
@@ -42,8 +42,9 @@ struct LogLossObjective
 
 // Poisson raw-score clamp: log-rates clamp to +-this before exp so a runaway
 // leaf cannot overflow to inf and poison every later gradient. exp(30) ~ 1e13,
-// far past any sane rate. Named here so the host objective and the device
-// gradient kernel clamp with one identical constant.
+// far past any sane rate. One named constant so the host objective and the
+// device gradient kernel cannot drift apart (invariants:
+// device-objective-formula-matches-host).
 inline constexpr float k_poisson_max_log = 30.0F;
 
 // Poisson negative log-likelihood with a log link: raw scores are
@@ -112,19 +113,13 @@ struct QuantileObjective
     float alpha_ = 0.5F;
 };
 
-// Multiclass softmax. A dispatch tag more than an Objective: the
-// K-output shape doesn't fit the 1-D Objective concept, so BoosterFor
-// routes {softmax, G, Sa} to MulticlassBooster<G, Sa>, which owns the
-// softmax math internally. The members below only satisfy the registry
-// thunks (eval table, link table); the 1-D eval cannot express K columns
-// and throws if reached.
 // A dispatch TAG wearing the Objective interface, documented rather than
 // re-typed: the K-output shape can't satisfy the 1-D concept, so BoosterFor
 // routes {softmax, G, Sa} to MulticlassBooster and these methods are never
 // called on the training path. They must still exist and throw because the
-// generic per-objective trait tables (eval_table etc.) instantiate them for
-// every typelist member; a separate tag type would need the same stubs under
-// a different name.
+// generic per-objective trait tables (link_inverse_of, default_metrics_of)
+// instantiate them for every typelist member; a separate tag type would need
+// the same stubs under a different name.
 struct SoftmaxObjective
 {
     SoftmaxObjective() = default;

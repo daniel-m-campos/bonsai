@@ -15,9 +15,11 @@ namespace bonsai
 namespace cuda_detail
 {
 
-// perf: Nodes with fewer rows than this build on the CPU: the kernel launch +
-// synchronous copy-back round trip outweighs the histogram work itself
-// below roughly this size (knee measured on Jetson Orin Nano).
+// perf: Nodes with fewer rows than this take hist_small_kernel, which
+// accumulates straight into the node's global slot: below roughly this size
+// the per-(node, feature) shared-memory zero and merge dominates the
+// histogram work. The 2026-08-17 sweep measured every cutoff above 512
+// worse at every cell.
 inline constexpr size_t k_min_gpu_rows = 512;
 
 // perf: Default shared-memory histogram footprint cap (stride floats, 48 KiB
@@ -210,18 +212,16 @@ template <typename T> class PinnedBuffer
     T *ptr_ = nullptr;
 };
 
-// sync: Page-locked staging paired with its device mirror. The upload is a
-// cudaMemcpyAsync, so the host side stays live until the copy lands and a
-// caller may only rewrite it after the fetch that fenced the previous one.
-// Page-locked staging paired with its device mirror: the host-to-device half of
-// Staged, with the two properties a per-round staging path needs. The host side
-// is pinned and the upload is asynchronous, so it never stream-syncs the way a
-// pageable copy does (that sync drains every kernel already queued, which on a
-// plane that stages a handful of scalars per round is the round's whole idle).
-// The host side stays live until the copy lands, so a caller may only rewrite
-// it after a later blocking copy on the same stream has fenced the previous
-// upload. Pageable Staged remains the default everywhere that stages per level
-// or per tree, where the sync is amortized and the aliasing rule is a hazard.
+// sync: Page-locked staging paired with its device mirror: the host-to-device
+// half of Staged, with the two properties a per-round staging path needs. The
+// host side is pinned and the upload is a cudaMemcpyAsync, so it never
+// stream-syncs the way a pageable copy does (that sync drains every kernel
+// already queued, which on a plane that stages a handful of scalars per round
+// is the round's whole idle). The host side stays live until the copy lands,
+// so a caller may only rewrite it after a later blocking copy on the same
+// stream has fenced the previous upload. Pageable Staged remains the default
+// everywhere that stages per level or per tree, where the sync is amortized
+// and the aliasing rule is a hazard.
 template <typename T> class PinnedStaged
 {
   public:

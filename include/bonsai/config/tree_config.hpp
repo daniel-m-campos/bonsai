@@ -18,7 +18,8 @@ struct TreeConfig
     uint32_t max_leaves        = 31; // leafwise only; 0 = unbounded (depth-capped)
     uint32_t feature_seed      = 2;  // rng seed for feature_fraction draws
     // Per-feature monotone direction: +1 increasing, -1 decreasing, 0 free.
-    // Missing trailing entries are free. Node-splitting growers only.
+    // Missing trailing entries are free. Levelwise projects the finished leaf
+    // table instead of vetoing splits (invariants: levelwise-monotone-holds).
     std::vector<int> monotone_constraints = {};
     // Feature groups allowed to interact on a tree path; one group per
     // string, ids separated by ',' (TOML) or '+' (CLI). Features outside

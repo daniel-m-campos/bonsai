@@ -17,10 +17,10 @@ namespace bonsai::config
 // unknown keys, type mismatches, or bad values.
 Config load_toml(std::string const &path);
 
-// Parse from an in-memory TOML string. Used by tests.
+// Parse from an in-memory TOML string. Same strictness as load_toml.
 Config parse_toml(std::string_view text);
 
-// Serialize a Config back to TOML. Output is parseable by `parse_toml` —
+// Serialize a Config back to TOML. Output is parseable by `parse_toml`:
 // `parse_toml(dump_toml(cfg)) == cfg` for any cfg built from the codec.
 // `dump_toml(Config{})` is the canonical default-config dump used by
 // `bonsai params`.
@@ -32,7 +32,7 @@ using OverrideValue = std::variant<bool, int64_t, double, std::string,
 
 // The dotted keys a TOML text explicitly sets, with parsed typed values, in
 // registry order. This is what a sparse overrides object (Params.from_toml)
-// needs — only the stated keys, never the resolved whole. Strict like
+// needs: only the stated keys, never the resolved whole. Strict like
 // load_toml: unknown sections or keys throw ConfigError.
 std::vector<std::pair<std::string, OverrideValue>>
 typed_overrides(std::string_view text);

@@ -10,8 +10,7 @@ namespace bonsai::detail
 {
 
 // Routing a tree in bin space, shared by the booster's prediction family and
-// by TreeSHAP. Its own header because src/shap.cpp needs it and cannot include
-// booster.hpp (booster.hpp includes shap.hpp).
+// by TreeSHAP. Its own header so both callers include it without a cycle.
 
 // A tree's splits in bin space, so a routing walk inverts bin_of_threshold
 // once per tree instead of once per row: per split, the bin its threshold came

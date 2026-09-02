@@ -42,7 +42,8 @@ using cell_view_t = std::span<HistCell const>;
 // sums; every reduction over them runs in double, and node totals are
 // computed at split time rather than accumulated in the fill, which is what
 // keeps the subtraction trick exact (invariants: subtraction-trick). The
-// feature is the missing bin: honest data, outside the split sweep.
+// last cell is the missing bin: honest data, outside the split sweep, which
+// missing(), sweep_cells() and cut_cells() all address by position.
 class Histogram
 {
   public:
@@ -151,7 +152,7 @@ class Histogram
         assert(out.size() == prefix_size());
         if (out.empty())
         {
-            return; // degenerate hist (cells_.size() < 2): no cuts to scan
+            return;
         }
         double grad = 0.0;
         double hess = 0.0;
@@ -278,19 +279,16 @@ class NodeHistograms
                size_t n_features, bool alone = false)
     {
         carve_storage(layout, n_features);
-        // The runtime's dynamic chunk is n_sel / (n_threads * 4), so one
-        // index per run hands out the same contiguous groups a hand-rolled
-        // grain would; a team of one is the serial pass.
         parallel::for_each_index_on(alone ? parallel::n_threads() : 1, selected.size(),
                                     [&](size_t j) { carve_run(layout, selected, j); });
     }
 
-    // Sizes the arena and the slot table without touching a cell. Pairs with
-    // carve_run for callers that carve inside their own fill.
+    // Sizes the arena and the slot table without touching a cell: the
+    // allocator leaves the resize untouched, so carve_run's placement-new is
+    // where every cell's lifetime starts. Pairs with carve_run for callers
+    // that carve inside their own fill.
     void carve_storage(ArenaLayout const &layout, size_t n_features)
     {
-        // The allocator leaves the resize untouched, so carve_run's
-        // placement-new is where every cell's lifetime starts.
         arena_.clear();
         arena_.resize(layout.total_cells());
         hists_.clear();

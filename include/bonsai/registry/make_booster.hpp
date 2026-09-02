@@ -32,7 +32,7 @@ struct AvailableCombo
 };
 
 // Enumerate every (objective, grower, sampler) combo in the dispatch
-// table. Used by `bonsai info` and the Python sidecar for sanity.
+// table, in typelist order.
 std::vector<AvailableCombo> available_combos();
 
 // Answered from the grower's engine type, never from the spelling of its

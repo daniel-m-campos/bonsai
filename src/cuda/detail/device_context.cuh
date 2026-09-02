@@ -113,8 +113,8 @@ struct CudaDeviceContext
         // perf: Pristine root row list for full-data fits: partitioning ping-pongs
         // the working rows buffer, so the identity permutation is cached once
         // and restored device-to-device per tree instead of re-uploaded.
-        // 0 = invalid; only ever the identity, which is what every sampler
-        // returns when its size equals n_rows.
+        // 0 = invalid; only ever the identity permutation (invariants:
+        // device-root-spends-its-host-rows).
         DeviceBuffer<uint32_t> root_rows;
         size_t                 root_rows_cached_n = 0;
         DeviceBuffer<double2>  sum_partial;
@@ -268,10 +268,11 @@ struct CudaDeviceContext
 
     // perf: The one histogram-capacity predicate: a node's per-feature scratch is
     // 4 * bins floats in shared memory. begin_root refuses a tree that fails
-    // it, and resident_begin must apply the SAME test (once per fit, on the
-    // worst-case feature) so no tree can fail it after the resident mode
-    // armed. Any new capacity condition must land here, visible to both
-    // callers.
+    // it, and leaf_begin_root, leaf_budget_ok and resident_begin apply the
+    // SAME test, resident once per fit on the worst-case feature, so no tree
+    // can fail it after the resident mode armed (invariants:
+    // device-oversized-tree-refuses-not-falls-back). Any new capacity
+    // condition lands here.
     bool hist_budget_ok(size_t max_bins) const
     {
         return 4 * max_bins * sizeof(float) <= shared_limit;

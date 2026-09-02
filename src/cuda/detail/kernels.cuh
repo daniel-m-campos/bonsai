@@ -731,12 +731,12 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
                 int const  dl = 1 - d;
                 auto const s =
                     split_sums_dev(pg, ph, miss_g, miss_h, real_g, real_h, dl);
-                // perf: Ported from the CPU level find (split.cpp): an infeasible
-                // node does NOT veto the whole level candidate. It contributes
-                // its parent score (zero gain) and the broadcast split still
-                // applies to it. At depth >= 5 some frontier node is always
-                // near-empty, so vetoing rejected every good deep cut and GPU
-                // levelwise trailed its own CPU grower (and catboost) at scale.
+                // perf: An infeasible node does NOT veto the whole level
+                // candidate. It contributes its parent score (zero gain) and
+                // the broadcast split still applies to it. At depth >= 5 some
+                // frontier node is always near-empty, so vetoing rejected every
+                // good deep cut and GPU levelwise trailed its own CPU grower
+                // (and catboost) at scale.
                 bool const   ok = s.hL >= min_child_hess && s.hR >= min_child_hess;
                 double const cs =
                     !active

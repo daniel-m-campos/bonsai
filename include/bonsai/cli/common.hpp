@@ -16,7 +16,6 @@
 namespace bonsai::cli
 {
 
-// Shared CLI options used by most subcommands.
 struct CommonOpts
 {
     std::string                   config_path;
@@ -25,8 +24,6 @@ struct CommonOpts
 };
 
 // Load config from TOML (if path is given) and apply CLI overrides.
-// Also applies process-wide settings the resolved config dictates
-// (worker thread count) so every subcommand honors [parallel].
 inline Config resolve_config(CommonOpts const &opts)
 {
     Config cfg = config::resolve(opts.config_path, opts.overrides);
@@ -75,8 +72,8 @@ struct FeatureBuffer
     }
 };
 
-// Build a row-major feature matrix from a parsed CSV, using only the columns
-// the bin mappers know about (preserves their order).
+// Build a row-major feature matrix from a parsed CSV: every column of the
+// batch, in batch order.
 FeatureBuffer to_feature_buffer(detail::ColumnBatch const &batch);
 
 } // namespace bonsai::cli

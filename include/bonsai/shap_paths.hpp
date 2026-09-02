@@ -15,12 +15,11 @@ namespace bonsai
 
 // TreeSHAP with the recursion flattened and the row taken out of the packing.
 //
-// Algorithm 2 (src/shap.cpp) walks the tree per row, growing and unwinding a
-// "unique path" as it goes. Along one fixed root-to-leaf path the only thing
-// the row decides is, per merged element, whether it satisfies every
-// constraint that path places on that element's feature. So the tree can be
-// packed once into its leaf paths, and a row evaluates each path in closed
-// form:
+// Algorithm 2 walks the tree per row, growing and unwinding a "unique path"
+// as it goes. Along one fixed root-to-leaf path the only thing the row
+// decides is, per merged element, whether it satisfies every constraint that
+// path places on that element's feature. So the tree can be packed once into
+// its leaf paths, and a row evaluates each path in closed form:
 //
 //   P(t) = prod_j (z_j + o_j t)   over the path's merged elements j,
 //
@@ -99,7 +98,8 @@ struct ShapPaths
 // closed form has no such division, and a zero cover fraction either zeroes
 // P outright (the branch carries nothing) or leaves a bare t factor (the row
 // routed into a dead branch and still contributes). Both fall out of the
-// arithmetic, so the packer needs no zero-cover rule.
+// arithmetic, so the packer needs no zero-cover rule (invariants:
+// zero-cover-branches-are-real).
 //
 // Throws std::invalid_argument if a tree carries no covers, if a split
 // feature has more than 256 bins (lo/hi are 8-bit), or if a split feature id

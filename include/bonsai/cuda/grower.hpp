@@ -9,8 +9,7 @@ namespace bonsai
 
 // The registered "cuda_depthwise" grower: the depthwise grow loop with the
 // GPU histogram engine. A named alias so the registry, name trait, and CLI
-// can refer to the type without spelling the full instantiation; the
-// explicit instantiation lives in src/cuda/grower_cuda.cpp.
+// can refer to the type without spelling the full instantiation.
 using CudaDepthwiseGrower = DepthwiseGrower<CudaHistogramEngine>;
 
 // The "cuda_levelwise" grower: the levelwise (symmetric-tree) grow loop with

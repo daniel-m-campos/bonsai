@@ -37,9 +37,10 @@ using train_leaf_values = std::vector<float>;
 // grow of a fit resizes from empty and value-initializes all of them, and no
 // writer ever names them afterwards, so `+= lr * 0` leaves the score at its
 // init value. That is the contract, not an accident of recycling, and
-// test_views_leave_out_of_view_scores_alone pins it. Anything that writes an
-// out-of-view slot breaks it. One home for the two buffers so this is stated
-// once for all three growers.
+// "A resident view leaves the scores of rows outside it alone" in
+// test_cuda_resident pins it. Anything that writes an out-of-view slot breaks
+// it. One home for the two buffers so this is stated once for all three
+// growers.
 struct RecycledOutputs
 {
     train_leaf_values      values;
@@ -56,7 +57,7 @@ template <typename TreeT> struct GrowResult
 {
     TreeT             tree;
     train_leaf_values values;
-    // Per train row: the leaf that produced values[r] — DenseTree node id,
+    // Per train row: the leaf that produced values[r]: a DenseTree node id,
     // or ObliviousTree leaf-table index. Lets the booster regroup rows by
     // leaf (leaf renewal for surrogate-hessian objectives).
     std::vector<node_id_t> leaf_ids;
@@ -90,8 +91,8 @@ concept TreeGrower = requires(T g, Dataset const &ds, floats_view grad,
 // a pure function of configuration,
 // missing values in the last bin, and hists[f] sized n_bins(f) for every
 // selected f. A type satisfying the syntax while bending any of these
-// trains silently wrong models — see docs/guide/2 for what each clause is
-// load-bearing for.
+// trains silently wrong models; docs/guide/2-binning-and-histograms.md says
+// what each clause is load-bearing for.
 template <typename T>
 concept HistogramEngine =
     requires(T b, Dataset const &ds, floats_view grad, floats_view hess,
@@ -142,9 +143,7 @@ concept GPULevelEngine =
 
 // The GPU leaf plane: best-first growth expands one leaf at a time, so the
 // histograms live in a per-tree slot pool instead of the level plane's
-// ping-pong. A second concept beside
-// GPULevelEngine, not a change to it: the depthwise and levelwise paths are
-// untouched. Same rule as begin_root: leaf_begin_root opens the tree on the
+// ping-pong. Same rule as begin_root: leaf_begin_root opens the tree on the
 // device or throws.
 template <typename T>
 concept GPULeafEngine =
@@ -195,8 +194,8 @@ struct CpuHistogramEngine
                        SplitInput &split_input, std::span<feature_id_t const> selected,
                        NodeHistograms &sibling);
     // Level-batched fill: all of a level's nodes in one call, so row-wise
-    // work units from many small nodes share one parallel section
-    // in one parallel section. populate() is the one-node case.
+    // work units from many small nodes share one parallel section.
+    // populate() is the one-node case.
     void populate_many(Dataset const &ds, floats_view grad, floats_view hess,
                        split_input_refs nodes, std::span<feature_id_t const> selected);
 };

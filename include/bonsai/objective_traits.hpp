@@ -16,8 +16,9 @@ namespace bonsai
 // resident scores and labels, with no host objective pass and no per-tree
 // gradient upload. Squared error is the trivial case: g = score - label,
 // h = 1. LogLoss and Poisson add a transcendental per row (sigmoid, exp) but
-// stay two-line kernels. The booster and the CUDA engine share this tag so the
-// resident seam is decided once, and this core header carries no CUDA include.
+// stay two-line kernels. The booster and the CUDA engine share this tag
+// (invariants: resident-objective-eligibility), and this core header carries
+// no CUDA include.
 enum class DeviceObjectiveKind : uint8_t
 {
     none,

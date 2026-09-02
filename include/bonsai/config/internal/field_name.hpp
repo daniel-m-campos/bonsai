@@ -1,20 +1,9 @@
 #pragma once
 
-// ============================================================================
-// field_name<&T::m>() -> std::string_view, evaluated at compile time.
-//
-// C++23 stand-in for C++26 reflection. When P2996 lands, replace uses of
-// field_name<MemPtr>() with std::meta::identifier_of(member) and delete this
-// header. The Field/Section/FieldCodec layers above this primitive are
-// designed to survive that migration unchanged.
-//
-// Mechanism: instantiate a consteval function templated on the pointer-to-
-// member as a non-type template parameter, read
-// std::source_location::current().function_name(), and parse the member
-// identifier out of the signature. A static_assert below pins down the
-// signature format for the toolchain we build with; if a future compiler
-// version changes the format, the build fails here loud.
-// ============================================================================
+// field_name<&T::m>() names a member at compile time by parsing the
+// identifier out of a consteval function's signature. The static_assert
+// below pins the signature format for the toolchain we build with; a
+// compiler that changes it fails the build here, loudly.
 
 #if !defined(__GNUC__) && !defined(__clang__)
 #error "bonsai::config::field_name() relies on GCC/Clang __PRETTY_FUNCTION__ format"

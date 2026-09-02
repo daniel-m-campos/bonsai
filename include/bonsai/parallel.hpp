@@ -123,6 +123,9 @@ inline void warn_if_over_quota(int requested)
 }
 } // namespace internal
 
+// The configuration point, called before a fit and never inside a parallel
+// section: the fill plan keys model bytes to the resolved count, so a change
+// mid-fit alters the model without an error.
 inline void set_n_threads(uint32_t n)
 {
     internal::n_threads_slot() = static_cast<int>(n);
@@ -137,7 +140,8 @@ inline void set_n_threads(uint32_t n)
 // host's core count, so an unclamped pool burns its quota early and the
 // fit spends most of every period frozen by the scheduler. Explicit counts
 // pass through uncapped, since the fixed-N contract keys model bytes to the
-// resolved count; one over the quota draws a warning instead.
+// resolved count; one over the quota draws a warning instead (invariants:
+// auto-thread-cap).
 inline constexpr int auto_thread_cap = 16;
 
 inline int n_threads()

@@ -37,6 +37,8 @@ class BinMappers
     // fits it, so cuts are bit-identical to the ColumnBatch overload.
     static BinMappers fit(features_view X, std::vector<std::string> feature_names,
                           BinMapperConfig const &cfg, BinEdges const &bin_edges = {});
+    // `mappers` and `feature_names` are parallel by feature id; nothing here
+    // checks the lengths, and a mismatch misnames every split.
     static BinMappers from_mappers(std::vector<BinMapper>   mappers,
                                    std::vector<std::string> feature_names)
     {

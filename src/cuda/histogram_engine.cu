@@ -32,7 +32,6 @@
 namespace bonsai
 {
 
-// namespace bonsai::cuda_detail (external linkage, shared with the
 using namespace cuda_detail;
 
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic,bugprone-easily-swappable-parameters)
@@ -302,7 +301,7 @@ std::shared_ptr<CudaIngestPlane> make_ingest_plane(BinMappers const &mappers,
 
 // perf: Raw chunks stream through one device buffer, ~64MB a piece; each chunk is
 // copied then binned before the next (the copy dominates and already runs
-// at bus rate — dbin in ingest-profile says whether overlap is ever worth
+// at bus rate; dbin in ingest-profile says whether overlap is ever worth
 // the staging machinery).
 constexpr size_t k_ingest_chunk_bytes = 64UL * 1024UL * 1024UL;
 

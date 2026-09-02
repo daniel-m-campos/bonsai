@@ -42,7 +42,8 @@ inline size_t rows_in(row_run_view runs)
 // run-length encoding whatever the caller passed. The ids are GLOBAL ids into
 // the Dataset's plane: a view narrows the fit's row list and changes nothing
 // about the plane's geometry, so grad, hess, labels and the row-major mirror
-// stay full length and globally indexed.
+// stay full length and globally indexed (invariants:
+// view-narrows-rows-not-plane).
 //
 // The forms differ only in storage. Range is two integers, which is what
 // makes is_identity() a comparison rather than a scan over the row list.
@@ -274,9 +275,7 @@ struct RowSelection
     RowShape       shape = {};
 
     RowSelection() = default;
-    // NOLINTBEGIN(google-explicit-constructor): converting from a bare row
-    // list is the point, so "just these rows, assume nothing" stays a
-    // one-liner at every call site.
+    // NOLINTBEGIN(google-explicit-constructor)
     RowSelection(row_index_view r) : rows(r) {}
     RowSelection(std::vector<row_id_t> const &r) : rows(r) {}
     // NOLINTEND(google-explicit-constructor)

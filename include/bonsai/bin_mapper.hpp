@@ -23,11 +23,8 @@ class BinMapper
   public:
     static BinMapper fit(floats_view column, BinMapperConfig const &cfg);
     // Cuts from an already-gathered, NaN-free working set. Precondition
-    // (asserted): `sample` contains no NaN — one poisons the whole column's
-    // cuts. The row-sample-once
-    // path (BinMappers::fit) draws one shared row sample and gathers each
-    // feature's values at those rows, so the O(n) reservoir pass runs once for
-    // the whole matrix instead of once per feature.
+    // (asserted): `sample` contains no NaN, since one poisons the whole
+    // column's cuts.
     static BinMapper from_sample(std::vector<float> sample, BinMapperConfig const &cfg);
     static BinMapper from_cuts(std::vector<float> cuts)
     {
@@ -46,9 +43,7 @@ class BinMapper
     // The bin a stored split threshold came from. The grower records
     // threshold = cuts()[bin] and cuts are strictly increasing, so lower_bound
     // recovers that bin exactly. The one inversion of the grower's threshold
-    // step; every route that reconstructs a bin from a threshold (DART, warm
-    // start, the resident device epilogue, the SHAP path packer) goes through
-    // here, most of them via Dataset::bin_of_threshold.
+    // step (invariants: threshold-to-bin-one-inversion).
     bin_id_t bin_of_threshold(float threshold) const
     {
         return static_cast<bin_id_t>(std::ranges::lower_bound(cuts_, threshold) -
