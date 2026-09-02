@@ -1,0 +1,13 @@
+{"date": "2026-09-02", "division": "code", "git_sha": "3b834fd64b26a3cdcf8370a9b18390f95f9a3c54", "kind": "meta", "notes": {"date": "HEAD commit date, so the file is a pure function of the tree", "deps": "rule documented in runtime_deps()", "dispatch": "textual typelist count; see dispatch_factors()", "loc": "wc -l over each plane's tracked .hpp/.cpp/.cu/.cuh/.py files"}, "plane_map": {"bench_tooling": ["python/bonsai/bench/**", "scripts/*.py"], "bindings_cli": ["src/python/**", "src/cli/**", "include/bonsai/cli/**", "python/bonsai/** except bench/"], "core_headers": ["include/bonsai/*.hpp", "include/bonsai/config/**", "include/bonsai/registry/**", "include/bonsai/detail/**", "include/bonsai/io/**"], "cuda_plane": ["src/cuda/**", "include/bonsai/cuda/**"], "engine_impl": ["src/*.hpp", "src/*.cpp", "src/config/**", "src/io/**", "src/registry/**"], "tests": ["tests/**", "python/tests/**"]}, "schema": "code-metrics-v1", "tool": "lizard", "tool_pin": "uvx lizard@1.23.0", "tool_version": "1.23.0"}
+{"ccn_max": 11, "ccn_mean": 1.77, "files": 60, "functions": 350, "kind": "plane", "loc": 7209, "nloc": 4996, "plane": "core_headers"}
+{"ccn_max": 29, "ccn_mean": 3.26, "files": 31, "functions": 296, "kind": "plane", "loc": 7215, "nloc": 6474, "plane": "engine_impl"}
+{"ccn_max": 30, "ccn_mean": 3.3, "files": 18, "functions": 211, "kind": "plane", "loc": 5512, "nloc": 4788, "plane": "cuda_plane"}
+{"ccn_max": 54, "ccn_mean": 2.88, "files": 22, "functions": 236, "kind": "plane", "loc": 6158, "nloc": 4493, "plane": "bindings_cli"}
+{"ccn_max": 34, "ccn_mean": 4.78, "files": 40, "functions": 330, "kind": "plane", "loc": 8893, "nloc": 5350, "plane": "bench_tooling"}
+{"ccn_max": 12, "ccn_mean": 1.77, "files": 71, "functions": 983, "kind": "plane", "loc": 20286, "nloc": 15423, "plane": "tests"}
+{"ccn": 29, "file": "src/io/csv.cpp", "function": "bonsai::detail::csv::parse", "kind": "offender", "nloc": 142, "rank": 1}
+{"ccn": 20, "file": "src/io/csv.cpp", "function": "bonsai::detail::libsvm::parse", "kind": "offender", "nloc": 99, "rank": 2}
+{"ccn": 19, "file": "src/io/model.cpp", "function": "bonsai::io::validate_dense_tree", "kind": "offender", "nloc": 60, "rank": 3}
+{"ccn": 15, "file": "src/bin_mapper.cpp", "function": "bonsai::greedy_weighted_cuts", "kind": "offender", "nloc": 51, "rank": 4}
+{"ccn": 15, "file": "src/fill/lone.hpp", "function": "bonsai::fill_detail::fill_lone", "kind": "offender", "nloc": 105, "rank": 5}
+{"cpp_compiled_dep_names": ["CLI11", "nlohmann_json", "tomlplusplus"], "cpp_compiled_deps": 3, "dispatch_combinations": 126, "dispatch_factors": {"growers": 6, "objectives": 7, "samplers": 3}, "kind": "surface", "parameters": 43, "python_public_api": 11, "python_runtime_dep_names": ["numpy"], "python_runtime_deps": 1}

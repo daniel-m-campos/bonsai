@@ -14,9 +14,9 @@ Fit totals (ingest plus train) at the tall cell of each plane, bold to the faste
 
 | grower | GPU (gpu-tall) | CPU (cpu-tall) |
 |---|---|---|
-| depthwise | **bonsai 4.8s** vs XGBoost 31.1s | bonsai 10.9s vs **XGBoost 9.9s** |
-| leafwise | **bonsai 7.1s** vs LightGBM 24.3s | **bonsai 11.2s** vs LightGBM 11.7s |
-| levelwise | **bonsai 4.7s** vs CatBoost 16.7s | bonsai 10.8s vs **CatBoost 9.3s** |
+| depthwise | **bonsai 5.0s** vs XGBoost 31.5s | bonsai 11.2s vs XGBoost 11.0s (tie) |
+| leafwise | **bonsai 7.5s** vs LightGBM 25.8s | **bonsai 12.4s** vs LightGBM 14.6s |
+| levelwise | **bonsai 4.9s** vs CatBoost 16.9s | bonsai 9.5s vs CatBoost 10.1s (tie) |
 
 ## Depthwise against XGBoost
 
@@ -24,23 +24,23 @@ Fit totals (ingest plus train) at the tall cell of each plane, bold to the faste
 
 | scenario | arm | ingest_s | train_s | peak RSS | peak VRAM | test r2 |
 |---|---|---|---|---|---|---|
-| gpu-tall (16M x 128) | bonsai depthwise | **0.6s** | **4.1s** | **9.1GB (+0.8)** | **3.4GB** | 0.879 (tie) |
-| gpu-tall (16M x 128) | XGBoost | 26.0s | 5.1s | 29.4GB (+21.1) | 18.9GB | 0.880 (tie) |
-| gpu-wide (131k x 16384) | bonsai depthwise | **6.0s** | 22.1s (tie) | **9.9GB (+0.3)** | **16.7GB** | 0.860 (tie) |
-| gpu-wide (131k x 16384) | XGBoost | 24.6s | 22.5s (tie) | 40.1GB (+30.5) | 18.9GB | 0.859 (tie) |
-| gpu-extreme (16M x 1024) | bonsai depthwise | 3.9s | 19.6s | 66.8GB (+0.8) | 18.2GB | 0.879 |
+| gpu-tall (16M x 128) | bonsai depthwise | **0.8s** | **4.2s** | **9.1GB (+0.8)** | **3.4GB** | 0.879 (tie) |
+| gpu-tall (16M x 128) | XGBoost | 26.1s | 5.4s | 29.4GB (+21.2) | 18.9GB | 0.880 (tie) |
+| gpu-wide (131k x 16384) | bonsai depthwise | **6.3s** | **22.6s** | **19.2GB (+9.6)** | 16.7GB (tie) | 0.859 (tie) |
+| gpu-wide (131k x 16384) | XGBoost | 28.6s | 23.3s | 40.1GB (+30.5) | 18.9GB (tie) | 0.859 (tie) |
+| gpu-extreme (16M x 1024) | bonsai depthwise | 4.4s | 19.8s | 66.7GB (+0.8) | 18.2GB | 0.879 |
 | gpu-extreme (16M x 1024) | XGBoost | oom | oom | oom | oom | oom |
 
-The two columns are one call taken apart. bonsai's fused `train(X, y)` form fits the same cell in 3.8s against the split's 3.8s, medians of the refresh's interleaved parity arm, which is what makes reporting the seam honest.
+The two columns are one call taken apart. bonsai's fused `train(X, y)` form fits the same cell in 3.9s against the split's 4.0s, medians of the refresh's interleaved parity arm, which is what makes reporting the seam honest.
 
 ### CPU
 
 | scenario | arm | ingest_s | train_s | peak RSS | test r2 |
 |---|---|---|---|---|---|
-| cpu-tall (2M x 128) | bonsai depthwise | **1.0s** | 9.9s | 2.5GB (+1.3) (tie) | 0.877 (tie) |
-| cpu-tall (2M x 128) | XGBoost | 3.4s | **6.5s** | 2.2GB (+1.1) (tie) | 0.877 (tie) |
-| cpu-wide (16k x 16384) | bonsai depthwise | **1.7s** | **54.0s** | **10.3GB (+9.1)** | 0.761 (tie) |
-| cpu-wide (16k x 16384) | XGBoost | 3.8s | 102.6s | 22.5GB (+21.3) | 0.761 (tie) |
+| cpu-tall (2M x 128) | bonsai depthwise | **1.0s** | 10.3s | 2.5GB (+1.3) (tie) | 0.877 (tie) |
+| cpu-tall (2M x 128) | XGBoost | 3.5s | **7.5s** | 2.3GB (+1.1) (tie) | 0.877 (tie) |
+| cpu-wide (16k x 16384) | bonsai depthwise | **1.7s** | **71.9s** | **10.2GB (+9.0)** | 0.761 (tie) |
+| cpu-wide (16k x 16384) | XGBoost | 3.6s | 126.6s | 22.5GB (+21.3) | 0.761 (tie) |
 
 ## Leafwise against LightGBM
 
@@ -48,21 +48,21 @@ The two columns are one call taken apart. bonsai's fused `train(X, y)` form fits
 
 | scenario | arm | ingest_s | train_s | peak RSS | peak VRAM | test r2 |
 |---|---|---|---|---|---|---|
-| gpu-tall (16M x 128) | bonsai leafwise | **0.6s** | **6.5s** | **9.1GB (+0.8)** | **3.5GB** | 0.880 |
-| gpu-tall (16M x 128) | LightGBM | 14.0s | 10.3s | 15.2GB (+7.0) | 5.4GB | **0.886** |
-| gpu-wide (131k x 16384) | bonsai leafwise | **6.0s** | **81.7s** | **9.9GB (+0.3)** | **18.5GB** | 0.860 |
-| gpu-wide (131k x 16384) | LightGBM | 63.4s | 152.9s | 55.7GB (+46.1) | 20.8GB | **0.865** |
-| gpu-extreme (16M x 1024) | bonsai leafwise | **4.0s** | **23.2s** | **66.8GB (+0.9)** | **18.4GB** | 0.879 |
-| gpu-extreme (16M x 1024) | LightGBM | 103.8s | 54.6s | 116.0GB (+50.1) | 34.3GB | **0.885** |
+| gpu-tall (16M x 128) | bonsai leafwise | **0.8s** | **6.7s** | **9.1GB (+0.8)** | **3.5GB** | 0.879 |
+| gpu-tall (16M x 128) | LightGBM | 14.5s | 11.3s | 15.3GB (+7.0) | 5.4GB | **0.886** |
+| gpu-wide (131k x 16384) | bonsai leafwise | **6.6s** | **81.9s** | **9.9GB (+0.3)** | **18.5GB** | 0.860 |
+| gpu-wide (131k x 16384) | LightGBM | 72.1s | 155.6s | 58.0GB (+48.5) | 20.8GB | **0.865** |
+| gpu-extreme (16M x 1024) | bonsai leafwise | **4.5s** | **23.3s** | **66.8GB (+0.8)** | **18.4GB** | 0.879 |
+| gpu-extreme (16M x 1024) | LightGBM | 105.4s | 56.9s | 116.2GB (+50.3) | 34.3GB | **0.885** |
 
 ### CPU
 
 | scenario | arm | ingest_s | train_s | peak RSS | test r2 |
 |---|---|---|---|---|---|
-| cpu-tall (2M x 128) | bonsai leafwise | **1.0s** | 10.3s | **1.9GB (+0.7)** | 0.877 (tie) |
-| cpu-tall (2M x 128) | LightGBM | 2.2s | **9.5s** | 2.0GB (+0.8) | 0.878 (tie) |
-| cpu-wide (16k x 16384) | bonsai leafwise | **1.7s** | **32.1s** | **9.0GB (+7.8)** | 0.761 |
-| cpu-wide (16k x 16384) | LightGBM | 8.4s | 46.3s | 19.6GB (+18.4) | **0.762** |
+| cpu-tall (2M x 128) | bonsai leafwise | **1.0s** | **11.4s** | **1.9GB (+0.7)** | 0.877 (tie) |
+| cpu-tall (2M x 128) | LightGBM | 2.2s | 12.4s | 2.1GB (+0.9) | 0.878 (tie) |
+| cpu-wide (16k x 16384) | bonsai leafwise | **1.9s** | **45.4s** | **9.0GB (+7.8)** | 0.761 |
+| cpu-wide (16k x 16384) | LightGBM | 8.6s | 57.5s | 19.6GB (+18.4) | **0.762** |
 
 ## Levelwise against CatBoost
 
@@ -70,23 +70,23 @@ The two columns are one call taken apart. bonsai's fused `train(X, y)` form fits
 
 | scenario | arm | ingest_s | train_s | peak RSS | peak VRAM | test r2 |
 |---|---|---|---|---|---|---|
-| gpu-tall (16M x 128) | bonsai levelwise | **0.6s** | **4.1s** | **9.1GB (+0.8)** | **3.4GB** | **0.877** |
-| gpu-tall (16M x 128) | CatBoost | 2.4s | 14.2s | 25.5GB (+17.3) | 90.2GB | 0.876 |
-| gpu-wide (131k x 16384) | bonsai levelwise | 6.0s | **23.6s** | **9.9GB (+0.3)** | **16.7GB** | **0.874** |
-| gpu-wide (131k x 16384) | CatBoost | **1.4s** | 59.8s | 26.4GB (+16.8) | 90.2GB | 0.872 |
-| gpu-extreme (16M x 1024) | bonsai levelwise | 3.9s | 16.9s | 66.8GB (+0.8) | 18.2GB | 0.876 |
+| gpu-tall (16M x 128) | bonsai levelwise | **0.7s** | **4.1s** | **9.1GB (+0.8)** | **3.4GB** | **0.877** |
+| gpu-tall (16M x 128) | CatBoost | 2.3s | 14.5s | 25.5GB (+17.3) | 90.2GB | 0.876 |
+| gpu-wide (131k x 16384) | bonsai levelwise | 6.3s | **24.3s** | **9.9GB (+0.3)** | **16.7GB** | **0.874** |
+| gpu-wide (131k x 16384) | CatBoost | **1.6s** | 61.8s | 26.4GB (+16.8) | 90.2GB | 0.872 |
+| gpu-extreme (16M x 1024) | bonsai levelwise | 4.5s | 17.0s | 66.8GB (+0.8) | 18.2GB | 0.876 |
 | gpu-extreme (16M x 1024) | CatBoost | oom | oom | oom | oom | oom |
 
 ### CPU
 
 | scenario | arm | ingest_s | train_s | peak RSS | test r2 |
 |---|---|---|---|---|---|
-| cpu-tall (2M x 128) | bonsai levelwise | 1.0s | 9.8s | **2.0GB (+0.8)** | **0.877** |
-| cpu-tall (2M x 128) | CatBoost | **0.3s** | **9.0s** | 4.1GB (+2.9) | 0.875 |
-| cpu-wide (16k x 16384) | bonsai levelwise | 1.7s | 74.1s | **11.5GB (+10.3)** | **0.858** |
-| cpu-wide (16k x 16384) | CatBoost | **0.3s** | **66.1s** | 18.6GB (+17.4) | 0.830 |
+| cpu-tall (2M x 128) | bonsai levelwise | 1.0s | **8.5s** | **2.0GB (+0.8)** | **0.877** |
+| cpu-tall (2M x 128) | CatBoost | **0.3s** | 9.8s | 4.1GB (+2.9) | 0.875 |
+| cpu-wide (16k x 16384) | bonsai levelwise | 1.7s | 111.0s | **11.5GB (+10.3)** | **0.858** |
+| cpu-wide (16k x 16384) | CatBoost | **0.3s** | **86.5s** | 18.6GB (+17.4) | 0.830 |
 
-*Source: [`gpu-tall-2026-08.jsonl`](../../../benchmarks/results/gpu-tall-2026-08.jsonl), [`gpu-wide-2026-08.jsonl`](../../../benchmarks/results/gpu-wide-2026-08.jsonl), [`gpu-extreme-2026-08.jsonl`](../../../benchmarks/results/gpu-extreme-2026-08.jsonl), [`cpu-tall-2026-08.jsonl`](../../../benchmarks/results/cpu-tall-2026-08.jsonl), [`cpu-wide-2026-08.jsonl`](../../../benchmarks/results/cpu-wide-2026-08.jsonl), [`gpu-early-stop-2026-08.jsonl`](../../../benchmarks/results/gpu-early-stop-2026-08.jsonl). As-run under the redesigned scenario matrix (decision 103), best of the session's repeats per arm. Each plane runs on one pod, so the arms compare within a plane and not across the two. The GPU plane is measured at `adb22c5` (2026-08-26, pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition). The CPU plane is measured at `adb22c5` (2026-08-26, pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition).*
+*Source: [`gpu-tall-2026-09.jsonl`](../../../benchmarks/results/gpu-tall-2026-09.jsonl), [`gpu-wide-2026-09.jsonl`](../../../benchmarks/results/gpu-wide-2026-09.jsonl), [`gpu-extreme-2026-09.jsonl`](../../../benchmarks/results/gpu-extreme-2026-09.jsonl), [`cpu-tall-2026-09.jsonl`](../../../benchmarks/results/cpu-tall-2026-09.jsonl), [`cpu-wide-2026-09.jsonl`](../../../benchmarks/results/cpu-wide-2026-09.jsonl), [`gpu-early-stop-2026-09.jsonl`](../../../benchmarks/results/gpu-early-stop-2026-09.jsonl). As-run under the redesigned scenario matrix (decision 103), best of the session's repeats per arm. Each plane runs on one pod, so the arms compare within a plane and not across the two. The GPU plane is measured at `3b834fd` (2026-09-02, pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition). The CPU plane is measured at `3b834fd` (2026-09-02, pod-NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition).*
 
 ## Early stopping
 
@@ -94,12 +94,12 @@ Three arms at the tall cell: `off` fits the round budget blind, `eval` scores a 
 
 | grower | arm | eval overhead | stop-arm fit | stopped at |
 |---|---|---|---|---|
-| depthwise | bonsai depthwise | +19.0% | 35.4s | 1001 |
-| depthwise | XGBoost | +1.6% | 72.6s | 1216 |
-| leafwise | bonsai leafwise | +11.8% | 72.8s | 1294 |
-| leafwise | LightGBM | -0.3% | 75.5s | 847 |
-| levelwise | bonsai levelwise | +22.2% | 66.1s | 2000 |
-| levelwise | CatBoost | +4.6% | 114.3s | 1923 |
+| depthwise | bonsai depthwise | +20.6% | 35.5s | 988 |
+| depthwise | XGBoost | +1.3% | 73.6s | 1216 |
+| leafwise | bonsai leafwise | +13.4% | 62.3s | 1042 |
+| leafwise | LightGBM | -1.8% | 79.1s | 847 |
+| levelwise | bonsai levelwise | +20.7% | 65.9s | 1921 |
+| levelwise | CatBoost | +4.4% | 116.8s | 2000 |
 
 ## TreeSHAP throughput (gpu-shap)
 
@@ -107,14 +107,14 @@ One `pred_contribs` call over the full matrix, seconds, best repeat, bold best p
 
 | cell | bonsai depthwise (GPU) | XGBoost (GPU) | LightGBM (CPU SHAP) | CatBoost (CPU SHAP) |
 |---|---|---|---|---|
-| 1,048,576 x 128, depth 6 | **0.59** | 2.23 | 175.93 | 3.14 |
-| 1,048,576 x 128, depth 8 | **2.22** | 7.46 | - | 4.30 |
-| 1,048,576 x 512, depth 6 | **0.84** | 2.44 | 181.26 | 8.52 |
-| 4,194,304 x 128, depth 6 | **1.25** | 5.47 | 362.24 | 8.35 |
+| 1,048,576 x 128, depth 6 | **0.61** | 2.25 | 172.75 | 3.22 |
+| 1,048,576 x 128, depth 8 | **2.40** | 7.50 | - | 4.21 |
+| 1,048,576 x 512, depth 6 | **0.84** | 2.48 | 180.17 | 8.62 |
+| 4,194,304 x 128, depth 6 | **1.30** | 5.53 | 363.66 | 8.54 |
 
 | cell | bonsai depthwise (GPU) | XGBoost (GPU) | LightGBM (CPU SHAP) | CatBoost (CPU SHAP) |
 |---|---|---|---|---|
 | 1,048,576 x 128, depth 6 | 4.1e-06 | 3.4e-06 | 0.0e+00 | 0.0e+00 |
-| 1,048,576 x 128, depth 8 | 7.5e-06 | 4.9e-06 | - | 0.0e+00 |
-| 1,048,576 x 512, depth 6 | 3.5e-06 | 2.8e-06 | 0.0e+00 | 0.0e+00 |
-| 4,194,304 x 128, depth 6 | 4.5e-06 | 3.9e-06 | 0.0e+00 | 0.0e+00 |
+| 1,048,576 x 128, depth 8 | 7.0e-06 | 4.9e-06 | - | 0.0e+00 |
+| 1,048,576 x 512, depth 6 | 4.2e-06 | 2.8e-06 | 0.0e+00 | 0.0e+00 |
+| 4,194,304 x 128, depth 6 | 4.2e-06 | 3.9e-06 | 0.0e+00 | 0.0e+00 |
