@@ -334,164 +334,131 @@ std::string two_decimals(double value)
     return dot == std::string::npos ? text : text.substr(0, dot + 3);
 }
 
-std::vector<bonsai::feature_id_t>
-parse_column_selection(nb::handle columns, std::span<std::string const> names)
+struct IndexAxis
 {
-    size_t const     n   = names.size();
-    nb::object const np  = nb::module_::import_("numpy");
-    nb::object       arr = nb::isinstance<nb::slice>(columns) ? [&]
+    std::string_view                            keyword;
+    std::string_view                            one;
+    std::string_view                            many;
+    std::string_view                            empty_consequence;
+    std::optional<std::span<std::string const>> names;
+};
+
+IndexAxis row_axis()
+{
+    return {.keyword           = "rows",
+            .one               = "row",
+            .many              = "rows",
+            .empty_consequence = "an empty training set has no gradients to boost on",
+            .names             = std::nullopt};
+}
+
+IndexAxis column_axis(std::span<std::string const> names)
+{
+    return {.keyword           = "columns",
+            .one               = "feature",
+            .many              = "features",
+            .empty_consequence = "a dataset with no columns has nothing to split on",
+            .names             = names};
+}
+
+nb::object name_positions(nb::object const &np, nb::object const &arr,
+                          IndexAxis const &axis)
+{
+    std::vector<int64_t> ids;
+    for (nb::handle const item :
+         nb::cast<nb::sequence>(np.attr("atleast_1d")(arr).attr("tolist")()))
     {
-        auto const [start, stop, step, len] = nb::cast<nb::slice>(columns).compute(n);
+        auto const want = nb::cast<std::string>(nb::str(item));
+        auto const it   = std::ranges::find(*axis.names, want);
+        if (it == axis.names->end())
+        {
+            throw nb::key_error(std::format("Dataset.subset({}=...) names the {} '{}', "
+                                            "which this dataset does not have",
+                                            axis.keyword, axis.one, want)
+                                    .c_str());
+        }
+        ids.push_back(std::distance(axis.names->begin(), it));
+    }
+    return np.attr("asarray")(nb::cast(ids));
+}
+
+template <typename IdT>
+std::vector<IdT> parse_index_selection(nb::handle selection, size_t n,
+                                       IndexAxis const &axis)
+{
+    nb::object const np  = nb::module_::import_("numpy");
+    nb::object       arr = nb::isinstance<nb::slice>(selection)
+                               ? [&]
+    {
+        auto const [start, stop, step, len] = nb::cast<nb::slice>(selection).compute(n);
         return np.attr("arange")(start, stop, step);
     }()
-                                                              : np.attr("asarray")(columns);
+                               : np.attr("asarray")(selection);
     if (nb::cast<size_t>(arr.attr("size")) == 0)
     {
-        throw nb::value_error(
-            "Dataset.subset(columns=...) kept no features; a dataset with no "
-            "columns has nothing to split on");
+        throw nb::value_error(std::format("Dataset.subset({}=...) selected no {}; {}",
+                                          axis.keyword, axis.many,
+                                          axis.empty_consequence)
+                                  .c_str());
     }
     auto const kind = nb::cast<std::string>(arr.attr("dtype").attr("kind"));
     if (kind == "b")
     {
         if (size_t const given = nb::cast<size_t>(arr.attr("size")); given != n)
         {
-            std::string const msg =
-                "Dataset.subset(columns=<bool mask>): the mask has " +
-                std::to_string(given) + " entries and the dataset has " +
-                std::to_string(n) + " features; a mask names one feature per entry";
-            throw nb::value_error(msg.c_str());
+            throw nb::value_error(
+                std::format(
+                    "Dataset.subset({}=<bool mask>): the mask has {} entries and "
+                    "the dataset has {} {}; a mask names one {} per entry",
+                    axis.keyword, given, n, axis.many, axis.one)
+                    .c_str());
         }
         arr = np.attr("flatnonzero")(arr);
     }
-    else if (kind == "U" || kind == "S" || kind == "O")
+    else if (axis.names && (kind == "U" || kind == "S" || kind == "O"))
     {
-        std::vector<int64_t> ids;
-        for (nb::handle const item :
-             nb::cast<nb::sequence>(np.attr("atleast_1d")(arr).attr("tolist")()))
-        {
-            auto const want = nb::cast<std::string>(nb::str(item));
-            auto const it   = std::ranges::find(names, want);
-            if (it == names.end())
-            {
-                std::string const msg =
-                    "Dataset.subset(columns=...) names the feature '" + want +
-                    "', which this dataset does not have";
-                throw nb::key_error(msg.c_str());
-            }
-            ids.push_back(std::distance(names.begin(), it));
-        }
-        arr = np.attr("asarray")(nb::cast(ids));
+        arr = name_positions(np, arr, axis);
     }
     else if (kind != "i" && kind != "u")
     {
-        std::string const msg =
-            "Dataset.subset(columns=...) takes a slice, a boolean mask, an "
-            "integer array, or feature names; got dtype kind '" +
-            kind + "'";
-        throw nb::type_error(msg.c_str());
+        throw nb::type_error(
+            std::format("Dataset.subset({}=...) takes a slice, a boolean mask, {}an "
+                        "integer array{}; got dtype kind '{}'",
+                        axis.keyword, axis.names ? "" : "or ",
+                        axis.names ? std::format(", or {} names", axis.one) : "", kind)
+                .c_str());
     }
     arr = np.attr("ascontiguousarray")(arr, np.attr("int64"));
     if (nb::cast<size_t>(arr.attr("ndim")) != 1)
     {
         throw nb::value_error(
-            "Dataset.subset(columns=...) takes one dimension of feature ids");
+            std::format("Dataset.subset({}=...) takes one dimension of {} ids",
+                        axis.keyword, axis.one)
+                .c_str());
     }
     auto const ids = nb::cast<
         nb::ndarray<int64_t const, nb::ndim<1>, nb::c_contig, nb::device::cpu>>(arr);
-    std::span<int64_t const> const in{ids.data(), ids.shape(0)};
-    if (in.empty())
-    {
-        throw nb::value_error(
-            "Dataset.subset(columns=...) kept no features; a dataset with no "
-            "columns has nothing to split on");
-    }
-    std::vector<bonsai::feature_id_t> out;
-    out.reserve(in.size());
-    for (int64_t const id : in)
-    {
-        if (id < 0 || static_cast<size_t>(id) >= n)
-        {
-            std::string const msg =
-                "Dataset.subset(columns=...) got feature " + std::to_string(id) +
-                ", out of range for a dataset of " + std::to_string(n) +
-                " features; feature ids index the binned plane and do "
-                "not wrap";
-            throw nb::index_error(msg.c_str());
-        }
-        out.push_back(static_cast<bonsai::feature_id_t>(id));
-    }
-    return out;
-}
-
-std::vector<bonsai::row_id_t> parse_row_selection(nb::handle rows, size_t n)
-{
-    nb::object const np  = nb::module_::import_("numpy");
-    nb::object       arr = nb::none();
-    if (nb::isinstance<nb::slice>(rows))
-    {
-        auto const [start, stop, step, len] = nb::cast<nb::slice>(rows).compute(n);
-        arr                                 = np.attr("arange")(start, stop, step);
-    }
-    else
-    {
-        arr             = np.attr("asarray")(rows);
-        auto const kind = nb::cast<std::string>(arr.attr("dtype").attr("kind"));
-        if (kind == "b")
-        {
-            if (size_t const given = nb::cast<size_t>(arr.attr("size")); given != n)
-            {
-                std::string const msg =
-                    "Dataset.subset(rows=<bool mask>): the mask has " +
-                    std::to_string(given) + " entries and the dataset has " +
-                    std::to_string(n) + " rows; a mask names one row per entry";
-                throw nb::value_error(msg.c_str());
-            }
-            arr = np.attr("flatnonzero")(arr);
-        }
-        else if (kind != "i" && kind != "u")
-        {
-            std::string const msg =
-                "Dataset.subset(rows=...) takes a slice, a boolean mask, or "
-                "an integer array; got dtype kind '" +
-                kind + "'";
-            throw nb::type_error(msg.c_str());
-        }
-    }
-    arr = np.attr("ascontiguousarray")(arr, np.attr("int64"));
-    if (nb::cast<size_t>(arr.attr("ndim")) != 1)
-    {
-        throw nb::value_error(
-            "Dataset.subset(rows=...) takes one dimension of row ids");
-    }
-    auto const ids = nb::cast<
-        nb::ndarray<int64_t const, nb::ndim<1>, nb::c_contig, nb::device::cpu>>(arr);
-    std::span<int64_t const> const in{ids.data(), ids.shape(0)};
-    if (in.empty())
-    {
-        throw nb::value_error(
-            "Dataset.subset(rows=...) selected no rows; an empty training "
-            "set has no gradients to boost on");
-    }
-    std::vector<bonsai::row_id_t> out;
-    out.reserve(in.size());
-    for (int64_t const id : in)
+    std::vector<IdT> out;
+    out.reserve(ids.shape(0));
+    for (int64_t const id : std::span<int64_t const>{ids.data(), ids.shape(0)})
     {
         if (id < 0)
         {
-            std::string const msg = "Dataset.subset(rows=...) got the negative index " +
-                                    std::to_string(id) +
-                                    "; row ids index the binned plane and do not wrap";
-            throw nb::index_error(msg.c_str());
+            throw nb::index_error(
+                std::format("Dataset.subset({}=...) got the negative index "
+                            "{}; {} ids index the binned plane and do not wrap",
+                            axis.keyword, id, axis.one)
+                    .c_str());
         }
         if (static_cast<size_t>(id) >= n)
         {
-            std::string const msg =
-                "Dataset.subset(rows=...) got row " + std::to_string(id) +
-                ", out of range for a dataset of " + std::to_string(n) + " rows";
-            throw nb::index_error(msg.c_str());
+            throw nb::index_error(
+                std::format("Dataset.subset({}=...) got {} {}, out of range "
+                            "for a dataset of {} {}",
+                            axis.keyword, axis.one, id, n, axis.many)
+                    .c_str());
         }
-        out.push_back(static_cast<bonsai::row_id_t>(id));
+        out.push_back(static_cast<IdT>(id));
     }
     return out;
 }
@@ -618,11 +585,13 @@ class Dataset
             Dataset const narrowed =
                 rows.is_none() ? *this : subset(self, rows, nb::none());
             auto const names = narrowed.loaded_->mappers.feature_names();
-            return {
-                narrowed.bins().select_features(parse_column_selection(columns, names)),
-                narrowed.bin_cfg_, narrowed.device_id_};
+            return {narrowed.bins().select_features(
+                        parse_index_selection<bonsai::feature_id_t>(
+                            columns, names.size(), column_axis(names))),
+                    narrowed.bin_cfg_, narrowed.device_id_};
         }
-        std::vector<bonsai::row_id_t> ids = parse_row_selection(rows, n_rows());
+        std::vector<bonsai::row_id_t> ids =
+            parse_index_selection<bonsai::row_id_t>(rows, n_rows(), row_axis());
         if (is_view())
         {
             std::vector<bonsai::row_id_t> const mine = bins().row_view().materialize();
@@ -644,9 +613,10 @@ class Dataset
                 "Dataset.reorder() needs rows=: a permutation of this Dataset's "
                 "rows, as an integer array or a slice");
         }
-        std::vector<bonsai::row_id_t> const ids = parse_row_selection(rows, n_rows());
-        std::vector<bool>                   seen(n_rows(), false);
-        bool const                          whole = ids.size() == n_rows();
+        std::vector<bonsai::row_id_t> const ids =
+            parse_index_selection<bonsai::row_id_t>(rows, n_rows(), row_axis());
+        std::vector<bool> seen(n_rows(), false);
+        bool const        whole = ids.size() == n_rows();
         for (bonsai::row_id_t const id : ids)
         {
             if (!whole || seen[id])
