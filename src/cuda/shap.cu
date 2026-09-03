@@ -238,14 +238,8 @@ bool cuda_pred_contribs(CudaShapPlan const &plan, IngestPlane const &plane,
                         size_t n_rows, size_t n_features, std::span<double> out)
 {
     size_t const cols = n_features + 1;
-    if (plane.backend_tag() != cuda_backend_tag() || out.size() != n_rows * cols ||
-        n_rows == 0 || n_rows > std::numeric_limits<uint32_t>::max())
-    {
-        return false;
-    }
-    auto const &cp = static_cast<CudaIngestPlane const &>(plane);
-    if (cp.n_rows != n_rows || cp.n_feats != n_features || n_features != plan.n_feats ||
-        cp.tile_w != k_bin_tile_width)
+    auto const  *cp   = matching_plane(plane, n_rows, n_features, plan.n_feats);
+    if (cp == nullptr || out.size() != n_rows * cols)
     {
         return false;
     }
@@ -280,14 +274,7 @@ bool cuda_pred_contribs(CudaShapPlan const &plan, IngestPlane const &plane,
         };
         if (total > 0)
         {
-            if (cp.bins_are_u8)
-            {
-                launch(cp.bins8.data());
-            }
-            else
-            {
-                launch(cp.bins16.data());
-            }
+            cp->with_bins(launch);
             check(cudaGetLastError(), "shap walk launch");
         }
         double walk_s = 0.0;
