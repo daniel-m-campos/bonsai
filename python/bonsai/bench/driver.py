@@ -176,57 +176,22 @@ def run_one(spec: dict, timeout: int, sampler: bool = False,
     a campaign measuring wall clock wants: the counters cost time on planes
     whose rounds are short enough for a profile sync to be the round.
     """
-    env = dict(os.environ)
-    if (resolve(spec[runlog.Row.VARIANT]).lib == Lib.BONSAI
-            and not env.get("BONSAI_BENCH_NO_PROFILE")):
-        env.update(BONSAI_GROW_PROFILE="1", BONSAI_INGEST_PROFILE="1",
-                   BONSAI_CUDA_PROFILE="1", BONSAI_FIT_PROFILE="1")
-    if data_cache:
-        env["BONSAI_BENCH_DATA_CACHE"] = data_cache
     proc = subprocess.Popen([sys.executable, "-m", "bonsai.bench", "worker"],
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True, env=env)
+                            stderr=subprocess.PIPE, text=True,
+                            env=_worker_env(spec, data_cache))
     sm = DeviceMemSampler(proc.pid) if sampler else None
     try:
         with sm or contextlib.nullcontext():
             stdout, stderr = proc.communicate(input=json.dumps(spec),
                                               timeout=timeout)
     except subprocess.TimeoutExpired:
-        proc.kill()
-        # A child wedged in an uninterruptible driver call can survive
-        # SIGKILL for a while; never block the sweep on it unboundedly.
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            proc.communicate(timeout=30)
+        _kill_wedged(proc)
         out = {runlog.Row.STATUS: "timeout", runlog.Row.MESSAGE: f"exceeded {timeout}s"}
-        if sm:
-            out[runlog.Row.DEV_MEM] = sm.result()
-        return out
-    dev_mem = sm.result() if sm else None
-    result_line = next((ln for ln in stdout.splitlines()
-                        if ln.startswith("RESULT ")), None)
-    if proc.returncode != 0 or result_line is None:
-        if proc.returncode < 0:
-            # SIGKILL is the OOM killer's signature; a segfault is a crash in
-            # the library under test and reads as one, because "arm ran out of
-            # memory" and "arm cannot do this at all" are different findings.
-            sig = -proc.returncode
-            out = {runlog.Row.STATUS: "oom" if sig == signal.SIGKILL else "error",
-                   runlog.Row.MESSAGE: f"killed by signal {sig}"}
-        else:
-            # Classify from the WHOLE stderr (the OOM keyword rarely sits on
-            # the last line); report the last non-noise line as the message.
-            out = {runlog.Row.STATUS: classify_error(stderr),
-                   runlog.Row.MESSAGE: error_message(stderr)}
-        if sm:
-            out[runlog.Row.DEV_MEM] = dev_mem
-        return out
-    out = json.loads(result_line.removeprefix("RESULT "))
-    out[runlog.Row.STATUS] = "ok"
-    out[runlog.Row.MESSAGE] = None
-    prof = parse_profiles(stderr)
-    out[runlog.Row.PROFILE] = prof or None
+    else:
+        out = _row_from_exit(proc.returncode, stdout, stderr)
     if sm:
-        out[runlog.Row.DEV_MEM] = dev_mem
+        out[runlog.Row.DEV_MEM] = sm.result()
     return out
 
 
@@ -255,26 +220,19 @@ def resume_keys(path: str | pathlib.Path) -> set[tuple]:
 
 def skip_reason(job: dict, host: dict, gates: dict) -> tuple[str, str] | None:
     """(status, message) when a job must not run on this host, else None."""
-    cell, variant, threads = job[runlog.Row.CELL], job[runlog.Row.VARIANT], job[runlog.Row.THREADS]
-    v = resolve(variant)
-    gpu_max_cols = gates.get("gpu_max_cols", GPU_MAX_COLS)
+    cell, threads = job[runlog.Row.CELL], job[runlog.Row.THREADS]
+    v = resolve(job[runlog.Row.VARIANT])
     mem_gate = gates.get("mem_gate", "on") != "off"
-    if v.device == Device.CUDA and host["gpu"] is None:
-        return ("skipped", "no CUDA device on host")
-    if v.device == Device.CUDA and gpu_max_cols and cell["cols"] > gpu_max_cols:
-        return ("skipped", f"cols > {gpu_max_cols} (GPU variant policy)")
-    if (v.device == Device.CUDA and mem_gate and
-            est_dev_gb(cell["rows"], cell["cols"]) >
-            0.85 * (host["gpu_vram_gb"] or 0)):
-        return ("skipped", f"est {est_dev_gb(cell['rows'], cell['cols']):.1f}"
-                           f"GB > 0.85x{host['gpu_vram_gb']}GB VRAM")
+    if v.device == Device.CUDA:
+        skip = _device_skip(cell, host, gates.get("gpu_max_cols", GPU_MAX_COLS), mem_gate)
+        if skip:
+            return skip
     if v.lib == Lib.BONSAI and cell["bins"] > 65_535:
         return ("unsupported", "bonsai bin_id_t is uint16 (max_bin <= 65535)")
     if mem_gate:
-        est = est_host_gb(cell["rows"], cell["cols"], cell["n_test"], v.lib)
-        if est > 0.8 * host["ram_gb"]:
-            return ("skipped", f"est {est:.1f}"
-                               f"GB > 0.8x{host['ram_gb']}GB RAM")
+        skip = _host_memory_skip(cell, v.lib, host)
+        if skip:
+            return skip
     if cell.get("axis") == "threads" and threads > (host["n_vcpu"] or 1):
         return ("skipped", f"threads {threads} > {host['n_vcpu']} vcpus")
     return None
@@ -392,6 +350,75 @@ def _smi_query(pid: int):
             pid_mb = (pid_mb or 0) + int(parts[1])
     head = total.stdout.splitlines()[0].strip() if total.stdout.strip() else ""
     return pid_mb, (int(head) if head.isdigit() else None)
+
+
+def _worker_env(spec: dict, data_cache: str | None) -> dict[str, str]:
+    """The child's environment: profile counters on for bonsai, cache path if any."""
+    env = dict(os.environ)
+    if (resolve(spec[runlog.Row.VARIANT]).lib == Lib.BONSAI
+            and not env.get("BONSAI_BENCH_NO_PROFILE")):
+        env.update(BONSAI_GROW_PROFILE="1", BONSAI_INGEST_PROFILE="1",
+                   BONSAI_CUDA_PROFILE="1", BONSAI_FIT_PROFILE="1")
+    if data_cache:
+        env["BONSAI_BENCH_DATA_CACHE"] = data_cache
+    return env
+
+
+def _kill_wedged(proc: subprocess.Popen):
+    """SIGKILL a timed-out child without blocking the sweep on it.
+
+    A child wedged in an uninterruptible driver call can survive SIGKILL for
+    a while, so the reap itself carries a bound.
+    """
+    proc.kill()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.communicate(timeout=30)
+
+
+def _row_from_exit(returncode: int, stdout: str, stderr: str) -> dict:
+    """Status row for a child that ran to completion, well or badly."""
+    result_line = next((ln for ln in stdout.splitlines()
+                        if ln.startswith("RESULT ")), None)
+    if returncode < 0:
+        return _signal_row(-returncode)
+    if returncode != 0 or result_line is None:
+        # Classify from the WHOLE stderr (the OOM keyword rarely sits on the
+        # last line); report the last non-noise line as the message.
+        return {runlog.Row.STATUS: classify_error(stderr),
+                runlog.Row.MESSAGE: error_message(stderr)}
+    out = json.loads(result_line.removeprefix("RESULT "))
+    out[runlog.Row.STATUS] = "ok"
+    out[runlog.Row.MESSAGE] = None
+    out[runlog.Row.PROFILE] = parse_profiles(stderr) or None
+    return out
+
+
+def _signal_row(sig: int) -> dict:
+    """SIGKILL is the OOM killer's signature; any other signal is a crash in
+    the library under test and reads as one, because "arm ran out of memory"
+    and "arm cannot do this at all" are different findings."""
+    return {runlog.Row.STATUS: "oom" if sig == signal.SIGKILL else "error",
+            runlog.Row.MESSAGE: f"killed by signal {sig}"}
+
+
+def _device_skip(cell: dict, host: dict, gpu_max_cols: int | None,
+                 mem_gate: bool) -> tuple[str, str] | None:
+    """The gates a CUDA variant must clear on this host."""
+    if host["gpu"] is None:
+        return ("skipped", "no CUDA device on host")
+    if gpu_max_cols and cell["cols"] > gpu_max_cols:
+        return ("skipped", f"cols > {gpu_max_cols} (GPU variant policy)")
+    est = est_dev_gb(cell["rows"], cell["cols"])
+    if mem_gate and est > 0.85 * (host["gpu_vram_gb"] or 0):
+        return ("skipped", f"est {est:.1f}GB > 0.85x{host['gpu_vram_gb']}GB VRAM")
+    return None
+
+
+def _host_memory_skip(cell: dict, lib: str, host: dict) -> tuple[str, str] | None:
+    est = est_host_gb(cell["rows"], cell["cols"], cell["n_test"], lib)
+    if est > 0.8 * host["ram_gb"]:
+        return ("skipped", f"est {est:.1f}GB > 0.8x{host['ram_gb']}GB RAM")
+    return None
 
 
 def _job_key(job: dict, repeat: int, host_name: str | None,
