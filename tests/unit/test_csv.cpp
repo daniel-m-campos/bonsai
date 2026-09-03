@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -127,4 +128,101 @@ TEST_CASE("Csv: ignore_columns drops the column from features", "[csv][fit]")
     REQUIRE(batch.feature_names.size() == 2);
     REQUIRE(batch.feature_names[0] == "f1");
     REQUIRE(batch.feature_names[1] == "f3");
+}
+
+TEST_CASE("Csv: a headerless file names its columns f0..fn", "[csv][fit]")
+{
+    auto const path =
+        (std::filesystem::temp_directory_path() / "bonsai-noheader.csv").string();
+    std::ofstream{path} << "1,2,3\n4,5,6\n";
+    bonsai::DataConfig data_cfg;
+    data_cfg.header       = false;
+    data_cfg.label_column = 0;
+
+    auto const batch = bonsai::detail::csv::parse(path, data_cfg);
+    REQUIRE(batch.feature_names == std::vector<std::string>{"f1", "f2"});
+    REQUIRE(batch.labels == std::vector<float>{1.0F, 4.0F});
+    REQUIRE(batch.features[1] == std::vector<float>{3.0F, 6.0F});
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Csv: a short row is a column count mismatch, not a silent gap",
+          "[csv][edge]")
+{
+    auto const path =
+        (std::filesystem::temp_directory_path() / "bonsai-short-row.csv").string();
+    std::ofstream{path} << "label,f1,f2\n1,2,3\n4,5\n";
+    bonsai::DataConfig data_cfg;
+    data_cfg.header       = true;
+    data_cfg.label_column = 0;
+
+    REQUIRE_THROWS_WITH(bonsai::detail::csv::parse(path, data_cfg),
+                        Catch::Matchers::ContainsSubstring("column count mismatch"));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Libsvm: parse densifies 1-based sparse rows", "[csv][fit]")
+{
+    auto const path =
+        (std::filesystem::temp_directory_path() / "bonsai-libsvm.txt").string();
+    {
+        std::ofstream out(path);
+        out << "# comment line\n"
+            << "1.5 1:0.5 3:2.0\r\n"
+            << "\n"
+            << "-2 2:7\n";
+    }
+    bonsai::DataConfig data_cfg;
+
+    SECTION("feature count inferred from the largest index")
+    {
+        auto const batch = bonsai::detail::libsvm::parse(path, data_cfg);
+        REQUIRE(batch.labels == std::vector<float>{1.5F, -2.0F});
+        REQUIRE(batch.features.size() == 3);
+        REQUIRE(batch.features[0] == std::vector<float>{0.5F, 0.0F});
+        REQUIRE(batch.features[1] == std::vector<float>{0.0F, 7.0F});
+        REQUIRE(batch.features[2] == std::vector<float>{2.0F, 0.0F});
+        REQUIRE(batch.feature_names == std::vector<std::string>{"f0", "f1", "f2"});
+        REQUIRE(batch.weights.empty());
+    }
+    SECTION("libsvm_n_features widens but never narrows")
+    {
+        data_cfg.libsvm_n_features = 5;
+        REQUIRE(bonsai::detail::libsvm::parse(path, data_cfg).features.size() == 5);
+        data_cfg.libsvm_n_features = 2;
+        REQUIRE(bonsai::detail::libsvm::parse(path, data_cfg).features.size() == 3);
+    }
+    SECTION("parse_input dispatches on the format string")
+    {
+        data_cfg.format = "libsvm";
+        REQUIRE(bonsai::detail::parse_input(path, data_cfg).features.size() == 3);
+    }
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Libsvm: a malformed pair or a 0 index is a parse error", "[csv][edge]")
+{
+    auto const path =
+        (std::filesystem::temp_directory_path() / "bonsai-libsvm-bad.txt").string();
+    bonsai::DataConfig data_cfg;
+
+    SECTION("pair without a colon")
+    {
+        std::ofstream{path} << "1 2\n";
+        REQUIRE_THROWS_WITH(bonsai::detail::libsvm::parse(path, data_cfg),
+                            Catch::Matchers::ContainsSubstring("malformed pair"));
+    }
+    SECTION("index 0")
+    {
+        std::ofstream{path} << "1 0:4\n";
+        REQUIRE_THROWS_WITH(bonsai::detail::libsvm::parse(path, data_cfg),
+                            Catch::Matchers::ContainsSubstring("1-based"));
+    }
+    SECTION("missing file")
+    {
+        std::filesystem::remove(path);
+        REQUIRE_THROWS_WITH(bonsai::detail::libsvm::parse(path, data_cfg),
+                            Catch::Matchers::ContainsSubstring("cannot open"));
+    }
+    std::filesystem::remove(path);
 }
