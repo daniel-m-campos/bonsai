@@ -295,6 +295,160 @@ float round_validation_loss(ITrainableBooster const &booster,
     return booster.validation_loss(scores, labels);
 }
 
+class ValidationScorer
+{
+  public:
+    ValidationScorer(Config const &cfg, Dataset const &train, LabeledData const &valid,
+                     [[maybe_unused]] bool warm_start)
+        : cfg_(cfg), train_(train), valid_(valid),
+          device_grower_(grower_runs_on_device(cfg.dispatch.grower_name))
+    {
+        if (valid.dataset.view_n_rows() > 0 && valid.dataset.bins_are_u8())
+        {
+            bins_ = &valid.dataset;
+        }
+        else
+        {
+            defer_binning_ = valid.dataset.plane_n_rows() == 0 && train.bins_are_u8() &&
+                             has_raw_rows(valid);
+        }
+        assert(has_raw_rows(valid) || (bins_ != nullptr && !warm_start));
+        assert(valid.dataset.row_view().is_identity() ||
+               (bins_ != nullptr && !warm_start));
+        if (!valid.dataset.row_view().is_identity())
+        {
+            narrowed_labels_ = valid.dataset.row_view().gather(valid.labels);
+        }
+    }
+
+    size_t base() const
+    {
+        return base_;
+    }
+
+    float score_round(ITrainableBooster &booster, uint32_t i)
+    {
+        if (i == 0)
+        {
+            seed(booster);
+        }
+        bin_if_due(i);
+        if (i == 0)
+        {
+            arm_device(booster);
+        }
+        std::optional<float> const device_loss = route(booster);
+        return device_loss.has_value()
+                   ? *device_loss
+                   : round_validation_loss(booster, scores_, labels());
+    }
+
+  private:
+    void seed(ITrainableBooster const &booster)
+    {
+        base_ = booster.n_iters() - 1;
+        scores_.resize(eval_row_count(valid_) * booster.score_width());
+        booster.seed_validation_scores(valid_.features.view(), scores_, base_);
+    }
+
+    void bin_if_due(uint32_t i)
+    {
+        if (!defer_binning_)
+        {
+            return;
+        }
+        if (!device_grower_ && !bin_validation_pays(valid_.features.n_features,
+                                                    cfg_.tree_config.max_depth, i))
+        {
+            return;
+        }
+        binned_here_   = bin_validation(valid_, train_, cfg_.data);
+        bins_          = &*binned_here_;
+        defer_binning_ = false;
+    }
+
+    void arm_device(ITrainableBooster &booster)
+    {
+        if (!device_grower_ || bins_ == nullptr || !bins_->row_view().is_identity())
+        {
+            return;
+        }
+        detail::Phase<&detail::FitProfiler::eval_arm_s> phase;
+        device_eval_ =
+            booster.begin_resident_validation(*bins_, std::span<float const>{scores_});
+    }
+
+    std::optional<float> route(ITrainableBooster &booster)
+    {
+        std::optional<float> device_loss;
+        if (bins_ == nullptr)
+        {
+            route_last_round(booster, valid_.features.view(), scores_);
+            return device_loss;
+        }
+        if (device_eval_)
+        {
+            device_eval_ =
+                route_last_round_resident(booster, *bins_, scores_, device_loss);
+        }
+        if (!device_eval_)
+        {
+            route_last_round_binned(booster, *bins_, scores_);
+        }
+        return device_loss;
+    }
+
+    floats_view labels() const
+    {
+        return valid_.dataset.row_view().is_identity() ? floats_view{valid_.labels}
+                                                       : floats_view{narrowed_labels_};
+    }
+
+    Config const          &cfg_;
+    Dataset const         &train_;
+    LabeledData const     &valid_;
+    bool const             device_grower_;
+    Dataset const         *bins_          = nullptr;
+    bool                   defer_binning_ = false;
+    bool                   device_eval_   = false;
+    std::optional<Dataset> binned_here_;
+    std::vector<float>     narrowed_labels_;
+    std::vector<float>     scores_;
+    size_t                 base_ = 0;
+};
+
+class EarlyStopping
+{
+  public:
+    explicit EarlyStopping(uint32_t rounds) : rounds_(rounds) {}
+
+    bool stops_after(uint32_t i, float loss)
+    {
+        if (i == 0 || loss < best_loss_)
+        {
+            best_loss_ = loss;
+            best_iter_ = i;
+            return false;
+        }
+        return i - best_iter_ >= rounds_;
+    }
+
+    float best_loss() const
+    {
+        return best_loss_;
+    }
+
+    uint32_t best_iter() const
+    {
+        return best_iter_;
+    }
+
+  private:
+    uint32_t rounds_;
+    float    best_loss_ = 0.0F;
+    uint32_t best_iter_ = 0;
+};
+
 using ValidationRef = std::optional<std::reference_wrapper<LabeledData const>>;
 
 std::unique_ptr<ITrainableBooster>
@@ -367,45 +521,12 @@ train_impl(Config const &cfg, LabeledData const &train, ValidationRef validation
         throw ConfigError("early_stopping_rounds cannot be combined with "
                           "dart_drop_rate");
     }
-    std::optional<Dataset> binned_here;
-    Dataset const         *validation_bins = nullptr;
-    bool                   defer_binning   = false;
+    std::optional<ValidationScorer> scorer;
     if (es_enabled || track_eval)
     {
-        auto const &valid = validation->get();
-        if (valid.dataset.view_n_rows() > 0 && valid.dataset.bins_are_u8())
-        {
-            validation_bins = &valid.dataset;
-        }
-        else
-        {
-            defer_binning = valid.dataset.plane_n_rows() == 0 &&
-                            train.dataset.bins_are_u8() && has_raw_rows(valid);
-        }
-        assert(has_raw_rows(valid) || (validation_bins != nullptr && !warm_start));
-        assert(valid.dataset.row_view().is_identity() ||
-               (validation_bins != nullptr && !warm_start));
+        scorer.emplace(cfg, train.dataset, validation->get(), warm_start);
     }
-
-    std::vector<float> narrowed_labels;
-    floats_view        eval_labels;
-    if (validation)
-    {
-        auto const &valid = validation->get();
-        eval_labels       = valid.labels;
-        if (!valid.dataset.row_view().is_identity())
-        {
-            narrowed_labels = valid.dataset.row_view().gather(valid.labels);
-            eval_labels     = narrowed_labels;
-        }
-    }
-
-    std::vector<float> es_scores;
-    float              best_loss     = 0.0F;
-    uint32_t           best_iter     = 0;
-    size_t             es_base       = 0;
-    bool const         device_grower = grower_runs_on_device(cfg.dispatch.grower_name);
-    bool               device_eval   = false;
+    EarlyStopping stopper(es_rounds);
 
     for (uint32_t i = 0; i < n_iters; ++i)
     {
@@ -420,82 +541,31 @@ train_impl(Config const &cfg, LabeledData const &train, ValidationRef validation
                 fire_tick(static_cast<size_t>(one_based));
             }
         }
-        if (es_enabled || track_eval)
+        if (!scorer)
         {
-            auto const &valid = validation->get();
-            if (i == 0)
+            continue;
+        }
+        float const loss = scorer->score_round(*booster, i);
+        if (track_eval)
+        {
+            if (i == 0 && scorer->base() > 0)
             {
-                es_base = booster->n_iters() - 1;
-                es_scores.resize(eval_row_count(valid) * booster->score_width());
-                booster->seed_validation_scores(valid.features.view(), es_scores,
-                                                es_base);
-                if (track_eval && es_base > 0)
-                {
-                    eval_history->get().insert(eval_history->get().end(), es_base,
-                                               std::numeric_limits<float>::quiet_NaN());
-                }
+                eval_history->get().insert(eval_history->get().end(), scorer->base(),
+                                           std::numeric_limits<float>::quiet_NaN());
             }
-            if (defer_binning &&
-                (device_grower || bin_validation_pays(valid.features.n_features,
-                                                      cfg.tree_config.max_depth, i)))
+            eval_history->get().push_back(loss);
+        }
+        if (es_enabled && stopper.stops_after(i, loss))
+        {
+            booster->truncate(scorer->base() + stopper.best_iter() + 1);
+            if (has_sink)
             {
-                binned_here     = bin_validation(valid, train.dataset, cfg.data);
-                validation_bins = &*binned_here;
-                defer_binning   = false;
+                std::println(
+                    "fit: early stop at iter {} (best iter {}, valid {} loss {})",
+                    i + 1, stopper.best_iter() + 1, cfg.dispatch.objective_name,
+                    stopper.best_loss());
             }
-            std::optional<float> device_loss;
-            if (i == 0 && device_grower && validation_bins != nullptr &&
-                validation_bins->row_view().is_identity())
-            {
-                detail::Phase<&detail::FitProfiler::eval_arm_s> phase;
-                device_eval = booster->begin_resident_validation(
-                    *validation_bins, std::span<float const>{es_scores});
-            }
-            if (validation_bins != nullptr)
-            {
-                if (device_eval)
-                {
-                    device_eval = route_last_round_resident(*booster, *validation_bins,
-                                                            es_scores, device_loss);
-                }
-                if (!device_eval)
-                {
-                    route_last_round_binned(*booster, *validation_bins, es_scores);
-                }
-            }
-            else
-            {
-                route_last_round(*booster, valid.features.view(), es_scores);
-            }
-            float const loss =
-                device_loss.has_value()
-                    ? *device_loss
-                    : round_validation_loss(*booster, es_scores, eval_labels);
-            if (track_eval)
-            {
-                eval_history->get().push_back(loss);
-            }
-            if (!es_enabled)
-            {
-                continue;
-            }
-            if (i == 0 || loss < best_loss)
-            {
-                best_loss = loss;
-                best_iter = i;
-            }
-            else if (i - best_iter >= es_rounds)
-            {
-                booster->truncate(es_base + best_iter + 1);
-                if (has_sink)
-                {
-                    std::println("fit: early stop at iter {} (best iter {}, valid {} "
-                                 "loss {})",
-                                 i + 1, best_iter + 1, cfg.dispatch.objective_name,
-                                 best_loss);
-                }
-                break;
-            }
+            break;
         }
     }
 
