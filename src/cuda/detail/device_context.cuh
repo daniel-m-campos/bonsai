@@ -225,19 +225,17 @@ struct CudaDeviceContext
 
     struct ResidentPlane
     {
-        DeviceBuffer<float>    labels;
-        DeviceBuffer<float>    scores;
-        DeviceBuffer<float>    weights;
-        LabelsId               labels_key{};
-        NodeTable              nodes;
-        DeviceObjectiveKind    kind          = DeviceObjectiveKind::none;
-        bool                   weighted      = false;
-        bool                   armed         = false;
-        float                  learning_rate = 0.0F;
-        size_t                 n_rows        = 0;
-        DeviceBuffer<row_id_t> rows;
-        size_t                 n_view_rows   = 0;
-        bool                   view_identity = true;
+        DeviceBuffer<float> labels;
+        DeviceBuffer<float> scores;
+        DeviceBuffer<float> weights;
+        LabelsId            labels_key{};
+        NodeTable           nodes;
+        DeviceObjectiveKind kind          = DeviceObjectiveKind::none;
+        bool                weighted      = false;
+        bool                armed         = false;
+        float               learning_rate = 0.0F;
+        size_t              n_rows        = 0;
+        RowMap              rows;
     };
 
     struct EvalPlane

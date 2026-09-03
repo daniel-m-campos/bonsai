@@ -1,11 +1,14 @@
 #pragma once
 
+#include "bonsai/row_view.hpp"
+#include "bonsai/types.hpp"
 #include <cuda.h>
 
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -51,6 +54,11 @@ inline __host__ __device__ size_t tiled_cell(uint32_t f, uint32_t r, uint32_t n_
     uint32_t const t = f / k_bin_tile_width;
     return (static_cast<size_t>(n_rows) * t * k_bin_tile_width) +
            (static_cast<size_t>(r) * tile_strip(t, n_feats)) + (f % k_bin_tile_width);
+}
+
+inline __host__ __device__ uint32_t mapped_row(uint32_t const *rows, uint32_t k)
+{
+    return rows == nullptr ? k : rows[k];
 }
 
 inline constexpr uint32_t k_not_selected = 0xFFFFFFFFU;
@@ -187,6 +195,39 @@ template <typename T> class DeviceBuffer
   private:
     T     *ptr_      = nullptr;
     size_t capacity_ = 0;
+};
+
+struct RowMap
+{
+    DeviceBuffer<row_id_t> ids;
+    size_t                 n        = 0;
+    bool                   identity = true;
+
+    void stage(RowView const &view)
+    {
+        n        = view.size();
+        identity = view.is_identity();
+        if (!identity)
+        {
+            std::vector<row_id_t> const materialized = view.materialize();
+            ids.upload(materialized.data(), materialized.size());
+        }
+    }
+
+    void stage(std::span<row_id_t const> rows, size_t plane_rows)
+    {
+        identity = rows.empty();
+        n        = identity ? plane_rows : rows.size();
+        if (!identity)
+        {
+            ids.upload(rows.data(), rows.size());
+        }
+    }
+
+    row_id_t const *data() const
+    {
+        return identity ? nullptr : ids.data();
+    }
 };
 
 template <typename T> class PinnedBuffer

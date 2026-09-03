@@ -993,7 +993,7 @@ __global__ void route_add_kernel(BinT const *bins, uint32_t const *n_bins,
     {
         return;
     }
-    uint32_t const r   = (rows == nullptr) ? k : rows[k];
+    uint32_t const r   = mapped_row(rows, k);
     uint32_t       idx = 0;
     while (is_leaf[idx] == 0)
     {

@@ -82,7 +82,7 @@ __global__ void gather_cols_kernel(BinT const *src, BinT *dst, uint32_t const *k
     }
     uint32_t const t = blockIdx.y;
     uint32_t const w = tile_strip(t, n_feats_dst);
-    uint32_t const r = (rows == nullptr) ? i : rows[i];
+    uint32_t const r = mapped_row(rows, i);
     for (uint32_t j = 0; j < w; ++j)
     {
         uint32_t const f = (t * k_bin_tile_width) + j;
@@ -182,7 +182,9 @@ CudaIngestPlane::select_columns(std::span<feature_id_t const> keep,
             return nullptr;
         }
     }
-    size_t const out_rows = rows.empty() ? n_rows : rows.size();
+    RowMap map;
+    map.stage(rows, n_rows);
+    size_t const out_rows = map.n;
     if (out_rows == 0)
     {
         return nullptr;
@@ -213,11 +215,6 @@ CudaIngestPlane::select_columns(std::span<feature_id_t const> keep,
 
     DeviceBuffer<uint32_t> d_keep;
     d_keep.upload(keep.data(), keep.size());
-    DeviceBuffer<uint32_t> d_rows;
-    if (!rows.empty())
-    {
-        d_rows.upload(rows.data(), rows.size());
-    }
 
     auto const n_dst = static_cast<uint32_t>(out_rows);
     auto const f_dst = static_cast<uint32_t>(keep.size());
@@ -225,9 +222,8 @@ CudaIngestPlane::select_columns(std::span<feature_id_t const> keep,
     auto const launch = [&](auto const *src, auto *dst)
     {
         gather_cols_kernel<<<grid, dim3(256)>>>(
-            src, dst, d_keep.data(), rows.empty() ? nullptr : d_rows.data(),
-            static_cast<uint32_t>(n_rows), static_cast<uint32_t>(n_feats), n_dst,
-            f_dst);
+            src, dst, d_keep.data(), map.data(), static_cast<uint32_t>(n_rows),
+            static_cast<uint32_t>(n_feats), n_dst, f_dst);
     };
     size_t const cells = out_rows * keep.size();
     if (bins_are_u8)
@@ -1524,14 +1520,7 @@ bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind ki
     resident.weighted      = !ds.weights().empty();
     resident.n_rows        = ds.plane_n_rows();
     resident.learning_rate = learning_rate;
-    RowView const &view    = ds.row_view();
-    resident.n_view_rows   = view.size();
-    resident.view_identity = view.is_identity();
-    if (!resident.view_identity)
-    {
-        std::vector<row_id_t> const ids = view.materialize();
-        resident.rows.upload(ids.data(), ids.size());
-    }
+    resident.rows.stage(ds.row_view());
     resident.armed = true;
     return true;
 }
@@ -1588,7 +1577,7 @@ void CudaDeviceContext::resident_finalize(
     auto lap = prof_counters.lap();
     resident.nodes.stage(nodes);
 
-    auto const n = static_cast<uint32_t>(resident.n_view_rows);
+    auto const n = static_cast<uint32_t>(resident.rows.n);
     dim3 const grid((n + 255) / 256);
     data.dispatch_bins(
         [&](auto const *bins)
@@ -1600,7 +1589,7 @@ void CudaDeviceContext::resident_finalize(
                 t.split_bin.device(), t.left.device(), t.right.device(),
                 t.default_left.device(), t.is_leaf.device(), t.value.device(),
                 resident.learning_rate, resident.scores.data(), n,
-                resident.view_identity ? nullptr : resident.rows.data());
+                resident.rows.data());
         });
     check(cudaGetLastError(), "resident route+add launch");
     lap(prof_counters.score_kernel_s);
