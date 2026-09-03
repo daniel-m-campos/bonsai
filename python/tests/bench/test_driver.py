@@ -225,6 +225,47 @@ def test_driver_gates_and_effective_bins():
         driver.run_one = real
 
 
+def test_skip_reason_names_each_gate_in_order():
+    from bonsai.bench import driver
+
+    host = {"gpu": "FakeGPU", "gpu_vram_gb": 24.0, "ram_gb": 64.0, "n_vcpu": 8}
+    cell = {"axis": "cell", "rows": 1000, "cols": 10, "bins": 255, "n_test": 200}
+
+    def job(variant="bonsai_depthwise", threads=4, **over):
+        return {"cell": dict(cell, **over), "variant": variant, "threads": threads}
+
+    gpu = "bonsai_cuda_depthwise"
+    assert driver.skip_reason(job(), host, {}) is None
+    assert driver.skip_reason(job(gpu), dict(host, gpu=None), {}) == (
+        "skipped", "no CUDA device on host")
+    assert driver.skip_reason(job(gpu, cols=20_000), host, {}) == (
+        "skipped", "cols > 16384 (GPU variant policy)")
+    assert driver.skip_reason(job(gpu, cols=20_000), host,
+                              {"gpu_max_cols": None}) is None
+    status, msg = driver.skip_reason(job(gpu, rows=2**30, cols=64), host, {})
+    assert status == "skipped" and msg.endswith("GB > 0.85x24.0GB VRAM")
+    assert driver.skip_reason(job(bins=70_000), host, {}) == (
+        "unsupported", "bonsai bin_id_t is uint16 (max_bin <= 65535)")
+    status, msg = driver.skip_reason(job(rows=2**30, cols=64), host, {})
+    assert status == "skipped" and msg.endswith("GB > 0.8x64.0GB RAM")
+    assert driver.skip_reason(job(rows=2**30, cols=64), host,
+                              {"mem_gate": "off"}) is None
+    assert driver.skip_reason(job(threads=16, axis="threads"), host, {}) == (
+        "skipped", "threads 16 > 8 vcpus")
+    assert driver.skip_reason(job(threads=16), host, {}) is None
+
+
+def test_run_one_turns_a_failing_and_a_wedged_worker_into_status_rows():
+    from bonsai.bench import driver
+
+    spec = {"variant": "bonsai_depthwise", "threads": 1}
+    failed = driver.run_one(spec, timeout=120)
+    assert failed == {"status": "error", "message": "KeyError: 'cell'"}
+
+    wedged = driver.run_one(spec, timeout=0.01, sampler=False)
+    assert wedged == {"status": "timeout", "message": "exceeded 0.01s"}
+
+
 def test_resume_is_host_scoped():
     import pathlib
 
