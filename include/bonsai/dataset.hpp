@@ -200,6 +200,8 @@ class Dataset
 
     static LabelsId mint_labels_id();
     static FitId    mint_fit_id();
+    static Dataset  mint(std::shared_ptr<BinStore const> store,
+                         std::vector<float> labels, std::vector<float> weights);
 
     std::shared_ptr<BinStore const> store_ =
         std::make_shared<BinStore const>(BinStore::Key{});

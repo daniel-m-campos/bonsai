@@ -43,6 +43,19 @@ FitId Dataset::mint_fit_id()
     return FitId{identity_counter().fetch_add(1, std::memory_order_relaxed)};
 }
 
+Dataset Dataset::mint(std::shared_ptr<BinStore const> store, std::vector<float> labels,
+                      std::vector<float> weights)
+{
+    Dataset ds;
+    ds.rows_  = RowView::all(store->n_rows());
+    ds.store_ = std::move(store);
+    ds.id_    = mint_fit_id();
+    ds.meta_  = std::make_shared<Meta const>(Meta{.labels  = std::move(labels),
+                                                  .weights = std::move(weights),
+                                                  .id      = mint_labels_id()});
+    return ds;
+}
+
 namespace
 {
 
@@ -122,13 +135,7 @@ Dataset Dataset::bin(detail::ColumnBatch const &batch, BinMappers const &mappers
             bin_columns(mappers, batch.features.size(), n,
                         [&](size_t f, size_t r) { return batch.features[f][r]; }));
     }
-    Dataset ds;
-    ds.rows_  = RowView::all(n);
-    ds.store_ = std::move(store);
-    ds.id_    = mint_fit_id();
-    ds.meta_  = std::make_shared<Meta const>(
-        Meta{.labels = batch.labels, .weights = batch.weights, .id = mint_labels_id()});
-    return ds;
+    return mint(std::move(store), batch.labels, batch.weights);
 }
 
 Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mappers,
@@ -143,18 +150,11 @@ Dataset Dataset::bin(features_view X, floats_view labels, BinMappers const &mapp
     }
     detail::Phase<&detail::IngestProfiler::bin_s> phase;
     size_t const                                  n = labels.size();
-    Dataset                                       ds;
-    ds.rows_  = RowView::all(n);
-    ds.store_ = std::make_shared<BinStore const>(BinStore::Key{}, n, mappers,
+    return mint(std::make_shared<BinStore const>(BinStore::Key{}, n, mappers,
                                                  bin_columns(mappers, X.extent(1), n,
                                                              [&](size_t f, size_t r)
-                                                             { return X[r, f]; }));
-    ds.id_    = mint_fit_id();
-    ds.meta_  = std::make_shared<Meta const>(
-        Meta{.labels  = std::vector<float>(labels.begin(), labels.end()),
-              .weights = std::vector<float>(weights.begin(), weights.end()),
-              .id      = mint_labels_id()});
-    return ds;
+                                                             { return X[r, f]; })),
+                {labels.begin(), labels.end()}, {weights.begin(), weights.end()});
 }
 
 Dataset Dataset::bin(size_t n_rows, [[maybe_unused]] size_t n_features,
@@ -165,16 +165,9 @@ Dataset Dataset::bin(size_t n_rows, [[maybe_unused]] size_t n_features,
     assert(plane != nullptr);
     require_n_features(n_features, mappers.size(), "the input to Dataset::bin");
     detail::Phase<&detail::IngestProfiler::bin_s> phase;
-    Dataset                                       ds;
-    ds.rows_  = RowView::all(n_rows);
-    ds.store_ = std::make_shared<BinStore const>(BinStore::Key{}, n_rows, mappers,
-                                                 std::move(plane));
-    ds.id_    = mint_fit_id();
-    ds.meta_  = std::make_shared<Meta const>(
-        Meta{.labels  = std::vector<float>(labels.begin(), labels.end()),
-              .weights = std::vector<float>(weights.begin(), weights.end()),
-              .id      = mint_labels_id()});
-    return ds;
+    return mint(std::make_shared<BinStore const>(BinStore::Key{}, n_rows, mappers,
+                                                 std::move(plane)),
+                {labels.begin(), labels.end()}, {weights.begin(), weights.end()});
 }
 
 Dataset Dataset::from_bins(BinColumns cols, BinMappers mappers, floats_view labels,
@@ -209,32 +202,18 @@ Dataset Dataset::from_bins(BinColumns cols, BinMappers mappers, floats_view labe
             }
         },
         cols);
-    Dataset ds;
-    ds.rows_  = RowView::all(n_rows);
-    ds.store_ = std::make_shared<BinStore const>(BinStore::Key{}, n_rows,
-                                                 std::move(mappers), std::move(cols));
-    ds.id_    = mint_fit_id();
-    ds.meta_  = std::make_shared<Meta const>(
-        Meta{.labels  = std::vector<float>(labels.begin(), labels.end()),
-              .weights = std::vector<float>(weights.begin(), weights.end()),
-              .id      = mint_labels_id()});
-    return ds;
+    return mint(std::make_shared<BinStore const>(BinStore::Key{}, n_rows,
+                                                 std::move(mappers), std::move(cols)),
+                {labels.begin(), labels.end()}, {weights.begin(), weights.end()});
 }
 
 Dataset Dataset::select_features(std::span<feature_id_t const> keep) const
 {
     std::vector<row_id_t> const ids =
         rows_.is_identity() ? std::vector<row_id_t>{} : rows_.materialize();
-    Dataset ds;
-    ds.store_ = store_->select_columns(keep, ids);
-    ds.rows_  = RowView::all(ds.store_->n_rows());
-    ds.id_    = mint_fit_id();
-    ds.meta_  = std::make_shared<Meta const>(
-        Meta{.labels  = rows_.gather(meta_->labels),
-              .weights = meta_->weights.empty() ? std::vector<float>{}
-                                                : rows_.gather(meta_->weights),
-              .id      = mint_labels_id()});
-    return ds;
+    return mint(store_->select_columns(keep, ids), rows_.gather(meta_->labels),
+                meta_->weights.empty() ? std::vector<float>{}
+                                       : rows_.gather(meta_->weights));
 }
 
 Dataset Dataset::materialize() const
