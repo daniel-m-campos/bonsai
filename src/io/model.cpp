@@ -156,6 +156,60 @@ template <typename TreeT> TreeT tree_from_json(json const &j, size_t n_features)
 
 constexpr size_t k_max_oblivious_depth = 31;
 
+bool is_leaf(DenseTree::Node const &n)
+{
+    return n.feature_id == DenseTree::k_leaf_flag;
+}
+
+void check_split_node(DenseTree::Node const &n, size_t i, size_t n_nodes,
+                      size_t n_features)
+{
+    if (n.feature_id >= n_features)
+    {
+        throw std::runtime_error("split names a feature the model lacks");
+    }
+    if (std::isnan(n.threshold_or_value))
+    {
+        throw std::runtime_error("split threshold is not a number");
+    }
+    if (n.left <= i || n.right <= i || n.left >= n_nodes || n.right >= n_nodes)
+    {
+        throw std::runtime_error("node links must point forward");
+    }
+}
+
+void check_links_form_a_tree(DenseTree::Nodes const &nodes)
+{
+    std::vector<uint8_t> reached(nodes.size(), 0);
+    for (DenseTree::Node const &n : nodes)
+    {
+        if (is_leaf(n))
+        {
+            continue;
+        }
+        if (n.left == n.right || reached[n.left] != 0 || reached[n.right] != 0)
+        {
+            throw std::runtime_error("node links must form a tree");
+        }
+        reached[n.left]  = 1;
+        reached[n.right] = 1;
+    }
+}
+
+size_t structural_depth(DenseTree::Nodes const &nodes)
+{
+    std::vector<size_t> depth(nodes.size(), 0);
+    for (size_t i = nodes.size(); i-- > 0;)
+    {
+        DenseTree::Node const &n = nodes[i];
+        if (!is_leaf(n))
+        {
+            depth[i] = 1 + std::max(depth[n.left], depth[n.right]);
+        }
+    }
+    return depth[0];
+}
+
 void validate_dense_tree(DenseTree::Nodes const &nodes, DenseTree::Params const &p,
                          size_t n_features)
 {
@@ -169,49 +223,13 @@ void validate_dense_tree(DenseTree::Nodes const &nodes, DenseTree::Params const 
     }
     for (size_t i = 0; i < nodes.size(); ++i)
     {
-        DenseTree::Node const &n = nodes[i];
-        if (n.feature_id == DenseTree::k_leaf_flag)
+        if (!is_leaf(nodes[i]))
         {
-            continue;
-        }
-        if (n.feature_id >= n_features)
-        {
-            throw std::runtime_error("split names a feature the model lacks");
-        }
-        if (std::isnan(n.threshold_or_value))
-        {
-            throw std::runtime_error("split threshold is not a number");
-        }
-        if (n.left <= i || n.right <= i || n.left >= nodes.size() ||
-            n.right >= nodes.size())
-        {
-            throw std::runtime_error("node links must point forward");
+            check_split_node(nodes[i], i, nodes.size(), n_features);
         }
     }
-    std::vector<uint8_t> reached(nodes.size(), 0);
-    for (DenseTree::Node const &n : nodes)
-    {
-        if (n.feature_id == DenseTree::k_leaf_flag)
-        {
-            continue;
-        }
-        if (n.left == n.right || reached[n.left] != 0 || reached[n.right] != 0)
-        {
-            throw std::runtime_error("node links must form a tree");
-        }
-        reached[n.left]  = 1;
-        reached[n.right] = 1;
-    }
-    std::vector<size_t> depth(nodes.size(), 0);
-    for (size_t i = nodes.size(); i-- > 0;)
-    {
-        DenseTree::Node const &n = nodes[i];
-        if (n.feature_id != DenseTree::k_leaf_flag)
-        {
-            depth[i] = 1 + std::max(depth[n.left], depth[n.right]);
-        }
-    }
-    if (p.depth != depth[0])
+    check_links_form_a_tree(nodes);
+    if (p.depth != structural_depth(nodes))
     {
         throw std::runtime_error("stated depth disagrees with the stored structure");
     }

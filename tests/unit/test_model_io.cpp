@@ -375,6 +375,16 @@ TEST_CASE("ModelIo: corrupt tree shapes refuse to load", "[model_io][edge]")
                             Catch::Matchers::ContainsSubstring("point forward"));
     }
 
+    SECTION("a dense tree with no nodes is refused")
+    {
+        TempPath const tmp;
+        io::save_booster(booster, tmp.str(), mappers, cfg);
+        rewrite_corrupted(tmp.str(), [](nlohmann::json &root)
+                          { root["trees"][0]["nodes"] = nlohmann::json::array(); });
+        REQUIRE_THROWS_WITH(io::load_booster(tmp.str()),
+                            Catch::Matchers::ContainsSubstring("no nodes"));
+    }
+
     SECTION("dense depth beyond the node count")
     {
         TempPath const tmp;
