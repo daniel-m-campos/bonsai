@@ -120,6 +120,12 @@ void CpuHistogramEngine::begin_tree(Dataset const & /*ds*/, floats_view /*grad*/
     fd::plan_cache().unit_hess = unit;
 }
 
+template bool GrowerHost<CpuHistogramEngine>::eval_accumulate<DenseTree>(
+    DenseTree const &, Dataset const &, float, std::span<float>,
+    std::optional<float> &);
+template bool GrowerHost<CpuHistogramEngine>::eval_accumulate<ObliviousTree>(
+    ObliviousTree const &, Dataset const &, float, std::span<float>,
+    std::optional<float> &);
 template class DepthwiseGrower<CpuHistogramEngine, HistogramNodeSplitFinder>;
 template class ObliviousGrower<CpuHistogramEngine, HistogramLevelSplitFinder>;
 template class LeafwiseGrower<CpuHistogramEngine, HistogramNodeSplitFinder>;

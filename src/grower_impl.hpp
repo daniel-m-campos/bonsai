@@ -752,41 +752,15 @@ bool eval_walk(EngineT &engine, bool armed, TableFn &&table, float lr,
     }
 }
 
-template <HistogramEngine EngineT, NodeSplitFinder SplitterT>
-bool DepthwiseGrower<EngineT, SplitterT>::eval_accumulate(Tree const      &tree,
-                                                          Dataset const   &valid,
-                                                          float            lr,
-                                                          std::span<float> scores_out,
-                                                          std::optional<float> &loss)
+template <HistogramEngine EngineT>
+template <typename Tree>
+bool GrowerHost<EngineT>::eval_accumulate(Tree const &tree, Dataset const &valid,
+                                          float lr, std::span<float> scores_out,
+                                          std::optional<float> &loss)
 {
     return eval_walk(
-        seam().engine(), seam().eval_armed(), [&]<typename NodeT>()
-        { return grower_detail::resident_node_table<NodeT>(tree.nodes(), valid); }, lr,
-        scores_out, loss);
-}
-
-template <HistogramEngine EngineT, LevelSplitFinder SplitterT>
-bool ObliviousGrower<EngineT, SplitterT>::eval_accumulate(Tree const      &tree,
-                                                          Dataset const   &valid,
-                                                          float            lr,
-                                                          std::span<float> scores_out,
-                                                          std::optional<float> &loss)
-{
-    return eval_walk(
-        seam().engine(), seam().eval_armed(), [&]<typename NodeT>()
-        { return grower_detail::oblivious_node_table<NodeT>(tree, valid); }, lr,
-        scores_out, loss);
-}
-
-template <HistogramEngine EngineT, ParallelNodeSplitFinder SplitterT>
-bool LeafwiseGrower<EngineT, SplitterT>::eval_accumulate(Tree const    &tree,
-                                                         Dataset const &valid, float lr,
-                                                         std::span<float> scores_out,
-                                                         std::optional<float> &loss)
-{
-    return eval_walk(
-        seam().engine(), seam().eval_armed(), [&]<typename NodeT>()
-        { return grower_detail::resident_node_table<NodeT>(tree.nodes(), valid); }, lr,
+        seam_.engine(), seam_.eval_armed(), [&]<typename NodeT>()
+        { return grower_detail::resident_node_table<NodeT>(tree, valid); }, lr,
         scores_out, loss);
 }
 

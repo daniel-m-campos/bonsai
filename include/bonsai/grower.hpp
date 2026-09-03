@@ -277,9 +277,9 @@ bool engine_eval_begin(EngineT &engine, Dataset const &valid, DeviceObjectiveKin
 // can route the eval walk. begin() and begin_leaf() differ only in that
 // best-first growth sizes its histogram pool from the tree config, a
 // capacity decided once per fit; a CPU engine compiles both to `false`
-// through the engine_* shims above. eval_armed() is read by the growers'
-// eval_accumulate definitions, which stay per-grower because each tree shape
-// flattens to a device node table its own way.
+// through the engine_* shims above. eval_armed() gates the host's
+// eval_accumulate, which flattens either tree shape through the
+// resident_node_table overload for it.
 template <typename EngineT> class DeviceSeam
 {
   public:
@@ -365,6 +365,9 @@ template <HistogramEngine EngineT> class GrowerHost
     {
         return seam_.eval_begin(valid, kind, scores);
     }
+    template <typename Tree>
+    bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
+                         std::span<float> scores_out, std::optional<float> &loss);
 
   protected:
     explicit GrowerHost(TreeConfig const &cfg)
@@ -425,8 +428,6 @@ class DepthwiseGrower : public GrowerHost<EngineT>
     explicit DepthwiseGrower(TreeConfig const &cfg);
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
                           RowSelection selection = {});
-    bool             eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
-                                     std::span<float> scores_out, std::optional<float> &loss);
 
   private:
     using Host::begin_grow;
@@ -446,8 +447,6 @@ class ObliviousGrower : public GrowerHost<EngineT>
     explicit ObliviousGrower(TreeConfig const &cfg);
     GrowResult<Tree> grow(Dataset const &ds, floats_view grad, floats_view hess,
                           RowSelection selection = {});
-    bool             eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
-                                     std::span<float> scores_out, std::optional<float> &loss);
 
   private:
     using Host::begin_grow;
@@ -471,8 +470,6 @@ class LeafwiseGrower : public GrowerHost<EngineT>
     {
         return seam().begin_leaf(ds, config(), kind, scores, learning_rate);
     }
-    bool eval_accumulate(Tree const &tree, Dataset const &valid, float lr,
-                         std::span<float> scores_out, std::optional<float> &loss);
 
   private:
     using Host::begin_grow;
