@@ -382,44 +382,43 @@ nb::object name_positions(nb::object const &np, nb::object const &arr,
     return np.attr("asarray")(nb::cast(ids));
 }
 
-template <typename IdT>
-std::vector<IdT> parse_index_selection(nb::handle selection, size_t n,
-                                       IndexAxis const &axis)
+nb::object selection_as_array(nb::object const &np, nb::handle selection, size_t n)
 {
-    nb::object const np  = nb::module_::import_("numpy");
-    nb::object       arr = nb::isinstance<nb::slice>(selection)
-                               ? [&]
+    if (!nb::isinstance<nb::slice>(selection))
     {
-        auto const [start, stop, step, len] = nb::cast<nb::slice>(selection).compute(n);
-        return np.attr("arange")(start, stop, step);
-    }()
-                               : np.attr("asarray")(selection);
-    if (nb::cast<size_t>(arr.attr("size")) == 0)
-    {
-        throw nb::value_error(std::format("Dataset.subset({}=...) selected no {}; {}",
-                                          axis.keyword, axis.many,
-                                          axis.empty_consequence)
-                                  .c_str());
+        return np.attr("asarray")(selection);
     }
+    auto const [start, stop, step, len] = nb::cast<nb::slice>(selection).compute(n);
+    return np.attr("arange")(start, stop, step);
+}
+
+nb::object mask_positions(nb::object const &np, nb::object const &mask, size_t n,
+                          IndexAxis const &axis)
+{
+    if (size_t const given = nb::cast<size_t>(mask.attr("size")); given != n)
+    {
+        throw nb::value_error(
+            std::format("Dataset.subset({}=<bool mask>): the mask has {} entries and "
+                        "the dataset has {} {}; a mask names one {} per entry",
+                        axis.keyword, given, n, axis.many, axis.one)
+                .c_str());
+    }
+    return np.attr("flatnonzero")(mask);
+}
+
+nb::object integer_positions(nb::object const &np, nb::object const &arr, size_t n,
+                             IndexAxis const &axis)
+{
     auto const kind = nb::cast<std::string>(arr.attr("dtype").attr("kind"));
     if (kind == "b")
     {
-        if (size_t const given = nb::cast<size_t>(arr.attr("size")); given != n)
-        {
-            throw nb::value_error(
-                std::format(
-                    "Dataset.subset({}=<bool mask>): the mask has {} entries and "
-                    "the dataset has {} {}; a mask names one {} per entry",
-                    axis.keyword, given, n, axis.many, axis.one)
-                    .c_str());
-        }
-        arr = np.attr("flatnonzero")(arr);
+        return mask_positions(np, arr, n, axis);
     }
-    else if (axis.names && (kind == "U" || kind == "S" || kind == "O"))
+    if (axis.names && (kind == "U" || kind == "S" || kind == "O"))
     {
-        arr = name_positions(np, arr, axis);
+        return name_positions(np, arr, axis);
     }
-    else if (kind != "i" && kind != "u")
+    if (kind != "i" && kind != "u")
     {
         throw nb::type_error(
             std::format("Dataset.subset({}=...) takes a slice, a boolean mask, {}an "
@@ -428,8 +427,46 @@ std::vector<IdT> parse_index_selection(nb::handle selection, size_t n,
                         axis.names ? std::format(", or {} names", axis.one) : "", kind)
                 .c_str());
     }
-    arr = np.attr("ascontiguousarray")(arr, np.attr("int64"));
-    if (nb::cast<size_t>(arr.attr("ndim")) != 1)
+    return arr;
+}
+
+template <typename IdT> IdT bounded_id(int64_t id, size_t n, IndexAxis const &axis)
+{
+    if (id < 0)
+    {
+        throw nb::index_error(
+            std::format("Dataset.subset({}=...) got the negative index "
+                        "{}; {} ids index the binned plane and do not wrap",
+                        axis.keyword, id, axis.one)
+                .c_str());
+    }
+    if (static_cast<size_t>(id) >= n)
+    {
+        throw nb::index_error(
+            std::format("Dataset.subset({}=...) got {} {}, out of range "
+                        "for a dataset of {} {}",
+                        axis.keyword, axis.one, id, n, axis.many)
+                .c_str());
+    }
+    return static_cast<IdT>(id);
+}
+
+template <typename IdT>
+std::vector<IdT> parse_index_selection(nb::handle selection, size_t n,
+                                       IndexAxis const &axis)
+{
+    nb::object const np  = nb::module_::import_("numpy");
+    nb::object const arr = selection_as_array(np, selection, n);
+    if (nb::cast<size_t>(arr.attr("size")) == 0)
+    {
+        throw nb::value_error(std::format("Dataset.subset({}=...) selected no {}; {}",
+                                          axis.keyword, axis.many,
+                                          axis.empty_consequence)
+                                  .c_str());
+    }
+    nb::object const positions = np.attr("ascontiguousarray")(
+        integer_positions(np, arr, n, axis), np.attr("int64"));
+    if (nb::cast<size_t>(positions.attr("ndim")) != 1)
     {
         throw nb::value_error(
             std::format("Dataset.subset({}=...) takes one dimension of {} ids",
@@ -437,28 +474,13 @@ std::vector<IdT> parse_index_selection(nb::handle selection, size_t n,
                 .c_str());
     }
     auto const ids = nb::cast<
-        nb::ndarray<int64_t const, nb::ndim<1>, nb::c_contig, nb::device::cpu>>(arr);
+        nb::ndarray<int64_t const, nb::ndim<1>, nb::c_contig, nb::device::cpu>>(
+        positions);
     std::vector<IdT> out;
     out.reserve(ids.shape(0));
     for (int64_t const id : std::span<int64_t const>{ids.data(), ids.shape(0)})
     {
-        if (id < 0)
-        {
-            throw nb::index_error(
-                std::format("Dataset.subset({}=...) got the negative index "
-                            "{}; {} ids index the binned plane and do not wrap",
-                            axis.keyword, id, axis.one)
-                    .c_str());
-        }
-        if (static_cast<size_t>(id) >= n)
-        {
-            throw nb::index_error(
-                std::format("Dataset.subset({}=...) got {} {}, out of range "
-                            "for a dataset of {} {}",
-                            axis.keyword, axis.one, id, n, axis.many)
-                    .c_str());
-        }
-        out.push_back(static_cast<IdT>(id));
+        out.push_back(bounded_id<IdT>(id, n, axis));
     }
     return out;
 }
