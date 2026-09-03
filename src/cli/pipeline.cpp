@@ -528,42 +528,45 @@ class FitTicker
     std::vector<float> validation_preds_;
 };
 
-struct EvalMode
+struct EvalPlan
 {
-    bool early_stop    = false;
-    bool track_history = false;
-
-    bool scores() const
-    {
-        return early_stop || track_history;
-    }
+    bool           early_stop = false;
+    ValidationRef  scored;
+    EvalHistoryRef history;
 };
 
-EvalMode eval_mode(Config const &cfg, ValidationRef validation,
+EvalPlan eval_plan(Config const &cfg, ValidationRef validation,
                    EvalHistoryRef eval_history)
 {
-    EvalMode mode;
-    mode.early_stop =
+    EvalPlan plan;
+    plan.early_stop =
         cfg.booster_config.early_stopping_rounds > 0 && validation.has_value();
-    mode.track_history = eval_history.has_value() && validation.has_value() &&
-                         eval_row_count(validation->get()) > 0 &&
-                         cfg.booster_config.dart_drop_rate == 0.0F;
-    if (mode.early_stop && eval_row_count(validation->get()) == 0)
+    bool const track_history = eval_history.has_value() && validation.has_value() &&
+                               eval_row_count(validation->get()) > 0 &&
+                               cfg.booster_config.dart_drop_rate == 0.0F;
+    if (plan.early_stop && eval_row_count(validation->get()) == 0)
     {
         throw ConfigError("early stopping needs a non-empty validation set");
     }
-    if (mode.early_stop && cfg.booster_config.dart_drop_rate > 0.0F)
+    if (plan.early_stop && cfg.booster_config.dart_drop_rate > 0.0F)
     {
         throw ConfigError("early_stopping_rounds cannot be combined with "
                           "dart_drop_rate");
     }
-    return mode;
+    if (plan.early_stop || track_history)
+    {
+        plan.scored = validation;
+    }
+    if (track_history)
+    {
+        plan.history = eval_history;
+    }
+    return plan;
 }
 
-void record_eval(EvalHistoryRef eval_history, ValidationScorer const &scorer,
+void record_eval(std::vector<float> &history, ValidationScorer const &scorer,
                  uint32_t i, float loss)
 {
-    auto &history = eval_history->get();
     if (i == 0 && scorer.base() > 0)
     {
         history.insert(history.end(), scorer.base(),
@@ -596,11 +599,11 @@ train_impl(Config const &cfg, LabeledData const &train, ValidationRef validation
     FitTicker ticker(cfg, train, validation, on_tick);
     ticker.baseline(*booster);
 
-    auto const                      mode = eval_mode(cfg, validation, eval_history);
+    auto const                      plan = eval_plan(cfg, validation, eval_history);
     std::optional<ValidationScorer> scorer;
-    if (mode.scores())
+    if (plan.scored)
     {
-        scorer.emplace(cfg, train.dataset, validation->get(), warm_start);
+        scorer.emplace(cfg, train.dataset, plan.scored->get(), warm_start);
     }
     EarlyStopping stopper(cfg.booster_config.early_stopping_rounds);
 
@@ -613,11 +616,11 @@ train_impl(Config const &cfg, LabeledData const &train, ValidationRef validation
             continue;
         }
         float const loss = scorer->score_round(*booster, i);
-        if (mode.track_history)
+        if (plan.history)
         {
-            record_eval(eval_history, *scorer, i, loss);
+            record_eval(plan.history->get(), *scorer, i, loss);
         }
-        if (mode.early_stop && stopper.stops_after(i, loss))
+        if (plan.early_stop && stopper.stops_after(i, loss))
         {
             booster->truncate(scorer->base() + stopper.best_iter() + 1);
             if (on_tick)
