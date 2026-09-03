@@ -526,8 +526,14 @@ std::vector<ResidentNodeT> perfect_tree_table(size_t depth, SplitAtFn &&split_at
 }
 
 template <typename ResidentNodeT>
-std::vector<ResidentNodeT> oblivious_node_table(ObliviousTree const &tree,
-                                                Dataset const       &ds)
+std::vector<ResidentNodeT> resident_node_table(DenseTree const &tree, Dataset const &ds)
+{
+    return resident_node_table<ResidentNodeT>(tree.nodes(), ds);
+}
+
+template <typename ResidentNodeT>
+std::vector<ResidentNodeT> resident_node_table(ObliviousTree const &tree,
+                                               Dataset const       &ds)
 {
     return perfect_tree_table<ResidentNodeT>(
         tree.splits().size(),
