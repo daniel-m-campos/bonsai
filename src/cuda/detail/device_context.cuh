@@ -293,6 +293,10 @@ struct CudaDeviceContext
     size_t   stage_selection(Dataset const &ds, std::span<feature_id_t const> selected);
     void     require_hist_fits(size_t max_sel_bins) const;
     void     launch_root_sums(float2 const *gh, uint32_t n);
+    void     launch_stamp(std::span<CudaHistogramEngine::LeafStamp const> stamps,
+                          std::span<uint32_t const>                       slot_offsets,
+                          std::span<uint32_t const> slot_counts, uint32_t const *rows,
+                          char const *label);
     HistCell fetch_root_sums();
     void     wait_for_profile(ProfileCounters::Lap &lap);
     void     note_plane(bool tiled, size_t shared);
