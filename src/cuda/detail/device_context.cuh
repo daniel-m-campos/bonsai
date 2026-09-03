@@ -240,16 +240,19 @@ struct CudaDeviceContext
 
     struct EvalPlane
     {
-        DeviceBuffer<uint8_t>  bins;
-        DeviceBuffer<uint32_t> n_bins;
-        DeviceBuffer<float>    scores;
-        DeviceBuffer<float>    labels;
-        Staged<double>         loss_partial;
-        DeviceObjectiveKind    kind = DeviceObjectiveKind::none;
-        NodeTable              nodes;
-        bool                   armed   = false;
-        size_t                 n_rows  = 0;
-        size_t                 n_feats = 0;
+        DeviceBuffer<uint8_t>              bins;
+        DeviceBuffer<uint32_t>             n_bins;
+        DeviceBuffer<float>                scores;
+        DeviceBuffer<float>                labels;
+        Staged<double>                     loss_partial;
+        DeviceObjectiveKind                kind = DeviceObjectiveKind::none;
+        NodeTable                          nodes;
+        RowMap                             rows;
+        std::shared_ptr<IngestPlane const> adopted;
+        uint8_t const                     *bin_source = nullptr;
+        bool                               armed      = false;
+        size_t                             plane_rows = 0;
+        size_t                             n_feats    = 0;
     };
 
     DeviceData      data;

@@ -6,12 +6,14 @@
 // the cases that used to assert host-fallback parity assert the error.
 
 #include "bonsai/booster.hpp"
+#include "bonsai/config/data_config.hpp"
 #include "bonsai/config/tree_config.hpp"
 #include "bonsai/cuda/grower.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/objective.hpp"
+#include "bonsai/row_view.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/types.hpp"
 #include "test_grower_helpers.hpp"
@@ -157,6 +159,96 @@ TEST_CASE("CudaObliviousGrower device eval walk matches the host binned walk",
           "[cuda][grower][eval]")
 {
     check_device_eval_parity<CudaObliviousGrower>(4);
+}
+
+// The eval plane over a row view: the seed, the scores and the loss are
+// view-length and position-indexed, the bin rows follow the view's ids, and
+// a parent whose plane already lives on the device is walked in place
+// rather than retiled through the host. The host reference is the binned
+// walk over the same ids and the host objective over the gathered labels.
+TEST_CASE("CudaDepthwiseGrower device eval walk honors a row view",
+          "[cuda][grower][eval][view]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
+
+    TreeConfig cfg;
+    cfg.max_depth        = 5;
+    cfg.min_data_in_leaf = 4;
+    CudaDepthwiseGrower grower(cfg);
+    auto grown = grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+
+    float const  lr = 0.1F;
+    auto const   sb = internal::split_bins(grown.tree, ds);
+    size_t const n  = ds.plane_n_rows();
+
+    auto const check_view = [&](Dataset const &parent, std::vector<row_id_t> const &ids)
+    {
+        Dataset const        view = parent.with_rows(RowView::encode(ids, n));
+        std::vector<float>   host(ids.size(), 0.25F);
+        std::vector<float>   dev = host;
+        std::optional<float> loss;
+        REQUIRE(grower.eval_begin(view, DeviceObjectiveKind::none, dev));
+        REQUIRE(grower.eval_accumulate(grown.tree, view, lr, dev, loss));
+        REQUIRE(!loss.has_value());
+        for (size_t k = 0; k < ids.size(); ++k)
+        {
+            host[k] +=
+                lr * internal::value_binned(grown.tree, sb, [&](size_t f)
+                                            { return parent.bin_at(f, ids[k]); });
+            REQUIRE_THAT(dev[k], Catch::Matchers::WithinAbs(host[k], 1e-6));
+        }
+
+        std::vector<float> dev2(ids.size(), 0.25F);
+        REQUIRE(grower.eval_begin(view, DeviceObjectiveKind::mse, dev2));
+        std::optional<float> dev_loss;
+        REQUIRE(grower.eval_accumulate(grown.tree, view, lr, dev2, dev_loss));
+        REQUIRE(dev_loss.has_value());
+        auto const  labels = view.row_view().gather(parent.labels());
+        float const host_loss =
+            MSEObjective::eval(floats_view{host.data(), host.size()},
+                               floats_view{labels.data(), labels.size()});
+        REQUIRE_THAT(*dev_loss, Catch::Matchers::WithinAbs(host_loss, 1e-5));
+    };
+
+    std::vector<row_id_t> range(1500);
+    std::iota(range.begin(), range.end(), row_id_t{1000});
+    std::vector<row_id_t> const gather{9, 4095, 9, 0, 2048, 9, 17};
+
+    SECTION("a contiguous range of a host plane")
+    {
+        check_view(ds, range);
+    }
+
+    SECTION("a gather with a repeated row of a host plane")
+    {
+        check_view(ds, gather);
+    }
+
+    SECTION("a seed of the wrong length declines")
+    {
+        Dataset const            view = ds.with_rows(RowView::encode(gather, n));
+        std::vector<float> const seed(n, 0.25F);
+        REQUIRE(!grower.eval_begin(view, DeviceObjectiveKind::none, seed));
+        std::vector<float>   scores(gather.size(), 0.25F);
+        std::optional<float> loss;
+        REQUIRE(!grower.eval_accumulate(grown.tree, view, lr, scores, loss));
+    }
+
+    SECTION("a device-ingested parent is walked in place")
+    {
+        auto const plane = cuda_ingest(scenario.built.batch, scenario.built.mappers);
+        REQUIRE(plane);
+        auto const dev_ds = Dataset::bin(scenario.built.batch, scenario.built.mappers,
+                                         DataConfig{}, plane);
+        check_view(dev_ds, range);
+        check_view(dev_ds, gather);
+        check_view(dev_ds, scenario.rows);
+    }
 }
 
 // Twelve features: more than one bin tile at the shipping width, so a fit

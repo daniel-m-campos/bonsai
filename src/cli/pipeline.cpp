@@ -369,7 +369,7 @@ class ValidationScorer
 
     void arm_device(ITrainableBooster &booster)
     {
-        if (!device_grower_ || bins_ == nullptr || !bins_->row_view().is_identity())
+        if (!device_grower_ || bins_ == nullptr)
         {
             return;
         }
