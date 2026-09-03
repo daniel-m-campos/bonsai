@@ -135,6 +135,15 @@ def test_view_accepts_a_slice_and_a_boolean_mask():
     assert _model_bytes(_PAIRS, by_slice) == _model_bytes(_PAIRS, by_array)
 
 
+def test_view_accepts_a_stepped_slice_and_an_unsigned_array():
+    X, y = _blocky_data()
+    ds = bonsai.Dataset(X, y)
+    by_slice = ds.subset(rows=slice(1000, 3000, 7))
+    by_unsigned = ds.subset(rows=np.arange(1000, 3000, 7, dtype=np.uint32))
+    assert by_slice.n_rows == by_unsigned.n_rows == len(range(1000, 3000, 7))
+    assert _model_bytes(_PAIRS, by_slice) == _model_bytes(_PAIRS, by_unsigned)
+
+
 def test_view_outlives_its_parent():
     """The view shares the parent's plane through a shared pointer, so
     dropping the Python parent must not take the bins with it."""
@@ -209,6 +218,8 @@ def test_subset_rejects_abuse():
         ds.subset()
     with pytest.raises(TypeError):
         ds.subset(rows="everything")
+    with pytest.raises(Exception, match="one dimension"):
+        ds.subset(rows=np.arange(4).reshape(2, 2))
 
 
 # Column selection ================================================================================
