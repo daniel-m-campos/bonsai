@@ -908,35 +908,12 @@ class Model
     {
         check_width(X, "predict_proba");
         require_proba_objective();
-        size_t const n   = X.shape(0);
-        size_t const w   = booster_->score_width();
-        auto         out = std::make_unique<std::vector<double>>(n * w, 0.0);
-        {
-            nb::gil_scoped_release release;
-            if (w > 1)
-            {
-                booster_->predict_proba(bonsai::features_view{X.data(), n, X.shape(1)},
-                                        std::span<double>{*out});
-            }
-            else
-            {
-                std::vector<float> margins(n, 0.0F);
-                booster_->predict_at(bonsai::features_view{X.data(), n, X.shape(1)},
-                                     bonsai::floats_out{margins.data(), n}, 0);
-                bonsai::apply_link_inverse_by_name(
-                    cfg_.dispatch.objective_name,
-                    bonsai::floats_out{margins.data(), n});
-                for (size_t i = 0; i < n; ++i)
-                {
-                    (*out)[i] = margins[i];
-                }
-            }
-        }
-        if (w > 1)
-        {
-            return to_numpy(std::move(out), {n, w});
-        }
-        return to_numpy(std::move(out), {n});
+        size_t const                n = X.shape(0);
+        bonsai::features_view const rows{X.data(), n, X.shape(1)};
+        return proba_columns(
+            n, [&](std::span<double> out) { booster_->predict_proba(rows, out); },
+            [&](bonsai::floats_out margins)
+            { booster_->predict_at(rows, margins, 0); });
     }
 
     nb::ndarray<nb::numpy, double> predict_proba(Dataset const &ds) const
@@ -946,54 +923,24 @@ class Model
         {
             return predict_proba(ds.host_matrix("predict_proba"));
         }
-        size_t const n   = ds.n_rows();
-        size_t const w   = booster_->score_width();
-        auto         out = std::make_unique<std::vector<double>>(n * w, 0.0);
-        {
-            nb::gil_scoped_release release;
-            if (w > 1)
-            {
-                booster_->predict_proba_binned(ds.bins(), std::span<double>{*out});
-            }
-            else
-            {
-                std::vector<float> margins(n, 0.0F);
-                booster_->predict_at_binned(ds.bins(),
-                                            bonsai::floats_out{margins.data(), n}, 0);
-                bonsai::apply_link_inverse_by_name(
-                    cfg_.dispatch.objective_name,
-                    bonsai::floats_out{margins.data(), n});
-                for (size_t i = 0; i < n; ++i)
-                {
-                    (*out)[i] = margins[i];
-                }
-            }
-        }
-        if (w > 1)
-        {
-            return to_numpy(std::move(out), {n, w});
-        }
-        return to_numpy(std::move(out), {n});
+        return proba_columns(
+            ds.n_rows(), [&](std::span<double> out)
+            { booster_->predict_proba_binned(ds.bins(), out); },
+            [&](bonsai::floats_out margins)
+            { booster_->predict_at_binned(ds.bins(), margins, 0); });
     }
 
     nb::ndarray<nb::numpy, float> staged_predict(array_2d const &X) const
     {
         check_width(X, "staged_predict");
-        size_t const n   = X.shape(0);
-        size_t const k   = booster_->n_iters();
-        auto         out = std::make_unique<std::vector<float>>(k * n, 0.0F);
-        {
-            nb::gil_scoped_release release;
-            booster_->predict_staged(bonsai::features_view{X.data(), n, X.shape(1)},
-                                     *out);
-            for (size_t t = 0; t < k; ++t)
-            {
-                bonsai::apply_link_inverse_by_name(
-                    cfg_.dispatch.objective_name,
-                    bonsai::floats_out{std::span{*out}.subspan(t * n, n)});
-            }
-        }
-        return to_numpy(std::move(out), {k, n});
+        size_t const n = X.shape(0);
+        return staged_columns(n,
+                              [&](std::vector<float> &out)
+                              {
+                                  booster_->predict_staged(
+                                      bonsai::features_view{X.data(), n, X.shape(1)},
+                                      out);
+                              });
     }
 
     nb::ndarray<nb::numpy, float> staged_predict(Dataset const &ds) const
@@ -1002,20 +949,8 @@ class Model
         {
             return staged_predict(ds.host_matrix("staged_predict"));
         }
-        size_t const n   = ds.n_rows();
-        size_t const k   = booster_->n_iters();
-        auto         out = std::make_unique<std::vector<float>>(k * n, 0.0F);
-        {
-            nb::gil_scoped_release release;
-            booster_->predict_staged_binned(ds.bins(), *out);
-            for (size_t t = 0; t < k; ++t)
-            {
-                bonsai::apply_link_inverse_by_name(
-                    cfg_.dispatch.objective_name,
-                    bonsai::floats_out{std::span{*out}.subspan(t * n, n)});
-            }
-        }
-        return to_numpy(std::move(out), {k, n});
+        return staged_columns(ds.n_rows(), [&](std::vector<float> &out)
+                              { booster_->predict_staged_binned(ds.bins(), out); });
     }
 
     nb::ndarray<nb::numpy, uint32_t> predict_leaf(array_2d const &X) const
@@ -1168,41 +1103,101 @@ class Model
         }
     }
 
-    bool predict_on_device(Dataset const &ds, std::vector<float> &out,
-                           size_t num_iteration) const
+    template <typename ProbaFn, typename MarginFn>
+    nb::ndarray<nb::numpy, double> proba_columns(size_t n, ProbaFn &&proba,
+                                                 MarginFn &&margin) const
+    {
+        size_t const w   = booster_->score_width();
+        auto         out = std::make_unique<std::vector<double>>(n * w, 0.0);
+        {
+            nb::gil_scoped_release release;
+            if (w > 1)
+            {
+                proba(std::span<double>{*out});
+            }
+            else
+            {
+                std::vector<float> margins(n, 0.0F);
+                margin(bonsai::floats_out{margins.data(), n});
+                bonsai::apply_link_inverse_by_name(
+                    cfg_.dispatch.objective_name,
+                    bonsai::floats_out{margins.data(), n});
+                std::ranges::copy(margins, out->begin());
+            }
+        }
+        if (w > 1)
+        {
+            return to_numpy(std::move(out), {n, w});
+        }
+        return to_numpy(std::move(out), {n});
+    }
+
+    template <typename StagedFn>
+    nb::ndarray<nb::numpy, float> staged_columns(size_t n, StagedFn &&staged) const
+    {
+        size_t const k   = booster_->n_iters();
+        auto         out = std::make_unique<std::vector<float>>(k * n, 0.0F);
+        {
+            nb::gil_scoped_release release;
+            staged(*out);
+            for (size_t t = 0; t < k; ++t)
+            {
+                bonsai::apply_link_inverse_by_name(
+                    cfg_.dispatch.objective_name,
+                    bonsai::floats_out{std::span{*out}.subspan(t * n, n)});
+            }
+        }
+        return to_numpy(std::move(out), {k, n});
+    }
+
+    struct DeviceReady
+    {
+        std::shared_ptr<bonsai::IngestPlane const> plane;
+        size_t                                     n_rows;
+        size_t                                     n_features;
+        bonsai::DevicePlanInput                    in;
+    };
+
+    std::optional<DeviceReady> device_ready(Dataset const &ds) const
     {
         auto const &bins  = ds.bins();
         auto const  plane = bins.ingest_plane();
         if (!plane || !bins.row_view().is_identity())
         {
-            return false;
+            return std::nullopt;
         }
-        auto const in = booster_->device_plan_input();
+        auto in = booster_->device_plan_input();
         if (in.trees.empty())
+        {
+            return std::nullopt;
+        }
+        return DeviceReady{plane, bins.plane_n_rows(), bins.n_features(),
+                           std::move(in)};
+    }
+
+    bool predict_on_device(Dataset const &ds, std::vector<float> &out,
+                           size_t num_iteration) const
+    {
+        auto const ready = device_ready(ds);
+        if (!ready)
         {
             return false;
         }
-        auto const plan = plan_cache_->predict(in, mappers_);
-        return plan && bonsai::cuda_predict(*plan, *plane, bins.plane_n_rows(),
-                                            bins.n_features(), num_iteration, out);
+        auto const plan = plan_cache_->predict(ready->in, mappers_);
+        return plan && bonsai::cuda_predict(*plan, *ready->plane, ready->n_rows,
+                                            ready->n_features, num_iteration, out);
     }
 
     bool contribs_on_device(Dataset const &ds, std::span<double> out) const
     {
-        auto const &bins  = ds.bins();
-        auto const  plane = bins.ingest_plane();
-        if (!plane || !bins.row_view().is_identity())
+        auto const ready = device_ready(ds);
+        if (!ready)
         {
             return false;
         }
-        auto const in = booster_->device_plan_input();
-        if (in.trees.empty())
-        {
-            return false;
-        }
-        auto const plan = plan_cache_->shap(in, mappers_);
-        return plan && bonsai::cuda_pred_contribs(*plan, *plane, bins.plane_n_rows(),
-                                                  bins.n_features(), out);
+        auto const plan = plan_cache_->shap(ready->in, mappers_);
+        return plan && bonsai::cuda_pred_contribs(*plan, *ready->plane, ready->n_rows,
+                                                  ready->n_features, out);
     }
 
     std::unique_ptr<bonsai::IBooster> booster_;
