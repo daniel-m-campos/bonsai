@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <print>
 #include <span>
 #include <string>
 #include <string_view>
@@ -29,6 +30,19 @@ inline Config resolve_config(CommonOpts const &opts)
     Config cfg = config::resolve(opts.config_path, opts.overrides);
     parallel::set_n_threads(cfg.parallel.n_threads);
     return cfg;
+}
+
+// --dump-config prints the resolved config and the subcommand stops there,
+// before it touches data or a model. Fit calls this after warm-start
+// reconcile so the dump shows the config the fit would have used.
+inline bool dumped_config(CommonOpts const &opts, Config const &cfg)
+{
+    if (!opts.dump_config)
+    {
+        return false;
+    }
+    std::println("{}", config::dump_toml(cfg));
+    return true;
 }
 
 // The metric-name list a subcommand reports: the user's override if it is

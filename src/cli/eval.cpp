@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "bonsai/config/data_config.hpp"
-#include "bonsai/config/toml.hpp"
 #include "bonsai/io/model.hpp"
 #include "bonsai/metric.hpp"
 #include "bonsai/registry/objective_dispatch.hpp"
@@ -22,9 +21,8 @@ namespace bonsai::cli
 int run_eval(EvalOpts const &opts)
 {
     auto cfg = resolve_config(opts.common);
-    if (opts.common.dump_config)
+    if (dumped_config(opts.common, cfg))
     {
-        std::println("{}", config::dump_toml(cfg));
         return EXIT_SUCCESS;
     }
     auto loaded = io::load_booster(opts.model_path);
