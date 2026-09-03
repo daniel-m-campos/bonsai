@@ -258,12 +258,12 @@ class CudaHistogramEngine
     void resident_finalize(std::span<ResidentNode const> nodes);
     void resident_end(std::span<float> scores_out);
 
-    // The validation plane: eval_begin uploads the binned validation rows,
-    // the labels when the kind has a device loss, and the seed scores once
-    // per fit; false when the mirror is not u8 (and any prior arming is
-    // dropped). eval_accumulate walks the finished tree there; with a device
-    // loss it returns the round's loss and moves at most 8 KiB, otherwise it
-    // returns the scores through scores_out for the host loss pass.
+    // The validation plane: eval_begin adopts the rows' device plane in place
+    // or uploads them retiled, with the labels when the kind has a device
+    // loss and the view-length seed scores, once per fit; false when the
+    // mirror is not u8 (and any prior arming is dropped). eval_accumulate
+    // walks the finished tree there by view position; with a device loss it
+    // returns the round's loss (at most 8 KiB moved), else scores_out.
     bool                 eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
                                     std::span<float const> initial_scores);
     std::optional<float> eval_accumulate(std::span<ResidentNode const> nodes, float lr,

@@ -739,6 +739,70 @@ def test_a_view_of_a_device_resident_parent_predicts_on_the_device(shape):
     assert re.search(rf"cuda-shap: .*rows={len(idx)} plane={n_rows} ", lines), lines
 
 
+_DEVICE_EVAL_WORKER = """
+import sys
+import numpy as np
+import bonsai
+sys.path.insert(0, sys.argv[1])
+from test_dataset_views import _blocky_data, _row_shapes, _READ_PAIRS
+
+X, y = _blocky_data()
+Xh, yh = _blocky_data(seed=1)
+train = bonsai.Dataset(X, y, device="cuda")
+hold = bonsai.Dataset(Xh, yh, reference=train)
+idx = _row_shapes(len(Xh))[sys.argv[2]]
+pairs = dict(
+    _READ_PAIRS,
+    **{
+        "dispatch.grower_name": "cuda_depthwise",
+        "booster.n_iters": "60",
+        "booster.early_stopping_rounds": "5",
+    },
+)
+viewed = bonsai.train(pairs, train, eval_set=hold.subset(rows=idx))
+copied = bonsai.train(
+    pairs, train, eval_set=bonsai.Dataset(Xh[idx], yh[idx], reference=train)
+)
+assert viewed.n_iters == copied.n_iters, (viewed.n_iters, copied.n_iters)
+np.testing.assert_allclose(viewed.eval_history, copied.eval_history, rtol=1e-5, atol=1e-5)
+print("DONE", flush=True)
+"""
+
+
+def _device_eval_lines(shape):
+    """stderr of one child that fits against an eval_set view of a
+    device-resident holdout, under the device profile flag."""
+    env = {
+        **os.environ,
+        "BONSAI_CUDA_PROFILE": "1",
+        "PYTHONPATH": os.pathsep.join(sys.path),
+    }
+    here = os.path.dirname(os.path.abspath(__file__))
+    proc = subprocess.run(
+        [sys.executable, "-c", _DEVICE_EVAL_WORKER, here, shape],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert "DONE" in proc.stdout, proc.stderr[-2000:]
+    return proc.stderr
+
+
+@requires_cuda
+@pytest.mark.parametrize("shape", ["range", "segments", "gather"])
+def test_an_eval_set_view_of_a_device_resident_parent_scores_on_the_device(shape):
+    """One holdout on the device, split by view into the eval set: each round
+    walks the parent plane in place through the view's ids, so the plane is
+    adopted rather than retiled through the host, and the history (and the
+    early stop it drives) matches a copied eval set within device rounding."""
+    n_rows = len(_blocky_data()[0])
+    idx = _row_shapes(n_rows)[shape]
+    lines = _device_eval_lines(shape)
+    armed = rf"cuda eval plane armed: rows={len(idx)} plane={n_rows} adopted=1 "
+    assert re.search(armed, lines), lines
+
+
 # Reorder =========================================================================================
 
 

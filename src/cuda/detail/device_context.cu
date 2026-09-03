@@ -1587,7 +1587,7 @@ void CudaDeviceContext::resident_finalize(
                 static_cast<uint32_t>(data.key.n_feats), t.feature.device(),
                 t.split_bin.device(), t.left.device(), t.right.device(),
                 t.default_left.device(), t.is_leaf.device(), t.value.device(),
-                resident.learning_rate, resident.scores.data(), n,
+                resident.learning_rate, resident.scores.data(), n, resident.rows.data(),
                 resident.rows.data());
         });
     check(cudaGetLastError(), "resident route+add launch");
@@ -1606,25 +1606,58 @@ void CudaDeviceContext::resident_end(std::span<float> scores_out)
     resident.armed = false;
 }
 
-bool CudaDeviceContext::eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
-                                   std::span<float const> initial_scores)
+namespace
 {
-    veval.armed = false;
-    if (!valid.bins_are_u8() || valid.n_features() == 0 ||
-        initial_scores.size() != valid.plane_n_rows())
-    {
-        return false;
-    }
+
+using EvalPlane = CudaDeviceContext::EvalPlane;
+
+void stage_eval_labels(EvalPlane &veval, Dataset const &valid, DeviceObjectiveKind kind)
+{
     veval.kind = valid.labels().size() == valid.plane_n_rows()
                      ? kind
                      : DeviceObjectiveKind::none;
-    if (veval.kind != DeviceObjectiveKind::none)
+    if (veval.kind == DeviceObjectiveKind::none)
+    {
+        return;
+    }
+    auto const &view = valid.row_view();
+    if (view.is_identity())
     {
         veval.labels.upload(valid.labels().data(), valid.labels().size());
-        veval.loss_partial.reserve(1024);
     }
-    size_t const n_rows  = valid.plane_n_rows();
-    size_t const n_feats = valid.n_features();
+    else
+    {
+        auto const gathered = view.gather(valid.labels());
+        veval.labels.upload(gathered.data(), gathered.size());
+    }
+    veval.loss_partial.reserve(1024);
+}
+
+bool adopt_eval_plane(EvalPlane &veval, Dataset const &valid)
+{
+    auto const &plane = valid.ingest_plane();
+    if (!plane)
+    {
+        return false;
+    }
+    auto const *cp = matching_plane(*plane, valid.plane_n_rows(), valid.n_features(),
+                                    valid.n_features());
+    if (cp == nullptr || !cp->bins_are_u8)
+    {
+        return false;
+    }
+    veval.adopted    = plane;
+    veval.bin_source = cp->bins8.data();
+    veval.plane_rows = valid.plane_n_rows();
+    veval.rows.stage(valid.row_view());
+    return true;
+}
+
+void retile_eval_plane(EvalPlane &veval, Dataset const &valid)
+{
+    RowIndex const index{valid.row_view()};
+    size_t const   n_rows  = index.size();
+    size_t const   n_feats = valid.n_features();
     // perf: Rearrange the host bins into the device plane's tile order once; the
     // per-round walk then reads the same addressing as the training plane.
     // Parallel over rows: serial, this pass costs more than the walks it
@@ -1632,31 +1665,54 @@ bool CudaDeviceContext::eval_begin(Dataset const &valid, DeviceObjectiveKind kin
     std::vector<uint8_t> tiled(n_rows * n_feats);
     parallel::for_each_index(
         n_rows,
-        [&](size_t r)
+        [&](size_t k)
         {
             for (size_t f = 0; f < n_feats; ++f)
             {
-                tiled[tiled_cell(static_cast<uint32_t>(f), static_cast<uint32_t>(r),
+                tiled[tiled_cell(static_cast<uint32_t>(f), static_cast<uint32_t>(k),
                                  static_cast<uint32_t>(n_rows),
                                  static_cast<uint32_t>(n_feats))] =
-                    static_cast<uint8_t>(valid.bin_at(f, r));
+                    static_cast<uint8_t>(valid.bin_at(f, index[k]));
             }
         });
+    veval.bins.upload(tiled.data(), tiled.size());
+    veval.bin_source = veval.bins.data();
+    veval.plane_rows = n_rows;
+    veval.rows.stage({}, n_rows);
+}
+
+} // namespace
+
+bool CudaDeviceContext::eval_begin(Dataset const &valid, DeviceObjectiveKind kind,
+                                   std::span<float const> initial_scores)
+{
+    veval.armed = false;
+    veval.adopted.reset();
+    if (!valid.bins_are_u8() || valid.n_features() == 0 ||
+        initial_scores.size() != valid.view_n_rows())
+    {
+        return false;
+    }
+    stage_eval_labels(veval, valid, kind);
+    if (!adopt_eval_plane(veval, valid))
+    {
+        retile_eval_plane(veval, valid);
+    }
+    size_t const          n_feats = valid.n_features();
     std::vector<uint32_t> nb(n_feats);
     for (size_t f = 0; f < n_feats; ++f)
     {
         nb[f] = static_cast<uint32_t>(valid.n_bins(f));
     }
-    veval.bins.upload(tiled.data(), tiled.size());
     veval.n_bins.upload(nb.data(), nb.size());
     veval.scores.upload(initial_scores.data(), initial_scores.size());
-    veval.n_rows  = n_rows;
     veval.n_feats = n_feats;
     veval.armed   = true;
     if (prof_counters.enabled)
     {
-        std::fprintf(stderr, "cuda eval plane armed: rows=%zu feats=%zu\n", n_rows,
-                     n_feats);
+        std::fprintf(stderr,
+                     "cuda eval plane armed: rows=%zu plane=%zu adopted=%d feats=%zu\n",
+                     veval.rows.n, veval.plane_rows, veval.adopted ? 1 : 0, n_feats);
     }
     return true;
 }
@@ -1668,14 +1724,14 @@ std::optional<float> CudaDeviceContext::eval_accumulate(
     auto lap = prof_counters.lap();
     veval.nodes.stage(nodes);
 
-    auto const       n = static_cast<uint32_t>(veval.n_rows);
+    auto const       n = static_cast<uint32_t>(veval.rows.n);
     dim3 const       grid((n + 255) / 256);
     NodeTable const &t = veval.nodes;
     route_add_kernel<<<grid, dim3(256)>>>(
-        veval.bins.data(), veval.n_bins.data(), n, static_cast<uint32_t>(veval.n_feats),
-        t.feature.device(), t.split_bin.device(), t.left.device(), t.right.device(),
-        t.default_left.device(), t.is_leaf.device(), t.value.device(), lr,
-        veval.scores.data(), n, nullptr);
+        veval.bin_source, veval.n_bins.data(), static_cast<uint32_t>(veval.plane_rows),
+        static_cast<uint32_t>(veval.n_feats), t.feature.device(), t.split_bin.device(),
+        t.left.device(), t.right.device(), t.default_left.device(), t.is_leaf.device(),
+        t.value.device(), lr, veval.scores.data(), n, veval.rows.data(), nullptr);
     check(cudaGetLastError(), "eval route+add launch");
     if (veval.kind != DeviceObjectiveKind::none)
     {
