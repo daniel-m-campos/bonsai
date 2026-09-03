@@ -180,14 +180,8 @@ cuda_predict_plan(std::span<DenseTree const> trees, BinMappers const &mappers,
 bool cuda_predict(CudaPredictPlan const &plan, IngestPlane const &plane, size_t n_rows,
                   size_t n_features, size_t n_trees, std::span<float> out)
 {
-    if (plane.backend_tag() != cuda_backend_tag() || out.size() != n_rows ||
-        n_rows == 0 || n_rows > std::numeric_limits<uint32_t>::max())
-    {
-        return false;
-    }
-    auto const &cp = static_cast<CudaIngestPlane const &>(plane);
-    if (cp.n_rows != n_rows || cp.n_feats != n_features || n_features != plan.n_feats ||
-        cp.tile_w != k_bin_tile_width)
+    auto const *cp = matching_plane(plane, n_rows, n_features, plan.n_feats);
+    if (cp == nullptr || out.size() != n_rows)
     {
         return false;
     }
@@ -209,14 +203,7 @@ bool cuda_predict(CudaPredictPlan const &plan, IngestPlane const &plane, size_t 
                 plan.right.data(), plan.default_left.data(), plan.is_leaf.data(),
                 plan.value.data(), plan.learning_rate, plan.init_score, scores.data());
         };
-        if (cp.bins_are_u8)
-        {
-            launch(cp.bins8.data());
-        }
-        else
-        {
-            launch(cp.bins16.data());
-        }
+        cp->with_bins(launch);
         check(cudaGetLastError(), "predict walk launch");
         double walk_s = 0.0;
         double d2h_s  = 0.0;

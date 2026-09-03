@@ -334,20 +334,15 @@ std::shared_ptr<IngestPlane const> cuda_ingest(features_view     X,
                          cudaMemcpyHostToDevice),
               "ingest raw upload");
         dim3 const grid((cells + 255) / 256);
-        if (plane->bins_are_u8)
-        {
-            bin_rows_kernel<<<grid, dim3(256)>>>(
-                raw.data(), static_cast<uint32_t>(rows), static_cast<uint32_t>(row0),
-                static_cast<uint32_t>(n_feats), static_cast<uint32_t>(n_rows),
-                table.cuts.data(), table.ofs.data(), plane->bins8.data());
-        }
-        else
-        {
-            bin_rows_kernel<<<grid, dim3(256)>>>(
-                raw.data(), static_cast<uint32_t>(rows), static_cast<uint32_t>(row0),
-                static_cast<uint32_t>(n_feats), static_cast<uint32_t>(n_rows),
-                table.cuts.data(), table.ofs.data(), plane->bins16.data());
-        }
+        plane->with_bins(
+            [&](auto *bins)
+            {
+                bin_rows_kernel<<<grid, dim3(256)>>>(
+                    raw.data(), static_cast<uint32_t>(rows),
+                    static_cast<uint32_t>(row0), static_cast<uint32_t>(n_feats),
+                    static_cast<uint32_t>(n_rows), table.cuts.data(), table.ofs.data(),
+                    bins);
+            });
         check(cudaGetLastError(), "ingest bin launch");
     }
     check(cudaDeviceSynchronize(), "ingest sync");
@@ -392,22 +387,15 @@ std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const &batch,
                              n * sizeof(float), cudaMemcpyHostToDevice),
                   "ingest raw upload");
             dim3 const grid((n + 255) / 256);
-            if (plane->bins_are_u8)
-            {
-                bin_col_kernel<<<grid, dim3(256)>>>(
-                    raw.data(), n, static_cast<uint32_t>(row0),
-                    static_cast<uint32_t>(f), static_cast<uint32_t>(n_rows),
-                    static_cast<uint32_t>(mappers.size()), table.cuts.data() + c0,
-                    n_cuts, plane->bins8.data());
-            }
-            else
-            {
-                bin_col_kernel<<<grid, dim3(256)>>>(
-                    raw.data(), n, static_cast<uint32_t>(row0),
-                    static_cast<uint32_t>(f), static_cast<uint32_t>(n_rows),
-                    static_cast<uint32_t>(mappers.size()), table.cuts.data() + c0,
-                    n_cuts, plane->bins16.data());
-            }
+            plane->with_bins(
+                [&](auto *bins)
+                {
+                    bin_col_kernel<<<grid, dim3(256)>>>(
+                        raw.data(), n, static_cast<uint32_t>(row0),
+                        static_cast<uint32_t>(f), static_cast<uint32_t>(n_rows),
+                        static_cast<uint32_t>(mappers.size()), table.cuts.data() + c0,
+                        n_cuts, bins);
+                });
             check(cudaGetLastError(), "ingest bin launch");
         }
     }
@@ -472,20 +460,14 @@ std::shared_ptr<IngestPlane const> cuda_ingest_device(DeviceMatrix const &X,
         auto const cells = static_cast<uint32_t>(rows * n_feats);
         auto const chunk = X.data + (row0 * n_feats);
         dim3 const grid((cells + 255) / 256);
-        if (plane->bins_are_u8)
-        {
-            bin_rows_kernel<<<grid, dim3(256)>>>(
-                chunk, static_cast<uint32_t>(rows), static_cast<uint32_t>(row0),
-                static_cast<uint32_t>(n_feats), static_cast<uint32_t>(n_rows),
-                table.cuts.data(), table.ofs.data(), plane->bins8.data());
-        }
-        else
-        {
-            bin_rows_kernel<<<grid, dim3(256)>>>(
-                chunk, static_cast<uint32_t>(rows), static_cast<uint32_t>(row0),
-                static_cast<uint32_t>(n_feats), static_cast<uint32_t>(n_rows),
-                table.cuts.data(), table.ofs.data(), plane->bins16.data());
-        }
+        plane->with_bins(
+            [&](auto *bins)
+            {
+                bin_rows_kernel<<<grid, dim3(256)>>>(
+                    chunk, static_cast<uint32_t>(rows), static_cast<uint32_t>(row0),
+                    static_cast<uint32_t>(n_feats), static_cast<uint32_t>(n_rows),
+                    table.cuts.data(), table.ofs.data(), bins);
+            });
         check(cudaGetLastError(), "ingest bin launch");
     }
     check(cudaDeviceSynchronize(), "ingest sync");
