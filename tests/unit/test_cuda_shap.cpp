@@ -29,6 +29,7 @@
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "test_grower_helpers.hpp"
@@ -38,6 +39,7 @@
 #include <cstddef>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <print>
 #include <random>
 #include <span>
@@ -187,7 +189,7 @@ size_t check_parity(size_t n_rows, size_t n_feats, size_t max_depth, char const 
     size_t const        cols = n_feats + 1;
     std::vector<double> host(n * cols, 0.0);
     std::vector<double> dev(n * cols, 0.0);
-    REQUIRE(cuda_pred_contribs(*plan, *plane2, n, n_feats, dev));
+    REQUIRE(cuda_pred_contribs(*plan, *plane2, n, n_feats, {}, dev));
     booster.pred_contribs_binned(scored, host, n_feats);
 
     std::vector<float> margin(n, 0.0F);
@@ -336,7 +338,70 @@ TEST_CASE("cuda_pred_contribs declines a plane of the wrong shape", "[cuda][shap
 
     size_t const        n = ds.plane_n_rows();
     std::vector<double> dev(n * (ds.n_features() + 2), 0.0);
-    REQUIRE(!cuda_pred_contribs(*plan, *plane, n, ds.n_features() + 1, dev));
+    REQUIRE(!cuda_pred_contribs(*plan, *plane, n, ds.n_features() + 1, {}, dev));
+}
+
+TEST_CASE("cuda_pred_contribs walks a row view of the plane", "[cuda][shap][view]")
+{
+    if (!cuda_available())
+    {
+        SKIP("device TreeSHAP needs a usable CUDA device");
+    }
+    size_t const n_feats = 5;
+    auto const   batch   = shap_batch(2048, n_feats);
+    auto const   mappers = BinMappers::fit(batch, BinMapperConfig{});
+    auto const   plane   = cuda_ingest(batch, mappers);
+    REQUIRE(plane);
+    auto const ds = Dataset::bin(batch, mappers, DataConfig{}, plane);
+
+    MseBooster booster{shap_cfg(5)};
+    for (size_t i = 0; i < 8; ++i)
+    {
+        booster.update_one_iter(ds);
+    }
+    auto const held   = decorrelated_holdout(2048, n_feats);
+    auto const plane2 = cuda_ingest(held, mappers);
+    REQUIRE(plane2);
+    auto const scored = Dataset::bin(held, mappers, DataConfig{}, plane2);
+
+    auto const in = booster.device_plan_input();
+    auto const plan =
+        cuda_shap_plan(in.trees, mappers, in.learning_rate, in.init_score);
+    REQUIRE(plan);
+
+    size_t const n          = scored.plane_n_rows();
+    size_t const cols       = n_feats + 1;
+    auto const   check_view = [&](std::vector<row_id_t> const &ids)
+    {
+        RowView const       view = RowView::encode(ids, n);
+        std::vector<double> host(ids.size() * cols, 0.0);
+        std::vector<double> dev(ids.size() * cols, 0.0);
+        REQUIRE(cuda_pred_contribs(*plan, *plane2, n, n_feats, ids, dev));
+        booster.pred_contribs_binned(scored.with_rows(view), host, n_feats);
+        for (size_t i = 0; i < host.size(); ++i)
+        {
+            REQUIRE(dev[i] == Catch::Approx(host[i]).margin(1e-5));
+        }
+    };
+
+    SECTION("a contiguous range")
+    {
+        std::vector<row_id_t> ids(600);
+        std::iota(ids.begin(), ids.end(), row_id_t{700});
+        check_view(ids);
+    }
+
+    SECTION("a scattered gather with a repeated row")
+    {
+        check_view({2047, 3, 3, 1024, 0, 511, 3});
+    }
+
+    SECTION("an output of the wrong length declines")
+    {
+        std::vector<row_id_t> const ids{1, 2, 3};
+        std::vector<double>         dev(n * cols, 0.0);
+        REQUIRE(!cuda_pred_contribs(*plan, *plane2, n, n_feats, ids, dev));
+    }
 }
 
 TEST_CASE("the device shap plan declines without a device", "[shap]")

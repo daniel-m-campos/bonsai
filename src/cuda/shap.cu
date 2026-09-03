@@ -42,14 +42,16 @@ template <typename BinT, uint32_t K>
 __global__ void shap_walk_kernel(BinT const *bins, uint8_t const *last_bin,
                                  uint32_t n_rows, uint32_t n_feats,
                                  ShapPathElem const *elems, ShapPathHead const *heads,
-                                 uint32_t n_paths, float const *weights, float *out)
+                                 uint32_t n_paths, float const *weights,
+                                 uint32_t n_walk, uint32_t const *rows, float *out)
 {
-    uint64_t const total  = static_cast<uint64_t>(n_rows) * n_paths;
+    uint64_t const total  = static_cast<uint64_t>(n_walk) * n_paths;
     uint64_t const stride = static_cast<uint64_t>(gridDim.x) * blockDim.x;
     for (uint64_t task = (static_cast<uint64_t>(blockIdx.x) * blockDim.x) + threadIdx.x;
          task < total; task += stride)
     {
-        auto const         r    = static_cast<uint32_t>(task / n_paths);
+        auto const         pos  = static_cast<uint32_t>(task / n_paths);
+        auto const         r    = mapped_row(rows, pos);
         auto const         p    = static_cast<uint32_t>(task % n_paths);
         ShapPathHead const head = heads[p];
         uint32_t const     n    = head.n_elems;
@@ -105,7 +107,7 @@ __global__ void shap_walk_kernel(BinT const *bins, uint8_t const *last_bin,
         }
 
         float const  value   = head.value;
-        float *const row_out = out + (static_cast<size_t>(r) * (n_feats + 1));
+        float *const row_out = out + (static_cast<size_t>(pos) * (n_feats + 1));
         for (uint32_t k = 0; k < n; ++k)
         {
             ShapPathElem const e = elems[head.first + k];
@@ -163,11 +165,12 @@ namespace
 
 template <uint32_t K, typename BinT>
 void launch_walk(BinT const *bins, CudaShapPlan const &plan, uint32_t n_rows,
-                 uint32_t n_feats, uint32_t n_paths, dim3 grid, dim3 block, float *out)
+                 uint32_t n_feats, uint32_t n_paths, dim3 grid, dim3 block,
+                 uint32_t n_walk, uint32_t const *rows, float *out)
 {
     shap_walk_kernel<BinT, K><<<grid, block>>>(
         bins, plan.last_bin.data(), n_rows, n_feats, plan.elems.data(),
-        plan.heads.data(), n_paths, plan.weights.data(), out);
+        plan.heads.data(), n_paths, plan.weights.data(), n_walk, rows, out);
 }
 
 } // namespace
@@ -235,23 +238,27 @@ std::shared_ptr<CudaShapPlan const> cuda_shap_plan(std::span<DenseTree const> tr
 }
 
 bool cuda_pred_contribs(CudaShapPlan const &plan, IngestPlane const &plane,
-                        size_t n_rows, size_t n_features, std::span<double> out)
+                        size_t n_rows, size_t n_features, row_index_view rows,
+                        std::span<double> out)
 {
-    size_t const cols = n_features + 1;
-    auto const  *cp   = matching_plane(plane, n_rows, n_features, plan.n_feats);
-    if (cp == nullptr || out.size() != n_rows * cols)
+    size_t const cols     = n_features + 1;
+    size_t const out_rows = rows.empty() ? n_rows : rows.size();
+    auto const  *cp       = matching_plane(plane, n_rows, n_features, plan.n_feats);
+    if (cp == nullptr || out.size() != out_rows * cols)
     {
         return false;
     }
-    auto const n = static_cast<uint32_t>(n_rows);
-    auto const f = static_cast<uint32_t>(n_features);
-    auto const p = static_cast<uint32_t>(plan.n_paths);
+    auto const stride = static_cast<uint32_t>(n_rows);
+    auto const f      = static_cast<uint32_t>(n_features);
+    auto const p      = static_cast<uint32_t>(plan.n_paths);
     try
     {
         ProfileCounters::Lap lap{.enabled = profile_on()};
+        RowMap const         map{rows, n_rows};
+        auto const           n = static_cast<uint32_t>(map.n);
         DeviceBuffer<float>  phi;
-        phi.reserve(n_rows * cols);
-        check(cudaMemset(phi.data(), 0, n_rows * cols * sizeof(float)),
+        phi.reserve(out_rows * cols);
+        check(cudaMemset(phi.data(), 0, out_rows * cols * sizeof(float)),
               "shap contribs clear");
         uint64_t const total = static_cast<uint64_t>(n) * p;
         dim3 const     block(256);
@@ -261,15 +268,18 @@ bool cuda_pred_contribs(CudaShapPlan const &plan, IngestPlane const &plane,
         {
             if (plan.max_path_len <= 8)
             {
-                launch_walk<8>(bins, plan, n, f, p, grid, block, phi.data());
+                launch_walk<8>(bins, plan, stride, f, p, grid, block, n, map.data(),
+                               phi.data());
             }
             else if (plan.max_path_len <= 16)
             {
-                launch_walk<16>(bins, plan, n, f, p, grid, block, phi.data());
+                launch_walk<16>(bins, plan, stride, f, p, grid, block, n, map.data(),
+                                phi.data());
             }
             else
             {
-                launch_walk<32>(bins, plan, n, f, p, grid, block, phi.data());
+                launch_walk<32>(bins, plan, stride, f, p, grid, block, n, map.data(),
+                                phi.data());
             }
         };
         if (total > 0)
@@ -284,7 +294,7 @@ bool cuda_pred_contribs(CudaShapPlan const &plan, IngestPlane const &plane,
             check(cudaDeviceSynchronize(), "shap walk sync");
             lap(walk_s);
         }
-        std::vector<float> raw(n_rows * cols, 0.0F);
+        std::vector<float> raw(out_rows * cols, 0.0F);
         check(cudaMemcpy(raw.data(), phi.data(), raw.size() * sizeof(float),
                          cudaMemcpyDeviceToHost),
               "shap contribs fetch");
@@ -292,7 +302,7 @@ bool cuda_pred_contribs(CudaShapPlan const &plan, IngestPlane const &plane,
         auto const   lr = static_cast<double>(plan.learning_rate);
         double const bias =
             (plan.bias_total * lr) + static_cast<double>(plan.init_score);
-        for (size_t r = 0; r < n_rows; ++r)
+        for (size_t r = 0; r < out_rows; ++r)
         {
             size_t const base = r * cols;
             for (size_t c = 0; c < n_features; ++c)
@@ -305,8 +315,8 @@ bool cuda_pred_contribs(CudaShapPlan const &plan, IngestPlane const &plane,
         {
             std::println(stderr,
                          "cuda-shap: pack={:.3f}s upload={:.3f}s walk={:.3f}s "
-                         "d2h={:.3f}s rows={} paths={}",
-                         plan.pack_s, plan.upload_s, walk_s, d2h_s, n_rows,
+                         "d2h={:.3f}s rows={} plane={} paths={}",
+                         plan.pack_s, plan.upload_s, walk_s, d2h_s, out_rows, n_rows,
                          plan.n_paths);
         }
     }

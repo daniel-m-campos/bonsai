@@ -19,8 +19,8 @@ cuda_predict_plan(std::span<DenseTree const> /*trees*/, BinMappers const & /*map
 }
 
 bool cuda_predict(CudaPredictPlan const & /*plan*/, IngestPlane const & /*plane*/,
-                  size_t /*n_rows*/, size_t /*n_features*/, size_t /*n_trees*/,
-                  std::span<float> /*out*/)
+                  size_t /*n_rows*/, size_t /*n_features*/, row_index_view /*rows*/,
+                  size_t /*n_trees*/, std::span<float> /*out*/)
 {
     return false;
 }
