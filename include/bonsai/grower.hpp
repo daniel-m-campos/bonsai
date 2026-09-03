@@ -8,9 +8,13 @@
 #include "bonsai/split.hpp"
 #include "bonsai/tree.hpp"
 #include "bonsai/types.hpp"
+#include <algorithm>
+#include <cmath>
 #include <concepts>
 #include <cstdint>
 #include <functional>
+#include <iterator>
+#include <numeric>
 #include <optional>
 #include <random>
 #include <span>
@@ -371,17 +375,37 @@ template <HistogramEngine EngineT> class GrowerHost
     {
         return config_;
     }
-    std::mt19937 &feature_rng()
-    {
-        return feature_rng_;
-    }
     DeviceSeam<EngineT> &seam()
     {
         return seam_;
     }
-    RecycledOutputs &recycled()
+    RecycledOutputs begin_grow(Dataset const &ds)
     {
-        return recycled_;
+        RecycledOutputs buffers = std::move(recycled_);
+        if (!seam_.armed())
+        {
+            buffers.values.resize(ds.plane_n_rows(), 0.0F);
+            buffers.leaf_ids.resize(ds.plane_n_rows(), 0);
+        }
+        return buffers;
+    }
+    std::vector<feature_id_t> feature_sample(size_t n_features)
+    {
+        std::vector<feature_id_t> all(n_features);
+        std::iota(all.begin(), all.end(), feature_id_t{0});
+        float const fraction = config_.feature_fraction;
+        if (fraction >= 1.0F || n_features <= 1)
+        {
+            return all;
+        }
+        auto const k = std::max<size_t>(
+            1,
+            static_cast<size_t>(std::ceil(fraction * static_cast<float>(n_features))));
+        std::vector<feature_id_t> selected;
+        selected.reserve(k);
+        std::sample(all.begin(), all.end(), std::back_inserter(selected), k,
+                    feature_rng_);
+        return selected;
     }
 
   private:
@@ -405,9 +429,9 @@ class DepthwiseGrower : public GrowerHost<EngineT>
                                      std::span<float> scores_out, std::optional<float> &loss);
 
   private:
+    using Host::begin_grow;
     using Host::config;
-    using Host::feature_rng;
-    using Host::recycled;
+    using Host::feature_sample;
     using Host::seam;
     std::vector<std::vector<feature_id_t>> interaction_groups_;
 };
@@ -426,9 +450,9 @@ class ObliviousGrower : public GrowerHost<EngineT>
                                      std::span<float> scores_out, std::optional<float> &loss);
 
   private:
+    using Host::begin_grow;
     using Host::config;
-    using Host::feature_rng;
-    using Host::recycled;
+    using Host::feature_sample;
     using Host::seam;
 };
 
@@ -451,9 +475,9 @@ class LeafwiseGrower : public GrowerHost<EngineT>
                          std::span<float> scores_out, std::optional<float> &loss);
 
   private:
+    using Host::begin_grow;
     using Host::config;
-    using Host::feature_rng;
-    using Host::recycled;
+    using Host::feature_sample;
     using Host::seam;
     std::vector<std::vector<feature_id_t>> interaction_groups_;
 };
