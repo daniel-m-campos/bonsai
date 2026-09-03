@@ -451,6 +451,134 @@ class EarlyStopping
 
 using ValidationRef = std::optional<std::reference_wrapper<LabeledData const>>;
 
+class FitTicker
+{
+  public:
+    FitTicker(Config const &cfg, LabeledData const &train, ValidationRef validation,
+              FitTickFn const &on_tick)
+        : on_tick_(on_tick), train_(train), validation_(validation),
+          n_iters_(cfg.booster_config.n_iters),
+          enabled_(cfg.booster_config.log_intervals > 0 && static_cast<bool>(on_tick)),
+          period_(enabled_ ? std::max<uint32_t>(
+                                 1, n_iters_ / std::max<uint32_t>(
+                                                   1, cfg.booster_config.log_intervals))
+                           : n_iters_)
+    {
+        if (!enabled_)
+        {
+            return;
+        }
+        train_preds_.resize(train.features.n_rows);
+        if (validation)
+        {
+            validation_preds_.resize(validation->get().features.n_rows);
+        }
+    }
+
+    void baseline(IBooster const &booster)
+    {
+        if (enabled_)
+        {
+            fire(booster, 0);
+        }
+    }
+
+    void after_round(IBooster const &booster, uint32_t i)
+    {
+        if (!enabled_)
+        {
+            return;
+        }
+        auto const one_based = i + 1;
+        if (one_based % period_ == 0 || one_based == n_iters_)
+        {
+            fire(booster, one_based);
+        }
+    }
+
+  private:
+    void fire(IBooster const &booster, size_t iter)
+    {
+        booster.predict(train_.features.view(), train_preds_);
+        floats_out  v_preds;
+        floats_view v_labels;
+        if (validation_)
+        {
+            booster.predict(validation_->get().features.view(), validation_preds_);
+            v_preds  = validation_preds_;
+            v_labels = validation_->get().labels;
+        }
+        on_tick_(FitTick{
+            .iter              = iter,
+            .n_iters           = static_cast<size_t>(n_iters_),
+            .train_preds       = train_preds_,
+            .train_labels      = train_.labels,
+            .validation_preds  = v_preds,
+            .validation_labels = v_labels,
+        });
+    }
+
+    FitTickFn const   &on_tick_;
+    LabeledData const &train_;
+    ValidationRef      validation_;
+    uint32_t           n_iters_;
+    bool               enabled_;
+    uint32_t           period_;
+    std::vector<float> train_preds_;
+    std::vector<float> validation_preds_;
+};
+
+struct EvalMode
+{
+    bool early_stop    = false;
+    bool track_history = false;
+
+    bool scores() const
+    {
+        return early_stop || track_history;
+    }
+};
+
+EvalMode eval_mode(Config const &cfg, ValidationRef validation,
+                   EvalHistoryRef eval_history)
+{
+    EvalMode mode;
+    mode.early_stop =
+        cfg.booster_config.early_stopping_rounds > 0 && validation.has_value();
+    mode.track_history = eval_history.has_value() && validation.has_value() &&
+                         eval_row_count(validation->get()) > 0 &&
+                         cfg.booster_config.dart_drop_rate == 0.0F;
+    if (mode.early_stop && eval_row_count(validation->get()) == 0)
+    {
+        throw ConfigError("early stopping needs a non-empty validation set");
+    }
+    if (mode.early_stop && cfg.booster_config.dart_drop_rate > 0.0F)
+    {
+        throw ConfigError("early_stopping_rounds cannot be combined with "
+                          "dart_drop_rate");
+    }
+    return mode;
+}
+
+void record_eval(EvalHistoryRef eval_history, ValidationScorer const &scorer,
+                 uint32_t i, float loss)
+{
+    auto &history = eval_history->get();
+    if (i == 0 && scorer.base() > 0)
+    {
+        history.insert(history.end(), scorer.base(),
+                       std::numeric_limits<float>::quiet_NaN());
+    }
+    history.push_back(loss);
+}
+
+void announce_early_stop(Config const &cfg, uint32_t i, EarlyStopping const &stopper)
+{
+    std::println("fit: early stop at iter {} (best iter {}, valid {} loss {})", i + 1,
+                 stopper.best_iter() + 1, cfg.dispatch.objective_name,
+                 stopper.best_loss());
+}
+
 std::unique_ptr<ITrainableBooster>
 train_impl(Config const &cfg, LabeledData const &train, ValidationRef validation,
            FitTickFn const &on_tick, std::unique_ptr<ITrainableBooster> initial,
@@ -463,107 +591,38 @@ train_impl(Config const &cfg, LabeledData const &train, ValidationRef validation
     }
     select_device_for(cfg);
     [[maybe_unused]] bool const warm_start = initial != nullptr;
-    auto       booster = initial ? std::move(initial) : make_booster(cfg);
-    auto const n_iters = cfg.booster_config.n_iters;
-    auto const log_iv  = cfg.booster_config.log_intervals;
+    auto booster = initial ? std::move(initial) : make_booster(cfg);
 
-    bool const has_sink = static_cast<bool>(on_tick);
+    FitTicker ticker(cfg, train, validation, on_tick);
+    ticker.baseline(*booster);
 
-    bool const ticks_enabled = log_iv > 0 && has_sink;
-    auto const period =
-        ticks_enabled ? std::max<uint32_t>(1, n_iters / std::max<uint32_t>(1, log_iv))
-                      : n_iters;
-
-    std::vector<float> train_preds(train.features.n_rows);
-    std::vector<float> validation_preds;
-    if (validation)
-    {
-        validation_preds.resize(validation->get().features.n_rows);
-    }
-
-    auto fire_tick = [&](size_t iter)
-    {
-        booster->predict(train.features.view(), train_preds);
-        floats_out  v_preds;
-        floats_view v_labels;
-        if (validation)
-        {
-            booster->predict(validation->get().features.view(), validation_preds);
-            v_preds  = validation_preds;
-            v_labels = validation->get().labels;
-        }
-        on_tick(FitTick{
-            .iter              = iter,
-            .n_iters           = static_cast<size_t>(n_iters),
-            .train_preds       = train_preds,
-            .train_labels      = train.labels,
-            .validation_preds  = v_preds,
-            .validation_labels = v_labels,
-        });
-    };
-
-    if (ticks_enabled)
-    {
-        fire_tick(0);
-    }
-
-    auto const es_rounds  = cfg.booster_config.early_stopping_rounds;
-    bool const es_enabled = es_rounds > 0 && validation.has_value();
-    bool const track_eval = eval_history.has_value() && validation.has_value() &&
-                            eval_row_count(validation->get()) > 0 &&
-                            cfg.booster_config.dart_drop_rate == 0.0F;
-    if (es_enabled && eval_row_count(validation->get()) == 0)
-    {
-        throw ConfigError("early stopping needs a non-empty validation set");
-    }
-    if (es_enabled && cfg.booster_config.dart_drop_rate > 0.0F)
-    {
-        throw ConfigError("early_stopping_rounds cannot be combined with "
-                          "dart_drop_rate");
-    }
+    auto const                      mode = eval_mode(cfg, validation, eval_history);
     std::optional<ValidationScorer> scorer;
-    if (es_enabled || track_eval)
+    if (mode.scores())
     {
         scorer.emplace(cfg, train.dataset, validation->get(), warm_start);
     }
-    EarlyStopping stopper(es_rounds);
+    EarlyStopping stopper(cfg.booster_config.early_stopping_rounds);
 
-    for (uint32_t i = 0; i < n_iters; ++i)
+    for (uint32_t i = 0; i < cfg.booster_config.n_iters; ++i)
     {
         booster->update_one_iter(train.dataset);
-        if (ticks_enabled)
-        {
-            auto const one_based = static_cast<uint32_t>(i + 1);
-            bool const is_period = (one_based % period) == 0;
-            bool const is_final  = one_based == n_iters;
-            if (is_period || is_final)
-            {
-                fire_tick(static_cast<size_t>(one_based));
-            }
-        }
+        ticker.after_round(*booster, i);
         if (!scorer)
         {
             continue;
         }
         float const loss = scorer->score_round(*booster, i);
-        if (track_eval)
+        if (mode.track_history)
         {
-            if (i == 0 && scorer->base() > 0)
-            {
-                eval_history->get().insert(eval_history->get().end(), scorer->base(),
-                                           std::numeric_limits<float>::quiet_NaN());
-            }
-            eval_history->get().push_back(loss);
+            record_eval(eval_history, *scorer, i, loss);
         }
-        if (es_enabled && stopper.stops_after(i, loss))
+        if (mode.early_stop && stopper.stops_after(i, loss))
         {
             booster->truncate(scorer->base() + stopper.best_iter() + 1);
-            if (has_sink)
+            if (on_tick)
             {
-                std::println(
-                    "fit: early stop at iter {} (best iter {}, valid {} loss {})",
-                    i + 1, stopper.best_iter() + 1, cfg.dispatch.objective_name,
-                    stopper.best_loss());
+                announce_early_stop(cfg, i, stopper);
             }
             break;
         }
