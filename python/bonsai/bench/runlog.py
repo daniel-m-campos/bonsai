@@ -173,8 +173,7 @@ def detect_host(name: str | None = None) -> dict:
                               "--format=csv,noheader,nounits"],
                              capture_output=True, text=True, timeout=10)
         if out.returncode == 0 and out.stdout.strip():
-            g, v = out.stdout.strip().splitlines()[0].split(",")
-            gpu, vram = g.strip(), round(float(v) / 1024, 1)
+            gpu, vram = _gpu_name_and_vram_gb(out.stdout.strip().splitlines()[0])
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     driver = None
@@ -258,6 +257,20 @@ def repo_root() -> pathlib.Path | None:
 
 
 # Private Functions ================================================================================
+
+def _gpu_name_and_vram_gb(smi_line: str) -> tuple[str, float | None]:
+    """Parse one ``name,memory.total`` line from nvidia-smi.
+
+    An integrated GPU (Jetson) shares the host's RAM and reports its memory
+    as ``[N/A]``, so the size is None there rather than a parse error.
+    """
+    name, _, memory_mib = smi_line.partition(",")
+    try:
+        vram = round(float(memory_mib) / 1024, 1)
+    except ValueError:
+        vram = None
+    return name.strip(), vram
+
 
 def _cfs_quota_cores() -> float | None:
     """The CFS bandwidth ceiling in cores; None when it reads unlimited."""

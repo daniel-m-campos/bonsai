@@ -8,22 +8,7 @@ import tempfile
 
 import bonsai
 import numpy as np
-
-REPO = pathlib.Path(__file__).resolve().parents[3]
-CH_TOML = REPO / "configs/california_housing.toml"
-CLI = REPO / "build/src/bonsai"
-
-CH_PARAMS = dict(
-    n_iters=200,
-    learning_rate=0.05,
-    max_depth=6,
-    grower="depthwise",
-    params={
-        "tree.min_data_in_leaf": 20,
-        "tree.min_child_hess": 0.001,
-        "bin_mapper.max_bin": 255,
-    },
-)
+from conftest import CH_PARAMS, CH_TOML, CLI
 
 
 def test_parity_with_cli(toy_train, toy_test):

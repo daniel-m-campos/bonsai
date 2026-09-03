@@ -67,6 +67,14 @@ def test_detect_host_driver_key():
     assert "omp_wait_policy" in host
 
 
+@pytest.mark.parametrize("line,expected", [
+    ("NVIDIA L40S, 46068", ("NVIDIA L40S", 45.0)),
+    ("Orin (nvgpu), [N/A]", ("Orin (nvgpu)", None)),
+])
+def test_gpu_line_parses_discrete_and_integrated(line, expected):
+    assert runlog._gpu_name_and_vram_gb(line) == expected
+
+
 @pytest.mark.parametrize("text,expected", [("1360000 100000", 13.6),
                                            ("max 100000", None)])
 def test_cpu_quota_reads_cgroup_v2(tmp_path, monkeypatch, text, expected):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pathlib
 
+import bonsai
 import numpy as np
 import pytest
 
@@ -11,7 +12,8 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 TRAIN_CSV = REPO / "tests/data/california_housing_train.csv"
 TEST_CSV = REPO / "tests/data/california_housing_test.csv"
 CH_TOML = REPO / "configs/california_housing.toml"
-CLI = REPO / "build/src/bonsai"
+BUILD_DIR = pathlib.Path(bonsai.__file__).resolve().parents[2]
+CLI = BUILD_DIR / "src/bonsai"
 
 CH_PARAMS = dict(
     n_iters=200,
