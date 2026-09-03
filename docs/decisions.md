@@ -1500,3 +1500,24 @@ Two limits are stated rather than hidden. With two or more constrained features 
 **Rejected alternatives.** A scalar baked-constant code generator, probed at 293 ns/row: row blocking beats that ceiling along the dimension the probe did not price, and the tree stays free of a code generator. An `isnan` test in the walk: the two comparison forms `v > t` and `!(v <= t)` agree on every non-NaN value and disagree exactly on NaN, so `default_left` selects the form and the test disappears (the header guards the IEEE assumption with a preprocessor check against `-ffinite-math-only`). Rows-outer inversion for dense trees, refuted above.
 
 **Reopener.** A host where the blocked oblivious walk stops converging across ISAs, which would mean it has become ISA bound and a wider block or an explicit SIMD path is worth pricing; or a code generator that also blocks rows, which would need to beat 181 on the same pod.
+
+## 120. A row view hands its ids to the device walks, and the eval plane adopts the device plane (adopted)
+
+**Decision.** The scoring side of a `Dataset` row view goes to the device the way the training side already did. `cuda_predict`, `cuda_pred_contribs` and the resident eval walk take a `std::span<row_id_t const>` of view ids (empty meaning every plane row), the kernels read bins at the mapped plane row and write at the view position, and the two identity checks that sent a non-identity view to the host walks (`ValidationScorer::arm_device`, `Model::device_ready`) are gone. The staged map has one home, `RowMap` in `src/cuda/detail/device_buffer.cuh`, a nullable device pointer over the plane the way `RowIndex` is a nullable index over the host, and the three kernels share `mapped_row`. Separately, `eval_begin` adopts a validation plane that already lives on the device through `matching_plane` instead of retiling it through `bin_at`, and retiles only the view's rows when it cannot.
+
+**Measurement.** Same-pod L40S, min of three interleaved reps, 4M x 64 train (device-resident), one 2M holdout binned against it, 100 rounds at depth 6, buckets from `BONSAI_FIT_PROFILE` and `BONSAI_CUDA_PROFILE`:
+
+| build | holdout arrangement | fit | eval-route | eval-loss | eval-arm | predict 1M |
+|---|---|---|---|---|---|---|
+| main | two Datasets | 1.00s | 0.02s | 0.00s | 0.12s | 0.00s |
+| main | one Dataset, `subset(rows=)` views | 1.78s | 0.67s | 0.24s | 0.00s | 0.58s |
+| main | views with `columns=slice(None)` | 1.00s | 0.02s | 0.00s | 0.12s | 0.00s |
+| this change | two Datasets | 0.89s | 0.02s | 0.00s | 0.00s | 0.00s |
+| this change | one Dataset, `subset(rows=)` views | 0.89s | 0.02s | 0.00s | 0.01s | 0.00s |
+| this change | views with `columns=slice(None)` | 0.88s | 0.02s | 0.00s | 0.00s | 0.00s |
+
+The view arm's `eval-route` and `eval-loss` were the per-round host walk and host loss; its `predict` was the parent plane pulled home to mint the row-major mirror. All three vanish. The `eval-arm` 0.12s on the other two arms was the host retile of a plane already on the device, and adoption removes it from every CUDA fit with a device-resident eval set, which is the 11% the arms that were never slow gained. Predictions through a view, a copied Dataset and the raw array are bit-equal (max abs diff 0.0 over 1M rows); SHAP through the view differs from the copy by 1.4e-5, the per-path atomic accumulation order the SHAP kernel has between any two calls. Every run of this change printed `cuda eval plane armed: ... adopted=1` and a `cuda-predict:` line with `rows` under `plane` on the view arm; no main view run printed either.
+
+**Rejected alternative.** A range-offset row map for contiguous views, which would skip the ids upload for a `slice`. The upload does not show in the profile at 1M view rows (`upload=0.000s` on every `cuda-predict:` line above), so a second map form would be a concept without a measurement in which the plain form loses. **Reopener:** `upload=` becoming a visible share of `cuda-predict:` or `cuda-shap:` at some larger view, which would price the offset form against the ids.
+
+**Lifetime.** The adopted plane is held by the eval seam until the next `eval_begin` or the context is torn down, the same lifetime the own tiled copy had, with one copy less on the device.
