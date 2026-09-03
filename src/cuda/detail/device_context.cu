@@ -820,8 +820,10 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     prof_counters.node_launched();
 }
 
-void CudaDeviceContext::stamp_leaves(
-    std::span<CudaHistogramEngine::LeafStamp const> stamps)
+void CudaDeviceContext::launch_stamp(
+    std::span<CudaHistogramEngine::LeafStamp const> stamps,
+    std::span<uint32_t const> slot_offsets, std::span<uint32_t const> slot_counts,
+    uint32_t const *rows, char const *label)
 {
     if (stamps.empty())
     {
@@ -833,16 +835,22 @@ void CudaDeviceContext::stamp_leaves(
     for (CudaHistogramEngine::LeafStamp const &st : stamps)
     {
         lvl.part_ops.host.push_back(
-            {lvl.slot_offsets[st.slot], lvl.slot_counts[st.slot], 0, 0, 0});
+            {slot_offsets[st.slot], slot_counts[st.slot], 0, 0, 0});
         lvl.stamp_ids.host.push_back(st.node_id);
     }
     lvl.part_ops.sync();
     lvl.stamp_ids.sync();
     stamp_kernel<<<dim3(static_cast<uint32_t>(stamps.size())), dim3(256)>>>(
-        lvl.cur_rows().data(), lvl.part_ops.device(), lvl.stamp_ids.device(),
-        lvl.leaf_by_row.data());
-    check(cudaGetLastError(), "stamp launch");
+        rows, lvl.part_ops.device(), lvl.stamp_ids.device(), lvl.leaf_by_row.data());
+    check(cudaGetLastError(), label);
     stamp_lap(prof_counters.fin_stamp_s);
+}
+
+void CudaDeviceContext::stamp_leaves(
+    std::span<CudaHistogramEngine::LeafStamp const> stamps)
+{
+    launch_stamp(stamps, lvl.slot_offsets, lvl.slot_counts, lvl.cur_rows().data(),
+                 "stamp launch");
 }
 
 void CudaDeviceContext::partition_level(
@@ -1482,26 +1490,8 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
 void CudaDeviceContext::leaf_stamp(
     std::span<CudaHistogramEngine::LeafStamp const> stamps)
 {
-    if (stamps.empty())
-    {
-        return;
-    }
-    auto stamp_lap = prof_counters.lap();
-    lvl.part_ops.clear();
-    lvl.stamp_ids.clear();
-    for (CudaHistogramEngine::LeafStamp const &st : stamps)
-    {
-        lvl.part_ops.host.push_back(
-            {leaf.slot_offsets[st.slot], leaf.slot_counts[st.slot], 0, 0, 0});
-        lvl.stamp_ids.host.push_back(st.node_id);
-    }
-    lvl.part_ops.sync();
-    lvl.stamp_ids.sync();
-    stamp_kernel<<<dim3(static_cast<uint32_t>(stamps.size())), dim3(256)>>>(
-        lvl.rows.data(), lvl.part_ops.device(), lvl.stamp_ids.device(),
-        lvl.leaf_by_row.data());
-    check(cudaGetLastError(), "leaf stamp launch");
-    stamp_lap(prof_counters.fin_stamp_s);
+    launch_stamp(stamps, leaf.slot_offsets, leaf.slot_counts, lvl.rows.data(),
+                 "leaf stamp launch");
 }
 
 bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
