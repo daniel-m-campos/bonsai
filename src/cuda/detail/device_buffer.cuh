@@ -203,6 +203,13 @@ struct RowMap
     size_t                 n        = 0;
     bool                   identity = true;
 
+    RowMap() = default;
+
+    RowMap(std::span<row_id_t const> rows, size_t plane_rows)
+    {
+        stage(rows, plane_rows);
+    }
+
     void stage(RowView const &view)
     {
         n        = view.size();

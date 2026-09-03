@@ -36,20 +36,20 @@ namespace
 {
 
 template <typename BinT>
-__global__ void
-predict_walk_kernel(BinT const *bins, uint32_t const *last_bin, uint32_t n_rows,
-                    uint32_t n_feats, uint32_t const *roots, uint32_t n_trees,
-                    uint32_t const *feature, uint32_t const *split_bin,
-                    uint32_t const *left, uint32_t const *right,
-                    uint32_t const *default_left, uint32_t const *is_leaf,
-                    float const *value, float lr, float init, float *out)
+__global__ void predict_walk_kernel(
+    BinT const *bins, uint32_t const *last_bin, uint32_t n_rows, uint32_t n_feats,
+    uint32_t const *roots, uint32_t n_trees, uint32_t const *feature,
+    uint32_t const *split_bin, uint32_t const *left, uint32_t const *right,
+    uint32_t const *default_left, uint32_t const *is_leaf, float const *value, float lr,
+    float init, uint32_t n, uint32_t const *rows, float *out)
 {
-    uint32_t const r = (blockIdx.x * blockDim.x) + threadIdx.x;
-    if (r >= n_rows)
+    uint32_t const k = (blockIdx.x * blockDim.x) + threadIdx.x;
+    if (k >= n)
     {
         return;
     }
-    float acc = 0.0F;
+    uint32_t const r   = mapped_row(rows, k);
+    float          acc = 0.0F;
     for (uint32_t t = 0; t < n_trees; ++t)
     {
         uint32_t const base = roots[t];
@@ -65,7 +65,7 @@ predict_walk_kernel(BinT const *bins, uint32_t const *last_bin, uint32_t n_rows,
         }
         acc += value[idx];
     }
-    out[r] = __fadd_rn(init, __fmul_rn(lr, acc));
+    out[k] = __fadd_rn(init, __fmul_rn(lr, acc));
 }
 
 struct PackedTrees
@@ -178,30 +178,34 @@ cuda_predict_plan(std::span<DenseTree const> trees, BinMappers const &mappers,
 }
 
 bool cuda_predict(CudaPredictPlan const &plan, IngestPlane const &plane, size_t n_rows,
-                  size_t n_features, size_t n_trees, std::span<float> out)
+                  size_t n_features, row_index_view rows, size_t n_trees,
+                  std::span<float> out)
 {
     auto const *cp = matching_plane(plane, n_rows, n_features, plan.n_feats);
-    if (cp == nullptr || out.size() != n_rows)
+    if (cp == nullptr || out.size() != (rows.empty() ? n_rows : rows.size()))
     {
         return false;
     }
     auto const k = static_cast<uint32_t>(
         n_trees == 0 ? plan.n_trees : std::min(n_trees, plan.n_trees));
-    auto const n = static_cast<uint32_t>(n_rows);
-    auto const f = static_cast<uint32_t>(n_features);
+    auto const stride = static_cast<uint32_t>(n_rows);
+    auto const f      = static_cast<uint32_t>(n_features);
     try
     {
         ProfileCounters::Lap lap{.enabled = profile_on()};
+        RowMap const         map{rows, n_rows};
+        auto const           n = static_cast<uint32_t>(map.n);
         DeviceBuffer<float>  scores;
-        scores.reserve(n_rows);
-        dim3 const grid(static_cast<uint32_t>((n_rows + 255) / 256));
+        scores.reserve(map.n);
+        dim3 const grid(static_cast<uint32_t>((map.n + 255) / 256));
         auto const launch = [&](auto const *bins)
         {
             predict_walk_kernel<<<grid, dim3(256)>>>(
-                bins, plan.last_bin.data(), n, f, plan.roots.data(), k,
+                bins, plan.last_bin.data(), stride, f, plan.roots.data(), k,
                 plan.feature.data(), plan.split_bin.data(), plan.left.data(),
                 plan.right.data(), plan.default_left.data(), plan.is_leaf.data(),
-                plan.value.data(), plan.learning_rate, plan.init_score, scores.data());
+                plan.value.data(), plan.learning_rate, plan.init_score, n, map.data(),
+                scores.data());
         };
         cp->with_bins(launch);
         check(cudaGetLastError(), "predict walk launch");
@@ -220,8 +224,8 @@ bool cuda_predict(CudaPredictPlan const &plan, IngestPlane const &plane, size_t 
         {
             std::println(stderr,
                          "cuda-predict: pack={:.3f}s upload={:.3f}s walk={:.3f}s "
-                         "d2h={:.3f}s rows={} trees={}",
-                         plan.pack_s, plan.upload_s, walk_s, d2h_s, n_rows,
+                         "d2h={:.3f}s rows={} plane={} trees={}",
+                         plan.pack_s, plan.upload_s, walk_s, d2h_s, map.n, n_rows,
                          static_cast<size_t>(k));
         }
     }

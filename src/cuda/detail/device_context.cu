@@ -182,8 +182,7 @@ CudaIngestPlane::select_columns(std::span<feature_id_t const> keep,
             return nullptr;
         }
     }
-    RowMap map;
-    map.stage(rows, n_rows);
+    RowMap const map{rows, n_rows};
     size_t const out_rows = map.n;
     if (out_rows == 0)
     {

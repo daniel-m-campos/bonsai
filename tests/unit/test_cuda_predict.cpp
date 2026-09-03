@@ -32,6 +32,7 @@
 #include <cstddef>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <random>
 #include <string>
 #include <utility>
@@ -90,7 +91,7 @@ TEST_CASE("cuda_predict matches the host binned walk", "[cuda][predict]")
 
     SECTION("the whole ensemble")
     {
-        REQUIRE(cuda_predict(*plan, *plane, n, ds.n_features(), 0, dev));
+        REQUIRE(cuda_predict(*plan, *plane, n, ds.n_features(), {}, 0, dev));
         booster.predict_at_binned(ds, host, 0);
         for (size_t r = 0; r < n; ++r)
         {
@@ -100,7 +101,7 @@ TEST_CASE("cuda_predict matches the host binned walk", "[cuda][predict]")
 
     SECTION("a truncated ensemble")
     {
-        REQUIRE(cuda_predict(*plan, *plane, n, ds.n_features(), 3, dev));
+        REQUIRE(cuda_predict(*plan, *plane, n, ds.n_features(), {}, 3, dev));
         booster.predict_at_binned(ds, host, 3);
         for (size_t r = 0; r < n; ++r)
         {
@@ -110,7 +111,75 @@ TEST_CASE("cuda_predict matches the host binned walk", "[cuda][predict]")
 
     SECTION("a plane of the wrong shape declines")
     {
-        REQUIRE(!cuda_predict(*plan, *plane, n, ds.n_features() + 1, 0, dev));
+        REQUIRE(!cuda_predict(*plan, *plane, n, ds.n_features() + 1, {}, 0, dev));
+    }
+}
+
+TEST_CASE("cuda_predict walks a row view of the plane", "[cuda][predict][view]")
+{
+    if (!cuda_available())
+    {
+        SKIP("device predict needs a usable CUDA device");
+    }
+    auto const batch   = test::random_batch(4096, 5, 19);
+    auto const mappers = BinMappers::fit(batch, BinMapperConfig{});
+    auto const plane   = cuda_ingest(batch, mappers);
+    REQUIRE(plane);
+    auto const ds = Dataset::bin(batch, mappers, DataConfig{}, plane);
+
+    MseBooster booster{predict_cfg()};
+    for (size_t i = 0; i < 8; ++i)
+    {
+        booster.update_one_iter(ds);
+    }
+    auto const in = booster.device_plan_input();
+    auto const plan =
+        cuda_predict_plan(in.trees, mappers, in.learning_rate, in.init_score);
+    REQUIRE(plan);
+
+    size_t const n          = ds.plane_n_rows();
+    auto const   check_view = [&](std::vector<row_id_t> const &ids)
+    {
+        RowView const      view = RowView::encode(ids, n);
+        std::vector<float> host(ids.size(), 0.0F);
+        std::vector<float> dev(ids.size(), 0.0F);
+        REQUIRE(cuda_predict(*plan, *plane, n, ds.n_features(), ids, 0, dev));
+        booster.predict_at_binned(ds.with_rows(view), host, 0);
+        for (size_t k = 0; k < ids.size(); ++k)
+        {
+            REQUIRE(dev[k] == host[k]);
+        }
+    };
+
+    SECTION("a contiguous range")
+    {
+        std::vector<row_id_t> ids(1500);
+        std::iota(ids.begin(), ids.end(), row_id_t{1000});
+        check_view(ids);
+    }
+
+    SECTION("a scattered gather")
+    {
+        std::mt19937                            rng{23};
+        std::vector<row_id_t>                   ids(700);
+        std::uniform_int_distribution<row_id_t> pick(0, static_cast<row_id_t>(n - 1));
+        for (auto &id : ids)
+        {
+            id = pick(rng);
+        }
+        check_view(ids);
+    }
+
+    SECTION("a repeated row")
+    {
+        check_view({7, 7, 4095, 0, 7});
+    }
+
+    SECTION("an output of the wrong length declines")
+    {
+        std::vector<row_id_t> const ids{1, 2, 3};
+        std::vector<float>          dev(n, 0.0F);
+        REQUIRE(!cuda_predict(*plan, *plane, n, ds.n_features(), ids, 0, dev));
     }
 }
 
@@ -148,7 +217,7 @@ TEST_CASE("cuda_predict matches the host binned walk for a levelwise model",
 
     SECTION("the whole ensemble")
     {
-        REQUIRE(cuda_predict(*plan, *plane, n, ds.n_features(), 0, dev));
+        REQUIRE(cuda_predict(*plan, *plane, n, ds.n_features(), {}, 0, dev));
         booster.predict_at_binned(ds, host, 0);
         for (size_t r = 0; r < n; ++r)
         {
@@ -158,7 +227,7 @@ TEST_CASE("cuda_predict matches the host binned walk for a levelwise model",
 
     SECTION("a truncated ensemble")
     {
-        REQUIRE(cuda_predict(*plan, *plane, n, ds.n_features(), 3, dev));
+        REQUIRE(cuda_predict(*plan, *plane, n, ds.n_features(), {}, 3, dev));
         booster.predict_at_binned(ds, host, 3);
         for (size_t r = 0; r < n; ++r)
         {

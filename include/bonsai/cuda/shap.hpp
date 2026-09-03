@@ -34,13 +34,14 @@ std::shared_ptr<CudaShapPlan const> cuda_shap_plan(std::span<DenseTree const> tr
                                                    float learning_rate,
                                                    float init_score);
 
-// Evaluates every packed path for every row of the plane and writes the
-// per-row contribution vector (n_features + 1 doubles, bias last) into out,
-// one D2H. The device walk is fp32 where the host walk is fp64, so this is a
-// tolerance-equal route, not a bit-equal one. false declines at run time (the
-// plane belongs to another backend, its shape disagrees with the plan's, or a
-// device allocation failed) and the caller runs the host bin walk.
+// Evaluates every packed path for each plane row in rows (every row when
+// empty) and writes one contribution vector per position (n_features + 1
+// doubles, bias last) into out, one D2H. The device walk is fp32 where the host
+// walk is fp64, so this is a tolerance-equal route, not a bit-equal one. false
+// declines at run time (another backend's plane, a shape that disagrees with
+// the plan's, or a failed allocation) and the caller runs the host bin walk.
 bool cuda_pred_contribs(CudaShapPlan const &plan, IngestPlane const &plane,
-                        size_t n_rows, size_t n_features, std::span<double> out);
+                        size_t n_rows, size_t n_features, row_index_view rows,
+                        std::span<double> out);
 
 } // namespace bonsai

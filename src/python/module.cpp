@@ -1177,6 +1177,7 @@ class Model
         std::shared_ptr<bonsai::IngestPlane const> plane;
         size_t                                     n_rows;
         size_t                                     n_features;
+        std::vector<bonsai::row_id_t>              rows;
         bonsai::DevicePlanInput                    in;
     };
 
@@ -1184,7 +1185,7 @@ class Model
     {
         auto const &bins  = ds.bins();
         auto const  plane = bins.ingest_plane();
-        if (!plane || !bins.row_view().is_identity())
+        if (!plane)
         {
             return std::nullopt;
         }
@@ -1193,7 +1194,10 @@ class Model
         {
             return std::nullopt;
         }
+        auto const &view = bins.row_view();
         return DeviceReady{plane, bins.plane_n_rows(), bins.n_features(),
+                           view.is_identity() ? std::vector<bonsai::row_id_t>{}
+                                              : view.materialize(),
                            std::move(in)};
     }
 
@@ -1206,8 +1210,9 @@ class Model
             return false;
         }
         auto const plan = plan_cache_->predict(ready->in, mappers_);
-        return plan && bonsai::cuda_predict(*plan, *ready->plane, ready->n_rows,
-                                            ready->n_features, num_iteration, out);
+        return plan &&
+               bonsai::cuda_predict(*plan, *ready->plane, ready->n_rows,
+                                    ready->n_features, ready->rows, num_iteration, out);
     }
 
     bool contribs_on_device(Dataset const &ds, std::span<double> out) const
@@ -1219,7 +1224,7 @@ class Model
         }
         auto const plan = plan_cache_->shap(ready->in, mappers_);
         return plan && bonsai::cuda_pred_contribs(*plan, *ready->plane, ready->n_rows,
-                                                  ready->n_features, out);
+                                                  ready->n_features, ready->rows, out);
     }
 
     std::unique_ptr<bonsai::IBooster> booster_;

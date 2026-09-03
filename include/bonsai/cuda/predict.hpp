@@ -31,11 +31,12 @@ std::shared_ptr<CudaPredictPlan const>
 cuda_predict_plan(std::span<DenseTree const> trees, BinMappers const &mappers,
                   float learning_rate, float init_score);
 
-// Walks every tree (or the first n_trees when nonzero) for every row of the
-// plane and writes init + lr * sum per row, one D2H into out. false declines at
-// run time (the plane belongs to another backend, its shape disagrees with the
-// plan's, or a device allocation failed) and the caller runs the host bin walk.
+// Walks every tree (or the first n_trees when nonzero) for each plane row in
+// rows (every row when empty) and writes init + lr * sum per position, one D2H
+// into out. false declines at run time (another backend's plane, a shape that
+// disagrees with the plan's, or a failed allocation): the host bin walk runs.
 bool cuda_predict(CudaPredictPlan const &plan, IngestPlane const &plane, size_t n_rows,
-                  size_t n_features, size_t n_trees, std::span<float> out);
+                  size_t n_features, row_index_view rows, size_t n_trees,
+                  std::span<float> out);
 
 } // namespace bonsai

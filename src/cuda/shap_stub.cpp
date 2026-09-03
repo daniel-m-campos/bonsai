@@ -21,7 +21,7 @@ std::shared_ptr<CudaShapPlan const> cuda_shap_plan(std::span<DenseTree const> /*
 
 bool cuda_pred_contribs(CudaShapPlan const & /*plan*/, IngestPlane const & /*plane*/,
                         size_t /*n_rows*/, size_t /*n_features*/,
-                        std::span<double> /*out*/)
+                        row_index_view /*rows*/, std::span<double> /*out*/)
 {
     return false;
 }

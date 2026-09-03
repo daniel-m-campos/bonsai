@@ -680,21 +680,63 @@ def test_leaf_renewal_over_a_view_reads_only_the_views_rows():
     assert _model_bytes(pairs, view) == _model_bytes(pairs, copy)
 
 
-@requires_cuda
-def test_a_view_of_a_device_resident_parent_reads_through_the_bin_route():
-    """The case the bin route exists for: the plane is on the device and there
-    is no host matrix to fall back to, so a view must route its own rows."""
-    X, y = _blocky_data()
-    ds = bonsai.Dataset(X, y, device="cuda")
-    model = bonsai.train(dict(_READ_PAIRS, **{"dispatch.grower_name": "cuda_depthwise"}), ds)
-    idx = _row_shapes(len(X))["gather"]
-    view = ds.subset(rows=idx)
-    assert len(view) == len(idx)
-    np.testing.assert_allclose(
-        model.predict(view), model.predict(X[idx]), rtol=1e-5, atol=1e-5
+_DEVICE_SCORE_WORKER = """
+import sys
+import numpy as np
+import bonsai
+sys.path.insert(0, sys.argv[1])
+from test_dataset_views import _blocky_data, _row_shapes, _READ_PAIRS
+
+X, y = _blocky_data()
+ds = bonsai.Dataset(X, y, device="cuda")
+model = bonsai.train(dict(_READ_PAIRS, **{"dispatch.grower_name": "cuda_depthwise"}), ds)
+idx = _row_shapes(len(X))[sys.argv[2]]
+view = ds.subset(rows=idx)
+assert len(view) == len(idx)
+np.testing.assert_allclose(model.predict(view), model.predict(X[idx]), rtol=1e-5, atol=1e-5)
+np.testing.assert_allclose(
+    model.pred_contribs(view), model.pred_contribs(X[idx]), rtol=1e-4, atol=1e-4
+)
+assert model.predict_leaf(view).shape[0] == len(idx)
+print("DONE", flush=True)
+"""
+
+
+def _device_scoring_lines(shape):
+    """stderr of one child that scores a view of a device-resident parent.
+
+    The device profile flag is read once per process, so the child is where
+    the engagement lines can be asserted.
+    """
+    env = {
+        **os.environ,
+        "BONSAI_CUDA_PROFILE": "1",
+        "PYTHONPATH": os.pathsep.join(sys.path),
+    }
+    here = os.path.dirname(os.path.abspath(__file__))
+    proc = subprocess.run(
+        [sys.executable, "-c", _DEVICE_SCORE_WORKER, here, shape],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
     )
-    assert model.predict_leaf(view).shape[0] == len(idx)
-    assert model.pred_contribs(view).shape == (len(idx), X.shape[1] + 1)
+    assert "DONE" in proc.stdout, proc.stderr[-2000:]
+    return proc.stderr
+
+
+@requires_cuda
+@pytest.mark.parametrize("shape", ["range", "segments", "gather"])
+def test_a_view_of_a_device_resident_parent_predicts_on_the_device(shape):
+    """The plane is on the device and there is no host matrix to fall back
+    to. A view hands its row ids to the device walks, which read the parent
+    plane in place: the predict and SHAP lines report the view's rows against
+    the parent's plane, and the parent is never pulled to the host."""
+    n_rows = len(_blocky_data()[0])
+    idx = _row_shapes(n_rows)[shape]
+    lines = _device_scoring_lines(shape)
+    assert re.search(rf"cuda-predict: .*rows={len(idx)} plane={n_rows} ", lines), lines
+    assert re.search(rf"cuda-shap: .*rows={len(idx)} plane={n_rows} ", lines), lines
 
 
 # Reorder =========================================================================================
