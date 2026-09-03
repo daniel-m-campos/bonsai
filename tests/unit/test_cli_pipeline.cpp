@@ -221,6 +221,53 @@ TEST_CASE("fit: a validation CSV of the wrong width is refused before eval",
     std::remove(narrow.c_str());
 }
 
+TEST_CASE("train_with_progress: log_intervals fires the baseline, the period, "
+          "and the final tick",
+          "[cli_pipeline][train]")
+{
+    auto cfg                         = make_tiny_config();
+    cfg.data.valid                   = {k_tiny_path};
+    cfg.booster_config.n_iters       = 7;
+    cfg.booster_config.log_intervals = 3;
+
+    auto const          loaded = load_train_and_validation_from_csv(cfg);
+    std::vector<size_t> iters;
+    std::vector<size_t> valid_widths;
+    auto const          on_tick = [&](FitTick const &tick)
+    {
+        iters.push_back(tick.iter);
+        valid_widths.push_back(tick.validation_preds.size());
+        CHECK(tick.n_iters == 7);
+        CHECK(tick.train_preds.size() == 4);
+        CHECK(tick.train_labels.size() == 4);
+        CHECK(tick.validation_labels.size() == 4);
+    };
+
+    SECTION("with a sink, period is n_iters / log_intervals rounded down")
+    {
+        train_with_progress(cfg, loaded, on_tick);
+        CHECK(iters == std::vector<size_t>{0, 2, 4, 6, 7});
+        CHECK(valid_widths == std::vector<size_t>{4, 4, 4, 4, 4});
+    }
+    SECTION("without a validation set the validation spans are empty")
+    {
+        std::vector<size_t> widths;
+        train_with_progress(cfg, loaded.train,
+                            [&](FitTick const &tick)
+                            {
+                                widths.push_back(tick.validation_preds.size() +
+                                                 tick.validation_labels.size());
+                            });
+        CHECK(widths == std::vector<size_t>{0, 0, 0, 0, 0});
+    }
+    SECTION("log_intervals of zero fires nothing even with a sink")
+    {
+        cfg.booster_config.log_intervals = 0;
+        train_with_progress(cfg, loaded, on_tick);
+        CHECK(iters.empty());
+    }
+}
+
 TEST_CASE("train_with_progress: early stopping truncates to the best iteration",
           "[cli_pipeline][early_stop]")
 {
