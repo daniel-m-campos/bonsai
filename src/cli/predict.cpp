@@ -17,7 +17,7 @@ namespace bonsai::cli
 int run_predict(PredictOpts const &opts)
 {
     auto cfg = resolve_config(opts.common);
-    if (dumped_config(opts.common, cfg))
+    if (dump_config(opts.common, cfg))
     {
         return EXIT_SUCCESS;
     }
