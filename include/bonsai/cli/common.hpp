@@ -35,7 +35,7 @@ inline Config resolve_config(CommonOpts const &opts)
 // --dump-config prints the resolved config and the subcommand stops there,
 // before it touches data or a model. Fit calls this after warm-start
 // reconcile so the dump shows the config the fit would have used.
-inline bool dumped_config(CommonOpts const &opts, Config const &cfg)
+inline bool dump_config(CommonOpts const &opts, Config const &cfg)
 {
     if (!opts.dump_config)
     {
