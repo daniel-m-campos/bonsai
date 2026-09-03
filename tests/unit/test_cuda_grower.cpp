@@ -163,9 +163,9 @@ TEST_CASE("CudaObliviousGrower device eval walk matches the host binned walk",
 
 // The eval plane over a row view: the seed, the scores and the loss are
 // view-length and position-indexed, the bin rows follow the view's ids, and
-// a parent whose plane already lives on the device is walked in place
-// rather than retiled through the host. The host reference is the binned
-// walk over the same ids and the host objective over the gathered labels.
+// a parent whose plane already lives on the device is walked in place. The
+// host reference is the binned walk over the same ids and the host objective
+// over the gathered labels.
 TEST_CASE("CudaDepthwiseGrower device eval walk honors a row view",
           "[cuda][grower][eval][view]")
 {
