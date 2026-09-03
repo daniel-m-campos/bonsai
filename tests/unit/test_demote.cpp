@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "bonsai/config/tree_config.hpp"
+#include "bonsai/grower.hpp"
 #include "bonsai/histogram.hpp"
 #include "bonsai/split.hpp"
 #include "bonsai/tree.hpp"
@@ -21,23 +22,20 @@ namespace
 // PendingSplit ready for populate.
 struct DemoteFixture
 {
-    TreeConfig             config;
-    gd::LevelPlan          plan;
-    DenseTree::Nodes       nodes;
-    size_t                 n_leaves = 0;
-    train_leaf_values      values;
-    std::vector<node_id_t> leaf_ids;
-    std::vector<float>     split_gains;
+    TreeConfig      config;
+    gd::LevelPlan   plan;
+    gd::DenseBuild  build{4.0F};
+    RecycledOutputs out;
 
     DemoteFixture()
     {
-        nodes.push_back(DenseTree::internal(0, 0.5F, 1, 2, true));
-        nodes.push_back(DenseTree::leaf(0.0F));
-        nodes.push_back(DenseTree::leaf(0.0F));
-        values.assign(4, 0.0F);
-        leaf_ids.assign(4, 0);
-        split_gains.assign(3, 0.0F);
-        split_gains[0] = 1.5F;
+        build.nodes[0] = DenseTree::internal(0, 0.5F, 1, 2, true);
+        build.nodes.push_back(DenseTree::leaf(0.0F));
+        build.nodes.push_back(DenseTree::leaf(0.0F));
+        out.values.assign(4, 0.0F);
+        out.leaf_ids.assign(4, 0);
+        build.split_gains.assign(3, 0.0F);
+        build.split_gains[0] = 1.5F;
 
         gd::DeferredSplit d;
         d.parent.id = 0;
@@ -53,8 +51,7 @@ struct DemoteFixture
 
     void run()
     {
-        gd::demote_empty_splits(config, plan, nodes, n_leaves, values, leaf_ids,
-                                split_gains);
+        gd::demote_empty_splits(config, plan, build, out);
     }
 };
 
@@ -68,14 +65,14 @@ TEST_CASE("empty-child host split demotes the parent to a leaf", "[demote]")
     fx.run();
 
     REQUIRE(fx.plan.splits.empty());
-    REQUIRE(DenseTree::is_leaf(fx.nodes[0]));
-    REQUIRE(fx.n_leaves == 1);
-    REQUIRE(fx.split_gains[0] == 0.0F);
+    REQUIRE(DenseTree::is_leaf(fx.build.nodes[0]));
+    REQUIRE(fx.build.n_leaves == 1);
+    REQUIRE(fx.build.split_gains[0] == 0.0F);
     // Survivor rows carry the demoted leaf's stamp.
     for (size_t r = 0; r < 4; ++r)
     {
-        REQUIRE(fx.leaf_ids[r] == 0);
-        REQUIRE(fx.values[r] == fx.nodes[0].threshold_or_value);
+        REQUIRE(fx.out.leaf_ids[r] == 0);
+        REQUIRE(fx.out.values[r] == fx.build.nodes[0].threshold_or_value);
     }
 }
 
@@ -93,9 +90,9 @@ TEST_CASE("device-plane empty child is not demoted", "[demote]")
     fx.run();
 
     REQUIRE(fx.plan.splits.size() == 1);
-    REQUIRE(!DenseTree::is_leaf(fx.nodes[0]));
-    REQUIRE(fx.n_leaves == 0);
-    REQUIRE(fx.split_gains[0] == 1.5F);
+    REQUIRE(!DenseTree::is_leaf(fx.build.nodes[0]));
+    REQUIRE(fx.build.n_leaves == 0);
+    REQUIRE(fx.build.split_gains[0] == 1.5F);
 }
 
 TEST_CASE("populated host split is left alone", "[demote]")
@@ -106,5 +103,5 @@ TEST_CASE("populated host split is left alone", "[demote]")
     fx.run();
 
     REQUIRE(fx.plan.splits.size() == 1);
-    REQUIRE(!DenseTree::is_leaf(fx.nodes[0]));
+    REQUIRE(!DenseTree::is_leaf(fx.build.nodes[0]));
 }
