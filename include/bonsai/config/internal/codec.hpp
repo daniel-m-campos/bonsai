@@ -34,27 +34,9 @@ template <typename U> ParseResult<U> read_uint_from_toml(toml::node const &node)
     return static_cast<U>(*opt);
 }
 
-template <typename U> ParseResult<U> read_uint_from_string(std::string_view value)
+template <typename I = int> ParseResult<I> read_int_from_string(std::string_view value)
 {
-    int64_t     v   = 0;
-    auto const *beg = value.data();
-    auto const *end = beg + value.size();
-    auto const  res = std::from_chars(beg, end, v);
-    if (res.ec != std::errc{} || res.ptr != end)
-    {
-        return std::unexpected("cannot parse integer from '" + std::string{value} +
-                               "'");
-    }
-    if (v < 0)
-    {
-        return std::unexpected("must be non-negative");
-    }
-    return static_cast<U>(v);
-}
-
-inline ParseResult<int> read_int_from_string(std::string_view value)
-{
-    int         v   = 0;
+    I           v   = 0;
     auto const *beg = value.data();
     auto const *end = beg + value.size();
     auto const  res = std::from_chars(beg, end, v);
@@ -64,6 +46,20 @@ inline ParseResult<int> read_int_from_string(std::string_view value)
                                "'");
     }
     return v;
+}
+
+template <typename U> ParseResult<U> read_uint_from_string(std::string_view value)
+{
+    auto const v = read_int_from_string<int64_t>(value);
+    if (!v)
+    {
+        return std::unexpected(v.error());
+    }
+    if (*v < 0)
+    {
+        return std::unexpected("must be non-negative");
+    }
+    return static_cast<U>(*v);
 }
 
 inline ParseResult<float> read_float_from_string(std::string_view value)
