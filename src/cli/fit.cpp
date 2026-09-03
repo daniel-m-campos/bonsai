@@ -47,9 +47,8 @@ int run_fit(FitOpts const &opts)
             std::move(cfg), init.cfg,
             config::stated_keys(opts.common.config_path, opts.common.overrides));
     }
-    if (opts.common.dump_config)
+    if (dumped_config(opts.common, cfg))
     {
-        std::println("{}", config::dump_toml(cfg));
         return EXIT_SUCCESS;
     }
     if (cfg.data.train.empty())

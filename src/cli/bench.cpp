@@ -7,7 +7,6 @@
 #include <cstdlib>
 #include <print>
 
-#include "bonsai/config/toml.hpp"
 #include "bonsai/io/model.hpp"
 
 namespace bonsai::cli
@@ -27,9 +26,8 @@ double seconds_since(std::chrono::steady_clock::time_point t)
 int run_bench(BenchOpts const &opts)
 {
     auto cfg = resolve_config(opts.common);
-    if (opts.common.dump_config)
+    if (dumped_config(opts.common, cfg))
     {
-        std::println("{}", config::dump_toml(cfg));
         return EXIT_SUCCESS;
     }
     if (cfg.data.train.empty())
