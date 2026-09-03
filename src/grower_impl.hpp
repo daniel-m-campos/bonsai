@@ -167,23 +167,6 @@ inline void propagate_interaction_state(interaction_groups const        &groups,
     right.path    = std::move(path);
 }
 
-inline std::vector<feature_id_t> sample_features(size_t n_features, float fraction,
-                                                 std::mt19937 &rng)
-{
-    std::vector<feature_id_t> all(n_features);
-    std::iota(all.begin(), all.end(), feature_id_t{0});
-    if (fraction >= 1.0F || n_features <= 1)
-    {
-        return all;
-    }
-    auto const k = std::max<size_t>(
-        1, static_cast<size_t>(std::ceil(fraction * static_cast<float>(n_features))));
-    std::vector<feature_id_t> selected;
-    selected.reserve(k);
-    std::sample(all.begin(), all.end(), std::back_inserter(selected), k, rng);
-    return selected;
-}
-
 inline std::pair<node_id_t, node_id_t>
 commit_split_node(DenseTree::Nodes &nodes, std::vector<bin_id_t> &split_bins,
                   std::vector<float> &split_gains, std::vector<float> &covers,
@@ -428,6 +411,22 @@ void for_each_unsampled(RowView const &view, row_index_view sampled, F &&fn)
     parallel::for_each_index(oob.size(), [&](size_t k) { fn(oob[k]); });
 }
 
+inline GrowResult<DenseTree> assemble_dense(DenseTree::Nodes   nodes,
+                                            DenseTree::Params  params,
+                                            std::vector<float> split_gains,
+                                            std::vector<float> covers,
+                                            RecycledOutputs    outputs)
+{
+    GrowProfiler::Lap alap;
+    split_gains.resize(nodes.size(), 0.0F);
+    covers.resize(nodes.size(), 0.0F);
+    alap(GrowProfiler::instance().assemble_s);
+    return {.tree     = DenseTree(std::move(nodes), params, std::move(split_gains),
+                                  std::move(covers)),
+            .values   = std::move(outputs.values),
+            .leaf_ids = std::move(outputs.leaf_ids)};
+}
+
 inline void route_unsampled(Dataset const &ds, DenseTree::Nodes const &nodes,
                             std::vector<bin_id_t> const &split_bins,
                             row_index_view sampled, train_leaf_values &values,
@@ -468,25 +467,18 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
                                                floats_view hess, RowSelection selection)
     -> GrowResult<Tree>
 {
-    namespace gd                    = grower_detail;
-    bool const             resident = this->resident();
-    gd::GrowProfiler::Lap  slap;
-    Tree::Nodes            nodes;
-    train_leaf_values      values   = std::move(recycled().values);
-    std::vector<node_id_t> leaf_ids = std::move(recycled().leaf_ids);
-    if (!resident)
-    {
-        values.resize(ds.plane_n_rows(), 0.0F);
-        leaf_ids.resize(ds.plane_n_rows(), 0);
-    }
+    namespace gd                   = grower_detail;
+    bool const            resident = this->resident();
+    gd::GrowProfiler::Lap slap;
+    Tree::Nodes           nodes;
+    auto [values, leaf_ids] = begin_grow(ds);
     std::vector<SplitInput> current;
     std::vector<SplitInput> next;
     gd::LevelOutputs        level_out;
     std::vector<bin_id_t>   split_bins(1, 0);
     std::vector<float>      split_gains(1, 0.0F);
     std::vector<float>      covers(1, static_cast<float>(selection.rows.size()));
-    auto const              selected =
-        gd::sample_features(ds.n_features(), config().feature_fraction, feature_rng());
+    auto const              selected = feature_sample(ds.n_features());
 
     gd::LevelStep<EngineT, SplitterT> step(seam().engine(), ds, config(), grad, hess,
                                            selected);
@@ -526,15 +518,9 @@ auto DepthwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
                                 leaf_ids);
         }
     }
-    gd::GrowProfiler::Lap alap;
-    split_gains.resize(nodes.size(), 0.0F);
-    covers.resize(nodes.size(), 0.0F);
-    alap(gd::GrowProfiler::instance().assemble_s);
-
-    return {.tree     = Tree(std::move(nodes), {.depth = depth, .n_leaves = n_leaves},
-                             std::move(split_gains), std::move(covers)),
-            .values   = std::move(values),
-            .leaf_ids = std::move(leaf_ids)};
+    return gd::assemble_dense(std::move(nodes), {.depth = depth, .n_leaves = n_leaves},
+                              std::move(split_gains), std::move(covers),
+                              {std::move(values), std::move(leaf_ids)});
 }
 
 template <HistogramEngine EngineT, LevelSplitFinder SplitterT>
@@ -557,19 +543,14 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
     gd::GrowProfiler::Lap slap;
     Tree::LevelSplits     level_splits;
     Tree::LeafTable       leaf_table;
-    train_leaf_values     values = std::move(recycled().values);
-    if (!resident)
-    {
-        values.resize(ds.plane_n_rows(), 0.0F);
-    }
+    auto [values, leaf_ids] = begin_grow(ds);
 
     std::vector<SplitInput> frontier;
     std::vector<SplitInput> next;
     gd::LevelOutputs        level_out;
     std::vector<bin_id_t>   level_bins;
     std::vector<float>      level_gains;
-    auto const              selected =
-        gd::sample_features(ds.n_features(), config().feature_fraction, feature_rng());
+    auto const              selected = feature_sample(ds.n_features());
 
     gd::LevelStep<EngineT, SplitterT> step(seam().engine(), ds, config(), grad, hess,
                                            selected);
@@ -626,11 +607,6 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
         ++depth;
     }
 
-    std::vector<node_id_t> leaf_ids = std::move(recycled().leaf_ids);
-    if (!resident)
-    {
-        leaf_ids.resize(ds.plane_n_rows(), 0);
-    }
     leaf_table.reserve(frontier.size());
     std::vector<float> leaf_covers;
     leaf_covers.reserve(frontier.size());
@@ -695,11 +671,7 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     bool const            resident = this->resident();
     gd::GrowProfiler::Lap slap;
     Tree::Nodes           nodes;
-    train_leaf_values     values = std::move(recycled().values);
-    if (!resident)
-    {
-        values.resize(ds.plane_n_rows(), 0.0F);
-    }
+    auto [values, leaf_ids] = begin_grow(ds);
 
     auto gain_less = [](gd::Candidate const &a, gd::Candidate const &b)
     {
@@ -715,14 +687,8 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     std::vector<bin_id_t>      split_bins(1, 0);
     std::vector<float>         split_gains(1, 0.0F);
     std::vector<float>         covers(1, static_cast<float>(selection.rows.size()));
-    std::vector<node_id_t>     leaf_ids = std::move(recycled().leaf_ids);
-    if (!resident)
-    {
-        leaf_ids.resize(ds.plane_n_rows(), 0);
-    }
 
-    auto const selected =
-        gd::sample_features(ds.n_features(), config().feature_fraction, feature_rng());
+    auto const selected = feature_sample(ds.n_features());
 
     gd::LeafStep<EngineT, SplitterT> step(seam().engine(), ds, config(), grad, hess,
                                           selected);
@@ -779,15 +745,9 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
                                 leaf_ids);
         }
     }
-    gd::GrowProfiler::Lap alap;
-    split_gains.resize(nodes.size(), 0.0F);
-    covers.resize(nodes.size(), 0.0F);
-    alap(gd::GrowProfiler::instance().assemble_s);
-
-    return {.tree     = Tree(std::move(nodes), {.depth = depth, .n_leaves = n_leaves},
-                             std::move(split_gains), std::move(covers)),
-            .values   = std::move(values),
-            .leaf_ids = std::move(leaf_ids)};
+    return gd::assemble_dense(std::move(nodes), {.depth = depth, .n_leaves = n_leaves},
+                              std::move(split_gains), std::move(covers),
+                              {std::move(values), std::move(leaf_ids)});
 }
 
 template <typename EngineT, typename TableFn>
