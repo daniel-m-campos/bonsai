@@ -257,6 +257,22 @@ constexpr uint32_t k_part_rows_per_thread = 16;
 constexpr uint32_t k_part_block           = 256;
 constexpr uint32_t k_part_chunk           = k_part_block * k_part_rows_per_thread;
 
+inline __device__ void block_scan(uint32_t *sh)
+{
+    __syncthreads();
+    for (uint32_t step = 1; step < k_part_block; step *= 2)
+    {
+        uint32_t v = 0;
+        if (threadIdx.x + 1 >= step + 1)
+        {
+            v = sh[threadIdx.x + 1 - step];
+        }
+        __syncthreads();
+        sh[threadIdx.x + 1] += v;
+        __syncthreads();
+    }
+}
+
 inline __device__ bool goes_left_dev(uint32_t b, uint32_t last_bin, uint32_t bin,
                                      uint32_t dl)
 {
@@ -321,18 +337,7 @@ __global__ void seg_scan_kernel(uint32_t *block_counts, uint32_t max_chunks,
     {
         uint32_t const k    = base + threadIdx.x;
         sh[threadIdx.x + 1] = k < max_chunks ? c[k] : 0;
-        __syncthreads();
-        for (uint32_t step = 1; step < k_part_block; step *= 2)
-        {
-            uint32_t v = 0;
-            if (threadIdx.x + 1 >= step + 1)
-            {
-                v = sh[threadIdx.x + 1 - step];
-            }
-            __syncthreads();
-            sh[threadIdx.x + 1] += v;
-            __syncthreads();
-        }
+        block_scan(sh);
         if (k < max_chunks)
         {
             c[k] = carry + sh[threadIdx.x];
@@ -366,18 +371,7 @@ __global__ void scatter_kernel(uint32_t const *rows_in, float2 const *gh_in,
     {
         sh[0] = 0;
     }
-    __syncthreads();
-    for (uint32_t step = 1; step < k_part_block; step *= 2)
-    {
-        uint32_t v = 0;
-        if (threadIdx.x + 1 >= step + 1)
-        {
-            v = sh[threadIdx.x + 1 - step];
-        }
-        __syncthreads();
-        sh[threadIdx.x + 1] += v;
-        __syncthreads();
-    }
+    block_scan(sh);
     uint32_t const nl_total = n_left[blockIdx.y];
     uint32_t const block_lefts =
         block_counts[(static_cast<size_t>(blockIdx.y) * max_chunks) + chunk];
