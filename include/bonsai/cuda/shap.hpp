@@ -38,8 +38,8 @@ std::shared_ptr<CudaShapPlan const> cuda_shap_plan(std::span<DenseTree const> tr
 // empty) and writes one contribution vector per position (n_features + 1
 // doubles, bias last) into out, one D2H. The device walk is fp32 where the host
 // walk is fp64, so this is a tolerance-equal route, not a bit-equal one. false
-// declines at run time (another backend's plane, a shape that disagrees with
-// the plan's, or a failed allocation) and the caller runs the host bin walk.
+// declines (another backend's plane, a shape off the plan's, an out not sized
+// to the rows, or a failed allocation) and the caller runs the host bin walk.
 bool cuda_pred_contribs(CudaShapPlan const &plan, IngestPlane const &plane,
                         size_t n_rows, size_t n_features, row_index_view rows,
                         std::span<double> out);

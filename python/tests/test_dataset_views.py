@@ -731,7 +731,7 @@ def test_a_view_of_a_device_resident_parent_predicts_on_the_device(shape):
     """The plane is on the device and there is no host matrix to fall back
     to. A view hands its row ids to the device walks, which read the parent
     plane in place: the predict and SHAP lines report the view's rows against
-    the parent's plane, and the parent is never pulled to the host."""
+    the parent's plane."""
     n_rows = len(_blocky_data()[0])
     idx = _row_shapes(n_rows)[shape]
     lines = _device_scoring_lines(shape)
