@@ -675,7 +675,7 @@ def test_a_view_of_a_device_resident_parent_reads_through_the_bin_route():
     is no host matrix to fall back to, so a view must route its own rows."""
     X, y = _blocky_data()
     ds = bonsai.Dataset(X, y, device="cuda")
-    model = bonsai.train(dict(_READ_PAIRS, **{"dispatch.grower_name": "cuda"}), ds)
+    model = bonsai.train(dict(_READ_PAIRS, **{"dispatch.grower_name": "cuda_depthwise"}), ds)
     idx = _row_shapes(len(X))["gather"]
     view = ds.subset(rows=idx)
     assert len(view) == len(idx)
