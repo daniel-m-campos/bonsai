@@ -54,3 +54,5 @@ Working agreement for agents in this repository. Where content lives is governed
 Run `make ci` before opening a PR (`ARGS=--fast` skips clang-tidy). It runs every gate this host can run and NAMES the ones it cannot, because a gate you forgot and a gate that passed look identical in a checklist. The three it cannot run on a laptop (sanitizers, the race gate, the CUDA compile) run in CI and on a GPU host.
 
 A change touching training or serialization must not move `scripts/model_hash.py` unless that is its stated purpose; wire identity is the gate.
+
+A function the diff touches whose cyclomatic complexity reads over 12 (lizard) is pinned by a test and split, or the PR body says `left whole: <reason>`; the rule set and its proofs by layer are in the design-ratchet skill.
