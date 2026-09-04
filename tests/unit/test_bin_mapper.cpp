@@ -16,6 +16,7 @@ using namespace bonsai; // NOLINT
 
 constexpr auto f_nan = std::numeric_limits<float>::quiet_NaN();
 constexpr auto f_inf = std::numeric_limits<float>::infinity();
+constexpr auto f_max = std::numeric_limits<float>::max();
 
 TEST_CASE("BinMapper: small column produces one cut per distinct value plus sentinel",
           "[bin_mapper][fit]")
@@ -91,6 +92,49 @@ TEST_CASE("BinMapper: a heavy value gets its own bin and the budget survives",
     CHECK(std::ranges::adjacent_find(mapper.cuts()) == mapper.cuts().end());
     CHECK(mapper.transform(0.0F) == 0); // the heavy value sits alone
     CHECK(mapper.transform(1.0F) == 1);
+}
+
+TEST_CASE("BinMapper: the greedy walk places the same cuts on each heavy shape",
+          "[bin_mapper][fit][dup]")
+{
+    // Exact cuts, one shape per rule of the walk: a heavy value closes
+    // its own bin, a bin closes early at half size when the next value
+    // is heavy, and every closed light bin rebalances the remaining
+    // budget. The budget is 6 cuts plus closer and sentinel.
+    auto fit_cuts = [](std::vector<float> column)
+    {
+        BinMapperConfig cfg{.max_bin = 8, .n_samples = column.size()};
+        auto const      mapper = BinMapper::fit(std::span(column), cfg);
+        return std::vector<float>(mapper.cuts().begin(), mapper.cuts().end());
+    };
+    auto ramp = [](std::vector<float> column)
+    {
+        for (int v = 1; v <= 44; ++v)
+        {
+            column.push_back(static_cast<float>(v));
+        }
+        return column;
+    };
+    SECTION("heavy value first")
+    {
+        std::vector<float> const expected = {0.5F,  8.5F,  16.5F, 23.5F,
+                                             30.5F, 37.5F, f_max, f_inf};
+        CHECK(fit_cuts(ramp(std::vector<float>(50, 0.0F))) == expected);
+    }
+    SECTION("heavy value in the middle closes the bin before it early")
+    {
+        std::vector<float> const expected = {8.5F,  16.5F, 20.25F, 20.75F,
+                                             28.5F, 36.5F, f_max,  f_inf};
+        CHECK(fit_cuts(ramp(std::vector<float>(50, 20.5F))) == expected);
+    }
+    SECTION("two heavy values rebalance the light budget between them")
+    {
+        std::vector<float> column(30, 10.5F);
+        column.insert(column.end(), 30, 30.5F);
+        std::vector<float> const expected = {9.5F,   10.75F, 19.5F, 28.5F,
+                                             30.75F, 38.5F,  f_max, f_inf};
+        CHECK(fit_cuts(ramp(column)) == expected);
+    }
 }
 
 TEST_CASE("BinMapper: subsamples deterministically on a large seeded column",
