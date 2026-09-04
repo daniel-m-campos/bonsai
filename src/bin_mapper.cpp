@@ -46,53 +46,73 @@ std::vector<float> create_subsample(floats_view column, BinMapperConfig const &c
     return subsample;
 }
 
+void push_if_above_last(std::vector<float> &out, float v)
+{
+    if (out.empty() || out.back() < v)
+    {
+        out.push_back(v);
+    }
+}
+
+struct HeavyMarks
+{
+    std::vector<bool> is_heavy;
+    size_t            n_heavy   = 0;
+    size_t            heavy_sum = 0;
+};
+
+HeavyMarks mark_heavy_values(std::vector<size_t> const &counts, double mean_bin)
+{
+    HeavyMarks marks{std::vector<bool>(counts.size())};
+    for (size_t i = 0; i < counts.size(); ++i)
+    {
+        if (static_cast<double>(counts[i]) < mean_bin)
+        {
+            continue;
+        }
+        marks.is_heavy[i] = true;
+        ++marks.n_heavy;
+        marks.heavy_sum += counts[i];
+    }
+    return marks;
+}
+
+bool closes_a_bin(bool heavy, bool next_heavy, size_t in_bin, double bin_size)
+{
+    auto const filled = static_cast<double>(in_bin);
+    return heavy || filled >= bin_size || (next_heavy && filled >= bin_size / 2.0);
+}
+
 std::vector<float> greedy_weighted_cuts(std::vector<float> const  &vals,
                                         std::vector<size_t> const &counts,
                                         size_t n_samples, size_t cut_budget,
                                         double mean_bin)
 {
     std::vector<float> cuts;
-    size_t const       n_groups = cut_budget + 1;
-    std::vector<bool>  is_big(vals.size());
-    size_t             n_big   = 0;
-    size_t             big_sum = 0;
-    for (size_t i = 0; i < vals.size(); ++i)
-    {
-        if (static_cast<double>(counts[i]) >= mean_bin)
-        {
-            is_big[i] = true;
-            ++n_big;
-            big_sum += counts[i];
-        }
-    }
-    size_t rest_sum    = n_samples - big_sum;
-    size_t rest_groups = n_groups - n_big;
-    double bin_size    = rest_groups != 0U ? static_cast<double>(rest_sum) /
+    auto const [is_heavy, n_heavy, heavy_sum] = mark_heavy_values(counts, mean_bin);
+    size_t rest_sum                           = n_samples - heavy_sum;
+    size_t rest_groups                        = cut_budget + 1 - n_heavy;
+    double bin_size = rest_groups != 0U ? static_cast<double>(rest_sum) /
                                               static_cast<double>(rest_groups)
-                                           : mean_bin;
-    size_t in_bin      = 0;
+                                        : mean_bin;
+    size_t in_bin   = 0;
     for (size_t i = 0; i + 1 < vals.size() && cuts.size() < cut_budget; ++i)
     {
-        if (!is_big[i])
+        if (!is_heavy[i])
         {
             rest_sum -= counts[i];
         }
         in_bin += counts[i];
-        if (is_big[i] || static_cast<double>(in_bin) >= bin_size ||
-            (is_big[i + 1] && static_cast<double>(in_bin) >= bin_size / 2.0))
+        if (!closes_a_bin(is_heavy[i], is_heavy[i + 1], in_bin, bin_size))
         {
-            float const mid = std::midpoint(vals[i], vals[i + 1]);
-            if (cuts.empty() || cuts.back() < mid)
-            {
-                cuts.push_back(mid);
-            }
-            in_bin = 0;
-            if (!is_big[i] && rest_groups > 1)
-            {
-                --rest_groups;
-                bin_size =
-                    static_cast<double>(rest_sum) / static_cast<double>(rest_groups);
-            }
+            continue;
+        }
+        push_if_above_last(cuts, std::midpoint(vals[i], vals[i + 1]));
+        in_bin = 0;
+        if (!is_heavy[i] && rest_groups > 1)
+        {
+            --rest_groups;
+            bin_size = static_cast<double>(rest_sum) / static_cast<double>(rest_groups);
         }
     }
     return cuts;
@@ -187,17 +207,10 @@ std::vector<float> create_cuts(std::vector<float> &subsample, size_t cut_budget)
             std::max((subsample.size() + cut_budget) / (cut_budget + 1), 1UL);
         for (size_t k = step; k < subsample.size(); k += step)
         {
-            float const v = subsample[k];
-            if (cuts.empty() || cuts.back() < v)
-            {
-                cuts.push_back(v);
-            }
+            push_if_above_last(cuts, subsample[k]);
         }
     }
-    if (cuts.empty() || cuts.back() < std::numeric_limits<float>::max())
-    {
-        cuts.push_back(std::numeric_limits<float>::max());
-    }
+    push_if_above_last(cuts, std::numeric_limits<float>::max());
     cuts.push_back(std::numeric_limits<float>::infinity());
     return cuts;
 }
