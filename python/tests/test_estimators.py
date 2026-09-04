@@ -77,6 +77,36 @@ def test_sample_weight_length_mismatch_raises():
         assert "sample_weight" in str(e.value)
 
 
+def _monotone_sweep_violation(objective, grower):
+    """Worst downward step of a +1-constrained fit along a sweep of feature 0."""
+    rng = np.random.default_rng(7)
+    n, p = 2000, 4
+    X = rng.standard_normal((n, p)).astype(np.float32)
+    y = (np.sin(X[:, 0]) + 0.5 * X[:, 1] * X[:, 2] + rng.standard_normal(n)).astype(np.float32)
+    reg = bonsai.BonsaiRegressor(
+        objective=objective,
+        grower=grower,
+        n_iters=60,
+        learning_rate=0.1,
+        max_depth=5,
+        device="cpu",
+        params={"tree.monotone_constraints": [1, 0, 0, 0]},
+    )
+    reg.fit(X, y)
+    grid = np.tile(np.median(X, axis=0), (200, 1)).astype(np.float32)
+    grid[:, 0] = np.linspace(X[:, 0].min(), X[:, 0].max(), 200)
+    return float(np.max(-np.diff(reg.predict(grid)), initial=0.0))
+
+
+@pytest.mark.parametrize("grower", ["depthwise", "leafwise"])
+@pytest.mark.parametrize("objective", ["mse", "mae", "huber", "quantile"])
+def test_monotone_constraint_survives_leaf_renewal(objective, grower):
+    """The renewing objectives (mae, huber, quantile) replace every leaf after
+    growth; the constraint must hold on the finished model, not only on the
+    Newton leaves the grower fenced. mse never renews and is the control."""
+    assert _monotone_sweep_violation(objective, grower) == 0.0
+
+
 def test_early_stopping_stops():
     Xtr, ytr = load_csv(TRAIN_CSV)
     m = bonsai.BonsaiRegressor(
