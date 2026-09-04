@@ -30,7 +30,7 @@ Each metric is one sentence of the house style, so each rise has one question:
 
 ## Scope: the diff, not the tree
 
-Four ratchet rounds settled what this skill is for. `clone_windows` fell from 431 to 127 across PRs #448 to #459 and then moved by 3 in a round; the last two rounds ran on cyclomatic complexity in `scripts/`, which the lint does not scan, so the scoreboard read flat by construction. The instrument is at its floor as a target and stays useful as a question about a diff. So the skill runs per PR, on the code the diff touches, and a standalone round is a sweep with a reason (a new instrument, a new blind spot), not a cadence.
+Four ratchet rounds settled what this skill is for. `clone_windows` fell from 431 to 127 across PRs #448 to #459 and then moved by 3 in a round; the last two rounds ran on cyclomatic complexity in `scripts/`, which the lint did not scan at the time, so the scoreboard read flat by construction. The instrument is at its floor as a target and stays useful as a question about a diff. So the skill runs per PR, on the code the diff touches, and a standalone round is a sweep with a reason (a new instrument, a new blind spot), not a cadence.
 
 | trigger | rule | proof |
 |---|---|---|

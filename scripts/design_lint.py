@@ -72,7 +72,7 @@ from typing import Final
 
 ROOT: Final = pathlib.Path(__file__).resolve().parents[1]
 BASELINE: Final = ROOT / "scripts" / "design_baseline.json"
-PRODUCTION: Final = ("include", "src", "python/bonsai")
+PRODUCTION: Final = ("include", "src", "python/bonsai", "scripts")
 SUFFIXES: Final = (".cpp", ".hpp", ".cu", ".cuh", ".py")
 GENERATED: Final = ("_params.py", "_version.py")
 WINDOW: Final = 6
