@@ -923,6 +923,19 @@ def _verdict(ab_path: pathlib.Path) -> str:
         return ""
     rows = [json.loads(ln) for ln in ab_path.read_text().splitlines()
             if ln.strip()]
+    med = _ab_samples(rows)
+    lines = ["| cell | grower | old | new | delta | old RSS | new RSS | "
+             "RSS delta |", "|---|---|--:|--:|--:|--:|--:|--:|"]
+    for cell in sorted({(r["rows"], r["cols"], r["grower"]) for r in rows}):
+        cells, moved = _ab_cells(med, cell)
+        cells[-1] += " **moved**" if moved else ""
+        rw, c, g = cell
+        lines.append(f"| {rw}x{c} | {g} | " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def _ab_samples(rows: list[dict]) -> dict:
+    """Every reported value, keyed by cell, grower, arm, and metric."""
     med: dict[tuple, list[float]] = {}
     for r in rows:
         for metric in ("fit_s", "peak_rss_gb"):
@@ -930,24 +943,24 @@ def _verdict(ab_path: pathlib.Path) -> str:
                 continue
             med.setdefault((r["rows"], r["cols"], r["grower"], r["arm"],
                             metric), []).append(r[metric])
-    lines = ["| cell | grower | old | new | delta | old RSS | new RSS | "
-             "RSS delta |", "|---|---|--:|--:|--:|--:|--:|--:|"]
-    for (rw, c, g) in sorted({(r["rows"], r["cols"], r["grower"])
-                              for r in rows}):
-        cells, moved = [], False
-        for metric, unit in (("fit_s", "s"), ("peak_rss_gb", "GB")):
-            old = med.get((rw, c, g, "old", metric))
-            new = med.get((rw, c, g, "new", metric))
-            if not old or not new:
-                cells += ["n/a", "n/a", "n/a"]
-                continue
-            o, n = statistics.median(old), statistics.median(new)
-            d = 100 * (n - o) / o
-            moved = moved or abs(d) > 5
-            cells += [f"{o:.2f}{unit}", f"{n:.2f}{unit}", f"{d:+.1f}%"]
-        cells[-1] += " **moved**" if moved else ""
-        lines.append(f"| {rw}x{c} | {g} | " + " | ".join(cells) + " |")
-    return "\n".join(lines)
+    return med
+
+
+def _ab_cells(med: dict, cell: tuple) -> tuple[list[str], bool]:
+    """One cell's old, new, and delta columns per metric, and whether it moved."""
+    rw, c, g = cell
+    cells, moved = [], False
+    for metric, unit in (("fit_s", "s"), ("peak_rss_gb", "GB")):
+        old = med.get((rw, c, g, "old", metric))
+        new = med.get((rw, c, g, "new", metric))
+        if not old or not new:
+            cells += ["n/a", "n/a", "n/a"]
+            continue
+        o, n = statistics.median(old), statistics.median(new)
+        d = 100 * (n - o) / o
+        moved = moved or abs(d) > 5
+        cells += [f"{o:.2f}{unit}", f"{n:.2f}{unit}", f"{d:+.1f}%"]
+    return cells, moved
 
 
 if __name__ == "__main__":
