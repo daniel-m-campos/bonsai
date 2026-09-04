@@ -34,6 +34,16 @@ float quantile_of(floats_view values, float alpha)
     return quantile_in_place(v, alpha);
 }
 
+template <typename PairLoss>
+float mean_pair_loss(floats_view preds, floats_view targets, PairLoss loss)
+{
+    assert(preds.size() == targets.size());
+    assert(!preds.empty());
+    float const sum = std::transform_reduce(preds.begin(), preds.end(), targets.begin(),
+                                            0.0F, std::plus<>(), loss);
+    return sum / static_cast<float>(preds.size());
+}
+
 } // namespace
 
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
@@ -56,18 +66,12 @@ void MSEObjective::compute(floats_view preds, floats_view targets, floats_out gr
 auto MSEObjective::eval(floats_view preds, floats_view targets)
     -> floats_view::value_type
 {
-    assert(preds.size() == targets.size());
-    assert(!preds.empty());
-    auto const  n                 = static_cast<float>(preds.size());
-    float const sum_squared_error = std::transform_reduce(
-        preds.begin(), preds.end(), targets.begin(), 0.0F, std::plus<>(),
-        [](auto const p, auto const t)
-        {
-            double const diff = p - t;
-            return diff * diff;
-        });
-
-    return sum_squared_error / n;
+    return mean_pair_loss(preds, targets,
+                          [](auto const p, auto const t)
+                          {
+                              double const diff = p - t;
+                              return diff * diff;
+                          });
 }
 
 auto MSEObjective::init_score(floats_view targets) -> floats_view::value_type
@@ -98,19 +102,13 @@ void LogLossObjective::compute(floats_view scores, floats_view labels, floats_ou
 
 float LogLossObjective::eval(floats_view scores, floats_view labels)
 {
-    assert(scores.size() == labels.size());
-    assert(!scores.empty());
-
-    auto const  n            = static_cast<float>(scores.size());
-    float const sum_log_loss = std::transform_reduce(
-        scores.begin(), scores.end(), labels.begin(), 0.0F, std::plus<>(),
-        [](auto const score, auto const y)
-        {
-            float const ax = std::abs(score);
-            return std::max(0.0F, score) + std::log1p(std::exp(-ax)) - (y * score);
-        });
-
-    return sum_log_loss / n;
+    return mean_pair_loss(scores, labels,
+                          [](auto const score, auto const y)
+                          {
+                              float const ax = std::abs(score);
+                              return std::max(0.0F, score) + std::log1p(std::exp(-ax)) -
+                                     (y * score);
+                          });
 }
 
 auto LogLossObjective::init_score(floats_view labels) -> floats_view::value_type
@@ -140,12 +138,8 @@ void MAEObjective::compute(floats_view preds, floats_view targets, floats_out gr
 auto MAEObjective::eval(floats_view preds, floats_view targets)
     -> floats_view::value_type
 {
-    assert(preds.size() == targets.size());
-    assert(!preds.empty());
-    float const sum = std::transform_reduce(
-        preds.begin(), preds.end(), targets.begin(), 0.0F, std::plus<>(),
-        [](auto const p, auto const t) { return std::abs(p - t); });
-    return sum / static_cast<float>(preds.size());
+    return mean_pair_loss(preds, targets,
+                          [](auto const p, auto const t) { return std::abs(p - t); });
 }
 
 auto MAEObjective::init_score(floats_view targets) -> floats_view::value_type
@@ -177,17 +171,13 @@ void HuberObjective::compute(floats_view preds, floats_view targets, floats_out 
 auto HuberObjective::eval(floats_view preds, floats_view targets) const
     -> floats_view::value_type
 {
-    assert(preds.size() == targets.size());
-    assert(!preds.empty());
-    float const d   = delta_;
-    float const sum = std::transform_reduce(
-        preds.begin(), preds.end(), targets.begin(), 0.0F, std::plus<>(),
-        [d](auto const p, auto const t)
-        {
-            float const a = std::abs(p - t);
-            return a <= d ? 0.5F * a * a : d * (a - (0.5F * d));
-        });
-    return sum / static_cast<float>(preds.size());
+    float const d = delta_;
+    return mean_pair_loss(preds, targets,
+                          [d](auto const p, auto const t)
+                          {
+                              float const a = std::abs(p - t);
+                              return a <= d ? 0.5F * a * a : d * (a - (0.5F * d));
+                          });
 }
 
 auto HuberObjective::init_score(floats_view targets) -> floats_view::value_type
@@ -224,14 +214,9 @@ void QuantileObjective::compute(floats_view preds, floats_view targets, floats_o
 auto QuantileObjective::eval(floats_view preds, floats_view targets) const
     -> floats_view::value_type
 {
-    assert(preds.size() == targets.size());
-    assert(!preds.empty());
     float const a = alpha_;
-    float const sum =
-        std::transform_reduce(preds.begin(), preds.end(), targets.begin(), 0.0F,
-                              std::plus<>(), [a](auto const p, auto const t)
-                              { return t >= p ? a * (t - p) : (1.0F - a) * (p - t); });
-    return sum / static_cast<float>(preds.size());
+    return mean_pair_loss(preds, targets, [a](auto const p, auto const t)
+                          { return t >= p ? a * (t - p) : (1.0F - a) * (p - t); });
 }
 
 auto QuantileObjective::init_score(floats_view targets) const -> floats_view::value_type
