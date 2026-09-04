@@ -353,6 +353,29 @@ def test_predict_rejects_names_that_disagree():
         est.predict(_Frame(X, list(reversed(NAMES))))
 
 
+def test_predict_names_the_disagreement_it_found():
+    """One sentence per kind of disagreement: only the unseen names, only the
+    missing names, or both in that order, and the order remark only when the
+    sets agree."""
+    X, y = _reg_data()
+    est = bonsai.BonsaiRegressor(n_iters=10, max_depth=4).fit(_Frame(X, NAMES), y)
+    prefix = "The feature names should match those that were passed during fit."
+    with pytest.raises(ValueError) as unseen_only:
+        est.predict(_Frame(np.hstack([X, X[:, :1]]), [*NAMES, "salary"]))
+    assert str(unseen_only.value) == prefix + " Unseen at fit time: ['salary']."
+    with pytest.raises(ValueError) as missing_only:
+        est.predict(_Frame(X[:, :5], NAMES[:5]))
+    assert str(missing_only.value) == prefix + " Seen at fit time, now missing: ['spend']."
+    with pytest.raises(ValueError) as both:
+        est.predict(_Frame(X, [*NAMES[:5], "salary"]))
+    assert str(both.value) == (
+        prefix + " Unseen at fit time: ['salary']. Seen at fit time, now missing: ['spend']."
+    )
+    with pytest.raises(ValueError) as reordered:
+        est.predict(_Frame(X, list(reversed(NAMES))))
+    assert str(reordered.value) == prefix + " The same names arrived in a different order."
+
+
 def test_predict_on_a_dataset_reads_its_names(recwarn):
     """A Dataset names every column, so it must not read as unnamed; its
     synthesized f0..fN must not read as named either."""
