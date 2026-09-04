@@ -985,10 +985,8 @@ class Booster final : public Ensemble<Gr, Sa>
         auto                    &prof = detail::FitProfiler::instance();
         detail::FitProfiler::Lap lap;
 
-        // Leaf renewal (surrogate-hessian objectives): replace each leaf's
-        // Newton step with the objective's optimal value over the residuals
-        // of the rows it covers. scores_ still exclude this tree (and, under
-        // DART, the dropped trees), exactly the state gradients used.
+        // scores_ still exclude this tree (and, under DART, the dropped
+        // trees): renewal sees exactly the state the gradients were taken in.
         if constexpr (requires(std::span<float> r) { objective_.renew_leaf(r); })
         {
             renew_leaves(tree, leaf_ids, leaf_bounds, leaf_values, train.labels(),
@@ -1175,11 +1173,11 @@ class Booster final : public Ensemble<Gr, Sa>
                                  });
     }
 
-    // Each leaf's value is replaced by the objective's optimum over the
-    // residuals of the rows it covers. The rows are the fit's, which for a
-    // view is the view's: rows outside it were never carried through this tree
-    // and their leaf id names a leaf they do not belong to. The identity view
-    // is every row, so a plain or sampled fit renews exactly as before.
+    // Each leaf's value becomes the objective's optimum over the residuals of
+    // the rows it covers, clamped into leaf_bounds[leaf] when the grower left
+    // a fence. The rows are the fit's, which for a view is the view's: a row
+    // outside it was never carried through this tree, so its leaf id names a
+    // leaf it does not belong to. The identity view is every row.
     void renew_leaves(tree_type &tree, std::vector<node_id_t> const &leaf_ids,
                       std::vector<LeafBounds> const &leaf_bounds,
                       train_leaf_values &leaf_values, floats_view labels,
