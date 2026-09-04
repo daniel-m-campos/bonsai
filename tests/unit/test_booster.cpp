@@ -461,9 +461,11 @@ TEMPLATE_TEST_CASE("Booster: leaf renewal keeps a monotone constraint",
 {
     // Eight rows on one feature, one split, lr = 1. init = 3, so the split at
     // x < 2 leaves residuals {1, -2} on the left (gradient sum 0, Newton leaf
-    // 0) and {1, 0, 0, 0, 1, 0} on the right (gradient sum -2, Newton leaf
-    // 2/7): ordered, so the split passes the +1 veto. The renewed values are
-    // not ordered: medians 1 > 0, Huber means 0.5 > 1/3, quantiles 1 > 0.
+    // 0) and {1, 0, 0, 0, 1, 0} on the right (gradient sum -2 for MAE and
+    // Huber, -3 for the quantile, whose tie rule charges a zero residual as
+    // -alpha; Newton leaf 2/7 or 3/7): ordered, so the split passes the +1
+    // veto. The renewed values are not ordered: medians 1 > 0, Huber means
+    // 0.5 > 1/3, quantiles 1 > 0.
     detail::ColumnBatch batch{
         .features      = {{0.0F, 1.0F, 2.0F, 3.0F, 4.0F, 5.0F, 6.0F, 7.0F}},
         .labels        = {4.0F, 1.0F, 4.0F, 3.0F, 3.0F, 3.0F, 4.0F, 3.0F},
