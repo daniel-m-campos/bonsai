@@ -191,8 +191,33 @@ def test_double_slash_inside_a_string_is_not_a_comment(tmp_path):
     assert comment_lint.block_findings(path) == []
 
 
-def test_a_quote_on_the_line_hides_a_trailing_comment(tmp_path):
-    """Current behavior: any quote suppresses the trailing-comment check."""
+def test_a_trailing_comment_past_a_string_is_a_finding(tmp_path):
+    """A literal earlier on the line does not hide the comment after it."""
     path = _source(tmp_path, "src/other/a.cpp",
                    'const char* s = "a";  // this explains the string\n')
-    assert comment_lint.block_findings(path) == []
+    assert comment_lint.block_findings(path) == [
+        (1, "// this explains the string"),
+    ]
+
+
+def test_slashes_inside_literals_are_not_comments(tmp_path):
+    """Quotes, escapes, and raw strings all keep their slashes."""
+    path = _source(tmp_path, "src/other/a.cpp",
+                   "char c = '\"'; int a = 1; // after a char literal\n"
+                   'auto s = "esc \\" // still inside"; int b = 2;\n'
+                   'auto r = R"(a "quoted" http://x)"; int d = 3;\n'
+                   "char q = '//'; int e = 4;\n")
+    assert comment_lint.block_findings(path) == [
+        (1, "// after a char literal"),
+    ]
+
+
+def test_ffi_needs_src_directly_over_python(tmp_path):
+    """A python component elsewhere in the path does not admit the tag."""
+    path = _source(tmp_path, "python/src/a.cpp",
+                   "// ffi: the capsule owns the buffer past the call\n"
+                   "void* capsule_ptr;\n")
+    assert comment_lint.block_findings(path) == [
+        (1, "ffi: only src/python/ may carry this tag:"
+            " // ffi: the capsule owns the buffer past the call"),
+    ]

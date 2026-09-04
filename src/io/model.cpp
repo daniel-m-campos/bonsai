@@ -344,7 +344,7 @@ template <typename B> bool try_save_as(IBooster const &booster, json &out)
     }
     if constexpr (requires { concrete->init_scores(); })
     {
-        out["init_scores"] = concrete->init_scores(); // multiclass
+        out["init_scores"] = concrete->init_scores();
     }
     else
     {

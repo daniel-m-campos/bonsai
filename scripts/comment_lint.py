@@ -150,13 +150,19 @@ def _tag_violation(
             return None
         return ("sync: names no construct this file"
                 f" uses: {first[:56]}")
-    if "python" not in path.parts:
+    if not _under_src_python(path):
         return ("ffi: only src/python/ may carry"
                 f" this tag: {first[:56]}")
     if _names(block, code_text, FFI_VOCAB):
         return None
     return ("ffi: names no boundary construct"
             f" this file uses: {first[:56]}")
+
+
+def _under_src_python(path: pathlib.Path) -> bool:
+    """True when a src/ directory is immediately followed by python/."""
+    parts = path.parts
+    return any(a == "src" and b == "python" for a, b in zip(parts, parts[1:]))
 
 
 def _names(block: list[str], code_text: str, vocab: tuple[str, ...]) -> bool:
@@ -170,9 +176,12 @@ def _names(block: list[str], code_text: str, vocab: tuple[str, ...]) -> bool:
 
 
 def _trailing_findings(raw: str, index: int) -> list[tuple[int, str]]:
-    """Judge a comment sharing its line with code, quotes excepted."""
-    code, sep, trail = raw.partition("//")
-    if not sep or not code.strip() or '"' in code or "'" in code:
+    """Judge a comment sharing its line with code, literals excepted."""
+    split = _split_at_comment(raw)
+    if split is None:
+        return []
+    code, trail = split
+    if not code.strip():
         return []
     if trail.strip().startswith(("perf:", "sync:", "ffi:")):
         return []
@@ -180,6 +189,30 @@ def _trailing_findings(raw: str, index: int) -> list[tuple[int, str]]:
     if STRUCTURAL.search(comment):
         return []
     return [(index + 1, comment[:80])]
+
+
+def _split_at_comment(raw: str) -> tuple[str, str] | None:
+    """Split a line at the first // outside a string or character literal."""
+    quote: str | None = None
+    i = 0
+    while i < len(raw):
+        c = raw[i]
+        if quote:
+            if c == "\\":
+                i += 1
+            elif c == quote:
+                quote = None
+        elif raw.startswith('R"(', i):
+            i = raw.find(')"', i + 3)
+            if i < 0:
+                return None
+            i += 1
+        elif c in "\"'":
+            quote = c
+        elif raw.startswith("//", i):
+            return raw[:i], raw[i + 2:]
+        i += 1
+    return None
 
 
 def main() -> int:
