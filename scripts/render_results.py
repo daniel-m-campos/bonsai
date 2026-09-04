@@ -1083,10 +1083,10 @@ def render_pages() -> dict[pathlib.Path, str]:
 
 
 def check_registry(consumed_files: set[str]) -> list[str]:
-    """Standings registry invariants (decision 92): each registered file
-    exists, is rendered, and its rows carry exactly the registered sha
-    (sha_partial entries tolerate provenance-less rows, never a WRONG sha).
-    An axis's companion evidence file, if it has one, is held to the same
+    """Standings registry invariants: each registered file exists, is
+    rendered, and its rows carry exactly the registered sha (sha_partial
+    entries tolerate provenance-less rows, never a WRONG sha). An axis's
+    companion evidence file, if it has one, is held to the same
     exists-and-is-rendered rule.
 
     An axis whose `file` is null has never been measured (registry v2's
@@ -1099,27 +1099,41 @@ def check_registry(consumed_files: set[str]) -> list[str]:
     for axis, e in reg.items():
         if not e.get("file"):
             continue
-        for kind, name in (("", e["file"]), ("companion ", e.get("companion"))):
-            if not name:
-                continue
-            if not (RESULTS / name).exists():
-                errors.append(f"standings {axis}: {kind}{name} does not exist")
-            elif name not in consumed_files:
-                errors.append(f"standings {axis}: {kind}{name} is not rendered")
-        if not (RESULTS / e["file"]).exists() or not e.get("sha"):
-            continue
-        rows = [json.loads(ln)
-                for ln in (RESULTS / e["file"]).read_text().splitlines()
-                if ln.strip()]
-        shas = {r.get(K.GIT_SHA) for r in rows}
-        wrong = {s for s in shas if s and not s.startswith(e["sha"])
-                 and not e["sha"].startswith(s)}
-        if wrong:
-            errors.append(f"standings {axis}: rows carry {sorted(wrong)}, "
-                          f"registry says {e['sha']}")
-        if None in shas and not e.get("sha_partial"):
-            errors.append(f"standings {axis}: rows without git_sha in a "
-                          "full-provenance standings file")
+        errors += _registered_file_findings(axis, "", e["file"], consumed_files)
+        errors += _registered_file_findings(
+            axis, "companion ", e.get("companion"), consumed_files)
+        if (RESULTS / e["file"]).exists() and e.get("sha"):
+            errors += _row_sha_findings(axis, e, RESULTS / e["file"])
+    return errors
+
+
+def _registered_file_findings(axis: str, kind: str, name: str | None,
+                              consumed_files: set[str]) -> list[str]:
+    """The exists-and-is-rendered rule for one registered file."""
+    if not name:
+        return []
+    if not (RESULTS / name).exists():
+        return [f"standings {axis}: {kind}{name} does not exist"]
+    if name not in consumed_files:
+        return [f"standings {axis}: {kind}{name} is not rendered"]
+    return []
+
+
+def _row_sha_findings(axis: str, entry: dict, path: pathlib.Path) -> list[str]:
+    """Rows must carry the registered sha, or a prefix of it either way."""
+    rows = [json.loads(ln) for ln in path.read_text().splitlines()
+            if ln.strip()]
+    shas = {r.get(K.GIT_SHA) for r in rows}
+    sha = entry["sha"]
+    wrong = {s for s in shas
+             if s and not s.startswith(sha) and not sha.startswith(s)}
+    errors = []
+    if wrong:
+        errors.append(f"standings {axis}: rows carry {sorted(wrong)}, "
+                      f"registry says {sha}")
+    if None in shas and not entry.get("sha_partial"):
+        errors.append(f"standings {axis}: rows without git_sha in a "
+                      "full-provenance standings file")
     return errors
 
 
