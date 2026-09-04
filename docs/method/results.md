@@ -6,7 +6,7 @@ Every results file behind a published claim is rendered across the pages below, 
 
 ## Perf division
 
-On GPU at the tall scenario, fit totals run depthwise 5.0s vs XGBoost 31.5s; leafwise 7.5s vs LightGBM 25.8s; levelwise 4.9s vs CatBoost 16.9s. On CPU at the tall scenario: depthwise 11.2s vs XGBoost 11.0s (tie); leafwise 12.4s vs LightGBM 14.6s; levelwise 9.5s vs CatBoost 10.1s (tie). The wide and extreme scenarios, the host and device memory columns, and the early-stopping axis are on the panels page.
+On GPU at the tall scenario, fit totals run depthwise 4.8s vs XGBoost 30.8s; leafwise 7.2s vs LightGBM 24.6s; levelwise 4.8s vs CatBoost 16.8s. On CPU at the tall scenario: depthwise 11.2s vs XGBoost 9.9s; leafwise 12.0s vs LightGBM 13.5s; levelwise 10.5s vs CatBoost 9.5s. The wide and extreme scenarios, the host and device memory columns, and the early-stopping axis are on the panels page.
 
 | page | what it holds |
 |---|---|
