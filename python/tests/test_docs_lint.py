@@ -65,12 +65,15 @@ def test_lib_casing_fires_in_prose_only(tmp_path, monkeypatch):
         "The call xgboost.train returns.",
         "",
         "Also lightgbm and catboost lag.",
+        "",
+        "The page use/from-xgboost is a path, from-xgboost alone is not.",
     ]) + "\n"
     hard, soft = _lint(tmp_path, monkeypatch, "libs.md", body)
     assert hard == [
         ("libs.md", 1, "lib-casing", '"xgboost" in prose; write "XGBoost"'),
         ("libs.md", 11, "lib-casing", '"lightgbm" in prose; write "LightGBM"'),
         ("libs.md", 11, "lib-casing", '"catboost" in prose; write "CatBoost"'),
+        ("libs.md", 13, "lib-casing", '"xgboost" in prose; write "XGBoost"'),
     ]
     assert soft == []
 
