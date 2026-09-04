@@ -375,91 +375,24 @@ def supersede(args: argparse.Namespace) -> int:
     """
     src = pathlib.Path(args.results_dir)
     axes = [a.strip() for a in args.axes.split(",")]
-    parity_path = src / "parity.jsonl"
-    # The pod takes parity rows only when the session measures the axis they
-    # anchor, so for any other session absence is the expected state rather
-    # than a lost file. A parity.jsonl that is there anyway is still read.
-    anchored = PARITY_AXIS in axes
-    if not anchored:
-        print("Parity not expected: these axes do not include "
-              f"{PARITY_AXIS}, which the parity rows anchor.")
-    parity, parity_ok = _parity(parity_path,
-                                allow_absent=args.no_parity or not anchored)
-    print(parity)
-    if not parity_ok:
-        if not parity_path.exists():
-            print("ERROR: no parity.jsonl in this results dir; absence "
-                  "means the check never ran (a lost scp, a pod that died "
-                  "before the parity phase), which is exactly the failure "
-                  "mode the gate exists to catch. Pass --no-parity to "
-                  "proceed deliberately without parity evidence.",
-                  file=sys.stderr)
-        else:
-            print("ERROR: fused/two-step parity failed; the ingest/train "
-                  "split in these rows is not trustworthy. Fix the "
-                  "runner's device hint and re-measure.", file=sys.stderr)
+    parity = _cleared_parity(src / "parity.jsonl", axes,
+                             no_parity=args.no_parity)
+    if parity is None:
         return 1
-    files = {}
-    for axis in axes:
-        got = sorted(src.glob(f"{axis}-*.jsonl"))
-        if not got:
-            print(f"ERROR: no {axis}-*.jsonl in {src}",
-                  file=sys.stderr)
-            return 1
-        files[axis] = got[-1].name
-        shutil.copy2(got[-1], RESULTS / got[-1].name)
-    companion = _copy_parity(parity_path, files.get(PARITY_AXIS))
-    for axis in axes:
-        cmd = [sys.executable, "scripts/update_standings.py",
-               "--axis", axis, "--file", files[axis]]
-        if axis == PARITY_AXIS and companion:
-            cmd += ["--companion", companion]
-        subprocess.run(cmd, check=True, cwd=REPO)
-    # Stage supersessions BEFORE rendering: the committed-files gate reads
-    # git ls-files, and a month-rollover refresh deletes the old dated files.
-    subprocess.run(["git", "add", "-A", "benchmarks/"], check=True, cwd=REPO)
-    subprocess.run([sys.executable, "scripts/render_results.py"],
-                   check=True, cwd=REPO)
+    files = _stage_axis_files(src, axes)
+    if files is None:
+        return 1
+    _restamp_and_render(axes, files, _copy_parity(src / "parity.jsonl",
+                                                  files.get(PARITY_AXIS)))
     verdict = _verdict(src / "ab.jsonl")
     print(verdict or "A/B skipped (no ab.jsonl)")
 
-    cpu_axes = [a for a in axes if a.startswith(CPU_PREFIX)]
-    cpu_hosts = sorted({_row_host(RESULTS / files[a]) for a in cpu_axes})
-    hosts_note = ("" if not cpu_axes else
-                  f"\n\nCPU axes ({', '.join(cpu_axes)}) were measured on "
-                  f"{', '.join(h for h in cpu_hosts if h)} (issue #355). "
-                  "Every row carries its own host block, so the registry "
-                  "records which machine and which ceiling stands behind "
-                  "each axis.")
-    branch = f"standings-refresh-{time.strftime('%Y%m%d')}"
-    subprocess.run(["git", "checkout", "-b", branch], check=True, cwd=REPO)
-    subprocess.run(["git", "add", "-A", "benchmarks/", "docs/method/",
-                    "README.md"], check=True, cwd=REPO)
-    axes_label = ",".join(axes)
-    title = _refresh_title(axes)
-    subprocess.run(["git", "commit", "-m",
-                    f"{title}\n\n"
-                    f"Axes: {axes_label}. Same-pod refresh via "
-                    "scripts/standings_refresh.py "
-                    "(decision 96); superseded files deleted, registry "
-                    "updated, ledger and README regenerated." + hosts_note],
-                   check=True, cwd=REPO)
+    hosts_note = _cpu_hosts_note(axes, files)
+    branch = _commit_refresh(axes, hosts_note)
     if args.no_pr:
         print(f"committed on {branch}; push and open the PR when ready")
         return 0
-    subprocess.run(["git", "push", "-u", "origin", branch], check=True, cwd=REPO)
-    body = (f"Standings refresh of {axes_label} via "
-            f"`scripts/standings_refresh.py` "
-            f"(decision 96).{hosts_note}\n\nIngest/train parity (bonsai's "
-            f"fused call vs the two-step Dataset form, same pod, interleaved, "
-            f"+-{PARITY_BAND_PCT}% band):\n\n{parity}\n\n"
-            f"A/B verdict (previous release wheel vs HEAD, "
-            f"same pod, interleaved, +-5% band):\n\n"
-            f"{verdict or 'A/B skipped.'}\n\nA **moved** verdict requires a "
-            f"`Standings:`-tagged decision entry before merge; the docs-check "
-            f"gate enforces it.")
-    subprocess.run(["gh", "pr", "create", "--base", "main", "--title",
-                    title, "--body", body], check=True, cwd=REPO)
+    _open_refresh_pr(axes, branch, parity, verdict, hosts_note)
     return 0
 
 
@@ -577,6 +510,115 @@ def _copy_parity(path: pathlib.Path, axis_file: str | None) -> str | None:
     shutil.copy2(path, RESULTS / name)
     return name
 
+
+def _cleared_parity(path: pathlib.Path, axes: list[str], *,
+                    no_parity: bool) -> str | None:
+    """The parity table these results carry, or None when the gate refuses."""
+    # The pod takes parity rows only when the session measures the axis they
+    # anchor, so for any other session absence is the expected state rather
+    # than a lost file. A parity.jsonl that is there anyway is still read.
+    anchored = PARITY_AXIS in axes
+    if not anchored:
+        print("Parity not expected: these axes do not include "
+              f"{PARITY_AXIS}, which the parity rows anchor.")
+    table, ok = _parity(path, allow_absent=no_parity or not anchored)
+    print(table)
+    if ok:
+        return table
+    if not path.exists():
+        print("ERROR: no parity.jsonl in this results dir; absence "
+              "means the check never ran (a lost scp, a pod that died "
+              "before the parity phase), which is exactly the failure "
+              "mode the gate exists to catch. Pass --no-parity to "
+              "proceed deliberately without parity evidence.",
+              file=sys.stderr)
+    else:
+        print("ERROR: fused/two-step parity failed; the ingest/train "
+              "split in these rows is not trustworthy. Fix the "
+              "runner's device hint and re-measure.", file=sys.stderr)
+    return None
+
+
+def _stage_axis_files(src: pathlib.Path, axes: list[str]) -> dict | None:
+    """Copy each axis's newest results file in, or None if one never arrived."""
+    files = {}
+    for axis in axes:
+        got = sorted(src.glob(f"{axis}-*.jsonl"))
+        if not got:
+            print(f"ERROR: no {axis}-*.jsonl in {src}", file=sys.stderr)
+            return None
+        files[axis] = got[-1].name
+        shutil.copy2(got[-1], RESULTS / got[-1].name)
+    return files
+
+
+def _restamp_and_render(axes: list[str], files: dict,
+                        companion: str | None) -> None:
+    """Move every axis's stamp onto its new file, then regenerate the pages."""
+    for axis in axes:
+        cmd = [sys.executable, "scripts/update_standings.py",
+               "--axis", axis, "--file", files[axis]]
+        if axis == PARITY_AXIS and companion:
+            cmd += ["--companion", companion]
+        subprocess.run(cmd, check=True, cwd=REPO)
+    # Stage supersessions BEFORE rendering: the committed-files gate reads
+    # git ls-files, and a month-rollover refresh deletes the old dated files.
+    subprocess.run(["git", "add", "-A", "benchmarks/"], check=True, cwd=REPO)
+    subprocess.run([sys.executable, "scripts/render_results.py"],
+                   check=True, cwd=REPO)
+
+
+def _cpu_hosts_note(axes: list[str], files: dict) -> str:
+    """The sentence naming which machine measured the cpu axes, or "".
+
+    Every row carries its own host block; this is where that reaches a
+    reader of the PR, since a CPU number means nothing without the ceiling
+    it was made under.
+    """
+    cpu_axes = [a for a in axes if a.startswith(CPU_PREFIX)]
+    if not cpu_axes:
+        return ""
+    cpu_hosts = sorted({_row_host(RESULTS / files[a]) for a in cpu_axes})
+    return (f"\n\nCPU axes ({', '.join(cpu_axes)}) were measured on "
+            f"{', '.join(h for h in cpu_hosts if h)} (issue #355). "
+            "Every row carries its own host block, so the registry "
+            "records which machine and which ceiling stands behind "
+            "each axis.")
+
+
+def _commit_refresh(axes: list[str], hosts_note: str) -> str:
+    """Branch, stage the regenerated pages, commit; returns the branch name."""
+    branch = f"standings-refresh-{time.strftime('%Y%m%d')}"
+    subprocess.run(["git", "checkout", "-b", branch], check=True, cwd=REPO)
+    subprocess.run(["git", "add", "-A", "benchmarks/", "docs/method/",
+                    "README.md"], check=True, cwd=REPO)
+    subprocess.run(["git", "commit", "-m",
+                    f"{_refresh_title(axes)}\n\n"
+                    f"Axes: {','.join(axes)}. Same-pod refresh via "
+                    "scripts/standings_refresh.py "
+                    "(decision 96); superseded files deleted, registry "
+                    "updated, ledger and README regenerated." + hosts_note],
+                   check=True, cwd=REPO)
+    return branch
+
+
+def _open_refresh_pr(axes: list[str], branch: str, parity: str, verdict: str,
+                     hosts_note: str) -> None:
+    """Push the branch and open the supersession PR with both gate tables."""
+    subprocess.run(["git", "push", "-u", "origin", branch], check=True, cwd=REPO)
+    body = (f"Standings refresh of {','.join(axes)} via "
+            f"`scripts/standings_refresh.py` "
+            f"(decision 96).{hosts_note}\n\nIngest/train parity (bonsai's "
+            f"fused call vs the two-step Dataset form, same pod, interleaved, "
+            f"+-{PARITY_BAND_PCT}% band):\n\n{parity}\n\n"
+            f"A/B verdict (previous release wheel vs HEAD, "
+            f"same pod, interleaved, +-5% band):\n\n"
+            f"{verdict or 'A/B skipped.'}\n\nA **moved** verdict requires a "
+            f"`Standings:`-tagged decision entry before merge; the docs-check "
+            f"gate enforces it.")
+    subprocess.run(["gh", "pr", "create", "--base", "main", "--title",
+                    _refresh_title(axes), "--body", body], check=True,
+                   cwd=REPO)
 
 
 def _run_session(key: str, args: argparse.Namespace, *, plane: str,
