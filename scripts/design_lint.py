@@ -12,9 +12,10 @@ Gated numbers, each standing for one sentence of the house style:
 ``clone_windows``
     Redundant copies of six-line windows with literals normalized. One
     concept has one home; the second copy is the one that gets fixed
-    without the first. Include and import blocks and bare string literals
-    are outside any narrative and are skipped; they were 38% of the count
-    before they were.
+    without the first. Include and import blocks and rows made only of
+    literals (a string table, a knob map, an initializer) are outside any
+    narrative and are skipped; the first two were 38% of the count before
+    they were, and the tables another 19%.
 ``vocabulary_singletons``
     Words that appear in exactly one public name under include/. The
     conceptual model is a small shared vocabulary; a word used once is
@@ -24,9 +25,9 @@ Gated numbers, each standing for one sentence of the house style:
     Comment lines under include/. A contract carried by prose is one that
     a name, a type, or a test has not carried yet.
 ``binding_prose_lines``
-    Lines of src/python/module.cpp that are bare string literals, which
-    is to say docstrings written in C++. Documentation belongs beside the
-    surface it documents.
+    Lines of src/python/module.cpp made only of string literals, which is
+    to say docstrings and signatures written in C++. Documentation belongs
+    beside the surface it documents.
 
 Tracked but not gated:
 
@@ -100,6 +101,7 @@ FUNCTION_DECLARATION: Final = re.compile(r"^\s*((?:[\w:<>,\*&]+\s+)+)([a-z_]\w*)
 NOT_A_NAME: Final = KEYWORDS | {"decltype", "requires", "noexcept", "alignof", "static_assert"}
 CALL_LEADERS: Final = frozenset({"return", "throw", "co_return"})
 MIN_ALIAS_CHARS: Final = 3
+LITERAL_ROW: Final = re.compile(r"^\s*(?:\"[^\"]*\"|'[^']*'|\d+(?:\.\d+)?[fF]?|[\s:,()\[\]{}])+$")
 
 
 @dataclass(frozen=True)
@@ -299,7 +301,7 @@ def _hardware_leaks(files: list[pathlib.Path], root: pathlib.Path) -> Reading:
 
 
 def _is_bare_literal(line: str) -> bool:
-    return re.match(r'\s*"[^"]*"\s*[,)]?\s*$', line) is not None
+    return re.search(r"[\"'\d]", line) is not None and LITERAL_ROW.match(line) is not None
 
 
 def _is_outside_the_narrative(line: str) -> bool:
