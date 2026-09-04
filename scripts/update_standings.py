@@ -157,45 +157,14 @@ def supersede(args: argparse.Namespace, reg: dict) -> int:
         0 on success, 1 when the new file cannot back a standings claim.
     """
     entry = reg[args.axis]
-
-    rows = [json.loads(ln)
-            for ln in (RESULTS / args.file).read_text().splitlines()
-            if ln.strip()]
-    shas = {r.get("git_sha") for r in rows if r.get("git_sha")}
-    if len(shas) != 1:
-        print(f"ERROR: {args.file} carries shas {sorted(shas)}; a standings "
-              "file must be single-sha", file=sys.stderr)
+    rows = _results_rows(args.file)
+    sha, refusal = _measured_sha(rows, args.file)
+    if refusal:
+        print(f"ERROR: {refusal}", file=sys.stderr)
         return 1
-    # "unknown" is what runlog records when nothing states the commit and the
-    # cwd is not a checkout. It is truthy, so every downstream check passes
-    # while the row stays unattributable; the registry would claim provenance
-    # it does not have. Set BONSAI_BENCH_GIT_SHA and re-run.
-    if shas == {"unknown"}:
-        print(f"ERROR: {args.file} carries git_sha \"unknown\", so nothing "
-              "ties these rows to a commit; re-run with BONSAI_BENCH_GIT_SHA "
-              "set (the pod script sets it from GIT_SHA)", file=sys.stderr)
-        return 1
-    hosts = {(r["host"].get("name") if isinstance(r.get("host"), dict)
-              else r.get("host")) for r in rows if r.get("host")}
-    dates = sorted({r["ts"][:10] for r in rows if r.get("ts")})
-
-    # file is null on an axis that has never been measured (registry v2
-    # placeholder), so there is nothing to supersede on its first refresh.
-    old = entry.get("file")
-    if old != args.file:
-        if old and (RESULTS / old).exists():
-            (RESULTS / old).unlink()
-            print(f"superseded {old} (git history is the archive)")
-        entry.pop("note", None)
-    old_companion = entry.get("companion")
-    if args.companion and old_companion != args.companion:
-        if old_companion and (RESULTS / old_companion).exists():
-            (RESULTS / old_companion).unlink()
-            print(f"superseded {old_companion} (git history is the archive)")
-        entry["companion"] = args.companion
-    entry.update(file=args.file, sha=shas.pop(),
-                 host=sorted(hosts)[0] if len(hosts) == 1 else None,
-                 date=dates[-1] if dates else None,
+    _retire_superseded_files(entry, args)
+    entry.update(file=args.file, sha=sha, host=_measured_host(rows),
+                 date=_measured_date(rows),
                  refreshed_for=args.version or project_version())
     # A measured stamp is never a carried-forward one.
     entry.pop("carried_forward", None)
@@ -205,6 +174,63 @@ def supersede(args: argparse.Namespace, reg: dict) -> int:
     print(f"{args.axis}: {args.file} at {entry['sha']} "
           f"(refreshed for {entry['refreshed_for']})")
     return 0
+
+
+def _results_rows(name: str) -> list[dict]:
+    """The rows of one results file in benchmarks/results."""
+    return [json.loads(ln)
+            for ln in (RESULTS / name).read_text().splitlines() if ln.strip()]
+
+
+def _measured_sha(rows: list[dict],
+                  name: str) -> tuple[str | None, str | None]:
+    """The one commit a results file attributes its rows to, or a refusal."""
+    shas = {r.get("git_sha") for r in rows if r.get("git_sha")}
+    if len(shas) != 1:
+        return None, (f"{name} carries shas {sorted(shas)}; a standings file "
+                      "must be single-sha")
+    # "unknown" is what runlog records when nothing states the commit and the
+    # cwd is not a checkout. It is truthy, so every downstream check passes
+    # while the row stays unattributable; the registry would claim provenance
+    # it does not have. Set BONSAI_BENCH_GIT_SHA and re-run.
+    if shas == {"unknown"}:
+        return None, (f"{name} carries git_sha \"unknown\", so nothing ties "
+                      "these rows to a commit; re-run with "
+                      "BONSAI_BENCH_GIT_SHA set (the pod script sets it from "
+                      "GIT_SHA)")
+    return shas.pop(), None
+
+
+def _measured_host(rows: list[dict]) -> str | None:
+    """The one host the rows were measured on, or None when they disagree."""
+    hosts = {(r["host"].get("name") if isinstance(r.get("host"), dict)
+              else r.get("host")) for r in rows if r.get("host")}
+    return sorted(hosts)[0] if len(hosts) == 1 else None
+
+
+def _measured_date(rows: list[dict]) -> str | None:
+    """The last date the rows carry, or None when none of them is stamped."""
+    dates = sorted({r["ts"][:10] for r in rows if r.get("ts")})
+    return dates[-1] if dates else None
+
+
+def _retire_superseded_files(entry: dict,
+                             args: argparse.Namespace) -> None:
+    """Delete the files this refresh replaces and adopt the new companion."""
+    if entry.get("file") != args.file:
+        _delete_result(entry.get("file"))
+        entry.pop("note", None)
+    if args.companion and entry.get("companion") != args.companion:
+        _delete_result(entry.get("companion"))
+        entry["companion"] = args.companion
+
+
+def _delete_result(name: str | None) -> None:
+    """Delete a superseded results file, if the axis had one on disk."""
+    if not name or not (RESULTS / name).exists():
+        return
+    (RESULTS / name).unlink()
+    print(f"superseded {name} (git history is the archive)")
 
 
 def _byte_identity_evidence(
