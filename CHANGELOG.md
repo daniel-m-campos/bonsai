@@ -4,6 +4,10 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-09-04
+
+A row view now runs on the device for scoring, prediction and explanation, which removes the one case where splitting a holdout by view was slower than building two Datasets. Leaf renewal under the `mae`, `huber` and `quantile` objectives no longer breaks a monotone constraint on depthwise and leafwise trees.
+
 ### Changed
 - **A row view scores, predicts and explains on the device** (PR #458). A `subset(rows=)` view of a device-resident parent was routed to the host walks by two identity checks: `eval_set=hold.subset(rows=val)` scored every round on the host, and the first `predict` on a view pulled the whole parent plane home to mint the row-major mirror, which is why one holdout split by view built faster than two Datasets but made `fit + predict` slower. The device predict, SHAP and eval walks now take the view's row ids and read the parent plane in place, and the predictions are bit-equal to the copied Dataset's. Measured same-pod on an L40S (4M x 64 train, 1M view eval set, 1M view predict, 100 rounds): the view fit drops from 1.78s to 0.89s and the view predict from 0.58s to under 0.01s, matching two separate Datasets.
 - **A device-resident eval set is adopted in place** (PR #458). `eval_begin` used to rebuild its own tiled copy of the validation plane through the host even when the plane already lived on the device, 0.12s per fit at 1M x 64 on the L40S above. It adopts the plane now, so every CUDA fit with a device-resident `eval_set` skips that copy: the separate-Dataset arm drops from 1.00s to 0.89s in the same session.
