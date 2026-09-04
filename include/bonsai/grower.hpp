@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <numeric>
 #include <optional>
 #include <random>
@@ -43,8 +44,7 @@ using train_leaf_values = std::vector<float>;
 // init value. That is the contract, not an accident of recycling, and
 // "A resident view leaves the scores of rows outside it alone" in
 // test_cuda_resident pins it. Anything that writes an out-of-view slot breaks
-// it. One home for the two buffers so this is stated once for all three
-// growers.
+// it. One home for both buffers, so this is stated once for all growers.
 struct RecycledOutputs
 {
     train_leaf_values      values;
@@ -57,14 +57,22 @@ struct RecycledOutputs
     }
 };
 
+struct LeafBounds
+{
+    double lo = -std::numeric_limits<double>::infinity();
+    double hi = std::numeric_limits<double>::infinity();
+};
+
 template <typename TreeT> struct GrowResult
 {
     TreeT             tree;
     train_leaf_values values;
-    // Per train row: the leaf that produced values[r]: a DenseTree node id,
-    // or ObliviousTree leaf-table index. Lets the booster regroup rows by
-    // leaf (leaf renewal for surrogate-hessian objectives).
+    // Per train row: the leaf that produced values[r] (DenseTree node id or
+    // ObliviousTree leaf-table index), so the booster can regroup rows by leaf.
     std::vector<node_id_t> leaf_ids;
+    // Per DenseTree node id: the fence monotone constraints left that leaf;
+    // renewal clamps into it (renewal-keeps-monotone). Empty for ObliviousTree.
+    std::vector<LeafBounds> leaf_bounds;
 };
 
 // The one growth contract all three strategies satisfy. grow() returns the

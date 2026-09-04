@@ -97,7 +97,7 @@ class MulticlassBooster final : public Ensemble<Gr, Sa>
                     grad()[i]      = (p - y) * wi;
                     hess()[i]      = std::max(p * (1.0F - p), 1e-6F) * wi;
                 });
-            auto [tree, leaf_values, leaf_ids] =
+            auto [tree, leaf_values, leaf_ids, leaf_bounds] =
                 grower().grow(train, grad(), hess(), select_rows(train));
             // Over the plane, one slot per (row, class), for the same reason
             // the binary booster gives: a repeated row id must not have its

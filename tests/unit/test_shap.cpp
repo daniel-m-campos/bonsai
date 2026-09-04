@@ -101,7 +101,7 @@ TEST_CASE("TreeSHAP: matches brute-force Shapley on a small tree", "[shap][exact
                           .max_depth        = 3,
                           .min_data_in_leaf = 0};
     DepthwiseGrower<> grower{cfg};
-    auto [tree, values, lids] = grower.grow(built.ds, grad, hess, rows);
+    auto [tree, values, lids, bounds] = grower.grow(built.ds, grad, hess, rows);
     REQUIRE(tree.params().depth >= 2); // interactions present
 
     std::vector<float> const x{0.15F, 0.9F, 0.4F};
