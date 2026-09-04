@@ -36,6 +36,7 @@ NOLINT directives, clang-format toggles, and closing-brace namespace labels.
 
 from __future__ import annotations
 
+import collections.abc
 import pathlib
 import re
 import sys
@@ -63,8 +64,103 @@ FFI_VOCAB = ("nb::", "capsule", "gil", "PyObject", "DLPack", "keep_alive",
              "NB_MODULE", "dlpack", "__dlpack__")
 
 
+def block_findings(path: pathlib.Path) -> list[tuple[int, str]]:
+    """Return (line, text) findings for illegal comments in one file.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The implementation file to read.
+
+    Returns
+    -------
+    list of (int, str)
+        One entry per offending comment, the line number being 1-based.
+    """
+    lines = path.read_text().splitlines()
+    code_text = "\n".join(ln for ln in lines
+                          if not ln.strip().startswith("//"))
+    block_end = dict(_comment_blocks(lines))
+    findings: list[tuple[int, str]] = []
+    i = 0
+    while i < len(lines):
+        end = block_end.get(i)
+        if end is None:
+            findings += _trailing_findings(lines[i], i)
+            i += 1
+            continue
+        findings += _block_findings(lines, i, end, path, code_text)
+        i = end
+    return findings
+
+
+def _comment_blocks(
+    lines: list[str],
+) -> collections.abc.Iterator[tuple[int, int]]:
+    """Yield the half-open runs of consecutive whole-line comments."""
+    i = 0
+    while i < len(lines):
+        if not lines[i].strip().startswith("//"):
+            i += 1
+            continue
+        j = i
+        while j < len(lines) and lines[j].strip().startswith("//"):
+            j += 1
+        yield i, j
+        i = j
+
+
+def _block_findings(
+    lines: list[str],
+    start: int,
+    end: int,
+    path: pathlib.Path,
+    code_text: str,
+) -> list[tuple[int, str]]:
+    """Judge one run of whole-line comments against the policy."""
+    block = [lines[k].strip() for k in range(start, end)]
+    if not _is_tagged(block[0]):
+        return [(k + 1, lines[k].strip()[:80]) for k in range(start, end)
+                if not STRUCTURAL.search(lines[k].strip())]
+    declaration = lines[end] if end < len(lines) else ""
+    message = _tag_violation(block, declaration, path, code_text)
+    return [(start + 1, message)] if message else []
+
+
+def _is_tagged(first: str) -> bool:
+    """True when a comment line opens with one of the three tags."""
+    return bool(PERF.match(first) or SYNC.match(first) or FFI.match(first))
+
+
+def _tag_violation(
+    block: list[str],
+    declaration: str,
+    path: pathlib.Path,
+    code_text: str,
+) -> str | None:
+    """The message for a tag that fails its admission test, else None."""
+    first = block[0]
+    if PERF.match(first):
+        if any(DIGIT.search(b) for b in [*block, declaration]):
+            return None
+        return ("perf: carries no number, so it is"
+                f" not a measurement: {first[:52]}")
+    if SYNC.match(first):
+        if _names(block, code_text, SYNC_VOCAB):
+            return None
+        return ("sync: names no construct this file"
+                f" uses: {first[:56]}")
+    if "python" not in path.parts:
+        return ("ffi: only src/python/ may carry"
+                f" this tag: {first[:56]}")
+    if _names(block, code_text, FFI_VOCAB):
+        return None
+    return ("ffi: names no boundary construct"
+            f" this file uses: {first[:56]}")
+
+
 def _names(block: list[str], code_text: str, vocab: tuple[str, ...]) -> bool:
-    """True when the block names a vocabulary term the file's code really uses.
+    """True when the block names a vocabulary term the file's code uses.
 
     Both halves are the test. Naming a term proves the comment is about a
     concrete construct rather than prose, and requiring the term in the code
@@ -73,54 +169,17 @@ def _names(block: list[str], code_text: str, vocab: tuple[str, ...]) -> bool:
     return any(any(w in b for b in block) and w in code_text for w in vocab)
 
 
-def block_findings(path: pathlib.Path) -> list[tuple[int, str]]:
-    """Return (line, text) findings for illegal comments in one file."""
-    findings = []
-    lines = path.read_text().splitlines()
-    code_text = "\n".join(ln for ln in lines
-                          if not ln.strip().startswith("//"))
-    i = 0
-    while i < len(lines):
-        raw = lines[i]
-        line = raw.strip()
-        if line.startswith("//"):
-            j = i
-            while j < len(lines) and lines[j].strip().startswith("//"):
-                j += 1
-            block = [lines[k].strip() for k in range(i, j)]
-            first = block[0]
-            if PERF.match(first):
-                # The number may be the declaration itself: a measured
-                # constant states its measurement by being that value.
-                decl = lines[j] if j < len(lines) else ""
-                if not any(DIGIT.search(b) for b in [*block, decl]):
-                    findings.append((i + 1, "perf: carries no number, so it is"
-                                            f" not a measurement: {first[:52]}"))
-            elif SYNC.match(first):
-                if not _names(block, code_text, SYNC_VOCAB):
-                    findings.append((i + 1, "sync: names no construct this file"
-                                            f" uses: {first[:56]}"))
-            elif FFI.match(first):
-                if "python" not in path.parts:
-                    findings.append((i + 1, "ffi: only src/python/ may carry"
-                                            f" this tag: {first[:56]}"))
-                elif not _names(block, code_text, FFI_VOCAB):
-                    findings.append((i + 1, "ffi: names no boundary construct"
-                                            f" this file uses: {first[:56]}"))
-            else:
-                for k in range(i, j):
-                    if not STRUCTURAL.search(lines[k].strip()):
-                        findings.append((k + 1, lines[k].strip()[:80]))
-            i = j
-            continue
-        code, sep, trail = raw.partition("//")
-        if sep and code.strip() and '"' not in code and "'" not in code:
-            comment = "// " + trail.strip()
-            tagged = trail.strip().startswith(("perf:", "sync:", "ffi:"))
-            if not STRUCTURAL.search(comment) and not tagged:
-                findings.append((i + 1, comment[:80]))
-        i += 1
-    return findings
+def _trailing_findings(raw: str, index: int) -> list[tuple[int, str]]:
+    """Judge a comment sharing its line with code, quotes excepted."""
+    code, sep, trail = raw.partition("//")
+    if not sep or not code.strip() or '"' in code or "'" in code:
+        return []
+    if trail.strip().startswith(("perf:", "sync:", "ffi:")):
+        return []
+    comment = "// " + trail.strip()
+    if STRUCTURAL.search(comment):
+        return []
+    return [(index + 1, comment[:80])]
 
 
 def main() -> int:
