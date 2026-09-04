@@ -441,6 +441,65 @@ TEST_CASE("Booster: MAE leaf renewal sets leaves to residual medians",
     }
 }
 
+template <typename Obj, typename G>
+using RenewingBooster = Booster<Obj, G, AllRowsSampler>;
+
+// INVARIANT: renewal-keeps-monotone
+// A depthwise or leafwise fit under a monotone constraint stays ordered by
+// that feature after leaf renewal. Renewal replaces each leaf's Newton step
+// with a residual statistic (median, Huber mean, quantile) that can reverse
+// the order the growth-time fence enforced, so the renewed value is clamped
+// back into the fence the grower left for that leaf.
+TEMPLATE_TEST_CASE("Booster: leaf renewal keeps a monotone constraint",
+                   "[booster][renewal][monotone][invariant]",
+                   (RenewingBooster<MAEObjective, DepthwiseGrower<>>),
+                   (RenewingBooster<MAEObjective, LeafwiseGrower<>>),
+                   (RenewingBooster<HuberObjective, DepthwiseGrower<>>),
+                   (RenewingBooster<HuberObjective, LeafwiseGrower<>>),
+                   (RenewingBooster<QuantileObjective, DepthwiseGrower<>>),
+                   (RenewingBooster<QuantileObjective, LeafwiseGrower<>>) )
+{
+    // Eight rows on one feature, one split, lr = 1. init = 3, so the split at
+    // x < 2 leaves residuals {1, -2} on the left (gradient sum 0, Newton leaf
+    // 0) and {1, 0, 0, 0, 1, 0} on the right (gradient sum -2, Newton leaf
+    // 2/7): ordered, so the split passes the +1 veto. The renewed values are
+    // not ordered: medians 1 > 0, Huber means 0.5 > 1/3, quantiles 1 > 0.
+    detail::ColumnBatch batch{
+        .features      = {{0.0F, 1.0F, 2.0F, 3.0F, 4.0F, 5.0F, 6.0F, 7.0F}},
+        .labels        = {4.0F, 1.0F, 4.0F, 3.0F, 3.0F, 3.0F, 4.0F, 3.0F},
+        .weights       = {},
+        .feature_names = {"a"},
+    };
+    Dataset const train = make_dataset(batch);
+    auto const    raw   = to_raw(batch);
+
+    Config cfg                           = tiny_cfg();
+    cfg.tree_config.max_depth            = 1;
+    cfg.tree_config.lambda_l2            = 1.0F;
+    cfg.tree_config.monotone_constraints = {+1};
+    cfg.booster_config.learning_rate     = 1.0F;
+
+    auto predict_rows = [&](Config const &c)
+    {
+        TestType b{c};
+        b.update_one_iter(train);
+        std::vector<float> pred(raw.n_rows);
+        b.predict(raw.view(), pred);
+        return pred;
+    };
+
+    Config unconstrained = cfg;
+    unconstrained.tree_config.monotone_constraints.clear();
+    auto const free_pred = predict_rows(unconstrained);
+    CHECK(free_pred.front() > free_pred.back());
+
+    auto const pred = predict_rows(cfg);
+    for (size_t i = 1; i < pred.size(); ++i)
+    {
+        CHECK(pred[i - 1] <= pred[i]);
+    }
+}
+
 TEST_CASE("Booster: predict_at, staged, and leaf predictions are consistent",
           "[booster][predict_extras]")
 {

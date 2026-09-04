@@ -74,6 +74,12 @@ The flattened node table and ObliviousTree::leaf_for agree on one numbering. The
 
 - enforced by: [`ObliviousTree: the flattened table numbers leaves as leaf_for does`](../tests/unit/test_oblivious_tree.cpp)
 
+### renewal-keeps-monotone
+
+A depthwise or leafwise fit under a monotone constraint stays ordered by that feature after leaf renewal. Renewal replaces each leaf's Newton step with a residual statistic (median, Huber mean, quantile) that can reverse the order the growth-time fence enforced, so the renewed value is clamped back into the fence the grower left for that leaf.
+
+- enforced by: [`Booster: leaf renewal keeps a monotone constraint`](../tests/unit/test_booster.cpp)
+
 ### row-list-follows-the-fit
 
 The row list a round trains on belongs to the fit it was materialized for, keyed on the fit's minted token and never on its size: a second fit on a same-sized view of different rows grows the tree those rows grow, not the previous view's.
