@@ -53,3 +53,17 @@ def test_clone_windows_count_copied_code_and_not_a_shared_table(tmp_path):
     reading = design_lint._clone_windows(files, root, blind_to_identifiers=False)
     assert reading.value == 2
     assert reading.top_sites == [("python/bonsai/b.py", 2)]
+
+
+def test_production_files_reach_scripts_and_skip_the_rest(tmp_path):
+    """The gate scripts are production code the ratchet reads; generated
+    files, build trees, shell, and docs are not."""
+    root = _tree(tmp_path, {
+        "include/a.hpp": "", "src/b.cpp": "", "python/bonsai/c.py": "",
+        "python/bonsai/_params.py": "", "scripts/d.py": "",
+        "scripts/e.sh": "", "scripts/build/f.py": "", "docs/g.py": "",
+        "python/tests/h.py": "",
+    })
+
+    assert [str(f.relative_to(root)) for f in design_lint._production_files(root)] == [
+        "include/a.hpp", "python/bonsai/c.py", "scripts/d.py", "src/b.cpp"]
