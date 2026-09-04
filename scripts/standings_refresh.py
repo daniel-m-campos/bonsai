@@ -111,10 +111,14 @@ PLANE_CPU = "cpu"
 # the GPU session and no second pod is rented.
 CPU_PLANE_HOSTS = (PLANE_GPU, "cpupod")
 
+# The band a same-pod interleaved A/B pair (previous release wheel vs HEAD)
+# must agree inside before a cell counts as moved.
+AB_BAND_PCT = 5
+
 # The band the fused and two-step forms must agree inside. Measured at 2.5%
-# on one L40S at 4M x 512 and inside repeat noise at 16M; 5% matches the A/B
-# band, which is the same pod-noise question.
-PARITY_BAND_PCT = 5
+# on one L40S at 4M x 512 and inside repeat noise at 16M; the A/B band is
+# the same pod-noise question, so the two share a number.
+PARITY_BAND_PCT = AB_BAND_PCT
 
 # Every axis is the stem of its dated results file AND the name of the
 # branch the pod script runs to produce it.
@@ -228,7 +232,7 @@ def measure(args: argparse.Namespace) -> int:
     if drift := registry_drift():
         print(drift, file=sys.stderr)
         return 1
-    axes = [a.strip() for a in args.axes.split(",") if a.strip()]
+    axes = _requested_axes(args.axes)
     if args.only_stale:
         stale = stale_axes()
         current = [a for a in axes if a not in stale]
@@ -374,7 +378,7 @@ def supersede(args: argparse.Namespace) -> int:
         parity gate fails.
     """
     src = pathlib.Path(args.results_dir)
-    axes = [a.strip() for a in args.axes.split(",")]
+    axes = _requested_axes(args.axes)
     parity = _cleared_parity(src / "parity.jsonl", axes,
                              no_parity=args.no_parity)
     if parity is None:
@@ -511,6 +515,11 @@ def _copy_parity(path: pathlib.Path, axis_file: str | None) -> str | None:
     return name
 
 
+def _requested_axes(spec: str) -> list[str]:
+    """The axis names in a comma-separated --axes value, blanks dropped."""
+    return [a.strip() for a in spec.split(",") if a.strip()]
+
+
 def _cleared_parity(path: pathlib.Path, axes: list[str], *,
                     no_parity: bool) -> str | None:
     """The parity table these results carry, or None when the gate refuses."""
@@ -612,7 +621,7 @@ def _open_refresh_pr(axes: list[str], branch: str, parity: str, verdict: str,
             f"fused call vs the two-step Dataset form, same pod, interleaved, "
             f"+-{PARITY_BAND_PCT}% band):\n\n{parity}\n\n"
             f"A/B verdict (previous release wheel vs HEAD, "
-            f"same pod, interleaved, +-5% band):\n\n"
+            f"same pod, interleaved, +-{AB_BAND_PCT}% band):\n\n"
             f"{verdict or 'A/B skipped.'}\n\nA **moved** verdict requires a "
             f"`Standings:`-tagged decision entry before merge; the docs-check "
             f"gate enforces it.")
@@ -969,10 +978,9 @@ def _verdict(ab_path: pathlib.Path) -> str:
     lines = ["| cell | grower | old | new | delta | old RSS | new RSS | "
              "RSS delta |", "|---|---|--:|--:|--:|--:|--:|--:|"]
     for cell in sorted({(r["rows"], r["cols"], r["grower"]) for r in rows}):
-        cells, moved = _ab_cells(med, cell)
-        cells[-1] += " **moved**" if moved else ""
         rw, c, g = cell
-        lines.append(f"| {rw}x{c} | {g} | " + " | ".join(cells) + " |")
+        lines.append(f"| {rw}x{c} | {g} | "
+                     + " | ".join(_ab_cells(med, cell)) + " |")
     return "\n".join(lines)
 
 
@@ -988,10 +996,11 @@ def _ab_samples(rows: list[dict]) -> dict:
     return med
 
 
-def _ab_cells(med: dict, cell: tuple) -> tuple[list[str], bool]:
-    """One cell's old, new, and delta columns per metric, and whether it moved."""
+def _ab_cells(med: dict, cell: tuple) -> list[str]:
+    """One cell's old, new, and delta columns per metric, the delta flagged
+    **moved** when it left the A/B band."""
     rw, c, g = cell
-    cells, moved = [], False
+    cells: list[str] = []
     for metric, unit in (("fit_s", "s"), ("peak_rss_gb", "GB")):
         old = med.get((rw, c, g, "old", metric))
         new = med.get((rw, c, g, "new", metric))
@@ -1000,9 +1009,9 @@ def _ab_cells(med: dict, cell: tuple) -> tuple[list[str], bool]:
             continue
         o, n = statistics.median(old), statistics.median(new)
         d = 100 * (n - o) / o
-        moved = moved or abs(d) > 5
-        cells += [f"{o:.2f}{unit}", f"{n:.2f}{unit}", f"{d:+.1f}%"]
-    return cells, moved
+        flag = " **moved**" if abs(d) > AB_BAND_PCT else ""
+        cells += [f"{o:.2f}{unit}", f"{n:.2f}{unit}", f"{d:+.1f}%{flag}"]
+    return cells
 
 
 if __name__ == "__main__":

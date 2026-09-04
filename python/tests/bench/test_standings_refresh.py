@@ -145,8 +145,8 @@ def test_verdict_is_empty_without_an_ab_file(tmp_path):
 
 
 def test_verdict_tables_every_cell_and_flags_the_ones_that_moved(tmp_path):
-    """One row per cell, both metrics, and the moved flag on the row whose
-    delta left the 5% band. The cells sort, so the table is stable."""
+    """One row per cell, both metrics, and the moved flag on the delta that
+    left the A/B band. The cells sort, so the table is stable."""
     path = _jsonl(
         tmp_path / "ab.jsonl",
         _ab_row("old", 10.0, 4.0), _ab_row("new", 10.2, 4.1),
@@ -159,8 +159,36 @@ def test_verdict_tables_every_cell_and_flags_the_ones_that_moved(tmp_path):
         "|---|---|--:|--:|--:|--:|--:|--:|\n"
         "| 4000000x512 | cuda_depthwise | 10.00s | 10.20s | +2.0% | 4.00GB "
         "| 4.10GB | +2.5% |\n"
-        "| 8000000x512 | cuda_depthwise | 20.00s | 14.00s | -30.0% | 8.00GB "
-        "| 8.10GB | +1.2% **moved** |")
+        "| 8000000x512 | cuda_depthwise | 20.00s | 14.00s | -30.0% **moved** "
+        "| 8.00GB | 8.10GB | +1.2% |")
+
+
+def test_verdict_flags_the_metric_that_moved_not_the_row(tmp_path):
+    """A time move with no memory evidence lands on the time delta; the
+    memory columns stay n/a rather than carrying a flag for a number they
+    never had."""
+    path = _jsonl(tmp_path / "ab.jsonl",
+                  _ab_row("old", 20.0, None), _ab_row("new", 14.0, None))
+
+    assert standings_refresh._verdict(path).endswith(
+        "| 20.00s | 14.00s | -30.0% **moved** | n/a | n/a | n/a |")
+
+
+def test_verdict_band_edge_is_the_named_ab_band(tmp_path):
+    """The flag fires past AB_BAND_PCT, not at it, and the same number the PR
+    body quotes is the one the table applies."""
+    band = standings_refresh.AB_BAND_PCT
+    at = _jsonl(tmp_path / "at.jsonl",
+                _ab_row("old", 100.0, 4.0),
+                _ab_row("new", 100.0 + band, 4.0))
+    past = _jsonl(tmp_path / "past.jsonl",
+                  _ab_row("old", 100.0, 4.0),
+                  _ab_row("new", 100.0 + band + 0.1, 4.0))
+
+    assert "**moved**" not in standings_refresh._verdict(at)
+    assert standings_refresh._verdict(past).endswith(
+        f"| 100.00s | {100.0 + band + 0.1:.2f}s | +{band + 0.1:.1f}% **moved** "
+        "| 4.00GB | 4.00GB | +0.0% |")
 
 
 def test_verdict_moves_on_memory_alone(tmp_path):
@@ -295,6 +323,18 @@ def test_supersede_accepts_a_session_that_anchors_no_parity(monkeypatch,
     out = capsys.readouterr().out
     assert "Parity not expected" in out
     assert "Parity check absent" in out
+    assert json.loads((repo / "calls.jsonl").read_text().strip()) == [
+        "--axis", "cpu-tall", "--file", "cpu-tall-2026-09.jsonl"]
+
+
+def test_supersede_reads_axes_the_way_measure_does(monkeypatch, tmp_path):
+    """A trailing comma or a space around a name is not an axis. measure
+    already drops blanks; supersede reading the same flag differently made
+    a valid session fail as missing an axis with no name."""
+    repo = _fake_repo(monkeypatch, tmp_path)
+    src = _session(tmp_path, parity=False)
+
+    assert standings_refresh.supersede(_args(src, " cpu-tall ,")) == 0
     assert json.loads((repo / "calls.jsonl").read_text().strip()) == [
         "--axis", "cpu-tall", "--file", "cpu-tall-2026-09.jsonl"]
 
