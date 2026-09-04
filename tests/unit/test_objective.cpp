@@ -317,6 +317,41 @@ TEST_CASE("QuantileObjective: pinball gradients and alpha-quantile init",
     CHECK(obj.init_score(labels) == 9.0F);
 }
 
+TEST_CASE("Objective: eval is the float-ordered mean of the per-pair loss",
+          "[objective][eval]")
+{
+    // Pinned to the values the left-to-right float reduction returns on
+    // non-dyadic inputs, so a refactor of the reduction holds them bit for bit.
+    std::vector<float> const preds{0.3F, -1.7F, 2.2F, 4.9F, -0.6F, 1.1F, 3.8F};
+    std::vector<float> const targets{0.0F, -1.0F, 2.5F, 1.0F, -0.9F, 1.4F, 0.7F};
+
+    SECTION("mse")
+    {
+        CHECK(MSEObjective::eval(preds, targets) == 3.66714287F);
+    }
+    SECTION("mae")
+    {
+        CHECK(MAEObjective::eval(preds, targets) == 1.27142847F);
+    }
+    SECTION("huber")
+    {
+        Config cfg{};
+        cfg.objective.huber_delta = 2.0F;
+        CHECK(HuberObjective{cfg}.eval(preds, targets) == 1.48928571F);
+    }
+    SECTION("quantile")
+    {
+        Config cfg{};
+        cfg.objective.quantile_alpha = 0.9F;
+        CHECK(QuantileObjective{cfg}.eval(preds, targets) == 0.275714308F);
+    }
+    SECTION("logloss")
+    {
+        std::vector<float> const labels{0.0F, 1.0F, 1.0F, 0.0F, 1.0F, 0.0F, 1.0F};
+        CHECK(LogLossObjective::eval(preds, labels) == 1.45451319F);
+    }
+}
+
 TEST_CASE("PoissonObjective: gradients, init, and the label guard",
           "[objective][poisson]")
 {
