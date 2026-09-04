@@ -640,31 +640,23 @@ class _BonsaiEstimator:
         given = _input_feature_names(X)
         if fitted is None and given is None:
             return
-        if given is None:
-            warnings.warn(
-                "X does not have valid feature names, but "
-                f"{type(self).__name__} was fitted with feature names",
-                stacklevel=3,
-            )
+        if given is None or fitted is None:
+            self._warn_names_on_one_side(fitted_has_names=given is None)
             return
-        if fitted is None:
-            warnings.warn(
-                f"X has feature names, but {type(self).__name__} was fitted "
-                "without feature names",
-                stacklevel=3,
-            )
-            return
-        if fitted == given:
-            return
-        unseen = [name for name in given if name not in set(fitted)]
-        missing = [name for name in fitted if name not in set(given)]
-        detail = (f" Unseen at fit time: {unseen}." if unseen else "") + (
-            f" Seen at fit time, now missing: {missing}." if missing else ""
-        )
-        raise ValueError(
-            "The feature names should match those that were passed during "
-            "fit." + (detail or " The same names arrived in a different order.")
-        )
+        if fitted != given:
+            raise ValueError(_names_disagreement(fitted, given))
+
+    def _warn_names_on_one_side(self, fitted_has_names: bool):
+        """Names on only one side of fit and predict: a warning, since the
+        columns may still be in the right order."""
+        estimator = type(self).__name__
+        if fitted_has_names:
+            message = (f"X does not have valid feature names, but {estimator} was "
+                       "fitted with feature names")
+        else:
+            message = (f"X has feature names, but {estimator} was fitted without "
+                       "feature names")
+        warnings.warn(message, stacklevel=4)
 
     def _fit_names(self, X: object, feature_names: Sequence[str] | None,
                    init_model: str | None) -> list[str] | None:
@@ -1092,6 +1084,18 @@ def _init_defaults(cls) -> dict[str, object]:
     sig = inspect.signature(cls.__init__)
     return {name: prm.default for name, prm in sig.parameters.items()
             if name != "self"}
+
+
+def _names_disagreement(fitted: list[str], given: list[str]) -> str:
+    """The error for two name lists that differ: which names are new, which
+    are gone, or that only the order changed."""
+    unseen = [name for name in given if name not in set(fitted)]
+    missing = [name for name in fitted if name not in set(given)]
+    detail = (f" Unseen at fit time: {unseen}." if unseen else "") + (
+        f" Seen at fit time, now missing: {missing}." if missing else ""
+    )
+    return ("The feature names should match those that were passed during "
+            "fit." + (detail or " The same names arrived in a different order."))
 
 
 def _input_feature_names(X: object) -> list[str] | None:
