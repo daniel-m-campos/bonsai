@@ -21,7 +21,8 @@ HARD (exit 1, one message per offending line):
      XGBoost, LightGBM, CatBoost. "Prose" excludes fenced code, inline
      backtick spans, URLs and markdown link targets, table rows, and any
      token that is part of an identifier or path (an adjacent _, /, ., or
-     word character, so xgboost.train and use/from-xgboost stay quiet).
+     word character, or a / earlier in the same word, so xgboost.train and
+     use/from-xgboost stay quiet).
   c. A tight banned-phrase list: unfalsifiable hype ("blazingly", "blazing
      fast", "clean code", "simple API", "easy to use", "world-class") and
      the comparatives "significantly/much faster|slower" when no digit
@@ -252,12 +253,18 @@ def _lib_casing_findings(rel: str, lineno: int, text: str) -> list[tuple]:
     findings: list[tuple] = []
     masked = mask_code_and_links(text)
     for m in LIB_RE.finditer(masked):
-        if _reads_as_identifier(masked, m.end()):
+        if _reads_as_identifier(masked, m.end()) or _sits_in_a_path(masked, m.start()):
             continue
         lib = m.group(1)
         findings.append((rel, lineno, "lib-casing",
                          f'"{lib}" in prose; write "{LIB_CORRECT[lib]}"'))
     return findings
+
+
+def _sits_in_a_path(masked: str, start: int) -> bool:
+    """Whether a / appears earlier in the word the library name sits in."""
+    word_start = max(masked.rfind(" ", 0, start), masked.rfind("\t", 0, start)) + 1
+    return "/" in masked[word_start:start]
 
 
 def _reads_as_identifier(masked: str, end: int) -> bool:
