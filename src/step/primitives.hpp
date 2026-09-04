@@ -28,22 +28,39 @@ using feature_view = std::span<feature_id_t const>;
 using detail::GrowProfiler;
 using detail::Phase;
 
-inline float write_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
-                        TreeConfig const &config, size_t &n_leaves)
+struct DenseBuild
 {
-    auto const v   = static_cast<float>(bounded_leaf_weight(
+    DenseTree::Nodes        nodes;
+    std::vector<bin_id_t>   split_bins  = std::vector<bin_id_t>(1, 0);
+    std::vector<float>      split_gains = std::vector<float>(1, 0.0F);
+    std::vector<float>      covers;
+    std::vector<LeafBounds> leaf_bounds;
+    size_t                  n_leaves = 0;
+    uint8_t                 depth    = 0;
+
+    explicit DenseBuild(float root_cover) : covers(1, root_cover)
+    {
+        nodes.emplace_back(DenseTree::leaf(0.0F));
+    }
+};
+
+inline float write_leaf(DenseBuild &build, SplitInput const &node,
+                        TreeConfig const &config)
+{
+    auto const v         = static_cast<float>(bounded_leaf_weight(
         node.total_grad(), node.total_hess(), config, node.lo, node.hi));
-    nodes[node.id] = DenseTree::leaf(v);
-    ++n_leaves;
+    build.nodes[node.id] = DenseTree::leaf(v);
+    build.leaf_bounds.resize(build.nodes.size());
+    build.leaf_bounds[node.id] = {.lo = node.lo, .hi = node.hi};
+    ++build.n_leaves;
     return v;
 }
 
-inline void finalize_as_leaf(DenseTree::Nodes &nodes, SplitInput const &node,
-                             TreeConfig const &config, size_t &n_leaves,
-                             train_leaf_values      &values,
+inline void finalize_as_leaf(DenseBuild &build, SplitInput const &node,
+                             TreeConfig const &config, train_leaf_values &values,
                              std::vector<node_id_t> &leaf_ids)
 {
-    float const v = write_leaf(nodes, node, config, n_leaves);
+    float const v = write_leaf(build, node, config);
     // perf: Row-parallel: each row is written exactly once with the same value,
     // so the order is immaterial (byte-identical at any thread count). The
     // stamping loops were ~17s of the 16M CPU fit on dual-EPYC hosts:

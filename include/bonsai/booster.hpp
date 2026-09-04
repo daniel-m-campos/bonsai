@@ -961,23 +961,26 @@ class Booster final : public Ensemble<Gr, Sa>
         RowSelection const rows = select_rows(train);
         lap(prof.sample_s);
 
-        auto [tree, leaf_values, leaf_ids] = grower().grow(train, grad(), hess(), rows);
+        auto [tree, leaf_values, leaf_ids, leaf_bounds] =
+            grower().grow(train, grad(), hess(), rows);
         lap(prof.grow_s);
 
-        finish_round(train, tree, leaf_values, leaf_ids, dropped, dropped_sum);
+        finish_round(train, tree, leaf_values, leaf_ids, leaf_bounds, dropped,
+                     dropped_sum);
     }
 
     // Everything a round does to the tree after the grower returns it, in the
     // order that IS the contract: renewal first, because it overwrites every
-    // leaf value with a residual statistic; the monotone reprojection second,
-    // restoring the constraint over what renewal wrote; the score update
-    // last, reading the final values. Encoding this as statement order inside
-    // update_one_iter is how a violation went unnoticed, so the sequence has
-    // one name and one home.
+    // leaf value with a residual statistic clamped into the grower's fence;
+    // the oblivious reprojection second, restoring the constraint over a leaf
+    // table that carries no fence; the score update last, reading the final
+    // values. Encoding this as statement order inside update_one_iter is how
+    // a violation went unnoticed, so the sequence has one name and one home.
     void finish_round(Dataset const &train, tree_type &tree,
                       train_leaf_values &leaf_values, std::vector<node_id_t> &leaf_ids,
-                      std::vector<size_t> const &dropped,
-                      std::vector<float> const  &dropped_sum)
+                      std::vector<LeafBounds> const &leaf_bounds,
+                      std::vector<size_t> const     &dropped,
+                      std::vector<float> const      &dropped_sum)
     {
         auto                    &prof = detail::FitProfiler::instance();
         detail::FitProfiler::Lap lap;
@@ -988,7 +991,8 @@ class Booster final : public Ensemble<Gr, Sa>
         // DART, the dropped trees), exactly the state gradients used.
         if constexpr (requires(std::span<float> r) { objective_.renew_leaf(r); })
         {
-            renew_leaves(tree, leaf_ids, leaf_values, train.labels(), train.row_view());
+            renew_leaves(tree, leaf_ids, leaf_bounds, leaf_values, train.labels(),
+                         train.row_view());
             if constexpr (std::same_as<tree_type, ObliviousTree>)
             {
                 reproject_monotone(tree, leaf_ids, leaf_values, train.row_view());
@@ -1177,6 +1181,7 @@ class Booster final : public Ensemble<Gr, Sa>
     // and their leaf id names a leaf they do not belong to. The identity view
     // is every row, so a plain or sampled fit renews exactly as before.
     void renew_leaves(tree_type &tree, std::vector<node_id_t> const &leaf_ids,
+                      std::vector<LeafBounds> const &leaf_bounds,
                       train_leaf_values &leaf_values, floats_view labels,
                       RowView const &view)
     {
@@ -1191,7 +1196,13 @@ class Booster final : public Ensemble<Gr, Sa>
         renewed.reserve(residuals.size());
         for (auto &[leaf, res] : residuals)
         {
-            float const v = objective_.renew_leaf(std::span<float>{res});
+            float v = objective_.renew_leaf(std::span<float>{res});
+            if (!leaf_bounds.empty())
+            {
+                v = static_cast<float>(std::clamp(static_cast<double>(v),
+                                                  leaf_bounds[leaf].lo,
+                                                  leaf_bounds[leaf].hi));
+            }
             tree.set_leaf_value(leaf, v);
             renewed.emplace(leaf, v);
         }

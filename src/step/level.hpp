@@ -81,15 +81,15 @@ class LevelStep : public TreeStep<EngineT>
         }
     }
 
-    void end_tree(std::vector<SplitInput> const &current, DenseTree::Nodes &nodes,
-                  size_t &n_leaves, train_leaf_values &values,
-                  std::vector<node_id_t> &leaf_ids, row_index_view /*row_indices*/)
+    void end_tree(std::vector<SplitInput> const &current, DenseBuild &build,
+                  train_leaf_values &values, std::vector<node_id_t> &leaf_ids,
+                  row_index_view /*row_indices*/)
     {
         for (auto const &input : current)
         {
-            write_leaf(nodes, input, config_, n_leaves);
+            write_leaf(build, input, config_);
         }
-        stamp_leaf_rows(nodes, current, values, leaf_ids);
+        stamp_leaf_rows(build.nodes, current, values, leaf_ids);
     }
 
     void finalize_leaves(std::vector<SplitInput> const &frontier,
@@ -209,9 +209,9 @@ class LevelStep<EngineT, SplitterT> : public TreeStep<EngineT>
         engine_.advance_level(ds_, ops);
     }
 
-    void end_tree(std::vector<SplitInput> const &current, DenseTree::Nodes &nodes,
-                  size_t &n_leaves, train_leaf_values &values,
-                  std::vector<node_id_t> &leaf_ids, row_index_view /*row_indices*/)
+    void end_tree(std::vector<SplitInput> const &current, DenseBuild &build,
+                  train_leaf_values &values, std::vector<node_id_t> &leaf_ids,
+                  row_index_view /*row_indices*/)
     {
         bool const resident = engine_.resident_armed();
         if (!resident)
@@ -221,15 +221,15 @@ class LevelStep<EngineT, SplitterT> : public TreeStep<EngineT>
         }
         for (auto const &input : current)
         {
-            finalize_as_leaf(nodes, input, config_, n_leaves, values, leaf_ids);
+            finalize_as_leaf(build, input, config_, values, leaf_ids);
         }
         if (resident)
         {
             engine_.resident_finalize(
-                resident_node_table<typename EngineT::ResidentNode>(nodes, ds_));
+                resident_node_table<typename EngineT::ResidentNode>(build.nodes, ds_));
             return;
         }
-        engine_.finalize_tree(node_values(nodes), values, leaf_ids);
+        engine_.finalize_tree(node_values(build.nodes), values, leaf_ids);
     }
 
     void finalize_leaves(std::vector<SplitInput> const &frontier,
