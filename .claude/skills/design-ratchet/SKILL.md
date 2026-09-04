@@ -36,6 +36,7 @@ Four ratchet rounds settled what this skill is for. `clone_windows` fell from 43
 |---|---|---|
 | any PR touching code | the scoreboard above, main against the branch; every rising gated row gets FIX or PIN in its commit message | scoreboard in the PR body |
 | a function the diff touches reads over CCN 12 (`uvx lizard -l cpp -l python -C 12 -w <touched files>`) | pin its exact outputs with a test first, then split in a second commit, or write `left whole: <reason>` in the PR body | a `test:` commit, then a `refactor:` commit |
+| a block the diff touches shows in `uvx lizard -Eduplicate -l cpp -l python <touched files>` (token-based, so it sees a copy whose names and literals drifted: the five objective evals shared one reduction that the exact window read as 0) | pin its exact outputs with a test first, then house the shape in one name in a second commit | a `test:` commit, then a `refactor:` commit |
 | the split touches a gate script (`scripts/*_lint.py`, `update_standings.py`, `render_*.py`) | main's copy against the branch's over the real corpus, byte-identical; run main's copy with `PYTHONPATH=scripts` so its sibling imports resolve | the commit's `Ran:` line |
 | the split touches training or serialization | `scripts/model_hash.py` unchanged | the commit's `Ran:` line |
 | the split is inside a kernel or fill loop | a SASS diff or a same-pod min before merge, else leave it whole and say so | the perf ledger |
