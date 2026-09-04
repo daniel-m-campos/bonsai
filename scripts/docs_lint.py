@@ -71,6 +71,7 @@ BANNED_WORD_RES = (
 COMPARATIVE_RE = re.compile(r"\b(significantly|much)\s+(faster|slower)\b", re.I)
 
 SOFT_WORD_LIMIT = 25
+LINK_DENSE_TARGETS = 3
 
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
 LIB_RE = re.compile(r"(?<![A-Za-z0-9_/.])(" + "|".join(LIBS) + r")")
@@ -206,58 +207,88 @@ def lint_invariants(hard: list[tuple]) -> None:
 def lint_file(path: pathlib.Path, hard: list[tuple], soft: list[tuple]) -> None:
     """Every finding for one file."""
     rel = path.relative_to(REPO).as_posix()
-    lines = path.read_text().splitlines()
-    classified = classify(lines)
+    classified = classify(path.read_text().splitlines())
 
     for lineno, text, in_code in classified:
-        if in_code:
-            continue
+        if not in_code:
+            hard.extend(_line_findings(rel, lineno, text))
 
-        # (a) em-dash, anywhere outside fenced code.
-        if EM_DASH in text:
-            hard.append((rel, lineno, "em-dash",
-                         "em-dash; use a comma, colon, or parentheses"))
-
-        # (c-i) banned hype substrings, outside fenced code and inline code.
-        masked_lower = mask_code_and_links(text).lower()
-        for phrase in BANNED_SUBSTRINGS:
-            if phrase in masked_lower:
-                hard.append((rel, lineno, "banned-phrase",
-                             f'banned phrase "{phrase}"'))
-        for word_re, msg in BANNED_WORD_RES:
-            if word_re.search(masked_lower):
-                hard.append((rel, lineno, "banned-word", msg))
-
-        # (b) lowercase library names in prose (not tables).
-        if not is_table_row(text):
-            masked = mask_code_and_links(text)
-            for m in LIB_RE.finditer(masked):
-                lib = m.group(1)
-                nxt = masked[m.end():m.end() + 1]
-                nxt2 = masked[m.end() + 1:m.end() + 2]
-                if nxt.isalnum() or nxt in ("_", "/"):
-                    continue  # part of an identifier or path
-                if nxt == "." and nxt2.isalnum():
-                    continue  # xgboost.train, file.md
-                hard.append((rel, lineno, "lib-casing",
-                             f'"{lib}" in prose; write "{LIB_CORRECT[lib]}"'))
-
-    # Sentence-level rules over reconstructed prose paragraphs.
     for start, raw in prose_paragraphs(classified):
-        link_dense = raw.count("](") >= 3
-        plain = to_plain(raw)
-        for sentence in split_sentences(plain):
-            # (c-ii) comparative without a number in its sentence.
-            if COMPARATIVE_RE.search(sentence) and not re.search(r"\d", sentence):
-                m = COMPARATIVE_RE.search(sentence)
-                hard.append((rel, start, "comparative",
+        sentences = split_sentences(to_plain(raw))
+        hard.extend(_comparative_findings(rel, start, sentences))
+        if raw.count("](") < LINK_DENSE_TARGETS:
+            soft.extend(_long_sentence_findings(rel, start, sentences))
+
+
+def _line_findings(rel: str, lineno: int, text: str) -> list[tuple]:
+    """Rules (a), (b), (c-i) and (d): everything one prose line decides."""
+    findings: list[tuple] = []
+    if EM_DASH in text:
+        findings.append((rel, lineno, "em-dash",
+                         "em-dash; use a comma, colon, or parentheses"))
+    findings.extend(_banned_text_findings(rel, lineno, text))
+    findings.extend(_lib_casing_findings(rel, lineno, text))
+    return findings
+
+
+def _banned_text_findings(rel: str, lineno: int, text: str) -> list[tuple]:
+    """Rules (c-i) and (d): banned hype phrases and banned bare words."""
+    findings: list[tuple] = []
+    masked_lower = mask_code_and_links(text).lower()
+    for phrase in BANNED_SUBSTRINGS:
+        if phrase in masked_lower:
+            findings.append((rel, lineno, "banned-phrase",
+                             f'banned phrase "{phrase}"'))
+    for word_re, msg in BANNED_WORD_RES:
+        if word_re.search(masked_lower):
+            findings.append((rel, lineno, "banned-word", msg))
+    return findings
+
+
+def _lib_casing_findings(rel: str, lineno: int, text: str) -> list[tuple]:
+    """Rule (b): lowercase library names in prose, tables excepted."""
+    if is_table_row(text):
+        return []
+    findings: list[tuple] = []
+    masked = mask_code_and_links(text)
+    for m in LIB_RE.finditer(masked):
+        if _reads_as_identifier(masked, m.end()):
+            continue
+        lib = m.group(1)
+        findings.append((rel, lineno, "lib-casing",
+                         f'"{lib}" in prose; write "{LIB_CORRECT[lib]}"'))
+    return findings
+
+
+def _reads_as_identifier(masked: str, end: int) -> bool:
+    """Whether what follows a library name makes it an identifier or a path."""
+    nxt = masked[end:end + 1]
+    if nxt.isalnum() or nxt in ("_", "/"):
+        return True
+    return nxt == "." and masked[end + 1:end + 2].isalnum()
+
+
+def _comparative_findings(rel: str, start: int,
+                          sentences: list[str]) -> list[tuple]:
+    """Rule (c-ii): a comparative with no number in its own sentence."""
+    findings: list[tuple] = []
+    for sentence in sentences:
+        m = COMPARATIVE_RE.search(sentence)
+        if m and not re.search(r"\d", sentence):
+            findings.append((rel, start, "comparative",
                              f'"{m.group(0)}" with no number in the sentence'))
-            # SOFT: overlong sentences.
-            if link_dense:
-                continue
-            n = word_count(sentence)
-            if n > SOFT_WORD_LIMIT:
-                soft.append((n, rel, start, sentence))
+    return findings
+
+
+def _long_sentence_findings(rel: str, start: int,
+                            sentences: list[str]) -> list[tuple]:
+    """The soft rule: sentences over the word limit, with their word count."""
+    findings: list[tuple] = []
+    for sentence in sentences:
+        n = word_count(sentence)
+        if n > SOFT_WORD_LIMIT:
+            findings.append((n, rel, start, sentence))
+    return findings
 
 
 def main() -> int:
