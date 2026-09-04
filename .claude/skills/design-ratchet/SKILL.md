@@ -28,6 +28,22 @@ Each metric is one sentence of the house style, so each rise has one question:
 - `hardware_leaks` rose: a caller above the engine seam is asking about the machine. The seam answers such questions itself, so the fix is a method on the seam, not a string test at the call site.
 - `shape_clone_windows` rose alone: a block was copied and renamed, or a legitimate table gained a row. Read the top sites to tell which.
 
+## Scope: the diff, not the tree
+
+Four ratchet rounds settled what this skill is for. `clone_windows` fell from 431 to 127 across PRs #448 to #459 and then moved by 3 in a round; the last two rounds ran on cyclomatic complexity in `scripts/`, which the lint does not scan, so the scoreboard read flat by construction. The instrument is at its floor as a target and stays useful as a question about a diff. So the skill runs per PR, on the code the diff touches, and a standalone round is a sweep with a reason (a new instrument, a new blind spot), not a cadence.
+
+| trigger | rule | proof |
+|---|---|---|
+| any PR touching code | the scoreboard above, main against the branch; every rising gated row gets FIX or PIN in its commit message | scoreboard in the PR body |
+| a function the diff touches reads over CCN 12 (`uvx lizard -l cpp -l python -C 12 -w <touched files>`) | pin its exact outputs with a test first, then split in a second commit, or write `left whole: <reason>` in the PR body | a `test:` commit, then a `refactor:` commit |
+| the split touches a gate script (`scripts/*_lint.py`, `update_standings.py`, `render_*.py`) | main's copy against the branch's over the real corpus, byte-identical; run main's copy with `PYTHONPATH=scripts` so its sibling imports resolve | the commit's `Ran:` line |
+| the split touches training or serialization | `scripts/model_hash.py` unchanged | the commit's `Ran:` line |
+| the split is inside a kernel or fill loop | a SASS diff or a same-pod min before merge, else leave it whole and say so | the perf ledger |
+
+Pin before moving, always. The pin is the durable output: the rounds gave `standings_refresh.py` its first 17 tests and `comment_lint.py` its first 18, and the greedy cut walk's exact-cut pin caught its own first draft copying from a dangling span. Targets come from reading the diff, not from the scoreboard: the exact-window clone measure misses a copy whose lines drifted, and it does not see complexity at all. Reasons a function stays whole are few and named: a hot loop, a constructor whose width is the design, a body with no injection seam (`standings_refresh.measure` rents a pod).
+
+Only a feature or fix PR can score on the ledger below. A ratchet PR farms the metric it is meant to test.
+
 ## Altitude
 
 There is no single correct altitude. A seam belongs where the cost model changes shape, and this tree has three regimes: statistical (objective, split, leaf, where a question is settled by a rule about the type, per decision 116), layout (bins, SoA, blocked rows, where a question is settled by a number, per the `perf:` tag's admission test), and device (warp, stream, occupancy, settled by same-pod measurement behind `HistogramEngine`). The Metal engine satisfying that concept in 700 lines where CUDA needs 4000 is the evidence the seam sits right: it hides exactly what varies and exposes exactly what costs.
@@ -51,3 +67,4 @@ The scoreboard, then one line per rising row: `<metric> +N: <the question above,
 Reviews in which a number changed the outcome, with no false positive among the gated rows.
 
 1. PR #447, 2026-09-01. Found: the width rule written three times with three messages, three names for the keys an invocation states, a stale test citation, four clone pairs, and 24 lines of decision-grade rationale in a header. Applied in one commit: `clone_windows` from +6 to -13, `contract_prose_lines` from +121 to +89 with the rest pinned as new contracts. Instrument lessons: include blocks were 38% of the clone count and are now skipped; `--against` exists because the totals hid the swap and the divergence.
+2. PR #458, 2026-09-03. Found: after the predict and SHAP walks took a row view, `clone_windows` read +2 and named the staging prologue the two launchers now shared; the eval plane's second map in the next commit took it back to flat, and the `shape_clone_windows` +1 that remained was pinned as the one home the row map was introduced to be. No false positive among the gated rows.
