@@ -855,12 +855,7 @@ def _parity(path: pathlib.Path, *, allow_absent: bool = False) -> tuple[str, boo
         The markdown table (or a one-line note) and the pass flag.
     """
     if not path.exists():
-        if allow_absent:
-            return ("Parity check absent (no parity.jsonl in this results "
-                     "dir).", True)
-        return ("Parity check FAILED: no parity.jsonl in this results "
-                 "dir. Absence is not evidence the check does not apply, "
-                 "it means the check never ran.", False)
+        return _absent_parity(allow_absent)
     rows = [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
     live = [r for r in rows if not r.get("skipped")]
     if not live:
@@ -870,30 +865,51 @@ def _parity(path: pathlib.Path, *, allow_absent: bool = False) -> tuple[str, boo
              "|---|--:|--:|--:|"]
     ok = True
     for metric, unit in (("fit_s", "s"), ("peak_rss_gb", "GB")):
-        arms = {arm: [r[metric] for r in live
-                      if r["arm"] == arm and r.get(metric) is not None]
-                for arm in ("fused", "two_step")}
-        if not arms["fused"] or not arms["two_step"]:
-            lines.append(f"| {metric} | n/a | n/a | n/a |")
-            continue
-        f = statistics.median(arms["fused"])
-        t = statistics.median(arms["two_step"])
-        d = 100 * (t - f) / f
-        moved = abs(d) > PARITY_BAND_PCT
+        row, moved = _parity_metric_row(live, metric, unit)
+        lines.append(row)
         ok = ok and not moved
-        lines.append(f"| {metric} | {f:.2f}{unit} | {t:.2f}{unit} | "
-                     f"{d:+.1f}%{' **FAIL**' if moved else ''} |")
+    if split := _two_step_split(live):
+        lines += ["", split]
+    lines += ["", f"Verdict: {'PASS' if ok else 'FAIL'} "
+                  f"(band +-{PARITY_BAND_PCT}%)."]
+    return "\n".join(lines), ok
+
+
+def _absent_parity(allow_absent: bool) -> tuple[str, bool]:
+    """What a missing parity.jsonl reads as, deliberately accepted or not."""
+    if allow_absent:
+        return ("Parity check absent (no parity.jsonl in this results "
+                "dir).", True)
+    return ("Parity check FAILED: no parity.jsonl in this results "
+            "dir. Absence is not evidence the check does not apply, "
+            "it means the check never ran.", False)
+
+
+def _parity_metric_row(live: list[dict], metric: str,
+                unit: str) -> tuple[str, bool]:
+    """One metric's fused-vs-two-step row, and whether it left the band."""
+    arms = {arm: [r[metric] for r in live
+                  if r["arm"] == arm and r.get(metric) is not None]
+            for arm in ("fused", "two_step")}
+    if not arms["fused"] or not arms["two_step"]:
+        return f"| {metric} | n/a | n/a | n/a |", False
+    f = statistics.median(arms["fused"])
+    t = statistics.median(arms["two_step"])
+    d = 100 * (t - f) / f
+    moved = abs(d) > PARITY_BAND_PCT
+    return (f"| {metric} | {f:.2f}{unit} | {t:.2f}{unit} | "
+            f"{d:+.1f}%{' **FAIL**' if moved else ''} |"), moved
+
+
+def _two_step_split(live: list[dict]) -> str:
+    """The ingest/train medians the perf page publishes, or "" if unreported."""
     split = [(r["ingest_s"], r["train_s"]) for r in live
              if r["arm"] == "two_step" and r.get("ingest_s") is not None]
-    if split:
-        lines.append("")
-        lines.append(f"Two-step split: ingest "
-                     f"{statistics.median(i for i, _ in split):.2f}s, train "
-                     f"{statistics.median(t for _, t in split):.2f}s.")
-    lines.append("")
-    lines.append(f"Verdict: {'PASS' if ok else 'FAIL'} "
-                 f"(band +-{PARITY_BAND_PCT}%).")
-    return "\n".join(lines), ok
+    if not split:
+        return ""
+    return (f"Two-step split: ingest "
+            f"{statistics.median(i for i, _ in split):.2f}s, train "
+            f"{statistics.median(t for _, t in split):.2f}s.")
 
 
 def _verdict(ab_path: pathlib.Path) -> str:
