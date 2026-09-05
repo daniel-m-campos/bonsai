@@ -60,7 +60,7 @@ What that bought:
 
 - The parity suite: one contract, checked at `1e-4`, that any engine must meet.
 - Bit-identical CPU models across architectures and thread counts, checked per commit ([determinism](determinism-as-a-contract.md)).
-- The `1e-4` GPU convention: `cuda_*` models are tolerance-equal, not tree-equal, because atomic add order differs. The tests assert prediction tolerance, never tree equality ([invariants](../invariants.md)).
+- The `1e-4` GPU convention: a `cuda_*` model is byte-identical to itself run to run (integer histogram cells) but matches the host model to tolerance, not tree for tree, because the host accumulates float cells. The tests assert host-vs-device prediction tolerance and device-vs-device byte equality ([invariants](../invariants.md)).
 
 The trade is stated plainly.
 The device cannot cut through the seams.

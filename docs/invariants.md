@@ -14,6 +14,12 @@ Predicting through a Dataset carrying the model's own cuts is bit-identical to p
 
 - enforced by: [`Binned prediction: depthwise booster matches the raw walk bit for bit`](../tests/unit/test_predict_binned.cpp)
 
+### cuda-training-bit-reproducible
+
+A device fit is bit-reproducible on one device and one build. Histogram cells are int64 fixed point, so every accumulation is an exact integer sum whatever order the atomics land in, and everything downstream of the fill already ran in a fixed order. Three fits of one dataset serialize to identical bytes on every device plane, with the device objective and with the host objective forced. Not claimed: cross-device, cross-toolkit, or host-vs-device equality, which stay tolerance-bound.
+
+- enforced by: [`CudaGrowers: three fits of one dataset serialize to identical bytes`](../tests/unit/test_cuda_resident.cpp)
+
 ### dart-excludes-early-stopping
 
 DART and early stopping are incompatible by construction and the combination throws rather than silently producing wrong validation numbers: DART rescales earlier trees every round, which invalidates the incrementally accumulated validation scores early stopping reads.
@@ -141,13 +147,6 @@ Device predict is bit-equal to the host binned walk, row for row; the epilogue s
 - code: `include/bonsai/detail/bin_walk.hpp` : `split_bins`
 - elaboration: decision 108.
 
-### cuda-training-tolerance
-
-The cuda growers' training determinism contract is tolerance-equal, never bit-exact, and not bit-equal to itself run to run: device atomics accumulate in arbitrary order. The host plane's fixed-thread bit-identity contract does not extend to the device.
-
-- code: `include/bonsai/cuda/histogram_engine.hpp` : `CudaHistogramEngine`
-- elaboration: decisions 60 and the determinism note in [learn/determinism-as-a-contract.md](learn/determinism-as-a-contract.md).
-
 ### stub-trains-nothing-predicts-anywhere
 
 The cuda growers are registered in every build; without a device, construction and load succeed and training throws with a message naming the fix. Models trained on a device predict on any build.
@@ -208,7 +207,7 @@ Multiclass softmax uses the true diagonal Hessian p(1-p), not the factor-2 conve
 
 ### host-determinism
 
-Model bytes are identical across runs, across thread counts (outside one documented relaxation), and across CPU architectures; CI trains on arm64 and x86-64 and compares file hashes per commit. Host builds compile with contraction off, which is what makes the claim hold across compilers.
+Model bytes are identical across runs, across thread counts (outside one documented relaxation), and across CPU architectures; CI trains on arm64 and x86-64 and compares file hashes per commit. Host builds compile with contraction off, which is what makes the claim hold across compilers. A host fit and a device fit of one dataset agree to 1e-4 in predictions, never byte for byte: the host accumulates histogram cells in float and the device in int64 fixed point, and the device fit's own byte identity is the enforced `cuda-training-bit-reproducible`.
 
 - code: `include/bonsai/parallel.hpp` : `for_each_index`
 - code: `scripts/model_hash.py` : `sha256`

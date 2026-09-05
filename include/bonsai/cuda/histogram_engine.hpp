@@ -70,9 +70,9 @@ std::shared_ptr<IngestPlane const> cuda_ingest_device(DeviceMatrix const &X,
 
 // HistogramEngine that offloads histogram construction to the GPU
 // (src/cuda/histogram_engine.cu; a throwing stub backs it when built
-// without BONSAI_CUDA). GPU cells match the CPU engine to tolerance, not
-// bit-exactly: atomics accumulate in arbitrary order (invariants:
-// cuda-training-tolerance).
+// without BONSAI_CUDA). Cells are int64 fixed point: a device fit is
+// bit-reproducible on one device and build, and matches the CPU engine's
+// float cells to tolerance (invariants: cuda-training-bit-reproducible).
 class CudaHistogramEngine
 {
   public:
