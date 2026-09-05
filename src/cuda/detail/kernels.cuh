@@ -207,29 +207,139 @@ __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
     }
 }
 
+template <size_t Bytes>
+inline __device__ void load_words(void const *sp, uint32_t *word)
+{
+    if constexpr (Bytes == 4)
+    {
+        word[0] = *static_cast<uint32_t const *>(sp);
+    }
+    else if constexpr (Bytes == 8)
+    {
+        uint2 const v = *static_cast<uint2 const *>(sp);
+        word[0]       = v.x;
+        word[1]       = v.y;
+    }
+    else
+    {
+        uint4 const v = *static_cast<uint4 const *>(sp);
+        word[0]       = v.x;
+        word[1]       = v.y;
+        word[2]       = v.z;
+        word[3]       = v.w;
+    }
+}
+
 template <uint32_t W, typename BinT>
 inline __device__ void load_strip(BinT const *sp, BinT *strip)
 {
     constexpr size_t bytes = W * sizeof(BinT);
-    if constexpr (bytes == 4)
-    {
-        *reinterpret_cast<uint32_t *>(strip) = *reinterpret_cast<uint32_t const *>(sp);
-    }
-    else if constexpr (bytes == 8)
-    {
-        *reinterpret_cast<uint2 *>(strip) = *reinterpret_cast<uint2 const *>(sp);
-    }
-    else if constexpr (bytes == 16)
-    {
-        *reinterpret_cast<uint4 *>(strip) = *reinterpret_cast<uint4 const *>(sp);
-    }
-    else
+    if constexpr (bytes != 4 && bytes != 8 && bytes != 16)
     {
 #pragma unroll
         for (uint32_t j = 0; j < W; ++j)
         {
             strip[j] = sp[j];
         }
+    }
+    else
+    {
+        constexpr uint32_t per_word = 4 / sizeof(BinT);
+        constexpr uint32_t bin_bits = 8 * sizeof(BinT);
+        uint32_t           word[bytes / 4];
+        load_words<bytes>(sp, word);
+#pragma unroll
+        for (uint32_t j = 0; j < W; ++j)
+        {
+            strip[j] =
+                static_cast<BinT>(word[j / per_word] >> (bin_bits * (j % per_word)));
+        }
+    }
+}
+
+template <uint32_t W> struct TileBlock
+{
+    uint32_t t;
+    uint32_t node;
+    uint32_t f0;
+    uint32_t wt;
+    uint32_t slot[W];
+    bool     any;
+};
+
+template <uint32_t W>
+inline __device__ TileBlock<W> tile_block(uint32_t const *sel_slot, uint32_t n_feats)
+{
+    TileBlock<W> tb{};
+    tb.t    = blockIdx.x;
+    tb.node = blockIdx.y;
+    tb.f0   = tb.t * W;
+    tb.wt   = tile_strip(tb.t, n_feats);
+#pragma unroll
+    for (uint32_t j = 0; j < W; ++j)
+    {
+        tb.slot[j] = j < tb.wt ? sel_slot[tb.f0 + j] : k_not_selected;
+        tb.any     = tb.any || tb.slot[j] != k_not_selected;
+    }
+    return tb;
+}
+
+template <uint32_t W, typename BinT>
+inline __device__ void load_partial_strip(BinT const *sp, uint32_t wt, BinT *strip)
+{
+#pragma unroll
+    for (uint32_t j = 0; j < W; ++j)
+    {
+        strip[j] = j < wt ? sp[j] : BinT{};
+    }
+}
+
+template <uint32_t W, bool Full, typename BinT, typename Visit>
+inline __device__ void visit_tile_rows(TileBlock<W> const &tb, BinT const *bins,
+                                       uint32_t n_rows, NodeRows const &seg,
+                                       float2 scale, uint32_t first, uint32_t step,
+                                       Visit visit)
+{
+    BinT const *tp = bins + (static_cast<size_t>(n_rows) * tb.t * W);
+    for (uint32_t k = first; k < seg.count; k += step)
+    {
+        float2 const     v  = seg.gh[k];
+        hist_int_t const qg = quantise(v.x, scale.x);
+        hist_int_t const qh = quantise(v.y, scale.y);
+        BinT             strip[W];
+        if constexpr (Full)
+        {
+            load_strip<W>(tp + (static_cast<size_t>(seg.rows[k]) * W), strip);
+        }
+        else
+        {
+            load_partial_strip<W>(tp + (static_cast<size_t>(seg.rows[k]) * tb.wt),
+                                  tb.wt, strip);
+        }
+#pragma unroll
+        for (uint32_t j = 0; j < W; ++j)
+        {
+            if (tb.slot[j] != k_not_selected)
+            {
+                visit(j, pair_off(strip[j]), qg, qh);
+            }
+        }
+    }
+}
+
+template <uint32_t W, typename BinT, typename Visit>
+inline __device__ void visit_tile_rows(TileBlock<W> const &tb, BinT const *bins,
+                                       uint32_t n_rows, NodeRows const &seg,
+                                       float2 scale, uint32_t first, uint32_t step,
+                                       Visit visit)
+{
+    if (tb.wt == W)
+    {
+        visit_tile_rows<W, true>(tb, bins, n_rows, seg, scale, first, step, visit);
+    }
+    else
+    {
+        visit_tile_rows<W, false>(tb, bins, n_rows, seg, scale, first, step, visit);
     }
 }
 
@@ -242,72 +352,36 @@ hist_tile_kernel(BinT const *bins, float2 const *gh_ordered, uint32_t const *row
                  uint32_t const *out_slot, GhQuant const *quant)
 {
     extern __shared__ hist_int_t sh[];
-    uint32_t const               t  = blockIdx.x;
-    uint32_t const               f0 = t * W;
-    uint32_t const               wt = tile_strip(t, n_feats);
-    uint32_t                     slot[W];
-    bool                         any = false;
-#pragma unroll
-    for (uint32_t j = 0; j < W; ++j)
-    {
-        slot[j] = j < wt ? sel_slot[f0 + j] : k_not_selected;
-        any     = any || slot[j] != k_not_selected;
-    }
-    if (!any)
+    TileBlock<W> const           tb = tile_block<W>(sel_slot, n_feats);
+    if (!tb.any)
     {
         return;
     }
-    uint32_t const node = blockIdx.y;
-    NodeRows const seg  = node_rows(rows, gh_ordered, row_offsets, row_counts, node);
+    NodeRows const seg = node_rows(rows, gh_ordered, row_offsets, row_counts, tb.node);
     if (blockIdx.z * blockDim.x >= seg.count)
     {
         return;
     }
-    zero_shared(sh, wt * stride);
-    float2 const   scale = quant->scale;
-    uint32_t const span  = gridDim.z * blockDim.x;
-    BinT const    *tp    = bins + (static_cast<size_t>(n_rows) * t * W);
-    for (uint32_t k = (blockIdx.z * blockDim.x) + threadIdx.x; k < seg.count; k += span)
-    {
-        float2 const     v  = seg.gh[k];
-        hist_int_t const qg = quantise(v.x, scale.x);
-        hist_int_t const qh = quantise(v.y, scale.y);
-        BinT const      *sp = tp + (static_cast<size_t>(seg.rows[k]) * wt);
-        BinT             strip[W];
-        if (wt == W)
-        {
-            load_strip<W>(sp, strip);
-        }
-        else
-        {
-#pragma unroll
-            for (uint32_t j = 0; j < W; ++j)
-            {
-                strip[j] = j < wt ? sp[j] : BinT{};
-            }
-        }
-#pragma unroll
-        for (uint32_t j = 0; j < W; ++j)
-        {
-            if (slot[j] != k_not_selected)
-            {
-                hist_int_t *my = sh + (static_cast<size_t>(j) * stride);
-                hist_add_shared(&my[pair_off(strip[j])], qg);
-                hist_add_shared(&my[pair_off(strip[j]) + 1], qh);
-            }
-        }
-    }
+    zero_shared(sh, tb.wt * stride);
+    visit_tile_rows<W>(tb, bins, n_rows, seg, quant->scale,
+                       (blockIdx.z * blockDim.x) + threadIdx.x, gridDim.z * blockDim.x,
+                       [&](uint32_t j, uint32_t off, hist_int_t qg, hist_int_t qh)
+                       {
+                           hist_int_t *my = sh + (static_cast<size_t>(j) * stride);
+                           hist_add_shared(&my[off], qg);
+                           hist_add_shared(&my[off + 1], qh);
+                       });
     __syncthreads();
-    uint32_t const oslot = out_slot != nullptr ? out_slot[node] : node;
+    uint32_t const oslot = out_slot != nullptr ? out_slot[tb.node] : tb.node;
 #pragma unroll
     for (uint32_t j = 0; j < W; ++j)
     {
-        if (slot[j] != k_not_selected)
+        if (tb.slot[j] != k_not_selected)
         {
             hist_int_t const *base = sh + (static_cast<size_t>(j) * stride);
             hist_int_t       *o =
-                out + (((static_cast<size_t>(oslot) * n_sel) + slot[j]) * stride);
-            uint32_t const nb = n_bins[f0 + j];
+                out + (((static_cast<size_t>(oslot) * n_sel) + tb.slot[j]) * stride);
+            uint32_t const nb = n_bins[tb.f0 + j];
             for (uint32_t i = threadIdx.x; i < 2 * nb; i += blockDim.x)
             {
                 if (base[i] != 0)
@@ -320,30 +394,33 @@ hist_tile_kernel(BinT const *bins, float2 const *gh_ordered, uint32_t const *row
 }
 
 // perf: Small nodes skip the shared-memory stage: below ~512 rows the fixed
-// per-(node,feature) zero+merge cost dominates, so one block per node
-// accumulates row visits straight into the node's global slot.
-template <typename BinT>
+// per-(node,feature) zero+merge cost dominates, so row visits go straight into
+// the node's global slot. One block per (tile, node): a single block per node
+// measured 18.8 ms per launch at 131k x 16384 on an RTX PRO 6000, 7.6 s of a
+// 27.4 s fit, from one SM issuing count x n_sel x 2 atomics.
+template <uint32_t W, typename BinT>
 __global__ void hist_small_kernel(BinT const *bins, float2 const *gh_ordered,
                                   uint32_t const *rows, uint32_t const *row_offsets,
-                                  uint32_t const *row_counts, uint32_t const *features,
+                                  uint32_t const *row_counts, uint32_t const *sel_slot,
                                   uint32_t n_rows, uint32_t n_feats, uint32_t n_sel,
                                   hist_int_t *out, uint32_t stride,
                                   uint32_t const *out_slot, GhQuant const *quant)
 {
-    uint32_t const node  = blockIdx.x;
-    NodeRows const seg   = node_rows(rows, gh_ordered, row_offsets, row_counts, node);
-    float2 const   scale = quant->scale;
-    hist_int_t    *o     = out + (static_cast<size_t>(out_slot[node]) * n_sel * stride);
-    for (uint32_t k = threadIdx.x; k < seg.count * n_sel; k += blockDim.x)
+    TileBlock<W> const tb = tile_block<W>(sel_slot, n_feats);
+    if (!tb.any)
     {
-        uint32_t const sel = k / seg.count;
-        uint32_t const i   = k % seg.count;
-        uint32_t const b =
-            bins[tiled_cell(features[sel], seg.rows[i], n_rows, n_feats)];
-        float2 const v = seg.gh[i];
-        hist_add(&o[(sel * stride) + (2 * b)], quantise(v.x, scale.x));
-        hist_add(&o[(sel * stride) + (2 * b) + 1], quantise(v.y, scale.y));
+        return;
     }
+    hist_int_t    *o = out + (static_cast<size_t>(out_slot[tb.node]) * n_sel * stride);
+    NodeRows const seg = node_rows(rows, gh_ordered, row_offsets, row_counts, tb.node);
+    visit_tile_rows<W>(tb, bins, n_rows, seg, quant->scale, threadIdx.x, blockDim.x,
+                       [&](uint32_t j, uint32_t off, hist_int_t qg, hist_int_t qh)
+                       {
+                           hist_int_t *cell =
+                               o + (static_cast<size_t>(tb.slot[j]) * stride) + off;
+                           hist_add(cell, qg);
+                           hist_add(cell + 1, qh);
+                       });
 }
 
 constexpr uint32_t k_part_rows_per_thread = 16;
