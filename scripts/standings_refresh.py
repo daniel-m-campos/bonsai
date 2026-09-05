@@ -123,8 +123,6 @@ PLANE_CPU = "cpu"
 # the GPU session and no second pod is rented.
 CPU_PLANE_HOSTS = (PLANE_GPU, "cpupod")
 
-# The A/B bands and the anchor wheel are check_standings.py's: the gate,
-# the renderer and this driver read one number.
 AB_BAND_PCT = check_standings.AB_BAND_PCT
 ANCHOR_BAND_PCT = check_standings.ANCHOR_BAND_PCT
 ANCHOR_VERSION = check_standings.ANCHOR_VERSION
@@ -134,11 +132,7 @@ ANCHOR_VERSION = check_standings.ANCHOR_VERSION
 # the same pod-noise question, so the two share a number.
 PARITY_BAND_PCT = AB_BAND_PCT
 
-# One A/B file per plane in a results directory, so the two sessions
-# cannot land on each other's rows.
 AB_FILES = {PLANE_GPU: "ab-gpu.jsonl", PLANE_CPU: "ab-cpu.jsonl"}
-# The axis each plane's A/B file is registered under: the tall axis, whose
-# cell the pod script fits the arms at, so the file supersedes with it.
 AB_AXES = {PLANE_GPU: "gpu-tall", PLANE_CPU: "cpu-tall"}
 
 # Every axis is the stem of its dated results file AND the name of the
@@ -513,29 +507,8 @@ def _row_host(path: pathlib.Path) -> str:
 
 def _copy_evidence(path: pathlib.Path, axis_file: str | None,
                    prefix: str) -> str | None:
-    """Commit a session evidence file beside the axis file it rode with.
-
-    The parity rows are where the perf page's one fused fit total comes
-    from and the A/B rows are where its release drift table comes from, so
-    each ships with the standings it anchors and supersedes with them. The
-    file is dated from the axis file it accompanies, which is the only
-    honest date: the two were measured in the same session.
-
-    Parameters
-    ----------
-    path : pathlib.Path
-        The pod's ``parity.jsonl`` or ``ab-<plane>.jsonl``.
-    axis_file : str or None
-        The dated standings file the rows anchor, or None when this
-        session did not measure that axis.
-    prefix : str
-        The committed file's stem before the date stamp.
-
-    Returns
-    -------
-    str or None
-        The committed file name, or None when there is nothing to commit.
-    """
+    """Copy ``path`` to RESULTS as ``<prefix>-<stamp>.jsonl``, dated from
+    the axis file it was measured beside; None when either is absent."""
     if not axis_file or not path.exists():
         return None
     stamp = "-".join(pathlib.Path(axis_file).stem.split("-")[-2:])

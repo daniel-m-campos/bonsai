@@ -137,8 +137,6 @@ def test_an_axis_without_an_ab_file_is_not_gated(monkeypatch, tmp_path):
 
 
 def test_a_moved_ab_nobody_cites_fails_the_gate(monkeypatch, tmp_path):
-    """The error names the axis, the file and the cells that moved, and
-    says what to do: a tagged entry citing the file, or a re-measurement."""
     reg = _ab_registry(monkeypatch, tmp_path,
                        [_arm("anchor", 10.0), _arm("old", 10.0), _arm("new", 10.3)],
                        decisions="## 1. Nothing\n")
@@ -161,9 +159,6 @@ def test_a_moved_ab_ships_under_an_entry_tagged_with_its_axis(monkeypatch,
 
 def test_a_citation_under_another_axis_tag_does_not_count(monkeypatch,
                                                           tmp_path):
-    """The citing entry is the one check_decisions holds against the axis's
-    as_of_decision, so a citation filed under the wrong axis explains a move
-    the registry never had to acknowledge."""
     reg = _ab_registry(monkeypatch, tmp_path,
                        [_arm("anchor", 10.0), _arm("old", 10.0), _arm("new", 10.3)],
                        decisions=DECISIONS.replace("Standings: gpu-tall",
@@ -173,8 +168,6 @@ def test_a_citation_under_another_axis_tag_does_not_count(monkeypatch,
 
 
 def test_a_skipped_arm_carries_no_cell(monkeypatch, tmp_path):
-    """The pod script writes a skipped row for an arm it could not fit; the
-    gate reads it as an absent arm, never as a zero-second fit."""
     reg = _ab_registry(monkeypatch, tmp_path,
                        [{"arm": "anchor", "grower": "cuda_depthwise",
                          "skipped": "no cuda"},

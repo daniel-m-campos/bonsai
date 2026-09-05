@@ -495,8 +495,6 @@ def test_supersede_stamps_a_quality_axis_that_registers_no_plane(monkeypatch,
 
 def test_supersede_swaps_the_ab_file_it_was_given(monkeypatch, tmp_path,
                                                   capsys):
-    """The release A/B is measured with the axis and supersedes with it,
-    exactly as the companion does."""
     registry = _measured_axis(monkeypatch, tmp_path, "cpu-tall",
                               {"file": "cpu-tall-2026-08.jsonl",
                                "sha": MEASURED_SHA, "plane": "cpu",
@@ -517,8 +515,6 @@ def test_supersede_swaps_the_ab_file_it_was_given(monkeypatch, tmp_path,
 
 
 def test_supersede_keeps_the_ab_file_when_none_is_given(monkeypatch, tmp_path):
-    """A refresh that fitted no arms leaves the last A/B registered: the
-    gate keeps reading it until a later session replaces it."""
     registry = _measured_axis(monkeypatch, tmp_path, "cpu-tall",
                               {"file": "cpu-tall-2026-08.jsonl",
                                "sha": MEASURED_SHA, "plane": "cpu",

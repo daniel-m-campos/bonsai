@@ -8,8 +8,8 @@ Two hard-fail chokepoints plus the refresh planner, stdlib only:
         claims a perf change on an axis carries a `Standings: <axis>[, ...]`
         line; the gate fails while any tagged entry is newer than the axis's
         registered as_of_decision, forcing refresh-or-demote before the claim
-        ships. The same run reads every registered release A/B file and
-        fails while one holds a moved cell that no tagged entry cites.
+        ships, and while a registered release A/B holds a moved cell that
+        no tagged entry cites.
 
     python3 scripts/check_standings.py --release <version>
         Release-time gate (runs in the wheels publish job). Fails unless every
@@ -45,10 +45,7 @@ inside ANCHOR_BAND_PCT; the anchor is what makes the comparison cumulative,
 since a 1.5% loss that hides inside the release band every release compounds
 to 35% over twenty of them and shows against the anchor by the second. The
 math lives here, the lowest module, so the driver, the renderer and the gate
-read one answer. The refresh registers each plane's file as its tall axis's
-`ab`, so the file is rendered with the standings it accompanies and gated
-with them: a moved cell ships only under a `Standings:` entry that names
-the axis and cites the file.
+read one answer.
 
 Reference-library majors are compared against the installed package in this
 environment when available (`importlib.metadata`, no import needed); most
@@ -131,14 +128,7 @@ def check_decisions(reg: dict) -> list[str]:
 
 
 def check_ab(reg: dict) -> list[str]:
-    """A moved release A/B ships only under a tagged entry that cites it.
-
-    The verdict is recomputed from the registered file, never trusted from
-    the PR body, and the citation must sit in an entry whose `Standings:`
-    tag names the axis: that is the entry `check_decisions` already holds
-    against the axis's as_of_decision, so one decision carries both the
-    explanation and the bump.
-    """
+    """A moved release A/B needs an entry tagged with its axis citing it."""
     cited = tagged_bodies(DECISIONS.read_text())
     errors = []
     for axis, e in reg.items():
