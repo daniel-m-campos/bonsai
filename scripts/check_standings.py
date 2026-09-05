@@ -169,9 +169,13 @@ def tagged_bodies(text: str) -> dict[str, str]:
 
 
 def ab_rows(path: pathlib.Path) -> list[dict]:
-    """The measured rows of one A/B file; a skipped arm carries no cell."""
-    rows = [json.loads(ln) for ln in path.read_text().splitlines()
-            if ln.strip()]
+    """The measured rows of one A/B file."""
+    return measured([json.loads(ln) for ln in path.read_text().splitlines()
+                     if ln.strip()])
+
+
+def measured(rows: list[dict]) -> list[dict]:
+    """The rows that carry a cell; a skipped arm carries none."""
     return [r for r in rows if not r.get("skipped")]
 
 

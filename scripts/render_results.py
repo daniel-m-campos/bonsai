@@ -555,7 +555,7 @@ def _ab_block(axis: str) -> str:
     name = _STANDINGS_REG[axis].get("ab")
     if not name or not (RESULTS / name).exists():
         return ""
-    rows = [r for r in load_jsonl(name) if not r.get("skipped")]
+    rows = check_standings.measured(load_jsonl(name))
     plane = _STANDINGS_REG[axis]["plane"].upper()
     return (f"### {plane} plane ({check_standings.ab_arm_line(rows)})\n\n"
             f"{check_standings.ab_table(rows)}\n\n"
