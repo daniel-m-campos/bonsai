@@ -580,6 +580,19 @@ __global__ void stamp_kernel(uint32_t const *rows, PartOpDev const *segs,
     }
 }
 
+__global__ void zero_slots_kernel(hist_int_t *pool, uint32_t const *slot_ids,
+                                  uint32_t id_stride, uint32_t slot_cells)
+{
+    uint32_t const slot = slot_ids[blockIdx.y * id_stride];
+    hist_int_t    *out  = pool + (static_cast<size_t>(slot) * slot_cells);
+    uint32_t const span = gridDim.x * blockDim.x;
+    for (uint32_t i = (blockIdx.x * blockDim.x) + threadIdx.x; i < slot_cells;
+         i += span)
+    {
+        out[i] = 0;
+    }
+}
+
 __global__ void subtract_inplace_kernel(hist_int_t *pool, uint32_t large_slot,
                                         uint32_t small_slot, uint32_t slot_cells)
 {

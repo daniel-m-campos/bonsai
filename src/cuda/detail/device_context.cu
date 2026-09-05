@@ -41,6 +41,16 @@ constexpr uint32_t k_sum_blocks = 64;
 namespace
 {
 
+constexpr uint32_t k_slot_stream_threads = 256;
+
+dim3 slot_stream_grid(uint32_t slot_cells, uint32_t n_slots)
+{
+    return dim3(std::clamp<uint32_t>((slot_cells + k_slot_stream_threads - 1) /
+                                         k_slot_stream_threads,
+                                     1, 256),
+                n_slots);
+}
+
 [[noreturn]] void refuse_hist_budget(size_t max_bins, size_t limit)
 {
     throw ConfigError(
@@ -1008,9 +1018,11 @@ void CudaDeviceContext::advance_level(Dataset const                             
     {
         lvl.prof_record_begin(/*root=*/false);
     }
-    check(cudaMemset(lvl.other().data(), 0,
-                     child_slots * lvl.slot_cells() * sizeof(hist_int_t)),
-          "zero level");
+    auto const sd = static_cast<uint32_t>(lvl.slot_cells());
+    zero_slots_kernel<<<slot_stream_grid(sd, static_cast<uint32_t>(ops.size())),
+                        dim3(k_slot_stream_threads)>>>(lvl.other().data(),
+                                                       lvl.triples.device() + 1, 3, sd);
+    check(cudaGetLastError(), "zero level launch");
     if (prof.enabled)
     {
         check(cudaEventRecord(lvl.prof_ev[LevelPipeline::ev_after_memset]),
@@ -1048,11 +1060,9 @@ void CudaDeviceContext::advance_level(Dataset const                             
         check(cudaEventRecord(lvl.prof_ev[LevelPipeline::ev_after_hist]),
               "profile event record");
     }
-    auto const sd = static_cast<uint32_t>(lvl.slot_cells());
-    subtract_kernel<<<dim3(std::clamp<uint32_t>((sd + 255) / 256, 1, 256),
-                           static_cast<uint32_t>(ops.size())),
-                      dim3(256)>>>(lvl.cur().data(), lvl.other().data(),
-                                   lvl.triples.device(), sd);
+    subtract_kernel<<<slot_stream_grid(sd, static_cast<uint32_t>(ops.size())),
+                      dim3(k_slot_stream_threads)>>>(
+        lvl.cur().data(), lvl.other().data(), lvl.triples.device(), sd);
     check(cudaGetLastError(), "subtract launch");
     if (prof.enabled)
     {
@@ -1268,9 +1278,8 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     leaf.slot_offsets.assign(max_slots, 0);
     leaf.slot_counts.assign(max_slots, 0);
     leaf.pool.reserve(max_slots * lvl.slot_cells());
-    check(cudaMemset(leaf.pool.data(), 0,
-                     max_slots * lvl.slot_cells() * sizeof(hist_int_t)),
-          "zero leaf pool");
+    check(cudaMemset(leaf.pool.data(), 0, lvl.slot_cells() * sizeof(hist_int_t)),
+          "zero leaf root slot");
 
     bool const     identity = root.rows.empty() && root.row_count == data.key.n_rows;
     uint32_t const n        = stage_root_rows(root, identity);
@@ -1396,6 +1405,10 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
     leaf.build_seg.sync(3);
     lap(prof.adv_stage_s);
 
+    auto const sd = static_cast<uint32_t>(lvl.slot_cells());
+    zero_slots_kernel<<<slot_stream_grid(sd, 1), dim3(k_slot_stream_threads)>>>(
+        leaf.pool.data(), leaf.build_seg.device() + 2, 1, sd);
+    check(cudaGetLastError(), "zero leaf slot launch");
     if (small_count >= k_min_gpu_rows)
     {
         launch_hist(static_cast<uint32_t>(ds.plane_n_rows()),
@@ -1421,10 +1434,8 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
             }
         });
     check(cudaGetLastError(), "leaf hist launch");
-    auto const sd = static_cast<uint32_t>(lvl.slot_cells());
-    subtract_inplace_kernel<<<dim3(std::clamp<uint32_t>((sd + 255) / 256, 1, 256)),
-                              dim3(256)>>>(leaf.pool.data(), large_slot, small_slot,
-                                           sd);
+    subtract_inplace_kernel<<<slot_stream_grid(sd, 1), dim3(k_slot_stream_threads)>>>(
+        leaf.pool.data(), large_slot, small_slot, sd);
     check(cudaGetLastError(), "leaf subtract launch");
     if (prof.enabled)
     {
