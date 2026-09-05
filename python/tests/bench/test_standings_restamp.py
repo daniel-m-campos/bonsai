@@ -21,7 +21,13 @@ REASON = "host-side fill only; src/cuda byte-identical"
 
 # The L40S session behind the tolerance kind: four reps of one cuda_depthwise
 # fit at one commit wrote four different model hashes, so the argument is made
-# against the run-to-run spread instead (500k x 100, 20 iters, depth 8).
+# against the run-to-run spread instead (500k x 100, 20 iters, depth 8). The
+# device fit has hashed identically run to run since decision 124, so the
+# kind stays for the record and a device carry-forward now names its grower
+# and host on a model-hash block.
+DEVICE_GROWER = "cuda_depthwise"
+DEVICE_HOST = "pod-l40s"
+DEVICE_HASH_REASON = "kernel refactor; device bytes identical on the pod"
 DEVICE_REASON = "no src/cuda change; every gpu spec pins its thread count"
 FLOOR_BEFORE = 2.4e-06
 FLOOR_AFTER = 2.9e-06
@@ -126,7 +132,8 @@ def test_carry_forward_round_trip_clears_the_gates(monkeypatch, tmp_path,
     assert entry["carried_forward"] == {
         "measured_at": MEASURED_SHA, "stamped_at": STAMPED_SHA,
         "reason": REASON,
-        "evidence": {"kind": "model-hash", "before": PROOF, "after": PROOF}}
+        "evidence": {"kind": "model-hash", "grower": "depthwise",
+                     "before": PROOF, "after": PROOF}}
 
     assert check_standings.stale_axes(reg) == []
     assert check_standings.check_release(reg, "1.8.0") == []
@@ -137,6 +144,38 @@ def test_carry_forward_round_trip_clears_the_gates(monkeypatch, tmp_path,
     # Spent on the next move: a carry-forward is not a standing exemption.
     (tmp_path / "src" / "cuda" / "kernel.cu").write_text("device, faster\n")
     assert check_standings.stale_axes(reg) == ["gpu-tall"]
+
+
+def test_device_hash_refuses_without_the_host_it_was_measured_on(monkeypatch,
+                                                                 tmp_path):
+    """A cuda_* hash is identity on one device and one build, so the block
+    that carries it must say which device; without a host the stamp is
+    refused and the registry stays byte-identical."""
+    registry = _stale_gpu_axis(monkeypatch, tmp_path)
+    before = registry.read_text()
+
+    assert _run(monkeypatch, "--axis", "gpu-tall", "--restamp-verified",
+                "--reason", DEVICE_HASH_REASON,
+                "--evidence-grower", DEVICE_GROWER,
+                "--evidence-before", PROOF, "--evidence-after", PROOF) == 1
+    assert registry.read_text() == before
+
+
+def test_device_hash_carries_its_grower_and_host(monkeypatch, tmp_path):
+    """With the host named, a device hash is a byte-identity proof for the
+    device plane, and the block records where that identity holds."""
+    registry = _stale_gpu_axis(monkeypatch, tmp_path)
+    assert _run(monkeypatch, "--axis", "gpu-tall", "--restamp-verified",
+                "--reason", DEVICE_HASH_REASON,
+                "--evidence-grower", DEVICE_GROWER,
+                "--evidence-host", DEVICE_HOST,
+                "--evidence-before", PROOF, "--evidence-after", PROOF) == 0
+
+    reg = json.loads(registry.read_text())
+    assert reg["gpu-tall"]["carried_forward"]["evidence"] == {
+        "kind": "model-hash", "grower": DEVICE_GROWER, "host": DEVICE_HOST,
+        "before": PROOF, "after": PROOF}
+    assert check_standings.stale_axes(reg) == []
 
 
 def test_carry_forward_refuses_an_axis_that_is_already_current(monkeypatch,
