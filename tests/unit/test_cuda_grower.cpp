@@ -1,9 +1,10 @@
 // CUDA grower parity tests. Compiled in every build; each case SKIPs at
-// runtime unless cuda_available(). GPU histograms accumulate per-chunk in
-// float (merged in double), and atomics add in arbitrary order, so
-// comparisons are tolerance-based rather than bit-exact. A configuration the
-// device cannot hold is refused with ConfigError, not moved to the host, so
-// the cases that used to assert host-fallback parity assert the error.
+// runtime unless cuda_available(). GPU histograms accumulate quantised
+// gradients in int64 cells, so a device fit is exact against its own
+// quantiser; the host accumulates in float, so host-vs-device comparisons
+// are tolerance-based rather than bit-exact. A configuration the device
+// cannot hold is refused with ConfigError, not moved to the host, so the
+// cases that used to assert host-fallback parity assert the error.
 
 #include "bonsai/booster.hpp"
 #include "bonsai/config/data_config.hpp"
@@ -684,6 +685,71 @@ TEST_CASE("CudaDepthwiseGrower handles consecutive trees and datasets",
 
 } // namespace
 
+TEST_CASE("CudaDepthwiseGrower matches CPU across every histogram plane",
+          "[cuda][grower]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    // 65536 rows puts the root past one 32768-row chunk, depth 8 leaves nodes
+    // under the 512-row small-kernel threshold, and max_bin selects the plane:
+    // 256 bins tile eight features per block in u8 cells, 512 bins overflow
+    // the tile budget and run one feature per block in u16 cells.
+    uint32_t max_bin = 0;
+    SECTION("tiled plane, u8 cells")
+    {
+        max_bin = 256;
+    }
+    SECTION("per-feature plane, u16 cells")
+    {
+        max_bin = 512;
+    }
+    std::mt19937                          rng(17);
+    std::uniform_real_distribution<float> value(0.0F, 1.0F);
+    std::normal_distribution<float>       gradient(0.0F, 1.0F);
+    size_t const                          n = 65536;
+
+    detail::ColumnBatch batch;
+    batch.features.resize(4, std::vector<float>(n));
+    batch.feature_names = {"a", "b", "c", "d"};
+    batch.labels.assign(n, 0.0F);
+    std::vector<float> grad(n);
+    std::vector<float> hess(n);
+    for (size_t r = 0; r < n; ++r)
+    {
+        for (auto &column : batch.features)
+        {
+            column[r] = value(rng);
+        }
+        grad[r] = gradient(rng);
+        hess[r] = 0.5F + value(rng);
+    }
+    BinMapperConfig bm;
+    bm.max_bin         = max_bin;
+    BinMappers mappers = BinMappers::fit(batch, bm);
+    Dataset    ds      = Dataset::bin(batch, mappers, {});
+    REQUIRE(ds.n_bins(0) > max_bin / 2);
+
+    TreeConfig cfg;
+    cfg.max_depth        = 8;
+    cfg.max_leaves       = 1U << 30U;
+    cfg.min_data_in_leaf = 4;
+
+    DepthwiseGrower<CpuHistogramEngine> cpu_grower(cfg);
+    CudaDepthwiseGrower                 gpu_grower(cfg);
+
+    auto rows = test::iota_rows(n);
+    auto cpu  = cpu_grower.grow(ds, grad, hess, rows);
+    auto gpu  = gpu_grower.grow(ds, grad, hess, rows);
+
+    REQUIRE(cpu.values.size() == gpu.values.size());
+    for (size_t r = 0; r < cpu.values.size(); ++r)
+    {
+        REQUIRE_THAT(gpu.values[r], Catch::Matchers::WithinAbs(cpu.values[r], 1e-4));
+    }
+}
+
 TEST_CASE("CudaDepthwiseGrower matches CPU past the 48KiB shared-memory budget",
           "[cuda][grower]")
 {
@@ -752,7 +818,7 @@ TEST_CASE("A max_bin past the shared-memory ceiling is refused",
     {
         SKIP("no usable CUDA device");
     }
-    // ~16k bins per feature: 4*16384*4B = 256KiB of shared memory, past every
+    // ~16k bins per feature: 2*16384*8B = 256KiB of shared memory, past every
     // device's opt-in ceiling. begin_root refuses the tree and names the
     // limit; the host fallback this replaced trained a wrong model once
     // (issue #12, fixed in cd4e726) and hid a large slowdown the rest of the

@@ -205,8 +205,9 @@ if(BONSAI_CUDA)
         --cuda-path=${CUDAToolkit_LIBRARY_ROOT}
         -Wno-unknown-cuda-version
         # Target flags come last, overriding the directory-level
-        # -ffp-contract=off: fma is the native device op and the kernels'
-        # f32-chunk/f64-merge scheme owns its own precision story.
+        # -ffp-contract=off: fma is the native device op, and the histogram
+        # fill quantises each visit with one power-of-two multiply, which
+        # no contraction can reach.
         -ffp-contract=fast)
     target_include_directories(bonsai_cuda_kernels PRIVATE ${CMAKE_SOURCE_DIR}/include)
     # NVIDIA's headers #error on libc++ hosts on x86_64; this macro is their

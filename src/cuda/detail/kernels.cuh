@@ -62,49 +62,128 @@ inline void gather(float2 const *gh, uint32_t const *rows, uint32_t n,
     check(cudaGetLastError(), "gather launch");
 }
 
+inline __device__ hist_int_t quantise(float v, float scale)
+{
+    return __float2ll_rn(v * scale);
+}
+
+inline __device__ void hist_add(hist_int_t *cell, hist_int_t q)
+{
+    atomicAdd(reinterpret_cast<unsigned long long *>(cell),
+              static_cast<unsigned long long>(q));
+}
+
+inline __device__ NodeRows node_rows(uint32_t const *rows, float2 const *gh_ordered,
+                                     uint32_t const *row_offsets,
+                                     uint32_t const *row_counts, uint32_t node)
+{
+    uint32_t const offset = row_offsets[node];
+    return {rows + offset, gh_ordered + offset, row_counts[node]};
+}
+
+inline __device__ void zero_shared(hist_int_t *sh, uint32_t n)
+{
+    for (uint32_t i = threadIdx.x; i < n; i += blockDim.x)
+    {
+        sh[i] = 0;
+    }
+    __syncthreads();
+}
+
+__global__ void gh_absmax_kernel(float2 const *gh, uint32_t n, uint2 *absmax)
+{
+    float          mg   = 0.0F;
+    float          mh   = 0.0F;
+    uint32_t const span = gridDim.x * blockDim.x;
+    for (uint32_t r = (blockIdx.x * blockDim.x) + threadIdx.x; r < n; r += span)
+    {
+        mg = fmaxf(mg, fabsf(gh[r].x));
+        mh = fmaxf(mh, fabsf(gh[r].y));
+    }
+    for (int off = 16; off > 0; off >>= 1)
+    {
+        mg = fmaxf(mg, __shfl_down_sync(0xffffffffU, mg, off));
+        mh = fmaxf(mh, __shfl_down_sync(0xffffffffU, mh, off));
+    }
+    if ((threadIdx.x & 31U) == 0)
+    {
+        atomicMax(&absmax->x, __float_as_uint(mg));
+        atomicMax(&absmax->y, __float_as_uint(mh));
+    }
+}
+
+inline __device__ float fixed_point_scale(uint32_t absmax_bits, uint32_t n_rows,
+                                          double *inv)
+{
+    double const m = static_cast<double>(__uint_as_float(absmax_bits)) * n_rows;
+    if (!(m > 0.0) || !isfinite(m))
+    {
+        *inv = 0.0;
+        return 0.0F;
+    }
+    int const e = 61 - ilogb(m) < 126 ? 61 - ilogb(m) : 126;
+    *inv        = ldexp(1.0, -e);
+    return ldexpf(1.0F, e);
+}
+
+__global__ void gh_quant_kernel(uint2 const *absmax, uint32_t n_rows, GhQuant *out)
+{
+    if (threadIdx.x != 0 || blockIdx.x != 0)
+    {
+        return;
+    }
+    GhQuant q{};
+    q.scale.x = fixed_point_scale(absmax->x, n_rows, &q.inv.x);
+    q.scale.y = fixed_point_scale(absmax->y, n_rows, &q.inv.y);
+    *out      = q;
+}
+
+inline void launch_gh_quant(float2 const *gh, uint32_t n, uint2 *absmax, GhQuant *out)
+{
+    check(cudaMemset(absmax, 0, sizeof(uint2)), "absmax zero");
+    gh_absmax_kernel<<<dim3(std::clamp<uint32_t>(n / 256, 1, 1024)), dim3(256)>>>(
+        gh, n, absmax);
+    check(cudaGetLastError(), "absmax launch");
+    gh_quant_kernel<<<dim3(1), dim3(1)>>>(absmax, n, out);
+    check(cudaGetLastError(), "quant launch");
+}
+
 template <typename BinT>
 __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
                             uint32_t const *rows, uint32_t const *row_offsets,
                             uint32_t const *row_counts, uint32_t const *features,
                             uint32_t const *n_bins, uint32_t n_rows, uint32_t n_feats,
-                            uint32_t n_sel, double *out, uint32_t stride,
-                            uint32_t const *out_slot)
+                            uint32_t n_sel, hist_int_t *out, uint32_t stride,
+                            uint32_t const *out_slot, GhQuant const *quant)
 {
-    extern __shared__ float sh[];
-    uint32_t const          f     = features[blockIdx.x];
-    uint32_t const          node  = blockIdx.y;
-    uint32_t const          count = row_counts[node];
-    if (blockIdx.z * blockDim.x >= count)
+    extern __shared__ hist_int_t sh[];
+    uint32_t const               f    = features[blockIdx.x];
+    uint32_t const               node = blockIdx.y;
+    NodeRows const seg = node_rows(rows, gh_ordered, row_offsets, row_counts, node);
+    if (blockIdx.z * blockDim.x >= seg.count)
     {
         return;
     }
     uint32_t const nb = n_bins[f];
-    for (uint32_t i = threadIdx.x; i < 4 * nb; i += blockDim.x)
+    zero_shared(sh, 2 * nb);
+    float2 const   scale = quant->scale;
+    uint32_t const span  = gridDim.z * blockDim.x;
+    for (uint32_t k = (blockIdx.z * blockDim.x) + threadIdx.x; k < seg.count; k += span)
     {
-        sh[i] = 0.0F;
-    }
-    __syncthreads();
-    float          *my = sh + (static_cast<size_t>((threadIdx.x >> 5) & 1U) * 2 * nb);
-    uint32_t const  offset = row_offsets[node];
-    uint32_t const *nrows  = rows + offset;
-    float2 const   *ngh    = gh_ordered + offset;
-    uint32_t const  span   = gridDim.z * blockDim.x;
-    for (uint32_t k = (blockIdx.z * blockDim.x) + threadIdx.x; k < count; k += span)
-    {
-        uint32_t const b = bins[tiled_cell(f, nrows[k], n_rows, n_feats)];
-        float2 const   v = ngh[k];
-        atomicAdd(&my[pair_off(b)], v.x);
-        atomicAdd(&my[pair_off(b) + 1], v.y);
+        uint32_t const b = bins[tiled_cell(f, seg.rows[k], n_rows, n_feats)];
+        float2 const   v = seg.gh[k];
+        hist_add(&sh[pair_off(b)], quantise(v.x, scale.x));
+        hist_add(&sh[pair_off(b) + 1], quantise(v.y, scale.y));
     }
     __syncthreads();
     uint32_t const oslot = out_slot != nullptr ? out_slot[node] : node;
-    double *o = out + (((static_cast<size_t>(oslot) * n_sel) + blockIdx.x) * stride);
+    hist_int_t    *o =
+        out + (((static_cast<size_t>(oslot) * n_sel) + blockIdx.x) * stride);
     for (uint32_t i = threadIdx.x; i < 2 * nb; i += blockDim.x)
     {
-        float const v = sh[i] + sh[(2 * nb) + i];
-        if (v != 0.0F)
+        if (sh[i] != 0)
         {
-            atomicAdd(&o[i], static_cast<double>(v));
+            hist_add(&o[i], sh[i]);
         }
     }
 }
@@ -136,19 +215,19 @@ inline __device__ void load_strip(BinT const *sp, BinT *strip)
 }
 
 template <uint32_t W, typename BinT>
-__global__ void hist_tile_kernel(BinT const *bins, float2 const *gh_ordered,
-                                 uint32_t const *rows, uint32_t const *row_offsets,
-                                 uint32_t const *row_counts, uint32_t const *sel_slot,
-                                 uint32_t const *n_bins, uint32_t n_rows,
-                                 uint32_t n_feats, uint32_t n_sel, double *out,
-                                 uint32_t stride, uint32_t const *out_slot)
+__global__ void
+hist_tile_kernel(BinT const *bins, float2 const *gh_ordered, uint32_t const *rows,
+                 uint32_t const *row_offsets, uint32_t const *row_counts,
+                 uint32_t const *sel_slot, uint32_t const *n_bins, uint32_t n_rows,
+                 uint32_t n_feats, uint32_t n_sel, hist_int_t *out, uint32_t stride,
+                 uint32_t const *out_slot, GhQuant const *quant)
 {
-    extern __shared__ float sh[];
-    uint32_t const          t  = blockIdx.x;
-    uint32_t const          f0 = t * W;
-    uint32_t const          wt = tile_strip(t, n_feats);
-    uint32_t                slot[W];
-    bool                    any = false;
+    extern __shared__ hist_int_t sh[];
+    uint32_t const               t  = blockIdx.x;
+    uint32_t const               f0 = t * W;
+    uint32_t const               wt = tile_strip(t, n_feats);
+    uint32_t                     slot[W];
+    bool                         any = false;
 #pragma unroll
     for (uint32_t j = 0; j < W; ++j)
     {
@@ -159,27 +238,23 @@ __global__ void hist_tile_kernel(BinT const *bins, float2 const *gh_ordered,
     {
         return;
     }
-    uint32_t const node  = blockIdx.y;
-    uint32_t const count = row_counts[node];
-    if (blockIdx.z * blockDim.x >= count)
+    uint32_t const node = blockIdx.y;
+    NodeRows const seg  = node_rows(rows, gh_ordered, row_offsets, row_counts, node);
+    if (blockIdx.z * blockDim.x >= seg.count)
     {
         return;
     }
-    for (uint32_t i = threadIdx.x; i < wt * stride; i += blockDim.x)
+    zero_shared(sh, wt * stride);
+    float2 const   scale = quant->scale;
+    uint32_t const span  = gridDim.z * blockDim.x;
+    BinT const    *tp    = bins + (static_cast<size_t>(n_rows) * t * W);
+    for (uint32_t k = (blockIdx.z * blockDim.x) + threadIdx.x; k < seg.count; k += span)
     {
-        sh[i] = 0.0F;
-    }
-    __syncthreads();
-    uint32_t const  offset = row_offsets[node];
-    uint32_t const *nrows  = rows + offset;
-    float2 const   *ngh    = gh_ordered + offset;
-    uint32_t const  span   = gridDim.z * blockDim.x;
-    BinT const     *tp     = bins + (static_cast<size_t>(n_rows) * t * W);
-    for (uint32_t k = (blockIdx.z * blockDim.x) + threadIdx.x; k < count; k += span)
-    {
-        float2 const v  = ngh[k];
-        BinT const  *sp = tp + (static_cast<size_t>(nrows[k]) * wt);
-        BinT         strip[W];
+        float2 const     v  = seg.gh[k];
+        hist_int_t const qg = quantise(v.x, scale.x);
+        hist_int_t const qh = quantise(v.y, scale.y);
+        BinT const      *sp = tp + (static_cast<size_t>(seg.rows[k]) * wt);
+        BinT             strip[W];
         if (wt == W)
         {
             load_strip<W>(sp, strip);
@@ -197,9 +272,9 @@ __global__ void hist_tile_kernel(BinT const *bins, float2 const *gh_ordered,
         {
             if (slot[j] != k_not_selected)
             {
-                float *my = sh + (static_cast<size_t>(j) * stride);
-                atomicAdd(&my[pair_off(strip[j])], v.x);
-                atomicAdd(&my[pair_off(strip[j]) + 1], v.y);
+                hist_int_t *my = sh + (static_cast<size_t>(j) * stride);
+                hist_add(&my[pair_off(strip[j])], qg);
+                hist_add(&my[pair_off(strip[j]) + 1], qh);
             }
         }
     }
@@ -210,15 +285,15 @@ __global__ void hist_tile_kernel(BinT const *bins, float2 const *gh_ordered,
     {
         if (slot[j] != k_not_selected)
         {
-            float const *base = sh + (static_cast<size_t>(j) * stride);
-            double      *o =
+            hist_int_t const *base = sh + (static_cast<size_t>(j) * stride);
+            hist_int_t       *o =
                 out + (((static_cast<size_t>(oslot) * n_sel) + slot[j]) * stride);
             uint32_t const nb = n_bins[f0 + j];
             for (uint32_t i = threadIdx.x; i < 2 * nb; i += blockDim.x)
             {
-                if (base[i] != 0.0F)
+                if (base[i] != 0)
                 {
-                    atomicAdd(&o[i], static_cast<double>(base[i]));
+                    hist_add(&o[i], base[i]);
                 }
             }
         }
@@ -227,29 +302,28 @@ __global__ void hist_tile_kernel(BinT const *bins, float2 const *gh_ordered,
 
 // perf: Small nodes skip the shared-memory stage: below ~512 rows the fixed
 // per-(node,feature) zero+merge cost dominates, so one block per node
-// accumulates row visits straight into the node's global slot in double.
+// accumulates row visits straight into the node's global slot.
 template <typename BinT>
 __global__ void hist_small_kernel(BinT const *bins, float2 const *gh_ordered,
                                   uint32_t const *rows, uint32_t const *row_offsets,
                                   uint32_t const *row_counts, uint32_t const *features,
                                   uint32_t n_rows, uint32_t n_feats, uint32_t n_sel,
-                                  double *out, uint32_t stride,
-                                  uint32_t const *out_slot)
+                                  hist_int_t *out, uint32_t stride,
+                                  uint32_t const *out_slot, GhQuant const *quant)
 {
-    uint32_t const  node   = blockIdx.x;
-    uint32_t const  count  = row_counts[node];
-    uint32_t const  offset = row_offsets[node];
-    uint32_t const *nr     = rows + offset;
-    float2 const   *ngh    = gh_ordered + offset;
-    double         *o = out + (static_cast<size_t>(out_slot[node]) * n_sel * stride);
-    for (uint32_t k = threadIdx.x; k < count * n_sel; k += blockDim.x)
+    uint32_t const node  = blockIdx.x;
+    NodeRows const seg   = node_rows(rows, gh_ordered, row_offsets, row_counts, node);
+    float2 const   scale = quant->scale;
+    hist_int_t    *o     = out + (static_cast<size_t>(out_slot[node]) * n_sel * stride);
+    for (uint32_t k = threadIdx.x; k < seg.count * n_sel; k += blockDim.x)
     {
-        uint32_t const sel = k / count;
-        uint32_t const i   = k % count;
-        uint32_t const b   = bins[tiled_cell(features[sel], nr[i], n_rows, n_feats)];
-        float2 const   v   = ngh[i];
-        atomicAdd(&o[(sel * stride) + (2 * b)], static_cast<double>(v.x));
-        atomicAdd(&o[(sel * stride) + (2 * b) + 1], static_cast<double>(v.y));
+        uint32_t const sel = k / seg.count;
+        uint32_t const i   = k % seg.count;
+        uint32_t const b =
+            bins[tiled_cell(features[sel], seg.rows[i], n_rows, n_feats)];
+        float2 const v = seg.gh[i];
+        hist_add(&o[(sel * stride) + (2 * b)], quantise(v.x, scale.x));
+        hist_add(&o[(sel * stride) + (2 * b) + 1], quantise(v.y, scale.y));
     }
 }
 
@@ -410,28 +484,28 @@ __global__ void stamp_kernel(uint32_t const *rows, PartOpDev const *segs,
     }
 }
 
-__global__ void subtract_inplace_kernel(double *pool, uint32_t large_slot,
-                                        uint32_t small_slot, uint32_t slot_doubles)
+__global__ void subtract_inplace_kernel(hist_int_t *pool, uint32_t large_slot,
+                                        uint32_t small_slot, uint32_t slot_cells)
 {
-    double        *large = pool + (static_cast<size_t>(large_slot) * slot_doubles);
-    double const  *small = pool + (static_cast<size_t>(small_slot) * slot_doubles);
-    uint32_t const span  = gridDim.x * blockDim.x;
-    for (uint32_t i = (blockIdx.x * blockDim.x) + threadIdx.x; i < slot_doubles;
+    hist_int_t       *large = pool + (static_cast<size_t>(large_slot) * slot_cells);
+    hist_int_t const *small = pool + (static_cast<size_t>(small_slot) * slot_cells);
+    uint32_t const    span  = gridDim.x * blockDim.x;
+    for (uint32_t i = (blockIdx.x * blockDim.x) + threadIdx.x; i < slot_cells;
          i += span)
     {
         large[i] -= small[i];
     }
 }
 
-__global__ void subtract_kernel(double const *parents, double *children,
-                                uint32_t const *triples, uint32_t slot_doubles)
+__global__ void subtract_kernel(hist_int_t const *parents, hist_int_t *children,
+                                uint32_t const *triples, uint32_t slot_cells)
 {
-    uint32_t const *t     = triples + (3UL * blockIdx.y);
-    uint32_t const  span  = gridDim.x * blockDim.x;
-    double const   *par   = parents + (static_cast<size_t>(t[0]) * slot_doubles);
-    double const   *small = children + (static_cast<size_t>(t[1]) * slot_doubles);
-    double         *large = children + (static_cast<size_t>(t[2]) * slot_doubles);
-    for (uint32_t i = (blockIdx.x * blockDim.x) + threadIdx.x; i < slot_doubles;
+    uint32_t const   *t     = triples + (3UL * blockIdx.y);
+    uint32_t const    span  = gridDim.x * blockDim.x;
+    hist_int_t const *par   = parents + (static_cast<size_t>(t[0]) * slot_cells);
+    hist_int_t const *small = children + (static_cast<size_t>(t[1]) * slot_cells);
+    hist_int_t       *large = children + (static_cast<size_t>(t[2]) * slot_cells);
+    for (uint32_t i = (blockIdx.x * blockDim.x) + threadIdx.x; i < slot_cells;
          i += span)
     {
         large[i] = par[i] - small[i];
@@ -484,12 +558,13 @@ inline __device__ bool feat_better(double ga, int ba, int da, int va, double gb,
     return da > db;
 }
 
-__global__ void find_kernel(double const *hists, uint32_t const *features,
+__global__ void find_kernel(hist_int_t const *hists, uint32_t const *features,
                             uint32_t const *n_bins, double const *node_sums,
                             double const *node_bounds, char const *allowed,
                             int const *monotone, uint32_t n_sel, uint32_t stride,
                             double l1, double l2, double min_child_hess,
-                            double min_gain, FeatBest *out, uint32_t const *hist_slot)
+                            double min_gain, FeatBest *out, uint32_t const *hist_slot,
+                            GhQuant const *quant)
 {
     uint32_t const node = blockIdx.y;
     uint32_t const sel  = blockIdx.x;
@@ -516,46 +591,47 @@ __global__ void find_kernel(double const *hists, uint32_t const *features,
     size_t const hidx =
         ((static_cast<size_t>(hist_slot != nullptr ? hist_slot[node] : node) * n_sel) +
          sel);
-    double const  *cells      = hists + (hidx * stride);
-    double const   g_total    = node_sums[pair_off(node)];
-    double const   h_total    = node_sums[pair_off(node) + 1];
-    double const   miss_g     = cells[pair_off(nb - 1)];
-    double const   miss_h     = cells[pair_off(nb - 1) + 1];
-    double const   node_score = score(g_total, h_total, l1, l2);
-    double const   real_grad  = g_total - miss_g;
-    double const   real_hess  = h_total - miss_h;
-    double const   lo         = node_bounds[pair_off(node)];
-    double const   hi         = node_bounds[pair_off(node) + 1];
-    int const      mc         = monotone[f];
-    uint32_t const n_cut      = nb - 2;
+    hist_int_t const *cells      = hists + (hidx * stride);
+    double2 const     inv        = quant->inv;
+    double const      g_total    = node_sums[pair_off(node)];
+    double const      h_total    = node_sums[pair_off(node) + 1];
+    hist_int_t const  miss_qg    = cells[pair_off(nb - 1)];
+    hist_int_t const  miss_qh    = cells[pair_off(nb - 1) + 1];
+    double const      miss_g     = static_cast<double>(miss_qg) * inv.x;
+    double const      miss_h     = static_cast<double>(miss_qh) * inv.y;
+    double const      node_score = score(g_total, h_total, l1, l2);
+    double const      real_grad  = g_total - miss_g;
+    double const      real_hess  = h_total - miss_h;
+    double const      lo         = node_bounds[pair_off(node)];
+    double const      hi         = node_bounds[pair_off(node) + 1];
+    int const         mc         = monotone[f];
+    uint32_t const    n_cut      = nb - 2;
 
-    int const n_dirs = (miss_g == 0.0 && miss_h == 0.0) ? 1 : 2;
+    int const n_dirs = (miss_qg == 0 && miss_qh == 0) ? 1 : 2;
 
     double  best_gain = 0.0;
     int32_t best_bin = 0, best_dl = 0, best_valid = 0;
     double  bgL = 0, bhL = 0, bgR = 0, bhR = 0;
 
-    double carry_g = 0.0;
-    double carry_h = 0.0;
+    hist_int_t carry_g = 0;
+    hist_int_t carry_h = 0;
     for (uint32_t base = 0; base < n_cut; base += 32)
     {
         uint32_t const b   = base + lane;
-        double         vg  = (b < n_cut) ? cells[pair_off(b)] : 0.0;
-        double         vh  = (b < n_cut) ? cells[pair_off(b) + 1] : 0.0;
-        double         sg  = vg;
-        double         sh_ = vh;
+        hist_int_t     sg  = (b < n_cut) ? cells[pair_off(b)] : 0;
+        hist_int_t     sh_ = (b < n_cut) ? cells[pair_off(b) + 1] : 0;
         for (int off = 1; off < 32; off <<= 1)
         {
-            double ng = __shfl_up_sync(0xffffffffU, sg, off);
-            double nh = __shfl_up_sync(0xffffffffU, sh_, off);
+            hist_int_t const ng = __shfl_up_sync(0xffffffffU, sg, off);
+            hist_int_t const nh = __shfl_up_sync(0xffffffffU, sh_, off);
             if (lane >= static_cast<uint32_t>(off))
             {
                 sg += ng;
                 sh_ += nh;
             }
         }
-        double const pg = carry_g + sg;
-        double const ph = carry_h + sh_;
+        double const pg = static_cast<double>(carry_g + sg) * inv.x;
+        double const ph = static_cast<double>(carry_h + sh_) * inv.y;
         carry_g += __shfl_sync(0xffffffffU, sg, 31);
         carry_h += __shfl_sync(0xffffffffU, sh_, 31);
 
@@ -644,12 +720,12 @@ __global__ void reduce_kernel(FeatBest const *per_feat, uint32_t n_sel, FeatBest
     out[node] = best;
 }
 
-__global__ void level_find_kernel(double const *hists, uint32_t const *features,
+__global__ void level_find_kernel(hist_int_t const *hists, uint32_t const *features,
                                   uint32_t const *n_bins, double const *node_sums,
                                   uint32_t n_sel, uint32_t n_nodes, uint32_t stride,
                                   double l1, double l2, double min_child_hess,
                                   double min_gain, double *score_scratch,
-                                  FeatBest *out_feat)
+                                  FeatBest *out_feat, GhQuant const *quant)
 {
     uint32_t const max_cut    = stride / 2;
     uint32_t const f          = blockIdx.x;
@@ -677,10 +753,9 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
         bool           empty = true;
         if (p < n_nodes)
         {
-            double const *cells =
+            hist_int_t const *cells =
                 hists + ((static_cast<size_t>(p) * n_sel + f) * stride);
-            empty =
-                cells[pair_off(nb - 1)] == 0.0 && cells[pair_off(nb - 1) + 1] == 0.0;
+            empty = cells[pair_off(nb - 1)] == 0 && cells[pair_off(nb - 1) + 1] == 0;
         }
         all_missing_empty =
             all_missing_empty && (__all_sync(0xffffffffU, empty ? 1 : 0) != 0);
@@ -696,30 +771,35 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
     }
     __syncwarp();
 
+    double2 const inv = quant->inv;
     for (uint32_t base = 0; base < n_nodes; base += 32)
     {
-        uint32_t const p      = base + lane;
-        bool const     active = p < n_nodes;
-        double const  *cells =
+        uint32_t const    p      = base + lane;
+        bool const        active = p < n_nodes;
+        hist_int_t const *cells =
             active ? hists + ((static_cast<size_t>(p) * n_sel + f) * stride) : nullptr;
-        double const g       = active ? node_sums[pair_off(p)] : 0.0;
-        double const h       = active ? node_sums[pair_off(p) + 1] : 0.0;
-        double const miss_g  = active ? cells[pair_off(nb - 1)] : 0.0;
-        double const miss_h  = active ? cells[pair_off(nb - 1) + 1] : 0.0;
+        double const g = active ? node_sums[pair_off(p)] : 0.0;
+        double const h = active ? node_sums[pair_off(p) + 1] : 0.0;
+        double const miss_g =
+            active ? static_cast<double>(cells[pair_off(nb - 1)]) * inv.x : 0.0;
+        double const miss_h =
+            active ? static_cast<double>(cells[pair_off(nb - 1) + 1]) * inv.y : 0.0;
         double const real_g  = g - miss_g;
         double const real_h  = h - miss_h;
         double const node_ps = active ? score(g, h, l1, l2) : 0.0;
         parent_sum += warp_sum(node_ps);
 
-        double pg = 0.0;
-        double ph = 0.0;
+        hist_int_t pq_g = 0;
+        hist_int_t pq_h = 0;
         for (uint32_t b = 0; b < n_cut; ++b)
         {
             if (active)
             {
-                pg += cells[pair_off(b)];
-                ph += cells[pair_off(b) + 1];
+                pq_g += cells[pair_off(b)];
+                pq_h += cells[pair_off(b) + 1];
             }
+            double const pg = static_cast<double>(pq_g) * inv.x;
+            double const ph = static_cast<double>(pq_h) * inv.y;
             for (int d = 0; d < n_dirs; ++d)
             {
                 int const  dl = 1 - d;
@@ -774,11 +854,12 @@ __global__ void level_find_kernel(double const *hists, uint32_t const *features,
     }
 }
 
-__global__ void level_child_sums_kernel(double const *hists, double const *node_sums,
-                                        FeatBest const *winner,
+__global__ void level_child_sums_kernel(hist_int_t const *hists,
+                                        double const *node_sums, FeatBest const *winner,
                                         uint32_t const *features,
                                         uint32_t const *n_bins, uint32_t n_nodes,
-                                        uint32_t n_sel, uint32_t stride, double *out4)
+                                        uint32_t n_sel, uint32_t stride, double *out4,
+                                        GhQuant const *quant)
 {
     uint32_t const p = (blockIdx.x * blockDim.x) + threadIdx.x;
     if (p >= n_nodes)
@@ -794,19 +875,22 @@ __global__ void level_child_sums_kernel(double const *hists, double const *node_
         out4[(4 * p) + 3] = 0.0;
         return;
     }
-    auto const     sel    = static_cast<uint32_t>(b.sel);
-    uint32_t const nb     = n_bins[features[sel]];
-    double const  *cells  = hists + ((static_cast<size_t>(p) * n_sel + sel) * stride);
-    double const   g      = node_sums[pair_off(p)];
-    double const   h      = node_sums[pair_off(p) + 1];
-    double const   miss_g = cells[pair_off(nb - 1)];
-    double const   miss_h = cells[pair_off(nb - 1) + 1];
-    double         pg = 0.0, ph = 0.0;
+    auto const        sel   = static_cast<uint32_t>(b.sel);
+    uint32_t const    nb    = n_bins[features[sel]];
+    hist_int_t const *cells = hists + ((static_cast<size_t>(p) * n_sel + sel) * stride);
+    double const      g     = node_sums[pair_off(p)];
+    double const      h     = node_sums[pair_off(p) + 1];
+    double2 const     inv   = quant->inv;
+    double const      miss_g = static_cast<double>(cells[pair_off(nb - 1)]) * inv.x;
+    double const      miss_h = static_cast<double>(cells[pair_off(nb - 1) + 1]) * inv.y;
+    hist_int_t        pq_g = 0, pq_h = 0;
     for (uint32_t bb = 0; bb <= static_cast<uint32_t>(b.bin); ++bb)
     {
-        pg += cells[pair_off(bb)];
-        ph += cells[pair_off(bb) + 1];
+        pq_g += cells[pair_off(bb)];
+        pq_h += cells[pair_off(bb) + 1];
     }
+    double const pg = static_cast<double>(pq_g) * inv.x;
+    double const ph = static_cast<double>(pq_h) * inv.y;
     auto const s = split_sums_dev(pg, ph, miss_g, miss_h, g - miss_g, h - miss_h, b.dl);
     out4[(4 * p) + 0] = s.gL;
     out4[(4 * p) + 1] = s.hL;

@@ -69,9 +69,11 @@ struct CudaDeviceContext
 
     struct GradientPlane
     {
-        DeviceBuffer<float>  grad_raw;
-        DeviceBuffer<float>  hess_raw;
-        DeviceBuffer<float2> gh;
+        DeviceBuffer<float>   grad_raw;
+        DeviceBuffer<float>   hess_raw;
+        DeviceBuffer<float2>  gh;
+        DeviceBuffer<uint2>   absmax;
+        DeviceBuffer<GhQuant> quant;
     };
 
     struct LevelPipeline
@@ -83,24 +85,24 @@ struct CudaDeviceContext
         Staged<uint32_t>       features;
         Staged<uint32_t>       sel_slot;
 
-        DeviceBuffer<double>   level_a;
-        DeviceBuffer<double>   level_b;
-        bool                   cur_is_a   = true;
-        uint32_t               n_selected = 0;
-        uint32_t               stride     = 0;
-        Staged<uint32_t>       slots;
-        Staged<uint32_t>       triples;
-        Staged<double>         node_sums;
-        Staged<double>         node_bounds;
-        Staged<char>           allowed;
-        Staged<int>            monotone;
-        DeviceBuffer<FeatBest> feat_best;
-        Staged<FeatBest>       node_best;
-        Staged<double>         level_child;
-        DeviceBuffer<double>   level_score;
-        Staged<uint32_t>       small_offsets;
-        Staged<uint32_t>       small_counts;
-        Staged<uint32_t>       small_slots;
+        DeviceBuffer<hist_int_t> level_a;
+        DeviceBuffer<hist_int_t> level_b;
+        bool                     cur_is_a   = true;
+        uint32_t                 n_selected = 0;
+        uint32_t                 stride     = 0;
+        Staged<uint32_t>         slots;
+        Staged<uint32_t>         triples;
+        Staged<double>           node_sums;
+        Staged<double>           node_bounds;
+        Staged<char>             allowed;
+        Staged<int>              monotone;
+        DeviceBuffer<FeatBest>   feat_best;
+        Staged<FeatBest>         node_best;
+        Staged<double>           level_child;
+        DeviceBuffer<double>     level_score;
+        Staged<uint32_t>         small_offsets;
+        Staged<uint32_t>         small_counts;
+        Staged<uint32_t>         small_slots;
 
         DeviceBuffer<uint32_t> rows_b;
         DeviceBuffer<float2>   gh_b;
@@ -165,15 +167,15 @@ struct CudaDeviceContext
         {
             return cur_is_a ? gh_b : gh_ordered;
         }
-        DeviceBuffer<double> &cur()
+        DeviceBuffer<hist_int_t> &cur()
         {
             return cur_is_a ? level_a : level_b;
         }
-        DeviceBuffer<double> &other()
+        DeviceBuffer<hist_int_t> &other()
         {
             return cur_is_a ? level_b : level_a;
         }
-        size_t slot_doubles() const
+        size_t slot_cells() const
         {
             return static_cast<size_t>(n_selected) * stride;
         }
@@ -194,9 +196,9 @@ struct CudaDeviceContext
 
     struct LeafPipeline
     {
-        DeviceBuffer<double>  pool;
-        std::vector<uint32_t> slot_offsets;
-        std::vector<uint32_t> slot_counts;
+        DeviceBuffer<hist_int_t> pool;
+        std::vector<uint32_t>    slot_offsets;
+        std::vector<uint32_t>    slot_counts;
         // perf: Per-round staging. Pinned and asynchronous because the round's whole
         // host residue is these uploads: a pageable copy stream-syncs before it
         // starts, so 8 of them per round drain the pipeline 8 times.
@@ -271,17 +273,18 @@ struct CudaDeviceContext
     int    sm_count      = 0;
     bool   shared_probed = false;
     bool   plane_noted   = false;
+    bool   quant_noted   = false;
 
     // perf: The one histogram-capacity predicate: a node's per-feature scratch is
-    // 4 * bins floats in shared memory. begin_root refuses a tree that fails
-    // it, and leaf_begin_root, leaf_budget_ok and resident_begin apply the
-    // SAME test, resident once per fit on the worst-case feature, so no tree
-    // can fail it after the resident mode armed (invariants:
+    // 2 * bins int64 cells in shared memory. begin_root refuses a tree that
+    // fails it, and leaf_begin_root, leaf_budget_ok and resident_begin apply
+    // the SAME test, resident once per fit on the worst-case feature, so no
+    // tree can fail it after the resident mode armed (invariants:
     // device-oversized-tree-refuses-not-falls-back). Any new capacity
     // condition lands here.
     bool hist_budget_ok(size_t max_bins) const
     {
-        return 4 * max_bins * sizeof(float) <= shared_limit;
+        return hist_shared_bytes(max_bins) <= shared_limit;
     }
 
     bool leaf_pool_ok(size_t bytes) const;
@@ -301,9 +304,10 @@ struct CudaDeviceContext
     HistCell fetch_root_sums();
     void     wait_for_profile(ProfileCounters::Lap &lap);
     void     note_plane(bool tiled, size_t shared);
+    void     note_quant();
     void     launch_hist(uint32_t ds_rows, uint32_t ds_feats, uint32_t n_nodes,
                          uint32_t max_rows, float2 const *gh, uint32_t const *rows,
-                         uint32_t const *offsets, uint32_t const *counts, double *out,
+                         uint32_t const *offsets, uint32_t const *counts, hist_int_t *out,
                          uint32_t const *slots);
     uint32_t stage_root_rows(SplitInput const &root, bool identity);
     void     begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
