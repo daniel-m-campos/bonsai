@@ -55,4 +55,4 @@ Run `make ci` before opening a PR (`ARGS=--fast` skips clang-tidy). It runs ever
 
 A change touching training or serialization must not move `scripts/model_hash.py` unless that is its stated purpose; wire identity is the gate.
 
-A function the diff touches whose cyclomatic complexity reads over 12 (lizard) is pinned by a test and split, or the PR body says `left whole: <reason>`; the rule set and its proofs by layer are in the design-ratchet skill.
+`scripts/design_lint.py` runs in `docs-check`: a gated design metric that rises against `scripts/design_baseline.json` fails until the diff fixes it or re-pins it (`--update-baseline`) in a commit whose message names the metric and why the rise is the design. A function the diff touches whose cyclomatic complexity reads over 12 (lizard) is pinned by a test and split, or the PR body says `left whole: <reason>`; the rule set and its proofs by layer are in the design-ratchet skill.

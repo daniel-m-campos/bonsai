@@ -6,11 +6,11 @@ description: >
   home, or a seam, and decide whether to fix or to re-pin with a reason.
   Also carries the altitude test (hardware vocabulary above the engine seam)
   and the admission test for a new concept. Use on a diff before asking for
-  review, or on the tree for a sweep. A skill first; it becomes a CI gate
-  once it has changed the outcome of three reviews without a false positive.
+  review, or on the tree for a sweep. The gate's explanation: design_lint
+  runs in docs-check, and this is how to read what it refuses.
 ---
 
-A style preference is enforceable once it has a number and a direction. `scripts/comment_lint.py` proved the shape in this repo: a judgment that three sweeps failed to apply became a mechanical rule, and the comment count fell from 2145 to 207 only then. This skill applies the same move to design, by hand, until the numbers have earned a gate.
+A style preference is enforceable once it has a number and a direction. `scripts/comment_lint.py` proved the shape in this repo: a judgment that three sweeps failed to apply became a mechanical rule, and the comment count fell from 2145 to 207 only then. This skill applies the same move to design. The numbers earned their gate after three reviews in which they changed the outcome without a false positive (the ledger below), so `scripts/design_lint.py` runs in `docs-check` and a gated row that rises fails the build until it is fixed or re-pinned with a reason.
 
 ## Run it
 
@@ -61,7 +61,7 @@ A lower number re-pins freely: run `--update-baseline` in the commit that improv
 
 ## Output contract
 
-The scoreboard, then one line per rising row: `<metric> +N: <the question above, answered>. FIX: <the name, home, or seam method> | PIN: <why the rise is the design>`. Then the findings the numbers could not see, if any: the same rule written under different words is invisible to both clone measures when each copy is shorter than a window, and the vocabulary churn is where it shows. End with `PROMOTE: <n>/3` and append the review to the ledger below; at 3, add `@python3 scripts/design_lint.py` back to `docs-check` and this skill becomes the gate's explanation.
+The scoreboard, then one line per rising row: `<metric> +N: <the question above, answered>. FIX: <the name, home, or seam method> | PIN: <why the rise is the design>`. Then the findings the numbers could not see, if any: the same rule written under different words is invisible to both clone measures when each copy is shorter than a window, and the vocabulary churn is where it shows. Append a review in which a number changed the outcome to the ledger below; a false positive among the gated rows is recorded there too, since it is the evidence for narrowing the metric.
 
 ## Promotion ledger
 
@@ -69,3 +69,4 @@ Reviews in which a number changed the outcome, with no false positive among the 
 
 1. PR #447, 2026-09-01. Found: the width rule written three times with three messages, three names for the keys an invocation states, a stale test citation, four clone pairs, and 24 lines of decision-grade rationale in a header. Applied in one commit: `clone_windows` from +6 to -13, `contract_prose_lines` from +121 to +89 with the rest pinned as new contracts. Instrument lessons: include blocks were 38% of the clone count and are now skipped; `--against` exists because the totals hid the swap and the divergence.
 2. PR #458, 2026-09-03. Found: after the predict and SHAP walks took a row view, `clone_windows` read +2 and named the staging prologue the two launchers now shared; the eval plane's second map in the next commit took it back to flat, and the `shape_clone_windows` +1 that remained was pinned as the one home the row map was introduced to be. No false positive among the gated rows.
+3. PR #462, 2026-09-04. Found: `contract_prose_lines` +4 from a first draft of the `GrowResult` and `finish_round` contracts, cut by rewriting both in place; `vocabulary_singletons` +1 for `LeafBounds`, adjudicated in decision 121 (`bounds` is the word `SplitInput`'s contract already uses for `lo` and `hi`; `Range` and `interval` name other things) and pinned with the reopener there. No false positive; the third review, and the gate went into `docs-check` after it.
