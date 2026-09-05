@@ -412,7 +412,7 @@ bool CudaDeviceContext::LevelPipeline::stage_find_inputs(
 void CudaDeviceContext::LevelPipeline::unpack_splits(std::span<SplitInput const> level,
                                                      TreeConfig const           &config,
                                                      std::span<SplitOutput>      out,
-                                                     std::span<HistCell> child_sums)
+                                                     std::span<NodeTotals> child_sums)
 {
     for (size_t i = 0; i < level.size(); ++i)
     {
@@ -432,10 +432,8 @@ void CudaDeviceContext::LevelPipeline::unpack_splits(std::span<SplitInput const>
                                    .bin_id       = static_cast<bin_id_t>(b.bin),
                                    .default_left = b.dl != 0,
                                    .valid        = true};
-        child_sums[2 * i]       = {.sum_grad = static_cast<float>(b.gL),
-                                   .sum_hess = static_cast<float>(b.hL)};
-        child_sums[(2 * i) + 1] = {.sum_grad = static_cast<float>(b.gR),
-                                   .sum_hess = static_cast<float>(b.hR)};
+        child_sums[2 * i]       = {.sum_grad = b.gL, .sum_hess = b.hL};
+        child_sums[(2 * i) + 1] = {.sum_grad = b.gR, .sum_hess = b.hR};
     }
 }
 
@@ -532,14 +530,13 @@ void CudaDeviceContext::launch_root_sums(float2 const *gh, uint32_t n)
     check(cudaGetLastError(), "root sum pass2 launch");
 }
 
-HistCell CudaDeviceContext::fetch_root_sums()
+NodeTotals CudaDeviceContext::fetch_root_sums()
 {
     double2 sums{};
     check(
         cudaMemcpy(&sums, lvl.sum_out.data(), sizeof(double2), cudaMemcpyDeviceToHost),
         "root sums fetch");
-    return {.sum_grad = static_cast<float>(sums.x),
-            .sum_hess = static_cast<float>(sums.y)};
+    return {.sum_grad = sums.x, .sum_hess = sums.y};
 }
 
 void CudaDeviceContext::wait_for_profile(ProfileCounters::Lap &lap)
@@ -829,8 +826,7 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
             sg += grad[r];
             sh += hess[r];
         }
-        root.sums      = {.sum_grad = static_cast<float>(sg),
-                          .sum_hess = static_cast<float>(sh)};
+        root.sums      = {.sum_grad = sg, .sum_hess = sh};
         root.row_count = root.rows.size();
     }
     sums_lap(prof_counters.root_sums_s);
@@ -1082,7 +1078,7 @@ void CudaDeviceContext::advance_layout_only()
 void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &config,
                                          std::span<SplitInput const> level,
                                          std::span<SplitOutput>      out,
-                                         std::span<HistCell>         child_sums)
+                                         std::span<NodeTotals>       child_sums)
 {
     size_t const n    = level.size();
     auto        &prof = prof_counters;
@@ -1126,7 +1122,7 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
                                          TreeConfig const           &config,
                                          std::span<SplitInput const> level,
                                          std::span<SplitOutput>      out,
-                                         std::span<HistCell>         child_sums)
+                                         std::span<NodeTotals>       child_sums)
 {
     size_t const n    = level.size();
     auto        &prof = prof_counters;
@@ -1178,13 +1174,11 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
     }
     for (size_t i = 0; i < n; ++i)
     {
-        out[i]            = split;
-        child_sums[2 * i] = {
-            .sum_grad = static_cast<float>(lvl.level_child.host[(4 * i) + 0]),
-            .sum_hess = static_cast<float>(lvl.level_child.host[(4 * i) + 1])};
-        child_sums[(2 * i) + 1] = {
-            .sum_grad = static_cast<float>(lvl.level_child.host[(4 * i) + 2]),
-            .sum_hess = static_cast<float>(lvl.level_child.host[(4 * i) + 3])};
+        out[i]                  = split;
+        child_sums[2 * i]       = {.sum_grad = lvl.level_child.host[(4 * i) + 0],
+                                   .sum_hess = lvl.level_child.host[(4 * i) + 1]};
+        child_sums[(2 * i) + 1] = {.sum_grad = lvl.level_child.host[(4 * i) + 2],
+                                   .sum_hess = lvl.level_child.host[(4 * i) + 3]};
     }
     lap(prof.unpack_s);
 }
@@ -1475,7 +1469,7 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
                                   std::span<SplitInput const> nodes,
                                   std::span<uint32_t const>   slots,
                                   std::span<SplitOutput>      out,
-                                  std::span<HistCell>         child_sums)
+                                  std::span<NodeTotals>       child_sums)
 {
     auto const n    = static_cast<uint32_t>(nodes.size());
     auto      &prof = prof_counters;

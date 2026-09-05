@@ -112,7 +112,7 @@ class LeafStep<EngineT, SplitterT> : public TreeStep<EngineT>
         lap(GrowProfiler::instance().populate_s);
         std::array<uint32_t, 1> const slots{0};
         std::array<SplitOutput, 1>    out{};
-        std::array<HistCell, 2>       sums{};
+        std::array<NodeTotals, 2>     sums{};
         engine_.leaf_find(ds_, config_, std::span<SplitInput const>{&root, 1}, slots,
                           out, sums);
         lap(GrowProfiler::instance().find_s);

@@ -189,7 +189,8 @@ struct CudaDeviceContext
                                TreeConfig const &config, Dataset const &ds);
 
         void unpack_splits(std::span<SplitInput const> level, TreeConfig const &config,
-                           std::span<SplitOutput> out, std::span<HistCell> child_sums);
+                           std::span<SplitOutput> out,
+                           std::span<NodeTotals>  child_sums);
 
         void stage_level_sums(std::span<SplitInput const> level);
     };
@@ -292,42 +293,42 @@ struct CudaDeviceContext
     bool leaf_budget_ok(TreeConfig const &config, size_t n_selected,
                         size_t max_bins) const;
 
-    void     init_shared_limit();
-    void     ensure_dataset(Dataset const &dataset);
-    size_t   stage_selection(Dataset const &ds, std::span<feature_id_t const> selected);
-    void     require_hist_fits(size_t max_sel_bins) const;
-    void     launch_root_sums(float2 const *gh, uint32_t n);
-    void     launch_stamp(std::span<CudaHistogramEngine::LeafStamp const> stamps,
-                          std::span<uint32_t const>                       slot_offsets,
-                          std::span<uint32_t const> slot_counts, uint32_t const *rows,
-                          char const *label);
-    HistCell fetch_root_sums();
-    void     wait_for_profile(ProfileCounters::Lap &lap);
-    void     note_plane(bool tiled, size_t shared);
-    void     note_quant();
-    void     launch_hist(uint32_t ds_rows, uint32_t ds_feats, uint32_t n_nodes,
-                         uint32_t max_rows, float2 const *gh, uint32_t const *rows,
-                         uint32_t const *offsets, uint32_t const *counts, hist_int_t *out,
-                         uint32_t const *slots);
-    uint32_t stage_root_rows(SplitInput const &root, bool identity);
-    void     begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
-    void     begin_root(Dataset const &ds, floats_view grad, floats_view hess,
-                        SplitInput &root, std::span<feature_id_t const> selected);
-    void     stamp_leaves(std::span<CudaHistogramEngine::LeafStamp const> stamps);
-    void     partition_level(Dataset const                                    &ds,
-                             std::span<CudaHistogramEngine::PartitionOp const> ops,
-                             std::span<uint32_t> child_counts);
-    void     finalize_tree(std::span<float const> node_values, std::span<float> values,
-                           std::span<node_id_t> leaf_ids);
-    void     advance_level(Dataset const                                &ds,
-                           std::span<CudaHistogramEngine::LevelOp const> ops);
-    void     advance_layout_only();
-    void     find_splits_many(Dataset const &ds, TreeConfig const &config,
-                              std::span<SplitInput const> level, std::span<SplitOutput> out,
-                              std::span<HistCell> child_sums);
-    void     find_level_split(Dataset const &ds, TreeConfig const &config,
-                              std::span<SplitInput const> level, std::span<SplitOutput> out,
-                              std::span<HistCell> child_sums);
+    void   init_shared_limit();
+    void   ensure_dataset(Dataset const &dataset);
+    size_t stage_selection(Dataset const &ds, std::span<feature_id_t const> selected);
+    void   require_hist_fits(size_t max_sel_bins) const;
+    void   launch_root_sums(float2 const *gh, uint32_t n);
+    void   launch_stamp(std::span<CudaHistogramEngine::LeafStamp const> stamps,
+                        std::span<uint32_t const>                       slot_offsets,
+                        std::span<uint32_t const> slot_counts, uint32_t const *rows,
+                        char const *label);
+    NodeTotals fetch_root_sums();
+    void       wait_for_profile(ProfileCounters::Lap &lap);
+    void       note_plane(bool tiled, size_t shared);
+    void       note_quant();
+    void       launch_hist(uint32_t ds_rows, uint32_t ds_feats, uint32_t n_nodes,
+                           uint32_t max_rows, float2 const *gh, uint32_t const *rows,
+                           uint32_t const *offsets, uint32_t const *counts, hist_int_t *out,
+                           uint32_t const *slots);
+    uint32_t   stage_root_rows(SplitInput const &root, bool identity);
+    void       begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
+    void       begin_root(Dataset const &ds, floats_view grad, floats_view hess,
+                          SplitInput &root, std::span<feature_id_t const> selected);
+    void       stamp_leaves(std::span<CudaHistogramEngine::LeafStamp const> stamps);
+    void       partition_level(Dataset const                                    &ds,
+                               std::span<CudaHistogramEngine::PartitionOp const> ops,
+                               std::span<uint32_t> child_counts);
+    void finalize_tree(std::span<float const> node_values, std::span<float> values,
+                       std::span<node_id_t> leaf_ids);
+    void advance_level(Dataset const                                &ds,
+                       std::span<CudaHistogramEngine::LevelOp const> ops);
+    void advance_layout_only();
+    void find_splits_many(Dataset const &ds, TreeConfig const &config,
+                          std::span<SplitInput const> level, std::span<SplitOutput> out,
+                          std::span<NodeTotals> child_sums);
+    void find_level_split(Dataset const &ds, TreeConfig const &config,
+                          std::span<SplitInput const> level, std::span<SplitOutput> out,
+                          std::span<NodeTotals> child_sums);
 
     void leaf_begin_root(Dataset const &ds, TreeConfig const &config, floats_view grad,
                          floats_view hess, SplitInput &root,
@@ -339,7 +340,7 @@ struct CudaDeviceContext
                          std::span<uint32_t const>   slots);
     void leaf_find(Dataset const &ds, TreeConfig const &config,
                    std::span<SplitInput const> nodes, std::span<uint32_t const> slots,
-                   std::span<SplitOutput> out, std::span<HistCell> child_sums);
+                   std::span<SplitOutput> out, std::span<NodeTotals> child_sums);
     void leaf_stamp(std::span<CudaHistogramEngine::LeafStamp const> stamps);
 
     bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,

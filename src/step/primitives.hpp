@@ -249,8 +249,8 @@ struct DeferredSplit
     double                    parent_hi;
     std::vector<feature_id_t> parent_path;
     uint32_t                  parent_slot = 0;
-    HistCell                  left_sums{};
-    HistCell                  right_sums{};
+    NodeTotals                left_sums{};
+    NodeTotals                right_sums{};
 };
 
 struct SlotLeaf
@@ -447,8 +447,8 @@ struct Candidate
     SplitOutput split;
     uint8_t     depth = 0;
     uint32_t    slot  = 0;
-    HistCell    left_sums{};
-    HistCell    right_sums{};
+    NodeTotals  left_sums{};
+    NodeTotals  right_sums{};
 };
 
 struct ChildPair
@@ -456,7 +456,7 @@ struct ChildPair
     std::array<SplitInput, 2>  nodes;
     std::array<SplitOutput, 2> splits{};
     std::array<uint32_t, 2>    slots{};
-    std::array<HistCell, 4>    child_sums{};
+    std::array<NodeTotals, 4>  child_sums{};
     uint8_t                    depth = 0;
 };
 
@@ -473,7 +473,7 @@ inline uint32_t row_count_of(SplitInput const &node)
 struct LevelOutputs
 {
     std::vector<SplitOutput> splits;
-    std::vector<HistCell>    child_sums;
+    std::vector<NodeTotals>  child_sums;
 };
 
 template <typename ResidentNodeT>

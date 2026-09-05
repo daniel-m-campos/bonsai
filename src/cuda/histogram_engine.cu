@@ -137,7 +137,7 @@ void CudaHistogramEngine::advance_layout_only()
 void CudaHistogramEngine::find_splits_many(Dataset const &ds, TreeConfig const &config,
                                            std::span<SplitInput const> level,
                                            std::span<SplitOutput>      out,
-                                           std::span<HistCell>         child_sums)
+                                           std::span<NodeTotals>       child_sums)
 {
     impl_->ctx.find_splits_many(ds, config, level, out, child_sums);
 }
@@ -145,7 +145,7 @@ void CudaHistogramEngine::find_splits_many(Dataset const &ds, TreeConfig const &
 void CudaHistogramEngine::find_level_split(Dataset const &ds, TreeConfig const &config,
                                            std::span<SplitInput const> level,
                                            std::span<SplitOutput>      out,
-                                           std::span<HistCell>         child_sums)
+                                           std::span<NodeTotals>       child_sums)
 {
     impl_->ctx.find_level_split(ds, config, level, out, child_sums);
 }
@@ -174,7 +174,7 @@ void CudaHistogramEngine::leaf_find(Dataset const &ds, TreeConfig const &config,
                                     std::span<SplitInput const> nodes,
                                     std::span<uint32_t const>   slots,
                                     std::span<SplitOutput>      out,
-                                    std::span<HistCell>         child_sums)
+                                    std::span<NodeTotals>       child_sums)
 {
     impl_->ctx.leaf_find(ds, config, nodes, slots, out, child_sums);
 }
