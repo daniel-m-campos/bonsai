@@ -593,31 +593,39 @@ __global__ void zero_slots_kernel(hist_int_t *pool, uint32_t const *slot_ids,
     }
 }
 
-__global__ void subtract_inplace_kernel(hist_int_t *pool, uint32_t large_slot,
-                                        uint32_t small_slot, uint32_t slot_cells)
+template <typename CellT>
+inline __device__ CellT *strip_at(CellT *hists, uint32_t slot, uint32_t n_sel,
+                                  uint32_t sel, uint32_t stride)
 {
-    hist_int_t       *large = pool + (static_cast<size_t>(large_slot) * slot_cells);
-    hist_int_t const *small = pool + (static_cast<size_t>(small_slot) * slot_cells);
-    uint32_t const    span  = gridDim.x * blockDim.x;
-    for (uint32_t i = (blockIdx.x * blockDim.x) + threadIdx.x; i < slot_cells;
-         i += span)
-    {
-        large[i] -= small[i];
-    }
+    return hists + (((static_cast<size_t>(slot) * n_sel) + sel) * stride);
 }
 
-__global__ void subtract_kernel(hist_int_t const *parents, hist_int_t *children,
-                                uint32_t const *triples, uint32_t slot_cells)
+inline __device__ void derive_large_strip(hist_int_t *hists, hist_int_t const *parents,
+                                          SiblingDerive const &d, uint32_t slot,
+                                          uint32_t n_sel, uint32_t sel, uint32_t stride)
 {
-    uint32_t const   *t     = triples + (3UL * blockIdx.y);
-    uint32_t const    span  = gridDim.x * blockDim.x;
-    hist_int_t const *par   = parents + (static_cast<size_t>(t[0]) * slot_cells);
-    hist_int_t const *small = children + (static_cast<size_t>(t[1]) * slot_cells);
-    hist_int_t       *large = children + (static_cast<size_t>(t[2]) * slot_cells);
-    for (uint32_t i = (blockIdx.x * blockDim.x) + threadIdx.x; i < slot_cells;
-         i += span)
+    if (d.parent_slot == k_not_selected)
     {
-        large[i] = par[i] - small[i];
+        return;
+    }
+    hist_int_t       *large  = strip_at(hists, slot, n_sel, sel, stride);
+    hist_int_t const *parent = strip_at(parents, d.parent_slot, n_sel, sel, stride);
+    hist_int_t const *small  = strip_at(hists, d.small_slot, n_sel, sel, stride);
+    for (uint32_t i = threadIdx.x; i < stride; i += blockDim.x)
+    {
+        large[i] = parent[i] - small[i];
+    }
+    __syncwarp();
+}
+
+inline __device__ void derive_level_strips(hist_int_t *hists, hist_int_t const *parents,
+                                           SiblingDerive const *derive,
+                                           uint32_t n_nodes, uint32_t n_sel,
+                                           uint32_t sel, uint32_t stride)
+{
+    for (uint32_t p = 0; p < n_nodes; ++p)
+    {
+        derive_large_strip(hists, parents, derive[p], p, n_sel, sel, stride);
     }
 }
 
@@ -667,7 +675,8 @@ inline __device__ bool feat_better(double ga, int ba, int da, int va, double gb,
     return da > db;
 }
 
-__global__ void find_kernel(hist_int_t const *hists, uint32_t const *features,
+__global__ void find_kernel(hist_int_t *hists, hist_int_t const *parents,
+                            SiblingDerive const *derive, uint32_t const *features,
                             uint32_t const *n_bins, double const *node_sums,
                             double const *node_bounds, char const *allowed,
                             int const *monotone, uint32_t n_sel, uint32_t stride,
@@ -682,6 +691,8 @@ __global__ void find_kernel(hist_int_t const *hists, uint32_t const *features,
     {
         return;
     }
+    uint32_t const slot = hist_slot != nullptr ? hist_slot[node] : node;
+    derive_large_strip(hists, parents, derive[node], slot, n_sel, sel, stride);
     size_t const oidx = (static_cast<size_t>(node) * n_sel) + sel;
     if (lane == 0)
     {
@@ -697,10 +708,7 @@ __global__ void find_kernel(hist_int_t const *hists, uint32_t const *features,
     {
         return;
     }
-    size_t const hidx =
-        ((static_cast<size_t>(hist_slot != nullptr ? hist_slot[node] : node) * n_sel) +
-         sel);
-    hist_int_t const *cells      = hists + (hidx * stride);
+    hist_int_t const *cells      = strip_at(hists, slot, n_sel, sel, stride);
     double2 const     inv        = quant->inv;
     double const      g_total    = node_sums[pair_off(node)];
     double const      h_total    = node_sums[pair_off(node) + 1];
@@ -855,7 +863,8 @@ __global__ void reduce_kernel(FeatBest const *per_feat, uint32_t n_sel, FeatBest
     }
 }
 
-__global__ void level_find_kernel(hist_int_t const *hists, uint32_t const *features,
+__global__ void level_find_kernel(hist_int_t *hists, hist_int_t const *parents,
+                                  SiblingDerive const *derive, uint32_t const *features,
                                   uint32_t const *n_bins, double const *node_sums,
                                   uint32_t n_sel, uint32_t n_nodes, uint32_t stride,
                                   double l1, double l2, double min_child_hess,
@@ -871,6 +880,7 @@ __global__ void level_find_kernel(hist_int_t const *hists, uint32_t const *featu
                                  score_scratch + ((static_cast<size_t>(f) * 2 + 1) * max_cut)};
     double         parent_sum = 0.0;
 
+    derive_level_strips(hists, parents, derive, n_nodes, n_sel, f, stride);
     if (lane == 0)
     {
         out_feat[f] = FeatBest{};

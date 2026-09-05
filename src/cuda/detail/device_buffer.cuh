@@ -89,6 +89,14 @@ inline __host__ __device__ uint32_t mapped_row(uint32_t const *rows, uint32_t k)
 
 inline constexpr uint32_t k_not_selected = 0xFFFFFFFFU;
 
+struct SiblingDerive
+{
+    uint32_t parent_slot;
+    uint32_t small_slot;
+};
+
+inline constexpr SiblingDerive k_filled_slot{k_not_selected, k_not_selected};
+
 struct FeatBest
 {
     double  gain, gL, hL, gR, hR;
