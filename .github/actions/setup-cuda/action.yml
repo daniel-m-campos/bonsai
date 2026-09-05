@@ -22,12 +22,12 @@ runs:
         # x86_64 repo path: every CUDA build target in this repo is linux
         # x86_64 (wheels leg, cuda-compile); aarch64 CUDA is out of scope.
         distro="ubuntu$(. /etc/os-release && echo "${VERSION_ID/./}")"
-        wget -q "https://developer.download.nvidia.com/compute/cuda/repos/${distro}/x86_64/cuda-keyring_1.1-1_all.deb"
+        wget --timeout=30 --tries=3 -q "https://developer.download.nvidia.com/compute/cuda/repos/${distro}/x86_64/cuda-keyring_1.1-1_all.deb"
         sudo dpkg -i cuda-keyring_1.1-1_all.deb
-        sudo apt-get update -qq
+        sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
         # libcurand-dev: clang's __clang_cuda_runtime_wrapper.h includes
         # curand device headers unconditionally.
         pkg="${{ inputs.version }}"; pkg="${pkg/./-}"
-        sudo apt-get install -y -qq "cuda-nvcc-${pkg}" \
+        sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -qq "cuda-nvcc-${pkg}" \
           "cuda-cudart-dev-${pkg}" "libcurand-dev-${pkg}"
         echo "root=/usr/local/cuda-${{ inputs.version }}" >> "$GITHUB_OUTPUT"
