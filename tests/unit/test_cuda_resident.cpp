@@ -20,6 +20,7 @@
 #include "bonsai/detail/column_batch.hpp"
 #include "bonsai/io/model.hpp"
 #include "bonsai/objective.hpp"
+#include "bonsai/registry/names.hpp"
 #include "bonsai/sampler.hpp"
 #include "bonsai/types.hpp"
 #include "test_grower_helpers.hpp"
@@ -263,10 +264,11 @@ std::vector<float> fit_predict(Config const &cfg, RegData const &data, size_t it
     return pred;
 }
 
-template <typename BoosterT>
-std::vector<uint8_t> fit_bytes(Config const &cfg, RegData const &data, size_t iters,
+template <typename G>
+std::vector<uint8_t> fit_bytes(Config cfg, RegData const &data, size_t iters,
                                bool host_forced)
 {
+    cfg.dispatch.grower_name = std::string{impl_name<G>::value};
     if (host_forced)
     {
         setenv("BONSAI_HOST_OBJECTIVE", "1", 1);
@@ -275,7 +277,7 @@ std::vector<uint8_t> fit_bytes(Config const &cfg, RegData const &data, size_t it
     {
         unsetenv("BONSAI_HOST_OBJECTIVE");
     }
-    BoosterT booster{cfg};
+    Booster<MSEObjective, G, AllRowsSampler> booster{cfg};
     for (size_t i = 0; i < iters; ++i)
     {
         booster.update_one_iter(data.built.ds);
@@ -284,15 +286,14 @@ std::vector<uint8_t> fit_bytes(Config const &cfg, RegData const &data, size_t it
     return io::save_booster_bytes(booster, data.built.mappers, cfg);
 }
 
-template <typename BoosterT>
-void require_reproducible(Config const &cfg, RegData const &data)
+template <typename G> void require_reproducible(Config const &cfg, RegData const &data)
 {
     for (bool const host_forced : {false, true})
     {
-        auto const first = fit_bytes<BoosterT>(cfg, data, 40, host_forced);
+        auto const first = fit_bytes<G>(cfg, data, 40, host_forced);
         for (int rep = 0; rep < 2; ++rep)
         {
-            REQUIRE(fit_bytes<BoosterT>(cfg, data, 40, host_forced) == first);
+            REQUIRE(fit_bytes<G>(cfg, data, 40, host_forced) == first);
         }
     }
 }
@@ -1086,14 +1087,14 @@ TEST_CASE("CudaGrowers: three fits of one dataset serialize to identical bytes",
     auto const data = make_regression(16384, 8, 23);
     SECTION("depthwise")
     {
-        require_reproducible<MseBooster<CudaDepthwiseGrower>>(reg_cfg(), data);
+        require_reproducible<CudaDepthwiseGrower>(reg_cfg(), data);
     }
     SECTION("oblivious")
     {
-        require_reproducible<MseBooster<CudaObliviousGrower>>(reg_cfg(), data);
+        require_reproducible<CudaObliviousGrower>(reg_cfg(), data);
     }
     SECTION("leafwise")
     {
-        require_reproducible<MseBooster<CudaLeafwiseGrower>>(leaf_cfg(), data);
+        require_reproducible<CudaLeafwiseGrower>(leaf_cfg(), data);
     }
 }
