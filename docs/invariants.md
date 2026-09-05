@@ -252,7 +252,7 @@ Host TreeSHAP satisfies the efficiency property exactly: sum(phi) plus the expec
 
 - code: `include/bonsai/shap.hpp` : `tree_shap`
 - code: `src/shap.cpp` : `tree_expected_value`
-- elaboration: decision 108; issue #429 tracks where the fp32 bound crosses 1e-5.
+- elaboration: decision 108; its status banner records the fp32 device bound reaching 1e-5 at 200 trees depth 10.
 
 ### dataset-not-picklable
 
