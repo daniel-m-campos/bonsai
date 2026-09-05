@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -45,7 +46,7 @@ namespace
     throw ConfigError(
         "cuda: the widest selected feature has " + std::to_string(max_bins) +
         " bins, so one node histogram needs " +
-        std::to_string(4 * max_bins * sizeof(float)) +
+        std::to_string(hist_shared_bytes(max_bins)) +
         " bytes of shared memory, above this device's " + std::to_string(limit) +
         "-byte limit. Lower bin_mapper.max_bin, or train on the host plane "
         "(device=\"cpu\", or a dispatch.grower_name without the cuda_ prefix).");
@@ -561,21 +562,36 @@ void CudaDeviceContext::note_plane(bool tiled, size_t shared)
     plane_noted = true;
     std::println(stderr,
                  "bonsai: bin plane is tile-blocked, width {}, {} cells; histogram "
-                 "build is {} at {} shared bytes per block",
+                 "build is {} at {} shared bytes per block, fixed-point int64 cells",
                  k_bin_tile_width, data.bins_are_u8 ? "u8" : "u16",
                  tiled ? "tiled" : "one feature per block", shared);
+}
+
+void CudaDeviceContext::note_quant()
+{
+    if (quant_noted || !prof_counters.enabled)
+    {
+        return;
+    }
+    quant_noted = true;
+    GhQuant q{};
+    check(cudaMemcpy(&q, grads.quant.data(), sizeof(GhQuant), cudaMemcpyDeviceToHost),
+          "quant fetch");
+    std::println(stderr, "bonsai: fixed-point scale_g=2^{} scale_h=2^{}",
+                 std::ilogb(q.scale.x), std::ilogb(q.scale.y));
 }
 
 void CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
                                     uint32_t n_nodes, uint32_t max_rows,
                                     float2 const *gh, uint32_t const *rows,
                                     uint32_t const *offsets, uint32_t const *counts,
-                                    double *out, uint32_t const *slots)
+                                    hist_int_t *out, uint32_t const *slots)
 {
     size_t const tiled_shared =
-        static_cast<size_t>(k_bin_tile_width) * lvl.stride * sizeof(float);
-    bool const tiled = tiled_shared <= k_max_shared_bytes;
-    note_plane(tiled, tiled ? tiled_shared : 2UL * lvl.stride * sizeof(float));
+        static_cast<size_t>(k_bin_tile_width) * lvl.stride * sizeof(hist_int_t);
+    size_t const feature_shared = static_cast<size_t>(lvl.stride) * sizeof(hist_int_t);
+    bool const   tiled          = tiled_shared <= k_max_shared_bytes;
+    note_plane(tiled, tiled ? tiled_shared : feature_shared);
     uint32_t const grid_x  = tiled ? tile_count(ds_feats) : lvl.n_selected;
     uint32_t const by_rows = (max_rows + 32767) / 32768;
     uint32_t const blocks  = grid_x * n_nodes;
@@ -594,7 +610,7 @@ void CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
                 hist_tile_kernel<k_bin_tile_width><<<grid, dim3(256), tiled_shared>>>(
                     bins, gh, rows, offsets, counts, lvl.sel_slot.device(),
                     data.n_bins_ptr(), ds_rows, ds_feats, lvl.n_selected, out,
-                    lvl.stride, slots);
+                    lvl.stride, slots, grads.quant.data());
             });
         return;
     }
@@ -602,10 +618,10 @@ void CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
     data.dispatch_bins(
         [&](auto const *bins)
         {
-            hist_kernel<<<grid, dim3(256), 2UL * lvl.stride * sizeof(float)>>>(
+            hist_kernel<<<grid, dim3(256), feature_shared>>>(
                 bins, gh, rows, offsets, counts, lvl.features.device(),
                 data.n_bins_ptr(), ds_rows, ds_feats, lvl.n_selected, out, lvl.stride,
-                slots);
+                slots, grads.quant.data());
         });
 }
 
@@ -685,10 +701,13 @@ void CudaDeviceContext::begin_tree(Dataset const &ds, floats_view grad,
         auto       lap = prof_counters.lap();
         auto const n   = static_cast<uint32_t>(resident.n_rows);
         grads.gh.reserve(resident.n_rows);
+        grads.absmax.reserve(1);
+        grads.quant.reserve(1);
         gh_from_scores(resident.kind, resident.weighted, resident.scores.data(),
                        resident.labels.data(),
                        resident.weighted ? resident.weights.data() : nullptr, n,
                        grads.gh.data());
+        launch_gh_quant(grads.gh.data(), n, grads.absmax.data(), grads.quant.data());
         lap(prof_counters.obj_kernel_s);
         return;
     }
@@ -697,7 +716,10 @@ void CudaDeviceContext::begin_tree(Dataset const &ds, floats_view grad,
     grads.grad_raw.upload(grad.data(), grad.size());
     grads.hess_raw.upload(hess.data(), hess.size());
     grads.gh.reserve(grad.size());
+    grads.absmax.reserve(1);
+    grads.quant.reserve(1);
     interleave(grads.grad_raw.data(), grads.hess_raw.data(), n, grads.gh.data());
+    launch_gh_quant(grads.gh.data(), n, grads.absmax.data(), grads.quant.data());
     lap(prof_counters.gh_upload_s);
 }
 
@@ -747,8 +769,8 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
 
     auto root_lap = prof_counters.lap();
     lvl.cur_is_a  = true;
-    lvl.cur().reserve(lvl.slot_doubles());
-    check(cudaMemset(lvl.cur().data(), 0, lvl.slot_doubles() * sizeof(double)),
+    lvl.cur().reserve(lvl.slot_cells());
+    check(cudaMemset(lvl.cur().data(), 0, lvl.slot_cells() * sizeof(hist_int_t)),
           "zero root slot");
     stage_root_rows(root, identity);
     lvl.row_offsets.host.assign(1, 0);
@@ -812,6 +834,7 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
         root.row_count = root.rows.size();
     }
     sums_lap(prof_counters.root_sums_s);
+    note_quant();
     prof_counters.node_launched();
 }
 
@@ -983,13 +1006,13 @@ void CudaDeviceContext::advance_level(Dataset const                             
     lap(prof.adv_stage_s);
 
     size_t const child_slots = 2 * ops.size();
-    lvl.other().reserve(child_slots * lvl.slot_doubles());
+    lvl.other().reserve(child_slots * lvl.slot_cells());
     if (prof.enabled)
     {
         lvl.prof_record_begin(/*root=*/false);
     }
     check(cudaMemset(lvl.other().data(), 0,
-                     child_slots * lvl.slot_doubles() * sizeof(double)),
+                     child_slots * lvl.slot_cells() * sizeof(hist_int_t)),
           "zero level");
     if (prof.enabled)
     {
@@ -1016,7 +1039,8 @@ void CudaDeviceContext::advance_level(Dataset const                             
                     lvl.small_offsets.device(), lvl.small_counts.device(),
                     lvl.features.device(), static_cast<uint32_t>(ds.plane_n_rows()),
                     static_cast<uint32_t>(ds.n_features()), lvl.n_selected,
-                    lvl.other().data(), lvl.stride, lvl.small_slots.device());
+                    lvl.other().data(), lvl.stride, lvl.small_slots.device(),
+                    grads.quant.data());
             }
         });
     check(cudaGetLastError(), "level hist launch");
@@ -1025,7 +1049,7 @@ void CudaDeviceContext::advance_level(Dataset const                             
         check(cudaEventRecord(lvl.prof_ev[LevelPipeline::ev_after_hist]),
               "profile event record");
     }
-    auto const sd = static_cast<uint32_t>(lvl.slot_doubles());
+    auto const sd = static_cast<uint32_t>(lvl.slot_cells());
     subtract_kernel<<<dim3(std::clamp<uint32_t>((sd + 255) / 256, 1, 256),
                            static_cast<uint32_t>(ops.size())),
                       dim3(256)>>>(lvl.cur().data(), lvl.other().data(),
@@ -1076,7 +1100,7 @@ void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &co
         any_mask ? lvl.allowed.device() : nullptr, lvl.monotone.device(),
         lvl.n_selected, lvl.stride, config.lambda_l1, config.lambda_l2,
         config.min_child_hess, config.min_gain_to_split, lvl.feat_best.data(),
-        /*hist_slot=*/nullptr);
+        /*hist_slot=*/nullptr, grads.quant.data());
     check(cudaGetLastError(), "find launch");
     reduce_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(32)>>>(
         lvl.feat_best.data(), lvl.n_selected, lvl.node_best.device());
@@ -1121,7 +1145,8 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
         lvl.cur().data(), lvl.features.device(), data.n_bins_ptr(),
         lvl.node_sums.device(), lvl.n_selected, static_cast<uint32_t>(n), lvl.stride,
         config.lambda_l1, config.lambda_l2, config.min_child_hess,
-        config.min_gain_to_split, lvl.level_score.data(), lvl.feat_best.data());
+        config.min_gain_to_split, lvl.level_score.data(), lvl.feat_best.data(),
+        grads.quant.data());
     check(cudaGetLastError(), "level find launch");
     reduce_kernel<<<dim3(1), dim3(32)>>>(lvl.feat_best.data(), lvl.n_selected,
                                          lvl.node_best.device());
@@ -1130,7 +1155,7 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
                               dim3(128)>>>(
         lvl.cur().data(), lvl.node_sums.device(), lvl.node_best.device(),
         lvl.features.device(), data.n_bins_ptr(), static_cast<uint32_t>(n),
-        lvl.n_selected, lvl.stride, lvl.level_child.device());
+        lvl.n_selected, lvl.stride, lvl.level_child.device(), grads.quant.data());
     check(cudaGetLastError(), "level child sums launch");
     lvl.node_best.fetch(1);
     lvl.level_child.fetch(4 * n);
@@ -1207,13 +1232,13 @@ bool CudaDeviceContext::leaf_budget_ok(TreeConfig const &config, size_t n_select
     {
         return false;
     }
-    size_t const max_slots    = leaf_max_slots(config);
-    size_t const slot_doubles = n_selected * 2 * max_bins;
-    if (max_slots > static_cast<size_t>(-1) / std::max<size_t>(1, slot_doubles))
+    size_t const max_slots  = leaf_max_slots(config);
+    size_t const slot_cells = n_selected * 2 * max_bins;
+    if (max_slots > static_cast<size_t>(-1) / std::max<size_t>(1, slot_cells))
     {
         return false;
     }
-    return leaf_pool_ok(max_slots * slot_doubles * sizeof(double));
+    return leaf_pool_ok(max_slots * slot_cells * sizeof(hist_int_t));
 }
 
 void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &config,
@@ -1245,9 +1270,9 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     leaf.next_slot = 1;
     leaf.slot_offsets.assign(max_slots, 0);
     leaf.slot_counts.assign(max_slots, 0);
-    leaf.pool.reserve(max_slots * lvl.slot_doubles());
+    leaf.pool.reserve(max_slots * lvl.slot_cells());
     check(cudaMemset(leaf.pool.data(), 0,
-                     max_slots * lvl.slot_doubles() * sizeof(double)),
+                     max_slots * lvl.slot_cells() * sizeof(hist_int_t)),
           "zero leaf pool");
 
     bool const     identity = root.rows.empty() && root.row_count == data.key.n_rows;
@@ -1276,6 +1301,7 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     root.sums      = fetch_root_sums();
     root.row_count = n;
     sums_lap(prof_counters.root_sums_s);
+    note_quant();
     prof_counters.node_launched();
 }
 
@@ -1391,11 +1417,12 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
                     leaf.build_seg.device(), leaf.build_seg.device() + 1,
                     lvl.features.device(), static_cast<uint32_t>(ds.plane_n_rows()),
                     static_cast<uint32_t>(ds.n_features()), lvl.n_selected,
-                    leaf.pool.data(), lvl.stride, leaf.build_seg.device() + 2);
+                    leaf.pool.data(), lvl.stride, leaf.build_seg.device() + 2,
+                    grads.quant.data());
             }
         });
     check(cudaGetLastError(), "leaf hist launch");
-    auto const sd = static_cast<uint32_t>(lvl.slot_doubles());
+    auto const sd = static_cast<uint32_t>(lvl.slot_cells());
     subtract_inplace_kernel<<<dim3(std::clamp<uint32_t>((sd + 255) / 256, 1, 256)),
                               dim3(256)>>>(leaf.pool.data(), large_slot, small_slot,
                                            sd);
@@ -1466,7 +1493,7 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
         any_mask ? lvl.allowed.device() : nullptr, leaf.monotone.device(),
         lvl.n_selected, lvl.stride, config.lambda_l1, config.lambda_l2,
         config.min_child_hess, config.min_gain_to_split, lvl.feat_best.data(),
-        leaf.find_slots.device());
+        leaf.find_slots.device(), grads.quant.data());
     check(cudaGetLastError(), "leaf find launch");
     reduce_kernel<<<dim3(n), dim3(32)>>>(lvl.feat_best.data(), lvl.n_selected,
                                          lvl.node_best.device());

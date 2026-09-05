@@ -268,7 +268,7 @@ bool ingest_would_decline(BinMappers const &mappers)
     {
         ceiling = std::max(ceiling, static_cast<size_t>(optin));
     }
-    return 4 * max_bins * sizeof(float) > ceiling;
+    return hist_shared_bytes(max_bins) > ceiling;
 }
 
 std::shared_ptr<CudaIngestPlane> make_ingest_plane(BinMappers const &mappers,

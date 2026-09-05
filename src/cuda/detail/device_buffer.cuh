@@ -25,10 +25,30 @@ namespace cuda_detail
 // worse at every cell.
 inline constexpr size_t k_min_gpu_rows = 512;
 
-// perf: Default shared-memory histogram footprint cap (stride floats, 48 KiB
-// static budget). The engine raises it at runtime to the device's opt-in
-// limit (~99 KiB on consumer parts, 227 KiB on sm_90), moving the bin count
-// the device refuses from ~3k to ~6k+ per feature.
+using hist_int_t = long long;
+
+struct GhQuant
+{
+    float2  scale;
+    double2 inv;
+};
+
+struct NodeRows
+{
+    uint32_t const *rows;
+    float2 const   *gh;
+    uint32_t        count;
+};
+
+inline constexpr size_t hist_shared_bytes(size_t max_bins)
+{
+    return 2 * max_bins * sizeof(hist_int_t);
+}
+
+// perf: Default shared-memory histogram footprint cap (stride int64 cells,
+// 48 KiB static budget). The engine raises it at runtime to the device's
+// opt-in limit (~99 KiB on consumer parts, 227 KiB on sm_90), moving the bin
+// count the device refuses from ~3k to ~6k+ per feature.
 inline constexpr size_t   k_max_shared_bytes   = 48UL * 1024UL;
 inline constexpr uint32_t k_fill_blocks_per_sm = 4;
 
