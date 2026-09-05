@@ -656,13 +656,65 @@ inline __device__ SplitSumsDev split_sums_dev(double pg, double ph, double miss_
             .hR = (real_h - ph) + (dl == 0 ? miss_h : 0.0)};
 }
 
+inline __device__ double node_block_sum(double v, uint32_t block)
+{
+    for (uint32_t o = block / 2; o > 0; o >>= 1)
+    {
+        v += __shfl_down_sync(0xffffffffU, v, static_cast<int>(o));
+    }
+    return v;
+}
+
 inline __device__ double warp_sum(double v)
 {
-    for (int o = 16; o > 0; o >>= 1)
+    return __shfl_sync(0xffffffffU, node_block_sum(v, 32), 0);
+}
+
+struct LevelLanes
+{
+    uint32_t block;
+    uint32_t groups;
+    uint32_t node;
+    uint32_t group;
+};
+
+inline __device__ LevelLanes level_lanes(uint32_t n_nodes, uint32_t lane)
+{
+    uint32_t block = 1;
+    while (block < n_nodes && block < 32)
     {
-        v += __shfl_down_sync(0xffffffffU, v, o);
+        block <<= 1;
     }
-    return __shfl_sync(0xffffffffU, v, 0);
+    return {.block  = block,
+            .groups = 32 / block,
+            .node   = lane & (block - 1),
+            .group  = lane / block};
+}
+
+inline __device__ hist_int_t group_exclusive_scan(hist_int_t own, uint32_t block)
+{
+    hist_int_t acc = own;
+    for (uint32_t o = block; o < 32; o <<= 1)
+    {
+        hist_int_t const up = __shfl_up_sync(0xffffffffU, acc, static_cast<int>(o));
+        if (threadIdx.x >= o)
+        {
+            acc += up;
+        }
+    }
+    return acc - own;
+}
+
+// perf: An infeasible node does NOT veto the whole level candidate. It
+// contributes its parent score (zero gain) and the broadcast split still
+// applies to it. At depth >= 5 some frontier node is always near-empty, so
+// vetoing rejected every good deep cut and GPU levelwise trailed its own CPU
+// grower (and catboost) at scale.
+inline __device__ double level_cut_score(SplitSumsDev const &s, double node_ps,
+                                         double l1, double l2, double min_child_hess)
+{
+    bool const ok = s.hL >= min_child_hess && s.hR >= min_child_hess;
+    return ok ? score(s.gL, s.hL, l1, l2) + score(s.gR, s.hR, l1, l2) : node_ps;
 }
 
 inline __device__ bool feat_better(double ga, int ba, int da, int va, double gb, int bb,
@@ -928,10 +980,14 @@ __global__ void level_find_kernel(hist_int_t *hists, hist_int_t const *parents,
     }
     __syncwarp();
 
-    double2 const inv = quant->inv;
-    for (uint32_t base = 0; base < n_nodes; base += 32)
+    double2 const    inv   = quant->inv;
+    LevelLanes const ll    = level_lanes(n_nodes, lane);
+    uint32_t const   chunk = (n_cut + ll.groups - 1) / ll.groups;
+    uint32_t const   b0    = ll.group * chunk;
+    uint32_t const   b_end = min(b0 + chunk, n_cut);
+    for (uint32_t base = 0; base < n_nodes; base += ll.block)
     {
-        uint32_t const    p      = base + lane;
+        uint32_t const    p      = base + ll.node;
         bool const        active = p < n_nodes;
         hist_int_t const *cells =
             active ? hists + ((static_cast<size_t>(p) * n_sel + f) * stride) : nullptr;
@@ -944,13 +1000,21 @@ __global__ void level_find_kernel(hist_int_t *hists, hist_int_t const *parents,
         double const real_g  = g - miss_g;
         double const real_h  = h - miss_h;
         double const node_ps = active ? score(g, h, l1, l2) : 0.0;
-        parent_sum += warp_sum(node_ps);
+        parent_sum += warp_sum(ll.group == 0 ? node_ps : 0.0);
 
-        hist_int_t pq_g = 0;
-        hist_int_t pq_h = 0;
-        for (uint32_t b = 0; b < n_cut; ++b)
+        hist_int_t own_g = 0;
+        hist_int_t own_h = 0;
+        for (uint32_t b = b0; active && b < b_end; ++b)
         {
-            if (active)
+            own_g += cells[pair_off(b)];
+            own_h += cells[pair_off(b) + 1];
+        }
+        hist_int_t pq_g = group_exclusive_scan(own_g, ll.block);
+        hist_int_t pq_h = group_exclusive_scan(own_h, ll.block);
+        for (uint32_t b = b0; b < b0 + chunk; ++b)
+        {
+            bool const in = active && b < b_end;
+            if (in)
             {
                 pq_g += cells[pair_off(b)];
                 pq_h += cells[pair_off(b) + 1];
@@ -962,20 +1026,10 @@ __global__ void level_find_kernel(hist_int_t *hists, hist_int_t const *parents,
                 int const  dl = 1 - d;
                 auto const s =
                     split_sums_dev(pg, ph, miss_g, miss_h, real_g, real_h, dl);
-                // perf: An infeasible node does NOT veto the whole level
-                // candidate. It contributes its parent score (zero gain) and
-                // the broadcast split still applies to it. At depth >= 5 some
-                // frontier node is always near-empty, so vetoing rejected every
-                // good deep cut and GPU levelwise trailed its own CPU grower
-                // (and catboost) at scale.
-                bool const   ok = s.hL >= min_child_hess && s.hR >= min_child_hess;
                 double const cs =
-                    !active
-                        ? 0.0
-                        : (ok ? score(s.gL, s.hL, l1, l2) + score(s.gR, s.hR, l1, l2)
-                              : node_ps);
-                double const sum = warp_sum(cs);
-                if (lane == 0)
+                    in ? level_cut_score(s, node_ps, l1, l2, min_child_hess) : 0.0;
+                double const sum = node_block_sum(cs, ll.block);
+                if (ll.node == 0 && b < b_end)
                 {
                     s_score[dl][b] += sum;
                 }
