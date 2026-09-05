@@ -8,6 +8,12 @@
         --evidence-kind model-hash \
         --evidence-before 9f0a1c2d3e4f5061 --evidence-after 9f0a1c2d3e4f5061
 
+    python3 scripts/update_standings.py --axis gpu-tall --restamp-verified \
+        --reason "kernel refactor; device bytes identical on the pod" \
+        --evidence-kind model-hash --evidence-grower cuda_depthwise \
+        --evidence-host pod-l40s \
+        --evidence-before e1a5391a7beea349 --evidence-after e1a5391a7beea349
+
 Both modes, the evidence kinds, their refusals, and the rule that a
 carry-forward is spent when the plane moves again are specified in
 docs/method/benchmark-protocol.md; `--help` lists the flags.
@@ -28,6 +34,8 @@ RESULTS = REPO / "benchmarks" / "results"
 
 sys.path.insert(0, str(REPO / "scripts"))
 import check_standings  # noqa: E402
+
+DEVICE_GROWER_PREFIX = "cuda_"
 
 REF_LIBRARIES = ("xgboost", "lightgbm", "catboost")
 EVIDENCE_KEYS = ("companion", "ab")
@@ -243,12 +251,15 @@ def _byte_identity_evidence(
 
     The claim is that the same inputs produce the same model bytes at both
     commits, so the only acceptable reading is equality: any difference is a
-    measured difference and ends the argument.
+    measured difference and ends the argument. A host hash is identity on
+    every machine; a device hash is identity on one device and one build, so
+    a device grower's block must name the host it was measured on.
 
     Parameters
     ----------
     args : argparse.Namespace
-        Parsed arguments; needs `evidence_before` and `evidence_after`.
+        Parsed arguments; needs `evidence_before`, `evidence_after`, and
+        `evidence_grower`, plus `evidence_host` for a device grower.
 
     Returns
     -------
@@ -266,8 +277,21 @@ def _byte_identity_evidence(
         return None, (f"model hashes {args.evidence_before!r} and "
                       f"{args.evidence_after!r} differ; that is a measured "
                       "difference, not an equivalence proof")
-    return {"kind": "model-hash", "before": args.evidence_before,
-            "after": args.evidence_after}, None
+    block = {"kind": "model-hash", "grower": args.evidence_grower,
+             "before": args.evidence_before, "after": args.evidence_after}
+    if not _is_device_grower(args.evidence_grower):
+        return block, None
+    if not args.evidence_host:
+        return None, (f"a {args.evidence_grower} hash is identity on one "
+                      "device and one build, so model-hash evidence from it "
+                      "needs --evidence-host: the pod both hashes were "
+                      "measured on")
+    block["host"] = args.evidence_host
+    return block, None
+
+
+def _is_device_grower(grower: str) -> bool:
+    return grower.startswith(DEVICE_GROWER_PREFIX)
 
 
 def _tolerance_evidence(
@@ -360,6 +384,10 @@ def main() -> int:
                     help="model-hash: the model hash at the measured sha")
     ap.add_argument("--evidence-after", default=None,
                     help="model-hash: the model hash at the stamped sha")
+    ap.add_argument("--evidence-grower", default="depthwise",
+                    help="model-hash: the grower model_hash.py ran with; a "
+                         "cuda_* grower's hash is identity on one device and "
+                         "needs --evidence-host")
     ap.add_argument("--metric", default=None,
                     help="tolerance: what was compared, e.g. 'max abs "
                          "prediction delta'")
@@ -376,7 +404,8 @@ def main() -> int:
     ap.add_argument("--config", default=None,
                     help="tolerance: the fit configuration it ran under")
     ap.add_argument("--evidence-host", default=None,
-                    help="tolerance: the host the comparison ran on")
+                    help="tolerance, and model-hash from a cuda_* grower: the "
+                         "host the comparison ran on")
     args = ap.parse_args()
 
     reg = json.loads(REGISTRY.read_text())
