@@ -92,6 +92,7 @@ struct CudaDeviceContext
         uint32_t                 stride     = 0;
         Staged<uint32_t>         slots;
         Staged<uint32_t>         triples;
+        Staged<SiblingDerive>    derive;
         Staged<double>           node_sums;
         Staged<double>           node_bounds;
         Staged<char>             allowed;
@@ -138,9 +139,8 @@ struct CudaDeviceContext
             ev_before_memset = 0,
             ev_after_memset,
             ev_after_hist,
-            ev_after_subtract,
         };
-        cudaEvent_t prof_ev[4]       = {};
+        cudaEvent_t prof_ev[3]       = {};
         bool        prof_ev_ready    = false;
         bool        prof_ev_recorded = false;
         bool        prof_ev_root     = false;
@@ -205,13 +205,16 @@ struct CudaDeviceContext
         // starts, so 8 of them per round drain the pipeline 8 times.
         // Each buffer is written once per round, downstream of the blocking
         // fetch that fenced the previous round's upload of it.
-        PinnedStaged<PartOpDev> part_op;
-        PinnedStaged<uint32_t>  build_seg;
-        PinnedStaged<double>    find_stats;
-        PinnedStaged<uint32_t>  find_slots;
-        Staged<int>             monotone;
-        uint32_t                next_slot = 0;
-        uint32_t                max_slots = 0;
+        PinnedStaged<PartOpDev>     part_op;
+        PinnedStaged<uint32_t>      build_seg;
+        PinnedStaged<double>        find_stats;
+        PinnedStaged<uint32_t>      find_slots;
+        PinnedStaged<SiblingDerive> find_derive;
+        Staged<int>                 monotone;
+        uint32_t                    next_slot     = 0;
+        uint32_t                    max_slots     = 0;
+        uint32_t                    pending_small = k_not_selected;
+        uint32_t                    pending_large = k_not_selected;
     };
 
     struct NodeTable

@@ -157,8 +157,8 @@ class CudaHistogramEngine
     // data that returns to the host.
     void partition_level(Dataset const &ds, std::span<PartitionOp const> ops,
                          std::span<uint32_t> child_counts);
-    // Populates all smaller children and subtracts all larger ones, then
-    // makes the child level current.
+    // Populates the smaller children and makes the child level current. The
+    // find that follows writes the larger ones (parent minus smaller, exact).
     void advance_level(Dataset const &ds, std::span<LevelOp const> ops);
     // Last level of a tree: children are leaves, their histograms unread;
     // performs only the segment-layout flip that stamping depends on.

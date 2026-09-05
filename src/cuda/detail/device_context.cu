@@ -287,9 +287,6 @@ void CudaDeviceContext::LevelPipeline::prof_read(ProfileCounters &prof)
         cudaEventElapsedTime(&ms, prof_ev[ev_before_memset], prof_ev[ev_after_memset]),
         "profile event memset");
     prof.adv_memset_s += ms / 1e3;
-    check(cudaEventElapsedTime(&ms, prof_ev[ev_after_hist], prof_ev[ev_after_subtract]),
-          "profile event subtract");
-    prof.adv_sub_s += ms / 1e3;
 }
 
 CudaDeviceContext::LevelPipeline::~LevelPipeline()
@@ -321,10 +318,13 @@ size_t CudaDeviceContext::LevelPipeline::stage_children(
     small_counts.clear();
     small_slots.clear();
     triples.clear();
+    derive.host.assign(2 * ops.size(), k_filled_slot);
     for (CudaHistogramEngine::LevelOp const &op : ops)
     {
-        uint32_t const offset = next_offsets[op.small_slot];
-        uint32_t const count  = next_counts[op.small_slot];
+        derive.host[op.large_slot] = {.parent_slot = op.parent_slot,
+                                      .small_slot  = op.small_slot};
+        uint32_t const offset      = next_offsets[op.small_slot];
+        uint32_t const count       = next_counts[op.small_slot];
         if (count >= k_min_gpu_rows)
         {
             row_offsets.host.push_back(offset);
@@ -355,6 +355,7 @@ size_t CudaDeviceContext::LevelPipeline::stage_children(
         small_slots.sync();
     }
     triples.sync();
+    derive.sync();
     return max_rows;
 }
 
@@ -787,6 +788,8 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     lvl.row_counts.sync();
     lvl.slots.host.assign(1, 0);
     lvl.slots.sync();
+    lvl.derive.host.assign(1, k_filled_slot);
+    lvl.derive.sync();
     root_lap(prof_counters.root_stage_s);
     if (identity)
     {
@@ -1059,15 +1062,6 @@ void CudaDeviceContext::advance_level(Dataset const                             
     {
         check(cudaEventRecord(lvl.prof_ev[LevelPipeline::ev_after_hist]),
               "profile event record");
-    }
-    subtract_kernel<<<slot_stream_grid(sd, static_cast<uint32_t>(ops.size())),
-                      dim3(k_slot_stream_threads)>>>(
-        lvl.cur().data(), lvl.other().data(), lvl.triples.device(), sd);
-    check(cudaGetLastError(), "subtract launch");
-    if (prof.enabled)
-    {
-        check(cudaEventRecord(lvl.prof_ev[LevelPipeline::ev_after_subtract]),
-              "profile event record");
         lvl.prof_ev_recorded = true;
     }
     lvl.cur_is_a     = !lvl.cur_is_a;
@@ -1104,11 +1098,12 @@ void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &co
     lvl.feat_best.reserve(n * lvl.n_selected);
     lvl.node_best.reserve(n);
     find_kernel<<<dim3(lvl.n_selected, static_cast<uint32_t>(n)), dim3(32)>>>(
-        lvl.cur().data(), lvl.features.device(), data.n_bins_ptr(),
-        lvl.node_sums.device(), lvl.node_bounds.device(),
-        any_mask ? lvl.allowed.device() : nullptr, lvl.monotone.device(),
-        lvl.n_selected, lvl.stride, config.lambda_l1, config.lambda_l2,
-        config.min_child_hess, config.min_gain_to_split, lvl.feat_best.data(),
+        lvl.cur().data(), lvl.other().data(), lvl.derive.device(),
+        lvl.features.device(), data.n_bins_ptr(), lvl.node_sums.device(),
+        lvl.node_bounds.device(), any_mask ? lvl.allowed.device() : nullptr,
+        lvl.monotone.device(), lvl.n_selected, lvl.stride, config.lambda_l1,
+        config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
+        lvl.feat_best.data(),
         /*hist_slot=*/nullptr, grads.quant.data());
     check(cudaGetLastError(), "find launch");
     reduce_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(k_reduce_threads)>>>(
@@ -1151,11 +1146,11 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
     lvl.node_best.reserve(1);
     lvl.level_child.reserve(4 * n);
     level_find_kernel<<<dim3(lvl.n_selected), dim3(32)>>>(
-        lvl.cur().data(), lvl.features.device(), data.n_bins_ptr(),
-        lvl.node_sums.device(), lvl.n_selected, static_cast<uint32_t>(n), lvl.stride,
-        config.lambda_l1, config.lambda_l2, config.min_child_hess,
-        config.min_gain_to_split, lvl.level_score.data(), lvl.feat_best.data(),
-        grads.quant.data());
+        lvl.cur().data(), lvl.other().data(), lvl.derive.device(),
+        lvl.features.device(), data.n_bins_ptr(), lvl.node_sums.device(),
+        lvl.n_selected, static_cast<uint32_t>(n), lvl.stride, config.lambda_l1,
+        config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
+        lvl.level_score.data(), lvl.feat_best.data(), grads.quant.data());
     check(cudaGetLastError(), "level find launch");
     reduce_kernel<<<dim3(1), dim3(k_reduce_threads)>>>(
         lvl.feat_best.data(), lvl.n_selected, lvl.node_best.device());
@@ -1434,9 +1429,8 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
             }
         });
     check(cudaGetLastError(), "leaf hist launch");
-    subtract_inplace_kernel<<<slot_stream_grid(sd, 1), dim3(k_slot_stream_threads)>>>(
-        leaf.pool.data(), large_slot, small_slot, sd);
-    check(cudaGetLastError(), "leaf subtract launch");
+    leaf.pending_small = small_slot;
+    leaf.pending_large = large_slot;
     if (prof.enabled)
     {
         ++prof.launches;
@@ -1451,6 +1445,7 @@ bool CudaDeviceContext::leaf_stage_find(std::span<SplitInput const> nodes,
     size_t const n = nodes.size();
     leaf.find_stats.reserve(4 * n);
     leaf.find_slots.reserve(n);
+    leaf.find_derive.reserve(n);
     double *stats    = leaf.find_stats.host();
     bool    any_mask = false;
     for (size_t i = 0; i < n; ++i)
@@ -1460,10 +1455,18 @@ bool CudaDeviceContext::leaf_stage_find(std::span<SplitInput const> nodes,
         stats[(2 * n) + (2 * i)]     = nodes[i].lo;
         stats[(2 * n) + (2 * i) + 1] = nodes[i].hi;
         leaf.find_slots.host()[i]    = slots[i];
-        any_mask                     = any_mask || !nodes[i].allowed.empty();
+        leaf.find_derive.host()[i] =
+            slots[i] == leaf.pending_large
+                ? SiblingDerive{.parent_slot = slots[i],
+                                .small_slot  = leaf.pending_small}
+                : k_filled_slot;
+        any_mask = any_mask || !nodes[i].allowed.empty();
     }
+    leaf.pending_small = k_not_selected;
+    leaf.pending_large = k_not_selected;
     leaf.find_stats.sync(4 * n);
     leaf.find_slots.sync(n);
+    leaf.find_derive.sync(n);
     if (any_mask)
     {
         lvl.allowed.host.resize(n * lvl.n_selected);
@@ -1498,12 +1501,12 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
     lvl.feat_best.reserve(static_cast<size_t>(n) * lvl.n_selected);
     lvl.node_best.reserve(n);
     find_kernel<<<dim3(lvl.n_selected, n), dim3(32)>>>(
-        leaf.pool.data(), lvl.features.device(), data.n_bins_ptr(),
-        leaf.find_stats.device(), leaf.find_stats.device() + (2 * n),
-        any_mask ? lvl.allowed.device() : nullptr, leaf.monotone.device(),
-        lvl.n_selected, lvl.stride, config.lambda_l1, config.lambda_l2,
-        config.min_child_hess, config.min_gain_to_split, lvl.feat_best.data(),
-        leaf.find_slots.device(), grads.quant.data());
+        leaf.pool.data(), leaf.pool.data(), leaf.find_derive.device(),
+        lvl.features.device(), data.n_bins_ptr(), leaf.find_stats.device(),
+        leaf.find_stats.device() + (2 * n), any_mask ? lvl.allowed.device() : nullptr,
+        leaf.monotone.device(), lvl.n_selected, lvl.stride, config.lambda_l1,
+        config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
+        lvl.feat_best.data(), leaf.find_slots.device(), grads.quant.data());
     check(cudaGetLastError(), "leaf find launch");
     reduce_kernel<<<dim3(n), dim3(k_reduce_threads)>>>(
         lvl.feat_best.data(), lvl.n_selected, lvl.node_best.device());
