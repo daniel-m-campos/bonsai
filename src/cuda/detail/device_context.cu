@@ -1030,14 +1030,16 @@ void CudaDeviceContext::advance_level(Dataset const                             
         {
             if (!lvl.small_offsets.empty())
             {
-                hist_small_kernel<<<
-                    dim3(static_cast<uint32_t>(lvl.small_offsets.size())), dim3(128)>>>(
-                    bins, lvl.other_gh().data(), lvl.other_rows().data(),
-                    lvl.small_offsets.device(), lvl.small_counts.device(),
-                    lvl.features.device(), static_cast<uint32_t>(ds.plane_n_rows()),
-                    static_cast<uint32_t>(ds.n_features()), lvl.n_selected,
-                    lvl.other().data(), lvl.stride, lvl.small_slots.device(),
-                    grads.quant.data());
+                hist_small_kernel<k_bin_tile_width>
+                    <<<dim3(tile_count(static_cast<uint32_t>(ds.n_features())),
+                            static_cast<uint32_t>(lvl.small_offsets.size())),
+                       dim3(k_small_fill_threads)>>>(
+                        bins, lvl.other_gh().data(), lvl.other_rows().data(),
+                        lvl.small_offsets.device(), lvl.small_counts.device(),
+                        lvl.sel_slot.device(), static_cast<uint32_t>(ds.plane_n_rows()),
+                        static_cast<uint32_t>(ds.n_features()), lvl.n_selected,
+                        lvl.other().data(), lvl.stride, lvl.small_slots.device(),
+                        grads.quant.data());
             }
         });
     check(cudaGetLastError(), "level hist launch");
@@ -1407,13 +1409,15 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
         {
             if (small_count < k_min_gpu_rows)
             {
-                hist_small_kernel<<<dim3(1), dim3(128)>>>(
-                    bins, lvl.gh_ordered.data(), lvl.rows.data(),
-                    leaf.build_seg.device(), leaf.build_seg.device() + 1,
-                    lvl.features.device(), static_cast<uint32_t>(ds.plane_n_rows()),
-                    static_cast<uint32_t>(ds.n_features()), lvl.n_selected,
-                    leaf.pool.data(), lvl.stride, leaf.build_seg.device() + 2,
-                    grads.quant.data());
+                hist_small_kernel<k_bin_tile_width>
+                    <<<dim3(tile_count(static_cast<uint32_t>(ds.n_features())), 1),
+                       dim3(k_small_fill_threads)>>>(
+                        bins, lvl.gh_ordered.data(), lvl.rows.data(),
+                        leaf.build_seg.device(), leaf.build_seg.device() + 1,
+                        lvl.sel_slot.device(), static_cast<uint32_t>(ds.plane_n_rows()),
+                        static_cast<uint32_t>(ds.n_features()), lvl.n_selected,
+                        leaf.pool.data(), lvl.stride, leaf.build_seg.device() + 2,
+                        grads.quant.data());
             }
         });
     check(cudaGetLastError(), "leaf hist launch");

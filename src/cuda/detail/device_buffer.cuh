@@ -55,7 +55,8 @@ inline constexpr uint32_t k_fill_blocks_per_sm = 4;
 // perf: Three 32 KiB tile blocks fit a 100 KiB SM, so 512 threads per block
 // keep 1536 threads resident where 256 left 768; the 16M-row root fill
 // measured 0.68 s at 256 and 0.60 s at 512 per 100 trees on an L40S.
-inline constexpr uint32_t k_tile_fill_threads = 512;
+inline constexpr uint32_t k_tile_fill_threads  = 512;
+inline constexpr uint32_t k_small_fill_threads = 128;
 
 inline constexpr uint32_t k_bin_tile_width = 8;
 static_assert((k_bin_tile_width & (k_bin_tile_width - 1)) == 0,
