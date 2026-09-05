@@ -1099,7 +1099,7 @@ void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &co
         config.min_child_hess, config.min_gain_to_split, lvl.feat_best.data(),
         /*hist_slot=*/nullptr, grads.quant.data());
     check(cudaGetLastError(), "find launch");
-    reduce_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(32)>>>(
+    reduce_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(k_reduce_threads)>>>(
         lvl.feat_best.data(), lvl.n_selected, lvl.node_best.device());
     check(cudaGetLastError(), "reduce launch");
     if (prof.enabled)
@@ -1145,8 +1145,8 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
         config.min_gain_to_split, lvl.level_score.data(), lvl.feat_best.data(),
         grads.quant.data());
     check(cudaGetLastError(), "level find launch");
-    reduce_kernel<<<dim3(1), dim3(32)>>>(lvl.feat_best.data(), lvl.n_selected,
-                                         lvl.node_best.device());
+    reduce_kernel<<<dim3(1), dim3(k_reduce_threads)>>>(
+        lvl.feat_best.data(), lvl.n_selected, lvl.node_best.device());
     check(cudaGetLastError(), "level reduce launch");
     level_child_sums_kernel<<<dim3((static_cast<uint32_t>(n) + 127) / 128),
                               dim3(128)>>>(
@@ -1490,8 +1490,8 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
         config.min_child_hess, config.min_gain_to_split, lvl.feat_best.data(),
         leaf.find_slots.device(), grads.quant.data());
     check(cudaGetLastError(), "leaf find launch");
-    reduce_kernel<<<dim3(n), dim3(32)>>>(lvl.feat_best.data(), lvl.n_selected,
-                                         lvl.node_best.device());
+    reduce_kernel<<<dim3(n), dim3(k_reduce_threads)>>>(
+        lvl.feat_best.data(), lvl.n_selected, lvl.node_best.device());
     check(cudaGetLastError(), "leaf reduce launch");
     lvl.node_best.fetch(n);
     if (prof.enabled)

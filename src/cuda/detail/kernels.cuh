@@ -720,23 +720,49 @@ __global__ void find_kernel(hist_int_t const *hists, uint32_t const *features,
     }
 }
 
+constexpr uint32_t k_reduce_threads = 256;
+
+inline __device__ bool first_max_better(double gain, uint32_t sel, double best_gain,
+                                        uint32_t best_sel)
+{
+    return sel != k_not_selected &&
+           (gain > best_gain || (gain == best_gain && sel < best_sel));
+}
+
 __global__ void reduce_kernel(FeatBest const *per_feat, uint32_t n_sel, FeatBest *out)
 {
-    if (threadIdx.x != 0)
+    __shared__ double   gains[k_reduce_threads];
+    __shared__ uint32_t sels[k_reduce_threads];
+    uint32_t const      node      = blockIdx.x;
+    FeatBest const     *row       = per_feat + (static_cast<size_t>(node) * n_sel);
+    double              best_gain = 0.0;
+    uint32_t            best_sel  = k_not_selected;
+    for (uint32_t s = threadIdx.x; s < n_sel; s += blockDim.x)
     {
-        return;
-    }
-    uint32_t const  node = blockIdx.x;
-    FeatBest        best = {};
-    FeatBest const *row  = per_feat + (static_cast<size_t>(node) * n_sel);
-    for (uint32_t s = 0; s < n_sel; ++s)
-    {
-        if (row[s].valid != 0 && row[s].gain > best.gain)
+        if (row[s].valid != 0 && row[s].gain > best_gain)
         {
-            best = row[s];
+            best_gain = row[s].gain;
+            best_sel  = s;
         }
     }
-    out[node] = best;
+    gains[threadIdx.x] = best_gain;
+    sels[threadIdx.x]  = best_sel;
+    __syncthreads();
+    for (uint32_t off = blockDim.x / 2; off > 0; off >>= 1)
+    {
+        if (threadIdx.x < off &&
+            first_max_better(gains[threadIdx.x + off], sels[threadIdx.x + off],
+                             gains[threadIdx.x], sels[threadIdx.x]))
+        {
+            gains[threadIdx.x] = gains[threadIdx.x + off];
+            sels[threadIdx.x]  = sels[threadIdx.x + off];
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0)
+    {
+        out[node] = sels[0] == k_not_selected ? FeatBest{} : row[sels[0]];
+    }
 }
 
 __global__ void level_find_kernel(hist_int_t const *hists, uint32_t const *features,
