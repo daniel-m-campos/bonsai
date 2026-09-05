@@ -118,3 +118,9 @@ One `pred_contribs` call over the full matrix, seconds, best repeat, bold best p
 | 1,048,576 x 128, depth 8 | 7.7e-06 | 4.9e-06 | - | 0.0e+00 |
 | 1,048,576 x 512, depth 6 | 3.3e-06 | 2.8e-06 | 0.0e+00 | 0.0e+00 |
 | 4,194,304 x 128, depth 6 | 4.7e-06 | 3.9e-06 | 0.0e+00 | 0.0e+00 |
+
+## Release drift
+
+Every refresh fits three wheels at the tall cell of each plane, on the pod that measured the plane, interleaved: the previous release (`old`), the 1.15.0 anchor (`anchor`, one fixed release every refresh fits again) and the commit under refresh (`new`). The statistic is the min over repeats, since noise on a fixed workload only adds time. `new` is read inside 5% of `old` and inside 2% of `anchor`; the anchor is what makes the comparison cumulative, so a loss that hides inside the release band every release shows against the anchor by the second one. A cell marked **moved** ships only under a `Standings:`-tagged entry in the decisions log that cites the file, which `make docs-check` enforces.
+
+*Pending the first refresh that fits the anchor arm: the A/B files land with it and this section fills in unchanged.*

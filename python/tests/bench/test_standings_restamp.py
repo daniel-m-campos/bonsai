@@ -491,3 +491,46 @@ def test_supersede_stamps_a_quality_axis_that_registers_no_plane(monkeypatch,
         "date": "2026-09-01",
         "hash_set": check_standings.plane_digest(check_standings.PLANE_GPU),
         "refs": STAMPED_REFS})
+
+
+def test_supersede_swaps_the_ab_file_it_was_given(monkeypatch, tmp_path,
+                                                  capsys):
+    """The release A/B is measured with the axis and supersedes with it,
+    exactly as the companion does."""
+    registry = _measured_axis(monkeypatch, tmp_path, "cpu-tall",
+                              {"file": "cpu-tall-2026-08.jsonl",
+                               "sha": MEASURED_SHA, "plane": "cpu",
+                               "refreshed_for": "1.7.0",
+                               "ab": "ab-cpu-2026-08.jsonl"})
+    results = _results(monkeypatch, tmp_path, {
+        "ab-cpu-2026-08.jsonl": "old ab\n",
+        "cpu-tall-2026-09.jsonl": _rows(_row())})
+
+    assert _run(monkeypatch, "--axis", "cpu-tall", "--file",
+                "cpu-tall-2026-09.jsonl", "--ab", "ab-cpu-2026-09.jsonl",
+                "--version", "2.1.0") == 0
+
+    assert json.loads(registry.read_text())["cpu-tall"]["ab"] == (
+        "ab-cpu-2026-09.jsonl")
+    assert not (results / "ab-cpu-2026-08.jsonl").exists()
+    assert "superseded ab-cpu-2026-08.jsonl" in capsys.readouterr().out
+
+
+def test_supersede_keeps_the_ab_file_when_none_is_given(monkeypatch, tmp_path):
+    """A refresh that fitted no arms leaves the last A/B registered: the
+    gate keeps reading it until a later session replaces it."""
+    registry = _measured_axis(monkeypatch, tmp_path, "cpu-tall",
+                              {"file": "cpu-tall-2026-08.jsonl",
+                               "sha": MEASURED_SHA, "plane": "cpu",
+                               "refreshed_for": "1.7.0",
+                               "ab": "ab-cpu-2026-08.jsonl"})
+    results = _results(monkeypatch, tmp_path, {
+        "ab-cpu-2026-08.jsonl": "old ab\n",
+        "cpu-tall-2026-09.jsonl": _rows(_row())})
+
+    assert _run(monkeypatch, "--axis", "cpu-tall", "--file",
+                "cpu-tall-2026-09.jsonl", "--version", "2.1.0") == 0
+
+    assert json.loads(registry.read_text())["cpu-tall"]["ab"] == (
+        "ab-cpu-2026-08.jsonl")
+    assert (results / "ab-cpu-2026-08.jsonl").exists()

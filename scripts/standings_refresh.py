@@ -137,6 +137,9 @@ PARITY_BAND_PCT = AB_BAND_PCT
 # One A/B file per plane in a results directory, so the two sessions
 # cannot land on each other's rows.
 AB_FILES = {PLANE_GPU: "ab-gpu.jsonl", PLANE_CPU: "ab-cpu.jsonl"}
+# The axis each plane's A/B file is registered under: the tall axis, whose
+# cell the pod script fits the arms at, so the file supersedes with it.
+AB_AXES = {PLANE_GPU: "gpu-tall", PLANE_CPU: "cpu-tall"}
 
 # Every axis is the stem of its dated results file AND the name of the
 # branch the pod script runs to produce it.
@@ -405,8 +408,11 @@ def supersede(args: argparse.Namespace) -> int:
     files = _stage_axis_files(src, axes)
     if files is None:
         return 1
-    _restamp_and_render(axes, files, _copy_parity(src / "parity.jsonl",
-                                                  files.get(PARITY_AXIS)))
+    _restamp_and_render(
+        axes, files,
+        _copy_evidence(src / "parity.jsonl", files.get(PARITY_AXIS), "parity"),
+        {axis: _copy_evidence(src / AB_FILES[plane], files.get(axis), f"ab-{plane}")
+         for plane, axis in AB_AXES.items()})
     verdict = _ab_verdicts(src)
     print(verdict or "A/B skipped (no ab-*.jsonl)")
 
@@ -505,21 +511,25 @@ def _row_host(path: pathlib.Path) -> str:
     return ""
 
 
-def _copy_parity(path: pathlib.Path, axis_file: str | None) -> str | None:
-    """Commit the session's parity rows as the anchor axis's companion.
+def _copy_evidence(path: pathlib.Path, axis_file: str | None,
+                   prefix: str) -> str | None:
+    """Commit a session evidence file beside the axis file it rode with.
 
-    The perf page publishes one fused fit total, and this is where it comes
-    from, so the rows ship with the standings they anchor and supersede with
-    them. The file is dated from the axis file it accompanies, which is the
-    only honest date: the two were measured in the same session.
+    The parity rows are where the perf page's one fused fit total comes
+    from and the A/B rows are where its release drift table comes from, so
+    each ships with the standings it anchors and supersedes with them. The
+    file is dated from the axis file it accompanies, which is the only
+    honest date: the two were measured in the same session.
 
     Parameters
     ----------
     path : pathlib.Path
-        The pod's ``parity.jsonl``.
+        The pod's ``parity.jsonl`` or ``ab-<plane>.jsonl``.
     axis_file : str or None
-        The dated standings file the parity rows anchor, or None when this
+        The dated standings file the rows anchor, or None when this
         session did not measure that axis.
+    prefix : str
+        The committed file's stem before the date stamp.
 
     Returns
     -------
@@ -529,7 +539,7 @@ def _copy_parity(path: pathlib.Path, axis_file: str | None) -> str | None:
     if not axis_file or not path.exists():
         return None
     stamp = "-".join(pathlib.Path(axis_file).stem.split("-")[-2:])
-    name = f"parity-{stamp}.jsonl"
+    name = f"{prefix}-{stamp}.jsonl"
     shutil.copy2(path, RESULTS / name)
     return name
 
@@ -581,13 +591,15 @@ def _stage_axis_files(src: pathlib.Path, axes: list[str]) -> dict | None:
 
 
 def _restamp_and_render(axes: list[str], files: dict,
-                        companion: str | None) -> None:
+                        companion: str | None, ab: dict) -> None:
     """Move every axis's stamp onto its new file, then regenerate the pages."""
     for axis in axes:
         cmd = [sys.executable, "scripts/update_standings.py",
                "--axis", axis, "--file", files[axis]]
         if axis == PARITY_AXIS and companion:
             cmd += ["--companion", companion]
+        if ab.get(axis):
+            cmd += ["--ab", ab[axis]]
         subprocess.run(cmd, check=True, cwd=REPO)
     # Stage supersessions BEFORE rendering: the committed-files gate reads
     # git ls-files, and a month-rollover refresh deletes the old dated files.
@@ -984,8 +996,9 @@ def _two_step_split(live: list[dict]) -> str:
 def _ab_verdicts(src: pathlib.Path) -> str:
     """Every plane's A/B verdict table found in ``src``, or empty."""
     return "\n\n".join(
-        f"{plane} plane ({name}; {_arm_versions(src / name)}):\n\n"
-        f"{_verdict(src / name)}"
+        f"{plane} plane ({name}; "
+        f"{check_standings.ab_arm_line(check_standings.ab_rows(src / name))}):"
+        f"\n\n{_verdict(src / name)}"
         for plane, name in AB_FILES.items() if (src / name).exists())
 
 
@@ -998,18 +1011,7 @@ def _verdict(ab_path: pathlib.Path) -> str:
     """
     if not ab_path.exists():
         return ""
-    return check_standings.ab_table(_ab_rows(ab_path))
-
-
-def _arm_versions(ab_path: pathlib.Path) -> str:
-    versions = check_standings.ab_versions(_ab_rows(ab_path))
-    return ", ".join(f"{arm} {versions[arm]}" for arm in check_standings.AB_ARMS
-                     if arm in versions)
-
-
-def _ab_rows(ab_path: pathlib.Path) -> list[dict]:
-    return [json.loads(ln) for ln in ab_path.read_text().splitlines()
-            if ln.strip()]
+    return check_standings.ab_table(check_standings.ab_rows(ab_path))
 
 
 if __name__ == "__main__":
