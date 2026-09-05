@@ -26,7 +26,7 @@ struct ProfileCounters
     double gh_upload_s = 0, root_stage_s = 0, gpu_wait_s = 0;
     double bins_upload_s = 0, fin_wait_s = 0, fin_d2h_s = 0;
     double find_kern_s = 0, find_d2h_s = 0;
-    double root_sums_s = 0, adv_memset_s = 0, adv_hist_s = 0, adv_sub_s = 0;
+    double root_sums_s = 0, adv_memset_s = 0, adv_hist_s = 0;
     double root_hist_s = 0, fin_stamp_s = 0, fin_map_s = 0;
     double part_route_s = 0, part_scan_s = 0, part_scatter_s = 0;
     double obj_kernel_s = 0, score_kernel_s = 0;
@@ -91,9 +91,9 @@ struct ProfileCounters
                          bins_upload_s, fin_wait_s, fin_d2h_s, find_kern_s, find_d2h_s);
             std::println(stderr,
                          "cuda-round-decomp: root_sums={:.2f}s root_hist={:.2f}s "
-                         "adv_memset={:.2f}s adv_hist={:.2f}s adv_sub={:.2f}s "
+                         "adv_memset={:.2f}s adv_hist={:.2f}s "
                          "fin_stamp={:.2f}s fin_map={:.2f}s",
-                         root_sums_s, root_hist_s, adv_memset_s, adv_hist_s, adv_sub_s,
+                         root_sums_s, root_hist_s, adv_memset_s, adv_hist_s,
                          fin_stamp_s, fin_map_s);
             std::println(stderr,
                          "cuda-part-decomp: route={:.3f}s scan={:.3f}s "

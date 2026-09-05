@@ -207,29 +207,139 @@ __global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
     }
 }
 
+template <size_t Bytes>
+inline __device__ void load_words(void const *sp, uint32_t *word)
+{
+    if constexpr (Bytes == 4)
+    {
+        word[0] = *static_cast<uint32_t const *>(sp);
+    }
+    else if constexpr (Bytes == 8)
+    {
+        uint2 const v = *static_cast<uint2 const *>(sp);
+        word[0]       = v.x;
+        word[1]       = v.y;
+    }
+    else
+    {
+        uint4 const v = *static_cast<uint4 const *>(sp);
+        word[0]       = v.x;
+        word[1]       = v.y;
+        word[2]       = v.z;
+        word[3]       = v.w;
+    }
+}
+
 template <uint32_t W, typename BinT>
 inline __device__ void load_strip(BinT const *sp, BinT *strip)
 {
     constexpr size_t bytes = W * sizeof(BinT);
-    if constexpr (bytes == 4)
-    {
-        *reinterpret_cast<uint32_t *>(strip) = *reinterpret_cast<uint32_t const *>(sp);
-    }
-    else if constexpr (bytes == 8)
-    {
-        *reinterpret_cast<uint2 *>(strip) = *reinterpret_cast<uint2 const *>(sp);
-    }
-    else if constexpr (bytes == 16)
-    {
-        *reinterpret_cast<uint4 *>(strip) = *reinterpret_cast<uint4 const *>(sp);
-    }
-    else
+    if constexpr (bytes != 4 && bytes != 8 && bytes != 16)
     {
 #pragma unroll
         for (uint32_t j = 0; j < W; ++j)
         {
             strip[j] = sp[j];
         }
+    }
+    else
+    {
+        constexpr uint32_t per_word = 4 / sizeof(BinT);
+        constexpr uint32_t bin_bits = 8 * sizeof(BinT);
+        uint32_t           word[bytes / 4];
+        load_words<bytes>(sp, word);
+#pragma unroll
+        for (uint32_t j = 0; j < W; ++j)
+        {
+            strip[j] =
+                static_cast<BinT>(word[j / per_word] >> (bin_bits * (j % per_word)));
+        }
+    }
+}
+
+template <uint32_t W> struct TileBlock
+{
+    uint32_t t;
+    uint32_t node;
+    uint32_t f0;
+    uint32_t wt;
+    uint32_t slot[W];
+    bool     any;
+};
+
+template <uint32_t W>
+inline __device__ TileBlock<W> tile_block(uint32_t const *sel_slot, uint32_t n_feats)
+{
+    TileBlock<W> tb{};
+    tb.t    = blockIdx.x;
+    tb.node = blockIdx.y;
+    tb.f0   = tb.t * W;
+    tb.wt   = tile_strip(tb.t, n_feats);
+#pragma unroll
+    for (uint32_t j = 0; j < W; ++j)
+    {
+        tb.slot[j] = j < tb.wt ? sel_slot[tb.f0 + j] : k_not_selected;
+        tb.any     = tb.any || tb.slot[j] != k_not_selected;
+    }
+    return tb;
+}
+
+template <uint32_t W, typename BinT>
+inline __device__ void load_partial_strip(BinT const *sp, uint32_t wt, BinT *strip)
+{
+#pragma unroll
+    for (uint32_t j = 0; j < W; ++j)
+    {
+        strip[j] = j < wt ? sp[j] : BinT{};
+    }
+}
+
+template <uint32_t W, bool Full, typename BinT, typename Visit>
+inline __device__ void visit_tile_rows(TileBlock<W> const &tb, BinT const *bins,
+                                       uint32_t n_rows, NodeRows const &seg,
+                                       float2 scale, uint32_t first, uint32_t step,
+                                       Visit visit)
+{
+    BinT const *tp = bins + (static_cast<size_t>(n_rows) * tb.t * W);
+    for (uint32_t k = first; k < seg.count; k += step)
+    {
+        float2 const     v  = seg.gh[k];
+        hist_int_t const qg = quantise(v.x, scale.x);
+        hist_int_t const qh = quantise(v.y, scale.y);
+        BinT             strip[W];
+        if constexpr (Full)
+        {
+            load_strip<W>(tp + (static_cast<size_t>(seg.rows[k]) * W), strip);
+        }
+        else
+        {
+            load_partial_strip<W>(tp + (static_cast<size_t>(seg.rows[k]) * tb.wt),
+                                  tb.wt, strip);
+        }
+#pragma unroll
+        for (uint32_t j = 0; j < W; ++j)
+        {
+            if (tb.slot[j] != k_not_selected)
+            {
+                visit(j, pair_off(strip[j]), qg, qh);
+            }
+        }
+    }
+}
+
+template <uint32_t W, typename BinT, typename Visit>
+inline __device__ void visit_tile_rows(TileBlock<W> const &tb, BinT const *bins,
+                                       uint32_t n_rows, NodeRows const &seg,
+                                       float2 scale, uint32_t first, uint32_t step,
+                                       Visit visit)
+{
+    if (tb.wt == W)
+    {
+        visit_tile_rows<W, true>(tb, bins, n_rows, seg, scale, first, step, visit);
+    }
+    else
+    {
+        visit_tile_rows<W, false>(tb, bins, n_rows, seg, scale, first, step, visit);
     }
 }
 
@@ -242,72 +352,36 @@ hist_tile_kernel(BinT const *bins, float2 const *gh_ordered, uint32_t const *row
                  uint32_t const *out_slot, GhQuant const *quant)
 {
     extern __shared__ hist_int_t sh[];
-    uint32_t const               t  = blockIdx.x;
-    uint32_t const               f0 = t * W;
-    uint32_t const               wt = tile_strip(t, n_feats);
-    uint32_t                     slot[W];
-    bool                         any = false;
-#pragma unroll
-    for (uint32_t j = 0; j < W; ++j)
-    {
-        slot[j] = j < wt ? sel_slot[f0 + j] : k_not_selected;
-        any     = any || slot[j] != k_not_selected;
-    }
-    if (!any)
+    TileBlock<W> const           tb = tile_block<W>(sel_slot, n_feats);
+    if (!tb.any)
     {
         return;
     }
-    uint32_t const node = blockIdx.y;
-    NodeRows const seg  = node_rows(rows, gh_ordered, row_offsets, row_counts, node);
+    NodeRows const seg = node_rows(rows, gh_ordered, row_offsets, row_counts, tb.node);
     if (blockIdx.z * blockDim.x >= seg.count)
     {
         return;
     }
-    zero_shared(sh, wt * stride);
-    float2 const   scale = quant->scale;
-    uint32_t const span  = gridDim.z * blockDim.x;
-    BinT const    *tp    = bins + (static_cast<size_t>(n_rows) * t * W);
-    for (uint32_t k = (blockIdx.z * blockDim.x) + threadIdx.x; k < seg.count; k += span)
-    {
-        float2 const     v  = seg.gh[k];
-        hist_int_t const qg = quantise(v.x, scale.x);
-        hist_int_t const qh = quantise(v.y, scale.y);
-        BinT const      *sp = tp + (static_cast<size_t>(seg.rows[k]) * wt);
-        BinT             strip[W];
-        if (wt == W)
-        {
-            load_strip<W>(sp, strip);
-        }
-        else
-        {
-#pragma unroll
-            for (uint32_t j = 0; j < W; ++j)
-            {
-                strip[j] = j < wt ? sp[j] : BinT{};
-            }
-        }
-#pragma unroll
-        for (uint32_t j = 0; j < W; ++j)
-        {
-            if (slot[j] != k_not_selected)
-            {
-                hist_int_t *my = sh + (static_cast<size_t>(j) * stride);
-                hist_add_shared(&my[pair_off(strip[j])], qg);
-                hist_add_shared(&my[pair_off(strip[j]) + 1], qh);
-            }
-        }
-    }
+    zero_shared(sh, tb.wt * stride);
+    visit_tile_rows<W>(tb, bins, n_rows, seg, quant->scale,
+                       (blockIdx.z * blockDim.x) + threadIdx.x, gridDim.z * blockDim.x,
+                       [&](uint32_t j, uint32_t off, hist_int_t qg, hist_int_t qh)
+                       {
+                           hist_int_t *my = sh + (static_cast<size_t>(j) * stride);
+                           hist_add_shared(&my[off], qg);
+                           hist_add_shared(&my[off + 1], qh);
+                       });
     __syncthreads();
-    uint32_t const oslot = out_slot != nullptr ? out_slot[node] : node;
+    uint32_t const oslot = out_slot != nullptr ? out_slot[tb.node] : tb.node;
 #pragma unroll
     for (uint32_t j = 0; j < W; ++j)
     {
-        if (slot[j] != k_not_selected)
+        if (tb.slot[j] != k_not_selected)
         {
             hist_int_t const *base = sh + (static_cast<size_t>(j) * stride);
             hist_int_t       *o =
-                out + (((static_cast<size_t>(oslot) * n_sel) + slot[j]) * stride);
-            uint32_t const nb = n_bins[f0 + j];
+                out + (((static_cast<size_t>(oslot) * n_sel) + tb.slot[j]) * stride);
+            uint32_t const nb = n_bins[tb.f0 + j];
             for (uint32_t i = threadIdx.x; i < 2 * nb; i += blockDim.x)
             {
                 if (base[i] != 0)
@@ -320,30 +394,33 @@ hist_tile_kernel(BinT const *bins, float2 const *gh_ordered, uint32_t const *row
 }
 
 // perf: Small nodes skip the shared-memory stage: below ~512 rows the fixed
-// per-(node,feature) zero+merge cost dominates, so one block per node
-// accumulates row visits straight into the node's global slot.
-template <typename BinT>
+// per-(node,feature) zero+merge cost dominates, so row visits go straight into
+// the node's global slot. One block per (tile, node): a single block per node
+// measured 18.8 ms per launch at 131k x 16384 on an RTX PRO 6000, 7.6 s of a
+// 27.4 s fit, from one SM issuing count x n_sel x 2 atomics.
+template <uint32_t W, typename BinT>
 __global__ void hist_small_kernel(BinT const *bins, float2 const *gh_ordered,
                                   uint32_t const *rows, uint32_t const *row_offsets,
-                                  uint32_t const *row_counts, uint32_t const *features,
+                                  uint32_t const *row_counts, uint32_t const *sel_slot,
                                   uint32_t n_rows, uint32_t n_feats, uint32_t n_sel,
                                   hist_int_t *out, uint32_t stride,
                                   uint32_t const *out_slot, GhQuant const *quant)
 {
-    uint32_t const node  = blockIdx.x;
-    NodeRows const seg   = node_rows(rows, gh_ordered, row_offsets, row_counts, node);
-    float2 const   scale = quant->scale;
-    hist_int_t    *o     = out + (static_cast<size_t>(out_slot[node]) * n_sel * stride);
-    for (uint32_t k = threadIdx.x; k < seg.count * n_sel; k += blockDim.x)
+    TileBlock<W> const tb = tile_block<W>(sel_slot, n_feats);
+    if (!tb.any)
     {
-        uint32_t const sel = k / seg.count;
-        uint32_t const i   = k % seg.count;
-        uint32_t const b =
-            bins[tiled_cell(features[sel], seg.rows[i], n_rows, n_feats)];
-        float2 const v = seg.gh[i];
-        hist_add(&o[(sel * stride) + (2 * b)], quantise(v.x, scale.x));
-        hist_add(&o[(sel * stride) + (2 * b) + 1], quantise(v.y, scale.y));
+        return;
     }
+    hist_int_t    *o = out + (static_cast<size_t>(out_slot[tb.node]) * n_sel * stride);
+    NodeRows const seg = node_rows(rows, gh_ordered, row_offsets, row_counts, tb.node);
+    visit_tile_rows<W>(tb, bins, n_rows, seg, quant->scale, threadIdx.x, blockDim.x,
+                       [&](uint32_t j, uint32_t off, hist_int_t qg, hist_int_t qh)
+                       {
+                           hist_int_t *cell =
+                               o + (static_cast<size_t>(tb.slot[j]) * stride) + off;
+                           hist_add(cell, qg);
+                           hist_add(cell + 1, qh);
+                       });
 }
 
 constexpr uint32_t k_part_rows_per_thread = 16;
@@ -503,32 +580,65 @@ __global__ void stamp_kernel(uint32_t const *rows, PartOpDev const *segs,
     }
 }
 
-__global__ void subtract_inplace_kernel(hist_int_t *pool, uint32_t large_slot,
-                                        uint32_t small_slot, uint32_t slot_cells)
+__global__ void zero_slots_kernel(hist_int_t *pool, uint32_t const *slot_ids,
+                                  uint32_t id_stride, uint32_t slot_cells)
 {
-    hist_int_t       *large = pool + (static_cast<size_t>(large_slot) * slot_cells);
-    hist_int_t const *small = pool + (static_cast<size_t>(small_slot) * slot_cells);
-    uint32_t const    span  = gridDim.x * blockDim.x;
+    uint32_t const slot = slot_ids[blockIdx.y * id_stride];
+    hist_int_t    *out  = pool + (static_cast<size_t>(slot) * slot_cells);
+    uint32_t const span = gridDim.x * blockDim.x;
     for (uint32_t i = (blockIdx.x * blockDim.x) + threadIdx.x; i < slot_cells;
          i += span)
     {
-        large[i] -= small[i];
+        out[i] = 0;
     }
 }
 
-__global__ void subtract_kernel(hist_int_t const *parents, hist_int_t *children,
-                                uint32_t const *triples, uint32_t slot_cells)
+template <typename CellT>
+inline __device__ CellT *strip_at(CellT *hists, uint32_t slot, uint32_t n_sel,
+                                  uint32_t sel, uint32_t stride)
 {
-    uint32_t const   *t     = triples + (3UL * blockIdx.y);
-    uint32_t const    span  = gridDim.x * blockDim.x;
-    hist_int_t const *par   = parents + (static_cast<size_t>(t[0]) * slot_cells);
-    hist_int_t const *small = children + (static_cast<size_t>(t[1]) * slot_cells);
-    hist_int_t       *large = children + (static_cast<size_t>(t[2]) * slot_cells);
-    for (uint32_t i = (blockIdx.x * blockDim.x) + threadIdx.x; i < slot_cells;
-         i += span)
+    return hists + (((static_cast<size_t>(slot) * n_sel) + sel) * stride);
+}
+
+inline __device__ void derive_large_strip(hist_int_t *hists, hist_int_t const *parents,
+                                          SiblingDerive const &d, uint32_t slot,
+                                          uint32_t n_sel, uint32_t sel, uint32_t stride)
+{
+    if (d.parent_slot == k_not_selected)
     {
-        large[i] = par[i] - small[i];
+        return;
     }
+    hist_int_t       *large  = strip_at(hists, slot, n_sel, sel, stride);
+    hist_int_t const *parent = strip_at(parents, d.parent_slot, n_sel, sel, stride);
+    hist_int_t const *small  = strip_at(hists, d.small_slot, n_sel, sel, stride);
+    for (uint32_t i = threadIdx.x; i < stride; i += blockDim.x)
+    {
+        large[i] = parent[i] - small[i];
+    }
+    __syncwarp();
+}
+
+inline __device__ void derive_level_strips(hist_int_t *hists, hist_int_t const *parents,
+                                           SiblingDerive const *derive,
+                                           uint32_t n_nodes, uint32_t n_sel,
+                                           uint32_t sel, uint32_t stride)
+{
+    if (derive == nullptr)
+    {
+        return;
+    }
+    for (uint32_t p = 0; p < n_nodes; ++p)
+    {
+        derive_large_strip(hists, parents, derive[p], p, n_sel, sel, stride);
+    }
+}
+
+__global__ void derive_strips_kernel(hist_int_t *hists, hist_int_t const *parents,
+                                     SiblingDerive const *derive, uint32_t n_sel,
+                                     uint32_t stride)
+{
+    derive_large_strip(hists, parents, derive[blockIdx.y], blockIdx.y, n_sel,
+                       blockIdx.x, stride);
 }
 
 struct SplitSumsDev
@@ -577,7 +687,8 @@ inline __device__ bool feat_better(double ga, int ba, int da, int va, double gb,
     return da > db;
 }
 
-__global__ void find_kernel(hist_int_t const *hists, uint32_t const *features,
+__global__ void find_kernel(hist_int_t *hists, hist_int_t const *parents,
+                            SiblingDerive const *derive, uint32_t const *features,
                             uint32_t const *n_bins, double const *node_sums,
                             double const *node_bounds, char const *allowed,
                             int const *monotone, uint32_t n_sel, uint32_t stride,
@@ -592,6 +703,8 @@ __global__ void find_kernel(hist_int_t const *hists, uint32_t const *features,
     {
         return;
     }
+    uint32_t const slot = hist_slot != nullptr ? hist_slot[node] : node;
+    derive_large_strip(hists, parents, derive[node], slot, n_sel, sel, stride);
     size_t const oidx = (static_cast<size_t>(node) * n_sel) + sel;
     if (lane == 0)
     {
@@ -607,10 +720,7 @@ __global__ void find_kernel(hist_int_t const *hists, uint32_t const *features,
     {
         return;
     }
-    size_t const hidx =
-        ((static_cast<size_t>(hist_slot != nullptr ? hist_slot[node] : node) * n_sel) +
-         sel);
-    hist_int_t const *cells      = hists + (hidx * stride);
+    hist_int_t const *cells      = strip_at(hists, slot, n_sel, sel, stride);
     double2 const     inv        = quant->inv;
     double const      g_total    = node_sums[pair_off(node)];
     double const      h_total    = node_sums[pair_off(node) + 1];
@@ -720,26 +830,53 @@ __global__ void find_kernel(hist_int_t const *hists, uint32_t const *features,
     }
 }
 
-__global__ void reduce_kernel(FeatBest const *per_feat, uint32_t n_sel, FeatBest *out)
+constexpr uint32_t k_reduce_threads = 256;
+
+inline __device__ bool first_max_better(double gain, uint32_t sel, double best_gain,
+                                        uint32_t best_sel)
 {
-    if (threadIdx.x != 0)
-    {
-        return;
-    }
-    uint32_t const  node = blockIdx.x;
-    FeatBest        best = {};
-    FeatBest const *row  = per_feat + (static_cast<size_t>(node) * n_sel);
-    for (uint32_t s = 0; s < n_sel; ++s)
-    {
-        if (row[s].valid != 0 && row[s].gain > best.gain)
-        {
-            best = row[s];
-        }
-    }
-    out[node] = best;
+    return sel != k_not_selected &&
+           (gain > best_gain || (gain == best_gain && sel < best_sel));
 }
 
-__global__ void level_find_kernel(hist_int_t const *hists, uint32_t const *features,
+__global__ void reduce_kernel(FeatBest const *per_feat, uint32_t n_sel, FeatBest *out)
+{
+    __shared__ double   gains[k_reduce_threads];
+    __shared__ uint32_t sels[k_reduce_threads];
+    uint32_t const      node      = blockIdx.x;
+    FeatBest const     *row       = per_feat + (static_cast<size_t>(node) * n_sel);
+    double              best_gain = 0.0;
+    uint32_t            best_sel  = k_not_selected;
+    for (uint32_t s = threadIdx.x; s < n_sel; s += blockDim.x)
+    {
+        if (row[s].valid != 0 && row[s].gain > best_gain)
+        {
+            best_gain = row[s].gain;
+            best_sel  = s;
+        }
+    }
+    gains[threadIdx.x] = best_gain;
+    sels[threadIdx.x]  = best_sel;
+    __syncthreads();
+    for (uint32_t off = blockDim.x / 2; off > 0; off >>= 1)
+    {
+        if (threadIdx.x < off &&
+            first_max_better(gains[threadIdx.x + off], sels[threadIdx.x + off],
+                             gains[threadIdx.x], sels[threadIdx.x]))
+        {
+            gains[threadIdx.x] = gains[threadIdx.x + off];
+            sels[threadIdx.x]  = sels[threadIdx.x + off];
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0)
+    {
+        out[node] = sels[0] == k_not_selected ? FeatBest{} : row[sels[0]];
+    }
+}
+
+__global__ void level_find_kernel(hist_int_t *hists, hist_int_t const *parents,
+                                  SiblingDerive const *derive, uint32_t const *features,
                                   uint32_t const *n_bins, double const *node_sums,
                                   uint32_t n_sel, uint32_t n_nodes, uint32_t stride,
                                   double l1, double l2, double min_child_hess,
@@ -755,6 +892,7 @@ __global__ void level_find_kernel(hist_int_t const *hists, uint32_t const *featu
                                  score_scratch + ((static_cast<size_t>(f) * 2 + 1) * max_cut)};
     double         parent_sum = 0.0;
 
+    derive_level_strips(hists, parents, derive, n_nodes, n_sel, f, stride);
     if (lane == 0)
     {
         out_feat[f] = FeatBest{};

@@ -49,13 +49,15 @@ inline constexpr size_t hist_shared_bytes(size_t max_bins)
 // 48 KiB static budget). The engine raises it at runtime to the device's
 // opt-in limit (~99 KiB on consumer parts, 227 KiB on sm_90), moving the bin
 // count the device refuses from ~3k to ~6k+ per feature.
-inline constexpr size_t   k_max_shared_bytes   = 48UL * 1024UL;
-inline constexpr uint32_t k_fill_blocks_per_sm = 4;
+inline constexpr size_t   k_max_shared_bytes    = 48UL * 1024UL;
+inline constexpr uint32_t k_fill_blocks_per_sm  = 4;
+inline constexpr uint32_t k_derive_warps_per_sm = 4;
 
 // perf: Three 32 KiB tile blocks fit a 100 KiB SM, so 512 threads per block
 // keep 1536 threads resident where 256 left 768; the 16M-row root fill
 // measured 0.68 s at 256 and 0.60 s at 512 per 100 trees on an L40S.
-inline constexpr uint32_t k_tile_fill_threads = 512;
+inline constexpr uint32_t k_tile_fill_threads  = 512;
+inline constexpr uint32_t k_small_fill_threads = 128;
 
 inline constexpr uint32_t k_bin_tile_width = 8;
 static_assert((k_bin_tile_width & (k_bin_tile_width - 1)) == 0,
@@ -87,6 +89,14 @@ inline __host__ __device__ uint32_t mapped_row(uint32_t const *rows, uint32_t k)
 }
 
 inline constexpr uint32_t k_not_selected = 0xFFFFFFFFU;
+
+struct SiblingDerive
+{
+    uint32_t parent_slot;
+    uint32_t small_slot;
+};
+
+inline constexpr SiblingDerive k_filled_slot{k_not_selected, k_not_selected};
 
 struct FeatBest
 {
