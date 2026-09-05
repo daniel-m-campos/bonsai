@@ -623,10 +623,22 @@ inline __device__ void derive_level_strips(hist_int_t *hists, hist_int_t const *
                                            uint32_t n_nodes, uint32_t n_sel,
                                            uint32_t sel, uint32_t stride)
 {
+    if (derive == nullptr)
+    {
+        return;
+    }
     for (uint32_t p = 0; p < n_nodes; ++p)
     {
         derive_large_strip(hists, parents, derive[p], p, n_sel, sel, stride);
     }
+}
+
+__global__ void derive_strips_kernel(hist_int_t *hists, hist_int_t const *parents,
+                                     SiblingDerive const *derive, uint32_t n_sel,
+                                     uint32_t stride)
+{
+    derive_large_strip(hists, parents, derive[blockIdx.y], blockIdx.y, n_sel,
+                       blockIdx.x, stride);
 }
 
 struct SplitSumsDev
