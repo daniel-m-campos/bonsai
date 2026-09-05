@@ -26,6 +26,7 @@ import sys
 from collections import defaultdict
 from typing import Final
 
+import check_standings
 from _render_common import md_table, write_or_check
 
 
@@ -317,6 +318,10 @@ PLANE_LABEL: Final = {PLANE_GPU: "The GPU plane is",
 PENDING: Final = ("*Measurement pending the first redesigned refresh "
                   "(decision 103): the axis files land with it and this "
                   "section fills in unchanged.*")
+AB_AXES: Final = (Axis.GPU_TALL, Axis.CPU_TALL)
+PENDING_AB: Final = ("*Pending the first refresh that fits the anchor arm: "
+                     "the A/B files land with it and this section fills in "
+                     "unchanged.*")
 
 
 class Col:
@@ -532,6 +537,32 @@ def fused_anchor_line() -> str:
             f"{statistics.median(split):.1f}s, medians of the refresh's "
             f"interleaved parity arm, which is what makes reporting the "
             f"seam honest.\n")
+
+
+def ab_section() -> str:
+    """Release drift: three wheels at the tall cell of each plane."""
+    blocks = [b for b in (_ab_block(axis) for axis in AB_AXES) if b]
+    return f"""## Release drift
+
+Every refresh fits three wheels at the tall cell of each plane, on the pod that measured the plane, interleaved: the previous release (`old`), the {check_standings.ANCHOR_VERSION} anchor (`anchor`, one fixed release every refresh fits again) and the commit under refresh (`new`). The statistic is the min over repeats, since noise on a fixed workload only adds time. `new` is read inside {check_standings.AB_BAND_PCT}% of `old` and inside {check_standings.ANCHOR_BAND_PCT}% of `anchor`; the anchor is what makes the comparison cumulative, so a loss that hides inside the release band every release shows against the anchor by the second one. A cell marked **moved** ships only under a `Standings:`-tagged entry in the decisions log that cites the file, which `make docs-check` enforces.
+
+{chr(10).join(blocks) if blocks else PENDING_AB}
+"""
+
+
+def _ab_block(axis: str) -> str:
+    """One plane's A/B table under its arms, or empty while unmeasured."""
+    name = _STANDINGS_REG[axis].get("ab")
+    if not name or not (RESULTS / name).exists():
+        return ""
+    rows = [r for r in load_jsonl(name) if not r.get("skipped")]
+    plane = _STANDINGS_REG[axis]["plane"].upper()
+    return (f"### {plane} plane ({check_standings.ab_arm_line(rows)})\n\n"
+            f"{check_standings.ab_table(rows)}\n\n"
+            + provenance([name], "Min over the session's interleaved "
+                         "repeats per arm, fit seconds and peak host RSS; "
+                         f"the {axis} standings were measured in the "
+                         "same session.") + "\n")
 
 
 def early_stop_section() -> str:
@@ -907,7 +938,7 @@ PAGES: list[tuple[str, str, str, list]] = [
      "Every grower against its closest rival, both planes, at the "
      "redesigned scenarios.",
      [perf_summary_section, perf_panels_section, early_stop_section,
-      shap_section]),
+      shap_section, ab_section]),
     ("quality-grinsztajn.md", "Grinsztajn standings",
      "The only citable standings: 55 third-party tasks.",
      [grinsztajn_section]),
@@ -1086,8 +1117,8 @@ def check_registry(consumed_files: set[str]) -> list[str]:
     """Standings registry invariants: each registered file exists, is
     rendered, and its rows carry exactly the registered sha (sha_partial
     entries tolerate provenance-less rows, never a WRONG sha). An axis's
-    companion evidence file, if it has one, is held to the same
-    exists-and-is-rendered rule.
+    companion evidence file and its release A/B file, if it has them, are
+    held to the same exists-and-is-rendered rule.
 
     An axis whose `file` is null has never been measured (registry v2's
     placeholder), so there is nothing to check yet; the release gate in
@@ -1102,6 +1133,8 @@ def check_registry(consumed_files: set[str]) -> list[str]:
         errors += _registered_file_findings(axis, "", e["file"], consumed_files)
         errors += _registered_file_findings(
             axis, "companion ", e.get("companion"), consumed_files)
+        errors += _registered_file_findings(
+            axis, "ab ", e.get("ab"), consumed_files)
         if (RESULTS / e["file"]).exists() and e.get("sha"):
             errors += _row_sha_findings(axis, e, RESULTS / e["file"])
     return errors

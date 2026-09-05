@@ -30,6 +30,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 import check_standings  # noqa: E402
 
 REF_LIBRARIES = ("xgboost", "lightgbm", "catboost")
+EVIDENCE_KEYS = ("companion", "ab")
 
 # A cross-commit delta this many times the larger measured within-commit noise
 # floor is still indistinguishable from that noise at two samples per commit.
@@ -147,7 +148,8 @@ def supersede(args: argparse.Namespace, reg: dict) -> int:
     Parameters
     ----------
     args : argparse.Namespace
-        Parsed arguments; needs `axis`, `file`, `version`, and `companion`.
+        Parsed arguments; needs `axis`, `file`, `version`, `companion` and
+        `ab`.
     reg : dict
         The loaded registry, mutated and written on success.
 
@@ -216,13 +218,15 @@ def _measured_date(rows: list[dict]) -> str | None:
 
 def _retire_superseded_files(entry: dict,
                              args: argparse.Namespace) -> None:
-    """Delete the files this refresh replaces and adopt the new companion."""
+    """Delete the files this refresh replaces and adopt the new evidence."""
     if entry.get("file") != args.file:
         _delete_result(entry.get("file"))
         entry.pop("note", None)
-    if args.companion and entry.get("companion") != args.companion:
-        _delete_result(entry.get("companion"))
-        entry["companion"] = args.companion
+    for key in EVIDENCE_KEYS:
+        new = getattr(args, key)
+        if new and entry.get(key) != new:
+            _delete_result(entry.get(key))
+            entry[key] = new
 
 
 def _delete_result(name: str | None) -> None:
@@ -336,6 +340,10 @@ def main() -> int:
     ap.add_argument("--companion", default=None,
                     help="evidence file measured with this axis (rendered "
                          "with it, superseded with it)")
+    ap.add_argument("--ab", default=None,
+                    help="the plane's release A/B rows, measured with this "
+                         "axis (rendered with it, gated with it, superseded "
+                         "with it)")
     ap.add_argument("--restamp-verified", action="store_true",
                     help="carry the current plane digest forward with no new "
                          "measurement, for an axis the changed sources cannot "

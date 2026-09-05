@@ -99,3 +99,17 @@ def test_an_entry_without_a_sha_skips_the_row_check(tmp_path, monkeypatch):
     rows = [{"git_sha": "feedface"}, {"variant": "no provenance"}]
     _registry(tmp_path, monkeypatch, entries, {"rows.jsonl": rows})
     assert render_results.check_registry({"rows.jsonl"}) == []
+
+
+def test_an_ab_file_is_held_to_the_same_rule(tmp_path, monkeypatch):
+    entries = {"rows": {"file": "rows.jsonl", "ab": "ab-gpu-2026-09.jsonl"}}
+    _registry(tmp_path, monkeypatch, entries, {"rows.jsonl": []})
+    assert render_results.check_registry({"rows.jsonl"}) == [
+        "standings rows: ab ab-gpu-2026-09.jsonl does not exist",
+    ]
+    (tmp_path / "benchmarks" / "results" / "ab-gpu-2026-09.jsonl").write_text("")
+    assert render_results.check_registry({"rows.jsonl"}) == [
+        "standings rows: ab ab-gpu-2026-09.jsonl is not rendered",
+    ]
+    assert render_results.check_registry(
+        {"rows.jsonl", "ab-gpu-2026-09.jsonl"}) == []

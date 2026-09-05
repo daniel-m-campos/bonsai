@@ -490,3 +490,53 @@ def test_supersede_notes_no_cpu_host_when_no_cpu_axis_ran(monkeypatch,
     assert standings_refresh.supersede(_args(src, "gpu-tall")) == 0
 
     assert "CPU axes" not in _git(repo, "log", "-1", "--pretty=%B")
+
+
+def test_supersede_commits_each_plane_ab_with_its_tall_axis(monkeypatch,
+                                                            tmp_path):
+    """The gpu A/B rides gpu-tall and the cpu A/B rides cpu-tall, each dated
+    from the axis file it was measured beside, and update_standings learns
+    of each through --ab so the file supersedes with the axis and the gate
+    reads it from the registry."""
+    repo = _fake_repo(monkeypatch, tmp_path)
+    src = _session(tmp_path)
+    _jsonl(src / "ab-gpu.jsonl", *_three_arms(10.0, 10.0, 10.1))
+    _jsonl(src / "ab-cpu.jsonl", *_three_arms(50.0, 50.0, 50.5))
+
+    assert standings_refresh.supersede(
+        _args(src, "gpu-tall,cpu-tall")) == 0
+
+    results = standings_refresh.RESULTS
+    assert (results / "ab-gpu-2026-09.jsonl").read_text() == (
+        (src / "ab-gpu.jsonl").read_text())
+    assert (results / "ab-cpu-2026-09.jsonl").read_text() == (
+        (src / "ab-cpu.jsonl").read_text())
+    assert [json.loads(ln) for ln in
+            (repo / "calls.jsonl").read_text().splitlines()] == [
+        ["--axis", "gpu-tall", "--file", "gpu-tall-2026-09.jsonl",
+         "--companion", "parity-2026-09.jsonl", "--ab", "ab-gpu-2026-09.jsonl"],
+        ["--axis", "cpu-tall", "--file", "cpu-tall-2026-09.jsonl",
+         "--ab", "ab-cpu-2026-09.jsonl"]]
+    committed = _git(repo, "show", "--name-only", "--pretty=", "HEAD")
+    assert "benchmarks/results/ab-gpu-2026-09.jsonl" in committed
+    assert "benchmarks/results/ab-cpu-2026-09.jsonl" in committed
+
+
+def test_supersede_leaves_a_plane_ab_behind_when_its_axis_did_not_run(
+        monkeypatch, tmp_path):
+    """A session that measured only the gpu plane cannot date a cpu A/B: the
+    file stays on the pod and the cpu-tall entry keeps whatever it carried."""
+    repo = _fake_repo(monkeypatch, tmp_path)
+    src = _session(tmp_path)
+    _jsonl(src / "ab-gpu.jsonl", *_three_arms(10.0, 10.0, 10.1))
+    _jsonl(src / "ab-cpu.jsonl", *_three_arms(50.0, 50.0, 50.5))
+
+    assert standings_refresh.supersede(_args(src, "gpu-tall")) == 0
+
+    results = standings_refresh.RESULTS
+    assert (results / "ab-gpu-2026-09.jsonl").exists()
+    assert not (results / "ab-cpu-2026-09.jsonl").exists()
+    assert [json.loads(ln) for ln in
+            (repo / "calls.jsonl").read_text().splitlines()] == [
+        ["--axis", "gpu-tall", "--file", "gpu-tall-2026-09.jsonl",
+         "--companion", "parity-2026-09.jsonl", "--ab", "ab-gpu-2026-09.jsonl"]]

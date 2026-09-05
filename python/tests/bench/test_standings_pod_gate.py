@@ -15,11 +15,15 @@ from __future__ import annotations
 import pathlib
 import re
 import subprocess
+import sys
 
 import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 POD_SCRIPT = REPO_ROOT / "scripts" / "standings_refresh_pod.sh"
+
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+import standings_refresh  # noqa: E402
 
 
 def _throttle_pct_program() -> str:
@@ -257,3 +261,13 @@ def test_the_cpu_ab_rides_the_tall_axis_only(axis, taken):
                        f"if {_cpu_ab_guard()}; then echo taken; else echo no; fi"],
         capture_output=True, text=True)
     assert done.stdout.strip() == ("taken" if taken else "no"), done.stderr
+
+
+def test_the_driver_registers_the_cpu_ab_under_the_axis_the_pod_fits_it_at():
+    """The pod writes ab-cpu.jsonl at CPU_AB_AXIS's cell; the driver dates and
+    registers it under AB_AXES[cpu]. Two constants, one cell."""
+    match = re.search(r"^CPU_AB_AXIS=(\S+)$", POD_SCRIPT.read_text(), re.M)
+    assert match, "the pod script names no CPU_AB_AXIS"
+    assert standings_refresh.AB_AXES[standings_refresh.PLANE_CPU] == match.group(1)
+    assert standings_refresh.AB_AXES[standings_refresh.PLANE_GPU] == (
+        standings_refresh.PARITY_AXIS)

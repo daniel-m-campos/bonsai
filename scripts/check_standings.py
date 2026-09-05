@@ -8,7 +8,8 @@ Two hard-fail chokepoints plus the refresh planner, stdlib only:
         claims a perf change on an axis carries a `Standings: <axis>[, ...]`
         line; the gate fails while any tagged entry is newer than the axis's
         registered as_of_decision, forcing refresh-or-demote before the claim
-        ships.
+        ships. The same run reads every registered release A/B file and
+        fails while one holds a moved cell that no tagged entry cites.
 
     python3 scripts/check_standings.py --release <version>
         Release-time gate (runs in the wheels publish job). Fails unless every
@@ -44,7 +45,10 @@ inside ANCHOR_BAND_PCT; the anchor is what makes the comparison cumulative,
 since a 1.5% loss that hides inside the release band every release compounds
 to 35% over twenty of them and shows against the anchor by the second. The
 math lives here, the lowest module, so the driver, the renderer and the gate
-read one answer.
+read one answer. The refresh registers each plane's file as its tall axis's
+`ab`, so the file is rendered with the standings it accompanies and gated
+with them: a moved cell ships only under a `Standings:` entry that names
+the axis and cites the file.
 
 Reference-library majors are compared against the installed package in this
 environment when available (`importlib.metadata`, no import needed); most
@@ -65,6 +69,7 @@ import sys
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 REGISTRY = REPO / "benchmarks" / "standings.json"
+RESULTS = REPO / "benchmarks" / "results"
 DECISIONS = REPO / "docs" / "decisions.md"
 REF_VERSIONS = REPO / "benchmarks" / "reference_versions.json"
 MODEL_HASH_SCRIPT = REPO / "scripts" / "model_hash.py"
@@ -108,27 +113,76 @@ def load_registry() -> dict:
 
 
 def check_decisions(reg: dict) -> list[str]:
-    text = DECISIONS.read_text()
-    entries = list(ENTRY_RE.finditer(text))
     errors = []
-    for i, m in enumerate(entries):
-        n = int(m.group(1))
-        body = text[m.end():entries[i + 1].start() if i + 1 < len(entries)
-                    else len(text)]
-        for tag in TAG_RE.finditer(body):
-            for axis in (a.strip() for a in tag.group(1).split(",")):
-                if axis in RETIRED_AXES:
-                    continue
-                if axis not in reg:
-                    errors.append(f"decision {n}: unknown standings axis "
-                                  f"{axis!r} (known: {sorted(reg)})")
-                elif n > reg[axis]["as_of_decision"]:
-                    errors.append(
-                        f"decision {n} supersedes the {axis!r} standings "
-                        f"(as_of_decision {reg[axis]['as_of_decision']}): "
-                        "refresh the axis and bump the registry, or drop the "
-                        "tag if the claim does not move the standings")
+    for n, axes, _ in tagged_entries(DECISIONS.read_text()):
+        for axis in axes:
+            if axis in RETIRED_AXES:
+                continue
+            if axis not in reg:
+                errors.append(f"decision {n}: unknown standings axis "
+                              f"{axis!r} (known: {sorted(reg)})")
+            elif n > reg[axis]["as_of_decision"]:
+                errors.append(
+                    f"decision {n} supersedes the {axis!r} standings "
+                    f"(as_of_decision {reg[axis]['as_of_decision']}): "
+                    "refresh the axis and bump the registry, or drop the "
+                    "tag if the claim does not move the standings")
     return errors
+
+
+def check_ab(reg: dict) -> list[str]:
+    """A moved release A/B ships only under a tagged entry that cites it.
+
+    The verdict is recomputed from the registered file, never trusted from
+    the PR body, and the citation must sit in an entry whose `Standings:`
+    tag names the axis: that is the entry `check_decisions` already holds
+    against the axis's as_of_decision, so one decision carries both the
+    explanation and the bump.
+    """
+    cited = tagged_bodies(DECISIONS.read_text())
+    errors = []
+    for axis, e in reg.items():
+        name = e.get("ab")
+        if not name or not (RESULTS / name).exists():
+            continue
+        moves = ab_moves(ab_rows(RESULTS / name))
+        if not moves or name in cited.get(axis, ""):
+            continue
+        errors.append(
+            f"{axis}: the release A/B {name} moved ({'; '.join(moves)}); "
+            f"a decision entry tagged `Standings: {axis}` must cite {name} "
+            "and say why the move ships, or the axis is re-measured")
+    return errors
+
+
+def tagged_entries(text: str) -> list[tuple[int, list[str], str]]:
+    """(number, tagged axes, body) of every decision entry with a tag."""
+    entries = list(ENTRY_RE.finditer(text))
+    tagged = []
+    for i, m in enumerate(entries):
+        end = entries[i + 1].start() if i + 1 < len(entries) else len(text)
+        body = text[m.end():end]
+        axes = [a.strip() for tag in TAG_RE.finditer(body)
+                for a in tag.group(1).split(",")]
+        if axes:
+            tagged.append((int(m.group(1)), axes, body))
+    return tagged
+
+
+def tagged_bodies(text: str) -> dict[str, str]:
+    """The joined bodies of the entries tagging each axis, by axis."""
+    bodies: dict[str, list[str]] = {}
+    for _, axes, body in tagged_entries(text):
+        for axis in axes:
+            bodies.setdefault(axis, []).append(body)
+    return {axis: "\n".join(b) for axis, b in bodies.items()}
+
+
+def ab_rows(path: pathlib.Path) -> list[dict]:
+    """The measured rows of one A/B file; a skipped arm carries no cell."""
+    rows = [json.loads(ln) for ln in path.read_text().splitlines()
+            if ln.strip()]
+    return [r for r in rows if not r.get("skipped")]
 
 
 def ab_best(rows: list[dict]) -> dict[tuple, float]:
@@ -150,6 +204,13 @@ def ab_cells(rows: list[dict]) -> list[tuple]:
 def ab_versions(rows: list[dict]) -> dict[str, str]:
     """The wheel or build each arm actually fitted, by arm."""
     return {r["arm"]: r["version"] for r in rows if "version" in r}
+
+
+def ab_arm_line(rows: list[dict]) -> str:
+    """`anchor 1.15.0, old 2.0.0, new 2.1.0+source`, the arms that ran."""
+    versions = ab_versions(rows)
+    return ", ".join(f"{arm} {versions[arm]}" for arm in AB_ARMS
+                     if arm in versions)
 
 
 def pct_delta(base: float, new: float) -> float:
@@ -377,7 +438,7 @@ def _major(version: str) -> int:
 def main() -> int:
     reg = load_registry()
     if "--decisions" in sys.argv:
-        errors = check_decisions(reg)
+        errors = check_decisions(reg) + check_ab(reg)
         label = "decision gate"
     elif "--release" in sys.argv:
         version = sys.argv[sys.argv.index("--release") + 1]

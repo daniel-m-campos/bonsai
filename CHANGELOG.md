@@ -4,6 +4,9 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### Changed
+- **The release A/B fits a fixed anchor wheel on both planes, and a moved verdict is gated.** The refresh compared HEAD with the previous release inside a 5% band, so a loss of 1.5% a release passed every time and compounded (twenty releases is 1.35x). Each plane now fits three arms at its tall cell, interleaved on the pod that measured the plane: the previous release, the 1.15.0 anchor, and HEAD, read as the min over repeats inside 5% of the previous release and 2% of the anchor. The rows are committed as `benchmarks/results/ab-<plane>-<date>.jsonl`, registered with the plane's tall axis, and rendered as the release drift section of the perf page; `make docs-check` refuses a moved cell until a `Standings:` decision entry cites the file. `cpu-tall` takes 4 repeats and `cpu-wide` 2 (decision 122).
+
 ## [2.1.0] - 2026-09-04
 
 A row view now runs on the device for scoring, prediction and explanation, which removes the one case where splitting a holdout by view was slower than building two Datasets. Leaf renewal under the `mae`, `huber` and `quantile` objectives no longer breaks a monotone constraint on depthwise and leafwise trees.
