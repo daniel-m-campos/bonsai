@@ -173,7 +173,7 @@ class CudaHistogramEngine
     // 2 cells per node. level[i] corresponds to slot i.
     void find_splits_many(Dataset const &ds, TreeConfig const &config,
                           std::span<SplitInput const> level, std::span<SplitOutput> out,
-                          std::span<HistCell> child_sums);
+                          std::span<NodeTotals> child_sums);
     // Levelwise: ONE split for the whole frontier, chosen to maximize the gain
     // summed across all nodes and feasible for every node. out is filled with
     // that split for every slot, and child_sums with each node's (left, right)
@@ -181,7 +181,7 @@ class CudaHistogramEngine
     // next level's find reads. Enables ObliviousGrower<CudaHistogramEngine>.
     void find_level_split(Dataset const &ds, TreeConfig const &config,
                           std::span<SplitInput const> level, std::span<SplitOutput> out,
-                          std::span<HistCell> child_sums);
+                          std::span<NodeTotals> child_sums);
 
     // --- GPULeafEngine. Best-first growth expands one leaf at a time, so this
     // plane keeps a per-tree histogram slot pool instead of the level plane's
@@ -232,7 +232,7 @@ class CudaHistogramEngine
     // child_sums receives the winning cut's (left, right) totals, 2 per node.
     void leaf_find(Dataset const &ds, TreeConfig const &config,
                    std::span<SplitInput const> nodes, std::span<uint32_t const> slots,
-                   std::span<SplitOutput> out, std::span<HistCell> child_sums);
+                   std::span<SplitOutput> out, std::span<NodeTotals> child_sums);
     // Records final leaf assignment for every row in the given slots'
     // segments; a leaf's segment never moves again, so the tree epilogue can
     // stamp them all at once.

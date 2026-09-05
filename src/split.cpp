@@ -61,6 +61,13 @@ inline CandidateScore score_candidate(double left_grad, double left_hess,
             .feasible = true};
 }
 
+inline HistCell cell_totals(SplitInput const &input)
+{
+    NodeTotals const t = input.totals();
+    return {.sum_grad = static_cast<float>(t.sum_grad),
+            .sum_hess = static_cast<float>(t.sum_hess)};
+}
+
 inline bool missing_empty(HistCell const &missing)
 {
     return missing.sum_grad == 0.0F && missing.sum_hess == 0.0F;
@@ -239,7 +246,7 @@ SplitOutput HistogramNodeSplitFinder::find(SplitInput const &input,
         return {};
     }
     feature_id_t const n_features  = input.hists.size();
-    HistCell const     node_totals = input.totals();
+    HistCell const     node_totals = cell_totals(input);
     SplitOutput        best;
     for (feature_id_t fid = 0; fid < n_features; ++fid)
     {
@@ -267,7 +274,7 @@ void HistogramNodeSplitFinder::find_parallel(std::span<SplitInput const> nodes,
     {
         if (!cannot_split(nodes[i], config))
         {
-            totals[i] = nodes[i].totals();
+            totals[i] = cell_totals(nodes[i]);
         }
     }
     HistCell const *const tot_ptr  = totals.data();
@@ -307,7 +314,7 @@ SplitOutput HistogramLevelSplitFinder::find(FrontierInput     frontier,
     std::vector<HistCell> node_totals(frontier.size());
     for (size_t p = 0; p < frontier.size(); ++p)
     {
-        node_totals[p] = frontier[p].totals();
+        node_totals[p] = cell_totals(frontier[p]);
     }
     std::vector<SplitOutput> per_feature(n_features);
     parallel::for_each_index(n_features,

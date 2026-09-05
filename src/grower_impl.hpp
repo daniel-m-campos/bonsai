@@ -191,8 +191,8 @@ inline std::pair<node_id_t, node_id_t> commit_split_node(DenseBuild        &buil
 inline LevelPlan plan_level(Dataset const &ds, TreeConfig const &config,
                             std::vector<SplitInput>        &current,
                             std::vector<SplitOutput> const &splits,
-                            std::vector<HistCell> const &child_sums, DenseBuild &build,
-                            RecycledOutputs &out)
+                            std::vector<NodeTotals> const  &child_sums,
+                            DenseBuild &build, RecycledOutputs &out)
 {
     Phase<&GrowProfiler::bookkeep_s> phase;
     LevelPlan                        plan;
@@ -209,12 +209,13 @@ inline LevelPlan plan_level(Dataset const &ds, TreeConfig const &config,
         }
         auto const [left_id, right_id] = commit_split_node(build, ds, node.id, split);
 
-        double const   parent_lo   = node.lo;
-        double const   parent_hi   = node.hi;
-        auto           parent_path = std::move(node.path);
-        HistCell const ls = child_sums.empty() ? HistCell{} : child_sums[2 * size_t{i}];
-        HistCell const rs =
-            child_sums.empty() ? HistCell{} : child_sums[(2 * size_t{i}) + 1];
+        double const     parent_lo   = node.lo;
+        double const     parent_hi   = node.hi;
+        auto             parent_path = std::move(node.path);
+        NodeTotals const ls =
+            child_sums.empty() ? NodeTotals{} : child_sums[2 * size_t{i}];
+        NodeTotals const rs =
+            child_sums.empty() ? NodeTotals{} : child_sums[(2 * size_t{i}) + 1];
         plan.splits.push_back({.parent      = std::move(node),
                                .p           = {},
                                .split       = split,
@@ -553,11 +554,12 @@ auto ObliviousGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gr
         plan.splits.reserve(frontier.size());
         for (uint32_t i = 0; i < frontier.size(); ++i)
         {
-            HistCell const ls =
-                level_out.child_sums.empty() ? HistCell{} : level_out.child_sums[2 * i];
-            HistCell const rs = level_out.child_sums.empty()
-                                    ? HistCell{}
-                                    : level_out.child_sums[(2 * i) + 1];
+            NodeTotals const ls = level_out.child_sums.empty()
+                                      ? NodeTotals{}
+                                      : level_out.child_sums[2 * i];
+            NodeTotals const rs = level_out.child_sums.empty()
+                                      ? NodeTotals{}
+                                      : level_out.child_sums[(2 * i) + 1];
             plan.splits.push_back({.parent      = std::move(frontier[i]),
                                    .p           = {},
                                    .split       = split,

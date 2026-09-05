@@ -24,6 +24,15 @@ inline bool rows_are_identity(std::span<row_id_t const> rows, size_t n_rows)
                rows, std::views::iota(row_id_t{0}, static_cast<row_id_t>(n_rows)));
 }
 
+// Node totals stay double: the device planes derive each right child as the
+// parent total minus the left prefix, so a float total at the root reaches a
+// four-row leaf 1e-4 off. "matches CPU across every histogram plane" pins it.
+struct NodeTotals
+{
+    double sum_grad = 0.0;
+    double sum_hess = 0.0;
+};
+
 struct SplitInput
 {
     NodeHistograms        hists;
@@ -46,13 +55,13 @@ struct SplitInput
     std::vector<feature_id_t> path = {};
     // Cached node totals + row count. A device-resident engine leaves
     // hists/rows empty and sets these as the node's only host statistics.
-    HistCell sums      = {};
-    size_t   row_count = 0;
+    NodeTotals sums      = {};
+    size_t     row_count = 0;
 
     // Node-level totals: the cached sums when set, else from the first
     // populated histogram (every populated feature sums the same rows;
     // unselected features are zero-binned placeholders and are skipped).
-    HistCell totals() const
+    NodeTotals totals() const
     {
         if (row_count > 0)
         {
@@ -62,7 +71,8 @@ struct SplitInput
         {
             if (h.size() != 0)
             {
-                return h.totals();
+                HistCell const t = h.totals();
+                return {.sum_grad = t.sum_grad, .sum_hess = t.sum_hess};
             }
         }
         return {};

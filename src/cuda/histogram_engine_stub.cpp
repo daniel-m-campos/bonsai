@@ -99,7 +99,7 @@ void CudaHistogramEngine::find_splits_many(Dataset const & /*ds*/,
                                            TreeConfig const & /*config*/,
                                            std::span<SplitInput const> /*level*/,
                                            std::span<SplitOutput> /*out*/,
-                                           std::span<HistCell> /*child_sums*/)
+                                           std::span<NodeTotals> /*child_sums*/)
 {
     throw_unavailable();
 }
@@ -137,7 +137,7 @@ void CudaHistogramEngine::find_level_split(Dataset const & /*ds*/,
                                            TreeConfig const & /*config*/,
                                            std::span<SplitInput const> /*level*/,
                                            std::span<SplitOutput> /*out*/,
-                                           std::span<HistCell> /*child_sums*/)
+                                           std::span<NodeTotals> /*child_sums*/)
 {
     throw_unavailable();
 }
@@ -168,7 +168,7 @@ void CudaHistogramEngine::leaf_find(Dataset const & /*ds*/,
                                     std::span<SplitInput const> /*nodes*/,
                                     std::span<uint32_t const> /*slots*/,
                                     std::span<SplitOutput> /*out*/,
-                                    std::span<HistCell> /*child_sums*/)
+                                    std::span<NodeTotals> /*child_sums*/)
 {
     throw_unavailable();
 }
