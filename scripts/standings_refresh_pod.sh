@@ -113,19 +113,8 @@ QUOTA_SPARE_CORES=1
 THROTTLED_PCT_MAX=5
 FAILURES=0
 
-# Same-pod A/B, the perf-change detector: released wheels against the HEAD
-# build, every arm once per rep and the reps interleaved, so pod
-# thermal/state drift cannot masquerade as a code delta. `old` is the
-# previous release and `anchor` is one fixed release that every refresh
-# fits again (standings_refresh.py's ANCHOR_VERSION), which makes the
-# comparison cumulative: a loss that hides inside the release-over-release
-# band every time shows against the anchor as its sum. Each wheel gets its
-# own venv, so no arm displaces another or the bench extras in /opt/venv;
-# standings_ab.py needs only bonsai, numpy and psutil. The gpu pod takes the
-# cuda growers here; the cpu pod takes the cpu growers inside run_cpu_axis,
-# behind its throttle gate, because an A/B made under an undeclared ceiling
-# is exactly the measurement that gate exists to refuse. One file per
-# plane, so the two sessions cannot land on each other's rows.
+# Same-pod A/B: every arm once per rep, reps interleaved, one venv per
+# wheel so no arm displaces another, one file per plane.
 AB_ARMS=()
 if [ -n "$ANCHOR_VERSION" ]; then AB_ARMS+=(anchor); fi
 if [ -n "$PREV_VERSION" ]; then AB_ARMS+=(old); fi
@@ -136,8 +125,6 @@ AB_GPU_REPS=2
 AB_CPU_GROWERS=(levelwise depthwise leafwise)
 AB_CPU_REPS=4
 CPU_AB_AXIS=cpu-tall
-# The cpu arms wait the way the cpu axes are measured; the gpu arms are
-# measured without the flag, exactly like BENCH and CPU_BENCH above.
 if [ "$PLANE" = cpu ]; then AB_ENV=(env OMP_WAIT_POLICY=passive); else AB_ENV=(env); fi
 
 wheel_python() {  # <version>; the interpreter of a venv holding that wheel
@@ -150,9 +137,7 @@ wheel_python() {  # <version>; the interpreter of a venv holding that wheel
     echo "$venv/bin/python"
 }
 
-# Every arm once at one cell, appended to the plane's A/B file. A wheel
-# arm runs with an empty PYTHONPATH so the import resolves inside its venv;
-# the new arm resolves to the build this pod just made.
+# A wheel arm imports from its venv (empty PYTHONPATH); new from this build.
 ab_arms() {  # <out> <grower> <rows> <cols> <threads>
     for arm in "${AB_ARMS[@]}"; do
         case "$arm" in
@@ -178,8 +163,6 @@ if [ "$PLANE" = gpu ] && [ "${#AB_ARMS[@]}" -gt 1 ]; then
     done
 fi
 
-# The cpu plane's A/B at the tall cell, at the spec's thread count, run
-# by run_cpu_axis once the axis has cleared the CPU-cap gate.
 run_cpu_ab() {  # <threads>
     [ "${#AB_ARMS[@]}" -gt 1 ] || return 0
     rows=$(spec_field "$CPU_AB_AXIS" "s['cells'][0]['rows']")

@@ -494,10 +494,6 @@ def test_supersede_notes_no_cpu_host_when_no_cpu_axis_ran(monkeypatch,
 
 def test_supersede_commits_each_plane_ab_with_its_tall_axis(monkeypatch,
                                                             tmp_path):
-    """The gpu A/B rides gpu-tall and the cpu A/B rides cpu-tall, each dated
-    from the axis file it was measured beside, and update_standings learns
-    of each through --ab so the file supersedes with the axis and the gate
-    reads it from the registry."""
     repo = _fake_repo(monkeypatch, tmp_path)
     src = _session(tmp_path)
     _jsonl(src / "ab-gpu.jsonl", *_three_arms(10.0, 10.0, 10.1))
@@ -524,8 +520,6 @@ def test_supersede_commits_each_plane_ab_with_its_tall_axis(monkeypatch,
 
 def test_supersede_leaves_a_plane_ab_behind_when_its_axis_did_not_run(
         monkeypatch, tmp_path):
-    """A session that measured only the gpu plane cannot date a cpu A/B: the
-    file stays on the pod and the cpu-tall entry keeps whatever it carried."""
     repo = _fake_repo(monkeypatch, tmp_path)
     src = _session(tmp_path)
     _jsonl(src / "ab-gpu.jsonl", *_three_arms(10.0, 10.0, 10.1))

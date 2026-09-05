@@ -264,8 +264,6 @@ def test_the_cpu_ab_rides_the_tall_axis_only(axis, taken):
 
 
 def test_the_driver_registers_the_cpu_ab_under_the_axis_the_pod_fits_it_at():
-    """The pod writes ab-cpu.jsonl at CPU_AB_AXIS's cell; the driver dates and
-    registers it under AB_AXES[cpu]. Two constants, one cell."""
     match = re.search(r"^CPU_AB_AXIS=(\S+)$", POD_SCRIPT.read_text(), re.M)
     assert match, "the pod script names no CPU_AB_AXIS"
     assert standings_refresh.AB_AXES[standings_refresh.PLANE_CPU] == match.group(1)

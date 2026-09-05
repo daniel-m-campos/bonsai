@@ -544,7 +544,7 @@ def ab_section() -> str:
     blocks = [b for b in (_ab_block(axis) for axis in AB_AXES) if b]
     return f"""## Release drift
 
-Every refresh fits three wheels at the tall cell of each plane, on the pod that measured the plane, interleaved: the previous release (`old`), the {check_standings.ANCHOR_VERSION} anchor (`anchor`, one fixed release every refresh fits again) and the commit under refresh (`new`). The statistic is the min over repeats, since noise on a fixed workload only adds time. `new` is read inside {check_standings.AB_BAND_PCT}% of `old` and inside {check_standings.ANCHOR_BAND_PCT}% of `anchor`; the anchor is what makes the comparison cumulative, so a loss that hides inside the release band every release shows against the anchor by the second one. A cell marked **moved** ships only under a `Standings:`-tagged entry in the decisions log that cites the file, which `make docs-check` enforces.
+Each plane's tall cell, three wheels interleaved on the pod that measured the plane: the previous release (`old`), the fixed {check_standings.ANCHOR_VERSION} anchor and the commit under refresh (`new`), min over repeats. `new` is read inside {check_standings.AB_BAND_PCT}% of `old` and {check_standings.ANCHOR_BAND_PCT}% of `anchor`; a cell marked **moved** ships only under a decision entry that cites the file (the [benchmark protocol](../benchmark-protocol.md) has the argument).
 
 {chr(10).join(blocks) if blocks else PENDING_AB}
 """
