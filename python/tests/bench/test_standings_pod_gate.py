@@ -205,3 +205,55 @@ def test_parity_is_taken_only_by_the_session_that_anchors_it(plane, axes, taken)
                        f"if {_parity_guard()}; then echo taken; else echo no; fi"],
         capture_output=True, text=True)
     assert done.stdout.strip() == ("taken" if taken else "no"), done.stderr
+
+
+# A/B arms =========================================================================================
+
+def _arm_list_source() -> str:
+    """The lines that build AB_ARMS from which wheels the driver named."""
+    lines = POD_SCRIPT.read_text().splitlines()
+    start = lines.index("AB_ARMS=()")
+    end = lines.index("AB_ARMS+=(new)", start)
+    return "\n".join(lines[start:end + 1])
+
+
+@pytest.mark.parametrize("anchor,prev,arms", [
+    ("1.15.0", "2.0.0", "anchor old new"),
+    ("1.15.0", "", "anchor new"),
+    ("", "2.0.0", "old new"),
+    ("", "", "new"),
+])
+def test_the_arms_are_the_wheels_the_driver_named_plus_head(anchor, prev, arms):
+    """The anchor and the previous release are each optional; HEAD is always
+    fitted, and with no wheel to compare against the A/B blocks (one arm)
+    have nothing to do."""
+    done = subprocess.run(
+        ["bash", "-c", f"set -eu; ANCHOR_VERSION='{anchor}'; PREV_VERSION='{prev}'\n"
+                       f"{_arm_list_source()}\n"
+                       'echo "${AB_ARMS[*]}"'],
+        capture_output=True, text=True)
+    assert done.stdout.strip() == arms, done.stderr
+
+
+def _cpu_ab_guard() -> str:
+    """The condition under which run_cpu_axis takes the cpu plane's A/B."""
+    found = [ln.strip() for ln in POD_SCRIPT.read_text().splitlines()
+             if ln.strip().startswith("if ") and "CPU_AB_AXIS" in ln]
+    assert len(found) == 1, f"expected one cpu A/B guard, got {found}"
+    return found[0].removeprefix("if ").removesuffix("; then")
+
+
+@pytest.mark.parametrize("axis,taken", [
+    ("cpu-tall", True),
+    ("cpu-wide", False),
+    ("cpu-tallest", False),
+])
+def test_the_cpu_ab_rides_the_tall_axis_only(axis, taken):
+    """One A/B file per plane, at the tall cell, after that axis cleared the
+    cap gate: a session measuring only cpu-wide never writes it, so its rows
+    cannot be another cell's under the same name."""
+    done = subprocess.run(
+        ["bash", "-c", f"axis={axis}; CPU_AB_AXIS=cpu-tall\n"
+                       f"if {_cpu_ab_guard()}; then echo taken; else echo no; fi"],
+        capture_output=True, text=True)
+    assert done.stdout.strip() == ("taken" if taken else "no"), done.stderr

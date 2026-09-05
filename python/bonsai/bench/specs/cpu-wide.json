@@ -7,6 +7,6 @@
   "variants": ["bonsai_depthwise", "bonsai_leafwise", "bonsai_levelwise",
                "xgb_hist", "lgbm_cpu", "catboost_cpu"],
   "threads": [12],
-  "repeats": {"default": 1, "cpu": 1},
+  "repeats": {"default": 2, "cpu": 2},
   "timeout_cap": 7200
 }

@@ -14,9 +14,12 @@ import pathlib
 import subprocess
 import sys
 
+import pytest
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
+import check_standings  # noqa: E402
 import standings_refresh  # noqa: E402
 
 
@@ -132,88 +135,156 @@ def test_parity_skips_the_split_when_the_rows_carry_no_ingest(tmp_path):
 
 # Verdict ==========================================================================================
 
-def _ab_row(arm: str, fit_s, peak_rss_gb, rows: int = 4000000) -> dict:
+HEADER = ("| cell | grower | anchor | old | new | vs old | vs anchor "
+          "| old RSS | new RSS | RSS delta |\n"
+          "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|\n")
+
+
+def _ab_row(arm: str, fit_s, peak_rss_gb, rows: int = 4000000,
+            version: str | None = None) -> dict:
     """One A/B row."""
-    return {"rows": rows, "cols": 512, "grower": "cuda_depthwise", "arm": arm,
-            "fit_s": fit_s, "peak_rss_gb": peak_rss_gb}
+    row = {"rows": rows, "cols": 512, "grower": "cuda_depthwise", "arm": arm,
+           "fit_s": fit_s, "peak_rss_gb": peak_rss_gb}
+    if version is not None:
+        row["version"] = version
+    return row
+
+
+def _three_arms(anchor, old, new, rss=4.0, rows: int = 4000000) -> list[dict]:
+    return [_ab_row("anchor", anchor, rss, rows), _ab_row("old", old, rss, rows),
+            _ab_row("new", new, rss, rows)]
 
 
 def test_verdict_is_empty_without_an_ab_file(tmp_path):
     """An A/B is optional (measure --prev-version drives it), so its absence
     is silence rather than a failure."""
-    assert standings_refresh._verdict(tmp_path / "ab.jsonl") == ""
+    assert standings_refresh._verdict(tmp_path / "ab-gpu.jsonl") == ""
 
 
 def test_verdict_tables_every_cell_and_flags_the_ones_that_moved(tmp_path):
-    """One row per cell, both metrics, and the moved flag on the delta that
-    left the A/B band. The cells sort, so the table is stable."""
+    """One row per cell, three arms, both metrics, and the moved flag on the
+    delta that left its band. The cells sort, so the table is stable."""
     path = _jsonl(
-        tmp_path / "ab.jsonl",
-        _ab_row("old", 10.0, 4.0), _ab_row("new", 10.2, 4.1),
+        tmp_path / "ab-gpu.jsonl",
+        *_three_arms(10.1, 10.0, 10.2),
+        _ab_row("anchor", 20.0, 8.0, rows=8000000),
         _ab_row("old", 20.0, 8.0, rows=8000000),
         _ab_row("new", 14.0, 8.1, rows=8000000))
 
-    assert standings_refresh._verdict(path) == (
-        "| cell | grower | old | new | delta | old RSS | new RSS | "
-        "RSS delta |\n"
-        "|---|---|--:|--:|--:|--:|--:|--:|\n"
-        "| 4000000x512 | cuda_depthwise | 10.00s | 10.20s | +2.0% | 4.00GB "
-        "| 4.10GB | +2.5% |\n"
-        "| 8000000x512 | cuda_depthwise | 20.00s | 14.00s | -30.0% **moved** "
-        "| 8.00GB | 8.10GB | +1.2% |")
+    assert standings_refresh._verdict(path) == HEADER + (
+        "| 4000000x512 | cuda_depthwise | 10.10s | 10.00s | 10.20s | +2.0% "
+        "| +1.0% | 4.00GB | 4.00GB | +0.0% |\n"
+        "| 8000000x512 | cuda_depthwise | 20.00s | 20.00s | 14.00s "
+        "| -30.0% **moved** | -30.0% **moved** | 8.00GB | 8.10GB | +1.2% |")
+
+
+def test_verdict_flags_a_cumulative_move_the_release_band_hides(tmp_path):
+    """The case the anchor arm exists for: new sits inside the release band
+    against old, and past the anchor band against the fixed wheel, because
+    each release lost a little. Only the anchor column carries the flag."""
+    path = _jsonl(tmp_path / "ab-cpu.jsonl", *_three_arms(100.0, 102.0, 104.0))
+
+    assert standings_refresh._verdict(path).endswith(
+        "| 100.00s | 102.00s | 104.00s | +2.0% | +4.0% **moved** "
+        "| 4.00GB | 4.00GB | +0.0% |")
+    assert check_standings.ab_moves(_three_arms(100.0, 102.0, 104.0)) == [
+        f"4000000x512 cuda_depthwise: fit vs the "
+        f"{check_standings.ANCHOR_VERSION} anchor +4.0% (band "
+        f"{check_standings.ANCHOR_BAND_PCT}%)"]
+
+
+def test_verdict_takes_the_min_over_reps_not_the_median(tmp_path):
+    """Noise on a fixed workload only adds time, so one slow rep must not
+    move a cell: the median of {10, 12, 12} would read +20%, the min reads
+    the 10 both arms reached."""
+    path = _jsonl(tmp_path / "ab-gpu.jsonl",
+                  _ab_row("old", 10.0, 4.0), _ab_row("old", 10.0, 4.0),
+                  _ab_row("old", 10.0, 4.0),
+                  _ab_row("new", 10.0, 4.0), _ab_row("new", 12.0, 4.0),
+                  _ab_row("new", 12.0, 4.0))
+
+    assert standings_refresh._verdict(path).endswith(
+        "| n/a | 10.00s | 10.00s | +0.0% | n/a | 4.00GB | 4.00GB | +0.0% |")
 
 
 def test_verdict_flags_the_metric_that_moved_not_the_row(tmp_path):
     """A time move with no memory evidence lands on the time delta; the
     memory columns stay n/a rather than carrying a flag for a number they
     never had."""
-    path = _jsonl(tmp_path / "ab.jsonl",
+    path = _jsonl(tmp_path / "ab-gpu.jsonl",
                   _ab_row("old", 20.0, None), _ab_row("new", 14.0, None))
 
     assert standings_refresh._verdict(path).endswith(
-        "| 20.00s | 14.00s | -30.0% **moved** | n/a | n/a | n/a |")
+        "| n/a | 20.00s | 14.00s | -30.0% **moved** | n/a | n/a | n/a | n/a |")
 
 
-def test_verdict_band_edge_is_the_named_ab_band(tmp_path):
-    """The flag fires past AB_BAND_PCT, not at it, and the same number the PR
-    body quotes is the one the table applies."""
-    band = standings_refresh.AB_BAND_PCT
+@pytest.mark.parametrize("arm,band_name,column", [
+    ("old", "AB_BAND_PCT", 5),
+    ("anchor", "ANCHOR_BAND_PCT", 6),
+])
+def test_verdict_band_edge_is_the_named_band(tmp_path, arm, band_name, column):
+    """Each comparison's flag fires past its own band, not at it, and the
+    number the PR body quotes is the one the table applies."""
+    band = getattr(standings_refresh, band_name)
     at = _jsonl(tmp_path / "at.jsonl",
-                _ab_row("old", 100.0, 4.0),
+                _ab_row(arm, 100.0, 4.0),
                 _ab_row("new", 100.0 + band, 4.0))
     past = _jsonl(tmp_path / "past.jsonl",
-                  _ab_row("old", 100.0, 4.0),
+                  _ab_row(arm, 100.0, 4.0),
                   _ab_row("new", 100.0 + band + 0.1, 4.0))
 
     assert "**moved**" not in standings_refresh._verdict(at)
-    assert standings_refresh._verdict(past).endswith(
-        f"| 100.00s | {100.0 + band + 0.1:.2f}s | +{band + 0.1:.1f}% **moved** "
-        "| 4.00GB | 4.00GB | +0.0% |")
+    cells = standings_refresh._verdict(past).splitlines()[-1].split(" | ")
+    assert cells[column] == f"+{band + 0.1:.1f}% **moved**"
 
 
 def test_verdict_moves_on_memory_alone(tmp_path):
     """Memory is a standings claim: a path change can cost RSS before it
     costs seconds, and that still ends the automatic merge."""
-    path = _jsonl(tmp_path / "ab.jsonl",
+    path = _jsonl(tmp_path / "ab-gpu.jsonl",
                   _ab_row("old", 10.0, 4.0), _ab_row("new", 10.1, 6.0))
 
     assert standings_refresh._verdict(path).endswith(
         "| 4.00GB | 6.00GB | +50.0% **moved** |")
+    assert check_standings.ab_moves([_ab_row("old", 10.0, 4.0),
+                                     _ab_row("new", 10.1, 6.0)]) == [
+        "4000000x512 cuda_depthwise: RSS vs the previous release +50.0% "
+        f"(band {check_standings.AB_BAND_PCT}%)"]
 
 
 def test_verdict_reports_a_cell_with_one_arm_as_not_applicable(tmp_path):
-    """A cell the old wheel could not run has nothing to compare against, and
+    """A cell the wheels could not run has nothing to compare against, and
     a metric no row reported is the same case one column over."""
-    path = _jsonl(tmp_path / "ab.jsonl",
+    path = _jsonl(tmp_path / "ab-gpu.jsonl",
                   _ab_row("new", 10.0, 4.0),
                   _ab_row("old", 20.0, None, rows=8000000),
                   _ab_row("new", 20.4, None, rows=8000000))
 
     lines = standings_refresh._verdict(path).splitlines()
-    assert lines[2] == ("| 4000000x512 | cuda_depthwise | n/a | n/a | n/a | "
-                        "n/a | n/a | n/a |")
-    assert lines[3] == ("| 8000000x512 | cuda_depthwise | 20.00s | 20.40s | "
-                        "+2.0% | n/a | n/a | n/a |")
+    assert lines[2] == ("| 4000000x512 | cuda_depthwise | n/a | n/a | 10.00s "
+                        "| n/a | n/a | n/a | 4.00GB | n/a |")
+    assert lines[3] == ("| 8000000x512 | cuda_depthwise | n/a | 20.00s | 20.40s "
+                        "| +2.0% | n/a | n/a | n/a | n/a |")
+
+
+def test_verdicts_head_each_plane_with_the_wheels_it_fitted(tmp_path):
+    """A results directory holds one A/B file per plane; the printed verdict
+    names the plane, the file and the versions the arms resolved to, so a
+    wheel that silently resolved to the wrong release is visible."""
+    _jsonl(tmp_path / "ab-gpu.jsonl",
+           _ab_row("anchor", 10.0, 4.0, version="1.15.0"),
+           _ab_row("old", 10.0, 4.0, version="2.0.0"),
+           _ab_row("new", 10.0, 4.0, version="2.1.0+source"))
+    _jsonl(tmp_path / "ab-cpu.jsonl",
+           _ab_row("old", 10.0, 4.0, version="2.0.0"),
+           _ab_row("new", 10.0, 4.0, version="2.1.0+source"))
+
+    text = standings_refresh._ab_verdicts(tmp_path)
+    assert text.startswith(
+        "gpu plane (ab-gpu.jsonl; anchor 1.15.0, old 2.0.0, new 2.1.0+source):"
+        "\n\n" + HEADER)
+    assert "\n\ncpu plane (ab-cpu.jsonl; old 2.0.0, new 2.1.0+source):\n\n" in text
+    assert standings_refresh._ab_verdicts(tmp_path / "empty") == ""
 
 
 # Supersession =====================================================================================
