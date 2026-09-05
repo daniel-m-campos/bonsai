@@ -20,12 +20,12 @@ runs:
           exit 0
         fi
         codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
-        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+        wget --timeout=30 --tries=3 -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
           | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
         # https, not http: apt.llvm.org 301-redirects http to https, and apt
         # reports the redirect it will not follow as "no longer has a Release
         # file", which reads like the repo was retired when it is still there.
         echo "deb https://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-21 main" \
           | sudo tee /etc/apt/sources.list.d/llvm21.list >/dev/null
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq ${{ inputs.packages }}
+        sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
+        sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y -qq ${{ inputs.packages }}
