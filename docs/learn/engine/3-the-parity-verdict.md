@@ -22,7 +22,7 @@ Validation confirmed it on real hardware. The r2 was identical across single, 2,
 
 The two interconnects were the experiment's independent variable. A level's reduction is small, so over PCIe it costs a few milliseconds per level, and over NVLink at 600 GB/s it is noise. That is why the ladder ran on both a PCIe box and an NVLink mesh.
 
-The reproducibility posture carried over unchanged. The GPU path is a tolerance match, not bit-exact, because atomics accumulate in arbitrary order. Multi-GPU fixes the reduction order by ascending device id, so a given device count is deterministic run to run.
+The reproducibility posture carried over unchanged. The GPU path was, at the time, a tolerance match and not bit-exact, because atomics accumulated in arbitrary order (the cells have since gone int64 fixed point, decision 124). Multi-GPU fixes the reduction order by ascending device id, so a given device count is deterministic run to run.
 
 A passing correctness suite feels like progress. It is a precondition for value, not evidence of it.
 

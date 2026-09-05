@@ -5,6 +5,7 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 ## [Unreleased]
 
 ### Changed
+- **CUDA training is bit-reproducible run to run on one device and build** (issue #278, decision 124). Histogram cells are int64 fixed point with one power-of-two scale per tree, so every accumulation is an exact integer sum whatever order the atomics land in; three fits of one dataset serialize to identical bytes on every device plane, and the suite holds it as `cuda-training-bit-reproducible`. Host-vs-device agreement stays at 1e-4. Same-pod cost on an L40S: MEASURED-TABLE.
 - **The release A/B fits a fixed 1.15.0 anchor on both planes, and a moved cell needs a citing decision** (decision 122). A 1.5% loss a release passed the 5% band every time and compounded; against the anchor, read inside 2%, it shows by the second release. The rows ship as `benchmarks/results/ab-<plane>-<date>.jsonl`, render as the perf page's release drift section, and `make docs-check` refuses a moved cell until a `Standings:` entry cites the file. `cpu-tall` takes 4 repeats, `cpu-wide` 2.
 
 ## [2.1.0] - 2026-09-04
@@ -16,6 +17,7 @@ A row view now runs on the device for scoring, prediction and explanation, which
 - **A device-resident eval set is adopted in place** (PR #458). `eval_begin` used to rebuild its own tiled copy of the validation plane through the host even when the plane already lived on the device, 0.12s per fit at 1M x 64 on the L40S above. It adopts the plane now, so every CUDA fit with a device-resident `eval_set` skips that copy: the separate-Dataset arm drops from 1.00s to 0.89s in the same session.
 
 ### Fixed
+- **Device node totals no longer round to float between levels.** The device planes handed each node's gradient and hessian totals to the host as float and re-uploaded them as the parent totals the find kernels subtract a left prefix from, so every right-child edge re-read a total rounded one level up; at 65536 rows a four-row leaf landed 2.4e-4 off the exact leaf weight where the CPU path was within 1.4e-7. Totals now travel as a double `NodeTotals`; CPU model bytes are unchanged.
 - **Leaf renewal keeps a monotone constraint on depthwise and leafwise trees** (issue #442). The `mae`, `huber` and `quantile` objectives replace every leaf after growth with a residual statistic (median, Huber mean, quantile), and nothing fenced that value: the grower vetoes violating splits and clamps Newton leaves into the fence each split leaves behind, then renewal overwrote the clamped values. An eight-row fit at depth 1 predicted 4.0 left of the split and 3.0 right of it under a `+1` constraint, and a 2000 x 4 fit at 60 rounds, depth 5, showed a worst downward step of 0.06 to 0.09 along a sweep of the constrained feature. The grower now hands each leaf's fence out with the tree and renewal clamps into it, which is the exact fenced optimum for these objectives. Violation is 0.0 on both cases and `mse` fits are unchanged.
 
 ## [2.0.0] - 2026-09-02

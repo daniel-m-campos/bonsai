@@ -17,13 +17,14 @@ at any count. The one exception was bought, measured, and is this
 chapter's closing story.
 
 The "on the CPU" is not a hedge, it is the boundary. GPU training
-accumulates histogram cells with device atomics, and the order those adds
-land in is the scheduler's, not the configuration's, so **the same GPU
-fit produces different model bytes every run** (four repetitions of one
-`cuda_depthwise` fit at one commit gave four different model hashes).
-There is no thread count to pin that would fix it: the promise below is a
-CPU promise, and on the device the equivalent question is answered by
-measuring the run-to-run spread and showing a change stays inside it
+accumulates histogram cells with device atomics whose landing order is
+the scheduler's, not the configuration's; the cells are int64 fixed
+point, so the sum is one integer in any order and **the same GPU fit
+produces the same model bytes every run** on one device and one build.
+What the device does not promise is the rest of the CPU rule: identity
+across devices and toolkits, where the gradient kernels' transcendentals
+and fused multiply-adds differ, and identity with the host fit, which
+accumulates float cells and agrees to 1e-4
 ([chapter 10](10-gpu-training.md)).
 
 ## The math (of non-determinism)

@@ -331,8 +331,8 @@ def test_dataset_honors_n_threads():
 
 def test_device_dataset_matches_the_fused_path():
     """A device-binned Dataset reaches the same device ingest the fused
-    train(pairs, X, y) call takes; GPU histogram atomics make the comparison
-    tolerance-equal, not bit-equal (cuda-training-tolerance)."""
+    train(pairs, X, y) call takes, and a device fit is bit-reproducible
+    (cuda-training-bit-reproducible), so the two models predict identically."""
     if not bonsai.cuda_available():
         pytest.skip("no CUDA build or no visible device")
     X, y = _reg_data(n=20000)
@@ -343,7 +343,7 @@ def test_device_dataset_matches_the_fused_path():
     ds = bonsai.Dataset(X, y, device="cuda")
     assert ds.device == "cuda"
     two_step = np.asarray(bonsai.train(pairs, ds).predict(X))
-    np.testing.assert_allclose(fused, two_step, rtol=0, atol=1e-4)
+    np.testing.assert_array_equal(fused, two_step)
 
     with pytest.raises(Exception, match="not picklable"):
         pickle.dumps(ds)

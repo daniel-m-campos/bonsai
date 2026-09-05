@@ -5,10 +5,11 @@
 // replacing the finalize D2H. The escape hatch (BONSAI_HOST_OBJECTIVE=1)
 // forces the host objective path for a same-process A/B.
 //
-// GPU histograms accumulate per-chunk in float with atomics in arbitrary
-// order, so resident and host-objective models match to tolerance, not
-// bit-exactly. The ship contract is a four-decimal r2 match; predictions are
-// additionally required to agree closely.
+// The resident objective computes gradients on the device and the host
+// objective computes them in float on the host, so resident and
+// host-objective models match to tolerance, not bit-exactly. The ship
+// contract is a four-decimal r2 match; predictions are additionally required
+// to agree closely. Each path is bit-reproducible against itself.
 
 #include "bonsai/booster.hpp"
 #include "bonsai/config/config.hpp"
@@ -17,6 +18,7 @@
 #include "bonsai/cuda/histogram_engine.hpp"
 #include "bonsai/dataset.hpp"
 #include "bonsai/detail/column_batch.hpp"
+#include "bonsai/io/model.hpp"
 #include "bonsai/objective.hpp"
 #include "bonsai/sampler.hpp"
 #include "bonsai/types.hpp"
@@ -29,6 +31,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <numeric>
@@ -258,6 +261,40 @@ std::vector<float> fit_predict(Config const &cfg, RegData const &data, size_t it
     std::vector<float> pred(data.n_rows);
     booster.predict(data.view(), floats_out{pred});
     return pred;
+}
+
+template <typename BoosterT>
+std::vector<uint8_t> fit_bytes(Config const &cfg, RegData const &data, size_t iters,
+                               bool host_forced)
+{
+    if (host_forced)
+    {
+        setenv("BONSAI_HOST_OBJECTIVE", "1", 1);
+    }
+    else
+    {
+        unsetenv("BONSAI_HOST_OBJECTIVE");
+    }
+    BoosterT booster{cfg};
+    for (size_t i = 0; i < iters; ++i)
+    {
+        booster.update_one_iter(data.built.ds);
+    }
+    unsetenv("BONSAI_HOST_OBJECTIVE");
+    return io::save_booster_bytes(booster, data.built.mappers, cfg);
+}
+
+template <typename BoosterT>
+void require_reproducible(Config const &cfg, RegData const &data)
+{
+    for (bool const host_forced : {false, true})
+    {
+        auto const first = fit_bytes<BoosterT>(cfg, data, 40, host_forced);
+        for (int rep = 0; rep < 2; ++rep)
+        {
+            REQUIRE(fit_bytes<BoosterT>(cfg, data, 40, host_forced) == first);
+        }
+    }
 }
 
 // A leaf-budget config for the leaf plane: best-first growth stopped by the
@@ -1029,4 +1066,34 @@ TEST_CASE("A device column gather follows the view's rows", "[cuda][ingest][view
     std::vector<feature_id_t> const keep = {9, 2};
     require_same_bins(dev.with_rows(rows).select_features(keep),
                       data.built.ds.with_rows(rows).select_features(keep));
+}
+
+// INVARIANT: cuda-training-bit-reproducible
+// A device fit is bit-reproducible on one device and one build. Histogram
+// cells are int64 fixed point, so every accumulation is an exact integer sum
+// whatever order the atomics land in, and everything downstream of the fill
+// already ran in a fixed order. Three fits of one dataset serialize to
+// identical bytes on every device plane, with the device objective and with
+// the host objective forced. Not claimed: cross-device, cross-toolkit, or
+// host-vs-device equality, which stay tolerance-bound.
+TEST_CASE("CudaGrowers: three fits of one dataset serialize to identical bytes",
+          "[cuda][resident][invariant]")
+{
+    if (!cuda_available())
+    {
+        SKIP("bit reproducibility needs a usable CUDA device");
+    }
+    auto const data = make_regression(16384, 8, 23);
+    SECTION("depthwise")
+    {
+        require_reproducible<MseBooster<CudaDepthwiseGrower>>(reg_cfg(), data);
+    }
+    SECTION("oblivious")
+    {
+        require_reproducible<MseBooster<CudaObliviousGrower>>(reg_cfg(), data);
+    }
+    SECTION("leafwise")
+    {
+        require_reproducible<MseBooster<CudaLeafwiseGrower>>(leaf_cfg(), data);
+    }
 }

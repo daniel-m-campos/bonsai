@@ -1,10 +1,10 @@
 // CUDA grower parity tests. Compiled in every build; each case SKIPs at
 // runtime unless cuda_available(). GPU histograms accumulate quantised
-// gradients in int64 cells, so a device fit is exact against its own
-// quantiser; the host accumulates in float, so host-vs-device comparisons
-// are tolerance-based rather than bit-exact. A configuration the device
-// cannot hold is refused with ConfigError, not moved to the host, so the
-// cases that used to assert host-fallback parity assert the error.
+// gradients in int64 cells, so a device fit is bit-reproducible on one
+// device and build; the host accumulates in float, so host-vs-device
+// comparisons are tolerance-based. A configuration the device cannot hold
+// is refused with ConfigError, not moved to the host, so the cases that
+// used to assert host-fallback parity assert the error.
 
 #include "bonsai/booster.hpp"
 #include "bonsai/config/data_config.hpp"
@@ -670,13 +670,7 @@ TEST_CASE("CudaDepthwiseGrower handles consecutive trees and datasets",
                                              scenario_a.hess, scenario_a.rows);
     auto const          second = grower.grow(scenario_a.built.ds, scenario_a.grad,
                                              scenario_a.hess, scenario_a.rows);
-    // Not bit-exact: atomic accumulation order differs between runs, so the
-    // two grows may disagree in the last ulps even on identical inputs.
-    for (size_t r = 0; r < first.values.size(); ++r)
-    {
-        REQUIRE_THAT(second.values[r],
-                     Catch::Matchers::WithinAbs(first.values[r], 1e-4));
-    }
+    REQUIRE(second.values == first.values);
 
     auto const other = grower.grow(scenario_b.built.ds, scenario_b.grad,
                                    scenario_b.hess, scenario_b.rows);

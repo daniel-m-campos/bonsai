@@ -25,13 +25,6 @@ Device predict is bit-equal to the host binned walk, row for row; the epilogue s
 - code: `include/bonsai/detail/bin_walk.hpp` : `split_bins`
 - elaboration: decision 108.
 
-### cuda-training-tolerance
-
-The cuda growers' training determinism contract is tolerance-equal, never bit-exact, and not bit-equal to itself run to run: device atomics accumulate in arbitrary order. The host plane's fixed-thread bit-identity contract does not extend to the device.
-
-- code: `include/bonsai/cuda/histogram_engine.hpp` : `CudaHistogramEngine`
-- elaboration: decisions 60 and the determinism note in [learn/determinism-as-a-contract.md](learn/determinism-as-a-contract.md).
-
 ### stub-trains-nothing-predicts-anywhere
 
 The cuda growers are registered in every build; without a device, construction and load succeed and training throws with a message naming the fix. Models trained on a device predict on any build.
@@ -92,7 +85,7 @@ Multiclass softmax uses the true diagonal Hessian p(1-p), not the factor-2 conve
 
 ### host-determinism
 
-Model bytes are identical across runs, across thread counts (outside one documented relaxation), and across CPU architectures; CI trains on arm64 and x86-64 and compares file hashes per commit. Host builds compile with contraction off, which is what makes the claim hold across compilers.
+Model bytes are identical across runs, across thread counts (outside one documented relaxation), and across CPU architectures; CI trains on arm64 and x86-64 and compares file hashes per commit. Host builds compile with contraction off, which is what makes the claim hold across compilers. A host fit and a device fit of one dataset agree to 1e-4 in predictions, never byte for byte: the host accumulates histogram cells in float and the device in int64 fixed point, and the device fit's own byte identity is the enforced `cuda-training-bit-reproducible`.
 
 - code: `include/bonsai/parallel.hpp` : `for_each_index`
 - code: `scripts/model_hash.py` : `sha256`

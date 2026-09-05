@@ -6,10 +6,15 @@ fixed threads: the determinism contract (decision 49) makes the hash
 stable across runs on one machine.
 
     make python && PYTHONPATH=build/python python3 scripts/model_hash.py
+
+`--grower cuda_depthwise` measures a device plane instead (needs the CUDA
+build on PYTHONPATH); the device contract is identity run to run on one
+device and build, so the gate there is three runs printing one hash.
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import sys
 import tempfile
@@ -46,6 +51,10 @@ def _model_sha(X: np.ndarray, y: np.ndarray, extra=()) -> str:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--grower", default=PAIRS["dispatch.grower_name"])
+    grower = parser.parse_args().grower
+    PAIRS["dispatch.grower_name"] = grower
     X, y = _gen_data()
     # Printed so a cross-platform hash mismatch can be attributed: if the DATA
     # digests differ, numpy built different inputs (SIMD-width-dependent
