@@ -179,6 +179,8 @@ std::vector<float> create_cuts(std::vector<float> &subsample, size_t cut_budget)
     sort_floats(subsample);
     std::vector<float>  vals;
     std::vector<size_t> counts;
+    vals.reserve(subsample.size());
+    counts.reserve(subsample.size());
     for (float const v : subsample)
     {
         if (vals.empty() || vals.back() < v)
