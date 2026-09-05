@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """One anchor-cell fit for the standings refresh A/B (decision 92).
 
-    python scripts/standings_ab.py --rows N --cols N --grower G --arm old|new
+    python scripts/standings_ab.py --rows N --cols N --grower G --arm anchor|old|new
 
-The refresh workflow interleaves invocations of the previous release's wheel
-(no PYTHONPATH) and the HEAD build (PYTHONPATH=build-cuda/python) on ONE pod;
-same-pod interleaving is the only timing comparison the fleet-spread rule
-allows. Prints one JSON line; the workflow aggregates medians per (cell,
-grower, arm) and calls a move beyond +-5%.
+The refresh pod interleaves invocations of the previous release's wheel
+(old), one fixed anchor release's wheel (anchor) and the HEAD build (new)
+on ONE pod; same-pod interleaving is the only timing comparison the
+fleet-spread rule allows. Prints one JSON line; check_standings.py takes
+the min per (cell, grower, arm), the statistic a one-sided noise leaves
+honest, and calls a move beyond +-5% against old or +-2% against the
+anchor, the band that catches a loss compounding inside the first.
 
 The fit runs through bonsai.bench.runners.worker, the same code the standings
 execute, so the detector cannot measure a path the standings do not: a change

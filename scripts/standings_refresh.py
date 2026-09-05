@@ -26,6 +26,15 @@ companion file, because the fused fit total the perf page publishes once is
 their median: the anchor is read from a measurement the session already
 takes, never from a new run.
 
+The A/B is the perf-change detector, and both planes take it: the pod fits
+the previous release wheel, the fixed anchor wheel and HEAD at anchor cells,
+every arm once per rep with the reps interleaved, cuda growers on the GPU
+session and the cpu growers on whichever host measures cpu-tall. The math
+(min over reps, the two bands, what counts as moved) is
+check_standings.py's, so the verdict printed here, the table the perf page
+renders and the gate that demands a decision entry for a move read one
+answer.
+
 The host of record for the CPU plane is a GPU pod's CPU, at the 12 threads
 the CPU specs pin (runbook section 11). That is server silicon rather than
 the desktop-class parts a CPU rental buys, and a CPU ranking is a claim
@@ -77,6 +86,9 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 RESULTS = REPO / "benchmarks" / "results"
 POD_SCRIPT = REPO / "scripts" / "standings_refresh_pod.sh"
 
+sys.path.insert(0, str(REPO / "scripts"))
+import check_standings  # noqa: E402
+
 REST = "https://rest.runpod.io/v1"
 # Per-datacenter stock is a v2 catalog reading; pods are still created on v1.
 CATALOG = "https://api.runpod.io/v2/catalog/gpus"
@@ -111,14 +123,20 @@ PLANE_CPU = "cpu"
 # the GPU session and no second pod is rented.
 CPU_PLANE_HOSTS = (PLANE_GPU, "cpupod")
 
-# The band a same-pod interleaved A/B pair (previous release wheel vs HEAD)
-# must agree inside before a cell counts as moved.
-AB_BAND_PCT = 5
+# The A/B bands and the anchor wheel are check_standings.py's: the gate,
+# the renderer and this driver read one number.
+AB_BAND_PCT = check_standings.AB_BAND_PCT
+ANCHOR_BAND_PCT = check_standings.ANCHOR_BAND_PCT
+ANCHOR_VERSION = check_standings.ANCHOR_VERSION
 
 # The band the fused and two-step forms must agree inside. Measured at 2.5%
 # on one L40S at 4M x 512 and inside repeat noise at 16M; the A/B band is
 # the same pod-noise question, so the two share a number.
 PARITY_BAND_PCT = AB_BAND_PCT
+
+# One A/B file per plane in a results directory, so the two sessions
+# cannot land on each other's rows.
+AB_FILES = {PLANE_GPU: "ab-gpu.jsonl", PLANE_CPU: "ab-cpu.jsonl"}
 
 # Every axis is the stem of its dated results file AND the name of the
 # branch the pod script runs to produce it.
@@ -174,7 +192,8 @@ def main() -> int:
     m = sub.add_parser("measure", help="rent a pod, run the suites, pull results")
     m.add_argument("--axes", default=",".join(AXES))
     m.add_argument("--prev-version", default="",
-                   help="wheel for the A/B old arm (empty skips the A/B)")
+                   help="wheel for the A/B old arm (the anchor arm is "
+                        f"always {ANCHOR_VERSION})")
     m.add_argument("--out-dir", default=None,
                    help="where the jsonl files land (default: a dated dir)")
     m.add_argument("--keep-pod", action="store_true",
@@ -388,8 +407,8 @@ def supersede(args: argparse.Namespace) -> int:
         return 1
     _restamp_and_render(axes, files, _copy_parity(src / "parity.jsonl",
                                                   files.get(PARITY_AXIS)))
-    verdict = _verdict(src / "ab.jsonl")
-    print(verdict or "A/B skipped (no ab.jsonl)")
+    verdict = _ab_verdicts(src)
+    print(verdict or "A/B skipped (no ab-*.jsonl)")
 
     hosts_note = _cpu_hosts_note(axes, files)
     branch = _commit_refresh(axes, hosts_note)
@@ -620,11 +639,12 @@ def _open_refresh_pr(axes: list[str], branch: str, parity: str, verdict: str,
             f"(decision 96).{hosts_note}\n\nIngest/train parity (bonsai's "
             f"fused call vs the two-step Dataset form, same pod, interleaved, "
             f"+-{PARITY_BAND_PCT}% band):\n\n{parity}\n\n"
-            f"A/B verdict (previous release wheel vs HEAD, "
-            f"same pod, interleaved, +-{AB_BAND_PCT}% band):\n\n"
-            f"{verdict or 'A/B skipped.'}\n\nA **moved** verdict requires a "
-            f"`Standings:`-tagged decision entry before merge; the docs-check "
-            f"gate enforces it.")
+            f"A/B verdict (previous release wheel and the {ANCHOR_VERSION} "
+            f"anchor vs HEAD, same pod, interleaved, min of reps, "
+            f"+-{AB_BAND_PCT}% band vs old, +-{ANCHOR_BAND_PCT}% vs the "
+            f"anchor):\n\n{verdict or 'A/B skipped.'}\n\nA **moved** "
+            f"verdict requires a `Standings:`-tagged decision entry before "
+            f"merge; the docs-check gate enforces it.")
     subprocess.run(["gh", "pr", "create", "--base", "main", "--title",
                     _refresh_title(axes), "--body", body], check=True,
                    cwd=REPO)
@@ -636,10 +656,10 @@ def _run_session(key: str, args: argparse.Namespace, *, plane: str,
     """One pod, one plane: create, launch the on-pod script, poll, tear down.
 
     Both planes write into the same results directory. Their file names do
-    not collide (one dated file per axis), and the A/B rows are cuda
-    measurements the CPU pod skips. The parity rows are narrower still: the
-    pod takes them only when this session measures the axis they anchor, so
-    they cannot arrive from a host that measured no anchor.
+    not collide (one dated file per axis, one A/B file per plane). The
+    parity rows are narrower: the pod takes them only when this session
+    measures the axis they anchor, so they cannot arrive from a host that
+    measured no anchor.
     """
     pod_id = _create_pod(key, pubkey, plane=plane, vcpu=args.cpu_vcpu,
                          gpus=gpus)
@@ -647,9 +667,6 @@ def _run_session(key: str, args: argparse.Namespace, *, plane: str,
     # No HOST_TAG on either plane: the driver knows what it asked for, the
     # pod knows what it got, and naming a row after the request is how a
     # 12-thread run ended up committed under a 16-thread tag.
-    # The A/B compares cuda growers against a released wheel; only the GPU
-    # session can run it, so the CPU pod is never asked to.
-    prev_version = args.prev_version if plane == PLANE_GPU else ""
     try:
         ip, port = _wait_ssh(key, pod_id)
         ssh = ["ssh", "-i", str(pathlib.Path.home() / ".ssh" / "id_ed25519"),
@@ -663,7 +680,8 @@ def _run_session(key: str, args: argparse.Namespace, *, plane: str,
         # Detached: an ssh drop must not kill a multi-hour sweep.
         subprocess.run([*ssh, f"nohup env AXES='{','.join(axes)}' "
                         f"GIT_SHA='{sha}' "
-                        f"PREV_VERSION='{prev_version}' "
+                        f"PREV_VERSION='{args.prev_version}' "
+                        f"ANCHOR_VERSION='{ANCHOR_VERSION}' "
                         f"PLANE='{plane}' "
                         "bash /root/standings_refresh_pod.sh "
                         "> /root/refresh.log 2>&1 & echo launched"], check=True)
@@ -963,55 +981,35 @@ def _two_step_split(live: list[dict]) -> str:
             f"{statistics.median(t for _, t in split):.2f}s.")
 
 
+def _ab_verdicts(src: pathlib.Path) -> str:
+    """Every plane's A/B verdict table found in ``src``, or empty."""
+    return "\n\n".join(
+        f"{plane} plane ({name}; {_arm_versions(src / name)}):\n\n"
+        f"{_verdict(src / name)}"
+        for plane, name in AB_FILES.items() if (src / name).exists())
+
+
 def _verdict(ab_path: pathlib.Path) -> str:
     """The A/B verdict table, or empty when the file is absent.
 
-    Time and peak RSS both get a column and both can move the verdict:
+    Time and peak RSS both get columns and both can move the verdict:
     memory is a standings claim, and a path change can cost RSS before it
     costs seconds.
     """
     if not ab_path.exists():
         return ""
-    rows = [json.loads(ln) for ln in ab_path.read_text().splitlines()
+    return check_standings.ab_table(_ab_rows(ab_path))
+
+
+def _arm_versions(ab_path: pathlib.Path) -> str:
+    versions = check_standings.ab_versions(_ab_rows(ab_path))
+    return ", ".join(f"{arm} {versions[arm]}" for arm in check_standings.AB_ARMS
+                     if arm in versions)
+
+
+def _ab_rows(ab_path: pathlib.Path) -> list[dict]:
+    return [json.loads(ln) for ln in ab_path.read_text().splitlines()
             if ln.strip()]
-    med = _ab_samples(rows)
-    lines = ["| cell | grower | old | new | delta | old RSS | new RSS | "
-             "RSS delta |", "|---|---|--:|--:|--:|--:|--:|--:|"]
-    for cell in sorted({(r["rows"], r["cols"], r["grower"]) for r in rows}):
-        rw, c, g = cell
-        lines.append(f"| {rw}x{c} | {g} | "
-                     + " | ".join(_ab_cells(med, cell)) + " |")
-    return "\n".join(lines)
-
-
-def _ab_samples(rows: list[dict]) -> dict:
-    """Every reported value, keyed by cell, grower, arm, and metric."""
-    med: dict[tuple, list[float]] = {}
-    for r in rows:
-        for metric in ("fit_s", "peak_rss_gb"):
-            if r.get(metric) is None:
-                continue
-            med.setdefault((r["rows"], r["cols"], r["grower"], r["arm"],
-                            metric), []).append(r[metric])
-    return med
-
-
-def _ab_cells(med: dict, cell: tuple) -> list[str]:
-    """One cell's old, new, and delta columns per metric, the delta flagged
-    **moved** when it left the A/B band."""
-    rw, c, g = cell
-    cells: list[str] = []
-    for metric, unit in (("fit_s", "s"), ("peak_rss_gb", "GB")):
-        old = med.get((rw, c, g, "old", metric))
-        new = med.get((rw, c, g, "new", metric))
-        if not old or not new:
-            cells += ["n/a", "n/a", "n/a"]
-            continue
-        o, n = statistics.median(old), statistics.median(new)
-        d = 100 * (n - o) / o
-        flag = " **moved**" if abs(d) > AB_BAND_PCT else ""
-        cells += [f"{o:.2f}{unit}", f"{n:.2f}{unit}", f"{d:+.1f}%{flag}"]
-    return cells
 
 
 if __name__ == "__main__":

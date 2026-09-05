@@ -35,6 +35,17 @@ measurement (`update_standings.py --restamp-verified`). Such an entry clears
 the gates like any other skip, so every report that clears it labels it
 carried-forward rather than a run.
 
+The release A/B. Every refresh fits three arms at each anchor cell, same pod,
+interleaved: `anchor` (the ANCHOR_VERSION wheel, one fixed release every
+refresh fits again), `old` (the previous release wheel) and `new` (HEAD).
+The statistic is the min over reps, because noise on a fixed workload only
+adds time. `new` vs `old` is read inside AB_BAND_PCT and `new` vs `anchor`
+inside ANCHOR_BAND_PCT; the anchor is what makes the comparison cumulative,
+since a 1.5% loss that hides inside the release band every release compounds
+to 35% over twenty of them and shows against the anchor by the second. The
+math lives here, the lowest module, so the driver, the renderer and the gate
+read one answer.
+
 Reference-library majors are compared against the installed package in this
 environment when available (`importlib.metadata`, no import needed); most
 release-gate runs have no bench extras installed, so this falls back to
@@ -74,6 +85,21 @@ PLANE_GPU = "gpu"
 # change confined here.
 CUDA_PREFIXES = ("src/cuda/", "include/bonsai/cuda/")
 
+AB_BAND_PCT = 5
+ANCHOR_BAND_PCT = 2
+# Re-pinned only by the PR that carries the `Standings:` decision entry
+# explaining the cumulative move it would otherwise hide.
+ANCHOR_VERSION = "1.15.0"
+AB_ARMS = ("anchor", "old", "new")
+AB_FIT = "fit_s"
+AB_RSS = "peak_rss_gb"
+AB_TABLE_HEADER = (
+    "| cell | grower | anchor | old | new | vs old | vs anchor "
+    "| old RSS | new RSS | RSS delta |",
+    "|---|---|--:|--:|--:|--:|--:|--:|--:|--:|",
+)
+AB_NA = "n/a"
+
 
 def load_registry() -> dict:
     reg = json.loads(REGISTRY.read_text())
@@ -103,6 +129,85 @@ def check_decisions(reg: dict) -> list[str]:
                         "refresh the axis and bump the registry, or drop the "
                         "tag if the claim does not move the standings")
     return errors
+
+
+def ab_best(rows: list[dict]) -> dict[tuple, float]:
+    """Min per (rows, cols, grower, arm, metric) over the A/B rows."""
+    best: dict[tuple, float] = {}
+    for r in rows:
+        for metric in (AB_FIT, AB_RSS):
+            if r.get(metric) is None:
+                continue
+            key = (r["rows"], r["cols"], r["grower"], r["arm"], metric)
+            best[key] = min(best.get(key, float("inf")), r[metric])
+    return best
+
+
+def ab_cells(rows: list[dict]) -> list[tuple]:
+    return sorted({(r["rows"], r["cols"], r["grower"]) for r in rows})
+
+
+def ab_versions(rows: list[dict]) -> dict[str, str]:
+    """The wheel or build each arm actually fitted, by arm."""
+    return {r["arm"]: r["version"] for r in rows if "version" in r}
+
+
+def pct_delta(base: float, new: float) -> float:
+    return 100 * (new - base) / base
+
+
+def ab_moves(rows: list[dict]) -> list[str]:
+    """One line per (cell, comparison) outside its band; empty means held."""
+    best = ab_best(rows)
+    moves = []
+    for rw, c, g in ab_cells(rows):
+        for arm, metric, band, what in _AB_COMPARISONS:
+            base = best.get((rw, c, g, arm, metric))
+            new = best.get((rw, c, g, "new", metric))
+            if base is None or new is None:
+                continue
+            d = pct_delta(base, new)
+            if abs(d) > band:
+                moves.append(f"{rw}x{c} {g}: {what} {d:+.1f}% (band {band}%)")
+    return moves
+
+
+def ab_table(rows: list[dict]) -> str:
+    """The verdict table: one row per cell, mins per arm, deltas flagged."""
+    best = ab_best(rows)
+    lines = list(AB_TABLE_HEADER)
+    for rw, c, g in ab_cells(rows):
+        fit = {arm: best.get((rw, c, g, arm, AB_FIT)) for arm in AB_ARMS}
+        rss = {arm: best.get((rw, c, g, arm, AB_RSS)) for arm in ("old", "new")}
+        cells = [
+            f"{rw}x{c}", g,
+            *(_fmt_value(fit[arm], "s") for arm in AB_ARMS),
+            _fmt_delta(fit["old"], fit["new"], AB_BAND_PCT),
+            _fmt_delta(fit["anchor"], fit["new"], ANCHOR_BAND_PCT),
+            _fmt_value(rss["old"], "GB"), _fmt_value(rss["new"], "GB"),
+            _fmt_delta(rss["old"], rss["new"], AB_BAND_PCT),
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+_AB_COMPARISONS = (
+    ("old", AB_FIT, AB_BAND_PCT, "fit vs the previous release"),
+    ("anchor", AB_FIT, ANCHOR_BAND_PCT, f"fit vs the {ANCHOR_VERSION} anchor"),
+    ("old", AB_RSS, AB_BAND_PCT, "RSS vs the previous release"),
+)
+
+
+def _fmt_value(v: float | None, unit: str) -> str:
+    return AB_NA if v is None else f"{v:.2f}{unit}"
+
+
+def _fmt_delta(base: float | None, new: float | None, band: float) -> str:
+    if base is None or new is None:
+        return AB_NA
+    d = pct_delta(base, new)
+    flag = " **moved**" if abs(d) > band else ""
+    return f"{d:+.1f}%{flag}"
 
 
 def check_release(reg: dict, version: str) -> list[str]:

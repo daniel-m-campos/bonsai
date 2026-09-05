@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # On-pod half of the standings refresh (decision 92). Invoked by
 # scripts/standings_refresh.py's measure phase (decision 96); manual use:
-#   AXES=gpu-tall,gpu-wide GIT_SHA=<sha> PREV_VERSION=1.6.1 bash scripts/standings_refresh_pod.sh
-#   AXES=cpu-tall,cpu-wide GIT_SHA=<sha> PLANE=cpu bash scripts/standings_refresh_pod.sh
-# Writes dated standings jsonl + the A/B rows to /root/standings/.
+#   AXES=gpu-tall,gpu-wide GIT_SHA=<sha> PREV_VERSION=1.6.1 ANCHOR_VERSION=1.15.0 bash scripts/standings_refresh_pod.sh
+#   AXES=cpu-tall,cpu-wide GIT_SHA=<sha> PLANE=cpu ANCHOR_VERSION=1.15.0 bash scripts/standings_refresh_pod.sh
+# Writes dated standings jsonl + the plane's A/B rows to /root/standings/.
 #
 # One axis, one bundled spec of the same name, one dated output file
 # (<axis>-YYYY-MM.jsonl): the scenario matrix of decision 103.
@@ -26,6 +26,7 @@ AXES="${AXES:?comma list of axes}"
 AXES="${AXES// /}"
 GIT_SHA="${GIT_SHA:?commit to measure}"
 PREV_VERSION="${PREV_VERSION:-}"
+ANCHOR_VERSION="${ANCHOR_VERSION:-}"
 PLANE="${PLANE:-gpu}"
 # The axis the parity rows anchor; standings_refresh.py's PARITY_AXIS.
 PARITY_AXIS=gpu-tall
@@ -112,27 +113,84 @@ QUOTA_SPARE_CORES=1
 THROTTLED_PCT_MAX=5
 FAILURES=0
 
-# Same-pod A/B: previous release wheel (no PYTHONPATH) vs HEAD build,
-# interleaved per rep so pod thermal/state drift cannot masquerade as a
-# code delta. This is the perf-change detector.
-if [ "$PLANE" = gpu ] && [ -n "$PREV_VERSION" ]; then
-    uv pip install -q --python /opt/venv/bin/python "bonsai-gbt==$PREV_VERSION"
-    : > /root/standings/ab.jsonl
-    for rep in 1 2; do
-        for grower in cuda_depthwise cuda_levelwise; do
-            for cell in "1000000 100" "16000000 100"; do
+# Same-pod A/B, the perf-change detector: released wheels against the HEAD
+# build, every arm once per rep and the reps interleaved, so pod
+# thermal/state drift cannot masquerade as a code delta. `old` is the
+# previous release and `anchor` is one fixed release that every refresh
+# fits again (standings_refresh.py's ANCHOR_VERSION), which makes the
+# comparison cumulative: a loss that hides inside the release-over-release
+# band every time shows against the anchor as its sum. Each wheel gets its
+# own venv, so no arm displaces another or the bench extras in /opt/venv;
+# standings_ab.py needs only bonsai, numpy and psutil. The gpu pod takes the
+# cuda growers here; the cpu pod takes the cpu growers inside run_cpu_axis,
+# behind its throttle gate, because an A/B made under an undeclared ceiling
+# is exactly the measurement that gate exists to refuse. One file per
+# plane, so the two sessions cannot land on each other's rows.
+AB_ARMS=()
+if [ -n "$ANCHOR_VERSION" ]; then AB_ARMS+=(anchor); fi
+if [ -n "$PREV_VERSION" ]; then AB_ARMS+=(old); fi
+AB_ARMS+=(new)
+AB_GPU_CELLS=("1000000 100" "16000000 100")
+AB_GPU_GROWERS=(cuda_depthwise cuda_levelwise)
+AB_GPU_REPS=2
+AB_CPU_GROWERS=(levelwise depthwise leafwise)
+AB_CPU_REPS=4
+CPU_AB_AXIS=cpu-tall
+# The cpu arms wait the way the cpu axes are measured; the gpu arms are
+# measured without the flag, exactly like BENCH and CPU_BENCH above.
+if [ "$PLANE" = cpu ]; then AB_ENV=(env OMP_WAIT_POLICY=passive); else AB_ENV=(env); fi
+
+wheel_python() {  # <version>; the interpreter of a venv holding that wheel
+    venv="/root/venv-$1"
+    if [ ! -x "$venv/bin/python" ]; then
+        uv venv -q --python /opt/venv/bin/python "$venv" >&2
+        uv pip install -q --python "$venv/bin/python" \
+            "bonsai-gbt==$1" numpy psutil >&2
+    fi
+    echo "$venv/bin/python"
+}
+
+# Every arm once at one cell, appended to the plane's A/B file. A wheel
+# arm runs with an empty PYTHONPATH so the import resolves inside its venv;
+# the new arm resolves to the build this pod just made.
+ab_arms() {  # <out> <grower> <rows> <cols> <threads>
+    for arm in "${AB_ARMS[@]}"; do
+        case "$arm" in
+            anchor) py=$(wheel_python "$ANCHOR_VERSION"); path= ;;
+            old) py=$(wheel_python "$PREV_VERSION"); path= ;;
+            new) py=/opt/venv/bin/python; path=$BUILD ;;
+        esac
+        "${AB_ENV[@]}" PYTHONPATH="$path" "$py" scripts/standings_ab.py \
+            --rows "$3" --cols "$4" --grower "$2" --arm "$arm" \
+            --threads "$5" >> "$1"
+    done
+}
+
+if [ "$PLANE" = gpu ] && [ "${#AB_ARMS[@]}" -gt 1 ]; then
+    : > /root/standings/ab-gpu.jsonl
+    for rep in $(seq "$AB_GPU_REPS"); do
+        for grower in "${AB_GPU_GROWERS[@]}"; do
+            for cell in "${AB_GPU_CELLS[@]}"; do
                 set -- $cell
-                /opt/venv/bin/python scripts/standings_ab.py \
-                    --rows "$1" --cols "$2" --grower "$grower" --arm old \
-                    >> /root/standings/ab.jsonl
-                env PYTHONPATH=/root/bonsai/build-cuda/python \
-                    /opt/venv/bin/python scripts/standings_ab.py \
-                    --rows "$1" --cols "$2" --grower "$grower" --arm new \
-                    >> /root/standings/ab.jsonl
+                ab_arms /root/standings/ab-gpu.jsonl "$grower" "$1" "$2" 16
             done
         done
     done
 fi
+
+# The cpu plane's A/B at the tall cell, at the spec's thread count, run
+# by run_cpu_axis once the axis has cleared the CPU-cap gate.
+run_cpu_ab() {  # <threads>
+    [ "${#AB_ARMS[@]}" -gt 1 ] || return 0
+    rows=$(spec_field "$CPU_AB_AXIS" "s['cells'][0]['rows']")
+    cols=$(spec_field "$CPU_AB_AXIS" "s['cells'][0]['cols']")
+    : > /root/standings/ab-cpu.jsonl
+    for rep in $(seq "$AB_CPU_REPS"); do
+        for grower in "${AB_CPU_GROWERS[@]}"; do
+            ab_arms /root/standings/ab-cpu.jsonl "$grower" "$rows" "$cols" "$1"
+        done
+    done
+}
 
 # Ingest/train parity: the same anchor cell through bonsai's fused call and
 # through the two-step Dataset + train form the runner uses. The published
@@ -320,6 +378,9 @@ run_cpu_axis() {
     fi
     "${CPU_BENCH[@]}" run --spec "$axis" --out "$out" \
         --run-label "standings-$axis-$YM" --host-name "$HOST_TAG"
+    if [ "$axis" = "$CPU_AB_AXIS" ]; then
+        run_cpu_ab "$spec_threads"
+    fi
 }
 
 IFS=',' read -ra AXIS_LIST <<< "$AXES"
