@@ -604,10 +604,11 @@ void CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
         data.dispatch_bins(
             [&](auto const *bins)
             {
-                hist_tile_kernel<k_bin_tile_width><<<grid, dim3(256), tiled_shared>>>(
-                    bins, gh, rows, offsets, counts, lvl.sel_slot.device(),
-                    data.n_bins_ptr(), ds_rows, ds_feats, lvl.n_selected, out,
-                    lvl.stride, slots, grads.quant.data());
+                hist_tile_kernel<k_bin_tile_width>
+                    <<<grid, dim3(k_tile_fill_threads), tiled_shared>>>(
+                        bins, gh, rows, offsets, counts, lvl.sel_slot.device(),
+                        data.n_bins_ptr(), ds_rows, ds_feats, lvl.n_selected, out,
+                        lvl.stride, slots, grads.quant.data());
             });
         return;
     }
