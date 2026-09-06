@@ -521,6 +521,12 @@ void CudaDeviceContext::init_shared_limit()
                              optin) == cudaSuccess &&
         cudaFuncSetAttribute(hist_kernel<uint16_t>,
                              cudaFuncAttributeMaxDynamicSharedMemorySize,
+                             optin) == cudaSuccess &&
+        cudaFuncSetAttribute(hist_tile_kernel<k_bin_tile_width, uint8_t>,
+                             cudaFuncAttributeMaxDynamicSharedMemorySize,
+                             optin) == cudaSuccess &&
+        cudaFuncSetAttribute(hist_tile_kernel<k_bin_tile_width, uint16_t>,
+                             cudaFuncAttributeMaxDynamicSharedMemorySize,
                              optin) == cudaSuccess)
     {
         shared_limit = static_cast<size_t>(optin);
@@ -630,7 +636,7 @@ void CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
     size_t const tiled_shared = static_cast<size_t>(k_bin_tile_width) *
                                 tile_stride(lvl.stride) * sizeof(hist_int_t);
     size_t const feature_shared = static_cast<size_t>(lvl.stride) * sizeof(hist_int_t);
-    bool const   tiled          = tiled_shared <= k_max_shared_bytes;
+    bool const   tiled          = tiled_shared <= shared_limit;
     note_plane(tiled, tiled ? tiled_shared : feature_shared);
     uint32_t const grid_x  = tiled ? tile_count(ds_feats) : lvl.n_selected;
     uint32_t const by_rows = (max_rows + 32767) / 32768;

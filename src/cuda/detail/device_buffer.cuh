@@ -72,13 +72,16 @@ inline constexpr uint32_t k_derive_blocks_per_sm = 4;
 inline constexpr uint32_t k_level_find_threads   = 256;
 inline constexpr uint32_t k_level_find_warps     = k_level_find_threads / 32;
 
-// perf: Three 32 KiB tile blocks fit a 100 KiB SM, so 512 threads per block
-// keep 1536 threads resident where 256 left 768; the 16M-row root fill
-// measured 0.68 s at 256 and 0.60 s at 512 per 100 trees on an L40S.
-inline constexpr uint32_t k_tile_fill_threads  = 512;
+// perf: A 16-feature tile of 255-bin planes is 64 KiB, one block per 100 KiB
+// SM, so that block carries every warp the SM holds: 1024 threads under the
+// launch bound (64 registers, no spills). Same-pod RTX PRO 6000 train over
+// 100 trees at 16M x 128: 3.32 s at width 8 x 512 threads, 3.09 s at width
+// 16 x 512, 2.90 s at 16 x 768, 2.88 s at 16 x 1024; the wider strip costs
+// the partition kernels 0.15 s of that, two rows per 32-byte sector, not four.
+inline constexpr uint32_t k_tile_fill_threads  = 1024;
 inline constexpr uint32_t k_small_fill_threads = 128;
 
-inline constexpr uint32_t k_bin_tile_width   = 8;
+inline constexpr uint32_t k_bin_tile_width   = 16;
 inline constexpr uint32_t k_plane_group      = 32;
 inline constexpr uint32_t k_plane_group_mask = k_plane_group - 1;
 static_assert((k_bin_tile_width & (k_bin_tile_width - 1)) == 0,
