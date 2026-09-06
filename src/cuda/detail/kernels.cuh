@@ -1062,12 +1062,14 @@ inline __device__ bool is_finite_dev(double x)
 struct ScreenNode
 {
     Interval real_g, real_h, miss_g, miss_h, node_score, l1, l2;
+    Interval min_child_hess, min_gain;
     float    inv_g, inv_h;
     bool     on;
 };
 
 inline __device__ ScreenNode screen_node(NodeCut const &nd, double2 inv, double l1,
-                                         double l2, bool exhaustive)
+                                         double l2, double min_child_hess,
+                                         double min_gain, bool exhaustive)
 {
     bool const finite = is_finite_dev(nd.real_g) && is_finite_dev(nd.real_h) &&
                         is_finite_dev(nd.miss_g) && is_finite_dev(nd.miss_h) &&
@@ -1076,16 +1078,18 @@ inline __device__ ScreenNode screen_node(NodeCut const &nd, double2 inv, double 
     float const inv_h = static_cast<float>(inv.y);
     bool const  exact_inv =
         static_cast<double>(inv_g) == inv.x && static_cast<double>(inv_h) == inv.y;
-    return {.real_g     = interval_of(nd.real_g),
-            .real_h     = interval_of(nd.real_h),
-            .miss_g     = interval_of(nd.miss_g),
-            .miss_h     = interval_of(nd.miss_h),
-            .node_score = interval_of(nd.node_score),
-            .l1         = interval_of(l1),
-            .l2         = interval_of(l2),
-            .inv_g      = inv_g,
-            .inv_h      = inv_h,
-            .on         = !exhaustive && finite && exact_inv};
+    return {.real_g         = interval_of(nd.real_g),
+            .real_h         = interval_of(nd.real_h),
+            .miss_g         = interval_of(nd.miss_g),
+            .miss_h         = interval_of(nd.miss_h),
+            .node_score     = interval_of(nd.node_score),
+            .l1             = interval_of(l1),
+            .l2             = interval_of(l2),
+            .min_child_hess = interval_of(min_child_hess),
+            .min_gain       = interval_of(min_gain),
+            .inv_g          = inv_g,
+            .inv_h          = inv_h,
+            .on             = !exhaustive && finite && exact_inv};
 }
 
 struct CutScreen
@@ -1112,23 +1116,21 @@ inline __device__ SplitBounds split_bounds(Interval pg, Interval ph,
 
 template <bool k_l1>
 inline __device__ CutScreen screen_cut(Interval pg, Interval ph, ScreenNode const &sn,
-                                       int dl, int mc, double min_child_hess,
-                                       double min_gain)
+                                       int dl, int mc)
 {
-    SplitBounds const b            = split_bounds(pg, ph, sn, dl);
-    bool const        surely_valid = static_cast<double>(b.hL.lo) >= min_child_hess &&
-                              static_cast<double>(b.hR.lo) >= min_child_hess;
-    bool const surely_invalid = static_cast<double>(b.hL.hi) < min_child_hess ||
-                                static_cast<double>(b.hR.hi) < min_child_hess;
+    SplitBounds const b = split_bounds(pg, ph, sn, dl);
+    bool const        surely_valid =
+        b.hL.lo >= sn.min_child_hess.hi && b.hR.lo >= sn.min_child_hess.hi;
+    bool const surely_invalid =
+        b.hL.hi < sn.min_child_hess.lo || b.hR.hi < sn.min_child_hess.lo;
     Interval const gain = (cut_score_bounds<k_l1>(b.gL, b.hL, sn.l1, sn.l2) +
                            cut_score_bounds<k_l1>(b.gR, b.hR, sn.l1, sn.l2)) -
                           sn.node_score;
-    bool const certified = surely_valid && mc == 0 && gain.lo > 0.0f &&
-                           static_cast<double>(gain.lo) >= min_gain;
+    bool const certified =
+        surely_valid && mc == 0 && gain.lo > 0.0f && gain.lo >= sn.min_gain.hi;
     return {.upper     = gain.hi,
             .certified = certified ? gain.lo : 0.0f,
-            .drop      = surely_invalid || gain.hi <= 0.0f ||
-                    static_cast<double>(gain.hi) < min_gain};
+            .drop      = surely_invalid || gain.hi <= 0.0f || gain.hi < sn.min_gain.lo};
 }
 
 inline __device__ float warp_max_nonnegative(float v)
@@ -1266,8 +1268,7 @@ inline __device__ FeatBest sweep_cuts(CutStrip const &s, uint32_t n_cut, int n_d
         for (int d = 0; d < n_dirs; ++d)
         {
             int const       dl = 1 - d;
-            CutScreen const sc =
-                screen_cut<k_l1>(pg, ph, sn, dl, nd.mc, min_child_hess, min_gain);
+            CutScreen const sc = screen_cut<k_l1>(pg, ph, sn, dl, nd.mc);
             l_star =
                 fmaxf(l_star, warp_max_nonnegative(b < n_cut ? sc.certified : 0.0f));
             bool const keep =
@@ -1364,9 +1365,10 @@ find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive const *der
                                 .lo         = node_bounds[pair_off(node)],
                                 .hi         = node_bounds[pair_off(node) + 1],
                                 .mc         = monotone[f]};
-    ScreenNode const sn      = screen_node(nd, inv, l1, l2, exhaustive);
-    uint32_t const   n_cut   = nb - 2;
-    int const        n_dirs  = (miss_q.x == 0 && miss_q.y == 0) ? 1 : 2;
+    ScreenNode const sn =
+        screen_node(nd, inv, l1, l2, min_child_hess, min_gain, exhaustive);
+    uint32_t const n_cut  = nb - 2;
+    int const      n_dirs = (miss_q.x == 0 && miss_q.y == 0) ? 1 : 2;
 
     FeatBest const best = sweep_strip<k_l1>(strip, n_cut, stride, n_dirs, nd, sn, inv,
                                             l1, l2, min_child_hess, min_gain, sel);
