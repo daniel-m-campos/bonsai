@@ -956,10 +956,25 @@ inline __device__ Interval interval_of(double x)
     return {.lo = __double2float_rd(x), .hi = __double2float_ru(x)};
 }
 
+constexpr float k_two_pow_32 = 4294967296.0F;
+
+inline __device__ float float_below(hist_int_t q)
+{
+    int32_t const  hi = static_cast<int32_t>(q >> 32);
+    uint32_t const lo = static_cast<uint32_t>(q);
+    return __fmaf_rd(__int2float_rd(hi), k_two_pow_32, __uint2float_rd(lo));
+}
+
+inline __device__ float float_above(hist_int_t q)
+{
+    int32_t const  hi = static_cast<int32_t>(q >> 32);
+    uint32_t const lo = static_cast<uint32_t>(q);
+    return __fmaf_ru(__int2float_ru(hi), k_two_pow_32, __uint2float_ru(lo));
+}
+
 inline __device__ Interval interval_of(hist_int_t q, float inv)
 {
-    return {.lo = __fmul_rd(__ll2float_rd(q), inv),
-            .hi = __fmul_ru(__ll2float_ru(q), inv)};
+    return {.lo = __fmul_rd(float_below(q), inv), .hi = __fmul_ru(float_above(q), inv)};
 }
 
 inline __device__ Interval operator+(Interval a, Interval b)
