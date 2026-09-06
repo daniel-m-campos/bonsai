@@ -450,6 +450,47 @@ void require_values_match(std::vector<float> const &cpu, std::vector<float> cons
     }
 }
 
+template <class CpuGrower, class GpuGrower>
+void require_l1_parity(TreeConfig const &cfg)
+{
+    auto        scenario = random_scenario();
+    auto const &ds       = scenario.built.ds;
+    CpuGrower   cpu_grower(cfg);
+    GpuGrower   gpu_grower(cfg);
+    auto        cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    auto        gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    require_values_match(cpu.values, gpu.values);
+}
+
+TEST_CASE("CudaGrowers: lambda_l1 matches the host on every plane",
+          "[cuda][grower][fit]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    TreeConfig cfg;
+    cfg.max_depth        = 5;
+    cfg.max_leaves       = 31;
+    cfg.min_data_in_leaf = 4;
+    cfg.lambda_l1        = 0.5F;
+
+    SECTION("depthwise")
+    {
+        require_l1_parity<DepthwiseGrower<CpuHistogramEngine>, CudaDepthwiseGrower>(
+            cfg);
+    }
+    SECTION("oblivious")
+    {
+        require_l1_parity<ObliviousGrower<CpuHistogramEngine>, CudaObliviousGrower>(
+            cfg);
+    }
+    SECTION("leafwise")
+    {
+        require_l1_parity<LeafwiseGrower<CpuHistogramEngine>, CudaLeafwiseGrower>(cfg);
+    }
+}
+
 TEST_CASE("CudaLeafwiseGrower predictions match LeafwiseGrower", "[cuda][grower][fit]")
 {
     if (!cuda_available())
