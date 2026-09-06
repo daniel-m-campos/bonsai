@@ -778,6 +778,7 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
 
     auto root_lap = prof_counters.lap();
     lvl.cur_is_a  = true;
+    lvl.depth     = 0;
     lvl.cur().reserve(lvl.slot_cells());
     check(cudaMemset(lvl.cur().data(), 0, lvl.slot_cells() * sizeof(hist_int_t)),
           "zero root slot");
@@ -1064,7 +1065,8 @@ void CudaDeviceContext::advance_level(Dataset const                             
               "profile event record");
         lvl.prof_ev_recorded = true;
     }
-    lvl.cur_is_a     = !lvl.cur_is_a;
+    lvl.cur_is_a = !lvl.cur_is_a;
+    ++lvl.depth;
     lvl.slot_offsets = lvl.next_offsets;
     lvl.slot_counts  = lvl.next_counts;
     if (prof.enabled)
@@ -1077,7 +1079,8 @@ void CudaDeviceContext::advance_level(Dataset const                             
 
 void CudaDeviceContext::advance_layout_only()
 {
-    lvl.cur_is_a     = !lvl.cur_is_a;
+    lvl.cur_is_a = !lvl.cur_is_a;
+    ++lvl.depth;
     lvl.slot_offsets = lvl.next_offsets;
     lvl.slot_counts  = lvl.next_counts;
 }
@@ -1097,14 +1100,17 @@ void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &co
 
     lvl.feat_best.reserve(n * lvl.n_selected);
     lvl.node_best.reserve(n);
-    find_kernel<<<dim3(lvl.n_selected, static_cast<uint32_t>(n)), dim3(32)>>>(
+    auto const n_nodes       = static_cast<uint32_t>(n);
+    bool const children_read = lvl.depth + 1 < static_cast<uint32_t>(config.max_depth);
+    find_kernel<<<find_grid(lvl.n_selected, n_nodes), dim3(32)>>>(
         lvl.cur().data(), lvl.other().data(), lvl.derive.device(),
         lvl.features.device(), data.n_bins_ptr(), lvl.node_sums.device(),
         lvl.node_bounds.device(), any_mask ? lvl.allowed.device() : nullptr,
         lvl.monotone.device(), lvl.n_selected, lvl.stride, config.lambda_l1,
         config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
         lvl.feat_best.data(),
-        /*hist_slot=*/nullptr, grads.quant.data(), finder_exhaustive);
+        /*hist_slot=*/nullptr, grads.quant.data(), finder_exhaustive, n_nodes,
+        children_read);
     check(cudaGetLastError(), "find launch");
     reduce_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(k_reduce_threads)>>>(
         lvl.feat_best.data(), lvl.n_selected, lvl.node_best.device());
@@ -1509,14 +1515,14 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
 
     lvl.feat_best.reserve(static_cast<size_t>(n) * lvl.n_selected);
     lvl.node_best.reserve(n);
-    find_kernel<<<dim3(lvl.n_selected, n), dim3(32)>>>(
+    find_kernel<<<find_grid(lvl.n_selected, n), dim3(32)>>>(
         leaf.pool.data(), leaf.pool.data(), leaf.find_derive.device(),
         lvl.features.device(), data.n_bins_ptr(), leaf.find_stats.device(),
         leaf.find_stats.device() + (2 * n), any_mask ? lvl.allowed.device() : nullptr,
         leaf.monotone.device(), lvl.n_selected, lvl.stride, config.lambda_l1,
         config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
         lvl.feat_best.data(), leaf.find_slots.device(), grads.quant.data(),
-        finder_exhaustive);
+        finder_exhaustive, n, /*store_derived=*/true);
     check(cudaGetLastError(), "leaf find launch");
     reduce_kernel<<<dim3(n), dim3(k_reduce_threads)>>>(
         lvl.feat_best.data(), lvl.n_selected, lvl.node_best.device());

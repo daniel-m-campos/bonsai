@@ -600,6 +600,37 @@ inline __device__ CellT *strip_at(CellT *hists, uint32_t slot, uint32_t n_sel,
     return hists + (((static_cast<size_t>(slot) * n_sel) + sel) * stride);
 }
 
+struct CutStrip
+{
+    hist_int_t const *cells;
+    hist_int_t const *small;
+    hist_int_t       *store;
+};
+
+inline __device__ void derive_strip_range(CutStrip const &s, uint32_t from,
+                                          uint32_t stride)
+{
+    for (uint32_t i = from + threadIdx.x; i < stride; i += blockDim.x)
+    {
+        s.store[i] = s.cells[i] - s.small[i];
+    }
+}
+
+inline __device__ CutStrip open_strip(hist_int_t *hists, hist_int_t const *parents,
+                                      SiblingDerive const &d, uint32_t slot,
+                                      uint32_t n_sel, uint32_t sel, uint32_t stride,
+                                      bool store_derived)
+{
+    hist_int_t *own = strip_at(hists, slot, n_sel, sel, stride);
+    if (d.parent_slot == k_not_selected)
+    {
+        return {.cells = own, .small = nullptr, .store = nullptr};
+    }
+    return {.cells = strip_at(parents, d.parent_slot, n_sel, sel, stride),
+            .small = strip_at(hists, d.small_slot, n_sel, sel, stride),
+            .store = store_derived ? own : nullptr};
+}
+
 inline __device__ void derive_large_strip(hist_int_t *hists, hist_int_t const *parents,
                                           SiblingDerive const &d, uint32_t slot,
                                           uint32_t n_sel, uint32_t sel, uint32_t stride)
@@ -608,13 +639,8 @@ inline __device__ void derive_large_strip(hist_int_t *hists, hist_int_t const *p
     {
         return;
     }
-    hist_int_t       *large  = strip_at(hists, slot, n_sel, sel, stride);
-    hist_int_t const *parent = strip_at(parents, d.parent_slot, n_sel, sel, stride);
-    hist_int_t const *small  = strip_at(hists, d.small_slot, n_sel, sel, stride);
-    for (uint32_t i = threadIdx.x; i < stride; i += blockDim.x)
-    {
-        large[i] = parent[i] - small[i];
-    }
+    derive_strip_range(open_strip(hists, parents, d, slot, n_sel, sel, stride, true), 0,
+                       stride);
     __syncwarp();
 }
 
@@ -1162,12 +1188,41 @@ struct CutPrefix
     hist_int_t qg, qh;
 };
 
-inline __device__ longlong2 load_cut(hist_int_t const *cells, uint32_t b,
-                                     uint32_t n_cut)
+template <bool k_derived, bool k_store>
+inline __device__ longlong2 load_cut(CutStrip const &s, uint32_t b, uint32_t n_cut)
 {
     static_assert(sizeof(longlong2) == 2 * sizeof(hist_int_t));
-    return (b < n_cut) ? reinterpret_cast<longlong2 const *>(cells)[b]
-                       : longlong2{0, 0};
+    if (b >= n_cut)
+    {
+        return longlong2{0, 0};
+    }
+    longlong2 const p = reinterpret_cast<longlong2 const *>(s.cells)[b];
+    if constexpr (!k_derived)
+    {
+        return p;
+    }
+    else
+    {
+        longlong2 const q = reinterpret_cast<longlong2 const *>(s.small)[b];
+        longlong2 const d = {p.x - q.x, p.y - q.y};
+        if constexpr (k_store)
+        {
+            reinterpret_cast<longlong2 *>(s.store)[b] = d;
+        }
+        return d;
+    }
+}
+
+inline __device__ longlong2 strip_miss(CutStrip const &s, uint32_t nb)
+{
+    size_t const at   = pair_off(nb - 1);
+    longlong2    miss = {s.cells[at], s.cells[at + 1]};
+    if (s.small != nullptr)
+    {
+        miss.x -= s.small[at];
+        miss.y -= s.small[at + 1];
+    }
+    return miss;
 }
 
 inline __device__ CutPrefix warp_cut_prefix(longlong2 cut, hist_int_t &carry_g,
@@ -1181,11 +1236,11 @@ inline __device__ CutPrefix warp_cut_prefix(longlong2 cut, hist_int_t &carry_g,
     return pre;
 }
 
-template <bool k_l1>
-inline __device__ FeatBest sweep_cuts(hist_int_t const *cells, uint32_t n_cut,
-                                      int n_dirs, NodeCut const &nd,
-                                      ScreenNode const &sn, double2 inv, double l1,
-                                      double l2, double min_child_hess, double min_gain,
+template <bool k_l1, bool k_derived, bool k_store>
+inline __device__ FeatBest sweep_cuts(CutStrip const &s, uint32_t n_cut, int n_dirs,
+                                      NodeCut const &nd, ScreenNode const &sn,
+                                      double2 inv, double l1, double l2,
+                                      double min_child_hess, double min_gain,
                                       uint32_t sel)
 {
     uint32_t const lane = threadIdx.x;
@@ -1195,12 +1250,12 @@ inline __device__ FeatBest sweep_cuts(hist_int_t const *cells, uint32_t n_cut,
     float      l_star   = 0.0f;
     hist_int_t carry_g  = 0;
     hist_int_t carry_h  = 0;
-    longlong2  next     = load_cut(cells, lane, n_cut);
+    longlong2  next     = load_cut<k_derived, k_store>(s, lane, n_cut);
     for (uint32_t base = 0; base < n_cut; base += 32)
     {
         uint32_t const  b   = base + lane;
         longlong2 const cut = next;
-        next                = load_cut(cells, b + 32, n_cut);
+        next                = load_cut<k_derived, k_store>(s, b + 32, n_cut);
         CutPrefix const pre = warp_cut_prefix(cut, carry_g, carry_h);
         Interval const  pg  = interval_of(pre.qg, sn.inv_g);
         Interval const  ph  = interval_of(pre.qh, sn.inv_h);
@@ -1229,6 +1284,33 @@ inline __device__ FeatBest sweep_cuts(hist_int_t const *cells, uint32_t n_cut,
     return warp_best_split(best);
 }
 
+inline __device__ bool node_sweeps(char const *allowed, size_t oidx, uint32_t nb)
+{
+    return (allowed == nullptr || allowed[oidx] != 0) && nb >= 2;
+}
+
+template <bool k_l1>
+inline __device__ FeatBest sweep_strip(CutStrip const &s, uint32_t n_cut,
+                                       uint32_t stride, int n_dirs, NodeCut const &nd,
+                                       ScreenNode const &sn, double2 inv, double l1,
+                                       double l2, double min_child_hess,
+                                       double min_gain, uint32_t sel)
+{
+    if (s.small == nullptr)
+    {
+        return sweep_cuts<k_l1, false, false>(s, n_cut, n_dirs, nd, sn, inv, l1, l2,
+                                              min_child_hess, min_gain, sel);
+    }
+    if (s.store == nullptr)
+    {
+        return sweep_cuts<k_l1, true, false>(s, n_cut, n_dirs, nd, sn, inv, l1, l2,
+                                             min_child_hess, min_gain, sel);
+    }
+    derive_strip_range(s, static_cast<uint32_t>(pair_off(n_cut)), stride);
+    return sweep_cuts<k_l1, true, true>(s, n_cut, n_dirs, nd, sn, inv, l1, l2,
+                                        min_child_hess, min_gain, sel);
+}
+
 template <bool k_l1>
 inline __device__ void
 find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive const *derive,
@@ -1236,54 +1318,53 @@ find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive const *der
           double const *node_bounds, char const *allowed, int const *monotone,
           uint32_t n_sel, uint32_t stride, double l1, double l2, double min_child_hess,
           double min_gain, FeatBest *out, uint32_t const *hist_slot,
-          GhQuant const *quant, bool exhaustive)
+          GhQuant const *quant, bool exhaustive, uint32_t n_nodes, bool store_derived)
 {
-    uint32_t const node = blockIdx.y;
-    uint32_t const sel  = blockIdx.x;
+    uint32_t const node = (2 * blockIdx.y) + (blockIdx.x & 1U);
+    uint32_t const sel  = blockIdx.x >> 1;
     uint32_t const lane = threadIdx.x;
-    if (sel >= n_sel)
+    if (node >= n_nodes)
     {
         return;
     }
-    uint32_t const slot = hist_slot != nullptr ? hist_slot[node] : node;
-    derive_large_strip(hists, parents, derive[node], slot, n_sel, sel, stride);
-    size_t const oidx = (static_cast<size_t>(node) * n_sel) + sel;
+    uint32_t const slot  = hist_slot != nullptr ? hist_slot[node] : node;
+    CutStrip const strip = open_strip(hists, parents, derive[node], slot, n_sel, sel,
+                                      stride, store_derived);
+    size_t const   oidx  = (static_cast<size_t>(node) * n_sel) + sel;
     if (lane == 0)
     {
         out[oidx] = FeatBest{};
     }
-    if (allowed != nullptr && allowed[oidx] == 0)
-    {
-        return;
-    }
     uint32_t const f  = features[sel];
     uint32_t const nb = n_bins[f];
-    if (nb < 2)
+    if (!node_sweeps(allowed, oidx, nb))
     {
+        if (strip.store != nullptr)
+        {
+            derive_strip_range(strip, 0, stride);
+        }
         return;
     }
-    hist_int_t const *cells   = strip_at(hists, slot, n_sel, sel, stride);
-    double2 const     inv     = quant->inv;
-    double const      g_total = node_sums[pair_off(node)];
-    double const      h_total = node_sums[pair_off(node) + 1];
-    hist_int_t const  miss_qg = cells[pair_off(nb - 1)];
-    hist_int_t const  miss_qh = cells[pair_off(nb - 1) + 1];
-    double const      miss_g  = static_cast<double>(miss_qg) * inv.x;
-    double const      miss_h  = static_cast<double>(miss_qh) * inv.y;
-    NodeCut const     nd      = {.miss_g     = miss_g,
-                                 .miss_h     = miss_h,
-                                 .real_g     = g_total - miss_g,
-                                 .real_h     = h_total - miss_h,
-                                 .node_score = cut_score<k_l1>(g_total, h_total, l1, l2),
-                                 .lo         = node_bounds[pair_off(node)],
-                                 .hi         = node_bounds[pair_off(node) + 1],
-                                 .mc         = monotone[f]};
-    ScreenNode const  sn      = screen_node(nd, inv, l1, l2, exhaustive);
-    uint32_t const    n_cut   = nb - 2;
-    int const         n_dirs  = (miss_qg == 0 && miss_qh == 0) ? 1 : 2;
+    double2 const    inv     = quant->inv;
+    double const     g_total = node_sums[pair_off(node)];
+    double const     h_total = node_sums[pair_off(node) + 1];
+    longlong2 const  miss_q  = strip_miss(strip, nb);
+    double const     miss_g  = static_cast<double>(miss_q.x) * inv.x;
+    double const     miss_h  = static_cast<double>(miss_q.y) * inv.y;
+    NodeCut const    nd      = {.miss_g     = miss_g,
+                                .miss_h     = miss_h,
+                                .real_g     = g_total - miss_g,
+                                .real_h     = h_total - miss_h,
+                                .node_score = cut_score<k_l1>(g_total, h_total, l1, l2),
+                                .lo         = node_bounds[pair_off(node)],
+                                .hi         = node_bounds[pair_off(node) + 1],
+                                .mc         = monotone[f]};
+    ScreenNode const sn      = screen_node(nd, inv, l1, l2, exhaustive);
+    uint32_t const   n_cut   = nb - 2;
+    int const        n_dirs  = (miss_q.x == 0 && miss_q.y == 0) ? 1 : 2;
 
-    FeatBest const best = sweep_cuts<k_l1>(cells, n_cut, n_dirs, nd, sn, inv, l1, l2,
-                                           min_child_hess, min_gain, sel);
+    FeatBest const best = sweep_strip<k_l1>(strip, n_cut, stride, n_dirs, nd, sn, inv,
+                                            l1, l2, min_child_hess, min_gain, sel);
     if (lane == 0 && best.valid != 0)
     {
         out[oidx] = best;
@@ -1297,18 +1378,25 @@ __global__ void __launch_bounds__(32, 16)
                 double const *node_bounds, char const *allowed, int const *monotone,
                 uint32_t n_sel, uint32_t stride, double l1, double l2,
                 double min_child_hess, double min_gain, FeatBest *out,
-                uint32_t const *hist_slot, GhQuant const *quant, bool exhaustive)
+                uint32_t const *hist_slot, GhQuant const *quant, bool exhaustive,
+                uint32_t n_nodes, bool store_derived)
 {
     if (l1 == 0.0)
     {
         find_node<false>(hists, parents, derive, features, n_bins, node_sums,
                          node_bounds, allowed, monotone, n_sel, stride, l1, l2,
-                         min_child_hess, min_gain, out, hist_slot, quant, exhaustive);
+                         min_child_hess, min_gain, out, hist_slot, quant, exhaustive,
+                         n_nodes, store_derived);
         return;
     }
     find_node<true>(hists, parents, derive, features, n_bins, node_sums, node_bounds,
                     allowed, monotone, n_sel, stride, l1, l2, min_child_hess, min_gain,
-                    out, hist_slot, quant, exhaustive);
+                    out, hist_slot, quant, exhaustive, n_nodes, store_derived);
+}
+
+inline dim3 find_grid(uint32_t n_sel, uint32_t n_nodes)
+{
+    return {2 * n_sel, (n_nodes + 1) / 2};
 }
 
 constexpr uint32_t k_reduce_threads = 256;

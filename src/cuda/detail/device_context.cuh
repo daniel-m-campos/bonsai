@@ -89,6 +89,7 @@ struct CudaDeviceContext
         DeviceBuffer<hist_int_t> level_a;
         DeviceBuffer<hist_int_t> level_b;
         bool                     cur_is_a   = true;
+        uint32_t                 depth      = 0;
         uint32_t                 n_selected = 0;
         uint32_t                 stride     = 0;
         Staged<uint32_t>         slots;
