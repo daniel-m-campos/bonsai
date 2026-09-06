@@ -22,6 +22,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 #include <vector_types.h>
@@ -522,10 +523,16 @@ void CudaDeviceContext::init_shared_limit()
         cudaFuncSetAttribute(hist_kernel<uint16_t>,
                              cudaFuncAttributeMaxDynamicSharedMemorySize,
                              optin) == cudaSuccess &&
-        cudaFuncSetAttribute(hist_tile_kernel<k_bin_tile_width, uint8_t>,
+        cudaFuncSetAttribute(hist_tile_kernel<k_bin_tile_width, false, uint8_t>,
                              cudaFuncAttributeMaxDynamicSharedMemorySize,
                              optin) == cudaSuccess &&
-        cudaFuncSetAttribute(hist_tile_kernel<k_bin_tile_width, uint16_t>,
+        cudaFuncSetAttribute(hist_tile_kernel<k_bin_tile_width, false, uint16_t>,
+                             cudaFuncAttributeMaxDynamicSharedMemorySize,
+                             optin) == cudaSuccess &&
+        cudaFuncSetAttribute(hist_tile_kernel<k_bin_tile_width, true, uint8_t>,
+                             cudaFuncAttributeMaxDynamicSharedMemorySize,
+                             optin) == cudaSuccess &&
+        cudaFuncSetAttribute(hist_tile_kernel<k_bin_tile_width, true, uint16_t>,
                              cudaFuncAttributeMaxDynamicSharedMemorySize,
                              optin) == cudaSuccess)
     {
@@ -608,9 +615,16 @@ void CudaDeviceContext::note_plane(bool tiled, size_t shared)
     plane_noted = true;
     std::println(stderr,
                  "bonsai: bin plane is tile-blocked, width {}, {} cells; histogram "
-                 "build is {} at {} shared bytes per block, fixed-point int64 cells",
+                 "build is {} at {} shared bytes per block, fixed-point int64 cells{}",
                  k_bin_tile_width, data.bins_are_u8 ? "u8" : "u16",
-                 tiled ? "tiled" : "one feature per block", shared);
+                 tiled ? "tiled" : "one feature per block", shared,
+                 unit_hessian() ? ", unit-hessian count plane" : "");
+}
+
+bool CudaDeviceContext::unit_hessian() const
+{
+    return resident.armed && resident.kind == DeviceObjectiveKind::mse &&
+           !resident.weighted;
 }
 
 void CudaDeviceContext::note_quant()
@@ -650,14 +664,25 @@ void CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
     if (tiled)
     {
         dim3 const grid(grid_x, n_nodes, n_chunks);
+        auto const launch = [&](auto const *bins, auto unit_h)
+        {
+            hist_tile_kernel<k_bin_tile_width, decltype(unit_h)::value>
+                <<<grid, dim3(k_tile_fill_threads), tiled_shared>>>(
+                    bins, gh, rows, offsets, counts, lvl.sel_slot.device(),
+                    data.n_bins_ptr(), ds_rows, ds_feats, lvl.n_selected, out,
+                    lvl.stride, slots, grads.quant.data());
+        };
         data.dispatch_bins(
             [&](auto const *bins)
             {
-                hist_tile_kernel<k_bin_tile_width>
-                    <<<grid, dim3(k_tile_fill_threads), tiled_shared>>>(
-                        bins, gh, rows, offsets, counts, lvl.sel_slot.device(),
-                        data.n_bins_ptr(), ds_rows, ds_feats, lvl.n_selected, out,
-                        lvl.stride, slots, grads.quant.data());
+                if (unit_hessian())
+                {
+                    launch(bins, std::true_type{});
+                }
+                else
+                {
+                    launch(bins, std::false_type{});
+                }
             });
         return;
     }

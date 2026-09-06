@@ -123,11 +123,30 @@ inline __device__ void plane_add(uint32_t *w, uint32_t b, hist_int_t qg, hist_in
     hist_add_words(w + i + (2 * k_plane_group), w + i + (3 * k_plane_group), qh);
 }
 
+inline __device__ void plane_add_unit_h(uint32_t *w, uint32_t b, hist_int_t qg)
+{
+    uint32_t const i = plane_word(b);
+    hist_add_words(w + i, w + i + k_plane_group, qg);
+    atomicAdd(w + i + (2 * k_plane_group), 1U);
+}
+
 inline __device__ hist_int_t plane_cell(uint32_t const *w, uint32_t i)
 {
     uint32_t const lo = plane_word(i >> 1) + ((i & 1U) * 2 * k_plane_group);
     return static_cast<hist_int_t>(
         (static_cast<unsigned long long>(w[lo + k_plane_group]) << 32) | w[lo]);
+}
+
+template <bool UnitH>
+inline __device__ hist_int_t plane_cell_scaled(uint32_t const *w, uint32_t i,
+                                               hist_int_t qh)
+{
+    hist_int_t const v = plane_cell(w, i);
+    if constexpr (UnitH)
+    {
+        return (i & 1U) != 0 ? v * qh : v;
+    }
+    return v;
 }
 
 inline __device__ NodeRows node_rows(uint32_t const *rows, float2 const *gh_ordered,
@@ -382,7 +401,7 @@ inline __device__ void visit_tile_rows(TileBlock<W> const &tb, BinT const *bins,
     }
 }
 
-template <uint32_t W, typename BinT>
+template <uint32_t W, bool UnitH, typename BinT>
 __global__ void __launch_bounds__(k_tile_fill_threads)
     hist_tile_kernel(BinT const *bins, float2 const *gh_ordered, uint32_t const *rows,
                      uint32_t const *row_offsets, uint32_t const *row_counts,
@@ -402,12 +421,23 @@ __global__ void __launch_bounds__(k_tile_fill_threads)
         return;
     }
     zero_shared(sh, tb.wt * tile_stride(stride));
-    visit_tile_rows<W>(tb, bins, n_rows, seg, quant->scale,
+    float2 const scale = quant->scale;
+    visit_tile_rows<W>(tb, bins, n_rows, seg, scale,
                        (blockIdx.z * blockDim.x) + threadIdx.x, gridDim.z * blockDim.x,
                        [&](uint32_t j, uint32_t b, hist_int_t qg, hist_int_t qh)
-                       { plane_add(plane_words(sh, j, stride), b, qg, qh); });
+                       {
+                           if constexpr (UnitH)
+                           {
+                               plane_add_unit_h(plane_words(sh, j, stride), b, qg);
+                           }
+                           else
+                           {
+                               plane_add(plane_words(sh, j, stride), b, qg, qh);
+                           }
+                       });
     __syncthreads();
-    uint32_t const oslot = out_slot != nullptr ? out_slot[tb.node] : tb.node;
+    hist_int_t const unit_qh = quantise(1.0F, scale.y);
+    uint32_t const   oslot   = out_slot != nullptr ? out_slot[tb.node] : tb.node;
 #pragma unroll
     for (uint32_t j = 0; j < W; ++j)
     {
@@ -419,7 +449,7 @@ __global__ void __launch_bounds__(k_tile_fill_threads)
             uint32_t const nb = n_bins[tb.f0 + j];
             for (uint32_t i = threadIdx.x; i < 2 * nb; i += blockDim.x)
             {
-                hist_int_t const v = plane_cell(w, i);
+                hist_int_t const v = plane_cell_scaled<UnitH>(w, i, unit_qh);
                 if (v != 0)
                 {
                     hist_add(&o[i], v);
