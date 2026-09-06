@@ -321,6 +321,7 @@ struct CudaDeviceContext
     void       wait_for_profile(ProfileCounters::Lap &lap);
     void       note_plane(bool tiled, size_t shared);
     void       note_quant();
+    bool       unit_hessian() const;
     void       launch_hist(uint32_t ds_rows, uint32_t ds_feats, uint32_t n_nodes,
                            uint32_t max_rows, float2 const *gh, uint32_t const *rows,
                            uint32_t const *offsets, uint32_t const *counts, hist_int_t *out,
