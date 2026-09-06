@@ -78,18 +78,56 @@ inline __device__ void hist_add(hist_int_t *cell, hist_int_t q)
 // taken from the returned low word cut the 16M-row root fill from 1.09 s to
 // 0.68 s per 100 trees on an L40S. Whole-word integer sums commute, so the
 // split is exact whatever order the halves land in.
-inline __device__ void hist_add_shared(hist_int_t *cell, hist_int_t q)
+inline __device__ void hist_add_words(uint32_t *lo_word, uint32_t *hi_word,
+                                      hist_int_t q)
 {
-    auto *const    words = reinterpret_cast<uint32_t *>(cell);
     auto const     uq    = static_cast<unsigned long long>(q);
     uint32_t const lo    = static_cast<uint32_t>(uq);
     uint32_t const hi    = static_cast<uint32_t>(uq >> 32);
-    uint32_t const old   = atomicAdd(words, lo);
+    uint32_t const old   = atomicAdd(lo_word, lo);
     uint32_t const carry = old > (UINT32_MAX - lo) ? 1U : 0U;
     if (hi + carry != 0)
     {
-        atomicAdd(words + 1, hi + carry);
+        atomicAdd(hi_word, hi + carry);
     }
+}
+
+inline __device__ void hist_add_shared(hist_int_t *cell, hist_int_t q)
+{
+    auto *const words = reinterpret_cast<uint32_t *>(cell);
+    hist_add_words(words, words + 1, q);
+}
+
+inline __device__ uint32_t *plane_words(hist_int_t *sh, uint32_t j, uint32_t stride)
+{
+    return reinterpret_cast<uint32_t *>(sh +
+                                        (static_cast<size_t>(j) * tile_stride(stride)));
+}
+
+// perf: Each 32-bin group holds four 32-word planes (g lo, g hi, h lo, h hi),
+// so bin b lands in shared bank b mod 32 where the interleaved cell put eight
+// bins on one bank. The plane offsets are constants folded into the atomic's
+// immediate, which keeps hist_tile_kernel<8> at 37 registers; runtime plane
+// bases read 94 and cut residency to one 512-thread block per SM. Same-pod
+// RTX PRO 6000 train time: wide depthwise 5.07 s to 4.85 s, tall 3.61 s to
+// 3.32 s over 100 trees.
+inline __device__ uint32_t plane_word(uint32_t b)
+{
+    return ((b & ~k_plane_group_mask) << 2) | (b & k_plane_group_mask);
+}
+
+inline __device__ void plane_add(uint32_t *w, uint32_t b, hist_int_t qg, hist_int_t qh)
+{
+    uint32_t const i = plane_word(b);
+    hist_add_words(w + i, w + i + k_plane_group, qg);
+    hist_add_words(w + i + (2 * k_plane_group), w + i + (3 * k_plane_group), qh);
+}
+
+inline __device__ hist_int_t plane_cell(uint32_t const *w, uint32_t i)
+{
+    uint32_t const lo = plane_word(i >> 1) + ((i & 1U) * 2 * k_plane_group);
+    return static_cast<hist_int_t>(
+        (static_cast<unsigned long long>(w[lo + k_plane_group]) << 32) | w[lo]);
 }
 
 inline __device__ NodeRows node_rows(uint32_t const *rows, float2 const *gh_ordered,
@@ -322,7 +360,7 @@ inline __device__ void visit_tile_rows(TileBlock<W> const &tb, BinT const *bins,
         {
             if (tb.slot[j] != k_not_selected)
             {
-                visit(j, pair_off(strip[j]), qg, qh);
+                visit(j, strip[j], qg, qh);
             }
         }
     }
@@ -363,15 +401,11 @@ hist_tile_kernel(BinT const *bins, float2 const *gh_ordered, uint32_t const *row
     {
         return;
     }
-    zero_shared(sh, tb.wt * stride);
+    zero_shared(sh, tb.wt * tile_stride(stride));
     visit_tile_rows<W>(tb, bins, n_rows, seg, quant->scale,
                        (blockIdx.z * blockDim.x) + threadIdx.x, gridDim.z * blockDim.x,
-                       [&](uint32_t j, uint32_t off, hist_int_t qg, hist_int_t qh)
-                       {
-                           hist_int_t *my = sh + (static_cast<size_t>(j) * stride);
-                           hist_add_shared(&my[off], qg);
-                           hist_add_shared(&my[off + 1], qh);
-                       });
+                       [&](uint32_t j, uint32_t b, hist_int_t qg, hist_int_t qh)
+                       { plane_add(plane_words(sh, j, stride), b, qg, qh); });
     __syncthreads();
     uint32_t const oslot = out_slot != nullptr ? out_slot[tb.node] : tb.node;
 #pragma unroll
@@ -379,15 +413,16 @@ hist_tile_kernel(BinT const *bins, float2 const *gh_ordered, uint32_t const *row
     {
         if (tb.slot[j] != k_not_selected)
         {
-            hist_int_t const *base = sh + (static_cast<size_t>(j) * stride);
-            hist_int_t       *o =
+            uint32_t const *w = plane_words(sh, j, stride);
+            hist_int_t     *o =
                 out + (((static_cast<size_t>(oslot) * n_sel) + tb.slot[j]) * stride);
             uint32_t const nb = n_bins[tb.f0 + j];
             for (uint32_t i = threadIdx.x; i < 2 * nb; i += blockDim.x)
             {
-                if (base[i] != 0)
+                hist_int_t const v = plane_cell(w, i);
+                if (v != 0)
                 {
-                    hist_add(&o[i], base[i]);
+                    hist_add(&o[i], v);
                 }
             }
         }
@@ -415,10 +450,11 @@ __global__ void hist_small_kernel(BinT const *bins, float2 const *gh_ordered,
     hist_int_t    *o = out + (static_cast<size_t>(out_slot[tb.node]) * n_sel * stride);
     NodeRows const seg = node_rows(rows, gh_ordered, row_offsets, row_counts, tb.node);
     visit_tile_rows<W>(tb, bins, n_rows, seg, quant->scale, threadIdx.x, blockDim.x,
-                       [&](uint32_t j, uint32_t off, hist_int_t qg, hist_int_t qh)
+                       [&](uint32_t j, uint32_t b, hist_int_t qg, hist_int_t qh)
                        {
                            hist_int_t *cell =
-                               o + (static_cast<size_t>(tb.slot[j]) * stride) + off;
+                               o + (static_cast<size_t>(tb.slot[j]) * stride) +
+                               pair_off(b);
                            hist_add(cell, qg);
                            hist_add(cell + 1, qh);
                        });

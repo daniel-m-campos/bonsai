@@ -78,7 +78,9 @@ inline constexpr uint32_t k_level_find_warps     = k_level_find_threads / 32;
 inline constexpr uint32_t k_tile_fill_threads  = 512;
 inline constexpr uint32_t k_small_fill_threads = 128;
 
-inline constexpr uint32_t k_bin_tile_width = 8;
+inline constexpr uint32_t k_bin_tile_width   = 8;
+inline constexpr uint32_t k_plane_group      = 32;
+inline constexpr uint32_t k_plane_group_mask = k_plane_group - 1;
 static_assert((k_bin_tile_width & (k_bin_tile_width - 1)) == 0,
               "the tile width must be a power of two: the index arithmetic divides by "
               "it on every bin read");
@@ -92,6 +94,11 @@ inline __host__ __device__ uint32_t tile_strip(uint32_t t, uint32_t n_feats)
 inline __host__ __device__ uint32_t tile_count(uint32_t n_feats)
 {
     return (n_feats + k_bin_tile_width - 1) / k_bin_tile_width;
+}
+
+inline __host__ __device__ uint32_t tile_stride(uint32_t stride)
+{
+    return (stride + (2 * k_plane_group) - 1) & ~((2 * k_plane_group) - 1);
 }
 
 inline __host__ __device__ size_t tiled_cell(uint32_t f, uint32_t r, uint32_t n_rows,
