@@ -96,6 +96,7 @@ struct CudaDeviceContext
         Staged<uint32_t>         triples;
         Staged<SiblingDerive>    derive;
         Staged<double>           node_sums;
+        Staged<NodeScreen>       node_screen;
         Staged<double>           node_bounds;
         Staged<char>             allowed;
         Staged<int>              monotone;
@@ -209,6 +210,7 @@ struct CudaDeviceContext
         PinnedStaged<PartOpDev>     part_op;
         PinnedStaged<uint32_t>      build_seg;
         PinnedStaged<double>        find_stats;
+        PinnedStaged<NodeScreen>    find_screen;
         PinnedStaged<uint32_t>      find_slots;
         PinnedStaged<SiblingDerive> find_derive;
         Staged<int>                 monotone;
@@ -342,7 +344,7 @@ struct CudaDeviceContext
          leaf_split(Dataset const &ds, CudaHistogramEngine::LeafPartOp const &op);
     void leaf_build(Dataset const &ds, uint32_t small_slot, uint32_t large_slot);
     bool leaf_stage_find(std::span<SplitInput const> nodes,
-                         std::span<uint32_t const>   slots);
+                         std::span<uint32_t const> slots, TreeConfig const &config);
     void leaf_find(Dataset const &ds, TreeConfig const &config,
                    std::span<SplitInput const> nodes, std::span<uint32_t const> slots,
                    std::span<SplitOutput> out, std::span<NodeTotals> child_sums);

@@ -33,6 +33,22 @@ struct GhQuant
     double2 inv;
 };
 
+struct Interval
+{
+    float lo, hi;
+};
+
+struct ScreenConst
+{
+    Interval l1, l2, min_child_hess, min_gain;
+};
+
+struct NodeScreen
+{
+    double   score;
+    Interval score_bounds, sum_grad, sum_hess;
+};
+
 struct NodeRows
 {
     uint32_t const *rows;
