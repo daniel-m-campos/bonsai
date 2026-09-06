@@ -1135,14 +1135,20 @@ struct CutPrefix
     hist_int_t qg, qh;
 };
 
-inline __device__ CutPrefix warp_cut_prefix(hist_int_t const *cells, uint32_t b,
-                                            uint32_t n_cut, hist_int_t &carry_g,
+inline __device__ longlong2 load_cut(hist_int_t const *cells, uint32_t b,
+                                     uint32_t n_cut)
+{
+    static_assert(sizeof(longlong2) == 2 * sizeof(hist_int_t));
+    return (b < n_cut) ? reinterpret_cast<longlong2 const *>(cells)[b]
+                       : longlong2{0, 0};
+}
+
+inline __device__ CutPrefix warp_cut_prefix(longlong2 cut, hist_int_t &carry_g,
                                             hist_int_t &carry_h)
 {
-    hist_int_t const sg = warp_inclusive_scan((b < n_cut) ? cells[pair_off(b)] : 0);
-    hist_int_t const sh_ =
-        warp_inclusive_scan((b < n_cut) ? cells[pair_off(b) + 1] : 0);
-    CutPrefix const pre = {.qg = carry_g + sg, .qh = carry_h + sh_};
+    hist_int_t const sg  = warp_inclusive_scan(cut.x);
+    hist_int_t const sh_ = warp_inclusive_scan(cut.y);
+    CutPrefix const  pre = {.qg = carry_g + sg, .qh = carry_h + sh_};
     carry_g += __shfl_sync(0xffffffffU, sg, 31);
     carry_h += __shfl_sync(0xffffffffU, sh_, 31);
     return pre;
@@ -1162,10 +1168,13 @@ inline __device__ FeatBest sweep_cuts(hist_int_t const *cells, uint32_t n_cut,
     float      l_star   = 0.0f;
     hist_int_t carry_g  = 0;
     hist_int_t carry_h  = 0;
+    longlong2  next     = load_cut(cells, lane, n_cut);
     for (uint32_t base = 0; base < n_cut; base += 32)
     {
         uint32_t const  b   = base + lane;
-        CutPrefix const pre = warp_cut_prefix(cells, b, n_cut, carry_g, carry_h);
+        longlong2 const cut = next;
+        next                = load_cut(cells, b + 32, n_cut);
+        CutPrefix const pre = warp_cut_prefix(cut, carry_g, carry_h);
         Interval const  pg  = interval_of(pre.qg, sn.inv_g);
         Interval const  ph  = interval_of(pre.qh, sn.inv_h);
         for (int d = 0; d < n_dirs; ++d)
