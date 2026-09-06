@@ -1140,13 +1140,11 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
     lvl.stage_level_sums(level);
     lap(prof.lfind_stage_s);
 
-    size_t const scratch = static_cast<size_t>(lvl.n_selected) * 2 * (lvl.stride / 2);
-    lvl.level_score.reserve(scratch);
     lvl.feat_best.reserve(lvl.n_selected);
     lvl.node_best.reserve(1);
     lvl.level_child.reserve(4 * n);
     bool const finder_derives =
-        lvl.n_selected >= static_cast<uint32_t>(sm_count) * k_derive_warps_per_sm;
+        lvl.n_selected >= static_cast<uint32_t>(sm_count) * k_derive_blocks_per_sm;
     if (!finder_derives)
     {
         derive_strips_kernel<<<dim3(lvl.n_selected, static_cast<uint32_t>(n)),
@@ -1155,13 +1153,13 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
                                            lvl.stride);
         check(cudaGetLastError(), "level derive launch");
     }
-    level_find_kernel<<<dim3(lvl.n_selected), dim3(32)>>>(
+    level_find_kernel<<<dim3(lvl.n_selected), dim3(k_level_find_threads)>>>(
         lvl.cur().data(), lvl.other().data(),
         finder_derives ? lvl.derive.device() : nullptr, lvl.features.device(),
         data.n_bins_ptr(), lvl.node_sums.device(), lvl.n_selected,
         static_cast<uint32_t>(n), lvl.stride, config.lambda_l1, config.lambda_l2,
-        config.min_child_hess, config.min_gain_to_split, lvl.level_score.data(),
-        lvl.feat_best.data(), grads.quant.data());
+        config.min_child_hess, config.min_gain_to_split, lvl.feat_best.data(),
+        grads.quant.data());
     check(cudaGetLastError(), "level find launch");
     reduce_kernel<<<dim3(1), dim3(k_reduce_threads)>>>(
         lvl.feat_best.data(), lvl.n_selected, lvl.node_best.device());

@@ -49,9 +49,11 @@ inline constexpr size_t hist_shared_bytes(size_t max_bins)
 // 48 KiB static budget). The engine raises it at runtime to the device's
 // opt-in limit (~99 KiB on consumer parts, 227 KiB on sm_90), moving the bin
 // count the device refuses from ~3k to ~6k+ per feature.
-inline constexpr size_t   k_max_shared_bytes    = 48UL * 1024UL;
-inline constexpr uint32_t k_fill_blocks_per_sm  = 4;
-inline constexpr uint32_t k_derive_warps_per_sm = 4;
+inline constexpr size_t   k_max_shared_bytes     = 48UL * 1024UL;
+inline constexpr uint32_t k_fill_blocks_per_sm   = 4;
+inline constexpr uint32_t k_derive_blocks_per_sm = 4;
+inline constexpr uint32_t k_level_find_threads   = 256;
+inline constexpr uint32_t k_level_find_warps     = k_level_find_threads / 32;
 
 // perf: Three 32 KiB tile blocks fit a 100 KiB SM, so 512 threads per block
 // keep 1536 threads resident where 256 left 768; the 16M-row root fill
