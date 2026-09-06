@@ -100,7 +100,6 @@ struct CudaDeviceContext
         DeviceBuffer<FeatBest>   feat_best;
         Staged<FeatBest>         node_best;
         Staged<double>           level_child;
-        DeviceBuffer<double>     level_score;
         Staged<uint32_t>         small_offsets;
         Staged<uint32_t>         small_counts;
         Staged<uint32_t>         small_slots;

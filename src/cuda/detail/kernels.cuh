@@ -656,65 +656,131 @@ inline __device__ SplitSumsDev split_sums_dev(double pg, double ph, double miss_
             .hR = (real_h - ph) + (dl == 0 ? miss_h : 0.0)};
 }
 
-inline __device__ double node_block_sum(double v, uint32_t block)
+inline __device__ hist_int_t warp_inclusive_scan(hist_int_t v)
 {
-    for (uint32_t o = block / 2; o > 0; o >>= 1)
+    uint32_t const lane = threadIdx.x % 32;
+    for (uint32_t o = 1; o < 32; o <<= 1)
     {
-        v += __shfl_down_sync(0xffffffffU, v, static_cast<int>(o));
+        hist_int_t const up = __shfl_up_sync(0xffffffffU, v, static_cast<int>(o));
+        if (lane >= o)
+        {
+            v += up;
+        }
     }
     return v;
 }
 
-inline __device__ double warp_sum(double v)
+inline __device__ uint32_t bit_reverse5(uint32_t i)
 {
-    return __shfl_sync(0xffffffffU, node_block_sum(v, 32), 0);
+    return __brev(i) >> 27;
 }
 
-struct LevelLanes
+struct ShuffleTreeSum
 {
-    uint32_t block;
-    uint32_t groups;
-    uint32_t node;
-    uint32_t group;
+    double part[5];
+
+    __device__ double push(uint32_t leaf, double v)
+    {
+        bool carry = true;
+#pragma unroll
+        for (uint32_t j = 0; j < 5; ++j)
+        {
+            bool const   set    = ((leaf >> j) & 1U) != 0U;
+            double const merged = part[j] + v;
+            part[j]             = (carry && !set) ? v : part[j];
+            v                   = (carry && set) ? merged : v;
+            carry               = carry && set;
+        }
+        return v;
+    }
 };
 
-inline __device__ LevelLanes level_lanes(uint32_t n_nodes, uint32_t lane)
+struct LevelNode
 {
-    uint32_t block = 1;
-    while (block < n_nodes && block < 32)
-    {
-        block <<= 1;
-    }
-    return {.block  = block,
-            .groups = 32 / block,
-            .node   = lane & (block - 1),
-            .group  = lane / block};
+    double miss_g, miss_h, real_g, real_h, node_ps;
+};
+
+inline __device__ LevelNode stage_level_node(hist_int_t const *cells,
+                                             double const *node_sums, uint32_t p,
+                                             uint32_t nb, double2 inv, double l1,
+                                             double l2)
+{
+    double const g      = node_sums[pair_off(p)];
+    double const h      = node_sums[pair_off(p) + 1];
+    double const miss_g = static_cast<double>(cells[pair_off(nb - 1)]) * inv.x;
+    double const miss_h = static_cast<double>(cells[pair_off(nb - 1) + 1]) * inv.y;
+    return {.miss_g  = miss_g,
+            .miss_h  = miss_h,
+            .real_g  = g - miss_g,
+            .real_h  = h - miss_h,
+            .node_ps = score(g, h, l1, l2)};
 }
 
-inline __device__ hist_int_t group_exclusive_scan(hist_int_t own, uint32_t block)
+inline __device__ int level_missing_dirs(hist_int_t const *hists, uint32_t n_nodes,
+                                         uint32_t n_sel, uint32_t f, uint32_t stride,
+                                         uint32_t nb)
 {
-    hist_int_t acc = own;
-    for (uint32_t o = block; o < 32; o <<= 1)
+    bool all_empty = true;
+    for (uint32_t base = 0; base < n_nodes; base += k_level_find_threads)
     {
-        hist_int_t const up = __shfl_up_sync(0xffffffffU, acc, static_cast<int>(o));
-        if (threadIdx.x >= o)
+        uint32_t const p     = base + threadIdx.x;
+        bool           empty = true;
+        if (p < n_nodes)
         {
-            acc += up;
+            hist_int_t const *cells = strip_at(hists, p, n_sel, f, stride);
+            empty = cells[pair_off(nb - 1)] == 0 && cells[pair_off(nb - 1) + 1] == 0;
         }
+        all_empty = all_empty && (__syncthreads_and(empty ? 1 : 0) != 0);
     }
-    return acc - own;
+    return all_empty ? 1 : 2;
 }
 
-// perf: An infeasible node does NOT veto the whole level candidate. It
-// contributes its parent score (zero gain) and the broadcast split still
-// applies to it. At depth >= 5 some frontier node is always near-empty, so
-// vetoing rejected every good deep cut and GPU levelwise trailed its own CPU
-// grower (and catboost) at scale.
-inline __device__ double level_cut_score(SplitSumsDev const &s, double node_ps,
-                                         double l1, double l2, double min_child_hess)
+struct LevelPrefixTotals
 {
-    bool const ok = s.hL >= min_child_hess && s.hR >= min_child_hess;
-    return ok ? score(s.gL, s.hL, l1, l2) + score(s.gR, s.hR, l1, l2) : node_ps;
+    hist_int_t own_g, own_h, pre_g, pre_h;
+};
+
+struct CutSums
+{
+    hist_int_t g, h;
+};
+
+inline __device__ CutSums level_cut_sums(hist_int_t const *cells, bool load, uint32_t b,
+                                         uint32_t pass,
+                                         LevelPrefixTotals (&tot)[k_level_find_warps])
+{
+    uint32_t const tid   = threadIdx.x;
+    uint32_t const warp  = tid / 32;
+    uint32_t const lane  = tid % 32;
+    hist_int_t     own_g = load ? cells[pair_off(b)] : 0;
+    hist_int_t     own_h = load ? cells[pair_off(b) + 1] : 0;
+    hist_int_t     pre_g = 0;
+    hist_int_t     pre_h = 0;
+    for (uint32_t j = 0; cells != nullptr && j < pass; ++j)
+    {
+        uint32_t const e = (j * k_level_find_threads) + tid;
+        pre_g += cells[pair_off(e)];
+        pre_h += cells[pair_off(e) + 1];
+    }
+    own_g = warp_inclusive_scan(own_g);
+    own_h = warp_inclusive_scan(own_h);
+    if (pass > 0)
+    {
+        pre_g = warp_inclusive_scan(pre_g);
+        pre_h = warp_inclusive_scan(pre_h);
+    }
+    if (lane == 31)
+    {
+        tot[warp] = {.own_g = own_g, .own_h = own_h, .pre_g = pre_g, .pre_h = pre_h};
+    }
+    __syncthreads();
+    CutSums sums = {.g = own_g, .h = own_h};
+    for (uint32_t w = 0; w < k_level_find_warps; ++w)
+    {
+        sums.g += tot[w].pre_g + (w < warp ? tot[w].own_g : 0);
+        sums.h += tot[w].pre_h + (w < warp ? tot[w].own_h : 0);
+    }
+    return sums;
 }
 
 inline __device__ bool feat_better(double ga, int ba, int da, int va, double gb, int bb,
@@ -737,6 +803,37 @@ inline __device__ bool feat_better(double ga, int ba, int da, int va, double gb,
         return ba < bb;
     }
     return da > db;
+}
+
+inline __device__ FeatBest warp_best_cut(FeatBest best)
+{
+    for (int off = 16; off > 0; off >>= 1)
+    {
+        double const og = __shfl_down_sync(0xffffffffU, best.gain, off);
+        int const    ob = __shfl_down_sync(0xffffffffU, best.bin, off);
+        int const    od = __shfl_down_sync(0xffffffffU, best.dl, off);
+        int const    ov = __shfl_down_sync(0xffffffffU, best.valid, off);
+        if (feat_better(og, ob, od, ov, best.gain, best.bin, best.dl, best.valid))
+        {
+            best.gain  = og;
+            best.bin   = ob;
+            best.dl    = od;
+            best.valid = ov;
+        }
+    }
+    return best;
+}
+
+// perf: An infeasible node does NOT veto the whole level candidate. It
+// contributes its parent score (zero gain) and the broadcast split still
+// applies to it. At depth >= 5 some frontier node is always near-empty, so
+// vetoing rejected every good deep cut and GPU levelwise trailed its own CPU
+// grower (and catboost) at scale.
+inline __device__ double level_cut_score(SplitSumsDev const &s, double node_ps,
+                                         double l1, double l2, double min_child_hess)
+{
+    bool const ok = s.hL >= min_child_hess && s.hR >= min_child_hess;
+    return ok ? score(s.gL, s.hL, l1, l2) + score(s.gR, s.hR, l1, l2) : node_ps;
 }
 
 __global__ void find_kernel(hist_int_t *hists, hist_int_t const *parents,
@@ -927,25 +1024,133 @@ __global__ void reduce_kernel(FeatBest const *per_feat, uint32_t n_sel, FeatBest
     }
 }
 
-__global__ void level_find_kernel(hist_int_t *hists, hist_int_t const *parents,
-                                  SiblingDerive const *derive, uint32_t const *features,
-                                  uint32_t const *n_bins, double const *node_sums,
-                                  uint32_t n_sel, uint32_t n_nodes, uint32_t stride,
-                                  double l1, double l2, double min_child_hess,
-                                  double min_gain, double *score_scratch,
-                                  FeatBest *out_feat, GhQuant const *quant)
+struct LevelPassSums
 {
-    uint32_t const max_cut    = stride / 2;
-    uint32_t const f          = blockIdx.x;
-    uint32_t const lane       = threadIdx.x;
-    uint32_t const fid        = features[f];
-    uint32_t const nb         = n_bins[fid];
-    double        *s_score[2] = {score_scratch + (static_cast<size_t>(f) * 2 * max_cut),
-                                 score_scratch + ((static_cast<size_t>(f) * 2 + 1) * max_cut)};
-    double         parent_sum = 0.0;
+    double parent, cut[2];
+};
+
+struct LevelCut
+{
+    uint32_t b, pass;
+    bool     in;
+};
+
+inline __device__ double level_cut_partial(LevelNode const &nd, CutSums const &sums,
+                                           bool live, int dl, double2 inv, double l1,
+                                           double l2, double min_child_hess)
+{
+    double const pg = static_cast<double>(sums.g) * inv.x;
+    double const ph = static_cast<double>(sums.h) * inv.y;
+    auto const   s =
+        split_sums_dev(pg, ph, nd.miss_g, nd.miss_h, nd.real_g, nd.real_h, dl);
+    return live ? level_cut_score(s, nd.node_ps, l1, l2, min_child_hess) : 0.0;
+}
+
+inline __device__ void stage_level_chunk(LevelNode (&s_node)[k_level_find_threads],
+                                         hist_int_t const *hists,
+                                         double const *node_sums, uint32_t base,
+                                         uint32_t n_nodes, uint32_t n_sel, uint32_t f,
+                                         uint32_t stride, uint32_t nb, double2 inv,
+                                         double l1, double l2)
+{
+    uint32_t const p = base + threadIdx.x;
+    __syncthreads();
+    if (p < n_nodes)
+    {
+        s_node[threadIdx.x] = stage_level_node(strip_at(hists, p, n_sel, f, stride),
+                                               node_sums, p, nb, inv, l1, l2);
+    }
+    __syncthreads();
+}
+
+inline __device__ LevelPassSums level_pass_sums(
+    hist_int_t const *hists, double const *node_sums,
+    LevelNode (&s_node)[k_level_find_threads],
+    LevelPrefixTotals (&s_tot)[2][k_level_find_warps], uint32_t f, uint32_t n_sel,
+    uint32_t n_nodes, uint32_t stride, uint32_t nb, int n_dirs, LevelCut cut,
+    double2 inv, double l1, double l2, double min_child_hess)
+{
+    LevelPassSums  acc = {.parent = 0.0, .cut = {0.0, 0.0}};
+    ShuffleTreeSum ps_tree{};
+    ShuffleTreeSum cut_tree[2]{};
+    for (uint32_t base = 0; base < n_nodes; base += k_level_find_threads)
+    {
+        stage_level_chunk(s_node, hists, node_sums, base, n_nodes, n_sel, f, stride, nb,
+                          inv, l1, l2);
+        uint32_t const n_chunk = min(k_level_find_threads, n_nodes - base);
+        for (uint32_t i0 = 0; i0 < n_chunk; i0 += 32)
+        {
+            for (uint32_t i = 0; i < 32; ++i)
+            {
+                uint32_t const    local  = i0 + bit_reverse5(i);
+                uint32_t const    p      = base + local;
+                bool const        active = p < n_nodes;
+                bool const        live   = active && cut.in;
+                LevelNode const   nd     = active ? s_node[local] : LevelNode{};
+                hist_int_t const *cells =
+                    active ? strip_at(hists, p, n_sel, f, stride) : nullptr;
+                CutSums const sums =
+                    level_cut_sums(cells, live, cut.b, cut.pass, s_tot[i & 1U]);
+                double const t_ps = ps_tree.push(i, nd.node_ps);
+                acc.parent += i == 31 ? t_ps : 0.0;
+#pragma unroll
+                for (int d = 0; d < 2; ++d)
+                {
+                    int const    dl = 1 - d;
+                    double const cs = level_cut_partial(
+                        nd, sums, live && d < n_dirs, dl, inv, l1, l2, min_child_hess);
+                    double const t = cut_tree[dl].push(i, cs);
+                    acc.cut[dl] += i == 31 ? t : 0.0;
+                }
+            }
+        }
+    }
+    return acc;
+}
+
+inline __device__ FeatBest block_best_cut(FeatBest best,
+                                          FeatBest (&s_best)[k_level_find_warps])
+{
+    uint32_t const warp = threadIdx.x / 32;
+    uint32_t const lane = threadIdx.x % 32;
+    best                = warp_best_cut(best);
+    if (lane == 0)
+    {
+        s_best[warp] = best;
+    }
+    __syncthreads();
+    for (uint32_t w = 1; w < k_level_find_warps; ++w)
+    {
+        FeatBest const o = s_best[w];
+        if (feat_better(o.gain, o.bin, o.dl, o.valid, best.gain, best.bin, best.dl,
+                        best.valid))
+        {
+            best = o;
+        }
+    }
+    return best;
+}
+
+__global__ void __launch_bounds__(k_level_find_threads)
+    level_find_kernel(hist_int_t *hists, hist_int_t const *parents,
+                      SiblingDerive const *derive, uint32_t const *features,
+                      uint32_t const *n_bins, double const *node_sums, uint32_t n_sel,
+                      uint32_t n_nodes, uint32_t stride, double l1, double l2,
+                      double min_child_hess, double min_gain, FeatBest *out_feat,
+                      GhQuant const *quant)
+{
+    __shared__ LevelNode         s_node[k_level_find_threads];
+    __shared__ LevelPrefixTotals s_tot[2][k_level_find_warps];
+    __shared__ FeatBest          s_best[k_level_find_warps];
+
+    uint32_t const f   = blockIdx.x;
+    uint32_t const tid = threadIdx.x;
+    uint32_t const fid = features[f];
+    uint32_t const nb  = n_bins[fid];
 
     derive_level_strips(hists, parents, derive, n_nodes, n_sel, f, stride);
-    if (lane == 0)
+    __syncthreads();
+    if (tid == 0)
     {
         out_feat[f] = FeatBest{};
     }
@@ -953,114 +1158,49 @@ __global__ void level_find_kernel(hist_int_t *hists, hist_int_t const *parents,
     {
         return;
     }
-    uint32_t const n_cut = nb - 2;
+    uint32_t const n_cut  = nb - 2;
+    double2 const  inv    = quant->inv;
+    int const      n_dirs = level_missing_dirs(hists, n_nodes, n_sel, f, stride, nb);
 
-    bool all_missing_empty = true;
-    for (uint32_t base = 0; base < n_nodes; base += 32)
+    FeatBest best = {.gain  = 0.0,
+                     .gL    = 0.0,
+                     .hL    = 0.0,
+                     .gR    = 0.0,
+                     .hR    = 0.0,
+                     .bin   = 0,
+                     .dl    = 0,
+                     .valid = 0,
+                     .sel   = static_cast<int32_t>(f)};
+    for (uint32_t pass = 0; pass * k_level_find_threads < n_cut; ++pass)
     {
-        uint32_t const p     = base + lane;
-        bool           empty = true;
-        if (p < n_nodes)
+        LevelCut const      cut = {.b    = (pass * k_level_find_threads) + tid,
+                                   .pass = pass,
+                                   .in   = (pass * k_level_find_threads) + tid < n_cut};
+        LevelPassSums const sums =
+            level_pass_sums(hists, node_sums, s_node, s_tot, f, n_sel, n_nodes, stride,
+                            nb, n_dirs, cut, inv, l1, l2, min_child_hess);
+#pragma unroll
+        for (int d = 0; d < 2; ++d)
         {
-            hist_int_t const *cells =
-                hists + ((static_cast<size_t>(p) * n_sel + f) * stride);
-            empty = cells[pair_off(nb - 1)] == 0 && cells[pair_off(nb - 1) + 1] == 0;
-        }
-        all_missing_empty =
-            all_missing_empty && (__all_sync(0xffffffffU, empty ? 1 : 0) != 0);
-    }
-    int const n_dirs = all_missing_empty ? 1 : 2;
-
-    for (uint32_t b = lane; b < n_cut; b += 32)
-    {
-        for (int d = 0; d < n_dirs; ++d)
-        {
-            s_score[1 - d][b] = 0.0;
-        }
-    }
-    __syncwarp();
-
-    double2 const    inv   = quant->inv;
-    LevelLanes const ll    = level_lanes(n_nodes, lane);
-    uint32_t const   chunk = (n_cut + ll.groups - 1) / ll.groups;
-    uint32_t const   b0    = ll.group * chunk;
-    uint32_t const   b_end = min(b0 + chunk, n_cut);
-    for (uint32_t base = 0; base < n_nodes; base += ll.block)
-    {
-        uint32_t const    p      = base + ll.node;
-        bool const        active = p < n_nodes;
-        hist_int_t const *cells =
-            active ? hists + ((static_cast<size_t>(p) * n_sel + f) * stride) : nullptr;
-        double const g = active ? node_sums[pair_off(p)] : 0.0;
-        double const h = active ? node_sums[pair_off(p) + 1] : 0.0;
-        double const miss_g =
-            active ? static_cast<double>(cells[pair_off(nb - 1)]) * inv.x : 0.0;
-        double const miss_h =
-            active ? static_cast<double>(cells[pair_off(nb - 1) + 1]) * inv.y : 0.0;
-        double const real_g  = g - miss_g;
-        double const real_h  = h - miss_h;
-        double const node_ps = active ? score(g, h, l1, l2) : 0.0;
-        parent_sum += warp_sum(ll.group == 0 ? node_ps : 0.0);
-
-        hist_int_t own_g = 0;
-        hist_int_t own_h = 0;
-        for (uint32_t b = b0; active && b < b_end; ++b)
-        {
-            own_g += cells[pair_off(b)];
-            own_h += cells[pair_off(b) + 1];
-        }
-        hist_int_t pq_g = group_exclusive_scan(own_g, ll.block);
-        hist_int_t pq_h = group_exclusive_scan(own_h, ll.block);
-        for (uint32_t b = b0; b < b0 + chunk; ++b)
-        {
-            bool const in = active && b < b_end;
-            if (in)
+            int const    dl   = 1 - d;
+            double const gain = sums.cut[dl] - sums.parent;
+            if (d < n_dirs && cut.in && gain > best.gain && gain >= min_gain)
             {
-                pq_g += cells[pair_off(b)];
-                pq_h += cells[pair_off(b) + 1];
-            }
-            double const pg = static_cast<double>(pq_g) * inv.x;
-            double const ph = static_cast<double>(pq_h) * inv.y;
-            for (int d = 0; d < n_dirs; ++d)
-            {
-                int const  dl = 1 - d;
-                auto const s =
-                    split_sums_dev(pg, ph, miss_g, miss_h, real_g, real_h, dl);
-                double const cs =
-                    in ? level_cut_score(s, node_ps, l1, l2, min_child_hess) : 0.0;
-                double const sum = node_block_sum(cs, ll.block);
-                if (ll.node == 0 && b < b_end)
-                {
-                    s_score[dl][b] += sum;
-                }
+                best = {.gain  = gain,
+                        .gL    = 0,
+                        .hL    = 0,
+                        .gR    = 0,
+                        .hR    = 0,
+                        .bin   = static_cast<int32_t>(cut.b),
+                        .dl    = dl,
+                        .valid = 1,
+                        .sel   = static_cast<int32_t>(f)};
             }
         }
-        __syncwarp();
     }
-
-    if (lane == 0)
+    best = block_best_cut(best, s_best);
+    if (tid == 0)
     {
-        FeatBest best = {};
-        for (uint32_t b = 0; b < n_cut; ++b)
-        {
-            for (int d = 0; d < n_dirs; ++d)
-            {
-                int const    dl   = 1 - d;
-                double const gain = s_score[dl][b] - parent_sum;
-                if (gain > best.gain && gain >= min_gain)
-                {
-                    best = {.gain  = gain,
-                            .gL    = 0,
-                            .hL    = 0,
-                            .gR    = 0,
-                            .hR    = 0,
-                            .bin   = static_cast<int32_t>(b),
-                            .dl    = dl,
-                            .valid = 1,
-                            .sel   = static_cast<int32_t>(f)};
-                }
-            }
-        }
         out_feat[f] = best;
     }
 }
