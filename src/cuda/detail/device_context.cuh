@@ -153,21 +153,29 @@ struct CudaDeviceContext
         void prof_read(ProfileCounters &prof);
         ~LevelPipeline();
 
+        DeviceBuffer<uint32_t> &rows_of(bool in_b)
+        {
+            return in_b ? rows_b : rows;
+        }
+        DeviceBuffer<float2> &gh_of(bool in_b)
+        {
+            return in_b ? gh_b : gh_ordered;
+        }
         DeviceBuffer<uint32_t> &cur_rows()
         {
-            return cur_is_a ? rows : rows_b;
+            return rows_of(!cur_is_a);
         }
         DeviceBuffer<uint32_t> &other_rows()
         {
-            return cur_is_a ? rows_b : rows;
+            return rows_of(cur_is_a);
         }
         DeviceBuffer<float2> &cur_gh()
         {
-            return cur_is_a ? gh_ordered : gh_b;
+            return gh_of(!cur_is_a);
         }
         DeviceBuffer<float2> &other_gh()
         {
-            return cur_is_a ? gh_b : gh_ordered;
+            return gh_of(cur_is_a);
         }
         DeviceBuffer<hist_int_t> &cur()
         {
@@ -202,6 +210,7 @@ struct CudaDeviceContext
         DeviceBuffer<hist_int_t> pool;
         std::vector<uint32_t>    slot_offsets;
         std::vector<uint32_t>    slot_counts;
+        std::vector<uint8_t>     slot_in_b;
         // perf: Per-round staging. Pinned and asynchronous because the round's whole
         // host residue is these uploads: a pageable copy stream-syncs before it
         // starts, so 8 of them per round drain the pipeline 8 times.
