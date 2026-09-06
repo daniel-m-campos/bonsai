@@ -31,6 +31,7 @@ struct GhQuant
 {
     float2  scale;
     double2 inv;
+    float2  inv_f;
 };
 
 struct Interval

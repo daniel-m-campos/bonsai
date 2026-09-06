@@ -154,6 +154,7 @@ __global__ void gh_quant_kernel(uint2 const *absmax, uint32_t n_rows, GhQuant *o
     GhQuant q{};
     q.scale.x = fixed_point_scale(absmax->x, n_rows, &q.inv.x);
     q.scale.y = fixed_point_scale(absmax->y, n_rows, &q.inv.y);
+    q.inv_f   = {static_cast<float>(q.inv.x), static_cast<float>(q.inv.y)};
     *out      = q;
 }
 
@@ -1095,16 +1096,16 @@ struct ScreenNode
 };
 
 inline __device__ ScreenNode screen_node(NodeCut const &nd, NodeScreen const &ns,
-                                         longlong2 miss_q, double2 inv,
+                                         longlong2 miss_q, GhQuant const &q,
                                          ScreenConst const &c, bool exhaustive)
 {
     bool const finite = is_finite_dev(nd.real_g) && is_finite_dev(nd.real_h) &&
                         is_finite_dev(nd.miss_g) && is_finite_dev(nd.miss_h) &&
                         is_finite_dev(nd.node_score);
-    float const inv_g = static_cast<float>(inv.x);
-    float const inv_h = static_cast<float>(inv.y);
+    float const inv_g = q.inv_f.x;
+    float const inv_h = q.inv_f.y;
     bool const  exact_inv =
-        static_cast<double>(inv_g) == inv.x && static_cast<double>(inv_h) == inv.y;
+        static_cast<double>(inv_g) == q.inv.x && static_cast<double>(inv_h) == q.inv.y;
     Interval const miss_g = interval_of(miss_q.x, inv_g);
     Interval const miss_h = interval_of(miss_q.y, inv_h);
     return {.real_g         = ns.sum_grad - miss_g,
@@ -1396,7 +1397,7 @@ find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive const *der
                                 .lo         = node_bounds[pair_off(node)],
                                 .hi         = node_bounds[pair_off(node) + 1],
                                 .mc         = monotone[f]};
-    ScreenNode const sn      = screen_node(nd, ns, miss_q, inv, screen, exhaustive);
+    ScreenNode const sn      = screen_node(nd, ns, miss_q, *quant, screen, exhaustive);
     uint32_t const   n_cut   = nb - 2;
     int const        n_dirs  = (miss_q.x == 0 && miss_q.y == 0) ? 1 : 2;
 
