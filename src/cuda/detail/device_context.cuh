@@ -109,9 +109,8 @@ struct CudaDeviceContext
 
         DeviceBuffer<uint32_t> rows_b;
         DeviceBuffer<float2>   gh_b;
-        DeviceBuffer<uint8_t>  flags;
         Staged<PartOpDev>      part_ops;
-        DeviceBuffer<uint32_t> block_counts;
+        PartTiles              part_tiles;
         Staged<uint32_t>       nl_dev;
         Staged<uint32_t>       stamp_ids;
         DeviceBuffer<uint32_t> leaf_by_row;
@@ -146,7 +145,7 @@ struct CudaDeviceContext
         bool        prof_ev_ready    = false;
         bool        prof_ev_recorded = false;
         bool        prof_ev_root     = false;
-        cudaEvent_t part_ev[3]       = {};
+        cudaEvent_t part_ev[2]       = {};
         bool        part_ev_ready    = false;
 
         void prof_record_begin(bool root);
