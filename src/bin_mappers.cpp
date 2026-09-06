@@ -80,12 +80,18 @@ std::vector<float> gather(std::span<uint32_t const> rows, ColumnFn value)
 
 // perf: A row-major matrix is gathered a block of adjacent columns per row
 // pass, with the row 16 ahead prefetched, so a row's cache line serves every
-// column of the block instead of one float per line at a 64 KiB stride. On
-// an M2 at 32768 x 16384 the gather reads 1.16 s one column at a time,
-// 0.46 s in blocks of 8 without the prefetch, 0.29 s with it; blocks of 16
-// and 32 read 0.38 s and 0.46 s, and 16 rows ahead sits on the plateau
-// between 8 (0.29 s) and 32 (0.38 s).
-constexpr size_t k_column_block      = 8;
+// column of the block instead of one float per line at a 64 KiB stride. The
+// block's column streams sit 32 floats past a multiple of the row count
+// apart: at a power-of-two row count an unpadded stride lands every stream
+// in one cache set, which is why the first sweep read blocks of 16 and 32
+// slower than 8 (0.38 s and 0.46 s against 0.29 s at 32768 x 16384 on an
+// M2, 8 threads). Padded and with the NaN drop as an unconditional store
+// plus a conditional advance, that sweep reads 0.121 s at 16 and 0.101 s
+// at 32 (0.116 s at 64), against 1.16 s one column at a time. The sort
+// runs in place on the block, so no column is copied out.
+constexpr size_t k_column_block      = 32;
+constexpr size_t k_stream_pad        = 32;
+constexpr size_t k_floats_per_line   = 16;
 constexpr size_t k_prefetch_ahead    = 16;
 constexpr size_t k_blocks_per_worker = 4;
 
@@ -96,27 +102,45 @@ size_t column_block_width(size_t n_features)
     return std::clamp<size_t>(per_worker, 1, k_column_block);
 }
 
-std::vector<std::vector<float>> gather_columns(features_view             X,
-                                               std::span<uint32_t const> rows,
-                                               size_t first, size_t width)
+struct ColumnBlock
 {
-    std::vector<std::vector<float>> out(width);
-    for (auto &col : out)
+    size_t              stride;
+    std::vector<float>  cells;
+    std::vector<size_t> fill;
+
+    std::span<float> column(size_t j)
     {
-        col.reserve(rows.size());
+        return {cells.data() + j * stride, fill[j]};
     }
+};
+
+ColumnBlock gather_columns(features_view X, std::span<uint32_t const> rows,
+                           size_t first, size_t width)
+{
+    size_t const stride = rows.size() + k_stream_pad;
+    ColumnBlock  block{stride, std::vector<float>(width * stride),
+                      std::vector<size_t>(width, 0)};
+    float       *cells = block.cells.data();
+    size_t      *fill  = block.fill.data();
     for (size_t i = 0; i < rows.size(); ++i)
     {
         if (i + k_prefetch_ahead < rows.size())
         {
-            __builtin_prefetch(&X[rows[i + k_prefetch_ahead], first]);
+            float const *ahead = &X[rows[i + k_prefetch_ahead], first];
+            for (size_t j = 0; j < width; j += k_floats_per_line)
+            {
+                __builtin_prefetch(ahead + j);
+            }
         }
+        float const *row = &X[rows[i], first];
         for (size_t j = 0; j < width; ++j)
         {
-            push_present(out[j], X[rows[i], first + j]);
+            float const v               = row[j];
+            cells[j * stride + fill[j]] = v;
+            fill[j] += static_cast<size_t>(!std::isnan(v));
         }
     }
-    return out;
+    return block;
 }
 
 // sync: seeded before the parallel::for_each_index in fit, because
@@ -160,9 +184,9 @@ BinMappers BinMappers::fit(detail::ColumnBatch const &batch, BinMapperConfig con
                                      return;
                                  }
                                  auto const &col = batch.features[f];
-                                 slots[f]        = BinMapper::from_sample(
-                                     gather(rows, [&](size_t r) { return col[r]; }),
-                                     cfg);
+                                 auto        sample =
+                                     gather(rows, [&](size_t r) { return col[r]; });
+                                 slots[f] = BinMapper::from_sample(sample, cfg);
                              });
     lap(detail::IngestProfiler::instance().fit_s);
 
@@ -193,15 +217,15 @@ BinMappers BinMappers::fit(features_view X, std::vector<std::string> feature_nam
                              {
                                  size_t const first = b * width;
                                  size_t const count = std::min(width, f - first);
-                                 auto samples = gather_columns(X, rows, first, count);
+                                 auto block = gather_columns(X, rows, first, count);
                                  for (size_t j = 0; j < count; ++j)
                                  {
                                      if (slots[first + j])
                                      {
                                          continue;
                                      }
-                                     slots[first + j] = BinMapper::from_sample(
-                                         std::move(samples[j]), cfg);
+                                     slots[first + j] =
+                                         BinMapper::from_sample(block.column(j), cfg);
                                  }
                              });
     lap(detail::IngestProfiler::instance().fit_s);
