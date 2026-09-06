@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -22,10 +23,10 @@ class BinMapper
 {
   public:
     static BinMapper fit(floats_view column, BinMapperConfig const &cfg);
-    // Cuts from an already-gathered, NaN-free working set. Precondition
-    // (asserted): `sample` contains no NaN, since one poisons the whole
-    // column's cuts.
-    static BinMapper from_sample(std::vector<float> sample, BinMapperConfig const &cfg);
+    // Cuts from an already-gathered, NaN-free working set, sorted in place.
+    // Precondition (asserted): `sample` contains no NaN, since one poisons
+    // the whole column's cuts.
+    static BinMapper from_sample(std::span<float> sample, BinMapperConfig const &cfg);
     static BinMapper from_cuts(std::vector<float> cuts)
     {
         return BinMapper{std::move(cuts)};

@@ -10,6 +10,7 @@
 #include <numeric>
 #include <random>
 #include <ranges>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -61,7 +62,7 @@ struct HeavyMarks
     size_t            heavy_sum = 0;
 };
 
-HeavyMarks mark_heavy_values(std::vector<size_t> const &counts, double mean_bin)
+HeavyMarks mark_heavy_values(std::span<size_t const> counts, double mean_bin)
 {
     HeavyMarks marks{std::vector<bool>(counts.size())};
     for (size_t i = 0; i < counts.size(); ++i)
@@ -83,8 +84,8 @@ bool closes_a_bin(bool heavy, bool next_heavy, size_t in_bin, double bin_size)
     return heavy || filled >= bin_size || (next_heavy && filled >= bin_size / 2.0);
 }
 
-std::vector<float> greedy_weighted_cuts(std::vector<float> const  &vals,
-                                        std::vector<size_t> const &counts,
+std::vector<float> greedy_weighted_cuts(std::span<float const>  vals,
+                                        std::span<size_t const> counts,
                                         size_t n_samples, size_t cut_budget,
                                         double mean_bin)
 {
@@ -118,19 +119,67 @@ std::vector<float> greedy_weighted_cuts(std::vector<float> const  &vals,
     return cuts;
 }
 
+using ByteHistograms = std::array<std::array<size_t, 256>, 4>;
+
+uint32_t sortable_key(float f)
+{
+    auto const b = std::bit_cast<uint32_t>(f);
+    return b ^ ((b >> 31U) != 0U ? 0xFFFFFFFFU : 0x80000000U);
+}
+
+float key_to_float(uint32_t k)
+{
+    return std::bit_cast<float>((k >> 31U) != 0U ? k ^ 0x80000000U : ~k);
+}
+
+uint32_t key_byte(uint32_t k, unsigned pass)
+{
+    return (k >> (8U * pass)) & 0xFFU;
+}
+
+ByteHistograms transform_keys(std::span<float const> v, uint32_t *keys)
+{
+    ByteHistograms hist{};
+    for (size_t i = 0; i < v.size(); ++i)
+    {
+        uint32_t const k = sortable_key(v[i]);
+        keys[i]          = k;
+        for (unsigned pass = 0; pass < 4; ++pass)
+        {
+            ++hist[pass][key_byte(k, pass)];
+        }
+    }
+    return hist;
+}
+
+void exclusive_prefix(std::array<size_t, 256> &counts)
+{
+    size_t sum = 0;
+    for (auto &c : counts)
+    {
+        size_t const bucket = c;
+        c                   = sum;
+        sum += bucket;
+    }
+}
+
 // perf: LSD byte-radix sort for the NaN-free subsample: the standard order-
 // preserving key transform (flip all bits of negatives, flip the sign bit
 // of non-negatives) makes unsigned byte passes order floats like operator<.
 // The output equals std::sort's up to reordering within equal-comparing
 // values (only -0.0 vs +0.0: the key transform puts -0.0 first, unstable
-// std::sort may not), so a mixed-zero run's RLE representative below can
-// differ in SIGN across the two paths. Binning and predictions are
+// std::sort may not), so a mixed-zero run's representative in run_lengths
+// can differ in SIGN across the two paths. Binning and predictions are
 // unaffected: lower_bound under operator< treats the zeros as equal, and
-// std::midpoint agrees on either. Small inputs keep std::sort: four
-// counting passes only pay past ~2k elements.
-// Motivation: the mapper fit is sort-bound at wide shapes (11.5s of a
-// 54.9s GPU fit at 131k x 16384).
-void sort_floats(std::vector<float> &v)
+// std::midpoint agrees on either. All four byte histograms come from the
+// key transform pass, and a byte every key shares skips its scatter (the
+// low bytes of small integers, the high byte of a one-signed column).
+// Small inputs keep std::sort: the histogram pass only pays past ~2k
+// elements. Single thread, 256 columns of 131072 rows on an M2, sort plus
+// run lengths: 0.247 s with a count pass per byte and a push_back
+// run-length loop, 0.133 s this way (0.478 s to 0.157 s on integer-valued
+// columns, where two of the four scatters skip).
+void sort_floats(std::span<float> v)
 {
     constexpr size_t k_radix_min = 2048;
     if (v.size() < k_radix_min)
@@ -143,60 +192,77 @@ void sort_floats(std::vector<float> &v)
     static thread_local std::vector<uint32_t> scratch;
     keys.resize(n);
     scratch.resize(n);
-    for (size_t i = 0; i < n; ++i)
+    ByteHistograms hist = transform_keys(v, keys.data());
+    uint32_t      *src  = keys.data();
+    uint32_t      *dst  = scratch.data();
+    for (unsigned pass = 0; pass < 4; ++pass)
     {
-        auto b  = std::bit_cast<uint32_t>(v[i]);
-        keys[i] = b ^ ((b >> 31U) != 0U ? 0xFFFFFFFFU : 0x80000000U);
-    }
-    uint32_t *src = keys.data();
-    uint32_t *dst = scratch.data();
-    for (unsigned shift = 0; shift < 32; shift += 8)
-    {
-        std::array<size_t, 257> count{};
+        auto &offsets = hist[pass];
+        if (offsets[key_byte(src[0], pass)] == n)
+        {
+            continue;
+        }
+        exclusive_prefix(offsets);
         for (size_t i = 0; i < n; ++i)
         {
-            ++count[((src[i] >> shift) & 0xFFU) + 1];
-        }
-        for (size_t b = 1; b < 257; ++b)
-        {
-            count[b] += count[b - 1];
-        }
-        for (size_t i = 0; i < n; ++i)
-        {
-            dst[count[(src[i] >> shift) & 0xFFU]++] = src[i];
+            dst[offsets[key_byte(src[i], pass)]++] = src[i];
         }
         std::swap(src, dst);
     }
     for (size_t i = 0; i < n; ++i)
     {
-        uint32_t const k = src[i];
-        v[i] = std::bit_cast<float>((k >> 31U) != 0U ? k ^ 0x80000000U : ~k);
+        v[i] = key_to_float(src[i]);
     }
 }
 
-std::vector<float> create_cuts(std::vector<float> &subsample, size_t cut_budget)
+struct RunLengths
+{
+    std::span<float const>  vals;
+    std::span<size_t const> counts;
+};
+
+RunLengths run_lengths(std::span<float const> sorted)
+{
+    static thread_local std::vector<float>  vals;
+    static thread_local std::vector<size_t> ends;
+    size_t const                            n = sorted.size();
+    if (n == 0)
+    {
+        return {};
+    }
+    vals.resize(n);
+    ends.resize(n);
+    float  *run_val = vals.data();
+    size_t *run_end = ends.data();
+    float   prev    = sorted[0];
+    size_t  m       = 0;
+    run_val[0]      = prev;
+    for (size_t i = 0; i < n; ++i)
+    {
+        float const f = sorted[i];
+        m += static_cast<size_t>(prev < f);
+        run_val[m] = f;
+        run_end[m] = i + 1;
+        prev       = f;
+    }
+    for (size_t r = m; r > 0; --r)
+    {
+        run_end[r] -= run_end[r - 1];
+    }
+    return {{run_val, m + 1}, {run_end, m + 1}};
+}
+
+std::vector<float> create_cuts(std::span<float> subsample, size_t cut_budget)
 {
     sort_floats(subsample);
-    std::vector<float>  vals;
-    std::vector<size_t> counts;
-    vals.reserve(subsample.size());
-    counts.reserve(subsample.size());
-    for (float const v : subsample)
-    {
-        if (vals.empty() || vals.back() < v)
-        {
-            vals.push_back(v);
-            counts.push_back(0);
-        }
-        ++counts.back();
-    }
+    auto const [vals, counts] = run_lengths(subsample);
 
     std::vector<float> cuts;
     double const       mean_bin =
         static_cast<double>(subsample.size()) / static_cast<double>(cut_budget + 1);
     if (vals.size() <= cut_budget)
     {
-        cuts = std::move(vals);
+        cuts.assign(vals.begin(), vals.end());
     }
     else if (static_cast<double>(std::ranges::max(counts)) >= mean_bin)
     {
@@ -222,10 +288,11 @@ std::vector<float> create_cuts(std::vector<float> &subsample, size_t cut_budget)
 BinMapper BinMapper::fit(floats_view column, BinMapperConfig const &cfg)
 {
     assert(cfg.max_bin > 2);
-    return from_sample(create_subsample(column, cfg), cfg);
+    auto sample = create_subsample(column, cfg);
+    return from_sample(sample, cfg);
 }
 
-BinMapper BinMapper::from_sample(std::vector<float> sample, BinMapperConfig const &cfg)
+BinMapper BinMapper::from_sample(std::span<float> sample, BinMapperConfig const &cfg)
 {
     assert(cfg.max_bin > 2);
     assert(std::ranges::none_of(sample, [](float x) { return std::isnan(x); }));
