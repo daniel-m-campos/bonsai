@@ -980,24 +980,19 @@ void CudaDeviceContext::partition_level(
         });
     check(cudaGetLastError(), "route launch");
     mark(1);
-    seg_scan_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(k_part_block)>>>(
-        lvl.block_counts.data(), max_chunks, lvl.nl_dev.device());
-    check(cudaGetLastError(), "seg scan launch");
-    mark(2);
     lvl.other_rows().reserve(data.key.n_rows);
     lvl.other_gh().reserve(data.key.n_rows);
     scatter_kernel<<<grid, dim3(k_part_block)>>>(
         lvl.cur_rows().data(), lvl.cur_gh().data(), lvl.flags.data(),
-        lvl.part_ops.device(), lvl.block_counts.data(), lvl.nl_dev.device(), max_chunks,
+        lvl.part_ops.device(), lvl.block_counts.data(), max_chunks, lvl.nl_dev.device(),
         lvl.other_rows().data(), lvl.other_gh().data());
     check(cudaGetLastError(), "scatter launch");
-    mark(3);
+    mark(2);
     lvl.nl_dev.fetch(n);
     if (prof.enabled)
     {
-        double *const spans[3] = {&prof.part_route_s, &prof.part_scan_s,
-                                  &prof.part_scatter_s};
-        for (int i = 0; i < 3; ++i)
+        double *const spans[2] = {&prof.part_route_s, &prof.part_scatter_s};
+        for (int i = 0; i < 2; ++i)
         {
             float ms = 0.0F;
             check(cudaEventElapsedTime(&ms, lvl.part_ev[i], lvl.part_ev[i + 1]),
@@ -1389,14 +1384,11 @@ CudaDeviceContext::leaf_split(Dataset const & /*ds*/,
                 lvl.block_counts.data());
         });
     check(cudaGetLastError(), "leaf route launch");
-    seg_scan_kernel<<<dim3(1), dim3(k_part_block)>>>(lvl.block_counts.data(),
-                                                     max_chunks, lvl.nl_dev.device());
-    check(cudaGetLastError(), "leaf seg scan launch");
     lvl.rows_b.reserve(data.key.n_rows);
     lvl.gh_b.reserve(data.key.n_rows);
     scatter_kernel<<<grid, dim3(k_part_block)>>>(
         lvl.rows.data(), lvl.gh_ordered.data(), lvl.flags.data(), leaf.part_op.device(),
-        lvl.block_counts.data(), lvl.nl_dev.device(), max_chunks, lvl.rows_b.data(),
+        lvl.block_counts.data(), max_chunks, lvl.nl_dev.device(), lvl.rows_b.data(),
         lvl.gh_b.data());
     check(cudaGetLastError(), "leaf scatter launch");
     check(cudaMemcpyAsync(lvl.rows.data() + offset, lvl.rows_b.data() + offset,

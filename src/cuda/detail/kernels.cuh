@@ -462,22 +462,74 @@ __global__ void hist_small_kernel(BinT const *bins, float2 const *gh_ordered,
 
 constexpr uint32_t k_part_rows_per_thread = 16;
 constexpr uint32_t k_part_block           = 256;
+constexpr uint32_t k_part_warps           = k_part_block / 32;
+constexpr uint32_t k_part_warp_rows       = 32 * k_part_rows_per_thread;
 constexpr uint32_t k_part_chunk           = k_part_block * k_part_rows_per_thread;
 
-inline __device__ void block_scan(uint32_t *sh)
+inline __device__ uint32_t warp_sum_u32(uint32_t v)
 {
-    __syncthreads();
-    for (uint32_t step = 1; step < k_part_block; step *= 2)
+    for (uint32_t step = 16; step > 0; step /= 2)
     {
-        uint32_t v = 0;
-        if (threadIdx.x + 1 >= step + 1)
-        {
-            v = sh[threadIdx.x + 1 - step];
-        }
-        __syncthreads();
-        sh[threadIdx.x + 1] += v;
-        __syncthreads();
+        v += __shfl_xor_sync(0xffffffffU, v, step);
     }
+    return v;
+}
+
+struct PartLane
+{
+    uint32_t warp;
+    uint32_t lane;
+    uint32_t first;
+};
+
+inline __device__ PartLane part_lane(uint32_t chunk)
+{
+    uint32_t const warp = threadIdx.x / 32;
+    return {warp, threadIdx.x % 32, (chunk * k_part_chunk) + (warp * k_part_warp_rows)};
+}
+
+inline __device__ uint32_t part_row(PartLane const &pl, uint32_t j)
+{
+    return pl.first + (j * 32) + pl.lane;
+}
+
+template <typename Fn>
+inline __device__ void for_each_lane_row(PartLane const &pl, uint32_t count, Fn fn)
+{
+#pragma unroll
+    for (uint32_t j = 0; j < k_part_rows_per_thread; ++j)
+    {
+        uint32_t const i = part_row(pl, j);
+        if (i < count)
+        {
+            fn(j, i);
+        }
+    }
+}
+
+struct WarpPrefix
+{
+    uint32_t before;
+    uint32_t total;
+};
+
+inline __device__ WarpPrefix warp_prefix_in_block(uint32_t *sh, PartLane const &pl,
+                                                  uint32_t v)
+{
+    v = warp_sum_u32(v);
+    if (pl.lane == 0)
+    {
+        sh[pl.warp] = v;
+    }
+    __syncthreads();
+    WarpPrefix p{0, 0};
+    for (uint32_t w = 0; w < k_part_warps; ++w)
+    {
+        uint32_t const c = sh[w];
+        p.before += w < pl.warp ? c : 0;
+        p.total += c;
+    }
+    return p;
 }
 
 inline __device__ bool goes_left_dev(uint32_t b, uint32_t last_bin, uint32_t bin,
@@ -496,114 +548,104 @@ route_count_kernel(BinT const *bins, uint32_t const *n_bins, uint32_t const *row
                    PartOpDev const *ops, uint32_t n_rows, uint32_t n_feats,
                    uint32_t max_chunks, uint8_t *flags, uint32_t *block_counts)
 {
-    __shared__ uint32_t sh[k_part_block];
-    PartOpDev const     op    = ops[blockIdx.y];
-    uint32_t const      chunk = blockIdx.x;
-    uint32_t const      base  = chunk * k_part_chunk;
-    uint32_t const      last  = n_bins[op.fid] - 1;
-    uint32_t            mine  = 0;
+    __shared__ uint32_t sh[k_part_warps];
+    PartOpDev const     op   = ops[blockIdx.y];
+    uint32_t const      last = n_bins[op.fid] - 1;
+    PartLane const      pl   = part_lane(blockIdx.x);
+    uint32_t            row[k_part_rows_per_thread];
+#pragma unroll
     for (uint32_t j = 0; j < k_part_rows_per_thread; ++j)
     {
-        uint32_t const i = base + (threadIdx.x * k_part_rows_per_thread) + j;
-        if (i < op.count)
-        {
-            bool const l = goes_left_dev(
-                bins[tiled_cell(op.fid, rows[op.offset + i], n_rows, n_feats)], last,
-                op.bin, op.dl);
-            flags[op.offset + i] = l ? 1 : 0;
-            mine += l ? 1U : 0U;
-        }
+        uint32_t const i = part_row(pl, j);
+        row[j]           = i < op.count ? rows[op.offset + i] : 0;
     }
-    sh[threadIdx.x] = mine;
-    __syncthreads();
-    for (uint32_t step = k_part_block / 2; step > 0; step /= 2)
+    BinT bin[k_part_rows_per_thread];
+#pragma unroll
+    for (uint32_t j = 0; j < k_part_rows_per_thread; ++j)
     {
-        if (threadIdx.x < step)
-        {
-            sh[threadIdx.x] += sh[threadIdx.x + step];
-        }
-        __syncthreads();
+        bin[j] = part_row(pl, j) < op.count
+                     ? bins[tiled_cell(op.fid, row[j], n_rows, n_feats)]
+                     : BinT{0};
     }
+    uint32_t mine = 0;
+    for_each_lane_row(pl, op.count,
+                      [&](uint32_t j, uint32_t i)
+                      {
+                          bool const l = goes_left_dev(bin[j], last, op.bin, op.dl);
+                          flags[op.offset + i] = l ? 1 : 0;
+                          mine += l ? 1U : 0U;
+                      });
+    uint32_t const total = warp_prefix_in_block(sh, pl, mine).total;
     if (threadIdx.x == 0)
     {
-        block_counts[(static_cast<size_t>(blockIdx.y) * max_chunks) + chunk] = sh[0];
+        block_counts[(static_cast<size_t>(blockIdx.y) * max_chunks) + blockIdx.x] =
+            total;
     }
 }
 
-__global__ void seg_scan_kernel(uint32_t *block_counts, uint32_t max_chunks,
-                                uint32_t *n_left)
+struct SegmentLefts
 {
-    __shared__ uint32_t sh[k_part_block + 1];
-    uint32_t *c     = block_counts + (static_cast<size_t>(blockIdx.x) * max_chunks);
-    uint32_t  carry = 0;
-    if (threadIdx.x == 0)
+    uint32_t below;
+    uint32_t total;
+};
+
+inline __device__ SegmentLefts segment_lefts(uint32_t const *counts,
+                                             uint32_t max_chunks, uint32_t chunk,
+                                             uint32_t *sh, PartLane const &pl)
+{
+    uint32_t below = 0;
+    uint32_t total = 0;
+    for (uint32_t k = threadIdx.x; k < max_chunks; k += k_part_block)
     {
-        sh[0] = 0;
+        uint32_t const c = counts[k];
+        below += k < chunk ? c : 0;
+        total += c;
     }
-    for (uint32_t base = 0; base < max_chunks; base += k_part_block)
-    {
-        uint32_t const k    = base + threadIdx.x;
-        sh[threadIdx.x + 1] = k < max_chunks ? c[k] : 0;
-        block_scan(sh);
-        if (k < max_chunks)
-        {
-            c[k] = carry + sh[threadIdx.x];
-        }
-        carry += sh[k_part_block];
-        __syncthreads();
-    }
-    if (threadIdx.x == 0)
-    {
-        n_left[blockIdx.x] = carry;
-    }
+    below = warp_prefix_in_block(sh, pl, below).total;
+    total = warp_prefix_in_block(sh + k_part_warps, pl, total).total;
+    return {below, total};
 }
 
 __global__ void scatter_kernel(uint32_t const *rows_in, float2 const *gh_in,
                                uint8_t const *flags, PartOpDev const *ops,
-                               uint32_t const *block_counts, uint32_t const *n_left,
-                               uint32_t max_chunks, uint32_t *rows_out, float2 *gh_out)
+                               uint32_t const *block_counts, uint32_t max_chunks,
+                               uint32_t *n_left, uint32_t *rows_out, float2 *gh_out)
 {
-    __shared__ uint32_t sh[k_part_block + 1];
+    __shared__ uint32_t sh[3 * k_part_warps];
     PartOpDev const     op    = ops[blockIdx.y];
     uint32_t const      chunk = blockIdx.x;
-    uint32_t const      base  = chunk * k_part_chunk;
-    uint32_t            mine  = 0;
+    PartLane const      pl    = part_lane(chunk);
+    SegmentLefts const  seg =
+        segment_lefts(block_counts + (static_cast<size_t>(blockIdx.y) * max_chunks),
+                      max_chunks, chunk, sh, pl);
+    if (chunk == 0 && threadIdx.x == 0)
+    {
+        n_left[blockIdx.y] = seg.total;
+    }
+    uint32_t mask[k_part_rows_per_thread];
+    uint32_t mine = 0;
+#pragma unroll
     for (uint32_t j = 0; j < k_part_rows_per_thread; ++j)
     {
-        uint32_t const i = base + (threadIdx.x * k_part_rows_per_thread) + j;
-        mine += (i < op.count && flags[op.offset + i] != 0) ? 1U : 0U;
+        uint32_t const i = part_row(pl, j);
+        bool const     l = i < op.count && flags[op.offset + i] != 0;
+        mask[j]          = __ballot_sync(0xffffffffU, l);
+        mine += l ? 1U : 0U;
     }
-    sh[threadIdx.x + 1] = mine;
-    if (threadIdx.x == 0)
-    {
-        sh[0] = 0;
-    }
-    block_scan(sh);
-    uint32_t const nl_total = n_left[blockIdx.y];
-    uint32_t const block_lefts =
-        block_counts[(static_cast<size_t>(blockIdx.y) * max_chunks) + chunk];
-    uint32_t lefts  = block_lefts + sh[threadIdx.x];
-    uint32_t before = base + (threadIdx.x * k_part_rows_per_thread);
-    for (uint32_t j = 0; j < k_part_rows_per_thread; ++j)
-    {
-        uint32_t const i = base + (threadIdx.x * k_part_rows_per_thread) + j;
-        if (i >= op.count)
-        {
-            break;
-        }
-        uint32_t dst = 0;
-        if (flags[op.offset + i] != 0)
-        {
-            dst = op.offset + lefts;
-            ++lefts;
-        }
-        else
-        {
-            dst = op.offset + nl_total + (before + j - lefts);
-        }
-        rows_out[dst] = rows_in[op.offset + i];
-        gh_out[dst]   = gh_in[op.offset + i];
-    }
+    uint32_t lefts =
+        seg.below + warp_prefix_in_block(sh + (2 * k_part_warps), pl, mine).before;
+    uint32_t const lane_lt = (1U << pl.lane) - 1;
+    for_each_lane_row(pl, op.count,
+                      [&](uint32_t j, uint32_t i)
+                      {
+                          uint32_t const here = lefts + __popc(mask[j] & lane_lt);
+                          bool const     l    = ((mask[j] >> pl.lane) & 1U) != 0;
+                          uint32_t const dst =
+                              op.offset + (l ? here : seg.total + (i - here));
+                          rows_out[dst] = rows_in[op.offset + i];
+                          gh_out[dst]   = gh_in[op.offset + i];
+                          lefts += __popc(mask[j]);
+                      });
 }
 
 __global__ void stamp_kernel(uint32_t const *rows, PartOpDev const *segs,

@@ -146,7 +146,7 @@ struct CudaDeviceContext
         bool        prof_ev_ready    = false;
         bool        prof_ev_recorded = false;
         bool        prof_ev_root     = false;
-        cudaEvent_t part_ev[4]       = {};
+        cudaEvent_t part_ev[3]       = {};
         bool        part_ev_ready    = false;
 
         void prof_record_begin(bool root);
