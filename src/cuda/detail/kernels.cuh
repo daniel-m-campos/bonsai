@@ -1131,13 +1131,17 @@ inline __device__ CutScreen screen_cut(Interval pg, Interval ph, ScreenNode cons
                     static_cast<double>(gain.hi) < min_gain};
 }
 
-inline __device__ float warp_max(float v)
+inline __device__ float warp_max_nonnegative(float v)
 {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
+    return __uint_as_float(__reduce_max_sync(0xffffffffU, __float_as_uint(v)));
+#else
     for (int off = 16; off > 0; off >>= 1)
     {
         v = fmaxf(v, __shfl_xor_sync(0xffffffffU, v, off));
     }
     return v;
+#endif
 }
 
 struct Survivors
@@ -1264,7 +1268,8 @@ inline __device__ FeatBest sweep_cuts(CutStrip const &s, uint32_t n_cut, int n_d
             int const       dl = 1 - d;
             CutScreen const sc =
                 screen_cut<k_l1>(pg, ph, sn, dl, nd.mc, min_child_hess, min_gain);
-            l_star = fmaxf(l_star, warp_max(b < n_cut ? sc.certified : 0.0f));
+            l_star =
+                fmaxf(l_star, warp_max_nonnegative(b < n_cut ? sc.certified : 0.0f));
             bool const keep =
                 b < n_cut && (!sn.on || (!sc.drop && !(sc.upper < l_star)));
             uint32_t const mask = __ballot_sync(0xffffffffU, keep);
