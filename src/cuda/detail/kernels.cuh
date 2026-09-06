@@ -872,6 +872,34 @@ inline __device__ bool feat_better(FeatBest const &a, FeatBest const &b)
     return feat_better(a.gain, a.bin, a.dl, a.valid, b.gain, b.bin, b.dl, b.valid);
 }
 
+inline __device__ long long key_of_positive_gain(double gain)
+{
+    return __double_as_longlong(gain);
+}
+
+inline __device__ bool split_better(FeatBest const &a, FeatBest const &b)
+{
+    if (a.valid != b.valid)
+    {
+        return a.valid > b.valid;
+    }
+    if (a.valid == 0)
+    {
+        return false;
+    }
+    long long const ka = key_of_positive_gain(a.gain);
+    long long const kb = key_of_positive_gain(b.gain);
+    if (ka != kb)
+    {
+        return ka > kb;
+    }
+    if (a.bin != b.bin)
+    {
+        return a.bin < b.bin;
+    }
+    return a.dl > b.dl;
+}
+
 inline __device__ FeatBest warp_best_cut(FeatBest best)
 {
     for (int off = 16; off > 0; off >>= 1)
@@ -934,18 +962,22 @@ score_cut_exact(double pg, double ph, uint32_t b, int dl, NodeCut const &nd, dou
     }
     double const gain = cut_score<k_l1>(s.gL, s.hL, l1, l2) +
                         cut_score<k_l1>(s.gR, s.hR, l1, l2) - nd.node_score;
-    if (gain > 0.0 && gain >= min_gain &&
-        feat_better(gain, static_cast<int>(b), dl, 1, best.gain, best.bin, best.dl,
-                    best.valid))
+    if (!(gain > 0.0 && gain >= min_gain))
     {
-        best.gain  = gain;
-        best.gL    = s.gL;
-        best.hL    = s.hL;
-        best.gR    = s.gR;
-        best.hR    = s.hR;
-        best.bin   = static_cast<int32_t>(b);
-        best.dl    = dl;
-        best.valid = 1;
+        return;
+    }
+    FeatBest const cand = {.gain  = gain,
+                           .gL    = s.gL,
+                           .hL    = s.hL,
+                           .gR    = s.gR,
+                           .hR    = s.hR,
+                           .bin   = static_cast<int32_t>(b),
+                           .dl    = dl,
+                           .valid = 1,
+                           .sel   = best.sel};
+    if (split_better(cand, best))
+    {
+        best = cand;
     }
 }
 
@@ -962,18 +994,13 @@ inline __device__ FeatBest warp_best_split(FeatBest best)
                             .dl    = __shfl_down_sync(0xffffffffU, best.dl, off),
                             .valid = __shfl_down_sync(0xffffffffU, best.valid, off),
                             .sel   = best.sel};
-        if (feat_better(o, best))
+        if (split_better(o, best))
         {
             best = o;
         }
     }
     return best;
 }
-
-struct Interval
-{
-    float lo, hi;
-};
 
 constexpr float k_inf_f32 = __builtin_inff();
 
@@ -1067,9 +1094,9 @@ struct ScreenNode
     bool     on;
 };
 
-inline __device__ ScreenNode screen_node(NodeCut const &nd, double2 inv, double l1,
-                                         double l2, double min_child_hess,
-                                         double min_gain, bool exhaustive)
+inline __device__ ScreenNode screen_node(NodeCut const &nd, NodeScreen const &ns,
+                                         longlong2 miss_q, double2 inv,
+                                         ScreenConst const &c, bool exhaustive)
 {
     bool const finite = is_finite_dev(nd.real_g) && is_finite_dev(nd.real_h) &&
                         is_finite_dev(nd.miss_g) && is_finite_dev(nd.miss_h) &&
@@ -1078,15 +1105,17 @@ inline __device__ ScreenNode screen_node(NodeCut const &nd, double2 inv, double 
     float const inv_h = static_cast<float>(inv.y);
     bool const  exact_inv =
         static_cast<double>(inv_g) == inv.x && static_cast<double>(inv_h) == inv.y;
-    return {.real_g         = interval_of(nd.real_g),
-            .real_h         = interval_of(nd.real_h),
-            .miss_g         = interval_of(nd.miss_g),
-            .miss_h         = interval_of(nd.miss_h),
-            .node_score     = interval_of(nd.node_score),
-            .l1             = interval_of(l1),
-            .l2             = interval_of(l2),
-            .min_child_hess = interval_of(min_child_hess),
-            .min_gain       = interval_of(min_gain),
+    Interval const miss_g = interval_of(miss_q.x, inv_g);
+    Interval const miss_h = interval_of(miss_q.y, inv_h);
+    return {.real_g         = ns.sum_grad - miss_g,
+            .real_h         = ns.sum_hess - miss_h,
+            .miss_g         = miss_g,
+            .miss_h         = miss_h,
+            .node_score     = ns.score_bounds,
+            .l1             = c.l1,
+            .l2             = c.l2,
+            .min_child_hess = c.min_child_hess,
+            .min_gain       = c.min_gain,
             .inv_g          = inv_g,
             .inv_h          = inv_h,
             .on             = !exhaustive && finite && exact_inv};
@@ -1323,8 +1352,9 @@ find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive const *der
           uint32_t const *features, uint32_t const *n_bins, double const *node_sums,
           double const *node_bounds, char const *allowed, int const *monotone,
           uint32_t n_sel, uint32_t stride, double l1, double l2, double min_child_hess,
-          double min_gain, FeatBest *out, uint32_t const *hist_slot,
-          GhQuant const *quant, bool exhaustive, uint32_t n_nodes, bool store_derived)
+          double min_gain, ScreenConst const &screen, NodeScreen const *node_screen,
+          FeatBest *out, uint32_t const *hist_slot, GhQuant const *quant,
+          bool exhaustive, uint32_t n_nodes, bool store_derived)
 {
     uint32_t const node = (2 * blockIdx.y) + (blockIdx.x & 1U);
     uint32_t const sel  = blockIdx.x >> 1;
@@ -1357,18 +1387,18 @@ find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive const *der
     longlong2 const  miss_q  = strip_miss(strip, nb);
     double const     miss_g  = static_cast<double>(miss_q.x) * inv.x;
     double const     miss_h  = static_cast<double>(miss_q.y) * inv.y;
+    NodeScreen const ns      = node_screen[node];
     NodeCut const    nd      = {.miss_g     = miss_g,
                                 .miss_h     = miss_h,
                                 .real_g     = g_total - miss_g,
                                 .real_h     = h_total - miss_h,
-                                .node_score = cut_score<k_l1>(g_total, h_total, l1, l2),
+                                .node_score = ns.score,
                                 .lo         = node_bounds[pair_off(node)],
                                 .hi         = node_bounds[pair_off(node) + 1],
                                 .mc         = monotone[f]};
-    ScreenNode const sn =
-        screen_node(nd, inv, l1, l2, min_child_hess, min_gain, exhaustive);
-    uint32_t const n_cut  = nb - 2;
-    int const      n_dirs = (miss_q.x == 0 && miss_q.y == 0) ? 1 : 2;
+    ScreenNode const sn      = screen_node(nd, ns, miss_q, inv, screen, exhaustive);
+    uint32_t const   n_cut   = nb - 2;
+    int const        n_dirs  = (miss_q.x == 0 && miss_q.y == 0) ? 1 : 2;
 
     FeatBest const best = sweep_strip<k_l1>(strip, n_cut, stride, n_dirs, nd, sn, inv,
                                             l1, l2, min_child_hess, min_gain, sel);
@@ -1384,21 +1414,23 @@ __global__ void __launch_bounds__(32, 16)
                 uint32_t const *n_bins, double const *node_sums,
                 double const *node_bounds, char const *allowed, int const *monotone,
                 uint32_t n_sel, uint32_t stride, double l1, double l2,
-                double min_child_hess, double min_gain, FeatBest *out,
-                uint32_t const *hist_slot, GhQuant const *quant, bool exhaustive,
-                uint32_t n_nodes, bool store_derived)
+                double min_child_hess, double min_gain, ScreenConst screen,
+                NodeScreen const *node_screen, FeatBest *out, uint32_t const *hist_slot,
+                GhQuant const *quant, bool exhaustive, uint32_t n_nodes,
+                bool store_derived)
 {
     if (l1 == 0.0)
     {
         find_node<false>(hists, parents, derive, features, n_bins, node_sums,
                          node_bounds, allowed, monotone, n_sel, stride, l1, l2,
-                         min_child_hess, min_gain, out, hist_slot, quant, exhaustive,
-                         n_nodes, store_derived);
+                         min_child_hess, min_gain, screen, node_screen, out, hist_slot,
+                         quant, exhaustive, n_nodes, store_derived);
         return;
     }
     find_node<true>(hists, parents, derive, features, n_bins, node_sums, node_bounds,
                     allowed, monotone, n_sel, stride, l1, l2, min_child_hess, min_gain,
-                    out, hist_slot, quant, exhaustive, n_nodes, store_derived);
+                    screen, node_screen, out, hist_slot, quant, exhaustive, n_nodes,
+                    store_derived);
 }
 
 inline dim3 find_grid(uint32_t n_sel, uint32_t n_nodes)
