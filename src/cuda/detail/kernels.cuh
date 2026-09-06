@@ -608,6 +608,31 @@ struct CutStrip
     hist_int_t       *store;
 };
 
+inline __device__ void prefetch_l2(void const *p)
+{
+    asm volatile("prefetch.global.L2 [%0];" ::"l"(p));
+}
+
+constexpr uint32_t k_l2_line_cells = 128 / sizeof(hist_int_t);
+
+inline __device__ void prefetch_strip(hist_int_t const *cells, uint32_t stride)
+{
+    for (uint32_t i = threadIdx.x * k_l2_line_cells; i < stride;
+         i += blockDim.x * k_l2_line_cells)
+    {
+        prefetch_l2(cells + i);
+    }
+}
+
+inline __device__ void prefetch_strips(CutStrip const &s, uint32_t stride)
+{
+    prefetch_strip(s.cells, stride);
+    if (s.small != nullptr)
+    {
+        prefetch_strip(s.small, stride);
+    }
+}
+
 inline __device__ void derive_strip_range(CutStrip const &s, uint32_t from,
                                           uint32_t stride)
 {
@@ -1367,7 +1392,8 @@ find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive const *der
     uint32_t const slot  = hist_slot != nullptr ? hist_slot[node] : node;
     CutStrip const strip = open_strip(hists, parents, derive[node], slot, n_sel, sel,
                                       stride, store_derived);
-    size_t const   oidx  = (static_cast<size_t>(node) * n_sel) + sel;
+    prefetch_strips(strip, stride);
+    size_t const oidx = (static_cast<size_t>(node) * n_sel) + sel;
     if (lane == 0)
     {
         out[oidx] = FeatBest{};
