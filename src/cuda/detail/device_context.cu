@@ -627,8 +627,8 @@ void CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
                                     uint32_t const *offsets, uint32_t const *counts,
                                     hist_int_t *out, uint32_t const *slots)
 {
-    size_t const tiled_shared =
-        static_cast<size_t>(k_bin_tile_width) * lvl.stride * sizeof(hist_int_t);
+    size_t const tiled_shared = static_cast<size_t>(k_bin_tile_width) *
+                                tile_stride(lvl.stride) * sizeof(hist_int_t);
     size_t const feature_shared = static_cast<size_t>(lvl.stride) * sizeof(hist_int_t);
     bool const   tiled          = tiled_shared <= k_max_shared_bytes;
     note_plane(tiled, tiled ? tiled_shared : feature_shared);
