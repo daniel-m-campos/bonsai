@@ -32,6 +32,12 @@ The u8-vs-u16 storage decision uses the same bin-count criterion on both sides, 
 
 - enforced by: [`cuda_ingest bins bit-identically to the host fill`](../tests/unit/test_cuda_grower.cpp)
 
+### device-finder-screen-is-exact
+
+The device finders screen every cut with fp32 interval bounds and score only the survivors in fp64; the screen may only discard a cut whose gain upper bound is below a gain already certified, so the exact best cut always survives and the chosen split, its bin and its direction are the same bytes the exhaustive fp64 sweep picks. BONSAI_CUDA_FINDER_EXHAUSTIVE disables the screen, and this test requires the two to route every row identically on data built to make the bounds tight: duplicate and near-duplicate columns, plateaus, a constant column, missing values, gradients at 1e-6 and 1e6, unit hessians on the min_child_hess boundary, lambda_l1, and monotone constraints with a positive min_gain_to_split.
+
+- enforced by: [`CudaGrowers: the finder screen picks the exhaustive split`](../tests/unit/test_cuda_grower.cpp)
+
 ### device-grower-by-engine-type
 
 Whether a grower runs on a device is answered by its engine type through the registry, never by a caller inspecting the name. The registered spellings still say cuda_ for every device grower, so the predicate agrees with the prefix on every name the table holds; a name outside the table is not a device grower however it is spelled.

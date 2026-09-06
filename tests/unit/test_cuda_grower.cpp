@@ -27,11 +27,13 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <limits>
 #include <numeric>
 #include <optional>
 #include <random>
 #include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -488,6 +490,134 @@ TEST_CASE("CudaGrowers: lambda_l1 matches the host on every plane",
     SECTION("leafwise")
     {
         require_l1_parity<LeafwiseGrower<CpuHistogramEngine>, CudaLeafwiseGrower>(cfg);
+    }
+}
+
+// 8192 rows x 12 features built to stress the finder's fp32 screen: an
+// informative column, an exact duplicate and a near duplicate of it (ties and
+// near-ties across features), a four-bin plateau, a column missing on a third
+// of rows, a constant column with no valid cut, the negated informative column
+// for a -1 monotone constraint, and five noise columns. grad_scale exercises
+// tiny and huge gradient magnitudes; unit_hess puts every child hessian on an
+// integer so min_child_hess can sit exactly on the boundary.
+test::ScenarioInputs screening_scenario(float grad_scale, bool unit_hess)
+{
+    std::mt19937                          rng(23);
+    std::uniform_real_distribution<float> value(0.0F, 1.0F);
+    std::normal_distribution<float>       noise(0.0F, 0.25F);
+    size_t const                          n      = 8192;
+    size_t const                          n_feat = 12;
+
+    detail::ColumnBatch batch;
+    batch.features.resize(n_feat, std::vector<float>(n));
+    for (size_t f = 0; f < n_feat; ++f)
+    {
+        batch.feature_names.push_back("f" + std::to_string(f));
+    }
+    batch.labels.assign(n, 0.0F);
+    std::vector<float> grad(n);
+    std::vector<float> hess(n);
+    for (size_t r = 0; r < n; ++r)
+    {
+        float const x        = value(rng);
+        batch.features[0][r] = x;
+        batch.features[1][r] = x;
+        batch.features[2][r] = x + 1e-3F * noise(rng);
+        batch.features[3][r] = std::round(x * 4.0F);
+        batch.features[4][r] =
+            (r % 3 == 0) ? std::numeric_limits<float>::quiet_NaN() : x;
+        batch.features[5][r] = 1.0F;
+        batch.features[6][r] = -x;
+        for (size_t f = 7; f < n_feat; ++f)
+        {
+            batch.features[f][r] = value(rng);
+        }
+        grad[r] = grad_scale * ((x > 0.5F ? 1.0F : -1.0F) + noise(rng));
+        hess[r] = unit_hess ? 1.0F : 0.5F + value(rng);
+    }
+    return {.built = test::build(std::move(batch)),
+            .grad  = std::move(grad),
+            .hess  = std::move(hess),
+            .rows  = test::iota_rows(n)};
+}
+
+template <typename GpuGrower>
+void require_screen_matches_exhaustive(TreeConfig const &cfg, float grad_scale,
+                                       bool unit_hess)
+{
+    auto const scenario = screening_scenario(grad_scale, unit_hess);
+    setenv("BONSAI_CUDA_FINDER_EXHAUSTIVE", "1", 1);
+    GpuGrower exhaustive(cfg);
+    unsetenv("BONSAI_CUDA_FINDER_EXHAUSTIVE");
+    GpuGrower   screened(cfg);
+    auto const &ds  = scenario.built.ds;
+    auto const  ref = exhaustive.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    auto const  got = screened.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+    REQUIRE(got.leaf_ids == ref.leaf_ids);
+    REQUIRE(got.values == ref.values);
+}
+
+void require_screen_matches_on_every_plane(TreeConfig const &cfg, float grad_scale,
+                                           bool unit_hess)
+{
+    require_screen_matches_exhaustive<CudaDepthwiseGrower>(cfg, grad_scale, unit_hess);
+    require_screen_matches_exhaustive<CudaLeafwiseGrower>(cfg, grad_scale, unit_hess);
+    TreeConfig level = cfg;
+    level.monotone_constraints.clear();
+    require_screen_matches_exhaustive<CudaObliviousGrower>(level, grad_scale,
+                                                           unit_hess);
+}
+
+// INVARIANT: device-finder-screen-is-exact
+// The device finders screen every cut with fp32 interval bounds and score
+// only the survivors in fp64; the screen may only discard a cut whose gain
+// upper bound is below a gain already certified, so the exact best cut always
+// survives and the chosen split, its bin and its direction are the same bytes
+// the exhaustive fp64 sweep picks. BONSAI_CUDA_FINDER_EXHAUSTIVE disables the
+// screen, and this test requires the two to route every row identically on
+// data built to make the bounds tight: duplicate and near-duplicate columns,
+// plateaus, a constant column, missing values, gradients at 1e-6 and 1e6,
+// unit hessians on the min_child_hess boundary, lambda_l1, and monotone
+// constraints with a positive min_gain_to_split.
+TEST_CASE("CudaGrowers: the finder screen picks the exhaustive split",
+          "[cuda][grower][fit][invariant]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    TreeConfig cfg;
+    cfg.max_depth        = 6;
+    cfg.max_leaves       = 63;
+    cfg.min_data_in_leaf = 1;
+
+    SECTION("unit gradients")
+    {
+        require_screen_matches_on_every_plane(cfg, 1.0F, false);
+    }
+    SECTION("tiny gradients")
+    {
+        require_screen_matches_on_every_plane(cfg, 1e-6F, false);
+    }
+    SECTION("huge gradients")
+    {
+        require_screen_matches_on_every_plane(cfg, 1e6F, false);
+    }
+    SECTION("unit hessians on the min_child_hess boundary")
+    {
+        cfg.min_child_hess = 40.0F;
+        require_screen_matches_on_every_plane(cfg, 1.0F, true);
+    }
+    SECTION("lambda_l1")
+    {
+        cfg.lambda_l1 = 0.5F;
+        require_screen_matches_on_every_plane(cfg, 1.0F, false);
+    }
+    SECTION("monotone constraints and a gain floor")
+    {
+        cfg.monotone_constraints = {+1, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0};
+        cfg.min_gain_to_split    = 0.5F;
+        require_screen_matches_on_every_plane(cfg, 1.0F, false);
     }
 }
 

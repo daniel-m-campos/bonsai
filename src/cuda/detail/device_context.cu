@@ -1104,7 +1104,7 @@ void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &co
         lvl.monotone.device(), lvl.n_selected, lvl.stride, config.lambda_l1,
         config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
         lvl.feat_best.data(),
-        /*hist_slot=*/nullptr, grads.quant.data());
+        /*hist_slot=*/nullptr, grads.quant.data(), finder_exhaustive);
     check(cudaGetLastError(), "find launch");
     reduce_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(k_reduce_threads)>>>(
         lvl.feat_best.data(), lvl.n_selected, lvl.node_best.device());
@@ -1515,7 +1515,8 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
         leaf.find_stats.device() + (2 * n), any_mask ? lvl.allowed.device() : nullptr,
         leaf.monotone.device(), lvl.n_selected, lvl.stride, config.lambda_l1,
         config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
-        lvl.feat_best.data(), leaf.find_slots.device(), grads.quant.data());
+        lvl.feat_best.data(), leaf.find_slots.device(), grads.quant.data(),
+        finder_exhaustive);
     check(cudaGetLastError(), "leaf find launch");
     reduce_kernel<<<dim3(n), dim3(k_reduce_threads)>>>(
         lvl.feat_best.data(), lvl.n_selected, lvl.node_best.device());

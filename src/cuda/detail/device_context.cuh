@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <driver_types.h>
 #include <memory>
 #include <optional>
@@ -267,6 +268,7 @@ struct CudaDeviceContext
     ResidentPlane   resident;
     EvalPlane       veval;
     ProfileCounters prof_counters;
+    bool finder_exhaustive = std::getenv("BONSAI_CUDA_FINDER_EXHAUSTIVE") != nullptr;
 
     // perf: Runtime shared-memory ceiling for the hist kernels: the opt-in limit
     // when the device grants one (both BinT instantiations opted in), else

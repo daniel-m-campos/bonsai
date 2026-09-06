@@ -841,6 +841,11 @@ inline __device__ bool feat_better(double ga, int ba, int da, int va, double gb,
     return da > db;
 }
 
+inline __device__ bool feat_better(FeatBest const &a, FeatBest const &b)
+{
+    return feat_better(a.gain, a.bin, a.dl, a.valid, b.gain, b.bin, b.dl, b.valid);
+}
+
 inline __device__ FeatBest warp_best_cut(FeatBest best)
 {
     for (int off = 16; off > 0; off >>= 1)
@@ -875,6 +880,319 @@ inline __device__ double level_cut_score(SplitSumsDev const &s, double node_ps,
               : node_ps;
 }
 
+struct NodeCut
+{
+    double miss_g, miss_h, real_g, real_h, node_score, lo, hi;
+    int    mc;
+};
+
+template <bool k_l1>
+inline __device__ void
+score_cut_exact(double pg, double ph, uint32_t b, int dl, NodeCut const &nd, double l1,
+                double l2, double min_child_hess, double min_gain, FeatBest &best)
+{
+    auto const s =
+        split_sums_dev(pg, ph, nd.miss_g, nd.miss_h, nd.real_g, nd.real_h, dl);
+    if (s.hL < min_child_hess || s.hR < min_child_hess)
+    {
+        return;
+    }
+    if (nd.mc != 0)
+    {
+        double const wL = bounded_leaf_weight(s.gL, s.hL, l1, l2, nd.lo, nd.hi);
+        double const wR = bounded_leaf_weight(s.gR, s.hR, l1, l2, nd.lo, nd.hi);
+        if (static_cast<double>(nd.mc) * (wR - wL) < 0.0)
+        {
+            return;
+        }
+    }
+    double const gain = cut_score<k_l1>(s.gL, s.hL, l1, l2) +
+                        cut_score<k_l1>(s.gR, s.hR, l1, l2) - nd.node_score;
+    if (gain > 0.0 && gain >= min_gain &&
+        feat_better(gain, static_cast<int>(b), dl, 1, best.gain, best.bin, best.dl,
+                    best.valid))
+    {
+        best.gain  = gain;
+        best.gL    = s.gL;
+        best.hL    = s.hL;
+        best.gR    = s.gR;
+        best.hR    = s.hR;
+        best.bin   = static_cast<int32_t>(b);
+        best.dl    = dl;
+        best.valid = 1;
+    }
+}
+
+inline __device__ FeatBest warp_best_split(FeatBest best)
+{
+    for (int off = 16; off > 0; off >>= 1)
+    {
+        FeatBest const o = {.gain  = __shfl_down_sync(0xffffffffU, best.gain, off),
+                            .gL    = __shfl_down_sync(0xffffffffU, best.gL, off),
+                            .hL    = __shfl_down_sync(0xffffffffU, best.hL, off),
+                            .gR    = __shfl_down_sync(0xffffffffU, best.gR, off),
+                            .hR    = __shfl_down_sync(0xffffffffU, best.hR, off),
+                            .bin   = __shfl_down_sync(0xffffffffU, best.bin, off),
+                            .dl    = __shfl_down_sync(0xffffffffU, best.dl, off),
+                            .valid = __shfl_down_sync(0xffffffffU, best.valid, off),
+                            .sel   = best.sel};
+        if (feat_better(o, best))
+        {
+            best = o;
+        }
+    }
+    return best;
+}
+
+struct Interval
+{
+    float lo, hi;
+};
+
+constexpr float k_inf_f32 = __builtin_inff();
+
+inline __device__ Interval interval_of(double x)
+{
+    return {.lo = __double2float_rd(x), .hi = __double2float_ru(x)};
+}
+
+inline __device__ Interval interval_of(hist_int_t q, float inv)
+{
+    return {.lo = __fmul_rd(__ll2float_rd(q), inv),
+            .hi = __fmul_ru(__ll2float_ru(q), inv)};
+}
+
+inline __device__ Interval operator+(Interval a, Interval b)
+{
+    return {.lo = __fadd_rd(a.lo, b.lo), .hi = __fadd_ru(a.hi, b.hi)};
+}
+
+inline __device__ Interval operator-(Interval a, Interval b)
+{
+    return {.lo = __fsub_rd(a.lo, b.hi), .hi = __fsub_ru(a.hi, b.lo)};
+}
+
+inline __device__ Interval square(Interval a)
+{
+    float const near = a.lo > 0.0f ? a.lo : (a.hi < 0.0f ? -a.hi : 0.0f);
+    float const far  = fmaxf(-a.lo, a.hi);
+    return {.lo = __fmul_rd(near, near), .hi = __fmul_ru(far, far)};
+}
+
+inline __device__ Interval thresholded(Interval g, Interval l1)
+{
+    float const lo = g.lo > l1.hi ? __fsub_rd(g.lo, l1.hi)
+                                  : (g.lo < -l1.lo ? __fadd_rd(g.lo, l1.lo) : 0.0f);
+    float const hi = g.hi > l1.lo ? __fsub_ru(g.hi, l1.lo)
+                                  : (g.hi < -l1.hi ? __fadd_ru(g.hi, l1.hi) : 0.0f);
+    return {.lo = lo, .hi = hi};
+}
+
+template <bool k_l1>
+inline __device__ Interval cut_score_bounds(Interval g, Interval h, Interval l1,
+                                            Interval l2)
+{
+    Interval const t  = k_l1 ? thresholded(g, l1) : g;
+    Interval const t2 = square(t);
+    Interval const d  = h + l2;
+    float const    hi =
+        d.lo > 0.0f ? __fdiv_ru(t2.hi, d.lo) : (d.hi > 0.0f ? k_inf_f32 : 0.0f);
+    float const lo = d.lo > 0.0f ? __fdiv_rd(t2.lo, d.hi) : 0.0f;
+    return {.lo = lo, .hi = hi};
+}
+
+inline __device__ bool is_finite_dev(double x)
+{
+    return (__double_as_longlong(x) & 0x7fffffffffffffffLL) < 0x7ff0000000000000LL;
+}
+
+struct ScreenNode
+{
+    Interval real_g, real_h, miss_g, miss_h, node_score, l1, l2;
+    float    inv_g, inv_h;
+    bool     on;
+};
+
+inline __device__ ScreenNode screen_node(NodeCut const &nd, double2 inv, double l1,
+                                         double l2, bool exhaustive)
+{
+    bool const finite = is_finite_dev(nd.real_g) && is_finite_dev(nd.real_h) &&
+                        is_finite_dev(nd.miss_g) && is_finite_dev(nd.miss_h) &&
+                        is_finite_dev(nd.node_score);
+    float const inv_g = static_cast<float>(inv.x);
+    float const inv_h = static_cast<float>(inv.y);
+    bool const  exact_inv =
+        static_cast<double>(inv_g) == inv.x && static_cast<double>(inv_h) == inv.y;
+    return {.real_g     = interval_of(nd.real_g),
+            .real_h     = interval_of(nd.real_h),
+            .miss_g     = interval_of(nd.miss_g),
+            .miss_h     = interval_of(nd.miss_h),
+            .node_score = interval_of(nd.node_score),
+            .l1         = interval_of(l1),
+            .l2         = interval_of(l2),
+            .inv_g      = inv_g,
+            .inv_h      = inv_h,
+            .on         = !exhaustive && finite && exact_inv};
+}
+
+struct CutScreen
+{
+    float upper, certified;
+    bool  drop;
+};
+
+struct SplitBounds
+{
+    Interval gL, hL, gR, hR;
+};
+
+inline __device__ SplitBounds split_bounds(Interval pg, Interval ph,
+                                           ScreenNode const &sn, int dl)
+{
+    Interval const rg = sn.real_g - pg;
+    Interval const rh = sn.real_h - ph;
+    return {.gL = dl != 0 ? pg + sn.miss_g : pg,
+            .hL = dl != 0 ? ph + sn.miss_h : ph,
+            .gR = dl != 0 ? rg : rg + sn.miss_g,
+            .hR = dl != 0 ? rh : rh + sn.miss_h};
+}
+
+template <bool k_l1>
+inline __device__ CutScreen screen_cut(Interval pg, Interval ph, ScreenNode const &sn,
+                                       int dl, int mc, double min_child_hess,
+                                       double min_gain)
+{
+    SplitBounds const b            = split_bounds(pg, ph, sn, dl);
+    bool const        surely_valid = static_cast<double>(b.hL.lo) >= min_child_hess &&
+                              static_cast<double>(b.hR.lo) >= min_child_hess;
+    bool const surely_invalid = static_cast<double>(b.hL.hi) < min_child_hess ||
+                                static_cast<double>(b.hR.hi) < min_child_hess;
+    Interval const gain = (cut_score_bounds<k_l1>(b.gL, b.hL, sn.l1, sn.l2) +
+                           cut_score_bounds<k_l1>(b.gR, b.hR, sn.l1, sn.l2)) -
+                          sn.node_score;
+    bool const certified = surely_valid && mc == 0 && gain.lo > 0.0f &&
+                           static_cast<double>(gain.lo) >= min_gain;
+    return {.upper     = gain.hi,
+            .certified = certified ? gain.lo : 0.0f,
+            .drop      = surely_invalid || gain.hi <= 0.0f ||
+                    static_cast<double>(gain.hi) < min_gain};
+}
+
+inline __device__ float warp_max(float v)
+{
+    for (int off = 16; off > 0; off >>= 1)
+    {
+        v = fmaxf(v, __shfl_xor_sync(0xffffffffU, v, off));
+    }
+    return v;
+}
+
+struct Survivors
+{
+    hist_int_t qg, qh;
+    uint32_t   b;
+    int        dl;
+    uint32_t   n;
+};
+
+template <bool k_l1>
+inline __device__ void flush_survivors(Survivors &sv, double2 inv, NodeCut const &nd,
+                                       double l1, double l2, double min_child_hess,
+                                       double min_gain, FeatBest &best)
+{
+    if (threadIdx.x < sv.n)
+    {
+        double const pg = static_cast<double>(sv.qg) * inv.x;
+        double const ph = static_cast<double>(sv.qh) * inv.y;
+        score_cut_exact<k_l1>(pg, ph, sv.b, sv.dl, nd, l1, l2, min_child_hess, min_gain,
+                              best);
+    }
+    sv.n = 0;
+}
+
+inline __device__ void append_survivors(Survivors &sv, uint32_t mask, hist_int_t qg,
+                                        hist_int_t qh, uint32_t b, int dl)
+{
+    uint32_t const   lane = threadIdx.x;
+    uint32_t const   cnt  = __popc(mask);
+    uint32_t const   nth  = lane >= sv.n ? lane - sv.n + 1 : 1;
+    int const        src  = static_cast<int>(__fns(mask, 0, static_cast<int>(nth)));
+    hist_int_t const g_in = __shfl_sync(0xffffffffU, qg, src);
+    hist_int_t const h_in = __shfl_sync(0xffffffffU, qh, src);
+    uint32_t const   b_in = __shfl_sync(0xffffffffU, b, src);
+    if (lane >= sv.n && lane < sv.n + cnt)
+    {
+        sv.qg = g_in;
+        sv.qh = h_in;
+        sv.b  = b_in;
+        sv.dl = dl;
+    }
+    sv.n += cnt;
+}
+
+struct CutPrefix
+{
+    hist_int_t qg, qh;
+};
+
+inline __device__ CutPrefix warp_cut_prefix(hist_int_t const *cells, uint32_t b,
+                                            uint32_t n_cut, hist_int_t &carry_g,
+                                            hist_int_t &carry_h)
+{
+    hist_int_t const sg = warp_inclusive_scan((b < n_cut) ? cells[pair_off(b)] : 0);
+    hist_int_t const sh_ =
+        warp_inclusive_scan((b < n_cut) ? cells[pair_off(b) + 1] : 0);
+    CutPrefix const pre = {.qg = carry_g + sg, .qh = carry_h + sh_};
+    carry_g += __shfl_sync(0xffffffffU, sg, 31);
+    carry_h += __shfl_sync(0xffffffffU, sh_, 31);
+    return pre;
+}
+
+template <bool k_l1>
+inline __device__ FeatBest sweep_cuts(hist_int_t const *cells, uint32_t n_cut,
+                                      int n_dirs, NodeCut const &nd,
+                                      ScreenNode const &sn, double2 inv, double l1,
+                                      double l2, double min_child_hess, double min_gain,
+                                      uint32_t sel)
+{
+    uint32_t const lane = threadIdx.x;
+    FeatBest       best = {};
+    best.sel            = static_cast<int32_t>(sel);
+    Survivors  sv       = {};
+    float      l_star   = 0.0f;
+    hist_int_t carry_g  = 0;
+    hist_int_t carry_h  = 0;
+    for (uint32_t base = 0; base < n_cut; base += 32)
+    {
+        uint32_t const  b   = base + lane;
+        CutPrefix const pre = warp_cut_prefix(cells, b, n_cut, carry_g, carry_h);
+        Interval const  pg  = interval_of(pre.qg, sn.inv_g);
+        Interval const  ph  = interval_of(pre.qh, sn.inv_h);
+        for (int d = 0; d < n_dirs; ++d)
+        {
+            int const       dl = 1 - d;
+            CutScreen const sc =
+                screen_cut<k_l1>(pg, ph, sn, dl, nd.mc, min_child_hess, min_gain);
+            l_star = fmaxf(l_star, warp_max(b < n_cut ? sc.certified : 0.0f));
+            bool const keep =
+                b < n_cut && (!sn.on || (!sc.drop && !(sc.upper < l_star)));
+            uint32_t const mask = __ballot_sync(0xffffffffU, keep);
+            if (mask == 0)
+            {
+                continue;
+            }
+            if (sv.n + __popc(mask) > 32)
+            {
+                flush_survivors<k_l1>(sv, inv, nd, l1, l2, min_child_hess, min_gain,
+                                      best);
+            }
+            append_survivors(sv, mask, pre.qg, pre.qh, b, dl);
+        }
+    }
+    flush_survivors<k_l1>(sv, inv, nd, l1, l2, min_child_hess, min_gain, best);
+    return warp_best_split(best);
+}
+
 template <bool k_l1>
 inline __device__ void
 find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive const *derive,
@@ -882,7 +1200,7 @@ find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive const *der
           double const *node_bounds, char const *allowed, int const *monotone,
           uint32_t n_sel, uint32_t stride, double l1, double l2, double min_child_hess,
           double min_gain, FeatBest *out, uint32_t const *hist_slot,
-          GhQuant const *quant)
+          GhQuant const *quant, bool exhaustive)
 {
     uint32_t const node = blockIdx.y;
     uint32_t const sel  = blockIdx.x;
@@ -908,118 +1226,31 @@ find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive const *der
     {
         return;
     }
-    hist_int_t const *cells      = strip_at(hists, slot, n_sel, sel, stride);
-    double2 const     inv        = quant->inv;
-    double const      g_total    = node_sums[pair_off(node)];
-    double const      h_total    = node_sums[pair_off(node) + 1];
-    hist_int_t const  miss_qg    = cells[pair_off(nb - 1)];
-    hist_int_t const  miss_qh    = cells[pair_off(nb - 1) + 1];
-    double const      miss_g     = static_cast<double>(miss_qg) * inv.x;
-    double const      miss_h     = static_cast<double>(miss_qh) * inv.y;
-    double const      node_score = cut_score<k_l1>(g_total, h_total, l1, l2);
-    double const      real_grad  = g_total - miss_g;
-    double const      real_hess  = h_total - miss_h;
-    double const      lo         = node_bounds[pair_off(node)];
-    double const      hi         = node_bounds[pair_off(node) + 1];
-    int const         mc         = monotone[f];
-    uint32_t const    n_cut      = nb - 2;
+    hist_int_t const *cells   = strip_at(hists, slot, n_sel, sel, stride);
+    double2 const     inv     = quant->inv;
+    double const      g_total = node_sums[pair_off(node)];
+    double const      h_total = node_sums[pair_off(node) + 1];
+    hist_int_t const  miss_qg = cells[pair_off(nb - 1)];
+    hist_int_t const  miss_qh = cells[pair_off(nb - 1) + 1];
+    double const      miss_g  = static_cast<double>(miss_qg) * inv.x;
+    double const      miss_h  = static_cast<double>(miss_qh) * inv.y;
+    NodeCut const     nd      = {.miss_g     = miss_g,
+                                 .miss_h     = miss_h,
+                                 .real_g     = g_total - miss_g,
+                                 .real_h     = h_total - miss_h,
+                                 .node_score = cut_score<k_l1>(g_total, h_total, l1, l2),
+                                 .lo         = node_bounds[pair_off(node)],
+                                 .hi         = node_bounds[pair_off(node) + 1],
+                                 .mc         = monotone[f]};
+    ScreenNode const  sn      = screen_node(nd, inv, l1, l2, exhaustive);
+    uint32_t const    n_cut   = nb - 2;
+    int const         n_dirs  = (miss_qg == 0 && miss_qh == 0) ? 1 : 2;
 
-    int const n_dirs = (miss_qg == 0 && miss_qh == 0) ? 1 : 2;
-
-    double  best_gain = 0.0;
-    int32_t best_bin = 0, best_dl = 0, best_valid = 0;
-    double  bgL = 0, bhL = 0, bgR = 0, bhR = 0;
-
-    hist_int_t carry_g = 0;
-    hist_int_t carry_h = 0;
-    for (uint32_t base = 0; base < n_cut; base += 32)
+    FeatBest const best = sweep_cuts<k_l1>(cells, n_cut, n_dirs, nd, sn, inv, l1, l2,
+                                           min_child_hess, min_gain, sel);
+    if (lane == 0 && best.valid != 0)
     {
-        uint32_t const b   = base + lane;
-        hist_int_t     sg  = (b < n_cut) ? cells[pair_off(b)] : 0;
-        hist_int_t     sh_ = (b < n_cut) ? cells[pair_off(b) + 1] : 0;
-        for (int off = 1; off < 32; off <<= 1)
-        {
-            hist_int_t const ng = __shfl_up_sync(0xffffffffU, sg, off);
-            hist_int_t const nh = __shfl_up_sync(0xffffffffU, sh_, off);
-            if (lane >= static_cast<uint32_t>(off))
-            {
-                sg += ng;
-                sh_ += nh;
-            }
-        }
-        double const pg = static_cast<double>(carry_g + sg) * inv.x;
-        double const ph = static_cast<double>(carry_h + sh_) * inv.y;
-        carry_g += __shfl_sync(0xffffffffU, sg, 31);
-        carry_h += __shfl_sync(0xffffffffU, sh_, 31);
-
-        if (b < n_cut)
-        {
-#pragma unroll
-            for (int d = 0; d < 2; ++d)
-            {
-                if (d >= n_dirs)
-                {
-                    break;
-                }
-                int const  dl = 1 - d;
-                auto const s =
-                    split_sums_dev(pg, ph, miss_g, miss_h, real_grad, real_hess, dl);
-                if (s.hL < min_child_hess || s.hR < min_child_hess)
-                {
-                    continue;
-                }
-                if (mc != 0)
-                {
-                    double const wL = bounded_leaf_weight(s.gL, s.hL, l1, l2, lo, hi);
-                    double const wR = bounded_leaf_weight(s.gR, s.hR, l1, l2, lo, hi);
-                    if (static_cast<double>(mc) * (wR - wL) < 0.0)
-                    {
-                        continue;
-                    }
-                }
-                double const gain = cut_score<k_l1>(s.gL, s.hL, l1, l2) +
-                                    cut_score<k_l1>(s.gR, s.hR, l1, l2) - node_score;
-                if (gain > 0.0 && gain >= min_gain &&
-                    feat_better(gain, static_cast<int>(b), dl, 1, best_gain, best_bin,
-                                best_dl, best_valid))
-                {
-                    best_gain  = gain;
-                    best_bin   = static_cast<int32_t>(b);
-                    best_dl    = dl;
-                    best_valid = 1;
-                    bgL = s.gL, bhL = s.hL, bgR = s.gR, bhR = s.hR;
-                }
-            }
-        }
-    }
-
-    for (int off = 16; off > 0; off >>= 1)
-    {
-        double const og  = __shfl_down_sync(0xffffffffU, best_gain, off);
-        int const    ob  = __shfl_down_sync(0xffffffffU, best_bin, off);
-        int const    od  = __shfl_down_sync(0xffffffffU, best_dl, off);
-        int const    ov  = __shfl_down_sync(0xffffffffU, best_valid, off);
-        double const ogL = __shfl_down_sync(0xffffffffU, bgL, off);
-        double const ohL = __shfl_down_sync(0xffffffffU, bhL, off);
-        double const ogR = __shfl_down_sync(0xffffffffU, bgR, off);
-        double const ohR = __shfl_down_sync(0xffffffffU, bhR, off);
-        if (feat_better(og, ob, od, ov, best_gain, best_bin, best_dl, best_valid))
-        {
-            best_gain = og, best_bin = ob, best_dl = od, best_valid = ov;
-            bgL = ogL, bhL = ohL, bgR = ogR, bhR = ohR;
-        }
-    }
-    if (lane == 0 && best_valid != 0)
-    {
-        out[oidx] = {.gain  = best_gain,
-                     .gL    = bgL,
-                     .hL    = bhL,
-                     .gR    = bgR,
-                     .hR    = bhR,
-                     .bin   = best_bin,
-                     .dl    = best_dl,
-                     .valid = 1,
-                     .sel   = static_cast<int32_t>(sel)};
+        out[oidx] = best;
     }
 }
 
@@ -1030,18 +1261,18 @@ __global__ void find_kernel(hist_int_t *hists, hist_int_t const *parents,
                             int const *monotone, uint32_t n_sel, uint32_t stride,
                             double l1, double l2, double min_child_hess,
                             double min_gain, FeatBest *out, uint32_t const *hist_slot,
-                            GhQuant const *quant)
+                            GhQuant const *quant, bool exhaustive)
 {
     if (l1 == 0.0)
     {
         find_node<false>(hists, parents, derive, features, n_bins, node_sums,
                          node_bounds, allowed, monotone, n_sel, stride, l1, l2,
-                         min_child_hess, min_gain, out, hist_slot, quant);
+                         min_child_hess, min_gain, out, hist_slot, quant, exhaustive);
         return;
     }
     find_node<true>(hists, parents, derive, features, n_bins, node_sums, node_bounds,
                     allowed, monotone, n_sel, stride, l1, l2, min_child_hess, min_gain,
-                    out, hist_slot, quant);
+                    out, hist_slot, quant, exhaustive);
 }
 
 constexpr uint32_t k_reduce_threads = 256;
@@ -1197,8 +1428,7 @@ inline __device__ FeatBest block_best_cut(FeatBest best,
     for (uint32_t w = 1; w < k_level_find_warps; ++w)
     {
         FeatBest const o = s_best[w];
-        if (feat_better(o.gain, o.bin, o.dl, o.valid, best.gain, best.bin, best.dl,
-                        best.valid))
+        if (feat_better(o, best))
         {
             best = o;
         }
