@@ -460,7 +460,7 @@ __global__ void hist_small_kernel(BinT const *bins, float2 const *gh_ordered,
                        });
 }
 
-constexpr uint32_t k_part_rows_per_thread = 16;
+constexpr uint32_t k_part_rows_per_thread = 4;
 constexpr uint32_t k_part_block           = 256;
 constexpr uint32_t k_part_warps           = k_part_block / 32;
 constexpr uint32_t k_part_warp_rows       = 32 * k_part_rows_per_thread;
@@ -542,22 +542,120 @@ inline __device__ bool goes_left_dev(uint32_t b, uint32_t last_bin, uint32_t bin
     return b <= bin;
 }
 
-template <typename BinT>
-__global__ void
-route_count_kernel(BinT const *bins, uint32_t const *n_bins, uint32_t const *rows,
-                   PartOpDev const *ops, uint32_t n_rows, uint32_t n_feats,
-                   uint32_t max_chunks, uint8_t *flags, uint32_t *block_counts)
+constexpr uint32_t k_part_status_aggregate = 1;
+constexpr uint32_t k_part_status_inclusive = 2;
+
+inline __device__ unsigned long long part_status_word(uint32_t value, uint32_t epoch,
+                                                      uint32_t flag)
 {
-    __shared__ uint32_t sh[k_part_warps];
-    PartOpDev const     op   = ops[blockIdx.y];
-    uint32_t const      last = n_bins[op.fid] - 1;
-    PartLane const      pl   = part_lane(blockIdx.x);
-    uint32_t            row[k_part_rows_per_thread];
+    return (static_cast<unsigned long long>((epoch << 2) | flag) << 32) | value;
+}
+
+inline __device__ void part_publish(unsigned long long *word, uint32_t value,
+                                    uint32_t epoch, uint32_t flag)
+{
+    atomicExch(word, part_status_word(value, epoch, flag));
+}
+
+struct PartStatus
+{
+    uint32_t value;
+    bool     ready;
+    bool     inclusive;
+};
+
+inline __device__ PartStatus part_status_read(unsigned long long const *words,
+                                              int32_t idx, uint32_t epoch)
+{
+    if (idx < 0)
+    {
+        return {0, true, true};
+    }
+    unsigned long long const w   = __ldcg(words + idx);
+    uint32_t const           tag = static_cast<uint32_t>(w >> 32);
+    bool const aggregate         = tag == ((epoch << 2) | k_part_status_aggregate);
+    bool const inclusive         = tag == ((epoch << 2) | k_part_status_inclusive);
+    return {static_cast<uint32_t>(w), aggregate || inclusive, inclusive};
+}
+
+inline __device__ uint32_t part_lookback(unsigned long long const *words,
+                                         uint32_t epoch, uint32_t chunk, uint32_t lane)
+{
+    uint32_t prefix = 0;
+    int32_t  end    = static_cast<int32_t>(chunk);
+    while (true)
+    {
+        PartStatus const s =
+            part_status_read(words, end - 32 + static_cast<int32_t>(lane), epoch);
+        uint32_t const inclusive = __ballot_sync(0xffffffffU, s.inclusive);
+        uint32_t const ready     = __ballot_sync(0xffffffffU, s.ready);
+        uint32_t const from =
+            inclusive == 0 ? 0U : static_cast<uint32_t>(31 - __clz(inclusive));
+        uint32_t const needed = ~((1U << from) - 1);
+        if ((ready & needed) != needed)
+        {
+            continue;
+        }
+        prefix += warp_sum_u32(lane >= from ? s.value : 0U);
+        if (inclusive != 0)
+        {
+            return prefix;
+        }
+        end -= 32;
+    }
+}
+
+inline __device__ void part_publish_prefix(unsigned long long *words, uint32_t epoch,
+                                           uint32_t chunk, uint32_t max_chunks,
+                                           uint32_t block_total, PartLane const &pl,
+                                           uint32_t *before_out, uint32_t *n_left)
+{
+    if (threadIdx.x == 0 && chunk > 0)
+    {
+        part_publish(words + chunk, block_total, epoch, k_part_status_aggregate);
+    }
+    if (pl.warp != 0)
+    {
+        return;
+    }
+    uint32_t const before = part_lookback(words, epoch, chunk, pl.lane);
+    if (pl.lane != 0)
+    {
+        return;
+    }
+    part_publish(words + chunk, before + block_total, epoch, k_part_status_inclusive);
+    *before_out = before;
+    if (chunk + 1 == max_chunks)
+    {
+        *n_left = before + block_total;
+    }
+}
+
+template <typename BinT>
+__global__ void __launch_bounds__(k_part_block)
+    partition_kernel(BinT const *bins, uint32_t const *n_bins, uint32_t const *rows_in,
+                     float2 const *gh_in, PartOpDev const *ops, uint32_t n_rows,
+                     uint32_t n_feats, uint32_t max_chunks, PartTilesDev tiles,
+                     uint32_t *n_left, uint32_t *rows_out, float2 *gh_out)
+{
+    __shared__ uint32_t sh[k_part_warps + 2];
+    if (threadIdx.x == 0)
+    {
+        sh[k_part_warps] = atomicAdd(tiles.counter, 1U) - tiles.base;
+    }
+    __syncthreads();
+    uint32_t const  tile  = sh[k_part_warps];
+    uint32_t const  chunk = tile % max_chunks;
+    uint32_t const  opi   = tile / max_chunks;
+    PartOpDev const op    = ops[opi];
+    uint32_t const  last  = n_bins[op.fid] - 1;
+    PartLane const  pl    = part_lane(chunk);
+    uint32_t        row[k_part_rows_per_thread];
 #pragma unroll
     for (uint32_t j = 0; j < k_part_rows_per_thread; ++j)
     {
         uint32_t const i = part_row(pl, j);
-        row[j]           = i < op.count ? rows[op.offset + i] : 0;
+        row[j]           = i < op.count ? rows_in[op.offset + i] : 0;
     }
     BinT bin[k_part_rows_per_thread];
 #pragma unroll
@@ -567,83 +665,33 @@ route_count_kernel(BinT const *bins, uint32_t const *n_bins, uint32_t const *row
                      ? bins[tiled_cell(op.fid, row[j], n_rows, n_feats)]
                      : BinT{0};
     }
-    uint32_t mine = 0;
-    for_each_lane_row(pl, op.count,
-                      [&](uint32_t j, uint32_t i)
-                      {
-                          bool const l = goes_left_dev(bin[j], last, op.bin, op.dl);
-                          flags[op.offset + i] = l ? 1 : 0;
-                          mine += l ? 1U : 0U;
-                      });
-    uint32_t const total = warp_prefix_in_block(sh, pl, mine).total;
-    if (threadIdx.x == 0)
-    {
-        block_counts[(static_cast<size_t>(blockIdx.y) * max_chunks) + blockIdx.x] =
-            total;
-    }
-}
-
-struct SegmentLefts
-{
-    uint32_t below;
-    uint32_t total;
-};
-
-inline __device__ SegmentLefts segment_lefts(uint32_t const *counts,
-                                             uint32_t max_chunks, uint32_t chunk,
-                                             uint32_t *sh, PartLane const &pl)
-{
-    uint32_t below = 0;
-    uint32_t total = 0;
-    for (uint32_t k = threadIdx.x; k < max_chunks; k += k_part_block)
-    {
-        uint32_t const c = counts[k];
-        below += k < chunk ? c : 0;
-        total += c;
-    }
-    below = warp_prefix_in_block(sh, pl, below).total;
-    total = warp_prefix_in_block(sh + k_part_warps, pl, total).total;
-    return {below, total};
-}
-
-__global__ void scatter_kernel(uint32_t const *rows_in, float2 const *gh_in,
-                               uint8_t const *flags, PartOpDev const *ops,
-                               uint32_t const *block_counts, uint32_t max_chunks,
-                               uint32_t *n_left, uint32_t *rows_out, float2 *gh_out)
-{
-    __shared__ uint32_t sh[3 * k_part_warps];
-    PartOpDev const     op    = ops[blockIdx.y];
-    uint32_t const      chunk = blockIdx.x;
-    PartLane const      pl    = part_lane(chunk);
-    SegmentLefts const  seg =
-        segment_lefts(block_counts + (static_cast<size_t>(blockIdx.y) * max_chunks),
-                      max_chunks, chunk, sh, pl);
-    if (chunk == 0 && threadIdx.x == 0)
-    {
-        n_left[blockIdx.y] = seg.total;
-    }
     uint32_t mask[k_part_rows_per_thread];
     uint32_t mine = 0;
 #pragma unroll
     for (uint32_t j = 0; j < k_part_rows_per_thread; ++j)
     {
-        uint32_t const i = part_row(pl, j);
-        bool const     l = i < op.count && flags[op.offset + i] != 0;
-        mask[j]          = __ballot_sync(0xffffffffU, l);
+        bool const l =
+            part_row(pl, j) < op.count && goes_left_dev(bin[j], last, op.bin, op.dl);
+        mask[j] = __ballot_sync(0xffffffffU, l);
         mine += l ? 1U : 0U;
     }
-    uint32_t lefts =
-        seg.below + warp_prefix_in_block(sh + (2 * k_part_warps), pl, mine).before;
+    WarpPrefix const          wp = warp_prefix_in_block(sh, pl, mine);
+    unsigned long long *const words =
+        tiles.status + (static_cast<size_t>(opi) * max_chunks);
+    part_publish_prefix(words, tiles.epoch, chunk, max_chunks, wp.total, pl,
+                        sh + k_part_warps + 1, n_left + opi);
+    __syncthreads();
+    uint32_t       lefts   = sh[k_part_warps + 1] + wp.before;
     uint32_t const lane_lt = (1U << pl.lane) - 1;
+    uint32_t const end     = op.offset + op.count - 1;
     for_each_lane_row(pl, op.count,
                       [&](uint32_t j, uint32_t i)
                       {
                           uint32_t const here = lefts + __popc(mask[j] & lane_lt);
                           bool const     l    = ((mask[j] >> pl.lane) & 1U) != 0;
-                          uint32_t const dst =
-                              op.offset + (l ? here : seg.total + (i - here));
-                          rows_out[dst] = rows_in[op.offset + i];
-                          gh_out[dst]   = gh_in[op.offset + i];
+                          uint32_t const dst  = l ? op.offset + here : end - (i - here);
+                          rows_out[dst]       = row[j];
+                          gh_out[dst]         = gh_in[op.offset + i];
                           lefts += __popc(mask[j]);
                       });
 }

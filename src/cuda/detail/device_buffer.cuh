@@ -138,6 +138,14 @@ struct PartOpDev
     uint32_t offset, count, fid, bin, dl;
 };
 
+struct PartTilesDev
+{
+    unsigned long long *status;
+    uint32_t           *counter;
+    uint32_t            base;
+    uint32_t            epoch;
+};
+
 inline void check(cudaError_t rc, char const *what)
 {
     if (rc != cudaSuccess)
@@ -259,6 +267,41 @@ template <typename T> class DeviceBuffer
   private:
     T     *ptr_      = nullptr;
     size_t capacity_ = 0;
+};
+
+class PartTiles
+{
+  public:
+    PartTilesDev arm(size_t status_words, uint32_t n_tiles)
+    {
+        if (status_words > words_)
+        {
+            status_.reserve(status_words);
+            check(cudaMemset(status_.data(), 0,
+                             status_words * sizeof(unsigned long long)),
+                  "partition status zero");
+            words_ = status_words;
+        }
+        if (!counter_ready_)
+        {
+            counter_.reserve(1);
+            check(cudaMemset(counter_.data(), 0, sizeof(uint32_t)),
+                  "partition counter zero");
+            counter_ready_ = true;
+        }
+        ++epoch_;
+        PartTilesDev const dev{status_.data(), counter_.data(), issued_, epoch_};
+        issued_ += n_tiles;
+        return dev;
+    }
+
+  private:
+    DeviceBuffer<unsigned long long> status_;
+    DeviceBuffer<uint32_t>           counter_;
+    size_t                           words_         = 0;
+    uint32_t                         issued_        = 0;
+    uint32_t                         epoch_         = 0;
+    bool                             counter_ready_ = false;
 };
 
 struct RowMap

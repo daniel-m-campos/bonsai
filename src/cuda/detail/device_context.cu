@@ -947,8 +947,6 @@ void CudaDeviceContext::partition_level(
     lvl.part_ops.sync();
     uint32_t const max_chunks =
         std::max(1U, (max_cnt + k_part_chunk - 1) / k_part_chunk);
-    lvl.flags.reserve(data.key.n_rows);
-    lvl.block_counts.reserve(n * max_chunks);
     lvl.nl_dev.reserve(n);
     lap(prof.part_stage_s);
 
@@ -967,38 +965,29 @@ void CudaDeviceContext::partition_level(
             check(cudaEventRecord(lvl.part_ev[i]), "part event record");
         }
     };
+    uint32_t const n_tiles = max_chunks * static_cast<uint32_t>(n);
+    lvl.other_rows().reserve(data.key.n_rows);
+    lvl.other_gh().reserve(data.key.n_rows);
+    PartTilesDev const tiles = lvl.part_tiles.arm(n_tiles, n_tiles);
     mark(0);
-    dim3 const grid(max_chunks, static_cast<uint32_t>(n));
     data.dispatch_bins(
         [&](auto const *bins)
         {
-            route_count_kernel<<<grid, dim3(k_part_block)>>>(
-                bins, data.n_bins_ptr(), lvl.cur_rows().data(), lvl.part_ops.device(),
-                static_cast<uint32_t>(data.key.n_rows),
-                static_cast<uint32_t>(data.key.n_feats), max_chunks, lvl.flags.data(),
-                lvl.block_counts.data());
+            partition_kernel<<<dim3(n_tiles), dim3(k_part_block)>>>(
+                bins, data.n_bins_ptr(), lvl.cur_rows().data(), lvl.cur_gh().data(),
+                lvl.part_ops.device(), static_cast<uint32_t>(data.key.n_rows),
+                static_cast<uint32_t>(data.key.n_feats), max_chunks, tiles,
+                lvl.nl_dev.device(), lvl.other_rows().data(), lvl.other_gh().data());
         });
-    check(cudaGetLastError(), "route launch");
+    check(cudaGetLastError(), "partition launch");
     mark(1);
-    lvl.other_rows().reserve(data.key.n_rows);
-    lvl.other_gh().reserve(data.key.n_rows);
-    scatter_kernel<<<grid, dim3(k_part_block)>>>(
-        lvl.cur_rows().data(), lvl.cur_gh().data(), lvl.flags.data(),
-        lvl.part_ops.device(), lvl.block_counts.data(), max_chunks, lvl.nl_dev.device(),
-        lvl.other_rows().data(), lvl.other_gh().data());
-    check(cudaGetLastError(), "scatter launch");
-    mark(2);
     lvl.nl_dev.fetch(n);
     if (prof.enabled)
     {
-        double *const spans[2] = {&prof.part_route_s, &prof.part_scatter_s};
-        for (int i = 0; i < 2; ++i)
-        {
-            float ms = 0.0F;
-            check(cudaEventElapsedTime(&ms, lvl.part_ev[i], lvl.part_ev[i + 1]),
-                  "part event elapsed");
-            *spans[i] += ms / 1e3;
-        }
+        float ms = 0.0F;
+        check(cudaEventElapsedTime(&ms, lvl.part_ev[0], lvl.part_ev[1]),
+              "part event elapsed");
+        prof.part_kernel_s += ms / 1e3;
         ++prof.launches;
     }
     lap(prof.gpu_s);
@@ -1372,27 +1361,22 @@ CudaDeviceContext::leaf_split(Dataset const & /*ds*/,
                             op.default_left ? 1U : 0U};
     leaf.part_op.sync(1);
     uint32_t const max_chunks = std::max(1U, (count + k_part_chunk - 1) / k_part_chunk);
-    lvl.flags.reserve(data.key.n_rows);
-    lvl.block_counts.reserve(max_chunks);
     lvl.nl_dev.reserve(1);
+    PartTilesDev const tiles = lvl.part_tiles.arm(max_chunks, max_chunks);
     lap(prof.part_stage_s);
 
-    dim3 const grid(max_chunks, 1);
     data.dispatch_bins(
         [&](auto const *bins)
         {
-            route_count_kernel<<<grid, dim3(k_part_block)>>>(
+            partition_kernel<<<dim3(max_chunks), dim3(k_part_block)>>>(
                 bins, data.n_bins_ptr(), lvl.rows_of(in_b).data(),
-                leaf.part_op.device(), static_cast<uint32_t>(data.key.n_rows),
-                static_cast<uint32_t>(data.key.n_feats), max_chunks, lvl.flags.data(),
-                lvl.block_counts.data());
+                lvl.gh_of(in_b).data(), leaf.part_op.device(),
+                static_cast<uint32_t>(data.key.n_rows),
+                static_cast<uint32_t>(data.key.n_feats), max_chunks, tiles,
+                lvl.nl_dev.device(), lvl.rows_of(!in_b).data(),
+                lvl.gh_of(!in_b).data());
         });
-    check(cudaGetLastError(), "leaf route launch");
-    scatter_kernel<<<grid, dim3(k_part_block)>>>(
-        lvl.rows_of(in_b).data(), lvl.gh_of(in_b).data(), lvl.flags.data(),
-        leaf.part_op.device(), lvl.block_counts.data(), max_chunks, lvl.nl_dev.device(),
-        lvl.rows_of(!in_b).data(), lvl.gh_of(!in_b).data());
-    check(cudaGetLastError(), "leaf scatter launch");
+    check(cudaGetLastError(), "leaf partition launch");
     lvl.nl_dev.fetch(1);
     if (prof.enabled)
     {
