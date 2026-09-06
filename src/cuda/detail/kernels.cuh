@@ -107,10 +107,10 @@ inline __device__ uint32_t *plane_words(hist_int_t *sh, uint32_t j, uint32_t str
 // perf: Each 32-bin group holds four 32-word planes (g lo, g hi, h lo, h hi),
 // so bin b lands in shared bank b mod 32 where the interleaved cell put eight
 // bins on one bank. The plane offsets are constants folded into the atomic's
-// immediate, which keeps hist_tile_kernel<8> at 37 registers; runtime plane
-// bases read 94 and cut residency to one 512-thread block per SM. Same-pod
-// RTX PRO 6000 train time: wide depthwise 5.07 s to 4.85 s, tall 3.61 s to
-// 3.32 s over 100 trees.
+// immediate, which kept hist_tile_kernel<8> at 37 registers where runtime
+// plane bases read 94; hist_tile_kernel<16> holds 64 under its launch bound
+// with no spills. Same-pod RTX PRO 6000 train time at width 8: wide depthwise
+// 5.07 s to 4.85 s, tall 3.61 s to 3.32 s over 100 trees.
 inline __device__ uint32_t plane_word(uint32_t b)
 {
     return ((b & ~k_plane_group_mask) << 2) | (b & k_plane_group_mask);
@@ -383,12 +383,12 @@ inline __device__ void visit_tile_rows(TileBlock<W> const &tb, BinT const *bins,
 }
 
 template <uint32_t W, typename BinT>
-__global__ void
-hist_tile_kernel(BinT const *bins, float2 const *gh_ordered, uint32_t const *rows,
-                 uint32_t const *row_offsets, uint32_t const *row_counts,
-                 uint32_t const *sel_slot, uint32_t const *n_bins, uint32_t n_rows,
-                 uint32_t n_feats, uint32_t n_sel, hist_int_t *out, uint32_t stride,
-                 uint32_t const *out_slot, GhQuant const *quant)
+__global__ void __launch_bounds__(k_tile_fill_threads)
+    hist_tile_kernel(BinT const *bins, float2 const *gh_ordered, uint32_t const *rows,
+                     uint32_t const *row_offsets, uint32_t const *row_counts,
+                     uint32_t const *sel_slot, uint32_t const *n_bins, uint32_t n_rows,
+                     uint32_t n_feats, uint32_t n_sel, hist_int_t *out, uint32_t stride,
+                     uint32_t const *out_slot, GhQuant const *quant)
 {
     extern __shared__ hist_int_t sh[];
     TileBlock<W> const           tb = tile_block<W>(sel_slot, n_feats);
