@@ -988,6 +988,18 @@ inline __device__ Interval thresholded(Interval g, Interval l1)
     return {.lo = lo, .hi = hi};
 }
 
+inline __device__ float quotient_above(float x, float y)
+{
+    float const q = x / y;
+    return q < k_inf_f32 ? __int_as_float(__float_as_int(q) + 1) : q;
+}
+
+inline __device__ float quotient_below(float x, float y)
+{
+    float const q = x / y;
+    return q > 0.0f ? __int_as_float(__float_as_int(q) - 1) : 0.0f;
+}
+
 template <bool k_l1>
 inline __device__ Interval cut_score_bounds(Interval g, Interval h, Interval l1,
                                             Interval l2)
@@ -996,8 +1008,8 @@ inline __device__ Interval cut_score_bounds(Interval g, Interval h, Interval l1,
     Interval const t2 = square(t);
     Interval const d  = h + l2;
     float const    hi =
-        d.lo > 0.0f ? __fdiv_ru(t2.hi, d.lo) : (d.hi > 0.0f ? k_inf_f32 : 0.0f);
-    float const lo = d.lo > 0.0f ? __fdiv_rd(t2.lo, d.hi) : 0.0f;
+        d.lo > 0.0f ? quotient_above(t2.hi, d.lo) : (d.hi > 0.0f ? k_inf_f32 : 0.0f);
+    float const lo = d.lo > 0.0f ? quotient_below(t2.lo, d.hi) : 0.0f;
     return {.lo = lo, .hi = hi};
 }
 
@@ -1263,14 +1275,14 @@ find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive const *der
     }
 }
 
-__global__ void find_kernel(hist_int_t *hists, hist_int_t const *parents,
-                            SiblingDerive const *derive, uint32_t const *features,
-                            uint32_t const *n_bins, double const *node_sums,
-                            double const *node_bounds, char const *allowed,
-                            int const *monotone, uint32_t n_sel, uint32_t stride,
-                            double l1, double l2, double min_child_hess,
-                            double min_gain, FeatBest *out, uint32_t const *hist_slot,
-                            GhQuant const *quant, bool exhaustive)
+__global__ void __launch_bounds__(32, 16)
+    find_kernel(hist_int_t *hists, hist_int_t const *parents,
+                SiblingDerive const *derive, uint32_t const *features,
+                uint32_t const *n_bins, double const *node_sums,
+                double const *node_bounds, char const *allowed, int const *monotone,
+                uint32_t n_sel, uint32_t stride, double l1, double l2,
+                double min_child_hess, double min_gain, FeatBest *out,
+                uint32_t const *hist_slot, GhQuant const *quant, bool exhaustive)
 {
     if (l1 == 0.0)
     {
