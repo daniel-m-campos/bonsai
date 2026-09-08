@@ -64,6 +64,14 @@ Interval bracket(double x)
                                                    : nearest};
 }
 
+CutConst cut_const(TreeConfig const &config)
+{
+    return {.l1             = config.lambda_l1,
+            .l2             = config.lambda_l2,
+            .min_child_hess = config.min_child_hess,
+            .min_gain       = config.min_gain_to_split};
+}
+
 ScreenConst screen_const(TreeConfig const &config)
 {
     return {.l1             = bracket(config.lambda_l1),
@@ -1083,8 +1091,7 @@ void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &co
     find_kernel<<<find_grid(lvl.n_selected, n_nodes), dim3(32)>>>(
         lvl.cur().data(), lvl.other().data(), nodes, lvl.features.device(),
         data.n_bins_ptr(), any_mask ? lvl.allowed.device() : nullptr,
-        lvl.monotone.device(), lvl.n_selected, lvl.stride, config.lambda_l1,
-        config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
+        lvl.monotone.device(), lvl.n_selected, lvl.stride, cut_const(config),
         screen_const(config), lvl.feat_best.data(), grads.quant.data(),
         finder_exhaustive, n_nodes, children_read);
     check(cudaGetLastError(), "find launch");
@@ -1136,8 +1143,7 @@ void CudaDeviceContext::find_level_split(Dataset const & /*ds*/,
         lvl.cur().data(), lvl.other().data(),
         finder_derives ? lvl.derive.device() : nullptr, lvl.features.device(),
         data.n_bins_ptr(), lvl.node_sums.device(), lvl.n_selected,
-        static_cast<uint32_t>(n), lvl.stride, config.lambda_l1, config.lambda_l2,
-        config.min_child_hess, config.min_gain_to_split, lvl.feat_best.data(),
+        static_cast<uint32_t>(n), lvl.stride, cut_const(config), lvl.feat_best.data(),
         grads.quant.data());
     check(cudaGetLastError(), "level find launch");
     reduce_kernel<<<dim3(1), dim3(k_reduce_threads)>>>(
@@ -1441,8 +1447,7 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
     find_kernel<<<find_grid(lvl.n_selected, n), dim3(32)>>>(
         leaf.pool.data(), leaf.pool.data(), args, lvl.features.device(),
         data.n_bins_ptr(), any_mask ? lvl.allowed.device() : nullptr,
-        leaf.monotone.device(), lvl.n_selected, lvl.stride, config.lambda_l1,
-        config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
+        leaf.monotone.device(), lvl.n_selected, lvl.stride, cut_const(config),
         screen_const(config), lvl.feat_best.data(), grads.quant.data(),
         finder_exhaustive, n, /*store_derived=*/true);
     check(cudaGetLastError(), "leaf find launch");
