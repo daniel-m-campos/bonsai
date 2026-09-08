@@ -197,6 +197,8 @@ struct CudaDeviceContext
         bool stage_find_inputs(std::span<SplitInput const> level,
                                TreeConfig const &config, Dataset const &ds);
 
+        bool stage_allowed(std::span<SplitInput const> nodes);
+
         void unpack_splits(std::span<SplitInput const> level, TreeConfig const &config,
                            std::span<SplitOutput> out,
                            std::span<NodeTotals>  child_sums);
@@ -210,25 +212,23 @@ struct CudaDeviceContext
         std::vector<uint32_t>    slot_offsets;
         std::vector<uint32_t>    slot_counts;
         std::vector<uint8_t>     slot_in_b;
-        // perf: Per-round staging. Pinned and asynchronous because the round's whole
-        // host residue is these uploads: a pageable copy stream-syncs before it
-        // starts, so 8 of them per round drain the pipeline 8 times.
-        // Each buffer is written once per round, downstream of the blocking
-        // fetch that fenced the previous round's upload of it.
-        PinnedStaged<PartOpDev>     part_op;
-        PinnedStaged<uint32_t>      build_seg;
-        PinnedStaged<double>        find_stats;
-        PinnedStaged<NodeScreen>    find_screen;
-        PinnedStaged<uint32_t>      find_slots;
-        PinnedStaged<SiblingDerive> find_derive;
-        Staged<int>                 monotone;
-        MappedScalar<uint32_t>      n_left;
-        StreamFence                 partitioned;
-        bool                        queued_fill_noted = false;
-        uint32_t                    next_slot         = 0;
-        uint32_t                    max_slots         = 0;
-        uint32_t                    pending_small     = k_not_selected;
-        uint32_t                    pending_large     = k_not_selected;
+        // perf: The round's one remaining upload, the direct build's segment.
+        // Pinned and asynchronous because a pageable copy stream-syncs before
+        // it starts and drains every queued kernel; the partition op and the
+        // finder's node arguments ride their launches as kernel parameters,
+        // which removed 5 uploads per expansion over the ~26400 expansions of
+        // 100 tall leafwise trees. Written once per round, downstream of the
+        // event that fenced the previous round's upload of it.
+        PinnedStaged<uint32_t> build_seg;
+        Staged<int>            monotone;
+        MappedScalar<uint32_t> n_left;
+        StreamFence            partitioned;
+        bool                   queued_fill_noted = false;
+        bool                   launch_args_noted = false;
+        uint32_t               next_slot         = 0;
+        uint32_t               max_slots         = 0;
+        uint32_t               pending_small     = k_not_selected;
+        uint32_t               pending_large     = k_not_selected;
     };
 
     struct NodeTable
@@ -360,12 +360,14 @@ struct CudaDeviceContext
          leaf_children(CudaHistogramEngine::LeafPartOp const &op, uint32_t offset,
                        uint32_t count, uint32_t nl, bool in_b);
     void note_queued_fill();
-    bool leaf_stage_find(std::span<SplitInput const> nodes,
-                         std::span<uint32_t const> slots, TreeConfig const &config);
-    void leaf_find(Dataset const &ds, TreeConfig const &config,
-                   std::span<SplitInput const> nodes, std::span<uint32_t const> slots,
-                   std::span<SplitOutput> out, std::span<NodeTotals> child_sums);
-    void leaf_stamp(std::span<CudaHistogramEngine::LeafStamp const> stamps);
+    void note_launch_args();
+    LeafFindNodes leaf_find_nodes(std::span<SplitInput const> nodes,
+                                  std::span<uint32_t const>   slots,
+                                  TreeConfig const           &config);
+    void          leaf_find(Dataset const &ds, TreeConfig const &config,
+                            std::span<SplitInput const> nodes, std::span<uint32_t const> slots,
+                            std::span<SplitOutput> out, std::span<NodeTotals> child_sums);
+    void          leaf_stamp(std::span<CudaHistogramEngine::LeafStamp const> stamps);
 
     bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
                         std::span<float const> initial_scores, float learning_rate);

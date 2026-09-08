@@ -417,7 +417,6 @@ bool CudaDeviceContext::LevelPipeline::stage_find_inputs(
     node_sums.host.resize(2 * n);
     node_bounds.host.resize(2 * n);
     node_screen.host.resize(n);
-    bool any_mask = false;
     for (size_t i = 0; i < n; ++i)
     {
         node_sums.host[2 * i]         = level[i].sums.sum_grad;
@@ -425,25 +424,11 @@ bool CudaDeviceContext::LevelPipeline::stage_find_inputs(
         node_bounds.host[2 * i]       = level[i].lo;
         node_bounds.host[(2 * i) + 1] = level[i].hi;
         node_screen.host[i]           = node_screen_of(level[i].sums, config);
-        any_mask                      = any_mask || !level[i].allowed.empty();
     }
     node_sums.sync();
     node_bounds.sync();
     node_screen.sync();
-    if (any_mask)
-    {
-        allowed.host.resize(n * n_selected);
-        for (size_t i = 0; i < n; ++i)
-        {
-            for (uint32_t s = 0; s < n_selected; ++s)
-            {
-                allowed.host[(i * n_selected) + s] =
-                    level[i].allowed.empty() ? char{1}
-                                             : level[i].allowed[features.host[s]];
-            }
-        }
-        allowed.sync();
-    }
+    bool const any_mask = stage_allowed(level);
     monotone.host.resize(ds.n_features());
     for (feature_id_t f = 0; f < ds.n_features(); ++f)
     {
@@ -451,6 +436,28 @@ bool CudaDeviceContext::LevelPipeline::stage_find_inputs(
     }
     monotone.sync();
     return any_mask;
+}
+
+bool CudaDeviceContext::LevelPipeline::stage_allowed(std::span<SplitInput const> nodes)
+{
+    allowed.host.clear();
+    if (std::ranges::all_of(nodes,
+                            [](SplitInput const &s) { return s.allowed.empty(); }))
+    {
+        return false;
+    }
+    size_t const n = nodes.size();
+    allowed.host.resize(n * n_selected);
+    for (size_t i = 0; i < n; ++i)
+    {
+        for (uint32_t s = 0; s < n_selected; ++s)
+        {
+            allowed.host[(i * n_selected) + s] =
+                nodes[i].allowed.empty() ? char{1} : nodes[i].allowed[features.host[s]];
+        }
+    }
+    allowed.sync();
+    return true;
 }
 
 void CudaDeviceContext::LevelPipeline::unpack_splits(std::span<SplitInput const> level,
@@ -1000,7 +1007,8 @@ void CudaDeviceContext::partition_level(
         {
             partition_kernel<<<dim3(n_tiles), dim3(k_part_block)>>>(
                 bins, data.n_bins_ptr(), lvl.cur_rows().data(), lvl.cur_gh().data(),
-                lvl.part_ops.device(), static_cast<uint32_t>(data.key.n_rows),
+                PartOpTable{lvl.part_ops.device()},
+                static_cast<uint32_t>(data.key.n_rows),
                 static_cast<uint32_t>(data.key.n_feats), max_chunks, tiles,
                 lvl.nl_dev.device(), SmallChildDev{}, lvl.other_rows().data(),
                 lvl.other_gh().data());
@@ -1150,15 +1158,18 @@ void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &co
     lvl.node_best.reserve(n);
     auto const n_nodes       = static_cast<uint32_t>(n);
     bool const children_read = lvl.depth + 1 < static_cast<uint32_t>(config.max_depth);
+    FindNodesRef const nodes{.sums    = lvl.node_sums.device(),
+                             .bounds  = lvl.node_bounds.device(),
+                             .screens = lvl.node_screen.device(),
+                             .derives = lvl.derive.device(),
+                             .slots   = nullptr};
     find_kernel<<<find_grid(lvl.n_selected, n_nodes), dim3(32)>>>(
-        lvl.cur().data(), lvl.other().data(), lvl.derive.device(),
-        lvl.features.device(), data.n_bins_ptr(), lvl.node_sums.device(),
-        lvl.node_bounds.device(), any_mask ? lvl.allowed.device() : nullptr,
+        lvl.cur().data(), lvl.other().data(), nodes, lvl.features.device(),
+        data.n_bins_ptr(), any_mask ? lvl.allowed.device() : nullptr,
         lvl.monotone.device(), lvl.n_selected, lvl.stride, config.lambda_l1,
         config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
-        screen_const(config), lvl.node_screen.device(), lvl.feat_best.data(),
-        /*hist_slot=*/nullptr, grads.quant.data(), finder_exhaustive, n_nodes,
-        children_read);
+        screen_const(config), lvl.feat_best.data(), grads.quant.data(),
+        finder_exhaustive, n_nodes, children_read);
     check(cudaGetLastError(), "find launch");
     reduce_kernel<<<dim3(static_cast<uint32_t>(n)), dim3(k_reduce_threads)>>>(
         lvl.feat_best.data(), lvl.n_selected, lvl.node_best.device());
@@ -1386,10 +1397,8 @@ CudaDeviceContext::leaf_split(Dataset const                         &ds,
     {
         throw std::runtime_error("cuda: leaf histogram pool exhausted");
     }
-    leaf.part_op.reserve(1);
-    *leaf.part_op.host() = {offset, count, op.feature_id, op.bin_id,
-                            op.default_left ? 1U : 0U};
-    leaf.part_op.sync(1);
+    PartOpValue const part_op{
+        {offset, count, op.feature_id, op.bin_id, op.default_left ? 1U : 0U}};
     uint32_t const max_chunks = std::max(1U, (count + k_part_chunk - 1) / k_part_chunk);
     PartTilesDev const tiles  = lvl.part_tiles.arm(max_chunks, max_chunks);
     leaf.build_seg.reserve(3);
@@ -1403,8 +1412,7 @@ CudaDeviceContext::leaf_split(Dataset const                         &ds,
         {
             partition_kernel<<<dim3(max_chunks), dim3(k_part_block)>>>(
                 bins, data.n_bins_ptr(), lvl.rows_of(in_b).data(),
-                lvl.gh_of(in_b).data(), leaf.part_op.device(),
-                static_cast<uint32_t>(data.key.n_rows),
+                lvl.gh_of(in_b).data(), part_op, static_cast<uint32_t>(data.key.n_rows),
                 static_cast<uint32_t>(data.key.n_feats), max_chunks, tiles,
                 leaf.n_left.device(), small, lvl.rows_of(!in_b).data(),
                 lvl.gh_of(!in_b).data());
@@ -1416,6 +1424,7 @@ CudaDeviceContext::leaf_split(Dataset const                         &ds,
         leaf_enqueue_fill(ds, !in_b, count / 2);
         note_queued_fill();
     }
+    note_launch_args();
     leaf.partitioned.wait();
     if (prof.enabled)
     {
@@ -1472,6 +1481,17 @@ void CudaDeviceContext::note_queued_fill()
                          "chosen on device, nl by event");
 }
 
+void CudaDeviceContext::note_launch_args()
+{
+    if (leaf.launch_args_noted || !prof_counters.enabled)
+    {
+        return;
+    }
+    leaf.launch_args_noted = true;
+    std::println(stderr, "bonsai: leaf partition op and finder nodes ride the launch "
+                         "as kernel parameters");
+}
+
 void CudaDeviceContext::leaf_enqueue_fill(Dataset const &ds, bool in_b,
                                           uint32_t max_rows)
 {
@@ -1518,53 +1538,31 @@ void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
     lap(prof.gpu_s);
 }
 
-bool CudaDeviceContext::leaf_stage_find(std::span<SplitInput const> nodes,
-                                        std::span<uint32_t const>   slots,
-                                        TreeConfig const           &config)
+LeafFindNodes CudaDeviceContext::leaf_find_nodes(std::span<SplitInput const> nodes,
+                                                 std::span<uint32_t const>   slots,
+                                                 TreeConfig const           &config)
 {
-    size_t const n = nodes.size();
-    leaf.find_stats.reserve(4 * n);
-    leaf.find_screen.reserve(n);
-    leaf.find_slots.reserve(n);
-    leaf.find_derive.reserve(n);
-    double *stats    = leaf.find_stats.host();
-    bool    any_mask = false;
-    for (size_t i = 0; i < n; ++i)
+    if (nodes.size() > k_leaf_find_nodes)
     {
-        stats[2 * i]                 = nodes[i].sums.sum_grad;
-        stats[(2 * i) + 1]           = nodes[i].sums.sum_hess;
-        stats[(2 * n) + (2 * i)]     = nodes[i].lo;
-        stats[(2 * n) + (2 * i) + 1] = nodes[i].hi;
-        leaf.find_screen.host()[i]   = node_screen_of(nodes[i].sums, config);
-        leaf.find_slots.host()[i]    = slots[i];
-        leaf.find_derive.host()[i] =
-            slots[i] == leaf.pending_large
-                ? SiblingDerive{.parent_slot = slots[i],
-                                .small_slot  = leaf.pending_small}
-                : k_filled_slot;
-        any_mask = any_mask || !nodes[i].allowed.empty();
+        throw std::invalid_argument("cuda: leaf_find takes a root or a sibling pair");
+    }
+    LeafFindNodes args{};
+    for (size_t i = 0; i < nodes.size(); ++i)
+    {
+        args.sums[2 * i]         = nodes[i].sums.sum_grad;
+        args.sums[(2 * i) + 1]   = nodes[i].sums.sum_hess;
+        args.bounds[2 * i]       = nodes[i].lo;
+        args.bounds[(2 * i) + 1] = nodes[i].hi;
+        args.screens[i]          = node_screen_of(nodes[i].sums, config);
+        args.slots[i]            = slots[i];
+        args.derives[i]          = slots[i] == leaf.pending_large
+                                       ? SiblingDerive{.parent_slot = slots[i],
+                                                       .small_slot  = leaf.pending_small}
+                                       : k_filled_slot;
     }
     leaf.pending_small = k_not_selected;
     leaf.pending_large = k_not_selected;
-    leaf.find_stats.sync(4 * n);
-    leaf.find_screen.sync(n);
-    leaf.find_slots.sync(n);
-    leaf.find_derive.sync(n);
-    if (any_mask)
-    {
-        lvl.allowed.host.resize(n * lvl.n_selected);
-        for (size_t i = 0; i < n; ++i)
-        {
-            for (uint32_t s = 0; s < lvl.n_selected; ++s)
-            {
-                lvl.allowed.host[(i * lvl.n_selected) + s] =
-                    nodes[i].allowed.empty() ? char{1}
-                                             : nodes[i].allowed[lvl.features.host[s]];
-            }
-        }
-        lvl.allowed.sync();
-    }
-    return any_mask;
+    return args;
 }
 
 void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &config,
@@ -1578,20 +1576,19 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
     auto       lap  = prof.lap();
 
     wait_for_profile(lap);
-    bool const any_mask = leaf_stage_find(nodes, slots, config);
+    LeafFindNodes const args     = leaf_find_nodes(nodes, slots, config);
+    bool const          any_mask = lvl.stage_allowed(nodes);
     lap(prof.find_stage_s);
 
     lvl.feat_best.reserve(static_cast<size_t>(n) * lvl.n_selected);
     lvl.node_best.reserve(n);
     find_kernel<<<find_grid(lvl.n_selected, n), dim3(32)>>>(
-        leaf.pool.data(), leaf.pool.data(), leaf.find_derive.device(),
-        lvl.features.device(), data.n_bins_ptr(), leaf.find_stats.device(),
-        leaf.find_stats.device() + (2 * n), any_mask ? lvl.allowed.device() : nullptr,
+        leaf.pool.data(), leaf.pool.data(), args, lvl.features.device(),
+        data.n_bins_ptr(), any_mask ? lvl.allowed.device() : nullptr,
         leaf.monotone.device(), lvl.n_selected, lvl.stride, config.lambda_l1,
         config.lambda_l2, config.min_child_hess, config.min_gain_to_split,
-        screen_const(config), leaf.find_screen.device(), lvl.feat_best.data(),
-        leaf.find_slots.device(), grads.quant.data(), finder_exhaustive, n,
-        /*store_derived=*/true);
+        screen_const(config), lvl.feat_best.data(), grads.quant.data(),
+        finder_exhaustive, n, /*store_derived=*/true);
     check(cudaGetLastError(), "leaf find launch");
     reduce_kernel<<<dim3(n), dim3(k_reduce_threads)>>>(
         lvl.feat_best.data(), lvl.n_selected, lvl.node_best.device());

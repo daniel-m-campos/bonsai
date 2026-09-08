@@ -21,11 +21,6 @@ using namespace cuda_detail;
 
 // NOLINTBEGIN(bugprone-easily-swappable-parameters,cppcoreguidelines-avoid-c-arrays,cppcoreguidelines-pro-bounds-pointer-arithmetic,modernize-avoid-c-arrays,cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-avoid-non-const-global-variables,cppcoreguidelines-pro-bounds-array-to-pointer-decay,readability-function-cognitive-complexity,readability-identifier-naming)
 
-constexpr __device__ size_t pair_off(uint32_t i)
-{
-    return 2 * static_cast<size_t>(i);
-}
-
 __global__ void interleave_kernel(float const *grad, float const *hess, uint32_t n,
                                   float2 *gh)
 {
@@ -700,13 +695,12 @@ inline __device__ void publish_small_child(SmallChildDev const &small,
     small.seg[2]              = small.slot;
 }
 
-template <typename BinT>
+template <typename BinT, typename Ops>
 __global__ void __launch_bounds__(k_part_block)
     partition_kernel(BinT const *bins, uint32_t const *n_bins, uint32_t const *rows_in,
-                     float2 const *gh_in, PartOpDev const *ops, uint32_t n_rows,
-                     uint32_t n_feats, uint32_t max_chunks, PartTilesDev tiles,
-                     uint32_t *n_left, SmallChildDev small, uint32_t *rows_out,
-                     float2 *gh_out)
+                     float2 const *gh_in, Ops ops, uint32_t n_rows, uint32_t n_feats,
+                     uint32_t max_chunks, PartTilesDev tiles, uint32_t *n_left,
+                     SmallChildDev small, uint32_t *rows_out, float2 *gh_out)
 {
     __shared__ uint32_t sh[k_part_warps + 2];
     if (threadIdx.x == 0)
@@ -717,7 +711,7 @@ __global__ void __launch_bounds__(k_part_block)
     uint32_t const  tile  = sh[k_part_warps];
     uint32_t const  chunk = tile % max_chunks;
     uint32_t const  opi   = tile / max_chunks;
-    PartOpDev const op    = ops[opi];
+    PartOpDev const op    = ops.at(opi);
     uint32_t const  last  = n_bins[op.fid] - 1;
     PartLane const  pl    = part_lane(chunk);
     uint32_t        row[k_part_rows_per_thread];
@@ -1321,9 +1315,10 @@ struct ScreenNode
     bool     on;
 };
 
-inline __device__ ScreenNode screen_node(NodeCut const &nd, NodeScreen const &ns,
-                                         longlong2 miss_q, GhQuant const &q,
-                                         ScreenConst const &c, bool exhaustive)
+__forceinline__ __device__ ScreenNode screen_node(NodeCut const    &nd,
+                                                  NodeScreen const &ns,
+                                                  longlong2 miss_q, GhQuant const &q,
+                                                  ScreenConst const &c, bool exhaustive)
 {
     bool const finite = is_finite_dev(nd.real_g) && is_finite_dev(nd.real_h) &&
                         is_finite_dev(nd.miss_g) && is_finite_dev(nd.miss_h) &&
@@ -1411,9 +1406,9 @@ struct Survivors
 };
 
 template <bool k_l1>
-inline __device__ void flush_survivors(Survivors &sv, double2 inv, NodeCut const &nd,
-                                       double l1, double l2, double min_child_hess,
-                                       double min_gain, FeatBest &best)
+__forceinline__ __device__ void
+flush_survivors(Survivors &sv, double2 inv, NodeCut const &nd, double l1, double l2,
+                double min_child_hess, double min_gain, FeatBest &best)
 {
     if (threadIdx.x < sv.n)
     {
@@ -1499,11 +1494,12 @@ inline __device__ CutPrefix warp_cut_prefix(longlong2 cut, hist_int_t &carry_g,
 }
 
 template <bool k_l1, bool k_derived, bool k_store>
-inline __device__ FeatBest sweep_cuts(CutStrip const &s, uint32_t n_cut, int n_dirs,
-                                      NodeCut const &nd, ScreenNode const &sn,
-                                      double2 inv, double l1, double l2,
-                                      double min_child_hess, double min_gain,
-                                      uint32_t sel)
+__forceinline__ __device__ FeatBest sweep_cuts(CutStrip const &s, uint32_t n_cut,
+                                               int n_dirs, NodeCut const &nd,
+                                               ScreenNode const &sn, double2 inv,
+                                               double l1, double l2,
+                                               double min_child_hess, double min_gain,
+                                               uint32_t sel)
 {
     uint32_t const lane = threadIdx.x;
     FeatBest       best = {};
@@ -1552,11 +1548,12 @@ inline __device__ bool node_sweeps(char const *allowed, size_t oidx, uint32_t nb
 }
 
 template <bool k_l1>
-inline __device__ FeatBest sweep_strip(CutStrip const &s, uint32_t n_cut,
-                                       uint32_t stride, int n_dirs, NodeCut const &nd,
-                                       ScreenNode const &sn, double2 inv, double l1,
-                                       double l2, double min_child_hess,
-                                       double min_gain, uint32_t sel)
+__forceinline__ __device__ FeatBest sweep_strip(CutStrip const &s, uint32_t n_cut,
+                                                uint32_t stride, int n_dirs,
+                                                NodeCut const &nd, ScreenNode const &sn,
+                                                double2 inv, double l1, double l2,
+                                                double min_child_hess, double min_gain,
+                                                uint32_t sel)
 {
     if (s.small == nullptr)
     {
@@ -1573,26 +1570,26 @@ inline __device__ FeatBest sweep_strip(CutStrip const &s, uint32_t n_cut,
                                         min_child_hess, min_gain, sel);
 }
 
+// perf: The finder chain from screen_node down is forced inline. With two
+// find_kernel instantiations the sweep has two callers, loses the
+// single-caller inline bonus and is outlined, its NodeCut and ScreenNode
+// arguments crossing a 256-byte local frame with 91 STL per kernel on
+// sm_87; forced, each kernel is one 22k-line body with a 16 to 24-byte
+// frame and 6 to 9 STL, the shape of the single-instantiation finder.
 template <bool k_l1>
-inline __device__ void
-find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive const *derive,
-          uint32_t const *features, uint32_t const *n_bins, double const *node_sums,
-          double const *node_bounds, char const *allowed, int const *monotone,
-          uint32_t n_sel, uint32_t stride, double l1, double l2, double min_child_hess,
-          double min_gain, ScreenConst const &screen, NodeScreen const *node_screen,
-          FeatBest *out, uint32_t const *hist_slot, GhQuant const *quant,
-          bool exhaustive, uint32_t n_nodes, bool store_derived)
+__forceinline__ __device__ void
+find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive derive,
+          uint32_t slot, double2 total, NodeScreen ns, double2 bound,
+          uint32_t const *features, uint32_t const *n_bins, char const *allowed,
+          int const *monotone, uint32_t n_sel, uint32_t stride, double l1, double l2,
+          double min_child_hess, double min_gain, ScreenConst const &screen,
+          FeatBest *out, GhQuant const *quant, bool exhaustive, bool store_derived)
 {
     uint32_t const node = (2 * blockIdx.y) + (blockIdx.x & 1U);
     uint32_t const sel  = blockIdx.x >> 1;
     uint32_t const lane = threadIdx.x;
-    if (node >= n_nodes)
-    {
-        return;
-    }
-    uint32_t const slot  = hist_slot != nullptr ? hist_slot[node] : node;
-    CutStrip const strip = open_strip(hists, parents, derive[node], slot, n_sel, sel,
-                                      stride, store_derived);
+    CutStrip const strip =
+        open_strip(hists, parents, derive, slot, n_sel, sel, stride, store_derived);
     prefetch_strips(strip, stride);
     size_t const oidx = (static_cast<size_t>(node) * n_sel) + sel;
     if (lane == 0)
@@ -1609,24 +1606,21 @@ find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive const *der
         }
         return;
     }
-    double2 const    inv     = quant->inv;
-    double const     g_total = node_sums[pair_off(node)];
-    double const     h_total = node_sums[pair_off(node) + 1];
-    longlong2 const  miss_q  = strip_miss(strip, nb);
-    double const     miss_g  = static_cast<double>(miss_q.x) * inv.x;
-    double const     miss_h  = static_cast<double>(miss_q.y) * inv.y;
-    NodeScreen const ns      = node_screen[node];
-    NodeCut const    nd      = {.miss_g     = miss_g,
-                                .miss_h     = miss_h,
-                                .real_g     = g_total - miss_g,
-                                .real_h     = h_total - miss_h,
-                                .node_score = ns.score,
-                                .lo         = node_bounds[pair_off(node)],
-                                .hi         = node_bounds[pair_off(node) + 1],
-                                .mc         = monotone[f]};
-    ScreenNode const sn      = screen_node(nd, ns, miss_q, *quant, screen, exhaustive);
-    uint32_t const   n_cut   = nb - 2;
-    int const        n_dirs  = (miss_q.x == 0 && miss_q.y == 0) ? 1 : 2;
+    double2 const    inv    = quant->inv;
+    longlong2 const  miss_q = strip_miss(strip, nb);
+    double const     miss_g = static_cast<double>(miss_q.x) * inv.x;
+    double const     miss_h = static_cast<double>(miss_q.y) * inv.y;
+    NodeCut const    nd     = {.miss_g     = miss_g,
+                               .miss_h     = miss_h,
+                               .real_g     = total.x - miss_g,
+                               .real_h     = total.y - miss_h,
+                               .node_score = ns.score,
+                               .lo         = bound.x,
+                               .hi         = bound.y,
+                               .mc         = monotone[f]};
+    ScreenNode const sn     = screen_node(nd, ns, miss_q, *quant, screen, exhaustive);
+    uint32_t const   n_cut  = nb - 2;
+    int const        n_dirs = (miss_q.x == 0 && miss_q.y == 0) ? 1 : 2;
 
     FeatBest const best = sweep_strip<k_l1>(strip, n_cut, stride, n_dirs, nd, sn, inv,
                                             l1, l2, min_child_hess, min_gain, sel);
@@ -1636,29 +1630,36 @@ find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive const *der
     }
 }
 
+template <typename Nodes>
 __global__ void __launch_bounds__(32, 16)
-    find_kernel(hist_int_t *hists, hist_int_t const *parents,
-                SiblingDerive const *derive, uint32_t const *features,
-                uint32_t const *n_bins, double const *node_sums,
-                double const *node_bounds, char const *allowed, int const *monotone,
-                uint32_t n_sel, uint32_t stride, double l1, double l2,
-                double min_child_hess, double min_gain, ScreenConst screen,
-                NodeScreen const *node_screen, FeatBest *out, uint32_t const *hist_slot,
-                GhQuant const *quant, bool exhaustive, uint32_t n_nodes,
+    find_kernel(hist_int_t *hists, hist_int_t const *parents, Nodes nodes,
+                uint32_t const *features, uint32_t const *n_bins, char const *allowed,
+                int const *monotone, uint32_t n_sel, uint32_t stride, double l1,
+                double l2, double min_child_hess, double min_gain, ScreenConst screen,
+                FeatBest *out, GhQuant const *quant, bool exhaustive, uint32_t n_nodes,
                 bool store_derived)
 {
-    if (l1 == 0.0)
+    uint32_t const node = (2 * blockIdx.y) + (blockIdx.x & 1U);
+    if (node >= n_nodes)
     {
-        find_node<false>(hists, parents, derive, features, n_bins, node_sums,
-                         node_bounds, allowed, monotone, n_sel, stride, l1, l2,
-                         min_child_hess, min_gain, screen, node_screen, out, hist_slot,
-                         quant, exhaustive, n_nodes, store_derived);
         return;
     }
-    find_node<true>(hists, parents, derive, features, n_bins, node_sums, node_bounds,
+    SiblingDerive const derive = nodes.derive(node);
+    uint32_t const      slot   = nodes.slot(node);
+    double2 const       total  = nodes.sum(node);
+    NodeScreen const    ns     = nodes.screen(node);
+    double2 const       bound  = nodes.bound(node);
+    if (l1 == 0.0)
+    {
+        find_node<false>(hists, parents, derive, slot, total, ns, bound, features,
+                         n_bins, allowed, monotone, n_sel, stride, l1, l2,
+                         min_child_hess, min_gain, screen, out, quant, exhaustive,
+                         store_derived);
+        return;
+    }
+    find_node<true>(hists, parents, derive, slot, total, ns, bound, features, n_bins,
                     allowed, monotone, n_sel, stride, l1, l2, min_child_hess, min_gain,
-                    screen, node_screen, out, hist_slot, quant, exhaustive, n_nodes,
-                    store_derived);
+                    screen, out, quant, exhaustive, store_derived);
 }
 
 inline dim3 find_grid(uint32_t n_sel, uint32_t n_nodes)

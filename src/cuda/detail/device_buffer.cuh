@@ -152,6 +152,105 @@ struct SmallChildDev
     uint32_t  slot = 0;
 };
 
+constexpr __host__ __device__ size_t pair_off(uint32_t i)
+{
+    return 2 * static_cast<size_t>(i);
+}
+
+struct PartOpTable
+{
+    PartOpDev const *ops;
+
+    __device__ PartOpDev at(uint32_t i) const
+    {
+        return ops[i];
+    }
+};
+
+struct PartOpValue
+{
+    PartOpDev op;
+
+    __device__ PartOpDev at(uint32_t /*i*/) const
+    {
+        return op;
+    }
+};
+
+struct FindNodesRef
+{
+    double const        *sums;
+    double const        *bounds;
+    NodeScreen const    *screens;
+    SiblingDerive const *derives;
+    uint32_t const      *slots;
+
+    __device__ uint32_t slot(uint32_t node) const
+    {
+        return slots != nullptr ? slots[node] : node;
+    }
+    __device__ SiblingDerive derive(uint32_t node) const
+    {
+        return derives[node];
+    }
+    __device__ double2 sum(uint32_t node) const
+    {
+        return double2{sums[pair_off(node)], sums[pair_off(node) + 1]};
+    }
+    __device__ NodeScreen screen(uint32_t node) const
+    {
+        return screens[node];
+    }
+    __device__ double2 bound(uint32_t node) const
+    {
+        return double2{bounds[pair_off(node)], bounds[pair_off(node) + 1]};
+    }
+};
+
+inline constexpr uint32_t k_leaf_find_nodes = 2;
+
+template <typename T>
+inline __device__ T pick_node(uint32_t node, T const (&a)[k_leaf_find_nodes])
+{
+    return node == 0 ? a[0] : a[1];
+}
+
+inline __device__ double2 pick_pair(uint32_t node,
+                                    double const (&a)[2 * k_leaf_find_nodes])
+{
+    return node == 0 ? double2{a[0], a[1]} : double2{a[2], a[3]};
+}
+
+struct LeafFindNodes
+{
+    double        sums[2 * k_leaf_find_nodes];
+    double        bounds[2 * k_leaf_find_nodes];
+    NodeScreen    screens[k_leaf_find_nodes];
+    SiblingDerive derives[k_leaf_find_nodes];
+    uint32_t      slots[k_leaf_find_nodes];
+
+    __device__ uint32_t slot(uint32_t node) const
+    {
+        return pick_node(node, slots);
+    }
+    __device__ SiblingDerive derive(uint32_t node) const
+    {
+        return pick_node(node, derives);
+    }
+    __device__ double2 sum(uint32_t node) const
+    {
+        return pick_pair(node, sums);
+    }
+    __device__ NodeScreen screen(uint32_t node) const
+    {
+        return pick_node(node, screens);
+    }
+    __device__ double2 bound(uint32_t node) const
+    {
+        return pick_pair(node, bounds);
+    }
+};
+
 inline void check(cudaError_t rc, char const *what)
 {
     if (rc != cudaSuccess)
