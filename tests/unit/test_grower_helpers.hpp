@@ -3,6 +3,7 @@
 #include <array>
 #include <concepts>
 #include <cstddef>
+#include <cstdlib>
 #include <limits>
 #include <random>
 #include <string>
@@ -25,6 +26,39 @@
 
 namespace bonsai::test
 {
+
+// A process flag held for one scope: set to "1" or cleared on entry, cleared
+// on exit whatever path leaves the scope, so a failing assertion cannot leak
+// the flag into the next test.
+class ScopedEnv
+{
+  public:
+    ScopedEnv(char const *name, bool set) : name_{name}
+    {
+        if (set)
+        {
+            setenv(name_, "1", 1);
+        }
+        else
+        {
+            unsetenv(name_);
+        }
+    }
+    ~ScopedEnv()
+    {
+        unsetenv(name_);
+    }
+    ScopedEnv(ScopedEnv const &)            = delete;
+    ScopedEnv &operator=(ScopedEnv const &) = delete;
+
+  private:
+    char const *name_;
+};
+
+inline ScopedEnv host_objective(bool forced)
+{
+    return {"BONSAI_HOST_OBJECTIVE", forced};
+}
 
 // The two width-1 boosters the device suites measure: a dense grower, and the
 // levelwise one that reaches the same kernels through its plan input's dense
