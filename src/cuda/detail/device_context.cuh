@@ -125,10 +125,8 @@ struct CudaDeviceContext
         DeviceBuffer<double2>  sum_out;
         DeviceBuffer<float>    epi_node_vals;
         DeviceBuffer<float>    epi_values;
-        std::vector<uint32_t>  slot_offsets;
-        std::vector<uint32_t>  slot_counts;
-        std::vector<uint32_t>  next_offsets;
-        std::vector<uint32_t>  next_counts;
+        std::vector<RowSeg>    segs;
+        std::vector<RowSeg>    next_segs;
 
         bool root_rows_cached(size_t n_rows) const
         {
@@ -209,8 +207,7 @@ struct CudaDeviceContext
     struct LeafPipeline
     {
         DeviceBuffer<hist_int_t> pool;
-        std::vector<uint32_t>    slot_offsets;
-        std::vector<uint32_t>    slot_counts;
+        std::vector<RowSeg>      segs;
         std::vector<uint8_t>     slot_in_b;
         DeviceBuffer<BuildSeg>   build_seg;
         Staged<int>              monotone;
@@ -312,8 +309,7 @@ struct CudaDeviceContext
     void   require_hist_fits(size_t max_sel_bins) const;
     void   launch_root_sums(float2 const *gh, uint32_t n);
     void   launch_stamp(std::span<CudaHistogramEngine::LeafStamp const> stamps,
-                        std::span<uint32_t const>                       slot_offsets,
-                        std::span<uint32_t const> slot_counts, uint32_t const *rows,
+                        std::span<RowSeg const> segs, uint32_t const *rows,
                         char const *label);
     NodeTotals fetch_root_sums();
     void       wait_for_profile(ProfileCounters::Lap &lap);
