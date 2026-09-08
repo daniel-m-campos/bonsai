@@ -147,3 +147,34 @@ def test_an_unranked_arm_is_left_out_of_the_table_and_named_under_it(monkeypatch
         "Its rows are read in the ledger.")
     assert render_results._unranked_note(
         render_results._ranked(UNRANKED_ROWS), "in the ledger") == ""
+
+
+_CLF_298 = dict(suite=298, kind="clf", metric="auc")
+DUEL_ROWS = [
+    _quality_row("bonsai_cuda_leafwise", "wine", 0.50),
+    _quality_row("lgbm_cuda", "wine", 0.40),
+    _quality_row("bonsai_cuda_leafwise", "eye", 0.70),
+    _quality_row("lgbm_cuda", "eye", 0.80),
+    _quality_row("bonsai_cuda_leafwise", "pol", 0.90),
+    _quality_row("lgbm_cuda", "pol", 0.90),
+    dict(_quality_row("bonsai_cuda_leafwise", "cpu", 0.60), **_CLF_298),
+    dict(_quality_row("lgbm_cuda", "cpu", 0.55), **_CLF_298),
+    dict(_quality_row("bonsai_cuda_leafwise", "cpu", 0.62), **_CLF_298, seed=1),
+    dict(_quality_row("lgbm_cuda", "cpu", 0.61), **_CLF_298, seed=1),
+    _quality_row("bonsai_cuda_leafwise", "lonely", 0.10),
+]
+
+
+def test_the_head_to_head_table_counts_wins_per_suite_from_seed_means():
+    """The duel reads the two libraries at their seed means per task: a
+    task both ran is won by the higher mean, tied at equality, and the gap
+    is home minus away; a task only one library ran is not a pair."""
+    table = render_results._head_to_head_table(DUEL_ROWS, "bonsai", "lgbm")
+    assert table.splitlines()[0] == (
+        "| suite | tasks | bonsai wins | lightgbm wins | ties | mean gap "
+        "| widest lead | widest deficit |")
+    assert table.splitlines()[2:] == [
+        "| 297 | 3 | 1 | 1 | 1 | +0.0000 | +0.1000 | -0.1000 |",
+        "| 298 | 1 | 1 | 0 | 0 | +0.0300 | +0.0300 | +0.0300 |",
+        "| all | 4 | 2 | 1 | 1 | +0.0075 | +0.1000 | -0.1000 |",
+    ]

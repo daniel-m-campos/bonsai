@@ -101,6 +101,13 @@ The same suite with every library on its GPU build:
 
 `lgbm_cuda` is measured but not ranked: LightGBM's CUDA tree learner does not apply `max_depth` (LightGBM 4.7.0: the only depth check is the serial learner's `BeforeFindBestSplit`, which the CUDA `Train` loop never calls), so at the campaign knobs it grows 63 leaves at any depth where every other arm is capped at depth 6. Ranked among all arms it would read 1.71 with 38 outright wins. Its rows are read in [the ledger](https://daniel-m-campos.github.io/bonsai/method/results/quality-grinsztajn/).
 
+bonsai leafwise against LightGBM head to head on the GPU, both at 63 leaves with no binding depth cap (the regime LightGBM's CUDA learner grows in, [the ledger](https://daniel-m-campos.github.io/bonsai/method/results/quality-grinsztajn/) has the task-by-task table):
+
+| library | mean rank | outright wins |
+|---|--:|--:|
+| **bonsai** | **1.42** | **32** |
+| lightgbm | 1.58 | 23 |
+
 <!-- standings:end -->
 bonsai keeps the lead under either reading of the one knob that translates ambiguously between libraries, which [the standings page](https://daniel-m-campos.github.io/bonsai/method/results/quality-grinsztajn/) records; reproduce with `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite and `python -m bonsai.bench.grinsztajn out.jsonl --report` to render the standings.
 
