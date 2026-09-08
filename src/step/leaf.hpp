@@ -128,7 +128,8 @@ class LeafStep<EngineT, SplitterT> : public TreeStep<EngineT>
     {
         Phase<&GrowProfiler::partition_s>  phase;
         typename EngineT::LeafPartOp const op{c.slot, c.split.feature_id,
-                                              c.split.bin_id, c.split.default_left};
+                                              c.split.bin_id, c.split.default_left,
+                                              c.depth + 1 < config_.max_depth};
         auto const                         round = engine_.leaf_split(ds_, op);
         ChildPair                          pair;
         pair.depth              = static_cast<uint8_t>(c.depth + 1);

@@ -222,10 +222,13 @@ struct CudaDeviceContext
         PinnedStaged<uint32_t>      find_slots;
         PinnedStaged<SiblingDerive> find_derive;
         Staged<int>                 monotone;
-        uint32_t                    next_slot     = 0;
-        uint32_t                    max_slots     = 0;
-        uint32_t                    pending_small = k_not_selected;
-        uint32_t                    pending_large = k_not_selected;
+        MappedScalar<uint32_t>      n_left;
+        StreamFence                 partitioned;
+        bool                        queued_fill_noted = false;
+        uint32_t                    next_slot         = 0;
+        uint32_t                    max_slots         = 0;
+        uint32_t                    pending_small     = k_not_selected;
+        uint32_t                    pending_large     = k_not_selected;
     };
 
     struct NodeTable
@@ -352,6 +355,11 @@ struct CudaDeviceContext
     CudaHistogramEngine::LeafRound
          leaf_split(Dataset const &ds, CudaHistogramEngine::LeafPartOp const &op);
     void leaf_build(Dataset const &ds, uint32_t small_slot, uint32_t large_slot);
+    void leaf_enqueue_fill(Dataset const &ds, bool in_b, uint32_t max_rows);
+    CudaHistogramEngine::LeafRound
+         leaf_children(CudaHistogramEngine::LeafPartOp const &op, uint32_t offset,
+                       uint32_t count, uint32_t nl, bool in_b);
+    void note_queued_fill();
     bool leaf_stage_find(std::span<SplitInput const> nodes,
                          std::span<uint32_t const> slots, TreeConfig const &config);
     void leaf_find(Dataset const &ds, TreeConfig const &config,

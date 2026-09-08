@@ -146,6 +146,12 @@ struct PartTilesDev
     uint32_t            epoch;
 };
 
+struct SmallChildDev
+{
+    uint32_t *seg  = nullptr;
+    uint32_t  slot = 0;
+};
+
 inline void check(cudaError_t rc, char const *what)
 {
     if (rc != cudaSuccess)
@@ -365,6 +371,69 @@ template <typename T> class PinnedBuffer
 
   private:
     T *ptr_ = nullptr;
+};
+
+template <typename T> class MappedScalar
+{
+  public:
+    MappedScalar() = default;
+    ~MappedScalar()
+    {
+        cudaFreeHost(host_);
+    }
+    MappedScalar(MappedScalar const &)            = delete;
+    MappedScalar &operator=(MappedScalar const &) = delete;
+
+    T *device()
+    {
+        if (host_ == nullptr)
+        {
+            check(cudaHostAlloc(&host_, sizeof(T), cudaHostAllocMapped),
+                  "hostAllocMapped");
+            check(cudaHostGetDevicePointer(&dev_, host_, 0), "mapped device pointer");
+        }
+        return dev_;
+    }
+    T value() const
+    {
+        return *static_cast<T const volatile *>(host_);
+    }
+
+  private:
+    T *host_ = nullptr;
+    T *dev_  = nullptr;
+};
+
+class StreamFence
+{
+  public:
+    StreamFence() = default;
+    ~StreamFence()
+    {
+        if (event_ != nullptr)
+        {
+            cudaEventDestroy(event_);
+        }
+    }
+    StreamFence(StreamFence const &)            = delete;
+    StreamFence &operator=(StreamFence const &) = delete;
+
+    void record()
+    {
+        if (event_ == nullptr)
+        {
+            check(cudaEventCreateWithFlags(&event_, cudaEventDisableTiming),
+                  "fence event");
+        }
+        check(cudaEventRecord(event_), "fence record");
+    }
+    void wait() const
+    {
+        check(cudaEventSynchronize(event_), "fence wait");
+    }
+
+  private:
+    cudaEvent_t event_ = nullptr;
 };
 
 // sync: Page-locked staging paired with its device mirror: the host-to-device
