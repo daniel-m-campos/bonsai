@@ -145,6 +145,12 @@ struct PartTilesDev
     uint32_t            epoch;
 };
 
+struct RowSeg
+{
+    uint32_t offset = 0;
+    uint32_t count  = 0;
+};
+
 struct BuildSeg
 {
     uint32_t offset;

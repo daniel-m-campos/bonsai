@@ -353,19 +353,18 @@ size_t CudaDeviceContext::LevelPipeline::stage_children(
     {
         derive.host[op.large_slot] = {.parent_slot = op.parent_slot,
                                       .small_slot  = op.small_slot};
-        uint32_t const offset      = next_offsets[op.small_slot];
-        uint32_t const count       = next_counts[op.small_slot];
-        if (count >= k_min_gpu_rows)
+        RowSeg const seg           = next_segs[op.small_slot];
+        if (seg.count >= k_min_gpu_rows)
         {
-            row_offsets.host.push_back(offset);
-            row_counts.host.push_back(count);
+            row_offsets.host.push_back(seg.offset);
+            row_counts.host.push_back(seg.count);
             slots.host.push_back(op.small_slot);
-            max_rows = std::max<size_t>(max_rows, count);
+            max_rows = std::max<size_t>(max_rows, seg.count);
         }
         else
         {
-            small_offsets.host.push_back(offset);
-            small_counts.host.push_back(count);
+            small_offsets.host.push_back(seg.offset);
+            small_counts.host.push_back(seg.count);
             small_slots.host.push_back(op.small_slot);
         }
         triples.host.push_back(op.parent_slot);
@@ -394,19 +393,16 @@ void CudaDeviceContext::LevelPipeline::layout_children(
     std::span<uint32_t>                               child_counts)
 {
     size_t const n = ops.size();
-    next_offsets.assign(2 * n, 0);
-    next_counts.assign(2 * n, 0);
+    next_segs.assign(2 * n, RowSeg{});
     for (size_t k = 0; k < n; ++k)
     {
-        uint32_t const nl               = nl_dev.host[k];
-        uint32_t const parent_offset    = part_ops.host[k].offset;
-        uint32_t const parent_count     = part_ops.host[k].count;
-        next_offsets[ops[k].left_slot]  = parent_offset;
-        next_counts[ops[k].left_slot]   = nl;
-        next_offsets[ops[k].right_slot] = parent_offset + nl;
-        next_counts[ops[k].right_slot]  = parent_count - nl;
-        child_counts[2 * k]             = nl;
-        child_counts[(2 * k) + 1]       = parent_count - nl;
+        uint32_t const nl            = nl_dev.host[k];
+        uint32_t const parent_offset = part_ops.host[k].offset;
+        uint32_t const parent_count  = part_ops.host[k].count;
+        next_segs[ops[k].left_slot]  = {parent_offset, nl};
+        next_segs[ops[k].right_slot] = {parent_offset + nl, parent_count - nl};
+        child_counts[2 * k]          = nl;
+        child_counts[(2 * k) + 1]    = parent_count - nl;
     }
 }
 
@@ -887,8 +883,7 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
         lvl.prof_ev_recorded = true;
     }
 
-    lvl.slot_offsets.assign(1, 0);
-    lvl.slot_counts.assign(1, n);
+    lvl.segs.assign(1, RowSeg{0, n});
     lvl.leaf_by_row.reserve(ds.plane_n_rows());
 
     auto sums_lap = prof_counters.lap();
@@ -922,8 +917,7 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
 
 void CudaDeviceContext::launch_stamp(
     std::span<CudaHistogramEngine::LeafStamp const> stamps,
-    std::span<uint32_t const> slot_offsets, std::span<uint32_t const> slot_counts,
-    uint32_t const *rows, char const *label)
+    std::span<RowSeg const> segs, uint32_t const *rows, char const *label)
 {
     if (stamps.empty())
     {
@@ -935,7 +929,7 @@ void CudaDeviceContext::launch_stamp(
     for (CudaHistogramEngine::LeafStamp const &st : stamps)
     {
         lvl.part_ops.host.push_back(
-            {slot_offsets[st.slot], slot_counts[st.slot], 0, 0, 0});
+            {segs[st.slot].offset, segs[st.slot].count, 0, 0, 0});
         lvl.stamp_ids.host.push_back(st.node_id);
     }
     lvl.part_ops.sync();
@@ -949,8 +943,7 @@ void CudaDeviceContext::launch_stamp(
 void CudaDeviceContext::stamp_leaves(
     std::span<CudaHistogramEngine::LeafStamp const> stamps)
 {
-    launch_stamp(stamps, lvl.slot_offsets, lvl.slot_counts, lvl.cur_rows().data(),
-                 "stamp launch");
+    launch_stamp(stamps, lvl.segs, lvl.cur_rows().data(), "stamp launch");
 }
 
 void CudaDeviceContext::partition_level(
@@ -959,8 +952,7 @@ void CudaDeviceContext::partition_level(
 {
     if (ops.empty())
     {
-        lvl.next_offsets.clear();
-        lvl.next_counts.clear();
+        lvl.next_segs.clear();
         return;
     }
     auto &prof = prof_counters;
@@ -971,11 +963,10 @@ void CudaDeviceContext::partition_level(
     lvl.part_ops.clear();
     for (CudaHistogramEngine::PartitionOp const &op : ops)
     {
-        uint32_t const count = lvl.slot_counts[op.parent_slot];
-        lvl.part_ops.host.push_back({lvl.slot_offsets[op.parent_slot], count,
-                                     op.feature_id, op.bin_id,
-                                     op.default_left ? 1U : 0U});
-        max_cnt = std::max(max_cnt, count);
+        RowSeg const parent = lvl.segs[op.parent_slot];
+        lvl.part_ops.host.push_back({parent.offset, parent.count, op.feature_id,
+                                     op.bin_id, op.default_left ? 1U : 0U});
+        max_cnt = std::max(max_cnt, parent.count);
     }
     lvl.part_ops.sync();
     uint32_t const max_chunks =
@@ -1124,8 +1115,7 @@ void CudaDeviceContext::advance_level(Dataset const                             
     }
     lvl.cur_is_a = !lvl.cur_is_a;
     ++lvl.depth;
-    lvl.slot_offsets = lvl.next_offsets;
-    lvl.slot_counts  = lvl.next_counts;
+    lvl.segs = lvl.next_segs;
     if (prof.enabled)
     {
         ++prof.launches;
@@ -1138,8 +1128,7 @@ void CudaDeviceContext::advance_layout_only()
 {
     lvl.cur_is_a = !lvl.cur_is_a;
     ++lvl.depth;
-    lvl.slot_offsets = lvl.next_offsets;
-    lvl.slot_counts  = lvl.next_counts;
+    lvl.segs = lvl.next_segs;
 }
 
 void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &config,
@@ -1345,8 +1334,7 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     lvl.cur_is_a   = true;
     leaf.max_slots = static_cast<uint32_t>(max_slots);
     leaf.next_slot = 1;
-    leaf.slot_offsets.assign(max_slots, 0);
-    leaf.slot_counts.assign(max_slots, 0);
+    leaf.segs.assign(max_slots, RowSeg{});
     leaf.slot_in_b.assign(max_slots, 0);
     leaf.pool.reserve(max_slots * lvl.slot_cells());
     check(cudaMemset(leaf.pool.data(), 0, lvl.slot_cells() * sizeof(hist_int_t)),
@@ -1354,7 +1342,7 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
 
     bool const     identity = root.rows.empty() && root.row_count == data.key.n_rows;
     uint32_t const n        = stage_root_rows(root, identity);
-    leaf.slot_counts[0]     = n;
+    leaf.segs[0]            = {0, n};
     BuildSeg const root_seg{0, n, 0};
     leaf.build_seg.upload(&root_seg, 1);
     root_lap(prof_counters.root_stage_s);
@@ -1388,9 +1376,8 @@ CudaDeviceContext::leaf_split(Dataset const                         &ds,
     auto &prof = prof_counters;
     auto  lap  = prof.lap();
 
-    uint32_t const offset = leaf.slot_offsets[op.parent_slot];
-    uint32_t const count  = leaf.slot_counts[op.parent_slot];
-    bool const     in_b   = leaf.slot_in_b[op.parent_slot] != 0;
+    auto const [offset, count] = leaf.segs[op.parent_slot];
+    bool const in_b            = leaf.slot_in_b[op.parent_slot] != 0;
     if (op.build_children && leaf.next_slot >= leaf.max_slots)
     {
         throw std::runtime_error("cuda: leaf histogram pool exhausted");
@@ -1449,16 +1436,14 @@ CudaDeviceContext::leaf_children(CudaHistogramEngine::LeafPartOp const &op,
     {
         throw std::runtime_error("cuda: leaf histogram pool exhausted");
     }
-    bool const     left_small           = round.left_count <= round.right_count;
-    uint32_t const fresh                = leaf.next_slot++;
-    round.left_slot                     = left_small ? fresh : op.parent_slot;
-    round.right_slot                    = left_small ? op.parent_slot : fresh;
-    leaf.slot_offsets[round.left_slot]  = offset;
-    leaf.slot_counts[round.left_slot]   = round.left_count;
-    leaf.slot_offsets[round.right_slot] = offset + nl;
-    leaf.slot_counts[round.right_slot]  = round.right_count;
-    leaf.slot_in_b[round.left_slot]     = in_b ? 0 : 1;
-    leaf.slot_in_b[round.right_slot]    = in_b ? 0 : 1;
+    bool const     left_small        = round.left_count <= round.right_count;
+    uint32_t const fresh             = leaf.next_slot++;
+    round.left_slot                  = left_small ? fresh : op.parent_slot;
+    round.right_slot                 = left_small ? op.parent_slot : fresh;
+    leaf.segs[round.left_slot]       = {offset, round.left_count};
+    leaf.segs[round.right_slot]      = {offset + nl, round.right_count};
+    leaf.slot_in_b[round.left_slot]  = !in_b;
+    leaf.slot_in_b[round.right_slot] = !in_b;
     if (op.build_children)
     {
         leaf.pending_small = fresh;
@@ -1582,10 +1567,8 @@ void CudaDeviceContext::leaf_stamp(
     {
         side[leaf.slot_in_b[st.slot]].push_back(st);
     }
-    launch_stamp(side[0], leaf.slot_offsets, leaf.slot_counts, lvl.rows.data(),
-                 "leaf stamp launch");
-    launch_stamp(side[1], leaf.slot_offsets, leaf.slot_counts, lvl.rows_b.data(),
-                 "leaf stamp launch");
+    launch_stamp(side[0], leaf.segs, lvl.rows.data(), "leaf stamp launch");
+    launch_stamp(side[1], leaf.segs, lvl.rows_b.data(), "leaf stamp launch");
 }
 
 bool CudaDeviceContext::resident_begin(Dataset const &ds, DeviceObjectiveKind kind,
