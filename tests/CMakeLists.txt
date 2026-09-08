@@ -39,6 +39,7 @@ add_executable(bonsai_tests
     unit/test_toml.cpp
     unit/test_model_io.cpp
     unit/test_ingest_plane.cpp
+    unit/test_cut_order.cpp
 )
 
 # Compiled in every build; the [cuda] cases SKIP at runtime when no usable

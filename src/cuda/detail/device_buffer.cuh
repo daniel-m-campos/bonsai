@@ -2,6 +2,7 @@
 
 #include "bonsai/row_view.hpp"
 #include "bonsai/types.hpp"
+#include "cut_order.hpp"
 #include <cuda.h>
 
 #include <cstddef>
@@ -126,12 +127,6 @@ struct SiblingDerive
 };
 
 inline constexpr SiblingDerive k_filled_slot{k_not_selected, k_not_selected};
-
-struct FeatBest
-{
-    double  gain, gL, hL, gR, hR;
-    int32_t bin, dl, valid, sel;
-};
 
 struct PartOpDev
 {
