@@ -152,17 +152,6 @@ ByteHistograms transform_keys(std::span<float const> v, uint32_t *keys)
     return hist;
 }
 
-void exclusive_prefix(std::array<size_t, 256> &counts)
-{
-    size_t sum = 0;
-    for (auto &c : counts)
-    {
-        size_t const bucket = c;
-        c                   = sum;
-        sum += bucket;
-    }
-}
-
 // perf: LSD byte-radix sort for the NaN-free subsample: the standard order-
 // preserving key transform (flip all bits of negatives, flip the sign bit
 // of non-negatives) makes unsigned byte passes order floats like operator<.
@@ -202,7 +191,7 @@ void sort_floats(std::span<float> v)
         {
             continue;
         }
-        exclusive_prefix(offsets);
+        std::exclusive_scan(offsets.begin(), offsets.end(), offsets.begin(), size_t{0});
         for (size_t i = 0; i < n; ++i)
         {
             dst[offsets[key_byte(src[i], pass)]++] = src[i];
