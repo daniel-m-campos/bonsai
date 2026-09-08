@@ -145,9 +145,16 @@ struct PartTilesDev
     uint32_t            epoch;
 };
 
+struct BuildSeg
+{
+    uint32_t offset;
+    uint32_t count;
+    uint32_t slot;
+};
+
 struct SmallChildDev
 {
-    uint32_t *seg  = nullptr;
+    BuildSeg *seg  = nullptr;
     uint32_t  slot = 0;
 };
 

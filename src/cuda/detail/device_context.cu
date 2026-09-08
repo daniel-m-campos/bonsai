@@ -9,7 +9,6 @@
 #include "bonsai/types.hpp"
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -1356,8 +1355,8 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     bool const     identity = root.rows.empty() && root.row_count == data.key.n_rows;
     uint32_t const n        = stage_root_rows(root, identity);
     leaf.slot_counts[0]     = n;
-    std::array<uint32_t, 3> const root_seg{0, n, 0};
-    leaf.build_seg.upload(root_seg.data(), root_seg.size());
+    BuildSeg const root_seg{0, n, 0};
+    leaf.build_seg.upload(&root_seg, 1);
     root_lap(prof_counters.root_stage_s);
 
     lvl.gh_ordered.reserve(n);
@@ -1366,10 +1365,11 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     gather(grads.gh.data(), lvl.rows.data(), n, lvl.gh_ordered.data());
     launch_root_sums(lvl.gh_ordered.data(), n);
 
+    BuildSeg *const seg = leaf.build_seg.data();
     launch_hist(static_cast<uint32_t>(ds.plane_n_rows()),
                 static_cast<uint32_t>(ds.n_features()), 1, static_cast<uint32_t>(n),
-                lvl.gh_ordered.data(), lvl.rows.data(), leaf.build_seg.data(),
-                leaf.build_seg.data() + 1, leaf.pool.data(), leaf.build_seg.data() + 2);
+                lvl.gh_ordered.data(), lvl.rows.data(), &seg->offset, &seg->count,
+                leaf.pool.data(), &seg->slot);
     check(cudaGetLastError(), "leaf root hist launch");
     lvl.leaf_by_row.reserve(ds.plane_n_rows());
 
@@ -1492,14 +1492,15 @@ void CudaDeviceContext::note_launch_args()
 void CudaDeviceContext::leaf_enqueue_fill(Dataset const &ds, bool in_b,
                                           uint32_t max_rows)
 {
-    auto const sd = static_cast<uint32_t>(lvl.slot_cells());
+    auto const      sd  = static_cast<uint32_t>(lvl.slot_cells());
+    BuildSeg *const seg = leaf.build_seg.data();
     zero_slots_kernel<<<slot_stream_grid(sd, 1), dim3(k_slot_stream_threads)>>>(
-        leaf.pool.data(), leaf.build_seg.data() + 2, 1, sd);
+        leaf.pool.data(), &seg->slot, 1, sd);
     check(cudaGetLastError(), "zero leaf slot launch");
     launch_hist(static_cast<uint32_t>(ds.plane_n_rows()),
                 static_cast<uint32_t>(ds.n_features()), 1, max_rows,
-                lvl.gh_of(in_b).data(), lvl.rows_of(in_b).data(), leaf.build_seg.data(),
-                leaf.build_seg.data() + 1, leaf.pool.data(), leaf.build_seg.data() + 2);
+                lvl.gh_of(in_b).data(), lvl.rows_of(in_b).data(), &seg->offset,
+                &seg->count, leaf.pool.data(), &seg->slot);
     if (prof_counters.enabled)
     {
         ++prof_counters.launches;

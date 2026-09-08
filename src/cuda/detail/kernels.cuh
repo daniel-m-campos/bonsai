@@ -690,9 +690,8 @@ inline __device__ void publish_small_child(SmallChildDev const &small,
     }
     uint32_t const nr         = op.count - nl;
     bool const     left_small = nl <= nr;
-    small.seg[0]              = left_small ? op.offset : op.offset + nl;
-    small.seg[1]              = left_small ? nl : nr;
-    small.seg[2]              = small.slot;
+    *small.seg = BuildSeg{left_small ? op.offset : op.offset + nl, left_small ? nl : nr,
+                          small.slot};
 }
 
 template <typename BinT, typename Ops>
