@@ -462,12 +462,13 @@ bool CudaDeviceContext::LevelPipeline::stage_allowed(std::span<SplitInput const>
 
 void CudaDeviceContext::LevelPipeline::unpack_splits(std::span<SplitInput const> level,
                                                      TreeConfig const           &config,
+                                                     std::span<FeatBest const>   best,
                                                      std::span<SplitOutput>      out,
                                                      std::span<NodeTotals> child_sums)
 {
     for (size_t i = 0; i < level.size(); ++i)
     {
-        FeatBest const &b = node_best.host[i];
+        FeatBest const &b = best[i];
         bool const      eligible =
             level[i].row_count >= 2 * static_cast<size_t>(config.min_data_in_leaf);
         if (b.valid == 0 || !eligible)
@@ -1187,7 +1188,7 @@ void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &co
     }
     lap(prof.gpu_s);
 
-    lvl.unpack_splits(level, config, out, child_sums);
+    lvl.unpack_splits(level, config, lvl.node_best.host, out, child_sums);
     lap(prof.unpack_s);
 }
 
@@ -1414,7 +1415,7 @@ CudaDeviceContext::leaf_split(Dataset const                         &ds,
                 bins, data.n_bins_ptr(), lvl.rows_of(in_b).data(),
                 lvl.gh_of(in_b).data(), part_op, static_cast<uint32_t>(data.key.n_rows),
                 static_cast<uint32_t>(data.key.n_feats), max_chunks, tiles,
-                leaf.n_left.device(), small, lvl.rows_of(!in_b).data(),
+                leaf.n_left.device(1), small, lvl.rows_of(!in_b).data(),
                 lvl.gh_of(!in_b).data());
         });
     check(cudaGetLastError(), "leaf partition launch");
@@ -1431,7 +1432,7 @@ CudaDeviceContext::leaf_split(Dataset const                         &ds,
         ++prof.launches;
     }
     lap(prof.gpu_s);
-    return leaf_children(op, offset, count, leaf.n_left.value(), in_b);
+    return leaf_children(op, offset, count, leaf.n_left.host(1)[0], in_b);
 }
 
 CudaHistogramEngine::LeafRound
@@ -1489,7 +1490,7 @@ void CudaDeviceContext::note_launch_args()
     }
     leaf.launch_args_noted = true;
     std::println(stderr, "bonsai: leaf partition op and finder nodes ride the launch "
-                         "as kernel parameters");
+                         "as kernel parameters, best split by event");
 }
 
 void CudaDeviceContext::leaf_enqueue_fill(Dataset const &ds, bool in_b,
@@ -1581,7 +1582,6 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
     lap(prof.find_stage_s);
 
     lvl.feat_best.reserve(static_cast<size_t>(n) * lvl.n_selected);
-    lvl.node_best.reserve(n);
     find_kernel<<<find_grid(lvl.n_selected, n), dim3(32)>>>(
         leaf.pool.data(), leaf.pool.data(), args, lvl.features.device(),
         data.n_bins_ptr(), any_mask ? lvl.allowed.device() : nullptr,
@@ -1591,16 +1591,17 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
         finder_exhaustive, n, /*store_derived=*/true);
     check(cudaGetLastError(), "leaf find launch");
     reduce_kernel<<<dim3(n), dim3(k_reduce_threads)>>>(
-        lvl.feat_best.data(), lvl.n_selected, lvl.node_best.device());
+        lvl.feat_best.data(), lvl.n_selected, leaf.node_best.device(n));
     check(cudaGetLastError(), "leaf reduce launch");
-    lvl.node_best.fetch(n);
+    leaf.found.record();
+    leaf.found.wait();
     if (prof.enabled)
     {
         ++prof.launches;
     }
     lap(prof.gpu_s);
 
-    lvl.unpack_splits(nodes, config, out, child_sums);
+    lvl.unpack_splits(nodes, config, leaf.node_best.host(n), out, child_sums);
     lap(prof.unpack_s);
 }
 

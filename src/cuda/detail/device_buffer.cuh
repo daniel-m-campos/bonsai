@@ -472,35 +472,40 @@ template <typename T> class PinnedBuffer
     T *ptr_ = nullptr;
 };
 
-template <typename T> class MappedScalar
+template <typename T> class MappedBuffer
 {
   public:
-    MappedScalar() = default;
-    ~MappedScalar()
+    MappedBuffer() = default;
+    ~MappedBuffer()
     {
         cudaFreeHost(host_);
     }
-    MappedScalar(MappedScalar const &)            = delete;
-    MappedScalar &operator=(MappedScalar const &) = delete;
+    MappedBuffer(MappedBuffer const &)            = delete;
+    MappedBuffer &operator=(MappedBuffer const &) = delete;
 
-    T *device()
+    T *device(size_t n)
     {
-        if (host_ == nullptr)
+        if (n > capacity_)
         {
-            check(cudaHostAlloc(&host_, sizeof(T), cudaHostAllocMapped),
+            cudaFreeHost(host_);
+            host_     = nullptr;
+            capacity_ = 0;
+            check(cudaHostAlloc(&host_, n * sizeof(T), cudaHostAllocMapped),
                   "hostAllocMapped");
             check(cudaHostGetDevicePointer(&dev_, host_, 0), "mapped device pointer");
+            capacity_ = n;
         }
         return dev_;
     }
-    T value() const
+    std::span<T const> host(size_t n) const
     {
-        return *static_cast<T const volatile *>(host_);
+        return {host_, n};
     }
 
   private:
-    T *host_ = nullptr;
-    T *dev_  = nullptr;
+    T     *host_     = nullptr;
+    T     *dev_      = nullptr;
+    size_t capacity_ = 0;
 };
 
 class StreamFence
