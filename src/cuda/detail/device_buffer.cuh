@@ -10,6 +10,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace bonsai
@@ -518,6 +519,18 @@ template <typename T> class MappedBuffer
     T     *host_     = nullptr;
     T     *dev_      = nullptr;
     size_t capacity_ = 0;
+};
+
+class Once
+{
+  public:
+    bool first()
+    {
+        return !std::exchange(done_, true);
+    }
+
+  private:
+    bool done_ = false;
 };
 
 class StreamFence

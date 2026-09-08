@@ -22,6 +22,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -612,17 +613,25 @@ void CudaDeviceContext::wait_for_profile(ProfileCounters::Lap &lap)
 
 void CudaDeviceContext::note_plane(bool tiled, size_t shared)
 {
-    if (plane_noted || !prof_counters.enabled)
+    if (!prof_counters.enabled || !plane_noted.first())
     {
         return;
     }
-    plane_noted = true;
     std::println(stderr,
                  "bonsai: bin plane is tile-blocked, width {}, {} cells; histogram "
                  "build is {} at {} shared bytes per block, fixed-point int64 cells{}",
                  k_bin_tile_width, data.bins_are_u8 ? "u8" : "u16",
                  tiled ? "tiled" : "one feature per block", shared,
                  unit_hessian() ? ", unit-hessian count plane" : "");
+}
+
+void CudaDeviceContext::note_once(Once &noted, std::string_view line)
+{
+    if (!prof_counters.enabled || !noted.first())
+    {
+        return;
+    }
+    std::println(stderr, "bonsai: {}", line);
 }
 
 bool CudaDeviceContext::unit_hessian() const
@@ -633,11 +642,10 @@ bool CudaDeviceContext::unit_hessian() const
 
 void CudaDeviceContext::note_quant()
 {
-    if (quant_noted || !prof_counters.enabled)
+    if (!prof_counters.enabled || !quant_noted.first())
     {
         return;
     }
-    quant_noted = true;
     GhQuant q{};
     check(cudaMemcpy(&q, grads.quant.data(), sizeof(GhQuant), cudaMemcpyDeviceToHost),
           "quant fetch");
@@ -1402,14 +1410,17 @@ CudaDeviceContext::leaf_split(Dataset const                         &ds,
                 lvl.gh_of(!in_b).data());
         });
     check(cudaGetLastError(), "leaf partition launch");
-    leaf.partitioned.record();
+    leaf.fence.record();
     if (op.build_children)
     {
         leaf_enqueue_fill(ds, !in_b, count / 2);
-        note_queued_fill();
+        note_once(leaf.queued_fill_noted, "leaf fill queued behind the partition, "
+                                          "small child chosen on device, nl by event");
     }
-    note_launch_args();
-    leaf.partitioned.wait();
+    note_once(leaf.launch_args_noted,
+              "leaf partition op and finder nodes ride the "
+              "launch as kernel parameters, best split by event");
+    leaf.fence.wait();
     if (prof.enabled)
     {
         ++prof.launches;
@@ -1450,28 +1461,6 @@ CudaDeviceContext::leaf_children(CudaHistogramEngine::LeafPartOp const &op,
         leaf.pending_large = op.parent_slot;
     }
     return round;
-}
-
-void CudaDeviceContext::note_queued_fill()
-{
-    if (leaf.queued_fill_noted || !prof_counters.enabled)
-    {
-        return;
-    }
-    leaf.queued_fill_noted = true;
-    std::println(stderr, "bonsai: leaf fill queued behind the partition, small child "
-                         "chosen on device, nl by event");
-}
-
-void CudaDeviceContext::note_launch_args()
-{
-    if (leaf.launch_args_noted || !prof_counters.enabled)
-    {
-        return;
-    }
-    leaf.launch_args_noted = true;
-    std::println(stderr, "bonsai: leaf partition op and finder nodes ride the launch "
-                         "as kernel parameters, best split by event");
 }
 
 void CudaDeviceContext::leaf_enqueue_fill(Dataset const &ds, bool in_b,
@@ -1547,8 +1536,8 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
     reduce_kernel<<<dim3(n), dim3(k_reduce_threads)>>>(
         lvl.feat_best.data(), lvl.n_selected, leaf.node_best.device(n));
     check(cudaGetLastError(), "leaf reduce launch");
-    leaf.found.record();
-    leaf.found.wait();
+    leaf.fence.record();
+    leaf.fence.wait();
     if (prof.enabled)
     {
         ++prof.launches;

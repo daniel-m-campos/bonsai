@@ -14,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <utility>
 #include <vector>
 #include <vector_types.h>
@@ -213,14 +214,13 @@ struct CudaDeviceContext
         Staged<int>              monotone;
         MappedBuffer<uint32_t>   n_left;
         MappedBuffer<FeatBest>   node_best;
-        StreamFence              partitioned;
-        StreamFence              found;
-        bool                     queued_fill_noted = false;
-        bool                     launch_args_noted = false;
-        uint32_t                 next_slot         = 0;
-        uint32_t                 max_slots         = 0;
-        uint32_t                 pending_small     = k_not_selected;
-        uint32_t                 pending_large     = k_not_selected;
+        StreamFence              fence;
+        Once                     queued_fill_noted;
+        Once                     launch_args_noted;
+        uint32_t                 next_slot     = 0;
+        uint32_t                 max_slots     = 0;
+        uint32_t                 pending_small = k_not_selected;
+        uint32_t                 pending_large = k_not_selected;
     };
 
     struct NodeTable
@@ -283,8 +283,8 @@ struct CudaDeviceContext
     size_t shared_limit  = k_max_shared_bytes;
     int    sm_count      = 0;
     bool   shared_probed = false;
-    bool   plane_noted   = false;
-    bool   quant_noted   = false;
+    Once   plane_noted;
+    Once   quant_noted;
 
     // perf: The one histogram-capacity predicate: a node's per-feature scratch is
     // 2 * bins int64 cells in shared memory. begin_root refuses a tree that
@@ -315,6 +315,7 @@ struct CudaDeviceContext
     void       wait_for_profile(ProfileCounters::Lap &lap);
     void       note_plane(bool tiled, size_t shared);
     void       note_quant();
+    void       note_once(Once &noted, std::string_view line);
     bool       unit_hessian() const;
     void       launch_hist(uint32_t ds_rows, uint32_t ds_feats, uint32_t n_nodes,
                            uint32_t max_rows, float2 const *gh, uint32_t const *rows,
@@ -347,10 +348,8 @@ struct CudaDeviceContext
          leaf_split(Dataset const &ds, CudaHistogramEngine::LeafPartOp const &op);
     void leaf_enqueue_fill(Dataset const &ds, bool in_b, uint32_t max_rows);
     CudaHistogramEngine::LeafRound
-         leaf_children(CudaHistogramEngine::LeafPartOp const &op, uint32_t offset,
-                       uint32_t count, uint32_t nl, bool in_b);
-    void note_queued_fill();
-    void note_launch_args();
+    leaf_children(CudaHistogramEngine::LeafPartOp const &op, uint32_t offset,
+                  uint32_t count, uint32_t nl, bool in_b);
     LeafFindNodes leaf_find_nodes(std::span<SplitInput const> nodes,
                                   std::span<uint32_t const>   slots,
                                   TreeConfig const           &config);
