@@ -121,11 +121,27 @@ AB_NA = "n/a"
 # to a task's host seed spread so a single-seed task still has an allowance.
 QUALITY_DRIFT_FLOOR = 1e-4
 QUALITY_GPU_SUFFIX = "-gpu"
-# The CPU spelling each device grower is read against: the short names are
-# the ones the CPU suite's committed rows carry.
+# The CPU spelling each device arm is read against: the short names are
+# the ones the CPU suite's committed rows carry. Only bonsai's arms are
+# gated; a reference library's GPU build is reported, not held, because
+# its distance from its own CPU build is that library's to explain.
 QUALITY_PARTNERS = {"bonsai_cuda_depthwise": "bonsai_dw",
                     "bonsai_cuda_leafwise": "bonsai_lw",
-                    "bonsai_cuda_levelwise": "bonsai_obl"}
+                    "bonsai_cuda_levelwise": "bonsai_obl",
+                    "xgb_cuda": "xgb", "lgbm_cuda": "lgbm",
+                    "catboost_gpu": "catboost"}
+QUALITY_GATED = tuple(g for g in QUALITY_PARTNERS if g.startswith("bonsai"))
+# An arm the standings leave out because its library does not take the
+# campaign knobs on that device. Its rows are still swept and read in the
+# drift table, which is where the deviation shows and where a release
+# that repairs it will show the arm holding its host spread again.
+QUALITY_UNRANKED = {
+    "lgbm_cuda": "LightGBM's CUDA tree learner does not apply `max_depth` "
+                 "(LightGBM 4.7.0: the only depth check is the serial "
+                 "learner's `BeforeFindBestSplit`, which the CUDA `Train` "
+                 "loop never calls), so at the campaign knobs it grows 63 "
+                 "leaves at any depth where every other arm is capped at "
+                 "depth 6"}
 QUALITY_KEY = ("suite", "dataset", "seed")
 
 
@@ -148,6 +164,10 @@ class Drift:
     @property
     def held(self) -> bool:
         return self.worst <= self.worst_spread + QUALITY_DRIFT_FLOOR
+
+    @property
+    def gated(self) -> bool:
+        return self.grower in QUALITY_GATED
 
 
 def load_registry() -> dict:
@@ -193,12 +213,12 @@ def check_ab(reg: dict) -> list[str]:
 
 
 def check_drift(reg: dict) -> list[str]:
-    """Every device quality axis holds its CPU partner inside the host spread."""
+    """Every gated device arm holds its CPU partner inside the host spread."""
     errors = []
     for gpu_axis, cpu_axis in drift_pairs(reg):
         for d in quality_drift(quality_rows(RESULTS / reg[cpu_axis]["file"]),
                                quality_rows(RESULTS / reg[gpu_axis]["file"])):
-            if d.held:
+            if d.held or not d.gated:
                 continue
             errors.append(
                 f"{gpu_axis}: {d.grower} drifts {d.worst:.2e} from "

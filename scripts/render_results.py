@@ -220,8 +220,7 @@ def _standings(rows: list[dict]):
         acc[(r["suite"], r[K.DATASET], r[K.VARIANT])].append(v)
     lib_best: dict[tuple, float] = {}
     for (suite, ds, variant), vals in acc.items():
-        lib = "bonsai" if variant.startswith("bonsai") else variant
-        key = (suite, ds, lib)
+        key = (suite, ds, _library(variant))
         mean = sum(vals) / len(vals)
         lib_best[key] = max(lib_best.get(key, float("-inf")), mean)
     by_ds: dict[tuple, list[tuple[str, float]]] = defaultdict(list)
@@ -252,25 +251,64 @@ def _standings(rows: list[dict]):
     return table, suite_ranks, n_datasets
 
 
-def grinsztajn_section() -> str:
-    """The Grinsztajn standings section of the quality page."""
-    main = load_jsonl(standings_file(Axis.GRINSZTAJN))
-    table, suite_ranks, n = _standings(main)
-    rows = [[lib, fmt(mean, 2), str(w)] for lib, mean, w in table]
-    campaign = md_table(["library", "mean rank", "outright wins"], rows)
+def _library(variant: str) -> str:
+    """The library a variant belongs to: every bonsai grower is one entry,
+    and a reference's device suffix (xgb_cuda, catboost_gpu) folds into
+    its CPU name so both planes' tables read in the same words."""
+    return "bonsai" if variant.startswith("bonsai") else variant.split("_")[0]
+
+
+def _ranked(rows: list[dict]) -> list[dict]:
+    """The rows the standings rank: an arm whose library does not take the
+    campaign knobs on its device is measured, read in the drift table, and
+    left out here, since a rank at matched knobs cannot hold an arm at
+    other knobs."""
+    return [r for r in rows if r[K.VARIANT] not in check_standings.QUALITY_UNRANKED]
+
+
+def _unranked_note(rows: list[dict], where: str) -> str:
+    """One paragraph per arm the standings leave out, naming why and the
+    rank it would take among all arms, so the number the rule declined is
+    on the page next to the rule."""
+    left_out = sorted({r[K.VARIANT] for r in rows} & set(check_standings.QUALITY_UNRANKED))
+    if not left_out:
+        return ""
+    by_lib = {lib: (mean, w) for lib, mean, w in _standings(rows)[0]}
+    parts = []
+    for v in left_out:
+        mean, w = by_lib[_library(v)]
+        parts.append(
+            f"`{v}` is measured but not ranked: {check_standings.QUALITY_UNRANKED[v]}. "
+            f"Ranked among all arms it would read {mean:.2f} with {w} outright wins. "
+            f"Its rows are read {where}.")
+    return "\n\n".join(parts)
+
+
+def _standings_tables(rows: list[dict], chart: str, plane: str):
+    """(overall table, per-suite table, n tasks) for one plane's ranked
+    rows, with the plane's rank chart written beside it."""
+    table, suite_ranks, n = _standings(_ranked(rows))
+    overall = md_table(["library", "mean rank", "outright wins"],
+                       [[lib, fmt(mean, 2), str(w)] for lib, mean, w in table])
     bar_chart(
-        "grinsztajn-rank.svg",
-        f"Grinsztajn suite: mean rank across {n} tasks (lower is better)",
+        chart,
+        f"Grinsztajn suite, {plane}: mean rank across {n} tasks (lower is better)",
         [(lib, mean, f"{w} outright wins") for lib, mean, w in table],
         x_max=4.0,
-        note="55 OpenML tasks, 3 seeds, campaign knobs, best variant per library (decision 68)")
-
+        note=f"55 OpenML tasks, 3 seeds, campaign knobs, every library on the {plane}, "
+             "best variant per library (decision 68)")
     suites = sorted({s for s, _ in suite_ranks})
-    libs = [lib for lib, _, _ in table]
     per_suite = md_table(
         ["library", *suites],
         [[lib, *[fmt(sum(v) / len(v), 2) if (v := suite_ranks.get((s, lib))) else "-"
-                 for s in suites]] for lib in libs])
+                 for s in suites]] for lib, _, _ in table])
+    return overall, per_suite, n
+
+
+def grinsztajn_section() -> str:
+    """The Grinsztajn standings section of the quality page."""
+    campaign, per_suite, n = _standings_tables(
+        load_jsonl(standings_file(Axis.GRINSZTAJN)), "grinsztajn-rank.svg", "CPU")
 
     return f"""### External standings: the Grinsztajn suite
 
@@ -292,6 +330,39 @@ Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinszt
 """
 
 
+def grinsztajn_gpu_section() -> str:
+    """The same suite with every library on the GPU, ranked the same way."""
+    gpu = axis_rows(Axis.GRINSZTAJN_GPU)
+    if not _ranks_libraries(gpu):
+        return ""
+    campaign, per_suite, n = _standings_tables(gpu, "grinsztajn-rank-gpu.svg", "GPU")
+    unranked = _unranked_note(gpu, "in the drift table below")
+    return f"""### Device standings: the same suite on the GPU
+
+The same {n} tasks, seeds, and campaign knobs, with every library on its GPU build: bonsai's three CUDA growers against XGBoost `device=cuda`, LightGBM `device_type=cuda`, and CatBoost `task_type=GPU`, ranked by the same rule as the CPU table (best variant per library, average rank across tasks, lower is better). Each table ranks one plane against its own peers; the drift table below is where a device arm is read against its CPU rows.
+
+![Grinsztajn mean rank by library on the GPU](assets/grinsztajn-rank-gpu.svg)
+
+{campaign}
+
+{unranked}
+
+Per-suite mean rank:
+
+{per_suite}
+
+Reproduce: `python -m bonsai.bench.grinsztajn --device cuda out.jsonl` on a CUDA host, then `--report` on the same file.
+
+{provenance([standings_file(Axis.GRINSZTAJN_GPU)], "As-run on one GPU host; the arm placement is pinned by python/tests/bench/test_grinsztajn.py.")}
+"""
+
+
+def _ranks_libraries(rows: list[dict]) -> bool:
+    """Standings need at least two libraries; a sweep of bonsai's growers
+    alone is drift evidence, not a ranking."""
+    return len({_library(r[K.VARIANT]) for r in rows}) >= 2
+
+
 def grinsztajn_drift_section() -> str:
     """The device plane read against the CPU rows, task by task."""
     gpu = axis_rows(Axis.GRINSZTAJN_GPU)
@@ -301,19 +372,25 @@ def grinsztajn_drift_section() -> str:
         load_jsonl(standings_file(Axis.GRINSZTAJN)), gpu)
     floor = check_standings.QUALITY_DRIFT_FLOOR
     table = md_table(
-        ["device grower", "CPU partner", "pairs", "mean gap", "worst gap",
+        ["device arm", "CPU partner", "pairs", "mean gap", "worst gap",
          "host spread", "worst task", "verdict"],
         [[d.grower, check_standings.QUALITY_PARTNERS[d.grower], str(d.pairs),
           f"{d.mean:+.2e}", f"{d.worst:.2e}", f"{d.worst_spread:.2e}",
-          d.worst_task, "held" if d.held else "**moved**"] for d in drifts])
-    return f"""### Device drift: the same suite on the CUDA growers
+          d.worst_task, _drift_verdict(d)] for d in drifts])
+    return f"""### Device drift: each GPU arm against its CPU rows
 
-The same {len({(r["suite"], r[K.DATASET]) for r in gpu})} tasks and three seeds, fitted by bonsai's three CUDA growers at the same campaign knobs, each row read against the CPU row of the same suite, dataset, seed, and strategy. The gap is the device metric minus the CPU metric (r2 or AUC), and its allowance is the task's own noise: the gate holds each gap inside the host's seed-to-seed spread of that task and strategy, plus {floor:.0e}, and a release refuses to ship past it. The worst pair is the one nearest to, or past, its allowance, shown with the spread it is read against.
+Every arm of the device sweep read against the CPU row of the same suite, dataset, seed, and library strategy. The gap is the device metric minus the CPU metric (r2 or AUC), and its allowance is the task's own noise: the host's seed-to-seed spread of that task and strategy, plus {floor:.0e}. The worst pair is the one nearest to, or past, its allowance, shown with the spread it is read against. bonsai's three arms are gated, and a release refuses to ship one past its allowance; a reference library's GPU build is reported the same way but not held, since its distance from its own CPU build is that library's to explain.
 
 {table}
 
-{provenance([standings_file(Axis.GRINSZTAJN_GPU)], "Same host as the CPU rows above; the allowance and the pairing rule live in scripts/check_standings.py.")}
+{provenance([standings_file(Axis.GRINSZTAJN_GPU)], "The allowance and the pairing rule live in scripts/check_standings.py.")}
 """
+
+
+def _drift_verdict(d) -> str:
+    if d.held:
+        return "held"
+    return "**moved**" if d.gated else "moved (not gated)"
 
 
 # Perf: the scenario panels ========================================================================
@@ -957,7 +1034,7 @@ PAGES: list[tuple[str, str, str, list]] = [
       shap_section, ab_section]),
     ("quality-grinsztajn.md", "Grinsztajn standings",
      "The only citable standings: 55 third-party tasks.",
-     [grinsztajn_section, grinsztajn_drift_section]),
+     [grinsztajn_section, grinsztajn_gpu_section, grinsztajn_drift_section]),
     ("code-metrics.md", "The code division",
      "Self-measurement of the tree: lines, complexity, surface counts.",
      [code_metrics_section]),
@@ -1084,15 +1161,12 @@ def readme_standings_block() -> str:
     92): division summaries plus the quality table."""
     perf = _perf_summary()
 
-    table, _, n_tasks = _standings(load_jsonl(standings_file(Axis.GRINSZTAJN)))
-    qlines = ["| library | mean rank | outright wins |", "|---|--:|--:|"]
-    for i, (lib, mean, wins) in enumerate(table):
-        row = [_LIB_NAMES.get(lib, lib), f"{mean:.2f}", str(wins)]
-        if i == 0:
-            row = [f"**{x}**" for x in row]
-        qlines.append("| " + " | ".join(row) + " |")
-    quality_table = "\n".join(qlines)
-    lead = _LIB_NAMES.get(table[0][0], table[0][0])
+    cpu, n_tasks = _readme_quality_table(load_jsonl(standings_file(Axis.GRINSZTAJN)))
+    gpu_rows = axis_rows(Axis.GRINSZTAJN_GPU)
+    gpu = ("\n\nThe same suite with every library on its GPU build:\n\n"
+           + _readme_quality_table(gpu_rows)[0]
+           + "\n\n" + _unranked_note(gpu_rows, f"in [the ledger]({_SITE}/method/results/quality-grinsztajn/)")
+           if _ranks_libraries(gpu_rows) else "")
 
     return f"""### Perf
 
@@ -1102,9 +1176,21 @@ The panels, and the closed campaigns behind them, are in [the ledger]({_SITE}/me
 
 ### Quality
 
-On the [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) ({n_tasks} OpenML tasks selected by third parties, three seeds, matched knobs, best variant per library), {lead} takes the best mean rank with {table[0][2]} outright wins:
+On the [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) ({n_tasks} OpenML tasks selected by third parties, three seeds, matched knobs, best variant per library), every library on the CPU:
 
-{quality_table}"""
+{cpu}{gpu}"""
+
+
+def _readme_quality_table(rows: list[dict]) -> tuple[str, int]:
+    """One plane's standings as the README table, the leader in bold."""
+    table, _, n_tasks = _standings(_ranked(rows))
+    lines = ["| library | mean rank | outright wins |", "|---|--:|--:|"]
+    for i, (lib, mean, wins) in enumerate(table):
+        row = [_LIB_NAMES.get(lib, lib), f"{mean:.2f}", str(wins)]
+        if i == 0:
+            row = [f"**{x}**" for x in row]
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines), n_tasks
 
 
 def spliced_readme() -> str:

@@ -110,12 +110,12 @@
   },
   "quality-grinsztajn-gpu": {
     "file": "quality-grinsztajn-gpu-2026-09.jsonl",
-    "sha": "4b6a8c6eecdf7ce4f0da5d10d61686612aa4dba4",
-    "host": "883e25c0ab1e",
+    "sha": "0bee80c635966c9b5d21e6ea839aec872b83bf28",
+    "host": "07d85d32692a",
     "date": "2026-09-08",
     "plane": "gpu",
     "refreshed_for": "2.2.0",
-    "as_of_decision": 128,
+    "as_of_decision": 129,
     "hash_set": "ce9bf53bd2c4caef",
     "refs": {
       "xgboost": "3.2.0",

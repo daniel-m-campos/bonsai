@@ -113,3 +113,37 @@ def test_an_ab_file_is_held_to_the_same_rule(tmp_path, monkeypatch):
     ]
     assert render_results.check_registry(
         {"rows.jsonl", "ab-gpu-2026-09.jsonl"}) == []
+
+
+def _quality_row(variant: str, dataset: str, value: float) -> dict:
+    return {"suite": 297, "dataset": dataset, "variant": variant, "seed": 0,
+            "kind": "reg", "metric": "r2", "value": value, "status": "ok"}
+
+
+UNRANKED_ROWS = [
+    _quality_row("bonsai_cuda_depthwise", "wine", 0.50),
+    _quality_row("xgb_cuda", "wine", 0.40),
+    _quality_row("lgbm_cuda", "wine", 0.60),
+    _quality_row("bonsai_cuda_depthwise", "eye", 0.70),
+    _quality_row("xgb_cuda", "eye", 0.65),
+    _quality_row("lgbm_cuda", "eye", 0.80),
+]
+
+
+def test_an_unranked_arm_is_left_out_of_the_table_and_named_under_it(monkeypatch):
+    """An arm whose library does not take the campaign knobs on its device
+    is measured but not ranked: the table ranks the rest, and the note
+    under it carries the reason and the rank the arm would have taken."""
+    monkeypatch.setattr(render_results.check_standings, "QUALITY_UNRANKED",
+                        {"lgbm_cuda": "it ignores max_depth"})
+    table, _, n = render_results._standings(render_results._ranked(UNRANKED_ROWS))
+    assert n == 2
+    assert [(lib, mean, wins) for lib, mean, wins in table] == [
+        ("bonsai", 1.0, 2), ("xgb", 2.0, 0)]
+    note = render_results._unranked_note(UNRANKED_ROWS, "in the ledger")
+    assert note == (
+        "`lgbm_cuda` is measured but not ranked: it ignores max_depth. "
+        "Ranked among all arms it would read 1.00 with 2 outright wins. "
+        "Its rows are read in the ledger.")
+    assert render_results._unranked_note(
+        render_results._ranked(UNRANKED_ROWS), "in the ledger") == ""
