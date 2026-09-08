@@ -170,6 +170,62 @@ TEST_CASE("BinMappers: ColumnBatch and features_view overloads agree above n_sam
     }
 }
 
+TEST_CASE("BinMappers: row-major fit drops NaN per column across a wide block",
+          "[bin_mappers][overload][nan]")
+{
+    // 1024 features put at least two columns in one gathered block on any
+    // host up to 128 threads, and a NaN density that differs by column makes
+    // the block's per-column fill counts diverge, so a slip in that
+    // bookkeeping would bin one column's values under another's cuts. The
+    // feature-major overload drops NaN one column at a time and is the
+    // reference.
+    size_t const n_rows = 2000;
+    size_t const n_feat = 1024;
+    auto         batch  = random_batch(n_rows, n_feat);
+    for (size_t f = 0; f < n_feat; ++f)
+    {
+        size_t const every = 2 + (f % 9);
+        for (size_t r = f % every; r < n_rows; r += every)
+        {
+            batch.features[f][r] = std::numeric_limits<float>::quiet_NaN();
+        }
+    }
+    std::vector<float> row_major(n_rows * n_feat);
+    for (size_t r = 0; r < n_rows; ++r)
+    {
+        for (size_t f = 0; f < n_feat; ++f)
+        {
+            row_major[(r * n_feat) + f] = batch.features[f][r];
+        }
+    }
+    features_view const view{row_major.data(), n_rows, n_feat};
+
+    BinMapperConfig cfg;
+    SECTION("every row")
+    {
+        cfg.n_samples = n_rows;
+    }
+    SECTION("a shared row sample")
+    {
+        cfg.n_samples = 700;
+        cfg.seed      = 7;
+    }
+    BinMappers const from_batch = BinMappers::fit(batch, cfg);
+    BinMappers const from_view =
+        BinMappers::fit(view, std::vector<std::string>(n_feat, "x"), cfg);
+
+    REQUIRE(from_batch.size() == n_feat);
+    REQUIRE(from_view.size() == n_feat);
+    for (size_t f = 0; f < n_feat; ++f)
+    {
+        auto const cb = from_batch[f].cuts();
+        auto const cv = from_view[f].cuts();
+        REQUIRE(cb.size() == cv.size());
+        REQUIRE(std::equal(cb.begin(), cb.end(), cv.begin()));
+        CHECK(from_view[f].n_bins() == from_batch[f].n_bins());
+    }
+}
+
 TEST_CASE("BinMappers: bin_edges overrides one column, fits the rest identically",
           "[bin_mappers][edges]")
 {
