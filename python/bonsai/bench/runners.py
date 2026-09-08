@@ -207,7 +207,7 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
     of them. The predict calls therefore pass iteration_range explicitly, or
     the reported metric would be the overshot model's, not the stopped one's.
 
-    A cuda-device request is checked after the fit (_assert_xgb_trained_on_
+    A cuda-device request is checked after the fit (assert_xgb_trained_on_
     device): xgboost 3.3 can silently drop a cuda request to CPU and keep
     training rather than raise, which posts a CPU time under a cuda label.
     """
@@ -240,7 +240,7 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
                                     num_boost_round=c["iters"], **fit_kwargs,
                                     **rp.xgb_early_stop(rounds))
     if device == Device.CUDA:
-        _assert_xgb_trained_on_device(booster, caught)
+        assert_xgb_trained_on_device(booster, caught)
     # (0, 0) is xgboost's "every tree"; a stop needs the explicit range.
     span = (0, booster.best_iteration + 1) if rounds else (0, 0)
     # inplace_predict on a host array against a GPU booster may warn and
@@ -264,6 +264,33 @@ def run_xgb(spec, X, y, Xte, yte) -> dict:
                   lambda: booster.inplace_predict(X, iteration_range=span),
                   cell=c,
                   stopped_at=booster.best_iteration + 1 if rounds else None)
+
+
+def assert_xgb_trained_on_device(booster, caught_warnings) -> None:
+    """Raise if a cuda-requested xgboost fit actually ran on CPU.
+
+    booster.save_config()'s learner.generic_param.device reports the
+    device the fit actually used, not the device that was requested:
+    xgboost 3.3 rewrites this field from "cuda" to "cpu" the moment it
+    falls back, and does so without raising (verified locally: a
+    device="cuda" fit on a GPU-less host completes and save_config then
+    reports device="cpu"). That makes it an honest post-fit signal rather
+    than an echo of params, and the check this guard exists for (issue
+    #333: a fallback that posts a plausible CPU time under a cuda label).
+    Captured warnings are folded into the message for context only; xgboost's
+    fallback warning text is not a documented contract, so it never gates
+    the check on its own.
+    """
+    cfg = json.loads(booster.save_config())
+    actual = cfg["learner"]["generic_param"]["device"]
+    if actual.startswith("cuda"):
+        return
+    hint = next((str(w.message) for w in caught_warnings
+                if "gpu" in str(w.message).lower()), None)
+    detail = f" ({hint})" if hint else ""
+    raise RuntimeError(
+        "unsupported: xgboost silently fell back to CPU (requested "
+        f"device=cuda, trained device={actual!r}){detail}")
 
 
 def run_lgbm(spec, X, y, Xte, yte) -> dict:
@@ -541,33 +568,6 @@ def _phase(timed: dict, name: str):
     t0 = time.perf_counter()
     yield
     timed[name] = time.perf_counter() - t0
-
-
-def _assert_xgb_trained_on_device(booster, caught_warnings) -> None:
-    """Raise if a cuda-requested xgboost fit actually ran on CPU.
-
-    booster.save_config()'s learner.generic_param.device reports the
-    device the fit actually used, not the device that was requested:
-    xgboost 3.3 rewrites this field from "cuda" to "cpu" the moment it
-    falls back, and does so without raising (verified locally: a
-    device="cuda" fit on a GPU-less host completes and save_config then
-    reports device="cpu"). That makes it an honest post-fit signal rather
-    than an echo of params, and the check this guard exists for (issue
-    #333: a fallback that posts a plausible CPU time under a cuda label).
-    Captured warnings are folded into the message for context only; xgboost's
-    fallback warning text is not a documented contract, so it never gates
-    the check on its own.
-    """
-    cfg = json.loads(booster.save_config())
-    actual = cfg["learner"]["generic_param"]["device"]
-    if actual.startswith("cuda"):
-        return
-    hint = next((str(w.message) for w in caught_warnings
-                if "gpu" in str(w.message).lower()), None)
-    detail = f" ({hint})" if hint else ""
-    raise RuntimeError(
-        "unsupported: xgboost silently fell back to CPU (requested "
-        f"device=cuda, trained device={actual!r}){detail}")
 
 
 def _score(task: str, timed: dict, y, yte, pred_te, predict_train, *,
