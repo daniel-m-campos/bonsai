@@ -123,6 +123,14 @@
       "catboost": "1.2.10"
     }
   },
+  "quality-grinsztajn-leaf-capped-gpu": {
+    "file": null,
+    "sha": null,
+    "host": null,
+    "date": null,
+    "plane": "gpu",
+    "as_of_decision": 130
+  },
   "code": {
     "file": "code-metrics-2026-09.jsonl",
     "sha": "2d87607472fe2b57f5a2c18405d61d49378c545f",

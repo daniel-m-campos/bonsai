@@ -139,7 +139,7 @@ AB_AXES = {PLANE_GPU: "gpu-tall", PLANE_CPU: "cpu-tall"}
 # branch the pod script runs to produce it.
 AXES = ("gpu-tall", "gpu-wide", "gpu-extreme", "cpu-tall", "cpu-wide",
         "gpu-early-stop", "gpu-shap", "quality-grinsztajn",
-        "quality-grinsztajn-gpu")
+        "quality-grinsztajn-gpu", "quality-grinsztajn-leaf-capped-gpu")
 
 # Measured on this machine, not the pod: the code division reads the tree
 # rather than running it, so a rental would only rent a checkout. Named here

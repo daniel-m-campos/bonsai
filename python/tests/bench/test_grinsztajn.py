@@ -89,3 +89,41 @@ def test_a_cuda_xgb_arm_that_fell_back_to_cpu_fails_the_row(monkeypatch):
     with pytest.raises(RuntimeError, match="fell back to CPU"):
         grinsztajn.fit_predict("xgb_cuda", X, Y, X, "r2")
     grinsztajn.fit_predict("xgb", X, Y, X, "r2")
+
+
+def _stub_bonsai(monkeypatch, seen):
+    import bonsai
+
+    def regressor(**kw):
+        return _Fitted(seen, "bonsai", **kw)
+
+    monkeypatch.setattr(bonsai, "BonsaiRegressor", regressor)
+
+
+def test_the_leaf_capped_regime_holds_the_leaves_and_lifts_the_depth(monkeypatch):
+    """lightgbm's CUDA learner caps a tree by its leaf count alone, so the
+    head to head hands both learners the campaign's 63 leaves under a depth
+    cap a 63-leaf tree cannot reach; the campaign regime keeps depth 6."""
+    seen = {}
+    _stub_bonsai(monkeypatch, seen)
+    _stub_references(monkeypatch, seen)
+    for arm in ("bonsai_lw", "lgbm"):
+        grinsztajn.fit_predict(arm, X, Y, X, "r2", grinsztajn.LEAF_CAPPED.knobs)
+    assert (seen["bonsai"]["max_depth"], seen["bonsai"]["max_leaves"]) == (62, 63)
+    assert (seen["lgbm"]["max_depth"], seen["lgbm"]["num_leaves"]) == (62, 63)
+    for arm in ("bonsai_lw", "lgbm"):
+        grinsztajn.fit_predict(arm, X, Y, X, "r2")
+    assert (seen["bonsai"]["max_depth"], seen["bonsai"]["max_leaves"]) == (6, 63)
+    assert (seen["lgbm"]["max_depth"], seen["lgbm"]["num_leaves"]) == (6, 63)
+
+
+def test_the_leaf_capped_regime_runs_only_the_learners_a_leaf_count_caps():
+    """A depthwise or symmetric tree at depth 62 is a different experiment,
+    not a matched one, so the regime's arms are leafwise bonsai and
+    lightgbm on each device, and the CLI reaches them by name."""
+    assert grinsztajn.LEAF_CAPPED.arms == {"cpu": ("bonsai_lw", "lgbm"),
+                                          "cuda": ("bonsai_cuda_leafwise", "lgbm_cuda")}
+    assert grinsztajn.LEAF_CAPPED.knobs == dict(grinsztajn.C, depth=62)
+    args = grinsztajn.parse_args(["--device", "cuda", "--regime", "leaf-capped", "o.jsonl"])
+    assert (args.device, args.regime) == ("cuda", "leaf-capped")
+    assert grinsztajn.parse_args(["o.jsonl"]).regime == "campaign"
