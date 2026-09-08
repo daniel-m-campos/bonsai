@@ -568,19 +568,26 @@ struct WarpPrefix
     uint32_t total;
 };
 
-inline __device__ WarpPrefix warp_prefix_in_block(uint32_t *sh, PartLane const &pl,
+struct PartShared
+{
+    uint32_t warp_total[k_part_warps];
+    uint32_t tile;
+    uint32_t before;
+};
+
+inline __device__ WarpPrefix warp_prefix_in_block(PartShared &sh, PartLane const &pl,
                                                   uint32_t v)
 {
     v = warp_sum_u32(v);
     if (pl.lane == 0)
     {
-        sh[pl.warp] = v;
+        sh.warp_total[pl.warp] = v;
     }
     __syncthreads();
     WarpPrefix p{0, 0};
     for (uint32_t w = 0; w < k_part_warps; ++w)
     {
-        uint32_t const c = sh[w];
+        uint32_t const c = sh.warp_total[w];
         p.before += w < pl.warp ? c : 0;
         p.total += c;
     }
@@ -597,19 +604,23 @@ inline __device__ bool goes_left_dev(uint32_t b, uint32_t last_bin, uint32_t bin
     return b <= bin;
 }
 
-constexpr uint32_t k_part_status_aggregate = 1;
-constexpr uint32_t k_part_status_inclusive = 2;
-
-inline __device__ unsigned long long part_status_word(uint32_t value, uint32_t epoch,
-                                                      uint32_t flag)
+enum class PartStatusFlag : uint32_t
 {
-    return (static_cast<unsigned long long>((epoch << 2) | flag) << 32) | value;
+    aggregate = 1,
+    inclusive = 2,
+};
+constexpr uint32_t k_part_status_flag_bits = 2;
+
+inline __device__ uint32_t part_status_tag(uint32_t epoch, PartStatusFlag flag)
+{
+    return (epoch << k_part_status_flag_bits) | static_cast<uint32_t>(flag);
 }
 
 inline __device__ void part_publish(unsigned long long *word, uint32_t value,
-                                    uint32_t epoch, uint32_t flag)
+                                    uint32_t epoch, PartStatusFlag flag)
 {
-    atomicExch(word, part_status_word(value, epoch, flag));
+    unsigned long long const tag = part_status_tag(epoch, flag);
+    atomicExch(word, (tag << 32) | value);
 }
 
 struct PartStatus
@@ -628,8 +639,8 @@ inline __device__ PartStatus part_status_read(unsigned long long const *words,
     }
     unsigned long long const w   = __ldcg(words + idx);
     uint32_t const           tag = static_cast<uint32_t>(w >> 32);
-    bool const aggregate         = tag == ((epoch << 2) | k_part_status_aggregate);
-    bool const inclusive         = tag == ((epoch << 2) | k_part_status_inclusive);
+    bool const aggregate = tag == part_status_tag(epoch, PartStatusFlag::aggregate);
+    bool const inclusive = tag == part_status_tag(epoch, PartStatusFlag::inclusive);
     return {static_cast<uint32_t>(w), aggregate || inclusive, inclusive};
 }
 
@@ -666,7 +677,7 @@ inline __device__ void part_publish_prefix(unsigned long long *words, uint32_t e
 {
     if (threadIdx.x == 0 && chunk > 0)
     {
-        part_publish(words + chunk, block_total, epoch, k_part_status_aggregate);
+        part_publish(words + chunk, block_total, epoch, PartStatusFlag::aggregate);
     }
     if (pl.warp != 0)
     {
@@ -677,7 +688,7 @@ inline __device__ void part_publish_prefix(unsigned long long *words, uint32_t e
     {
         return;
     }
-    part_publish(words + chunk, before + block_total, epoch, k_part_status_inclusive);
+    part_publish(words + chunk, before + block_total, epoch, PartStatusFlag::inclusive);
     *before_out = before;
 }
 
@@ -701,13 +712,13 @@ __global__ void __launch_bounds__(k_part_block)
                      uint32_t max_chunks, PartTilesDev tiles, uint32_t *n_left,
                      SmallChildDev small, uint32_t *rows_out, float2 *gh_out)
 {
-    __shared__ uint32_t sh[k_part_warps + 2];
+    __shared__ PartShared sh;
     if (threadIdx.x == 0)
     {
-        sh[k_part_warps] = atomicAdd(tiles.counter, 1U) - tiles.base;
+        sh.tile = atomicAdd(tiles.counter, 1U) - tiles.base;
     }
     __syncthreads();
-    uint32_t const  tile  = sh[k_part_warps];
+    uint32_t const  tile  = sh.tile;
     uint32_t const  chunk = tile % max_chunks;
     uint32_t const  opi   = tile / max_chunks;
     PartOpDev const op    = ops.at(opi);
@@ -741,15 +752,15 @@ __global__ void __launch_bounds__(k_part_block)
     WarpPrefix const          wp = warp_prefix_in_block(sh, pl, mine);
     unsigned long long *const words =
         tiles.status + (static_cast<size_t>(opi) * max_chunks);
-    part_publish_prefix(words, tiles.epoch, chunk, wp.total, pl, sh + k_part_warps + 1);
+    part_publish_prefix(words, tiles.epoch, chunk, wp.total, pl, &sh.before);
     __syncthreads();
     if (threadIdx.x == 0 && chunk + 1 == max_chunks)
     {
-        uint32_t const nl = sh[k_part_warps + 1] + wp.total;
+        uint32_t const nl = sh.before + wp.total;
         n_left[opi]       = nl;
         publish_small_child(small, op, nl);
     }
-    uint32_t       lefts   = sh[k_part_warps + 1] + wp.before;
+    uint32_t       lefts   = sh.before + wp.before;
     uint32_t const lane_lt = (1U << pl.lane) - 1;
     uint32_t const end     = op.offset + op.count - 1;
     for_each_lane_row(pl, op.count,
