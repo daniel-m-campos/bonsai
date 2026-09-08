@@ -200,8 +200,8 @@ struct CudaDeviceContext
         bool stage_allowed(std::span<SplitInput const> nodes);
 
         void unpack_splits(std::span<SplitInput const> level, TreeConfig const &config,
-                           std::span<SplitOutput> out,
-                           std::span<NodeTotals>  child_sums);
+                           std::span<FeatBest const> best, std::span<SplitOutput> out,
+                           std::span<NodeTotals> child_sums);
 
         void stage_level_sums(std::span<SplitInput const> level);
     };
@@ -221,8 +221,10 @@ struct CudaDeviceContext
         // event that fenced the previous round's upload of it.
         PinnedStaged<uint32_t> build_seg;
         Staged<int>            monotone;
-        MappedScalar<uint32_t> n_left;
+        MappedBuffer<uint32_t> n_left;
+        MappedBuffer<FeatBest> node_best;
         StreamFence            partitioned;
+        StreamFence            found;
         bool                   queued_fill_noted = false;
         bool                   launch_args_noted = false;
         uint32_t               next_slot         = 0;
