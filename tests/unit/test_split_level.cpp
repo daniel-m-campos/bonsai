@@ -136,15 +136,18 @@ TEST_CASE(
     CHECK(s.gain == Catch::Approx(expected_gain).epsilon(1e-12));
 }
 
-TEST_CASE("HistogramLevelSplitFinder: an infeasible parent contributes zero gain "
-          "instead of vetoing the level cut",
-          "[split][level][min_child_hess]")
+// INVARIANT: infeasible-node-scores-its-parent
+// A frontier node whose children would fall under min_child_hess contributes
+// its parent score (zero gain) to a level candidate instead of vetoing it. At
+// real depths some frontier node is always near-empty, so a veto rejected
+// every good deep cut. The device level finder holds the same rule, pinned
+// by its own parity case in test_cuda_grower.cpp.
+TEST_CASE("HistogramLevelSplitFinder: an infeasible parent scores zero, not a veto",
+          "[split][level][min_child_hess][invariant]")
 {
     // Parent A and B both have the obvious cut at bin 0, but B's children
-    // hess (0.5) is below min_child_hess (0.8). Pre-#60 the whole candidate
-    // was rejected — at real depths some frontier node is always near-empty,
-    // so every good cut died. Now B contributes its parent score (zero
-    // gain) and A's gain carries the cut.
+    // hess (0.5) is below min_child_hess (0.8): B contributes its parent
+    // score and A's gain carries the cut.
     auto make_a = []
     {
         Histogram h{3};

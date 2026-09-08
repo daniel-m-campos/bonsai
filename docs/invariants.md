@@ -74,6 +74,12 @@ A row-narrowed view mints a FitId distinct from its parent's, and a copy shares 
 
 - enforced by: [`identity tokens: minted, shared by copies, distinct per fit`](../tests/unit/test_dataset.cpp)
 
+### infeasible-node-scores-its-parent
+
+A frontier node whose children would fall under min_child_hess contributes its parent score (zero gain) to a level candidate instead of vetoing it. At real depths some frontier node is always near-empty, so a veto rejected every good deep cut. The device level finder holds the same rule, pinned by its own parity case in test_cuda_grower.cpp.
+
+- enforced by: [`HistogramLevelSplitFinder: an infeasible parent scores zero, not a veto`](../tests/unit/test_split_level.cpp)
+
 ### levelwise-monotone-holds
 
 A levelwise fit under a monotone constraint produces predictions ordered by that feature, on both the CPU and CUDA engines. The mechanism is a projection of the finished leaf table onto the monotone cone (project_monotone), not a veto during growth, so the tree's structure is whatever the unconstrained search would have chosen.

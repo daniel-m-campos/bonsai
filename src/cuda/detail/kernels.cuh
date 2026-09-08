@@ -1095,11 +1095,9 @@ inline __device__ FeatBest warp_best_cut(FeatBest best)
     return best;
 }
 
-// perf: An infeasible node does NOT veto the whole level candidate. It
-// contributes its parent score (zero gain) and the broadcast split still
-// applies to it. At depth >= 5 some frontier node is always near-empty, so
-// vetoing rejected every good deep cut and GPU levelwise trailed its own CPU
-// grower (and catboost) at scale.
+// perf: An infeasible node contributes its parent score instead of vetoing
+// the level candidate; at depth >= 5 some frontier node is always near-empty
+// (invariants: infeasible-node-scores-its-parent).
 template <bool k_l1>
 inline __device__ double level_cut_score(SplitSumsDev const &s, double node_ps,
                                          CutConst const &cc)

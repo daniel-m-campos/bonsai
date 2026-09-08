@@ -196,13 +196,11 @@ inline void update_best_for_feature_for_level(FrontierInput frontier, feature_id
                 auto const      c =
                     score_candidate(lp.sum_grad, lp.sum_hess, hist.missing(),
                                     real_grad[p], real_hess[p], default_left, config);
-                // perf: A node whose children would fall under min_child_hess no
-                // longer vetoes the whole candidate (at depth >= 5
-                // some frontier node is always near-empty, so every good cut
-                // was rejected and levelwise trailed catboost by 3-26%). It
-                // contributes its parent score instead (zero gain) and the
-                // broadcast split still applies to it; empty children are
-                // first-class (invariants: zero-cover-branches-are-real).
+                // perf: An infeasible node contributes its parent score instead
+                // of vetoing the candidate; at depth >= 5 some frontier node is
+                // always near-empty, and a veto cost levelwise 3-26% against
+                // catboost (invariants: infeasible-node-scores-its-parent,
+                // zero-cover-branches-are-real).
                 sum_children_score += c.feasible ? c.children_score : parent_score[p];
             }
             update_best(best, sum_children_score - sum_parent_score, fid,

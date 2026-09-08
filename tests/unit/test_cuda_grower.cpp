@@ -403,17 +403,14 @@ TEST_CASE("CudaObliviousGrower survives frontiers wider than one node chunk",
     }
 }
 
-TEST_CASE("CudaObliviousGrower matches CPU when deep nodes go infeasible (issue #60)",
+// The device port of invariants: infeasible-node-scores-its-parent. The
+// level finder once kept the veto, so at depth >= 5, where some frontier node
+// is always near-empty, device levelwise lost 0.011 test r2 at 16M rows
+// against its own host grower. A high min_child_hess forces the
+// infeasibility at shallow depth so the divergence reproduces on 4k rows.
+TEST_CASE("CudaObliviousGrower: an infeasible node scores its parent, not a veto",
           "[cuda][grower]")
 {
-    // The CPU level-find lets an infeasible node contribute its parent score
-    // (zero gain) rather than veto the whole level candidate (split.cpp,
-    // issue #60). The device level-find originally kept the veto, so at depth
-    // >= 5 — where some frontier node is always near-empty — GPU levelwise
-    // chose worse splits than its own CPU grower and silently lost accuracy at
-    // scale (0.011 test r2 at 16M). A high min_child_hess forces that
-    // infeasibility at shallow depth so the divergence reproduces on 4k rows:
-    // pre-fix this REQUIRE fails; with the parent-score port it holds.
     if (!cuda_available())
     {
         SKIP("no usable CUDA device");
