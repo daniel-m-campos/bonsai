@@ -1298,6 +1298,102 @@ TEST_CASE("CudaDepthwiseGrower: interaction constraints keep groups on separate 
     }
 }
 
+// Two duplicated columns tie every candidate their originals win, so any
+// split on index 2 or 3 means a tie went to the higher feature. The host
+// finder scans features in order and only replaces the best on a strictly
+// larger gain, and the device reduce carries the lower selected index
+// through its shared-memory tree; this pins the two rules to each other.
+TEST_CASE("CudaGrowers: a tied gain goes to the lower feature on every plane",
+          "[cuda][grower][fit]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    std::mt19937                          rng(11);
+    std::uniform_real_distribution<float> value(0.0F, 1.0F);
+    std::normal_distribution<float>       gradient(0.0F, 1.0F);
+    size_t const                          n = 4096;
+
+    detail::ColumnBatch batch;
+    batch.features.resize(4, std::vector<float>(n));
+    batch.feature_names = {"a", "b", "a_copy", "b_copy"};
+    batch.labels.assign(n, 0.0F);
+    std::vector<float> grad(n);
+    std::vector<float> hess(n);
+    for (size_t r = 0; r < n; ++r)
+    {
+        batch.features[0][r] = value(rng);
+        batch.features[1][r] =
+            (r % 5 == 0) ? std::numeric_limits<float>::quiet_NaN() : value(rng);
+        batch.features[2][r] = batch.features[0][r];
+        batch.features[3][r] = batch.features[1][r];
+        grad[r]              = gradient(rng);
+        hess[r]              = 0.5F + value(rng);
+    }
+    test::ScenarioInputs scenario{.built = test::build(std::move(batch)),
+                                  .grad  = std::move(grad),
+                                  .hess  = std::move(hess),
+                                  .rows  = test::iota_rows(n)};
+    auto const          &ds = scenario.built.ds;
+
+    TreeConfig cfg;
+    cfg.max_depth        = 5;
+    cfg.max_leaves       = 31;
+    cfg.min_data_in_leaf = 8;
+
+    auto const splits_on_originals_only = [](DenseTree const &tree)
+    {
+        REQUIRE(tree.params().n_leaves > 1);
+        for (auto const &node : tree.nodes())
+        {
+            if (!DenseTree::is_leaf(node))
+            {
+                CHECK(node.feature_id < 2);
+            }
+        }
+    };
+    auto const levels_on_originals_only = [](ObliviousTree const &tree)
+    {
+        REQUIRE(tree.params().depth > 0);
+        for (auto const &level : tree.splits())
+        {
+            CHECK(level.feature_id < 2);
+        }
+    };
+
+    SECTION("depthwise")
+    {
+        DepthwiseGrower<CpuHistogramEngine> cpu_grower(cfg);
+        CudaDepthwiseGrower                 gpu_grower(cfg);
+        auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+        auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+        splits_on_originals_only(cpu.tree);
+        splits_on_originals_only(gpu.tree);
+        require_values_match(cpu.values, gpu.values);
+    }
+    SECTION("oblivious")
+    {
+        ObliviousGrower<CpuHistogramEngine> cpu_grower(cfg);
+        CudaObliviousGrower                 gpu_grower(cfg);
+        auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+        auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+        levels_on_originals_only(cpu.tree);
+        levels_on_originals_only(gpu.tree);
+        require_values_match(cpu.values, gpu.values);
+    }
+    SECTION("leafwise")
+    {
+        LeafwiseGrower<CpuHistogramEngine> cpu_grower(cfg);
+        CudaLeafwiseGrower                 gpu_grower(cfg);
+        auto cpu = cpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+        auto gpu = gpu_grower.grow(ds, scenario.grad, scenario.hess, scenario.rows);
+        splits_on_originals_only(cpu.tree);
+        splits_on_originals_only(gpu.tree);
+        require_values_match(cpu.values, gpu.values);
+    }
+}
+
 TEST_CASE("CudaObliviousGrower rejects constraints at construction",
           "[cuda][grower][ctor]")
 {
