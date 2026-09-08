@@ -229,8 +229,8 @@ class CudaHistogramEngine
     // subtraction; call only for a round both counts survived. A no-op when
     // the round's leaf_split queued it (build_children).
     void leaf_build(Dataset const &ds, uint32_t small_slot, uint32_t large_slot);
-    // Best split per named pool slot (slots[i] holds nodes[i]'s histogram);
-    // child_sums receives the winning cut's (left, right) totals, 2 per node.
+    // Best split for the root alone or one sibling pair, nodes[i] held in pool
+    // slot slots[i]; child_sums gets each winner's (left, right) totals.
     void leaf_find(Dataset const &ds, TreeConfig const &config,
                    std::span<SplitInput const> nodes, std::span<uint32_t const> slots,
                    std::span<SplitOutput> out, std::span<NodeTotals> child_sums);
