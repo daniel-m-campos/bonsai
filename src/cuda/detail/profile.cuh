@@ -58,12 +58,12 @@ struct ProfileCounters
     {
         return Lap{.enabled = enabled};
     }
-    void node_launched()
+    void launched(size_t nodes = 0)
     {
         if (enabled)
         {
             ++launches;
-            ++gpu_nodes;
+            gpu_nodes += nodes;
         }
     }
 

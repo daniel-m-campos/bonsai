@@ -282,59 +282,24 @@ CudaIngestPlane::select_columns(std::span<feature_id_t const> keep,
     return out;
 }
 
-void CudaDeviceContext::LevelPipeline::prof_record_begin(bool root)
+void CudaDeviceContext::LevelPipeline::fill_done(bool root)
 {
-    if (!prof_ev_ready)
-    {
-        for (auto &e : prof_ev)
-        {
-            check(cudaEventCreate(&e), "profile event create");
-        }
-        prof_ev_ready = true;
-    }
-    prof_ev_root = root;
-    if (!root)
-    {
-        check(cudaEventRecord(prof_ev[ev_before_memset]), "profile event record");
-    }
+    hist_timer.end();
+    fill_timed   = true;
+    fill_is_root = root;
 }
 
 void CudaDeviceContext::LevelPipeline::prof_read(ProfileCounters &prof)
 {
-    if (!prof_ev_recorded)
+    if (!fill_timed)
     {
         return;
     }
-    prof_ev_recorded = false;
-    float ms         = 0.0F;
-    check(cudaEventElapsedTime(&ms, prof_ev[ev_after_memset], prof_ev[ev_after_hist]),
-          "profile event hist");
-    (prof_ev_root ? prof.root_hist_s : prof.adv_hist_s) += ms / 1e3;
-    if (prof_ev_root)
+    fill_timed = false;
+    hist_timer.add_elapsed(fill_is_root ? prof.root_hist_s : prof.adv_hist_s);
+    if (!fill_is_root)
     {
-        return;
-    }
-    check(
-        cudaEventElapsedTime(&ms, prof_ev[ev_before_memset], prof_ev[ev_after_memset]),
-        "profile event memset");
-    prof.adv_memset_s += ms / 1e3;
-}
-
-CudaDeviceContext::LevelPipeline::~LevelPipeline()
-{
-    if (prof_ev_ready)
-    {
-        for (auto &e : prof_ev)
-        {
-            cudaEventDestroy(e);
-        }
-    }
-    if (part_ev_ready)
-    {
-        for (auto &e : part_ev)
-        {
-            cudaEventDestroy(e);
-        }
+        memset_timer.add_elapsed(prof.adv_memset_s);
     }
 }
 
@@ -873,23 +838,13 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     }
     lvl.gh_ordered.reserve(n);
     gather(grads.gh.data(), lvl.rows.data(), n, lvl.gh_ordered.data());
-    if (prof_counters.enabled)
-    {
-        lvl.prof_record_begin(/*root=*/true);
-        check(cudaEventRecord(lvl.prof_ev[LevelPipeline::ev_after_memset]),
-              "profile event record");
-    }
+    lvl.hist_timer.begin();
     launch_hist(static_cast<uint32_t>(ds.plane_n_rows()),
                 static_cast<uint32_t>(ds.n_features()), 1, static_cast<uint32_t>(n),
                 lvl.gh_ordered.data(), lvl.rows.data(), lvl.row_offsets.device(),
                 lvl.row_counts.device(), lvl.cur().data(), lvl.slots.device());
     check(cudaGetLastError(), "root hist launch");
-    if (prof_counters.enabled)
-    {
-        check(cudaEventRecord(lvl.prof_ev[LevelPipeline::ev_after_hist]),
-              "profile event record");
-        lvl.prof_ev_recorded = true;
-    }
+    lvl.fill_done(/*root=*/true);
 
     lvl.segs.assign(1, RowSeg{0, n});
     lvl.leaf_by_row.reserve(ds.plane_n_rows());
@@ -920,7 +875,7 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
     }
     sums_lap(prof_counters.root_sums_s);
     note_quant();
-    prof_counters.node_launched();
+    prof_counters.launched(1);
 }
 
 void CudaDeviceContext::launch_stamp(
@@ -982,26 +937,11 @@ void CudaDeviceContext::partition_level(
     lvl.nl_dev.reserve(n);
     lap(prof.part_stage_s);
 
-    if (prof.enabled && !lvl.part_ev_ready)
-    {
-        for (auto &e : lvl.part_ev)
-        {
-            check(cudaEventCreate(&e), "part event create");
-        }
-        lvl.part_ev_ready = true;
-    }
-    auto const mark = [&](int i)
-    {
-        if (prof.enabled)
-        {
-            check(cudaEventRecord(lvl.part_ev[i]), "part event record");
-        }
-    };
     uint32_t const n_tiles = max_chunks * static_cast<uint32_t>(n);
     lvl.other_rows().reserve(data.key.n_rows);
     lvl.other_gh().reserve(data.key.n_rows);
     PartTilesDev const tiles = lvl.part_tiles.arm(n_tiles);
-    mark(0);
+    lvl.part_timer.begin();
     data.dispatch_bins(
         [&](auto const *bins)
         {
@@ -1014,16 +954,10 @@ void CudaDeviceContext::partition_level(
                 lvl.other_gh().data());
         });
     check(cudaGetLastError(), "partition launch");
-    mark(1);
+    lvl.part_timer.end();
     lvl.nl_dev.fetch(n);
-    if (prof.enabled)
-    {
-        float ms = 0.0F;
-        check(cudaEventElapsedTime(&ms, lvl.part_ev[0], lvl.part_ev[1]),
-              "part event elapsed");
-        prof.part_kernel_s += ms / 1e3;
-        ++prof.launches;
-    }
+    lvl.part_timer.add_elapsed(prof.part_kernel_s);
+    prof.launched();
     lap(prof.gpu_s);
 
     lvl.layout_children(ops, child_counts);
@@ -1074,20 +1008,14 @@ void CudaDeviceContext::advance_level(Dataset const                             
 
     size_t const child_slots = 2 * ops.size();
     lvl.other().reserve(child_slots * lvl.slot_cells());
-    if (prof.enabled)
-    {
-        lvl.prof_record_begin(/*root=*/false);
-    }
+    lvl.memset_timer.begin();
     auto const sd = static_cast<uint32_t>(lvl.slot_cells());
     zero_slots_kernel<<<slot_stream_grid(sd, static_cast<uint32_t>(ops.size())),
                         dim3(k_slot_stream_threads)>>>(lvl.other().data(),
                                                        lvl.triples.device() + 1, 3, sd);
     check(cudaGetLastError(), "zero level launch");
-    if (prof.enabled)
-    {
-        check(cudaEventRecord(lvl.prof_ev[LevelPipeline::ev_after_memset]),
-              "profile event record");
-    }
+    lvl.memset_timer.end();
+    lvl.hist_timer.begin();
     if (!lvl.row_offsets.empty())
     {
         launch_hist(static_cast<uint32_t>(ds.plane_n_rows()),
@@ -1115,20 +1043,11 @@ void CudaDeviceContext::advance_level(Dataset const                             
             }
         });
     check(cudaGetLastError(), "level hist launch");
-    if (prof.enabled)
-    {
-        check(cudaEventRecord(lvl.prof_ev[LevelPipeline::ev_after_hist]),
-              "profile event record");
-        lvl.prof_ev_recorded = true;
-    }
+    lvl.fill_done(/*root=*/false);
     lvl.cur_is_a = !lvl.cur_is_a;
     ++lvl.depth;
     lvl.segs = lvl.next_segs;
-    if (prof.enabled)
-    {
-        ++prof.launches;
-        prof.gpu_nodes += child_slots;
-    }
+    prof.launched(child_slots);
     lap(prof.gpu_s);
 }
 
@@ -1178,11 +1097,8 @@ void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &co
         lap(prof.find_kern_s);
     }
     lvl.node_best.fetch(n);
-    if (prof.enabled)
-    {
-        ++prof.launches;
-        lap(prof.find_d2h_s);
-    }
+    prof.launched();
+    lap(prof.find_d2h_s);
     lap(prof.gpu_s);
 
     lvl.unpack_splits(level, config, lvl.node_best.host, out, child_sums);
@@ -1374,7 +1290,7 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     root.row_count = n;
     sums_lap(prof_counters.root_sums_s);
     note_quant();
-    prof_counters.node_launched();
+    prof_counters.launched(1);
 }
 
 CudaHistogramEngine::LeafRound
@@ -1421,10 +1337,7 @@ CudaDeviceContext::leaf_split(Dataset const                         &ds,
               "leaf partition op and finder nodes ride the "
               "launch as kernel parameters, best split by event");
     leaf.fence.wait();
-    if (prof.enabled)
-    {
-        ++prof.launches;
-    }
+    prof.launched();
     lap(prof.gpu_s);
     return leaf_children(op, offset, count, leaf.n_left.host(1)[0], in_b);
 }
@@ -1538,10 +1451,7 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
     check(cudaGetLastError(), "leaf reduce launch");
     leaf.fence.record();
     leaf.fence.wait();
-    if (prof.enabled)
-    {
-        ++prof.launches;
-    }
+    prof.launched();
     lap(prof.gpu_s);
 
     lvl.unpack_splits(nodes, config, leaf.node_best.host(n), out, child_sums);

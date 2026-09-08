@@ -3,6 +3,7 @@
 #include "bonsai/row_view.hpp"
 #include "bonsai/types.hpp"
 #include "cut_order.hpp"
+#include "profile.cuh"
 #include <cuda.h>
 
 #include <cstddef>
@@ -561,6 +562,61 @@ class StreamFence
 
   private:
     cudaEvent_t event_ = nullptr;
+};
+
+class KernelTimer
+{
+  public:
+    KernelTimer() = default;
+    ~KernelTimer()
+    {
+        for (cudaEvent_t const e : events_)
+        {
+            if (e != nullptr)
+            {
+                cudaEventDestroy(e);
+            }
+        }
+    }
+    KernelTimer(KernelTimer const &)            = delete;
+    KernelTimer &operator=(KernelTimer const &) = delete;
+
+    void begin()
+    {
+        record(0);
+    }
+    void end()
+    {
+        record(1);
+    }
+    void add_elapsed(double &seconds) const
+    {
+        if (!enabled_)
+        {
+            return;
+        }
+        float ms = 0.0F;
+        check(cudaEventElapsedTime(&ms, events_[0], events_[1]),
+              "kernel timer elapsed");
+        seconds += ms / 1e3;
+    }
+
+  private:
+    void record(size_t i)
+    {
+        if (!enabled_)
+        {
+            return;
+        }
+        if (events_[i] == nullptr)
+        {
+            check(cudaEventCreate(&events_[i]), "kernel timer event");
+        }
+        check(cudaEventRecord(events_[i]), "kernel timer record");
+    }
+
+    bool        enabled_   = profile_on();
+    cudaEvent_t events_[2] = {nullptr, nullptr};
 };
 
 template <typename T> struct Staged
