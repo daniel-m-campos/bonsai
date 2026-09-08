@@ -105,12 +105,17 @@ size_t column_block_width(size_t n_features)
 struct ColumnBlock
 {
     size_t              stride;
-    std::vector<float>  cells;
+    std::vector<float>  storage;
     std::vector<size_t> fill;
+
+    auto cells()
+    {
+        return std::mdspan(storage.data(), fill.size(), stride);
+    }
 
     std::span<float> column(size_t j)
     {
-        return {cells.data() + j * stride, fill[j]};
+        return {&cells()[j, 0], fill[j]};
     }
 };
 
@@ -120,7 +125,7 @@ ColumnBlock gather_columns(features_view X, std::span<uint32_t const> rows,
     size_t const stride = rows.size() + k_stream_pad;
     ColumnBlock  block{stride, std::vector<float>(width * stride),
                       std::vector<size_t>(width, 0)};
-    float       *cells = block.cells.data();
+    auto const   cells = block.cells();
     size_t      *fill  = block.fill.data();
     for (size_t i = 0; i < rows.size(); ++i)
     {
@@ -135,8 +140,8 @@ ColumnBlock gather_columns(features_view X, std::span<uint32_t const> rows,
         float const *row = &X[rows[i], first];
         for (size_t j = 0; j < width; ++j)
         {
-            float const v               = row[j];
-            cells[j * stride + fill[j]] = v;
+            float const v     = row[j];
+            cells[j, fill[j]] = v;
             fill[j] += static_cast<size_t>(!std::isnan(v));
         }
     }
