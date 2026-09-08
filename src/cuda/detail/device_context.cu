@@ -1000,7 +1000,7 @@ void CudaDeviceContext::partition_level(
     uint32_t const n_tiles = max_chunks * static_cast<uint32_t>(n);
     lvl.other_rows().reserve(data.key.n_rows);
     lvl.other_gh().reserve(data.key.n_rows);
-    PartTilesDev const tiles = lvl.part_tiles.arm(n_tiles, n_tiles);
+    PartTilesDev const tiles = lvl.part_tiles.arm(n_tiles);
     mark(0);
     data.dispatch_bins(
         [&](auto const *bins)
@@ -1393,7 +1393,7 @@ CudaDeviceContext::leaf_split(Dataset const                         &ds,
     PartOpValue const part_op{
         {offset, count, op.feature_id, op.bin_id, op.default_left ? 1U : 0U}};
     uint32_t const max_chunks = std::max(1U, (count + k_part_chunk - 1) / k_part_chunk);
-    PartTilesDev const  tiles = lvl.part_tiles.arm(max_chunks, max_chunks);
+    PartTilesDev const  tiles = lvl.part_tiles.arm(max_chunks);
     SmallChildDev const small =
         op.build_children ? SmallChildDev{leaf.build_seg.data(), leaf.next_slot}
                           : SmallChildDev{};

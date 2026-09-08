@@ -390,15 +390,14 @@ template <typename T> class DeviceBuffer
 class PartTiles
 {
   public:
-    PartTilesDev arm(size_t status_words, uint32_t n_tiles)
+    PartTilesDev arm(uint32_t n_tiles)
     {
-        if (status_words > words_)
+        if (n_tiles > words_)
         {
-            status_.reserve(status_words);
-            check(cudaMemset(status_.data(), 0,
-                             status_words * sizeof(unsigned long long)),
+            status_.reserve(n_tiles);
+            check(cudaMemset(status_.data(), 0, n_tiles * sizeof(unsigned long long)),
                   "partition status zero");
-            words_ = status_words;
+            words_ = n_tiles;
         }
         if (!counter_ready_)
         {
@@ -512,6 +511,10 @@ template <typename T> class MappedBuffer
     }
     std::span<T const> host(size_t n) const
     {
+        if (n > capacity_)
+        {
+            throw std::logic_error("mapped buffer read past its device size");
+        }
         return {host_, n};
     }
 
