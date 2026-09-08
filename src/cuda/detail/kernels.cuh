@@ -1065,61 +1065,6 @@ inline __device__ CutSums level_cut_sums(hist_int_t const *cells, bool load, uin
     return sums;
 }
 
-inline __device__ bool feat_better(double ga, int ba, int da, int va, double gb, int bb,
-                                   int db, int vb)
-{
-    if (va != vb)
-    {
-        return va > vb;
-    }
-    if (va == 0)
-    {
-        return false;
-    }
-    if (ga != gb)
-    {
-        return ga > gb;
-    }
-    if (ba != bb)
-    {
-        return ba < bb;
-    }
-    return da > db;
-}
-
-inline __device__ bool feat_better(FeatBest const &a, FeatBest const &b)
-{
-    return feat_better(a.gain, a.bin, a.dl, a.valid, b.gain, b.bin, b.dl, b.valid);
-}
-
-inline __device__ long long key_of_positive_gain(double gain)
-{
-    return __double_as_longlong(gain);
-}
-
-inline __device__ bool split_better(FeatBest const &a, FeatBest const &b)
-{
-    if (a.valid != b.valid)
-    {
-        return a.valid > b.valid;
-    }
-    if (a.valid == 0)
-    {
-        return false;
-    }
-    long long const ka = key_of_positive_gain(a.gain);
-    long long const kb = key_of_positive_gain(b.gain);
-    if (ka != kb)
-    {
-        return ka > kb;
-    }
-    if (a.bin != b.bin)
-    {
-        return a.bin < b.bin;
-    }
-    return a.dl > b.dl;
-}
-
 inline __device__ FeatBest warp_best_cut(FeatBest best)
 {
     for (int off = 16; off > 0; off >>= 1)

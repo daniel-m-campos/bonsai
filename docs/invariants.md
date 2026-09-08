@@ -20,6 +20,12 @@ A device fit is bit-reproducible on one device and one build. Histogram cells ar
 
 - enforced by: [`CudaGrowers: three fits of one dataset serialize to identical bytes`](../tests/unit/test_cuda_resident.cpp)
 
+### cut-order-key
+
+A valid cut carries a strictly positive gain: score_cut_exact admits a candidate only when gain > 0.0, and the level finder only when it beats a best seeded at 0.0. On that domain the bit pattern of a double orders like its value, so split_better, which compares the pattern to keep the warp scan on the integer pipe, ranks every pair exactly as feat_better does. If either finder ever marked a non-positive or NaN gain valid, the two finders would disagree and this test would fail on the -0.0 and NaN rows.
+
+- enforced by: [`CutOrder: split_better agrees with feat_better on every valid pair`](../tests/unit/test_cut_order.cpp)
+
 ### dart-excludes-early-stopping
 
 DART and early stopping are incompatible by construction and the combination throws rather than silently producing wrong validation numbers: DART rescales earlier trees every round, which invalidates the incrementally accumulated validation scores early stopping reads.
