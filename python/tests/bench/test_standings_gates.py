@@ -300,3 +300,20 @@ def test_unpaired_and_failed_rows_carry_no_gap(monkeypatch, tmp_path):
         _quality_row("bonsai_cuda_depthwise", "iris", 0, 0.9),
         _quality_row("bonsai_cuda_leafwise", "wine", 0, 0.9, status="fail")])
     assert check_standings.check_drift(reg) == []
+
+
+def test_a_reference_gpu_build_is_read_but_not_gated(monkeypatch, tmp_path):
+    """The references' GPU arms pair with their CPU rows like bonsai's, so
+    the drift table shows all six, but only bonsai's arms can fail the
+    gate: a library's distance from its own CPU build is its to explain."""
+    reg = _drift_registry(monkeypatch, tmp_path, CPU_ROWS, [
+        _quality_row("xgb_cuda", "wine", 0, 0.850),
+        _quality_row("bonsai_cuda_depthwise", "wine", 0, 0.5004)])
+    assert check_standings.check_drift(reg) == []
+    xgb, = [d for d in check_standings.quality_drift(
+        _quality_rows(tmp_path, ""), _quality_rows(tmp_path, "-gpu"))
+        if d.grower == "xgb_cuda"]
+    assert (xgb.pairs, xgb.held, xgb.gated) == (1, False, False)
+    assert abs(xgb.worst - 0.05) < 1e-12
+    assert check_standings.QUALITY_GATED == (
+        "bonsai_cuda_depthwise", "bonsai_cuda_leafwise", "bonsai_cuda_levelwise")

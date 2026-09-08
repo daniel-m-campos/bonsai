@@ -30,14 +30,43 @@ Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinszt
 
 *Source: [`quality-grinsztajn-2026-09.jsonl`](../../../benchmarks/results/quality-grinsztajn-2026-09.jsonl). As-run; evidence narrative in [benchmarks/grinsztajn-2026-07.md](../../../benchmarks/grinsztajn-2026-07.md), ruling in decision 68.*
 
-### Device drift: the same suite on the CUDA growers
+### Device standings: the same suite on the GPU
 
-The same 55 tasks and three seeds, fitted by bonsai's three CUDA growers at the same campaign knobs, each row read against the CPU row of the same suite, dataset, seed, and strategy. The gap is the device metric minus the CPU metric (r2 or AUC), and its allowance is the task's own noise: the gate holds each gap inside the host's seed-to-seed spread of that task and strategy, plus 1e-04, and a release refuses to ship past it. The worst pair is the one nearest to, or past, its allowance, shown with the spread it is read against.
+The same 55 tasks, seeds, and campaign knobs, with every library on its GPU build: bonsai's three CUDA growers against XGBoost `device=cuda`, LightGBM `device_type=cuda`, and CatBoost `task_type=GPU`, ranked by the same rule as the CPU table (best variant per library, average rank across tasks, lower is better). Each table ranks one plane against its own peers; the drift table below is where a device arm is read against its CPU rows.
 
-| device grower | CPU partner | pairs | mean gap | worst gap | host spread | worst task | verdict |
+![Grinsztajn mean rank by library on the GPU](../assets/grinsztajn-rank-gpu.svg)
+
+| library | mean rank | outright wins |
+|---|---|---|
+| bonsai | 1.24 | 42 |
+| xgb | 2.29 | 7 |
+| catboost | 2.47 | 6 |
+
+`lgbm_cuda` is measured but not ranked: LightGBM's CUDA tree learner does not apply `max_depth` (LightGBM 4.7.0: the only depth check is the serial learner's `BeforeFindBestSplit`, which the CUDA `Train` loop never calls), so at the campaign knobs it grows 63 leaves at any depth where every other arm is capped at depth 6. Ranked among all arms it would read 1.71 with 38 outright wins. Its rows are read in the drift table below.
+
+Per-suite mean rank:
+
+| library | cat_clf | cat_reg | num_clf | num_reg |
+|---|---|---|---|---|
+| bonsai | 1.00 | 1.31 | 1.33 | 1.20 |
+| xgb | 2.86 | 2.23 | 2.33 | 2.10 |
+| catboost | 2.14 | 2.46 | 2.33 | 2.70 |
+
+Reproduce: `python -m bonsai.bench.grinsztajn --device cuda out.jsonl` on a CUDA host, then `--report` on the same file.
+
+*Source: [`quality-grinsztajn-gpu-2026-09.jsonl`](../../../benchmarks/results/quality-grinsztajn-gpu-2026-09.jsonl). As-run on one GPU host; the arm placement is pinned by python/tests/bench/test_grinsztajn.py.*
+
+### Device drift: each GPU arm against its CPU rows
+
+Every arm of the device sweep read against the CPU row of the same suite, dataset, seed, and library strategy. The gap is the device metric minus the CPU metric (r2 or AUC), and its allowance is the task's own noise: the host's seed-to-seed spread of that task and strategy, plus 1e-04. The worst pair is the one nearest to, or past, its allowance, shown with the spread it is read against. bonsai's three arms are gated, and a release refuses to ship one past its allowance; a reference library's GPU build is reported the same way but not held, since its distance from its own CPU build is that library's to explain.
+
+| device arm | CPU partner | pairs | mean gap | worst gap | host spread | worst task | verdict |
 |---|---|---|---|---|---|---|---|
 | bonsai_cuda_depthwise | bonsai_dw | 165 | -2.94e-05 | 3.56e-06 | 1.77e-05 | SGEMM_GPU_kernel_performance s2 | held |
 | bonsai_cuda_leafwise | bonsai_lw | 165 | -4.08e-05 | 4.37e-06 | 1.17e-05 | SGEMM_GPU_kernel_performance s0 | held |
 | bonsai_cuda_levelwise | bonsai_obl | 165 | -1.24e-05 | 1.40e-04 | 1.33e-04 | Bike_Sharing_Demand s1 | held |
+| xgb_cuda | xgb | 165 | -5.79e-04 | 1.08e-03 | 2.91e-04 | covertype s2 | moved (not gated) |
+| lgbm_cuda | lgbm | 165 | +6.54e-03 | 2.62e-02 | 8.28e-03 | compass s0 | moved (not gated) |
+| catboost_gpu | catboost | 165 | +2.66e-04 | 5.89e-03 | 2.21e-03 | cpu_act s2 | moved (not gated) |
 
-*Source: [`quality-grinsztajn-gpu-2026-09.jsonl`](../../../benchmarks/results/quality-grinsztajn-gpu-2026-09.jsonl). Same host as the CPU rows above; the allowance and the pairing rule live in scripts/check_standings.py.*
+*Source: [`quality-grinsztajn-gpu-2026-09.jsonl`](../../../benchmarks/results/quality-grinsztajn-gpu-2026-09.jsonl). The allowance and the pairing rule live in scripts/check_standings.py.*

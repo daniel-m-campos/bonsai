@@ -82,7 +82,7 @@ The panels, and the closed campaigns behind them, are in [the ledger](https://da
 
 ### Quality
 
-On the [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) (55 OpenML tasks selected by third parties, three seeds, matched knobs, best variant per library), bonsai takes the best mean rank with 35 outright wins:
+On the [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) (55 OpenML tasks selected by third parties, three seeds, matched knobs, best variant per library), every library on the CPU:
 
 | library | mean rank | outright wins |
 |---|--:|--:|
@@ -90,6 +90,16 @@ On the [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) (
 | lightgbm | 2.40 | 6 |
 | xgboost | 2.93 | 5 |
 | catboost | 3.18 | 9 |
+
+The same suite with every library on its GPU build:
+
+| library | mean rank | outright wins |
+|---|--:|--:|
+| **bonsai** | **1.24** | **42** |
+| xgboost | 2.29 | 7 |
+| catboost | 2.47 | 6 |
+
+`lgbm_cuda` is measured but not ranked: LightGBM's CUDA tree learner does not apply `max_depth` (LightGBM 4.7.0: the only depth check is the serial learner's `BeforeFindBestSplit`, which the CUDA `Train` loop never calls), so at the campaign knobs it grows 63 leaves at any depth where every other arm is capped at depth 6. Ranked among all arms it would read 1.71 with 38 outright wins. Its rows are read in [the ledger](https://daniel-m-campos.github.io/bonsai/method/results/quality-grinsztajn/).
 
 <!-- standings:end -->
 bonsai keeps the lead under either reading of the one knob that translates ambiguously between libraries, which [the standings page](https://daniel-m-campos.github.io/bonsai/method/results/quality-grinsztajn/) records; reproduce with `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite and `python -m bonsai.bench.grinsztajn out.jsonl --report` to render the standings.
