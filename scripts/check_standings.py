@@ -47,6 +47,20 @@ to 35% over twenty of them and shows against the anchor by the second. The
 math lives here, the lowest module, so the driver, the renderer and the gate
 read one answer.
 
+The quality drift. A `quality-*-gpu` axis sweeps the same suite as its
+`quality-*` partner with bonsai's CUDA growers alone, so every device row has
+one CPU row to be read against: same suite, dataset, seed, and growing
+strategy. The device plane's fit is not the host's (fixed-point cells, its
+own tie order), so the metrics differ in the last places, and by how much
+depends on the task: the scores are read on held-out rows of tasks as small
+as 2043 training rows, where a different split at one near-tie cut moves the
+score by more than 1e-3, the same thing that moves it between seeds. The
+gate therefore reads each pair against its task: the gap holds inside the
+host's seed-to-seed spread of that (suite, dataset, strategy), plus
+QUALITY_DRIFT_FLOOR for the single-seed case, and the quality page tables
+the mean, the worst pair and the spread it sits against. A gap past its
+task's spread is a device-plane bug until shown otherwise.
+
 Reference-library majors are compared against the installed package in this
 environment when available (`importlib.metadata`, no import needed); most
 release-gate runs have no bench extras installed, so this falls back to
@@ -57,6 +71,7 @@ so there is no lockfile to read statically instead.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import importlib.metadata as metadata
 import json
@@ -102,6 +117,38 @@ AB_TABLE_HEADER = (
 )
 AB_NA = "n/a"
 
+# Metric units (r2 or AUC): the host-vs-device prediction tolerance, added
+# to a task's host seed spread so a single-seed task still has an allowance.
+QUALITY_DRIFT_FLOOR = 1e-4
+QUALITY_GPU_SUFFIX = "-gpu"
+# The CPU spelling each device grower is read against: the short names are
+# the ones the CPU suite's committed rows carry.
+QUALITY_PARTNERS = {"bonsai_cuda_depthwise": "bonsai_dw",
+                    "bonsai_cuda_leafwise": "bonsai_lw",
+                    "bonsai_cuda_levelwise": "bonsai_obl"}
+QUALITY_KEY = ("suite", "dataset", "seed")
+
+
+@dataclasses.dataclass(frozen=True)
+class Drift:
+    """One device grower read against its CPU partner over the paired rows.
+
+    ``worst`` is the pair furthest past (or nearest to) its allowance, the
+    host seed spread of its task plus QUALITY_DRIFT_FLOOR, not the largest
+    gap: a large gap on a task whose seeds spread wider is inside the noise.
+    """
+
+    grower: str
+    pairs: int
+    mean: float
+    worst: float
+    worst_spread: float
+    worst_task: str
+
+    @property
+    def held(self) -> bool:
+        return self.worst <= self.worst_spread + QUALITY_DRIFT_FLOOR
+
 
 def load_registry() -> dict:
     reg = json.loads(REGISTRY.read_text())
@@ -143,6 +190,87 @@ def check_ab(reg: dict) -> list[str]:
             f"a decision entry tagged `Standings: {axis}` must cite {name} "
             "and say why the move ships, or the axis is re-measured")
     return errors
+
+
+def check_drift(reg: dict) -> list[str]:
+    """Every device quality axis holds its CPU partner inside the host spread."""
+    errors = []
+    for gpu_axis, cpu_axis in drift_pairs(reg):
+        for d in quality_drift(quality_rows(RESULTS / reg[cpu_axis]["file"]),
+                               quality_rows(RESULTS / reg[gpu_axis]["file"])):
+            if d.held:
+                continue
+            errors.append(
+                f"{gpu_axis}: {d.grower} drifts {d.worst:.2e} from "
+                f"{QUALITY_PARTNERS[d.grower]} on {d.worst_task}, past that "
+                f"task's host seed spread {d.worst_spread:.2e} by more than "
+                f"{QUALITY_DRIFT_FLOOR:.0e} ({d.pairs} pairs); the device "
+                "plane moved a quality standing, so it is a bug or a decision")
+    return errors
+
+
+def drift_pairs(reg: dict) -> list[tuple[str, str]]:
+    """(device axis, CPU partner) for every pair the tree holds rows of."""
+    pairs = []
+    for axis, e in reg.items():
+        if not axis.endswith(QUALITY_GPU_SUFFIX):
+            continue
+        partner = reg.get(axis[:-len(QUALITY_GPU_SUFFIX)], {})
+        if not (e.get("file") and partner.get("file")):
+            continue
+        pairs.append((axis, axis[:-len(QUALITY_GPU_SUFFIX)]))
+    return pairs
+
+
+def quality_rows(path: pathlib.Path) -> list[dict]:
+    """The scored rows of one quality file."""
+    rows = [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
+    return [r for r in rows
+            if r.get("status") == "ok" and quality_value(r) is not None]
+
+
+def quality_value(row: dict) -> float | None:
+    """Metric value across schema generations (v1 `value`, pre-schema `metric`)."""
+    v = row.get("value")
+    if isinstance(v, (int, float)):
+        return v
+    m = row.get("metric")
+    return m if isinstance(m, (int, float)) else None
+
+
+def quality_drift(cpu_rows: list[dict], gpu_rows: list[dict]) -> list[Drift]:
+    """One Drift per device grower, over the (suite, dataset, seed) it pairs on."""
+    cpu = {(r["variant"], *(r[k] for k in QUALITY_KEY)): quality_value(r)
+           for r in cpu_rows}
+    spread = host_seed_spread(cpu_rows)
+    gaps: dict[str, list[tuple[float, float, str]]] = {
+        g: [] for g in QUALITY_PARTNERS}
+    for r in gpu_rows:
+        partner = QUALITY_PARTNERS.get(r["variant"])
+        base = cpu.get((partner, *(r[k] for k in QUALITY_KEY)))
+        if base is None:
+            continue
+        gaps[r["variant"]].append(
+            (quality_value(r) - base, spread[(partner, r["suite"], r["dataset"])],
+             f"{r['dataset']} s{r['seed']}"))
+    drifts = []
+    for grower, deltas in gaps.items():
+        if not deltas:
+            continue
+        worst, worst_spread, task = max(deltas, key=lambda d: abs(d[0]) - d[1])
+        drifts.append(Drift(grower, len(deltas),
+                            sum(d for d, _, _ in deltas) / len(deltas),
+                            abs(worst), worst_spread, task))
+    return drifts
+
+
+def host_seed_spread(cpu_rows: list[dict]) -> dict[tuple[str, int, str], float]:
+    """Max minus min of the metric over seeds, per (variant, suite, dataset)."""
+    values: dict[tuple[str, int, str], list[float]] = {}
+    for r in cpu_rows:
+        values.setdefault((r["variant"], r["suite"], r["dataset"]), []).append(
+            quality_value(r))
+    return {k: max(v) - min(v) for k, v in values.items()}
 
 
 def tagged_entries(text: str) -> list[tuple[int, list[str], str]]:
@@ -432,11 +560,11 @@ def _major(version: str) -> int:
 def main() -> int:
     reg = load_registry()
     if "--decisions" in sys.argv:
-        errors = check_decisions(reg) + check_ab(reg)
+        errors = check_decisions(reg) + check_ab(reg) + check_drift(reg)
         label = "decision gate"
     elif "--release" in sys.argv:
         version = sys.argv[sys.argv.index("--release") + 1]
-        errors = check_release(reg, version)
+        errors = check_release(reg, version) + check_drift(reg)
         label = f"release gate ({version})"
     elif "--stale" in sys.argv:
         # One name per line and nothing else: the refresh driver reads this.

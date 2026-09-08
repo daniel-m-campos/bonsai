@@ -4,6 +4,9 @@ All notable changes to bonsai. Format loosely follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+### Added
+- **The device plane's quality is gated against the host's.** `python -m bonsai.bench.grinsztajn --device cuda` sweeps the Grinsztajn suite with the three CUDA growers alone, the rows ship as the `quality-grinsztajn-gpu` standings axis, and `make docs-check` and the release gate refuse a per-task metric gap between a device grower and its CPU partner that exceeds the host's own seed-to-seed spread on that task, plus 1e-4 (decision 128: the pre-registered fixed 1e-3 band was refuted by the first sweep, 33 of 495 pairs past it and all inside their task's seed spread).
+
 ## [2.2.0] - 2026-09-08
 
 CUDA training is bit-reproducible run to run on one device and build, and the wide CUDA cell (131072 x 16384) fits 63 to 90% faster across twenty-seven measured levers, with the 16M x 128 cells 20 to 35% faster on train. Model bytes on the CPU plane are unchanged; device models differ from 2.1.0 by the fixed-point histogram cells, within the 1e-4 host-vs-device bound that stays.

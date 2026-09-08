@@ -41,6 +41,7 @@ class Axis:
     GPU_EARLY_STOP: Final = "gpu-early-stop"
     GPU_SHAP: Final = "gpu-shap"
     GRINSZTAJN: Final = "quality-grinsztajn"
+    GRINSZTAJN_GPU: Final = "quality-grinsztajn-gpu"
     CODE: Final = "code"
 
 
@@ -205,15 +206,6 @@ def bar_chart(fname: str, title: str, rows: list[tuple[str, float, str]],
 # Quality: Grinsztajn standings ====================================================================
 
 
-def _value(r: dict):
-    """Metric value across schema generations (v1 `value`, pre-schema `metric`)."""
-    v = r.get("value")
-    if isinstance(v, (int, float)):
-        return v
-    m = r.get("metric")
-    return m if isinstance(m, (int, float)) else None
-
-
 def _standings(rows: list[dict]):
     """Replicates bonsai.bench.grinsztajn.report(): mean value over seeds per
     (suite, dataset, variant); best variant per library; average-rank ties;
@@ -222,7 +214,7 @@ def _standings(rows: list[dict]):
     for r in rows:
         if r.get(K.STATUS) != "ok":
             continue
-        v = _value(r)
+        v = check_standings.quality_value(r)
         if v is None:
             continue
         acc[(r["suite"], r[K.DATASET], r[K.VARIANT])].append(v)
@@ -297,6 +289,30 @@ XGBoost's campaign mapping sets `min_child_weight=20` (hessian-weighted, the kno
 Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite (hours; datasets fetch from OpenML), then `--report` on the same file to render the standings from the jsonl.
 
 {provenance([standings_file(Axis.GRINSZTAJN)], "As-run; evidence narrative in [benchmarks/grinsztajn-2026-07.md](../../benchmarks/grinsztajn-2026-07.md), ruling in decision 68.")}
+"""
+
+
+def grinsztajn_drift_section() -> str:
+    """The device plane read against the CPU rows, task by task."""
+    gpu = axis_rows(Axis.GRINSZTAJN_GPU)
+    if not gpu:
+        return ""
+    drifts = check_standings.quality_drift(
+        load_jsonl(standings_file(Axis.GRINSZTAJN)), gpu)
+    floor = check_standings.QUALITY_DRIFT_FLOOR
+    table = md_table(
+        ["device grower", "CPU partner", "pairs", "mean gap", "worst gap",
+         "host spread", "worst task", "verdict"],
+        [[d.grower, check_standings.QUALITY_PARTNERS[d.grower], str(d.pairs),
+          f"{d.mean:+.2e}", f"{d.worst:.2e}", f"{d.worst_spread:.2e}",
+          d.worst_task, "held" if d.held else "**moved**"] for d in drifts])
+    return f"""### Device drift: the same suite on the CUDA growers
+
+The same {len({(r["suite"], r[K.DATASET]) for r in gpu})} tasks and three seeds, fitted by bonsai's three CUDA growers at the same campaign knobs, each row read against the CPU row of the same suite, dataset, seed, and strategy. The gap is the device metric minus the CPU metric (r2 or AUC), and its allowance is the task's own noise: the gate holds each gap inside the host's seed-to-seed spread of that task and strategy, plus {floor:.0e}, and a release refuses to ship past it. The worst pair is the one nearest to, or past, its allowance, shown with the spread it is read against.
+
+{table}
+
+{provenance([standings_file(Axis.GRINSZTAJN_GPU)], "Same host as the CPU rows above; the allowance and the pairing rule live in scripts/check_standings.py.")}
 """
 
 
@@ -941,7 +957,7 @@ PAGES: list[tuple[str, str, str, list]] = [
       shap_section, ab_section]),
     ("quality-grinsztajn.md", "Grinsztajn standings",
      "The only citable standings: 55 third-party tasks.",
-     [grinsztajn_section]),
+     [grinsztajn_section, grinsztajn_drift_section]),
     ("code-metrics.md", "The code division",
      "Self-measurement of the tree: lines, complexity, surface counts.",
      [code_metrics_section]),
@@ -1105,7 +1121,7 @@ def render_pages() -> dict[pathlib.Path, str]:
     """Every generated page body keyed by output path."""
     out: dict[pathlib.Path, str] = {}
     for rel, title, _desc, fns in PAGES:
-        body = _reroot("\n".join(fn() for fn in fns))
+        body = _reroot("\n".join(s for fn in fns if (s := fn())))
         head = "" if body.startswith("## ") else f"# {title}\n\n"
         out[REPO / "docs" / "method" / "results" / rel] = (
             f"{GEN_NOTE}\n\n{head}{body}")

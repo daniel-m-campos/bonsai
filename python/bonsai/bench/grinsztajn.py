@@ -12,10 +12,14 @@ splits instead of its resampling protocol, and no per-model tuning (matched
 knobs is the point). xgboost's min_child_weight follows the campaign mapping;
 see decision 68's correction for the bracketing caveat.
 
-Resumable: rows already in the output jsonl are skipped.
+Resumable: rows already in the output jsonl are skipped. `--device cuda`
+sweeps the three CUDA growers alone (no references) into its own file,
+so the device plane's quality can be read task by task against the
+CPU rows; scripts/check_standings.py holds the two inside a band.
 
     python -m bonsai.bench.grinsztajn out.jsonl
     python -m bonsai.bench.grinsztajn out.jsonl --report
+    python -m bonsai.bench.grinsztajn --device cuda out-gpu.jsonl
 
 Needs the [bench] extra (xgboost, lightgbm, catboost, scikit-learn, pandas,
 openml).
@@ -23,9 +27,9 @@ openml).
 
 from __future__ import annotations
 
+import argparse
 import json
 import pathlib
-import sys
 import time
 
 import numpy as np
@@ -38,6 +42,8 @@ SEEDS = (0, 1, 2)
 TRAIN_CAP, TEST_CAP = 10_000, 50_000
 # This suite's historical short names, registered as aliases in the registry.
 VARIANTS = vr.GRINSZTAJN
+DEVICE_VARIANTS = {vr.Device.CPU: VARIANTS,
+                   vr.Device.CUDA: vr.GRINSZTAJN_CUDA}
 C = params.CAMPAIGN
 
 
@@ -116,7 +122,7 @@ def load_task(task):
     return Xn, yn, kind, ds.name
 
 
-def run(out_path):
+def run(out_path, variants=VARIANTS):
     """Sweep every (suite, task, seed, variant); resume by completed keys."""
     import openml
     out = pathlib.Path(out_path)
@@ -142,7 +148,7 @@ def run(out_path):
                 n_tr = min(TRAIN_CAP, int(len(X) * 0.8))
                 tr = idx[:n_tr]
                 te = idx[n_tr:n_tr + TEST_CAP]
-                for v in VARIANTS:
+                for v in variants:
                     if (sname, name, v, seed) in done:
                         continue
                     t0 = time.perf_counter()
@@ -195,12 +201,26 @@ def report(out_path):
           + rk.groupby(["suite"])["dataset"].nunique().to_string())
 
 
-def main():
-    """`grinsztajn out.jsonl` runs; `... --report` prints the standings."""
-    if "--report" in sys.argv:
-        report(sys.argv[1])
+def main(argv=None):
+    """`grinsztajn out.jsonl` runs; `--report` prints; `--device` picks the arms."""
+    args = parse_args(argv)
+    if args.report:
+        report(args.out)
     else:
-        run(sys.argv[1])
+        run(args.out, DEVICE_VARIANTS[args.device])
+
+
+def parse_args(argv=None):
+    """The CLI: an output path, `--report`, and the device whose arms run."""
+    ap = argparse.ArgumentParser(prog="python -m bonsai.bench.grinsztajn")
+    ap.add_argument("out", help="results jsonl; existing rows are resumed")
+    ap.add_argument("--report", action="store_true",
+                    help="print the library standings from `out` instead")
+    ap.add_argument("--device", choices=sorted(DEVICE_VARIANTS),
+                    default=vr.Device.CPU,
+                    help="cpu sweeps every library; cuda sweeps bonsai's "
+                         "device growers alone")
+    return ap.parse_args(argv)
 
 
 # Private Functions ================================================================================

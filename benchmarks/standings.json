@@ -108,6 +108,21 @@
       "catboost": "1.2.10"
     }
   },
+  "quality-grinsztajn-gpu": {
+    "file": "quality-grinsztajn-gpu-2026-09.jsonl",
+    "sha": "4b6a8c6eecdf7ce4f0da5d10d61686612aa4dba4",
+    "host": "883e25c0ab1e",
+    "date": "2026-09-08",
+    "plane": "gpu",
+    "refreshed_for": "2.2.0",
+    "as_of_decision": 128,
+    "hash_set": "ce9bf53bd2c4caef",
+    "refs": {
+      "xgboost": "3.2.0",
+      "lightgbm": "4.6.0",
+      "catboost": "1.2.10"
+    }
+  },
   "code": {
     "file": "code-metrics-2026-09.jsonl",
     "sha": "2d87607472fe2b57f5a2c18405d61d49378c545f",

@@ -62,6 +62,10 @@ SCALING = ("bonsai_depthwise", "bonsai_leafwise", "bonsai_levelwise",
            "bonsai_cuda_depthwise", "bonsai_cuda_levelwise", "xgb_hist",
            "xgb_cuda", "lgbm_cpu", "lgbm_cuda", "catboost_cpu", "catboost_gpu")
 GRINSZTAJN = ("bonsai_dw", "bonsai_lw", "bonsai_obl", "xgb", "lgbm", "catboost")
+# The device sweep of the same suite: bonsai's three CUDA growers, no
+# references, so each arm has one CPU partner to be read against.
+GRINSZTAJN_CUDA = ("bonsai_cuda_depthwise", "bonsai_cuda_leafwise",
+                   "bonsai_cuda_levelwise")
 
 
 def resolve(name: str) -> Variant:
