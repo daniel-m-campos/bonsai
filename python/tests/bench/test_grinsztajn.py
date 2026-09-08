@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 
 import numpy as np
 import pytest
@@ -127,3 +129,39 @@ def test_the_leaf_capped_regime_runs_only_the_learners_a_leaf_count_caps():
     args = grinsztajn.parse_args(["--device", "cuda", "--regime", "leaf-capped", "o.jsonl"])
     assert (args.device, args.regime) == ("cuda", "leaf-capped")
     assert grinsztajn.parse_args(["o.jsonl"]).regime == "campaign"
+
+
+def test_a_row_records_the_reference_version_its_fit_imported(monkeypatch,
+                                                              tmp_path):
+    """The standings refs are read from the rows, so a row must carry the
+    version of the library that produced it. The host is detected once
+    before any reference is imported; the libs are read again at emission,
+    after the fit, when the arm's library is loaded."""
+    task = types.SimpleNamespace()
+    openml = types.SimpleNamespace(
+        study=types.SimpleNamespace(
+            get_suite=lambda sid: types.SimpleNamespace(
+                tasks=[7] if sid == 297 else [])),
+        tasks=types.SimpleNamespace(get_task=lambda tid, download_splits: task))
+    monkeypatch.setitem(sys.modules, "openml", openml)
+    rng = np.random.default_rng(0)
+    X, y = rng.random((40, 3), dtype=np.float32), rng.random(40, dtype=np.float32)
+    monkeypatch.setattr(grinsztajn, "load_task", lambda t: (X, y, "r2", "toy"))
+
+    def fit_predict(variant, Xtr, ytr, Xte, kind, knobs):
+        if variant == "xgb":
+            monkeypatch.setitem(sys.modules, "xgboost",
+                                types.SimpleNamespace(__version__="9.9.9"))
+        return np.zeros(len(Xte))
+
+    monkeypatch.setattr(grinsztajn, "fit_predict", fit_predict)
+    monkeypatch.setattr(grinsztajn, "SEEDS", (0,))
+    monkeypatch.delitem(sys.modules, "xgboost", raising=False)
+
+    out = tmp_path / "rows.jsonl"
+    grinsztajn.run(out, variants=("bonsai_dw", "xgb"))
+
+    rows = [json.loads(line) for line in out.read_text().splitlines()]
+    libs = {r["variant"]: r["host"]["libs"] for r in rows}
+    assert "xgboost" not in libs["bonsai_dw"]
+    assert libs["xgb"]["xgboost"] == "9.9.9"

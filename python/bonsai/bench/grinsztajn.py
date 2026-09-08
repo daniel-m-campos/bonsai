@@ -157,7 +157,8 @@ def run(out_path, variants=VARIANTS, regime=CAMPAIGN):
                         value, status = None, f"error: {e!r}"[:200]
                     runlog.emit_row(
                         out, division="quality", suite=sname, knobs=knobs,
-                        host=host, dataset=name, task=kind, variant=v,
+                        host=dict(host, libs=runlog.lib_versions()),
+                        dataset=name, task=kind, variant=v,
                         seed=seed, kind=kind, metric=kind, value=value,
                         status=status, n_train=len(tr),
                         n_features=int(X.shape[1]),

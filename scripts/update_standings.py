@@ -51,25 +51,52 @@ def project_version() -> str:
     return m.group(1)
 
 
-def stamp_skip_gate(entry: dict) -> None:
+def stamp_skip_gate(entry: dict, rows: list[dict]) -> None:
     """Record the hash-unchanged skip's inputs on a freshly refreshed axis.
 
     A perf axis stamps its own plane's digest, so a later change confined to
     the other plane leaves it provably current; a quality axis has no plane
-    and stamps the whole-implementation digest, as it always did.
+    and stamps the whole-implementation digest, as it always did. The
+    reference versions are the ones the rows record: the sweep's own
+    environment, not the checking machine's.
     """
     entry["hash_set"] = check_standings.plane_digest(
         entry.get("plane") or check_standings.PLANE_GPU)
-    ref_versions = current_ref_versions()
+    ref_versions = current_ref_versions(measured_ref_versions(rows)[0])
     entry["refs"] = ref_versions
     refresh_ref_ledger(ref_versions)
 
 
-def current_ref_versions() -> dict:
-    """Installed reference-library versions, falling back to the ledger."""
+def current_ref_versions(measured: dict) -> dict:
+    """The measured reference versions, completed for the gate.
+
+    A library no row exercised falls back to the checking environment's
+    installed version, then to the ledger, so the gate still has a major to
+    compare against.
+    """
     recorded = check_standings.recorded_ref_versions()
-    return {name: check_standings.installed_ref_version(name) or recorded.get(name)
+    return {name: measured.get(name)
+            or check_standings.installed_ref_version(name)
+            or recorded.get(name)
             for name in REF_LIBRARIES}
+
+
+def measured_ref_versions(rows: list[dict]) -> tuple[dict, str | None]:
+    """One version per reference library from the rows' `host.libs`, or a
+    refusal when a library appears at two: a file measured against both
+    cannot stand behind one standings claim."""
+    seen: dict[str, set[str]] = {name: set() for name in REF_LIBRARIES}
+    for row in rows:
+        host = row.get("host")
+        libs = host.get("libs", {}) if isinstance(host, dict) else {}
+        for name, version in libs.items():
+            if name in seen:
+                seen[name].add(version)
+    for name, versions in seen.items():
+        if len(versions) > 1:
+            return {}, (f"rows carry {name} at {sorted(versions)}; a standings "
+                        "file measures one version of each reference")
+    return {name: next(iter(v)) for name, v in seen.items() if v}, None
 
 
 def refresh_ref_ledger(ref_versions: dict) -> None:
@@ -169,6 +196,7 @@ def supersede(args: argparse.Namespace, reg: dict) -> int:
     entry = reg[args.axis]
     rows = _results_rows(args.file)
     sha, refusal = _measured_sha(rows, args.file)
+    refusal = refusal or measured_ref_versions(rows)[1]
     if refusal:
         print(f"ERROR: {refusal}", file=sys.stderr)
         return 1
@@ -179,7 +207,7 @@ def supersede(args: argparse.Namespace, reg: dict) -> int:
     # A measured stamp is never a carried-forward one.
     entry.pop("carried_forward", None)
     if check_standings.is_quality_axis(args.axis) or entry.get("plane"):
-        stamp_skip_gate(entry)
+        stamp_skip_gate(entry, rows)
     REGISTRY.write_text(json.dumps(reg, indent=2) + "\n")
     print(f"{args.axis}: {args.file} at {entry['sha']} "
           f"(refreshed for {entry['refreshed_for']})")

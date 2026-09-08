@@ -414,6 +414,53 @@ def test_supersede_deletes_the_file_it_replaces_and_stamps_the_gate(
     assert "gpu-tall: gpu-tall-2026-09.jsonl at abc1234" in out
 
 
+def test_supersede_stamps_the_reference_versions_the_rows_measured(
+        monkeypatch, tmp_path):
+    """The refs answer which reference versions the numbers were measured
+    against, so the rows are the witness: a version they record beats the
+    checking machine's installed copy and the ledger, which only complete
+    the block for a library no row exercised. The ledger learns what the
+    rows saw."""
+    registry = _measured_axis(monkeypatch, tmp_path, "gpu-tall",
+                              {"file": "gpu-tall-2026-08.jsonl",
+                               "sha": MEASURED_SHA, "plane": "gpu",
+                               "refreshed_for": "1.7.0"})
+    _results(monkeypatch, tmp_path, {"gpu-tall-2026-09.jsonl": _rows(
+        _row(), dict(_row(), host={"name": "pod-blackwell",
+                                   "libs": {"lightgbm": "4.7.0",
+                                            "numpy": "2.5.2"}}),
+        dict(_row(), host={"name": "pod-blackwell",
+                           "libs": {"lightgbm": "4.7.0"}}))})
+
+    assert _run(monkeypatch, "--axis", "gpu-tall", "--file",
+                "gpu-tall-2026-09.jsonl", "--version", "2.1.0") == 0
+
+    entry = json.loads(registry.read_text())["gpu-tall"]
+    assert entry["refs"] == {"xgboost": "3.3.0", "lightgbm": "4.7.0",
+                             "catboost": "1.2.10"}
+    assert json.loads((tmp_path / "reference_versions.json").read_text()) == {
+        "_": "doc", "xgboost": "3.3.0", "lightgbm": "4.7.0",
+        "catboost": "1.2.10"}
+
+
+def test_supersede_refuses_rows_measured_against_two_versions(monkeypatch,
+                                                              tmp_path):
+    """A resumed sweep that crossed a reference upgrade measured against
+    both versions; one refs block cannot say which, so the registry must
+    not move."""
+    registry = _measured_axis(monkeypatch, tmp_path, "gpu-tall",
+                              {"file": "gpu-tall-2026-08.jsonl",
+                               "sha": MEASURED_SHA, "plane": "gpu",
+                               "refreshed_for": "1.7.0"})
+    before = registry.read_text()
+    _results(monkeypatch, tmp_path, {"mixed.jsonl": _rows(
+        dict(_row(), host={"name": "pod", "libs": {"xgboost": "3.2.0"}}),
+        dict(_row(), host={"name": "pod", "libs": {"xgboost": "3.3.0"}}))})
+
+    assert _run(monkeypatch, "--axis", "gpu-tall", "--file", "mixed.jsonl") == 1
+    assert registry.read_text() == before
+
+
 def test_supersede_keeps_the_note_when_the_file_name_does_not_move(monkeypatch,
                                                                    tmp_path):
     """A re-run onto the same dated file supersedes nothing, so there is no
