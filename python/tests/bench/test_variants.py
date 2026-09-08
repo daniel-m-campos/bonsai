@@ -15,7 +15,12 @@ def test_variant_registry():
     assert grinsztajn.VARIANTS == variants.GRINSZTAJN == (
         "bonsai_dw", "bonsai_lw", "bonsai_obl", "xgb", "lgbm", "catboost")
     assert variants.GRINSZTAJN_CUDA == (
-        "bonsai_cuda_depthwise", "bonsai_cuda_leafwise", "bonsai_cuda_levelwise")
+        "bonsai_cuda_depthwise", "bonsai_cuda_leafwise", "bonsai_cuda_levelwise",
+        "xgb_cuda", "lgbm_cuda", "catboost_gpu")
+    # Position pairs each device arm with its CPU partner.
+    for cpu, gpu in zip(variants.GRINSZTAJN, variants.GRINSZTAJN_CUDA):
+        assert variants.resolve(cpu).lib == variants.resolve(gpu).lib
+        assert variants.resolve(gpu).device == variants.Device.CUDA
     assert grinsztajn.DEVICE_VARIANTS == {"cpu": variants.GRINSZTAJN,
                                           "cuda": variants.GRINSZTAJN_CUDA}
     for n in variants.SCALING:
