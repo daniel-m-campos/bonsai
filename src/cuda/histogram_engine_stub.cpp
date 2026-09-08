@@ -157,12 +157,6 @@ CudaHistogramEngine::leaf_split(Dataset const & /*ds*/, LeafPartOp const & /*op*
     throw_unavailable();
 }
 
-void CudaHistogramEngine::leaf_build(Dataset const & /*ds*/, uint32_t /*small_slot*/,
-                                     uint32_t /*large_slot*/)
-{
-    throw_unavailable();
-}
-
 void CudaHistogramEngine::leaf_find(Dataset const & /*ds*/,
                                     TreeConfig const & /*config*/,
                                     std::span<SplitInput const> /*nodes*/,

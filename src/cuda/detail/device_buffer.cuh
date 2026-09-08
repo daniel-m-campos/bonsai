@@ -4,7 +4,6 @@
 #include "bonsai/types.hpp"
 #include <cuda.h>
 
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -538,89 +537,6 @@ class StreamFence
 
   private:
     cudaEvent_t event_ = nullptr;
-};
-
-// sync: Page-locked staging paired with its device mirror: the host-to-device
-// half of Staged, with the two properties a per-round staging path needs. The
-// host side is pinned and the upload is a cudaMemcpyAsync, so it never
-// stream-syncs the way a pageable copy does (that sync drains every kernel
-// already queued, which on a plane that stages a handful of scalars per round
-// is the round's whole idle). The host side stays live until the copy lands,
-// so a caller may only rewrite it after a later blocking copy on the same
-// stream has fenced the previous upload. Pageable Staged remains the default
-// everywhere that stages per level or per tree, where the sync is amortized
-// and the aliasing rule is a hazard.
-template <typename T> class PinnedStaged
-{
-  public:
-    PinnedStaged() = default;
-    ~PinnedStaged()
-    {
-        cudaFreeHost(host_);
-#ifndef NDEBUG
-        if (fence_ != nullptr)
-        {
-            cudaEventDestroy(fence_);
-        }
-#endif
-    }
-    PinnedStaged(PinnedStaged const &)            = delete;
-    PinnedStaged &operator=(PinnedStaged const &) = delete;
-
-    T *host() const
-    {
-        return host_;
-    }
-    T *device() const
-    {
-        return dev_.data();
-    }
-
-    void reserve(size_t n)
-    {
-        assert_fenced();
-        dev_.reserve(n);
-        if (n <= capacity_)
-        {
-            return;
-        }
-        cudaFreeHost(host_);
-        host_     = nullptr;
-        capacity_ = 0;
-        check(cudaHostAlloc(&host_, n * sizeof(T), cudaHostAllocDefault), "hostAlloc");
-        capacity_ = n;
-    }
-
-    void sync(size_t n) const
-    {
-        assert_fenced();
-        check(
-            cudaMemcpyAsync(dev_.data(), host_, n * sizeof(T), cudaMemcpyHostToDevice),
-            "pinned upload");
-#ifndef NDEBUG
-        if (fence_ == nullptr)
-        {
-            check(cudaEventCreateWithFlags(&fence_, cudaEventDisableTiming),
-                  "pinned fence event");
-        }
-        check(cudaEventRecord(fence_), "pinned fence record");
-#endif
-    }
-
-  private:
-    void assert_fenced() const
-    {
-        assert((fence_ == nullptr || cudaEventQuery(fence_) == cudaSuccess) &&
-               "PinnedStaged: host buffer rewritten before the prior upload's "
-               "blocking copy fenced it");
-    }
-
-    T              *host_     = nullptr;
-    size_t          capacity_ = 0;
-    DeviceBuffer<T> dev_;
-#ifndef NDEBUG
-    mutable cudaEvent_t fence_ = nullptr;
-#endif
 };
 
 template <typename T> struct Staged
