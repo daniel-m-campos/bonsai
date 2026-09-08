@@ -545,10 +545,13 @@ template <typename GpuGrower>
 void require_screen_matches_exhaustive(TreeConfig const &cfg, float grad_scale,
                                        bool unit_hess)
 {
-    auto const scenario = screening_scenario(grad_scale, unit_hess);
-    setenv("BONSAI_CUDA_FINDER_EXHAUSTIVE", "1", 1);
-    GpuGrower exhaustive(cfg);
-    unsetenv("BONSAI_CUDA_FINDER_EXHAUSTIVE");
+    auto const scenario        = screening_scenario(grad_scale, unit_hess);
+    auto const make_exhaustive = [&]
+    {
+        test::ScopedEnv const flag{"BONSAI_CUDA_FINDER_EXHAUSTIVE", true};
+        return GpuGrower(cfg);
+    };
+    GpuGrower   exhaustive = make_exhaustive();
     GpuGrower   screened(cfg);
     auto const &ds  = scenario.built.ds;
     auto const  ref = exhaustive.grow(ds, scenario.grad, scenario.hess, scenario.rows);

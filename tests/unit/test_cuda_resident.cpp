@@ -245,20 +245,12 @@ template <typename BoosterT>
 std::vector<float> fit_predict(Config const &cfg, RegData const &data, size_t iters,
                                bool host_forced)
 {
-    if (host_forced)
-    {
-        setenv("BONSAI_HOST_OBJECTIVE", "1", 1);
-    }
-    else
-    {
-        unsetenv("BONSAI_HOST_OBJECTIVE");
-    }
-    BoosterT booster{cfg};
+    test::ScopedEnv const host = test::host_objective(host_forced);
+    BoosterT              booster{cfg};
     for (size_t i = 0; i < iters; ++i)
     {
         booster.update_one_iter(data.built.ds);
     }
-    unsetenv("BONSAI_HOST_OBJECTIVE");
     std::vector<float> pred(data.n_rows);
     booster.predict(data.view(), floats_out{pred});
     return pred;
@@ -268,21 +260,13 @@ template <typename G>
 std::vector<uint8_t> fit_bytes(Config cfg, RegData const &data, size_t iters,
                                bool host_forced)
 {
-    cfg.dispatch.grower_name = std::string{impl_name<G>::value};
-    if (host_forced)
-    {
-        setenv("BONSAI_HOST_OBJECTIVE", "1", 1);
-    }
-    else
-    {
-        unsetenv("BONSAI_HOST_OBJECTIVE");
-    }
+    cfg.dispatch.grower_name                      = std::string{impl_name<G>::value};
+    test::ScopedEnv const                    host = test::host_objective(host_forced);
     Booster<MSEObjective, G, AllRowsSampler> booster{cfg};
     for (size_t i = 0; i < iters; ++i)
     {
         booster.update_one_iter(data.built.ds);
     }
-    unsetenv("BONSAI_HOST_OBJECTIVE");
     return io::save_booster_bytes(booster, data.built.mappers, cfg);
 }
 
@@ -390,32 +374,25 @@ TEST_CASE("Resident MSE warm-starts from loaded trees (depthwise)", "[cuda][resi
     // A base model to warm-start from; both continuations reload it and add
     // rounds, one host-forced and one resident, then must agree.
     MseBooster<CudaDepthwiseGrower> base{cfg};
-    setenv("BONSAI_HOST_OBJECTIVE", "1", 1);
-    for (size_t i = 0; i < 20; ++i)
     {
-        base.update_one_iter(data.built.ds);
+        test::ScopedEnv const host = test::host_objective(true);
+        for (size_t i = 0; i < 20; ++i)
+        {
+            base.update_one_iter(data.built.ds);
+        }
     }
-    unsetenv("BONSAI_HOST_OBJECTIVE");
     auto const  trees = base.trees();
     float const init  = base.init_score();
 
     auto continue_from = [&](bool host_forced)
     {
-        if (host_forced)
-        {
-            setenv("BONSAI_HOST_OBJECTIVE", "1", 1);
-        }
-        else
-        {
-            unsetenv("BONSAI_HOST_OBJECTIVE");
-        }
+        test::ScopedEnv const           host = test::host_objective(host_forced);
         MseBooster<CudaDepthwiseGrower> b{cfg};
         b.load_state(trees, init); // warm start: trees present, scores rebuilt
         for (size_t i = 0; i < 15; ++i)
         {
             b.update_one_iter(data.built.ds);
         }
-        unsetenv("BONSAI_HOST_OBJECTIVE");
         std::vector<float> pred(data.n_rows);
         b.predict(data.view(), floats_out{pred});
         return pred;
@@ -788,8 +765,8 @@ TEST_CASE("Resident labels follow the Dataset, not the shared ingest plane",
     REQUIRE(ds_a.ingest_plane() == ds_b.ingest_plane());
     std::vector<float> const y_b(flipped.labels.begin(), flipped.labels.end());
 
-    auto const cfg = reg_cfg();
-    unsetenv("BONSAI_HOST_OBJECTIVE");
+    auto const            cfg  = reg_cfg();
+    test::ScopedEnv const host = test::host_objective(false);
 
     // Control: ds_b on its own booster, so its key is written on first adopt.
     MseBooster<CudaDepthwiseGrower> control{cfg};
@@ -833,21 +810,13 @@ template <typename BoosterT>
 std::vector<float> fit_view(Config const &cfg, RegData const &data, RowView rows,
                             size_t iters, bool host_forced)
 {
-    if (host_forced)
-    {
-        setenv("BONSAI_HOST_OBJECTIVE", "1", 1);
-    }
-    else
-    {
-        unsetenv("BONSAI_HOST_OBJECTIVE");
-    }
-    Dataset const viewed = data.built.ds.with_rows(std::move(rows));
-    BoosterT      booster{cfg};
+    test::ScopedEnv const host   = test::host_objective(host_forced);
+    Dataset const         viewed = data.built.ds.with_rows(std::move(rows));
+    BoosterT              booster{cfg};
     for (size_t i = 0; i < iters; ++i)
     {
         booster.update_one_iter(viewed);
     }
-    unsetenv("BONSAI_HOST_OBJECTIVE");
     std::vector<float> pred(data.n_rows);
     booster.predict(data.view(), floats_out{pred});
     return pred;
