@@ -6,13 +6,13 @@ Self-measurement of the bonsai tree, no comparison: line counts and lizard compl
 
 | plane | files | LOC | NLOC | functions | mean CCN | max CCN |
 |---|---|---|---|---|---|---|
-| core_headers | 60 | 7245 | 5033 | 350 | 1.78 | 11 |
-| engine_impl | 31 | 7203 | 6447 | 319 | 3.05 | 15 |
-| cuda_plane | 18 | 5598 | 4857 | 223 | 3.15 | 30 |
+| core_headers | 60 | 7254 | 5038 | 350 | 1.78 | 11 |
+| engine_impl | 31 | 7349 | 6563 | 331 | 2.98 | 15 |
+| cuda_plane | 20 | 7064 | 6154 | 341 | 2.74 | 17 |
 | bindings_cli | 22 | 6293 | 4589 | 267 | 2.61 | 17 |
-| bench_tooling | 40 | 9185 | 5509 | 371 | 4.39 | 32 |
-| tests | 76 | 22210 | 16851 | 1086 | 1.72 | 12 |
-| all | 247 | 57734 | 43286 | 2616 | - | - |
+| bench_tooling | 40 | 9399 | 5652 | 387 | 4.34 | 32 |
+| tests | 77 | 23198 | 17636 | 1133 | 1.72 | 12 |
+| all | 250 | 60557 | 45632 | 2809 | - | - |
 
 The five highest-CCN functions across `core_headers` + `engine_impl`, published by name; a curated offender list would be marketing.
 
@@ -26,4 +26,4 @@ The five highest-CCN functions across `core_headers` + `engine_impl`, published 
 
 Surface counts: 43 config parameters, 126 registered dispatch combinations (7 objectives x 6 growers x 3 samplers), and 11 public Python names. Dependencies: 1 Python runtime dependency (numpy) and 3 compiled-in C++ libraries (CLI11, nlohmann_json, tomlplusplus), the rule stated in the protocol.
 
-*Source: [`code-metrics-2026-09.jsonl`](../../../benchmarks/results/code-metrics-2026-09.jsonl). lizard 1.23.0 (`uvx lizard@1.23.0`) at `c01ef71b4bc8`, 2026-09-04; regenerate with [scripts/measure_complexity.py](../../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).*
+*Source: [`code-metrics-2026-09.jsonl`](../../../benchmarks/results/code-metrics-2026-09.jsonl). lizard 1.23.0 (`uvx lizard@1.23.0`) at `2d87607472fe`, 2026-09-08; regenerate with [scripts/measure_complexity.py](../../../scripts/measure_complexity.py); superseded in place on re-measurement (decision 69).*
