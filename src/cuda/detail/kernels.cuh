@@ -1569,6 +1569,22 @@ __forceinline__ __device__ FeatBest sweep_strip(CutStrip const &s, uint32_t n_cu
                                         min_child_hess, min_gain, sel);
 }
 
+struct FindBlock
+{
+    uint32_t node;
+    uint32_t sel;
+};
+
+inline dim3 find_grid(uint32_t n_sel, uint32_t n_nodes)
+{
+    return {2 * n_sel, (n_nodes + 1) / 2};
+}
+
+inline __device__ FindBlock find_block()
+{
+    return {(2 * blockIdx.y) + (blockIdx.x & 1U), blockIdx.x >> 1};
+}
+
 // perf: The finder chain from screen_node down is forced inline. With two
 // find_kernel instantiations the sweep has two callers, loses the
 // single-caller inline bonus and is outlined, its NodeCut and ScreenNode
@@ -1584,9 +1600,8 @@ find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive derive,
           double min_child_hess, double min_gain, ScreenConst const &screen,
           FeatBest *out, GhQuant const *quant, bool exhaustive, bool store_derived)
 {
-    uint32_t const node = (2 * blockIdx.y) + (blockIdx.x & 1U);
-    uint32_t const sel  = blockIdx.x >> 1;
-    uint32_t const lane = threadIdx.x;
+    auto const [node, sel] = find_block();
+    uint32_t const lane    = threadIdx.x;
     CutStrip const strip =
         open_strip(hists, parents, derive, slot, n_sel, sel, stride, store_derived);
     prefetch_strips(strip, stride);
@@ -1638,7 +1653,7 @@ __global__ void __launch_bounds__(32, 16)
                 FeatBest *out, GhQuant const *quant, bool exhaustive, uint32_t n_nodes,
                 bool store_derived)
 {
-    uint32_t const node = (2 * blockIdx.y) + (blockIdx.x & 1U);
+    uint32_t const node = find_block().node;
     if (node >= n_nodes)
     {
         return;
@@ -1659,11 +1674,6 @@ __global__ void __launch_bounds__(32, 16)
     find_node<true>(hists, parents, derive, slot, total, ns, bound, features, n_bins,
                     allowed, monotone, n_sel, stride, l1, l2, min_child_hess, min_gain,
                     screen, out, quant, exhaustive, store_derived);
-}
-
-inline dim3 find_grid(uint32_t n_sel, uint32_t n_nodes)
-{
-    return {2 * n_sel, (n_nodes + 1) / 2};
 }
 
 constexpr uint32_t k_reduce_threads = 256;
