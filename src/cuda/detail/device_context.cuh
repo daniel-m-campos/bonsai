@@ -134,22 +134,14 @@ struct CudaDeviceContext
             return root_rows_cached_n == n_rows;
         }
 
-        enum : int
-        {
-            ev_before_memset = 0,
-            ev_after_memset,
-            ev_after_hist,
-        };
-        cudaEvent_t prof_ev[3]       = {};
-        bool        prof_ev_ready    = false;
-        bool        prof_ev_recorded = false;
-        bool        prof_ev_root     = false;
-        cudaEvent_t part_ev[2]       = {};
-        bool        part_ev_ready    = false;
+        KernelTimer memset_timer;
+        KernelTimer hist_timer;
+        KernelTimer part_timer;
+        bool        fill_timed   = false;
+        bool        fill_is_root = false;
 
-        void prof_record_begin(bool root);
+        void fill_done(bool root);
         void prof_read(ProfileCounters &prof);
-        ~LevelPipeline();
 
         DeviceBuffer<uint32_t> &rows_of(bool in_b)
         {
