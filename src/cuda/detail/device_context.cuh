@@ -212,25 +212,18 @@ struct CudaDeviceContext
         std::vector<uint32_t>    slot_offsets;
         std::vector<uint32_t>    slot_counts;
         std::vector<uint8_t>     slot_in_b;
-        // perf: The round's one remaining upload, the direct build's segment.
-        // Pinned and asynchronous because a pageable copy stream-syncs before
-        // it starts and drains every queued kernel; the partition op and the
-        // finder's node arguments ride their launches as kernel parameters,
-        // which removed 5 uploads per expansion over the ~26400 expansions of
-        // 100 tall leafwise trees. Written once per round, downstream of the
-        // event that fenced the previous round's upload of it.
-        PinnedStaged<uint32_t> build_seg;
-        Staged<int>            monotone;
-        MappedBuffer<uint32_t> n_left;
-        MappedBuffer<FeatBest> node_best;
-        StreamFence            partitioned;
-        StreamFence            found;
-        bool                   queued_fill_noted = false;
-        bool                   launch_args_noted = false;
-        uint32_t               next_slot         = 0;
-        uint32_t               max_slots         = 0;
-        uint32_t               pending_small     = k_not_selected;
-        uint32_t               pending_large     = k_not_selected;
+        DeviceBuffer<uint32_t>   build_seg;
+        Staged<int>              monotone;
+        MappedBuffer<uint32_t>   n_left;
+        MappedBuffer<FeatBest>   node_best;
+        StreamFence              partitioned;
+        StreamFence              found;
+        bool                     queued_fill_noted = false;
+        bool                     launch_args_noted = false;
+        uint32_t                 next_slot         = 0;
+        uint32_t                 max_slots         = 0;
+        uint32_t                 pending_small     = k_not_selected;
+        uint32_t                 pending_large     = k_not_selected;
     };
 
     struct NodeTable
@@ -356,7 +349,6 @@ struct CudaDeviceContext
                          std::span<feature_id_t const> selected);
     CudaHistogramEngine::LeafRound
          leaf_split(Dataset const &ds, CudaHistogramEngine::LeafPartOp const &op);
-    void leaf_build(Dataset const &ds, uint32_t small_slot, uint32_t large_slot);
     void leaf_enqueue_fill(Dataset const &ds, bool in_b, uint32_t max_rows);
     CudaHistogramEngine::LeafRound
          leaf_children(CudaHistogramEngine::LeafPartOp const &op, uint32_t offset,

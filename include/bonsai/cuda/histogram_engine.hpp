@@ -188,9 +188,10 @@ class CudaHistogramEngine
     // ping-pong. The host keeps the gain heap and every decision; per split
     // only a partition op goes up and the counts, splits and sums come down.
 
-    // One heap pop's routing: partition the popped leaf's row segment in
-    // place, so no sibling's rows move and no buffer flips; build_children
-    // also queues the smaller child's histogram, so leaf_build is a no-op.
+    // One heap pop's routing: partition the popped leaf's row segment into
+    // two adjacent subranges at the same offset of the other row buffer, so
+    // no sibling's rows move; build_children also queues the smaller child's
+    // histogram behind the partition.
     struct LeafPartOp
     {
         uint32_t     parent_slot;
@@ -205,8 +206,7 @@ class CudaHistogramEngine
     // emptied one side and no slot was taken (the caller demotes the split
     // back to a leaf, and the parent keeps its slot and segment). The smaller
     // child, and its segment, are derivable from the counts and slot_offsets/
-    // slot_counts, so leaf_build takes them directly instead of through this
-    // struct. Equal counts favor the left child, host and device alike
+    // slot_counts. Equal counts favor the left child, host and device alike
     // (smaller-child-tie-break-agrees).
     struct LeafRound
     {
@@ -225,10 +225,6 @@ class CudaHistogramEngine
                          std::span<feature_id_t const> selected);
     // Routes one leaf's rows into two adjacent subranges of its own segment.
     LeafRound leaf_split(Dataset const &ds, LeafPartOp const &op);
-    // Builds the smaller child's histogram and derives the larger by in-place
-    // subtraction; call only for a round both counts survived. A no-op when
-    // the round's leaf_split queued it (build_children).
-    void leaf_build(Dataset const &ds, uint32_t small_slot, uint32_t large_slot);
     // Best split for the root alone or one sibling pair, nodes[i] held in pool
     // slot slots[i]; child_sums gets each winner's (left, right) totals.
     void leaf_find(Dataset const &ds, TreeConfig const &config,

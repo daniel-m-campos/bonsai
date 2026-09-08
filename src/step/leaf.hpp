@@ -157,11 +157,6 @@ class LeafStep<EngineT, SplitterT> : public TreeStep<EngineT>
             return;
         }
         GrowProfiler::Lap lap;
-        bool const     left_small = pair.nodes[0].row_count <= pair.nodes[1].row_count;
-        uint32_t const small_slot = left_small ? pair.slots[0] : pair.slots[1];
-        uint32_t const large_slot = left_small ? pair.slots[1] : pair.slots[0];
-        engine_.leaf_build(ds_, small_slot, large_slot);
-        lap(GrowProfiler::instance().populate_s);
         engine_.leaf_find(ds_, config_, pair.nodes, pair.slots, pair.splits,
                           pair.child_sums);
         lap(GrowProfiler::instance().find_s);

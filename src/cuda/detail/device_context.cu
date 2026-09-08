@@ -9,6 +9,7 @@
 #include "bonsai/types.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -1355,11 +1356,8 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     bool const     identity = root.rows.empty() && root.row_count == data.key.n_rows;
     uint32_t const n        = stage_root_rows(root, identity);
     leaf.slot_counts[0]     = n;
-    leaf.build_seg.reserve(3);
-    leaf.build_seg.host()[0] = 0;
-    leaf.build_seg.host()[1] = n;
-    leaf.build_seg.host()[2] = 0;
-    leaf.build_seg.sync(3);
+    std::array<uint32_t, 3> const root_seg{0, n, 0};
+    leaf.build_seg.upload(root_seg.data(), root_seg.size());
     root_lap(prof_counters.root_stage_s);
 
     lvl.gh_ordered.reserve(n);
@@ -1370,9 +1368,8 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
 
     launch_hist(static_cast<uint32_t>(ds.plane_n_rows()),
                 static_cast<uint32_t>(ds.n_features()), 1, static_cast<uint32_t>(n),
-                lvl.gh_ordered.data(), lvl.rows.data(), leaf.build_seg.device(),
-                leaf.build_seg.device() + 1, leaf.pool.data(),
-                leaf.build_seg.device() + 2);
+                lvl.gh_ordered.data(), lvl.rows.data(), leaf.build_seg.data(),
+                leaf.build_seg.data() + 1, leaf.pool.data(), leaf.build_seg.data() + 2);
     check(cudaGetLastError(), "leaf root hist launch");
     lvl.leaf_by_row.reserve(ds.plane_n_rows());
 
@@ -1401,10 +1398,9 @@ CudaDeviceContext::leaf_split(Dataset const                         &ds,
     PartOpValue const part_op{
         {offset, count, op.feature_id, op.bin_id, op.default_left ? 1U : 0U}};
     uint32_t const max_chunks = std::max(1U, (count + k_part_chunk - 1) / k_part_chunk);
-    PartTilesDev const tiles  = lvl.part_tiles.arm(max_chunks, max_chunks);
-    leaf.build_seg.reserve(3);
+    PartTilesDev const  tiles = lvl.part_tiles.arm(max_chunks, max_chunks);
     SmallChildDev const small =
-        op.build_children ? SmallChildDev{leaf.build_seg.device(), leaf.next_slot}
+        op.build_children ? SmallChildDev{leaf.build_seg.data(), leaf.next_slot}
                           : SmallChildDev{};
     lap(prof.part_stage_s);
 
@@ -1498,45 +1494,17 @@ void CudaDeviceContext::leaf_enqueue_fill(Dataset const &ds, bool in_b,
 {
     auto const sd = static_cast<uint32_t>(lvl.slot_cells());
     zero_slots_kernel<<<slot_stream_grid(sd, 1), dim3(k_slot_stream_threads)>>>(
-        leaf.pool.data(), leaf.build_seg.device() + 2, 1, sd);
+        leaf.pool.data(), leaf.build_seg.data() + 2, 1, sd);
     check(cudaGetLastError(), "zero leaf slot launch");
     launch_hist(static_cast<uint32_t>(ds.plane_n_rows()),
                 static_cast<uint32_t>(ds.n_features()), 1, max_rows,
-                lvl.gh_of(in_b).data(), lvl.rows_of(in_b).data(),
-                leaf.build_seg.device(), leaf.build_seg.device() + 1, leaf.pool.data(),
-                leaf.build_seg.device() + 2);
+                lvl.gh_of(in_b).data(), lvl.rows_of(in_b).data(), leaf.build_seg.data(),
+                leaf.build_seg.data() + 1, leaf.pool.data(), leaf.build_seg.data() + 2);
     if (prof_counters.enabled)
     {
         ++prof_counters.launches;
         prof_counters.gpu_nodes += 2;
     }
-}
-
-void CudaDeviceContext::leaf_build(Dataset const &ds, uint32_t small_slot,
-                                   uint32_t large_slot)
-{
-    if (leaf.pending_small == small_slot)
-    {
-        return;
-    }
-    auto &prof = prof_counters;
-    auto  lap  = prof.lap();
-
-    uint32_t const small_offset = leaf.slot_offsets[small_slot];
-    uint32_t const small_count  = leaf.slot_counts[small_slot];
-    bool const     in_b         = leaf.slot_in_b[small_slot] != 0;
-
-    leaf.build_seg.reserve(3);
-    leaf.build_seg.host()[0] = small_offset;
-    leaf.build_seg.host()[1] = small_count;
-    leaf.build_seg.host()[2] = small_slot;
-    leaf.build_seg.sync(3);
-    lap(prof.adv_stage_s);
-
-    leaf_enqueue_fill(ds, in_b, small_count);
-    leaf.pending_small = small_slot;
-    leaf.pending_large = large_slot;
-    lap(prof.gpu_s);
 }
 
 LeafFindNodes CudaDeviceContext::leaf_find_nodes(std::span<SplitInput const> nodes,
