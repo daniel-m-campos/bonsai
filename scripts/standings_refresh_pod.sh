@@ -281,6 +281,8 @@ run_axis() {
             run_grinsztajn "$1" ;;
         quality-grinsztajn-gpu)
             run_grinsztajn "$1" --device cuda ;;
+        quality-grinsztajn-leaf-capped-gpu)
+            run_grinsztajn "$1" --device cuda --regime leaf-capped ;;
         *)
             fail_axis "$1" "no branch measures this axis; the driver asked for something this script cannot run"
             return 0 ;;

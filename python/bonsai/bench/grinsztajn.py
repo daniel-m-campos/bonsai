@@ -18,9 +18,15 @@ and the three references on their GPU builds, so the device standings
 rank like for like, and scripts/check_standings.py reads each arm
 against its CPU partner and holds bonsai's inside a band.
 
+`--regime leaf-capped` is the head to head at lightgbm's own regime: the
+campaign's 63 leaves under a depth cap a 63-leaf tree cannot reach, so the
+leaf count is the only cap. Only the learners a leaf count alone can cap
+run there, bonsai's leafwise grower and lightgbm, into their own file.
+
     python -m bonsai.bench.grinsztajn out.jsonl
     python -m bonsai.bench.grinsztajn out.jsonl --report
     python -m bonsai.bench.grinsztajn --device cuda out-gpu.jsonl
+    python -m bonsai.bench.grinsztajn --device cuda --regime leaf-capped out-duel.jsonl
 
 Needs the [bench] extra (xgboost, lightgbm, catboost, scikit-learn, pandas,
 openml).
@@ -29,6 +35,7 @@ openml).
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import pathlib
 import time
@@ -46,22 +53,48 @@ TRAIN_CAP, TEST_CAP = 10_000, 50_000
 VARIANTS = vr.GRINSZTAJN
 DEVICE_VARIANTS = {vr.Device.CPU: VARIANTS,
                    vr.Device.CUDA: vr.GRINSZTAJN_CUDA}
-C = params.CAMPAIGN
+# The campaign knobs with the leaf count they imply spelled out, so a
+# regime can hold the leaves and move the depth.
+C = dict(params.CAMPAIGN,
+         leaves=params.num_leaves_campaign(params.CAMPAIGN["depth"]))
 
 
-def fit_predict(variant, Xtr, ytr, Xte, kind):
-    """Fit one arm at the campaign knobs and predict the test split.
+@dataclasses.dataclass(frozen=True)
+class Regime:
+    """One matched knob set and the arms that take it on each device."""
+
+    name: str
+    knobs: dict
+    arms: dict
+
+
+CAMPAIGN = Regime("campaign", C, DEVICE_VARIANTS)
+# lightgbm's CUDA learner grows num_leaves leaves at any depth (it applies
+# no max_depth), so the campaign table cannot rank it. This regime meets it
+# there: the same 63 leaves under a depth cap a 63-leaf tree cannot reach,
+# the one parameter change that makes bonsai's leafwise grower fit the
+# same shape of tree, and lightgbm's max_depth=-1 fits the same trees as
+# this cap. Only the learners a leaf count alone can cap run here.
+LEAF_CAPPED = Regime(
+    "leaf-capped", dict(C, depth=params.leaf_bound_depth(C["leaves"])),
+    {vr.Device.CPU: vr.GRINSZTAJN_LEAF_CAPPED,
+     vr.Device.CUDA: vr.GRINSZTAJN_LEAF_CAPPED_CUDA})
+REGIMES = {r.name: r for r in (CAMPAIGN, LEAF_CAPPED)}
+
+
+def fit_predict(variant, Xtr, ytr, Xte, kind, knobs=C):
+    """Fit one arm at the given knobs and predict the test split.
 
     The arm's library and device come from the variant registry, the same
     lookup the perf runners' dispatch table is keyed by, so a name this
     suite committed (its short aliases) and a canonical one both land on
     the same fit, and a `_cuda` reference arm places its library on the
     GPU the way the perf runners do. The fits themselves stay this suite's
-    own: sklearn-style estimators at the campaign knobs, untimed,
+    own: sklearn-style estimators at the regime's knobs, untimed,
     predicting rather than scoring.
     """
     v = vr.resolve(variant)
-    return _FITS[v.lib](v, Xtr, ytr, Xte, kind)
+    return _FITS[v.lib](v, Xtr, ytr, Xte, kind, knobs)
 
 
 def load_task(task):
@@ -85,7 +118,7 @@ def load_task(task):
     return Xn, yn, kind, ds.name
 
 
-def run(out_path, variants=VARIANTS):
+def run(out_path, variants=VARIANTS, regime=CAMPAIGN):
     """Sweep every (suite, task, seed, variant); resume by completed keys."""
     import openml
     out = pathlib.Path(out_path)
@@ -95,7 +128,7 @@ def run(out_path, variants=VARIANTS):
             r = json.loads(line)
             done.add((r["suite"], r["dataset"], r["variant"], r["seed"]))
     host = runlog.detect_host()
-    knobs = dict(C, num_leaves_convention="campaign", train_cap=TRAIN_CAP)
+    knobs = dict(regime.knobs, regime=regime.name, train_cap=TRAIN_CAP)
     for sid, sname in SUITES.items():
         suite = openml.study.get_suite(sid)
         for tid in suite.tasks:
@@ -116,7 +149,8 @@ def run(out_path, variants=VARIANTS):
                         continue
                     t0 = time.perf_counter()
                     try:
-                        pred = fit_predict(v, X[tr], y[tr], X[te], kind)
+                        pred = fit_predict(v, X[tr], y[tr], X[te], kind,
+                                           regime.knobs)
                         fn = metrics.auc if kind == "auc" else metrics.r2
                         value, status = fn(y[te], pred), "ok"
                     except Exception as e:
@@ -165,16 +199,19 @@ def report(out_path):
 
 
 def main(argv=None):
-    """`grinsztajn out.jsonl` runs; `--report` prints; `--device` picks the arms."""
+    """`grinsztajn out.jsonl` runs; `--report` prints; `--device` and
+    `--regime` pick the arms and their knobs."""
     args = parse_args(argv)
     if args.report:
         report(args.out)
     else:
-        run(args.out, DEVICE_VARIANTS[args.device])
+        regime = REGIMES[args.regime]
+        run(args.out, regime.arms[args.device], regime)
 
 
 def parse_args(argv=None):
-    """The CLI: an output path, `--report`, and the device whose arms run."""
+    """The CLI: an output path, `--report`, the device whose arms run, and
+    the regime they run at."""
     ap = argparse.ArgumentParser(prog="python -m bonsai.bench.grinsztajn")
     ap.add_argument("out", help="results jsonl; existing rows are resumed")
     ap.add_argument("--report", action="store_true",
@@ -183,65 +220,68 @@ def parse_args(argv=None):
                     default=vr.Device.CPU,
                     help="cpu sweeps every library on the host; cuda "
                          "sweeps every library on the GPU")
+    ap.add_argument("--regime", choices=sorted(REGIMES),
+                    default=CAMPAIGN.name,
+                    help="campaign sweeps every library at depth 6; "
+                         "leaf-capped sweeps bonsai leafwise and lightgbm "
+                         "at 63 leaves with no binding depth cap")
     return ap.parse_args(argv)
 
 
 # Private Functions ================================================================================
 
-def _fit_bonsai(v, Xtr, ytr, Xte, kind):
+def _fit_bonsai(v, Xtr, ytr, Xte, kind, k):
     import bonsai
     grower = v.name.removeprefix("bonsai_")
     obj = "logloss" if kind == "auc" else "mse"
     m = bonsai.BonsaiRegressor(
-        objective=obj, grower=grower, n_iters=C["iters"],
-        learning_rate=C["lr"], max_depth=C["depth"],
-        max_leaves=params.num_leaves_campaign(C["depth"]),
-        random_seed=C["seed"], n_threads=8,
+        objective=obj, grower=grower, n_iters=k["iters"],
+        learning_rate=k["lr"], max_depth=k["depth"], max_leaves=k["leaves"],
+        random_seed=k["seed"], n_threads=8,
         params=params.BONSAI_CAMPAIGN_PARAMS).fit(Xtr, ytr)
     return np.asarray(m.predict(Xte))
 
 
-def _fit_xgb(v, Xtr, ytr, Xte, kind):
-    """xgboost at the campaign knobs; a cuda arm is checked after the fit
+def _fit_xgb(v, Xtr, ytr, Xte, kind, k):
+    """xgboost at the regime's knobs; a cuda arm is checked after the fit
     because xgboost 3.3 drops an unserved cuda request to CPU silently."""
     import xgboost as xgb
     cls = xgb.XGBClassifier if kind == "auc" else xgb.XGBRegressor
     core = params.xgb_core(
-        learning_rate=C["lr"], max_depth=C["depth"],
-        min_data_in_leaf=C["min_data_in_leaf"], lambda_l2=C["lambda_l2"],
-        max_bin=C["bins"], seed=C["seed"])
+        learning_rate=k["lr"], max_depth=k["depth"],
+        min_data_in_leaf=k["min_data_in_leaf"], lambda_l2=k["lambda_l2"],
+        max_bin=k["bins"], seed=k["seed"])
     core["random_state"] = core.pop("seed")
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        m = cls(n_estimators=C["iters"], n_jobs=8, device=v.device,
+        m = cls(n_estimators=k["iters"], n_jobs=8, device=v.device,
                 **core).fit(Xtr, ytr)
     if v.device == vr.Device.CUDA:
         runners.assert_xgb_trained_on_device(m.get_booster(), caught)
     return _predicted(m, Xte, kind)
 
 
-def _fit_lgbm(v, Xtr, ytr, Xte, kind):
+def _fit_lgbm(v, Xtr, ytr, Xte, kind, k):
     import lightgbm as lgb
     obj = "binary" if kind == "auc" else "regression"
     p = {**params.lgbm_core(
-             learning_rate=C["lr"], max_depth=C["depth"],
-             num_leaves=params.num_leaves_campaign(C["depth"]),
-             min_data_in_leaf=C["min_data_in_leaf"],
-             lambda_l2=C["lambda_l2"], max_bin=C["bins"], seed=C["seed"]),
-         "objective": obj, "num_iterations": C["iters"],
+             learning_rate=k["lr"], max_depth=k["depth"],
+             num_leaves=k["leaves"], min_data_in_leaf=k["min_data_in_leaf"],
+             lambda_l2=k["lambda_l2"], max_bin=k["bins"], seed=k["seed"]),
+         "objective": obj, "num_iterations": k["iters"],
          "deterministic": True, "num_threads": 8, "device_type": v.device}
     m = lgb.train(p, lgb.Dataset(Xtr, label=ytr))
     return m.predict(Xte)
 
 
-def _fit_catboost(v, Xtr, ytr, Xte, kind):
+def _fit_catboost(v, Xtr, ytr, Xte, kind, k):
     import catboost as cb
     cls = cb.CatBoostClassifier if kind == "auc" else cb.CatBoostRegressor
     m = cls(**params.catboost_core(
-                learning_rate=C["lr"], max_depth=C["depth"],
-                lambda_l2=C["lambda_l2"], max_bin=C["bins"],
-                seed=C["seed"], device=v.device),
-            iterations=C["iters"], verbose=False, thread_count=8,
+                learning_rate=k["lr"], max_depth=k["depth"],
+                lambda_l2=k["lambda_l2"], max_bin=k["bins"],
+                seed=k["seed"], device=v.device),
+            iterations=k["iters"], verbose=False, thread_count=8,
             allow_writing_files=False,
             task_type=("GPU" if v.device == vr.Device.CUDA else "CPU"),
             devices="0").fit(Xtr, ytr)

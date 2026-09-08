@@ -57,6 +57,14 @@ def num_leaves_full(depth: int) -> int:
     return 1 << depth
 
 
+def leaf_bound_depth(num_leaves: int) -> int:
+    """The deepest a tree of num_leaves leaves can grow: num_leaves - 1, one
+    split per level. A depth cap there never binds, so the leaf count is
+    the only cap, for bonsai's leafwise grower and for lightgbm alike (its
+    max_depth=-1 fits the same trees)."""
+    return num_leaves - 1
+
+
 def num_leaves_of(cell: dict) -> int:
     """A cell's leaf budget: an explicit num_leaves, else the full-depth
     convention. Uncapped-depth cells must name it, because 1 << depth is

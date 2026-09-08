@@ -68,6 +68,10 @@ GRINSZTAJN = ("bonsai_dw", "bonsai_lw", "bonsai_obl", "xgb", "lgbm", "catboost")
 GRINSZTAJN_CUDA = ("bonsai_cuda_depthwise", "bonsai_cuda_leafwise",
                    "bonsai_cuda_levelwise", "xgb_cuda", "lgbm_cuda",
                    "catboost_gpu")
+# The leaf-capped regime: only the learners a leaf count alone can cap,
+# bonsai's leafwise grower and lightgbm, head to head on each device.
+GRINSZTAJN_LEAF_CAPPED = ("bonsai_lw", "lgbm")
+GRINSZTAJN_LEAF_CAPPED_CUDA = ("bonsai_cuda_leafwise", "lgbm_cuda")
 
 
 def resolve(name: str) -> Variant:
