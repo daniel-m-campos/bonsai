@@ -212,7 +212,7 @@ struct CudaDeviceContext
         std::vector<uint32_t>    slot_offsets;
         std::vector<uint32_t>    slot_counts;
         std::vector<uint8_t>     slot_in_b;
-        DeviceBuffer<uint32_t>   build_seg;
+        DeviceBuffer<BuildSeg>   build_seg;
         Staged<int>              monotone;
         MappedBuffer<uint32_t>   n_left;
         MappedBuffer<FeatBest>   node_best;
