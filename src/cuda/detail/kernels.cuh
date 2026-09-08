@@ -1102,11 +1102,11 @@ inline __device__ FeatBest warp_best_cut(FeatBest best)
 // grower (and catboost) at scale.
 template <bool k_l1>
 inline __device__ double level_cut_score(SplitSumsDev const &s, double node_ps,
-                                         double l1, double l2, double min_child_hess)
+                                         CutConst const &cc)
 {
-    bool const ok = s.hL >= min_child_hess && s.hR >= min_child_hess;
-    return ok ? cut_score<k_l1>(s.gL, s.hL, l1, l2) +
-                    cut_score<k_l1>(s.gR, s.hR, l1, l2)
+    bool const ok = s.hL >= cc.min_child_hess && s.hR >= cc.min_child_hess;
+    return ok ? cut_score<k_l1>(s.gL, s.hL, cc.l1, cc.l2) +
+                    cut_score<k_l1>(s.gR, s.hR, cc.l1, cc.l2)
               : node_ps;
 }
 
@@ -1117,28 +1117,28 @@ struct NodeCut
 };
 
 template <bool k_l1>
-inline __device__ void
-score_cut_exact(double pg, double ph, uint32_t b, int dl, NodeCut const &nd, double l1,
-                double l2, double min_child_hess, double min_gain, FeatBest &best)
+inline __device__ void score_cut_exact(double pg, double ph, uint32_t b, int dl,
+                                       NodeCut const &nd, CutConst const &cc,
+                                       FeatBest &best)
 {
     auto const s =
         split_sums_dev(pg, ph, nd.miss_g, nd.miss_h, nd.real_g, nd.real_h, dl);
-    if (s.hL < min_child_hess || s.hR < min_child_hess)
+    if (s.hL < cc.min_child_hess || s.hR < cc.min_child_hess)
     {
         return;
     }
     if (nd.mc != 0)
     {
-        double const wL = bounded_leaf_weight(s.gL, s.hL, l1, l2, nd.lo, nd.hi);
-        double const wR = bounded_leaf_weight(s.gR, s.hR, l1, l2, nd.lo, nd.hi);
+        double const wL = bounded_leaf_weight(s.gL, s.hL, cc.l1, cc.l2, nd.lo, nd.hi);
+        double const wR = bounded_leaf_weight(s.gR, s.hR, cc.l1, cc.l2, nd.lo, nd.hi);
         if (static_cast<double>(nd.mc) * (wR - wL) < 0.0)
         {
             return;
         }
     }
-    double const gain = cut_score<k_l1>(s.gL, s.hL, l1, l2) +
-                        cut_score<k_l1>(s.gR, s.hR, l1, l2) - nd.node_score;
-    if (!(gain > 0.0 && gain >= min_gain))
+    double const gain = cut_score<k_l1>(s.gL, s.hL, cc.l1, cc.l2) +
+                        cut_score<k_l1>(s.gR, s.hR, cc.l1, cc.l2) - nd.node_score;
+    if (!(gain > 0.0 && gain >= cc.min_gain))
     {
         return;
     }
@@ -1361,16 +1361,15 @@ struct Survivors
 };
 
 template <bool k_l1>
-__forceinline__ __device__ void
-flush_survivors(Survivors &sv, double2 inv, NodeCut const &nd, double l1, double l2,
-                double min_child_hess, double min_gain, FeatBest &best)
+__forceinline__ __device__ void flush_survivors(Survivors &sv, double2 inv,
+                                                NodeCut const &nd, CutConst const &cc,
+                                                FeatBest &best)
 {
     if (threadIdx.x < sv.n)
     {
         double const pg = static_cast<double>(sv.qg) * inv.x;
         double const ph = static_cast<double>(sv.qh) * inv.y;
-        score_cut_exact<k_l1>(pg, ph, sv.b, sv.dl, nd, l1, l2, min_child_hess, min_gain,
-                              best);
+        score_cut_exact<k_l1>(pg, ph, sv.b, sv.dl, nd, cc, best);
     }
     sv.n = 0;
 }
@@ -1452,9 +1451,7 @@ template <bool k_l1, bool k_derived, bool k_store>
 __forceinline__ __device__ FeatBest sweep_cuts(CutStrip const &s, uint32_t n_cut,
                                                int n_dirs, NodeCut const &nd,
                                                NodeBounds const &bounds, double2 inv,
-                                               double l1, double l2,
-                                               double min_child_hess, double min_gain,
-                                               uint32_t sel)
+                                               CutConst const &cc, uint32_t sel)
 {
     uint32_t const lane = threadIdx.x;
     FeatBest       best = {};
@@ -1487,13 +1484,12 @@ __forceinline__ __device__ FeatBest sweep_cuts(CutStrip const &s, uint32_t n_cut
             }
             if (sv.n + __popc(mask) > 32)
             {
-                flush_survivors<k_l1>(sv, inv, nd, l1, l2, min_child_hess, min_gain,
-                                      best);
+                flush_survivors<k_l1>(sv, inv, nd, cc, best);
             }
             append_survivors(sv, mask, pre.qg, pre.qh, b, dl);
         }
     }
-    flush_survivors<k_l1>(sv, inv, nd, l1, l2, min_child_hess, min_gain, best);
+    flush_survivors<k_l1>(sv, inv, nd, cc, best);
     return warp_best_split(best);
 }
 
@@ -1503,24 +1499,24 @@ inline __device__ bool node_sweeps(char const *allowed, size_t oidx, uint32_t nb
 }
 
 template <bool k_l1>
-__forceinline__ __device__ FeatBest
-sweep_strip(CutStrip const &s, uint32_t n_cut, uint32_t stride, int n_dirs,
-            NodeCut const &nd, NodeBounds const &bounds, double2 inv, double l1,
-            double l2, double min_child_hess, double min_gain, uint32_t sel)
+__forceinline__ __device__ FeatBest sweep_strip(CutStrip const &s, uint32_t n_cut,
+                                                uint32_t stride, int n_dirs,
+                                                NodeCut const    &nd,
+                                                NodeBounds const &bounds, double2 inv,
+                                                CutConst const &cc, uint32_t sel)
 {
     if (s.small == nullptr)
     {
-        return sweep_cuts<k_l1, false, false>(s, n_cut, n_dirs, nd, bounds, inv, l1, l2,
-                                              min_child_hess, min_gain, sel);
+        return sweep_cuts<k_l1, false, false>(s, n_cut, n_dirs, nd, bounds, inv, cc,
+                                              sel);
     }
     if (s.store == nullptr)
     {
-        return sweep_cuts<k_l1, true, false>(s, n_cut, n_dirs, nd, bounds, inv, l1, l2,
-                                             min_child_hess, min_gain, sel);
+        return sweep_cuts<k_l1, true, false>(s, n_cut, n_dirs, nd, bounds, inv, cc,
+                                             sel);
     }
     derive_strip_range(s, static_cast<uint32_t>(pair_off(n_cut)), stride);
-    return sweep_cuts<k_l1, true, true>(s, n_cut, n_dirs, nd, bounds, inv, l1, l2,
-                                        min_child_hess, min_gain, sel);
+    return sweep_cuts<k_l1, true, true>(s, n_cut, n_dirs, nd, bounds, inv, cc, sel);
 }
 
 struct FindBlock
@@ -1550,9 +1546,9 @@ __forceinline__ __device__ void
 find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive derive,
           uint32_t slot, double2 total, NodeScreen ns, double2 bound,
           uint32_t const *features, uint32_t const *n_bins, char const *allowed,
-          int const *monotone, uint32_t n_sel, uint32_t stride, double l1, double l2,
-          double min_child_hess, double min_gain, ScreenConst const &screen,
-          FeatBest *out, GhQuant const *quant, bool exhaustive, bool store_derived)
+          int const *monotone, uint32_t n_sel, uint32_t stride, CutConst const &cc,
+          ScreenConst const &screen, FeatBest *out, GhQuant const *quant,
+          bool exhaustive, bool store_derived)
 {
     auto const [node, sel] = find_block();
     uint32_t const lane    = threadIdx.x;
@@ -1590,8 +1586,8 @@ find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive derive,
     uint32_t const   n_cut  = nb - 2;
     int const        n_dirs = (miss_q.x == 0 && miss_q.y == 0) ? 1 : 2;
 
-    FeatBest const best = sweep_strip<k_l1>(strip, n_cut, stride, n_dirs, nd, bounds,
-                                            inv, l1, l2, min_child_hess, min_gain, sel);
+    FeatBest const best =
+        sweep_strip<k_l1>(strip, n_cut, stride, n_dirs, nd, bounds, inv, cc, sel);
     if (lane == 0 && best.valid != 0)
     {
         out[oidx] = best;
@@ -1602,10 +1598,9 @@ template <typename Nodes>
 __global__ void __launch_bounds__(32, 16)
     find_kernel(hist_int_t *hists, hist_int_t const *parents, Nodes nodes,
                 uint32_t const *features, uint32_t const *n_bins, char const *allowed,
-                int const *monotone, uint32_t n_sel, uint32_t stride, double l1,
-                double l2, double min_child_hess, double min_gain, ScreenConst screen,
-                FeatBest *out, GhQuant const *quant, bool exhaustive, uint32_t n_nodes,
-                bool store_derived)
+                int const *monotone, uint32_t n_sel, uint32_t stride, CutConst cc,
+                ScreenConst screen, FeatBest *out, GhQuant const *quant,
+                bool exhaustive, uint32_t n_nodes, bool store_derived)
 {
     uint32_t const node = find_block().node;
     if (node >= n_nodes)
@@ -1617,17 +1612,16 @@ __global__ void __launch_bounds__(32, 16)
     double2 const       total  = nodes.sum(node);
     NodeScreen const    ns     = nodes.screen(node);
     double2 const       bound  = nodes.bound(node);
-    if (l1 == 0.0)
+    if (cc.l1 == 0.0)
     {
         find_node<false>(hists, parents, derive, slot, total, ns, bound, features,
-                         n_bins, allowed, monotone, n_sel, stride, l1, l2,
-                         min_child_hess, min_gain, screen, out, quant, exhaustive,
-                         store_derived);
+                         n_bins, allowed, monotone, n_sel, stride, cc, screen, out,
+                         quant, exhaustive, store_derived);
         return;
     }
     find_node<true>(hists, parents, derive, slot, total, ns, bound, features, n_bins,
-                    allowed, monotone, n_sel, stride, l1, l2, min_child_hess, min_gain,
-                    screen, out, quant, exhaustive, store_derived);
+                    allowed, monotone, n_sel, stride, cc, screen, out, quant,
+                    exhaustive, store_derived);
 }
 
 constexpr uint32_t k_reduce_threads = 256;
@@ -1688,14 +1682,14 @@ struct LevelCut
 
 template <bool k_l1>
 inline __device__ double level_cut_partial(LevelNode const &nd, CutSums const &sums,
-                                           bool live, int dl, double2 inv, double l1,
-                                           double l2, double min_child_hess)
+                                           bool live, int dl, double2 inv,
+                                           CutConst const &cc)
 {
     double const pg = static_cast<double>(sums.g) * inv.x;
     double const ph = static_cast<double>(sums.h) * inv.y;
     auto const   s =
         split_sums_dev(pg, ph, nd.miss_g, nd.miss_h, nd.real_g, nd.real_h, dl);
-    return live ? level_cut_score<k_l1>(s, nd.node_ps, l1, l2, min_child_hess) : 0.0;
+    return live ? level_cut_score<k_l1>(s, nd.node_ps, cc) : 0.0;
 }
 
 template <bool k_l1>
@@ -1716,12 +1710,12 @@ stage_level_chunk(LevelNode (&s_node)[k_level_find_threads], hist_int_t const *h
 }
 
 template <bool k_l1>
-inline __device__ LevelPassSums level_pass_sums(
-    hist_int_t const *hists, double const *node_sums,
-    LevelNode (&s_node)[k_level_find_threads],
-    LevelPrefixTotals (&s_tot)[2][k_level_find_warps], uint32_t f, uint32_t n_sel,
-    uint32_t n_nodes, uint32_t stride, uint32_t nb, int n_dirs, LevelCut cut,
-    double2 inv, double l1, double l2, double min_child_hess)
+inline __device__ LevelPassSums
+level_pass_sums(hist_int_t const *hists, double const *node_sums,
+                LevelNode (&s_node)[k_level_find_threads],
+                LevelPrefixTotals (&s_tot)[2][k_level_find_warps], uint32_t f,
+                uint32_t n_sel, uint32_t n_nodes, uint32_t stride, uint32_t nb,
+                int n_dirs, LevelCut cut, double2 inv, CutConst const &cc)
 {
     LevelPassSums  acc = {.parent = 0.0, .cut = {0.0, 0.0}};
     ShuffleTreeSum ps_tree{};
@@ -1729,7 +1723,7 @@ inline __device__ LevelPassSums level_pass_sums(
     for (uint32_t base = 0; base < n_nodes; base += k_level_find_threads)
     {
         stage_level_chunk<k_l1>(s_node, hists, node_sums, base, n_nodes, n_sel, f,
-                                stride, nb, inv, l1, l2);
+                                stride, nb, inv, cc.l1, cc.l2);
         uint32_t const n_chunk = min(k_level_find_threads, n_nodes - base);
         for (uint32_t i0 = 0; i0 < n_chunk; i0 += 32)
         {
@@ -1754,9 +1748,9 @@ inline __device__ LevelPassSums level_pass_sums(
                 {
                     int const    dl = 1 - d;
                     double const cs =
-                        d < n_dirs ? level_cut_partial<k_l1>(nd, sums, live, dl, inv,
-                                                             l1, l2, min_child_hess)
-                                   : 0.0;
+                        d < n_dirs
+                            ? level_cut_partial<k_l1>(nd, sums, live, dl, inv, cc)
+                            : 0.0;
                     double const t = cut_tree[dl].push(i, cs);
                     if (i == 31)
                     {
@@ -1803,9 +1797,8 @@ inline __device__ void
 level_find_feature(LevelFindShared &sh, hist_int_t *hists, hist_int_t const *parents,
                    SiblingDerive const *derive, uint32_t const *features,
                    uint32_t const *n_bins, double const *node_sums, uint32_t n_sel,
-                   uint32_t n_nodes, uint32_t stride, double l1, double l2,
-                   double min_child_hess, double min_gain, FeatBest *out_feat,
-                   GhQuant const *quant)
+                   uint32_t n_nodes, uint32_t stride, CutConst const &cc,
+                   FeatBest *out_feat, GhQuant const *quant)
 {
     uint32_t const f   = blockIdx.x;
     uint32_t const tid = threadIdx.x;
@@ -1842,13 +1835,13 @@ level_find_feature(LevelFindShared &sh, hist_int_t *hists, hist_int_t const *par
                                    .in   = (pass * k_level_find_threads) + tid < n_cut};
         LevelPassSums const sums =
             level_pass_sums<k_l1>(hists, node_sums, sh.node, sh.tot, f, n_sel, n_nodes,
-                                  stride, nb, n_dirs, cut, inv, l1, l2, min_child_hess);
+                                  stride, nb, n_dirs, cut, inv, cc);
 #pragma unroll
         for (int d = 0; d < 2; ++d)
         {
             int const    dl   = 1 - d;
             double const gain = sums.cut[dl] - sums.parent;
-            if (d < n_dirs && cut.in && gain > best.gain && gain >= min_gain)
+            if (d < n_dirs && cut.in && gain > best.gain && gain >= cc.min_gain)
             {
                 best = {.gain  = gain,
                         .gL    = 0,
@@ -1873,21 +1866,19 @@ __global__ void __launch_bounds__(k_level_find_threads)
     level_find_kernel(hist_int_t *hists, hist_int_t const *parents,
                       SiblingDerive const *derive, uint32_t const *features,
                       uint32_t const *n_bins, double const *node_sums, uint32_t n_sel,
-                      uint32_t n_nodes, uint32_t stride, double l1, double l2,
-                      double min_child_hess, double min_gain, FeatBest *out_feat,
-                      GhQuant const *quant)
+                      uint32_t n_nodes, uint32_t stride, CutConst cc,
+                      FeatBest *out_feat, GhQuant const *quant)
 {
     __shared__ LevelFindShared sh;
-    if (l1 == 0.0)
+    if (cc.l1 == 0.0)
     {
         level_find_feature<false>(sh, hists, parents, derive, features, n_bins,
-                                  node_sums, n_sel, n_nodes, stride, l1, l2,
-                                  min_child_hess, min_gain, out_feat, quant);
+                                  node_sums, n_sel, n_nodes, stride, cc, out_feat,
+                                  quant);
         return;
     }
     level_find_feature<true>(sh, hists, parents, derive, features, n_bins, node_sums,
-                             n_sel, n_nodes, stride, l1, l2, min_child_hess, min_gain,
-                             out_feat, quant);
+                             n_sel, n_nodes, stride, cc, out_feat, quant);
 }
 
 __global__ void level_child_sums_kernel(hist_int_t const *hists,

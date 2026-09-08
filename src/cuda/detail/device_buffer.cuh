@@ -41,6 +41,11 @@ struct Interval
     float lo, hi;
 };
 
+struct CutConst
+{
+    double l1, l2, min_child_hess, min_gain;
+};
+
 struct ScreenConst
 {
     Interval l1, l2, min_child_hess, min_gain;
