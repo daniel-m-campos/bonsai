@@ -189,13 +189,15 @@ class CudaHistogramEngine
     // only a partition op goes up and the counts, splits and sums come down.
 
     // One heap pop's routing: partition the popped leaf's row segment in
-    // place, so no sibling's rows move and no buffer flips.
+    // place, so no sibling's rows move and no buffer flips; build_children
+    // also queues the smaller child's histogram, so leaf_build is a no-op.
     struct LeafPartOp
     {
         uint32_t     parent_slot;
         feature_id_t feature_id;
         bin_id_t     bin_id;
         bool         default_left;
+        bool         build_children = false;
     };
 
     // What one partition produced. Both counts nonzero means the split stands
@@ -224,9 +226,8 @@ class CudaHistogramEngine
     // Routes one leaf's rows into two adjacent subranges of its own segment.
     LeafRound leaf_split(Dataset const &ds, LeafPartOp const &op);
     // Builds the smaller child's histogram and derives the larger by in-place
-    // subtraction; call only for a round both counts survived. small_slot's
-    // segment (offset, count) is read from leaf.slot_offsets/slot_counts,
-    // written by leaf_split.
+    // subtraction; call only for a round both counts survived. A no-op when
+    // the round's leaf_split queued it (build_children).
     void leaf_build(Dataset const &ds, uint32_t small_slot, uint32_t large_slot);
     // Best split per named pool slot (slots[i] holds nodes[i]'s histogram);
     // child_sums receives the winning cut's (left, right) totals, 2 per node.

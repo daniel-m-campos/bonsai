@@ -342,6 +342,22 @@ inline __device__ TileBlock<W> tile_block(uint32_t const *sel_slot, uint32_t n_f
     return tb;
 }
 
+template <uint32_t W> struct TileNode
+{
+    TileBlock<W> tb;
+    NodeRows     seg;
+};
+
+template <uint32_t W>
+inline __device__ TileNode<W> tile_node(uint32_t const *sel_slot, uint32_t n_feats,
+                                        uint32_t const *rows, float2 const *gh_ordered,
+                                        uint32_t const *row_offsets,
+                                        uint32_t const *row_counts)
+{
+    TileBlock<W> const tb = tile_block<W>(sel_slot, n_feats);
+    return {tb, node_rows(rows, gh_ordered, row_offsets, row_counts, tb.node)};
+}
+
 template <uint32_t W, typename BinT>
 inline __device__ void load_partial_strip(BinT const *sp, uint32_t wt, BinT *strip)
 {
@@ -401,6 +417,22 @@ inline __device__ void visit_tile_rows(TileBlock<W> const &tb, BinT const *bins,
     }
 }
 
+template <uint32_t W, typename BinT>
+inline __device__ void fill_direct(TileBlock<W> const &tb, BinT const *bins,
+                                   uint32_t n_rows, NodeRows const &seg, float2 scale,
+                                   hist_int_t *o, uint32_t stride)
+{
+    visit_tile_rows<W>(tb, bins, n_rows, seg, scale, threadIdx.x, blockDim.x,
+                       [&](uint32_t j, uint32_t b, hist_int_t qg, hist_int_t qh)
+                       {
+                           hist_int_t *cell =
+                               o + (static_cast<size_t>(tb.slot[j]) * stride) +
+                               pair_off(b);
+                           hist_add(cell, qg);
+                           hist_add(cell + 1, qh);
+                       });
+}
+
 template <uint32_t W, bool UnitH, typename BinT>
 __global__ void __launch_bounds__(k_tile_fill_threads)
     hist_tile_kernel(BinT const *bins, float2 const *gh_ordered, uint32_t const *rows,
@@ -410,18 +442,23 @@ __global__ void __launch_bounds__(k_tile_fill_threads)
                      uint32_t const *out_slot, GhQuant const *quant)
 {
     extern __shared__ hist_int_t sh[];
-    TileBlock<W> const           tb = tile_block<W>(sel_slot, n_feats);
-    if (!tb.any)
+    TileNode<W> const            tn =
+        tile_node<W>(sel_slot, n_feats, rows, gh_ordered, row_offsets, row_counts);
+    TileBlock<W> const &tb  = tn.tb;
+    NodeRows const     &seg = tn.seg;
+    if (!tb.any || blockIdx.z * blockDim.x >= seg.count)
     {
         return;
     }
-    NodeRows const seg = node_rows(rows, gh_ordered, row_offsets, row_counts, tb.node);
-    if (blockIdx.z * blockDim.x >= seg.count)
+    float2 const   scale = quant->scale;
+    uint32_t const oslot = out_slot != nullptr ? out_slot[tb.node] : tb.node;
+    if (seg.count < k_min_gpu_rows)
     {
+        fill_direct<W>(tb, bins, n_rows, seg, scale,
+                       out + (static_cast<size_t>(oslot) * n_sel * stride), stride);
         return;
     }
     zero_shared(sh, tb.wt * tile_stride(stride));
-    float2 const scale = quant->scale;
     visit_tile_rows<W>(tb, bins, n_rows, seg, scale,
                        (blockIdx.z * blockDim.x) + threadIdx.x, gridDim.z * blockDim.x,
                        [&](uint32_t j, uint32_t b, hist_int_t qg, hist_int_t qh)
@@ -437,7 +474,6 @@ __global__ void __launch_bounds__(k_tile_fill_threads)
                        });
     __syncthreads();
     hist_int_t const unit_qh = quantise(1.0F, scale.y);
-    uint32_t const   oslot   = out_slot != nullptr ? out_slot[tb.node] : tb.node;
 #pragma unroll
     for (uint32_t j = 0; j < W; ++j)
     {
@@ -472,22 +508,16 @@ __global__ void hist_small_kernel(BinT const *bins, float2 const *gh_ordered,
                                   hist_int_t *out, uint32_t stride,
                                   uint32_t const *out_slot, GhQuant const *quant)
 {
-    TileBlock<W> const tb = tile_block<W>(sel_slot, n_feats);
+    TileNode<W> const tn =
+        tile_node<W>(sel_slot, n_feats, rows, gh_ordered, row_offsets, row_counts);
+    TileBlock<W> const &tb = tn.tb;
     if (!tb.any)
     {
         return;
     }
-    hist_int_t    *o = out + (static_cast<size_t>(out_slot[tb.node]) * n_sel * stride);
-    NodeRows const seg = node_rows(rows, gh_ordered, row_offsets, row_counts, tb.node);
-    visit_tile_rows<W>(tb, bins, n_rows, seg, quant->scale, threadIdx.x, blockDim.x,
-                       [&](uint32_t j, uint32_t b, hist_int_t qg, hist_int_t qh)
-                       {
-                           hist_int_t *cell =
-                               o + (static_cast<size_t>(tb.slot[j]) * stride) +
-                               pair_off(b);
-                           hist_add(cell, qg);
-                           hist_add(cell + 1, qh);
-                       });
+    fill_direct<W>(tb, bins, n_rows, tn.seg, quant->scale,
+                   out + (static_cast<size_t>(out_slot[tb.node]) * n_sel * stride),
+                   stride);
 }
 
 constexpr uint32_t k_part_rows_per_thread = 4;
@@ -636,9 +666,8 @@ inline __device__ uint32_t part_lookback(unsigned long long const *words,
 }
 
 inline __device__ void part_publish_prefix(unsigned long long *words, uint32_t epoch,
-                                           uint32_t chunk, uint32_t max_chunks,
-                                           uint32_t block_total, PartLane const &pl,
-                                           uint32_t *before_out, uint32_t *n_left)
+                                           uint32_t chunk, uint32_t block_total,
+                                           PartLane const &pl, uint32_t *before_out)
 {
     if (threadIdx.x == 0 && chunk > 0)
     {
@@ -655,10 +684,20 @@ inline __device__ void part_publish_prefix(unsigned long long *words, uint32_t e
     }
     part_publish(words + chunk, before + block_total, epoch, k_part_status_inclusive);
     *before_out = before;
-    if (chunk + 1 == max_chunks)
+}
+
+inline __device__ void publish_small_child(SmallChildDev const &small,
+                                           PartOpDev const &op, uint32_t nl)
+{
+    if (small.seg == nullptr)
     {
-        *n_left = before + block_total;
+        return;
     }
+    uint32_t const nr         = op.count - nl;
+    bool const     left_small = nl <= nr;
+    small.seg[0]              = left_small ? op.offset : op.offset + nl;
+    small.seg[1]              = left_small ? nl : nr;
+    small.seg[2]              = small.slot;
 }
 
 template <typename BinT>
@@ -666,7 +705,8 @@ __global__ void __launch_bounds__(k_part_block)
     partition_kernel(BinT const *bins, uint32_t const *n_bins, uint32_t const *rows_in,
                      float2 const *gh_in, PartOpDev const *ops, uint32_t n_rows,
                      uint32_t n_feats, uint32_t max_chunks, PartTilesDev tiles,
-                     uint32_t *n_left, uint32_t *rows_out, float2 *gh_out)
+                     uint32_t *n_left, SmallChildDev small, uint32_t *rows_out,
+                     float2 *gh_out)
 {
     __shared__ uint32_t sh[k_part_warps + 2];
     if (threadIdx.x == 0)
@@ -708,9 +748,14 @@ __global__ void __launch_bounds__(k_part_block)
     WarpPrefix const          wp = warp_prefix_in_block(sh, pl, mine);
     unsigned long long *const words =
         tiles.status + (static_cast<size_t>(opi) * max_chunks);
-    part_publish_prefix(words, tiles.epoch, chunk, max_chunks, wp.total, pl,
-                        sh + k_part_warps + 1, n_left + opi);
+    part_publish_prefix(words, tiles.epoch, chunk, wp.total, pl, sh + k_part_warps + 1);
     __syncthreads();
+    if (threadIdx.x == 0 && chunk + 1 == max_chunks)
+    {
+        uint32_t const nl = sh[k_part_warps + 1] + wp.total;
+        n_left[opi]       = nl;
+        publish_small_child(small, op, nl);
+    }
     uint32_t       lefts   = sh[k_part_warps + 1] + wp.before;
     uint32_t const lane_lt = (1U << pl.lane) - 1;
     uint32_t const end     = op.offset + op.count - 1;
