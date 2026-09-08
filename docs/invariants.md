@@ -100,7 +100,7 @@ The row list a round trains on belongs to the fit it was materialized for, keyed
 
 ### smaller-child-tie-break-agrees
 
-On equal child row counts the fresh histogram slot goes to the LEFT child. The larger sibling derives by subtracting the smaller from the parent, so host and device must pick the same side or a subtraction reads the wrong sibling's histogram and the tree silently changes. The device mirrors this in leaf_split, where `left_small` is the same `<=` comparison.
+On equal child row counts the fresh histogram slot goes to the LEFT child. The larger sibling derives by subtracting the smaller from the parent, so host and device must pick the same side or a subtraction reads the wrong sibling's histogram and the tree silently changes. The device makes the same `<=` comparison twice, in publish_small_child (which child's rows the partition kernel fills) and in leaf_children (which child holds the fresh slot), and those two must agree with each other as well.
 
 - enforced by: [`partition: an equal-count split gives the fresh slot to the left`](../tests/unit/test_partition.cpp)
 
