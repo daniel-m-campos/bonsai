@@ -70,3 +70,35 @@ Every arm of the device sweep read against the CPU row of the same suite, datase
 | catboost_gpu | catboost | 165 | +2.66e-04 | 5.89e-03 | 2.21e-03 | cpu_act s2 | moved (not gated) |
 
 *Source: [`quality-grinsztajn-gpu-2026-09.jsonl`](../../../benchmarks/results/quality-grinsztajn-gpu-2026-09.jsonl). The allowance and the pairing rule live in scripts/check_standings.py.*
+
+### Head to head: bonsai leafwise against LightGBM at 63 leaves
+
+LightGBM's CUDA learner caps a tree by its leaf count alone, which is why the device table above ranks every library but it. This regime meets it there: the campaign's 63 leaves under a depth cap of 62, the deepest a 63-leaf tree can reach, so the leaf count is the only cap on both sides. That is one parameter change on bonsai's leafwise grower (`max_depth=62` in place of 6), and LightGBM's own `max_depth=-1` fits the same trees as the cap. Everything else is the campaign: the same 55 tasks, three seeds, and knobs (decision 68), both learners on the GPU. Only the learners a leaf count alone can cap run here; a depthwise or symmetric tree at depth 62 would be a different experiment, so bonsai's other growers, XGBoost, and CatBoost are absent by design.
+
+![Grinsztajn mean rank, leaf-capped regime on the GPU](../assets/grinsztajn-rank-leaf-capped-gpu.svg)
+
+| library | mean rank | outright wins |
+|---|---|---|
+| bonsai | 1.42 | 32 |
+| lgbm | 1.58 | 23 |
+
+Per-suite mean rank:
+
+| library | cat_clf | cat_reg | num_clf | num_reg |
+|---|---|---|---|---|
+| bonsai | 1.29 | 1.62 | 1.40 | 1.35 |
+| lgbm | 1.71 | 1.38 | 1.60 | 1.65 |
+
+Task by task: the gap is bonsai's mean over seeds minus LightGBM's (r2 or AUC), and a task is won by the higher mean.
+
+| suite | tasks | bonsai wins | lightgbm wins | ties | mean gap | widest lead | widest deficit |
+|---|---|---|---|---|---|---|---|
+| cat_clf | 7 | 5 | 2 | 0 | +0.0023 | +0.0091 | -0.0004 |
+| cat_reg | 13 | 5 | 8 | 0 | -0.0015 | +0.0019 | -0.0109 |
+| num_clf | 15 | 9 | 6 | 0 | +0.0007 | +0.0052 | -0.0024 |
+| num_reg | 20 | 13 | 7 | 0 | +0.0014 | +0.0256 | -0.0130 |
+| all | 55 | 32 | 23 | 0 | +0.0006 | +0.0256 | -0.0130 |
+
+Reproduce: `python -m bonsai.bench.grinsztajn --device cuda --regime leaf-capped out.jsonl` on a CUDA host, then `--report` on the same file.
+
+*Source: [`quality-grinsztajn-leaf-capped-gpu-2026-09.jsonl`](../../../benchmarks/results/quality-grinsztajn-leaf-capped-gpu-2026-09.jsonl). As-run on one GPU host; the regime's knobs and arms are pinned by python/tests/bench/test_grinsztajn.py.*

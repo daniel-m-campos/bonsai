@@ -42,6 +42,7 @@ class Axis:
     GPU_SHAP: Final = "gpu-shap"
     GRINSZTAJN: Final = "quality-grinsztajn"
     GRINSZTAJN_GPU: Final = "quality-grinsztajn-gpu"
+    GRINSZTAJN_LEAF_CAPPED_GPU: Final = "quality-grinsztajn-leaf-capped-gpu"
     CODE: Final = "code"
 
 
@@ -206,10 +207,10 @@ def bar_chart(fname: str, title: str, rows: list[tuple[str, float, str]],
 # Quality: Grinsztajn standings ====================================================================
 
 
-def _standings(rows: list[dict]):
-    """Replicates bonsai.bench.grinsztajn.report(): mean value over seeds per
-    (suite, dataset, variant); best variant per library; average-rank ties;
-    a win is rank exactly 1.0."""
+def _library_best(rows: list[dict]) -> dict[tuple, float]:
+    """Each library's best variant per task: mean value over seeds per
+    (suite, dataset, variant), then the max over the library's variants,
+    keyed (suite, dataset, library)."""
     acc: dict[tuple, list[float]] = defaultdict(list)
     for r in rows:
         if r.get(K.STATUS) != "ok":
@@ -223,8 +224,15 @@ def _standings(rows: list[dict]):
         key = (suite, ds, _library(variant))
         mean = sum(vals) / len(vals)
         lib_best[key] = max(lib_best.get(key, float("-inf")), mean)
+    return lib_best
+
+
+def _standings(rows: list[dict]):
+    """Replicates bonsai.bench.grinsztajn.report(): mean value over seeds per
+    (suite, dataset, variant); best variant per library; average-rank ties;
+    a win is rank exactly 1.0."""
     by_ds: dict[tuple, list[tuple[str, float]]] = defaultdict(list)
-    for (suite, ds, lib), v in lib_best.items():
+    for (suite, ds, lib), v in _library_best(rows).items():
         by_ds[(suite, ds)].append((lib, v))
     ranks: dict[str, list[float]] = defaultdict(list)
     suite_ranks: dict[tuple, list[float]] = defaultdict(list)
@@ -284,10 +292,12 @@ def _unranked_note(rows: list[dict], where: str) -> str:
     return "\n\n".join(parts)
 
 
-def _standings_tables(rows: list[dict], chart: str, plane: str):
-    """(overall table, per-suite table, n tasks) for one plane's ranked
-    rows, with the plane's rank chart written beside it."""
-    table, suite_ranks, n = _standings(_ranked(rows))
+def _standings_tables(rows: list[dict], chart: str, plane: str,
+                      knobs: str = "campaign knobs", arms: str = "every library"):
+    """(overall table, per-suite table, n tasks) for the rows one plane
+    ranks, with the plane's rank chart written beside it; the caller has
+    already left out the arms the rule does not rank."""
+    table, suite_ranks, n = _standings(rows)
     overall = md_table(["library", "mean rank", "outright wins"],
                        [[lib, fmt(mean, 2), str(w)] for lib, mean, w in table])
     bar_chart(
@@ -295,7 +305,7 @@ def _standings_tables(rows: list[dict], chart: str, plane: str):
         f"Grinsztajn suite, {plane}: mean rank across {n} tasks (lower is better)",
         [(lib, mean, f"{w} outright wins") for lib, mean, w in table],
         x_max=4.0,
-        note=f"55 OpenML tasks, 3 seeds, campaign knobs, every library on the {plane}, "
+        note=f"55 OpenML tasks, 3 seeds, {knobs}, {arms} on the {plane}, "
              "best variant per library (decision 68)")
     suites = sorted({s for s, _ in suite_ranks})
     per_suite = md_table(
@@ -308,7 +318,7 @@ def _standings_tables(rows: list[dict], chart: str, plane: str):
 def grinsztajn_section() -> str:
     """The Grinsztajn standings section of the quality page."""
     campaign, per_suite, n = _standings_tables(
-        load_jsonl(standings_file(Axis.GRINSZTAJN)), "grinsztajn-rank.svg", "CPU")
+        _ranked(load_jsonl(standings_file(Axis.GRINSZTAJN))), "grinsztajn-rank.svg", "CPU")
 
     return f"""### External standings: the Grinsztajn suite
 
@@ -335,7 +345,7 @@ def grinsztajn_gpu_section() -> str:
     gpu = axis_rows(Axis.GRINSZTAJN_GPU)
     if not _ranks_libraries(gpu):
         return ""
-    campaign, per_suite, n = _standings_tables(gpu, "grinsztajn-rank-gpu.svg", "GPU")
+    campaign, per_suite, n = _standings_tables(_ranked(gpu), "grinsztajn-rank-gpu.svg", "GPU")
     unranked = _unranked_note(gpu, "in the drift table below")
     return f"""### Device standings: the same suite on the GPU
 
@@ -355,6 +365,61 @@ Reproduce: `python -m bonsai.bench.grinsztajn --device cuda out.jsonl` on a CUDA
 
 {provenance([standings_file(Axis.GRINSZTAJN_GPU)], "As-run on one GPU host; the arm placement is pinned by python/tests/bench/test_grinsztajn.py.")}
 """
+
+
+def grinsztajn_leaf_capped_section() -> str:
+    """bonsai leafwise against LightGBM where a leaf count is the only cap."""
+    rows = axis_rows(Axis.GRINSZTAJN_LEAF_CAPPED_GPU)
+    if not _ranks_libraries(rows):
+        return ""
+    standings, per_suite, n = _standings_tables(
+        rows, "grinsztajn-rank-leaf-capped-gpu.svg", "GPU",
+        knobs="leaf-capped knobs", arms="bonsai leafwise and LightGBM")
+    duel = _head_to_head_table(rows, "bonsai", "lgbm")
+    return f"""### Head to head: bonsai leafwise against LightGBM at 63 leaves
+
+LightGBM's CUDA learner caps a tree by its leaf count alone, which is why the device table above ranks every library but it. This regime meets it there: the campaign's 63 leaves under a depth cap of 62, the deepest a 63-leaf tree can reach, so the leaf count is the only cap on both sides. That is one parameter change on bonsai's leafwise grower (`max_depth=62` in place of 6), and LightGBM's own `max_depth=-1` fits the same trees as the cap. Everything else is the campaign: the same {n} tasks, three seeds, and knobs (decision 68), both learners on the GPU. Only the learners a leaf count alone can cap run here; a depthwise or symmetric tree at depth 62 would be a different experiment, so bonsai's other growers, XGBoost, and CatBoost are absent by design.
+
+![Grinsztajn mean rank, leaf-capped regime on the GPU](assets/grinsztajn-rank-leaf-capped-gpu.svg)
+
+{standings}
+
+Per-suite mean rank:
+
+{per_suite}
+
+Task by task: the gap is bonsai's mean over seeds minus LightGBM's (r2 or AUC), and a task is won by the higher mean.
+
+{duel}
+
+Reproduce: `python -m bonsai.bench.grinsztajn --device cuda --regime leaf-capped out.jsonl` on a CUDA host, then `--report` on the same file.
+
+{provenance([standings_file(Axis.GRINSZTAJN_LEAF_CAPPED_GPU)], "As-run on one GPU host; the regime's knobs and arms are pinned by python/tests/bench/test_grinsztajn.py.")}
+"""
+
+
+def _head_to_head_table(rows: list[dict], home: str, away: str) -> str:
+    """Per suite and over all tasks: the tasks two libraries both ran, who
+    won each, and the gap (home minus away) as its mean, widest lead, and
+    widest deficit; each library at its best variant per task."""
+    best = _library_best(rows)
+    gaps: dict[object, list[float]] = defaultdict(list)
+    for (suite, ds, lib), v in best.items():
+        if lib != home or (suite, ds, away) not in best:
+            continue
+        gaps[suite].append(v - best[(suite, ds, away)])
+        gaps["all"].append(v - best[(suite, ds, away)])
+    home_name = _LIB_NAMES.get(home, home)
+    away_name = _LIB_NAMES.get(away, away)
+    body = []
+    for suite in [*sorted(s for s in gaps if s != "all"), "all"]:
+        g = gaps[suite]
+        body.append([str(suite), str(len(g)),
+                     str(sum(x > 0 for x in g)), str(sum(x < 0 for x in g)),
+                     str(sum(x == 0 for x in g)),
+                     *(f"{round(x, 4) + 0.0:+.4f}" for x in (sum(g) / len(g), max(g), min(g)))])
+    return md_table(["suite", "tasks", f"{home_name} wins", f"{away_name} wins",
+                     "ties", "mean gap", "widest lead", "widest deficit"], body)
 
 
 def _ranks_libraries(rows: list[dict]) -> bool:
@@ -1034,7 +1099,8 @@ PAGES: list[tuple[str, str, str, list]] = [
       shap_section, ab_section]),
     ("quality-grinsztajn.md", "Grinsztajn standings",
      "The only citable standings: 55 third-party tasks.",
-     [grinsztajn_section, grinsztajn_gpu_section, grinsztajn_drift_section]),
+     [grinsztajn_section, grinsztajn_gpu_section, grinsztajn_drift_section,
+      grinsztajn_leaf_capped_section]),
     ("code-metrics.md", "The code division",
      "Self-measurement of the tree: lines, complexity, surface counts.",
      [code_metrics_section]),
@@ -1161,12 +1227,17 @@ def readme_standings_block() -> str:
     92): division summaries plus the quality table."""
     perf = _perf_summary()
 
-    cpu, n_tasks = _readme_quality_table(load_jsonl(standings_file(Axis.GRINSZTAJN)))
+    cpu, n_tasks = _readme_quality_table(_ranked(load_jsonl(standings_file(Axis.GRINSZTAJN))))
     gpu_rows = axis_rows(Axis.GRINSZTAJN_GPU)
     gpu = ("\n\nThe same suite with every library on its GPU build:\n\n"
-           + _readme_quality_table(gpu_rows)[0]
+           + _readme_quality_table(_ranked(gpu_rows))[0]
            + "\n\n" + _unranked_note(gpu_rows, f"in [the ledger]({_SITE}/method/results/quality-grinsztajn/)")
            if _ranks_libraries(gpu_rows) else "")
+    duel_rows = axis_rows(Axis.GRINSZTAJN_LEAF_CAPPED_GPU)
+    duel = ("\n\nbonsai leafwise against LightGBM head to head on the GPU, both at 63 leaves with no binding depth cap "
+            f"(the regime LightGBM's CUDA learner grows in, [the ledger]({_SITE}/method/results/quality-grinsztajn/) has the task-by-task table):\n\n"
+            + _readme_quality_table(duel_rows)[0]
+            if _ranks_libraries(duel_rows) else "")
 
     return f"""### Perf
 
@@ -1178,12 +1249,12 @@ The panels, and the closed campaigns behind them, are in [the ledger]({_SITE}/me
 
 On the [Grinsztajn et al. tabular benchmark](https://arxiv.org/abs/2207.08815) ({n_tasks} OpenML tasks selected by third parties, three seeds, matched knobs, best variant per library), every library on the CPU:
 
-{cpu}{gpu}"""
+{cpu}{gpu}{duel}"""
 
 
 def _readme_quality_table(rows: list[dict]) -> tuple[str, int]:
     """One plane's standings as the README table, the leader in bold."""
-    table, _, n_tasks = _standings(_ranked(rows))
+    table, _, n_tasks = _standings(rows)
     lines = ["| library | mean rank | outright wins |", "|---|--:|--:|"]
     for i, (lib, mean, wins) in enumerate(table):
         row = [_LIB_NAMES.get(lib, lib), f"{mean:.2f}", str(wins)]
