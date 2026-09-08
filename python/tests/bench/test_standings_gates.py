@@ -200,3 +200,103 @@ def test_check_decisions_still_holds_a_tag_newer_than_the_registry(monkeypatch,
     reg["gpu-tall"]["as_of_decision"] = 121
     assert check_standings.check_decisions({"gpu-tall": reg["gpu-tall"]}) == [
         "decision 120: unknown standings axis 'cpu-tall' (known: ['gpu-tall'])"]
+
+
+# Quality drift ====================================================================================
+
+def _quality_row(variant: str, dataset: str, seed: int, value: float,
+                 status: str = "ok") -> dict:
+    return {"suite": 297, "dataset": dataset, "variant": variant, "seed": seed,
+            "kind": "reg", "metric": "r2", "value": value, "status": status}
+
+
+def _drift_registry(monkeypatch, tmp_path, cpu: list[dict],
+                    gpu: list[dict]) -> dict:
+    """A registry whose quality axes hold ``cpu`` and ``gpu`` rows."""
+    results = tmp_path / "benchmarks" / "results"
+    results.mkdir(parents=True)
+    for name, rows in (("quality-grinsztajn-2026-09.jsonl", cpu),
+                       ("quality-grinsztajn-gpu-2026-09.jsonl", gpu)):
+        (results / name).write_text(
+            "".join(json.dumps(r) + "\n" for r in rows))
+    monkeypatch.setattr(check_standings, "RESULTS", results)
+    return {"quality-grinsztajn": {"file": "quality-grinsztajn-2026-09.jsonl"},
+            "quality-grinsztajn-gpu": {
+                "file": "quality-grinsztajn-gpu-2026-09.jsonl", "plane": "gpu"}}
+
+
+def _quality_rows(tmp_path, name: str) -> list[dict]:
+    return check_standings.quality_rows(
+        tmp_path / "benchmarks" / "results" / f"quality-grinsztajn{name}-2026-09.jsonl")
+
+
+CPU_ROWS = [_quality_row("bonsai_dw", "wine", 0, 0.500),
+            _quality_row("bonsai_dw", "wine", 1, 0.501),
+            _quality_row("bonsai_dw", "eye", 0, 0.600),
+            _quality_row("bonsai_dw", "eye", 1, 0.610),
+            _quality_row("bonsai_lw", "wine", 0, 0.700),
+            _quality_row("xgb", "wine", 0, 0.800)]
+
+
+def test_a_device_plane_inside_the_host_spread_holds(monkeypatch, tmp_path):
+    reg = _drift_registry(monkeypatch, tmp_path, CPU_ROWS, [
+        _quality_row("bonsai_cuda_depthwise", "wine", 0, 0.5004),
+        _quality_row("bonsai_cuda_depthwise", "wine", 1, 0.5008),
+        _quality_row("bonsai_cuda_depthwise", "eye", 0, 0.605),
+        _quality_row("bonsai_cuda_leafwise", "wine", 0, 0.700)])
+    assert check_standings.check_drift(reg) == []
+    drifts = {d.grower: d for d in check_standings.quality_drift(
+        _quality_rows(tmp_path, ""), _quality_rows(tmp_path, "-gpu"))}
+    dw = drifts["bonsai_cuda_depthwise"]
+    assert (dw.pairs, dw.worst_task, dw.held) == (3, "wine s0", True)
+    assert abs(dw.worst - 4e-4) < 1e-12 and abs(dw.worst_spread - 1e-3) < 1e-12
+    assert abs(dw.mean - (4e-4 - 2e-4 + 5e-3) / 3) < 1e-12
+    lw = drifts["bonsai_cuda_leafwise"]
+    assert (lw.worst, lw.worst_spread, lw.held) == (0.0, 0.0, True)
+    assert "bonsai_cuda_levelwise" not in drifts
+
+
+def test_the_worst_pair_is_the_one_nearest_its_allowance(monkeypatch, tmp_path):
+    reg = _drift_registry(monkeypatch, tmp_path, CPU_ROWS, [
+        _quality_row("bonsai_cuda_depthwise", "wine", 0, 0.5002),
+        _quality_row("bonsai_cuda_depthwise", "eye", 0, 0.608)])
+    assert check_standings.check_drift(reg) == []
+    dw, = check_standings.quality_drift(
+        _quality_rows(tmp_path, ""), _quality_rows(tmp_path, "-gpu"))
+    assert dw.worst_task == "wine s0"
+    assert abs(dw.worst - 2e-4) < 1e-12 and abs(dw.worst_spread - 1e-3) < 1e-12
+
+
+def test_a_device_plane_past_the_host_spread_fails_the_gate(monkeypatch, tmp_path):
+    reg = _drift_registry(monkeypatch, tmp_path, CPU_ROWS, [
+        _quality_row("bonsai_cuda_depthwise", "wine", 0, 0.500),
+        _quality_row("bonsai_cuda_depthwise", "wine", 1, 0.5022),
+        _quality_row("bonsai_cuda_depthwise", "eye", 0, 0.605),
+        _quality_row("bonsai_cuda_leafwise", "wine", 0, 0.7002)])
+    assert check_standings.check_drift(reg) == [
+        "quality-grinsztajn-gpu: bonsai_cuda_depthwise drifts 1.20e-03 from "
+        "bonsai_dw on wine s1, past that task's host seed spread 1.00e-03 by "
+        "more than 1e-04 (3 pairs); the device plane moved a quality "
+        "standing, so it is a bug or a decision",
+        "quality-grinsztajn-gpu: bonsai_cuda_leafwise drifts 2.00e-04 from "
+        "bonsai_lw on wine s0, past that task's host seed spread 0.00e+00 by "
+        "more than 1e-04 (1 pairs); the device plane moved a quality "
+        "standing, so it is a bug or a decision"]
+
+
+def test_an_unmeasured_device_axis_is_not_gated(monkeypatch, tmp_path):
+    reg = _drift_registry(monkeypatch, tmp_path, CPU_ROWS, [])
+    reg["quality-grinsztajn-gpu"]["file"] = None
+    assert check_standings.drift_pairs(reg) == []
+    assert check_standings.check_drift(reg) == []
+    reg["quality-grinsztajn-gpu"]["file"] = "quality-grinsztajn-gpu-2026-09.jsonl"
+    assert check_standings.drift_pairs(reg) == [
+        ("quality-grinsztajn-gpu", "quality-grinsztajn")]
+
+
+def test_unpaired_and_failed_rows_carry_no_gap(monkeypatch, tmp_path):
+    reg = _drift_registry(monkeypatch, tmp_path, CPU_ROWS, [
+        _quality_row("bonsai_cuda_depthwise", "wine", 2, 0.9),
+        _quality_row("bonsai_cuda_depthwise", "iris", 0, 0.9),
+        _quality_row("bonsai_cuda_leafwise", "wine", 0, 0.9, status="fail")])
+    assert check_standings.check_drift(reg) == []

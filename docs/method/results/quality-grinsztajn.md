@@ -29,3 +29,15 @@ XGBoost's campaign mapping sets `min_child_weight=20` (hessian-weighted, the kno
 Reproduce: `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite (hours; datasets fetch from OpenML), then `--report` on the same file to render the standings from the jsonl.
 
 *Source: [`quality-grinsztajn-2026-09.jsonl`](../../../benchmarks/results/quality-grinsztajn-2026-09.jsonl). As-run; evidence narrative in [benchmarks/grinsztajn-2026-07.md](../../../benchmarks/grinsztajn-2026-07.md), ruling in decision 68.*
+
+### Device drift: the same suite on the CUDA growers
+
+The same 55 tasks and three seeds, fitted by bonsai's three CUDA growers at the same campaign knobs, each row read against the CPU row of the same suite, dataset, seed, and strategy. The gap is the device metric minus the CPU metric (r2 or AUC), and its allowance is the task's own noise: the gate holds each gap inside the host's seed-to-seed spread of that task and strategy, plus 1e-04, and a release refuses to ship past it. The worst pair is the one nearest to, or past, its allowance, shown with the spread it is read against.
+
+| device grower | CPU partner | pairs | mean gap | worst gap | host spread | worst task | verdict |
+|---|---|---|---|---|---|---|---|
+| bonsai_cuda_depthwise | bonsai_dw | 165 | -2.94e-05 | 3.56e-06 | 1.77e-05 | SGEMM_GPU_kernel_performance s2 | held |
+| bonsai_cuda_leafwise | bonsai_lw | 165 | -4.08e-05 | 4.37e-06 | 1.17e-05 | SGEMM_GPU_kernel_performance s0 | held |
+| bonsai_cuda_levelwise | bonsai_obl | 165 | -1.24e-05 | 1.40e-04 | 1.33e-04 | Bike_Sharing_Demand s1 | held |
+
+*Source: [`quality-grinsztajn-gpu-2026-09.jsonl`](../../../benchmarks/results/quality-grinsztajn-gpu-2026-09.jsonl). Same host as the CPU rows above; the allowance and the pairing rule live in scripts/check_standings.py.*

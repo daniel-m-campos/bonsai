@@ -138,7 +138,8 @@ AB_AXES = {PLANE_GPU: "gpu-tall", PLANE_CPU: "cpu-tall"}
 # Every axis is the stem of its dated results file AND the name of the
 # branch the pod script runs to produce it.
 AXES = ("gpu-tall", "gpu-wide", "gpu-extreme", "cpu-tall", "cpu-wide",
-        "gpu-early-stop", "gpu-shap", "quality-grinsztajn")
+        "gpu-early-stop", "gpu-shap", "quality-grinsztajn",
+        "quality-grinsztajn-gpu")
 
 # Measured on this machine, not the pod: the code division reads the tree
 # rather than running it, so a rental would only rent a checkout. Named here

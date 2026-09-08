@@ -278,7 +278,9 @@ run_axis() {
         gpu-tall|gpu-wide|gpu-early-stop|gpu-shap)
             run_spec "$1" ;;
         quality-grinsztajn)
-            run_grinsztajn ;;
+            run_grinsztajn "$1" ;;
+        quality-grinsztajn-gpu)
+            run_grinsztajn "$1" --device cuda ;;
         *)
             fail_axis "$1" "no branch measures this axis; the driver asked for something this script cannot run"
             return 0 ;;
@@ -289,12 +291,15 @@ run_axis() {
 # a cell grid, so it takes its own module and an output path instead of
 # run_spec's --spec/--out pair. Same env as BENCH, spelled out rather than
 # suffixed onto it, because the array-suffix idiom that would reuse it reads
-# as a typo.
-run_grinsztajn() {
+# as a typo. The device axis is the same module with its device flag, into
+# its own file, so the two planes stay separately stamped.
+run_grinsztajn() {  # <axis> [module flags]
+    axis=$1
+    shift
     env PYTHONPATH="$BUILD" BONSAI_BENCH_DATA_CACHE="$DATA_CACHE" \
         BONSAI_BENCH_GIT_SHA="$GIT_SHA" \
-        /opt/venv/bin/python -m bonsai.bench.grinsztajn \
-        "/root/standings/quality-grinsztajn-$YM.jsonl"
+        /opt/venv/bin/python -m bonsai.bench.grinsztajn "$@" \
+        "/root/standings/$axis-$YM.jsonl"
 }
 
 run_spec() {

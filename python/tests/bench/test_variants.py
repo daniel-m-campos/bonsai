@@ -14,6 +14,10 @@ def test_variant_registry():
         "xgb_cuda", "lgbm_cpu", "lgbm_cuda", "catboost_cpu", "catboost_gpu")
     assert grinsztajn.VARIANTS == variants.GRINSZTAJN == (
         "bonsai_dw", "bonsai_lw", "bonsai_obl", "xgb", "lgbm", "catboost")
+    assert variants.GRINSZTAJN_CUDA == (
+        "bonsai_cuda_depthwise", "bonsai_cuda_leafwise", "bonsai_cuda_levelwise")
+    assert grinsztajn.DEVICE_VARIANTS == {"cpu": variants.GRINSZTAJN,
+                                          "cuda": variants.GRINSZTAJN_CUDA}
     for n in variants.SCALING:
         assert variants.resolve(n).name == n
     # Historical alias spellings resolve to the intended canonical arm.
@@ -47,3 +51,12 @@ def test_variant_registry():
                     "bonsai_ts_depthwise", "bonsai_ts_cuda_depthwise"):
         with pytest.raises(KeyError):
             variants.resolve(retired)
+
+
+def test_grinsztajn_cli_picks_the_arms_by_device():
+    args = grinsztajn.parse_args(["out.jsonl"])
+    assert (args.out, args.device, args.report) == ("out.jsonl", "cpu", False)
+    assert grinsztajn.parse_args(["--device", "cuda", "gpu.jsonl"]).device == "cuda"
+    assert grinsztajn.parse_args(["out.jsonl", "--report"]).report
+    with pytest.raises(SystemExit):
+        grinsztajn.parse_args(["--device", "metal", "out.jsonl"])
