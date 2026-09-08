@@ -1262,15 +1262,15 @@ inline __device__ bool is_finite_dev(double x)
     return (__double_as_longlong(x) & 0x7fffffffffffffffLL) < 0x7ff0000000000000LL;
 }
 
-struct ScreenNode
+struct NodeBounds
 {
     Interval real_g, real_h, miss_g, miss_h, node_score, l1, l2;
     Interval min_child_hess, min_gain;
     float    inv_g, inv_h;
-    bool     on;
+    bool     active;
 };
 
-__forceinline__ __device__ ScreenNode screen_node(NodeCut const    &nd,
+__forceinline__ __device__ NodeBounds node_bounds(NodeCut const    &nd,
                                                   NodeScreen const &ns,
                                                   longlong2 miss_q, GhQuant const &q,
                                                   ScreenConst const &c, bool exhaustive)
@@ -1295,7 +1295,7 @@ __forceinline__ __device__ ScreenNode screen_node(NodeCut const    &nd,
             .min_gain       = c.min_gain,
             .inv_g          = inv_g,
             .inv_h          = inv_h,
-            .on             = !exhaustive && finite && exact_inv};
+            .active         = !exhaustive && finite && exact_inv};
 }
 
 struct CutScreen
@@ -1310,33 +1310,33 @@ struct SplitBounds
 };
 
 inline __device__ SplitBounds split_bounds(Interval pg, Interval ph,
-                                           ScreenNode const &sn, int dl)
+                                           NodeBounds const &bounds, int dl)
 {
-    Interval const rg = sn.real_g - pg;
-    Interval const rh = sn.real_h - ph;
-    return {.gL = dl != 0 ? pg + sn.miss_g : pg,
-            .hL = dl != 0 ? ph + sn.miss_h : ph,
-            .gR = dl != 0 ? rg : rg + sn.miss_g,
-            .hR = dl != 0 ? rh : rh + sn.miss_h};
+    Interval const rg = bounds.real_g - pg;
+    Interval const rh = bounds.real_h - ph;
+    return {.gL = dl != 0 ? pg + bounds.miss_g : pg,
+            .hL = dl != 0 ? ph + bounds.miss_h : ph,
+            .gR = dl != 0 ? rg : rg + bounds.miss_g,
+            .hR = dl != 0 ? rh : rh + bounds.miss_h};
 }
 
 template <bool k_l1>
-inline __device__ CutScreen screen_cut(Interval pg, Interval ph, ScreenNode const &sn,
-                                       int dl, int mc)
+inline __device__ CutScreen screen_cut(Interval pg, Interval ph,
+                                       NodeBounds const &bounds, int dl, int mc)
 {
-    SplitBounds const b = split_bounds(pg, ph, sn, dl);
+    SplitBounds const b = split_bounds(pg, ph, bounds, dl);
     bool const        surely_valid =
-        b.hL.lo >= sn.min_child_hess.hi && b.hR.lo >= sn.min_child_hess.hi;
+        b.hL.lo >= bounds.min_child_hess.hi && b.hR.lo >= bounds.min_child_hess.hi;
     bool const surely_invalid =
-        b.hL.hi < sn.min_child_hess.lo || b.hR.hi < sn.min_child_hess.lo;
-    Interval const gain = (cut_score_bounds<k_l1>(b.gL, b.hL, sn.l1, sn.l2) +
-                           cut_score_bounds<k_l1>(b.gR, b.hR, sn.l1, sn.l2)) -
-                          sn.node_score;
+        b.hL.hi < bounds.min_child_hess.lo || b.hR.hi < bounds.min_child_hess.lo;
+    Interval const gain = (cut_score_bounds<k_l1>(b.gL, b.hL, bounds.l1, bounds.l2) +
+                           cut_score_bounds<k_l1>(b.gR, b.hR, bounds.l1, bounds.l2)) -
+                          bounds.node_score;
     bool const certified =
-        surely_valid && mc == 0 && gain.lo > 0.0f && gain.lo >= sn.min_gain.hi;
+        surely_valid && mc == 0 && gain.lo > 0.0f && gain.lo >= bounds.min_gain.hi;
     return {.upper     = gain.hi,
             .certified = certified ? gain.lo : 0.0f,
-            .drop      = surely_invalid || gain.hi <= 0.0f || gain.hi < sn.min_gain.lo};
+            .drop = surely_invalid || gain.hi <= 0.0f || gain.hi < bounds.min_gain.lo};
 }
 
 inline __device__ float warp_max_nonnegative(float v)
@@ -1451,7 +1451,7 @@ inline __device__ CutPrefix warp_cut_prefix(longlong2 cut, hist_int_t &carry_g,
 template <bool k_l1, bool k_derived, bool k_store>
 __forceinline__ __device__ FeatBest sweep_cuts(CutStrip const &s, uint32_t n_cut,
                                                int n_dirs, NodeCut const &nd,
-                                               ScreenNode const &sn, double2 inv,
+                                               NodeBounds const &bounds, double2 inv,
                                                double l1, double l2,
                                                double min_child_hess, double min_gain,
                                                uint32_t sel)
@@ -1470,16 +1470,16 @@ __forceinline__ __device__ FeatBest sweep_cuts(CutStrip const &s, uint32_t n_cut
         longlong2 const cut = next;
         next                = load_cut<k_derived, k_store>(s, b + 32, n_cut);
         CutPrefix const pre = warp_cut_prefix(cut, carry_g, carry_h);
-        Interval const  pg  = interval_of(pre.qg, sn.inv_g);
-        Interval const  ph  = interval_of(pre.qh, sn.inv_h);
+        Interval const  pg  = interval_of(pre.qg, bounds.inv_g);
+        Interval const  ph  = interval_of(pre.qh, bounds.inv_h);
         for (int d = 0; d < n_dirs; ++d)
         {
             int const       dl = 1 - d;
-            CutScreen const sc = screen_cut<k_l1>(pg, ph, sn, dl, nd.mc);
+            CutScreen const sc = screen_cut<k_l1>(pg, ph, bounds, dl, nd.mc);
             l_star =
                 fmaxf(l_star, warp_max_nonnegative(b < n_cut ? sc.certified : 0.0f));
             bool const keep =
-                b < n_cut && (!sn.on || (!sc.drop && !(sc.upper < l_star)));
+                b < n_cut && (!bounds.active || (!sc.drop && !(sc.upper < l_star)));
             uint32_t const mask = __ballot_sync(0xffffffffU, keep);
             if (mask == 0)
             {
@@ -1503,25 +1503,23 @@ inline __device__ bool node_sweeps(char const *allowed, size_t oidx, uint32_t nb
 }
 
 template <bool k_l1>
-__forceinline__ __device__ FeatBest sweep_strip(CutStrip const &s, uint32_t n_cut,
-                                                uint32_t stride, int n_dirs,
-                                                NodeCut const &nd, ScreenNode const &sn,
-                                                double2 inv, double l1, double l2,
-                                                double min_child_hess, double min_gain,
-                                                uint32_t sel)
+__forceinline__ __device__ FeatBest
+sweep_strip(CutStrip const &s, uint32_t n_cut, uint32_t stride, int n_dirs,
+            NodeCut const &nd, NodeBounds const &bounds, double2 inv, double l1,
+            double l2, double min_child_hess, double min_gain, uint32_t sel)
 {
     if (s.small == nullptr)
     {
-        return sweep_cuts<k_l1, false, false>(s, n_cut, n_dirs, nd, sn, inv, l1, l2,
+        return sweep_cuts<k_l1, false, false>(s, n_cut, n_dirs, nd, bounds, inv, l1, l2,
                                               min_child_hess, min_gain, sel);
     }
     if (s.store == nullptr)
     {
-        return sweep_cuts<k_l1, true, false>(s, n_cut, n_dirs, nd, sn, inv, l1, l2,
+        return sweep_cuts<k_l1, true, false>(s, n_cut, n_dirs, nd, bounds, inv, l1, l2,
                                              min_child_hess, min_gain, sel);
     }
     derive_strip_range(s, static_cast<uint32_t>(pair_off(n_cut)), stride);
-    return sweep_cuts<k_l1, true, true>(s, n_cut, n_dirs, nd, sn, inv, l1, l2,
+    return sweep_cuts<k_l1, true, true>(s, n_cut, n_dirs, nd, bounds, inv, l1, l2,
                                         min_child_hess, min_gain, sel);
 }
 
@@ -1541,9 +1539,9 @@ inline __device__ FindBlock find_block()
     return {(2 * blockIdx.y) + (blockIdx.x & 1U), blockIdx.x >> 1};
 }
 
-// perf: The finder chain from screen_node down is forced inline. With two
+// perf: The finder chain from node_bounds down is forced inline. With two
 // find_kernel instantiations the sweep has two callers, loses the
-// single-caller inline bonus and is outlined, its NodeCut and ScreenNode
+// single-caller inline bonus and is outlined, its NodeCut and NodeBounds
 // arguments crossing a 256-byte local frame with 91 STL per kernel on
 // sm_87; forced, each kernel is one 22k-line body with a 16 to 24-byte
 // frame and 6 to 9 STL, the shape of the single-instantiation finder.
@@ -1588,12 +1586,12 @@ find_node(hist_int_t *hists, hist_int_t const *parents, SiblingDerive derive,
                                .lo         = bound.x,
                                .hi         = bound.y,
                                .mc         = monotone[f]};
-    ScreenNode const sn     = screen_node(nd, ns, miss_q, *quant, screen, exhaustive);
+    NodeBounds const bounds = node_bounds(nd, ns, miss_q, *quant, screen, exhaustive);
     uint32_t const   n_cut  = nb - 2;
     int const        n_dirs = (miss_q.x == 0 && miss_q.y == 0) ? 1 : 2;
 
-    FeatBest const best = sweep_strip<k_l1>(strip, n_cut, stride, n_dirs, nd, sn, inv,
-                                            l1, l2, min_child_hess, min_gain, sel);
+    FeatBest const best = sweep_strip<k_l1>(strip, n_cut, stride, n_dirs, nd, bounds,
+                                            inv, l1, l2, min_child_hess, min_gain, sel);
     if (lane == 0 && best.valid != 0)
     {
         out[oidx] = best;
