@@ -104,8 +104,8 @@ inline __device__ uint32_t *plane_words(hist_int_t *sh, uint32_t j, uint32_t str
 // bins on one bank. The plane offsets are constants folded into the atomic's
 // immediate, which kept hist_tile_kernel<8> at 37 registers where runtime
 // plane bases read 94; hist_tile_kernel<16> holds 64 under its launch bound
-// with no spills. Same-pod RTX PRO 6000 train time at width 8: wide depthwise
-// 5.07 s to 4.85 s, tall 3.61 s to 3.32 s over 100 trees.
+// with no spills. Same-pod RTX PRO 6000 train time at width 8, 2026-09-06:
+// wide depthwise 5.07 s to 4.85 s, tall 3.61 s to 3.32 s over 100 trees.
 inline __device__ uint32_t plane_word(uint32_t b)
 {
     return ((b & ~k_plane_group_mask) << 2) | (b & k_plane_group_mask);
