@@ -168,7 +168,15 @@ ByteHistograms transform_keys(std::span<float const> v, uint32_t *keys)
 // run lengths: 0.247 s with a count pass per byte and a push_back
 // run-length loop, 0.133 s this way (0.478 s to 0.157 s on integer-valued
 // columns, where two of the four scatters skip).
-void sort_floats(std::span<float> v)
+struct CutScratch
+{
+    std::vector<uint32_t> keys;
+    std::vector<uint32_t> swap;
+    std::vector<float>    run_vals;
+    std::vector<size_t>   run_counts;
+};
+
+void sort_floats(std::span<float> v, CutScratch &scratch)
 {
     constexpr size_t k_radix_min = 2048;
     if (v.size() < k_radix_min)
@@ -176,14 +184,12 @@ void sort_floats(std::span<float> v)
         std::sort(v.begin(), v.end());
         return;
     }
-    size_t const                              n = v.size();
-    static thread_local std::vector<uint32_t> keys;
-    static thread_local std::vector<uint32_t> scratch;
-    keys.resize(n);
-    scratch.resize(n);
-    ByteHistograms hist = transform_keys(v, keys.data());
-    uint32_t      *src  = keys.data();
-    uint32_t      *dst  = scratch.data();
+    size_t const n = v.size();
+    scratch.keys.resize(n);
+    scratch.swap.resize(n);
+    ByteHistograms hist = transform_keys(v, scratch.keys.data());
+    uint32_t      *src  = scratch.keys.data();
+    uint32_t      *dst  = scratch.swap.data();
     for (unsigned pass = 0; pass < 4; ++pass)
     {
         auto &offsets = hist[pass];
@@ -210,19 +216,17 @@ struct RunLengths
     std::span<size_t const> counts;
 };
 
-RunLengths run_lengths(std::span<float const> sorted)
+RunLengths run_lengths(std::span<float const> sorted, CutScratch &scratch)
 {
-    static thread_local std::vector<float>  vals;
-    static thread_local std::vector<size_t> ends;
-    size_t const                            n = sorted.size();
+    size_t const n = sorted.size();
     if (n == 0)
     {
         return {};
     }
-    vals.resize(n);
-    ends.resize(n);
-    float  *run_val = vals.data();
-    size_t *run_end = ends.data();
+    scratch.run_vals.resize(n);
+    scratch.run_counts.resize(n);
+    float  *run_val = scratch.run_vals.data();
+    size_t *run_end = scratch.run_counts.data();
     float   prev    = sorted[0];
     size_t  m       = 0;
     run_val[0]      = prev;
@@ -243,8 +247,9 @@ RunLengths run_lengths(std::span<float const> sorted)
 
 std::vector<float> create_cuts(std::span<float> subsample, size_t cut_budget)
 {
-    sort_floats(subsample);
-    auto const [vals, counts] = run_lengths(subsample);
+    static thread_local CutScratch scratch;
+    sort_floats(subsample, scratch);
+    auto const [vals, counts] = run_lengths(subsample, scratch);
 
     std::vector<float> cuts;
     double const       mean_bin =

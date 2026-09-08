@@ -379,6 +379,42 @@ TEST_CASE("BinMapper: radix and std::sort paths agree under bin equivalence",
     CHECK(m_radix.transform(-0.0F) == m_radix.transform(0.0F));
 }
 
+TEST_CASE("BinMapper: from_sample sorts the sample in place on every radix shape",
+          "[bin_mapper][fit][radix]")
+{
+    // Each column is radix-sized and skips a different set of byte passes:
+    // small integers share their two low key bytes, a column inside [1, 2)
+    // shares its high byte, and a two-signed column shares none. The sort
+    // must equal std::sort's exactly, so no zeros: a signed-zero pair is
+    // the one place the two orders may differ.
+    std::mt19937       rng(0x5047);
+    std::vector<float> column(4096);
+    SECTION("small integers skip the low passes")
+    {
+        std::uniform_int_distribution<int> dist(1, 255);
+        std::ranges::generate(column, [&] { return static_cast<float>(dist(rng)); });
+    }
+    SECTION("a one-signed column skips the high pass")
+    {
+        std::uniform_real_distribution<float> dist(1.0F, 2.0F);
+        std::ranges::generate(column, [&] { return dist(rng); });
+    }
+    SECTION("a two-signed column skips no pass")
+    {
+        std::uniform_real_distribution<float> dist(-1000.0F, 1000.0F);
+        std::ranges::generate(column, [&] { return dist(rng); });
+    }
+    std::vector<float> expected = column;
+    std::ranges::sort(expected);
+
+    BinMapperConfig cfg{.n_samples = column.size()};
+    auto            mapper = BinMapper::from_sample(std::span(column), cfg);
+
+    CHECK(column == expected);
+    CHECK(std::ranges::is_sorted(mapper.cuts()));
+    CHECK(mapper.cuts().back() == f_inf);
+}
+
 TEST_CASE("BinMapper: transform routes values to half-open right-inclusive bins",
           "[bin_mapper][transform]")
 {
