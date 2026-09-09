@@ -183,29 +183,30 @@ __global__ void gh_absmax_kernel(float2 const *gh, uint32_t n, uint2 *absmax)
     }
 }
 
-inline __device__ float fixed_point_scale(uint32_t absmax_bits, uint32_t n_rows,
-                                          double *inv)
+constexpr int k_fixed_point_row_bits = 27;
+
+inline __device__ float fixed_point_scale(uint32_t absmax_bits, double *inv)
 {
-    double const m = static_cast<double>(__uint_as_float(absmax_bits)) * n_rows;
-    if (!(m > 0.0) || !isfinite(m))
+    float const m = __uint_as_float(absmax_bits);
+    if (!(m > 0.0F) || !isfinite(m))
     {
         *inv = 0.0;
         return 0.0F;
     }
-    int const e = 61 - ilogb(m) < 126 ? 61 - ilogb(m) : 126;
+    int const e = min(k_fixed_point_row_bits - 1 - ilogbf(m), 126);
     *inv        = ldexp(1.0, -e);
     return ldexpf(1.0F, e);
 }
 
-__global__ void gh_quant_kernel(uint2 const *absmax, uint32_t n_rows, GhQuant *out)
+__global__ void gh_quant_kernel(uint2 const *absmax, GhQuant *out)
 {
     if (threadIdx.x != 0 || blockIdx.x != 0)
     {
         return;
     }
     GhQuant q{};
-    q.scale.x = fixed_point_scale(absmax->x, n_rows, &q.inv.x);
-    q.scale.y = fixed_point_scale(absmax->y, n_rows, &q.inv.y);
+    q.scale.x = fixed_point_scale(absmax->x, &q.inv.x);
+    q.scale.y = fixed_point_scale(absmax->y, &q.inv.y);
     q.inv_f   = {static_cast<float>(q.inv.x), static_cast<float>(q.inv.y)};
     *out      = q;
 }
@@ -216,7 +217,7 @@ inline void launch_gh_quant(float2 const *gh, uint32_t n, uint2 *absmax, GhQuant
     gh_absmax_kernel<<<dim3(std::clamp<uint32_t>(n / 256, 1, 1024)), dim3(256)>>>(
         gh, n, absmax);
     check(cudaGetLastError(), "absmax launch");
-    gh_quant_kernel<<<dim3(1), dim3(1)>>>(absmax, n, out);
+    gh_quant_kernel<<<dim3(1), dim3(1)>>>(absmax, out);
     check(cudaGetLastError(), "quant launch");
 }
 
