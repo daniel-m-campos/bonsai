@@ -176,7 +176,9 @@ def test_parse_profiles_lands_the_kernel_decomposition_lines():
     stderr = ("cuda-round-decomp: root_sums=0.01s root_hist=0.30s adv_memset=0.02s "
               "adv_hist=1.10s fin_stamp=0.05s fin_map=0.03s\n"
               "cuda-level-decomp: hist_l1=0.20s rows_l1=16000 blocks_l1=512 "
-              "hist_l2=0.25s rows_l2=8000 blocks_l2=384\n"
+              "small_l1=0.00s small_rows_l1=0 "
+              "hist_l2=0.25s rows_l2=8000 blocks_l2=384 "
+              "small_l2=0.03s small_rows_l2=700\n"
               "cuda-part-decomp: kernel=0.70s\n"
               "grow-profile: find=8.43s populate=1.60s\n")
     prof = driver.parse_profiles(stderr)
@@ -185,6 +187,8 @@ def test_parse_profiles_lands_the_kernel_decomposition_lines():
     assert prof["cuda-level-decomp_hist_l2"] == 0.25
     assert prof["cuda-level-decomp_rows_l2"] == 8000
     assert prof["cuda-level-decomp_blocks_l1"] == 512
+    assert prof["cuda-level-decomp_small_l2"] == 0.03
+    assert prof["cuda-level-decomp_small_rows_l2"] == 700
     assert prof["cuda-part-decomp_kernel"] == 0.70
     assert prof["grow_populate"] == 1.60
     assert driver.error_message("boom\n" + stderr) == "boom"

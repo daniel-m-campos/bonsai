@@ -136,6 +136,7 @@ struct CudaDeviceContext
 
         KernelTimer memset_timer;
         KernelTimer hist_timer;
+        KernelTimer small_timer;
         KernelTimer part_timer;
         bool        fill_timed = false;
         uint32_t    fill_level = 0;

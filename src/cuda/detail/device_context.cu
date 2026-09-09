@@ -311,9 +311,9 @@ void CudaDeviceContext::LevelPipeline::prof_read(ProfileCounters &prof)
         return;
     }
     hist_timer.add_elapsed(prof.adv_hist_s);
-    hist_timer.add_elapsed(
-        prof.level_hist_s[std::min<size_t>(fill_level, ProfileCounters::k_level_slots) -
-                          1]);
+    size_t const slot = ProfileCounters::level_slot(fill_level);
+    hist_timer.add_elapsed(prof.level_hist_s[slot]);
+    small_timer.add_elapsed(prof.level_small_s[slot]);
     memset_timer.add_elapsed(prof.adv_memset_s);
 }
 
@@ -634,6 +634,11 @@ void CudaDeviceContext::note_quant()
 
 namespace
 {
+
+size_t row_total(std::span<uint32_t const> counts)
+{
+    return std::reduce(counts.begin(), counts.end(), size_t{0});
+}
 
 size_t active_fill_blocks(FillLaunch const &launched, std::span<uint32_t const> counts)
 {
@@ -1062,12 +1067,12 @@ void CudaDeviceContext::advance_level(Dataset const                             
         if (prof_counters.enabled)
         {
             prof_counters.level_launched(
-                lvl.depth + 1,
-                std::reduce(lvl.row_counts.host.begin(), lvl.row_counts.host.end(),
-                            size_t{0}),
-                active_fill_blocks(launched, lvl.row_counts.host));
+                lvl.depth + 1, row_total(lvl.row_counts.host),
+                active_fill_blocks(launched, lvl.row_counts.host),
+                row_total(lvl.small_counts.host));
         }
     }
+    lvl.small_timer.begin();
     data.dispatch_bins(
         [&](auto const *bins)
         {
@@ -1085,6 +1090,7 @@ void CudaDeviceContext::advance_level(Dataset const                             
                         grads.quant.data());
             }
         });
+    lvl.small_timer.end();
     check(cudaGetLastError(), "level hist launch");
     lvl.fill_done(lvl.depth + 1);
     lvl.cur_is_a = !lvl.cur_is_a;

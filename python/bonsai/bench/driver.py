@@ -48,8 +48,8 @@ _GATE_KEYS = {"mem_gate", "gpu_max_cols"}
 def parse_profiles(stderr: str) -> dict:
     """The exit-time profiler lines as one flat {bucket_key: value} dict.
 
-    Timer buckets carry seconds; the per-level fill counts (rows_lN, blocks_lN)
-    carry plain counts.
+    Timer buckets carry seconds; the per-level fill counts (rows_lN, blocks_lN,
+    small_rows_lN) carry plain counts.
     """
     prof = {}
     for line in stderr.splitlines():
