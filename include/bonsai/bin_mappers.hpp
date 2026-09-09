@@ -33,6 +33,7 @@ std::vector<uint32_t> bin_sample_rows(size_t n_rows, BinMapperConfig const &cfg)
 // where a fit still cuts it; throws ConfigError before any parallel region.
 std::vector<std::optional<BinMapper>> mappers_from_edges(BinEdges const &bin_edges,
                                                          size_t          n_features);
+std::vector<BinMapper> resolve_mappers(std::vector<std::optional<BinMapper>> &slots);
 
 class BinMappers
 {

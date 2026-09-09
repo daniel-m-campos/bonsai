@@ -111,17 +111,6 @@ void fit_empty_sample(std::vector<std::optional<BinMapper>> &slots,
     }
 }
 
-std::vector<BinMapper> unwrap(std::vector<std::optional<BinMapper>> &slots)
-{
-    std::vector<BinMapper> mappers;
-    mappers.reserve(slots.size());
-    for (auto &s : slots)
-    {
-        mappers.push_back(std::move(*s)); // NOLINT(bugprone-unchecked-optional-access)
-    }
-    return mappers;
-}
-
 void fit_columns(DeviceMatrix const &X, uint32_t const *rows, uint32_t m,
                  BinMapperConfig const                 &cfg,
                  std::vector<std::optional<BinMapper>> &slots)
@@ -173,7 +162,7 @@ BinMappers cuda_fit_mappers(DeviceMatrix const      &X,
         fit_columns(X, rows.empty() ? nullptr : row_ids.data(), m, cfg, slots);
     }
     lap(detail::IngestProfiler::instance().fit_s);
-    return BinMappers::from_mappers(unwrap(slots), std::move(feature_names));
+    return BinMappers::from_mappers(resolve_mappers(slots), std::move(feature_names));
 }
 
 } // namespace bonsai
