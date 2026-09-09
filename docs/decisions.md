@@ -1776,3 +1776,45 @@ Level 1 is unchanged in blocks and time, the largest-node identity the design pr
 **Rejected alternatives.** A larger `k_fill_chunk_rows` (fewer chunks for every node): it shrinks the largest node's chunk count with the rest, and that count is what fills the SMs at the top levels, where one or two nodes carry the level. One launch per node sized to its own rows: 128 launches at level 7 per tree, and the largest node's chunking would move with it; the per-block exit gets the per-node count from the same grid at no host cost. Routing more nodes to `hist_small_kernel` by raising its 512-row cutoff: the 2026-08-17 sweep measured every higher cutoff worse at every cell, and the node this change leaves expensive at level 7 averages over 30k rows (4.65M rows over at most 128 nodes), far above any cutoff that sweep considered. Counting active blocks on the device: the host has the level's row counts already (`row_counts.host`), and the count is profile-only.
 
 **Reopener.** The deep-level row loop, 10 ms per tree at level 7 on the extreme cell against 5.5 at level 1 for the same rows, which needs a counter that separates the row loop from the zero-and-merge before it is designed against; and the wide cell's deep levels, where the small-node kernel's rows are not counted and the level timer spans both kernels: a `small_rows_lN` counter and a timer split between the two launches come first, before any lever is designed for that cell.
+
+## 136. The wide cell's deep-level fill is the small-node kernel; the extreme cell's is the tiled row loop (adopted)
+
+**Decision.** The level decomposition splits its fill timer: `small_lN` is the device time of the `hist_small_kernel` launch and `small_rows_lN` the row sum of the nodes under the 512-row cutoff, so `hist_lN - small_lN` is the tiled kernels' share and `rows_lN + small_rows_lN` the level's rows. Read once on the three ledger cells, the split attributes the two deep-level costs decision 135 left open to different kernels, so they are two levers with two designs. On the wide cell (131072 x 16384) the small-node kernel carries 0.84 s of the 2.00 s `adv_hist`, and 5.1 of the 7.6 ms per tree at level 7, for under 10k rows per tree; on the extreme (16M x 1024) and tall (16M x 128) cells its share is 0.00 s at every level, so the deep-level residual there sits in the tiled kernel's row loop. The wide small-node path is the next fill lever, priced at 0.84 s of small-kernel time plus the 0.50 s wide `adv_memset` it shares a slot with, out of a 6.29 s fit; the extreme row loop follows, once a counter separates it from the zero-and-merge.
+
+**Why.** The wide cell's level 7 read 7.6 ms per tree with 27k counted rows in about 16 nodes; the counted merge cells price at under 1 ms, and the rest of the level's rows sat in nodes the counters did not see, in a launch the timer spanned but did not separate. Each `hist_small_kernel` block owns one (16-feature tile, node) pair and adds every visit straight into the global slot with two int64 atomics, one per gradient component, with no shared stage and no merge; whether that path or the tiled kernel's merge carried the level could not be read from a timer over both.
+
+**Measurement.** One RTX PRO 6000 Blackwell Server Edition (US-NC-1), head 8f60a76, one arm (the counters change no model byte; `model_hash.py --grower cuda_depthwise` on the pod build read e1a5391a7beea349), min over two reps, 100 trees. Fit totals 13.62 s extreme, 2.99 s tall, 6.29 s wide. Round decomposition (seconds over the fit): extreme root_sums 1.44, root_hist 1.36, adv_memset 0.03, adv_hist 7.16; tall 0.26, 0.19, 0.01, 0.92; wide 0.20, 0.20, 0.50, 2.00.
+
+Wide, per level, rows and blocks per tree, seconds over 100 trees, tiled = hist - small:
+
+| level | tiled rows/tree | blocks/tree | small rows/tree | hist s | small s | tiled ms/tree | small ms/tree |
+|---|---|---|---|---|---|---|---|
+| 1 | 32239 | 1454 | 0 | 0.08 | 0.00 | 0.8 | 0.0 |
+| 2 | 35721 | 2427 | 7 | 0.10 | 0.00 | 1.0 | 0.0 |
+| 3 | 35696 | 3953 | 75 | 0.13 | 0.01 | 1.2 | 0.1 |
+| 4 | 34262 | 6820 | 268 | 0.18 | 0.02 | 1.6 | 0.2 |
+| 5 | 33772 | 10670 | 1001 | 0.29 | 0.08 | 2.1 | 0.8 |
+| 6 | 31321 | 14715 | 2624 | 0.46 | 0.22 | 2.4 | 2.2 |
+| 7 | 27026 | 16507 | 5894 | 0.76 | 0.51 | 2.5 | 5.1 |
+
+The small kernel's cost per row is flat where it is measurable, 0.80, 0.84 and 0.87 us at levels 5, 6 and 7, against 0.025 us per tiled row at level 1 and 0.09 at level 7 (merge included). At level 7 the 5894 small rows per tree are 18% of the level's filled rows and 67% of its time. Counting the atomics the kernel issues, 5894 rows x 16384 features x 2 components is 193M global int64 atomic adds per tree in 5.1 ms, 38 G per second; what bounds that rate (atomic unit throughput, or the DRAM sectors a random 8-byte read-modify-write touches across a slot 16384 features wide) is not measured here.
+
+Extreme, the same split:
+
+| level | tiled rows/tree | blocks/tree | small rows/tree | hist s | small s | tiled ms/tree |
+|---|---|---|---|---|---|---|
+| 1 | 4651350 | 3973 | 0 | 0.55 | 0.00 | 5.5 |
+| 2 | 4215091 | 5412 | 0 | 0.60 | 0.00 | 6.0 |
+| 3 | 4450903 | 6891 | 0 | 0.76 | 0.00 | 7.6 |
+| 4 | 4683568 | 8198 | 0 | 0.99 | 0.00 | 9.9 |
+| 5 | 4739758 | 9362 | 2 | 1.22 | 0.00 | 12.2 |
+| 6 | 4650977 | 10185 | 48 | 1.43 | 0.00 | 14.3 |
+| 7 | 4649717 | 11596 | 395 | 1.61 | 0.00 | 16.1 |
+
+Tall reads the same shape: small rows 0 through level 5, 57 and 412 per tree at levels 6 and 7, small seconds 0.00 at every level, hist 0.07 s at level 1 rising to 0.21 at level 7 for flat rows (4.3M to 4.8M per tree). On both cells the small-node kernel never reaches a hundredth of a second, so the rise from 5.5 to 16.1 ms per tree at equal rows is inside the tiled kernel, and decision 135 found the merge accounts for a third of it.
+
+The wide `adv_memset` is the second bucket the read exposes: 0.50 s on wide against 0.03 s on extreme and 0.01 s on tall. `zero_slots_kernel` zeroes the two child slots of every split node at every level, each slot the full feature width times the bin stride, so its bytes per level scale with the feature count (16384 against 1024 and 128) and not with the rows; on wide that is 5 ms per tree, more than any single level's fill below level 7.
+
+**Rejected alternatives.** Designing the wide lever against the level timer, on the assumption that the tiled merge carried level 7: the split shows the tiled share (row loop and merge) at 2.5 ms per tree and the small kernel at twice that. A same-pod A/B for this commit: the counters record only under the profile flag and change no model byte, so there is no arm to compare against and the read is one arm's attribution. Pricing the small kernel from the round decomposition alone: `adv_hist` at 2.00 s does not say which of two launches per level carries it.
+
+**Reopener.** The wide small-node path: a node under 512 rows is filled into a slot 16384 features wide by global atomics, one block per tile with no shared stage, and 0.84 s of small-kernel time plus a share of the 0.50 s memset is the ceiling on the saving (the small-kernel time alone is 13% of the 6.29 s fit), less whatever the design costs. The design is chosen by a probe that separates atomic throughput from the sector footprint, on a pod, not in the tree. The extreme tiled row loop: 16.1 ms per tree at level 7 against 5.5 at level 1 for the same rows, of which the merge is a third; a counter that splits the row loop from the zero-and-merge comes before any design, as decision 135's did.
