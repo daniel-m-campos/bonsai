@@ -12,11 +12,14 @@ namespace bonsai
 namespace cuda_detail
 {
 
-// perf: Nodes with fewer rows than this take hist_small_kernel, which
-// accumulates straight into the node's global slot: below roughly this size
-// the per-(node, feature) shared-memory zero and merge dominates the
-// histogram work. The 2026-08-17 sweep measured every cutoff above 512
-// worse at every cell.
+// perf: Nodes with fewer rows than this take hist_small_kernel, one block
+// per (tile, node) that owns the node's slot: on the tiled plane it stores
+// the slot whole from shared memory, on the per-feature plane it adds
+// straight into global memory. Below roughly this size the tiled kernel's
+// per-(node, feature) zero and merge dominates the histogram work; the
+// 2026-08-17 sweep measured every cutoff above 512 worse at every cell. The
+// whole-slot store measured 0.39 us per small row against 0.87 us for the
+// global add at 131072 x 16384 on an RTX PRO 6000.
 inline constexpr size_t k_min_gpu_rows = 512;
 
 using hist_int_t = long long;
