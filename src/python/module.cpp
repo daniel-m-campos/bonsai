@@ -253,6 +253,10 @@ using ResidentMatrix = std::shared_ptr<bonsai::DeviceMatrix const>;
 
 ResidentMatrix stage(MatrixArg const &X, bonsai::Config const &cfg, bool on_device)
 {
+    if (on_device)
+    {
+        bonsai::cuda_select_device(cfg.parallel.device_id);
+    }
     if (X.on_device())
     {
         return std::make_shared<bonsai::DeviceMatrix const>(X.dev);
@@ -261,7 +265,6 @@ ResidentMatrix stage(MatrixArg const &X, bonsai::Config const &cfg, bool on_devi
     {
         return nullptr;
     }
-    bonsai::cuda_select_device(cfg.parallel.device_id);
     return bonsai::cuda_upload(X.view(), static_cast<size_t>(cfg.bin_mapper.max_bin));
 }
 
@@ -286,30 +289,81 @@ make_labeled(MatrixArg const &X, ResidentMatrix const &resident, bonsai::floats_
     bonsai::cli::FeatureBuffer buf;
     buf.n_rows     = X.n_rows;
     buf.n_features = X.n_features;
-
+    auto plane     = resident    ? bonsai::cuda_ingest_device(*resident, mappers)
+                     : on_device ? bonsai::cuda_ingest(X.view(), mappers)
+                                 : nullptr;
     if (X.on_device())
     {
         return bonsai::cli::LabeledData{
-            .dataset = bonsai::Dataset::bin(
-                X.n_rows, X.n_features, y, mappers, cfg.data,
-                bonsai::cuda_ingest_device(X.dev, mappers), weights),
+            .dataset  = bonsai::Dataset::bin(X.n_rows, X.n_features, y, mappers,
+                                             cfg.data, std::move(plane), weights),
             .features = std::move(buf),
             .labels   = std::vector<float>(y.begin(), y.end())};
     }
     buf.borrowed = std::span{X.host->data(), X.n_rows * X.n_features};
-
-    if (on_device)
-    {
-        bonsai::cuda_select_device(cfg.parallel.device_id);
-    }
-    auto plane = resident    ? bonsai::cuda_ingest_device(*resident, mappers)
-                 : on_device ? bonsai::cuda_ingest(X.view(), mappers)
-                             : nullptr;
     return bonsai::cli::LabeledData{
         .dataset  = bonsai::Dataset::bin(X.view(), y, mappers, cfg.data,
                                          std::move(plane), weights),
         .features = std::move(buf),
         .labels   = std::vector<float>(y.begin(), y.end())};
+}
+
+bool dataset_runs_on_device(std::optional<std::string> const &device,
+                            MatrixArg const &X, std::optional<uint32_t> ref_device)
+{
+    std::string const hint =
+        device.value_or(X.on_device() || ref_device.has_value() ? "cuda" : "cpu");
+    bool const on_device = hint == "cuda";
+    if (!on_device && hint != "cpu")
+    {
+        throw std::invalid_argument(R"(Dataset: device must be "cpu" or "cuda")");
+    }
+    if (on_device && !bonsai::cuda_available())
+    {
+        throw std::invalid_argument(
+            "Dataset(device=\"cuda\") needs a CUDA build and a visible device; "
+            "cuda_available() is False");
+    }
+    if (X.on_device() && !on_device)
+    {
+        throw std::invalid_argument(
+            "Dataset: X is device-resident (DLPack), so device=\"cpu\" would "
+            "copy it back to the host. Drop the device argument to bin it "
+            "where it already lives, or pass a host array.");
+    }
+    return on_device;
+}
+
+bonsai::BinEdges
+edges_from_python(std::optional<std::map<size_t, array_1d>> const &bin_edges)
+{
+    bonsai::BinEdges edges;
+    if (!bin_edges)
+    {
+        return edges;
+    }
+    edges.reserve(bin_edges->size());
+    for (auto const &[col, arr] : *bin_edges)
+    {
+        edges.emplace_back(col,
+                           std::vector<float>(arr.data(), arr.data() + arr.shape(0)));
+    }
+    return edges;
+}
+
+bonsai::cli::LoadedTrainValidation
+ingest_training(MatrixArg const &X, bonsai::floats_view y, bonsai::floats_view weights,
+                bonsai::Config const &cfg, bool on_device,
+                std::optional<bonsai::BinMappers> preset,
+                std::vector<std::string> names, bonsai::BinEdges const &edges = {})
+{
+    auto const                         resident = stage(X, cfg, on_device);
+    bonsai::cli::LoadedTrainValidation loaded;
+    loaded.mappers = preset ? std::move(*preset)
+                            : fit_mappers(X, resident, std::move(names), cfg, edges);
+    loaded.train =
+        make_labeled(X, resident, y, loaded.mappers, cfg, on_device, weights);
+    return loaded;
 }
 
 bonsai::cli::LabeledData make_validation_labeled(array_2d const &X, array_1d const &y)
@@ -515,26 +569,7 @@ class Dataset
             device_id.value_or(ref_device.value_or(bonsai::ParallelConfig{}.device_id));
         auto const [xarg, yarg, warg] =
             resolve_inputs(X, y, weight, dev_id, "weight", "Dataset: ");
-        std::string const hint = device.value_or(
-            xarg.on_device() || ref_device.has_value() ? "cuda" : "cpu");
-        bool const on_device = hint == "cuda";
-        if (!on_device && hint != "cpu")
-        {
-            throw std::invalid_argument(R"(Dataset: device must be "cpu" or "cuda")");
-        }
-        if (on_device && !bonsai::cuda_available())
-        {
-            throw std::invalid_argument(
-                "Dataset(device=\"cuda\") needs a CUDA build and a visible device; "
-                "cuda_available() is False");
-        }
-        if (xarg.on_device() && !on_device)
-        {
-            throw std::invalid_argument(
-                "Dataset: X is device-resident (DLPack), so device=\"cpu\" would "
-                "copy it back to the host. Drop the device argument to bin it "
-                "where it already lives, or pass a host array.");
-        }
+        bool const on_device = dataset_runs_on_device(device, xarg, ref_device);
         bonsai::BinMapperConfig const base =
             reference != nullptr ? reference->bin_cfg_ : bonsai::BinMapperConfig{};
         bonsai::Config cfg;
@@ -552,28 +587,15 @@ class Dataset
 
         std::vector<std::string> names =
             resolve_feature_names(xarg.n_features, feature_names);
-        bonsai::BinEdges edges;
-        if (bin_edges)
-        {
-            edges.reserve(bin_edges->size());
-            for (auto const &[col, arr] : *bin_edges)
-            {
-                edges.emplace_back(
-                    col, std::vector<float>(arr.data(), arr.data() + arr.shape(0)));
-            }
-        }
         bonsai::floats_view const w = warg ? warg->view() : bonsai::floats_view{};
         nb::gil_scoped_release    release;
         bonsai::parallel::set_n_threads(cfg.parallel.n_threads);
-        bin_cfg_      = cfg.bin_mapper;
-        auto resident = stage(xarg, cfg, on_device);
-        loaded_->mappers =
-            reference != nullptr
-                ? reference->loaded_->mappers
-                : fit_mappers(xarg, resident, std::move(names), cfg, edges);
-        loaded_->train = make_labeled(xarg, resident, yarg.view(), loaded_->mappers,
-                                      cfg, on_device, w);
-        resident.reset();
+        bin_cfg_ = cfg.bin_mapper;
+        *loaded_ = ingest_training(xarg, yarg.view(), w, cfg, on_device,
+                                   reference != nullptr
+                                       ? std::optional{reference->loaded_->mappers}
+                                       : std::nullopt,
+                                   std::move(names), edges_from_python(bin_edges));
         if (loaded_->train.dataset.ingest_plane())
         {
             device_id_ = dev_id;
@@ -1617,20 +1639,17 @@ Model train(nb::object const &params, nb::handle X, nb::handle y,
 
     nb::gil_scoped_release release;
 
-    bonsai::cli::LoadedTrainValidation loaded;
-    bool const on_device = bonsai::grower_runs_on_device(cfg.dispatch.grower_name);
-    auto       resident  = stage(xarg, cfg, on_device);
-    loaded.mappers       = init ? std::move(init->mappers)
-                                : fit_mappers(xarg, resident, std::move(names), cfg);
     if (init)
     {
-        bonsai::require_n_features(xarg.n_features, loaded.mappers.size(),
+        bonsai::require_n_features(xarg.n_features, init->mappers.size(),
                                    "the matrix passed to fit(init_model=...)");
     }
+    bool const on_device = bonsai::grower_runs_on_device(cfg.dispatch.grower_name);
     bonsai::floats_view const wview = warg ? warg->view() : bonsai::floats_view{};
-    loaded.train = make_labeled(xarg, resident, yarg.view(), loaded.mappers, cfg,
-                                on_device, wview);
-    resident.reset();
+    auto                      loaded =
+        ingest_training(xarg, yarg.view(), wview, cfg, on_device,
+                        init ? std::optional{std::move(init->mappers)} : std::nullopt,
+                        std::move(names));
     std::optional<bonsai::cli::LabeledData> owned;
     auto const *const                       validation =
         resolve_eval_set(eval_set, cfg, loaded.mappers, init.has_value(), owned);

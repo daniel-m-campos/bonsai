@@ -172,6 +172,17 @@ std::vector<std::optional<BinMapper>> mappers_from_edges(BinEdges const &bin_edg
     return slots;
 }
 
+std::vector<BinMapper> resolve_mappers(std::vector<std::optional<BinMapper>> &slots)
+{
+    std::vector<BinMapper> mappers;
+    mappers.reserve(slots.size());
+    for (auto &s : slots)
+    {
+        mappers.push_back(std::move(*s)); // NOLINT(bugprone-unchecked-optional-access)
+    }
+    return mappers;
+}
+
 BinMappers BinMappers::fit(detail::ColumnBatch const &batch, BinMapperConfig const &cfg,
                            BinEdges const &bin_edges)
 {
@@ -194,12 +205,7 @@ BinMappers BinMappers::fit(detail::ColumnBatch const &batch, BinMapperConfig con
     lap(detail::IngestProfiler::instance().fit_s);
 
     BinMappers out;
-    out.mappers_.reserve(slots.size());
-    for (auto &s : slots)
-    {
-        out.mappers_.push_back(
-            std::move(*s)); // NOLINT(bugprone-unchecked-optional-access)
-    }
+    out.mappers_       = resolve_mappers(slots);
     out.feature_names_ = batch.feature_names;
     return out;
 }
@@ -232,13 +238,7 @@ BinMappers BinMappers::fit(features_view X, std::vector<std::string> feature_nam
                              });
     lap(detail::IngestProfiler::instance().fit_s);
 
-    std::vector<BinMapper> mappers;
-    mappers.reserve(f);
-    for (auto &s : slots)
-    {
-        mappers.push_back(std::move(*s)); // NOLINT(bugprone-unchecked-optional-access)
-    }
-    return from_mappers(std::move(mappers), std::move(feature_names));
+    return from_mappers(resolve_mappers(slots), std::move(feature_names));
 }
 
 BinMapper const &BinMappers::operator[](size_t fid) const
