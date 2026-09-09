@@ -309,10 +309,10 @@ struct CudaDeviceContext
     void       note_quant();
     void       note_once(Once &noted, std::string_view line);
     bool       unit_hessian() const;
-    size_t     launch_hist(uint32_t ds_rows, uint32_t ds_feats, uint32_t n_nodes,
+    FillLaunch launch_hist(uint32_t ds_rows, uint32_t ds_feats, uint32_t n_nodes,
                            uint32_t max_rows, float2 const *gh, uint32_t const *rows,
-                           uint32_t const *offsets, uint32_t const *counts, hist_int_t *out,
-                           uint32_t const *slots);
+                           uint32_t const *offsets, uint32_t const *counts,
+                           hist_int_t *out, uint32_t const *slots);
     uint32_t   stage_root_rows(SplitInput const &root, bool identity);
     void       begin_tree(Dataset const &ds, floats_view grad, floats_view hess);
     void       begin_root(Dataset const &ds, floats_view grad, floats_view hess,

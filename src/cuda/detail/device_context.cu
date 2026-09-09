@@ -632,11 +632,27 @@ void CudaDeviceContext::note_quant()
                  std::ilogb(q.scale.x), std::ilogb(q.scale.y));
 }
 
-size_t CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
-                                      uint32_t n_nodes, uint32_t max_rows,
-                                      float2 const *gh, uint32_t const *rows,
-                                      uint32_t const *offsets, uint32_t const *counts,
-                                      hist_int_t *out, uint32_t const *slots)
+namespace
+{
+
+size_t active_fill_blocks(FillLaunch const &launched, std::span<uint32_t const> counts)
+{
+    size_t active = 0;
+    for (uint32_t const count : counts)
+    {
+        active += node_chunk_count(count, launched.chunk_rows, launched.n_chunks);
+    }
+    return active * launched.grid_x;
+}
+
+} // namespace
+
+FillLaunch CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
+                                          uint32_t n_nodes, uint32_t max_rows,
+                                          float2 const *gh, uint32_t const *rows,
+                                          uint32_t const *offsets,
+                                          uint32_t const *counts, hist_int_t *out,
+                                          uint32_t const *slots)
 {
     size_t const tiled_shared = static_cast<size_t>(k_bin_tile_width) *
                                 tile_stride(lvl.stride) * sizeof(hist_int_t);
@@ -644,15 +660,17 @@ size_t CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
     bool const   tiled          = tiled_shared <= shared_limit;
     note_plane(tiled, tiled ? tiled_shared : feature_shared);
     uint32_t const grid_x  = tiled ? tile_count(ds_feats) : lvl.n_selected;
-    uint32_t const by_rows = (max_rows + 32767) / 32768;
+    uint32_t const by_rows = (max_rows + k_fill_chunk_rows - 1) / k_fill_chunk_rows;
     uint32_t const blocks  = grid_x * n_nodes;
     uint32_t const fill =
         sm_count > 0
             ? ((static_cast<uint32_t>(sm_count) * k_fill_blocks_per_sm) + blocks - 1) /
                   blocks
             : 1;
-    uint32_t const n_chunks = std::clamp<uint32_t>(std::max(by_rows, fill), 1, 64);
-    size_t const   launched = static_cast<size_t>(blocks) * n_chunks;
+    uint32_t const   n_chunks = std::clamp<uint32_t>(std::max(by_rows, fill), 1, 64);
+    FillLaunch const launched{.grid_x     = grid_x,
+                              .n_chunks   = n_chunks,
+                              .chunk_rows = std::max<uint32_t>(max_rows / n_chunks, 1)};
     if (tiled)
     {
         dim3 const grid(grid_x, n_nodes, n_chunks);
@@ -662,7 +680,7 @@ size_t CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
                 <<<grid, dim3(k_tile_fill_threads), tiled_shared>>>(
                     bins, gh, rows, offsets, counts, lvl.sel_slot.device(),
                     data.n_bins_ptr(), ds_rows, ds_feats, lvl.n_selected, out,
-                    lvl.stride, slots, grads.quant.data());
+                    lvl.stride, slots, grads.quant.data(), launched.chunk_rows);
         };
         data.dispatch_bins(
             [&](auto const *bins)
@@ -685,7 +703,7 @@ size_t CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
             hist_kernel<<<grid, dim3(256), feature_shared>>>(
                 bins, gh, rows, offsets, counts, lvl.features.device(),
                 data.n_bins_ptr(), ds_rows, ds_feats, lvl.n_selected, out, lvl.stride,
-                slots, grads.quant.data());
+                slots, grads.quant.data(), launched.chunk_rows);
         });
     return launched;
 }
@@ -1034,17 +1052,21 @@ void CudaDeviceContext::advance_level(Dataset const                             
     lvl.hist_timer.begin();
     if (!lvl.row_offsets.empty())
     {
-        size_t const blocks = launch_hist(
+        FillLaunch const launched = launch_hist(
             static_cast<uint32_t>(ds.plane_n_rows()),
             static_cast<uint32_t>(ds.n_features()),
             static_cast<uint32_t>(lvl.row_offsets.size()),
             static_cast<uint32_t>(max_rows), lvl.other_gh().data(),
             lvl.other_rows().data(), lvl.row_offsets.device(), lvl.row_counts.device(),
             lvl.other().data(), lvl.slots.device());
-        prof_counters.level_launched(lvl.depth + 1,
-                                     std::reduce(lvl.row_counts.host.begin(),
-                                                 lvl.row_counts.host.end(), size_t{0}),
-                                     blocks);
+        if (prof_counters.enabled)
+        {
+            prof_counters.level_launched(
+                lvl.depth + 1,
+                std::reduce(lvl.row_counts.host.begin(), lvl.row_counts.host.end(),
+                            size_t{0}),
+                active_fill_blocks(launched, lvl.row_counts.host));
+        }
     }
     data.dispatch_bins(
         [&](auto const *bins)

@@ -28,7 +28,7 @@ from bonsai.bench.variants import Device, Lib, resolve
 # gates are policy (a spec can disable them when OOM itself is the datum).
 GPU_MAX_COLS = 16_384
 
-PROFILE_RE = re.compile(r"(\w+)=([\d.]+)s")
+PROFILE_RE = re.compile(r"(\w+)=([\d.]+)s?(?![\w.])")
 
 PROFILE_PREFIXES = ("cuda-profile:", "grow-profile:", "ingest-profile:",
                     "fit-profile:", "cuda-upload-decomp:", "cuda-round-decomp:",
@@ -46,7 +46,11 @@ _GATE_KEYS = {"mem_gate", "gpu_max_cols"}
 # Public Functions =================================================================================
 
 def parse_profiles(stderr: str) -> dict:
-    """The exit-time profiler lines as one flat {bucket_key: seconds} dict."""
+    """The exit-time profiler lines as one flat {bucket_key: value} dict.
+
+    Timer buckets carry seconds; the per-level fill counts (rows_lN, blocks_lN)
+    carry plain counts.
+    """
     prof = {}
     for line in stderr.splitlines():
         if line.startswith(PROFILE_PREFIXES):
