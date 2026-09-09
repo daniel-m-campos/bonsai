@@ -30,11 +30,15 @@ GPU_MAX_COLS = 16_384
 
 PROFILE_RE = re.compile(r"(\w+)=([\d.]+)s")
 
+PROFILE_PREFIXES = ("cuda-profile:", "grow-profile:", "ingest-profile:",
+                    "fit-profile:", "cuda-upload-decomp:", "cuda-round-decomp:",
+                    "cuda-level-decomp:", "cuda-part-decomp:")
+
 # Backtrace frames and the exit-time profiler lines print AFTER the actual
 # exception, so the last stderr line is usually noise; the campaign's first
 # OOM was classified "error" with a bare "[bt] (8) ..." message because of it.
-_NOISE_RE = re.compile(r"^\s*(\[bt\]|Stack trace|cuda-profile:|grow-profile:|"
-                       r"ingest-profile:|fit-profile:|cuda-upload-decomp:)")
+_NOISE_RE = re.compile(r"^\s*(\[bt\]|Stack trace|"
+                       + "|".join(re.escape(p) for p in PROFILE_PREFIXES) + ")")
 
 _GATE_KEYS = {"mem_gate", "gpu_max_cols"}
 
@@ -45,8 +49,7 @@ def parse_profiles(stderr: str) -> dict:
     """The exit-time profiler lines as one flat {bucket_key: seconds} dict."""
     prof = {}
     for line in stderr.splitlines():
-        if line.startswith(("cuda-profile:", "grow-profile:", "ingest-profile:",
-                            "fit-profile:", "cuda-upload-decomp:")):
+        if line.startswith(PROFILE_PREFIXES):
             prefix = line.split(":", 1)[0].removesuffix("-profile")
             for key, val in PROFILE_RE.findall(line):
                 prof[f"{prefix}_{key}"] = float(val)

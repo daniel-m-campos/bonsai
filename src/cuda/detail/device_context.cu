@@ -290,11 +290,11 @@ CudaIngestPlane::select_columns(std::span<feature_id_t const> keep,
     return out;
 }
 
-void CudaDeviceContext::LevelPipeline::fill_done(bool root)
+void CudaDeviceContext::LevelPipeline::fill_done(uint32_t level)
 {
     hist_timer.end();
-    fill_timed   = true;
-    fill_is_root = root;
+    fill_timed = true;
+    fill_level = level;
 }
 
 void CudaDeviceContext::LevelPipeline::prof_read(ProfileCounters &prof)
@@ -304,11 +304,16 @@ void CudaDeviceContext::LevelPipeline::prof_read(ProfileCounters &prof)
         return;
     }
     fill_timed = false;
-    hist_timer.add_elapsed(fill_is_root ? prof.root_hist_s : prof.adv_hist_s);
-    if (!fill_is_root)
+    if (fill_level == 0)
     {
-        memset_timer.add_elapsed(prof.adv_memset_s);
+        hist_timer.add_elapsed(prof.root_hist_s);
+        return;
     }
+    hist_timer.add_elapsed(prof.adv_hist_s);
+    hist_timer.add_elapsed(
+        prof.level_hist_s[std::min<size_t>(fill_level, ProfileCounters::k_level_slots) -
+                          1]);
+    memset_timer.add_elapsed(prof.adv_memset_s);
 }
 
 size_t CudaDeviceContext::LevelPipeline::stage_children(
@@ -852,7 +857,7 @@ void CudaDeviceContext::begin_root(Dataset const &ds, floats_view grad,
                 lvl.gh_ordered.data(), lvl.rows.data(), lvl.row_offsets.device(),
                 lvl.row_counts.device(), lvl.cur().data(), lvl.slots.device());
     check(cudaGetLastError(), "root hist launch");
-    lvl.fill_done(/*root=*/true);
+    lvl.fill_done(0);
 
     lvl.segs.assign(1, RowSeg{0, n});
     lvl.leaf_by_row.reserve(ds.plane_n_rows());
@@ -1051,7 +1056,7 @@ void CudaDeviceContext::advance_level(Dataset const                             
             }
         });
     check(cudaGetLastError(), "level hist launch");
-    lvl.fill_done(/*root=*/false);
+    lvl.fill_done(lvl.depth + 1);
     lvl.cur_is_a = !lvl.cur_is_a;
     ++lvl.depth;
     lvl.segs = lvl.next_segs;

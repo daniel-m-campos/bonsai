@@ -137,10 +137,10 @@ struct CudaDeviceContext
         KernelTimer memset_timer;
         KernelTimer hist_timer;
         KernelTimer part_timer;
-        bool        fill_timed   = false;
-        bool        fill_is_root = false;
+        bool        fill_timed = false;
+        uint32_t    fill_level = 0;
 
-        void fill_done(bool root);
+        void fill_done(uint32_t level);
         void prof_read(ProfileCounters &prof);
 
         DeviceBuffer<uint32_t> &rows_of(bool in_b)
