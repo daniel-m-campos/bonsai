@@ -38,6 +38,12 @@ The u8-vs-u16 storage decision uses the same bin-count criterion on both sides, 
 
 - enforced by: [`cuda_ingest bins bit-identically to the host fill`](../tests/unit/test_cuda_grower.cpp)
 
+### device-cuts-bit-identical
+
+cuda_fit_mappers returns the cuts BinMappers::fit returns, compared as uint32 bit patterns over every branch of create_cuts: all-distinct, greedy, stride, tie runs, signed zeros, and the NaN and infinity tails. The device model hash is only reproducible from the host hash's inputs while this holds; a sign flip on a zero or a one-ulp midpoint difference fails here.
+
+- enforced by: [`CudaMapperFit: device cuts equal the host cuts`](../tests/unit/test_cuda_mapper_fit.cpp)
+
 ### device-finder-screen-is-exact
 
 The device finders screen every cut with fp32 interval bounds and score only the survivors in fp64; the screen may only discard a cut whose gain upper bound is below a gain already certified, so the exact best cut always survives and the chosen split, its bin and its direction are the same bytes the exhaustive fp64 sweep picks. BONSAI_CUDA_FINDER_EXHAUSTIVE disables the screen, and this test requires the two to route every row identically on data built to make the bounds tight: duplicate and near-duplicate columns, plateaus, a constant column, missing values, gradients at 1e-6 and 1e6, unit hessians on the min_child_hess boundary, lambda_l1, and monotone constraints with a positive min_gain_to_split.

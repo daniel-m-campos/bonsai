@@ -58,7 +58,7 @@ void cuda_download(float const *src, size_t n, float *dst);
 std::shared_ptr<DeviceMatrix const> cuda_upload(features_view X, size_t max_bin);
 
 // Fits cuts on the device over the same row sample as BinMappers::fit, bit
-// for bit (test: CudaMapperFit: device cuts equal the host cuts).
+// for bit (invariants: device-cuts-bit-identical).
 BinMappers cuda_fit_mappers(DeviceMatrix const      &X,
                             std::vector<std::string> feature_names,
                             BinMapperConfig const &cfg, BinEdges const &bin_edges = {});
