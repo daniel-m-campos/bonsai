@@ -211,7 +211,14 @@ void require_device_fit_matches(Matrix const &m, bonsai::BinMapperConfig const &
 
 } // namespace
 
-TEST_CASE("CudaMapperFit: device cuts equal the host cuts", "[cuda][fit]")
+// INVARIANT: device-cuts-bit-identical
+// cuda_fit_mappers returns the cuts BinMappers::fit returns, compared as
+// uint32 bit patterns over every branch of create_cuts: all-distinct,
+// greedy, stride, tie runs, signed zeros, and the NaN and infinity tails.
+// The device model hash is only reproducible from the host hash's inputs
+// while this holds; a sign flip on a zero or a one-ulp midpoint difference
+// fails here.
+TEST_CASE("CudaMapperFit: device cuts equal the host cuts", "[cuda][fit][invariant]")
 {
     if (!bonsai::cuda_available())
     {

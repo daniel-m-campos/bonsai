@@ -36,8 +36,7 @@ GB = 1e9
 # pageable cudaMemcpy 0.335 s, pinned cudaMemcpyAsync 0.152 s. A pipelined
 # pageable copy (host staging into a pinned ring plus DMA) shares one host
 # memory budget and runs at about 28e9. D2H pageable is the 2026-07 L40S
-# number via fin_d2h; PR #35's lesson stands: no edge gets priced from an
-# undecomposed line.
+# number via fin_d2h; no edge gets priced from an undecomposed line.
 BW = {
     "h2d": 25.5e9,        # pageable H2D, one cudaMemcpy of the raw matrix
     "h2d_pinned": 56.4e9, # pinned H2D

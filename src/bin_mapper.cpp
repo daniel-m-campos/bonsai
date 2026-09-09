@@ -157,8 +157,8 @@ ByteHistograms transform_keys(std::span<float const> v, uint32_t *keys)
 // of non-negatives) makes unsigned byte passes order floats like operator<.
 // Small inputs keep std::sort under the same key order, so -0.0 sorts
 // before +0.0 on both paths and a mixed-zero run's representative in
-// run_lengths carries the same sign whichever path cut it (the device fit
-// reproduces that order and is pinned to it bit for bit). All four byte
+// run_lengths carries the same sign whichever path cut it (a run's sign is
+// part of the cut bytes, invariant device-cuts-bit-identical). All four byte
 // histograms come from the key transform pass, and a byte every key
 // shares skips its scatter (the low bytes of small integers, the high
 // byte of a one-signed column). The histogram pass only pays past ~2k

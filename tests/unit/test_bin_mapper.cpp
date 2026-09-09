@@ -354,7 +354,7 @@ TEST_CASE("BinMapper: radix and std::sort paths agree bit for bit",
     // so both paths cut at exactly the distinct values. 2048 elements take
     // the radix branch, 2047 std::sort under the same key order, so the
     // mixed-zero run's representative is +0.0 on both and the cut bytes
-    // match; the device fit is pinned to these same bytes.
+    // match (invariant device-cuts-bit-identical).
     std::vector<float> values = {-0.0F, 0.0F};
     for (int i = 0; i < 30; ++i)
     {
