@@ -1131,11 +1131,14 @@ TEST_CASE("cuda_ingest bins bit-identically to the host fill",
 }
 
 // INVARIANT: device-ingest-chunk-reuse
-// Device ingest streams raw chunks through three pinned slots; a slot is
-// reused only after the fence that follows its copy and bin kernel, so a
-// matrix spanning more chunks than slots (here 256 MB row-major, four 64 MB
-// chunks, and sixteen single-chunk columns) bins identically to the host on
-// both paths. A slot reused early would bin a chunk from half-written raw.
+// Device ingest above 8 GiB of raw floats streams chunks through three
+// pinned slots; a slot is reused only after the fence that follows its copy
+// and bin kernel, so a matrix spanning more chunks than slots (here 256 MB
+// row-major, four 64 MB chunks, and sixteen single-chunk columns) bins
+// identically to the host on both paths. A slot reused early would bin a
+// chunk from half-written raw. BONSAI_CUDA_INGEST_RING engages the ring below
+// the threshold so this matrix exercises it; without the flag the same matrix
+// uploads pageable through one slot and must bin the same bytes.
 TEST_CASE("cuda_ingest bins identically across more chunks than slots",
           "[cuda][ingest][invariant]")
 {
@@ -1184,22 +1187,30 @@ TEST_CASE("cuda_ingest bins identically across more chunks than slots",
         return bad;
     };
 
-    SECTION("row-major arm crosses four chunks")
+    auto const require_both_arms = [&]
     {
         features_view const X{rowmajor.data(), n_rows, n_feats};
-        auto                plane = cuda_ingest(X, mappers);
-        REQUIRE(plane != nullptr);
-        auto const dev_ds =
-            Dataset::bin(X, floats_view{batch.labels}, mappers, {}, std::move(plane));
-        REQUIRE(mismatches(dev_ds) == 0);
+        auto                row_plane = cuda_ingest(X, mappers);
+        REQUIRE(row_plane != nullptr);
+        auto const row_ds = Dataset::bin(X, floats_view{batch.labels}, mappers, {},
+                                         std::move(row_plane));
+        REQUIRE(mismatches(row_ds) == 0);
+        auto col_plane = cuda_ingest(batch, mappers);
+        REQUIRE(col_plane != nullptr);
+        auto const col_ds = Dataset::bin(batch, mappers, {}, std::move(col_plane));
+        REQUIRE(mismatches(col_ds) == 0);
+    };
+
+    SECTION("pinned ring, four row chunks and sixteen columns over three slots")
+    {
+        test::ScopedEnv const flag{"BONSAI_CUDA_INGEST_RING", true};
+        require_both_arms();
     }
 
-    SECTION("feature-major arm stages sixteen columns")
+    SECTION("pageable upload through one slot below the ring threshold")
     {
-        auto plane = cuda_ingest(batch, mappers);
-        REQUIRE(plane != nullptr);
-        auto const dev_ds = Dataset::bin(batch, mappers, {}, std::move(plane));
-        REQUIRE(mismatches(dev_ds) == 0);
+        test::ScopedEnv const flag{"BONSAI_CUDA_INGEST_RING", false};
+        require_both_arms();
     }
 }
 
