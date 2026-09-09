@@ -86,6 +86,24 @@ A frontier node whose children would fall under min_child_hess contributes its p
 
 - enforced by: [`HistogramLevelSplitFinder: an infeasible parent scores zero, not a veto`](../tests/unit/test_split_level.cpp)
 
+### leaf-budget-cannot-bind-is-depthwise
+
+A depth-D tree has at most 2^D leaves, so a budget of 0 or of 2^D and above never stops an expansion: every leaf with positive gain splits, the same set depthwise splits. Sibling histograms are paired by subtraction in both growers, so leaf values agree to float rounding.
+
+- enforced by: `../tests/unit/test_leafwise_grower.cpp`
+
+### leaf-budget-route-keeps-the-name
+
+The routed triple is what the table is searched with; cfg.dispatch is what the user wrote and what a saved model carries.
+
+- enforced by: `../tests/unit/test_make_booster.cpp`
+
+### leaf-budget-route-round-trips
+
+The saved config carries "leafwise" as written; the load searches the table with the same routed name the save did, so the bytes round-trip and the loaded booster continues on the same plane.
+
+- enforced by: `../tests/unit/test_model_io.cpp`
+
 ### levelwise-monotone-holds
 
 A levelwise fit under a monotone constraint produces predictions ordered by that feature, on both the CPU and CUDA engines. The mechanism is a projection of the finished leaf table onto the monotone cone (project_monotone), not a veto during growth, so the tree's structure is whatever the unconstrained search would have chosen.

@@ -41,7 +41,7 @@ Per-tree shape and regularization, the primary overfitting controls.
 | `lambda_l1` | float | `0.0` | L1 penalty on leaf weights. Above 0 pushes small leaf outputs to exactly zero, a sparser, more regularized fit. |
 | `lambda_l2` | float | `1.0` | L2 penalty on leaf weights. Higher values shrink leaf outputs toward zero, smoothing predictions and reducing variance. |
 | `max_depth` | integer | `6` | Maximum tree depth. Deeper trees capture more feature interactions but overfit and cost more; the primary complexity knob. |
-| `max_leaves` | integer | `31` | Leaf cap for leafwise growth. 0 is unbounded (depth-capped). Fewer leaves regularize; more leaves fit finer structure. |
+| `max_leaves` | integer | `31` | Leaf cap for leafwise growth. 0 is unbounded (depth-capped). A budget of 0 or of 2^max_depth and above cannot bind, so that tree is grown by the depthwise plane. Fewer leaves regularize; more leaves fit finer structure. |
 | `min_child_hess` | float | `1.0` | Minimum hessian each child of a split must hold, or the candidate is rejected. Under squared error a row weighs 1, so this counts rows. |
 | `min_data_in_leaf` | integer | `20` | Rows a node needs to split at all, twice this value. It gates the node, not the child: min_child_hess is the per-child floor. |
 | `min_gain_to_split` | float | `0.0` | Minimum loss reduction to accept a split. Raising it prunes low-value splits and shrinks trees, curbing overfitting. |

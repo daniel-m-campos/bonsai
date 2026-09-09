@@ -80,7 +80,7 @@ EFFECTS = {
     "tree.lambda_l1": "L1 penalty on leaf weights. Above 0 pushes small leaf outputs to exactly zero, a sparser, more regularized fit.",
     "tree.max_depth": "Maximum tree depth. Deeper trees capture more feature interactions but overfit and cost more; the primary complexity knob.",
     "tree.min_data_in_leaf": "Rows a node needs to split at all, twice this value. It gates the node, not the child: min_child_hess is the per-child floor.",
-    "tree.max_leaves": "Leaf cap for leafwise growth. 0 is unbounded (depth-capped). Fewer leaves regularize; more leaves fit finer structure.",
+    "tree.max_leaves": "Leaf cap for leafwise growth. 0 is unbounded (depth-capped). A budget of 0 or of 2^max_depth and above cannot bind, so that tree is grown by the depthwise plane. Fewer leaves regularize; more leaves fit finer structure.",
     "tree.feature_fraction": "Fraction of features sampled per tree. Below 1 decorrelates trees and speeds training, often improving generalization.",
     "tree.feature_seed": "Seeds the per-tree feature_fraction draws. Fixing it keeps feature subsampling reproducible across runs.",
     "tree.monotone_constraints": "Per-feature monotone direction: +1 increasing, -1 decreasing, 0 free. Forces predictions to respect known monotonic relationships. Honoured by every grower.",

@@ -527,3 +527,47 @@ TEST_CASE("ModelIo: corrupt tree shapes refuse to load", "[model_io][edge]")
                             Catch::Matchers::ContainsSubstring("disagrees"));
     }
 }
+
+TEST_CASE("ModelIo: a routed leaf budget saves, loads and keeps training",
+          "[model_io][edge]")
+{
+    // INVARIANT: leaf-budget-route-round-trips
+    // The saved config carries "leafwise" as written; the load searches the
+    // table with the same routed name the save did, so the bytes round-trip
+    // and the loaded booster continues on the same plane.
+    auto const        batch   = batch_for<MSEObjective>();
+    BinMappers const  mappers = BinMappers::fit(batch, {});
+    Dataset const     train   = Dataset::bin(batch, mappers, {});
+    RawFeatures const raw     = to_raw(batch);
+
+    Config cfg                 = tiny_cfg();
+    cfg.dispatch.grower_name   = "leafwise";
+    cfg.tree_config.max_leaves = 1U << cfg.tree_config.max_depth;
+    auto booster               = make_booster(cfg);
+    for (int i = 0; i < 3; ++i)
+    {
+        booster->update_one_iter(train);
+    }
+    std::vector<float> y_before(raw.n_rows);
+    booster->predict(raw.view(), y_before);
+
+    TempPath const tmp;
+    io::save_booster(*booster, tmp.str(), mappers, cfg);
+    auto loaded = io::load_booster(tmp.str());
+    REQUIRE(loaded.cfg == cfg);
+    REQUIRE(loaded.cfg.dispatch.grower_name == "leafwise");
+    REQUIRE(loaded.booster->n_iters() == 3);
+
+    std::vector<float> y_after(raw.n_rows);
+    loaded.booster->predict(raw.view(), y_after);
+    REQUIRE(y_after == y_before);
+
+    loaded.booster->update_one_iter(train);
+    booster->update_one_iter(train);
+    REQUIRE(loaded.booster->n_iters() == 4);
+    std::vector<float> y_warm(raw.n_rows);
+    std::vector<float> y_cold(raw.n_rows);
+    loaded.booster->predict(raw.view(), y_warm);
+    booster->predict(raw.view(), y_cold);
+    REQUIRE(y_warm == y_cold);
+}
