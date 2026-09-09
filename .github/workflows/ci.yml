@@ -90,6 +90,9 @@ jobs:
           key: toy-data-v2-${{ hashFiles('scripts/fetch_toy.py') }}
       - run: make build
       - run: make test
+      # The committed parameters extraction against the structs this build
+      # compiled; the page-against-JSON half runs in the python job.
+      - run: make params-check
 
   sanitize:
     needs: changes

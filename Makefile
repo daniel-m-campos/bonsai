@@ -116,12 +116,15 @@ lint: build/build.ninja  ## Run clang-tidy over src/, header-filtered to bonsai.
 
 # Re-extract the parameters reference input from the built CLI, then rerender
 # docs/use/parameters.md. `bonsai params` dumps the default Config as TOML
-# straight from the structs; the extract step needs Python 3.11+ (tomllib).
-# CI runs only render_params.py --check against the committed JSON, so it
-# never rebuilds the CLI to verify the page.
+# straight from the structs; both extract steps need Python 3.11+ (tomllib).
+# docs-check holds the page against the committed JSON without a build;
+# params-check holds the JSON against the structs where the CLI exists.
 params-json: build  ## Re-extract docs/use/parameters.src.json from the built CLI and rerender the page.
 	@./build/src/bonsai params | python3 scripts/render_params.py --extract
 	@python3 scripts/render_params.py
+
+params-check: build  ## Fail when docs/use/parameters.src.json is behind the config structs.
+	@./build/src/bonsai params | python3 scripts/render_params.py --extract --check
 
 test: build $(TOY_SENTINEL)  ## Build, fetch the pinned test datasets, run ctest.
 	@ctest --test-dir build
@@ -177,7 +180,7 @@ CI_PYTHON := $(if $(wildcard $(PYTHON)),$(PYTHON),$(shell command -v python3))
 
 ci:  ## Run every CI gate this host can run (FAST=1 skips clang-tidy).
 	@fail=0; log=$$(mktemp); \
-	gates="format-check lint-python docs-check test python-test$(if $(FAST),, lint)"; \
+	gates="format-check lint-python docs-check test params-check python-test$(if $(FAST),, lint)"; \
 	[ "$$(uname -s)" = Linux ] && gates="$$gates test-asan test-tsan"; \
 	command -v nvcc >/dev/null 2>&1 && gates="$$gates build-cuda"; \
 	for g in $$gates; do \
@@ -212,4 +215,4 @@ install-hooks:  ## Point core.hooksPath at the versioned hooks (commit-msg forma
 	@git config core.hooksPath scripts/git-hooks
 	@echo "hooks installed: core.hooksPath = scripts/git-hooks"
 
-.PHONY: configure build build-cuda build-asan clean format format-check lint lint-python all params-json test test-cuda test-asan fit-benchmark bench-scaling python python-cuda python-test docs-check install-hooks help
+.PHONY: configure build build-cuda build-asan clean format format-check lint lint-python all params-json params-check test test-cuda test-asan fit-benchmark bench-scaling python python-cuda python-test docs-check install-hooks help
