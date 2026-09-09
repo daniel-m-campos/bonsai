@@ -67,6 +67,7 @@ inline constexpr size_t hist_shared_bytes(size_t max_bins)
 // count the device refuses from ~3k to ~6k+ per feature.
 inline constexpr size_t   k_max_shared_bytes     = 48UL * 1024UL;
 inline constexpr uint32_t k_fill_blocks_per_sm   = 4;
+inline constexpr uint32_t k_fill_chunk_rows      = 32768;
 inline constexpr uint32_t k_derive_blocks_per_sm = 4;
 inline constexpr uint32_t k_level_find_threads   = 256;
 inline constexpr uint32_t k_level_find_warps     = k_level_find_threads / 32;
@@ -91,6 +92,19 @@ inline __host__ __device__ uint32_t tile_strip(uint32_t t, uint32_t n_feats)
 {
     uint32_t const tail = n_feats - (t * k_bin_tile_width);
     return tail < k_bin_tile_width ? tail : k_bin_tile_width;
+}
+
+struct FillLaunch
+{
+    uint32_t grid_x, n_chunks, chunk_rows;
+};
+
+inline __host__ __device__ uint32_t node_chunk_count(uint32_t count,
+                                                     uint32_t chunk_rows,
+                                                     uint32_t n_chunks)
+{
+    uint32_t const wanted = (count + chunk_rows - 1) / chunk_rows;
+    return wanted == 0 ? 1 : wanted < n_chunks ? wanted : n_chunks;
 }
 
 inline __host__ __device__ uint32_t tile_count(uint32_t n_feats)

@@ -220,27 +220,41 @@ inline void launch_gh_quant(float2 const *gh, uint32_t n, uint2 *absmax, GhQuant
     check(cudaGetLastError(), "quant launch");
 }
 
+struct ChunkSpan
+{
+    uint32_t first, step;
+    bool     active;
+};
+
+inline __device__ ChunkSpan node_chunks(uint32_t count, uint32_t chunk_rows)
+{
+    uint32_t const chunks = node_chunk_count(count, chunk_rows, gridDim.z);
+    return {.first  = (blockIdx.z * blockDim.x) + threadIdx.x,
+            .step   = chunks * blockDim.x,
+            .active = blockIdx.z < chunks && blockIdx.z * blockDim.x < count};
+}
+
 template <typename BinT>
-__global__ void hist_kernel(BinT const *bins, float2 const *gh_ordered,
-                            uint32_t const *rows, uint32_t const *row_offsets,
-                            uint32_t const *row_counts, uint32_t const *features,
-                            uint32_t const *n_bins, uint32_t n_rows, uint32_t n_feats,
-                            uint32_t n_sel, hist_int_t *out, uint32_t stride,
-                            uint32_t const *out_slot, GhQuant const *quant)
+__global__ void
+hist_kernel(BinT const *bins, float2 const *gh_ordered, uint32_t const *rows,
+            uint32_t const *row_offsets, uint32_t const *row_counts,
+            uint32_t const *features, uint32_t const *n_bins, uint32_t n_rows,
+            uint32_t n_feats, uint32_t n_sel, hist_int_t *out, uint32_t stride,
+            uint32_t const *out_slot, GhQuant const *quant, uint32_t chunk_rows)
 {
     extern __shared__ hist_int_t sh[];
     uint32_t const               f    = features[blockIdx.x];
     uint32_t const               node = blockIdx.y;
-    NodeRows const seg = node_rows(rows, gh_ordered, row_offsets, row_counts, node);
-    if (blockIdx.z * blockDim.x >= seg.count)
+    NodeRows const  seg  = node_rows(rows, gh_ordered, row_offsets, row_counts, node);
+    ChunkSpan const span = node_chunks(seg.count, chunk_rows);
+    if (!span.active)
     {
         return;
     }
     uint32_t const nb = n_bins[f];
     zero_shared(sh, 2 * nb);
-    float2 const   scale = quant->scale;
-    uint32_t const span  = gridDim.z * blockDim.x;
-    for (uint32_t k = (blockIdx.z * blockDim.x) + threadIdx.x; k < seg.count; k += span)
+    float2 const scale = quant->scale;
+    for (uint32_t k = span.first; k < seg.count; k += span.step)
     {
         uint32_t const b = bins[tiled_cell(f, seg.rows[k], n_rows, n_feats)];
         float2 const   v = seg.gh[k];
@@ -434,14 +448,16 @@ __global__ void __launch_bounds__(k_tile_fill_threads)
                      uint32_t const *row_offsets, uint32_t const *row_counts,
                      uint32_t const *sel_slot, uint32_t const *n_bins, uint32_t n_rows,
                      uint32_t n_feats, uint32_t n_sel, hist_int_t *out, uint32_t stride,
-                     uint32_t const *out_slot, GhQuant const *quant)
+                     uint32_t const *out_slot, GhQuant const *quant,
+                     uint32_t chunk_rows)
 {
     extern __shared__ hist_int_t sh[];
     TileNode<W> const            tn =
         tile_node<W>(sel_slot, n_feats, rows, gh_ordered, row_offsets, row_counts);
-    TileBlock<W> const &tb  = tn.tb;
-    NodeRows const     &seg = tn.seg;
-    if (!tb.any || blockIdx.z * blockDim.x >= seg.count)
+    TileBlock<W> const &tb   = tn.tb;
+    NodeRows const     &seg  = tn.seg;
+    ChunkSpan const     span = node_chunks(seg.count, chunk_rows);
+    if (!tb.any || !span.active)
     {
         return;
     }
@@ -454,8 +470,7 @@ __global__ void __launch_bounds__(k_tile_fill_threads)
         return;
     }
     zero_shared(sh, tb.wt * tile_stride(stride));
-    visit_tile_rows<W>(tb, bins, n_rows, seg, scale,
-                       (blockIdx.z * blockDim.x) + threadIdx.x, gridDim.z * blockDim.x,
+    visit_tile_rows<W>(tb, bins, n_rows, seg, scale, span.first, span.step,
                        [&](uint32_t j, uint32_t b, hist_int_t qg, hist_int_t qh)
                        {
                            if constexpr (UnitH)
