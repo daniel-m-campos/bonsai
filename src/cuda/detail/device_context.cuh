@@ -304,12 +304,30 @@ struct CudaDeviceContext
     void   launch_stamp(std::span<CudaHistogramEngine::LeafStamp const> stamps,
                         std::span<RowSeg const> segs, uint32_t const *rows,
                         char const *label);
-    NodeTotals fetch_root_sums();
-    void       wait_for_profile(ProfileCounters::Lap &lap);
-    void       note_plane(bool tiled, size_t shared);
-    void       note_quant();
-    void       note_once(Once &noted, std::string_view line);
-    bool       unit_hessian() const;
+    NodeTotals                      fetch_root_sums();
+    void                            wait_for_profile(ProfileCounters::Lap &lap);
+    void                            note_plane(bool tiled, size_t shared);
+    void                            note_quant();
+    void                            note_once(Once &noted, std::string_view line);
+    bool                            unit_hessian() const;
+    size_t                          tiled_shared_bytes() const;
+    bool                            tiled_plane() const;
+    template <typename Launch> void dispatch_tiled(Launch const &launch)
+    {
+        data.dispatch_bins(
+            [&](auto const *bins)
+            {
+                if (unit_hessian())
+                {
+                    launch(bins, std::true_type{});
+                }
+                else
+                {
+                    launch(bins, std::false_type{});
+                }
+            });
+    }
+    void       launch_small_fill(Dataset const &ds, bool stored);
     FillLaunch launch_hist(uint32_t ds_rows, uint32_t ds_feats, uint32_t n_nodes,
                            uint32_t max_rows, float2 const *gh, uint32_t const *rows,
                            uint32_t const *offsets, uint32_t const *counts,

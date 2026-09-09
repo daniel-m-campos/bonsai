@@ -501,24 +501,20 @@ void CudaDeviceContext::init_shared_limit()
     {
         return;
     }
-    if (cudaFuncSetAttribute(hist_kernel<uint8_t>,
-                             cudaFuncAttributeMaxDynamicSharedMemorySize,
-                             optin) == cudaSuccess &&
-        cudaFuncSetAttribute(hist_kernel<uint16_t>,
-                             cudaFuncAttributeMaxDynamicSharedMemorySize,
-                             optin) == cudaSuccess &&
-        cudaFuncSetAttribute(hist_tile_kernel<k_bin_tile_width, false, uint8_t>,
-                             cudaFuncAttributeMaxDynamicSharedMemorySize,
-                             optin) == cudaSuccess &&
-        cudaFuncSetAttribute(hist_tile_kernel<k_bin_tile_width, false, uint16_t>,
-                             cudaFuncAttributeMaxDynamicSharedMemorySize,
-                             optin) == cudaSuccess &&
-        cudaFuncSetAttribute(hist_tile_kernel<k_bin_tile_width, true, uint8_t>,
-                             cudaFuncAttributeMaxDynamicSharedMemorySize,
-                             optin) == cudaSuccess &&
-        cudaFuncSetAttribute(hist_tile_kernel<k_bin_tile_width, true, uint16_t>,
-                             cudaFuncAttributeMaxDynamicSharedMemorySize,
-                             optin) == cudaSuccess)
+    auto const opt_in = [optin](auto kernel)
+    {
+        return cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                    optin) == cudaSuccess;
+    };
+    if (opt_in(hist_kernel<uint8_t>) && opt_in(hist_kernel<uint16_t>) &&
+        opt_in(hist_tile_kernel<k_bin_tile_width, false, uint8_t>) &&
+        opt_in(hist_tile_kernel<k_bin_tile_width, false, uint16_t>) &&
+        opt_in(hist_tile_kernel<k_bin_tile_width, true, uint8_t>) &&
+        opt_in(hist_tile_kernel<k_bin_tile_width, true, uint16_t>) &&
+        opt_in(hist_small_kernel<k_bin_tile_width, SmallFill::store, uint8_t>) &&
+        opt_in(hist_small_kernel<k_bin_tile_width, SmallFill::store, uint16_t>) &&
+        opt_in(hist_small_kernel<k_bin_tile_width, SmallFill::store_unit_h, uint8_t>) &&
+        opt_in(hist_small_kernel<k_bin_tile_width, SmallFill::store_unit_h, uint16_t>))
     {
         shared_limit = static_cast<size_t>(optin);
     }
@@ -598,10 +594,12 @@ void CudaDeviceContext::note_plane(bool tiled, size_t shared)
     }
     std::println(stderr,
                  "bonsai: bin plane is tile-blocked, width {}, {} cells; histogram "
-                 "build is {} at {} shared bytes per block, fixed-point int64 cells{}",
+                 "build is {} at {} shared bytes per block, fixed-point int64 cells{}, "
+                 "small nodes {}",
                  k_bin_tile_width, data.bins_are_u8 ? "u8" : "u16",
                  tiled ? "tiled" : "one feature per block", shared,
-                 unit_hessian() ? ", unit-hessian count plane" : "");
+                 unit_hessian() ? ", unit-hessian count plane" : "",
+                 tiled ? "stored whole" : "added in place");
 }
 
 void CudaDeviceContext::note_once(Once &noted, std::string_view line)
@@ -617,6 +615,17 @@ bool CudaDeviceContext::unit_hessian() const
 {
     return resident.armed && resident.kind == DeviceObjectiveKind::mse &&
            !resident.weighted;
+}
+
+size_t CudaDeviceContext::tiled_shared_bytes() const
+{
+    return static_cast<size_t>(k_bin_tile_width) * tile_stride(lvl.stride) *
+           sizeof(hist_int_t);
+}
+
+bool CudaDeviceContext::tiled_plane() const
+{
+    return tiled_shared_bytes() <= shared_limit;
 }
 
 void CudaDeviceContext::note_quant()
@@ -659,10 +668,9 @@ FillLaunch CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
                                           uint32_t const *counts, hist_int_t *out,
                                           uint32_t const *slots)
 {
-    size_t const tiled_shared = static_cast<size_t>(k_bin_tile_width) *
-                                tile_stride(lvl.stride) * sizeof(hist_int_t);
+    size_t const tiled_shared   = tiled_shared_bytes();
     size_t const feature_shared = static_cast<size_t>(lvl.stride) * sizeof(hist_int_t);
-    bool const   tiled          = tiled_shared <= shared_limit;
+    bool const   tiled          = tiled_plane();
     note_plane(tiled, tiled ? tiled_shared : feature_shared);
     uint32_t const grid_x  = tiled ? tile_count(ds_feats) : lvl.n_selected;
     uint32_t const by_rows = (max_rows + k_fill_chunk_rows - 1) / k_fill_chunk_rows;
@@ -679,25 +687,14 @@ FillLaunch CudaDeviceContext::launch_hist(uint32_t ds_rows, uint32_t ds_feats,
     if (tiled)
     {
         dim3 const grid(grid_x, n_nodes, n_chunks);
-        auto const launch = [&](auto const *bins, auto unit_h)
-        {
-            hist_tile_kernel<k_bin_tile_width, decltype(unit_h)::value>
-                <<<grid, dim3(k_tile_fill_threads), tiled_shared>>>(
-                    bins, gh, rows, offsets, counts, lvl.sel_slot.device(),
-                    data.n_bins_ptr(), ds_rows, ds_feats, lvl.n_selected, out,
-                    lvl.stride, slots, grads.quant.data(), launched.chunk_rows);
-        };
-        data.dispatch_bins(
-            [&](auto const *bins)
+        dispatch_tiled(
+            [&](auto const *bins, auto unit_h)
             {
-                if (unit_hessian())
-                {
-                    launch(bins, std::true_type{});
-                }
-                else
-                {
-                    launch(bins, std::false_type{});
-                }
+                hist_tile_kernel<k_bin_tile_width, decltype(unit_h)::value>
+                    <<<grid, dim3(k_tile_fill_threads), tiled_shared>>>(
+                        bins, gh, rows, offsets, counts, lvl.sel_slot.device(),
+                        data.n_bins_ptr(), ds_rows, ds_feats, lvl.n_selected, out,
+                        lvl.stride, slots, grads.quant.data(), launched.chunk_rows);
             });
         return launched;
     }
@@ -1047,11 +1044,22 @@ void CudaDeviceContext::advance_level(Dataset const                             
 
     size_t const child_slots = 2 * ops.size();
     lvl.other().reserve(child_slots * lvl.slot_cells());
+    bool const small_stored = tiled_plane();
     lvl.memset_timer.begin();
     auto const sd = static_cast<uint32_t>(lvl.slot_cells());
-    zero_slots_kernel<<<slot_stream_grid(sd, static_cast<uint32_t>(ops.size())),
-                        dim3(k_slot_stream_threads)>>>(lvl.other().data(),
-                                                       lvl.triples.device() + 1, 3, sd);
+    if (!small_stored)
+    {
+        zero_slots_kernel<<<slot_stream_grid(sd, static_cast<uint32_t>(ops.size())),
+                            dim3(k_slot_stream_threads)>>>(
+            lvl.other().data(), lvl.triples.device() + 1, 3, sd);
+    }
+    else if (!lvl.row_offsets.empty())
+    {
+        zero_slots_kernel<<<slot_stream_grid(
+                                sd, static_cast<uint32_t>(lvl.row_offsets.size())),
+                            dim3(k_slot_stream_threads)>>>(lvl.other().data(),
+                                                           lvl.slots.device(), 1, sd);
+    }
     check(cudaGetLastError(), "zero level launch");
     lvl.memset_timer.end();
     lvl.hist_timer.begin();
@@ -1073,23 +1081,10 @@ void CudaDeviceContext::advance_level(Dataset const                             
         }
     }
     lvl.small_timer.begin();
-    data.dispatch_bins(
-        [&](auto const *bins)
-        {
-            if (!lvl.small_offsets.empty())
-            {
-                hist_small_kernel<k_bin_tile_width>
-                    <<<dim3(tile_count(static_cast<uint32_t>(ds.n_features())),
-                            static_cast<uint32_t>(lvl.small_offsets.size())),
-                       dim3(k_small_fill_threads)>>>(
-                        bins, lvl.other_gh().data(), lvl.other_rows().data(),
-                        lvl.small_offsets.device(), lvl.small_counts.device(),
-                        lvl.sel_slot.device(), static_cast<uint32_t>(ds.plane_n_rows()),
-                        static_cast<uint32_t>(ds.n_features()), lvl.n_selected,
-                        lvl.other().data(), lvl.stride, lvl.small_slots.device(),
-                        grads.quant.data());
-            }
-        });
+    if (!lvl.small_offsets.empty())
+    {
+        launch_small_fill(ds, small_stored);
+    }
     lvl.small_timer.end();
     check(cudaGetLastError(), "level hist launch");
     lvl.fill_done(lvl.depth + 1);
@@ -1098,6 +1093,41 @@ void CudaDeviceContext::advance_level(Dataset const                             
     lvl.segs = lvl.next_segs;
     prof.launched(child_slots);
     lap(prof.gpu_s);
+}
+
+void CudaDeviceContext::launch_small_fill(Dataset const &ds, bool stored)
+{
+    dim3 const grid(tile_count(static_cast<uint32_t>(ds.n_features())),
+                    static_cast<uint32_t>(lvl.small_offsets.size()));
+    auto const launch = [&](auto fill, auto const *bins)
+    {
+        using BinT            = std::remove_cv_t<std::remove_pointer_t<decltype(bins)>>;
+        constexpr SmallFill f = decltype(fill)::value;
+        hist_small_kernel<k_bin_tile_width, f>
+            <<<grid, dim3(small_fill_threads(f)),
+               f == SmallFill::direct ? 0 : tiled_shared_bytes()>>>(SmallFillArgs<BinT>{
+                bins, lvl.other_gh().data(), lvl.other_rows().data(),
+                lvl.small_offsets.device(), lvl.small_counts.device(),
+                lvl.sel_slot.device(), static_cast<uint32_t>(ds.plane_n_rows()),
+                static_cast<uint32_t>(ds.n_features()), lvl.n_selected,
+                lvl.other().data(), lvl.stride, lvl.small_slots.device(),
+                grads.quant.data()});
+    };
+    if (stored)
+    {
+        dispatch_tiled(
+            [&](auto const *bins, auto unit_h)
+            {
+                constexpr SmallFill f = decltype(unit_h)::value
+                                            ? SmallFill::store_unit_h
+                                            : SmallFill::store;
+                launch(std::integral_constant<SmallFill, f>{}, bins);
+            });
+        return;
+    }
+    data.dispatch_bins(
+        [&](auto const *bins)
+        { launch(std::integral_constant<SmallFill, SmallFill::direct>{}, bins); });
 }
 
 void CudaDeviceContext::advance_layout_only()

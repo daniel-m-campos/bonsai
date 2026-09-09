@@ -443,6 +443,50 @@ inline __device__ void fill_direct(TileBlock<W> const &tb, BinT const *bins,
 }
 
 template <uint32_t W, bool UnitH, typename BinT>
+inline __device__ void fill_plane(TileBlock<W> const &tb, BinT const *bins,
+                                  uint32_t n_rows, NodeRows const &seg, float2 scale,
+                                  uint32_t first, uint32_t step, hist_int_t *sh,
+                                  uint32_t stride)
+{
+    zero_shared(sh, tb.wt * tile_stride(stride));
+    visit_tile_rows<W>(tb, bins, n_rows, seg, scale, first, step,
+                       [&](uint32_t j, uint32_t b, hist_int_t qg, hist_int_t qh)
+                       {
+                           if constexpr (UnitH)
+                           {
+                               plane_add_unit_h(plane_words(sh, j, stride), b, qg);
+                           }
+                           else
+                           {
+                               plane_add(plane_words(sh, j, stride), b, qg, qh);
+                           }
+                       });
+    __syncthreads();
+}
+
+template <uint32_t W, bool UnitH, typename Cells, typename Emit>
+inline __device__ void emit_plane(TileBlock<W> const &tb, hist_int_t *sh,
+                                  uint32_t stride, hist_int_t *slot_out, float2 scale,
+                                  Cells cells, Emit emit)
+{
+    hist_int_t const unit_qh = quantise(1.0F, scale.y);
+#pragma unroll
+    for (uint32_t j = 0; j < W; ++j)
+    {
+        if (tb.slot[j] != k_not_selected)
+        {
+            uint32_t const *w = plane_words(sh, j, stride);
+            hist_int_t     *o = slot_out + (static_cast<size_t>(tb.slot[j]) * stride);
+            uint32_t const  n = cells(j);
+            for (uint32_t i = threadIdx.x; i < n; i += blockDim.x)
+            {
+                emit(&o[i], plane_cell_scaled<UnitH>(w, i, unit_qh));
+            }
+        }
+    }
+}
+
+template <uint32_t W, bool UnitH, typename BinT>
 __global__ void __launch_bounds__(k_tile_fill_threads)
     hist_tile_kernel(BinT const *bins, float2 const *gh_ordered, uint32_t const *rows,
                      uint32_t const *row_offsets, uint32_t const *row_counts,
@@ -461,48 +505,26 @@ __global__ void __launch_bounds__(k_tile_fill_threads)
     {
         return;
     }
-    float2 const   scale = quant->scale;
-    uint32_t const oslot = out_slot != nullptr ? out_slot[tb.node] : tb.node;
+    float2 const      scale    = quant->scale;
+    uint32_t const    oslot    = out_slot != nullptr ? out_slot[tb.node] : tb.node;
+    hist_int_t *const slot_out = out + (static_cast<size_t>(oslot) * n_sel * stride);
     if (seg.count < k_min_gpu_rows)
     {
-        fill_direct<W>(tb, bins, n_rows, seg, scale,
-                       out + (static_cast<size_t>(oslot) * n_sel * stride), stride);
+        fill_direct<W>(tb, bins, n_rows, seg, scale, slot_out, stride);
         return;
     }
-    zero_shared(sh, tb.wt * tile_stride(stride));
-    visit_tile_rows<W>(tb, bins, n_rows, seg, scale, span.first, span.step,
-                       [&](uint32_t j, uint32_t b, hist_int_t qg, hist_int_t qh)
-                       {
-                           if constexpr (UnitH)
-                           {
-                               plane_add_unit_h(plane_words(sh, j, stride), b, qg);
-                           }
-                           else
-                           {
-                               plane_add(plane_words(sh, j, stride), b, qg, qh);
-                           }
-                       });
-    __syncthreads();
-    hist_int_t const unit_qh = quantise(1.0F, scale.y);
-#pragma unroll
-    for (uint32_t j = 0; j < W; ++j)
-    {
-        if (tb.slot[j] != k_not_selected)
+    fill_plane<W, UnitH>(tb, bins, n_rows, seg, scale, span.first, span.step, sh,
+                         stride);
+    emit_plane<W, UnitH>(
+        tb, sh, stride, slot_out, scale,
+        [&](uint32_t j) { return 2 * n_bins[tb.f0 + j]; },
+        [](hist_int_t *cell, hist_int_t v)
         {
-            uint32_t const *w = plane_words(sh, j, stride);
-            hist_int_t     *o =
-                out + (((static_cast<size_t>(oslot) * n_sel) + tb.slot[j]) * stride);
-            uint32_t const nb = n_bins[tb.f0 + j];
-            for (uint32_t i = threadIdx.x; i < 2 * nb; i += blockDim.x)
+            if (v != 0)
             {
-                hist_int_t const v = plane_cell_scaled<UnitH>(w, i, unit_qh);
-                if (v != 0)
-                {
-                    hist_add(&o[i], v);
-                }
+                hist_add(cell, v);
             }
-        }
-    }
+        });
 }
 
 // perf: Small nodes skip the shared-memory stage: below ~512 rows the fixed
@@ -510,24 +532,34 @@ __global__ void __launch_bounds__(k_tile_fill_threads)
 // the node's global slot. One block per (tile, node): a single block per node
 // measured 18.8 ms per launch at 131k x 16384 on an RTX PRO 6000, 7.6 s of a
 // 27.4 s fit, from one SM issuing count x n_sel x 2 atomics.
-template <uint32_t W, typename BinT>
-__global__ void hist_small_kernel(BinT const *bins, float2 const *gh_ordered,
-                                  uint32_t const *rows, uint32_t const *row_offsets,
-                                  uint32_t const *row_counts, uint32_t const *sel_slot,
-                                  uint32_t n_rows, uint32_t n_feats, uint32_t n_sel,
-                                  hist_int_t *out, uint32_t stride,
-                                  uint32_t const *out_slot, GhQuant const *quant)
+template <uint32_t W, SmallFill Fill, typename BinT>
+__global__ void __launch_bounds__(small_fill_threads(Fill))
+    hist_small_kernel(SmallFillArgs<BinT> const a)
 {
-    TileNode<W> const tn =
-        tile_node<W>(sel_slot, n_feats, rows, gh_ordered, row_offsets, row_counts);
+    extern __shared__ hist_int_t sh[];
+    TileNode<W> const   tn = tile_node<W>(a.sel_slot, a.n_feats, a.rows, a.gh_ordered,
+                                          a.row_offsets, a.row_counts);
     TileBlock<W> const &tb = tn.tb;
     if (!tb.any)
     {
         return;
     }
-    fill_direct<W>(tb, bins, n_rows, tn.seg, quant->scale,
-                   out + (static_cast<size_t>(out_slot[tb.node]) * n_sel * stride),
-                   stride);
+    float2 const      scale = a.quant->scale;
+    hist_int_t *const slot_out =
+        a.out + (static_cast<size_t>(a.out_slot[tb.node]) * a.n_sel * a.stride);
+    if constexpr (Fill == SmallFill::direct)
+    {
+        fill_direct<W>(tb, a.bins, a.n_rows, tn.seg, scale, slot_out, a.stride);
+    }
+    else
+    {
+        constexpr bool unit_h = Fill == SmallFill::store_unit_h;
+        fill_plane<W, unit_h>(tb, a.bins, a.n_rows, tn.seg, scale, threadIdx.x,
+                              blockDim.x, sh, a.stride);
+        emit_plane<W, unit_h>(
+            tb, sh, a.stride, slot_out, scale, [&](uint32_t) { return a.stride; },
+            [](hist_int_t *cell, hist_int_t v) { *cell = v; });
+    }
 }
 
 constexpr uint32_t k_part_rows_per_thread = 4;
