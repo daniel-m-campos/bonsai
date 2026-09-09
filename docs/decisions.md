@@ -1743,3 +1743,36 @@ Standings: quality-grinsztajn-gpu
 **Reopener.** A lightgbm release whose CUDA learner applies `max_depth`, at which point the campaign table ranks it (decision 129's reopener) and this regime becomes a second view rather than the only one; a third learner a leaf count alone can cap on its GPU build, which enters the regime's arm map in `python/bonsai/bench/grinsztajn.py` with a test pinning its knobs; or a gap on a task past its seed spread on either side, which is a quality finding for that learner, named in the ledger, never a gate.
 
 Standings: quality-grinsztajn-leaf-capped-gpu
+
+## 135. Each node's fill is chunked by its own rows, at the rows per block the largest node gets (adopted)
+
+**Decision.** `launch_hist` keeps its grid (tiles x nodes x chunks, the chunk count sized from the level's largest node) and passes the kernels `chunk_rows = max_rows / n_chunks`, the rows one block of the largest node covers. Every block computes its node's own chunk count, `clamp(ceil(count / chunk_rows), 1, n_chunks)`, exits when its z index is past that count, and strides the node's rows by that count. The largest node runs exactly the blocks it ran before, so its fill is bit-identical; a smaller node runs as many blocks as its rows fill at the same rows per block, and the rest of its grid slice exits before the shared-memory zero. The cells are int64 fixed point (decision 124), so the sum is the same integer in any block order and the model bytes cannot move: `model_hash.py --grower cuda_depthwise` reads e1a5391a7beea349 on both arms, r2 equal per cell. The per-level profile counters (`rows_lN`, `blocks_lN` on the `cuda-level-decomp` line, added in this change) now count active blocks, computed on the host from the level's row counts; a `blocks_lN` read from before this change counted grid blocks.
+
+**Why.** The extreme cell (16M x 1024) spent 8.25 s of a 14.9 s fit in `adv_hist`, and the per-level split showed where: rows filled per level are flat at about 4.65M per tree (the smaller sibling at every split), yet the fill's time rose from 5.5 ms per tree at level 1 to 20.1 at level 7, and the block count rose 26x (3973 to 103823), because the chunk count was sized from the largest node and every block with any rows ran, at 45 rows per block by level 7 against 1171 at level 1. Each block zeroes and merges 8160 shared cells (16 features x 2 x 255 bins) whatever its row count, so level 7 merged 847M cells per tree to fill the same rows level 1 filled through 32M. Priced from a linear fit across the levels at 18 us per million merged cells, the lever was worth about 4 s of the extreme fit; the measurement below says the fit across levels overstated the merge and the deep levels carry a second cost.
+
+**Measurement.** Same-pod on one RTX PRO 6000 Blackwell Server Edition (US-NC-1), 1986d78 (main plus the counters) against b8d7ef0, interleaved reps, min over two reps, seconds; `find` and `adv_hist` from the round decomposition, `hist_l7` from the level decomposition, fit total from the bench row.
+
+| cell | fit A | fit B | fit delta | find A | find B | adv_hist A | adv_hist B | hist_l7 A | hist_l7 B |
+|---|---|---|---|---|---|---|---|---|---|
+| extreme 16M x 1024 dw | 14.87 | 13.79 | -7.3% | 8.43 | 7.34 | 8.25 | 7.17 | 2.01 | 1.61 |
+| tall 16M x 128 dw | 2.92 | 2.85 | -2.3% | 1.02 | 0.98 | 0.96 | 0.92 | 0.24 | 0.21 |
+| wide 131072 x 16384 dw | 6.04 | 6.03 | -0.2% | 4.30 | 4.29 | 2.00 | 1.99 | 0.76 | 0.76 |
+| tall 16M x 128 lw | 3.64 | 3.69 | +1.3% | 1.53 | 1.62 | | | | |
+
+The extreme cell per level, blocks and merged cells per tree, min hist seconds over 100 trees:
+
+| level | rows/tree | blocks A | blocks B | Mcells A | Mcells B | hist A | hist B | delta |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 4651350 | 3973 | 3973 | 32 | 32 | 0.55 | 0.55 | 0% |
+| 2 | 4215091 | 7540 | 5412 | 62 | 44 | 0.61 | 0.60 | -2% |
+| 3 | 4450903 | 14249 | 6891 | 116 | 56 | 0.79 | 0.76 | -4% |
+| 4 | 4683568 | 25984 | 8198 | 212 | 67 | 1.10 | 0.99 | -10% |
+| 5 | 4739758 | 43899 | 9362 | 358 | 76 | 1.44 | 1.23 | -15% |
+| 6 | 4650977 | 68608 | 10185 | 560 | 83 | 1.74 | 1.43 | -18% |
+| 7 | 4649717 | 103823 | 11596 | 847 | 95 | 2.01 | 1.61 | -20% |
+
+Level 1 is unchanged in blocks and time, the largest-node identity the design promised. Level 7 dropped 752M merged cells per tree and 4.0 ms, so the merge costs about 5 us per million cells, a third of what the fit across levels implied; the other two thirds of that slope was a cost that rises with depth for a different reason. After the lever, level 7 still reads 16.1 ms per tree against level 1's 5.5 at the same rows and a comparable cell count (95M against 32M), so about 10 ms per tree of the deep-level fill is the row loop itself, three times the level-1 row loop for the same rows spread over the level's node segments instead of one. That is the residual and the next target; its mechanism is not measured here. On the tall cell the same shape at a tenth of the features (levels 5 to 7 read -6, -10, -12%) is 0.04 s of `adv_hist` and the fit moves at the edge of its rep spread (A 2.92 and 2.98, B 2.85 and 2.90). The wide cell is flat by construction: from level 5 every node already ran one chunk (blocks identical on both arms), so its level-7 cost, 7.6 ms per tree for 27k rows, is one zero-and-merge per (node, tile) with almost no rows behind it, which this lever cannot touch. The leafwise fill takes the same kernels and its fit reads +0.05 s inside its own spread (A 3.64 and 3.75, B 3.69 and 3.78).
+
+**Rejected alternatives.** A larger `k_fill_chunk_rows` (fewer chunks for every node): it shrinks the largest node's chunk count with the rest, and that count is what fills the SMs at the top levels, where one or two nodes carry the level. One launch per node sized to its own rows: 128 launches at level 7 per tree, and the largest node's chunking would move with it; the per-block exit gets the per-node count from the same grid at no host cost. Routing more nodes to `hist_small_kernel` by raising its 512-row cutoff: the 2026-08-17 sweep measured every higher cutoff worse at every cell, and the node this change leaves expensive at level 7 averages over 30k rows (4.65M rows over at most 128 nodes), far above any cutoff that sweep considered. Counting active blocks on the device: the host has the level's row counts already (`row_counts.host`), and the count is profile-only.
+
+**Reopener.** The deep-level row loop, 10 ms per tree at level 7 on the extreme cell against 5.5 at level 1 for the same rows, which needs a counter that separates the row loop from the zero-and-merge before it is designed against; and the wide cell's one-chunk nodes, where the cost is the merge per (node, tile) rather than the chunk count, a lever on how many cells a small node merges rather than how many blocks it runs.
