@@ -81,6 +81,35 @@ inline constexpr uint32_t k_level_find_warps     = k_level_find_threads / 32;
 inline constexpr uint32_t k_tile_fill_threads  = 1024;
 inline constexpr uint32_t k_small_fill_threads = 128;
 
+enum class SmallFill : uint8_t
+{
+    direct,
+    store,
+    store_unit_h
+};
+
+constexpr uint32_t small_fill_threads(SmallFill fill)
+{
+    return fill == SmallFill::direct ? k_small_fill_threads : k_tile_fill_threads;
+}
+
+template <typename BinT> struct SmallFillArgs
+{
+    BinT const     *bins;
+    float2 const   *gh_ordered;
+    uint32_t const *rows;
+    uint32_t const *row_offsets;
+    uint32_t const *row_counts;
+    uint32_t const *sel_slot;
+    uint32_t        n_rows;
+    uint32_t        n_feats;
+    uint32_t        n_sel;
+    hist_int_t     *out;
+    uint32_t        stride;
+    uint32_t const *out_slot;
+    GhQuant const  *quant;
+};
+
 inline constexpr uint32_t k_bin_tile_width   = 16;
 inline constexpr uint32_t k_plane_group      = 32;
 inline constexpr uint32_t k_plane_group_mask = k_plane_group - 1;
