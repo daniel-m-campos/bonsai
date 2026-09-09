@@ -38,28 +38,17 @@ struct ProfileCounters
     double eval_kernel_s = 0;
     size_t launches = 0, gpu_nodes = 0;
 
-    static constexpr size_t           k_level_slots = 16;
-    std::array<double, k_level_slots> level_hist_s{};
-    std::array<size_t, k_level_slots> level_rows{};
-    std::array<size_t, k_level_slots> level_blocks{};
-    std::array<double, k_level_slots> level_small_s{};
-    std::array<size_t, k_level_slots> level_small_rows{};
-
-    static size_t level_slot(uint32_t level)
+    struct LevelCounters
     {
-        return std::min<size_t>(level, k_level_slots) - 1;
-    }
+        double hist_s = 0, small_s = 0, find_s = 0, find_gb = 0;
+        size_t rows = 0, blocks = 0, small_rows = 0;
+    };
+    static constexpr size_t                  k_level_slots = 16;
+    std::array<LevelCounters, k_level_slots> levels{};
 
-    void level_launched(uint32_t level, size_t rows, size_t blocks, size_t small_rows)
+    LevelCounters &level(uint32_t depth)
     {
-        if (!enabled || level == 0)
-        {
-            return;
-        }
-        size_t const slot = level_slot(level);
-        level_rows[slot] += rows;
-        level_blocks[slot] += blocks;
-        level_small_rows[slot] += small_rows;
+        return levels[std::min<size_t>(depth, k_level_slots) - 1];
     }
 
     ProfileCounters()                                       = default;
@@ -101,13 +90,15 @@ struct ProfileCounters
         std::string line;
         for (size_t i = 0; i < k_level_slots; ++i)
         {
-            if (level_hist_s[i] > 0)
+            LevelCounters const &c = levels[i];
+            if (c.hist_s > 0)
             {
                 line += std::format(" hist_l{}={:.2f}s rows_l{}={} blocks_l{}={}"
-                                    " small_l{}={:.2f}s small_rows_l{}={}",
-                                    i + 1, level_hist_s[i], i + 1, level_rows[i], i + 1,
-                                    level_blocks[i], i + 1, level_small_s[i], i + 1,
-                                    level_small_rows[i]);
+                                    " small_l{}={:.2f}s small_rows_l{}={}"
+                                    " find_l{}={:.2f}s find_gb_l{}={:.1f}",
+                                    i + 1, c.hist_s, i + 1, c.rows, i + 1, c.blocks,
+                                    i + 1, c.small_s, i + 1, c.small_rows, i + 1,
+                                    c.find_s, i + 1, c.find_gb);
             }
         }
         return line;
