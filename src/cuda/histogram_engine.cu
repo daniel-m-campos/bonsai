@@ -246,13 +246,8 @@ void upload_cuts(BinMappers const &mappers, CutsTable &t)
     t.ofs.upload(ofs.data(), ofs.size());
 }
 
-bool ingest_would_decline(BinMappers const &mappers)
+bool bins_exceed_shared(size_t max_bins)
 {
-    size_t max_bins = 0;
-    for (size_t f = 0; f < mappers.size(); ++f)
-    {
-        max_bins = std::max(max_bins, mappers[f].n_bins());
-    }
     size_t ceiling = k_max_shared_bytes;
     int    dev     = 0;
     int    optin   = 0;
@@ -264,6 +259,35 @@ bool ingest_would_decline(BinMappers const &mappers)
     }
     return hist_shared_bytes(max_bins) > ceiling;
 }
+
+bool ingest_would_decline(BinMappers const &mappers)
+{
+    size_t max_bins = 0;
+    for (size_t f = 0; f < mappers.size(); ++f)
+    {
+        max_bins = std::max(max_bins, mappers[f].n_bins());
+    }
+    return bins_exceed_shared(max_bins);
+}
+
+constexpr size_t k_resident_matrix_share = 2;
+
+bool matrix_fits_device(size_t bytes)
+{
+    size_t free_bytes  = 0;
+    size_t total_bytes = 0;
+    if (cudaMemGetInfo(&free_bytes, &total_bytes) != cudaSuccess)
+    {
+        return false;
+    }
+    return bytes <= pool_reserved_free_bytes() + free_bytes / k_resident_matrix_share;
+}
+
+struct UploadedMatrix
+{
+    DeviceBuffer<float> raw;
+    DeviceMatrix        view;
+};
 
 std::shared_ptr<CudaIngestPlane> make_ingest_plane(BinMappers const &mappers,
                                                    size_t            n_rows)
@@ -404,36 +428,18 @@ void cuda_download(float const *src, size_t n, float *dst)
           "device download");
 }
 
-void cuda_gather_rows(DeviceMatrix const &X, std::span<uint32_t const> rows,
-                      std::span<float> out)
+std::shared_ptr<DeviceMatrix const> cuda_upload(features_view X, size_t max_bin)
 {
-    if (rows.empty())
+    size_t const cells = X.extent(0) * X.extent(1);
+    if (!cuda_available() || cells == 0 || bins_exceed_shared(max_bin) ||
+        !matrix_fits_device(cells * sizeof(float)))
     {
-        check(cudaMemcpy(out.data(), X.data, out.size() * sizeof(float),
-                         cudaMemcpyDeviceToHost),
-              "sample download");
-        return;
+        return nullptr;
     }
-    DeviceBuffer<uint32_t> idx;
-    idx.upload(rows.data(), rows.size());
-    DeviceBuffer<float> gathered;
-    gathered.reserve(out.size());
-
-    size_t const rows_per_chunk =
-        std::max<size_t>(1, k_ingest_chunk_bytes / (X.n_feats * sizeof(float)));
-    for (size_t row0 = 0; row0 < rows.size(); row0 += rows_per_chunk)
-    {
-        auto const n     = std::min(rows_per_chunk, rows.size() - row0);
-        auto const cells = static_cast<uint32_t>(n * X.n_feats);
-        dim3 const grid((cells + 255) / 256);
-        gather_rows_kernel<<<grid, dim3(256)>>>(X.data, idx.data() + row0, cells,
-                                                static_cast<uint32_t>(X.n_feats),
-                                                gathered.data() + (row0 * X.n_feats));
-        check(cudaGetLastError(), "sample gather launch");
-    }
-    check(cudaMemcpy(out.data(), gathered.data(), out.size() * sizeof(float),
-                     cudaMemcpyDeviceToHost),
-          "sample download");
+    auto owner = std::make_shared<UploadedMatrix>();
+    owner->raw.upload(X.data_handle(), cells);
+    owner->view = DeviceMatrix{owner->raw.data(), X.extent(0), X.extent(1)};
+    return std::shared_ptr<DeviceMatrix const>(owner, &owner->view);
 }
 
 std::shared_ptr<IngestPlane const> cuda_ingest_device(DeviceMatrix const &X,

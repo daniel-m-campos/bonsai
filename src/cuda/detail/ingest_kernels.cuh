@@ -54,17 +54,6 @@ __global__ void bin_rows_kernel(float const *chunk, uint32_t rows_in_chunk,
         transform_bin<BinT>(chunk[i], cuts + c0, cut_ofs[f + 1] - c0);
 }
 
-__global__ void gather_rows_kernel(float const *X, uint32_t const *rows, uint32_t cells,
-                                   uint32_t n_feats, float *out)
-{
-    uint32_t const i = (blockIdx.x * blockDim.x) + threadIdx.x;
-    if (i >= cells)
-    {
-        return;
-    }
-    out[i] = X[(static_cast<size_t>(rows[i / n_feats]) * n_feats) + (i % n_feats)];
-}
-
 template <typename BinT>
 __global__ void bin_col_kernel(float const *col, uint32_t n, uint32_t row0, uint32_t f,
                                uint32_t n_rows, uint32_t n_feats, float const *cuts,

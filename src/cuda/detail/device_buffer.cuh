@@ -67,6 +67,26 @@ inline bool use_async_alloc()
     return enabled;
 }
 
+inline size_t pool_reserved_free_bytes()
+{
+    if (!use_async_alloc())
+    {
+        return 0;
+    }
+    int           dev = 0;
+    cudaMemPool_t pool{};
+    if (cudaGetDevice(&dev) != cudaSuccess ||
+        cudaDeviceGetDefaultMemPool(&pool, dev) != cudaSuccess)
+    {
+        return 0;
+    }
+    cuuint64_t reserved = 0;
+    cuuint64_t used     = 0;
+    cudaMemPoolGetAttribute(pool, cudaMemPoolAttrReservedMemCurrent, &reserved);
+    cudaMemPoolGetAttribute(pool, cudaMemPoolAttrUsedMemCurrent, &used);
+    return reserved > used ? static_cast<size_t>(reserved - used) : 0;
+}
+
 inline void *alloc_device(size_t bytes)
 {
     void *p = nullptr;

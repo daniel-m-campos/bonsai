@@ -121,8 +121,16 @@ void cuda_download(float const * /*src*/, size_t /*n*/, float * /*dst*/)
     throw_unavailable();
 }
 
-void cuda_gather_rows(DeviceMatrix const & /*X*/, std::span<uint32_t const> /*rows*/,
-                      std::span<float> /*out*/)
+std::shared_ptr<DeviceMatrix const> cuda_upload(features_view /*X*/, size_t /*max_bin*/)
+{
+    return nullptr;
+}
+
+BinMappers cuda_fit_mappers(
+    DeviceMatrix const & /*X*/,
+    std::vector<
+        std::string> /*feature_names*/, // NOLINT(performance-unnecessary-value-param)
+    BinMapperConfig const & /*cfg*/, BinEdges const & /*bin_edges*/)
 {
     throw_unavailable();
 }
