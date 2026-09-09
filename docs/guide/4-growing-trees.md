@@ -156,6 +156,7 @@ nodes, levelwise trades a little RMSE for the fastest predict.
 - **`max_leaves` vs `max_depth` govern different growers.** A leafwise
   config that only sets `max_depth=8` still stops at the default 31
   leaves: the budget, not the cap, is usually what binds.
+- **A budget that cannot bind is grown depthwise.** A depth-$D$ tree has at most $2^D$ leaves, so `max_leaves = 0` or `max_leaves >= 2^max_depth` never stops an expansion and the leafwise tree is the depthwise tree grown one leaf at a time. The registry routes such a config to the depthwise grower of the same engine (host or CUDA): same tree to float rounding, level rounds instead of one round per leaf. The config and the saved model keep `leafwise` as written; `BONSAI_GROW_PROFILE=1` prints the route.
 - **Heap ties are a determinism hazard.** Equal gains happen (symmetric
   data produces them exactly); without the node-id tie-break, two runs
   could grow different trees and both look "correct".

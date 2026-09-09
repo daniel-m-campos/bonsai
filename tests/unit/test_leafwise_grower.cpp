@@ -285,3 +285,108 @@ TEST_CASE("LeafwiseGrower: empty row_indices yields zero-valued single leaf",
     CHECK(tree.params().depth == 0);
     CHECK(predict_one(tree, std::vector<float>{0.5F}) == 0.0F);
 }
+
+namespace
+{
+
+ScenarioInputs regression_4096()
+{
+    auto const     batch = random_batch(4096, 6, 19);
+    size_t const   n     = batch.labels.size();
+    ScenarioInputs in{.built = build(batch),
+                      .grad  = std::vector<float>(n),
+                      .hess  = std::vector<float>(n, 1.0F),
+                      .rows  = iota_rows(n)};
+    for (size_t r = 0; r < n; ++r)
+    {
+        in.grad[r] = -batch.labels[r];
+    }
+    return in;
+}
+
+std::vector<float> row_of(detail::ColumnBatch const &batch, size_t r)
+{
+    std::vector<float> x(batch.features.size());
+    for (size_t j = 0; j < x.size(); ++j)
+    {
+        x[j] = batch.features[j][r];
+    }
+    return x;
+}
+
+} // namespace
+
+TEST_CASE("LeafwiseGrower: a leaf budget that cannot bind grows the depthwise tree",
+          "[grower][leafwise][fit]")
+{
+    // INVARIANT: leaf-budget-cannot-bind-is-depthwise
+    // A depth-D tree has at most 2^D leaves, so a budget of 0 or of 2^D and
+    // above never stops an expansion: every leaf with positive gain splits,
+    // the same set depthwise splits. Sibling histograms are paired by
+    // subtraction in both growers, so leaf values agree to float rounding.
+    auto const batch = random_batch(4096, 6, 19);
+    auto       in    = regression_4096();
+
+    TreeConfig cfg{.min_child_hess   = 0.0F,
+                   .lambda_l2        = 1.0F,
+                   .max_depth        = 5,
+                   .min_data_in_leaf = 0,
+                   .max_leaves       = 32};
+    SECTION("plain") {}
+    SECTION("unbounded budget")
+    {
+        cfg.max_leaves = 0;
+    }
+    SECTION("min_data_in_leaf prunes the same leaves")
+    {
+        cfg.min_data_in_leaf = 60;
+    }
+    SECTION("monotone bounds propagate the same way")
+    {
+        cfg.monotone_constraints = {+1, -1, 0, +1};
+    }
+    SECTION("interaction groups gate the same paths")
+    {
+        cfg.interaction_constraints = {"0,1,2", "3,4", "5"};
+    }
+    SECTION("the per-tree feature draw is shared")
+    {
+        cfg.feature_fraction = 0.5F;
+    }
+
+    DepthwiseGrower<> depthwise{cfg};
+    LeafwiseGrower<>  leafwise{cfg};
+    auto [d_tree, d_values, d_lids, d_bounds] =
+        depthwise.grow(in.built.ds, in.grad, in.hess, in.rows);
+    auto [l_tree, l_values, l_lids, l_bounds] =
+        leafwise.grow(in.built.ds, in.grad, in.hess, in.rows);
+
+    REQUIRE(d_tree.params().n_leaves > 4);
+    CHECK(l_tree.params().n_leaves == d_tree.params().n_leaves);
+    CHECK(l_tree.params().depth == d_tree.params().depth);
+    for (size_t r = 0; r < in.rows.size(); r += 97)
+    {
+        auto const x = row_of(batch, r);
+        CHECK(predict_one(l_tree, x) ==
+              Catch::Approx(predict_one(d_tree, x)).margin(1e-5));
+    }
+}
+
+TEST_CASE("LeafwiseGrower: a budget one under 2^depth binds",
+          "[grower][leafwise][edge]")
+{
+    auto              in = regression_4096();
+    TreeConfig        cfg{.min_child_hess   = 0.0F,
+                          .lambda_l2        = 1.0F,
+                          .max_depth        = 4,
+                          .min_data_in_leaf = 0,
+                          .max_leaves       = 15};
+    DepthwiseGrower<> depthwise{cfg};
+    LeafwiseGrower<>  leafwise{cfg};
+    auto [d_tree, d_values, d_lids, d_bounds] =
+        depthwise.grow(in.built.ds, in.grad, in.hess, in.rows);
+    auto [l_tree, l_values, l_lids, l_bounds] =
+        leafwise.grow(in.built.ds, in.grad, in.hess, in.rows);
+    REQUIRE(d_tree.params().n_leaves == 16);
+    CHECK(l_tree.params().n_leaves == 15);
+}

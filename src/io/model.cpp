@@ -397,18 +397,18 @@ bool try_load_into(IBooster &booster, json const &j, size_t n_features)
     return true;
 }
 
-bool save_dispatch(IBooster const &booster, DispatchConfig const &disp, json &out)
+bool save_dispatch(IBooster const &booster, Config const &cfg, json &out)
 {
     return with_combo_matching(
-        disp,
+        cfg,
         [&]<typename Combo>() { return try_save_as<BoosterFor<Combo>>(booster, out); });
 }
 
-bool load_dispatch(IBooster &booster, DispatchConfig const &disp, json const &j,
+bool load_dispatch(IBooster &booster, Config const &cfg, json const &j,
                    size_t n_features)
 {
     return with_combo_matching(
-        disp, [&]<typename Combo>()
+        cfg, [&]<typename Combo>()
         { return try_load_into<BoosterFor<Combo>>(booster, j, n_features); });
 }
 
@@ -451,7 +451,7 @@ std::vector<uint8_t> save_booster_bytes(IBooster const   &booster,
     root["config"]      = cfg;
     root["bin_mappers"] = mappers_to_json(mappers);
 
-    if (!save_dispatch(booster, cfg.dispatch, root))
+    if (!save_dispatch(booster, cfg, root))
     {
         throw std::runtime_error(
             "model: save_booster: no impl for (" + cfg.dispatch.objective_name + ", " +
@@ -487,7 +487,7 @@ LoadedBooster load_booster_bytes(std::vector<uint8_t> const &bytes,
     out.mappers = mappers_from_json(root.at("bin_mappers"));
     out.booster = make_booster(out.cfg);
 
-    if (!load_dispatch(*out.booster, out.cfg.dispatch, root, out.mappers.size()))
+    if (!load_dispatch(*out.booster, out.cfg, root, out.mappers.size()))
     {
         throw std::runtime_error(
             "model: load_booster: dispatch triple unknown after make_booster");

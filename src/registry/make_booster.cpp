@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <memory>
+#include <print>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -10,6 +11,7 @@
 #include "bonsai/booster.hpp"
 #include "bonsai/config/config.hpp"
 #include "bonsai/cuda/histogram_engine.hpp"
+#include "bonsai/detail/perf.hpp"
 #include "bonsai/grower.hpp"
 #include "bonsai/registry/configurations.hpp"
 #include "bonsai/registry/names.hpp"
@@ -59,13 +61,28 @@ inline constexpr auto growers = make_table<Growers, GrowerEntry>(
     []<typename G>()
     { return GrowerEntry{impl_name<G>::value, GPULevelEngine<typename G::Engine>}; });
 
+void note_leaf_budget_route(Config const &config, DispatchConfig const &routed)
+{
+    if (!detail::GrowProfiler::instance().enabled || routed == config.dispatch)
+    {
+        return;
+    }
+    std::println(stderr,
+                 "bonsai: a leaf budget of {} under depth {} cannot bind; {} grows the "
+                 "tree as {}",
+                 config.tree_config.max_leaves, unsigned{config.tree_config.max_depth},
+                 config.dispatch.grower_name, routed.grower_name);
+}
+
 } // namespace
 
 std::unique_ptr<ITrainableBooster> make_booster(Config const &config)
 {
-    std::string_view const obj = config.dispatch.objective_name;
-    std::string_view const gr  = config.dispatch.grower_name;
-    std::string_view const sa  = config.dispatch.sampler_name;
+    DispatchConfig const   routed = resolve_dispatch(config);
+    std::string_view const obj    = routed.objective_name;
+    std::string_view const gr     = routed.grower_name;
+    std::string_view const sa     = routed.sampler_name;
+    note_leaf_budget_route(config, routed);
 
     for (Entry const &e : configurations)
     {
