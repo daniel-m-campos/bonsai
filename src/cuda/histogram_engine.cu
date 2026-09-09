@@ -436,9 +436,11 @@ std::shared_ptr<DeviceMatrix const> cuda_upload(features_view X, size_t max_bin)
     {
         return nullptr;
     }
-    auto owner = std::make_shared<UploadedMatrix>();
+    detail::IngestProfiler::Lap lap;
+    auto                        owner = std::make_shared<UploadedMatrix>();
     owner->raw.upload(X.data_handle(), cells);
     owner->view = DeviceMatrix{owner->raw.data(), X.extent(0), X.extent(1)};
+    lap(detail::IngestProfiler::instance().upload_s);
     return std::shared_ptr<DeviceMatrix const>(owner, &owner->view);
 }
 
