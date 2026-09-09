@@ -1743,3 +1743,26 @@ Standings: quality-grinsztajn-gpu
 **Reopener.** A lightgbm release whose CUDA learner applies `max_depth`, at which point the campaign table ranks it (decision 129's reopener) and this regime becomes a second view rather than the only one; a third learner a leaf count alone can cap on its GPU build, which enters the regime's arm map in `python/bonsai/bench/grinsztajn.py` with a test pinning its knobs; or a gap on a task past its seed spread on either side, which is a quality finding for that learner, named in the ledger, never a gate.
 
 Standings: quality-grinsztajn-leaf-capped-gpu
+
+## 132. A leaf budget that cannot bind takes the depthwise plane (adopted)
+
+**Decision.** A leafwise configuration whose budget cannot bind (`max_leaves` of 0, or of `2^max_depth` and above) is grown by the depthwise grower of the same engine. `resolve_dispatch(cfg)` is the one home for the rule; `make_booster`, `save_dispatch` and `load_dispatch` search the dispatch table with it. `cfg.dispatch` and the saved model keep the name the user wrote, so a warm start, `Params.from_model` and a loaded model see `leafwise` unchanged and a load searches with the same routed name the save did. `BONSAI_GROW_PROFILE=1` prints the route once per booster.
+
+**Why.** A depth-D tree has at most 2^D leaves, so a budget of 2^D or above never stops an expansion: every leaf with positive gain splits, which is exactly the set the depthwise grower splits in one level round. Leafwise grew that tree one leaf at a time, paying a find, a partition and a fill round per leaf (255 rounds at depth 8 against 8), and the leaf pool it sizes for 2^D live slots refused the wide cell on a 48 GB part where the depthwise plane fits. Every gpu standings leafwise cell uses `num_leaves = 2^depth`, so the leafwise rows were paying the per-leaf tax to grow the depthwise tree. On the host the two planes agree to float rounding across the options that could have separated them: 4096 x 6 at depth 5 with a budget of 32 or 0, with and without `min_data_in_leaf`, monotone bounds, interaction groups and a feature draw, every sampled leaf value within 1e-5 and the same leaf count and depth; a budget of 15 under depth 4 still binds (16 against 15 leaves). At 100k x 32 and depth 6 the planes differ 4.8e-7 at 64 leaves and 0.34 at 63.
+
+**Measurement.** Same-pod on one RTX PRO 6000 Blackwell (US-NC-1), main 681b4f2 against aad4e66, interleaved reps, min over reps, fit total in seconds; the depthwise rows are the control.
+
+| cell | plane | main | routed | delta |
+|---|---|---|---|---|
+| tall 16M x 128 | leafwise | 3.694 | 2.971 | -19.6% |
+| tall 16M x 128 | depthwise | 2.968 | 2.974 | +0.2% |
+| wide 131k x 16384 | leafwise | 7.521 | 6.141 | -18.3% |
+| wide 131k x 16384 | depthwise | 6.187 | 6.172 | -0.2% |
+| extreme 16M x 1024 | leafwise | 15.357 | 14.843 | -3.3% |
+| extreme 16M x 1024 | depthwise | 14.841 | 14.982 | +1.0% |
+
+On train alone the leafwise rows read -24.4% tall, -21.8% wide and -4.7% extreme (2.993 to 2.262, 5.688 to 4.450, 11.352 to 10.823 s). r2 is identical to four decimals across both arms and both planes at every cell (0.8797, 0.8597, 0.8788), and the three device model hashes (depthwise, leafwise, levelwise) are equal between the arms. The tall and wide reps were three and two, extreme one, which is why its 1% is read as the spread and not as a cost. The routed leafwise row lands on its depthwise row because it is the depthwise plane: on every gpu standings cell the leafwise row now measures depthwise, and the results pages say so. The leaf-capped regime (decision 130, 63 leaves under depth 62) is unaffected because that budget binds.
+
+**Rejected alternatives.** Batching a level's worth of expansions inside the leafwise grower when the budget cannot bind: it rebuilds the depthwise plane's level transaction a second time behind the leaf interface, and the depthwise plane already exists. Speculative batched expansion for a binding budget (grow a level, then prune back to the budget): the pruned tree is not the leafwise tree, since a leaf that would have been expanded ahead of its siblings under the gain order can lose its slot to a sibling split first, so it changes the model and needs its own quality study. Refusing a budget that cannot bind: a user who writes `max_leaves=256` at depth 8 has asked for the depthwise tree, and refusing is the answer nobody wants.
+
+**Reopener.** A binding budget's per-leaf residual (the leaf plane's find, partition and fill rounds against the depthwise plane's level rounds at the same knobs) is the remaining gap and is measured, not routed: when a leafwise cell with a binding budget lands within the depthwise row's noise, the leaf plane has closed it; while it does not, the leaf plane is the target.
