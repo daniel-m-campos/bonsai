@@ -311,10 +311,21 @@ void CudaDeviceContext::LevelPipeline::prof_read(ProfileCounters &prof)
         return;
     }
     hist_timer.add_elapsed(prof.adv_hist_s);
-    size_t const slot = ProfileCounters::level_slot(fill_level);
-    hist_timer.add_elapsed(prof.level_hist_s[slot]);
-    small_timer.add_elapsed(prof.level_small_s[slot]);
+    ProfileCounters::LevelCounters &c = prof.level(fill_level);
+    hist_timer.add_elapsed(c.hist_s);
+    small_timer.add_elapsed(c.small_s);
     memset_timer.add_elapsed(prof.adv_memset_s);
+}
+
+size_t CudaDeviceContext::LevelPipeline::find_strip_bytes(bool children_read) const
+{
+    size_t const derived_strips = children_read ? 3 : 2;
+    size_t       strips         = 0;
+    for (SiblingDerive const &d : derive.host)
+    {
+        strips += d.parent_slot == k_not_selected ? 1 : derived_strips;
+    }
+    return strips * slot_cells() * sizeof(hist_int_t);
 }
 
 size_t CudaDeviceContext::LevelPipeline::stage_children(
@@ -1074,10 +1085,10 @@ void CudaDeviceContext::advance_level(Dataset const                             
             lvl.other().data(), lvl.slots.device());
         if (prof_counters.enabled)
         {
-            prof_counters.level_launched(
-                lvl.depth + 1, row_total(lvl.row_counts.host),
-                active_fill_blocks(launched, lvl.row_counts.host),
-                row_total(lvl.small_counts.host));
+            ProfileCounters::LevelCounters &c = prof_counters.level(lvl.depth + 1);
+            c.rows += row_total(lvl.row_counts.host);
+            c.blocks += active_fill_blocks(launched, lvl.row_counts.host);
+            c.small_rows += row_total(lvl.small_counts.host);
         }
     }
     lvl.small_timer.begin();
@@ -1172,7 +1183,16 @@ void CudaDeviceContext::find_splits_many(Dataset const &ds, TreeConfig const &co
     if (prof.enabled)
     {
         check(cudaDeviceSynchronize(), "find kernel wait");
-        lap(prof.find_kern_s);
+        double kern_s = 0;
+        lap(kern_s);
+        prof.find_kern_s += kern_s;
+        if (lvl.depth > 0)
+        {
+            ProfileCounters::LevelCounters &c = prof.level(lvl.depth);
+            c.find_s += kern_s;
+            c.find_gb +=
+                static_cast<double>(lvl.find_strip_bytes(children_read)) * 1e-9;
+        }
     }
     lvl.node_best.fetch(n);
     prof.launched();
