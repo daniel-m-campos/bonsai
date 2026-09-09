@@ -327,14 +327,14 @@ class StreamFence
     StreamFence(StreamFence const &)            = delete;
     StreamFence &operator=(StreamFence const &) = delete;
 
-    void record()
+    void record(cudaStream_t stream = nullptr)
     {
         if (event_ == nullptr)
         {
             check(cudaEventCreateWithFlags(&event_, cudaEventDisableTiming),
                   "fence event");
         }
-        check(cudaEventRecord(event_), "fence record");
+        check(cudaEventRecord(event_, stream), "fence record");
     }
     void wait() const
     {
@@ -343,6 +343,29 @@ class StreamFence
 
   private:
     cudaEvent_t event_ = nullptr;
+};
+
+class Stream
+{
+  public:
+    Stream()
+    {
+        check(cudaStreamCreate(&stream_), "stream create");
+    }
+    ~Stream()
+    {
+        cudaStreamDestroy(stream_);
+    }
+    Stream(Stream const &)            = delete;
+    Stream &operator=(Stream const &) = delete;
+
+    cudaStream_t get() const
+    {
+        return stream_;
+    }
+
+  private:
+    cudaStream_t stream_ = nullptr;
 };
 
 class KernelTimer
