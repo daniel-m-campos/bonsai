@@ -170,6 +170,23 @@ def test_mem_sampler_falls_back_to_smi(monkeypatch):
         driver._default_query.cache_clear()
 
 
+def test_parse_profiles_lands_the_kernel_decomposition_lines():
+    from bonsai.bench import driver
+
+    stderr = ("cuda-round-decomp: root_sums=0.01s root_hist=0.30s adv_memset=0.02s "
+              "adv_hist=1.10s fin_stamp=0.05s fin_map=0.03s\n"
+              "cuda-level-decomp: hist_l1=0.20s hist_l2=0.25s\n"
+              "cuda-part-decomp: kernel=0.70s\n"
+              "grow-profile: find=8.43s populate=1.60s\n")
+    prof = driver.parse_profiles(stderr)
+    assert prof["cuda-round-decomp_root_hist"] == 0.30
+    assert prof["cuda-round-decomp_adv_hist"] == 1.10
+    assert prof["cuda-level-decomp_hist_l2"] == 0.25
+    assert prof["cuda-part-decomp_kernel"] == 0.70
+    assert prof["grow_populate"] == 1.60
+    assert driver.error_message("boom\n" + stderr) == "boom"
+
+
 def test_error_classification():
     from bonsai.bench import driver
 

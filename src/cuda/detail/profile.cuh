@@ -1,10 +1,13 @@
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <format>
 #include <print>
+#include <string>
 
 namespace bonsai
 {
@@ -32,6 +35,9 @@ struct ProfileCounters
     double obj_kernel_s = 0, score_kernel_s = 0;
     double eval_kernel_s = 0;
     size_t launches = 0, gpu_nodes = 0;
+
+    static constexpr size_t           k_level_slots = 16;
+    std::array<double, k_level_slots> level_hist_s{};
 
     ProfileCounters()                                       = default;
     ProfileCounters(ProfileCounters const &)                = delete;
@@ -67,6 +73,19 @@ struct ProfileCounters
         }
     }
 
+    std::string level_hist_line() const
+    {
+        std::string line;
+        for (size_t i = 0; i < k_level_slots; ++i)
+        {
+            if (level_hist_s[i] > 0)
+            {
+                line += std::format(" hist_l{}={:.2f}s", i + 1, level_hist_s[i]);
+            }
+        }
+        return line;
+    }
+
     ~ProfileCounters()
     {
         if (!enabled || gpu_s == 0)
@@ -95,6 +114,7 @@ struct ProfileCounters
                          "fin_stamp={:.2f}s fin_map={:.2f}s",
                          root_sums_s, root_hist_s, adv_memset_s, adv_hist_s,
                          fin_stamp_s, fin_map_s);
+            std::println(stderr, "cuda-level-decomp:{}", level_hist_line());
             std::println(stderr, "cuda-part-decomp: kernel={:.3f}s", part_kernel_s);
             std::println(stderr,
                          "cuda-resident-decomp: obj_kernel={:.2f}s "
