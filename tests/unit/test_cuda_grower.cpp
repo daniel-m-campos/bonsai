@@ -1130,6 +1130,79 @@ TEST_CASE("cuda_ingest bins bit-identically to the host fill",
     }
 }
 
+// INVARIANT: device-ingest-chunk-reuse
+// Device ingest streams raw chunks through three pinned slots; a slot is
+// reused only after the fence that follows its copy and bin kernel, so a
+// matrix spanning more chunks than slots (here 256 MB row-major, four 64 MB
+// chunks, and sixteen single-chunk columns) bins identically to the host on
+// both paths. A slot reused early would bin a chunk from half-written raw.
+TEST_CASE("cuda_ingest bins identically across more chunks than slots",
+          "[cuda][ingest][invariant]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    size_t const n_rows  = size_t{1} << 22;
+    size_t const n_feats = 16;
+    uint32_t     state   = 7;
+    auto const   next    = [&]
+    {
+        state = (state * 1664525U) + 1013904223U;
+        return static_cast<float>(state >> 8) / static_cast<float>(1U << 24);
+    };
+    std::vector<float>  rowmajor(n_rows * n_feats);
+    detail::ColumnBatch batch;
+    batch.features.resize(n_feats, std::vector<float>(n_rows));
+    for (size_t f = 0; f < n_feats; ++f)
+    {
+        batch.feature_names.push_back("f" + std::to_string(f));
+    }
+    batch.labels.assign(n_rows, 0.0F);
+    for (size_t r = 0; r < n_rows; ++r)
+    {
+        for (size_t f = 0; f < n_feats; ++f)
+        {
+            float const v =
+                (r % 97 == 0) ? std::numeric_limits<float>::quiet_NaN() : next();
+            batch.features[f][r]        = v;
+            rowmajor[(r * n_feats) + f] = v;
+        }
+    }
+    auto const mappers    = BinMappers::fit(batch, BinMapperConfig{});
+    auto const host_ds    = Dataset::bin(batch, mappers, {});
+    auto const mismatches = [&](Dataset const &dev_ds)
+    {
+        size_t bad = 0;
+        for (size_t f = 0; f < n_feats; ++f)
+        {
+            for (size_t r = 0; r < n_rows; ++r)
+            {
+                bad += dev_ds.bin_at(f, r) != host_ds.bin_at(f, r) ? 1 : 0;
+            }
+        }
+        return bad;
+    };
+
+    SECTION("row-major arm crosses four chunks")
+    {
+        features_view const X{rowmajor.data(), n_rows, n_feats};
+        auto                plane = cuda_ingest(X, mappers);
+        REQUIRE(plane != nullptr);
+        auto const dev_ds =
+            Dataset::bin(X, floats_view{batch.labels}, mappers, {}, std::move(plane));
+        REQUIRE(mismatches(dev_ds) == 0);
+    }
+
+    SECTION("feature-major arm stages sixteen columns")
+    {
+        auto plane = cuda_ingest(batch, mappers);
+        REQUIRE(plane != nullptr);
+        auto const dev_ds = Dataset::bin(batch, mappers, {}, std::move(plane));
+        REQUIRE(mismatches(dev_ds) == 0);
+    }
+}
+
 TEST_CASE("CudaDepthwiseGrower trains identically on a device-binned dataset",
           "[cuda][ingest][grower]")
 {
