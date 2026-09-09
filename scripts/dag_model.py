@@ -31,13 +31,17 @@ from dataclasses import dataclass
 
 GB = 1e9
 
-# Effective transfer rates, measured on healthy PCIe4 hosts. D2H pageable
-# joined once the fin_d2h counter landed (decision 54's instrumentation);
-# PR #35's lesson stands: no edge gets priced from an undecomposed line.
+# Effective transfer rates. The H2D pair was re-measured 2026-09-09 on an
+# RTX PRO 6000 Blackwell Server Edition (US-NC-1) with an 8.59 GB matrix:
+# pageable cudaMemcpy 0.335 s, pinned cudaMemcpyAsync 0.152 s. A pipelined
+# pageable copy (host staging into a pinned ring plus DMA) shares one host
+# memory budget and runs at about 28e9. D2H pageable is the 2026-07 L40S
+# number via fin_d2h; PR #35's lesson stands: no edge gets priced from an
+# undecomposed line.
 BW = {
-    "h2d": 14e9,        # pageable H2D, measured via gh_upload (0.88s / 12.8GB)
-    "h2d_pinned": 24e9, # pinned, from ensure_dataset-style staging
-    "d2h": 13.6e9,      # pageable D2H, measured via fin_d2h (0.94s / 12.8GB)
+    "h2d": 25.5e9,        # pageable H2D, one cudaMemcpy of the raw matrix
+    "h2d_pinned": 56.4e9, # pinned H2D
+    "d2h": 13.6e9,        # pageable D2H, measured via fin_d2h (0.94s / 12.8GB)
 }
 
 
@@ -68,7 +72,7 @@ class Edge:
 # (grow 14.05 + ingest 1.47 + objective/sample/score 0.51 ~= fit 15.70).
 
 NODES = [
-    Node("mapper_fit", 0.45, None, pinned="host", note="seeded RNG subsample; model-changing to move"),
+    Node("mapper_fit", 0.31, 0.30, note="tall 16M x 128 same-pod 2026-09-09: host 0.31-0.33 s, device 0.30 s; both draw the seeded 200000-row sample on the host (about 0.26 s at 16M, model-changing to move), so the device sort pays only where every row is cut"),
     Node("bin", 4.65, 0.55, note="decision 54 landed: dbin kernel + streamed upload (host cost kept for the counterfactual)"),
     Node("gradients_scores", 0.51, None, pinned="host", note="objective+sample+score fit-profile lines"),
     Node("hist_build", None, 7.90, pinned="device", note="adv_hist+root_hist events; the round's dominant cost"),
