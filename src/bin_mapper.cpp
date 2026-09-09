@@ -155,15 +155,13 @@ ByteHistograms transform_keys(std::span<float const> v, uint32_t *keys)
 // perf: LSD byte-radix sort for the NaN-free subsample: the standard order-
 // preserving key transform (flip all bits of negatives, flip the sign bit
 // of non-negatives) makes unsigned byte passes order floats like operator<.
-// The output equals std::sort's up to reordering within equal-comparing
-// values (only -0.0 vs +0.0: the key transform puts -0.0 first, unstable
-// std::sort may not), so a mixed-zero run's representative in run_lengths
-// can differ in SIGN across the two paths. Binning and predictions are
-// unaffected: lower_bound under operator< treats the zeros as equal, and
-// std::midpoint agrees on either. All four byte histograms come from the
-// key transform pass, and a byte every key shares skips its scatter (the
-// low bytes of small integers, the high byte of a one-signed column).
-// Small inputs keep std::sort: the histogram pass only pays past ~2k
+// Small inputs keep std::sort under the same key order, so -0.0 sorts
+// before +0.0 on both paths and a mixed-zero run's representative in
+// run_lengths carries the same sign whichever path cut it (the device fit
+// reproduces that order and is pinned to it bit for bit). All four byte
+// histograms come from the key transform pass, and a byte every key
+// shares skips its scatter (the low bytes of small integers, the high
+// byte of a one-signed column). The histogram pass only pays past ~2k
 // elements. Single thread, 256 columns of 131072 rows on an M2, sort plus
 // run lengths: 0.247 s with a count pass per byte and a push_back
 // run-length loop, 0.133 s this way (0.478 s to 0.157 s on integer-valued
@@ -181,7 +179,7 @@ void sort_floats(std::span<float> v, CutScratch &scratch)
     constexpr size_t k_radix_min = 2048;
     if (v.size() < k_radix_min)
     {
-        std::sort(v.begin(), v.end());
+        std::ranges::sort(v, {}, sortable_key);
         return;
     }
     size_t const n = v.size();

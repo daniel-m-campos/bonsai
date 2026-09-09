@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <bit>
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
 #include <cstddef>
@@ -346,14 +347,14 @@ TEST_CASE("BinMapper: signed zeros in a radix-sized column bin identically",
     CHECK(mapper.transform(-0.0F) == mapper.transform(0.0F));
 }
 
-TEST_CASE("BinMapper: radix and std::sort paths agree under bin equivalence",
+TEST_CASE("BinMapper: radix and std::sort paths agree bit for bit",
           "[bin_mapper][fit][radix]")
 {
     // 31 distinct values (both signed zeros collapse to one) fit the budget,
     // so both paths cut at exactly the distinct values. 2048 elements take
-    // the radix branch, 2047 std::sort; a mixed-zero run's representative
-    // may differ in sign between the two, so compare transform results per
-    // value, NOT cut bytes.
+    // the radix branch, 2047 std::sort under the same key order, so the
+    // mixed-zero run's representative is +0.0 on both and the cut bytes
+    // match; the device fit is pinned to these same bytes.
     std::vector<float> values = {-0.0F, 0.0F};
     for (int i = 0; i < 30; ++i)
     {
@@ -372,6 +373,12 @@ TEST_CASE("BinMapper: radix and std::sort paths agree under bin equivalence",
     auto            m_sort  = BinMapper::fit(std::span(small), cfg);
 
     REQUIRE(m_radix.n_bins() == m_sort.n_bins());
+    for (size_t i = 0; i < m_radix.n_bins(); ++i)
+    {
+        CHECK(std::bit_cast<uint32_t>(m_radix.cuts()[i]) ==
+              std::bit_cast<uint32_t>(m_sort.cuts()[i]));
+    }
+    CHECK(std::bit_cast<uint32_t>(m_sort.cuts()[0]) == 0U);
     for (float const v : values)
     {
         CHECK(m_radix.transform(v) == m_sort.transform(v));
@@ -385,8 +392,8 @@ TEST_CASE("BinMapper: from_sample sorts the sample in place on every radix shape
     // Each column is radix-sized and skips a different set of byte passes:
     // small integers share their two low key bytes, a column inside [1, 2)
     // shares its high byte, and a two-signed column shares none. The sort
-    // must equal std::sort's exactly, so no zeros: a signed-zero pair is
-    // the one place the two orders may differ.
+    // must equal an unkeyed std::sort's exactly, so no zeros: a signed-zero
+    // pair is the one place the key order is stricter.
     std::mt19937       rng(0x5047);
     std::vector<float> column(4096);
     SECTION("small integers skip the low passes")
