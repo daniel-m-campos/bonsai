@@ -180,6 +180,7 @@ struct CudaDeviceContext
         {
             return static_cast<size_t>(n_selected) * stride;
         }
+        size_t find_strip_bytes(bool children_read) const;
 
         size_t stage_children(std::span<CudaHistogramEngine::LevelOp const> ops);
 
