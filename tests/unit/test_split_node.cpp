@@ -33,6 +33,30 @@ TEST_CASE("HistogramNodeSplitFinder: picks the obvious cut on a single feature",
     CHECK(s.gain == expected);
 }
 
+TEST_CASE("SplitInput: totals reads the cached sums before the row count arrives",
+          "[split][edge]")
+{
+    // The device leaf plane sets a child's sums when the parent's split is
+    // popped and its row count only when the partition returns; the bound
+    // propagation in between must see the sums, not zeros.
+    SplitInput device_child{.hists = {}, .rows = {}};
+    device_child.sums = {.sum_grad = -2.5, .sum_hess = 4.0};
+    CHECK(device_child.row_count == 0);
+    CHECK(device_child.total_grad() == -2.5);
+    CHECK(device_child.total_hess() == 4.0);
+
+    SECTION("a held histogram is the source once populated")
+    {
+        Histogram h{2};
+        h.add(0, -1.0, 1.0);
+        h.add(1, +3.0, 2.0);
+        SplitInput host_child{.hists = {}, .rows = {}};
+        host_child.hists.push_back(std::move(h));
+        CHECK(host_child.total_grad() == 2.0);
+        CHECK(host_child.total_hess() == 3.0);
+    }
+}
+
 TEST_CASE("HistogramNodeSplitFinder: picks the best feature across two features",
           "[split][feature]")
 {

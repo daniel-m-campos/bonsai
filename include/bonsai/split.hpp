@@ -53,17 +53,17 @@ struct SplitInput
     // Distinct features used on the path from the root to this node.
     // NOLINTNEXTLINE(readability-redundant-member-init)
     std::vector<feature_id_t> path = {};
-    // Cached node totals + row count. A device-resident engine leaves
-    // hists/rows empty and sets these as the node's only host statistics.
+    // Cached totals + row count, a device node's only host statistics. The
+    // leaf plane sets sums before the partition returns row_count.
     NodeTotals sums      = {};
     size_t     row_count = 0;
 
-    // Node-level totals: the cached sums when set, else from the first
-    // populated histogram (every populated feature sums the same rows;
-    // unselected features are zero-binned placeholders and are skipped).
+    // The cached sums when no host histogram is held, else the first
+    // populated histogram's. Pinned by "SplitInput: totals reads the cached
+    // sums before the row count arrives".
     NodeTotals totals() const
     {
-        if (row_count > 0)
+        if (hists.empty())
         {
             return sums;
         }
