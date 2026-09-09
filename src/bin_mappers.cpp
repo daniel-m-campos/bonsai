@@ -148,12 +148,12 @@ ColumnBlock gather_columns(features_view X, std::span<uint32_t const> rows,
     return block;
 }
 
-// sync: seeded before the parallel::for_each_index in fit, because
-// from_edges validates and throws ConfigError, and a throw must not cross
-// the region.
-void seed_edge_slots(BinEdges const &bin_edges, size_t n_features,
-                     std::vector<std::optional<BinMapper>> &slots)
+} // namespace
+
+std::vector<std::optional<BinMapper>> mappers_from_edges(BinEdges const &bin_edges,
+                                                         size_t          n_features)
 {
+    std::vector<std::optional<BinMapper>> slots(n_features);
     for (auto const &[col, edges] : bin_edges)
     {
         if (col >= n_features)
@@ -169,9 +169,8 @@ void seed_edge_slots(BinEdges const &bin_edges, size_t n_features,
         }
         slots[col] = BinMapper::from_edges(edges);
     }
+    return slots;
 }
-
-} // namespace
 
 BinMappers BinMappers::fit(detail::ColumnBatch const &batch, BinMapperConfig const &cfg,
                            BinEdges const &bin_edges)
@@ -179,8 +178,7 @@ BinMappers BinMappers::fit(detail::ColumnBatch const &batch, BinMapperConfig con
     detail::IngestProfiler::Lap lap;
     size_t const n_rows = batch.features.empty() ? 0 : batch.features[0].size();
     auto const   rows   = sample_or_all_rows(n_rows, cfg);
-    std::vector<std::optional<BinMapper>> slots(batch.features.size());
-    seed_edge_slots(bin_edges, batch.features.size(), slots);
+    auto         slots  = mappers_from_edges(bin_edges, batch.features.size());
     parallel::for_each_index(batch.features.size(),
                              [&](size_t f)
                              {
@@ -209,14 +207,13 @@ BinMappers BinMappers::fit(detail::ColumnBatch const &batch, BinMapperConfig con
 BinMappers BinMappers::fit(features_view X, std::vector<std::string> feature_names,
                            BinMapperConfig const &cfg, BinEdges const &bin_edges)
 {
-    detail::IngestProfiler::Lap           lap;
-    size_t const                          n    = X.extent(0);
-    size_t const                          f    = X.extent(1);
-    auto const                            rows = sample_or_all_rows(n, cfg);
-    std::vector<std::optional<BinMapper>> slots(f);
-    seed_edge_slots(bin_edges, f, slots);
-    size_t const width    = column_block_width(f);
-    size_t const n_blocks = (f + width - 1) / width;
+    detail::IngestProfiler::Lap lap;
+    size_t const                n        = X.extent(0);
+    size_t const                f        = X.extent(1);
+    auto const                  rows     = sample_or_all_rows(n, cfg);
+    auto                        slots    = mappers_from_edges(bin_edges, f);
+    size_t const                width    = column_block_width(f);
+    size_t const                n_blocks = (f + width - 1) / width;
     parallel::for_each_index(n_blocks,
                              [&](size_t b)
                              {

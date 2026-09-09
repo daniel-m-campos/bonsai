@@ -183,10 +183,12 @@ if(BONSAI_CUDA)
     option(BONSAI_CUDA_STATIC_RUNTIME
         "Link cudart statically so the binary has no CUDA runtime DT_NEEDED (wheels)" OFF)
     add_library(bonsai_cuda_kernels STATIC src/cuda/histogram_engine.cu
+                                           src/cuda/mapper_fit.cu
                                            src/cuda/detail/device_context.cu
                                            src/cuda/predict.cu
                                            src/cuda/shap.cu)
     set_source_files_properties(src/cuda/histogram_engine.cu
+                                src/cuda/mapper_fit.cu
                                 src/cuda/detail/device_context.cu
                                 src/cuda/predict.cu
                                 src/cuda/shap.cu

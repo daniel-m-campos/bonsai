@@ -49,6 +49,7 @@ target_sources(bonsai_tests PRIVATE unit/test_cuda_grower.cpp)
 target_sources(bonsai_tests PRIVATE unit/test_cuda_resident.cpp)
 target_sources(bonsai_tests PRIVATE unit/test_cuda_predict.cpp)
 target_sources(bonsai_tests PRIVATE unit/test_cuda_shap.cpp)
+target_sources(bonsai_tests PRIVATE unit/test_cuda_mapper_fit.cpp)
 
 target_link_libraries(bonsai_tests PRIVATE
     bonsai_data

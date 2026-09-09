@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -27,6 +28,11 @@ using BinEdges = std::vector<std::pair<size_t, std::vector<float>>>;
 // gather exactly these rows and fit bit-identical cuts. Empty means "use every
 // row"; the indices are ascending.
 std::vector<uint32_t> bin_sample_rows(size_t n_rows, BinMapperConfig const &cfg);
+
+// One slot per feature, filled where bin_edges lists the column and empty
+// where a fit still cuts it; throws ConfigError before any parallel region.
+std::vector<std::optional<BinMapper>> mappers_from_edges(BinEdges const &bin_edges,
+                                                         size_t          n_features);
 
 class BinMappers
 {

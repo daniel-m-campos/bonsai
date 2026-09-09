@@ -27,22 +27,20 @@ bool cuda_available();
 // throws ConfigError. Placement only: model bits are unaffected.
 void cuda_select_device(uint32_t device_id);
 
-// The CUDA ingest transaction: bins raw features
-// on the device against host-fitted cuts and returns the resident plane for
-// Dataset::bin to carry. Returns nullptr, leaving the caller on the host
-// fill, when the build has no backend, no usable device is present, or a
-// feature's bins exceed the resident path's shared-memory ceiling (grow
-// would refuse such a dataset on the device anyway). Bin ids match
-// the host fill (invariants: device-binning-byte-identity).
+// The CUDA ingest transaction: bins raw features on the device against
+// host-fitted cuts and returns the resident plane Dataset::bin carries, or
+// nullptr (the caller stays on the host fill) when the build has no backend,
+// no device is present, or a feature's bins exceed the shared-memory ceiling
+// grow would refuse anyway. Bin ids match the host fill (invariants:
+// device-binning-byte-identity).
 std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const &batch,
                                                BinMappers const          &mappers);
 std::shared_ptr<IngestPlane const> cuda_ingest(features_view     X,
                                                BinMappers const &mappers);
 
-// A caller-owned, device-resident, row-major float32 matrix: the payload of
-// the DLPack capsule a cupy/torch/jax caller hands the Python layer. bonsai
-// reads it during ingest and retains nothing, so the caller's buffer only has
-// to outlive the call that consumes it.
+// A device-resident, row-major float32 matrix: the DLPack payload of a
+// cupy/torch/jax caller, or cuda_upload's copy. bonsai reads it during the
+// fit and the ingest and retains nothing beyond the shared_ptr it returned.
 struct DeviceMatrix
 {
     float const *data    = nullptr;
@@ -54,17 +52,20 @@ struct DeviceMatrix
 // caller, which bonsai keeps on the host like every other Dataset's.
 void cuda_download(float const *src, size_t n, float *dst);
 
-// Gathers the named rows of a device-resident matrix into a host row-major
-// (rows.size() x n_feats) buffer, the sample BinMappers::fit cuts on. An
-// empty rows span copies every row, matching bin_sample_rows.
-void cuda_gather_rows(DeviceMatrix const &X, std::span<uint32_t const> rows,
-                      std::span<float> out);
+// Uploads a host matrix for the fit and the bin below, or returns nullptr
+// when the backend, the device, its shared-memory ceiling at max_bin, or
+// free device memory (the matrix may take half of it) declines the copy.
+std::shared_ptr<DeviceMatrix const> cuda_upload(features_view X, size_t max_bin);
 
-// Bins a device-resident matrix in place: the same kernel over the same cuts
-// as cuda_ingest, with no host-to-device copy (invariants:
-// device-binning-byte-identity). Unlike cuda_ingest this never declines
-// on bin count: there is no host copy of the matrix to bin instead, and a
-// host grower materializes host bins from the plane.
+// Fits cuts on the device over the same row sample as BinMappers::fit, bit
+// for bit (test: CudaMapperFit: device cuts equal the host cuts).
+BinMappers cuda_fit_mappers(DeviceMatrix const      &X,
+                            std::vector<std::string> feature_names,
+                            BinMapperConfig const &cfg, BinEdges const &bin_edges = {});
+
+// Bins a device-resident matrix in place with cuda_ingest's kernel and cuts
+// (invariants: device-binning-byte-identity). It never declines: there is
+// no host copy to bin instead, and a host grower reads bins from the plane.
 std::shared_ptr<IngestPlane const> cuda_ingest_device(DeviceMatrix const &X,
                                                       BinMappers const   &mappers);
 
