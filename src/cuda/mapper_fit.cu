@@ -17,6 +17,7 @@
 
 #include "detail/device_buffer.cuh"
 #include "detail/mapper_fit_kernels.cuh"
+#include "detail/profile.cuh"
 
 namespace bonsai
 {
@@ -60,8 +61,36 @@ struct FitScratch
     }
 };
 
+struct FitDecomp
+{
+    ProfileCounters::Lap lap{.enabled = profile_on()};
+    double               gather_s = 0, sort_s = 0, cuts_s = 0, d2h_s = 0;
+
+    void mark(double &sink)
+    {
+        if (!lap.enabled)
+        {
+            return;
+        }
+        check(cudaDeviceSynchronize(), "mapper fit decomp sync");
+        lap(sink);
+    }
+
+    void print(size_t n_feats, uint32_t m, uint32_t width) const
+    {
+        if (!lap.enabled)
+        {
+            return;
+        }
+        std::println(stderr,
+                     "cuda-mapper-fit: gather={:.3f}s sort={:.3f}s cuts={:.3f}s "
+                     "d2h={:.3f}s cols={} rows={} chunk={}",
+                     gather_s, sort_s, cuts_s, d2h_s, n_feats, m, width);
+    }
+};
+
 void fit_chunk(DeviceMatrix const &X, uint32_t const *rows, uint32_t m, uint32_t col0,
-               uint32_t w, uint32_t budget, FitScratch &s)
+               uint32_t w, uint32_t budget, FitScratch &s, FitDecomp &d)
 {
     check(cudaMemset(s.nan_counts.data(), 0, w * sizeof(uint32_t)), "nan count reset");
     dim3 const         grid((m + k_transpose_tile - 1) / k_transpose_tile,
@@ -70,13 +99,16 @@ void fit_chunk(DeviceMatrix const &X, uint32_t const *rows, uint32_t m, uint32_t
     gather_keys_kernel<<<grid, dim3(k_transpose_tile, k_transpose_row_step)>>>(
         sample, col0, w, s.keys.data(), s.nan_counts.data());
     check(cudaGetLastError(), "mapper fit gather launch");
+    d.mark(d.gather_s);
     radix_sort_columns_kernel<<<w, k_sort_threads>>>(s.keys.data(), s.swap.data(), m,
                                                      s.parity.data());
     check(cudaGetLastError(), "mapper fit sort launch");
+    d.mark(d.sort_s);
     column_cuts_kernel<<<(w + k_cuts_warps - 1) / k_cuts_warps, k_cuts_threads>>>(
         s.keys.data(), s.swap.data(), s.parity.data(), s.nan_counts.data(), m, w,
         budget, s.cuts.data(), s.n_cuts.data());
     check(cudaGetLastError(), "mapper fit cuts launch");
+    d.mark(d.cuts_s);
     size_t const slot = budget + 2;
     check(cudaMemcpy(s.host_cuts.data(), s.cuts.data(), w * slot * sizeof(float),
                      cudaMemcpyDeviceToHost),
@@ -84,6 +116,7 @@ void fit_chunk(DeviceMatrix const &X, uint32_t const *rows, uint32_t m, uint32_t
     check(cudaMemcpy(s.host_n_cuts.data(), s.n_cuts.data(), w * sizeof(uint32_t),
                      cudaMemcpyDeviceToHost),
           "cut count download");
+    d.mark(d.d2h_s);
 }
 
 void note_device_fit(size_t n_feats, uint32_t m, uint32_t width)
@@ -120,10 +153,11 @@ void fit_columns(DeviceMatrix const &X, uint32_t const *rows, uint32_t m,
     uint32_t const width  = fit_chunk_width(X.n_feats, m);
     note_device_fit(X.n_feats, m, width);
     FitScratch scratch(width, m, slot);
+    FitDecomp  decomp;
     for (size_t col0 = 0; col0 < X.n_feats; col0 += width)
     {
         auto const w = static_cast<uint32_t>(std::min<size_t>(width, X.n_feats - col0));
-        fit_chunk(X, rows, m, static_cast<uint32_t>(col0), w, budget, scratch);
+        fit_chunk(X, rows, m, static_cast<uint32_t>(col0), w, budget, scratch, decomp);
         for (uint32_t j = 0; j < w; ++j)
         {
             if (slots[col0 + j])
@@ -136,6 +170,7 @@ void fit_columns(DeviceMatrix const &X, uint32_t const *rows, uint32_t m,
                 std::vector<float>(first, first + scratch.host_n_cuts[j]));
         }
     }
+    decomp.print(X.n_feats, m, width);
 }
 
 } // namespace
