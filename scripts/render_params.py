@@ -16,14 +16,15 @@ type, a default, and an effect on the model.
 Run the extract step through `make params-json`; it needs the built CLI and
 Python 3.11+ (`tomllib`, imported lazily so the page check stays 3.9-clean).
 The page check reads only the committed JSON, stdlib-only on every supported
-Python, so the docs job never builds C++ to verify the page. A knob with no
+Python, so the python job never builds C++ to verify the page. A knob with no
 effect line is a hard error listing the names, so a new knob forces
 documentation.
 
-Freshness has two gates. The page check holds page-against-JSON in the docs
-job; `make params-check` holds JSON-against-structs in the build job, which
-already has the CLI, so a knob added in C++ without `make params-json` fails
-CI naming the knob instead of silently missing from the reference.
+Freshness has two gates. The page check holds page-against-JSON in the
+python job; `make params-check` holds JSON-against-structs in the build-test
+job, which already has the CLI, so a knob added in C++ without
+`make params-json` fails CI naming the knob instead of silently missing from
+the reference.
 """
 
 from __future__ import annotations
@@ -140,7 +141,7 @@ def extract() -> int:
 
 def extraction(toml_text: str) -> dict[str, dict]:
     """The committed JSON's content for one `bonsai params` dump."""
-    import tomllib  # 3.11+; only the extract path (make params-json) needs it
+    import tomllib  # 3.11+; only the extract paths (make params-json, params-check) need it
 
     data = tomllib.loads(toml_text)
     out: dict[str, dict] = {}
