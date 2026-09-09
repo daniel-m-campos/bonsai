@@ -293,11 +293,77 @@ std::shared_ptr<CudaIngestPlane> make_ingest_plane(BinMappers const &mappers,
     return plane;
 }
 
-// perf: Raw chunks stream through one device buffer, ~64MB a piece; each chunk is
-// copied then binned before the next (the copy dominates and already runs
-// at bus rate; dbin in ingest-profile says whether overlap is ever worth
-// the staging machinery).
 constexpr size_t k_ingest_chunk_bytes = 64UL * 1024UL * 1024UL;
+constexpr size_t k_ingest_ring_slots  = 3;
+constexpr size_t k_ingest_copy_block  = size_t{1} << 20;
+
+void copy_to_pinned(float const *src, float *dst, size_t cells)
+{
+    parallel::for_each_index((cells + k_ingest_copy_block - 1) / k_ingest_copy_block,
+                             [&](size_t b)
+                             {
+                                 size_t const c0 = b * k_ingest_copy_block;
+                                 size_t const c1 =
+                                     std::min(c0 + k_ingest_copy_block, cells);
+                                 std::copy_n(src + c0, c1 - c0, dst + c0);
+                             });
+}
+
+struct IngestSlot
+{
+    PinnedBuffer<float> host;
+    DeviceBuffer<float> dev;
+    Stream              stream;
+    StreamFence         done;
+    bool                pending = false;
+
+    explicit IngestSlot(size_t cells) : host(cells)
+    {
+        dev.reserve(cells);
+    }
+};
+
+class IngestRing
+{
+  public:
+    explicit IngestRing(size_t cells_per_chunk)
+    {
+        for (size_t i = 0; i < k_ingest_ring_slots; ++i)
+        {
+            slots_.push_back(std::make_unique<IngestSlot>(cells_per_chunk));
+        }
+        if (detail::IngestProfiler::instance().enabled)
+        {
+            std::println(stderr,
+                         "bonsai: device ingest stages chunks of {} cells through {} "
+                         "pinned slots, copy and bin overlapped",
+                         cells_per_chunk, k_ingest_ring_slots);
+        }
+    }
+
+    template <typename Launch>
+    void stage(float const *src, size_t cells, Launch &&launch)
+    {
+        IngestSlot &slot = *slots_[next_];
+        next_            = (next_ + 1) % slots_.size();
+        if (slot.pending)
+        {
+            slot.done.wait();
+        }
+        copy_to_pinned(src, slot.host.data(), cells);
+        check(cudaMemcpyAsync(slot.dev.data(), slot.host.data(), cells * sizeof(float),
+                              cudaMemcpyHostToDevice, slot.stream.get()),
+              "ingest raw upload");
+        launch(static_cast<float const *>(slot.dev.data()), slot.stream.get());
+        check(cudaGetLastError(), "ingest bin launch");
+        slot.done.record(slot.stream.get());
+        slot.pending = true;
+    }
+
+  private:
+    std::vector<std::unique_ptr<IngestSlot>> slots_;
+    size_t                                   next_ = 0;
+};
 
 } // namespace
 
@@ -318,26 +384,26 @@ std::shared_ptr<IngestPlane const> cuda_ingest(features_view     X,
 
     size_t const rows_per_chunk =
         std::max<size_t>(1, k_ingest_chunk_bytes / (n_feats * sizeof(float)));
-    DeviceBuffer<float> raw;
-    raw.reserve(rows_per_chunk * n_feats);
+    IngestRing ring(std::min(rows_per_chunk, n_rows) * n_feats);
     for (size_t row0 = 0; row0 < n_rows; row0 += rows_per_chunk)
     {
         auto const rows  = std::min(rows_per_chunk, n_rows - row0);
         auto const cells = static_cast<uint32_t>(rows * n_feats);
-        check(cudaMemcpy(raw.data(), &X[row0, 0], cells * sizeof(float),
-                         cudaMemcpyHostToDevice),
-              "ingest raw upload");
         dim3 const grid((cells + 255) / 256);
-        plane->with_bins(
-            [&](auto *bins)
-            {
-                bin_rows_kernel<<<grid, dim3(256)>>>(
-                    raw.data(), static_cast<uint32_t>(rows),
-                    static_cast<uint32_t>(row0), static_cast<uint32_t>(n_feats),
-                    static_cast<uint32_t>(n_rows), table.cuts.data(), table.ofs.data(),
-                    bins);
-            });
-        check(cudaGetLastError(), "ingest bin launch");
+        ring.stage(&X[row0, 0], cells,
+                   [&](float const *raw, cudaStream_t stream)
+                   {
+                       plane->with_bins(
+                           [&](auto *bins)
+                           {
+                               bin_rows_kernel<<<grid, dim3(256), 0, stream>>>(
+                                   raw, static_cast<uint32_t>(rows),
+                                   static_cast<uint32_t>(row0),
+                                   static_cast<uint32_t>(n_feats),
+                                   static_cast<uint32_t>(n_rows), table.cuts.data(),
+                                   table.ofs.data(), bins);
+                           });
+                   });
     }
     check(cudaDeviceSynchronize(), "ingest sync");
     lap(detail::IngestProfiler::instance().dbin_s);
@@ -359,8 +425,7 @@ std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const &batch,
 
     size_t const rows_per_chunk =
         std::max<size_t>(1, k_ingest_chunk_bytes / sizeof(float));
-    DeviceBuffer<float> raw;
-    raw.reserve(std::min(rows_per_chunk, n_rows));
+    IngestRing ring(std::min(rows_per_chunk, n_rows));
     for (size_t f = 0; f < mappers.size(); ++f)
     {
         auto const     n_cuts = static_cast<uint32_t>(mappers[f].n_bins());
@@ -377,20 +442,21 @@ std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const &batch,
         {
             auto const n =
                 static_cast<uint32_t>(std::min(rows_per_chunk, n_rows - row0));
-            check(cudaMemcpy(raw.data(), batch.features[f].data() + row0,
-                             n * sizeof(float), cudaMemcpyHostToDevice),
-                  "ingest raw upload");
             dim3 const grid((n + 255) / 256);
-            plane->with_bins(
-                [&](auto *bins)
-                {
-                    bin_col_kernel<<<grid, dim3(256)>>>(
-                        raw.data(), n, static_cast<uint32_t>(row0),
-                        static_cast<uint32_t>(f), static_cast<uint32_t>(n_rows),
-                        static_cast<uint32_t>(mappers.size()), table.cuts.data() + c0,
-                        n_cuts, bins);
-                });
-            check(cudaGetLastError(), "ingest bin launch");
+            ring.stage(batch.features[f].data() + row0, n,
+                       [&](float const *raw, cudaStream_t stream)
+                       {
+                           plane->with_bins(
+                               [&](auto *bins)
+                               {
+                                   bin_col_kernel<<<grid, dim3(256), 0, stream>>>(
+                                       raw, n, static_cast<uint32_t>(row0),
+                                       static_cast<uint32_t>(f),
+                                       static_cast<uint32_t>(n_rows),
+                                       static_cast<uint32_t>(mappers.size()),
+                                       table.cuts.data() + c0, n_cuts, bins);
+                               });
+                       });
         }
     }
     check(cudaDeviceSynchronize(), "ingest sync");
