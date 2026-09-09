@@ -1,8 +1,10 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <format>
@@ -38,6 +40,19 @@ struct ProfileCounters
 
     static constexpr size_t           k_level_slots = 16;
     std::array<double, k_level_slots> level_hist_s{};
+    std::array<size_t, k_level_slots> level_rows{};
+    std::array<size_t, k_level_slots> level_blocks{};
+
+    void level_launched(uint32_t level, size_t rows, size_t blocks)
+    {
+        if (!enabled || level == 0)
+        {
+            return;
+        }
+        size_t const slot = std::min<size_t>(level, k_level_slots) - 1;
+        level_rows[slot] += rows;
+        level_blocks[slot] += blocks;
+    }
 
     ProfileCounters()                                       = default;
     ProfileCounters(ProfileCounters const &)                = delete;
@@ -80,7 +95,9 @@ struct ProfileCounters
         {
             if (level_hist_s[i] > 0)
             {
-                line += std::format(" hist_l{}={:.2f}s", i + 1, level_hist_s[i]);
+                line += std::format(" hist_l{}={:.2f}s rows_l{}={} blocks_l{}={}",
+                                    i + 1, level_hist_s[i], i + 1, level_rows[i], i + 1,
+                                    level_blocks[i]);
             }
         }
         return line;
