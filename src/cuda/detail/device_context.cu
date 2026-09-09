@@ -1275,6 +1275,7 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     leaf.segs[0]            = {0, n};
     BuildSeg const root_seg{0, n, 0};
     leaf.build_seg.upload(&root_seg, 1);
+    leaf.left_count.reserve(1);
     root_lap(prof_counters.root_stage_s);
 
     lvl.gh_ordered.reserve(n);
@@ -1299,27 +1300,87 @@ void CudaDeviceContext::leaf_begin_root(Dataset const &ds, TreeConfig const &con
     prof_counters.launched(1);
 }
 
-CudaHistogramEngine::LeafRound
-CudaDeviceContext::leaf_split(Dataset const                         &ds,
-                              CudaHistogramEngine::LeafPartOp const &op)
+void CudaDeviceContext::leaf_find_root(Dataset const & /*ds*/, TreeConfig const &config,
+                                       SplitInput const &root, SplitOutput &out,
+                                       std::span<NodeTotals> child_sums)
 {
     auto &prof = prof_counters;
     auto  lap  = prof.lap();
 
+    wait_for_profile(lap);
+    LeafRootNodes const nodes{leaf_node_stats(root, config)};
+    bool const          any_mask = lvl.stage_allowed({&root, 1});
+    lap(prof.find_stage_s);
+
+    launch_leaf_find(nodes, config, 1, any_mask);
+    leaf.fence.record();
+    leaf.fence.wait();
+    prof.launched();
+    lap(prof.gpu_s);
+
+    lvl.unpack_splits({&root, 1}, config, leaf.node_best.host(1), {&out, 1},
+                      child_sums);
+    lap(prof.unpack_s);
+}
+
+CudaHistogramEngine::LeafRound CudaDeviceContext::leaf_expand(
+    Dataset const &ds, TreeConfig const &config,
+    CudaHistogramEngine::LeafPartOp const &op, std::span<SplitInput, 2> children,
+    std::span<SplitOutput> out, std::span<NodeTotals> child_sums)
+{
+    auto &prof = prof_counters;
+    auto  lap  = prof.lap();
+
+    wait_for_profile(lap);
     auto const [offset, count] = leaf.segs[op.parent_slot];
     bool const in_b            = leaf.slot_in_b[op.parent_slot] != 0;
     if (op.build_children && leaf.next_slot >= leaf.max_slots)
     {
         throw std::runtime_error("cuda: leaf histogram pool exhausted");
     }
+    LeafPairNodes const nodes =
+        leaf_pair_nodes(children, config, op.parent_slot, count);
+    bool const any_mask = op.build_children && lvl.stage_allowed(children);
+    lap(prof.find_stage_s);
+
+    launch_leaf_partition(op, offset, count, in_b);
+    if (op.build_children)
+    {
+        leaf_enqueue_fill(ds, !in_b, count / 2);
+        launch_leaf_find(nodes, config, k_leaf_find_nodes, any_mask);
+        note_once(leaf.fused_round_noted, "leaf partition, fill and find fused behind "
+                                          "one wait, child slots resolved on device");
+    }
+    lap(prof.part_stage_s);
+    leaf.fence.record();
+    leaf.fence.wait();
+    prof.launched();
+    lap(prof.gpu_s);
+
+    auto const round = leaf_children(op, offset, count, leaf.n_left.host(1)[0], in_b);
+    children[0].row_count = round.left_count;
+    children[1].row_count = round.right_count;
+    if (op.build_children)
+    {
+        lvl.unpack_splits(children, config, leaf.node_best.host(k_leaf_find_nodes), out,
+                          child_sums);
+    }
+    lap(prof.unpack_s);
+    return round;
+}
+
+void CudaDeviceContext::launch_leaf_partition(CudaHistogramEngine::LeafPartOp const &op,
+                                              uint32_t offset, uint32_t count,
+                                              bool in_b)
+{
     PartOpValue const part_op{
         {offset, count, op.feature_id, op.bin_id, op.default_left ? 1U : 0U}};
     uint32_t const max_chunks = std::max(1U, (count + k_part_chunk - 1) / k_part_chunk);
     PartTilesDev const  tiles = lvl.part_tiles.arm(max_chunks);
     SmallChildDev const small =
-        op.build_children ? SmallChildDev{leaf.build_seg.data(), leaf.next_slot}
+        op.build_children ? SmallChildDev{leaf.build_seg.data(), leaf.left_count.data(),
+                                          leaf.next_slot}
                           : SmallChildDev{};
-    lap(prof.part_stage_s);
 
     data.dispatch_bins(
         [&](auto const *bins)
@@ -1332,20 +1393,6 @@ CudaDeviceContext::leaf_split(Dataset const                         &ds,
                 lvl.gh_of(!in_b).data());
         });
     check(cudaGetLastError(), "leaf partition launch");
-    leaf.fence.record();
-    if (op.build_children)
-    {
-        leaf_enqueue_fill(ds, !in_b, count / 2);
-        note_once(leaf.queued_fill_noted, "leaf fill queued behind the partition, "
-                                          "small child chosen on device, nl by event");
-    }
-    note_once(leaf.launch_args_noted,
-              "leaf partition op and finder nodes ride the "
-              "launch as kernel parameters, best split by event");
-    leaf.fence.wait();
-    prof.launched();
-    lap(prof.gpu_s);
-    return leaf_children(op, offset, count, leaf.n_left.host(1)[0], in_b);
 }
 
 CudaHistogramEngine::LeafRound
@@ -1354,10 +1401,8 @@ CudaDeviceContext::leaf_children(CudaHistogramEngine::LeafPartOp const &op,
                                  bool in_b)
 {
     CudaHistogramEngine::LeafRound round{};
-    round.left_count   = nl;
-    round.right_count  = count - nl;
-    leaf.pending_small = k_not_selected;
-    leaf.pending_large = k_not_selected;
+    round.left_count  = nl;
+    round.right_count = count - nl;
     if (nl == 0 || nl == count)
     {
         return round;
@@ -1366,7 +1411,7 @@ CudaDeviceContext::leaf_children(CudaHistogramEngine::LeafPartOp const &op,
     {
         throw std::runtime_error("cuda: leaf histogram pool exhausted");
     }
-    bool const     left_small        = round.left_count <= round.right_count;
+    bool const     left_small        = left_is_small(nl, count);
     uint32_t const fresh             = leaf.next_slot++;
     round.left_slot                  = left_small ? fresh : op.parent_slot;
     round.right_slot                 = left_small ? op.parent_slot : fresh;
@@ -1374,11 +1419,6 @@ CudaDeviceContext::leaf_children(CudaHistogramEngine::LeafPartOp const &op,
     leaf.segs[round.right_slot]      = {offset + nl, round.right_count};
     leaf.slot_in_b[round.left_slot]  = !in_b;
     leaf.slot_in_b[round.right_slot] = !in_b;
-    if (op.build_children)
-    {
-        leaf.pending_small = fresh;
-        leaf.pending_large = op.parent_slot;
-    }
     return round;
 }
 
@@ -1401,51 +1441,34 @@ void CudaDeviceContext::leaf_enqueue_fill(Dataset const &ds, bool in_b,
     }
 }
 
-LeafFindNodes CudaDeviceContext::leaf_find_nodes(std::span<SplitInput const> nodes,
-                                                 std::span<uint32_t const>   slots,
-                                                 TreeConfig const           &config)
+LeafNodeStats CudaDeviceContext::leaf_node_stats(SplitInput const &node,
+                                                 TreeConfig const &config)
 {
-    if (nodes.size() > k_leaf_find_nodes)
-    {
-        throw std::invalid_argument("cuda: leaf_find takes a root or a sibling pair");
-    }
-    LeafFindNodes args{};
-    for (size_t i = 0; i < nodes.size(); ++i)
-    {
-        args.sums[2 * i]         = nodes[i].sums.sum_grad;
-        args.sums[(2 * i) + 1]   = nodes[i].sums.sum_hess;
-        args.bounds[2 * i]       = nodes[i].lo;
-        args.bounds[(2 * i) + 1] = nodes[i].hi;
-        args.screens[i]          = node_screen_of(nodes[i].sums, config);
-        args.slots[i]            = slots[i];
-        args.derives[i]          = slots[i] == leaf.pending_large
-                                       ? SiblingDerive{.parent_slot = slots[i],
-                                                       .small_slot  = leaf.pending_small}
-                                       : k_filled_slot;
-    }
-    leaf.pending_small = k_not_selected;
-    leaf.pending_large = k_not_selected;
-    return args;
+    return {.sum    = {node.sums.sum_grad, node.sums.sum_hess},
+            .bound  = {node.lo, node.hi},
+            .screen = node_screen_of(node.sums, config)};
 }
 
-void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &config,
-                                  std::span<SplitInput const> nodes,
-                                  std::span<uint32_t const>   slots,
-                                  std::span<SplitOutput>      out,
-                                  std::span<NodeTotals>       child_sums)
+LeafPairNodes
+CudaDeviceContext::leaf_pair_nodes(std::span<SplitInput const, 2> children,
+                                   TreeConfig const &config, uint32_t parent_slot,
+                                   uint32_t count)
 {
-    auto const n    = static_cast<uint32_t>(nodes.size());
-    auto      &prof = prof_counters;
-    auto       lap  = prof.lap();
+    return {.stats       = {leaf_node_stats(children[0], config),
+                            leaf_node_stats(children[1], config)},
+            .left_count  = leaf.left_count.data(),
+            .parent_slot = parent_slot,
+            .fresh_slot  = leaf.next_slot,
+            .count       = count};
+}
 
-    wait_for_profile(lap);
-    LeafFindNodes const args     = leaf_find_nodes(nodes, slots, config);
-    bool const          any_mask = lvl.stage_allowed(nodes);
-    lap(prof.find_stage_s);
-
+template <typename Nodes>
+void CudaDeviceContext::launch_leaf_find(Nodes const &nodes, TreeConfig const &config,
+                                         uint32_t n, bool any_mask)
+{
     lvl.feat_best.reserve(static_cast<size_t>(n) * lvl.n_selected);
     find_kernel<<<find_grid(lvl.n_selected, n), dim3(32)>>>(
-        leaf.pool.data(), leaf.pool.data(), args, lvl.features.device(),
+        leaf.pool.data(), leaf.pool.data(), nodes, lvl.features.device(),
         data.n_bins_ptr(), any_mask ? lvl.allowed.device() : nullptr,
         leaf.monotone.device(), lvl.n_selected, lvl.stride, cut_const(config),
         screen_const(config), lvl.feat_best.data(), grads.quant.data(),
@@ -1454,13 +1477,6 @@ void CudaDeviceContext::leaf_find(Dataset const & /*ds*/, TreeConfig const &conf
     reduce_kernel<<<dim3(n), dim3(k_reduce_threads)>>>(
         lvl.feat_best.data(), lvl.n_selected, leaf.node_best.device(n));
     check(cudaGetLastError(), "leaf reduce launch");
-    leaf.fence.record();
-    leaf.fence.wait();
-    prof.launched();
-    lap(prof.gpu_s);
-
-    lvl.unpack_splits(nodes, config, leaf.node_best.host(n), out, child_sums);
-    lap(prof.unpack_s);
 }
 
 void CudaDeviceContext::leaf_stamp(

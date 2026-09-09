@@ -310,9 +310,19 @@ inline PoppedSplit pop_split(std::vector<Candidate> &heap, LessT gain_less,
             .parent_path = std::move(parent_path)};
 }
 
+inline void inherit_parent_state(PoppedSplit const &ps, TreeConfig const &config,
+                                 interaction_groups const &groups, Dataset const &ds,
+                                 ChildPair &pair)
+{
+    Phase<&GrowProfiler::commit_s> phase;
+    propagate_monotone_bounds(ps.parent_lo, ps.parent_hi, ps.c.split, config,
+                              pair.nodes[0], pair.nodes[1]);
+    propagate_interaction_state(groups, ps.parent_path, ps.c.split.feature_id,
+                                ds.n_features(), pair.nodes[0], pair.nodes[1]);
+}
+
 template <typename StepT>
-inline bool commit_pop(StepT &step, Dataset const &ds, TreeConfig const &config,
-                       interaction_groups const &groups, PoppedSplit &ps,
+inline bool commit_pop(StepT &step, TreeConfig const &config, PoppedSplit &ps,
                        ChildPair &pair, DenseBuild &build, size_t &live_leaves,
                        RecycledOutputs &out)
 {
@@ -330,10 +340,6 @@ inline bool commit_pop(StepT &step, Dataset const &ds, TreeConfig const &config,
     }
     build.covers[ps.left_id]  = static_cast<float>(row_count_of(left));
     build.covers[ps.right_id] = static_cast<float>(row_count_of(right));
-    propagate_monotone_bounds(ps.parent_lo, ps.parent_hi, ps.c.split, config, left,
-                              right);
-    propagate_interaction_state(groups, ps.parent_path, ps.c.split.feature_id,
-                                ds.n_features(), left, right);
     ++live_leaves;
     build.depth = std::max(build.depth, pair.depth);
     return true;
@@ -688,12 +694,12 @@ auto LeafwiseGrower<EngineT, SplitterT>::grow(Dataset const &ds, floats_view gra
     {
         gd::PoppedSplit ps   = gd::pop_split(heap, gain_less, build, ds);
         gd::ChildPair   pair = step.split_children(ps.c, ps.left_id, ps.right_id);
-        if (!gd::commit_pop(step, ds, config(), interaction_groups_, ps, pair, build,
-                            live_leaves, out))
+        gd::inherit_parent_state(ps, config(), interaction_groups_, ds, pair);
+        step.expand_children(ps.c, pair, pair.depth < config().max_depth);
+        if (!gd::commit_pop(step, config(), ps, pair, build, live_leaves, out))
         {
             continue;
         }
-        step.find_children(pair, pair.depth < config().max_depth);
         gd::queue_children(pair, gain_less, heap, pending);
     }
 

@@ -700,9 +700,10 @@ inline __device__ void publish_small_child(SmallChildDev const &small,
         return;
     }
     uint32_t const nr         = op.count - nl;
-    bool const     left_small = nl <= nr;
+    bool const     left_small = left_is_small(nl, op.count);
     *small.seg = BuildSeg{left_small ? op.offset : op.offset + nl, left_small ? nl : nr,
                           small.slot};
+    *small.left_count = nl;
 }
 
 template <typename BinT, typename Ops>

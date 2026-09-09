@@ -151,18 +151,19 @@ void CudaHistogramEngine::leaf_begin_root(Dataset const & /*ds*/,
     throw_unavailable();
 }
 
-CudaHistogramEngine::LeafRound
-CudaHistogramEngine::leaf_split(Dataset const & /*ds*/, LeafPartOp const & /*op*/)
+void CudaHistogramEngine::leaf_find_root(Dataset const & /*ds*/,
+                                         TreeConfig const & /*config*/,
+                                         SplitInput const & /*root*/,
+                                         SplitOutput & /*out*/,
+                                         std::span<NodeTotals> /*child_sums*/)
 {
     throw_unavailable();
 }
 
-void CudaHistogramEngine::leaf_find(Dataset const & /*ds*/,
-                                    TreeConfig const & /*config*/,
-                                    std::span<SplitInput const> /*nodes*/,
-                                    std::span<uint32_t const> /*slots*/,
-                                    std::span<SplitOutput> /*out*/,
-                                    std::span<NodeTotals> /*child_sums*/)
+CudaHistogramEngine::LeafRound CudaHistogramEngine::leaf_expand(
+    Dataset const & /*ds*/, TreeConfig const & /*config*/, LeafPartOp const & /*op*/,
+    std::span<SplitInput, 2> /*children*/, std::span<SplitOutput> /*out*/,
+    std::span<NodeTotals> /*child_sums*/)
 {
     throw_unavailable();
 }

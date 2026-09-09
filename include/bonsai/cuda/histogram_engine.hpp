@@ -185,13 +185,11 @@ class CudaHistogramEngine
 
     // --- GPULeafEngine. Best-first growth expands one leaf at a time, so this
     // plane keeps a per-tree histogram slot pool instead of the level plane's
-    // ping-pong. The host keeps the gain heap and every decision; per split
-    // only a partition op goes up and the counts, splits and sums come down.
+    // ping-pong; the host keeps the gain heap and every decision.
 
-    // One heap pop's routing: partition the popped leaf's row segment into
-    // two adjacent subranges at the same offset of the other row buffer, so
-    // no sibling's rows move; build_children also queues the smaller child's
-    // histogram behind the partition.
+    // One heap pop's routing: the popped leaf's row segment is partitioned into
+    // two adjacent subranges at the same offset of the other row buffer, so no
+    // sibling's rows move.
     struct LeafPartOp
     {
         uint32_t     parent_slot;
@@ -205,9 +203,8 @@ class CudaHistogramEngine
     // and the children own the named slots; a zero count means the partition
     // emptied one side and no slot was taken (the caller demotes the split
     // back to a leaf, and the parent keeps its slot and segment). The smaller
-    // child, and its segment, are derivable from the counts and slot_offsets/
-    // slot_counts. Equal counts favor the left child, host and device alike
-    // (smaller-child-tie-break-agrees).
+    // child takes the fresh slot and the larger keeps the parent's; equal
+    // counts favor the left, host and device alike (smaller-child-tie-break-agrees).
     struct LeafRound
     {
         uint32_t left_slot   = 0;
@@ -223,13 +220,18 @@ class CudaHistogramEngine
     void leaf_begin_root(Dataset const &ds, TreeConfig const &config, floats_view grad,
                          floats_view hess, SplitInput &root,
                          std::span<feature_id_t const> selected);
-    // Routes one leaf's rows into two adjacent subranges of its own segment.
-    LeafRound leaf_split(Dataset const &ds, LeafPartOp const &op);
-    // Best split for the root alone or one sibling pair, nodes[i] held in pool
-    // slot slots[i]; child_sums gets each winner's (left, right) totals.
-    void leaf_find(Dataset const &ds, TreeConfig const &config,
-                   std::span<SplitInput const> nodes, std::span<uint32_t const> slots,
-                   std::span<SplitOutput> out, std::span<NodeTotals> child_sums);
+    // Best split for the root in slot 0; child_sums gets the winner's (left,
+    // right) totals.
+    void leaf_find_root(Dataset const &ds, TreeConfig const &config,
+                        SplitInput const &root, SplitOutput &out,
+                        std::span<NodeTotals> child_sums);
+    // One expansion behind one wait: partitions the parent and, with
+    // op.build_children, fills and searches both children into out and
+    // child_sums (never an emptied side). children carry sums and bounds in
+    // and row counts out.
+    LeafRound leaf_expand(Dataset const &ds, TreeConfig const &config,
+                          LeafPartOp const &op, std::span<SplitInput, 2> children,
+                          std::span<SplitOutput> out, std::span<NodeTotals> child_sums);
     // Records final leaf assignment for every row in the given slots'
     // segments; a leaf's segment never moves again, so the tree epilogue can
     // stamp them all at once.

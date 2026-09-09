@@ -163,11 +163,11 @@ concept GPULeafEngine =
     requires(T b, Dataset const &ds, TreeConfig const &config, floats_view grad,
              floats_view hess, SplitInput &root, std::span<feature_id_t const> selected,
              std::span<typename T::LeafStamp const> stamps,
-             typename T::LeafPartOp const &part_op, std::span<SplitInput const> nodes,
-             std::span<uint32_t const> slots, std::span<SplitOutput> out,
-             std::span<NodeTotals> child_sums, std::span<float const> node_values,
-             std::span<float> values, std::span<node_id_t> leaf_ids,
-             std::span<float const>                    init_scores,
+             typename T::LeafPartOp const &part_op, SplitInput const &grown_root,
+             SplitOutput &root_split, std::span<SplitInput, 2> children,
+             std::span<SplitOutput> out, std::span<NodeTotals> child_sums,
+             std::span<float const> node_values, std::span<float> values,
+             std::span<node_id_t> leaf_ids, std::span<float const> init_scores,
              std::span<typename T::ResidentNode const> res_nodes,
              std::span<float>                          scores_out) {
         typename T::LeafPartOp;
@@ -175,8 +175,10 @@ concept GPULeafEngine =
         typename T::LeafStamp;
         typename T::ResidentNode;
         b.leaf_begin_root(ds, config, grad, hess, root, selected);
-        { b.leaf_split(ds, part_op) } -> std::convertible_to<typename T::LeafRound>;
-        b.leaf_find(ds, config, nodes, slots, out, child_sums);
+        b.leaf_find_root(ds, config, grown_root, root_split, child_sums);
+        {
+            b.leaf_expand(ds, config, part_op, children, out, child_sums)
+        } -> std::convertible_to<typename T::LeafRound>;
         b.leaf_stamp(stamps);
         b.finalize_tree(node_values, values, leaf_ids);
         {

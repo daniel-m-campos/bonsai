@@ -152,10 +152,16 @@ struct BuildSeg
     uint32_t slot;
 };
 
+inline constexpr __host__ __device__ bool left_is_small(uint32_t nl, uint32_t count)
+{
+    return nl <= count - nl;
+}
+
 struct SmallChildDev
 {
-    BuildSeg *seg  = nullptr;
-    uint32_t  slot = 0;
+    BuildSeg *seg        = nullptr;
+    uint32_t *left_count = nullptr;
+    uint32_t  slot       = 0;
 };
 
 constexpr __host__ __device__ size_t pair_off(uint32_t i)
@@ -221,39 +227,70 @@ inline __device__ T pick_node(uint32_t node, T const (&a)[k_leaf_find_nodes])
     return node == 0 ? a[0] : a[1];
 }
 
-inline __device__ double2 pick_pair(uint32_t node,
-                                    double const (&a)[2 * k_leaf_find_nodes])
+struct LeafNodeStats
 {
-    return node == 0 ? double2{a[0], a[1]} : double2{a[2], a[3]};
-}
+    double2    sum;
+    double2    bound;
+    NodeScreen screen;
+};
 
-struct LeafFindNodes
+struct LeafRootNodes
 {
-    double        sums[2 * k_leaf_find_nodes];
-    double        bounds[2 * k_leaf_find_nodes];
-    NodeScreen    screens[k_leaf_find_nodes];
-    SiblingDerive derives[k_leaf_find_nodes];
-    uint32_t      slots[k_leaf_find_nodes];
+    LeafNodeStats root;
 
+    __device__ uint32_t slot(uint32_t /*node*/) const
+    {
+        return 0;
+    }
+    __device__ SiblingDerive derive(uint32_t /*node*/) const
+    {
+        return k_filled_slot;
+    }
+    __device__ double2 sum(uint32_t /*node*/) const
+    {
+        return root.sum;
+    }
+    __device__ NodeScreen screen(uint32_t /*node*/) const
+    {
+        return root.screen;
+    }
+    __device__ double2 bound(uint32_t /*node*/) const
+    {
+        return root.bound;
+    }
+};
+
+struct LeafPairNodes
+{
+    LeafNodeStats   stats[k_leaf_find_nodes];
+    uint32_t const *left_count;
+    uint32_t        parent_slot;
+    uint32_t        fresh_slot;
+    uint32_t        count;
+
+    __device__ bool small(uint32_t node) const
+    {
+        return (node == 0) == left_is_small(*left_count, count);
+    }
     __device__ uint32_t slot(uint32_t node) const
     {
-        return pick_node(node, slots);
+        return small(node) ? fresh_slot : parent_slot;
     }
     __device__ SiblingDerive derive(uint32_t node) const
     {
-        return pick_node(node, derives);
+        return small(node) ? k_filled_slot : SiblingDerive{parent_slot, fresh_slot};
     }
     __device__ double2 sum(uint32_t node) const
     {
-        return pick_pair(node, sums);
+        return pick_node(node, stats).sum;
     }
     __device__ NodeScreen screen(uint32_t node) const
     {
-        return pick_node(node, screens);
+        return pick_node(node, stats).screen;
     }
     __device__ double2 bound(uint32_t node) const
     {
-        return pick_pair(node, bounds);
+        return pick_node(node, stats).bound;
     }
 };
 

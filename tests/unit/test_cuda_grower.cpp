@@ -799,6 +799,96 @@ TEST_CASE("CudaLeafwiseGrower matches CPU on a deep unconstrained tree",
     require_values_match(cpu.values, gpu.values);
 }
 
+TEST_CASE("CudaHistogramEngine: a leaf expansion that empties one side takes no slot",
+          "[cuda][grower][edge][nan]")
+{
+    if (!cuda_available())
+    {
+        SKIP("no usable CUDA device");
+    }
+    // Feature a is all NaN, so every row sits in its missing bin and a cut on
+    // it routes the whole leaf by default_left alone. The expansion still
+    // queues the fill and the find behind the partition, so the device has to
+    // resolve the empty child's slot and derive the full one without touching
+    // the parent's histogram, and the round must leave the pool where it was.
+    size_t const        n = 64;
+    detail::ColumnBatch batch;
+    batch.features.resize(2, std::vector<float>(n));
+    batch.feature_names = {"a", "b"};
+    batch.labels.assign(n, 0.0F);
+    std::vector<float> grad(n);
+    std::vector<float> hess(n, 1.0F);
+    for (size_t r = 0; r < n; ++r)
+    {
+        batch.features[0][r] = std::numeric_limits<float>::quiet_NaN();
+        batch.features[1][r] = static_cast<float>(r);
+        grad[r]              = r < n / 2 ? -1.0F : 1.0F;
+    }
+    BinMappers mappers = BinMappers::fit(batch, {});
+    Dataset    ds      = Dataset::bin(batch, mappers, {});
+    REQUIRE(ds.n_bins(0) == 2);
+
+    TreeConfig cfg;
+    cfg.max_depth        = 4;
+    cfg.max_leaves       = 8;
+    cfg.min_data_in_leaf = 1;
+    std::vector<feature_id_t> const selected{0, 1};
+
+    CudaHistogramEngine engine;
+    engine.begin_tree(ds, grad, hess);
+    SplitInput root;
+    root.row_count = n;
+    engine.leaf_begin_root(ds, cfg, grad, hess, root, selected);
+    SplitOutput               root_split{};
+    std::array<NodeTotals, 2> root_sums{};
+    engine.leaf_find_root(ds, cfg, root, root_split, root_sums);
+    REQUIRE(root_split.valid);
+    REQUIRE(root_split.feature_id == 1);
+
+    auto expand = [&](CudaHistogramEngine::LeafPartOp const &op, NodeTotals left,
+                      NodeTotals right, std::array<SplitOutput, 2> &out,
+                      std::array<NodeTotals, 4> &child_sums)
+    {
+        std::array<SplitInput, 2> children;
+        children[0].sums = left;
+        children[1].sums = right;
+        auto const round = engine.leaf_expand(ds, cfg, op, children, out, child_sums);
+        REQUIRE(children[0].row_count == round.left_count);
+        REQUIRE(children[1].row_count == round.right_count);
+        return round;
+    };
+    std::array<SplitOutput, 2> out{};
+    std::array<NodeTotals, 4>  child_sums{};
+
+    auto const all_right =
+        expand({0, 0, 0, false, true}, {}, root.sums, out, child_sums);
+    REQUIRE(all_right.left_count == 0);
+    REQUIRE(all_right.right_count == n);
+    auto const all_left = expand({0, 0, 0, true, true}, root.sums, {}, out, child_sums);
+    REQUIRE(all_left.left_count == n);
+    REQUIRE(all_left.right_count == 0);
+
+    auto const real = expand(
+        {0, root_split.feature_id, root_split.bin_id, root_split.default_left, true},
+        root_sums[0], root_sums[1], out, child_sums);
+    REQUIRE(real.left_count + real.right_count == n);
+    REQUIRE(real.left_count > 0);
+    REQUIRE(real.right_count > 0);
+    bool const left_small = real.left_count <= real.right_count;
+    REQUIRE((left_small ? real.left_slot : real.right_slot) == 1);
+    REQUIRE((left_small ? real.right_slot : real.left_slot) == 0);
+    for (size_t i = 0; i < 2; ++i)
+    {
+        if (!out[i].valid)
+        {
+            continue;
+        }
+        REQUIRE(std::isfinite(out[i].gain));
+        REQUIRE_THAT(child_sums[2 * i].sum_hess + child_sums[(2 * i) + 1].sum_hess,
+                     Catch::Matchers::WithinAbs(root_sums[i].sum_hess, 1e-6));
+    }
+}
+
 TEST_CASE("CudaLeafwiseGrower refuses an oversized leaf budget", "[cuda][grower][fit]")
 {
     if (!cuda_available())

@@ -203,16 +203,14 @@ struct CudaDeviceContext
         std::vector<RowSeg>      segs;
         std::vector<uint8_t>     slot_in_b;
         DeviceBuffer<BuildSeg>   build_seg;
+        DeviceBuffer<uint32_t>   left_count;
         Staged<int>              monotone;
         MappedBuffer<uint32_t>   n_left;
         MappedBuffer<FeatBest>   node_best;
         StreamFence              fence;
-        Once                     queued_fill_noted;
-        Once                     launch_args_noted;
-        uint32_t                 next_slot     = 0;
-        uint32_t                 max_slots     = 0;
-        uint32_t                 pending_small = k_not_selected;
-        uint32_t                 pending_large = k_not_selected;
+        Once                     fused_round_noted;
+        uint32_t                 next_slot = 0;
+        uint32_t                 max_slots = 0;
     };
 
     struct NodeTable
@@ -336,18 +334,27 @@ struct CudaDeviceContext
     void leaf_begin_root(Dataset const &ds, TreeConfig const &config, floats_view grad,
                          floats_view hess, SplitInput &root,
                          std::span<feature_id_t const> selected);
+    void leaf_find_root(Dataset const &ds, TreeConfig const &config,
+                        SplitInput const &root, SplitOutput &out,
+                        std::span<NodeTotals> child_sums);
     CudaHistogramEngine::LeafRound
-         leaf_split(Dataset const &ds, CudaHistogramEngine::LeafPartOp const &op);
+         leaf_expand(Dataset const &ds, TreeConfig const &config,
+                     CudaHistogramEngine::LeafPartOp const &op,
+                     std::span<SplitInput, 2> children, std::span<SplitOutput> out,
+                     std::span<NodeTotals> child_sums);
+    void launch_leaf_partition(CudaHistogramEngine::LeafPartOp const &op,
+                               uint32_t offset, uint32_t count, bool in_b);
     void leaf_enqueue_fill(Dataset const &ds, bool in_b, uint32_t max_rows);
+    template <typename Nodes>
+    void launch_leaf_find(Nodes const &nodes, TreeConfig const &config, uint32_t n,
+                          bool any_mask);
     CudaHistogramEngine::LeafRound
     leaf_children(CudaHistogramEngine::LeafPartOp const &op, uint32_t offset,
                   uint32_t count, uint32_t nl, bool in_b);
-    LeafFindNodes leaf_find_nodes(std::span<SplitInput const> nodes,
-                                  std::span<uint32_t const>   slots,
-                                  TreeConfig const           &config);
-    void          leaf_find(Dataset const &ds, TreeConfig const &config,
-                            std::span<SplitInput const> nodes, std::span<uint32_t const> slots,
-                            std::span<SplitOutput> out, std::span<NodeTotals> child_sums);
+    LeafNodeStats leaf_node_stats(SplitInput const &node, TreeConfig const &config);
+    LeafPairNodes leaf_pair_nodes(std::span<SplitInput const, 2> children,
+                                  TreeConfig const &config, uint32_t parent_slot,
+                                  uint32_t count);
     void          leaf_stamp(std::span<CudaHistogramEngine::LeafStamp const> stamps);
 
     bool resident_begin(Dataset const &ds, DeviceObjectiveKind kind,

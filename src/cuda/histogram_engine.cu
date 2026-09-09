@@ -158,19 +158,19 @@ void CudaHistogramEngine::leaf_begin_root(Dataset const &ds, TreeConfig const &c
     impl_->ctx.leaf_begin_root(ds, config, grad, hess, root, selected);
 }
 
-CudaHistogramEngine::LeafRound CudaHistogramEngine::leaf_split(Dataset const    &ds,
-                                                               LeafPartOp const &op)
+void CudaHistogramEngine::leaf_find_root(Dataset const &ds, TreeConfig const &config,
+                                         SplitInput const &root, SplitOutput &out,
+                                         std::span<NodeTotals> child_sums)
 {
-    return impl_->ctx.leaf_split(ds, op);
+    impl_->ctx.leaf_find_root(ds, config, root, out, child_sums);
 }
 
-void CudaHistogramEngine::leaf_find(Dataset const &ds, TreeConfig const &config,
-                                    std::span<SplitInput const> nodes,
-                                    std::span<uint32_t const>   slots,
-                                    std::span<SplitOutput>      out,
-                                    std::span<NodeTotals>       child_sums)
+CudaHistogramEngine::LeafRound CudaHistogramEngine::leaf_expand(
+    Dataset const &ds, TreeConfig const &config, LeafPartOp const &op,
+    std::span<SplitInput, 2> children, std::span<SplitOutput> out,
+    std::span<NodeTotals> child_sums)
 {
-    impl_->ctx.leaf_find(ds, config, nodes, slots, out, child_sums);
+    return impl_->ctx.leaf_expand(ds, config, op, children, out, child_sums);
 }
 
 void CudaHistogramEngine::leaf_stamp(std::span<LeafStamp const> stamps)

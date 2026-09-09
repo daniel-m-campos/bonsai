@@ -154,6 +154,7 @@ struct GrowProfiler : Profiler<GrowProfiler>
     static constexpr char const *prefix = "grow-profile";
 
     double find_s = 0, bookkeep_s = 0, partition_s = 0, populate_s = 0, finalize_s = 0;
+    double expand_s = 0;
     // Conservation buckets: everything grow spends outside the phase laps
     // above, so the laps and these three sum to grow's wall clock.
     double setup_s = 0, commit_s = 0, assemble_s = 0;
@@ -163,6 +164,7 @@ struct GrowProfiler : Profiler<GrowProfiler>
         std::pair{"bookkeep", &GrowProfiler::bookkeep_s},
         std::pair{"partition", &GrowProfiler::partition_s},
         std::pair{"populate", &GrowProfiler::populate_s},
+        std::pair{"expand", &GrowProfiler::expand_s},
         std::pair{"finalize", &GrowProfiler::finalize_s},
         std::pair{"setup", &GrowProfiler::setup_s},
         std::pair{"commit", &GrowProfiler::commit_s},
