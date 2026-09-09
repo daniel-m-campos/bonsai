@@ -56,6 +56,12 @@ Whether a grower runs on a device is answered by its engine type through the reg
 
 - enforced by: [`make_booster: grower_runs_on_device answers from the engine type`](../tests/unit/test_make_booster.cpp)
 
+### device-ingest-chunk-reuse
+
+Device ingest above 8 GiB of raw floats streams chunks through three pinned slots; a slot is reused only after the fence that follows its copy and bin kernel, so a matrix spanning more chunks than slots (here 256 MB row-major, four 64 MB chunks, and sixteen single-chunk columns) bins identically to the host on both paths. A slot reused early would bin a chunk from half-written raw. BONSAI_CUDA_INGEST_RING engages the ring below the threshold so this matrix exercises it; without the flag the same matrix uploads pageable through one slot and must bin the same bytes.
+
+- enforced by: [`cuda_ingest bins identically across more chunks than slots`](../tests/unit/test_cuda_grower.cpp)
+
 ### device-objective-formula-matches-host
 
 The device gradient and hessian kernels must stay numerically identical to src/objective.cpp's host formulas. Device-resident training reads them every round with no host cross-check, so a divergence shows up only as a quality difference. This suite is the cross-check: MSE, LogLoss and Poisson, on both the depthwise and levelwise planes, against the same fit with the host objective forced.

@@ -19,6 +19,7 @@
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <memory>
+#include <optional>
 #include <print>
 #include <span>
 #include <utility>
@@ -317,9 +318,21 @@ std::shared_ptr<CudaIngestPlane> make_ingest_plane(BinMappers const &mappers,
     return plane;
 }
 
-constexpr size_t k_ingest_chunk_bytes = 64UL * 1024UL * 1024UL;
-constexpr size_t k_ingest_ring_slots  = 3;
-constexpr size_t k_ingest_copy_block  = size_t{1} << 20;
+// perf: same-pod RTX PRO 6000, min over interleaved reps: at 16M x 1024
+// (64 GiB raw) the pinned ring takes ingest_dbin 3.57 to 2.78 s and the
+// fit 14.87 to 14.12 s; the two 8 GiB cells (16M x 128, 131072 x 16384)
+// read flat within 3%; a 128 MiB cell paid 0.05 s for its three 64 MiB
+// pinned slots. The ring therefore engages above 8 GiB of raw floats and
+// smaller matrices upload pageable as before.
+constexpr size_t k_ingest_chunk_bytes    = 64UL * 1024UL * 1024UL;
+constexpr size_t k_ingest_ring_slots     = 3;
+constexpr size_t k_ingest_ring_min_bytes = 8UL * 1024UL * 1024UL * 1024UL;
+constexpr size_t k_ingest_copy_block     = size_t{1} << 20;
+
+bool ring_forced()
+{
+    return std::getenv("BONSAI_CUDA_INGEST_RING") != nullptr;
+}
 
 void copy_to_pinned(float const *src, float *dst, size_t cells)
 {
@@ -335,14 +348,18 @@ void copy_to_pinned(float const *src, float *dst, size_t cells)
 
 struct IngestSlot
 {
-    PinnedBuffer<float> host;
-    DeviceBuffer<float> dev;
-    Stream              stream;
-    StreamFence         done;
-    bool                pending = false;
+    std::optional<PinnedBuffer<float>> host;
+    DeviceBuffer<float>                dev;
+    Stream                             stream;
+    StreamFence                        done;
+    bool                               pending = false;
 
-    explicit IngestSlot(size_t cells) : host(cells)
+    IngestSlot(size_t cells, bool pinned)
     {
+        if (pinned)
+        {
+            host.emplace(cells);
+        }
         dev.reserve(cells);
     }
 };
@@ -350,18 +367,31 @@ struct IngestSlot
 class IngestRing
 {
   public:
-    explicit IngestRing(size_t cells_per_chunk)
+    IngestRing(size_t cells_per_chunk, size_t raw_bytes)
+        : pinned_(raw_bytes > k_ingest_ring_min_bytes || ring_forced())
     {
-        for (size_t i = 0; i < k_ingest_ring_slots; ++i)
+        size_t const n_slots = pinned_ ? k_ingest_ring_slots : 1;
+        for (size_t i = 0; i < n_slots; ++i)
         {
-            slots_.push_back(std::make_unique<IngestSlot>(cells_per_chunk));
+            slots_.push_back(std::make_unique<IngestSlot>(cells_per_chunk, pinned_));
         }
-        if (detail::IngestProfiler::instance().enabled)
+        if (!detail::IngestProfiler::instance().enabled)
+        {
+            return;
+        }
+        if (pinned_)
         {
             std::println(stderr,
                          "bonsai: device ingest stages chunks of {} cells through {} "
                          "pinned slots, copy and bin overlapped",
-                         cells_per_chunk, k_ingest_ring_slots);
+                         cells_per_chunk, n_slots);
+        }
+        else
+        {
+            std::println(stderr,
+                         "bonsai: device ingest uploads chunks of {} cells pageable "
+                         "through one slot",
+                         cells_per_chunk);
         }
     }
 
@@ -370,12 +400,21 @@ class IngestRing
     {
         IngestSlot &slot = *slots_[next_];
         next_            = (next_ + 1) % slots_.size();
+        if (!pinned_)
+        {
+            check(cudaMemcpy(slot.dev.data(), src, cells * sizeof(float),
+                             cudaMemcpyHostToDevice),
+                  "ingest raw upload");
+            launch(static_cast<float const *>(slot.dev.data()), nullptr);
+            check(cudaGetLastError(), "ingest bin launch");
+            return;
+        }
         if (slot.pending)
         {
             slot.done.wait();
         }
-        copy_to_pinned(src, slot.host.data(), cells);
-        check(cudaMemcpyAsync(slot.dev.data(), slot.host.data(), cells * sizeof(float),
+        copy_to_pinned(src, slot.host->data(), cells);
+        check(cudaMemcpyAsync(slot.dev.data(), slot.host->data(), cells * sizeof(float),
                               cudaMemcpyHostToDevice, slot.stream.get()),
               "ingest raw upload");
         launch(static_cast<float const *>(slot.dev.data()), slot.stream.get());
@@ -385,6 +424,7 @@ class IngestRing
     }
 
   private:
+    bool                                     pinned_;
     std::vector<std::unique_ptr<IngestSlot>> slots_;
     size_t                                   next_ = 0;
 };
@@ -408,7 +448,8 @@ std::shared_ptr<IngestPlane const> cuda_ingest(features_view     X,
 
     size_t const rows_per_chunk =
         std::max<size_t>(1, k_ingest_chunk_bytes / (n_feats * sizeof(float)));
-    IngestRing ring(std::min(rows_per_chunk, n_rows) * n_feats);
+    IngestRing ring(std::min(rows_per_chunk, n_rows) * n_feats,
+                    n_rows * n_feats * sizeof(float));
     for (size_t row0 = 0; row0 < n_rows; row0 += rows_per_chunk)
     {
         auto const rows  = std::min(rows_per_chunk, n_rows - row0);
@@ -449,7 +490,8 @@ std::shared_ptr<IngestPlane const> cuda_ingest(detail::ColumnBatch const &batch,
 
     size_t const rows_per_chunk =
         std::max<size_t>(1, k_ingest_chunk_bytes / sizeof(float));
-    IngestRing ring(std::min(rows_per_chunk, n_rows));
+    IngestRing ring(std::min(rows_per_chunk, n_rows),
+                    n_rows * mappers.size() * sizeof(float));
     for (size_t f = 0; f < mappers.size(); ++f)
     {
         auto const     n_cuts = static_cast<uint32_t>(mappers[f].n_bins());
