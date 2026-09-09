@@ -527,10 +527,12 @@ __global__ void __launch_bounds__(k_tile_fill_threads)
         });
 }
 
-// perf: Small nodes skip the shared-memory stage: below ~512 rows the fixed
-// per-(node,feature) zero+merge cost dominates, so row visits go straight into
-// the node's global slot. One block per (tile, node): a single block per node
-// measured 18.8 ms per launch at 131k x 16384 on an RTX PRO 6000, 7.6 s of a
+// perf: Small nodes skip the tiled kernel's chunking: below ~512 rows the
+// fixed per-(node,feature) zero+merge cost dominates. One block per (tile,
+// node) then owns the node's slot, so on the tiled plane it stores every cell
+// from shared memory in place of the level memset and the global adds: 0.39 us
+// per small row against 0.87 us for the adds at 131k x 16384 on an RTX PRO
+// 6000. A single block per node measured 18.8 ms per launch there, 7.6 s of a
 // 27.4 s fit, from one SM issuing count x n_sel x 2 atomics.
 template <uint32_t W, SmallFill Fill, typename BinT>
 __global__ void __launch_bounds__(small_fill_threads(Fill))
