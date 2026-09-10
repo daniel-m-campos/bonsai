@@ -248,6 +248,64 @@ struct SortedColumn
     }
 };
 
+template <typename T, typename Op> inline __device__ T warp_reduce(T v, Op op)
+{
+    for (uint32_t off = 16; off > 0; off >>= 1)
+    {
+        v = op(v, __shfl_xor_sync(0xFFFFFFFFu, v, off));
+    }
+    return v;
+}
+
+inline __device__ uint32_t lanes_below(uint32_t mask, uint32_t lane)
+{
+    return mask & ((1u << lane) - 1u);
+}
+
+inline __device__ uint32_t highest_set(uint32_t mask)
+{
+    return 31u - __clz(mask);
+}
+
+struct RunChunk
+{
+    uint32_t const *keys;
+    uint32_t        n;
+    uint32_t        base   = 0;
+    uint32_t        starts = 0;
+    float           value  = 0.0f;
+    float           prev   = 0.0f;
+
+    __device__ void load(uint32_t new_base)
+    {
+        uint32_t const lane   = lane_id();
+        float const    before = __shfl_sync(0xFFFFFFFFu, value, 31);
+        uint32_t const j      = new_base + lane;
+        bool const     in     = j < n;
+        value                 = key_to_float(in ? keys[j] : 0u);
+        float const up        = __shfl_up_sync(0xFFFFFFFFu, value, 1);
+        prev                  = lane == 0 ? before : up;
+        uint32_t const mask   = __ballot_sync(0xFFFFFFFFu, in && prev < value);
+        starts                = new_base == 0 ? mask & ~1u : mask;
+        base                  = new_base;
+    }
+
+    __device__ void advance()
+    {
+        load(base + 32);
+    }
+
+    __device__ float value_before(uint32_t i) const
+    {
+        return __shfl_sync(0xFFFFFFFFu, prev, i - base);
+    }
+
+    __device__ float value_at(uint32_t i) const
+    {
+        return __shfl_sync(0xFFFFFFFFu, value, i - base);
+    }
+};
+
 struct Run
 {
     float    value;
@@ -256,29 +314,50 @@ struct Run
 
 struct RunCursor
 {
-    SortedColumn &col;
-    uint32_t      i = 0;
+    RunChunk chunk;
+    uint32_t i = 0;
+
+    __device__ explicit RunCursor(SortedColumn const &col) : chunk{col.keys, col.n}
+    {
+        if (col.n != 0)
+        {
+            chunk.load(0);
+        }
+    }
+
+    __device__ uint32_t run_end_from(uint32_t first)
+    {
+        uint32_t end = first;
+        for (;;)
+        {
+            if (end >= chunk.n)
+            {
+                return chunk.n;
+            }
+            if (end >= chunk.base + 32)
+            {
+                chunk.advance();
+            }
+            uint32_t const cand = chunk.starts & ~lanes_below(~0u, end - chunk.base);
+            if (cand != 0)
+            {
+                return chunk.base + __ffs(cand) - 1;
+            }
+            end = chunk.base + 32;
+        }
+    }
 
     __device__ bool next(Run &run)
     {
-        if (i >= col.n)
+        if (i >= chunk.n)
         {
             return false;
         }
-        float f   = col.at(i++);
-        run.count = 1;
-        while (i < col.n)
-        {
-            float const g = col.at(i);
-            if (f < g)
-            {
-                break;
-            }
-            f = g;
-            ++run.count;
-            ++i;
-        }
-        run.value = f;
+        uint32_t const end = run_end_from(i + 1);
+        run.count          = end - i;
+        run.value =
+            end > chunk.base ? chunk.value_at(end - 1) : chunk.value_before(end);
+        i = end;
         return true;
     }
 };
@@ -313,6 +392,16 @@ struct CutSink
         {
             push(v);
         }
+    }
+
+    __device__ void push_from_lanes(uint32_t lanes, float v)
+    {
+        uint32_t const lane = lane_id();
+        if ((lanes >> lane) & 1u)
+        {
+            out[n + __popc(lanes_below(lanes, lane))] = v;
+        }
+        n += __popc(lanes);
     }
 };
 
@@ -349,33 +438,81 @@ inline __device__ bool is_heavy(uint32_t count, double mean_bin)
     return !(static_cast<double>(count) < mean_bin);
 }
 
-inline __device__ RunSummary summarize_runs(SortedColumn &col, double mean_bin)
+struct LaneRuns
 {
-    RunSummary s{};
-    RunCursor  cur{col};
-    for (Run r; cur.next(r);)
+    double   mean_bin;
+    uint32_t max_count = 0;
+    uint32_t n_heavy   = 0;
+    uint64_t heavy_sum = 0;
+
+    __device__ void count(uint32_t run)
     {
-        ++s.n_runs;
-        s.max_count = max(s.max_count, r.count);
-        if (is_heavy(r.count, mean_bin))
+        max_count = max(max_count, run);
+        if (is_heavy(run, mean_bin))
         {
-            ++s.n_heavy;
-            s.heavy_sum += r.count;
+            ++n_heavy;
+            heavy_sum += run;
         }
     }
-    return s;
-}
 
-inline __device__ void push_every_run(SortedColumn &col, CutSink &sink)
-{
-    RunCursor cur{col};
-    for (Run r; cur.next(r);)
+    __device__ RunSummary reduce(uint32_t n_runs) const
     {
-        sink.push(r.value);
+        auto const sum = [](auto a, auto b) { return a + b; };
+        auto const big = [](uint32_t a, uint32_t b) { return max(a, b); };
+        RunSummary s{};
+        s.n_runs    = n_runs;
+        s.max_count = warp_reduce(max_count, big);
+        s.n_heavy   = warp_reduce(n_heavy, sum);
+        s.heavy_sum = warp_reduce(heavy_sum, sum);
+        return s;
     }
+};
+
+inline __device__ RunSummary summarize_runs(SortedColumn const &col, double mean_bin)
+{
+    if (col.n == 0)
+    {
+        return RunSummary{};
+    }
+    uint32_t const lane   = lane_id();
+    uint32_t       n_runs = 1;
+    uint32_t       open   = 0;
+    LaneRuns       runs{mean_bin};
+    RunChunk       chunk{col.keys, col.n};
+    for (chunk.load(0); chunk.base < col.n; chunk.advance())
+    {
+        uint32_t const starts = chunk.starts;
+        uint32_t const lower  = lanes_below(starts, lane);
+        uint32_t const from   = lower != 0 ? chunk.base + highest_set(lower) : open;
+        if ((starts >> lane) & 1u)
+        {
+            runs.count(chunk.base + lane - from);
+        }
+        n_runs += __popc(starts);
+        open = starts != 0 ? chunk.base + highest_set(starts) : open;
+    }
+    if (lane == 0)
+    {
+        runs.count(col.n - open);
+    }
+    return runs.reduce(n_runs);
 }
 
-inline __device__ void greedy_weighted_cuts(SortedColumn &col, uint32_t budget,
+inline __device__ void push_every_run(SortedColumn const &col, CutSink &sink)
+{
+    if (col.n == 0)
+    {
+        return;
+    }
+    RunChunk chunk{col.keys, col.n};
+    for (chunk.load(0); chunk.base < col.n; chunk.advance())
+    {
+        sink.push_from_lanes(chunk.starts, chunk.prev);
+    }
+    sink.push(key_to_float(col.keys[col.n - 1]));
+}
+
+inline __device__ void greedy_weighted_cuts(SortedColumn const &col, uint32_t budget,
                                             double mean_bin, RunSummary const &runs,
                                             CutSink &sink)
 {
