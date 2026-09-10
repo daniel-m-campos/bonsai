@@ -38,18 +38,6 @@ template <typename G, typename Sa> struct booster_for<TypeList<SoftmaxObjective,
 
 template <typename Combo> using BoosterFor = typename detail::booster_for<Combo>::type;
 
-namespace detail
-{
-template <typename G> struct depthwise_for
-{
-    using type = G;
-};
-template <typename E> struct depthwise_for<LeafwiseGrower<E>>
-{
-    using type = DepthwiseGrower<E>;
-};
-} // namespace detail
-
 // The triple the table is searched with: a leafwise budget of 0 or of
 // 2^max_depth and above cannot bind, so that grower becomes its engine's
 // depthwise one; cfg.dispatch stays put (invariants: leaf-budget-route-keeps-the-name).
@@ -64,15 +52,14 @@ inline DispatchConfig resolve_dispatch(Config const &cfg)
     {
         return disp;
     }
-    for_each_type<Growers>(
-        [&]<typename G>()
-        {
-            if (impl_name<G>::value == cfg.dispatch.grower_name)
-            {
-                disp.grower_name =
-                    impl_name<typename detail::depthwise_for<G>::type>::value;
-            }
-        });
+    if (disp.grower_name == impl_name<LeafwiseGrower<CpuHistogramEngine>>::value)
+    {
+        disp.grower_name = impl_name<DepthwiseGrower<CpuHistogramEngine>>::value;
+    }
+    else if (disp.grower_name == impl_name<CudaLeafwiseGrower>::value)
+    {
+        disp.grower_name = impl_name<CudaDepthwiseGrower>::value;
+    }
     return disp;
 }
 
