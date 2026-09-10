@@ -64,7 +64,7 @@ struct FitScratch
 struct FitDecomp
 {
     ProfileCounters::Lap lap{.enabled = profile_on()};
-    double               gather_s = 0, sort_s = 0, cuts_s = 0, d2h_s = 0;
+    double gather_s = 0, sort_s = 0, cuts_s = 0, d2h_s = 0, from_cuts_s = 0;
 
     void mark(double &sink)
     {
@@ -84,8 +84,8 @@ struct FitDecomp
         }
         std::println(stderr,
                      "cuda-mapper-fit: gather={:.3f}s sort={:.3f}s cuts={:.3f}s "
-                     "d2h={:.3f}s cols={} rows={} chunk={}",
-                     gather_s, sort_s, cuts_s, d2h_s, n_feats, m, width);
+                     "d2h={:.3f}s from_cuts={:.3f}s cols={} rows={} chunk={}",
+                     gather_s, sort_s, cuts_s, d2h_s, from_cuts_s, n_feats, m, width);
     }
 };
 
@@ -169,6 +169,7 @@ void fit_columns(DeviceMatrix const &X, uint32_t const *rows, uint32_t m,
             slots[col0 + j] = BinMapper::from_cuts(
                 std::vector<float>(first, first + scratch.host_n_cuts[j]));
         }
+        decomp.mark(decomp.from_cuts_s);
     }
     decomp.print(X.n_feats, m, width);
 }

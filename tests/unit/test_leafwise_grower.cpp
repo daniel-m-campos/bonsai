@@ -324,8 +324,7 @@ TEST_CASE("LeafwiseGrower: a leaf budget that cannot bind grows the depthwise tr
     // above never stops an expansion: every leaf with positive gain splits,
     // the same set depthwise splits. Sibling histograms are paired by
     // subtraction in both growers, so leaf values agree to float rounding.
-    auto const batch = random_batch(4096, 6, 19);
-    auto       in    = regression_4096();
+    auto in = regression_4096();
 
     TreeConfig cfg{.min_child_hess   = 0.0F,
                    .lambda_l2        = 1.0F,
@@ -366,7 +365,7 @@ TEST_CASE("LeafwiseGrower: a leaf budget that cannot bind grows the depthwise tr
     CHECK(l_tree.params().depth == d_tree.params().depth);
     for (size_t r = 0; r < in.rows.size(); r += 97)
     {
-        auto const x = row_of(batch, r);
+        auto const x = row_of(in.built.batch, r);
         CHECK(predict_one(l_tree, x) ==
               Catch::Approx(predict_one(d_tree, x)).margin(1e-5));
     }

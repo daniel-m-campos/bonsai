@@ -329,11 +329,6 @@ constexpr size_t k_ingest_ring_slots     = 3;
 constexpr size_t k_ingest_ring_min_bytes = 8UL * 1024UL * 1024UL * 1024UL;
 constexpr size_t k_ingest_copy_block     = size_t{1} << 20;
 
-bool ring_forced()
-{
-    return std::getenv("BONSAI_CUDA_INGEST_RING") != nullptr;
-}
-
 void copy_to_pinned(float const *src, float *dst, size_t cells)
 {
     parallel::for_each_index((cells + k_ingest_copy_block - 1) / k_ingest_copy_block,
@@ -368,7 +363,8 @@ class IngestRing
 {
   public:
     IngestRing(size_t cells_per_chunk, size_t raw_bytes)
-        : pinned_(raw_bytes > k_ingest_ring_min_bytes || ring_forced())
+        : pinned_(raw_bytes > k_ingest_ring_min_bytes ||
+                  std::getenv("BONSAI_CUDA_INGEST_RING") != nullptr)
     {
         size_t const n_slots = pinned_ ? k_ingest_ring_slots : 1;
         for (size_t i = 0; i < n_slots; ++i)

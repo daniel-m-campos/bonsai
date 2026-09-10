@@ -15,8 +15,8 @@ struct TreeConfig
     float    feature_fraction  = 1.0F; // per-tree feature subsample; 1 = all
     uint8_t  max_depth         = 6;
     uint8_t  min_data_in_leaf  = 20;
-    uint32_t max_leaves   = 31; // leafwise; 0 or >= 2^max_depth cannot bind: depthwise
-    uint32_t feature_seed = 2;  // rng seed for feature_fraction draws
+    uint32_t max_leaves        = 31; // leafwise; 0 or >= 2^max_depth cannot bind
+    uint32_t feature_seed      = 2;  // rng seed for feature_fraction draws
     // Per-feature monotone direction: +1 increasing, -1 decreasing, 0 free.
     // Missing trailing entries are free. Levelwise projects the finished leaf
     // table instead of vetoing splits (invariants: levelwise-monotone-holds).
