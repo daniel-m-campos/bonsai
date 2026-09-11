@@ -422,6 +422,37 @@ def test_supersede_refuses_a_results_dir_missing_an_axis(monkeypatch, tmp_path,
     assert "no gpu-wide-*.jsonl in" in capsys.readouterr().err
 
 
+def test_supersede_gives_a_file_to_the_longest_axis_that_prefixes_it(
+        monkeypatch, tmp_path):
+    """quality-grinsztajn is a prefix of two sibling axes, so a bare glob
+    hands it the newest sibling file; the 2.3.0 refresh staged the
+    leaf-capped results under the CPU quality axis that way. The month
+    stamp is the only thing an axis owns after its name, and code keeps
+    its metrics- infix because no other axis extends it."""
+    repo = _fake_repo(monkeypatch, tmp_path)
+    src = _session(tmp_path)
+    row = {"host": {"name": "pod-blackwell"}, "git_sha": "abc1234"}
+    for name in ("quality-grinsztajn-2026-09.jsonl",
+                 "quality-grinsztajn-gpu-2026-09.jsonl",
+                 "quality-grinsztajn-leaf-capped-gpu-2026-09.jsonl",
+                 "code-metrics-2026-09.jsonl"):
+        _jsonl(src / name, row)
+
+    assert standings_refresh.supersede(_args(
+        src, "gpu-tall,quality-grinsztajn,quality-grinsztajn-gpu,"
+        "quality-grinsztajn-leaf-capped-gpu,code")) == 0
+
+    staged = {json.loads(ln)[1]: json.loads(ln)[3] for ln in
+              (repo / "calls.jsonl").read_text().splitlines()}
+    assert staged == {
+        "gpu-tall": "gpu-tall-2026-09.jsonl",
+        "quality-grinsztajn": "quality-grinsztajn-2026-09.jsonl",
+        "quality-grinsztajn-gpu": "quality-grinsztajn-gpu-2026-09.jsonl",
+        "quality-grinsztajn-leaf-capped-gpu":
+            "quality-grinsztajn-leaf-capped-gpu-2026-09.jsonl",
+        "code": "code-metrics-2026-09.jsonl"}
+
+
 def test_supersede_commits_the_refresh_on_a_branch(monkeypatch, tmp_path,
                                                    capsys):
     """The whole --no-pr path: the newest file per axis is copied in, the

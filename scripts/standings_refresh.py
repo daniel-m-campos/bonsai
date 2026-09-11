@@ -554,13 +554,22 @@ def _stage_axis_files(src: pathlib.Path, axes: list[str]) -> dict | None:
     """Copy each axis's newest results file in, or None if one never arrived."""
     files = {}
     for axis in axes:
-        got = sorted(src.glob(f"{axis}-*.jsonl"))
+        got = _own_files(src, axis)
         if not got:
             print(f"ERROR: no {axis}-*.jsonl in {src}", file=sys.stderr)
             return None
         files[axis] = got[-1].name
         shutil.copy2(got[-1], RESULTS / got[-1].name)
     return files
+
+
+def _own_files(src: pathlib.Path, axis: str) -> list[pathlib.Path]:
+    """The axis's files, oldest first: a longer axis name that also prefixes
+    a file owns it, so quality-grinsztajn never claims the -gpu results."""
+    longer = [f"{other}-" for other in (*AXES, *LOCAL_AXES)
+              if other != axis and other.startswith(f"{axis}-")]
+    return sorted(path for path in src.glob(f"{axis}-*.jsonl")
+                  if not path.name.startswith(tuple(longer)))
 
 
 def _restamp_and_render(axes: list[str], files: dict,
