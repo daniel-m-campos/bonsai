@@ -29,7 +29,7 @@ takes, never from a new run.
 The A/B is the perf-change detector, and both planes take it: the pod fits
 the previous release wheel, the fixed anchor wheel and HEAD at anchor cells,
 every arm once per rep with the reps interleaved, cuda growers on the GPU
-session and the cpu growers on whichever host measures cpu-tall. The math
+session and the cpu growers on the cpu plane's own pod. The math
 (min over reps, the two bands, what counts as moved) is
 check_standings.py's, so the verdict printed here, the table the perf page
 renders and the gate that demands a decision entry for a move read one
@@ -38,9 +38,17 @@ answer.
 The host of record for the CPU plane is a GPU pod's CPU, at the 12 threads
 the CPU specs pin (runbook section 11). That is server silicon rather than
 the desktop-class parts a CPU rental buys, and a CPU ranking is a claim
-about a class of machine as much as about an engine. So the default is one
-rental: every axis rides the GPU session, and `--cpu-plane-host cpupod`
-buys a separate CPU pod for the CPU axes when that is what is wanted.
+about a class of machine as much as about an engine. So every axis rides
+the GPU session by default, and `--cpu-plane-host cpupod` buys a separate
+CPU pod for the CPU axes when that is what is wanted.
+
+The cpu A/B does not ride the GPU session. A ranking wants the server
+silicon; a same-library A/B wants a quiet host, and the GPU pod's metered
+CPU is not one: at the A/B cell it spread 15-22% run to run, which no min
+over reps resolves against a 2% band, and a 4-rep min there read a +14%
+move that 18 interleaved reps put at -2%. A cpuset host spread 0.7% at
+the same cell. So a release refresh is two rentals: the GPU pod for every
+axis and the GPU A/B, and a CPU pod for the cpu A/B alone.
 
 The two hosts cap by different mechanisms, which is why the pod script
 asserts whichever cap it landed under rather than one rule. A GPU pod
@@ -105,8 +113,8 @@ BANNED_DATACENTERS = ("EUR-IS-2",)
 # any level not on this list, is not a candidate.
 STOCK_ORDER = ("HIGH", "MEDIUM", "LOW")
 
-# The optional separate CPU rental (--cpu-plane-host cpupod), not the
-# default host of record. cpu5g is the general-purpose CPU5 flavor at 4GB of
+# The CPU rental: the cpu A/B's host, and the cpu axes' under
+# --cpu-plane-host cpupod. cpu5g is the general-purpose CPU5 flavor at 4GB of
 # RAM per vCPU, which covers both cpu cells with room to spare. Not a knob:
 # CPU_DISK_GB below is pinned at the CPU5 disk cap, so any other flavor fails
 # at create.
@@ -119,7 +127,7 @@ GPU_DISK_GB = 80
 PLANE_GPU = "gpu"
 PLANE_CPU = "cpu"
 # Where the CPU axes are measured. "gpu" is the host of record: they ride
-# the GPU session and no second pod is rented.
+# the GPU session, and the CPU pod is rented for the cpu A/B alone.
 CPU_PLANE_HOSTS = (PLANE_GPU, "cpupod")
 
 AB_BAND_PCT = check_standings.AB_BAND_PCT
@@ -202,10 +210,11 @@ def main() -> int:
                    default=PLANE_GPU,
                    help="where the cpu axes are measured: on the GPU pod's "
                         "own CPU (default, the host of record) or on a "
-                        "separately rented CPU pod")
+                        "separately rented CPU pod; the cpu A/B rents a "
+                        "CPU pod either way")
     m.add_argument("--cpu-vcpu", type=int, default=CPU_VCPU,
-                   help="vCPUs to buy when --cpu-plane-host is cpupod; must "
-                        "be at least one per thread the specs claim")
+                   help="vCPUs to buy for the CPU pod; must be at least "
+                        "one per thread the specs claim")
     m.add_argument("--gpu-type", default="",
                    help="rent exactly this GPU card instead of walking the "
                         "Server-then-Workstation Edition ladder")
@@ -259,34 +268,24 @@ def measure(args: argparse.Namespace) -> int:
         if not axes:
             print("every requested axis is current; nothing to measure")
             return 0
-    cpu_axes = [a for a in axes if a.startswith(CPU_PREFIX)]
-    if args.cpu_plane_host == PLANE_GPU:
-        # The host of record: the cpu axes ride the GPU session, so one
-        # rental measures the whole matrix and the pod script's cap
-        # assertion is the bandwidth-quota branch.
-        sessions = [(PLANE_GPU, axes)]
-        if cpu_axes:
-            print(f"cpu plane: {', '.join(cpu_axes)} on the GPU pod's own "
-                  f"CPU at {max(spec_threads(a) for a in cpu_axes)}t "
-                  "(runbook section 11); no second rental")
-    else:
-        sessions = [(PLANE_GPU, [a for a in axes if a not in cpu_axes]),
-                    (PLANE_CPU, cpu_axes)]
-        sessions = [(p, sax) for p, sax in sessions if sax]
-        if cpu_axes:
-            # One vCPU per thread is the whole sizing rule for this path: a
-            # rented CPU pod enforces the purchase as a cpuset, so a thread
-            # that spins at a barrier burns only the core it already owns.
-            needed = max(spec_threads(axis) for axis in cpu_axes)
-            print(f"cpu plane: {', '.join(cpu_axes)} at {needed}t need >= "
-                  f"{needed} vCPU (one per thread, because a cpu pod caps by "
-                  f"cpuset); renting {args.cpu_vcpu} x {CPU_FLAVOR}")
-            if args.cpu_vcpu < needed:
-                print(f"ERROR: --cpu-vcpu {args.cpu_vcpu} is below the "
-                      f"{needed} the sizing rule requires; the axis would "
-                      f"run more threads than the cpuset has cpus",
-                      file=sys.stderr)
-                return 1
+    sessions = _sessions(axes, args.cpu_plane_host)
+    cpu_session = next((sax for plane, sax in sessions if plane == PLANE_CPU),
+                       None)
+    if cpu_session is not None:
+        # One vCPU per thread is the whole sizing rule for a cpu pod: it
+        # enforces the purchase as a cpuset, so a thread that spins at a
+        # barrier burns only the core it already owns.
+        needed = max(spec_threads(axis)
+                     for axis in cpu_session or [AB_AXES[PLANE_CPU]])
+        what = ", ".join(cpu_session) or "the cpu A/B"
+        print(f"cpu plane: {what} at {needed}t need >= {needed} vCPU (one "
+              f"per thread, because a cpu pod caps by cpuset); renting "
+              f"{args.cpu_vcpu} x {CPU_FLAVOR}")
+        if args.cpu_vcpu < needed:
+            print(f"ERROR: --cpu-vcpu {args.cpu_vcpu} is below the {needed} "
+                  "the sizing rule requires; the fit would run more threads "
+                  "than the cpuset has cpus", file=sys.stderr)
+            return 1
     key = os.environ.get("RUNPOD_API_KEY")
     gpus = (args.gpu_type,) if args.gpu_type else GPUS
     if args.dry_run:
@@ -315,7 +314,7 @@ def measure(args: argparse.Namespace) -> int:
     # guard skipped ends there with no rows and no failure count, so the
     # delivery is verified file by file rather than trusted from the marker.
     missing = [a for a in axes
-               if not any(out_dir.glob(f"{a}-*.jsonl"))
+               if not _own_files(out_dir, a)
                and not any(out_dir.glob(f"QUOTAFAIL-{a}-*.jsonl"))]
     if missing:
         print("ERROR: the pod reported done but delivered no rows for "
@@ -328,6 +327,28 @@ def measure(args: argparse.Namespace) -> int:
           f"  python3 scripts/standings_refresh.py supersede "
           f"--results-dir {out_dir}")
     return 0
+
+
+def _sessions(axes: list[str],
+              cpu_plane_host: str) -> list[tuple[str, list[str]]]:
+    """The pod sessions a measurement rents, as (plane, axes) pairs.
+
+    The GPU session carries every axis by default (the host of record for
+    the cpu axes is the GPU pod's own CPU, runbook section 11) and the cpu
+    A/B runs on a CPU pod with no axes of its own. Under ``cpupod`` the cpu
+    axes move to that pod and the A/B rides them there, as the pod script
+    runs it after cpu-tall on the cpu plane.
+    """
+    cpu_axes = [a for a in axes if a.startswith(CPU_PREFIX)]
+    if cpu_plane_host == PLANE_GPU:
+        if cpu_axes:
+            print(f"cpu plane: {', '.join(cpu_axes)} on the GPU pod's own "
+                  f"CPU at {max(spec_threads(a) for a in cpu_axes)}t "
+                  "(runbook section 11)")
+        return [(PLANE_GPU, axes), (PLANE_CPU, [])]
+    sessions = [(PLANE_GPU, [a for a in axes if a not in cpu_axes]),
+                (PLANE_CPU, cpu_axes)]
+    return [(plane, sax) for plane, sax in sessions if sax]
 
 
 def spec_threads(axis: str) -> int:
@@ -657,7 +678,8 @@ def _run_session(key: str, args: argparse.Namespace, *, plane: str,
     """
     pod_id = _create_pod(key, pubkey, plane=plane, vcpu=args.cpu_vcpu,
                          gpus=gpus)
-    print(f"{plane} pod {pod_id} created for {', '.join(axes)}; waiting for ssh")
+    print(f"{plane} pod {pod_id} created for "
+          f"{', '.join(axes) or 'the cpu A/B'}; waiting for ssh")
     # No HOST_TAG on either plane: the driver knows what it asked for, the
     # pod knows what it got, and naming a row after the request is how a
     # 12-thread run ended up committed under a 16-thread tag.
@@ -730,7 +752,7 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int,
     A GPU pod is bought by device, and its CPU share is whatever the host
     has spare, read off the container rather than assumed. A CPU pod is
     bought by vCPU, so its ceiling is a line on the invoice; that is the
-    ``--cpu-plane-host cpupod`` path, not the host of record.
+    cpu A/B's host, and the cpu axes' under ``--cpu-plane-host cpupod``.
 
     The GPU create walks the cards in ``gpus`` in order, one create per
     stocked datacenter then unpinned, so a later card is tried only once

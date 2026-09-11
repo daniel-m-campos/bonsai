@@ -239,12 +239,24 @@ def test_the_arms_are_the_wheels_the_driver_named_plus_head(anchor, prev, arms):
     assert done.stdout.strip() == arms, done.stderr
 
 
-def _cpu_ab_guard() -> str:
-    """The condition under which run_cpu_axis takes the cpu plane's A/B."""
-    found = [ln.strip() for ln in POD_SCRIPT.read_text().splitlines()
+def _cpu_ab_guards() -> dict[str, str]:
+    """The two conditions under which the pod takes the cpu plane's A/B:
+    behind the tall axis when that axis ran, and alone on a cpu plane
+    that was given no axes."""
+    found = [ln.strip().removeprefix("if ").removesuffix("; then")
+             for ln in POD_SCRIPT.read_text().splitlines()
              if ln.strip().startswith("if ") and "CPU_AB_AXIS" in ln]
-    assert len(found) == 1, f"expected one cpu A/B guard, got {found}"
-    return found[0].removeprefix("if ").removesuffix("; then")
+    guards = {"alone" if "$PLANE" in g else "axis": g for g in found}
+    assert len(found) == 2 and set(guards) == {"axis", "alone"}, found
+    return guards
+
+
+def _takes(guard: str, env: str) -> bool:
+    done = subprocess.run(
+        ["bash", "-c", f"{env}\nif {guard}; then echo taken; else echo no; fi"],
+        capture_output=True, text=True)
+    assert done.stdout.strip() in ("taken", "no"), done.stderr
+    return done.stdout.strip() == "taken"
 
 
 @pytest.mark.parametrize("axis,taken", [
@@ -256,11 +268,24 @@ def test_the_cpu_ab_rides_the_tall_axis_only(axis, taken):
     """One A/B file per plane, at the tall cell, after that axis cleared the
     cap gate: a session measuring only cpu-wide never writes it, so its rows
     cannot be another cell's under the same name."""
-    done = subprocess.run(
-        ["bash", "-c", f"axis={axis}; CPU_AB_AXIS=cpu-tall\n"
-                       f"if {_cpu_ab_guard()}; then echo taken; else echo no; fi"],
-        capture_output=True, text=True)
-    assert done.stdout.strip() == ("taken" if taken else "no"), done.stderr
+    assert _takes(_cpu_ab_guards()["axis"],
+                  f"axis={axis}; CPU_AB_AXIS=cpu-tall") == taken
+
+
+@pytest.mark.parametrize("plane,axes,taken", [
+    ("cpu", "", True),
+    ("cpu", "cpu-wide", True),
+    ("cpu", "cpu-tall,cpu-wide", False),
+    ("gpu", "", False),
+    ("gpu", "gpu-tall,cpu-wide", False),
+])
+def test_the_cpu_ab_runs_alone_on_a_cpu_plane_that_did_not_fit_the_tall_axis(
+        plane, axes, taken):
+    """A refresh rents the CPU pod for the A/B by itself, so the cpu plane
+    takes it with no axes at all; a plane that ran cpu-tall already took it
+    behind that axis, and the GPU plane never takes the cpu A/B."""
+    assert _takes(_cpu_ab_guards()["alone"],
+                  f"PLANE={plane}; AXES={axes}; CPU_AB_AXIS=cpu-tall") == taken
 
 
 def test_the_driver_registers_the_cpu_ab_under_the_axis_the_pod_fits_it_at():
