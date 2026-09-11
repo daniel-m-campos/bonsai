@@ -287,6 +287,45 @@ def test_verdicts_head_each_plane_with_the_wheels_it_fitted(tmp_path):
     assert standings_refresh._ab_verdicts(tmp_path / "empty") == ""
 
 
+# Sessions =========================================================================================
+
+ALL_AXES = list(standings_refresh.AXES)
+
+
+def test_a_refresh_rents_the_cpu_pod_for_the_ab_alone():
+    """The cpu axes ride the GPU pod, the host of record, and the cpu A/B
+    gets a cpuset host of its own: the GPU pod's metered CPU spread 15-22%
+    at the A/B cell and cannot resolve a 2% band."""
+    assert standings_refresh._sessions(ALL_AXES, "gpu") == [
+        ("gpu", ALL_AXES), ("cpu", [])]
+    assert standings_refresh._sessions(["gpu-tall"], "gpu") == [
+        ("gpu", ["gpu-tall"]), ("cpu", [])]
+
+
+def test_cpupod_moves_the_cpu_axes_and_their_ab_together():
+    """Under cpupod the A/B rides cpu-tall on the CPU pod, so no third
+    session is rented and a GPU-only request rents no CPU pod at all."""
+    assert standings_refresh._sessions(ALL_AXES, "cpupod") == [
+        ("gpu", [a for a in ALL_AXES if not a.startswith("cpu-")]),
+        ("cpu", ["cpu-tall", "cpu-wide"])]
+    assert standings_refresh._sessions(["gpu-tall"], "cpupod") == [
+        ("gpu", ["gpu-tall"])]
+
+
+def test_the_ab_only_cpu_pod_is_sized_by_the_ab_cell(monkeypatch, capsys):
+    """A CPU pod with no axes still runs cpu-tall's threads, so the sizing
+    rule reads that spec rather than passing an empty session."""
+    monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
+    args = argparse.Namespace(
+        axes="gpu-tall", only_stale=False, prev_version="", out_dir="",
+        keep_pod=False, cpu_plane_host="gpu", cpu_vcpu=4, gpu_type="",
+        dry_run=True)
+
+    assert standings_refresh.measure(args) == 1
+    err = capsys.readouterr().err
+    assert "--cpu-vcpu 4 is below the 12" in err
+
+
 # Supersession =====================================================================================
 
 STUB_UPDATE = """import json, pathlib, sys

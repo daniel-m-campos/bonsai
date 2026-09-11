@@ -22,30 +22,29 @@ PUB=$(cat ~/.ssh/id_ed25519.pub)
 
 ## 1. Create a pod
 
-REST v1 is the reliable API surface (the GraphQL mutation works too; the v2 endpoint has had DNS outages). **`PUBLIC_KEY` in `env` is mandatory**: without it the pod boots but SSH refuses your key and the only fix is delete + recreate.
+REST v2 on `api.runpod.io` is the API surface; v1 on `rest.runpod.io` is retired (its create started orphaning billing pods behind error responses in 2026-09, which is what moved the driver). **`PUBLIC_KEY` in `env` is mandatory**: without it the pod boots but SSH refuses your key and the only fix is delete + recreate.
 
 ```bash
-curl -s https://rest.runpod.io/v1/pods \
+curl -s https://api.runpod.io/v2/pods \
   -H "Authorization: Bearer $RUNPOD_KEY" -H 'content-type: application/json' \
   -d "{
     \"name\": \"bonsai-validate\",
-    \"imageName\": \"ghcr.io/daniel-m-campos/bonsai-ci:cuda12.8\",
-    \"gpuTypeIds\": [\"NVIDIA L40S\"],
-    \"gpuCount\": 1,
-    \"cloudType\": \"SECURE\",
-    \"containerDiskInGb\": 80,
+    \"image\": \"ghcr.io/daniel-m-campos/bonsai-ci:cuda12.8\",
+    \"gpu\": {\"id\": \"NVIDIA L40S\", \"count\": 1},
+    \"cloud\": \"SECURE\",
+    \"disk\": 80,
     \"ports\": [\"22/tcp\"],
     \"env\": {\"PUBLIC_KEY\": \"$PUB\"}
   }" | python3 -m json.tool
 ```
 
-Note the returned `id`. GPU choice: L40S (SECURE, ~$1/hr) is the workhorse, consistently available with direct public IPs. A100-80GB SECURE (~$1.64/hr) is the fallback; community 4090/5090 capacity comes and goes hourly. Fleet caveat: identical code on two same-model pods has measured ~25% apart, so **only same-pod before/after comparisons are valid**; never quote cross-pod absolute numbers.
+Note the returned `id`. A create that answers 400 or 500 can still have placed the pod, and `GET /v2/pods` can lag a placed pod by a few seconds, so after any create error list the pods and look for your name before creating again; `standings_refresh.py` adopts a pod already carrying its session name rather than asking for a second. GPU choice: L40S (SECURE, ~$1/hr) is the workhorse, consistently available with direct public IPs. A100-80GB SECURE (~$1.64/hr) is the fallback; community 4090/5090 capacity comes and goes hourly. Fleet caveat: identical code on two same-model pods has measured ~25% apart, so **only same-pod before/after comparisons are valid**; never quote cross-pod absolute numbers.
 
 ### Pin the datacenter
 
 A create that names no datacenter is placed wherever RunPod picks, which fails with a 500 "no instances" while that same GPU sits in stock two regions over (measured on the 2026-08-14 GPU refresh). Read the per-datacenter stock first, then pin one in the create body.
 
-The stock reading is a v2 catalog call, on `api.runpod.io` rather than the `rest.runpod.io` host the v1 pod endpoints live on:
+The stock reading is a catalog call on the same host:
 
 ```bash
 GPU="NVIDIA RTX PRO 6000 Blackwell Server Edition"
@@ -59,27 +58,25 @@ Each entry is `{id, name, availability}` with availability `HIGH`, `MEDIUM`, `LO
 Three rules, all measured:
 
 - **One datacenter per create.** A multi-entry `dataCenterIds` list can 400 on the create schema, so iterate over candidates on failure instead of listing them all at once.
-- **A 400 on a pinned create means try the next one, not stop.** The v1 create schema carries its own enum of datacenter ids and it is not the set the catalog reports: US-MO-2 and US-NC-2 are readable as stocked and rejected at create.
+- **A 400 on a pinned create means try the next one, not stop.** The create schema carries its own enum of datacenter ids and it is not the set the catalog reports: US-MO-2 and US-NC-2 are readable as stocked and rejected at create.
 - **EUR-IS-2 is never rented.** That is policy, not availability; skip it whatever it reports.
 
 `standings_refresh.py` encodes all three in `stocked_datacenters()`, tries the stocked datacenters best-first with one create each, and falls back to an unpinned create if the catalog call fails, so a lookup outage is never worse than not pinning.
 
 ## 2. Wait for liveness and get the SSH endpoint
 
-`desiredStatus: RUNNING` from REST means nothing: the container may never have started. REST publishes `publicIp` and `portMappings` once the pod is placed, which is necessary but still not proof the container is up, so the only trustworthy readiness signal is sshd answering. `standings_refresh.py` polls the REST mapping and then probes ssh; the legacy GraphQL `runtime.uptimeInSeconds` query this runbook used to recommend now returns 403 for current API keys.
+`desiredStatus: RUNNING` from REST means nothing: the container may never have started. REST publishes `runtime.ports` once the pod is placed, which is necessary but still not proof the container is up, so the only trustworthy readiness signal is sshd answering. `standings_refresh.py` polls the mapping and then probes ssh; the legacy GraphQL `runtime.uptimeInSeconds` query this runbook used to recommend now returns 403 for current API keys.
 
 ```bash
 POD=<pod-id>
 while true; do
-  OUT=$(curl -s https://api.runpod.io/graphql \
-    -H "Authorization: Bearer $RUNPOD_KEY" -H 'content-type: application/json' \
-    -d "{\"query\":\"query{pod(input:{podId:\\\"$POD\\\"}){runtime{uptimeInSeconds ports{ip isIpPublic privatePort publicPort type}}}}\"}")
-  echo "$OUT" | grep -q '"runtime":null' || { echo "$OUT" | python3 -m json.tool; break; }
+  OUT=$(curl -s https://api.runpod.io/v2/pods/$POD -H "Authorization: Bearer $RUNPOD_KEY")
+  echo "$OUT" | grep -q '"private": *22' && { echo "$OUT" | python3 -m json.tool; break; }
   sleep 10
 done
 ```
 
-Read the entry with `"isIpPublic": true` and `"privatePort": 22`: that pair is your SSH target. Typical boot is 1–3 minutes (image pull is cached in each datacenter after the first use). If `runtime` stays null past ~5 minutes, read the container logs in the web console (the reason lives only there) and see the failure table.
+Read the `runtime.ports` entry with `"private": 22`: its `ip` and `public` are your SSH target. Typical boot is 1–3 minutes (image pull is cached in each datacenter after the first use). If `runtime` stays null past ~5 minutes, read the container logs in the web console (the reason lives only there) and see the failure table.
 
 ## 3. Connect
 
@@ -164,8 +161,8 @@ The script clones or fetches the branch, builds `python-cuda` (side-installing C
 ## 7. Tear down and sweep
 
 ```bash
-curl -s -X DELETE https://rest.runpod.io/v1/pods/$POD -H "Authorization: Bearer $RUNPOD_KEY"
-curl -s https://rest.runpod.io/v1/pods -H "Authorization: Bearer $RUNPOD_KEY" | python3 -m json.tool | grep -c '"id"'
+curl -s -X DELETE https://api.runpod.io/v2/pods/$POD -H "Authorization: Bearer $RUNPOD_KEY"
+curl -s https://api.runpod.io/v2/pods -H "Authorization: Bearer $RUNPOD_KEY" | python3 -c "import json,sys; print(len(json.load(sys.stdin)['pods']))"
 ```
 
 The sweep is not optional: **an error-returning create can still have created a billing pod.** After any failed create, list and delete strays. Zero pods listed = zero billing.
@@ -232,7 +229,7 @@ python3 scripts/standings_refresh.py supersede --results-dir standings-<date> \
 
 Release ordering is unchanged from decision 92: merge the version-bump PR FIRST, then run the refresh with `--prev-version` = the last release and no `--only-stale` (a release re-measures every axis on one host), merge the refresh PR (a **moved** verdict needs a `Standings:`-tagged decision first; docs-check enforces), then tag. The order matters because `update_standings.py` stamps `refreshed_for` from pyproject at the refresh's checkout sha: a refresh run before the bump stamps the old version and the publish gate then fails at tag time.
 
-The CPU axes are measured on the GPU pod's own CPU, so a full refresh is one rental; see section 11 before running `cpu-tall` or `cpu-wide`.
+The CPU axes are measured on the GPU pod's own CPU and the cpu A/B on a CPU pod of its own, so a full refresh is two rentals; see section 11 before running `cpu-tall` or `cpu-wide`.
 
 A pushed tag alone publishes nothing: wheels.yml's publish path triggers on the GitHub release event, so the release recipe ends with `gh release create v<version> --notes-file <changelog section>`, which is what fires the build, the pod self-validation, the standings gate, and the PyPI upload. This has been re-learned twice; it is written here so there is no third time.
 
@@ -258,9 +255,11 @@ A GPU rental sells you a device and leaves the CPU share to whatever the host ha
 
 So a CPU pod's cap is a cpuset, not a bandwidth quota, and it equals what was bought. Under a cpuset the container is handed whole CPUs, one per rented vCPU, and nothing meters how they are spent: a thread that spins at a barrier burns the core it already owns and takes nothing from its siblings, so spin-wait is free and one vCPU per thread is enough. Under a bandwidth quota the threads share one pool of core-seconds, a spinning thread draws on that pool while it waits, and the spare core plus the throttle counters are what keep the fit off the ceiling. A container that cannot be throttled cannot have its timing eaten by throttling, which is the one thing a CPU rental buys that a GPU pod does not. It also means a quota read alone reports "unlimited" on a CPU pod, which is why `cpu_quota()` and the pod script both take the tighter of the CFS quota and the cpuset.
 
-The rental has been exercised against the API: `POST /v1/pods` with `computeType: "CPU"`, `cpuFlavorIds: ["cpu5g"]` and `vcpuCount: 16` returns 201 with `memoryInGb` 64 and `costPerHr` 0.736, matching the flavor's 4GB per vCPU and its published per-vCPU price. The MCP `create-pod` tool cannot express a CPU flavor or a vCPU count, so that REST call is the provisioning path. The assertion below still confirms each session's rental rather than trusting this table.
+The rental has been exercised against the API: `POST /v2/pods` with `"cpu": {"id": "cpu5g", "vcpuCount": 16}` and `"disk": 30` returns a pod at 64GB and $0.736/h, matching the flavor's 4GB per vCPU and its published per-vCPU price. The MCP `create-pod` tool cannot express a CPU flavor or a vCPU count, so that REST call is the provisioning path. The assertion below still confirms each session's rental rather than trusting this table.
 
-**Measuring.** One command; the CPU axes ride the same session that measures the device planes, and everything lands in one results directory:
+**The cpu A/B lives on a CPU pod, whatever hosts the cpu axes.** A ranking and an A/B ask different things of a host. The ranking asks which engine wins on server silicon, and a desktop-class CPU rental answers a different question: at the tall cell a `cpu5g` pod moved LightGBM 3.0x against bonsai where the GPU pod's server CPU had it near parity, so the rankings stay on the GPU pod. The A/B asks whether one library moved against itself by 2%, and the GPU pod's metered CPU cannot answer that either way: at the A/B cell it spread 15-22% run to run, a 4-rep min read the depthwise grower at +14% against the anchor and +7% against the prior release where 18 interleaved reps put it at -2% and -3%, and no min over reps recovers a 2% band from a 20% spread. The cpuset pod spread 0.7% at the same cell. So `measure` rents the CPU pod for the cpu A/B alone by default, at the cpu-tall thread count, and runs it at 6 reps; under `--cpu-plane-host cpupod` the cpu axes move onto that pod too and the A/B rides them there.
+
+**Measuring.** One command; the CPU axes ride the same session that measures the device planes, the cpu A/B gets its own pod, and everything lands in one results directory:
 
 ```bash
 python3 scripts/standings_refresh.py measure --prev-version <last-release>
@@ -268,7 +267,7 @@ python3 scripts/standings_refresh.py measure --dry-run     # plan and sizing onl
 python3 scripts/standings_refresh.py supersede --results-dir <dir>
 ```
 
-`--dry-run` prints the plan and the thread count read out of the bundled specs, and rents nothing. `--cpu-plane-host` defaults to `gpu`, which is what makes the refresh one rental; pass `cpupod` to split the CPU axes onto their own pod. `--cpu-vcpu` sets how wide that `cpu5g` rental is (default 16); rent at least one vCPU per spec thread, since the cpuset is the whole cap there. The flavor is pinned at `cpu5g`, because the container disk is pinned at the CPU5 cap and any other flavor is refused at create. The gate itself is the pod script's, and only the pod can read the container it landed in. `parity.jsonl` is a cuda measurement and belongs to the GPU axes; the A/B runs on both planes, the cuda growers on the GPU session and the cpu growers wherever `cpu-tall` is measured, each into its own `ab-<plane>.jsonl`. The parity rows are narrower: the pod takes them only when the session measures `gpu-tall`, the axis they are committed beside, so a sweep of some other axis neither pays four runs at the anchor cell nor writes a second host's parity over the anchor's for the same month. `supersede` expects them absent in that case and says so, rather than asking for `--no-parity`.
+`--dry-run` prints the plan and the thread count read out of the bundled specs, and rents nothing. `--cpu-plane-host` defaults to `gpu`, the host of record for the cpu axes; pass `cpupod` to split them onto the CPU pod the A/B rents anyway. `--cpu-vcpu` sets how wide that `cpu5g` rental is (default 16); rent at least one vCPU per spec thread, since the cpuset is the whole cap there, and `measure` refuses a size below the widest spec it will run there. The flavor is pinned at `cpu5g`, because the container disk is pinned at the CPU5 cap and any other flavor is refused at create. The gate itself is the pod script's, and only the pod can read the container it landed in. `parity.jsonl` is a cuda measurement and belongs to the GPU axes; the A/B runs on both planes, the cuda growers on the GPU session and the cpu growers on the CPU pod, each into its own `ab-<plane>.jsonl`. The parity rows are narrower: the pod takes them only when the session measures `gpu-tall`, the axis they are committed beside, so a sweep of some other axis neither pays four runs at the anchor cell nor writes a second host's parity over the anchor's for the same month. `supersede` expects them absent in that case and says so, rather than asking for `--no-parity`.
 
 **The gate on the pod.** It reads `cpu.max` (with the v1 files as a fallback) for the bandwidth quota and `nproc` for the cpuset, then checks whichever cap the host actually carries: a quota host must exceed the spec's thread count by one spare core, a cpuset host must have at least one CPU per thread. It exports `OMP_WAIT_POLICY=passive` for the CPU arms only so the flag never crosses into a device axis, and brackets the axis's first fit with the `nr_throttled` counters. More than 5% throttled enforcement periods aborts the rest of the axis, and so does a probe that yields no percentage at all: a gate that cannot read its own counters has measured nothing, and nothing is not a pass. On a CPU pod that counter cannot move at all, since bandwidth enforcement is not running, which makes it a check on the rental rather than a knob to tune. `OMP_WAIT_POLICY=passive` stays on either way: it costs nothing where spin is free and it is the correct setting where spin is metered.
 
