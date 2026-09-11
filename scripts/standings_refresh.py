@@ -89,9 +89,8 @@ POD_SCRIPT = REPO / "scripts" / "standings_refresh_pod.sh"
 sys.path.insert(0, str(REPO / "scripts"))
 import check_standings  # noqa: E402
 
-REST = "https://rest.runpod.io/v1"
-# Per-datacenter stock is a v2 catalog reading; pods are still created on v1.
-CATALOG = "https://api.runpod.io/v2/catalog/gpus"
+REST = "https://api.runpod.io/v2"
+CATALOG = f"{REST}/catalog/gpus"
 # cuda12.8: the GPU below is sm_120, past 12.4's --offload-arch=native reach.
 IMAGE = "ghcr.io/daniel-m-campos/bonsai-ci:cuda12.8"
 # The create ladder, tried in order: the Workstation Edition is the same
@@ -694,6 +693,27 @@ def _api(url: str, key: str, payload: dict | None = None,
     return json.loads(body) if body.strip() else {}
 
 
+def _pods(key: str) -> list[dict]:
+    """Every pod on the account."""
+    out = _api(f"{REST}/pods", key, method="GET")
+    return out if isinstance(out, list) else out.get("pods", [])
+
+
+def _pod_named(key: str, name: str) -> str:
+    """The id of a pod carrying ``name``, or "" when none does.
+
+    A create that raises may still have placed a pod, so this is what
+    keeps an ambiguous error from renting a second one and billing for
+    both. Listing cannot raise past the caller: a failed reading answers
+    the same as no pod, and the caller then tries the next candidate.
+    """
+    try:
+        return next((p["id"] for p in _pods(key)
+                     if p.get("name") == name and p.get("id")), "")
+    except OSError:
+        return ""
+
+
 def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int,
                 gpus: tuple[str, ...]) -> str:
     """Create a standings pod for one plane, with the mandated PUBLIC_KEY env.
@@ -709,11 +729,11 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int,
     a cpu flavor is not a device with a per-region stock reading.
     """
     name = f"bonsai-standings-{plane}-{time.strftime('%Y%m%d-%H%M')}"
-    body = {"name": name, "imageName": IMAGE, "cloudType": "SECURE",
+    body = {"name": name, "image": IMAGE, "cloud": "SECURE",
             "ports": ["22/tcp"], "env": {"PUBLIC_KEY": pubkey}}
     if plane == PLANE_CPU:
-        body |= {"computeType": "CPU", "cpuFlavorIds": [CPU_FLAVOR],
-                 "vcpuCount": vcpu, "containerDiskInGb": CPU_DISK_GB}
+        body |= {"cpu": {"id": CPU_FLAVOR, "vcpuCount": vcpu},
+                 "disk": CPU_DISK_GB}
         bodies = [body]
     else:
         # One datacenter per attempt: a multi-entry dataCenterIds list can
@@ -722,8 +742,8 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int,
         # pinning.
         bodies = []
         for gpu in gpus:
-            card = body | {"gpuTypeIds": [gpu], "gpuCount": 1,
-                           "containerDiskInGb": GPU_DISK_GB}
+            card = body | {"gpu": {"id": gpu, "count": 1},
+                           "disk": GPU_DISK_GB}
             bodies += [card | {"dataCenterIds": [dc]}
                        for dc in stocked_datacenters(gpu, key)]
             bodies.append(card)
@@ -733,18 +753,26 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int,
         attempt += 1
         for candidate in bodies:
             where = ",".join(candidate.get("dataCenterIds", ["unpinned"]))
-            hardware = (candidate.get("gpuTypeIds") or [CPU_FLAVOR])[0]
+            hardware = (candidate.get("gpu") or {}).get("id", CPU_FLAVOR)
             try:
                 out = _api(f"{REST}/pods", key, candidate)
                 if out.get("id"):
                     return out["id"]
             except OSError as e:
-                # 500 is that datacenter out of instances; 400 is a
-                # datacenter the stock reading lists but the create
-                # schema's enum rejects (US-MO-2 and US-NC-2 were). Both
-                # mean try the next candidate, neither is fatal.
+                # 500 is that datacenter out of instances and 400 is a
+                # datacenter the create schema's enum rejects, so both
+                # mean try the next candidate. Neither proves the pod
+                # was not created: a create that answers 500 after
+                # placing one bills for it until something deletes it,
+                # so the error path adopts a pod already carrying this
+                # session's name rather than asking for a second.
                 print(f"create attempt {attempt} ({hardware}, {where}): {e}",
                       file=sys.stderr)
+                placed = _pod_named(key, name)
+                if placed:
+                    print(f"  {placed} carries {name} despite the "
+                          "error; adopting it")
+                    return placed
         if time.time() > deadline:
             raise SystemExit(
                 f"no usable {plane} pod after {attempt} passes over "
@@ -758,21 +786,14 @@ def _create_pod(key: str, pubkey: str, *, plane: str, vcpu: int,
 def _wait_ssh(key: str, pod_id: str) -> tuple[str, int]:
     """The public (ip, port) for sshd, once sshd actually answers.
 
-    Two waits, because neither signal alone is the truth. REST publishes
-    publicIp and portMappings once the pod is placed, which is necessary
+    Two waits, because neither signal alone is the truth. A pod lists a
+    runtime port for private 22 once it is placed, which is necessary
     but not sufficient: the container may still be starting. So the
     mapping is polled first, then sshd itself, which is the only signal
     that means the next step will work.
     """
     def mapping():
         out = _api(f"{REST}/pods/{pod_id}", key, method="GET")
-        port = (out.get("portMappings") or {}).get("22")
-        ip = out.get("publicIp")
-        if ip and port:
-            return ip, int(port)
-        # A CPU pod publishes the same publicIp and portMappings pair a GPU
-        # pod does, measured; runtime.ports is the older shape, kept because
-        # a pod that reports it would otherwise look like it never placed.
         for entry in ((out.get("runtime") or {}).get("ports") or []):
             if entry.get("private") == 22 and entry.get("ip"):
                 return entry["ip"], int(entry["public"])
@@ -858,11 +879,10 @@ def _delete_pod(key: str, pod_id: str):
 def _sweep(key: str):
     """Delete stray bonsai-standings pods; loudly report survivors."""
     try:
-        out = _api(f"{REST}/pods", key, method="GET")
+        items = _pods(key)
     except OSError as e:
         print(f"WARNING: sweep list failed: {e}", file=sys.stderr)
         return
-    items = out if isinstance(out, list) else out.get("items", [])
     strays = [p["id"] for p in items
               if str(p.get("name", "")).startswith("bonsai-standings")]
     for pid in strays:
