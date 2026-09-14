@@ -43,11 +43,11 @@ print("r2:", round(model.score(X_train, y_train), 3))
 print("GPU available:", bonsai.cuda_available())
 ```
 
-If `cuda_available()` is `True`, pass `device="cuda"` (the XGBoost spelling) or pick a CUDA grower directly with `grower="cuda_leafwise"` / `"cuda_depthwise"` / `"cuda_levelwise"`; the [API tour](api-tour.md) covers the rest.
+If `cuda_available()` is `True`, pass `device="cuda"` (the XGBoost spelling) or pick a CUDA grower directly with `grower="cuda_leafwise"` / `"cuda_depthwise"` / `"cuda_levelwise"`; the [quickstart](quickstart.md) covers the rest.
 
 ## The bench extra
 
-`pip install "bonsai-gbt[bench]"` adds the reference libraries the benchmark suites compare against. [Running the benchmarks](benchmarks.md) is the page for it.
+`pip install "bonsai-gbt[bench]"` adds the reference libraries the benchmark suites compare against. [Reproducing the results](../results/benchmarks.md) is the page for it.
 
 ## Docker
 

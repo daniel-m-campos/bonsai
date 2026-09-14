@@ -40,7 +40,7 @@ One property none of the reference libraries offer: models are bit-identical acr
 
     ---
 
-    [Install in one command](api/install.md), then [the API in one read](api/api-tour.md): sklearn-shaped estimators and an explicit `train(params, ...)` layer, dotted config keys shared with the CLI, one `.msgpack` model that round-trips everywhere.
+    [Install in one command](api/install.md), then [the quickstart](api/quickstart.md): sklearn-shaped estimators and an explicit `train(params, ...)` layer, dotted config keys shared with the CLI, one `.msgpack` model that round-trips everywhere.
 
 -   **[Results](results/README.md)**
 

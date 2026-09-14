@@ -136,11 +136,9 @@ nav:
       - How we got here: learn/timeline.md
   - API:
       - Install: api/install.md
-      - The API in one read: api/api-tour.md
+      - Quickstart: api/quickstart.md
       - Parameters: api/parameters.md
       - Reference: api/reference.md
-      - What to use when: api/what-to-use-when.md
-      - Running the benchmarks: api/benchmarks.md
       - Building from source: api/building.md
   - Results:
       - results/README.md
@@ -150,3 +148,4 @@ nav:
       - The code division: results/results/code-metrics.md
       - The archive: results/results/archive.md
       - The benchmark protocol: results/benchmark-protocol.md
+      - Reproducing the results: results/benchmarks.md

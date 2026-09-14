@@ -119,7 +119,7 @@
       "link": "https://proceedings.neurips.cc/paper/2017/hash/6449f44a102fde848669bdd9eb6b76fa-Abstract.html",
       "adopters": ["lightgbm"],
       "bonsai_status": "declined",
-      "bonsai_link": "../api/what-to-use-when.md"
+      "bonsai_link": "../results/results.md"
     },
     {
       "year": 2017,
@@ -199,7 +199,7 @@
       "link": "https://scikit-learn.org/stable/modules/ensemble.html#histogram-based-gradient-boosting",
       "adopters": ["bonsai"],
       "bonsai_status": "adopted",
-      "bonsai_link": "../api/api-tour.md"
+      "bonsai_link": "../api/quickstart.md"
     },
     {
       "year": 2026,

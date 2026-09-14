@@ -1,4 +1,4 @@
-# Running the benchmarks
+# Reproducing the results
 
 Every published table comes from a harness that ships inside the package: `bonsai.bench`. There are two ways to stand it up, and they differ only in where the package comes from.
 
@@ -51,9 +51,9 @@ For a campaign on a rented pod, copy the committed driver `scripts/pod_bench_dri
 
 ## Reading what comes out
 
-Suites append one JSON row per measurement to the output file, self-describing enough to reproduce: the command, the knob set (hashed for grouping), the git sha, and the host down to library versions (`bonsai.bench.runlog`). The published tables in [the results ledger](../results/results.md) are rendered from committed rows of exactly this shape.
+Suites append one JSON row per measurement to the output file, self-describing enough to reproduce: the command, the knob set (hashed for grouping), the git sha, and the host down to library versions (`bonsai.bench.runlog`). The published tables in [the results ledger](results.md) are rendered from committed rows of exactly this shape.
 
-One honest caveat before comparing numbers across machines: identical-model GPUs across rental fleets measure up to ~25% apart, so only same-host comparisons mean anything; [the benchmark protocol](../results/benchmark-protocol.md) is the full set of rules the published numbers follow.
+One honest caveat before comparing numbers across machines: identical-model GPUs across rental fleets measure up to ~25% apart, so only same-host comparisons mean anything; [the benchmark protocol](benchmark-protocol.md) is the full set of rules the published numbers follow.
 
 The building blocks are importable directly when you want a custom harness:
 
