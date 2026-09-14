@@ -35,8 +35,8 @@ theme:
     - search.highlight
     - content.code.copy
 
-# Internal material stays out of the public site: ops/ (infra runbook),
-# reviews/ (working notes), legacy standalone notes.
+# Internal material stays out of the public site: ops/ (the pod runbook),
+# hooks/, the writing contract and the invariants source.
 # CONVENTION: new internal material goes INSIDE one of the excluded
 # directories above; a new top-level docs/*.md is published by default, so
 # only create one when it belongs on the site.
@@ -44,7 +44,6 @@ exclude_docs: |
   STYLE.md
   FEEDBACK.md
   ops/
-  reviews/
   hooks/
   invariants.src.md
 
