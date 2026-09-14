@@ -424,7 +424,7 @@ def write_markdown(path: pathlib.Path, dataset: str, results: dict[str, Result])
             f"| {auc_s} | {acc_s} | {r.fit_seconds:11.3f} "
             f"| {r.predict_seconds:15.3f} |"
         )
-    note = ("Timing modes (docs/method/benchmark-protocol.md): `bonsai` rows "
+    note = ("Timing modes (docs/results/benchmark-protocol.md): `bonsai` rows "
             "time the CLI pipeline end to end (CSV read + fit + model I/O, "
             "timing_mode=pipeline); reference rows time in-process from "
             "arrays (timing_mode=in_memory).\n\n")

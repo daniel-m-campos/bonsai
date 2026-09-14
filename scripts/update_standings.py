@@ -16,7 +16,7 @@
 
 Both modes, the evidence kinds, their refusals, and the rule that a
 carry-forward is spent when the plane moves again are specified in
-docs/method/benchmark-protocol.md; `--help` lists the flags.
+docs/results/benchmark-protocol.md; `--help` lists the flags.
 """
 
 from __future__ import annotations

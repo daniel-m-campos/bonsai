@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="https://daniel-m-campos.github.io/bonsai/"><b>Documentation</b></a> &nbsp;·&nbsp;
-  <a href="https://daniel-m-campos.github.io/bonsai/use/install/">Install</a> &nbsp;·&nbsp;
+  <a href="https://daniel-m-campos.github.io/bonsai/api/install/">Install</a> &nbsp;·&nbsp;
   <a href="https://daniel-m-campos.github.io/bonsai/guide/">Guide</a> &nbsp;·&nbsp;
   <a href="https://daniel-m-campos.github.io/bonsai/decisions/">Decisions</a> &nbsp;·&nbsp;
   <a href="https://github.com/daniel-m-campos/bonsai/releases/latest">Releases</a>
@@ -28,7 +28,7 @@
 
 bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library and command-line tool written in C++23. It pairs a small, concept-checked component API (objectives, growers, split finders, samplers) with compile-time dispatch in the training hot path, and ships the benchmark harness that pits it against XGBoost, LightGBM, and CatBoost on real data. The aim is a readable, thoroughly documented GBT: a reference-grade implementation that competes with the production libraries instead of merely tolerating comparison with them.
 
-- **Compile-time dispatch, concept-checked components.** The runtime TOML config resolves once to a monomorphized `Booster<Objective, Grower, Splitter, Sampler>`; no virtual calls in the hot path, and contract violations fail at compile time. Adding a component is a [short recipe](https://daniel-m-campos.github.io/bonsai/use/building/#extending-bonsai).
+- **Compile-time dispatch, concept-checked components.** The runtime TOML config resolves once to a monomorphized `Booster<Objective, Grower, Splitter, Sampler>`; no virtual calls in the hot path, and contract violations fail at compile time. Adding a component is a [short recipe](https://daniel-m-campos.github.io/bonsai/api/building/#extending-bonsai).
 - **Six growers, one engine.** `depthwise` (XGBoost-style), `leafwise` (LightGBM-style), `levelwise` (CatBoost-style), and their CUDA twins `cuda_depthwise` / `cuda_leafwise` / `cuda_levelwise`; with 7 objectives and 3 samplers the dispatch space is 126 statically-typed combinations, selectable per run from config.
 - **Deterministic parallelism.** Models are bit-identical across runs, thread counts, and even CPU architectures (arm64 == x86-64), a property no reference library offers, enforced per-commit in CI ([the contract](https://daniel-m-campos.github.io/bonsai/learn/determinism-as-a-contract/)).
 - **A guide, not just docs.** [The guide](https://daniel-m-campos.github.io/bonsai/guide/) explains gradient boosting chapter by chapter: concept, math, then the ~50 real lines that implement it here, then an experiment against the reference libraries.
@@ -39,7 +39,7 @@ bonsai is a from-scratch, histogram-based gradient boosted trees (GBT) library a
 pip install bonsai-gbt
 ```
 
-Wheels cover Linux x86_64/aarch64 and macOS arm64, Python 3.9 to 3.13, no toolchain needed. The linux x86_64 wheel is CUDA-enabled at 2.3MB total: GPU training works out of the box on any NVIDIA driver R525+, it behaves exactly like a CPU wheel on machines without a GPU, and every release's CUDA wheel passes a live GPU validation before it ships ([decision 70](https://daniel-m-campos.github.io/bonsai/decisions/)). The full story, docker image included, is [Install](https://daniel-m-campos.github.io/bonsai/use/install/); everything past a wheel (the CLI binary, development setups, CUDA source builds) is [Building from source](https://daniel-m-campos.github.io/bonsai/use/building/).
+Wheels cover Linux x86_64/aarch64 and macOS arm64, Python 3.9 to 3.13, no toolchain needed. The linux x86_64 wheel is CUDA-enabled at 2.3MB total: GPU training works out of the box on any NVIDIA driver R525+, it behaves exactly like a CPU wheel on machines without a GPU, and every release's CUDA wheel passes a live GPU validation before it ships ([decision 70](https://daniel-m-campos.github.io/bonsai/decisions/)). The full story, docker image included, is [Install](https://daniel-m-campos.github.io/bonsai/api/install/); everything past a wheel (the CLI binary, development setups, CUDA source builds) is [Building from source](https://daniel-m-campos.github.io/bonsai/api/building/).
 
 ## Quick start
 
@@ -56,7 +56,7 @@ pred = model.predict(X_test)
 model.save("model.msgpack")           # loadable by `bonsai predict` and vice versa
 ```
 
-The CLI (a [source-build artifact](https://daniel-m-campos.github.io/bonsai/use/building/)) drives the same engine with the same keys and the same models:
+The CLI (a [source-build artifact](https://daniel-m-campos.github.io/bonsai/api/building/)) drives the same engine with the same keys and the same models:
 
 ```
 bonsai fit      -c CONFIG --model OUT.msgpack
@@ -66,11 +66,11 @@ bonsai info                        # list (objective, grower, sampler) combos
 bonsai params                      # dump the default config as TOML
 ```
 
-Any key overrides inline (`bonsai fit -c config.toml --set tree.max_depth=8 --set dispatch.grower_name=levelwise ...`), and `make fit-benchmark` trains and times bonsai against xgboost/lightgbm/catboost on California Housing in one command. The rest of the API is one read: [the API tour](https://daniel-m-campos.github.io/bonsai/use/api-tour/).
+Any key overrides inline (`bonsai fit -c config.toml --set tree.max_depth=8 --set dispatch.grower_name=levelwise ...`), and `make fit-benchmark` trains and times bonsai against xgboost/lightgbm/catboost on California Housing in one command. The rest of the API is one read: [the API tour](https://daniel-m-campos.github.io/bonsai/api/api-tour/).
 
 ## Results
 
-Two divisions, per the [benchmark charter](https://daniel-m-campos.github.io/bonsai/method/benchmark-protocol/): perf (latency and memory, accuracy as a sanity guard) and quality (accuracy, timing never citable). The evidence is [the results ledger](https://daniel-m-campos.github.io/bonsai/method/results/), one generated page per study.
+Two divisions, per the [benchmark charter](https://daniel-m-campos.github.io/bonsai/results/benchmark-protocol/): perf (latency and memory, accuracy as a sanity guard) and quality (accuracy, timing never citable). The evidence is [the results ledger](https://daniel-m-campos.github.io/bonsai/results/results/), one generated page per study.
 
 <!-- standings:begin (generated by scripts/render_results.py) -->
 
@@ -78,7 +78,7 @@ Two divisions, per the [benchmark charter](https://daniel-m-campos.github.io/bon
 
 On GPU at the tall scenario, fit totals run depthwise 2.8s vs XGBoost 16.9s; leafwise 2.9s vs LightGBM 22.4s; levelwise 2.7s vs CatBoost 15.2s. On CPU at the tall scenario: depthwise 10.1s vs XGBoost 8.2s; leafwise 11.3s vs LightGBM 11.2s (tie); levelwise 10.6s vs CatBoost 9.1s. The wide and extreme scenarios, the host and device memory columns, and the early-stopping axis are on the panels page.
 
-The panels, and the closed campaigns behind them, are in [the ledger](https://daniel-m-campos.github.io/bonsai/method/results/).
+The panels, and the closed campaigns behind them, are in [the ledger](https://daniel-m-campos.github.io/bonsai/results/results/).
 
 ### Quality
 
@@ -99,9 +99,9 @@ The same suite with every library on its GPU build:
 | xgboost | 2.29 | 7 |
 | catboost | 2.47 | 6 |
 
-`lgbm_cuda` is measured but not ranked: LightGBM's CUDA tree learner does not apply `max_depth` (LightGBM 4.7.0: the only depth check is the serial learner's `BeforeFindBestSplit`, which the CUDA `Train` loop never calls), so at the campaign knobs it grows 63 leaves at any depth where every other arm is capped at depth 6. Ranked among all arms it would read 1.71 with 38 outright wins. Its rows are read in [the ledger](https://daniel-m-campos.github.io/bonsai/method/results/quality-grinsztajn/).
+`lgbm_cuda` is measured but not ranked: LightGBM's CUDA tree learner does not apply `max_depth` (LightGBM 4.7.0: the only depth check is the serial learner's `BeforeFindBestSplit`, which the CUDA `Train` loop never calls), so at the campaign knobs it grows 63 leaves at any depth where every other arm is capped at depth 6. Ranked among all arms it would read 1.71 with 38 outright wins. Its rows are read in [the ledger](https://daniel-m-campos.github.io/bonsai/results/results/quality-grinsztajn/).
 
-bonsai leafwise against LightGBM head to head on the GPU, both at 63 leaves with no binding depth cap (the regime LightGBM's CUDA learner grows in, [the ledger](https://daniel-m-campos.github.io/bonsai/method/results/quality-grinsztajn/) has the task-by-task table):
+bonsai leafwise against LightGBM head to head on the GPU, both at 63 leaves with no binding depth cap (the regime LightGBM's CUDA learner grows in, [the ledger](https://daniel-m-campos.github.io/bonsai/results/results/quality-grinsztajn/) has the task-by-task table):
 
 | library | mean rank | outright wins |
 |---|--:|--:|
@@ -109,17 +109,17 @@ bonsai leafwise against LightGBM head to head on the GPU, both at 63 leaves with
 | lightgbm | 1.58 | 23 |
 
 <!-- standings:end -->
-bonsai keeps the lead under either reading of the one knob that translates ambiguously between libraries, which [the standings page](https://daniel-m-campos.github.io/bonsai/method/results/quality-grinsztajn/) records; reproduce with `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite and `python -m bonsai.bench.grinsztajn out.jsonl --report` to render the standings.
+bonsai keeps the lead under either reading of the one knob that translates ambiguously between libraries, which [the standings page](https://daniel-m-campos.github.io/bonsai/results/results/quality-grinsztajn/) records; reproduce with `pip install bonsai-gbt[bench]`, then `python -m bonsai.bench.grinsztajn out.jsonl` to run the suite and `python -m bonsai.bench.grinsztajn out.jsonl --report` to render the standings.
 
-Every headline claim links a reproducible run and the decision that records it: [claims and proofs](https://daniel-m-campos.github.io/bonsai/method/).
+Every headline claim links a reproducible run and the decision that records it: [claims and proofs](https://daniel-m-campos.github.io/bonsai/results/).
 
 ## Documentation
 
 The home is **[daniel-m-campos.github.io/bonsai](https://daniel-m-campos.github.io/bonsai/)**, four doors:
 
 - **[Learn](https://daniel-m-campos.github.io/bonsai/guide/)**: gradient boosting from intuition to the shipping code, one concept per chapter, each with an experiment against the reference libraries.
-- **[Use](https://daniel-m-campos.github.io/bonsai/use/install/)**: [install](https://daniel-m-campos.github.io/bonsai/use/install/), [the API in one read](https://daniel-m-campos.github.io/bonsai/use/api-tour/), [parameters](https://daniel-m-campos.github.io/bonsai/use/parameters/), [building from source](https://daniel-m-campos.github.io/bonsai/use/building/).
-- **[Results](https://daniel-m-campos.github.io/bonsai/method/)**: the measurement discipline; its rules in the [benchmark charter](https://daniel-m-campos.github.io/bonsai/method/benchmark-protocol/), its evidence in [the results ledger](https://daniel-m-campos.github.io/bonsai/method/results/).
+- **[Use](https://daniel-m-campos.github.io/bonsai/api/install/)**: [install](https://daniel-m-campos.github.io/bonsai/api/install/), [the API in one read](https://daniel-m-campos.github.io/bonsai/api/api-tour/), [parameters](https://daniel-m-campos.github.io/bonsai/api/parameters/), [building from source](https://daniel-m-campos.github.io/bonsai/api/building/).
+- **[Results](https://daniel-m-campos.github.io/bonsai/results/)**: the measurement discipline; its rules in the [benchmark charter](https://daniel-m-campos.github.io/bonsai/results/benchmark-protocol/), its evidence in [the results ledger](https://daniel-m-campos.github.io/bonsai/results/results/).
 - **[Invariants](https://daniel-m-campos.github.io/bonsai/invariants/)**: the contracts the engine holds, generated from the tests that prove them, beside the archive ([decisions log](https://daniel-m-campos.github.io/bonsai/decisions/)).
 
 The early planning records (proposal, context briefing, MVP retrospective) have been retired; git history holds them.

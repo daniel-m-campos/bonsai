@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.11"
 # ///
-"""Compute-DAG placement model (method: docs/method/how-we-decide.md).
+"""Compute-DAG placement model (method: docs/results/benchmark-protocol.md).
 
 Prices placement moves for the training narrative before a pod session is
 spent on them: nodes carry measured host/device costs, boundary edges carry

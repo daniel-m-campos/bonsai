@@ -91,7 +91,7 @@ def bonsai_core(*, learning_rate, max_depth, num_leaves, min_data_in_leaf,
     below so harnesses stop hand-building (and drifting) the pair list.
 
     early_stopping_rounds is bonsai's own patience config key (verified
-    against docs/use/parameters.md and the module docstring in
+    against docs/api/parameters.md and the module docstring in
     src/python/module.cpp: `train(pairs, dataset, eval_set=(Xv, yv))` is what
     enables per-iter eval, and booster.early_stopping_rounds is what arms the
     stop). 0 omits the key entirely rather than writing the default, so a

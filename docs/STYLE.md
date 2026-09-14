@@ -13,7 +13,7 @@ The routing table. Every piece of written content has exactly one normative home
 | cross-file contracts | a test, indexed into [invariants.md](invariants.md) | the test fails when the behavior changes |
 | rationale, measurements, rejected alternatives | [decisions.md](decisions.md), cited by number | append-only; corrections are status banners |
 | pedagogy | `guide/` and `learn/` | docs CI runs the examples |
-| adopter reference | `use/` and `method/`, generated where possible | generators re-render in `docs-check` |
+| adopter reference | `api/` and `results/`, generated where possible | generators re-render in `docs-check` |
 | procedures | `ops/` and `.claude/skills/` | exercised by the rituals that use them |
 
 Two tests route a claim:

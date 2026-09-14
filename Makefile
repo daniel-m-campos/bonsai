@@ -115,14 +115,14 @@ lint: build/build.ninja  ## Run clang-tidy over src/, header-filtered to bonsai.
 	echo "lint: no findings."
 
 # Re-extract the parameters reference input from the built CLI, then rerender
-# docs/use/parameters.md. `bonsai params` dumps the default Config as TOML
+# docs/api/parameters.md. `bonsai params` dumps the default Config as TOML
 # straight from the structs; both extract steps need Python 3.11+ (tomllib).
 # docs-check holds the page against the committed JSON without a build.
-params-json: build  ## Re-extract docs/use/parameters.src.json from the built CLI and rerender the page.
+params-json: build  ## Re-extract docs/api/parameters.src.json from the built CLI and rerender the page.
 	@./build/src/bonsai params | python3 scripts/render_params.py --extract
 	@python3 scripts/render_params.py
 
-params-check: build  ## Fail when docs/use/parameters.src.json is behind the config structs.
+params-check: build  ## Fail when docs/api/parameters.src.json is behind the config structs.
 	@./build/src/bonsai params | python3 scripts/render_params.py --extract --check
 
 test: build $(TOY_SENTINEL)  ## Build, fetch the pinned test datasets, run ctest.

@@ -121,7 +121,7 @@ A stored split threshold is turned back into a bin by exactly one function. The 
 
 - code: `include/bonsai/config/bin_mapper_config.hpp` : `max_bin`
 - code: `include/bonsai/bin_store.hpp` : `BinColumns`
-- elaboration: [use/parameters.md](use/parameters.md) is the generated reference; prose says "255 by default" and links there.
+- elaboration: [api/parameters.md](api/parameters.md) is the generated reference; prose says "255 by default" and links there.
 
 ### shap-additivity-exact
 
@@ -145,21 +145,21 @@ Dataset objects, host-built or device-resident, do not pickle; rebuild from X an
 The linux x86_64 wheel fatbins the one kernel TU for sm_70 through sm_120 with a compute_90 PTX floor for forward-JIT, links cudart statically, and imports on GPU-less hosts.
 
 - code: `CMakeLists.txt` : `BONSAI_CUDA_PTX_ARCH`
-- elaboration: decision 70; [use/install.md](use/install.md) carries the support matrix.
+- elaboration: decision 70; [api/install.md](api/install.md) carries the support matrix.
 
 ### static-libomp
 
 `BONSAI_OPENMP_STATIC=ON` links libomp into the module statically so bonsai and another OpenMP library (XGBoost, LightGBM) in one process cannot deadlock on two runtimes.
 
 - code: `CMakeLists.txt` : `BONSAI_OPENMP_STATIC`
-- elaboration: the libomp entry in decisions.md; [use/building.md](use/building.md) documents the flag.
+- elaboration: the libomp entry in decisions.md; [api/building.md](api/building.md) documents the flag.
 
 ### python-floor
 
 Supported CPythons are 3.9 through 3.13 on every wheel platform; the 3.9 floor is why nanobind is pinned below 3.
 
 - code: `pyproject.toml` : `requires-python`
-- elaboration: [use/install.md](use/install.md) carries the matrix.
+- elaboration: [api/install.md](api/install.md) carries the matrix.
 
 ### eight-cli-subcommands
 

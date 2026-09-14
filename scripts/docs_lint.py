@@ -22,7 +22,7 @@ HARD (exit 1, one message per offending line):
      backtick spans, URLs and markdown link targets, table rows, and any
      token that is part of an identifier or path (an adjacent _, /, ., or
      word character, or a / earlier in the same word, so xgboost.train and
-     use/from-xgboost stay quiet).
+     api/from-xgboost stay quiet).
   c. A tight banned-phrase list: unfalsifiable hype ("blazingly", "blazing
      fast", "clean code", "simple API", "easy to use", "world-class") and
      the comparatives "significantly/much faster|slower" when no digit

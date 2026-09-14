@@ -130,7 +130,7 @@ def run_bonsai(spec, X, y, Xte, yte) -> dict:
 
     An eval-mode cell passes eval_set=(Xv, yv) to train, which is what
     enables per-iter eval, and booster.early_stopping_rounds is what arms
-    the stop (module docstring in src/python/module.cpp; docs/use/
+    the stop (module docstring in src/python/module.cpp; docs/api/
     parameters.md). bonsai bins the eval set inside train, with the
     Dataset's own mappers, so that one-time cost lands in train_s where the
     reference libraries' lands in ingest_s; fit_s, the outer wall clock, is

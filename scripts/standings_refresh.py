@@ -633,7 +633,7 @@ def _commit_refresh(axes: list[str], hosts_note: str) -> str:
     """Branch, stage the regenerated pages, commit; returns the branch name."""
     branch = f"standings-refresh-{time.strftime('%Y%m%d')}"
     subprocess.run(["git", "checkout", "-b", branch], check=True, cwd=REPO)
-    subprocess.run(["git", "add", "-A", "benchmarks/", "docs/method/",
+    subprocess.run(["git", "add", "-A", "benchmarks/", "docs/results/",
                     "README.md"], check=True, cwd=REPO)
     subprocess.run(["git", "commit", "-m",
                     f"{_refresh_title(axes)}\n\n"
