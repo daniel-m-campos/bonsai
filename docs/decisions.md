@@ -512,7 +512,7 @@ Infrastructure that is independently valid (does not assume the broken impl):
 
 ### Outstanding
 
-Decision 8's Phase-1 commitment (depth-wise + oblivious) is not honored. The design-review drift flag at [`reviews/2026-05-19-design-review.md`](https://github.com/daniel-m-campos/bonsai/blob/main/docs/reviews/2026-05-19-design-review.md) §"DenseTree / ObliviousTree" remains accurate. The correct algorithm is documented as a design target in [`architecture/3-tree.md` §"Oblivious grow loop"](https://github.com/daniel-m-campos/bonsai/blob/06fab232a3b156a7c9f155fbbdf41fe14d45f1af/docs/architecture/3-tree.md); implementation pending in Phase 2.5 (user-authored).
+Decision 8's Phase-1 commitment (depth-wise + oblivious) is not honored. The design-review drift flag at [`reviews/2026-05-19-design-review.md`](https://github.com/daniel-m-campos/bonsai/blob/7b49532ed7555b7bbecce11fa5e7974e5538e325/docs/reviews/2026-05-19-design-review.md) §"DenseTree / ObliviousTree" remains accurate. The correct algorithm is documented as a design target in [`architecture/3-tree.md` §"Oblivious grow loop"](https://github.com/daniel-m-campos/bonsai/blob/06fab232a3b156a7c9f155fbbdf41fe14d45f1af/docs/architecture/3-tree.md); implementation pending in Phase 2.5 (user-authored).
 
 ### Lesson
 
