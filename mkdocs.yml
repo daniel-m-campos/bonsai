@@ -116,7 +116,7 @@ nav:
       - Determinism as a contract: learn/determinism-as-a-contract.md
       - The HPC tension: learn/the-hpc-tension.md
       - How we got here: learn/timeline.md
-  - Use:
+  - API:
       - Install: api/install.md
       - The API in one read: api/api-tour.md
       - Parameters: api/parameters.md
@@ -132,7 +132,3 @@ nav:
       - The code division: results/results/code-metrics.md
       - The archive: results/results/archive.md
       - The benchmark protocol: results/benchmark-protocol.md
-  - Design:
-      - Invariants: invariants.md
-      - Archive:
-          - Decisions log: decisions.md
