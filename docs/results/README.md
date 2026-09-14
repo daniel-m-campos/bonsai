@@ -18,4 +18,4 @@ Every performance and accuracy claim on this site comes from a committed benchma
 
 </div>
 
-Read the ledger for the current numbers and the protocol for the rules those numbers follow. Wins and losses sit on the same pages: where a competitor leads, [what to use when](../api/what-to-use-when.md) names it. The raw feed behind them is the [decisions log](../decisions.md).
+Read the ledger for the current numbers and the protocol for the rules those numbers follow. Wins and losses sit on the same pages: where a competitor leads, the row says so with the same prominence as a win. The raw feed behind them is the [decisions log](../decisions.md).

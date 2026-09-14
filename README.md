@@ -68,7 +68,7 @@ bonsai info                        # list (objective, grower, sampler) combos
 bonsai params                      # dump the default config as TOML
 ```
 
-Any key overrides inline (`bonsai fit -c config.toml --set tree.max_depth=8 --set dispatch.grower_name=levelwise ...`), and `make fit-benchmark` trains and times bonsai against xgboost/lightgbm/catboost on California Housing in one command. The rest of the API is one read: [the API tour](https://daniel-m-campos.github.io/bonsai/api/api-tour/).
+Any key overrides inline (`bonsai fit -c config.toml --set tree.max_depth=8 --set dispatch.grower_name=levelwise ...`), and `make fit-benchmark` trains and times bonsai against xgboost/lightgbm/catboost on California Housing in one command. The rest of the API is one read: [the quickstart](https://daniel-m-campos.github.io/bonsai/api/quickstart/).
 
 ## Results
 
@@ -120,7 +120,7 @@ Every headline claim links a reproducible run and the decision that records it: 
 The home is **[daniel-m-campos.github.io/bonsai](https://daniel-m-campos.github.io/bonsai/)**, three doors:
 
 - **[Learn](https://daniel-m-campos.github.io/bonsai/guide/)**: gradient boosting from intuition to the shipping code, one concept per chapter, each with an experiment against the reference libraries.
-- **[API](https://daniel-m-campos.github.io/bonsai/api/install/)**: [install](https://daniel-m-campos.github.io/bonsai/api/install/), [the API in one read](https://daniel-m-campos.github.io/bonsai/api/api-tour/), [parameters](https://daniel-m-campos.github.io/bonsai/api/parameters/), [building from source](https://daniel-m-campos.github.io/bonsai/api/building/).
+- **[API](https://daniel-m-campos.github.io/bonsai/api/install/)**: [install](https://daniel-m-campos.github.io/bonsai/api/install/), [the quickstart](https://daniel-m-campos.github.io/bonsai/api/quickstart/), [parameters](https://daniel-m-campos.github.io/bonsai/api/parameters/), [building from source](https://daniel-m-campos.github.io/bonsai/api/building/).
 - **[Results](https://daniel-m-campos.github.io/bonsai/results/)**: the measurement discipline; its rules in the [benchmark charter](https://daniel-m-campos.github.io/bonsai/results/benchmark-protocol/), its evidence in [the results ledger](https://daniel-m-campos.github.io/bonsai/results/results/). [The invariants](https://daniel-m-campos.github.io/bonsai/invariants/) are the contracts the engine holds, generated from the tests that prove them, and the [decisions log](https://daniel-m-campos.github.io/bonsai/decisions/) is the archive behind the numbers.
 
 The early planning records (proposal, context briefing, MVP retrospective) have been retired; git history holds them.

@@ -4,7 +4,7 @@ This directory is the evidence: one study writeup per closed round, the committe
 
 Three pages carry everything else, and this file deliberately repeats none of it:
 
-- How to run a suite, a custom ladder, or a pod campaign: [Running the benchmarks](../docs/api/benchmarks.md).
+- How to run a suite, a custom ladder, or a pod campaign: [Reproducing the results](../docs/results/benchmarks.md).
 - The normative rules (divisions, suites, primary metrics, timing modes, the result-row schema, the standings policy): [the benchmark protocol](../docs/results/benchmark-protocol.md).
 - Renting, accepting, and driving a GPU pod: [the RunPod runbook](../docs/ops/runpod-runbook.md).
 
