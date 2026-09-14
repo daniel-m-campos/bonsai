@@ -1,4 +1,4 @@
-"""Render docs/method/results.md (the results ledger) from every committed
+"""Render docs/results/results.md (the results ledger) from every committed
 data file under benchmarks/results/.
 
 The ledger is the use-it-or-remove-it contract for results data: the script
@@ -66,11 +66,11 @@ class K:
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 RESULTS = REPO / "benchmarks" / "results"
-OUT = REPO / "docs" / "method" / "results.md"
-ASSETS = REPO / "docs" / "method" / "assets"
+OUT = REPO / "docs" / "results" / "results.md"
+ASSETS = REPO / "docs" / "results" / "assets"
 
 consumed: set[str] = set()
-charts: dict[str, str] = {}  # filename -> svg, written to docs/method/assets/
+charts: dict[str, str] = {}  # filename -> svg, written to docs/results/assets/
 
 
 def load_jsonl(name: str) -> list[dict]:
@@ -1090,7 +1090,7 @@ HEADER = GEN_NOTE + """
 Every results file behind a published claim is rendered across the pages below, generated straight from the data in [`benchmarks/results/`](../../benchmarks/results): `python3 scripts/render_results.py` rewrites them and CI fails on drift. Rows are as-run records under the [benchmark protocol](benchmark-protocol.md): quality division numbers never cite timing, perf division numbers name their timing mode, and superseded files are deleted rather than kept beside their replacements, so what is here is the current evidence, whole.
 """
 
-# Per-suite pages under docs/method/results/, perf division first.
+# Per-suite pages under docs/results/results/, perf division first.
 PAGES: list[tuple[str, str, str, list]] = [
     ("perf.md", "The scenario panels",
      "Every grower against its closest rival, both planes, at the "
@@ -1110,7 +1110,7 @@ PAGES: list[tuple[str, str, str, list]] = [
 # the orphan check must not read them as stale generated output.
 HAND_WRITTEN_PAGES: Final = ("archive.md",)
 
-# Suite pages live one level below docs/method/, so their relative links
+# Suite pages live one level below docs/results/, so their relative links
 # gain one step. Replacement order matters: the two-step rule cannot touch
 # ../guide/ and runs first.
 _REROOT = [("](../../", "](../../../"), ("](../guide/", "](../../guide/"),
@@ -1231,11 +1231,11 @@ def readme_standings_block() -> str:
     gpu_rows = axis_rows(Axis.GRINSZTAJN_GPU)
     gpu = ("\n\nThe same suite with every library on its GPU build:\n\n"
            + _readme_quality_table(_ranked(gpu_rows))[0]
-           + "\n\n" + _unranked_note(gpu_rows, f"in [the ledger]({_SITE}/method/results/quality-grinsztajn/)")
+           + "\n\n" + _unranked_note(gpu_rows, f"in [the ledger]({_SITE}/results/results/quality-grinsztajn/)")
            if _ranks_libraries(gpu_rows) else "")
     duel_rows = axis_rows(Axis.GRINSZTAJN_LEAF_CAPPED_GPU)
     duel = ("\n\nbonsai leafwise against LightGBM head to head on the GPU, both at 63 leaves with no binding depth cap "
-            f"(the regime LightGBM's CUDA learner grows in, [the ledger]({_SITE}/method/results/quality-grinsztajn/) has the task-by-task table):\n\n"
+            f"(the regime LightGBM's CUDA learner grows in, [the ledger]({_SITE}/results/results/quality-grinsztajn/) has the task-by-task table):\n\n"
             + _readme_quality_table(duel_rows)[0]
             if _ranks_libraries(duel_rows) else "")
 
@@ -1243,7 +1243,7 @@ def readme_standings_block() -> str:
 
 {perf}
 
-The panels, and the closed campaigns behind them, are in [the ledger]({_SITE}/method/results/).
+The panels, and the closed campaigns behind them, are in [the ledger]({_SITE}/results/results/).
 
 ### Quality
 
@@ -1280,7 +1280,7 @@ def render_pages() -> dict[pathlib.Path, str]:
     for rel, title, _desc, fns in PAGES:
         body = _reroot("\n".join(s for fn in fns if (s := fn())))
         head = "" if body.startswith("## ") else f"# {title}\n\n"
-        out[REPO / "docs" / "method" / "results" / rel] = (
+        out[REPO / "docs" / "results" / "results" / rel] = (
             f"{GEN_NOTE}\n\n{head}{body}")
     out[OUT] = landing_page()
     return out
@@ -1374,7 +1374,7 @@ def main() -> int:
     for fname, svg in charts.items():
         outputs[ASSETS / fname] = svg
     # Use it or remove it, page-side: a suite page nothing generates is stale.
-    pages_dir = REPO / "docs" / "method" / "results"
+    pages_dir = REPO / "docs" / "results" / "results"
     orphans = [p for p in pages_dir.glob("*.md")
                if p not in outputs and p.name not in HAND_WRITTEN_PAGES
                ] if pages_dir.is_dir() else []

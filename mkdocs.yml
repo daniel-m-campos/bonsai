@@ -118,21 +118,21 @@ nav:
       - The HPC tension: learn/the-hpc-tension.md
       - How we got here: learn/timeline.md
   - Use:
-      - Install: use/install.md
-      - The API in one read: use/api-tour.md
-      - Parameters: use/parameters.md
-      - Switching from XGBoost: use/from-xgboost.md
-      - What to use when: use/what-to-use-when.md
-      - Running the benchmarks: use/benchmarks.md
-      - Building from source: use/building.md
+      - Install: api/install.md
+      - The API in one read: api/api-tour.md
+      - Parameters: api/parameters.md
+      - Switching from XGBoost: api/from-xgboost.md
+      - What to use when: api/what-to-use-when.md
+      - Running the benchmarks: api/benchmarks.md
+      - Building from source: api/building.md
   - Results:
-      - method/README.md
-      - The results ledger: method/results.md
-      - The scenario panels: method/results/perf.md
-      - Grinsztajn standings: method/results/quality-grinsztajn.md
-      - The code division: method/results/code-metrics.md
-      - The archive: method/results/archive.md
-      - The benchmark protocol: method/benchmark-protocol.md
+      - results/README.md
+      - The results ledger: results/results.md
+      - The scenario panels: results/results/perf.md
+      - Grinsztajn standings: results/results/quality-grinsztajn.md
+      - The code division: results/results/code-metrics.md
+      - The archive: results/results/archive.md
+      - The benchmark protocol: results/benchmark-protocol.md
   - Design:
       - Invariants: invariants.md
       - Archive:

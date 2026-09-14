@@ -13,7 +13,7 @@ Tiers:
                   check; not citable as standings, decision 68).
 - perf-scale      large real datasets for latency/throughput ladders.
 - perf-synthetic  the Friedman-1 generator (bonsai.bench.synth; provenance
-                  in its docstring and docs/method/benchmark-protocol.md).
+                  in its docstring and docs/results/benchmark-protocol.md).
 """
 
 from __future__ import annotations

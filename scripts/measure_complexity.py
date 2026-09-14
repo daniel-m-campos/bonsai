@@ -1,6 +1,6 @@
 """Measure bonsai's own tree: size, cyclomatic complexity, and surface
 counts, written to benchmarks/results/code-metrics-<YYYY-MM>.jsonl (the code
-division of the results ledger; rules in docs/method/benchmark-protocol.md).
+division of the results ledger; rules in docs/results/benchmark-protocol.md).
 
     make python                              # extension for the API count
     .venv/bin/python scripts/measure_complexity.py

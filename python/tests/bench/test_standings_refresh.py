@@ -335,7 +335,7 @@ with log.open("a") as fh:
 """
 
 STUB_RENDER = """import pathlib
-out = pathlib.Path(__file__).resolve().parents[1] / "docs/method/results.md"
+out = pathlib.Path(__file__).resolve().parents[1] / "docs/results/results.md"
 out.write_text("rendered\\n")
 """
 
@@ -357,11 +357,11 @@ def _fake_repo(monkeypatch, tmp_path) -> pathlib.Path:
     """
     repo = tmp_path / "repo"
     (repo / "benchmarks" / "results").mkdir(parents=True)
-    (repo / "docs" / "method").mkdir(parents=True)
+    (repo / "docs" / "results").mkdir(parents=True)
     (repo / "scripts").mkdir()
     (repo / "README.md").write_text("readme\n")
     (repo / "benchmarks" / "results" / ".keep").write_text("")
-    (repo / "docs" / "method" / "results.md").write_text("old\n")
+    (repo / "docs" / "results" / "results.md").write_text("old\n")
     (repo / "scripts" / "update_standings.py").write_text(STUB_UPDATE)
     (repo / "scripts" / "render_results.py").write_text(STUB_RENDER)
     _git(repo, "init", "-q", "-b", "main", ".")
@@ -526,7 +526,7 @@ def test_supersede_commits_the_refresh_on_a_branch(monkeypatch, tmp_path,
     assert "CPU axes (cpu-tall) were measured on pod-blackwell" in message
     committed = _git(repo, "show", "--name-only", "--pretty=", "HEAD")
     assert "benchmarks/results/parity-2026-09.jsonl" in committed
-    assert "docs/method/results.md" in committed
+    assert "docs/results/results.md" in committed
     assert "committed on standings-refresh-" in capsys.readouterr().out
 
 

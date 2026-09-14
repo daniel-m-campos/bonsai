@@ -9,7 +9,7 @@ reproduce the standings table yourself::
 Two divisions, both run "closed" (matched knobs, no per-model tuning):
 ``quality`` (accuracy standings; timing never citable) and ``perf``
 (latency/throughput/memory; every row labels its timing_mode). The normative
-protocol lives in docs/method/benchmark-protocol.md on the documentation site.
+protocol lives in docs/results/benchmark-protocol.md on the documentation site.
 
 Importing this package pulls numpy only; xgboost/lightgbm/catboost/openml/
 sklearn are imported lazily by the variants and suites that need them.

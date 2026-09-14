@@ -22,7 +22,7 @@ env:
 
 jobs:
   # The single path rule. `snippets` is prose that carries executable .run
-  # blocks (docs/use/**, docs/guide/**, README.md), which only the python job
+  # blocks (docs/api/**, docs/guide/**, README.md), which only the python job
   # needs; `code` is everything else outside docs. Prose with neither leaves
   # both false, and every job below skips.
   changes:
@@ -38,7 +38,7 @@ jobs:
         with:
           filters: |
             snippets:
-              - "docs/use/**"
+              - "docs/api/**"
               - "docs/guide/**"
               - "README.md"
             code:

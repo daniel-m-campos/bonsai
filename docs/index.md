@@ -6,7 +6,7 @@
 pip install bonsai-gbt
 ```
 
-Linux and macOS arm64, Python 3.9 to 3.13, no toolchain; on linux x86_64 the wheel trains on GPU out of the box. Details, docker, and extras: [Install](use/install.md).
+Linux and macOS arm64, Python 3.9 to 3.13, no toolchain; on linux x86_64 the wheel trains on GPU out of the box. Details, docker, and extras: [Install](api/install.md).
 
 bonsai began as a learning project: rebuild gradient-boosted trees from first principles to understand how the production libraries actually work, in a small codebase that takes modern C++23 and software design as seriously as the algorithms.
 
@@ -22,7 +22,7 @@ GPU support was the biggest swing, taken when a promotional window with Anthropi
 
 The ambition grew with the milestones: assimilate the defining ideas of XGBoost, LightGBM, and CatBoost into one library, match or beat their performance, and keep the code readable enough that reading it is still the point.
 
-Here is where that landed, measured on shared hardware at matched settings. On GPU at the tall scenario (16M x 128), fit totals run 5.6s against XGBoost's 21.7s, 9.1s against LightGBM's 28.0s, and 5.9s against CatBoost's 16.9s. bonsai holds 9.1GB of peak host memory there, against LightGBM's 15.2GB and XGBoost's 29.5GB. At the extreme scenario (16M x 1024), XGBoost and CatBoost run out of memory and bonsai finishes. LightGBM wins test r2 in every GPU scenario: 0.885, 0.868 and 0.886 against 0.879, 0.860 and 0.879. On CPU the leafwise grower loses to LightGBM, 39.8s against 19.9s at the tall scenario and 518.3s against 69.1s at the wide one. Both sides sit on the same page, [the scenario panels](method/results/perf.md).
+Here is where that landed, measured on shared hardware at matched settings. On GPU at the tall scenario (16M x 128), fit totals run 5.6s against XGBoost's 21.7s, 9.1s against LightGBM's 28.0s, and 5.9s against CatBoost's 16.9s. bonsai holds 9.1GB of peak host memory there, against LightGBM's 15.2GB and XGBoost's 29.5GB. At the extreme scenario (16M x 1024), XGBoost and CatBoost run out of memory and bonsai finishes. LightGBM wins test r2 in every GPU scenario: 0.885, 0.868 and 0.886 against 0.879, 0.860 and 0.879. On CPU the leafwise grower loses to LightGBM, 39.8s against 19.9s at the tall scenario and 518.3s against 69.1s at the wide one. Both sides sit on the same page, [the scenario panels](results/results/perf.md).
 
 One property none of the reference libraries offer: models are bit-identical across CPU architectures and thread counts, enforced per-commit in CI.
 
@@ -36,17 +36,17 @@ One property none of the reference libraries offer: models are bit-identical acr
 
     One concept per chapter: intuition, the mathematics, the ~50 real lines that implement it, then an experiment against the reference libraries. Start with [a tree traced by hand on eight rows](guide/0-a-tree-by-hand.md).
 
--   **[Use](use/install.md)**
+-   **[Use](api/install.md)**
 
     ---
 
-    [Install in one command](use/install.md), then [the API in one read](use/api-tour.md): sklearn-shaped estimators and an explicit `train(params, ...)` layer, dotted config keys shared with the CLI, one `.msgpack` model that round-trips everywhere.
+    [Install in one command](api/install.md), then [the API in one read](api/api-tour.md): sklearn-shaped estimators and an explicit `train(params, ...)` layer, dotted config keys shared with the CLI, one `.msgpack` model that round-trips everywhere.
 
--   **[Results](method/README.md)**
+-   **[Results](results/README.md)**
 
     ---
 
-    Every speed and accuracy claim as a committed run on named hardware. [The results ledger](method/results.md) opens with the division summaries and links one generated page per study; the rules are [the benchmark protocol](method/benchmark-protocol.md).
+    Every speed and accuracy claim as a committed run on named hardware. [The results ledger](results/results.md) opens with the division summaries and links one generated page per study; the rules are [the benchmark protocol](results/benchmark-protocol.md).
 
 -   **[Design](invariants.md)**
 

@@ -14,4 +14,4 @@ shims, or `python -m bonsai.bench.datasets --list` with the module built).
 Everything except `tiny.csv` is gitignored; the Grinsztajn standings suite
 and the internal campaign fetch straight from OpenML at runtime and never
 land here. Dataset provenance and tier definitions:
-docs/method/benchmark-protocol.md.
+docs/results/benchmark-protocol.md.
