@@ -146,6 +146,10 @@ python: build/build.ninja  ## Build the _bonsai Python extension into build/pyth
 	@cmake --build build --target _bonsai bonsai_stub -j
 	@echo "module at build/python/bonsai — use PYTHONPATH=build/python"
 
+site: python  ## Build the docs site, strict, with the reference read from the built package.
+	@uv pip install --quiet --python $(PYTHON) mkdocs-material mkdocstrings-python
+	@PYTHONPATH=build/python $(dir $(PYTHON))mkdocs build --strict
+
 python-test: python $(TOY_SENTINEL) $(AMAZON_SENTINEL)  ## Build the extension and run the Python test suites.
 	@PYTHONPATH=build/python $(PYTHON) -m pytest python/tests -q
 

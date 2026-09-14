@@ -1,5 +1,10 @@
 # Build and publish the MkDocs Material site to GitHub Pages. Requires the
 # repo's Pages source to be set to "GitHub Actions" (Settings -> Pages).
+#
+# The reference page is rendered from the package's docstrings, and two of
+# its classes live in the compiled module, so the job builds the extension
+# first and reads the stub the build writes beside it. `make site` is the
+# same command locally.
 name: docs-site
 
 on:
@@ -8,6 +13,8 @@ on:
     paths:
       - "docs/**"
       - "mkdocs.yml"
+      - "python/bonsai/**"
+      - "src/python/**"
       - ".github/workflows/docs-site.yml"
   workflow_dispatch:
 
@@ -22,12 +29,21 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-llvm
       - uses: astral-sh/setup-uv@v5
-      - run: uvx --with mkdocs-material mkdocs build --strict
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: python  # shared with the python job: same bindings TU
+      - uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-build-${{ hashFiles('CMakeLists.txt') }}
+      - run: uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python "nanobind<3" numpy
+      - run: make site
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
