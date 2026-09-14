@@ -26,7 +26,7 @@ Here is where that landed, measured on shared hardware at matched settings. On G
 
 One property none of the reference libraries offer: models are bit-identical across CPU architectures and thread counts, enforced per-commit in CI.
 
-## Four doors
+## Three doors
 
 <div class="grid cards" markdown>
 
@@ -34,9 +34,9 @@ One property none of the reference libraries offer: models are bit-identical acr
 
     ---
 
-    One concept per chapter: intuition, the mathematics, the ~50 real lines that implement it, then an experiment against the reference libraries. Start with [a tree traced by hand on eight rows](guide/0-a-tree-by-hand.md).
+    One concept per chapter: intuition, the mathematics, the ~50 real lines that implement it, then an experiment against the reference libraries. Start with [a tree traced by hand on eight rows](guide/0-a-tree-by-hand.md); the engine track and [how we got here](learn/timeline.md) sit behind the same door.
 
--   **[Use](api/install.md)**
+-   **[API](api/install.md)**
 
     ---
 
@@ -46,13 +46,7 @@ One property none of the reference libraries offer: models are bit-identical acr
 
     ---
 
-    Every speed and accuracy claim as a committed run on named hardware. [The results ledger](results/results.md) opens with the division summaries and links one generated page per study; the rules are [the benchmark protocol](results/benchmark-protocol.md).
-
--   **[Design](invariants.md)**
-
-    ---
-
-    [The invariants](invariants.md), the contracts the engine holds, generated from the tests that prove them. The archive holds the [decisions log](decisions.md); [how we got here](learn/timeline.md) traces the lineage of the ideas.
+    Every speed and accuracy claim as a committed run on named hardware. [The results ledger](results/results.md) opens with the division summaries and links one generated page per study; the rules are [the benchmark protocol](results/benchmark-protocol.md). [The invariants](invariants.md) are the contracts the engine holds, generated from the tests that prove them, and the [decisions log](decisions.md) is the archive of every measurement and refutation behind the numbers.
 
 </div>
 
