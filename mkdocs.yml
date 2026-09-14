@@ -49,6 +49,24 @@ exclude_docs: |
 
 hooks:
   - docs/hooks/repo_links.py
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [build/python]
+          options:
+            allow_inspection: false
+            docstring_style: numpy
+            show_root_heading: true
+            show_root_full_path: false
+            show_source: false
+            show_overloads: true
+            members_order: source
+            filters: ["!^_"]
+            extensions:
+              - docs/hooks/griffe_bonsai.py:OverloadOnlyFunctions
+              - docs/hooks/griffe_bonsai.py:LiveDocstrings
 
 markdown_extensions:
   - admonition
@@ -120,6 +138,7 @@ nav:
       - Install: api/install.md
       - The API in one read: api/api-tour.md
       - Parameters: api/parameters.md
+      - Reference: api/reference.md
       - What to use when: api/what-to-use-when.md
       - Running the benchmarks: api/benchmarks.md
       - Building from source: api/building.md

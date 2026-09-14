@@ -222,6 +222,10 @@ jobs:
       # so numpy and the ABI-matched extension resolve; GPU blocks are listed
       # and skipped without --gpu.
       - run: PYTHONPATH=build/python .venv/bin/python scripts/run_docs_examples.py
+      # The site, strict, against the same build: the reference page reads the
+      # package's docstrings, so a docstring edit can break it before main does.
+      - if: matrix.python == '3.12'
+        run: make site
 
   # Compile-only: no GPU runners, but the kernel TU should not silently rot.
   cuda-compile:
