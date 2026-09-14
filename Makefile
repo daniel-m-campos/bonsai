@@ -170,7 +170,7 @@ fit-benchmark: build $(TOY_SENTINEL)  ## Compare bonsai against reference librar
 # Uses the CUDA module tree when present, else the CPU one.
 bench-scaling:  ## Run a synthetic scaling spec (ARGS='run --spec scaling-rows').
 	@PYTHONPATH=$(if $(wildcard build-cuda/python),build-cuda/python,build/python) \
-	    uv run scripts/bench_scaling.py $(ARGS)
+	    $(PYTHON) -m bonsai.bench $(ARGS)
 
 $(TOY_SENTINEL):
 	@uv run scripts/fetch_toy.py

@@ -4,7 +4,7 @@
 
 Chapter 10 showed *where* the GPU boundary sits. This chapter is about **how you find out where it should sit**: the method behind the July 2026 campaign that took the 16M-row fit from ~43s to 26.9s and past XGBoost-GPU, told through its real moves and, more instructively, its real refutations.
 
-The reframing that made the campaign systematic: training is a small **compute DAG**. Nodes are the algorithmic steps (bin, gradients, per level: build/find/partition, epilogue, score update); each node has a measured cost per feasible placement (host or device); edges carry data, and an edge crossing the placement boundary costs `bytes / bandwidth(direction)`. Choosing an implementation *is* choosing a placement plus a schedule. General DAG placement is NP-hard; this DAG has ~10 node types and at most six with free placement, so **exhaustive enumeration is trivial**: the entire difficulty is honest constants. (`scripts/dag_model.py` is the living evaluator; the perf-round skill states the sequence.)
+The reframing that made the campaign systematic: training is a small **compute DAG**. Nodes are the algorithmic steps (bin, gradients, per level: build/find/partition, epilogue, score update); each node has a measured cost per feasible placement (host or device); edges carry data, and an edge crossing the placement boundary costs `bytes / bandwidth(direction)`. Choosing an implementation *is* choosing a placement plus a schedule. General DAG placement is NP-hard; this DAG has ~10 node types and at most six with free placement, so **exhaustive enumeration is trivial**: the entire difficulty is honest constants.
 
 Three rules fall out, each purchased with a real mistake:
 
@@ -63,9 +63,6 @@ The DAG is not a diagram on the side; it is load-bearing in the code's shapes:
 ## Try it
 
 ```bash
-# The model, with the campaign's constants — evaluate placements and the floor:
-uv run scripts/dag_model.py --floor
-
 # Reproduce a ledger line yourself (any machine with a CUDA device):
 BONSAI_GROW_PROFILE=1 BONSAI_CUDA_PROFILE=1 BONSAI_FIT_PROFILE=1 BONSAI_INGEST_PROFILE=1 \
   bonsai bench --config configs/california_housing.toml --set dispatch.grower_name=cuda_depthwise

@@ -129,11 +129,11 @@ The profiled single-cell benchmark is a spec JSON piped into the bench harness's
 $SSH 'cd /root/bonsai && spec="{\"variant\":\"bonsai_cuda_depthwise\",\"cell\":{\"axis\":\"rows\",\"rows\":16000000,\"cols\":100,\"bins\":255,\"bins_effective\":255,\"depth\":8,\"iters\":100,\"lr\":0.1,\"informative\":20,\"n_test\":500000,\"seed\":42},\"threads\":16}"; \
   PYTHONPATH=$PWD/build-cuda/python BONSAI_GROW_PROFILE=1 BONSAI_CUDA_PROFILE=1 \
   BONSAI_INGEST_PROFILE=1 BONSAI_FIT_PROFILE=1 \
-  /opt/venv/bin/python scripts/bench_scaling.py --worker <<<"$spec" > /tmp/run.out 2> /tmp/run.err; \
+  /opt/venv/bin/python -m bonsai.bench worker <<<"$spec" > /tmp/run.out 2> /tmp/run.err; \
   grep -o "RESULT .*" /tmp/run.out; grep -E "grow-profile|fit-profile|ingest-profile|cuda-upload-decomp" /tmp/run.err | tail -4'
 ```
 
-Other variants for same-pod ladders: `xgb_cuda`, `lgbm_cpu`, `catboost_gpu`, `bonsai_cuda_levelwise`, etc. (the `VARIANTS` table in `scripts/bench_scaling.py`). Full sweeps go through `make bench-scaling ARGS="--axis rows"` instead of raw worker calls; only the make target writes the results JSONL.
+Other variants for same-pod ladders: `xgb_cuda`, `lgbm_cpu`, `catboost_gpu`, `bonsai_cuda_levelwise`, etc. (the `VARIANTS` table in `python/bonsai/bench/variants.py`). Full sweeps go through `make bench-scaling ARGS="--axis rows"` instead of raw worker calls; only the make target writes the results JSONL.
 
 For anything longer than a few minutes, detach it so an SSH drop doesn't kill the run, and poll:
 

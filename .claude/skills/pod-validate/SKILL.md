@@ -62,7 +62,7 @@ A local background watcher polls every ~4 minutes and prints one heartbeat: `pro
 spec='{"variant":"bonsai_cuda_depthwise","cell":{"axis":"rows","rows":16777216,"cols":128,"bins":255,"bins_effective":255,"depth":8,"iters":100,"lr":0.1,"informative":20,"n_test":500000,"seed":42},"threads":16}'
 PYTHONPATH=$PWD/build-cuda/python BONSAI_GROW_PROFILE=1 BONSAI_CUDA_PROFILE=1 \
   BONSAI_INGEST_PROFILE=1 BONSAI_FIT_PROFILE=1 \
-  /opt/venv/bin/python scripts/bench_scaling.py --worker <<<"$spec" >/tmp/r.out 2>/tmp/r.err
+  /opt/venv/bin/python -m bonsai.bench worker <<<"$spec" >/tmp/r.out 2>/tmp/r.err
 grep -o "RESULT .*" /tmp/r.out
 grep -E "grow-profile|fit-profile|ingest-profile|cuda-round-decomp" /tmp/r.err | tail -4
 ```
