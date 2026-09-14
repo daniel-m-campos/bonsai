@@ -1,11 +1,21 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --quiet --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["numpy>=1.26", "pandas>=2.2", "scikit-learn>=1.4"]
+# ///
 """Fetch a benchmark dataset by registry name.
 
 The fetch logic lives in the dataset registry (decision 69); this loads
 bonsai/bench/datasets.py by file path so it works before the native module is
-built. `fetch` itself validates the name, so this is only the argv plumbing.
+built, which is what the C++ test targets need for the test-pin datasets.
+`fetch` itself validates the name, so this is only the argv plumbing.
 
-    python3 scripts/fetch.py higgs
+    uv run scripts/fetch.py california     # the toy dataset the C++ tests pin
+    uv run scripts/fetch.py amazon         # the categorical pin
+    uv run scripts/fetch.py higgs          # a perf-scale ladder input
+
+The two test-pin fetchers need scikit-learn and pandas, which the inline
+script metadata above supplies to `uv run`; the rest are stdlib streams.
 """
 
 from __future__ import annotations
@@ -23,7 +33,8 @@ _spec.loader.exec_module(_mod)
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("usage: fetch.py <a9a|covtype|higgs|year_msd>", file=sys.stderr)
+        names = "|".join(sorted(_mod.fetchable()))
+        print(f"usage: fetch.py <{names}>", file=sys.stderr)
         sys.exit(2)
     for path in _mod.fetch(sys.argv[1]):
         print(path)

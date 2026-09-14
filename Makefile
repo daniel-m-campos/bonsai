@@ -173,12 +173,12 @@ bench-scaling:  ## Run a synthetic scaling spec (ARGS='run --spec scaling-rows')
 	    $(PYTHON) -m bonsai.bench $(ARGS)
 
 $(TOY_SENTINEL):
-	@uv run scripts/fetch_toy.py
+	@uv run scripts/fetch.py california
 	@touch $@
 
 # test_encoding.py's amazon quality pin needs the stage-1 CSVs (gitignored).
 $(AMAZON_SENTINEL):
-	@uv run scripts/fetch_amazon.py
+	@uv run scripts/fetch.py amazon
 	@touch $@
 
 # The verification floor, executed rather than remembered. Runs every gate this

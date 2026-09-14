@@ -87,7 +87,7 @@ jobs:
           path: |
             tests/data/.toy-fetched
             tests/data/california_housing_*.csv
-          key: toy-data-v2-${{ hashFiles('scripts/fetch_toy.py') }}
+          key: toy-data-v3-${{ hashFiles('scripts/fetch.py', 'python/bonsai/bench/datasets.py') }}
       - run: make build
       - run: make test
       # The committed parameters extraction against the structs this build
@@ -115,7 +115,7 @@ jobs:
           path: |
             tests/data/.toy-fetched
             tests/data/california_housing_*.csv
-          key: toy-data-v2-${{ hashFiles('scripts/fetch_toy.py') }}
+          key: toy-data-v3-${{ hashFiles('scripts/fetch.py', 'python/bonsai/bench/datasets.py') }}
       # detect_leaks=0: libomp keeps its thread pool alive past exit and
       # LSan flags the runtime's own allocations, not bonsai's.
       - run: make test-asan
@@ -142,7 +142,7 @@ jobs:
           path: |
             tests/data/.toy-fetched
             tests/data/california_housing_*.csv
-          key: toy-data-v2-${{ hashFiles('scripts/fetch_toy.py') }}
+          key: toy-data-v3-${{ hashFiles('scripts/fetch.py', 'python/bonsai/bench/datasets.py') }}
       - run: make test-tsan
 
   format:
@@ -199,7 +199,7 @@ jobs:
             tests/data/.amazon-fetched
             tests/data/california_housing_*.csv
             tests/data/amazon_*.csv
-          key: toy-data-v2-${{ hashFiles('scripts/fetch_toy.py', 'scripts/fetch_amazon.py') }}
+          key: toy-data-v3-${{ hashFiles('scripts/fetch.py', 'python/bonsai/bench/datasets.py') }}
       # lightgbm: test_estimators.py cross-checks feature importances against it.
       # typing_extensions: the extension build generates the IDE stub, and
       # nanobind's stubgen requires it below Python 3.11.

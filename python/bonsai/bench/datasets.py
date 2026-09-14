@@ -5,8 +5,8 @@ fetch scripts load this file directly via importlib so data can be fetched
 before the native module is built.
 
 Tiers:
-- test-pin        CI-load-bearing; fetched by the standalone scripts the CI
-                  cache keys hash (scripts/fetch_toy.py, fetch_amazon.py).
+- test-pin        CI-load-bearing; fetched here like every other tier (the
+                  CI cache keys hash this file and scripts/fetch.py).
 - quality-external  third-party-selected accuracy suites (Grinsztajn) and
                   public single datasets used by quality studies.
 - quality-smoke   the internal ten-dataset campaign (fast local regression
@@ -79,7 +79,7 @@ REGISTRY = {
         "reg",
         "sklearn fetch_california_housing (StatLib)",
         "public domain",
-        "80/20 train_test_split(random_state=42) by scripts/fetch_toy.py",
+        "80/20 train_test_split(random_state=42)",
         ("california_housing_train.csv", "california_housing_test.csv"),
     ),
     "amazon": Dataset(
@@ -88,7 +88,7 @@ REGISTRY = {
         "binary",
         "OpenML data id 4135",
         "Kaggle competition data, research use",
-        "80/20 stratified random_state=42 by scripts/fetch_amazon.py",
+        "80/20 stratified random_state=42",
         ("amazon_train.csv", "amazon_test.csv"),
     ),
     "grinsztajn": Dataset(
@@ -175,9 +175,9 @@ def fetch(name: str, force: bool = False) -> list[pathlib.Path]:
     Raises
     ------
     ValueError
-        For datasets not fetched here: test-pin datasets are owned by the
-        standalone CI scripts, grinsztajn/campaign10 fetch at suite runtime
-        via OpenML, and friedman1 is generated, not fetched.
+        For datasets not fetched here: tiny is committed, grinsztajn and
+        campaign10 fetch at suite runtime via OpenML, and friedman1 is
+        generated, not fetched.
     """
     ds = REGISTRY[name]
     if name not in _FETCHERS:
@@ -272,12 +272,52 @@ def _fetch_year_msd(root: pathlib.Path):
             (tr if i < n_train else te).write(line)
 
 
+def _fetch_california(root: pathlib.Path):
+    """California Housing, label first, 80/20 split at random_state 42."""
+    import csv
+
+    from sklearn.datasets import fetch_california_housing
+    from sklearn.model_selection import train_test_split
+
+    bundle = fetch_california_housing(as_frame=True)
+    frame = bundle.frame
+    target = bundle.target.name
+    features = [c for c in frame.columns if c != target]
+    frame = frame[[target, *features]].rename(columns={target: "label"})
+    train, test = train_test_split(frame, test_size=0.2, random_state=42)
+    train.to_csv(root / "california_housing_train.csv", index=False, quoting=csv.QUOTE_MINIMAL)
+    test.to_csv(root / "california_housing_test.csv", index=False, quoting=csv.QUOTE_MINIMAL)
+
+
+def _fetch_amazon(root: pathlib.Path):
+    """OpenML 4135, nine integer-id categoricals, label first, 80/20
+    stratified at random_state 42."""
+    import pandas as pd
+    from sklearn.datasets import fetch_openml
+    from sklearn.model_selection import train_test_split
+
+    ds = fetch_openml(data_id=4135, as_frame=True, parser="auto")
+    X = ds.data.astype("int64")
+    y = ds.target.astype("int64")
+    frame = pd.concat([y.rename("label"), X], axis=1)
+    train, test = train_test_split(frame, test_size=0.2, random_state=42, stratify=frame["label"])
+    train.to_csv(root / "amazon_train.csv", index=False)
+    test.to_csv(root / "amazon_test.csv", index=False)
+
+
 _FETCHERS = {
+    "california": _fetch_california,
+    "amazon": _fetch_amazon,
     "a9a": _fetch_a9a,
     "covtype": _fetch_covtype,
     "higgs": _fetch_higgs,
     "year_msd": _fetch_year_msd,
 }
+
+
+def fetchable() -> list[str]:
+    """The registry names `fetch` accepts."""
+    return list(_FETCHERS)
 
 
 if __name__ == "__main__":

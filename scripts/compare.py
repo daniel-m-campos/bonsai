@@ -17,7 +17,7 @@ the same settings. Writes:
     benchmarks/results/<stem>.json
     benchmarks/results/<stem>.md
 
-Run via uv (after `make build` and `uv run scripts/fetch_toy.py`):
+Run via uv (after `make build` and `uv run scripts/fetch.py california`):
     uv run scripts/compare.py --config configs/california_housing.toml
 """
 
