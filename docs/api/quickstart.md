@@ -20,7 +20,7 @@ Three call shapes over one engine. The question that picks between them is how m
 
 If you know scikit-learn, you know this layer:
 
-```{.python .run}
+```python {.run}
 import bonsai
 import numpy as np
 
@@ -32,7 +32,9 @@ X_valid, y_valid = X[400:], y[400:]
 X_test, w = X[400:], np.ones(400, dtype=np.float32)
 
 model = bonsai.BonsaiRegressor(
-    n_iters=200, learning_rate=0.05, grower="leafwise",
+    n_iters=200,
+    learning_rate=0.05,
+    grower="leafwise",
     early_stopping_rounds=20,
 )
 model.fit(X_train, y_train, eval_set=(X_valid, y_valid), sample_weight=w)

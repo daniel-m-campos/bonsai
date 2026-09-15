@@ -123,7 +123,7 @@ then travel inside the saved model. A domain band like age brackets stays
 identical from training to deployment, with no external transform to
 drift:
 
-```{.python .run}
+```python {.run}
 import numpy as np
 import bonsai
 
@@ -140,8 +140,7 @@ ds = bonsai.Dataset(X, y, bin_edges={0: np.array([18.0, 65.0], dtype=np.float32)
 model = bonsai.train({"booster.n_iters": 30, "tree.max_depth": 4}, ds)
 
 # The edges live in the model, so predict reads raw ages.
-probe = np.array([[10.0, 0.5, 0.5], [40.0, 0.5, 0.5], [80.0, 0.5, 0.5]],
-                 dtype=np.float32)
+probe = np.array([[10.0, 0.5, 0.5], [40.0, 0.5, 0.5], [80.0, 0.5, 0.5]], dtype=np.float32)
 print(np.asarray(model.predict(probe)).round(2))
 ```
 
@@ -154,7 +153,7 @@ raise a config error ([decision 73](../decisions.md)).
 Coarser bins trade split resolution for speed. Set `max_bin` low and
 watch accuracy hold on smooth features:
 
-```{.python .run}
+```python {.run}
 import numpy as np
 import bonsai
 

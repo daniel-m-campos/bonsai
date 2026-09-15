@@ -95,7 +95,7 @@ it would have made *models* hardware-dependent.
 
 ## Try it
 
-```{.python .run}
+```python {.run}
 import numpy as np
 import bonsai
 
@@ -106,8 +106,7 @@ y = (X[:, 0] * 2.0 + X[:, 1] + rng.normal(0, 0.1, 5000)).astype(np.float32)
 
 def fit(n_threads):
     # u16 bins (max_bin > 255) are bit-identical at any thread count.
-    return bonsai.BonsaiRegressor(
-        n_iters=50, max_bin=511, n_threads=n_threads).fit(X, y)
+    return bonsai.BonsaiRegressor(n_iters=50, max_bin=511, n_threads=n_threads).fit(X, y)
 
 
 p1 = np.asarray(fit(1).predict(X))

@@ -2,7 +2,7 @@
 
 A fenced block opts into execution with the superfences attribute form:
 
-    ```{.python .run}
+    ```python {.run}
     import bonsai
     ...
     ```
@@ -15,7 +15,7 @@ index on that page. Each block must be self-contained per docs/STYLE.md:
 imports included, synthetic data generated inline, no downloads, small enough
 to finish in seconds.
 
-Blocks that need a GPU use `{.python .run-gpu}`. They are extracted and listed
+Blocks that need a GPU use `python {.run-gpu}`. They are extracted and listed
 but skipped unless `--gpu` is passed, so the default CI run stays CPU-only.
 
     PYTHONPATH=build/python python3 scripts/run_docs_examples.py
@@ -59,7 +59,7 @@ def _child_env() -> dict:
     return env
 
 
-OPEN_RE = re.compile(r"^(\s*)(`{3,}|~{3,})\{([^}]*)\}\s*$")
+OPEN_RE = re.compile(r"^(\s*)(`{3,}|~{3,})python\s*\{([^}]*)\}\s*$")
 
 
 def published_files() -> list[pathlib.Path]:

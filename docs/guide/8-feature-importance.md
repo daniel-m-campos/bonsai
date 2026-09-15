@@ -64,14 +64,14 @@ leaf values, not the histograms that produced them). So:
 
 ## Try it
 
-```{.python .run}
+```python {.run}
 import numpy as np
 import bonsai
 
 rng = np.random.default_rng(0)
 n = 6000
-f0 = rng.normal(size=n)           # a step: strong signal in one threshold
-f1 = rng.uniform(-3.0, 3.0, n)    # a wiggle: signal spread over many splits
+f0 = rng.normal(size=n)  # a step: strong signal in one threshold
+f1 = rng.uniform(-3.0, 3.0, n)  # a wiggle: signal spread over many splits
 rest = rng.normal(size=(n, 4))
 X = np.column_stack([f0, f1, rest]).astype(np.float32)
 y = (4.0 * np.sign(f0) + np.sin(3.0 * f1) + rng.normal(0, 0.1, n)).astype(np.float32)

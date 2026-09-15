@@ -66,7 +66,7 @@ than silently ignoring them.
 
 ## Try it
 
-```{.python .run}
+```python {.run}
 import numpy as np
 import bonsai
 
@@ -76,20 +76,20 @@ y = (X[:, 0] * 2.0 + X[:, 1] + rng.normal(0, 0.1, 4000)).astype(np.float32)
 
 # Monotone: prediction non-decreasing in feature 0.
 mono = bonsai.BonsaiRegressor(
-    n_iters=60, grower="depthwise",
-    params={"tree.monotone_constraints": "1,0,0,0,0,0,0,0"}).fit(X, y)
+    n_iters=60, grower="depthwise", params={"tree.monotone_constraints": "1,0,0,0,0,0,0,0"}
+).fit(X, y)
 
 # The same constraint by name. A plain array is named f0..fN; a Dataset built
 # with feature_names=, a fit on a frame with string columns, or fit(X, y,
 # feature_names=...) carries the names you gave it.
 named = bonsai.BonsaiRegressor(
-    n_iters=60, grower="depthwise",
-    params={"tree.monotone_constraints": {"f0": 1}}).fit(X, y)
+    n_iters=60, grower="depthwise", params={"tree.monotone_constraints": {"f0": 1}}
+).fit(X, y)
 
 # Interaction: features 0-3 may not mix with 4-7 on any path.
 inter = bonsai.BonsaiRegressor(
-    n_iters=60, grower="depthwise",
-    params={"tree.interaction_constraints": "0+1+2+3,4+5+6+7"}).fit(X, y)
+    n_iters=60, grower="depthwise", params={"tree.interaction_constraints": "0+1+2+3,4+5+6+7"}
+).fit(X, y)
 
 print("monotone    R2:", round(mono.score(X, y), 4))
 print("by name     R2:", round(named.score(X, y), 4))

@@ -169,7 +169,7 @@ and forward selection is the same loop with a set instead of a sort. There is de
 
 Both motivations in one miniature: junk features at small $n$, then the budget curve.
 
-```{.python .run}
+```python {.run}
 import numpy as np
 import bonsai
 
@@ -177,14 +177,15 @@ rng = np.random.default_rng(7)
 n, p = 900, 8
 X = rng.normal(size=(n, p)).astype(np.float32)
 w = np.array([3.0, -2.0, 1.5, 1.2, 1.0, -0.9, 0.8, 0.7], dtype=np.float32)
-y = (X @ w + np.sign(X[:, 1]) * 2 + X[:, 2] * X[:, 3]
-     + 0.3 * rng.normal(size=n)).astype(np.float32)
+y = (X @ w + np.sign(X[:, 1]) * 2 + X[:, 2] * X[:, 3] + 0.3 * rng.normal(size=n)).astype(np.float32)
 Xn = np.column_stack([X, rng.permuted(X, axis=0)])  # + 8 shuffled copies
 tr, te = slice(0, 600), slice(600, None)
+
 
 def rmse_at(cols):
     m = bonsai.BonsaiRegressor(n_iters=300, learning_rate=0.05).fit(Xn[tr][:, cols], y[tr])
     return float(np.sqrt(np.mean((np.asarray(m.predict(Xn[te][:, cols])) - y[te]) ** 2)))
+
 
 m_all = bonsai.BonsaiRegressor(n_iters=300, learning_rate=0.05).fit(Xn[tr], y[tr])
 order = np.argsort(np.asarray(m_all.importance("gain")))[::-1]

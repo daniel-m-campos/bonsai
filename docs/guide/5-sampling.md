@@ -44,7 +44,7 @@ Selection: `dispatch.sampler_name = all_rows | bernoulli | goss`, with
 
 ## Try it
 
-```{.python .run}
+```python {.run}
 import numpy as np
 import bonsai
 
