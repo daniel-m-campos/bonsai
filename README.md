@@ -47,13 +47,15 @@ Wheels cover Linux x86_64/aarch64 and macOS arm64, Python 3.9 to 3.13, no toolch
 import bonsai
 
 model = bonsai.BonsaiRegressor(
-    n_iters=200, learning_rate=0.05, grower="leafwise",
+    n_iters=200,
+    learning_rate=0.05,
+    grower="leafwise",
     early_stopping_rounds=20,
-    params={"tree.lambda_l1": 0.5},   # any dotted config key the CLI accepts
+    params={"tree.lambda_l1": 0.5},  # any dotted config key the CLI accepts
 )
 model.fit(X_train, y_train, eval_set=(X_valid, y_valid))
 pred = model.predict(X_test)
-model.save("model.msgpack")           # loadable by `bonsai predict` and vice versa
+model.save("model.msgpack")  # loadable by `bonsai predict` and vice versa
 ```
 
 The CLI (a [source-build artifact](https://daniel-m-campos.github.io/bonsai/api/building/)) drives the same engine with the same keys and the same models:

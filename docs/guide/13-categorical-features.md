@@ -34,8 +34,8 @@ Row $i$ never sees $y_i$: the encoding is *causal*, like a time series. The firs
 
 ```python
 enc = bonsai.OrderedTargetEncoder(columns=[0, 1, 8], prior_weight=10.0)
-Xtr_enc = enc.fit_transform(Xtr, ytr)   # causal: permuted running means
-Xte_enc = enc.transform(Xte)            # full-train statistics
+Xtr_enc = enc.fit_transform(Xtr, ytr)  # causal: permuted running means
+Xte_enc = enc.transform(Xte)  # full-train statistics
 ```
 
 The `fit_transform`/`transform` asymmetry *is* the leakage story: training rows get causal encodings, everything after training gets the full statistics, the same convention sklearn's `TargetEncoder` adopted, for the same reason.
@@ -49,11 +49,13 @@ The implementation is one segmented cumulative sum over a `(category, visit-orde
 ```python
 import numpy as np, bonsai
 
+
 def load(p):
     d = np.loadtxt(p, delimiter=",", skiprows=1, dtype=np.float32)
     return d[:, 1:], d[:, 0]
 
-Xtr, ytr = load("tests/data/amazon_train.csv")   # 9 columns, all category IDs
+
+Xtr, ytr = load("tests/data/amazon_train.csv")  # 9 columns, all category IDs
 Xte, yte = load("tests/data/amazon_test.csv")
 
 enc = bonsai.OrderedTargetEncoder(columns=range(Xtr.shape[1]))

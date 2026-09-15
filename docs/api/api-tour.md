@@ -98,7 +98,8 @@ from bonsai.params import Params, Booster, Dispatch
 
 model = bonsai.train(
     Params(dispatch=Dispatch(grower_name="levelwise"), booster=Booster(n_iters=200)),
-    X, y,
+    X,
+    y,
     eval_set=(Xv, yv),
 )
 ```
