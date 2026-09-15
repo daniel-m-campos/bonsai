@@ -57,7 +57,7 @@ One honest caveat before comparing numbers across machines: identical-model GPUs
 
 The building blocks are importable directly when you want a custom harness:
 
-```{.python .run}
+```python {.run}
 from bonsai.bench import metrics, synth
 
 X, y, X_test, y_test = synth.gen_data(rows=1000, cols=8, seed=0, n_test=200, informative=4)

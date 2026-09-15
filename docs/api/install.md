@@ -30,7 +30,7 @@ Every release's CUDA wheel is validated on rented GPU hardware before it attache
 
 ## Check it works
 
-```{.python .run}
+```python {.run}
 import bonsai
 import numpy as np
 

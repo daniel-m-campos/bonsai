@@ -179,15 +179,14 @@ The test story is the part worth copying into your own projects. [`tests/unit/te
 
 The chapter's example was hand-sized; here is the same machinery on data too big to hand-check, with the efficiency identity as the runtime proof.
 
-```{.python .run}
+```python {.run}
 import numpy as np
 import bonsai
 
 rng = np.random.default_rng(0)
 n = 4000
 X = rng.normal(size=(n, 5)).astype(np.float32)
-y = (3.0 * np.sign(X[:, 0]) + X[:, 1] * X[:, 2]
-     + 0.1 * rng.normal(size=n)).astype(np.float32)
+y = (3.0 * np.sign(X[:, 0]) + X[:, 1] * X[:, 2] + 0.1 * rng.normal(size=n)).astype(np.float32)
 
 m = bonsai.BonsaiRegressor(n_iters=150).fit(X, y)
 phi = np.asarray(m.pred_contribs(X[:500]))
@@ -196,13 +195,21 @@ print("phi shape:", phi.shape)
 print("max |sum(phi) - prediction|:", f"{np.abs(phi.sum(axis=1) - pred).max():.2e}")
 r = 0
 print("row 0: x =", X[r].round(2))
-print("row 0: phi =", phi[r, :-1].round(3), " bias =", round(float(phi[r, -1]), 3),
-      " prediction =", round(float(pred[r]), 3))
+print(
+    "row 0: phi =",
+    phi[r, :-1].round(3),
+    " bias =",
+    round(float(phi[r, -1]), 3),
+    " prediction =",
+    round(float(pred[r]), 3),
+)
 global_shap = np.abs(phi[:, :-1]).mean(axis=0)  # the dataset-level recipe
 print("mean-abs-SHAP ranking:", np.argsort(global_shap)[::-1])
-print("gain ranking         :", np.argsort(np.asarray(m.importance('gain')))[::-1])
-print("corr(phi_1, x1*sign(x2)):",
-      round(float(np.corrcoef(phi[:, 1], X[:500, 1] * np.sign(X[:500, 2]))[0, 1]), 3))
+print("gain ranking         :", np.argsort(np.asarray(m.importance("gain")))[::-1])
+print(
+    "corr(phi_1, x1*sign(x2)):",
+    round(float(np.corrcoef(phi[:, 1], X[:500, 1] * np.sign(X[:500, 2]))[0, 1]), 3),
+)
 ```
 
 The identity holds to float precision (about 3e-06): every row's contributions plus bias reproduce its prediction. Row 0's explanation is legible, one dominant feature and noise. The global rankings from mean-absolute-SHAP and gain agree here; chapter 14 measured where they stop agreeing (on wide data, SHAP on validation rows was the better ranking). The last line is the ice-cream lesson on real data: feature 1's per-row credit tracks $x_1 \cdot \text{sign}(x_2)$ at correlation 0.8, because in a product term, whether $x_1$ helped or hurt depends on its partner, exactly like the weekday leaf counting against weekend.

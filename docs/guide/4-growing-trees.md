@@ -132,7 +132,7 @@ this out is [decision 62–63](../decisions.md); the evidence is
 
 ## Try it
 
-```{.python .run}
+```python {.run}
 import numpy as np
 import bonsai
 

@@ -34,7 +34,7 @@ Config: `booster.early_stopping_rounds` + a `data.valid` CSV (Python:
 
 ### Try it
 
-```{.python .run}
+```python {.run}
 import numpy as np
 import bonsai
 
@@ -45,8 +45,8 @@ Xtr, ytr = X[:5000], y[:5000]
 Xv, yv = X[5000:], y[5000:]
 
 m = bonsai.BonsaiRegressor(
-    n_iters=400, learning_rate=0.15, grower="leafwise",
-    early_stopping_rounds=20).fit(Xtr, ytr, eval_set=(Xv, yv))
+    n_iters=400, learning_rate=0.15, grower="leafwise", early_stopping_rounds=20
+).fit(Xtr, ytr, eval_set=(Xv, yv))
 print("stopped at iteration:", m.n_iters_)
 print("valid R2:", round(m.score(Xv, yv), 4))
 ```
@@ -69,7 +69,7 @@ table: every fit pays the pass again for the same rows, and runs its first
 86 rounds raw before it does. Bin them once instead, against the training
 set's own cut points, and hand the same object to every fit:
 
-```{.python .run}
+```python {.run}
 import numpy as np
 import bonsai
 
@@ -81,12 +81,16 @@ valid = bonsai.Dataset(X[5000:], y[5000:], reference=train)
 
 for depth in (4, 6, 8):
     m = bonsai.train(
-        {"tree.max_depth": depth, "booster.n_iters": 400,
-         "booster.learning_rate": 0.15,
-         "booster.early_stopping_rounds": 20},
-        train, eval_set=valid)
-    print(f"depth {depth}: stopped at {m.n_iters}, valid mse "
-          f"{min(m.eval_history):.4f}")
+        {
+            "tree.max_depth": depth,
+            "booster.n_iters": 400,
+            "booster.learning_rate": 0.15,
+            "booster.early_stopping_rounds": 20,
+        },
+        train,
+        eval_set=valid,
+    )
+    print(f"depth {depth}: stopped at {m.n_iters}, valid mse {min(m.eval_history):.4f}")
 ```
 
 `reference=train` is the whole feature: it binds the validation rows to the
@@ -147,7 +151,7 @@ accumulated valid scores, so the combination throws.
 
 ### Try it
 
-```{.python .run}
+```python {.run}
 import numpy as np
 import bonsai
 
@@ -157,8 +161,8 @@ y = (X[:, 0] * 2.0 + X[:, 1] + rng.normal(0, 0.1, 4000)).astype(np.float32)
 
 plain = bonsai.BonsaiRegressor(n_iters=100, grower="depthwise").fit(X, y)
 dart = bonsai.BonsaiRegressor(
-    n_iters=100, grower="depthwise",
-    params={"booster.dart_drop_rate": 0.1}).fit(X, y)
+    n_iters=100, grower="depthwise", params={"booster.dart_drop_rate": 0.1}
+).fit(X, y)
 print("plain R2:", round(plain.score(X, y), 4))
 print("dart  R2:", round(dart.score(X, y), 4))
 ```

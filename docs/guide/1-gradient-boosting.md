@@ -120,7 +120,7 @@ closed a measured ~10% MAE gap vs the references
 
 Fit with the default squared error, then swap the loss with one kwarg:
 
-```{.python .run}
+```python {.run}
 import numpy as np
 import bonsai
 

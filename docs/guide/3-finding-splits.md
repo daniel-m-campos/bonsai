@@ -103,7 +103,7 @@ an invariant several later features lean on (out-of-bag routing, DART).
 Raise the evidence a split needs, then watch a missing feature still land
 on a finite leaf:
 
-```{.python .run}
+```python {.run}
 import numpy as np
 import bonsai
 
