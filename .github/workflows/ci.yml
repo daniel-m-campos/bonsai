@@ -213,10 +213,6 @@ jobs:
       # integration/test_cli_parity.py needs the built binary.
       - run: make build
       - run: make python-test
-      # ty reads the calls into the bench's reference libraries only when they
-      # are installed, so the 3.12 leg adds the bench extra before checking.
-      - if: matrix.python == '3.12'
-        run: uv pip install --python .venv/bin/python "xgboost>=3.2,<3.4" catboost pandas openml && make typecheck
       # Every ```{.python .run} example in the published docs, executed against
       # the module built by python-test (build/python). Uses the venv python
       # so numpy and the ABI-matched extension resolve; GPU blocks are listed
@@ -226,6 +222,11 @@ jobs:
       # package's docstrings, so a docstring edit can break it before main does.
       - if: matrix.python == '3.12'
         run: make site
+      # ty reads the calls into the bench's reference libraries, and the site
+      # hook's into griffe, only when they are installed: the 3.12 leg adds the
+      # bench extra after `make site` has installed the site's, then checks.
+      - if: matrix.python == '3.12'
+        run: uv pip install --python .venv/bin/python "xgboost>=3.2,<3.4" catboost pandas openml && make typecheck
 
   # Compile-only: no GPU runners, but the kernel TU should not silently rot.
   cuda-compile:
