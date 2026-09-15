@@ -20,7 +20,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [{ name = "Daniel M Campos" }]
-dependencies = ["numpy>=1.26"]
+dependencies = ["numpy>=1.26", "typing_extensions>=4.0"]
 keywords = ["gradient-boosting", "machine-learning", "gbdt", "decision-trees"]
 classifiers = [
     "Development Status :: 4 - Beta",
