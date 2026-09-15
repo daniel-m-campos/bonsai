@@ -11,8 +11,11 @@
 
 #ifdef __linux__
 #include <fstream>
+#include <sched.h>
 #include <string>
+#include <vector>
 #endif
+#include <cstdlib>
 
 #ifdef BONSAI_USE_OPENMP
 #include <omp.h>
@@ -121,6 +124,68 @@ inline void warn_if_over_quota(int requested)
                  "set OMP_WAIT_POLICY=passive to avoid it.",
                  requested, quota, quota);
 }
+#ifdef __linux__
+// The CPUs the process may run on, read once from the calling thread before
+// any worker is pinned, so a worker inherits the process mask, not a pin.
+inline std::vector<int> const &allowed_cpus()
+{
+    static std::vector<int> const cpus = []
+    {
+        std::vector<int> out;
+        cpu_set_t        set;
+        CPU_ZERO(&set);
+        if (sched_getaffinity(0, sizeof set, &set) == 0)
+        {
+            for (int c = 0; c < CPU_SETSIZE; ++c)
+            {
+                if (CPU_ISSET(c, &set))
+                {
+                    out.push_back(c);
+                }
+            }
+        }
+        return out;
+    }();
+    return cpus;
+}
+
+inline bool user_binds_threads()
+{
+    static bool const set = std::getenv("OMP_PROC_BIND") != nullptr ||
+                            std::getenv("OMP_PLACES") != nullptr ||
+                            std::getenv("KMP_AFFINITY") != nullptr ||
+                            std::getenv("GOMP_CPU_AFFINITY") != nullptr;
+    return set;
+}
+#endif
+
+// Pins a worker to the tid-th allowed CPU once, packed from the first: the
+// calling thread (tid 0) is never pinned, so nothing outside the team
+// inherits a mask. Skipped when the user placed threads through the
+// runtime's own variables or the mask is narrower than the team.
+inline void bind_worker(int tid, int team)
+{
+#ifdef __linux__
+    static thread_local bool bound = false;
+    if (bound || tid == 0)
+    {
+        return;
+    }
+    bound                        = true;
+    std::vector<int> const &cpus = allowed_cpus();
+    if (user_binds_threads() || cpus.size() < static_cast<size_t>(team))
+    {
+        return;
+    }
+    cpu_set_t one;
+    CPU_ZERO(&one);
+    CPU_SET(cpus[static_cast<size_t>(tid)], &one);
+    sched_setaffinity(0, sizeof one, &one);
+#else
+    (void) tid;
+    (void) team;
+#endif
+}
 } // namespace internal
 
 // The configuration point, called before a fit and never inside a parallel
@@ -179,10 +244,14 @@ template <typename F> void for_each_index_on(int workers, size_t n, F &&f)
         // compilation passes drop even with OpenMP enabled host-side.
         [[maybe_unused]] auto const chunk = static_cast<int64_t>(
             std::max<size_t>(1, n / (static_cast<size_t>(nt) * 4)));
-#pragma omp parallel for schedule(dynamic, chunk) num_threads(nt) proc_bind(close)
-        for (int64_t i = 0; i < static_cast<int64_t>(n); ++i)
+#pragma omp parallel num_threads(nt)
         {
-            f(static_cast<size_t>(i));
+            internal::bind_worker(omp_get_thread_num(), nt);
+#pragma omp for schedule(dynamic, chunk)
+            for (int64_t i = 0; i < static_cast<int64_t>(n); ++i)
+            {
+                f(static_cast<size_t>(i));
+            }
         }
         return;
     }
