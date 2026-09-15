@@ -156,7 +156,7 @@ struct GrowProfiler : Profiler<GrowProfiler>
     double find_s = 0, bookkeep_s = 0, partition_s = 0, populate_s = 0, finalize_s = 0;
     // Conservation buckets: everything grow spends outside the phase laps
     // above, so the laps and these three sum to grow's wall clock.
-    double setup_s = 0, commit_s = 0, assemble_s = 0;
+    double                 setup_s = 0, commit_s = 0, assemble_s = 0;
     std::array<double, 16> level_s{};
     int                    level = 0;
     std::string            extra() const

@@ -72,10 +72,10 @@ class LevelStep : public TreeStep<EngineT>
 
     void build_children(LevelPlan &plan, bool last = false)
     {
-        Phase<&GrowProfiler::populate_s>                phase;
-        GrowProfiler                                   &g    = GrowProfiler::instance();
-        size_t const                                    slot = static_cast<size_t>(++g.level);
-        GrowProfiler::Lap                               lap;
+        Phase<&GrowProfiler::populate_s> phase;
+        GrowProfiler                    &g    = GrowProfiler::instance();
+        size_t const                     slot = static_cast<size_t>(++g.level);
+        GrowProfiler::Lap                lap;
         std::vector<std::reference_wrapper<SplitInput>> smalls;
         smalls.reserve(plan.splits.size());
         for (auto &d : plan.splits)
