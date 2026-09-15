@@ -11,7 +11,7 @@ import tempfile
 import bonsai
 import numpy as np
 import pytest
-from conftest import CH_PARAMS, TEST_CSV, TRAIN_CSV, load_csv
+from conftest import CH_PARAMS, TEST_CSV, TRAIN_CSV, EstimatorKwargs, load_csv
 
 # The sklearn contract (clone, cross-validation, pickling, get/set_params) is
 # the same promise for both estimators, so those tests run against each.
@@ -56,7 +56,7 @@ def test_sample_weight_shifts_toward_upweighted_rows():
     n = 4000
     X = rng.random((n, 5), dtype=np.float32)  # pure noise, no signal
     y = np.concatenate([np.zeros(n // 2), np.full(n // 2, 10.0)]).astype(np.float32)
-    params = dict(n_iters=50, learning_rate=0.1, max_depth=4)
+    params: EstimatorKwargs = dict(n_iters=50, learning_rate=0.1, max_depth=4)
 
     uniform = bonsai.BonsaiRegressor(**params).fit(X, y).predict(X).mean()
     w = np.where(y > 5, 100.0, 1.0).astype(np.float32)  # upweight the tens
@@ -136,7 +136,7 @@ def test_fit_accepts_a_prebinned_eval_set():
     Xt, yt, Xv, yv = Xtr[:-2000], ytr[:-2000], Xtr[-2000:], ytr[-2000:]
     valid_ds = bonsai.Dataset(Xv, yv, reference=bonsai.Dataset(Xt, yt))
 
-    params = dict(n_iters=200, learning_rate=0.3, early_stopping_rounds=10)
+    params: EstimatorKwargs = dict(n_iters=200, learning_rate=0.3, early_stopping_rounds=10)
     arrays = bonsai.BonsaiRegressor(**params).fit(Xt, yt, eval_set=(Xv, yv))
     prebinned = bonsai.BonsaiRegressor(**params).fit(Xt, yt, eval_set=valid_ds)
     assert prebinned.n_iters_ == arrays.n_iters_ < 200
@@ -579,7 +579,7 @@ def test_multiclass_sample_weight_applied():
     ignored it before): upweighting one class shifts probability mass toward
     it, and all-ones weights stay bit-identical to no weights."""
     X, y = _three_class_data()
-    params = dict(n_iters=30, learning_rate=0.1, max_depth=4)
+    params: EstimatorKwargs = dict(n_iters=30, learning_rate=0.1, max_depth=4)
 
     base = bonsai.BonsaiClassifier(**params).fit(X, y)
     ones = bonsai.BonsaiClassifier(**params).fit(
@@ -651,9 +651,11 @@ def test_model_n_classes_semantics():
     of 3 must never leak out of a regression or binary model."""
     X, y = _three_class_data(500)
     m3 = bonsai.BonsaiClassifier(n_iters=3).fit(X, y)._model
+    assert m3 is not None
     assert m3.objective_name == "softmax" and m3.n_classes == 3
     yb = (y > 0).astype(np.float32)
     mb = bonsai.BonsaiClassifier(n_iters=3).fit(X, yb)._model
+    assert mb is not None
     assert mb.objective_name == "logloss" and mb.n_classes == 0
     mr = bonsai.train({"booster.n_iters": "3"}, X, y)
     assert mr.objective_name == "mse" and mr.n_classes == 0
@@ -709,7 +711,7 @@ def test_warm_start_inherits_the_loaded_objective(tmp_path):
 
     again = bonsai.train({"booster.n_iters": 2}, x, y, init_model=path)
     preds = again.predict(x)
-    assert preds.min() >= 0.0 and preds.max() <= 1.0
+    assert np.min(preds) >= 0.0 and np.max(preds) <= 1.0
     again.save(str(tmp_path / "logi2.bonsai"))
 
 

@@ -192,7 +192,9 @@ class DeviceMemSampler:
             self._stop.wait(self.interval_s)
 
 
-def run_one(spec: dict, timeout: int, sampler: bool = False, data_cache: str | None = None) -> dict:
+def run_one(
+    spec: dict, timeout: float, sampler: bool = False, data_cache: str | None = None
+) -> dict:
     """One worker child, one cell: the payload dict for the row.
 
     Timeouts, signals, and nonzero exits come back as status rows
@@ -372,7 +374,7 @@ def _default_query() -> tuple:
     # Any NVML failure (missing package, no driver, MIG topology) means the
     # fallback, never a dead sampler.
     try:
-        import pynvml
+        import pynvml  # ty: ignore[unresolved-import]
 
         pynvml.nvmlInit()
         handle = pynvml.nvmlDeviceGetHandleByIndex(_device_index())

@@ -11,6 +11,7 @@ Run with  PYTHONPATH=build/python .venv/bin/python -m pytest python/tests -q
 from __future__ import annotations
 
 import tempfile
+from typing import Any
 
 import bonsai
 import numpy as np
@@ -83,8 +84,9 @@ def test_eval_history_reports_the_native_objective_name():
 
 def test_eval_set_list_is_rejected():
     Xtr, ytr, Xva, yva = _reg_data()
+    not_a_pair: Any = [(Xva, yva)]
     with pytest.raises(ValueError, match=r"one \(X, y\) tuple"):
-        bonsai.BonsaiRegressor(n_iters=5).fit(Xtr, ytr, eval_set=[(Xva, yva)])
+        bonsai.BonsaiRegressor(n_iters=5).fit(Xtr, ytr, eval_set=not_a_pair)
 
 
 def test_save_from_file_roundtrip():

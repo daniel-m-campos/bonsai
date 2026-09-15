@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from typing import Any
 
 import bonsai
 import numpy as np
@@ -216,8 +217,9 @@ def test_subset_rejects_abuse():
         ds.subset(rows=np.zeros(499, dtype=bool))
     with pytest.raises(Exception, match="rows="):
         ds.subset()
+    not_a_selector: Any = "everything"
     with pytest.raises(TypeError):
-        ds.subset(rows="everything")
+        ds.subset(rows=not_a_selector)
     with pytest.raises(Exception, match="one dimension"):
         ds.subset(rows=np.arange(4).reshape(2, 2))
 
@@ -352,8 +354,9 @@ def test_subset_columns_rejects_abuse():
         ds.subset(columns=["nope"])
     with pytest.raises(Exception, match="mask"):
         ds.subset(columns=np.array([True, False]))
+    not_a_selector: Any = 3.5
     with pytest.raises(TypeError):
-        ds.subset(columns=3.5)
+        ds.subset(columns=not_a_selector)
 
 
 def test_a_model_trained_on_a_selection_refuses_the_parent():

@@ -88,3 +88,15 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 # Template strings ARE the generated pages' one-line markdown paragraphs;
 # wrapping them would hard-wrap the rendered prose.
 "scripts/render_*.py" = ["E501"]
+
+[tool.ty.environment]
+# The package's compiled half is read through the stub `make python` writes
+# beside it; the 3.9 floor is the one the wheels ship; scripts/ is on the
+# path because the tests put it there before importing a script module.
+python-version = "3.9"
+extra-paths = ["build/python", "scripts"]
+
+[tool.ty.src]
+# A script carrying PEP 723 metadata declares its own environment, which
+# ty does not install; those run under `uv run`, not the venv.
+exclude-scripts = true

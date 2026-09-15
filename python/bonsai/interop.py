@@ -555,7 +555,7 @@ from_catboost.__doc__ = _doc(
 
 
 def to_xgboost(
-    pairs: ParamsOps | Iterable[tuple[str, Any]], *, strict: bool = True
+    pairs: ParamsOps | Mapping[str, Any] | Iterable[tuple[str, Any]], *, strict: bool = True
 ) -> dict[str, Any]:
     return _to_library(_XGBOOST, pairs, strict)
 
@@ -570,7 +570,7 @@ to_xgboost.__doc__ = _doc(
 
 
 def to_lightgbm(
-    pairs: ParamsOps | Iterable[tuple[str, Any]], *, strict: bool = True
+    pairs: ParamsOps | Mapping[str, Any] | Iterable[tuple[str, Any]], *, strict: bool = True
 ) -> dict[str, Any]:
     return _to_library(_LIGHTGBM, pairs, strict)
 
@@ -584,7 +584,7 @@ to_lightgbm.__doc__ = _doc(
 
 
 def to_catboost(
-    pairs: ParamsOps | Iterable[tuple[str, Any]], *, strict: bool = True
+    pairs: ParamsOps | Mapping[str, Any] | Iterable[tuple[str, Any]], *, strict: bool = True
 ) -> dict[str, Any]:
     return _to_library(_CATBOOST, pairs, strict)
 
@@ -624,7 +624,7 @@ def _from_library(lib: _Library, params: Mapping[str, Any], strict: bool) -> Par
 
 
 def _to_library(
-    lib: _Library, pairs: ParamsOps | Iterable[tuple[str, Any]], strict: bool
+    lib: _Library, pairs: ParamsOps | Mapping[str, Any] | Iterable[tuple[str, Any]], strict: bool
 ) -> dict[str, Any]:
     """bonsai pairs to a foreign dict; the shared engine behind ``to_*``."""
     index = {knob.native: knob for knob in lib.knobs}

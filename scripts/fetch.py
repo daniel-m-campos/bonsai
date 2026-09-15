@@ -16,6 +16,7 @@ import sys
 
 _p = pathlib.Path(__file__).resolve().parents[1] / "python/bonsai/bench/datasets.py"
 _spec = importlib.util.spec_from_file_location("bench_datasets", _p)
+assert _spec is not None and _spec.loader is not None
 _mod = importlib.util.module_from_spec(_spec)
 sys.modules["bench_datasets"] = _mod
 _spec.loader.exec_module(_mod)

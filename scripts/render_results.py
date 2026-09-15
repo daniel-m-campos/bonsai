@@ -126,9 +126,13 @@ def measured_stamp(label: str, rows: list[dict]) -> str:
     dates = sorted({r["ts"][:10] for r in rows if r.get("ts")})
     hosts = sorted(
         {
-            (r["host"].get("name") if isinstance(r.get("host"), dict) else r.get("host"))
+            host
             for r in rows
-            if r.get("host")
+            if (
+                host := (
+                    r["host"].get("name") if isinstance(r.get("host"), dict) else r.get("host")
+                )
+            )
         }
     )
     when = _prose_list(dates)
@@ -440,7 +444,7 @@ def _head_to_head_table(rows: list[dict], home: str, away: str) -> str:
     won each, and the gap (home minus away) as its mean, widest lead, and
     widest deficit; each library at its best variant per task."""
     best = _library_best(rows)
-    gaps: dict[object, list[float]] = defaultdict(list)
+    gaps: dict[str, list[float]] = defaultdict(list)
     for (suite, ds, lib), v in best.items():
         if lib != home or (suite, ds, away) not in best:
             continue

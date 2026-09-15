@@ -213,6 +213,9 @@ jobs:
       # integration/test_cli_parity.py needs the built binary.
       - run: make build
       - run: make python-test
+      # ty over the whole tree, reading the compiled half through the stub the
+      # build wrote; pinned like ruff, so a checker release cannot go red alone.
+      - run: make typecheck
       # Every ```{.python .run} example in the published docs, executed against
       # the module built by python-test (build/python). Uses the venv python
       # so numpy and the ABI-matched extension resolve; GPU blocks are listed

@@ -54,7 +54,7 @@ VARIANTS = vr.GRINSZTAJN
 DEVICE_VARIANTS = {vr.Device.CPU: VARIANTS, vr.Device.CUDA: vr.GRINSZTAJN_CUDA}
 # The campaign knobs with the leaf count they imply spelled out, so a
 # regime can hold the leaves and move the depth.
-C = dict(params.CAMPAIGN, leaves=params.num_leaves_campaign(params.CAMPAIGN["depth"]))
+C = dict(params.CAMPAIGN, leaves=params.num_leaves_campaign(int(params.CAMPAIGN["depth"])))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -75,7 +75,7 @@ CAMPAIGN = Regime("campaign", C, DEVICE_VARIANTS)
 # this cap. Only the learners a leaf count alone can cap run here.
 LEAF_CAPPED = Regime(
     "leaf-capped",
-    dict(C, depth=params.leaf_bound_depth(C["leaves"])),
+    dict(C, depth=params.leaf_bound_depth(int(C["leaves"]))),
     {vr.Device.CPU: vr.GRINSZTAJN_LEAF_CAPPED, vr.Device.CUDA: vr.GRINSZTAJN_LEAF_CAPPED_CUDA},
 )
 REGIMES = {r.name: r for r in (CAMPAIGN, LEAF_CAPPED)}
@@ -132,6 +132,7 @@ def run(out_path, variants=VARIANTS, regime=CAMPAIGN):
     knobs = dict(regime.knobs, regime=regime.name, train_cap=TRAIN_CAP)
     for sid, sname in SUITES.items():
         suite = openml.study.get_suite(sid)
+        assert suite.tasks is not None
         for tid in suite.tasks:
             try:
                 X, y, kind, name = load_task(openml.tasks.get_task(tid, download_splits=False))

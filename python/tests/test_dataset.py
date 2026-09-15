@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pickle
 import tempfile
+from typing import Any
 
 import bonsai
 import numpy as np
@@ -255,13 +256,14 @@ def test_dataset_reference_refuses_a_mapper_mismatch():
 
     # The binning settings belong to the reference; a disagreeing one is an
     # error at construction, not a silently ignored argument.
-    for bad in (
+    disagreeing: tuple[dict[str, Any], ...] = (
         dict(max_bin=63),
         dict(seed=7),
         dict(min_data_in_bin=5),
         dict(n_samples=100),
         dict(bin_edges={0: np.array([0.5], np.float32)}),
-    ):
+    )
+    for bad in disagreeing:
         with pytest.raises(Exception, match="reference"):
             bonsai.Dataset(Xv, yv, reference=train_ds, **bad)
     with pytest.raises(Exception, match="columns"):

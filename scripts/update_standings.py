@@ -47,6 +47,7 @@ TOLERANCE_FACTOR = 2.0
 
 def project_version() -> str:
     m = re.search(r'^version = "([^"]+)"', (REPO / "pyproject.toml").read_text(), re.M)
+    assert m is not None
     return m.group(1)
 
 
@@ -142,6 +143,7 @@ def restamp_verified(args: argparse.Namespace, reg: dict) -> int:
     if refusal:
         print(f"ERROR: {refusal}", file=sys.stderr)
         return 1
+    assert evidence is not None
     if not entry.get("sha"):
         print(
             f"ERROR: {args.axis} has never been measured; there is no measurement to carry forward",
@@ -245,7 +247,7 @@ def _results_rows(name: str) -> list[dict]:
 
 def _measured_sha(rows: list[dict], name: str) -> tuple[str | None, str | None]:
     """The one commit a results file attributes its rows to, or a refusal."""
-    shas = {r.get("git_sha") for r in rows if r.get("git_sha")}
+    shas = {sha for r in rows if (sha := r.get("git_sha"))}
     if len(shas) != 1:
         return None, (f"{name} carries shas {sorted(shas)}; a standings file must be single-sha")
     # "unknown" is what runlog records when nothing states the commit and the
@@ -265,9 +267,9 @@ def _measured_sha(rows: list[dict], name: str) -> tuple[str | None, str | None]:
 def _measured_host(rows: list[dict]) -> str | None:
     """The one host the rows were measured on, or None when they disagree."""
     hosts = {
-        (r["host"].get("name") if isinstance(r.get("host"), dict) else r.get("host"))
+        host
         for r in rows
-        if r.get("host")
+        if (host := (r["host"].get("name") if isinstance(r.get("host"), dict) else r.get("host")))
     }
     return sorted(hosts)[0] if len(hosts) == 1 else None
 

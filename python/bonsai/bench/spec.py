@@ -13,6 +13,8 @@ import pathlib
 from bonsai.bench import params
 from bonsai.bench.variants import resolve
 
+_PACKAGE = __name__.rpartition(".")[0]
+
 _SPEC_KEYS = {
     "name",
     "suite",
@@ -44,7 +46,7 @@ def bundled_specs() -> list[str]:
     """Names of the specs shipped inside the wheel (bench/specs/*.json)."""
     from importlib import resources
 
-    d = resources.files(__package__) / "specs"
+    d = resources.files(_PACKAGE) / "specs"
     return sorted(f.name.removesuffix(".json") for f in d.iterdir() if f.name.endswith(".json"))
 
 
@@ -133,7 +135,7 @@ def _spec_text(name_or_path: str | pathlib.Path) -> str:
     from importlib import resources
 
     stem = str(name_or_path).removesuffix(".json")
-    res = resources.files(__package__) / "specs" / f"{stem}.json"
+    res = resources.files(_PACKAGE) / "specs" / f"{stem}.json"
     if res.is_file():
         return res.read_text()
     raise FileNotFoundError(
